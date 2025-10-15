@@ -204,6 +204,37 @@ func assertPodsOnDistinctNodes(t *testing.T, pods []v1.Pod) {
 	}
 }
 
+// waitForPodConditions polls until the expected pod state is reached or timeout occurs.
+// Returns the current state (total, running, pending) for logging purposes.
+func waitForPodConditions(ctx context.Context, clientset kubernetes.Interface, namespace, labelSelector string, expectedTotalPods, expectedPending int, timeout, interval time.Duration) (int, int, int, error) {
+	var lastTotal, lastRunning, lastPending int
+
+	err := pollForCondition(ctx, timeout, interval, func() (bool, error) {
+		pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
+		if err != nil {
+			return false, err
+		}
+
+		lastTotal = len(pods.Items)
+		lastRunning = 0
+		lastPending = 0
+		for _, pod := range pods.Items {
+			switch pod.Status.Phase {
+			case v1.PodRunning:
+				lastRunning++
+			case v1.PodPending:
+				lastPending++
+			}
+		}
+
+		// Check if conditions are met
+		return lastTotal == expectedTotalPods && lastPending == expectedPending, nil
+	})
+
+	return lastTotal, lastRunning, lastPending, err
+}
+
+// scalePCSGAndWait scales a PCSG and waits for the expected pod conditions to be reached.
 func scalePCSGAndWait(t *testing.T, ctx context.Context, clientset kubernetes.Interface, dynamicClient dynamic.Interface, namespace, labelSelector, pcsgName string, replicas int32, expectedTotalPods, expectedPending int) {
 	t.Helper()
 
@@ -221,20 +252,14 @@ func scalePCSGAndWait(t *testing.T, ctx context.Context, clientset kubernetes.In
 		t.Fatalf("Failed to scale PodCliqueScalingGroup %s: %v", pcsgName, err)
 	}
 
-	err = pollForCondition(ctx, 5*time.Minute, 5*time.Second, func() (bool, error) {
-		pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
-		if err != nil {
-			return false, err
-		}
-		return len(pods.Items) == expectedTotalPods, nil
-	})
+	totalPods, runningPods, pendingPods, err := waitForPodConditions(ctx, clientset, namespace, labelSelector, expectedTotalPods, expectedPending, 5*time.Minute, 5*time.Second)
 	if err != nil {
-		t.Fatalf("Failed to wait for pods after PCSG scaling: %v", err)
+		t.Fatalf("Failed to wait for expected pod conditions after PCSG scaling: %v. Final state: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
+			err, totalPods, runningPods, pendingPods, expectedTotalPods, expectedPending)
 	}
-
-	evaluatePodStates(t, ctx, clientset, namespace, labelSelector, expectedTotalPods, expectedPending)
 }
 
+// scalePCSAndWait scales a PCS and waits for the expected pod conditions to be reached.
 func scalePCSAndWait(t *testing.T, ctx context.Context, clientset kubernetes.Interface, dynamicClient dynamic.Interface, namespace, labelSelector, pcsName string, replicas int32, expectedTotalPods, expectedPending int) {
 	t.Helper()
 
@@ -252,48 +277,9 @@ func scalePCSAndWait(t *testing.T, ctx context.Context, clientset kubernetes.Int
 		t.Fatalf("Failed to scale PodCliqueSet %s: %v", pcsName, err)
 	}
 
-	err = pollForCondition(ctx, 1*time.Minute, 1*time.Second, func() (bool, error) {
-		pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
-		if err != nil {
-			return false, err
-		}
-		return len(pods.Items) == expectedTotalPods, nil
-	})
+	totalPods, runningPods, pendingPods, err := waitForPodConditions(ctx, clientset, namespace, labelSelector, expectedTotalPods, expectedPending, 1*time.Minute, 1*time.Second)
 	if err != nil {
-		t.Fatalf("Failed to wait for pods after PCS scaling: %v", err)
-	}
-
-	evaluatePodStates(t, ctx, clientset, namespace, labelSelector, expectedTotalPods, expectedPending)
-}
-
-func evaluatePodStates(t *testing.T, ctx context.Context, clientset kubernetes.Interface, namespace, labelSelector string, expectedTotalPods, expectedPending int) {
-	t.Helper()
-
-	pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
-	if err != nil {
-		t.Fatalf("Failed to list pods: %v", err)
-	}
-
-	runningPods := 0
-	pendingPods := 0
-	for _, pod := range pods.Items {
-		switch pod.Status.Phase {
-		case v1.PodRunning:
-			runningPods++
-		case v1.PodPending:
-			pendingPods++
-		}
-	}
-
-	if len(pods.Items) != expectedTotalPods {
-		t.Fatalf("Expected %d total pods, but found %d", expectedTotalPods, len(pods.Items))
-	}
-
-	if pendingPods != expectedPending {
-		t.Fatalf("Expected %d pending pods, but found %d", expectedPending, pendingPods)
-	}
-
-	if runningPods != expectedTotalPods-expectedPending {
-		t.Fatalf("Expected %d running pods, but found %d", expectedTotalPods-expectedPending, runningPods)
+		t.Fatalf("Failed to wait for expected pod conditions after PCS scaling: %v. Final state: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
+			err, totalPods, runningPods, pendingPods, expectedTotalPods, expectedPending)
 	}
 }
