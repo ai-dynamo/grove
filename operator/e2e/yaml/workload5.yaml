@@ -78,6 +78,8 @@ spec:
           roleName: role-c
           replicas: 3
           minAvailable: 3
+          startsAfter:
+            - pc-a
           podSpec:
             schedulerName: kai-scheduler
             affinity:

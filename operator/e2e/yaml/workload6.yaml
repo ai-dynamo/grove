@@ -48,7 +48,7 @@ spec:
           replicas: 1
           minAvailable: 1
           startsAfter:
-            - pc-c
+            - pc-a
           podSpec:
             schedulerName: kai-scheduler
             affinity:
@@ -78,6 +78,8 @@ spec:
           roleName: role-c
           replicas: 3
           minAvailable: 1
+          startsAfter:
+            - pc-b
           podSpec:
             schedulerName: kai-scheduler
             affinity:
