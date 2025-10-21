@@ -220,7 +220,7 @@ func Test_GS2_GangSchedulingWithScalingFullReplicas(t *testing.T) {
 	}
 
 	logger.Info("5. Wait for pods to become ready")
-	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, 10*time.Minute, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
 
@@ -321,7 +321,7 @@ func Test_GS2_GangSchedulingWithScalingFullReplicas(t *testing.T) {
 		}
 	}
 
-	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, 15*time.Minute, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to wait for scaled pods to be ready: %v", err)
 	}
 
@@ -444,7 +444,7 @@ func Test_GS3_GangSchedulingWithPCSScalingFullReplicas(t *testing.T) {
 	}
 
 	logger.Info("5. Wait for pods to become ready")
-	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, 10*time.Minute, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
 
@@ -460,7 +460,7 @@ func Test_GS3_GangSchedulingWithPCSScalingFullReplicas(t *testing.T) {
 		if pod.Status.Phase == v1.PodRunning {
 			runningPods++
 		}
-		logger.Infof("Pod %s: Phase=%s, Node=%s", pod.Name, pod.Status.Phase, pod.Spec.NodeName)
+		logger.Debugf("Pod %s: Phase=%s, Node=%s", pod.Name, pod.Status.Phase, pod.Spec.NodeName)
 	}
 
 	if runningPods != len(pods.Items) {
@@ -535,7 +535,7 @@ func Test_GS3_GangSchedulingWithPCSScalingFullReplicas(t *testing.T) {
 		}
 	}
 
-	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, 15*time.Minute, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to wait for scaled pods to be ready: %v", err)
 	}
 
@@ -659,7 +659,7 @@ func Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas(t *testing.T) {
 	}
 
 	logger.Info("5. Wait for pods to become ready")
-	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, 10*time.Minute, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
 
@@ -694,7 +694,7 @@ func Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas(t *testing.T) {
 		}
 	}
 
-	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, 10*time.Minute, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to wait for pods to be ready after PCSG scale: %v", err)
 	}
 
@@ -715,7 +715,7 @@ func Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas(t *testing.T) {
 		}
 	}
 
-	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, 10*time.Minute, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to wait for pods to be ready after PCS scale: %v", err)
 	}
 
@@ -738,7 +738,7 @@ func Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas(t *testing.T) {
 		}
 	}
 
-	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, 10*time.Minute, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to wait for pods to be ready after final PCSG scale: %v", err)
 	}
 
@@ -951,7 +951,7 @@ func Test_GS5_GangSchedulingWithMinReplicas(t *testing.T) {
 	}
 
 	// Wait for all remaining pods to be scheduled and ready
-	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, 10*time.Minute, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to wait for all pods to be ready: %v", err)
 	}
 
@@ -1182,7 +1182,7 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 	}
 
 	// Wait for all remaining pods to be scheduled and ready
-	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, 10*time.Minute, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to wait for all pods to be ready: %v", err)
 	}
 
@@ -1325,7 +1325,7 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 	}
 
 	// Wait for all remaining pods to be scheduled and ready
-	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, 10*time.Minute, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to wait for all pods to be ready: %v", err)
 	}
 
@@ -1591,7 +1591,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	}
 
 	// Wait for all remaining pods to be scheduled and ready
-	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, 10*time.Minute, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to wait for all pods to be ready: %v", err)
 	}
 
@@ -1701,7 +1701,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	}
 
 	// Wait for all remaining pods to be scheduled and ready
-	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, 10*time.Minute, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to wait for all pods to be ready: %v", err)
 	}
 
@@ -2024,7 +2024,7 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 	}
 
 	// Wait for all remaining pods to be scheduled and ready
-	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, 10*time.Minute, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to wait for all pods to be ready: %v", err)
 	}
 
@@ -2224,7 +2224,7 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 	}
 
 	// Wait for all remaining pods to be scheduled and ready
-	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, 10*time.Minute, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to wait for all pods to be ready: %v", err)
 	}
 
@@ -2334,7 +2334,7 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 	}
 
 	// Wait for all remaining pods to be scheduled and ready
-	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, 10*time.Minute, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to wait for all pods to be ready: %v", err)
 	}
 
@@ -2661,7 +2661,7 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 	}
 
 	// Wait for all remaining pods to be scheduled and ready
-	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, 10*time.Minute, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to wait for all pods to be ready: %v", err)
 	}
 
@@ -2837,7 +2837,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 		}
 	}
 
-	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, 10*time.Minute, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to wait for first wave pods to be ready: %v", err)
 	}
 
@@ -2912,7 +2912,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 		}
 	}
 
-	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, 10*time.Minute, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to wait for PCSG completion pods to be ready: %v", err)
 	}
 
@@ -2955,7 +2955,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 		}
 	}
 
-	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, 10*time.Minute, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to wait for PCS completion pods to be ready: %v", err)
 	}
 
@@ -3025,7 +3025,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 		}
 	}
 
-	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, 10*time.Minute, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to wait for all final pods to be ready: %v", err)
 	}
 
