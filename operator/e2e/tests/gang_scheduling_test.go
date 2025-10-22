@@ -169,7 +169,7 @@ func Test_GS2_GangSchedulingWithScalingFullReplicas(t *testing.T) {
 	expectedPods := 10
 
 	var pods *v1.PodList
-	err = pollForCondition(ctx, 2*time.Minute, 5*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
@@ -185,32 +185,8 @@ func Test_GS2_GangSchedulingWithScalingFullReplicas(t *testing.T) {
 	}
 
 	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
-	pendingPods := 0
-	for _, pod := range pods.Items {
-		if pod.Status.Phase == v1.PodPending {
-			pendingPods++
-		}
-	}
-
-	err = pollForCondition(ctx, 2*time.Minute, 10*time.Second, func() (bool, error) {
-		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
-			LabelSelector: workloadLabelSelector,
-		})
-		if err != nil {
-			return false, err
-		}
-
-		stillPending := 0
-		for _, pod := range pods.Items {
-			if pod.Status.Phase == v1.PodPending {
-				stillPending++
-			}
-		}
-
-		return stillPending == len(pods.Items), nil
-	})
-	if err != nil {
-		t.Fatalf("Failed to verify pods remain pending: %v", err)
+	if err := verifyPodsArePendingWithUnschedulableEvents(ctx, clientset, workloadNamespace, workloadLabelSelector, true, defaultPollTimeout, defaultPollInterval); err != nil {
+		t.Fatalf("Failed to verify all pods have Unschedulable events: %v", err)
 	}
 
 	logger.Info("4. Uncordon 1 node to allow scheduling and verify pods get scheduled")
@@ -252,7 +228,7 @@ func Test_GS2_GangSchedulingWithScalingFullReplicas(t *testing.T) {
 	pcsgGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquescalinggroups"}
 	pcsgName := "workload1-0-sg-x"
 
-	err = pollForCondition(ctx, 3*time.Minute, 5*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		_, err := dynamicClient.Resource(pcsgGVR).Namespace(workloadNamespace).Get(ctx, pcsgName, metav1.GetOptions{})
 		if err != nil {
 			if apierrors.IsNotFound(err) {
@@ -281,7 +257,7 @@ func Test_GS2_GangSchedulingWithScalingFullReplicas(t *testing.T) {
 	}
 
 	expectedScaledPods := 14
-	err = pollForCondition(ctx, 3*time.Minute, 5*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
@@ -296,7 +272,7 @@ func Test_GS2_GangSchedulingWithScalingFullReplicas(t *testing.T) {
 	}
 
 	runningPods = 0
-	pendingPods = 0
+	pendingPods := 0
 	for _, pod := range pods.Items {
 		switch pod.Status.Phase {
 		case v1.PodRunning:
@@ -394,7 +370,7 @@ func Test_GS3_GangSchedulingWithPCSScalingFullReplicas(t *testing.T) {
 
 	expectedPods := 10
 	var pods *v1.PodList
-	err = pollForCondition(ctx, 2*time.Minute, 5*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
@@ -409,32 +385,8 @@ func Test_GS3_GangSchedulingWithPCSScalingFullReplicas(t *testing.T) {
 	}
 
 	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
-	pendingPods := 0
-	for _, pod := range pods.Items {
-		if pod.Status.Phase == v1.PodPending {
-			pendingPods++
-		}
-	}
-
-	err = pollForCondition(ctx, 2*time.Minute, 10*time.Second, func() (bool, error) {
-		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
-			LabelSelector: workloadLabelSelector,
-		})
-		if err != nil {
-			return false, err
-		}
-
-		stillPending := 0
-		for _, pod := range pods.Items {
-			if pod.Status.Phase == v1.PodPending {
-				stillPending++
-			}
-		}
-
-		return stillPending == len(pods.Items), nil
-	})
-	if err != nil {
-		t.Fatalf("Failed to verify pods remain pending: %v", err)
+	if err := verifyPodsArePendingWithUnschedulableEvents(ctx, clientset, workloadNamespace, workloadLabelSelector, true, defaultPollTimeout, defaultPollInterval); err != nil {
+		t.Fatalf("Failed to verify all pods have Unschedulable events: %v", err)
 	}
 
 	logger.Info("4. Uncordon 1 node to allow scheduling and verify pods get scheduled")
@@ -455,17 +407,6 @@ func Test_GS3_GangSchedulingWithPCSScalingFullReplicas(t *testing.T) {
 		t.Fatalf("Failed to list workload pods: %v", err)
 	}
 
-	runningPods := 0
-	for _, pod := range pods.Items {
-		if pod.Status.Phase == v1.PodRunning {
-			runningPods++
-		}
-		logger.Debugf("Pod %s: Phase=%s, Node=%s", pod.Name, pod.Status.Phase, pod.Spec.NodeName)
-	}
-
-	if runningPods != len(pods.Items) {
-		t.Fatalf("Expected all %d pods to be running, but only %d are running", len(pods.Items), runningPods)
-	}
 	assertPodsOnDistinctNodes(t, pods.Items)
 
 	logger.Info("6. Scale PCS replicas to 2 and verify 10 new pending pods")
@@ -493,7 +434,7 @@ func Test_GS3_GangSchedulingWithPCSScalingFullReplicas(t *testing.T) {
 	}
 
 	expectedScaledPods := int(replicas) * expectedPods
-	err = pollForCondition(ctx, 5*time.Minute, 5*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
@@ -508,8 +449,8 @@ func Test_GS3_GangSchedulingWithPCSScalingFullReplicas(t *testing.T) {
 		t.Fatalf("Failed to wait for scaled pods to be created: %v", err)
 	}
 
-	runningPods = 0
-	pendingPods = 0
+	runningPods := 0
+	pendingPods := 0
 	for _, pod := range pods.Items {
 		switch pod.Status.Phase {
 		case v1.PodRunning:
@@ -609,11 +550,11 @@ func Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas(t *testing.T) {
 		t.Fatalf("Failed to apply workload YAML: %v", err)
 	}
 
-	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
+	logger.Info("2. Deploy workload WL1, and verify 10 newly created pods")
 	expectedPods := 10
 
 	var pods *v1.PodList
-	err = pollForCondition(ctx, 2*time.Minute, 5*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
@@ -626,30 +567,9 @@ func Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas(t *testing.T) {
 		t.Fatalf("Failed to wait for pods to be created: %v", err)
 	}
 
-	pendingPods := 0
-	for _, pod := range pods.Items {
-		if pod.Status.Phase == v1.PodPending {
-			pendingPods++
-		}
-	}
-
-	err = pollForCondition(ctx, 2*time.Minute, 10*time.Second, func() (bool, error) {
-		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
-		if err != nil {
-			return false, err
-		}
-
-		stillPending := 0
-		for _, pod := range pods.Items {
-			if pod.Status.Phase == v1.PodPending {
-				stillPending++
-			}
-		}
-
-		return stillPending == len(pods.Items), nil
-	})
-	if err != nil {
-		t.Fatalf("Failed to verify pods remain pending: %v", err)
+	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
+	if err := verifyPodsArePendingWithUnschedulableEvents(ctx, clientset, workloadNamespace, workloadLabelSelector, true, defaultPollTimeout, defaultPollInterval); err != nil {
+		t.Fatalf("Failed to verify all pods have Unschedulable events: %v", err)
 	}
 
 	logger.Info("4. Uncordon 1 node to allow scheduling and verify pods get scheduled")
@@ -801,7 +721,7 @@ func Test_GS5_GangSchedulingWithMinReplicas(t *testing.T) {
 	expectedPods := 10
 
 	var pods *v1.PodList
-	err = pollForCondition(ctx, 2*time.Minute, 5*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
@@ -817,47 +737,19 @@ func Test_GS5_GangSchedulingWithMinReplicas(t *testing.T) {
 	}
 
 	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
-	pendingPods := 0
-	for _, pod := range pods.Items {
-		if pod.Status.Phase == v1.PodPending {
-			pendingPods++
-		}
+	// Need to use a sleep here unfortunately, see: https://github.com/NVIDIA/grove/issues/226
+	time.Sleep(30 * time.Second)
+	if err := verifyAllPodsArePending(ctx, clientset, workloadNamespace, workloadLabelSelector, defaultPollTimeout, defaultPollInterval); err != nil {
+		t.Fatalf("Failed to verify all pods are pending: %v", err)
 	}
 
-	if pendingPods != len(pods.Items) {
-		t.Fatalf("Expected all %d pods to be pending, but only %d are pending", len(pods.Items), pendingPods)
-	}
-
-	// Verify pods remain pending due to gang scheduling constraints
-	err = pollForCondition(ctx, 2*time.Minute, 10*time.Second, func() (bool, error) {
-		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
-			LabelSelector: workloadLabelSelector,
-		})
-		if err != nil {
-			return false, err
-		}
-
-		stillPending := 0
-		for _, pod := range pods.Items {
-			if pod.Status.Phase == v1.PodPending {
-				stillPending++
-			}
-		}
-
-		return stillPending == len(pods.Items), nil
-	})
-	if err != nil {
-		t.Fatalf("Failed to verify pods remain pending: %v", err)
-	}
-
-	logger.Info("4. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1})")
 	firstNodeToUncordon := nodesToCordon[0]
 	if err := utils.CordonNode(ctx, clientset, firstNodeToUncordon, false); err != nil {
 		t.Fatalf("Failed to uncordon node %s: %v", firstNodeToUncordon, err)
 	}
 
 	// Wait for exactly 3 pods to be scheduled (min-replicas)
-	err = pollForCondition(ctx, 5*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -892,7 +784,7 @@ func Test_GS5_GangSchedulingWithMinReplicas(t *testing.T) {
 	}
 
 	runningPods := 0
-	pendingPods = 0
+	pendingPods := 0
 	runningPodNames := make([]string, 0)
 	for _, pod := range pods.Items {
 		switch pod.Status.Phase {
@@ -915,7 +807,7 @@ func Test_GS5_GangSchedulingWithMinReplicas(t *testing.T) {
 	logger.Info("5. Wait for scheduled pods to become ready")
 	// Note: WaitForPods waits for ALL pods, but we only want the running ones to be ready
 	// We'll verify readiness manually
-	err = pollForCondition(ctx, 5*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1033,7 +925,7 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 	// workload2 initially creates 10 pods
 	expectedPods := 10
 	var pods *v1.PodList
-	err = pollForCondition(ctx, 2*time.Minute, 5*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
@@ -1049,37 +941,10 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 	}
 
 	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
-	pendingPods := 0
-	for _, pod := range pods.Items {
-		if pod.Status.Phase == v1.PodPending {
-			pendingPods++
-		}
-	}
-
-	if pendingPods != len(pods.Items) {
-		t.Fatalf("Expected all %d pods to be pending, but only %d are pending", len(pods.Items), pendingPods)
-	}
-
-	// Verify pods remain pending due to gang scheduling constraints
-	err = pollForCondition(ctx, 2*time.Minute, 10*time.Second, func() (bool, error) {
-		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
-			LabelSelector: workloadLabelSelector,
-		})
-		if err != nil {
-			return false, err
-		}
-
-		stillPending := 0
-		for _, pod := range pods.Items {
-			if pod.Status.Phase == v1.PodPending {
-				stillPending++
-			}
-		}
-
-		return stillPending == len(pods.Items), nil
-	})
-	if err != nil {
-		t.Fatalf("Failed to verify pods remain pending: %v", err)
+	// Need to use a sleep here unfortunately, see: https://github.com/NVIDIA/grove/issues/226
+	time.Sleep(30 * time.Second)
+	if err := verifyAllPodsArePending(ctx, clientset, workloadNamespace, workloadLabelSelector, defaultPollTimeout, defaultPollInterval); err != nil {
+		t.Fatalf("Failed to verify all pods are pending: %v", err)
 	}
 
 	logger.Info("4. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1})")
@@ -1090,7 +955,7 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 	}
 
 	// Wait for exactly 3 pods to be scheduled (min-replicas)
-	err = pollForCondition(ctx, 5*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1125,7 +990,7 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 	}
 
 	runningPods := 0
-	pendingPods = 0
+	pendingPods := 0
 	runningPodNames := make([]string, 0)
 	for _, pod := range pods.Items {
 		switch pod.Status.Phase {
@@ -1146,7 +1011,7 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 	}
 
 	logger.Info("5. Wait for scheduled pods to become ready")
-	err = pollForCondition(ctx, 5*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1222,32 +1087,8 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 	scalePCSGAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, pcsgName, 3, expectedPodsAfterScaling, expectedNewPendingPods)
 
 	logger.Info("9. Verify all newly created pods are pending due to insufficient resources")
-	pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
-		LabelSelector: workloadLabelSelector,
-	})
-	if err != nil {
-		t.Fatalf("Failed to list pods after PCSG scaling: %v", err)
-	}
-
-	runningAfter := 0
-	pendingAfter := 0
-	for _, pod := range pods.Items {
-		switch pod.Status.Phase {
-		case v1.PodRunning:
-			runningAfter++
-		case v1.PodPending:
-			pendingAfter++
-		}
-	}
-
-	if len(pods.Items) != expectedPodsAfterScaling {
-		t.Fatalf("Expected %d total pods after scaling, but found %d", expectedPodsAfterScaling, len(pods.Items))
-	}
-	if pendingAfter != expectedNewPendingPods {
-		t.Fatalf("Expected %d pending pods after scaling, but found %d", expectedNewPendingPods, pendingAfter)
-	}
-	if runningAfter != expectedPodsAfterScaling-expectedNewPendingPods {
-		t.Fatalf("Expected %d running pods after scaling, but found %d", expectedPodsAfterScaling-expectedNewPendingPods, runningAfter)
+	if err := verifyPodsArePendingWithUnschedulableEvents(ctx, clientset, workloadNamespace, workloadLabelSelector, false, defaultPollTimeout, defaultPollInterval); err != nil {
+		t.Fatalf("Failed to verify all pending pods have Unschedulable events: %v", err)
 	}
 
 	logger.Info("10. Uncordon 2 nodes and verify 2 more pods get scheduled (pcs-0-{sg-x-2-pc-b=1, sg-x-2-pc-c=1})")
@@ -1261,7 +1102,7 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 	}
 
 	// Wait for exactly 2 more pods to be scheduled (min-replicas for new PCSG replica)
-	err = pollForCondition(ctx, 5*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1288,7 +1129,7 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 	}
 
 	logger.Info("11. Wait for scheduled pods to become ready")
-	err = pollForCondition(ctx, 5*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1409,7 +1250,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	// workload2 initially creates 10 pods
 	expectedPods := 10
 	var pods *v1.PodList
-	err = pollForCondition(ctx, 2*time.Minute, 5*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
@@ -1425,37 +1266,10 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	}
 
 	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
-	pendingPods := 0
-	for _, pod := range pods.Items {
-		if pod.Status.Phase == v1.PodPending {
-			pendingPods++
-		}
-	}
-
-	if pendingPods != len(pods.Items) {
-		t.Fatalf("Expected all %d pods to be pending, but only %d are pending", len(pods.Items), pendingPods)
-	}
-
-	// Verify pods remain pending due to gang scheduling constraints
-	err = pollForCondition(ctx, 2*time.Minute, 10*time.Second, func() (bool, error) {
-		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
-			LabelSelector: workloadLabelSelector,
-		})
-		if err != nil {
-			return false, err
-		}
-
-		stillPending := 0
-		for _, pod := range pods.Items {
-			if pod.Status.Phase == v1.PodPending {
-				stillPending++
-			}
-		}
-
-		return stillPending == len(pods.Items), nil
-	})
-	if err != nil {
-		t.Fatalf("Failed to verify pods remain pending: %v", err)
+	// Need to use a sleep here unfortunately, see: https://github.com/NVIDIA/grove/issues/226
+	time.Sleep(30 * time.Second)
+	if err := verifyAllPodsArePending(ctx, clientset, workloadNamespace, workloadLabelSelector, defaultPollTimeout, defaultPollInterval); err != nil {
+		t.Fatalf("Failed to verify all pods are pending: %v", err)
 	}
 
 	logger.Info("4. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1})")
@@ -1465,7 +1279,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	}
 
 	// Wait for exactly 3 pods to be scheduled (min-replicas)
-	err = pollForCondition(ctx, 5*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1492,7 +1306,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	}
 
 	logger.Info("5. Wait for scheduled pods to become ready")
-	err = pollForCondition(ctx, 5*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1528,7 +1342,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	}
 
 	// Wait for exactly 2 more pods to be scheduled (sg-x-1 min-replicas)
-	err = pollForCondition(ctx, 5*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1555,7 +1369,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	}
 
 	logger.Info("7. Wait for scheduled pods to become ready")
-	err = pollForCondition(ctx, 5*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1638,7 +1452,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	}
 
 	// Wait for exactly 2 more pods to be scheduled (min-replicas for new PCSG replica)
-	err = pollForCondition(ctx, 5*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1665,7 +1479,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	}
 
 	logger.Info("13. Wait for scheduled pods to become ready")
-	err = pollForCondition(ctx, 5*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1781,7 +1595,7 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 	// workload2 initially creates 10 pods
 	expectedPods := 10
 	var pods *v1.PodList
-	err = pollForCondition(ctx, 2*time.Minute, 5*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
@@ -1797,37 +1611,10 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 	}
 
 	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
-	pendingPods := 0
-	for _, pod := range pods.Items {
-		if pod.Status.Phase == v1.PodPending {
-			pendingPods++
-		}
-	}
-
-	if pendingPods != len(pods.Items) {
-		t.Fatalf("Expected all %d pods to be pending, but only %d are pending", len(pods.Items), pendingPods)
-	}
-
-	// Verify pods remain pending due to gang scheduling constraints
-	err = pollForCondition(ctx, 2*time.Minute, 10*time.Second, func() (bool, error) {
-		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
-			LabelSelector: workloadLabelSelector,
-		})
-		if err != nil {
-			return false, err
-		}
-
-		stillPending := 0
-		for _, pod := range pods.Items {
-			if pod.Status.Phase == v1.PodPending {
-				stillPending++
-			}
-		}
-
-		return stillPending == len(pods.Items), nil
-	})
-	if err != nil {
-		t.Fatalf("Failed to verify pods remain pending: %v", err)
+	// Need to use a sleep here unfortunately, see: https://github.com/NVIDIA/grove/issues/226
+	time.Sleep(30 * time.Second)
+	if err := verifyAllPodsArePending(ctx, clientset, workloadNamespace, workloadLabelSelector, defaultPollTimeout, defaultPollInterval); err != nil {
+		t.Fatalf("Failed to verify all pods are pending: %v", err)
 	}
 
 	// Create dynamic client for PCSG scaling operations
@@ -1855,7 +1642,7 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 		t.Fatalf("Failed to scale PodCliqueScalingGroup %s: %v", pcsgName, err)
 	}
 
-	err = pollForCondition(ctx, 3*time.Minute, 5*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
@@ -1871,25 +1658,10 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 	}
 
 	logger.Info("5. Verify all 14 newly created pods are pending due to insufficient resources")
-	pendingPods = 0
-	runningPods := 0
-	for _, pod := range pods.Items {
-		switch pod.Status.Phase {
-		case v1.PodPending:
-			pendingPods++
-		case v1.PodRunning:
-			runningPods++
-		}
-	}
-
-	if len(pods.Items) != expectedPodsAfterScaling {
-		t.Fatalf("Expected %d total pods after scaling, but found %d", expectedPodsAfterScaling, len(pods.Items))
-	}
-	if pendingPods != expectedPodsAfterScaling {
-		t.Fatalf("Expected all %d pods to be pending after scaling, but found %d pending", expectedPodsAfterScaling, pendingPods)
-	}
-	if runningPods != 0 {
-		t.Fatalf("Expected 0 running pods after scaling with all nodes cordoned, but found %d running", runningPods)
+	// Need to use a sleep here unfortunately, see: https://github.com/NVIDIA/grove/issues/226
+	time.Sleep(30 * time.Second)
+	if err := verifyAllPodsArePending(ctx, clientset, workloadNamespace, workloadLabelSelector, defaultPollTimeout, defaultPollInterval); err != nil {
+		t.Fatalf("Failed to verify all pods are pending: %v", err)
 	}
 
 	logger.Info("6. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1})")
@@ -1899,7 +1671,7 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 	}
 
 	// Wait for exactly 3 pods to be scheduled (min-replicas)
-	err = pollForCondition(ctx, 5*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1926,7 +1698,7 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 	}
 
 	logger.Info("7. Wait for scheduled pods to become ready")
-	err = pollForCondition(ctx, 5*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1962,7 +1734,7 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 	}
 
 	// Wait for exactly 4 more pods to be scheduled (sg-x-1 and sg-x-2 min-replicas)
-	err = pollForCondition(ctx, 5*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1988,7 +1760,7 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 	}
 
 	logger.Info("9. Wait for scheduled pods to become ready")
-	err = pollForCondition(ctx, 5*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -2106,7 +1878,7 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 	expectedPods := 10
 
 	var pods *v1.PodList
-	err = pollForCondition(ctx, 2*time.Minute, 5*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
@@ -2122,37 +1894,10 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 	}
 
 	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
-	pendingPods := 0
-	for _, pod := range pods.Items {
-		if pod.Status.Phase == v1.PodPending {
-			pendingPods++
-		}
-	}
-
-	if pendingPods != len(pods.Items) {
-		t.Fatalf("Expected all %d pods to be pending, but only %d are pending", len(pods.Items), pendingPods)
-	}
-
-	// Verify pods remain pending due to gang scheduling constraints
-	err = pollForCondition(ctx, 2*time.Minute, 10*time.Second, func() (bool, error) {
-		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
-			LabelSelector: workloadLabelSelector,
-		})
-		if err != nil {
-			return false, err
-		}
-
-		stillPending := 0
-		for _, pod := range pods.Items {
-			if pod.Status.Phase == v1.PodPending {
-				stillPending++
-			}
-		}
-
-		return stillPending == len(pods.Items), nil
-	})
-	if err != nil {
-		t.Fatalf("Failed to verify pods remain pending: %v", err)
+	// Need to use a sleep here unfortunately, see: https://github.com/NVIDIA/grove/issues/226
+	time.Sleep(30 * time.Second)
+	if err := verifyAllPodsArePending(ctx, clientset, workloadNamespace, workloadLabelSelector, defaultPollTimeout, defaultPollInterval); err != nil {
+		t.Fatalf("Failed to verify all pods are pending: %v", err)
 	}
 
 	logger.Info("4. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1})")
@@ -2162,7 +1907,7 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 	}
 
 	// Wait for exactly 3 pods to be scheduled (min-replicas)
-	err = pollForCondition(ctx, 5*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -2188,7 +1933,7 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 	}
 
 	logger.Info("5. Wait for scheduled pods to become ready")
-	err = pollForCondition(ctx, 5*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -2272,7 +2017,7 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 	}
 
 	// Wait for exactly 3 more pods to be scheduled (min-replicas for new PCS replica)
-	err = pollForCondition(ctx, 5*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -2298,7 +2043,7 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 	}
 
 	logger.Info("10. Wait for scheduled pods to become ready")
-	err = pollForCondition(ctx, 5*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -2415,7 +2160,7 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 	expectedPods := 10
 
 	var pods *v1.PodList
-	err = pollForCondition(ctx, 2*time.Minute, 5*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
@@ -2431,37 +2176,10 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 	}
 
 	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
-	pendingPods := 0
-	for _, pod := range pods.Items {
-		if pod.Status.Phase == v1.PodPending {
-			pendingPods++
-		}
-	}
-
-	if pendingPods != len(pods.Items) {
-		t.Fatalf("Expected all %d pods to be pending, but only %d are pending", len(pods.Items), pendingPods)
-	}
-
-	// Verify pods remain pending due to gang scheduling constraints
-	err = pollForCondition(ctx, 2*time.Minute, 10*time.Second, func() (bool, error) {
-		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
-			LabelSelector: workloadLabelSelector,
-		})
-		if err != nil {
-			return false, err
-		}
-
-		stillPending := 0
-		for _, pod := range pods.Items {
-			if pod.Status.Phase == v1.PodPending {
-				stillPending++
-			}
-		}
-
-		return stillPending == len(pods.Items), nil
-	})
-	if err != nil {
-		t.Fatalf("Failed to verify pods remain pending: %v", err)
+	// Need to use a sleep here unfortunately, see: https://github.com/NVIDIA/grove/issues/226
+	time.Sleep(30 * time.Second)
+	if err := verifyAllPodsArePending(ctx, clientset, workloadNamespace, workloadLabelSelector, defaultPollTimeout, defaultPollInterval); err != nil {
+		t.Fatalf("Failed to verify all pods are pending: %v", err)
 	}
 
 	// Create dynamic client for PCS scaling operations
@@ -2491,7 +2209,7 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 		t.Fatalf("Failed to scale PodCliqueSet %s: %v", pcsName, err)
 	}
 
-	err = pollForCondition(ctx, 3*time.Minute, 5*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
@@ -2507,25 +2225,10 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 	}
 
 	logger.Info("5. Verify all 20 newly created pods are pending due to insufficient resources")
-	pendingPods = 0
-	runningPods := 0
-	for _, pod := range pods.Items {
-		switch pod.Status.Phase {
-		case v1.PodPending:
-			pendingPods++
-		case v1.PodRunning:
-			runningPods++
-		}
-	}
-
-	if len(pods.Items) != expectedPodsAfterScaling {
-		t.Fatalf("Expected %d total pods after scaling, but found %d", expectedPodsAfterScaling, len(pods.Items))
-	}
-	if pendingPods != expectedPodsAfterScaling {
-		t.Fatalf("Expected all %d pods to be pending after scaling, but found %d pending", expectedPodsAfterScaling, pendingPods)
-	}
-	if runningPods != 0 {
-		t.Fatalf("Expected 0 running pods after scaling with all nodes cordoned, but found %d running", runningPods)
+	// Need to use a sleep here unfortunately, see: https://github.com/NVIDIA/grove/issues/226
+	time.Sleep(30 * time.Second)
+	if err := verifyAllPodsArePending(ctx, clientset, workloadNamespace, workloadLabelSelector, defaultPollTimeout, defaultPollInterval); err != nil {
+		t.Fatalf("Failed to verify all pods are pending: %v", err)
 	}
 
 	logger.Info("6. Uncordon 4 nodes and verify a total of 6 pods get scheduled")
@@ -2537,7 +2240,7 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 	}
 
 	// Wait for exactly 6 pods to be scheduled (min-replicas for both PCS replicas)
-	err = pollForCondition(ctx, 5*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -2563,7 +2266,7 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 	}
 
 	logger.Info("7. Wait for scheduled pods to become ready")
-	err = pollForCondition(ctx, 5*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -2599,7 +2302,7 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 	}
 
 	// Wait for exactly 4 more pods to be scheduled (sg-x-1 for both PCS replicas)
-	err = pollForCondition(ctx, 5*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -2625,7 +2328,7 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 	}
 
 	logger.Info("9. Wait for scheduled pods to become ready")
-	err = pollForCondition(ctx, 5*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -2693,27 +2396,6 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 // Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas tests gang-scheduling behavior with both PCS and PCSG scaling using min-replicas
 // Scenario GS-11:
 // 1. Initialize a 28-node Grove cluster, then cordon 26 nodes
-// 2. Deploy workload WL6, and verify 6 newly created pods
-// 3. Verify all workload pods are pending due to insufficient resources
-// 4. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1})
-// 5. Scale pcs-0-sg-x replicas to 3, verify 4 newly created pods
-// 6. Verify all newly created pods are pending due to insufficient resources
-// 7. Scale pcs-0 replicas to 3, verify 6 newly created pods
-// 8. Verify all newly created pods are pending due to insufficient resources
-// 9. Uncordon 2 nodes
-// 10. Verify a total of 9 pods get scheduled (pcs-0, pcs-1, pcs-2 each with {pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1})
-// 11. Scale pcs-0-sg-x replicas to 5, verify 8 newly created pods
-// 12. Verify all newly created pods are pending due to insufficient resources
-// 13. Scale pcs-1-sg-x replicas to 5, verify 8 newly created pods
-// 14. Verify all newly created pods are pending due to insufficient resources
-// 15. Scale pcs-2-sg-x replicas to 5, verify 8 newly created pods
-// 16. Verify all newly created pods are pending due to insufficient resources
-// 17. Uncordon 6 nodes
-// 18. Verify all pods get scheduled
-
-// Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas tests gang-scheduling behavior with both PCS and PCSG scaling using min-replicas
-// Scenario GS-11:
-// 1. Initialize a 28-node Grove cluster, then cordon 26 nodes
 // 2. Deploy workload WL2, and verify 10 newly created pods
 // 3. Verify all workload pods are pending due to insufficient resources
 // 4. Uncordon 1 node
@@ -2770,7 +2452,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 
 	expectedPods := 10
 	var pods *v1.PodList
-	err = pollForCondition(ctx, 2*time.Minute, 5*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
@@ -2784,23 +2466,10 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 	}
 
 	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
-	err = pollForCondition(ctx, 2*time.Minute, 10*time.Second, func() (bool, error) {
-		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
-		if err != nil {
-			return false, err
-		}
-
-		stillPending := 0
-		for _, pod := range pods.Items {
-			if pod.Status.Phase == v1.PodPending {
-				stillPending++
-			}
-		}
-
-		return stillPending == len(pods.Items), nil
-	})
-	if err != nil {
-		t.Fatalf("Failed to verify pods remain pending: %v", err)
+	// Need to use a sleep here unfortunately, see: https://github.com/NVIDIA/grove/issues/226
+	time.Sleep(30 * time.Second)
+	if err := verifyAllPodsArePending(ctx, clientset, workloadNamespace, workloadLabelSelector, defaultPollTimeout, defaultPollInterval); err != nil {
+		t.Fatalf("Failed to verify all pods are pending: %v", err)
 	}
 
 	logger.Info("4. Uncordon 1 node")
@@ -2810,7 +2479,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 	}
 
 	logger.Info("5. Wait for min-replicas pods to be scheduled and ready (should be 3 pods for min-available)")
-	err = pollForCondition(ctx, 5*time.Minute, 5*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
 			return false, err
@@ -2853,7 +2522,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 	logger.Info("8. Verify all newly created pods are pending due to insufficient resources")
 	expectedRunning := 10 // Initial 10 pods from first wave
 	expectedPending := 4  // 4 new pods from PCSG scaling
-	err = pollForCondition(ctx, 2*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
 			return false, err
@@ -2885,7 +2554,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 	}
 
 	logger.Info("10. Wait for 2 more pods to be scheduled and ready (min-available for sg-x-2)")
-	err = pollForCondition(ctx, 5*time.Minute, 5*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
 			return false, err
@@ -2928,7 +2597,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 	}
 
 	logger.Info("14. Wait for 3 more pods to be scheduled (min-available for pcs-1)")
-	err = pollForCondition(ctx, 5*time.Minute, 5*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
 			return false, err
@@ -2966,7 +2635,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 	logger.Info("17. Verify all newly created pods are pending due to insufficient resources")
 	expectedRunning = 24 // All previous pods should be running
 	expectedPending = 4  // 4 new pods from second PCSG scaling
-	err = pollForCondition(ctx, 2*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
 			return false, err
@@ -2998,7 +2667,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 	}
 
 	logger.Info("19. Wait for 2 more pods to be scheduled (min-available for pcs-1-sg-x-2)")
-	err = pollForCondition(ctx, 5*time.Minute, 5*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
 			return false, err
@@ -3091,7 +2760,7 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 
 	expectedPods := 10
 	var pods *v1.PodList
-	err = pollForCondition(ctx, 2*time.Minute, 5*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
@@ -3105,23 +2774,10 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 	}
 
 	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
-	err = pollForCondition(ctx, 2*time.Minute, 10*time.Second, func() (bool, error) {
-		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
-		if err != nil {
-			return false, err
-		}
-
-		stillPending := 0
-		for _, pod := range pods.Items {
-			if pod.Status.Phase == v1.PodPending {
-				stillPending++
-			}
-		}
-
-		return stillPending == len(pods.Items), nil
-	})
-	if err != nil {
-		t.Fatalf("Failed to verify pods remain pending: %v", err)
+	// Need to use a sleep here unfortunately, see: https://github.com/NVIDIA/grove/issues/226
+	time.Sleep(30 * time.Second)
+	if err := verifyAllPodsArePending(ctx, clientset, workloadNamespace, workloadLabelSelector, defaultPollTimeout, defaultPollInterval); err != nil {
+		t.Fatalf("Failed to verify all pods are pending: %v", err)
 	}
 
 	dynamicClient, err := dynamic.NewForConfig(restConfig)
@@ -3133,7 +2789,7 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 	scalePCSAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, "workload2", 2, 20, 20)
 
 	logger.Info("5. Verify all 20 newly created pods are pending due to insufficient resources")
-	err = pollForCondition(ctx, 2*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
 			return false, err
@@ -3162,7 +2818,7 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 	scalePCSGAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, pcsg2Name, 3, 28, 28)
 
 	logger.Info("7. Verify all 28 created pods are pending due to insufficient resources")
-	err = pollForCondition(ctx, 2*time.Minute, 10*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
 			return false, err
@@ -3190,7 +2846,7 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 		}
 	}
 
-	err = pollForCondition(ctx, 5*time.Minute, 5*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
 			return false, err
@@ -3210,7 +2866,7 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 	}
 
 	logger.Info("9. Wait for scheduled pods to become ready (only the 6 that are scheduled)")
-	err = pollForCondition(ctx, 10*time.Minute, 5*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
 			return false, err
@@ -3242,7 +2898,7 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 		}
 	}
 
-	err = pollForCondition(ctx, 5*time.Minute, 5*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
 			return false, err
@@ -3262,7 +2918,7 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 	}
 
 	logger.Info("11. Wait for scheduled pods to become ready (only the 14 that are scheduled)")
-	err = pollForCondition(ctx, 10*time.Minute, 5*time.Second, func() (bool, error) {
+	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
 			return false, err
@@ -3294,7 +2950,7 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 		}
 	}
 
-	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, 10*time.Minute, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPods(ctx, restConfig, []string{workloadNamespace}, workloadLabelSelector, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to wait for all final pods to be ready: %v", err)
 	}
 
