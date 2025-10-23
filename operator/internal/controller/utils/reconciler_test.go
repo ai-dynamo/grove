@@ -17,128 +17,246 @@
 package utils
 
 import (
-	"errors"
+	"context"
 	"testing"
 
-	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
+	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-func TestShouldRequeueAfter(t *testing.T) {
-	testCases := []struct {
-		description string
-		err         error
-		expected    bool
+// TestGetPodCliqueSet tests the GetPodCliqueSet function
+func TestGetPodCliqueSet(t *testing.T) {
+	tests := []struct {
+		name string
+		// namespacedName is the object key
+		namespacedName types.NamespacedName
+		// existingPCS is the existing PodCliqueSet
+		existingPCS *grovecorev1alpha1.PodCliqueSet
+		// notFound indicates if the object should not be found
+		notFound bool
+		// expectedResult is the expected ReconcileStepResult
+		expectedNeedsRequeue bool
+		// expectLogError indicates if we expect an error to be logged
+		expectLogError bool
 	}{
 		{
-			description: "should return true for GroveError with RequeueAfter code",
-			err: &groveerr.GroveError{
-				Code:    groveerr.ErrCodeRequeueAfter,
-				Message: "test requeue after error",
+			// Tests successful retrieval of PodCliqueSet
+			name: "successful_retrieval",
+			namespacedName: types.NamespacedName{
+				Name:      "test-pcs",
+				Namespace: "default",
 			},
-			expected: true,
-		},
-		{
-			description: "should return false for GroveError with ContinueReconcileAndRequeue code",
-			err: &groveerr.GroveError{
-				Code:    groveerr.ErrCodeContinueReconcileAndRequeue,
-				Message: "test continue and requeue error",
+			existingPCS: &grovecorev1alpha1.PodCliqueSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pcs",
+					Namespace: "default",
+				},
 			},
-			expected: false,
+			notFound:             false,
+			expectedNeedsRequeue: false,
+			expectLogError:       false,
 		},
 		{
-			description: "should return false for GroveError with other code",
-			err: &groveerr.GroveError{
-				Code:    "ERR_OTHER_CODE",
-				Message: "test other error",
+			// Tests when PodCliqueSet is not found
+			name: "not_found",
+			namespacedName: types.NamespacedName{
+				Name:      "test-pcs",
+				Namespace: "default",
 			},
-			expected: false,
+			existingPCS:          nil,
+			notFound:             true,
+			expectedNeedsRequeue: false, // DoNotRequeue() returns false for NeedsRequeue
+			expectLogError:       false,
 		},
 		{
-			description: "should return false for non-GroveError",
-			err:         errors.New("standard error"),
-			expected:    false,
-		},
-		{
-			description: "should return false for nil error",
-			err:         nil,
-			expected:    false,
-		},
-		{
-			description: "should return false for wrapped standard error",
-			err:         errors.New("wrapped: standard error"),
-			expected:    false,
+			// Tests when PodCliqueSet is being deleted
+			name: "being_deleted",
+			namespacedName: types.NamespacedName{
+				Name:      "test-pcs",
+				Namespace: "default",
+			},
+			existingPCS: &grovecorev1alpha1.PodCliqueSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "test-pcs",
+					Namespace:         "default",
+					DeletionTimestamp: &metav1.Time{},
+					Finalizers:        []string{"test-finalizer"},
+				},
+			},
+			notFound:             false,
+			expectedNeedsRequeue: false, // GetPodCliqueSet doesn't check deletion timestamp, just returns ContinueReconcile()
+			expectLogError:       false,
 		},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.description, func(t *testing.T) {
-			result := ShouldRequeueAfter(tc.err)
-			assert.Equal(t, tc.expected, result)
+	ctx := context.Background()
+	logger := logr.Discard()
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+
+			builder := fake.NewClientBuilder().WithScheme(scheme)
+			if tc.existingPCS != nil {
+				builder = builder.WithRuntimeObjects(tc.existingPCS)
+			}
+			fakeClient := builder.Build()
+
+			pcs := &grovecorev1alpha1.PodCliqueSet{}
+			result := GetPodCliqueSet(ctx, fakeClient, logger, tc.namespacedName, pcs)
+
+			assert.Equal(t, tc.expectedNeedsRequeue, result.NeedsRequeue())
+
+			if !tc.notFound {
+				assert.Equal(t, tc.namespacedName.Name, pcs.Name)
+				assert.Equal(t, tc.namespacedName.Namespace, pcs.Namespace)
+			}
 		})
 	}
 }
 
-func TestShouldContinueReconcileAndRequeue(t *testing.T) {
-	testCases := []struct {
-		description string
-		err         error
-		expected    bool
+// TestGetPodClique tests the GetPodClique function
+func TestGetPodClique(t *testing.T) {
+	tests := []struct {
+		name string
+		// namespacedName is the object key
+		namespacedName types.NamespacedName
+		// existingPCLQ is the existing PodClique
+		existingPCLQ *grovecorev1alpha1.PodClique
+		// notFound indicates if the object should not be found
+		notFound bool
+		// expectedResult is the expected ReconcileStepResult
+		expectedNeedsRequeue bool
 	}{
 		{
-			description: "should return true for GroveError with ContinueReconcileAndRequeue code",
-			err: &groveerr.GroveError{
-				Code:    groveerr.ErrCodeContinueReconcileAndRequeue,
-				Message: "test continue and requeue error",
+			// Tests successful retrieval of PodClique
+			name: "successful_retrieval",
+			namespacedName: types.NamespacedName{
+				Name:      "test-pclq",
+				Namespace: "default",
 			},
-			expected: true,
-		},
-		{
-			description: "should return false for GroveError with RequeueAfter code",
-			err: &groveerr.GroveError{
-				Code:    groveerr.ErrCodeRequeueAfter,
-				Message: "test requeue after error",
+			existingPCLQ: &grovecorev1alpha1.PodClique{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pclq",
+					Namespace: "default",
+				},
 			},
-			expected: false,
+			notFound:             false,
+			expectedNeedsRequeue: false,
 		},
 		{
-			description: "should return false for GroveError with other code",
-			err: &groveerr.GroveError{
-				Code:    "ERR_OTHER_CODE",
-				Message: "test other error",
+			// Tests when PodClique is not found
+			name: "not_found",
+			namespacedName: types.NamespacedName{
+				Name:      "test-pclq",
+				Namespace: "default",
 			},
-			expected: false,
-		},
-		{
-			description: "should return false for non-GroveError",
-			err:         errors.New("standard error"),
-			expected:    false,
-		},
-		{
-			description: "should return false for nil error",
-			err:         nil,
-			expected:    false,
-		},
-		{
-			description: "should return false for wrapped standard error",
-			err:         errors.New("wrapped: standard error"),
-			expected:    false,
-		},
-		{
-			description: "should return false for GroveError with unknown code",
-			err: &groveerr.GroveError{
-				Code:    "unknown-code",
-				Message: "test unknown code error",
-			},
-			expected: false,
+			existingPCLQ:         nil,
+			notFound:             true,
+			expectedNeedsRequeue: false, // When ignoreNotFound is true and not found, returns DoNotRequeue()
 		},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.description, func(t *testing.T) {
-			result := ShouldContinueReconcileAndRequeue(tc.err)
-			assert.Equal(t, tc.expected, result)
+	ctx := context.Background()
+	logger := logr.Discard()
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+
+			builder := fake.NewClientBuilder().WithScheme(scheme)
+			if tc.existingPCLQ != nil {
+				builder = builder.WithRuntimeObjects(tc.existingPCLQ)
+			}
+			fakeClient := builder.Build()
+
+			pclq := &grovecorev1alpha1.PodClique{}
+			result := GetPodClique(ctx, fakeClient, logger, tc.namespacedName, pclq, true)
+
+			assert.Equal(t, tc.expectedNeedsRequeue, result.NeedsRequeue())
+
+			if !tc.notFound {
+				assert.Equal(t, tc.namespacedName.Name, pclq.Name)
+				assert.Equal(t, tc.namespacedName.Namespace, pclq.Namespace)
+			}
+		})
+	}
+}
+
+// TestGetPodCliqueScalingGroup tests the GetPodCliqueScalingGroup function
+func TestGetPodCliqueScalingGroup(t *testing.T) {
+	tests := []struct {
+		name string
+		// namespacedName is the object key
+		namespacedName types.NamespacedName
+		// existingPCSG is the existing PodCliqueScalingGroup
+		existingPCSG *grovecorev1alpha1.PodCliqueScalingGroup
+		// notFound indicates if the object should not be found
+		notFound bool
+		// expectedResult is the expected ReconcileStepResult
+		expectedNeedsRequeue bool
+	}{
+		{
+			// Tests successful retrieval of PodCliqueScalingGroup
+			name: "successful_retrieval",
+			namespacedName: types.NamespacedName{
+				Name:      "test-pcsg",
+				Namespace: "default",
+			},
+			existingPCSG: &grovecorev1alpha1.PodCliqueScalingGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pcsg",
+					Namespace: "default",
+				},
+			},
+			notFound:             false,
+			expectedNeedsRequeue: false,
+		},
+		{
+			// Tests when PodCliqueScalingGroup is not found
+			name: "not_found",
+			namespacedName: types.NamespacedName{
+				Name:      "test-pcsg",
+				Namespace: "default",
+			},
+			existingPCSG:         nil,
+			notFound:             true,
+			expectedNeedsRequeue: false, // When not found, returns DoNotRequeue()
+		},
+	}
+
+	ctx := context.Background()
+	logger := logr.Discard()
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+
+			builder := fake.NewClientBuilder().WithScheme(scheme)
+			if tc.existingPCSG != nil {
+				builder = builder.WithRuntimeObjects(tc.existingPCSG)
+			}
+			fakeClient := builder.Build()
+
+			pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{}
+			result := GetPodCliqueScalingGroup(ctx, fakeClient, logger, tc.namespacedName, pcsg)
+
+			assert.Equal(t, tc.expectedNeedsRequeue, result.NeedsRequeue())
+
+			if !tc.notFound {
+				assert.Equal(t, tc.namespacedName.Name, pcsg.Name)
+				assert.Equal(t, tc.namespacedName.Namespace, pcsg.Namespace)
+			}
 		})
 	}
 }
