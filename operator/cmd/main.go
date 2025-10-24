@@ -87,7 +87,14 @@ func main() {
 	}
 
 	webhookCertsReadyCh := make(chan struct{})
-	if err = cert.ManageWebhookCerts(mgr, operatorConfig.Server.Webhooks.ServerCertDir, operatorConfig.Authorizer.Enabled, webhookCertsReadyCh); err != nil {
+	if err = cert.ManageWebhookCerts(
+		mgr,
+		operatorConfig.Server.Webhooks.ServerCertDir,
+		operatorConfig.Server.Webhooks.SecretName,
+		operatorConfig.Authorizer.Enabled,
+		*operatorConfig.Server.Webhooks.AutoProvision,
+		webhookCertsReadyCh,
+	); err != nil {
 		logger.Error(err, "failed to setup cert rotation")
 		handleErrorAndExit(err, cli.ExitErrInitializeManager)
 	}
