@@ -46,6 +46,25 @@ config:
   server:
     webhooks:
       port: 9443
+      # serverCertDir is the directory path where certificate files are located.
+      # The operator will look for tls.crt and tls.key in this directory.
+      # Default: /etc/grove-operator/webhook-certs
+      serverCertDir: /etc/grove-operator/webhook-certs
+      # secretName is the name of the Kubernetes Secret containing webhook certificates.
+      # The Secret must contain tls.crt, tls.key, and ca.crt.
+      # Default: ""
+      secretName: ""
+      # autoProvision enables automatic certificate generation via cert-controller.
+      # When true (default): cert-controller automatically generates self-signed certificates.
+      #   - Best for development/testing
+      #   - No manual certificate management needed
+      #   - Certificates auto-rotate before expiry
+      # When false: certificates must be provided externally (e.g., cert-manager, manual).
+      #   - Best for production
+      #   - Use your own CA or Let's Encrypt
+      #   - Requires Secret to exist before operator starts
+      # Default: if secretName is not set, then autoProvision is true, otherwise it is false
+      # autoProvision: true
     healthProbes:
       enable: false
       port: 9444
