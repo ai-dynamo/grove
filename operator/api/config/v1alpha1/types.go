@@ -140,6 +140,16 @@ type WebhookServer struct {
 	Server `json:",inline"`
 	// ServerCertDir is the directory containing the server certificate and key.
 	ServerCertDir string `json:"serverCertDir"`
+	// SecretName is the name of the Kubernetes Secret containing webhook certificates.
+	// The Secret must contain tls.crt, tls.key, and ca.crt.
+	// +optional
+	SecretName string `json:"secretName,omitempty"`
+	// AutoProvision enables automatic certificate generation and management via cert-controller.
+	// When true: cert-controller automatically generates self-signed certificates and stores them in the Secret.
+	// When false: certificates are expected to be provided externally (e.g., by cert-manager, cluster admin).
+	// Default: true (auto-generate certificates for easy setup)
+	// +optional
+	AutoProvision *bool `json:"autoProvision,omitempty"`
 }
 
 // Server contains information for HTTP(S) server configuration.

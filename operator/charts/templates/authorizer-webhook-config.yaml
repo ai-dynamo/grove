@@ -10,6 +10,13 @@ webhooks:
   - admissionReviewVersions:
       - v1
     clientConfig:
+      {{- if .Values.config.server.webhooks.secretName }}
+      # CA Bundle from secret
+      {{- $secret := lookup "v1" "Secret" .Release.Namespace .Values.config.server.webhooks.secretName }}
+      {{- if $secret }}
+      caBundle: {{ index $secret.data "ca.crt" }}
+      {{- end }}
+      {{- end }}
       service:
         name: {{ required ".Values.service.name is required" .Values.service.name }}
         namespace: {{ .Release.Namespace }}

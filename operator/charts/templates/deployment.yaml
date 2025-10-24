@@ -61,7 +61,7 @@ spec:
               mountPath: /var/run/secrets/kubernetes.io/serviceaccount
               readOnly: true
             - name: grove-webhook-server-cert
-              mountPath: /etc/grove-operator/webhook-certs
+              mountPath: {{ .Values.config.server.webhooks.serverCertDir | default "/etc/grove-operator/webhook-certs" }}
               readOnly: true
           env:
             - name: GROVE_OPERATOR_SERVICE_ACCOUNT_NAME
@@ -92,6 +92,7 @@ spec:
           configMap:
             name: {{ include "operator.config.name" . }}
         - name: grove-webhook-server-cert
+          # Mount the Secret volume containing webhook certificates
           secret:
-            secretName: grove-webhook-server-cert
+            secretName: {{ .Values.config.server.webhooks.secretName | default "grove-webhook-server-cert" }}
             defaultMode: 420
