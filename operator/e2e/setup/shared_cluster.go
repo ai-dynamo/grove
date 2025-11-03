@@ -230,9 +230,7 @@ func (scm *SharedClusterManager) CleanupWorkloads(ctx context.Context) error {
 	}
 
 	// Step 2: Poll for all resources and pods to be cleaned up, wait for 30 seconds or until all resources and pods are deleted
-	timeout := 30 * time.Second
-	interval := 1 * time.Second
-	if err := scm.waitForAllGroveManagedResourcesAndPodsDeleted(ctx, timeout, interval); err != nil {
+	if err := scm.waitForAllGroveManagedResourcesAndPodsDeleted(ctx, 30*time.Second, 1*time.Second); err != nil {
 		// List remaining resources and pods for debugging
 		scm.listRemainingGroveManagedResources(ctx)
 		scm.listRemainingPods(ctx, "default")
