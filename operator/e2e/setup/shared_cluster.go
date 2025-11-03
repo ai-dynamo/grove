@@ -38,8 +38,6 @@ import (
 const (
 	// relativeSkaffoldYAMLPath is the path to the skaffold.yaml file relative to the e2e/tests directory
 	relativeSkaffoldYAMLPath = "../../skaffold.yaml"
-
-	defaulPollInterval = 1 * time.Second
 )
 
 // resourceType represents a Kubernetes resource type for cleanup operations
@@ -231,12 +229,14 @@ func (scm *SharedClusterManager) CleanupWorkloads(ctx context.Context) error {
 		scm.logger.Warnf("failed to delete PodCliqueSets: %v", err)
 	}
 
-	// Step 2: Poll for all resources and pods to be cleaned up
-	if err := scm.waitForAllGroveManagedResourcesAndPodsDeleted(ctx, defaulPollInterval); err != nil {
-		scm.logger.Warnf("timeout waiting for resources and pods to be deleted: %v", err)
+	// Step 2: Poll for all resources and pods to be cleaned up, wait for 30 seconds or until all resources and pods are deleted
+	timeout := 30 * time.Second
+	interval := 1 * time.Second
+	if err := scm.waitForAllGroveManagedResourcesAndPodsDeleted(ctx, timeout, interval); err != nil {
 		// List remaining resources and pods for debugging
 		scm.listRemainingGroveManagedResources(ctx)
 		scm.listRemainingPods(ctx, "default")
+		return fmt.Errorf("failed to delete all resources and pods: %w", err)
 	}
 
 	// Step 3: Reset node cordoning state
@@ -296,7 +296,7 @@ func isSystemPod(pod *v1.Pod) bool {
 func (scm *SharedClusterManager) listRemainingPods(ctx context.Context, namespace string) {
 	pods, err := scm.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		scm.logger.Warnf("Failed to list remaining pods: %v", err)
+		scm.logger.Errorf("Failed to list remaining pods: %v", err)
 		return
 	}
 
@@ -308,7 +308,7 @@ func (scm *SharedClusterManager) listRemainingPods(ctx context.Context, namespac
 	}
 
 	if len(nonSystemPods) > 0 {
-		scm.logger.Warnf("Remaining non-system pods: %v", nonSystemPods)
+		scm.logger.Errorf("Remaining non-system pods: %v", nonSystemPods)
 	}
 }
 
@@ -324,8 +324,8 @@ func (scm *SharedClusterManager) resetNodeStates(ctx context.Context) error {
 }
 
 // waitForAllGroveManagedResourcesAndPodsDeleted waits for all Grove resources and pods to be deleted
-func (scm *SharedClusterManager) waitForAllGroveManagedResourcesAndPodsDeleted(ctx context.Context, timeout time.Duration) error {
-	return utils.PollForCondition(ctx, timeout, defaulPollInterval, func() (bool, error) {
+func (scm *SharedClusterManager) waitForAllGroveManagedResourcesAndPodsDeleted(ctx context.Context, timeout time.Duration, interval time.Duration) error {
+	return utils.PollForCondition(ctx, timeout, interval, func() (bool, error) {
 		allResourcesDeleted := true
 		totalResources := 0
 
@@ -395,7 +395,7 @@ func (scm *SharedClusterManager) listRemainingGroveManagedResources(ctx context.
 			LabelSelector: labelSelector,
 		})
 		if err != nil {
-			scm.logger.Warnf("Failed to list %s: %v", rt.name, err)
+			scm.logger.Errorf("Failed to list %s: %v", rt.name, err)
 			continue
 		}
 
@@ -404,7 +404,7 @@ func (scm *SharedClusterManager) listRemainingGroveManagedResources(ctx context.
 			for _, item := range resourceList.Items {
 				resourceNames = append(resourceNames, fmt.Sprintf("%s/%s", item.GetNamespace(), item.GetName()))
 			}
-			scm.logger.Warnf("Remaining %s: %v", rt.name, resourceNames)
+			scm.logger.Errorf("Remaining %s: %v", rt.name, resourceNames)
 		}
 	}
 }

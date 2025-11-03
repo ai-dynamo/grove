@@ -139,17 +139,17 @@ func Test_GS2_GangSchedulingWithScalingFullReplicas(t *testing.T) {
 	clientset, restConfig, _, cleanup, _ := setupTestCluster(ctx, t, 14)
 	defer cleanup()
 
-	// Get agent nodes for cordoning
-	agentNodes, err := getAgentNodes(ctx, clientset)
+	// Get worker nodes for cordoning
+	workerNodes, err := getWorkerNodes(ctx, clientset)
 	if err != nil {
-		t.Fatalf("Failed to get agent nodes: %v", err)
+		t.Fatalf("Failed to get worker nodes: %v", err)
 	}
 
-	if len(agentNodes) < 5 {
-		t.Fatalf("expected at least 5 agent nodes to cordon, but found %d", len(agentNodes))
+	if len(workerNodes) < 5 {
+		t.Fatalf("expected at least 5 worker nodes to cordon, but found %d", len(workerNodes))
 	}
 
-	nodesToCordon := agentNodes[:5]
+	nodesToCordon := workerNodes[:5]
 	for _, nodeName := range nodesToCordon {
 		if err := utils.CordonNode(ctx, clientset, nodeName, true); err != nil {
 			t.Fatalf("Failed to cordon node %s: %v", nodeName, err)
@@ -169,7 +169,7 @@ func Test_GS2_GangSchedulingWithScalingFullReplicas(t *testing.T) {
 	expectedPods := 10
 
 	var pods *v1.PodList
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
@@ -228,7 +228,7 @@ func Test_GS2_GangSchedulingWithScalingFullReplicas(t *testing.T) {
 	pcsgGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquescalinggroups"}
 	pcsgName := "workload1-0-sg-x"
 
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		_, err := dynamicClient.Resource(pcsgGVR).Namespace(workloadNamespace).Get(ctx, pcsgName, metav1.GetOptions{})
 		if err != nil {
 			if apierrors.IsNotFound(err) {
@@ -257,7 +257,7 @@ func Test_GS2_GangSchedulingWithScalingFullReplicas(t *testing.T) {
 	}
 
 	expectedScaledPods := 14
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
@@ -340,18 +340,18 @@ func Test_GS3_GangSchedulingWithPCSScalingFullReplicas(t *testing.T) {
 	clientset, restConfig, _, cleanup, _ := setupTestCluster(ctx, t, 20)
 	defer cleanup()
 
-	// Get agent nodes for cordoning
-	agentNodes, err := getAgentNodes(ctx, clientset)
+	// Get worker nodes for cordoning
+	workerNodes, err := getWorkerNodes(ctx, clientset)
 	if err != nil {
-		t.Fatalf("Failed to get agent nodes: %v", err)
+		t.Fatalf("Failed to get worker nodes: %v", err)
 	}
 
-	if len(agentNodes) < 11 {
-		t.Fatalf("expected at least 11 agent nodes to cordon, but found %d", len(agentNodes))
+	if len(workerNodes) < 11 {
+		t.Fatalf("expected at least 11 worker nodes to cordon, but found %d", len(workerNodes))
 	}
 
 	// Step 1 (continued): Cordon 11 nodes
-	nodesToCordon := agentNodes[:11]
+	nodesToCordon := workerNodes[:11]
 	for _, nodeName := range nodesToCordon {
 		if err := utils.CordonNode(ctx, clientset, nodeName, true); err != nil {
 			t.Fatalf("Failed to cordon node %s: %v", nodeName, err)
@@ -370,7 +370,7 @@ func Test_GS3_GangSchedulingWithPCSScalingFullReplicas(t *testing.T) {
 
 	expectedPods := 10
 	var pods *v1.PodList
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
@@ -434,7 +434,7 @@ func Test_GS3_GangSchedulingWithPCSScalingFullReplicas(t *testing.T) {
 	}
 
 	expectedScaledPods := int(replicas) * expectedPods
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
@@ -522,18 +522,18 @@ func Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas(t *testing.T) {
 	clientset, restConfig, _, cleanup, _ := setupTestCluster(ctx, t, 28)
 	defer cleanup()
 
-	// Get agent nodes for cordoning
-	agentNodes, err := getAgentNodes(ctx, clientset)
+	// Get worker nodes for cordoning
+	workerNodes, err := getWorkerNodes(ctx, clientset)
 	if err != nil {
-		t.Fatalf("Failed to get agent nodes: %v", err)
+		t.Fatalf("Failed to get worker nodes: %v", err)
 	}
 
-	if len(agentNodes) < 19 {
-		t.Fatalf("expected at least 19 agent nodes to cordon, but found %d", len(agentNodes))
+	if len(workerNodes) < 19 {
+		t.Fatalf("expected at least 19 worker nodes to cordon, but found %d", len(workerNodes))
 	}
 
 	// cordon 19 nodes
-	nodesToCordon := agentNodes[:19]
+	nodesToCordon := workerNodes[:19]
 	for _, nodeName := range nodesToCordon {
 		if err := utils.CordonNode(ctx, clientset, nodeName, true); err != nil {
 			t.Fatalf("Failed to cordon node %s: %v", nodeName, err)
@@ -554,7 +554,7 @@ func Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas(t *testing.T) {
 	expectedPods := 10
 
 	var pods *v1.PodList
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
@@ -688,18 +688,18 @@ func Test_GS5_GangSchedulingWithMinReplicas(t *testing.T) {
 	clientset, restConfig, _, cleanup, _ := setupTestCluster(ctx, t, 10)
 	defer cleanup()
 
-	// Get agent nodes for cordoning
-	agentNodes, err := getAgentNodes(ctx, clientset)
+	// Get worker nodes for cordoning
+	workerNodes, err := getWorkerNodes(ctx, clientset)
 	if err != nil {
-		t.Fatalf("Failed to get agent nodes: %v", err)
+		t.Fatalf("Failed to get worker nodes: %v", err)
 	}
 
-	if len(agentNodes) < 8 {
-		t.Fatalf("expected at least 8 agent nodes to cordon, but found %d", len(agentNodes))
+	if len(workerNodes) < 8 {
+		t.Fatalf("expected at least 8 worker nodes to cordon, but found %d", len(workerNodes))
 	}
 
-	// Cordon 8 agent nodes
-	nodesToCordon := agentNodes[:8]
+	// Cordon 8 worker nodes
+	nodesToCordon := workerNodes[:8]
 	for _, nodeName := range nodesToCordon {
 		if err := utils.CordonNode(ctx, clientset, nodeName, true); err != nil {
 			t.Fatalf("Failed to cordon node %s: %v", nodeName, err)
@@ -721,7 +721,7 @@ func Test_GS5_GangSchedulingWithMinReplicas(t *testing.T) {
 	expectedPods := 10
 
 	var pods *v1.PodList
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
@@ -737,7 +737,7 @@ func Test_GS5_GangSchedulingWithMinReplicas(t *testing.T) {
 	}
 
 	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
-	// Need to use a sleep here unfortunately, see: https://github.com/NVIDIA/grove/issues/226
+	// Need to use a sleep here unfortunately, see: https://github.com/ai-dynamo/grove/issues/226
 	time.Sleep(30 * time.Second)
 	if err := verifyAllPodsArePending(ctx, clientset, workloadNamespace, workloadLabelSelector, defaultPollTimeout, defaultPollInterval); err != nil {
 		t.Fatalf("Failed to verify all pods are pending: %v", err)
@@ -749,7 +749,7 @@ func Test_GS5_GangSchedulingWithMinReplicas(t *testing.T) {
 	}
 
 	// Wait for exactly 3 pods to be scheduled (min-replicas)
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -807,7 +807,7 @@ func Test_GS5_GangSchedulingWithMinReplicas(t *testing.T) {
 	logger.Info("5. Wait for scheduled pods to become ready")
 	// Note: WaitForPods waits for ALL pods, but we only want the running ones to be ready
 	// We'll verify readiness manually
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -894,18 +894,18 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 	clientset, restConfig, _, cleanup, _ := setupTestCluster(ctx, t, 14)
 	defer cleanup()
 
-	// Get agent nodes for cordoning
-	agentNodes, err := getAgentNodes(ctx, clientset)
+	// Get worker nodes for cordoning
+	workerNodes, err := getWorkerNodes(ctx, clientset)
 	if err != nil {
-		t.Fatalf("Failed to get agent nodes: %v", err)
+		t.Fatalf("Failed to get worker nodes: %v", err)
 	}
 
-	if len(agentNodes) < 12 {
-		t.Fatalf("expected at least 12 agent nodes to cordon, but found %d", len(agentNodes))
+	if len(workerNodes) < 12 {
+		t.Fatalf("expected at least 12 worker nodes to cordon, but found %d", len(workerNodes))
 	}
 
-	// Cordon 12 agent nodes
-	nodesToCordon := agentNodes[:12]
+	// Cordon 12 worker nodes
+	nodesToCordon := workerNodes[:12]
 	for _, nodeName := range nodesToCordon {
 		if err := utils.CordonNode(ctx, clientset, nodeName, true); err != nil {
 			t.Fatalf("Failed to cordon node %s: %v", nodeName, err)
@@ -925,7 +925,7 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 	// workload2 initially creates 10 pods
 	expectedPods := 10
 	var pods *v1.PodList
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
@@ -955,7 +955,7 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 	}
 
 	// Wait for exactly 3 pods to be scheduled (min-replicas)
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1011,7 +1011,7 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 	}
 
 	logger.Info("5. Wait for scheduled pods to become ready")
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1102,7 +1102,7 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 	}
 
 	// Wait for exactly 2 more pods to be scheduled (min-replicas for new PCSG replica)
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1129,7 +1129,7 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 	}
 
 	logger.Info("11. Wait for scheduled pods to become ready")
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1219,18 +1219,18 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	clientset, restConfig, _, cleanup, _ := setupTestCluster(ctx, t, 14)
 	defer cleanup()
 
-	// Get agent nodes for cordoning
-	agentNodes, err := getAgentNodes(ctx, clientset)
+	// Get worker nodes for cordoning
+	workerNodes, err := getWorkerNodes(ctx, clientset)
 	if err != nil {
-		t.Fatalf("Failed to get agent nodes: %v", err)
+		t.Fatalf("Failed to get worker nodes: %v", err)
 	}
 
-	if len(agentNodes) < 12 {
-		t.Fatalf("expected at least 12 agent nodes to cordon, but found %d", len(agentNodes))
+	if len(workerNodes) < 12 {
+		t.Fatalf("expected at least 12 worker nodes to cordon, but found %d", len(workerNodes))
 	}
 
-	// Cordon 12 agent nodes
-	nodesToCordon := agentNodes[:12]
+	// Cordon 12 worker nodes
+	nodesToCordon := workerNodes[:12]
 	for _, nodeName := range nodesToCordon {
 		if err := utils.CordonNode(ctx, clientset, nodeName, true); err != nil {
 			t.Fatalf("Failed to cordon node %s: %v", nodeName, err)
@@ -1250,7 +1250,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	// workload2 initially creates 10 pods
 	expectedPods := 10
 	var pods *v1.PodList
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
@@ -1279,7 +1279,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	}
 
 	// Wait for exactly 3 pods to be scheduled (min-replicas)
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1306,7 +1306,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	}
 
 	logger.Info("5. Wait for scheduled pods to become ready")
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1342,7 +1342,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	}
 
 	// Wait for exactly 2 more pods to be scheduled (sg-x-1 min-replicas)
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1369,7 +1369,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	}
 
 	logger.Info("7. Wait for scheduled pods to become ready")
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1452,7 +1452,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	}
 
 	// Wait for exactly 2 more pods to be scheduled (min-replicas for new PCSG replica)
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1479,7 +1479,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	}
 
 	logger.Info("13. Wait for scheduled pods to become ready")
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1564,18 +1564,18 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 	clientset, restConfig, _, cleanup, _ := setupTestCluster(ctx, t, 14)
 	defer cleanup()
 
-	// Get agent nodes for cordoning
-	agentNodes, err := getAgentNodes(ctx, clientset)
+	// Get worker nodes for cordoning
+	workerNodes, err := getWorkerNodes(ctx, clientset)
 	if err != nil {
-		t.Fatalf("Failed to get agent nodes: %v", err)
+		t.Fatalf("Failed to get worker nodes: %v", err)
 	}
 
-	if len(agentNodes) < 12 {
-		t.Fatalf("expected at least 12 agent nodes to cordon, but found %d", len(agentNodes))
+	if len(workerNodes) < 12 {
+		t.Fatalf("expected at least 12 worker nodes to cordon, but found %d", len(workerNodes))
 	}
 
-	// Cordon 12 agent nodes
-	nodesToCordon := agentNodes[:12]
+	// Cordon 12 worker nodes
+	nodesToCordon := workerNodes[:12]
 	for _, nodeName := range nodesToCordon {
 		if err := utils.CordonNode(ctx, clientset, nodeName, true); err != nil {
 			t.Fatalf("Failed to cordon node %s: %v", nodeName, err)
@@ -1595,7 +1595,7 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 	// workload2 initially creates 10 pods
 	expectedPods := 10
 	var pods *v1.PodList
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
@@ -1642,7 +1642,7 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 		t.Fatalf("Failed to scale PodCliqueScalingGroup %s: %v", pcsgName, err)
 	}
 
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
@@ -1671,7 +1671,7 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 	}
 
 	// Wait for exactly 3 pods to be scheduled (min-replicas)
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1698,7 +1698,7 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 	}
 
 	logger.Info("7. Wait for scheduled pods to become ready")
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1734,7 +1734,7 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 	}
 
 	// Wait for exactly 4 more pods to be scheduled (sg-x-1 and sg-x-2 min-replicas)
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1760,7 +1760,7 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 	}
 
 	logger.Info("9. Wait for scheduled pods to become ready")
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1846,18 +1846,18 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 	clientset, restConfig, _, cleanup, _ := setupTestCluster(ctx, t, 20)
 	defer cleanup()
 
-	// Get agent nodes for cordoning
-	agentNodes, err := getAgentNodes(ctx, clientset)
+	// Get worker nodes for cordoning
+	workerNodes, err := getWorkerNodes(ctx, clientset)
 	if err != nil {
-		t.Fatalf("Failed to get agent nodes: %v", err)
+		t.Fatalf("Failed to get worker nodes: %v", err)
 	}
 
-	if len(agentNodes) < 18 {
-		t.Fatalf("expected at least 18 agent nodes to cordon, but found %d", len(agentNodes))
+	if len(workerNodes) < 18 {
+		t.Fatalf("expected at least 18 worker nodes to cordon, but found %d", len(workerNodes))
 	}
 
-	// Cordon 18 agent nodes
-	nodesToCordon := agentNodes[:18]
+	// Cordon 18 worker nodes
+	nodesToCordon := workerNodes[:18]
 	for _, nodeName := range nodesToCordon {
 		if err := utils.CordonNode(ctx, clientset, nodeName, true); err != nil {
 			t.Fatalf("Failed to cordon node %s: %v", nodeName, err)
@@ -1878,7 +1878,7 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 	expectedPods := 10
 
 	var pods *v1.PodList
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
@@ -1907,7 +1907,7 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 	}
 
 	// Wait for exactly 3 pods to be scheduled (min-replicas)
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -1933,7 +1933,7 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 	}
 
 	logger.Info("5. Wait for scheduled pods to become ready")
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -2017,7 +2017,7 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 	}
 
 	// Wait for exactly 3 more pods to be scheduled (min-replicas for new PCS replica)
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -2043,7 +2043,7 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 	}
 
 	logger.Info("10. Wait for scheduled pods to become ready")
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -2128,18 +2128,18 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 	clientset, restConfig, _, cleanup, _ := setupTestCluster(ctx, t, 20)
 	defer cleanup()
 
-	// Get agent nodes for cordoning
-	agentNodes, err := getAgentNodes(ctx, clientset)
+	// Get worker nodes for cordoning
+	workerNodes, err := getWorkerNodes(ctx, clientset)
 	if err != nil {
-		t.Fatalf("Failed to get agent nodes: %v", err)
+		t.Fatalf("Failed to get worker nodes: %v", err)
 	}
 
-	if len(agentNodes) < 18 {
-		t.Fatalf("expected at least 18 agent nodes to cordon, but found %d", len(agentNodes))
+	if len(workerNodes) < 18 {
+		t.Fatalf("expected at least 18 worker nodes to cordon, but found %d", len(workerNodes))
 	}
 
-	// Cordon 18 agent nodes
-	nodesToCordon := agentNodes[:18]
+	// Cordon 18 worker nodes
+	nodesToCordon := workerNodes[:18]
 	for _, nodeName := range nodesToCordon {
 		if err := utils.CordonNode(ctx, clientset, nodeName, true); err != nil {
 			t.Fatalf("Failed to cordon node %s: %v", nodeName, err)
@@ -2160,7 +2160,7 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 	expectedPods := 10
 
 	var pods *v1.PodList
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
@@ -2209,7 +2209,7 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 		t.Fatalf("Failed to scale PodCliqueSet %s: %v", pcsName, err)
 	}
 
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
@@ -2240,7 +2240,7 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 	}
 
 	// Wait for exactly 6 pods to be scheduled (min-replicas for both PCS replicas)
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -2266,7 +2266,7 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 	}
 
 	logger.Info("7. Wait for scheduled pods to become ready")
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -2302,7 +2302,7 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 	}
 
 	// Wait for exactly 4 more pods to be scheduled (sg-x-1 for both PCS replicas)
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -2328,7 +2328,7 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 	}
 
 	logger.Info("9. Wait for scheduled pods to become ready")
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: workloadLabelSelector,
 		})
@@ -2423,17 +2423,17 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 	clientset, restConfig, _, cleanup, _ := setupTestCluster(ctx, t, 28)
 	defer cleanup()
 
-	// Get agent nodes for cordoning
-	agentNodes, err := getAgentNodes(ctx, clientset)
+	// Get worker nodes for cordoning
+	workerNodes, err := getWorkerNodes(ctx, clientset)
 	if err != nil {
-		t.Fatalf("Failed to get agent nodes: %v", err)
+		t.Fatalf("Failed to get worker nodes: %v", err)
 	}
 
-	if len(agentNodes) < 26 {
-		t.Fatalf("expected at least 26 agent nodes to cordon, but found %d", len(agentNodes))
+	if len(workerNodes) < 26 {
+		t.Fatalf("expected at least 26 worker nodes to cordon, but found %d", len(workerNodes))
 	}
 
-	nodesToCordon := agentNodes[:26]
+	nodesToCordon := workerNodes[:26]
 	for _, nodeName := range nodesToCordon {
 		if err := utils.CordonNode(ctx, clientset, nodeName, true); err != nil {
 			t.Fatalf("Failed to cordon node %s: %v", nodeName, err)
@@ -2452,7 +2452,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 
 	expectedPods := 10
 	var pods *v1.PodList
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
@@ -2479,7 +2479,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 	}
 
 	logger.Info("5. Wait for min-replicas pods to be scheduled and ready (should be 3 pods for min-available)")
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
 			return false, err
@@ -2522,7 +2522,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 	logger.Info("8. Verify all newly created pods are pending due to insufficient resources")
 	expectedRunning := 10 // Initial 10 pods from first wave
 	expectedPending := 4  // 4 new pods from PCSG scaling
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
 			return false, err
@@ -2554,7 +2554,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 	}
 
 	logger.Info("10. Wait for 2 more pods to be scheduled and ready (min-available for sg-x-2)")
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
 			return false, err
@@ -2597,7 +2597,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 	}
 
 	logger.Info("14. Wait for 3 more pods to be scheduled (min-available for pcs-1)")
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
 			return false, err
@@ -2635,7 +2635,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 	logger.Info("17. Verify all newly created pods are pending due to insufficient resources")
 	expectedRunning = 24 // All previous pods should be running
 	expectedPending = 4  // 4 new pods from second PCSG scaling
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
 			return false, err
@@ -2667,7 +2667,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 	}
 
 	logger.Info("19. Wait for 2 more pods to be scheduled (min-available for pcs-1-sg-x-2)")
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
 			return false, err
@@ -2731,17 +2731,17 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 	clientset, restConfig, _, cleanup, _ := setupTestCluster(ctx, t, 28)
 	defer cleanup()
 
-	// Get agent nodes for cordoning
-	agentNodes, err := getAgentNodes(ctx, clientset)
+	// Get worker nodes for cordoning
+	workerNodes, err := getWorkerNodes(ctx, clientset)
 	if err != nil {
-		t.Fatalf("Failed to get agent nodes: %v", err)
+		t.Fatalf("Failed to get worker nodes: %v", err)
 	}
 
-	if len(agentNodes) < 26 {
-		t.Fatalf("expected at least 26 agent nodes to cordon, but found %d", len(agentNodes))
+	if len(workerNodes) < 26 {
+		t.Fatalf("expected at least 26 worker nodes to cordon, but found %d", len(workerNodes))
 	}
 
-	nodesToCordon := agentNodes[:26]
+	nodesToCordon := workerNodes[:26]
 	for _, nodeName := range nodesToCordon {
 		if err := utils.CordonNode(ctx, clientset, nodeName, true); err != nil {
 			t.Fatalf("Failed to cordon node %s: %v", nodeName, err)
@@ -2760,7 +2760,7 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 
 	expectedPods := 10
 	var pods *v1.PodList
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		var err error
 		pods, err = clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
@@ -2789,7 +2789,7 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 	scalePCSAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, "workload2", 2, 20, 20)
 
 	logger.Info("5. Verify all 20 newly created pods are pending due to insufficient resources")
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
 			return false, err
@@ -2818,7 +2818,7 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 	scalePCSGAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, pcsg2Name, 3, 28, 28)
 
 	logger.Info("7. Verify all 28 created pods are pending due to insufficient resources")
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
 			return false, err
@@ -2846,7 +2846,7 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 		}
 	}
 
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
 			return false, err
@@ -2866,7 +2866,7 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 	}
 
 	logger.Info("9. Wait for scheduled pods to become ready (only the 6 that are scheduled)")
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
 			return false, err
@@ -2898,7 +2898,7 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 		}
 	}
 
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
 			return false, err
@@ -2918,7 +2918,7 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 	}
 
 	logger.Info("11. Wait for scheduled pods to become ready (only the 14 that are scheduled)")
-	err = pollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, err := clientset.CoreV1().Pods(workloadNamespace).List(ctx, metav1.ListOptions{LabelSelector: workloadLabelSelector})
 		if err != nil {
 			return false, err
