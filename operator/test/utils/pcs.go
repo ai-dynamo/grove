@@ -142,6 +142,15 @@ func (b *PodCliqueSetBuilder) WithPodCliqueSetGenerationHash(pcsGenerationHash *
 	return b
 }
 
+// WithTopologyLabel adds the grove.io/topology-name label.
+func (b *PodCliqueSetBuilder) WithTopologyLabel(topologyName string) *PodCliqueSetBuilder {
+	if b.pcs.ObjectMeta.Labels == nil {
+		b.pcs.ObjectMeta.Labels = make(map[string]string)
+	}
+	b.pcs.ObjectMeta.Labels["grove.io/topology-name"] = topologyName
+	return b
+}
+
 // Build creates a PodCliqueSet object.
 func (b *PodCliqueSetBuilder) Build() *grovecorev1alpha1.PodCliqueSet {
 	return b.pcs

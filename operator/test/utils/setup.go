@@ -41,6 +41,7 @@ func SetupFakeClient(objects ...client.Object) client.WithWatch {
 		WithStatusSubresource(&grovecorev1alpha1.PodCliqueSet{}).
 		WithStatusSubresource(&grovecorev1alpha1.PodCliqueScalingGroup{}).
 		WithStatusSubresource(&grovecorev1alpha1.PodClique{}).
+		WithStatusSubresource(&grovecorev1alpha1.ClusterTopology{}).
 		WithStatusSubresource(&v1.Pod{}).
 		WithObjects(objects...).
 		Build()
