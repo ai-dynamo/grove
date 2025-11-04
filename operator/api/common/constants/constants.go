@@ -28,6 +28,10 @@ const (
 	// This will be placed on all PodCliqueScalingGroup resources during reconciliation. This finalizer is used to clean up resources
 	// that are created for a PodCliqueScalingGroup when it is deleted.
 	FinalizerPodCliqueScalingGroup = "grove.io/podcliquescalinggroup.grove.io"
+	// FinalizerClusterTopology is the finalizer for ClusterTopology that is added to `.metadata.finalizers[]` slice.
+	// This will be placed on all ClusterTopology resources during reconciliation. This finalizer is used to prevent deletion
+	// when the topology is in use by PodCliqueSet resources or enabled in operator configuration.
+	FinalizerClusterTopology = "grove.io/clustertopology"
 )
 
 const (
