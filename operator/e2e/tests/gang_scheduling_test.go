@@ -91,7 +91,7 @@ func Test_GS2_GangSchedulingWithScalingFullReplicas(t *testing.T) {
 	// Setup cluster (shared or individual based on test run mode)
 	logger.Info("1. Initialize a 14-node Grove cluster, then cordon 5 nodes")
 
-	clientset, restConfig, _, cleanup, _ := setupTestCluster(ctx, t, 14)
+	clientset, restConfig, _, cleanup := prepareTestCluster(ctx, t, 14)
 	defer cleanup()
 
 	// Setup and cordon nodes
@@ -161,7 +161,7 @@ func Test_GS3_GangSchedulingWithPCSScalingFullReplicas(t *testing.T) {
 	ctx := context.Background()
 
 	logger.Info("1. Initialize a 20-node Grove cluster, then cordon 11 nodes")
-	clientset, restConfig, dynamicClient, cleanup, _ := setupTestCluster(ctx, t, 20)
+	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 20)
 	defer cleanup()
 
 	// Setup and cordon nodes
@@ -229,7 +229,7 @@ func Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas(t *testing.T) {
 
 	logger.Info("1. Initialize a 28-node Grove cluster, then cordon 19 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	clientset, restConfig, dynamicClient, cleanup, _ := setupTestCluster(ctx, t, 28)
+	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	// Setup and cordon nodes
@@ -297,7 +297,7 @@ func Test_GS5_GangSchedulingWithMinReplicas(t *testing.T) {
 
 	logger.Info("1. Initialize a 10-node Grove cluster, then cordon 8 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	clientset, restConfig, _, cleanup, _ := setupTestCluster(ctx, t, 10)
+	clientset, restConfig, _, cleanup := prepareTestCluster(ctx, t, 10)
 	defer cleanup()
 
 	// Setup and cordon nodes
@@ -368,7 +368,7 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 
 	logger.Info("1. Initialize a 14-node Grove cluster, then cordon 12 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	clientset, restConfig, dynamicClient, cleanup, _ := setupTestCluster(ctx, t, 14)
+	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 14)
 	defer cleanup()
 
 	// Setup and cordon nodes
@@ -482,7 +482,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 
 	logger.Info("1. Initialize a 14-node Grove cluster, then cordon 12 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	clientset, restConfig, dynamicClient, cleanup, _ := setupTestCluster(ctx, t, 14)
+	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 14)
 	defer cleanup()
 
 	// Setup and cordon nodes
@@ -606,7 +606,7 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 
 	logger.Info("1. Initialize a 14-node Grove cluster, then cordon 12 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	clientset, restConfig, dynamicClient, cleanup, _ := setupTestCluster(ctx, t, 14)
+	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 14)
 	defer cleanup()
 
 	// Setup and cordon nodes
@@ -703,7 +703,7 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 
 	logger.Info("1. Initialize a 20-node Grove cluster, then cordon 18 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	clientset, restConfig, dynamicClient, cleanup, _ := setupTestCluster(ctx, t, 20)
+	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 20)
 	defer cleanup()
 
 	// Setup and cordon nodes
@@ -808,7 +808,7 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 
 	logger.Info("1. Initialize a 20-node Grove cluster, then cordon 18 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	clientset, restConfig, dynamicClient, cleanup, _ := setupTestCluster(ctx, t, 20)
+	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 20)
 	defer cleanup()
 
 	// Setup and cordon nodes
@@ -915,7 +915,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 
 	logger.Info("1. Initialize a 28-node Grove cluster, then cordon 26 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	clientset, restConfig, dynamicClient, cleanup, _ := setupTestCluster(ctx, t, 28)
+	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	// Setup and cordon nodes
@@ -1059,7 +1059,7 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 
 	logger.Info("1. Initialize a 28-node Grove cluster, then cordon 26 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	clientset, restConfig, dynamicClient, cleanup, _ := setupTestCluster(ctx, t, 28)
+	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	// Setup and cordon nodes
