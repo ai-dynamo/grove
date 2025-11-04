@@ -256,7 +256,7 @@ func waitForPodConditions(ctx context.Context, clientset kubernetes.Interface, n
 }
 
 // scalePCSGAndWait scales a PCSG and waits for the expected pod conditions to be reached.
-func scalePCSGAndWait(t *testing.T, ctx context.Context, clientset kubernetes.Interface, dynamicClient dynamic.Interface, namespace, labelSelector, pcsgName string, replicas int32, expectedTotalPods, expectedPending int) {
+func scalePCSGAndWait(t *testing.T, ctx context.Context, clientset kubernetes.Interface, dynamicClient dynamic.Interface, namespace, labelSelector, pcsgName string, replicas int32, expectedTotalPods, expectedPending int, timeout, interval time.Duration) {
 	t.Helper()
 
 	pcsgGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquescalinggroups"}
@@ -273,7 +273,7 @@ func scalePCSGAndWait(t *testing.T, ctx context.Context, clientset kubernetes.In
 		t.Fatalf("Failed to scale PodCliqueScalingGroup %s: %v", pcsgName, err)
 	}
 
-	totalPods, runningPods, pendingPods, err := waitForPodConditions(ctx, clientset, namespace, labelSelector, expectedTotalPods, expectedPending, 5*time.Minute, 5*time.Second)
+	totalPods, runningPods, pendingPods, err := waitForPodConditions(ctx, clientset, namespace, labelSelector, expectedTotalPods, expectedPending, timeout, interval)
 	if err != nil {
 		t.Fatalf("Failed to wait for expected pod conditions after PCSG scaling: %v. Final state: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
 			err, totalPods, runningPods, pendingPods, expectedTotalPods, expectedPending)
@@ -281,7 +281,7 @@ func scalePCSGAndWait(t *testing.T, ctx context.Context, clientset kubernetes.In
 }
 
 // scalePCSAndWait scales a PCS and waits for the expected pod conditions to be reached.
-func scalePCSAndWait(t *testing.T, ctx context.Context, clientset kubernetes.Interface, dynamicClient dynamic.Interface, namespace, labelSelector, pcsName string, replicas int32, expectedTotalPods, expectedPending int) {
+func scalePCSAndWait(t *testing.T, ctx context.Context, clientset kubernetes.Interface, dynamicClient dynamic.Interface, namespace, labelSelector, pcsName string, replicas int32, expectedTotalPods, expectedPending int, timeout, interval time.Duration) {
 	t.Helper()
 
 	pcsGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquesets"}
@@ -298,7 +298,7 @@ func scalePCSAndWait(t *testing.T, ctx context.Context, clientset kubernetes.Int
 		t.Fatalf("Failed to scale PodCliqueSet %s: %v", pcsName, err)
 	}
 
-	totalPods, runningPods, pendingPods, err := waitForPodConditions(ctx, clientset, namespace, labelSelector, expectedTotalPods, expectedPending, 1*time.Minute, 1*time.Second)
+	totalPods, runningPods, pendingPods, err := waitForPodConditions(ctx, clientset, namespace, labelSelector, expectedTotalPods, expectedPending, timeout, interval)
 	if err != nil {
 		t.Fatalf("Failed to wait for expected pod conditions after PCS scaling: %v. Final state: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
 			err, totalPods, runningPods, pendingPods, expectedTotalPods, expectedPending)

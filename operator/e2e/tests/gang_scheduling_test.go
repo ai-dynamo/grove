@@ -604,7 +604,7 @@ func Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas(t *testing.T) {
 
 	logger.Info("6. Scale PCSG replicas to 3 and verify 4 new pending pods")
 	pcsgName := "workload1-0-sg-x"
-	scalePCSGAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, pcsgName, 3, 14, 4)
+	scalePCSGAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, pcsgName, 3, 14, 4, defaultPollTimeout, defaultPollInterval)
 
 	logger.Info("7. Uncordon 4 nodes and verify scaled pods get scheduled")
 	remainingNodesAfterFirstUncordon := nodesToCordon[1:5]
@@ -626,7 +626,7 @@ func Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas(t *testing.T) {
 	assertPodsOnDistinctNodes(t, pods.Items)
 
 	logger.Info("8. Scale PCS replicas to 2 and verify 10 new pending pods")
-	scalePCSAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, "workload1", 2, 24, 10)
+	scalePCSAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, "workload1", 2, 24, 10, defaultPollTimeout, defaultPollInterval)
 
 	remainingNodesAfterPCSScale := nodesToCordon[5:15]
 	for _, nodeName := range remainingNodesAfterPCSScale {
@@ -648,7 +648,7 @@ func Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas(t *testing.T) {
 
 	logger.Info("9. Scale PCSG replicas to 3 and verify 4 new pending pods")
 	secondReplicaPCSGName := "workload1-1-sg-x"
-	scalePCSGAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, secondReplicaPCSGName, 3, 28, 4)
+	scalePCSGAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, secondReplicaPCSGName, 3, 28, 4, defaultPollTimeout, defaultPollInterval)
 
 	logger.Info("10. Uncordon remaining nodes and verify all pods get scheduled")
 	finalNodes := nodesToCordon[15:19]
@@ -1084,7 +1084,7 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 	expectedPodsAfterScaling := 14
 	expectedNewPendingPods := 4
 
-	scalePCSGAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, pcsgName, 3, expectedPodsAfterScaling, expectedNewPendingPods)
+	scalePCSGAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, pcsgName, 3, expectedPodsAfterScaling, expectedNewPendingPods, defaultPollTimeout, defaultPollInterval)
 
 	logger.Info("9. Verify all newly created pods are pending due to insufficient resources")
 	if err := verifyPodsArePendingWithUnschedulableEvents(ctx, clientset, workloadNamespace, workloadLabelSelector, false, defaultPollTimeout, defaultPollInterval); err != nil {
@@ -1441,7 +1441,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	expectedPodsAfterScaling := 14
 	expectedNewPendingPods := 4
 	logger.Info("10. Set pcs-0-sg-x resource replicas equal to 3, then verify 4 newly created pods")
-	scalePCSGAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, pcsgName, 3, expectedPodsAfterScaling, expectedNewPendingPods)
+	scalePCSGAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, pcsgName, 3, expectedPodsAfterScaling, expectedNewPendingPods, defaultPollTimeout, defaultPollInterval)
 
 	logger.Info("12. Uncordon 2 nodes and verify 2 more pods get scheduled (pcs-0-{sg-x-2-pc-b=1, sg-x-2-pc-c=1})")
 	twoMoreNodesToUncordon := nodesToCordon[8:10]
@@ -2006,7 +2006,7 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 	expectedPodsAfterScaling := 20
 	expectedNewPendingPods := 10
 
-	scalePCSAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, pcsName, 2, expectedPodsAfterScaling, expectedNewPendingPods)
+	scalePCSAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, pcsName, 2, expectedPodsAfterScaling, expectedNewPendingPods, defaultPollTimeout, defaultPollInterval)
 
 	logger.Info("9. Uncordon 3 nodes and verify another 3 pods get scheduled (pcs-1-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1})")
 	threeNodesToUncordon := nodesToCordon[8:11]
@@ -2517,7 +2517,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 
 	logger.Info("7. Set pcs-0-sg-x resource replicas equal to 3, then verify 4 newly created pods")
 	pcsgName := "workload2-0-sg-x"
-	scalePCSGAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, pcsgName, 3, 14, 4)
+	scalePCSGAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, pcsgName, 3, 14, 4, defaultPollTimeout, defaultPollInterval)
 
 	logger.Info("8. Verify all newly created pods are pending due to insufficient resources")
 	expectedRunning := 10 // Initial 10 pods from first wave
@@ -2586,7 +2586,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 	}
 
 	logger.Info("12. Set pcs resource replicas equal to 2, then verify 10 more newly created pods")
-	scalePCSAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, "workload2", 2, 24, 10)
+	scalePCSAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, "workload2", 2, 24, 10, defaultPollTimeout, defaultPollInterval)
 
 	logger.Info("13. Uncordon 3 nodes")
 	remainingNodesFourthWave := nodesToCordon[12:15]
@@ -2630,7 +2630,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 
 	logger.Info("16. Set pcs-1-sg-x resource replicas equal to 3, then verify 4 newly created pods")
 	secondReplicaPCSGName := "workload2-1-sg-x"
-	scalePCSGAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, secondReplicaPCSGName, 3, 28, 4)
+	scalePCSGAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, secondReplicaPCSGName, 3, 28, 4, defaultPollTimeout, defaultPollInterval)
 
 	logger.Info("17. Verify all newly created pods are pending due to insufficient resources")
 	expectedRunning = 24 // All previous pods should be running
@@ -2786,7 +2786,7 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 	}
 
 	logger.Info("4. Set pcs resource replicas equal to 2, then verify 10 more newly created pods")
-	scalePCSAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, "workload2", 2, 20, 20)
+	scalePCSAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, "workload2", 2, 20, 20, defaultPollTimeout, defaultPollInterval)
 
 	logger.Info("5. Verify all 20 newly created pods are pending due to insufficient resources")
 	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
@@ -2812,10 +2812,10 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 	logger.Info("6. Set both pcs-0-sg-x and pcs-1-sg-x resource replicas equal to 3, verify 8 newly created pods")
 
 	pcsg1Name := "workload2-0-sg-x"
-	scalePCSGAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, pcsg1Name, 3, 24, 24)
+	scalePCSGAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, pcsg1Name, 3, 24, 24, defaultPollTimeout, defaultPollInterval)
 
 	pcsg2Name := "workload2-1-sg-x"
-	scalePCSGAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, pcsg2Name, 3, 28, 28)
+	scalePCSGAndWait(t, ctx, clientset, dynamicClient, workloadNamespace, workloadLabelSelector, pcsg2Name, 3, 28, 28, defaultPollTimeout, defaultPollInterval)
 
 	logger.Info("7. Verify all 28 created pods are pending due to insufficient resources")
 	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
