@@ -240,15 +240,15 @@ func SetupCompleteK3DCluster(ctx context.Context, cfg ClusterConfig, skaffoldYAM
 		return nil, nil, fmt.Errorf("component installation failed: %w", err)
 	}
 
-	// Wait for Grove pods to be ready
-	if err := utils.WaitForPodsInNamespace(ctx, "grove-system", restConfig, defaultPollTimeout, defaultPollInterval, logger); err != nil {
+	// Wait for Grove pods to be ready (0 = skip count validation)
+	if err := utils.WaitForPodsInNamespace(ctx, "grove-system", restConfig, 0, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		cleanup()
 
 		return nil, nil, fmt.Errorf("grove pods not ready: %w", err)
 	}
 
-	// Wait for Kai Scheduler pods to be ready
-	if err := utils.WaitForPodsInNamespace(ctx, kaiConfig.Namespace, kaiConfig.RestConfig, defaultPollTimeout, defaultPollInterval, kaiConfig.Logger); err != nil {
+	// Wait for Kai Scheduler pods to be ready (0 = skip count validation)
+	if err := utils.WaitForPodsInNamespace(ctx, kaiConfig.Namespace, kaiConfig.RestConfig, 0, defaultPollTimeout, defaultPollInterval, kaiConfig.Logger); err != nil {
 		cleanup()
 		return nil, nil, fmt.Errorf("kai scheduler pods not ready: %w", err)
 	}
@@ -266,8 +266,8 @@ func SetupCompleteK3DCluster(ctx context.Context, cfg ClusterConfig, skaffoldYAM
 	}
 
 	// Nvidia Operator seems to take the longest to be ready, so we wait for it last
-	// to get the most done while waiting.
-	if err := utils.WaitForPodsInNamespace(ctx, nvidiaConfig.Namespace, nvidiaConfig.RestConfig, defaultPollTimeout, defaultPollInterval, nvidiaConfig.Logger); err != nil {
+	// to get the most done while waiting. (0 = skip count validation)
+	if err := utils.WaitForPodsInNamespace(ctx, nvidiaConfig.Namespace, nvidiaConfig.RestConfig, 0, defaultPollTimeout, defaultPollInterval, nvidiaConfig.Logger); err != nil {
 		cleanup()
 		return nil, nil, fmt.Errorf("NVIDIA GPU Operator not ready: %w", err)
 	}

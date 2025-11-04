@@ -20,7 +20,6 @@ package tests
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"testing"
@@ -30,8 +29,6 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -132,6 +129,17 @@ func assertPodsOnDistinctNodes(t *testing.T, pods []v1.Pod) {
 	}
 }
 
+// listPodsAndAssertDistinctNodes lists pods and asserts they are on distinct nodes in one call.
+// This helper reduces the repetitive pattern of listing pods, checking errors, and asserting.
+func listPodsAndAssertDistinctNodes(t *testing.T, ctx context.Context, clientset kubernetes.Interface, namespace, labelSelector string) {
+	t.Helper()
+	pods, err := utils.ListPods(ctx, clientset, namespace, labelSelector)
+	if err != nil {
+		t.Fatalf("Failed to list workload pods: %v", err)
+	}
+	assertPodsOnDistinctNodes(t, pods.Items)
+}
+
 // verifyAllPodsArePending verifies that all pods matching the label selector are in pending state.
 // Returns an error if verification fails or timeout occurs.
 func verifyAllPodsArePending(ctx context.Context, clientset kubernetes.Interface, namespace, labelSelector string, timeout, interval time.Duration) error {
@@ -157,8 +165,9 @@ func verifyAllPodsArePending(ctx context.Context, clientset kubernetes.Interface
 
 // verifyPodsArePendingWithUnschedulableEvents verifies that pods are pending with Unschedulable events from kai-scheduler.
 // If allPodsMustBePending is true, verifies ALL pods are pending; otherwise only checks pending pods for Unschedulable events.
+// expectedPendingCount is the expected number of pending pods (pass 0 to skip count validation)
 // Returns an error if verification fails, or nil if successful after finding Unschedulable events for all (pending) pods.
-func verifyPodsArePendingWithUnschedulableEvents(ctx context.Context, clientset kubernetes.Interface, namespace, labelSelector string, allPodsMustBePending bool, timeout, interval time.Duration) error {
+func verifyPodsArePendingWithUnschedulableEvents(ctx context.Context, clientset kubernetes.Interface, namespace, labelSelector string, allPodsMustBePending bool, expectedPendingCount int, timeout, interval time.Duration) error {
 	// First verify all pods are pending if required
 	if allPodsMustBePending {
 		if err := verifyAllPodsArePending(ctx, clientset, namespace, labelSelector, timeout, interval); err != nil {
@@ -215,6 +224,12 @@ func verifyPodsArePendingWithUnschedulableEvents(ctx context.Context, clientset 
 			}
 		}
 
+		// Verify expected pending count if specified
+		if expectedPendingCount > 0 && pendingCount != expectedPendingCount {
+			logger.Debugf("Expected %d pending pods but found %d pending pods", expectedPendingCount, pendingCount)
+			return false, nil
+		}
+
 		// Return true only when all pending pods have the Unschedulable event
 		if podsWithUnschedulableEvent == pendingCount {
 			return true, nil
@@ -231,22 +246,15 @@ func waitForPodConditions(ctx context.Context, clientset kubernetes.Interface, n
 	var lastTotal, lastRunning, lastPending int
 
 	err := utils.PollForCondition(ctx, timeout, interval, func() (bool, error) {
-		pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
+		pods, err := utils.ListPods(ctx, clientset, namespace, labelSelector)
 		if err != nil {
 			return false, err
 		}
 
-		lastTotal = len(pods.Items)
-		lastRunning = 0
-		lastPending = 0
-		for _, pod := range pods.Items {
-			switch pod.Status.Phase {
-			case v1.PodRunning:
-				lastRunning++
-			case v1.PodPending:
-				lastPending++
-			}
-		}
+		count := utils.CountPodsByPhase(pods)
+		lastTotal = count.Total
+		lastRunning = count.Running
+		lastPending = count.Pending
 
 		// Check if conditions are met
 		return lastTotal == expectedTotalPods && lastPending == expectedPending, nil
@@ -259,17 +267,7 @@ func waitForPodConditions(ctx context.Context, clientset kubernetes.Interface, n
 func scalePCSGAndWait(t *testing.T, ctx context.Context, clientset kubernetes.Interface, dynamicClient dynamic.Interface, namespace, labelSelector, pcsgName string, replicas int32, expectedTotalPods, expectedPending int, timeout, interval time.Duration) {
 	t.Helper()
 
-	pcsgGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquescalinggroups"}
-	patchBytes, err := json.Marshal(map[string]interface{}{
-		"spec": map[string]interface{}{
-			"replicas": replicas,
-		},
-	})
-	if err != nil {
-		t.Fatalf("Failed to marshal PCSG patch: %v", err)
-	}
-
-	if _, err := dynamicClient.Resource(pcsgGVR).Namespace(namespace).Patch(ctx, pcsgName, types.MergePatchType, patchBytes, metav1.PatchOptions{}); err != nil {
+	if err := utils.ScalePodCliqueScalingGroupWithClient(ctx, dynamicClient, namespace, pcsgName, int(replicas), timeout, interval); err != nil {
 		t.Fatalf("Failed to scale PodCliqueScalingGroup %s: %v", pcsgName, err)
 	}
 
@@ -284,17 +282,7 @@ func scalePCSGAndWait(t *testing.T, ctx context.Context, clientset kubernetes.In
 func scalePCSAndWait(t *testing.T, ctx context.Context, clientset kubernetes.Interface, dynamicClient dynamic.Interface, namespace, labelSelector, pcsName string, replicas int32, expectedTotalPods, expectedPending int, timeout, interval time.Duration) {
 	t.Helper()
 
-	pcsGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquesets"}
-	patchBytes, err := json.Marshal(map[string]interface{}{
-		"spec": map[string]interface{}{
-			"replicas": replicas,
-		},
-	})
-	if err != nil {
-		t.Fatalf("Failed to marshal PCS patch: %v", err)
-	}
-
-	if _, err := dynamicClient.Resource(pcsGVR).Namespace(namespace).Patch(ctx, pcsName, types.MergePatchType, patchBytes, metav1.PatchOptions{}); err != nil {
+	if err := utils.ScalePodCliqueSetWithClient(ctx, dynamicClient, namespace, pcsName, int(replicas)); err != nil {
 		t.Fatalf("Failed to scale PodCliqueSet %s: %v", pcsName, err)
 	}
 
@@ -303,4 +291,138 @@ func scalePCSAndWait(t *testing.T, ctx context.Context, clientset kubernetes.Int
 		t.Fatalf("Failed to wait for expected pod conditions after PCS scaling: %v. Final state: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
 			err, totalPods, runningPods, pendingPods, expectedTotalPods, expectedPending)
 	}
+}
+
+// cordonNodes cordons or uncordons multiple nodes.
+// This helper reduces repetition of the cordon/uncordon loop pattern found throughout tests.
+func cordonNodes(t *testing.T, ctx context.Context, clientset kubernetes.Interface, nodes []string, cordon bool) {
+	t.Helper()
+	action := "cordon"
+	if !cordon {
+		action = "uncordon"
+	}
+	for _, nodeName := range nodes {
+		if err := utils.CordonNode(ctx, clientset, nodeName, cordon); err != nil {
+			t.Fatalf("Failed to %s node %s: %v", action, nodeName, err)
+		}
+	}
+}
+
+// waitForPodPhases waits for pods to reach specific running and pending counts.
+// This helper reduces repetition of the polling pattern for checking pod phases.
+func waitForPodPhases(t *testing.T, ctx context.Context, clientset kubernetes.Interface, namespace, labelSelector string, expectedRunning, expectedPending int, timeout, interval time.Duration) error {
+	t.Helper()
+	return utils.PollForCondition(ctx, timeout, interval, func() (bool, error) {
+		pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+			LabelSelector: labelSelector,
+		})
+		if err != nil {
+			return false, err
+		}
+
+		count := utils.CountPodsByPhase(pods)
+		return count.Running == expectedRunning && count.Pending == expectedPending, nil
+	})
+}
+
+// waitForReadyPods waits for a specific number of pods to be ready (Running + Ready condition).
+// This helper reduces repetition of the polling pattern for checking pod ready state.
+func waitForReadyPods(t *testing.T, ctx context.Context, clientset kubernetes.Interface, namespace, labelSelector string, expectedReady int, timeout, interval time.Duration) error {
+	t.Helper()
+	return utils.PollForCondition(ctx, timeout, interval, func() (bool, error) {
+		pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+			LabelSelector: labelSelector,
+		})
+		if err != nil {
+			return false, err
+		}
+
+		readyCount := utils.CountReadyPods(pods)
+		return readyCount == expectedReady, nil
+	})
+}
+
+// setupAndCordonNodes retrieves worker nodes, validates the count, and cordons the specified number.
+// Returns the nodes that were cordoned.
+func setupAndCordonNodes(t *testing.T, ctx context.Context, clientset kubernetes.Interface, numToCordon int) []string {
+	t.Helper()
+
+	workerNodes, err := getWorkerNodes(ctx, clientset)
+	if err != nil {
+		t.Fatalf("Failed to get worker nodes: %v", err)
+	}
+
+	if len(workerNodes) < numToCordon {
+		t.Fatalf("expected at least %d worker nodes to cordon, but found %d", numToCordon, len(workerNodes))
+	}
+
+	nodesToCordon := workerNodes[:numToCordon]
+	cordonNodes(t, ctx, clientset, nodesToCordon, true)
+
+	return nodesToCordon
+}
+
+// WorkloadConfig defines configuration for deploying and verifying a workload.
+type WorkloadConfig struct {
+	Name          string
+	YAMLPath      string
+	Namespace     string
+	LabelSelector string
+	ExpectedPods  int
+}
+
+// deployAndVerifyWorkload applies a workload YAML and waits for the expected pod count.
+// Returns the pod list after successful deployment.
+func deployAndVerifyWorkload(t *testing.T, ctx context.Context, clientset kubernetes.Interface, restConfig *rest.Config, config WorkloadConfig, timeout, interval time.Duration) (*v1.PodList, error) {
+	t.Helper()
+
+	_, err := utils.ApplyYAMLFile(ctx, config.YAMLPath, config.Namespace, restConfig, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply workload YAML: %w", err)
+	}
+
+	pods, err := utils.WaitForPodCount(ctx, clientset, config.Namespace, config.LabelSelector, config.ExpectedPods, timeout, interval)
+	if err != nil {
+		return nil, fmt.Errorf("failed to wait for pods to be created: %w", err)
+	}
+
+	return pods, nil
+}
+
+// verifyAllPodsArePendingWithSleep verifies all pods are pending after a fixed delay.
+// The sleep is a workaround for https://github.com/NVIDIA/grove/issues/226
+func verifyAllPodsArePendingWithSleep(t *testing.T, ctx context.Context, clientset kubernetes.Interface, namespace, labelSelector string, timeout, interval time.Duration) {
+	t.Helper()
+	// Need to use a sleep here unfortunately, see: https://github.com/NVIDIA/grove/issues/226
+	time.Sleep(30 * time.Second)
+	if err := verifyAllPodsArePending(ctx, clientset, namespace, labelSelector, timeout, interval); err != nil {
+		t.Fatalf("Failed to verify all pods are pending: %v", err)
+	}
+}
+
+// uncordonNodesAndWaitForPods uncordons the specified nodes and waits for pods to be ready.
+// This helper combines the common pattern of uncordoning nodes followed by waiting for pods.
+func uncordonNodesAndWaitForPods(t *testing.T, ctx context.Context, clientset kubernetes.Interface, restConfig *rest.Config, nodes []string, namespace, labelSelector string, expectedPods int, timeout, interval time.Duration) {
+	t.Helper()
+
+	cordonNodes(t, ctx, clientset, nodes, false)
+
+	if err := utils.WaitForPods(ctx, restConfig, []string{namespace}, labelSelector, expectedPods, timeout, interval, logger); err != nil {
+		t.Fatalf("Failed to wait for pods to be ready: %v", err)
+	}
+}
+
+// waitForRunningPods waits for a specific number of pods to be in Running phase (not necessarily ready).
+// This is useful for checking min-replicas scheduling where pods need to be running but may not be fully ready yet.
+func waitForRunningPods(t *testing.T, ctx context.Context, clientset kubernetes.Interface, namespace, labelSelector string, expectedRunning int, timeout, interval time.Duration) error {
+	t.Helper()
+	return utils.PollForCondition(ctx, timeout, interval, func() (bool, error) {
+		pods, err := utils.ListPods(ctx, clientset, namespace, labelSelector)
+		if err != nil {
+			return false, err
+		}
+
+		count := utils.CountPodsByPhase(pods)
+		return count.Running == expectedRunning, nil
+	})
 }
