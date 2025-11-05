@@ -170,7 +170,7 @@ func TestCheckDeletionConditions(t *testing.T) {
 				assert.True(t, result.RequeueAfter > 0, "expected requeue after delay")
 				assert.Equal(t, 30*time.Second, result.RequeueAfter, "requeue delay should be 30s")
 			} else {
-				assert.False(t, result.Requeue, "should not requeue immediately")
+				assert.False(t, result.RequeueAfter > 0, "should not requeue immediately")
 				assert.Equal(t, time.Duration(0), result.RequeueAfter, "should not requeue after delay")
 			}
 		})
@@ -315,9 +315,9 @@ func TestTriggerDeletionFlow(t *testing.T) {
 			}
 
 			if tt.wantRequeue {
-				assert.True(t, result.RequeueAfter > 0 || result.Requeue, "should requeue")
+				assert.True(t, result.RequeueAfter > 0, "should requeue")
 			} else {
-				assert.False(t, result.Requeue, "should not requeue")
+				assert.False(t, result.RequeueAfter > 0, "should not requeue")
 				assert.Equal(t, time.Duration(0), result.RequeueAfter, "should not requeue after delay")
 			}
 
