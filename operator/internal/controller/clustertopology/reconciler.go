@@ -60,8 +60,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		if !controllerutil.ContainsFinalizer(ct, constants.FinalizerClusterTopology) {
 			return ctrl.Result{}, nil
 		}
-		dLog := logger.WithValues("operation", "delete")
-		return r.triggerDeletionFlow(ctx, dLog, ct).Result()
+		log := logger.WithValues("operation", "delete")
+		return r.triggerDeletionFlow(ctx, log, ct).Result()
 	}
 
 	// Handle normal reconciliation

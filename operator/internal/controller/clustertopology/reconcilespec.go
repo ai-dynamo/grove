@@ -31,19 +31,19 @@ import (
 
 // reconcileSpec performs the main reconciliation logic for ClusterTopology spec.
 func (r *Reconciler) reconcileSpec(ctx context.Context, logger logr.Logger, ct *grovecorev1alpha1.ClusterTopology) ctrlcommon.ReconcileStepResult {
-	rLog := logger.WithValues("operation", "spec-reconcile")
+	log := logger.WithValues("operation", "spec-reconcile")
 
 	reconcileStepFns := []ctrlcommon.ReconcileStepFn[grovecorev1alpha1.ClusterTopology]{
 		r.ensureFinalizer,
 	}
 
 	for _, fn := range reconcileStepFns {
-		if stepResult := fn(ctx, rLog, ct); ctrlcommon.ShortCircuitReconcileFlow(stepResult) {
+		if stepResult := fn(ctx, log, ct); ctrlcommon.ShortCircuitReconcileFlow(stepResult) {
 			return stepResult
 		}
 	}
 
-	rLog.Info("Finished spec reconciliation flow", "ClusterTopology", ct.Name)
+	log.Info("Finished spec reconciliation flow", "ClusterTopology", ct.Name)
 	return ctrlcommon.ContinueReconcile()
 }
 

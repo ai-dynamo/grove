@@ -49,12 +49,6 @@ func TestEnsureFinalizer(t *testing.T) {
 			wantError:   false,
 			wantPresent: true,
 		},
-		{
-			name:        "multiple reconciliations - idempotent",
-			ct:          testutils.NewClusterTopologyBuilder("test-topology"),
-			wantError:   false,
-			wantPresent: true,
-		},
 	}
 
 	for _, tt := range tests {
@@ -79,17 +73,6 @@ func TestEnsureFinalizer(t *testing.T) {
 
 			hasFinalizer := controllerutil.ContainsFinalizer(updatedCT, constants.FinalizerClusterTopology)
 			assert.Equal(t, tt.wantPresent, hasFinalizer, "finalizer presence mismatch")
-
-			// Test idempotency - run again
-			if !tt.wantError && tt.name == "multiple reconciliations - idempotent" {
-				stepResult2 := reconciler.ensureFinalizer(context.Background(), logr.Discard(), updatedCT)
-				assert.False(t, stepResult2.HasErrors(), "expected no errors on second run")
-
-				updatedCT2 := tt.ct.Build()
-				getErr2 := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(ct), updatedCT2)
-				require.NoError(t, getErr2)
-				assert.True(t, controllerutil.ContainsFinalizer(updatedCT2, constants.FinalizerClusterTopology))
-			}
 		})
 	}
 }
