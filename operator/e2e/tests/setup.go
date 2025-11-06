@@ -127,11 +127,6 @@ func waitForPodCountAndPhases(tc TestContext, expectedTotal, expectedRunning, ex
 	return utils.WaitForPodCountAndPhases(tc.Ctx, tc.Clientset, tc.Namespace, tc.getLabelSelector(), expectedTotal, expectedRunning, expectedPending, tc.Timeout, tc.Interval)
 }
 
-// verifyPodPhases is a wrapper around utils.VerifyPodPhases that accepts TestContext
-func verifyPodPhases(tc TestContext, pods *v1.PodList, expectedRunning, expectedPending int) error {
-	return utils.VerifyPodPhases(pods, expectedRunning, expectedPending)
-}
-
 // prepareTestCluster is a helper function that prepares the shared cluster for a test
 // with the specified number of worker nodes and returns the necessary clients and a cleanup function.
 // The cleanup function will fatally fail the test if workload cleanup fails.

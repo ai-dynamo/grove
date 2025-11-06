@@ -21,6 +21,8 @@ package tests
 import (
 	"context"
 	"testing"
+
+	"github.com/ai-dynamo/grove/operator/e2e/utils"
 )
 
 // Test_GS1_GangSchedulingWithFullReplicas tests gang-scheduling behavior with insufficient resources
@@ -149,7 +151,7 @@ func Test_GS2_GangSchedulingWithScalingFullReplicas(t *testing.T) {
 		t.Fatalf("Failed to wait for scaled pods to be created: %v", err)
 	}
 
-	if err := verifyPodPhases(tc, pods, expectedPods, 4); err != nil {
+	if err := utils.VerifyPodPhases(pods, expectedPods, 4); err != nil {
 		t.Fatalf("Pod phase verification failed: %v", err)
 	}
 
