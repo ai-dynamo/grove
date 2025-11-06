@@ -50,11 +50,10 @@ func Test_GS1_GangSchedulingWithFullReplicas(t *testing.T) {
 	expectedPods := 10 // pc-a: 2 replicas, pc-b: 1*2 (scaling group), pc-c: 3*2 (scaling group) = 2+2+6=10
 
 	workloadConfig := WorkloadConfig{
-		Name:          "workload1",
-		YAMLPath:      "../yaml/workload1.yaml",
-		Namespace:     workloadNamespace,
-		LabelSelector: "app.kubernetes.io/part-of=workload1",
-		ExpectedPods:  expectedPods,
+		Name:         "workload1",
+		YAMLPath:     "../yaml/workload1.yaml",
+		Namespace:    workloadNamespace,
+		ExpectedPods: expectedPods,
 	}
 	_, err := deployAndVerifyWorkload(t, ctx, clientset, restConfig, workloadConfig, defaultPollTimeout, defaultPollInterval)
 	if err != nil {
@@ -62,7 +61,7 @@ func Test_GS1_GangSchedulingWithFullReplicas(t *testing.T) {
 	}
 
 	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
-	if err := verifyPodsArePendingWithUnschedulableEvents(ctx, clientset, workloadNamespace, workloadConfig.LabelSelector, true, expectedPods, defaultPollTimeout, defaultPollInterval); err != nil {
+	if err := verifyPodsArePendingWithUnschedulableEvents(ctx, clientset, workloadNamespace, workloadConfig.GetLabelSelector(), true, expectedPods, defaultPollTimeout, defaultPollInterval); err != nil {
 		t.Fatalf("Failed to verify all pods have Unschedulable events: %v", err)
 	}
 
@@ -71,7 +70,7 @@ func Test_GS1_GangSchedulingWithFullReplicas(t *testing.T) {
 
 	// Verify that each pod is scheduled on a unique node, worker nodes have 150m memory
 	// and workload pods requests 80m memory, so only 1 should fit per node
-	listPodsAndAssertDistinctNodes(t, ctx, clientset, workloadNamespace, workloadConfig.LabelSelector)
+	listPodsAndAssertDistinctNodes(t, ctx, clientset, workloadNamespace, workloadConfig.GetLabelSelector())
 
 	logger.Info("🎉 Gang-scheduling With Full Replicas test completed successfully!")
 }
@@ -99,20 +98,19 @@ func Test_GS2_GangSchedulingWithScalingFullReplicas(t *testing.T) {
 
 	logger.Info("2. Deploy workload WL1, and verify 10 newly created pods")
 	workloadNamespace := "default"
-	workloadLabelSelector := "app.kubernetes.io/part-of=workload1"
 	expectedPods := 10
 
 	workloadConfig := WorkloadConfig{
-		Name:          "workload1",
-		YAMLPath:      "../yaml/workload1.yaml",
-		Namespace:     workloadNamespace,
-		LabelSelector: workloadLabelSelector,
-		ExpectedPods:  expectedPods,
+		Name:         "workload1",
+		YAMLPath:     "../yaml/workload1.yaml",
+		Namespace:    workloadNamespace,
+		ExpectedPods: expectedPods,
 	}
 	pods, err := deployAndVerifyWorkload(t, ctx, clientset, restConfig, workloadConfig, defaultPollTimeout, defaultPollInterval)
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
+	workloadLabelSelector := workloadConfig.GetLabelSelector()
 
 	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	if err := verifyPodsArePendingWithUnschedulableEvents(ctx, clientset, workloadNamespace, workloadLabelSelector, true, expectedPods, defaultPollTimeout, defaultPollInterval); err != nil {
@@ -169,20 +167,19 @@ func Test_GS3_GangSchedulingWithPCSScalingFullReplicas(t *testing.T) {
 
 	logger.Info("2. Deploy workload WL1, and verify 10 newly created pods")
 	workloadNamespace := "default"
-	workloadLabelSelector := "app.kubernetes.io/part-of=workload1"
 	expectedPods := 10
 
 	workloadConfig := WorkloadConfig{
-		Name:          "workload1",
-		YAMLPath:      "../yaml/workload1.yaml",
-		Namespace:     workloadNamespace,
-		LabelSelector: workloadLabelSelector,
-		ExpectedPods:  expectedPods,
+		Name:         "workload1",
+		YAMLPath:     "../yaml/workload1.yaml",
+		Namespace:    workloadNamespace,
+		ExpectedPods: expectedPods,
 	}
 	_, err := deployAndVerifyWorkload(t, ctx, clientset, restConfig, workloadConfig, defaultPollTimeout, defaultPollInterval)
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
+	workloadLabelSelector := workloadConfig.GetLabelSelector()
 
 	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	if err := verifyPodsArePendingWithUnschedulableEvents(ctx, clientset, workloadNamespace, workloadLabelSelector, true, expectedPods, defaultPollTimeout, defaultPollInterval); err != nil {
@@ -237,20 +234,19 @@ func Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas(t *testing.T) {
 
 	logger.Info("2. Deploy workload WL1, and verify 10 newly created pods")
 	workloadNamespace := "default"
-	workloadLabelSelector := "app.kubernetes.io/part-of=workload1"
 	expectedPods := 10
 
 	workloadConfig := WorkloadConfig{
-		Name:          "workload1",
-		YAMLPath:      "../yaml/workload1.yaml",
-		Namespace:     workloadNamespace,
-		LabelSelector: workloadLabelSelector,
-		ExpectedPods:  expectedPods,
+		Name:         "workload1",
+		YAMLPath:     "../yaml/workload1.yaml",
+		Namespace:    workloadNamespace,
+		ExpectedPods: expectedPods,
 	}
 	_, err := deployAndVerifyWorkload(t, ctx, clientset, restConfig, workloadConfig, defaultPollTimeout, defaultPollInterval)
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
+	workloadLabelSelector := workloadConfig.GetLabelSelector()
 
 	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	if err := verifyPodsArePendingWithUnschedulableEvents(ctx, clientset, workloadNamespace, workloadLabelSelector, true, expectedPods, defaultPollTimeout, defaultPollInterval); err != nil {
@@ -305,20 +301,19 @@ func Test_GS5_GangSchedulingWithMinReplicas(t *testing.T) {
 
 	logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
 	workloadNamespace := "default"
-	workloadLabelSelector := "app.kubernetes.io/part-of=workload2"
 	expectedPods := 10
 
 	workloadConfig := WorkloadConfig{
-		Name:          "workload2",
-		YAMLPath:      "../yaml/workload2.yaml",
-		Namespace:     workloadNamespace,
-		LabelSelector: workloadLabelSelector,
-		ExpectedPods:  expectedPods,
+		Name:         "workload2",
+		YAMLPath:     "../yaml/workload2.yaml",
+		Namespace:    workloadNamespace,
+		ExpectedPods: expectedPods,
 	}
 	_, err := deployAndVerifyWorkload(t, ctx, clientset, restConfig, workloadConfig, defaultPollTimeout, defaultPollInterval)
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
+	workloadLabelSelector := workloadConfig.GetLabelSelector()
 
 	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	verifyAllPodsArePendingWithSleep(t, ctx, clientset, workloadNamespace, workloadLabelSelector, defaultPollTimeout, defaultPollInterval)
@@ -376,18 +371,17 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 
 	logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
 	workloadConfig := WorkloadConfig{
-		Name:          "workload2",
-		YAMLPath:      "../yaml/workload2.yaml",
-		Namespace:     "default",
-		LabelSelector: "app.kubernetes.io/part-of=workload2",
-		ExpectedPods:  10,
+		Name:         "workload2",
+		YAMLPath:     "../yaml/workload2.yaml",
+		Namespace:    "default",
+		ExpectedPods: 10,
 	}
 	_, err := deployAndVerifyWorkload(t, ctx, clientset, restConfig, workloadConfig, defaultPollTimeout, defaultPollInterval)
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 	workloadNamespace := workloadConfig.Namespace
-	workloadLabelSelector := workloadConfig.LabelSelector
+	workloadLabelSelector := workloadConfig.GetLabelSelector()
 
 	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	verifyAllPodsArePendingWithSleep(t, ctx, clientset, workloadNamespace, workloadLabelSelector, defaultPollTimeout, defaultPollInterval)
@@ -490,18 +484,17 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 
 	logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
 	workloadConfig := WorkloadConfig{
-		Name:          "workload2",
-		YAMLPath:      "../yaml/workload2.yaml",
-		Namespace:     "default",
-		LabelSelector: "app.kubernetes.io/part-of=workload2",
-		ExpectedPods:  10,
+		Name:         "workload2",
+		YAMLPath:     "../yaml/workload2.yaml",
+		Namespace:    "default",
+		ExpectedPods: 10,
 	}
 	pods, err := deployAndVerifyWorkload(t, ctx, clientset, restConfig, workloadConfig, defaultPollTimeout, defaultPollInterval)
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 	workloadNamespace := workloadConfig.Namespace
-	workloadLabelSelector := workloadConfig.LabelSelector
+	workloadLabelSelector := workloadConfig.GetLabelSelector()
 
 	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	verifyAllPodsArePendingWithSleep(t, ctx, clientset, workloadNamespace, workloadLabelSelector, defaultPollTimeout, defaultPollInterval)
@@ -614,18 +607,17 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 
 	logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
 	workloadConfig := WorkloadConfig{
-		Name:          "workload2",
-		YAMLPath:      "../yaml/workload2.yaml",
-		Namespace:     "default",
-		LabelSelector: "app.kubernetes.io/part-of=workload2",
-		ExpectedPods:  10,
+		Name:         "workload2",
+		YAMLPath:     "../yaml/workload2.yaml",
+		Namespace:    "default",
+		ExpectedPods: 10,
 	}
 	_, err := deployAndVerifyWorkload(t, ctx, clientset, restConfig, workloadConfig, defaultPollTimeout, defaultPollInterval)
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 	workloadNamespace := workloadConfig.Namespace
-	workloadLabelSelector := workloadConfig.LabelSelector
+	workloadLabelSelector := workloadConfig.GetLabelSelector()
 
 	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	verifyAllPodsArePendingWithSleep(t, ctx, clientset, workloadNamespace, workloadLabelSelector, defaultPollTimeout, defaultPollInterval)
@@ -711,18 +703,17 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 
 	logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
 	workloadConfig := WorkloadConfig{
-		Name:          "workload2",
-		YAMLPath:      "../yaml/workload2.yaml",
-		Namespace:     "default",
-		LabelSelector: "app.kubernetes.io/part-of=workload2",
-		ExpectedPods:  10,
+		Name:         "workload2",
+		YAMLPath:     "../yaml/workload2.yaml",
+		Namespace:    "default",
+		ExpectedPods: 10,
 	}
 	pods, err := deployAndVerifyWorkload(t, ctx, clientset, restConfig, workloadConfig, defaultPollTimeout, defaultPollInterval)
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 	workloadNamespace := workloadConfig.Namespace
-	workloadLabelSelector := workloadConfig.LabelSelector
+	workloadLabelSelector := workloadConfig.GetLabelSelector()
 
 	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	verifyAllPodsArePendingWithSleep(t, ctx, clientset, workloadNamespace, workloadLabelSelector, defaultPollTimeout, defaultPollInterval)
@@ -816,18 +807,17 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 
 	logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
 	workloadConfig := WorkloadConfig{
-		Name:          "workload2",
-		YAMLPath:      "../yaml/workload2.yaml",
-		Namespace:     "default",
-		LabelSelector: "app.kubernetes.io/part-of=workload2",
-		ExpectedPods:  10,
+		Name:         "workload2",
+		YAMLPath:     "../yaml/workload2.yaml",
+		Namespace:    "default",
+		ExpectedPods: 10,
 	}
 	_, err := deployAndVerifyWorkload(t, ctx, clientset, restConfig, workloadConfig, defaultPollTimeout, defaultPollInterval)
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 	workloadNamespace := workloadConfig.Namespace
-	workloadLabelSelector := workloadConfig.LabelSelector
+	workloadLabelSelector := workloadConfig.GetLabelSelector()
 
 	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	// Need to use a sleep here unfortunately, see: https://github.com/NVIDIA/grove/issues/226
@@ -923,18 +913,17 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 
 	logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
 	workloadConfig := WorkloadConfig{
-		Name:          "workload2",
-		YAMLPath:      "../yaml/workload2.yaml",
-		Namespace:     "default",
-		LabelSelector: "app.kubernetes.io/part-of=workload2",
-		ExpectedPods:  10,
+		Name:         "workload2",
+		YAMLPath:     "../yaml/workload2.yaml",
+		Namespace:    "default",
+		ExpectedPods: 10,
 	}
 	_, err := deployAndVerifyWorkload(t, ctx, clientset, restConfig, workloadConfig, defaultPollTimeout, defaultPollInterval)
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 	workloadNamespace := workloadConfig.Namespace
-	workloadLabelSelector := workloadConfig.LabelSelector
+	workloadLabelSelector := workloadConfig.GetLabelSelector()
 
 	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	verifyAllPodsArePendingWithSleep(t, ctx, clientset, workloadNamespace, workloadLabelSelector, defaultPollTimeout, defaultPollInterval)
@@ -1067,18 +1056,17 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 
 	logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
 	workloadConfig := WorkloadConfig{
-		Name:          "workload2",
-		YAMLPath:      "../yaml/workload2.yaml",
-		Namespace:     "default",
-		LabelSelector: "app.kubernetes.io/part-of=workload2",
-		ExpectedPods:  10,
+		Name:         "workload2",
+		YAMLPath:     "../yaml/workload2.yaml",
+		Namespace:    "default",
+		ExpectedPods: 10,
 	}
 	_, err := deployAndVerifyWorkload(t, ctx, clientset, restConfig, workloadConfig, defaultPollTimeout, defaultPollInterval)
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 	workloadNamespace := workloadConfig.Namespace
-	workloadLabelSelector := workloadConfig.LabelSelector
+	workloadLabelSelector := workloadConfig.GetLabelSelector()
 
 	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	verifyAllPodsArePendingWithSleep(t, ctx, clientset, workloadNamespace, workloadLabelSelector, defaultPollTimeout, defaultPollInterval)

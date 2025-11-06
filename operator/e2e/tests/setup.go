@@ -364,11 +364,16 @@ func setupAndCordonNodes(t *testing.T, ctx context.Context, clientset kubernetes
 
 // WorkloadConfig defines configuration for deploying and verifying a workload.
 type WorkloadConfig struct {
-	Name          string
-	YAMLPath      string
-	Namespace     string
-	LabelSelector string
-	ExpectedPods  int
+	Name         string
+	YAMLPath     string
+	Namespace    string
+	ExpectedPods int
+}
+
+// GetLabelSelector returns the label selector calculated from the workload name.
+// The label selector follows the pattern: "app.kubernetes.io/part-of=<name>"
+func (w WorkloadConfig) GetLabelSelector() string {
+	return fmt.Sprintf("app.kubernetes.io/part-of=%s", w.Name)
 }
 
 // deployAndVerifyWorkload applies a workload YAML and waits for the expected pod count.
@@ -381,7 +386,7 @@ func deployAndVerifyWorkload(t *testing.T, ctx context.Context, clientset kubern
 		return nil, fmt.Errorf("failed to apply workload YAML: %w", err)
 	}
 
-	pods, err := utils.WaitForPodCount(ctx, clientset, config.Namespace, config.LabelSelector, config.ExpectedPods, timeout, interval)
+	pods, err := utils.WaitForPodCount(ctx, clientset, config.Namespace, config.GetLabelSelector(), config.ExpectedPods, timeout, interval)
 	if err != nil {
 		return nil, fmt.Errorf("failed to wait for pods to be created: %w", err)
 	}
