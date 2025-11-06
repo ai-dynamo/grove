@@ -37,7 +37,7 @@ const (
 func TestAddAndPatchFinalizer(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	
+
 	// Test adding finalizer to object without any finalizers
 	t.Run("add finalizer to object without finalizers", func(t *testing.T) {
 		configMap := &corev1.ConfigMap{
@@ -46,19 +46,19 @@ func TestAddAndPatchFinalizer(t *testing.T) {
 				Namespace: "default",
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(configMap).
 			Build()
-		
+
 		err := AddAndPatchFinalizer(context.Background(), cl, configMap, testFinalizer)
 		require.NoError(t, err)
-		
+
 		// Verify finalizer was added
 		assert.Contains(t, configMap.GetFinalizers(), testFinalizer)
 	})
-	
+
 	// Test adding finalizer to object with existing finalizers
 	t.Run("add finalizer to object with existing finalizers", func(t *testing.T) {
 		existingFinalizer := "existing.finalizer"
@@ -69,21 +69,21 @@ func TestAddAndPatchFinalizer(t *testing.T) {
 				Finalizers: []string{existingFinalizer},
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(configMap).
 			Build()
-		
+
 		err := AddAndPatchFinalizer(context.Background(), cl, configMap, testFinalizer)
 		require.NoError(t, err)
-		
+
 		// Verify both finalizers are present
 		assert.Contains(t, configMap.GetFinalizers(), testFinalizer)
 		assert.Contains(t, configMap.GetFinalizers(), existingFinalizer)
 		assert.Len(t, configMap.GetFinalizers(), 2)
 	})
-	
+
 	// Test adding duplicate finalizer
 	t.Run("add duplicate finalizer", func(t *testing.T) {
 		configMap := &corev1.ConfigMap{
@@ -93,15 +93,15 @@ func TestAddAndPatchFinalizer(t *testing.T) {
 				Finalizers: []string{testFinalizer},
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(configMap).
 			Build()
-		
+
 		err := AddAndPatchFinalizer(context.Background(), cl, configMap, testFinalizer)
 		require.NoError(t, err)
-		
+
 		// Should still only have one instance
 		assert.Contains(t, configMap.GetFinalizers(), testFinalizer)
 	})
@@ -111,7 +111,7 @@ func TestAddAndPatchFinalizer(t *testing.T) {
 func TestRemoveAndPatchFinalizer(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	
+
 	// Test removing existing finalizer
 	t.Run("remove existing finalizer", func(t *testing.T) {
 		configMap := &corev1.ConfigMap{
@@ -121,19 +121,19 @@ func TestRemoveAndPatchFinalizer(t *testing.T) {
 				Finalizers: []string{testFinalizer},
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(configMap).
 			Build()
-		
+
 		err := RemoveAndPatchFinalizer(context.Background(), cl, configMap, testFinalizer)
 		require.NoError(t, err)
-		
+
 		// Verify finalizer was removed
 		assert.NotContains(t, configMap.GetFinalizers(), testFinalizer)
 	})
-	
+
 	// Test removing finalizer from object with multiple finalizers
 	t.Run("remove one finalizer from multiple", func(t *testing.T) {
 		otherFinalizer := "other.finalizer"
@@ -144,21 +144,21 @@ func TestRemoveAndPatchFinalizer(t *testing.T) {
 				Finalizers: []string{testFinalizer, otherFinalizer},
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(configMap).
 			Build()
-		
+
 		err := RemoveAndPatchFinalizer(context.Background(), cl, configMap, testFinalizer)
 		require.NoError(t, err)
-		
+
 		// Verify correct finalizer was removed
 		assert.NotContains(t, configMap.GetFinalizers(), testFinalizer)
 		assert.Contains(t, configMap.GetFinalizers(), otherFinalizer)
 		assert.Len(t, configMap.GetFinalizers(), 1)
 	})
-	
+
 	// Test removing non-existent finalizer
 	t.Run("remove non-existent finalizer", func(t *testing.T) {
 		configMap := &corev1.ConfigMap{
@@ -167,21 +167,21 @@ func TestRemoveAndPatchFinalizer(t *testing.T) {
 				Namespace: "default",
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(configMap).
 			Build()
-		
+
 		err := RemoveAndPatchFinalizer(context.Background(), cl, configMap, testFinalizer)
 		require.NoError(t, err)
-		
+
 		// Should not error
 		assert.Empty(t, configMap.GetFinalizers())
 	})
-	
+
 	// Test removing finalizer from non-existent object (NotFound errors are ignored)
-	t.Run("remove finalizer from non-existent object", func(t *testing.T) {
+	t.Run("remove finalizer from non-existent object", func(_ *testing.T) {
 		configMap := &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:            "nonexistent-cm",
@@ -190,13 +190,13 @@ func TestRemoveAndPatchFinalizer(t *testing.T) {
 				ResourceVersion: "1",
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			Build()
-		
+
 		err := RemoveAndPatchFinalizer(context.Background(), cl, configMap, testFinalizer)
-		
+
 		// Since the object doesn't exist, we expect some error but it should be handled
 		// The fake client might not perfectly simulate NotFound behavior, so we just check it doesn't panic
 		_ = err
@@ -212,10 +212,10 @@ func TestMergeFromWithOptimisticLock(t *testing.T) {
 			ResourceVersion: "123",
 		},
 	}
-	
+
 	patch := mergeFromWithOptimisticLock(configMap)
 	require.NotNil(t, patch)
-	
+
 	// Verify patch type
 	patchType := patch.Type()
 	assert.Equal(t, client.Merge.Type(), patchType)
@@ -225,7 +225,7 @@ func TestMergeFromWithOptimisticLock(t *testing.T) {
 func TestPatchFinalizer(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	
+
 	// Test successful patch
 	t.Run("successful patch", func(t *testing.T) {
 		configMap := &corev1.ConfigMap{
@@ -234,18 +234,18 @@ func TestPatchFinalizer(t *testing.T) {
 				Namespace: "default",
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(configMap).
 			Build()
-		
+
 		err := AddAndPatchFinalizer(context.Background(), cl, configMap, testFinalizer)
 		require.NoError(t, err)
 	})
-	
+
 	// Test patch with conflict (simulating optimistic lock failure)
-	t.Run("patch with stale object", func(t *testing.T) {
+	t.Run("patch with stale object", func(_ *testing.T) {
 		configMap := &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:            "test-cm",
@@ -253,20 +253,20 @@ func TestPatchFinalizer(t *testing.T) {
 				ResourceVersion: "1",
 			},
 		}
-		
+
 		// Create with a different resource version
 		storedConfigMap := configMap.DeepCopy()
 		storedConfigMap.ResourceVersion = "2"
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(storedConfigMap).
 			Build()
-		
+
 		// This should fail with conflict error in a real scenario
 		// but fake client might not enforce optimistic locking
 		err := AddAndPatchFinalizer(context.Background(), cl, configMap, testFinalizer)
-		
+
 		// Fake client may or may not enforce this, so we just verify it doesn't panic
 		_ = err
 	})
@@ -276,7 +276,7 @@ func TestPatchFinalizer(t *testing.T) {
 func TestFinalizerHelpers(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	
+
 	// Test with object that will be deleted
 	t.Run("finalizer on deleted object", func(t *testing.T) {
 		now := metav1.Now()
@@ -288,17 +288,17 @@ func TestFinalizerHelpers(t *testing.T) {
 				DeletionTimestamp: &now,
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(configMap).
 			Build()
-		
+
 		// Removing finalizer should work
 		err := RemoveAndPatchFinalizer(context.Background(), cl, configMap, testFinalizer)
 		require.NoError(t, err)
 	})
-	
+
 	// Test with empty finalizer string
 	t.Run("empty finalizer string", func(t *testing.T) {
 		configMap := &corev1.ConfigMap{
@@ -307,12 +307,12 @@ func TestFinalizerHelpers(t *testing.T) {
 				Namespace: "default",
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(configMap).
 			Build()
-		
+
 		err := AddAndPatchFinalizer(context.Background(), cl, configMap, "")
 		require.NoError(t, err)
 	})

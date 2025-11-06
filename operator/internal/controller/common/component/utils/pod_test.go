@@ -22,6 +22,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -35,7 +36,7 @@ func TestGetPCLQPods(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
 	_ = grovecorev1alpha1.AddToScheme(scheme)
-	
+
 	// Test with owned pods
 	t.Run("returns owned pods only", func(t *testing.T) {
 		pclq := &grovecorev1alpha1.PodClique{
@@ -45,15 +46,15 @@ func TestGetPCLQPods(t *testing.T) {
 				UID:       "pclq-uid-123",
 			},
 		}
-		
+
 		// Pod owned by the PodClique
 		ownedPod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "owned-pod",
 				Namespace: "default",
 				Labels: map[string]string{
-					apicommon.LabelPartOfKey:   "test-pcs",
-					apicommon.LabelPodClique:   "test-pclq",
+					apicommon.LabelPartOfKey:    "test-pcs",
+					apicommon.LabelPodClique:    "test-pclq",
 					apicommon.LabelManagedByKey: apicommon.LabelManagedByValue,
 				},
 				OwnerReferences: []metav1.OwnerReference{
@@ -67,27 +68,27 @@ func TestGetPCLQPods(t *testing.T) {
 				},
 			},
 		}
-		
+
 		// Pod with matching labels but not owned
 		notOwnedPod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "not-owned-pod",
 				Namespace: "default",
 				Labels: map[string]string{
-					apicommon.LabelPartOfKey:   "test-pcs",
-					apicommon.LabelPodClique:   "test-pclq",
+					apicommon.LabelPartOfKey:    "test-pcs",
+					apicommon.LabelPodClique:    "test-pclq",
 					apicommon.LabelManagedByKey: apicommon.LabelManagedByValue,
 				},
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(ownedPod, notOwnedPod).
 			Build()
-		
+
 		pods, err := GetPCLQPods(context.Background(), cl, "test-pcs", pclq)
-		
+
 		require.NoError(t, err)
 		assert.Len(t, pods, 1)
 		assert.Equal(t, "owned-pod", pods[0].Name)
@@ -102,13 +103,13 @@ func TestGetPCLQPods(t *testing.T) {
 				UID:       "pclq-uid-123",
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			Build()
-		
+
 		pods, err := GetPCLQPods(context.Background(), cl, "test-pcs", pclq)
-		
+
 		require.NoError(t, err)
 		assert.Empty(t, pods)
 	})
@@ -122,7 +123,7 @@ func TestGetPCLQPods(t *testing.T) {
 				UID:       "pclq-uid-123",
 			},
 		}
-		
+
 		pods := []*corev1.Pod{}
 		for i := 0; i < 3; i++ {
 			pod := &corev1.Pod{
@@ -130,8 +131,8 @@ func TestGetPCLQPods(t *testing.T) {
 					Name:      "pod-" + string(rune('a'+i)),
 					Namespace: "default",
 					Labels: map[string]string{
-						apicommon.LabelPartOfKey:   "test-pcs",
-						apicommon.LabelPodClique:   "test-pclq",
+						apicommon.LabelPartOfKey:    "test-pcs",
+						apicommon.LabelPodClique:    "test-pclq",
 						apicommon.LabelManagedByKey: apicommon.LabelManagedByValue,
 					},
 					OwnerReferences: []metav1.OwnerReference{
@@ -147,14 +148,14 @@ func TestGetPCLQPods(t *testing.T) {
 			}
 			pods = append(pods, pod)
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(pods[0], pods[1], pods[2]).
 			Build()
-		
+
 		result, err := GetPCLQPods(context.Background(), cl, "test-pcs", pclq)
-		
+
 		require.NoError(t, err)
 		assert.Len(t, result, 3)
 	})
@@ -168,14 +169,14 @@ func TestAddEnvVarsToContainers(t *testing.T) {
 			{Name: "container1"},
 			{Name: "container2"},
 		}
-		
+
 		envVars := []corev1.EnvVar{
 			{Name: "VAR1", Value: "value1"},
 			{Name: "VAR2", Value: "value2"},
 		}
-		
+
 		AddEnvVarsToContainers(containers, envVars)
-		
+
 		assert.Len(t, containers[0].Env, 2)
 		assert.Len(t, containers[1].Env, 2)
 		assert.Equal(t, "VAR1", containers[0].Env[0].Name)
@@ -192,13 +193,13 @@ func TestAddEnvVarsToContainers(t *testing.T) {
 				},
 			},
 		}
-		
+
 		newEnvVars := []corev1.EnvVar{
 			{Name: "NEW_VAR", Value: "new-value"},
 		}
-		
+
 		AddEnvVarsToContainers(containers, newEnvVars)
-		
+
 		assert.Len(t, containers[0].Env, 2)
 		assert.Equal(t, "EXISTING", containers[0].Env[0].Name)
 		assert.Equal(t, "NEW_VAR", containers[0].Env[1].Name)
@@ -209,19 +210,19 @@ func TestAddEnvVarsToContainers(t *testing.T) {
 		containers := []corev1.Container{
 			{Name: "container1"},
 		}
-		
+
 		AddEnvVarsToContainers(containers, []corev1.EnvVar{})
-		
+
 		assert.Empty(t, containers[0].Env)
 	})
 
 	// Test with no containers
-	t.Run("no containers", func(t *testing.T) {
+	t.Run("no containers", func(_ *testing.T) {
 		containers := []corev1.Container{}
 		envVars := []corev1.EnvVar{
 			{Name: "VAR1", Value: "value1"},
 		}
-		
+
 		// Should not panic
 		AddEnvVarsToContainers(containers, envVars)
 	})
@@ -245,9 +246,9 @@ func TestPodsToObjectNames(t *testing.T) {
 				},
 			},
 		}
-		
+
 		names := PodsToObjectNames(pods)
-		
+
 		assert.Len(t, names, 2)
 		assert.Contains(t, names, "default/pod1")
 		assert.Contains(t, names, "production/pod2")
@@ -256,9 +257,9 @@ func TestPodsToObjectNames(t *testing.T) {
 	// Test with empty slice
 	t.Run("empty slice", func(t *testing.T) {
 		pods := []*corev1.Pod{}
-		
+
 		names := PodsToObjectNames(pods)
-		
+
 		assert.Empty(t, names)
 	})
 
@@ -272,9 +273,9 @@ func TestPodsToObjectNames(t *testing.T) {
 				},
 			},
 		}
-		
+
 		names := PodsToObjectNames(pods)
-		
+
 		assert.Len(t, names, 1)
 		assert.Equal(t, "my-namespace/my-pod", names[0])
 	})

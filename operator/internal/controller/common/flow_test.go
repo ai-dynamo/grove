@@ -35,7 +35,7 @@ func TestReconcileStepResult(t *testing.T) {
 			result: ctrl.Result{Requeue: true},
 			errs:   []error{err1, err2},
 		}
-		
+
 		r, err := result.Result()
 		assert.True(t, r.Requeue)
 		assert.Error(t, err)
@@ -114,7 +114,7 @@ func TestReconcileStepResult(t *testing.T) {
 // TestDoNotRequeue tests that DoNotRequeue creates the correct result structure.
 func TestDoNotRequeue(t *testing.T) {
 	result := DoNotRequeue()
-	
+
 	assert.False(t, result.continueReconcile)
 	assert.False(t, result.result.Requeue)
 	assert.False(t, result.NeedsRequeue())
@@ -126,7 +126,7 @@ func TestRecordErrorAndDoNotRequeue(t *testing.T) {
 	err1 := errors.New("error 1")
 	err2 := errors.New("error 2")
 	result := RecordErrorAndDoNotRequeue("test description", err1, err2)
-	
+
 	assert.False(t, result.continueReconcile)
 	assert.False(t, result.result.Requeue)
 	assert.True(t, result.HasErrors())
@@ -138,7 +138,7 @@ func TestRecordErrorAndDoNotRequeue(t *testing.T) {
 // TestContinueReconcile tests that ContinueReconcile sets the flag properly.
 func TestContinueReconcile(t *testing.T) {
 	result := ContinueReconcile()
-	
+
 	assert.True(t, result.continueReconcile)
 	assert.False(t, result.NeedsRequeue())
 	assert.False(t, result.HasErrors())
@@ -149,7 +149,7 @@ func TestReconcileWithErrors(t *testing.T) {
 	err1 := errors.New("error 1")
 	err2 := errors.New("error 2")
 	result := ReconcileWithErrors("test description", err1, err2)
-	
+
 	assert.False(t, result.continueReconcile)
 	assert.True(t, result.result.Requeue)
 	assert.True(t, result.HasErrors())
@@ -162,7 +162,7 @@ func TestReconcileWithErrors(t *testing.T) {
 func TestReconcileAfter(t *testing.T) {
 	duration := 10 * time.Second
 	result := ReconcileAfter(duration, "test description")
-	
+
 	assert.False(t, result.continueReconcile)
 	assert.Equal(t, duration, result.result.RequeueAfter)
 	assert.False(t, result.HasErrors())

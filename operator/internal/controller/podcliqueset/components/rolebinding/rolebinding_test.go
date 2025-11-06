@@ -22,6 +22,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,11 +41,11 @@ func TestNew(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = grovecorev1alpha1.AddToScheme(scheme)
 	_ = rbacv1.AddToScheme(scheme)
-	
+
 	cl := fake.NewClientBuilder().WithScheme(scheme).Build()
-	
+
 	operator := New(cl, scheme)
-	
+
 	assert.NotNil(t, operator)
 }
 
@@ -53,24 +54,24 @@ func TestGetExistingResourceNames(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = grovecorev1alpha1.AddToScheme(scheme)
 	_ = rbacv1.AddToScheme(scheme)
-	
+
 	// Test with no existing rolebindings
 	t.Run("no existing rolebindings", func(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 		operator := New(cl, scheme)
-		
+
 		pcsObjMeta := metav1.ObjectMeta{
 			Name:      "test-pcs",
 			Namespace: "default",
 			UID:       "pcs-uid-123",
 		}
-		
+
 		names, err := operator.GetExistingResourceNames(context.Background(), logr.Discard(), pcsObjMeta)
-		
+
 		require.NoError(t, err)
 		assert.Empty(t, names)
 	})
-	
+
 	// Test with existing rolebinding owned by PCS
 	t.Run("existing owned rolebinding", func(t *testing.T) {
 		pcsUID := types.UID("pcs-uid-123")
@@ -89,21 +90,21 @@ func TestGetExistingResourceNames(t *testing.T) {
 				},
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(rb).
 			Build()
 		operator := New(cl, scheme)
-		
+
 		pcsObjMeta := metav1.ObjectMeta{
 			Name:      "test-pcs",
 			Namespace: "default",
 			UID:       pcsUID,
 		}
-		
+
 		names, err := operator.GetExistingResourceNames(context.Background(), logr.Discard(), pcsObjMeta)
-		
+
 		require.NoError(t, err)
 		assert.Len(t, names, 1)
 		assert.Equal(t, apicommon.GeneratePodRoleBindingName("test-pcs"), names[0])
@@ -126,21 +127,21 @@ func TestGetExistingResourceNames(t *testing.T) {
 				},
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(rb).
 			Build()
 		operator := New(cl, scheme)
-		
+
 		pcsObjMeta := metav1.ObjectMeta{
 			Name:      "test-pcs",
 			Namespace: "default",
 			UID:       "pcs-uid-123",
 		}
-		
+
 		names, err := operator.GetExistingResourceNames(context.Background(), logr.Discard(), pcsObjMeta)
-		
+
 		require.NoError(t, err)
 		// Should not include the rolebinding owned by another PCS
 		assert.Empty(t, names)
@@ -152,12 +153,12 @@ func TestSync(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = grovecorev1alpha1.AddToScheme(scheme)
 	_ = rbacv1.AddToScheme(scheme)
-	
+
 	// Test creating new rolebinding
 	t.Run("creates new rolebinding", func(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 		operator := New(cl, scheme)
-		
+
 		pcs := &grovecorev1alpha1.PodCliqueSet{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-pcs",
@@ -165,11 +166,11 @@ func TestSync(t *testing.T) {
 				UID:       types.UID("pcs-uid-123"),
 			},
 		}
-		
+
 		err := operator.Sync(context.Background(), logr.Discard(), pcs)
-		
+
 		require.NoError(t, err)
-		
+
 		// Verify rolebinding was created
 		rb := &rbacv1.RoleBinding{}
 		err = cl.Get(context.Background(), client.ObjectKey{Name: apicommon.GeneratePodRoleBindingName("test-pcs"), Namespace: "default"}, rb)
@@ -207,13 +208,13 @@ func TestSync(t *testing.T) {
 				},
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(rb).
 			Build()
 		operator := New(cl, scheme)
-		
+
 		pcs := &grovecorev1alpha1.PodCliqueSet{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-pcs",
@@ -221,9 +222,9 @@ func TestSync(t *testing.T) {
 				UID:       pcsUID,
 			},
 		}
-		
+
 		err := operator.Sync(context.Background(), logr.Discard(), pcs)
-		
+
 		// Should not error when rolebinding already exists
 		require.NoError(t, err)
 	})
@@ -235,7 +236,7 @@ func TestDelete(t *testing.T) {
 	_ = grovecorev1alpha1.AddToScheme(scheme)
 	_ = rbacv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
-	
+
 	// Test deleting existing rolebinding
 	t.Run("deletes existing rolebinding", func(t *testing.T) {
 		rb := &rbacv1.RoleBinding{
@@ -244,22 +245,22 @@ func TestDelete(t *testing.T) {
 				Namespace: "default",
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(rb).
 			Build()
 		operator := New(cl, scheme)
-		
+
 		pcsObjMeta := metav1.ObjectMeta{
 			Name:      "test-pcs",
 			Namespace: "default",
 		}
-		
+
 		err := operator.Delete(context.Background(), logr.Discard(), pcsObjMeta)
-		
+
 		require.NoError(t, err)
-		
+
 		// Verify rolebinding was deleted
 		rb = &rbacv1.RoleBinding{}
 		err = cl.Get(context.Background(), client.ObjectKey{Name: apicommon.GeneratePodRoleBindingName("test-pcs"), Namespace: "default"}, rb)
@@ -271,14 +272,14 @@ func TestDelete(t *testing.T) {
 	t.Run("handles non-existent rolebinding", func(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 		operator := New(cl, scheme)
-		
+
 		pcsObjMeta := metav1.ObjectMeta{
 			Name:      "test-pcs",
 			Namespace: "default",
 		}
-		
+
 		err := operator.Delete(context.Background(), logr.Discard(), pcsObjMeta)
-		
+
 		// Should not error when rolebinding doesn't exist
 		require.NoError(t, err)
 	})

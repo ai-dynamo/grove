@@ -20,8 +20,9 @@ import (
 	"testing"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
@@ -42,17 +43,17 @@ func TestCreateOperatorRegistry(t *testing.T) {
 	_ = corev1.AddToScheme(scheme)
 	_ = rbacv1.AddToScheme(scheme)
 	_ = autoscalingv2.AddToScheme(scheme)
-	
+
 	// Test successful registry creation with all operators
 	t.Run("creates registry with all operators", func(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 		mgr := &mockManager{client: cl, scheme: scheme}
 		eventRecorder := record.NewFakeRecorder(10)
-		
+
 		registry := CreateOperatorRegistry(mgr, eventRecorder)
-		
+
 		require.NotNil(t, registry)
-		
+
 		// Verify all expected operators are registered
 		expectedKinds := []component.Kind{
 			component.KindPodClique,
@@ -66,44 +67,44 @@ func TestCreateOperatorRegistry(t *testing.T) {
 			component.KindPodGang,
 			component.KindPodCliqueSetReplica,
 		}
-		
+
 		allOps := registry.GetAllOperators()
 		assert.Len(t, allOps, len(expectedKinds))
-		
+
 		for _, kind := range expectedKinds {
 			op, err := registry.GetOperator(kind)
 			require.NoError(t, err, "operator for kind %s should be registered", kind)
 			assert.NotNil(t, op, "operator for kind %s should not be nil", kind)
 		}
 	})
-	
+
 	// Test verifying specific operator registrations
 	t.Run("verifies key operator registrations", func(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 		mgr := &mockManager{client: cl, scheme: scheme}
 		eventRecorder := record.NewFakeRecorder(10)
-		
+
 		registry := CreateOperatorRegistry(mgr, eventRecorder)
-		
+
 		// Verify PodClique operator
 		pclqOp, err := registry.GetOperator(component.KindPodClique)
 		require.NoError(t, err)
 		assert.NotNil(t, pclqOp)
-		
+
 		// Verify Service operator
 		svcOp, err := registry.GetOperator(component.KindHeadlessService)
 		require.NoError(t, err)
 		assert.NotNil(t, svcOp)
-		
+
 		// Verify RBAC operators
 		roleOp, err := registry.GetOperator(component.KindRole)
 		require.NoError(t, err)
 		assert.NotNil(t, roleOp)
-		
+
 		rbOp, err := registry.GetOperator(component.KindRoleBinding)
 		require.NoError(t, err)
 		assert.NotNil(t, rbOp)
-		
+
 		saOp, err := registry.GetOperator(component.KindServiceAccount)
 		require.NoError(t, err)
 		assert.NotNil(t, saOp)

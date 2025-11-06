@@ -40,12 +40,12 @@ func TestNew(t *testing.T) {
 	// Tests creating a new operator instance
 	scheme := runtime.NewScheme()
 	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
-	
+
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 	eventRecorder := &record.FakeRecorder{}
-	
+
 	operator := New(client, scheme, eventRecorder)
-	
+
 	assert.NotNil(t, operator)
 	resource, ok := operator.(*_resource)
 	assert.True(t, ok)
@@ -57,15 +57,15 @@ func TestNew(t *testing.T) {
 // TestGetExistingResourceNames tests getting existing PodCliqueScalingGroup names
 func TestGetExistingResourceNames(t *testing.T) {
 	tests := []struct {
-		name          string
+		name string
 		// pcsObjMeta is the PodCliqueSet object metadata
-		pcsObjMeta    metav1.ObjectMeta
+		pcsObjMeta metav1.ObjectMeta
 		// existingObjs are the existing objects in the cluster
-		existingObjs  []runtime.Object
+		existingObjs []runtime.Object
 		// expectedNames are the expected resource names
 		expectedNames []string
 		// expectError indicates if an error is expected
-		expectError   bool
+		expectError bool
 	}{
 		{
 			// Tests finding owned PodCliqueScalingGroups
@@ -162,15 +162,15 @@ func TestGetExistingResourceNames(t *testing.T) {
 // TestSync tests the Sync function
 func TestSync(t *testing.T) {
 	tests := []struct {
-		name         string
+		name string
 		// pcs is the PodCliqueSet to sync
-		pcs          *grovecorev1alpha1.PodCliqueSet
+		pcs *grovecorev1alpha1.PodCliqueSet
 		// existingObjs are the existing objects in the cluster
 		existingObjs []runtime.Object
 		// expectError indicates if an error is expected
-		expectError  bool
+		expectError bool
 		// validate performs validation after sync
-		validate     func(*testing.T, client.Client)
+		validate func(*testing.T, client.Client)
 	}{
 		{
 			// Tests creating new PodCliqueScalingGroups
@@ -301,15 +301,15 @@ func TestSync(t *testing.T) {
 // TestDelete tests the Delete function
 func TestDelete(t *testing.T) {
 	tests := []struct {
-		name         string
+		name string
 		// pcsObjMeta is the PodCliqueSet object metadata
-		pcsObjMeta   metav1.ObjectMeta
+		pcsObjMeta metav1.ObjectMeta
 		// existingObjs are the existing objects in the cluster
 		existingObjs []runtime.Object
 		// expectError indicates if an error is expected
-		expectError  bool
+		expectError bool
 		// validate performs validation after deletion
-		validate     func(*testing.T, client.Client)
+		validate func(*testing.T, client.Client)
 	}{
 		{
 			// Tests successful deletion of PodCliqueScalingGroups
@@ -388,9 +388,9 @@ func TestDelete(t *testing.T) {
 // TestGetPodCliqueScalingGroupSelectorLabels tests generating selector labels
 func TestGetPodCliqueScalingGroupSelectorLabels(t *testing.T) {
 	tests := []struct {
-		name           string
+		name string
 		// pcsObjMeta is the PodCliqueSet object metadata
-		pcsObjMeta     metav1.ObjectMeta
+		pcsObjMeta metav1.ObjectMeta
 		// expectedLabels are the expected selector labels
 		expectedLabels map[string]string
 	}{
@@ -412,7 +412,7 @@ func TestGetPodCliqueScalingGroupSelectorLabels(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			result := getPodCliqueScalingGroupSelectorLabels(tc.pcsObjMeta)
-			
+
 			for key, expectedValue := range tc.expectedLabels {
 				assert.Equal(t, expectedValue, result[key])
 			}
@@ -423,15 +423,15 @@ func TestGetPodCliqueScalingGroupSelectorLabels(t *testing.T) {
 // TestBuildResource tests building a PodCliqueScalingGroup resource
 func TestBuildResource(t *testing.T) {
 	tests := []struct {
-		name      string
+		name string
 		// pcs is the PodCliqueSet
-		pcs       *grovecorev1alpha1.PodCliqueSet
+		pcs *grovecorev1alpha1.PodCliqueSet
 		// pcsgCfg is the PCSG configuration
-		pcsgCfg   *grovecorev1alpha1.PodCliqueScalingGroupConfig
+		pcsgCfg *grovecorev1alpha1.PodCliqueScalingGroupConfig
 		// pcsReplica is the PCS replica index
 		pcsReplica int
 		// validate performs validation on the built resource
-		validate  func(*testing.T, *grovecorev1alpha1.PodCliqueScalingGroup)
+		validate func(*testing.T, *grovecorev1alpha1.PodCliqueScalingGroup)
 	}{
 		{
 			// Tests building a basic PodCliqueScalingGroup
@@ -473,7 +473,7 @@ func TestBuildResource(t *testing.T) {
 
 			pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      apicommon.GeneratePodCliqueScalingGroupName(
+					Name: apicommon.GeneratePodCliqueScalingGroupName(
 						apicommon.ResourceNameReplica{Name: tc.pcs.Name, Replica: tc.pcsReplica},
 						tc.pcsgCfg.Name,
 					),

@@ -148,7 +148,7 @@ func TestGetPodCliqueFQNsForPCSNotInPCSG(t *testing.T) {
 			expected: []string{
 				"test-pcs-0-standalone1",
 				"test-pcs-0-standalone2",
-				"test-pcs-1-standalone1", 
+				"test-pcs-1-standalone1",
 				"test-pcs-1-standalone2",
 			},
 		},

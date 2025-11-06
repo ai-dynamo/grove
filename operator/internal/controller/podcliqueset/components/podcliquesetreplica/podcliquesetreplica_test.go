@@ -37,12 +37,12 @@ func TestNew(t *testing.T) {
 	// Tests creating a new operator instance
 	scheme := runtime.NewScheme()
 	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
-	
+
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 	eventRecorder := &record.FakeRecorder{}
-	
+
 	operator := New(client, eventRecorder)
-	
+
 	assert.NotNil(t, operator)
 	resource, ok := operator.(*_resource)
 	assert.True(t, ok)
@@ -55,13 +55,13 @@ func TestGetExistingResourceNames(t *testing.T) {
 	// Tests that GetExistingResourceNames always returns empty slice
 	scheme := runtime.NewScheme()
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
-	
+
 	r := &_resource{
 		client: client,
 	}
-	
+
 	names, err := r.GetExistingResourceNames(context.Background(), logr.Discard(), metav1.ObjectMeta{})
-	
+
 	assert.NoError(t, err)
 	assert.Empty(t, names)
 }
@@ -71,26 +71,26 @@ func TestDelete(t *testing.T) {
 	// Tests that Delete is a no-op
 	scheme := runtime.NewScheme()
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
-	
+
 	r := &_resource{
 		client: client,
 	}
-	
+
 	err := r.Delete(context.Background(), logr.Discard(), metav1.ObjectMeta{})
-	
+
 	assert.NoError(t, err)
 }
 
 // TestSync tests the Sync function
 func TestSync(t *testing.T) {
 	tests := []struct {
-		name         string
+		name string
 		// pcs is the PodCliqueSet to sync
-		pcs          *grovecorev1alpha1.PodCliqueSet
+		pcs *grovecorev1alpha1.PodCliqueSet
 		// existingObjs are the existing objects in the cluster
 		existingObjs []runtime.Object
 		// expectError indicates if an error is expected
-		expectError  bool
+		expectError bool
 	}{
 		{
 			// Tests sync with no replicas
@@ -171,9 +171,9 @@ func TestSync(t *testing.T) {
 // TestIsRollingUpdateInProgress tests the isRollingUpdateInProgress function
 func TestIsRollingUpdateInProgress(t *testing.T) {
 	tests := []struct {
-		name     string
+		name string
 		// pcs is the PodCliqueSet to check
-		pcs      *grovecorev1alpha1.PodCliqueSet
+		pcs *grovecorev1alpha1.PodCliqueSet
 		// expected is the expected result
 		expected bool
 	}{

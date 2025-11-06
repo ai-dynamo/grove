@@ -40,12 +40,12 @@ func TestNew(t *testing.T) {
 	// Tests creating a new operator instance
 	scheme := runtime.NewScheme()
 	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
-	
+
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 	eventRecorder := &record.FakeRecorder{}
-	
+
 	operator := New(client, scheme, eventRecorder)
-	
+
 	assert.NotNil(t, operator)
 	resource, ok := operator.(*_resource)
 	assert.True(t, ok)
@@ -57,11 +57,11 @@ func TestNew(t *testing.T) {
 // TestGetPCSGTemplateNumPods tests calculating the number of pods in a PCSG template
 func TestGetPCSGTemplateNumPods(t *testing.T) {
 	tests := []struct {
-		name     string
+		name string
 		// pcs is the PodCliqueSet
-		pcs      *grovecorev1alpha1.PodCliqueSet
+		pcs *grovecorev1alpha1.PodCliqueSet
 		// pcsg is the PodCliqueScalingGroup
-		pcsg     *grovecorev1alpha1.PodCliqueScalingGroup
+		pcsg *grovecorev1alpha1.PodCliqueScalingGroup
 		// expected is the expected total number of pods
 		expected int
 	}{
@@ -169,11 +169,11 @@ func TestGetPCSGTemplateNumPods(t *testing.T) {
 // TestGetPCSReplicaFromPCSG tests extracting PCS replica index from PCSG labels
 func TestGetPCSReplicaFromPCSG(t *testing.T) {
 	tests := []struct {
-		name        string
+		name string
 		// pcsg is the PodCliqueScalingGroup with labels
-		pcsg        *grovecorev1alpha1.PodCliqueScalingGroup
+		pcsg *grovecorev1alpha1.PodCliqueScalingGroup
 		// expected is the expected replica index
-		expected    int
+		expected int
 		// expectError indicates if an error is expected
 		expectError bool
 	}{
@@ -219,7 +219,7 @@ func TestGetPCSReplicaFromPCSG(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := getPCSReplicaFromPCSG(tc.pcsg)
-			
+
 			if tc.expectError {
 				assert.Error(t, err)
 			} else {
@@ -233,7 +233,7 @@ func TestGetPCSReplicaFromPCSG(t *testing.T) {
 // TestGetPodCliqueSelectorLabels tests generating selector labels for PodCliques
 func TestGetPodCliqueSelectorLabels(t *testing.T) {
 	tests := []struct {
-		name     string
+		name string
 		// pcsgMeta is the PCSG object metadata
 		pcsgMeta metav1.ObjectMeta
 		// expectedLabels are the expected selector labels
@@ -267,7 +267,7 @@ func TestGetPodCliqueSelectorLabels(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			result := getPodCliqueSelectorLabels(tc.pcsgMeta)
-			
+
 			for key, expectedValue := range tc.expectedLabels {
 				assert.Equal(t, expectedValue, result[key])
 			}
@@ -281,9 +281,9 @@ func TestEmptyPodClique(t *testing.T) {
 		Name:      "test-pclq",
 		Namespace: "test-ns",
 	}
-	
+
 	pclq := emptyPodClique(objKey)
-	
+
 	assert.Equal(t, objKey.Name, pclq.Name)
 	assert.Equal(t, objKey.Namespace, pclq.Namespace)
 }
@@ -291,13 +291,13 @@ func TestEmptyPodClique(t *testing.T) {
 // TestAddEnvironmentVariablesToPodContainerSpecs tests adding PCSG env vars to containers
 func TestAddEnvironmentVariablesToPodContainerSpecs(t *testing.T) {
 	tests := []struct {
-		name      string
+		name string
 		// pclq is the PodClique to modify
-		pclq      *grovecorev1alpha1.PodClique
+		pclq *grovecorev1alpha1.PodClique
 		// numPods is the number of pods in the PCSG template
-		numPods   int
+		numPods int
 		// validate performs custom validation on the result
-		validate  func(*testing.T, *grovecorev1alpha1.PodClique)
+		validate func(*testing.T, *grovecorev1alpha1.PodClique)
 	}{
 		{
 			// Tests adding env vars to containers and init containers
@@ -345,15 +345,15 @@ func TestAddEnvironmentVariablesToPodContainerSpecs(t *testing.T) {
 // TestGetExistingResourceNames tests getting existing PodClique names
 func TestGetExistingResourceNames(t *testing.T) {
 	tests := []struct {
-		name          string
+		name string
 		// pcsgObjMeta is the PCSG object metadata
-		pcsgObjMeta   metav1.ObjectMeta
+		pcsgObjMeta metav1.ObjectMeta
 		// existingObjs are the existing objects in the cluster
-		existingObjs  []runtime.Object
+		existingObjs []runtime.Object
 		// expectedNames are the expected resource names
 		expectedNames []string
 		// expectError indicates if an error is expected
-		expectError   bool
+		expectError bool
 	}{
 		{
 			// Tests finding owned PodCliques
@@ -471,15 +471,15 @@ func TestGetExistingResourceNames(t *testing.T) {
 // TestDelete tests deleting PodCliques
 func TestDelete(t *testing.T) {
 	tests := []struct {
-		name         string
+		name string
 		// pcsgObjMeta is the PCSG object metadata
-		pcsgObjMeta  metav1.ObjectMeta
+		pcsgObjMeta metav1.ObjectMeta
 		// existingObjs are the existing objects in the cluster
 		existingObjs []runtime.Object
 		// expectError indicates if an error is expected
-		expectError  bool
+		expectError bool
 		// validate performs validation after deletion
-		validate     func(*testing.T, client.Client)
+		validate func(*testing.T, client.Client)
 	}{
 		{
 			// Tests successful deletion of PodCliques
@@ -520,7 +520,7 @@ func TestDelete(t *testing.T) {
 				},
 			},
 			expectError: false,
-			validate: func(t *testing.T, c client.Client) {
+			validate: func(_ *testing.T, _ client.Client) {
 				// In the fake client, the PodClique might still exist since
 				// the Delete method uses DeleteAllOf which may not work as expected
 				// with the fake client
@@ -564,23 +564,23 @@ func TestDelete(t *testing.T) {
 // TestIdentifyFullyQualifiedStartupDependencyNames tests identifying startup dependencies
 func TestIdentifyFullyQualifiedStartupDependencyNames(t *testing.T) {
 	tests := []struct {
-		name         string
+		name string
 		// pcs is the PodCliqueSet
-		pcs          *grovecorev1alpha1.PodCliqueSet
+		pcs *grovecorev1alpha1.PodCliqueSet
 		// pcsReplica is the PCS replica index
-		pcsReplica   int
+		pcsReplica int
 		// pcsg is the PodCliqueScalingGroup
-		pcsg         *grovecorev1alpha1.PodCliqueScalingGroup
+		pcsg *grovecorev1alpha1.PodCliqueScalingGroup
 		// pcsgReplica is the PCSG replica index
-		pcsgReplica  int
+		pcsgReplica int
 		// pclq is the PodClique
-		pclq         *grovecorev1alpha1.PodClique
+		pclq *grovecorev1alpha1.PodClique
 		// foundAtIndex is the index where the clique was found
 		foundAtIndex int
 		// expected are the expected dependency names
-		expected     []string
+		expected []string
 		// expectError indicates if an error is expected
-		expectError  bool
+		expectError bool
 	}{
 		{
 			// Tests in-order startup for first clique

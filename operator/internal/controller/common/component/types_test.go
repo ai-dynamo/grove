@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -51,35 +52,20 @@ func TestNewOperatorRegistry(t *testing.T) {
 	})
 }
 
-// mockOperator is a mock implementation of the Operator interface for testing.
-type mockOperator[T GroveCustomResourceType] struct{}
-
-func (m *mockOperator[T]) GetExistingResourceNames(ctx interface{}, logger interface{}, objMeta interface{}) ([]string, error) {
-	return []string{"resource1", "resource2"}, nil
-}
-
-func (m *mockOperator[T]) Sync(ctx interface{}, logger interface{}, obj *T) error {
-	return nil
-}
-
-func (m *mockOperator[T]) Delete(ctx interface{}, logger interface{}, objMeta interface{}) error {
-	return nil
-}
-
-// Ensure mockOperator implements Operator interface at compile time
+// Ensure mockOperatorImpl implements Operator interface at compile time
 var _ Operator[grovecorev1alpha1.PodCliqueSet] = (*mockOperatorImpl[grovecorev1alpha1.PodCliqueSet])(nil)
 
 type mockOperatorImpl[T GroveCustomResourceType] struct{}
 
-func (m *mockOperatorImpl[T]) GetExistingResourceNames(ctx context.Context, logger logr.Logger, objMeta metav1.ObjectMeta) ([]string, error) {
+func (m *mockOperatorImpl[T]) GetExistingResourceNames(_ context.Context, _ logr.Logger, _ metav1.ObjectMeta) ([]string, error) {
 	return []string{"resource1", "resource2"}, nil
 }
 
-func (m *mockOperatorImpl[T]) Sync(ctx context.Context, logger logr.Logger, obj *T) error {
+func (m *mockOperatorImpl[T]) Sync(_ context.Context, _ logr.Logger, _ *T) error {
 	return nil
 }
 
-func (m *mockOperatorImpl[T]) Delete(ctx context.Context, logger logr.Logger, objMeta metav1.ObjectMeta) error {
+func (m *mockOperatorImpl[T]) Delete(_ context.Context, _ logr.Logger, _ metav1.ObjectMeta) error {
 	return nil
 }
 
@@ -87,10 +73,10 @@ func (m *mockOperatorImpl[T]) Delete(ctx context.Context, logger logr.Logger, ob
 func TestOperatorRegistryRegister(t *testing.T) {
 	registry := NewOperatorRegistry[grovecorev1alpha1.PodCliqueSet]()
 	operator := &mockOperatorImpl[grovecorev1alpha1.PodCliqueSet]{}
-	
+
 	// Register an operator
 	registry.Register(KindPodClique, operator)
-	
+
 	// Verify it was registered
 	allOps := registry.GetAllOperators()
 	assert.Len(t, allOps, 1)
@@ -101,7 +87,7 @@ func TestOperatorRegistryRegister(t *testing.T) {
 func TestOperatorRegistryGetOperator(t *testing.T) {
 	registry := NewOperatorRegistry[grovecorev1alpha1.PodCliqueSet]()
 	operator := &mockOperatorImpl[grovecorev1alpha1.PodCliqueSet]{}
-	
+
 	// Test getting non-existent operator
 	t.Run("non-existent operator", func(t *testing.T) {
 		op, err := registry.GetOperator(KindPodClique)
@@ -109,11 +95,11 @@ func TestOperatorRegistryGetOperator(t *testing.T) {
 		assert.Nil(t, op)
 		assert.Contains(t, err.Error(), "operator for kind PodClique not found")
 	})
-	
+
 	// Register and retrieve operator
 	t.Run("existing operator", func(t *testing.T) {
 		registry.Register(KindPodClique, operator)
-		
+
 		op, err := registry.GetOperator(KindPodClique)
 		require.NoError(t, err)
 		assert.NotNil(t, op)
@@ -124,19 +110,19 @@ func TestOperatorRegistryGetOperator(t *testing.T) {
 // TestOperatorRegistryGetAllOperators tests retrieving all operators.
 func TestOperatorRegistryGetAllOperators(t *testing.T) {
 	registry := NewOperatorRegistry[grovecorev1alpha1.PodCliqueSet]()
-	
+
 	// Initially empty
 	assert.Empty(t, registry.GetAllOperators())
-	
+
 	// Register multiple operators
 	op1 := &mockOperatorImpl[grovecorev1alpha1.PodCliqueSet]{}
 	op2 := &mockOperatorImpl[grovecorev1alpha1.PodCliqueSet]{}
 	op3 := &mockOperatorImpl[grovecorev1alpha1.PodCliqueSet]{}
-	
+
 	registry.Register(KindPodClique, op1)
 	registry.Register(KindServiceAccount, op2)
 	registry.Register(KindRole, op3)
-	
+
 	allOps := registry.GetAllOperators()
 	assert.Len(t, allOps, 3)
 	assert.Contains(t, allOps, KindPodClique)
@@ -150,16 +136,16 @@ func TestOperatorRegistryGetAllOperators(t *testing.T) {
 // TestOperatorRegistryMultipleRegistrations tests that registering multiple times overwrites.
 func TestOperatorRegistryMultipleRegistrations(t *testing.T) {
 	registry := NewOperatorRegistry[grovecorev1alpha1.PodClique]()
-	
+
 	op1 := &mockOperatorImpl[grovecorev1alpha1.PodClique]{}
 	op2 := &mockOperatorImpl[grovecorev1alpha1.PodClique]{}
-	
+
 	// Register first operator
 	registry.Register(KindPod, op1)
 	retrieved1, err := registry.GetOperator(KindPod)
 	require.NoError(t, err)
 	assert.Equal(t, op1, retrieved1)
-	
+
 	// Register second operator with same kind (should overwrite)
 	registry.Register(KindPod, op2)
 	retrieved2, err := registry.GetOperator(KindPod)

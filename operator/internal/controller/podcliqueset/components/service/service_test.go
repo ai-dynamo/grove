@@ -23,6 +23,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,11 +41,11 @@ func TestNew(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = grovecorev1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
-	
+
 	cl := fake.NewClientBuilder().WithScheme(scheme).Build()
-	
+
 	operator := New(cl, scheme)
-	
+
 	assert.NotNil(t, operator)
 }
 
@@ -53,24 +54,24 @@ func TestGetExistingResourceNames(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = grovecorev1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
-	
+
 	// Test with no existing services
 	t.Run("no existing services", func(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 		operator := New(cl, scheme)
-		
+
 		pcsObjMeta := metav1.ObjectMeta{
 			Name:      "test-pcs",
 			Namespace: "default",
 			UID:       "pcs-uid-123",
 		}
-		
+
 		names, err := operator.GetExistingResourceNames(context.Background(), logr.Discard(), pcsObjMeta)
-		
+
 		require.NoError(t, err)
 		assert.Empty(t, names)
 	})
-	
+
 	// Test with existing services owned by PCS
 	t.Run("existing owned services", func(t *testing.T) {
 		pcsUID := types.UID("pcs-uid-123")
@@ -79,10 +80,10 @@ func TestGetExistingResourceNames(t *testing.T) {
 				Name:      "test-pcs-0",
 				Namespace: "default",
 				Labels: map[string]string{
-					apicommon.LabelManagedByKey:                          apicommon.LabelManagedByValue,
-					apicommon.LabelPartOfKey:                             "test-pcs",
-					apicommon.LabelComponentKey:                          apicommon.LabelComponentNamePodCliqueSetReplicaHeadlessService,
-					apicommon.LabelPodCliqueSetReplicaIndex:              "0",
+					apicommon.LabelManagedByKey:             apicommon.LabelManagedByValue,
+					apicommon.LabelPartOfKey:                "test-pcs",
+					apicommon.LabelComponentKey:             apicommon.LabelComponentNamePodCliqueSetReplicaHeadlessService,
+					apicommon.LabelPodCliqueSetReplicaIndex: "0",
 				},
 				OwnerReferences: []metav1.OwnerReference{
 					{
@@ -100,10 +101,10 @@ func TestGetExistingResourceNames(t *testing.T) {
 				Name:      "test-pcs-1",
 				Namespace: "default",
 				Labels: map[string]string{
-					apicommon.LabelManagedByKey:                          apicommon.LabelManagedByValue,
-					apicommon.LabelPartOfKey:                             "test-pcs",
-					apicommon.LabelComponentKey:                          apicommon.LabelComponentNamePodCliqueSetReplicaHeadlessService,
-					apicommon.LabelPodCliqueSetReplicaIndex:              "1",
+					apicommon.LabelManagedByKey:             apicommon.LabelManagedByValue,
+					apicommon.LabelPartOfKey:                "test-pcs",
+					apicommon.LabelComponentKey:             apicommon.LabelComponentNamePodCliqueSetReplicaHeadlessService,
+					apicommon.LabelPodCliqueSetReplicaIndex: "1",
 				},
 				OwnerReferences: []metav1.OwnerReference{
 					{
@@ -116,21 +117,21 @@ func TestGetExistingResourceNames(t *testing.T) {
 				},
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(svc1, svc2).
 			Build()
 		operator := New(cl, scheme)
-		
+
 		pcsObjMeta := metav1.ObjectMeta{
 			Name:      "test-pcs",
 			Namespace: "default",
 			UID:       pcsUID,
 		}
-		
+
 		names, err := operator.GetExistingResourceNames(context.Background(), logr.Discard(), pcsObjMeta)
-		
+
 		require.NoError(t, err)
 		assert.Len(t, names, 2)
 		assert.Contains(t, names, "test-pcs-0")
@@ -144,10 +145,10 @@ func TestGetExistingResourceNames(t *testing.T) {
 				Name:      "test-pcs-0",
 				Namespace: "default",
 				Labels: map[string]string{
-					apicommon.LabelManagedByKey:                          apicommon.LabelManagedByValue,
-					apicommon.LabelPartOfKey:                             "test-pcs",
-					apicommon.LabelComponentKey:                          apicommon.LabelComponentNamePodCliqueSetReplicaHeadlessService,
-					apicommon.LabelPodCliqueSetReplicaIndex:              "0",
+					apicommon.LabelManagedByKey:             apicommon.LabelManagedByValue,
+					apicommon.LabelPartOfKey:                "test-pcs",
+					apicommon.LabelComponentKey:             apicommon.LabelComponentNamePodCliqueSetReplicaHeadlessService,
+					apicommon.LabelPodCliqueSetReplicaIndex: "0",
 				},
 				OwnerReferences: []metav1.OwnerReference{
 					{
@@ -160,21 +161,21 @@ func TestGetExistingResourceNames(t *testing.T) {
 				},
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(svc).
 			Build()
 		operator := New(cl, scheme)
-		
+
 		pcsObjMeta := metav1.ObjectMeta{
 			Name:      "test-pcs",
 			Namespace: "default",
 			UID:       "pcs-uid-123",
 		}
-		
+
 		names, err := operator.GetExistingResourceNames(context.Background(), logr.Discard(), pcsObjMeta)
-		
+
 		require.NoError(t, err)
 		// Should not include the service owned by another PCS
 		assert.Empty(t, names)
@@ -186,12 +187,12 @@ func TestSync(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = grovecorev1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
-	
+
 	// Test creating new services
 	t.Run("creates new services", func(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 		operator := New(cl, scheme)
-		
+
 		pcs := &grovecorev1alpha1.PodCliqueSet{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-pcs",
@@ -202,11 +203,11 @@ func TestSync(t *testing.T) {
 				Replicas: 2,
 			},
 		}
-		
+
 		err := operator.Sync(context.Background(), logr.Discard(), pcs)
-		
+
 		require.NoError(t, err)
-		
+
 		// Verify services were created
 		for i := 0; i < 2; i++ {
 			svc := &corev1.Service{}
@@ -231,7 +232,7 @@ func TestSync(t *testing.T) {
 	t.Run("creates services with PublishNotReadyAddresses", func(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 		operator := New(cl, scheme)
-		
+
 		pcs := &grovecorev1alpha1.PodCliqueSet{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-pcs",
@@ -247,11 +248,11 @@ func TestSync(t *testing.T) {
 				},
 			},
 		}
-		
+
 		err := operator.Sync(context.Background(), logr.Discard(), pcs)
-		
+
 		require.NoError(t, err)
-		
+
 		// Verify service was created with PublishNotReadyAddresses
 		svc := &corev1.Service{}
 		err = cl.Get(context.Background(), client.ObjectKey{Name: "test-pcs-0", Namespace: "default"}, svc)
@@ -272,17 +273,17 @@ func TestSync(t *testing.T) {
 				},
 			},
 			Spec: corev1.ServiceSpec{
-				ClusterIP: "None",
+				ClusterIP:                "None",
 				PublishNotReadyAddresses: false,
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(svc).
 			Build()
 		operator := New(cl, scheme)
-		
+
 		pcs := &grovecorev1alpha1.PodCliqueSet{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-pcs",
@@ -298,11 +299,11 @@ func TestSync(t *testing.T) {
 				},
 			},
 		}
-		
+
 		err := operator.Sync(context.Background(), logr.Discard(), pcs)
-		
+
 		require.NoError(t, err)
-		
+
 		// Verify service was updated
 		updatedSvc := &corev1.Service{}
 		err = cl.Get(context.Background(), client.ObjectKey{Name: "test-pcs-0", Namespace: "default"}, updatedSvc)
@@ -316,7 +317,7 @@ func TestDelete(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = grovecorev1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
-	
+
 	// Test deleting existing services
 	t.Run("deletes existing services", func(t *testing.T) {
 		svc1 := &corev1.Service{
@@ -324,9 +325,9 @@ func TestDelete(t *testing.T) {
 				Name:      "test-pcs-0",
 				Namespace: "default",
 				Labels: map[string]string{
-					apicommon.LabelManagedByKey:                          apicommon.LabelManagedByValue,
-					apicommon.LabelPartOfKey:                             "test-pcs",
-					apicommon.LabelComponentKey:                          apicommon.LabelComponentNamePodCliqueSetReplicaHeadlessService,
+					apicommon.LabelManagedByKey: apicommon.LabelManagedByValue,
+					apicommon.LabelPartOfKey:    "test-pcs",
+					apicommon.LabelComponentKey: apicommon.LabelComponentNamePodCliqueSetReplicaHeadlessService,
 				},
 			},
 		}
@@ -335,28 +336,28 @@ func TestDelete(t *testing.T) {
 				Name:      "test-pcs-1",
 				Namespace: "default",
 				Labels: map[string]string{
-					apicommon.LabelManagedByKey:                          apicommon.LabelManagedByValue,
-					apicommon.LabelPartOfKey:                             "test-pcs",
-					apicommon.LabelComponentKey:                          apicommon.LabelComponentNamePodCliqueSetReplicaHeadlessService,
+					apicommon.LabelManagedByKey: apicommon.LabelManagedByValue,
+					apicommon.LabelPartOfKey:    "test-pcs",
+					apicommon.LabelComponentKey: apicommon.LabelComponentNamePodCliqueSetReplicaHeadlessService,
 				},
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(svc1, svc2).
 			Build()
 		operator := New(cl, scheme)
-		
+
 		pcsObjMeta := metav1.ObjectMeta{
 			Name:      "test-pcs",
 			Namespace: "default",
 		}
-		
+
 		err := operator.Delete(context.Background(), logr.Discard(), pcsObjMeta)
-		
+
 		require.NoError(t, err)
-		
+
 		// Verify services were deleted
 		svcList := &corev1.ServiceList{}
 		err = cl.List(context.Background(), svcList, client.InNamespace("default"))
@@ -368,14 +369,14 @@ func TestDelete(t *testing.T) {
 	t.Run("handles non-existent services", func(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 		operator := New(cl, scheme)
-		
+
 		pcsObjMeta := metav1.ObjectMeta{
 			Name:      "test-pcs",
 			Namespace: "default",
 		}
-		
+
 		err := operator.Delete(context.Background(), logr.Discard(), pcsObjMeta)
-		
+
 		// Should not error when services don't exist
 		require.NoError(t, err)
 	})

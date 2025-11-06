@@ -64,10 +64,10 @@ func TestTriggerDeletionFlow(t *testing.T) {
 			mockSetup: func(registry *mockOperatorRegistry) {
 				// Mock pod operator
 				podOp := &mockOperator{
-					deleteFunc: func(ctx context.Context, logger logr.Logger, objMeta metav1.ObjectMeta) error {
+					deleteFunc: func(_ context.Context, _ logr.Logger, _ metav1.ObjectMeta) error {
 						return nil
 					},
-					getExistingResourceNamesFunc: func(ctx context.Context, logger logr.Logger, objMeta metav1.ObjectMeta) ([]string, error) {
+					getExistingResourceNamesFunc: func(_ context.Context, _ logr.Logger, _ metav1.ObjectMeta) ([]string, error) {
 						return []string{}, nil // No resources left
 					},
 				}
@@ -88,10 +88,10 @@ func TestTriggerDeletionFlow(t *testing.T) {
 			mockSetup: func(registry *mockOperatorRegistry) {
 				// Mock pod operator
 				podOp := &mockOperator{
-					deleteFunc: func(ctx context.Context, logger logr.Logger, objMeta metav1.ObjectMeta) error {
+					deleteFunc: func(_ context.Context, _ logr.Logger, _ metav1.ObjectMeta) error {
 						return nil
 					},
-					getExistingResourceNamesFunc: func(ctx context.Context, logger logr.Logger, objMeta metav1.ObjectMeta) ([]string, error) {
+					getExistingResourceNamesFunc: func(_ context.Context, _ logr.Logger, _ metav1.ObjectMeta) ([]string, error) {
 						return []string{"pod-1", "pod-2"}, nil // Resources still exist
 					},
 				}
@@ -112,7 +112,7 @@ func TestTriggerDeletionFlow(t *testing.T) {
 			mockSetup: func(registry *mockOperatorRegistry) {
 				// Mock pod operator
 				podOp := &mockOperator{
-					deleteFunc: func(ctx context.Context, logger logr.Logger, objMeta metav1.ObjectMeta) error {
+					deleteFunc: func(_ context.Context, _ logr.Logger, _ metav1.ObjectMeta) error {
 						return fmt.Errorf("failed to delete pod")
 					},
 				}

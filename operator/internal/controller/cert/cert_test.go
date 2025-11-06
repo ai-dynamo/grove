@@ -31,7 +31,7 @@ func TestGetWebhooks(t *testing.T) {
 	// Test with authorizer disabled
 	t.Run("authorizer disabled", func(t *testing.T) {
 		webhooks := getWebhooks(false)
-		
+
 		require.Len(t, webhooks, 2)
 		// Check that defaulting and validating webhooks are present
 		assert.Equal(t, cert.Mutating, webhooks[0].Type)
@@ -41,7 +41,7 @@ func TestGetWebhooks(t *testing.T) {
 	// Test with authorizer enabled
 	t.Run("authorizer enabled", func(t *testing.T) {
 		webhooks := getWebhooks(true)
-		
+
 		require.Len(t, webhooks, 3)
 		// Check that all three webhooks are present
 		assert.Equal(t, cert.Mutating, webhooks[0].Type)
@@ -60,7 +60,7 @@ func TestGetOperatorNamespace(t *testing.T) {
 		// /var/run/secrets/kubernetes.io/serviceaccount/namespace,
 		// which won't exist in a test environment, we expect an error
 		_, err := getOperatorNamespace()
-		
+
 		// This is expected to fail in test environment
 		if err != nil {
 			assert.Error(t, err)
@@ -74,16 +74,16 @@ func TestWaitTillWebhookCertsReady(t *testing.T) {
 	t.Run("channel closed immediately", func(t *testing.T) {
 		certsReady := make(chan struct{})
 		close(certsReady)
-		
+
 		logger := logr.Discard()
-		
+
 		// This should return immediately
 		done := make(chan struct{})
 		go func() {
 			WaitTillWebhookCertsReady(logger, certsReady)
 			close(done)
 		}()
-		
+
 		select {
 		case <-done:
 			// Success - function returned
@@ -96,13 +96,13 @@ func TestWaitTillWebhookCertsReady(t *testing.T) {
 	t.Run("channel closed after delay", func(t *testing.T) {
 		certsReady := make(chan struct{})
 		logger := logr.Discard()
-		
+
 		done := make(chan struct{})
 		go func() {
 			WaitTillWebhookCertsReady(logger, certsReady)
 			close(done)
 		}()
-		
+
 		// Ensure it's still waiting
 		select {
 		case <-done:
@@ -110,10 +110,10 @@ func TestWaitTillWebhookCertsReady(t *testing.T) {
 		case <-time.After(100 * time.Millisecond):
 			// Good, still waiting
 		}
-		
+
 		// Now close the channel
 		close(certsReady)
-		
+
 		// Should return now
 		select {
 		case <-done:

@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -37,9 +38,9 @@ func TestGetPodGangSelectorLabels(t *testing.T) {
 			Name:      "test-pcs",
 			Namespace: "default",
 		}
-		
+
 		labels := GetPodGangSelectorLabels(pcsObjMeta)
-		
+
 		// Should include part-of label
 		assert.Equal(t, "test-pcs", labels[apicommon.LabelPartOfKey])
 		// Should include component label
@@ -54,9 +55,9 @@ func TestGetPodGangSelectorLabels(t *testing.T) {
 			Name:      "my-workload",
 			Namespace: "production",
 		}
-		
+
 		labels := GetPodGangSelectorLabels(pcsObjMeta)
-		
+
 		assert.Equal(t, "my-workload", labels[apicommon.LabelPartOfKey])
 		assert.Equal(t, apicommon.LabelComponentNamePodGang, labels[apicommon.LabelComponentKey])
 	})
@@ -66,7 +67,7 @@ func TestGetPodGangSelectorLabels(t *testing.T) {
 func TestGetPodGang(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = groveschedulerv1alpha1.AddToScheme(scheme)
-	
+
 	// Test successful retrieval
 	t.Run("successful retrieval", func(t *testing.T) {
 		podGang := &groveschedulerv1alpha1.PodGang{
@@ -75,14 +76,14 @@ func TestGetPodGang(t *testing.T) {
 				Namespace: "default",
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(podGang).
 			Build()
-		
+
 		result, err := GetPodGang(context.Background(), cl, "test-podgang", "default")
-		
+
 		require.NoError(t, err)
 		assert.NotNil(t, result)
 		assert.Equal(t, "test-podgang", result.Name)
@@ -94,9 +95,9 @@ func TestGetPodGang(t *testing.T) {
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			Build()
-		
+
 		result, err := GetPodGang(context.Background(), cl, "nonexistent", "default")
-		
+
 		assert.Error(t, err)
 		assert.Nil(t, result)
 	})
@@ -109,14 +110,14 @@ func TestGetPodGang(t *testing.T) {
 				Namespace: "production",
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(podGang).
 			Build()
-		
+
 		result, err := GetPodGang(context.Background(), cl, "prod-podgang", "production")
-		
+
 		require.NoError(t, err)
 		assert.Equal(t, "production", result.Namespace)
 	})
@@ -129,15 +130,15 @@ func TestGetPodGang(t *testing.T) {
 				Namespace: "default",
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(podGang).
 			Build()
-		
+
 		// Try to fetch from wrong namespace
 		result, err := GetPodGang(context.Background(), cl, "test-podgang", "production")
-		
+
 		assert.Error(t, err)
 		assert.Nil(t, result)
 	})

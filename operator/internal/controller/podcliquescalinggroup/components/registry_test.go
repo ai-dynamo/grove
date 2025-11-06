@@ -21,6 +21,7 @@ import (
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -36,22 +37,22 @@ func TestCreateOperatorRegistry(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = grovecorev1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
-	
+
 	// Test successful registry creation
 	t.Run("creates registry with podclique operator", func(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 		mgr := &mockManager{client: cl, scheme: scheme}
 		eventRecorder := record.NewFakeRecorder(10)
-		
+
 		registry := CreateOperatorRegistry(mgr, eventRecorder)
-		
+
 		require.NotNil(t, registry)
-		
+
 		// Verify PodClique operator is registered
 		pclqOp, err := registry.GetOperator(component.KindPodClique)
 		require.NoError(t, err)
 		assert.NotNil(t, pclqOp)
-		
+
 		// Verify only one operator is registered
 		allOps := registry.GetAllOperators()
 		assert.Len(t, allOps, 1)

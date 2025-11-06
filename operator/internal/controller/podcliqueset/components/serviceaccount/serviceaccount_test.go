@@ -22,6 +22,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -39,11 +40,11 @@ func TestNew(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = grovecorev1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
-	
+
 	cl := fake.NewClientBuilder().WithScheme(scheme).Build()
-	
+
 	operator := New(cl, scheme)
-	
+
 	assert.NotNil(t, operator)
 }
 
@@ -52,24 +53,24 @@ func TestGetExistingResourceNames(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = grovecorev1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
-	
+
 	// Test with no existing service accounts
 	t.Run("no existing service accounts", func(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 		operator := New(cl, scheme)
-		
+
 		pcsObjMeta := metav1.ObjectMeta{
 			Name:      "test-pcs",
 			Namespace: "default",
 			UID:       "pcs-uid-123",
 		}
-		
+
 		names, err := operator.GetExistingResourceNames(context.Background(), logr.Discard(), pcsObjMeta)
-		
+
 		require.NoError(t, err)
 		assert.Empty(t, names)
 	})
-	
+
 	// Test with existing service account owned by PCS
 	t.Run("existing owned service account", func(t *testing.T) {
 		pcsUID := types.UID("pcs-uid-123")
@@ -88,21 +89,21 @@ func TestGetExistingResourceNames(t *testing.T) {
 				},
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(sa).
 			Build()
 		operator := New(cl, scheme)
-		
+
 		pcsObjMeta := metav1.ObjectMeta{
 			Name:      "test-pcs",
 			Namespace: "default",
 			UID:       pcsUID,
 		}
-		
+
 		names, err := operator.GetExistingResourceNames(context.Background(), logr.Discard(), pcsObjMeta)
-		
+
 		require.NoError(t, err)
 		assert.Len(t, names, 1)
 		assert.Equal(t, "test-pcs", names[0])
@@ -125,21 +126,21 @@ func TestGetExistingResourceNames(t *testing.T) {
 				},
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(sa).
 			Build()
 		operator := New(cl, scheme)
-		
+
 		pcsObjMeta := metav1.ObjectMeta{
 			Name:      "test-pcs",
 			Namespace: "default",
 			UID:       "pcs-uid-123",
 		}
-		
+
 		names, err := operator.GetExistingResourceNames(context.Background(), logr.Discard(), pcsObjMeta)
-		
+
 		require.NoError(t, err)
 		// Should not include the SA owned by another PCS
 		assert.Empty(t, names)
@@ -151,12 +152,12 @@ func TestSync(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = grovecorev1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
-	
+
 	// Test creating new service account
 	t.Run("creates new service account", func(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 		operator := New(cl, scheme)
-		
+
 		pcs := &grovecorev1alpha1.PodCliqueSet{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-pcs",
@@ -164,11 +165,11 @@ func TestSync(t *testing.T) {
 				UID:       types.UID("pcs-uid-123"),
 			},
 		}
-		
+
 		err := operator.Sync(context.Background(), logr.Discard(), pcs)
-		
+
 		require.NoError(t, err)
-		
+
 		// Verify service account was created
 		sa := &corev1.ServiceAccount{}
 		err = cl.Get(context.Background(), client.ObjectKey{Name: "test-pcs", Namespace: "default"}, sa)
@@ -188,13 +189,13 @@ func TestSync(t *testing.T) {
 				Namespace: "default",
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(sa).
 			Build()
 		operator := New(cl, scheme)
-		
+
 		pcs := &grovecorev1alpha1.PodCliqueSet{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-pcs",
@@ -202,11 +203,11 @@ func TestSync(t *testing.T) {
 				UID:       pcsUID,
 			},
 		}
-		
+
 		err := operator.Sync(context.Background(), logr.Discard(), pcs)
-		
+
 		require.NoError(t, err)
-		
+
 		// Verify owner reference was added
 		updatedSA := &corev1.ServiceAccount{}
 		err = cl.Get(context.Background(), client.ObjectKey{Name: "test-pcs", Namespace: "default"}, updatedSA)
@@ -220,7 +221,7 @@ func TestDelete(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = grovecorev1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
-	
+
 	// Test deleting existing service account
 	t.Run("deletes existing service account", func(t *testing.T) {
 		sa := &corev1.ServiceAccount{
@@ -229,22 +230,22 @@ func TestDelete(t *testing.T) {
 				Namespace: "default",
 			},
 		}
-		
+
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(sa).
 			Build()
 		operator := New(cl, scheme)
-		
+
 		pcsObjMeta := metav1.ObjectMeta{
 			Name:      "test-pcs",
 			Namespace: "default",
 		}
-		
+
 		err := operator.Delete(context.Background(), logr.Discard(), pcsObjMeta)
-		
+
 		require.NoError(t, err)
-		
+
 		// Verify service account was deleted
 		sa = &corev1.ServiceAccount{}
 		err = cl.Get(context.Background(), client.ObjectKey{Name: "test-pcs", Namespace: "default"}, sa)
@@ -256,14 +257,14 @@ func TestDelete(t *testing.T) {
 	t.Run("handles non-existent service account", func(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 		operator := New(cl, scheme)
-		
+
 		pcsObjMeta := metav1.ObjectMeta{
 			Name:      "test-pcs",
 			Namespace: "default",
 		}
-		
+
 		err := operator.Delete(context.Background(), logr.Discard(), pcsObjMeta)
-		
+
 		// Should not error when service account doesn't exist
 		require.NoError(t, err)
 	})

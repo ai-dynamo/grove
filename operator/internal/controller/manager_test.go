@@ -328,17 +328,17 @@ type mockWebhookServer struct {
 	mux     *http.ServeMux
 }
 
-func (w *mockWebhookServer) Register(path string, hook http.Handler) {
+func (w *mockWebhookServer) Register(_ string, _ http.Handler) {
 	// No-op for testing
 }
 
-func (w *mockWebhookServer) Start(ctx context.Context) error {
+func (w *mockWebhookServer) Start(_ context.Context) error {
 	w.started = true
 	return nil
 }
 
 func (w *mockWebhookServer) StartedChecker() healthz.Checker {
-	return func(req *http.Request) error {
+	return func(_ *http.Request) error {
 		if !w.started {
 			return errors.New("webhook server not started")
 		}
@@ -552,11 +552,11 @@ func TestRegisterControllersAndWebhooks(t *testing.T) {
 				tc.waitFn(logger, ch)
 			}
 		}
-		registerControllersWithMgr = func(m ctrl.Manager, cfg configv1alpha1.ControllerConfiguration) error {
+		registerControllersWithMgr = func(_ ctrl.Manager, _ configv1alpha1.ControllerConfiguration) error {
 			controllersCalled = true
 			return tc.controllerErr
 		}
-		registerWebhooksWithMgr = func(m ctrl.Manager, cfg configv1alpha1.AuthorizerConfig) error {
+		registerWebhooksWithMgr = func(_ ctrl.Manager, _ configv1alpha1.AuthorizerConfig) error {
 			webhooksCalled = true
 			return tc.webhookErr
 		}

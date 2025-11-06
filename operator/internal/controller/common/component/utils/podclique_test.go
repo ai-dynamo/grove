@@ -341,8 +341,8 @@ func TestIsPCLQUpdateInProgress(t *testing.T) {
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
 					RollingUpdateProgress: &grovecorev1alpha1.PodCliqueRollingUpdateProgress{
-					UpdateStartedAt:   metav1.Now(),
-					UpdateEndedAt: &metav1.Time{Time: metav1.Now().Time},
+						UpdateStartedAt: metav1.Now(),
+						UpdateEndedAt:   &metav1.Time{Time: metav1.Now().Time},
 					},
 				},
 			},
@@ -396,8 +396,8 @@ func TestIsLastPCLQUpdateCompleted(t *testing.T) {
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
 					RollingUpdateProgress: &grovecorev1alpha1.PodCliqueRollingUpdateProgress{
-					UpdateStartedAt:   metav1.Now(),
-					UpdateEndedAt: &metav1.Time{Time: metav1.Now().Time},
+						UpdateStartedAt: metav1.Now(),
+						UpdateEndedAt:   &metav1.Time{Time: metav1.Now().Time},
 					},
 				},
 			},
