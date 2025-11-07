@@ -18,6 +18,7 @@ package utils
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -32,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer/yaml"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	yamlutil "k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/discovery"
@@ -66,7 +68,8 @@ func ApplyYAMLFile(ctx context.Context, yamlFilePath string, namespace string, r
 
 // WaitForPods waits for pods to be ready in the specified namespaces
 // labelSelector is optional (pass empty string for all pods), timeout of 0 defaults to 5 minutes, interval of 0 defaults to 5 seconds
-func WaitForPods(ctx context.Context, restConfig *rest.Config, namespaces []string, labelSelector string, timeout time.Duration, interval time.Duration, logger *Logger) error {
+// expectedCount is the expected number of pods (pass 0 to skip count validation)
+func WaitForPods(ctx context.Context, restConfig *rest.Config, namespaces []string, labelSelector string, expectedCount int, timeout time.Duration, interval time.Duration, logger *Logger) error {
 	clientset, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create clientset: %w", err)
@@ -108,6 +111,12 @@ func WaitForPods(ctx context.Context, restConfig *rest.Config, namespaces []stri
 
 		if totalPods == 0 {
 			logger.Debug("⏳ No pods found yet, resources may still be creating pods...")
+			return false, nil
+		}
+
+		// Verify expected count if specified
+		if expectedCount > 0 && totalPods != expectedCount {
+			logger.Debugf("⏳ Expected %d pods but found %d pods", expectedCount, totalPods)
 			return false, nil
 		}
 
@@ -284,8 +293,9 @@ func updateResource(ctx context.Context, dynamicClient dynamic.Interface, gvr sc
 }
 
 // WaitForPodsInNamespace waits for all pods in a namespace to be ready
-func WaitForPodsInNamespace(ctx context.Context, namespace string, restConfig *rest.Config, timeout time.Duration, interval time.Duration, logger *Logger) error {
-	return WaitForPods(ctx, restConfig, []string{namespace}, "", timeout, interval, logger)
+// expectedCount is the expected number of pods (pass 0 to skip count validation)
+func WaitForPodsInNamespace(ctx context.Context, namespace string, restConfig *rest.Config, expectedCount int, timeout time.Duration, interval time.Duration, logger *Logger) error {
+	return WaitForPods(ctx, restConfig, []string{namespace}, "", expectedCount, timeout, interval, logger)
 }
 
 // getGVRFromGVK converts a GroupVersionKind to GroupVersionResource using REST mapper
@@ -299,6 +309,11 @@ func getGVRFromGVK(restMapper meta.RESTMapper, gvk schema.GroupVersionKind) (sch
 
 // isPodReady checks if a pod is ready
 func isPodReady(pod *v1.Pod) bool {
+	// First check that the pod is in Running phase
+	if pod.Status.Phase != v1.PodRunning {
+		return false
+	}
+	// Then check that the Ready condition is true
 	for _, condition := range pod.Status.Conditions {
 		if condition.Type == v1.PodReady && condition.Status == v1.ConditionTrue {
 			return true
@@ -324,5 +339,179 @@ func CordonNode(ctx context.Context, clientset kubernetes.Interface, nodeName st
 	if err != nil {
 		return fmt.Errorf("failed to update node %s: %w", nodeName, err)
 	}
+	return nil
+}
+
+// ListPods lists pods in a namespace with an optional label selector
+func ListPods(ctx context.Context, clientset kubernetes.Interface, namespace string, labelSelector string) (*v1.PodList, error) {
+	pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pods in namespace %s: %w", namespace, err)
+	}
+	return pods, nil
+}
+
+// WaitForPodCount waits for a specific number of pods to be created with the given label selector
+// Returns the pod list once the expected count is reached
+func WaitForPodCount(ctx context.Context, clientset kubernetes.Interface, namespace string, labelSelector string, expectedCount int, timeout time.Duration, interval time.Duration) (*v1.PodList, error) {
+	var pods *v1.PodList
+	err := PollForCondition(ctx, timeout, interval, func() (bool, error) {
+		var err error
+		pods, err = ListPods(ctx, clientset, namespace, labelSelector)
+		if err != nil {
+			return false, err
+		}
+		return len(pods.Items) == expectedCount, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to wait for %d pods with selector %q in namespace %s: %w", expectedCount, labelSelector, namespace, err)
+	}
+	return pods, nil
+}
+
+// PodPhaseCount holds counts of pods by phase
+type PodPhaseCount struct {
+	Running int
+	Pending int
+	Failed  int
+	Unknown int
+	Total   int
+}
+
+// CountPodsByPhase counts pods by their phase and returns a PodPhaseCount
+func CountPodsByPhase(pods *v1.PodList) PodPhaseCount {
+	count := PodPhaseCount{
+		Total: len(pods.Items),
+	}
+	for _, pod := range pods.Items {
+		switch pod.Status.Phase {
+		case v1.PodRunning:
+			count.Running++
+		case v1.PodPending:
+			count.Pending++
+		case v1.PodFailed:
+			count.Failed++
+		case v1.PodUnknown:
+			count.Unknown++
+		}
+	}
+	return count
+}
+
+// CountReadyPods counts the number of ready pods (Running + Ready condition)
+func CountReadyPods(pods *v1.PodList) int {
+	readyCount := 0
+	for _, pod := range pods.Items {
+		if isPodReady(&pod) {
+			readyCount++
+		}
+	}
+	return readyCount
+}
+
+// VerifyPodPhases verifies that the pod counts match the expected values
+// Pass -1 for any count you want to skip verification
+func VerifyPodPhases(pods *v1.PodList, expectedRunning, expectedPending int) error {
+	count := CountPodsByPhase(pods)
+
+	if expectedRunning >= 0 && count.Running != expectedRunning {
+		return fmt.Errorf("expected %d running pods but found %d", expectedRunning, count.Running)
+	}
+
+	if expectedPending >= 0 && count.Pending != expectedPending {
+		return fmt.Errorf("expected %d pending pods but found %d", expectedPending, count.Pending)
+	}
+
+	return nil
+}
+
+// WaitForPodCountAndPhases waits for pods to reach specific total count and phase counts
+// Pass -1 for any count you want to skip verification
+func WaitForPodCountAndPhases(ctx context.Context, clientset kubernetes.Interface, namespace, labelSelector string, expectedTotal, expectedRunning, expectedPending int, timeout, interval time.Duration) error {
+	return PollForCondition(ctx, timeout, interval, func() (bool, error) {
+		pods, err := ListPods(ctx, clientset, namespace, labelSelector)
+		if err != nil {
+			return false, err
+		}
+
+		count := CountPodsByPhase(pods)
+
+		totalMatch := expectedTotal < 0 || count.Total == expectedTotal
+		runningMatch := expectedRunning < 0 || count.Running == expectedRunning
+		pendingMatch := expectedPending < 0 || count.Pending == expectedPending
+
+		return totalMatch && runningMatch && pendingMatch, nil
+	})
+}
+
+// ScalePodCliqueScalingGroup scales a PodCliqueScalingGroup to the specified replica count
+// It waits for the PCSG to exist before scaling
+func ScalePodCliqueScalingGroup(ctx context.Context, restConfig *rest.Config, namespace, name string, replicas int, timeout, interval time.Duration) error {
+	dynamicClient, err := dynamic.NewForConfig(restConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+
+	return ScalePodCliqueScalingGroupWithClient(ctx, dynamicClient, namespace, name, replicas, timeout, interval)
+}
+
+// ScalePodCliqueScalingGroupWithClient scales a PodCliqueScalingGroup using an existing dynamic client
+// It waits for the PCSG to exist before scaling
+func ScalePodCliqueScalingGroupWithClient(ctx context.Context, dynamicClient dynamic.Interface, namespace, name string, replicas int, timeout, interval time.Duration) error {
+	pcsgGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquescalinggroups"}
+
+	// Wait for PCSG to exist
+	err := PollForCondition(ctx, timeout, interval, func() (bool, error) {
+		_, err := dynamicClient.Resource(pcsgGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			if errors.IsNotFound(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to find PodCliqueScalingGroup %s: %w", name, err)
+	}
+
+	// Scale the PCSG
+	return scaleCRD(ctx, dynamicClient, pcsgGVR, namespace, name, replicas)
+}
+
+// ScalePodCliqueSet scales a PodCliqueSet to the specified replica count
+func ScalePodCliqueSet(ctx context.Context, restConfig *rest.Config, namespace, name string, replicas int) error {
+	dynamicClient, err := dynamic.NewForConfig(restConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+
+	return ScalePodCliqueSetWithClient(ctx, dynamicClient, namespace, name, replicas)
+}
+
+// ScalePodCliqueSetWithClient scales a PodCliqueSet using an existing dynamic client
+func ScalePodCliqueSetWithClient(ctx context.Context, dynamicClient dynamic.Interface, namespace, name string, replicas int) error {
+	pcsGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquesets"}
+	return scaleCRD(ctx, dynamicClient, pcsGVR, namespace, name, replicas)
+}
+
+// scaleCRD is a helper function that patches the replicas field of a custom resource
+func scaleCRD(ctx context.Context, dynamicClient dynamic.Interface, gvr schema.GroupVersionResource, namespace, name string, replicas int) error {
+	scalePatch := map[string]interface{}{
+		"spec": map[string]interface{}{
+			"replicas": replicas,
+		},
+	}
+	patchBytes, err := json.Marshal(scalePatch)
+	if err != nil {
+		return fmt.Errorf("failed to marshal scale patch: %w", err)
+	}
+
+	if _, err := dynamicClient.Resource(gvr).Namespace(namespace).Patch(ctx, name, types.MergePatchType, patchBytes, metav1.PatchOptions{}); err != nil {
+		return fmt.Errorf("failed to scale %s %s: %w", gvr.Resource, name, err)
+	}
+
 	return nil
 }

@@ -67,6 +67,66 @@ const (
 	defaultPollInterval = 5 * time.Second
 )
 
+// TestContext holds common test parameters that are shared across many utility functions.
+// This reduces repetitive parameter passing and makes function signatures cleaner.
+type TestContext struct {
+	T             *testing.T
+	Ctx           context.Context
+	Clientset     kubernetes.Interface
+	DynamicClient dynamic.Interface
+	RestConfig    *rest.Config
+	Namespace     string
+	Timeout       time.Duration
+	Interval      time.Duration
+	Nodes         []string
+	Workload      *WorkloadConfig // Optional: workload configuration for the test
+}
+
+// pollForCondition is a wrapper around utils.PollForCondition that accepts TestContext
+func pollForCondition(tc TestContext, condition func() (bool, error)) error {
+	return utils.PollForCondition(tc.Ctx, tc.Timeout, tc.Interval, condition)
+}
+
+// listPods is a wrapper around utils.ListPods that accepts TestContext
+func listPods(tc TestContext) (*v1.PodList, error) {
+	return utils.ListPods(tc.Ctx, tc.Clientset, tc.Namespace, tc.getLabelSelector())
+}
+
+// waitForPods is a wrapper around utils.WaitForPods that accepts TestContext
+func waitForPods(tc TestContext, expectedCount int) error {
+	return utils.WaitForPods(tc.Ctx, tc.RestConfig, []string{tc.Namespace}, tc.getLabelSelector(), expectedCount, tc.Timeout, tc.Interval, logger)
+}
+
+// cordonNode is a wrapper around utils.CordonNode that accepts TestContext
+func cordonNode(tc TestContext, nodeName string, cordon bool) error {
+	return utils.CordonNode(tc.Ctx, tc.Clientset, nodeName, cordon)
+}
+
+// scalePodCliqueScalingGroup is a wrapper around utils.ScalePodCliqueScalingGroupWithClient that accepts TestContext
+func scalePodCliqueScalingGroup(tc TestContext, name string, replicas int) error {
+	return utils.ScalePodCliqueScalingGroupWithClient(tc.Ctx, tc.DynamicClient, tc.Namespace, name, replicas, tc.Timeout, tc.Interval)
+}
+
+// scalePodCliqueSet is a wrapper around utils.ScalePodCliqueSetWithClient that accepts TestContext
+func scalePodCliqueSet(tc TestContext, name string, replicas int) error {
+	return utils.ScalePodCliqueSetWithClient(tc.Ctx, tc.DynamicClient, tc.Namespace, name, replicas)
+}
+
+// applyYAMLFile is a wrapper around utils.ApplyYAMLFile that accepts TestContext
+func applyYAMLFile(tc TestContext, yamlPath string) ([]utils.AppliedResource, error) {
+	return utils.ApplyYAMLFile(tc.Ctx, yamlPath, tc.Namespace, tc.RestConfig, logger)
+}
+
+// waitForPodCount is a wrapper around utils.WaitForPodCount that accepts TestContext
+func waitForPodCount(tc TestContext, expectedCount int) (*v1.PodList, error) {
+	return utils.WaitForPodCount(tc.Ctx, tc.Clientset, tc.Namespace, tc.getLabelSelector(), expectedCount, tc.Timeout, tc.Interval)
+}
+
+// waitForPodCountAndPhases is a wrapper around utils.WaitForPodCountAndPhases that accepts TestContext
+func waitForPodCountAndPhases(tc TestContext, expectedTotal, expectedRunning, expectedPending int) error {
+	return utils.WaitForPodCountAndPhases(tc.Ctx, tc.Clientset, tc.Namespace, tc.getLabelSelector(), expectedTotal, expectedRunning, expectedPending, tc.Timeout, tc.Interval)
+}
+
 // prepareTestCluster is a helper function that prepares the shared cluster for a test
 // with the specified number of worker nodes and returns the necessary clients and a cleanup function.
 // The cleanup function will fatally fail the test if workload cleanup fails.
@@ -96,8 +156,8 @@ func prepareTestCluster(ctx context.Context, t *testing.T, requiredWorkerNodes i
 
 // getWorkerNodes retrieves the names of all worker nodes in the cluster,
 // excluding control plane nodes. Returns an error if the node list cannot be retrieved.
-func getWorkerNodes(ctx context.Context, clientset kubernetes.Interface) ([]string, error) {
-	nodes, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+func getWorkerNodes(tc TestContext) ([]string, error) {
+	nodes, err := tc.Clientset.CoreV1().Nodes().List(tc.Ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list nodes: %w", err)
 	}
@@ -129,13 +189,22 @@ func assertPodsOnDistinctNodes(t *testing.T, pods []v1.Pod) {
 	}
 }
 
+// listPodsAndAssertDistinctNodes lists pods and asserts they are on distinct nodes in one call.
+// This helper reduces the repetitive pattern of listing pods, checking errors, and asserting.
+func listPodsAndAssertDistinctNodes(tc TestContext) {
+	tc.T.Helper()
+	pods, err := listPods(tc)
+	if err != nil {
+		tc.T.Fatalf("Failed to list workload pods: %v", err)
+	}
+	assertPodsOnDistinctNodes(tc.T, pods.Items)
+}
+
 // verifyAllPodsArePending verifies that all pods matching the label selector are in pending state.
 // Returns an error if verification fails or timeout occurs.
-func verifyAllPodsArePending(ctx context.Context, clientset kubernetes.Interface, namespace, labelSelector string, timeout, interval time.Duration) error {
-	return utils.PollForCondition(ctx, timeout, interval, func() (bool, error) {
-		pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-			LabelSelector: labelSelector,
-		})
+func verifyAllPodsArePending(tc TestContext) error {
+	return pollForCondition(tc, func() (bool, error) {
+		pods, err := listPods(tc)
 		if err != nil {
 			return false, err
 		}
@@ -154,20 +223,19 @@ func verifyAllPodsArePending(ctx context.Context, clientset kubernetes.Interface
 
 // verifyPodsArePendingWithUnschedulableEvents verifies that pods are pending with Unschedulable events from kai-scheduler.
 // If allPodsMustBePending is true, verifies ALL pods are pending; otherwise only checks pending pods for Unschedulable events.
+// expectedPendingCount is the expected number of pending pods (pass 0 to skip count validation)
 // Returns an error if verification fails, or nil if successful after finding Unschedulable events for all (pending) pods.
-func verifyPodsArePendingWithUnschedulableEvents(ctx context.Context, clientset kubernetes.Interface, namespace, labelSelector string, allPodsMustBePending bool, timeout, interval time.Duration) error {
+func verifyPodsArePendingWithUnschedulableEvents(tc TestContext, allPodsMustBePending bool, expectedPendingCount int) error {
 	// First verify all pods are pending if required
 	if allPodsMustBePending {
-		if err := verifyAllPodsArePending(ctx, clientset, namespace, labelSelector, timeout, interval); err != nil {
+		if err := verifyAllPodsArePending(tc); err != nil {
 			return fmt.Errorf("not all pods are pending: %w", err)
 		}
 	}
 
 	// Now verify that all pending pods have Unschedulable events
-	return utils.PollForCondition(ctx, timeout, interval, func() (bool, error) {
-		pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-			LabelSelector: labelSelector,
-		})
+	return pollForCondition(tc, func() (bool, error) {
+		pods, err := listPods(tc)
 		if err != nil {
 			return false, err
 		}
@@ -182,7 +250,7 @@ func verifyPodsArePendingWithUnschedulableEvents(ctx context.Context, clientset 
 				pendingCount++
 
 				// Check for Unschedulable event from kai-scheduler
-				events, err := clientset.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{
+				events, err := tc.Clientset.CoreV1().Events(tc.Namespace).List(tc.Ctx, metav1.ListOptions{
 					FieldSelector: fmt.Sprintf("involvedObject.name=%s,involvedObject.kind=Pod", pod.Name),
 				})
 				if err != nil {
@@ -212,6 +280,12 @@ func verifyPodsArePendingWithUnschedulableEvents(ctx context.Context, clientset 
 			}
 		}
 
+		// Verify expected pending count if specified
+		if expectedPendingCount > 0 && pendingCount != expectedPendingCount {
+			logger.Debugf("Expected %d pending pods but found %d pending pods", expectedPendingCount, pendingCount)
+			return false, nil
+		}
+
 		// Return true only when all pending pods have the Unschedulable event
 		if podsWithUnschedulableEvent == pendingCount {
 			return true, nil
@@ -219,5 +293,206 @@ func verifyPodsArePendingWithUnschedulableEvents(ctx context.Context, clientset 
 
 		logger.Debugf("Waiting for all pending pods to have Unschedulable events: %d/%d", podsWithUnschedulableEvent, pendingCount)
 		return false, nil
+	})
+}
+
+// waitForPodConditions polls until the expected pod state is reached or timeout occurs.
+// Returns the current state (total, running, pending) for logging purposes.
+func waitForPodConditions(tc TestContext, expectedTotalPods, expectedPending int) (int, int, int, error) {
+	var lastTotal, lastRunning, lastPending int
+
+	err := pollForCondition(tc, func() (bool, error) {
+		pods, err := listPods(tc)
+		if err != nil {
+			return false, err
+		}
+
+		count := utils.CountPodsByPhase(pods)
+		lastTotal = count.Total
+		lastRunning = count.Running
+		lastPending = count.Pending
+
+		// Check if conditions are met
+		return lastTotal == expectedTotalPods && lastPending == expectedPending, nil
+	})
+
+	return lastTotal, lastRunning, lastPending, err
+}
+
+// scalePCSGAndWait scales a PCSG and waits for the expected pod conditions to be reached.
+func scalePCSGAndWait(tc TestContext, pcsgName string, replicas int32, expectedTotalPods, expectedPending int) {
+	tc.T.Helper()
+
+	if err := scalePodCliqueScalingGroup(tc, pcsgName, int(replicas)); err != nil {
+		tc.T.Fatalf("Failed to scale PodCliqueScalingGroup %s: %v", pcsgName, err)
+	}
+
+	totalPods, runningPods, pendingPods, err := waitForPodConditions(tc, expectedTotalPods, expectedPending)
+	if err != nil {
+		tc.T.Fatalf("Failed to wait for expected pod conditions after PCSG scaling: %v. Final state: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
+			err, totalPods, runningPods, pendingPods, expectedTotalPods, expectedPending)
+	}
+}
+
+// scalePCSAndWait scales a PCS and waits for the expected pod conditions to be reached.
+func scalePCSAndWait(tc TestContext, pcsName string, replicas int32, expectedTotalPods, expectedPending int) {
+	tc.T.Helper()
+
+	if err := scalePodCliqueSet(tc, pcsName, int(replicas)); err != nil {
+		tc.T.Fatalf("Failed to scale PodCliqueSet %s: %v", pcsName, err)
+	}
+
+	totalPods, runningPods, pendingPods, err := waitForPodConditions(tc, expectedTotalPods, expectedPending)
+	if err != nil {
+		tc.T.Fatalf("Failed to wait for expected pod conditions after PCS scaling: %v. Final state: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
+			err, totalPods, runningPods, pendingPods, expectedTotalPods, expectedPending)
+	}
+}
+
+// cordonNodes cordons or uncordons multiple nodes.
+// This helper reduces repetition of the cordon/uncordon loop pattern found throughout tests.
+func cordonNodes(tc TestContext, nodes []string, cordon bool) {
+	tc.T.Helper()
+	action := "cordon"
+	if !cordon {
+		action = "uncordon"
+	}
+	for _, nodeName := range nodes {
+		if err := cordonNode(tc, nodeName, cordon); err != nil {
+			tc.T.Fatalf("Failed to %s node %s: %v", action, nodeName, err)
+		}
+	}
+}
+
+// waitForPodPhases waits for pods to reach specific running and pending counts.
+// This helper reduces repetition of the polling pattern for checking pod phases.
+func waitForPodPhases(tc TestContext, expectedRunning, expectedPending int) error {
+	tc.T.Helper()
+	return pollForCondition(tc, func() (bool, error) {
+		pods, err := listPods(tc)
+		if err != nil {
+			return false, err
+		}
+
+		count := utils.CountPodsByPhase(pods)
+		return count.Running == expectedRunning && count.Pending == expectedPending, nil
+	})
+}
+
+// waitForReadyPods waits for a specific number of pods to be ready (Running + Ready condition).
+// This helper reduces repetition of the polling pattern for checking pod ready state.
+func waitForReadyPods(tc TestContext, expectedReady int) error {
+	tc.T.Helper()
+	return pollForCondition(tc, func() (bool, error) {
+		pods, err := listPods(tc)
+		if err != nil {
+			return false, err
+		}
+
+		readyCount := utils.CountReadyPods(pods)
+		return readyCount == expectedReady, nil
+	})
+}
+
+// setupAndCordonNodes retrieves worker nodes, validates the count, and cordons the specified number.
+// Returns the nodes that were cordoned.
+func setupAndCordonNodes(tc TestContext, numToCordon int) []string {
+	tc.T.Helper()
+
+	workerNodes, err := getWorkerNodes(tc)
+	if err != nil {
+		tc.T.Fatalf("Failed to get worker nodes: %v", err)
+	}
+
+	if len(workerNodes) < numToCordon {
+		tc.T.Fatalf("expected at least %d worker nodes to cordon, but found %d", numToCordon, len(workerNodes))
+	}
+
+	nodesToCordon := workerNodes[:numToCordon]
+	cordonNodes(tc, nodesToCordon, true)
+
+	return nodesToCordon
+}
+
+// WorkloadConfig defines configuration for deploying and verifying a workload.
+type WorkloadConfig struct {
+	Name         string
+	YAMLPath     string
+	Namespace    string
+	ExpectedPods int
+}
+
+// GetLabelSelector returns the label selector calculated from the workload name.
+// The label selector follows the pattern: "app.kubernetes.io/part-of=<name>"
+func (w WorkloadConfig) GetLabelSelector() string {
+	return fmt.Sprintf("app.kubernetes.io/part-of=%s", w.Name)
+}
+
+// deployAndVerifyWorkload applies a workload YAML and waits for the expected pod count.
+// Uses tc.Workload for configuration. Returns the pod list after successful deployment.
+func deployAndVerifyWorkload(tc TestContext) (*v1.PodList, error) {
+	tc.T.Helper()
+
+	if tc.Workload == nil {
+		return nil, fmt.Errorf("tc.Workload is nil, must be set before calling deployAndVerifyWorkload")
+	}
+
+	_, err := applyYAMLFile(tc, tc.Workload.YAMLPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply workload YAML: %w", err)
+	}
+
+	pods, err := waitForPodCount(tc, tc.Workload.ExpectedPods)
+	if err != nil {
+		return nil, fmt.Errorf("failed to wait for pods to be created: %w", err)
+	}
+
+	return pods, nil
+}
+
+// getLabelSelector returns the label selector for the current workload.
+// This is a convenience method to avoid repeatedly calling tc.Workload.GetLabelSelector().
+func (tc TestContext) getLabelSelector() string {
+	if tc.Workload == nil {
+		return ""
+	}
+	return tc.Workload.GetLabelSelector()
+}
+
+// verifyAllPodsArePendingWithSleep verifies all pods are pending after a fixed delay.
+// The sleep is a workaround for https://github.com/NVIDIA/grove/issues/226
+func verifyAllPodsArePendingWithSleep(tc TestContext) {
+	tc.T.Helper()
+	// Need to use a sleep here unfortunately, see: https://github.com/NVIDIA/grove/issues/226
+	time.Sleep(30 * time.Second)
+	if err := verifyAllPodsArePending(tc); err != nil {
+		tc.T.Fatalf("Failed to verify all pods are pending: %v", err)
+	}
+}
+
+// uncordonNodesAndWaitForPods uncordons the specified nodes and waits for pods to be ready.
+// This helper combines the common pattern of uncordoning nodes followed by waiting for pods.
+func uncordonNodesAndWaitForPods(tc TestContext, nodes []string, expectedPods int) {
+	tc.T.Helper()
+
+	cordonNodes(tc, nodes, false)
+
+	if err := waitForPods(tc, expectedPods); err != nil {
+		tc.T.Fatalf("Failed to wait for pods to be ready: %v", err)
+	}
+}
+
+// waitForRunningPods waits for a specific number of pods to be in Running phase (not necessarily ready).
+// This is useful for checking min-replicas scheduling where pods need to be running but may not be fully ready yet.
+func waitForRunningPods(tc TestContext, expectedRunning int) error {
+	tc.T.Helper()
+	return pollForCondition(tc, func() (bool, error) {
+		pods, err := listPods(tc)
+		if err != nil {
+			return false, err
+		}
+
+		count := utils.CountPodsByPhase(pods)
+		return count.Running == expectedRunning, nil
 	})
 }
