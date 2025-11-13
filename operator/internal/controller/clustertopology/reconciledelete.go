@@ -18,22 +18,24 @@ package clustertopology
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	groveconstants "github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 
 	"github.com/go-logr/logr"
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 // triggerDeletionFlow handles the deletion of a ClusterTopology with deletion prevention checks.
 func (r *Reconciler) triggerDeletionFlow(ctx context.Context, logger logr.Logger, ct *grovecorev1alpha1.ClusterTopology) ctrlcommon.ReconcileStepResult {
+	logger.Info("Triggering deletion flow", "ClusterTopology", ct.Name)
 	deleteStepFns := []ctrlcommon.ReconcileStepFn[grovecorev1alpha1.ClusterTopology]{
 		r.checkDeletionConditions,
 		r.removeFinalizer,
@@ -45,7 +47,6 @@ func (r *Reconciler) triggerDeletionFlow(ctx context.Context, logger logr.Logger
 		}
 	}
 
-	logger.Info("ClusterTopology deleted successfully")
 	return ctrlcommon.DoNotRequeue()
 }
 
@@ -54,6 +55,7 @@ func (r *Reconciler) triggerDeletionFlow(ctx context.Context, logger logr.Logger
 // 1. Any PodCliqueSet references this topology (via grove.io/cluster-topology-name label)
 // 2. Topology is enabled AND this specific topology is configured
 func (r *Reconciler) checkDeletionConditions(ctx context.Context, logger logr.Logger, ct *grovecorev1alpha1.ClusterTopology) ctrlcommon.ReconcileStepResult {
+	logger.Info("Checking deletion conditions", "ClusterTopology", ct.Name)
 	// Condition 1: Check for PodCliqueSet references
 	pcsList := &grovecorev1alpha1.PodCliqueSetList{}
 	labelSelector := client.MatchingLabels{
@@ -66,6 +68,8 @@ func (r *Reconciler) checkDeletionConditions(ctx context.Context, logger logr.Lo
 		logger.Info("Cannot delete ClusterTopology: referenced by PodCliqueSet resources",
 			"topologyName", ct.Name,
 			"podCliqueSetCount", len(pcsList.Items))
+		r.eventRecorder.Eventf(ct, corev1.EventTypeWarning, groveconstants.ReasonClusterTopologyDeleteBlocked,
+			"Cannot delete ClusterTopology %s: referenced by %d PodCliqueSet resource(s)", ct.Name, len(pcsList.Items))
 		return ctrlcommon.ReconcileAfter(30*time.Second, "topology referenced by PodCliqueSet resources")
 	}
 
@@ -73,6 +77,8 @@ func (r *Reconciler) checkDeletionConditions(ctx context.Context, logger logr.Lo
 	if r.config.ClusterTopology.Enabled && r.config.ClusterTopology.Name == ct.Name {
 		logger.Info("Cannot delete ClusterTopology: topology feature is enabled and configured to use this topology",
 			"topologyName", r.config.ClusterTopology.Name)
+		r.eventRecorder.Eventf(ct, corev1.EventTypeWarning, groveconstants.ReasonClusterTopologyDeleteBlocked,
+			"Cannot delete ClusterTopology %s: topology feature is enabled and configured to use this ClusterTopology", ct.Name)
 		return ctrlcommon.ReconcileAfter(30*time.Second, "topology feature configured to use this ClusterTopology")
 	}
 
@@ -88,7 +94,13 @@ func (r *Reconciler) removeFinalizer(ctx context.Context, logger logr.Logger, ct
 	}
 	logger.Info("Removing finalizer", "ClusterTopology", ct.Name, "finalizerName", constants.FinalizerClusterTopology)
 	if err := ctrlutils.RemoveAndPatchFinalizer(ctx, r.client, ct, constants.FinalizerClusterTopology); err != nil {
-		return ctrlcommon.ReconcileWithErrors("error removing finalizer", fmt.Errorf("failed to remove finalizer: %s from ClusterTopology: %s: %w", constants.FinalizerClusterTopology, ct.Name, err))
+		logger.Error(err, "failed to remove finalizer", "ClusterTopology", ct.Name, "finalizerName", constants.FinalizerClusterTopology)
+		r.eventRecorder.Eventf(ct, corev1.EventTypeWarning, groveconstants.ReasonClusterTopologyDeleteFailed,
+			"Cannot delete ClusterTopology %s: error removing finalizer: %s from ClusterTopology: %s: %w", constants.FinalizerClusterTopology, ct.Name, err)
+		return ctrlcommon.ReconcileWithErrors("failed to remove finalizer", err)
 	}
+	logger.Info("Finalizer removed", "ClusterTopology", ct.Name, "finalizerName", constants.FinalizerClusterTopology)
+	r.eventRecorder.Eventf(ct, corev1.EventTypeNormal, groveconstants.ReasonClusterTopologyDeleteSuccessful,
+		"ClusterTopology %s deleted successfully", ct.Name)
 	return ctrlcommon.ContinueReconcile()
 }

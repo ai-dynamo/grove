@@ -24,6 +24,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -34,6 +35,7 @@ import (
 type Reconciler struct {
 	config                  configv1alpha1.OperatorConfiguration
 	client                  ctrlclient.Client
+	eventRecorder           record.EventRecorder
 	reconcileStatusRecorder ctrlcommon.ReconcileErrorRecorder
 }
 
@@ -42,6 +44,7 @@ func NewReconciler(mgr ctrl.Manager, topologyCfg configv1alpha1.OperatorConfigur
 	return &Reconciler{
 		config:                  topologyCfg,
 		client:                  mgr.GetClient(),
+		eventRecorder:           mgr.GetEventRecorderFor(controllerName),
 		reconcileStatusRecorder: ctrlcommon.NewReconcileErrorRecorder(mgr.GetClient()),
 	}
 }
@@ -58,6 +61,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// Handle deletion
 	if !ct.DeletionTimestamp.IsZero() {
 		if !controllerutil.ContainsFinalizer(ct, constants.FinalizerClusterTopology) {
+			logger.V(1).Info("ClusterTopology marked for deletion but finalizer already removed", "clusterTopologyName", ct.Name)
 			return ctrl.Result{}, nil
 		}
 		log := logger.WithValues("operation", "delete")

@@ -26,6 +26,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -55,7 +56,7 @@ func TestEnsureFinalizer(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ct := tt.ct.Build()
 			fakeClient := testutils.SetupFakeClient(ct)
-			reconciler := &Reconciler{client: fakeClient}
+			reconciler := &Reconciler{client: fakeClient, eventRecorder: record.NewFakeRecorder(10)}
 
 			// Run ensureFinalizer
 			stepResult := reconciler.ensureFinalizer(context.Background(), logr.Discard(), ct)
@@ -105,7 +106,7 @@ func TestReconcileSpec(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ct := tt.ct.Build()
 			fakeClient := testutils.SetupFakeClient(ct)
-			reconciler := &Reconciler{client: fakeClient}
+			reconciler := &Reconciler{client: fakeClient, eventRecorder: record.NewFakeRecorder(10)}
 
 			// Run reconcileSpec
 			stepResult := reconciler.reconcileSpec(context.Background(), logr.Discard(), ct)

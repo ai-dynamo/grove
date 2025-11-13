@@ -29,6 +29,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -88,9 +89,20 @@ func TestCheckDeletionConditions(t *testing.T) {
 		},
 		{
 			name:                "blocked by topology enabled with default name",
-			clusterTopologyName: "grove-topology",
+			clusterTopologyName: configv1alpha1.DefaultClusterTopologyName,
 			topologyConfig: configv1alpha1.ClusterTopologyConfiguration{
 				Enabled: true,
+			},
+			existingPodCliqueSets: []client.Object{},
+			wantRequeue:           true,
+			wantError:             false,
+		},
+		{
+			name:                "blocked by topology enabled with default name that is specified explicitly",
+			clusterTopologyName: configv1alpha1.DefaultClusterTopologyName,
+			topologyConfig: configv1alpha1.ClusterTopologyConfiguration{
+				Enabled: true,
+				Name:    configv1alpha1.DefaultClusterTopologyName,
 			},
 			existingPodCliqueSets: []client.Object{},
 			wantRequeue:           true,
@@ -109,7 +121,7 @@ func TestCheckDeletionConditions(t *testing.T) {
 		},
 		{
 			name:                "allowed when topology enabled but different name",
-			clusterTopologyName: "grove-topology",
+			clusterTopologyName: configv1alpha1.DefaultClusterTopologyName,
 			topologyConfig: configv1alpha1.ClusterTopologyConfiguration{
 				Enabled: true,
 				Name:    "other-topology",
@@ -147,14 +159,15 @@ func TestCheckDeletionConditions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.topologyConfig.Name == "" {
-				tt.topologyConfig.Name = "grove-topology" // TODO remove this after taking care of registering the defaults properly
+				tt.topologyConfig.Name = configv1alpha1.DefaultClusterTopologyName // TODO remove this after taking care of registering the defaults properly
 			}
 
 			ct := testutils.NewSimpleClusterTopology(tt.clusterTopologyName)
 			allObjects := append([]client.Object{ct}, tt.existingPodCliqueSets...)
 			fakeClient := testutils.SetupFakeClient(allObjects...)
 			reconciler := &Reconciler{
-				client: fakeClient,
+				client:        fakeClient,
+				eventRecorder: record.NewFakeRecorder(10),
 				config: configv1alpha1.OperatorConfiguration{
 					ClusterTopology: tt.topologyConfig,
 				},
@@ -210,7 +223,7 @@ func TestRemoveFinalizer(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ct := tt.ct.Build()
 			fakeClient := testutils.SetupFakeClient(ct)
-			reconciler := &Reconciler{client: fakeClient}
+			reconciler := &Reconciler{client: fakeClient, eventRecorder: record.NewFakeRecorder(10)}
 
 			hadFinalizer := controllerutil.ContainsFinalizer(ct, constants.FinalizerClusterTopology)
 
@@ -285,11 +298,11 @@ func TestTriggerDeletionFlow(t *testing.T) {
 		},
 		{
 			name: "blocked deletion flow - topology enabled",
-			ct: testutils.NewClusterTopologyBuilder("grove-topology").
+			ct: testutils.NewClusterTopologyBuilder(configv1alpha1.DefaultClusterTopologyName).
 				WithFinalizer(constants.FinalizerClusterTopology),
 			topologyConfig: configv1alpha1.ClusterTopologyConfiguration{
 				Enabled: true,
-				Name:    "grove-topology", // TODO remove when defaults are registered properly
+				Name:    configv1alpha1.DefaultClusterTopologyName, // TODO remove when defaults are registered properly
 			},
 			existingPCS:          []client.Object{},
 			wantFinalizerRemoved: false,
@@ -304,7 +317,8 @@ func TestTriggerDeletionFlow(t *testing.T) {
 			allObjects := append([]client.Object{ct}, tt.existingPCS...)
 			fakeClient := testutils.SetupFakeClient(allObjects...)
 			reconciler := &Reconciler{
-				client: fakeClient,
+				client:        fakeClient,
+				eventRecorder: record.NewFakeRecorder(10),
 				config: configv1alpha1.OperatorConfiguration{
 					ClusterTopology: tt.topologyConfig,
 				},
