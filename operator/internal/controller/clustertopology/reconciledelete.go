@@ -51,13 +51,13 @@ func (r *Reconciler) triggerDeletionFlow(ctx context.Context, logger logr.Logger
 
 // checkDeletionConditions verifies that ClusterTopology can be safely deleted.
 // Deletion is blocked if:
-// 1. Any PodCliqueSet references this topology (via grove.io/topology-name label)
+// 1. Any PodCliqueSet references this topology (via grove.io/cluster-topology-name label)
 // 2. Topology is enabled AND this specific topology is configured
 func (r *Reconciler) checkDeletionConditions(ctx context.Context, logger logr.Logger, ct *grovecorev1alpha1.ClusterTopology) ctrlcommon.ReconcileStepResult {
 	// Condition 1: Check for PodCliqueSet references
 	pcsList := &grovecorev1alpha1.PodCliqueSetList{}
 	labelSelector := client.MatchingLabels{
-		apicommon.LabelTopologyName: ct.Name,
+		apicommon.LabelClusterTopologyName: ct.Name,
 	}
 	if err := r.client.List(ctx, pcsList, labelSelector); err != nil {
 		return ctrlcommon.ReconcileWithErrors("failed to list PodCliqueSet resources", err)
@@ -70,17 +70,10 @@ func (r *Reconciler) checkDeletionConditions(ctx context.Context, logger logr.Lo
 	}
 
 	// Condition 2: Check if topology is enabled and configured to use this ClusterTopology
-	if r.config.Enabled {
-		configuredName := "grove-topology" // default
-		if r.config.Name != nil {
-			configuredName = *r.config.Name
-		}
-		if configuredName == ct.Name {
-			logger.Info("Cannot delete ClusterTopology: topology feature is enabled and configured to use this topology",
-				"topologyName", ct.Name,
-				"configuredTopologyName", configuredName)
-			return ctrlcommon.ReconcileAfter(30*time.Second, "topology feature configured to use this ClusterTopology")
-		}
+	if r.config.ClusterTopology.Enabled && r.config.ClusterTopology.Name == ct.Name {
+		logger.Info("Cannot delete ClusterTopology: topology feature is enabled and configured to use this topology",
+			"topologyName", r.config.ClusterTopology.Name)
+		return ctrlcommon.ReconcileAfter(30*time.Second, "topology feature configured to use this ClusterTopology")
 	}
 
 	logger.Info("ClusterTopology can be safely deleted", "topologyName", ct.Name)
