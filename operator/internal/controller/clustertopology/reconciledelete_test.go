@@ -64,7 +64,7 @@ func TestCheckDeletionConditions(t *testing.T) {
 					WithTopologyLabel("test-topology").
 					Build(),
 			},
-			wantRequeue: true,
+			wantRequeue: false,
 			wantError:   false,
 		},
 		{
@@ -84,7 +84,7 @@ func TestCheckDeletionConditions(t *testing.T) {
 					WithTopologyLabel("test-topology").
 					Build(),
 			},
-			wantRequeue: true,
+			wantRequeue: false,
 			wantError:   false,
 		},
 		{
@@ -94,7 +94,7 @@ func TestCheckDeletionConditions(t *testing.T) {
 				Enabled: true,
 			},
 			existingPodCliqueSets: []client.Object{},
-			wantRequeue:           true,
+			wantRequeue:           false,
 			wantError:             false,
 		},
 		{
@@ -105,7 +105,7 @@ func TestCheckDeletionConditions(t *testing.T) {
 				Name:    configv1alpha1.DefaultClusterTopologyName,
 			},
 			existingPodCliqueSets: []client.Object{},
-			wantRequeue:           true,
+			wantRequeue:           false,
 			wantError:             false,
 		},
 		{
@@ -116,7 +116,7 @@ func TestCheckDeletionConditions(t *testing.T) {
 				Name:    "custom-topology",
 			},
 			existingPodCliqueSets: []client.Object{},
-			wantRequeue:           true,
+			wantRequeue:           false,
 			wantError:             false,
 		},
 		{
@@ -185,9 +185,8 @@ func TestCheckDeletionConditions(t *testing.T) {
 
 			if tt.wantRequeue {
 				assert.True(t, result.RequeueAfter > 0, "expected requeue after delay")
-				assert.Equal(t, 30*time.Second, result.RequeueAfter, "requeue delay should be 30s")
 			} else {
-				assert.False(t, result.RequeueAfter > 0, "should not requeue immediately")
+				assert.False(t, result.Requeue, "should not requeue immediately")
 				assert.Equal(t, time.Duration(0), result.RequeueAfter, "should not requeue after delay")
 			}
 		})
@@ -293,7 +292,7 @@ func TestTriggerDeletionFlow(t *testing.T) {
 					Build(),
 			},
 			wantFinalizerRemoved: false,
-			wantRequeue:          true,
+			wantRequeue:          false,
 			wantError:            false,
 		},
 		{
@@ -306,7 +305,7 @@ func TestTriggerDeletionFlow(t *testing.T) {
 			},
 			existingPCS:          []client.Object{},
 			wantFinalizerRemoved: false,
-			wantRequeue:          true,
+			wantRequeue:          false,
 			wantError:            false,
 		},
 	}
@@ -337,7 +336,7 @@ func TestTriggerDeletionFlow(t *testing.T) {
 			if tt.wantRequeue {
 				assert.True(t, result.RequeueAfter > 0, "should requeue")
 			} else {
-				assert.False(t, result.RequeueAfter > 0, "should not requeue")
+				assert.False(t, result.Requeue, "should not requeue immediately")
 				assert.Equal(t, time.Duration(0), result.RequeueAfter, "should not requeue after delay")
 			}
 

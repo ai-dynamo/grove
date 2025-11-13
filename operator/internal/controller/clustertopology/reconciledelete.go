@@ -18,7 +18,6 @@ package clustertopology
 
 import (
 	"context"
-	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -70,7 +69,8 @@ func (r *Reconciler) checkDeletionConditions(ctx context.Context, logger logr.Lo
 			"podCliqueSetCount", len(pcsList.Items))
 		r.eventRecorder.Eventf(ct, corev1.EventTypeWarning, groveconstants.ReasonClusterTopologyDeleteBlocked,
 			"Cannot delete ClusterTopology %s: referenced by %d PodCliqueSet resource(s)", ct.Name, len(pcsList.Items))
-		return ctrlcommon.ReconcileAfter(30*time.Second, "topology referenced by PodCliqueSet resources")
+		// Don't requeue - the watch on PodCliqueSet will trigger reconciliation when PCS is deleted
+		return ctrlcommon.DoNotRequeue()
 	}
 
 	// Condition 2: Check if topology is enabled and configured to use this ClusterTopology
@@ -79,7 +79,8 @@ func (r *Reconciler) checkDeletionConditions(ctx context.Context, logger logr.Lo
 			"topologyName", r.config.ClusterTopology.Name)
 		r.eventRecorder.Eventf(ct, corev1.EventTypeWarning, groveconstants.ReasonClusterTopologyDeleteBlocked,
 			"Cannot delete ClusterTopology %s: topology feature is enabled and configured to use this ClusterTopology", ct.Name)
-		return ctrlcommon.ReconcileAfter(30*time.Second, "topology feature configured to use this ClusterTopology")
+		// Don't requeue - this condition requires manual intervention (config change + operator restart)
+		return ctrlcommon.DoNotRequeue()
 	}
 
 	logger.Info("ClusterTopology can be safely deleted", "topologyName", ct.Name)
