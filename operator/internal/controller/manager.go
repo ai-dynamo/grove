@@ -56,7 +56,7 @@ func RegisterControllersAndWebhooks(mgr ctrl.Manager, logger logr.Logger, operat
 	if err := RegisterControllers(mgr, operatorCfg.Controllers); err != nil {
 		return err
 	}
-	if err := webhook.RegisterWebhooks(mgr, operatorCfg.Authorizer); err != nil {
+	if err := webhook.RegisterWebhooks(mgr, operatorCfg); err != nil {
 		return err
 	}
 	return nil

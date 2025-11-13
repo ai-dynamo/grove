@@ -87,11 +87,16 @@ func TestRegisterWebhooks_WithoutAuthorizer(t *testing.T) {
 	mgr.WebhookServer = server
 
 	// Authorizer disabled
-	authorizerConfig := configv1alpha1.AuthorizerConfig{
-		Enabled: false,
+	operatorCfg := &configv1alpha1.OperatorConfiguration{
+		Authorizer: configv1alpha1.AuthorizerConfig{
+			Enabled: false,
+		},
+		ClusterTopology: configv1alpha1.ClusterTopologyConfiguration{
+			Enabled: false,
+		},
 	}
 
-	err := RegisterWebhooks(mgr, authorizerConfig)
+	err := RegisterWebhooks(mgr, operatorCfg)
 	require.NoError(t, err)
 }
 
@@ -116,11 +121,16 @@ func TestRegisterWebhooks_WithAuthorizerMissingEnvVar(t *testing.T) {
 	require.NoError(t, err)
 
 	// Authorizer enabled
-	authorizerConfig := configv1alpha1.AuthorizerConfig{
-		Enabled: true,
+	operatorCfg := &configv1alpha1.OperatorConfiguration{
+		Authorizer: configv1alpha1.AuthorizerConfig{
+			Enabled: true,
+		},
+		ClusterTopology: configv1alpha1.ClusterTopologyConfiguration{
+			Enabled: false,
+		},
 	}
 
-	err = RegisterWebhooks(mgr, authorizerConfig)
+	err = RegisterWebhooks(mgr, operatorCfg)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), constants.EnvVarServiceAccountName)
 }
@@ -145,11 +155,16 @@ func TestRegisterWebhooks_WithAuthorizerMissingNamespaceFile(t *testing.T) {
 	t.Setenv(constants.EnvVarServiceAccountName, "test-sa")
 
 	// Authorizer enabled - will fail on reading non-existent namespace file
-	authorizerConfig := configv1alpha1.AuthorizerConfig{
-		Enabled: true,
+	operatorCfg := &configv1alpha1.OperatorConfiguration{
+		Authorizer: configv1alpha1.AuthorizerConfig{
+			Enabled: true,
+		},
+		ClusterTopology: configv1alpha1.ClusterTopologyConfiguration{
+			Enabled: false,
+		},
 	}
 
-	err := RegisterWebhooks(mgr, authorizerConfig)
+	err := RegisterWebhooks(mgr, operatorCfg)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "error reading namespace file")
 }
@@ -190,11 +205,16 @@ func TestRegisterWebhooks_WithAuthorizerSuccess(t *testing.T) {
 
 	// This test would require refactoring the code to make the namespace file path configurable
 	// For now, we'll just test that the error occurs as expected
-	authorizerConfig := configv1alpha1.AuthorizerConfig{
-		Enabled: true,
+	operatorCfg := &configv1alpha1.OperatorConfiguration{
+		Authorizer: configv1alpha1.AuthorizerConfig{
+			Enabled: true,
+		},
+		ClusterTopology: configv1alpha1.ClusterTopologyConfiguration{
+			Enabled: false,
+		},
 	}
 
-	err = RegisterWebhooks(mgr, authorizerConfig)
+	err = RegisterWebhooks(mgr, operatorCfg)
 	// Will error because it tries to read the hardcoded namespace file path
 	require.Error(t, err)
 }

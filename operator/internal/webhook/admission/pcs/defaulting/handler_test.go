@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -46,7 +48,10 @@ func TestNewHandler(t *testing.T) {
 		Logger: logr.Discard(),
 	}
 
-	handler := NewHandler(mgr)
+	topologyConfig := configv1alpha1.ClusterTopologyConfiguration{
+		Enabled: false,
+	}
+	handler := NewHandler(mgr, topologyConfig)
 	require.NotNil(t, handler)
 	assert.NotNil(t, handler.logger)
 }
@@ -58,6 +63,8 @@ func TestDefault(t *testing.T) {
 		name string
 		// obj is the runtime object to apply defaults to
 		obj runtime.Object
+		// topologyConfig is the topology configuration for the handler
+		topologyConfig configv1alpha1.ClusterTopologyConfiguration
 		// setupContext sets up the admission context if needed
 		setupContext func(context.Context) context.Context
 		// expectError indicates whether defaulting should fail
@@ -80,6 +87,9 @@ func TestDefault(t *testing.T) {
 						WithMinAvailable(1).
 						Build()).
 				Build(),
+			topologyConfig: configv1alpha1.ClusterTopologyConfiguration{
+				Enabled: false,
+			},
 			setupContext: func(ctx context.Context) context.Context {
 				return admission.NewContextWithRequest(ctx, admission.Request{
 					AdmissionRequest: admissionv1.AdmissionRequest{
@@ -131,6 +141,9 @@ func TestDefault(t *testing.T) {
 					},
 				},
 			},
+			topologyConfig: configv1alpha1.ClusterTopologyConfiguration{
+				Enabled: false,
+			},
 			setupContext: func(ctx context.Context) context.Context {
 				return admission.NewContextWithRequest(ctx, admission.Request{
 					AdmissionRequest: admissionv1.AdmissionRequest{
@@ -154,6 +167,9 @@ func TestDefault(t *testing.T) {
 		{
 			name: "wrong object type returns error",
 			obj:  &corev1.Pod{},
+			topologyConfig: configv1alpha1.ClusterTopologyConfiguration{
+				Enabled: false,
+			},
 			setupContext: func(ctx context.Context) context.Context {
 				return admission.NewContextWithRequest(ctx, admission.Request{
 					AdmissionRequest: admissionv1.AdmissionRequest{
@@ -182,9 +198,69 @@ func TestDefault(t *testing.T) {
 						WithMinAvailable(1).
 						Build()).
 				Build(),
+			topologyConfig: configv1alpha1.ClusterTopologyConfiguration{
+				Enabled: false,
+			},
 			setupContext:  func(ctx context.Context) context.Context { return ctx },
 			expectError:   true,
 			errorContains: "not found in context",
+		},
+		{
+			name: "topology enabled - label added to PodCliqueSet",
+			obj: &grovecorev1alpha1.PodCliqueSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pcs-topology",
+					Namespace: "default",
+				},
+				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+					Replicas: 1,
+					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+							{
+								Name: "test",
+								Spec: grovecorev1alpha1.PodCliqueSpec{
+									Replicas: 1,
+									RoleName: "test-role",
+									PodSpec: corev1.PodSpec{
+										Containers: []corev1.Container{
+											{
+												Name:  "test",
+												Image: "test:latest",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			topologyConfig: configv1alpha1.ClusterTopologyConfiguration{
+				Enabled: true,
+				Name:    "test-topology",
+			},
+			setupContext: func(ctx context.Context) context.Context {
+				return admission.NewContextWithRequest(ctx, admission.Request{
+					AdmissionRequest: admissionv1.AdmissionRequest{
+						Name:      "test-pcs-topology",
+						Namespace: "default",
+						Operation: admissionv1.Create,
+						UserInfo: authenticationv1.UserInfo{
+							Username: "test-user",
+						},
+					},
+				})
+			},
+			expectError: false,
+			verify: func(t *testing.T, obj runtime.Object) {
+				pcs, ok := obj.(*grovecorev1alpha1.PodCliqueSet)
+				require.True(t, ok)
+				// Verify that topology label is set with correct value
+				require.NotNil(t, pcs.Labels)
+				assert.Equal(t, "test-topology", pcs.Labels[apicommon.LabelTopologyName])
+				// Verify other defaults are also applied
+				assert.NotNil(t, pcs.Spec.Template.TerminationDelay)
+			},
 		},
 	}
 
@@ -197,7 +273,7 @@ func TestDefault(t *testing.T) {
 				Logger: logr.Discard(),
 			}
 
-			handler := NewHandler(mgr)
+			handler := NewHandler(mgr, tt.topologyConfig)
 
 			ctx := context.Background()
 			if tt.setupContext != nil {

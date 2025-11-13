@@ -31,8 +31,8 @@ import (
 )
 
 // RegisterWebhooks registers the webhooks with the controller manager.
-func RegisterWebhooks(mgr manager.Manager, authorizerConfig configv1alpha1.AuthorizerConfig) error {
-	defaultingWebhook := defaulting.NewHandler(mgr)
+func RegisterWebhooks(mgr manager.Manager, operatorCfg *configv1alpha1.OperatorConfiguration) error {
+	defaultingWebhook := defaulting.NewHandler(mgr, operatorCfg.ClusterTopology)
 	slog.Info("Registering webhook with manager", "handler", defaulting.Name)
 	if err := defaultingWebhook.RegisterWithManager(mgr); err != nil {
 		return fmt.Errorf("failed adding %s webhook handler: %v", defaulting.Name, err)
@@ -42,7 +42,7 @@ func RegisterWebhooks(mgr manager.Manager, authorizerConfig configv1alpha1.Autho
 	if err := validatingWebhook.RegisterWithManager(mgr); err != nil {
 		return fmt.Errorf("failed adding %s webhook handler: %v", validation.Name, err)
 	}
-	if authorizerConfig.Enabled {
+	if operatorCfg.Authorizer.Enabled {
 		serviceAccountName, ok := os.LookupEnv(constants.EnvVarServiceAccountName)
 		if !ok {
 			return fmt.Errorf("can not register authorizer webhook with no \"%s\" environment vairable", constants.EnvVarServiceAccountName)
@@ -52,7 +52,7 @@ func RegisterWebhooks(mgr manager.Manager, authorizerConfig configv1alpha1.Autho
 			return fmt.Errorf("error reading namespace file with error: %w", err)
 		}
 		reconcilerServiceAccountUserName := generateReconcilerServiceAccountUsername(string(namespace), serviceAccountName)
-		authorizerWebhook := authorization.NewHandler(mgr, authorizerConfig, reconcilerServiceAccountUserName)
+		authorizerWebhook := authorization.NewHandler(mgr, operatorCfg.Authorizer, reconcilerServiceAccountUserName)
 		slog.Info("Registering webhook with manager", "handler", authorization.Name)
 		if err := authorizerWebhook.RegisterWithManager(mgr); err != nil {
 			return fmt.Errorf("failed adding %s webhook handler: %v", authorization.Name, err)
