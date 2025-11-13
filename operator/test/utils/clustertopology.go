@@ -71,41 +71,37 @@ func (b *ClusterTopologyBuilder) Build() *grovecorev1alpha1.ClusterTopology {
 	}
 
 	if b.deletionTimestamp != nil {
-		ct.ObjectMeta.DeletionTimestamp = b.deletionTimestamp
+		ct.DeletionTimestamp = b.deletionTimestamp
 	}
 
 	return ct
 }
 
+// defaultTopologyLevels returns the default topology levels for testing.
+func defaultTopologyLevels() []grovecorev1alpha1.TopologyLevel {
+	return []grovecorev1alpha1.TopologyLevel{
+		{
+			Domain: grovecorev1alpha1.TopologyDomainZone,
+			Key:    "topology.kubernetes.io/zone",
+		},
+		{
+			Domain: grovecorev1alpha1.TopologyDomainHost,
+			Key:    "kubernetes.io/hostname",
+		},
+	}
+}
+
 // NewSimpleClusterTopology creates a basic ClusterTopology for testing.
 func NewSimpleClusterTopology(name string) *grovecorev1alpha1.ClusterTopology {
 	return NewClusterTopologyBuilder(name).
-		WithLevels([]grovecorev1alpha1.TopologyLevel{
-			{
-				Domain: grovecorev1alpha1.TopologyDomainZone,
-				Key:    "topology.kubernetes.io/zone",
-			},
-			{
-				Domain: grovecorev1alpha1.TopologyDomainHost,
-				Key:    "kubernetes.io/hostname",
-			},
-		}).
+		WithLevels(defaultTopologyLevels()).
 		Build()
 }
 
 // NewClusterTopologyWithFinalizer creates ClusterTopology with finalizer.
 func NewClusterTopologyWithFinalizer(name string) *grovecorev1alpha1.ClusterTopology {
 	return NewClusterTopologyBuilder(name).
-		WithLevels([]grovecorev1alpha1.TopologyLevel{
-			{
-				Domain: grovecorev1alpha1.TopologyDomainZone,
-				Key:    "topology.kubernetes.io/zone",
-			},
-			{
-				Domain: grovecorev1alpha1.TopologyDomainHost,
-				Key:    "kubernetes.io/hostname",
-			},
-		}).
+		WithLevels(defaultTopologyLevels()).
 		WithFinalizer(constants.FinalizerClusterTopology).
 		Build()
 }
@@ -113,16 +109,7 @@ func NewClusterTopologyWithFinalizer(name string) *grovecorev1alpha1.ClusterTopo
 // NewClusterTopologyMarkedForDeletion creates ClusterTopology with deletion timestamp.
 func NewClusterTopologyMarkedForDeletion(name string, hasFinalizer bool) *grovecorev1alpha1.ClusterTopology {
 	builder := NewClusterTopologyBuilder(name).
-		WithLevels([]grovecorev1alpha1.TopologyLevel{
-			{
-				Domain: grovecorev1alpha1.TopologyDomainZone,
-				Key:    "topology.kubernetes.io/zone",
-			},
-			{
-				Domain: grovecorev1alpha1.TopologyDomainHost,
-				Key:    "kubernetes.io/hostname",
-			},
-		}).
+		WithLevels(defaultTopologyLevels()).
 		WithDeletionTimestamp(metav1.Now())
 
 	if hasFinalizer {

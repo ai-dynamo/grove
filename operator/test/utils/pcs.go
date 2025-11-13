@@ -17,9 +17,9 @@
 package utils
 
 import (
-	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"time"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -145,10 +145,10 @@ func (b *PodCliqueSetBuilder) WithPodCliqueSetGenerationHash(pcsGenerationHash *
 
 // WithTopologyLabel adds the grove.io/cluster-topology-name label.
 func (b *PodCliqueSetBuilder) WithTopologyLabel(topologyName string) *PodCliqueSetBuilder {
-	if b.pcs.ObjectMeta.Labels == nil {
-		b.pcs.ObjectMeta.Labels = make(map[string]string)
+	if b.pcs.Labels == nil {
+		b.pcs.Labels = make(map[string]string)
 	}
-	b.pcs.ObjectMeta.Labels[apicommon.LabelClusterTopologyName] = topologyName
+	b.pcs.Labels[apicommon.LabelClusterTopologyName] = topologyName
 	return b
 }
 
