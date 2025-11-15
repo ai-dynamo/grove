@@ -4,7 +4,6 @@ apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
   name: authorizer-webhook
-  namespace: {{ .Release.Namespace }}
   labels:
 {{- include "operator.authorizer.webhook.labels" . | nindent 4 }}
 webhooks:
@@ -36,7 +35,7 @@ webhooks:
           - secrets
           - serviceaccounts
           - services
-        scope: '*'
+        scope: "Namespaced"
       - apiGroups:
           - ""
         apiVersions:
@@ -45,7 +44,7 @@ webhooks:
           - UPDATE
         resources:
           - pods
-        scope: '*'
+        scope: "Namespaced"
       - apiGroups:
           - "rbac.authorization.k8s.io"
         apiVersions:
@@ -56,7 +55,7 @@ webhooks:
         resources:
           - roles
           - rolebindings
-        scope: '*'
+        scope: "Namespaced"
       - apiGroups:
           - "autoscaling"
         apiVersions:
@@ -67,7 +66,7 @@ webhooks:
           - DELETE
         resources:
           - horizontalpodautoscalers
-        scope: '*'
+        scope: "Namespaced"
       - apiGroups:
           - "grove.io"
         apiVersions:
@@ -79,7 +78,7 @@ webhooks:
         resources:
           - podcliques
           - podcliquescalinggroups
-        scope: '*'
+        scope: "Namespaced"
       - apiGroups:
           - "scheduler.grove.io"
         apiVersions:
@@ -90,6 +89,6 @@ webhooks:
           - DELETE
         resources:
           - podgangs
-        scope: '*'
+        scope: "Namespaced"
     timeoutSeconds: 10
 {{- end }}

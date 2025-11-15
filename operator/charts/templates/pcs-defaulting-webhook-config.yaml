@@ -3,7 +3,6 @@ apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
 metadata:
   name: podcliqueset-defaulting-webhook
-  namespace: {{ .Release.Namespace }}
   labels:
 {{- include "operator.pcs.defaulting.webhook.labels" . | nindent 4 }}
 webhooks:
@@ -29,6 +28,6 @@ webhooks:
           - UPDATE
         resources:
           - podcliquesets
-        scope: '*'
+        scope: "Namespaced"
     sideEffects: None
     timeoutSeconds: 10
