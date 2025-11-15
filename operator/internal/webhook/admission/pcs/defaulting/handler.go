@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 
+	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -31,13 +32,15 @@ import (
 
 // Handler sets default values on PodCliqueSet resources.
 type Handler struct {
-	logger logr.Logger
+	logger         logr.Logger
+	topologyConfig configv1alpha1.ClusterTopologyConfiguration
 }
 
 // NewHandler returns a new instance of defaulting webhook handler.
-func NewHandler(mgr manager.Manager) *Handler {
+func NewHandler(mgr manager.Manager, topologyConfig configv1alpha1.ClusterTopologyConfiguration) *Handler {
 	return &Handler{
-		logger: mgr.GetLogger().WithName("webhook").WithName(Name),
+		logger:         mgr.GetLogger().WithName("webhook").WithName(Name),
+		topologyConfig: topologyConfig,
 	}
 }
 
@@ -53,6 +56,6 @@ func (h *Handler) Default(ctx context.Context, obj runtime.Object) error {
 		return err
 	}
 	h.logger.Info("Applying defaults", "PodCliqueSet", k8sutils.CreateObjectKeyForCreateWebhooks(pcs, req))
-	defaultPodCliqueSet(pcs)
+	defaultPodCliqueSet(pcs, h.topologyConfig)
 	return nil
 }

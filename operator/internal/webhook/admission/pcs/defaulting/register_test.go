@@ -19,6 +19,7 @@ package defaulting
 import (
 	"testing"
 
+	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -41,7 +42,10 @@ func TestRegisterWithManager(t *testing.T) {
 	})
 	mgr.WebhookServer = server
 
-	handler := NewHandler(mgr)
+	topologyConfig := configv1alpha1.ClusterTopologyConfiguration{
+		Enabled: false,
+	}
+	handler := NewHandler(mgr, topologyConfig)
 	err := handler.RegisterWithManager(mgr)
 	require.NoError(t, err)
 }
