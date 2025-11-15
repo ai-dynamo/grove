@@ -31,12 +31,12 @@ CRD_REF_DOCS      := $(TOOLS_BIN_DIR)/crd-ref-docs
 # default tool versions
 # -------------------------------------------------------------------------
 CONTROLLER_GEN_VERSION    ?= $(call version_gomod,sigs.k8s.io/controller-tools)
-KIND_VERSION              ?= v0.29.0
-GOLANGCI_LINT_VERSION     ?= v2.1.1
-GOIMPORTS_REVISER_VERSION ?= v3.9.1
-YQ_VERSION                ?= v4.45.1
-GO_ADD_LICENSE_VERSION    ?= v1.1.1
-SKAFFOLD_VERSION          ?= v2.14.0
+KIND_VERSION              ?= v0.30.0
+GOLANGCI_LINT_VERSION     ?= v2.6.1
+GOIMPORTS_REVISER_VERSION ?= v3.10.0
+YQ_VERSION                ?= v4.48.1
+GO_ADD_LICENSE_VERSION    ?= v1.2.0
+SKAFFOLD_VERSION          ?= v2.16.1
 CRD_REF_DOCS_VERSION      ?= v0.2.0
 
 export PATH := $(abspath $(TOOLS_BIN_DIR)):$(PATH)

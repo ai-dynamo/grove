@@ -112,7 +112,7 @@ kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
 - role: control-plane
-  image: kindest/node:v1.32.2
+  image: kindest/node:v1.33.4
 EOF
   if [ "${DEPLOY_REGISTRY}" = true ]; then
     echo "Adding registry config to the kind cluster config..."

@@ -2,8 +2,6 @@ module github.com/ai-dynamo/grove/operator
 
 go 1.24.0
 
-toolchain go1.24.5
-
 require (
 	github.com/ai-dynamo/grove/operator/api v0.0.0
 	github.com/ai-dynamo/grove/scheduler/api v0.0.0
