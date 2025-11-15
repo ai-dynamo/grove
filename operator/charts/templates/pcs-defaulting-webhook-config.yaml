@@ -4,12 +4,20 @@ kind: MutatingWebhookConfiguration
 metadata:
   name: podcliqueset-defaulting-webhook
   namespace: {{ .Release.Namespace }}
+  {{- if .Values.config.server.webhooks.certManagement.certManagerEnabled }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/{{ .Values.config.server.webhooks.certManagement.secretName }}
+  {{- end }}
   labels:
 {{- include "operator.pcs.defaulting.webhook.labels" . | nindent 4 }}
 webhooks:
   - admissionReviewVersions:
       - v1
     clientConfig:
+      {{- if and .Values.config.server.webhooks.certManagement.certFilesPath (not .Values.config.server.webhooks.certManagement.certManagerEnabled) }}
+      # CA Bundle from chart files
+      caBundle: {{ .Files.Get (printf "%s/ca.crt" .Values.config.server.webhooks.certManagement.certFilesPath) | b64enc }}
+      {{- end }}
       service:
         name: {{ required ".Values.service.name is required" .Values.service.name }}
         namespace: {{ .Release.Namespace }}

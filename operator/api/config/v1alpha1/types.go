@@ -136,6 +136,31 @@ type WebhookServer struct {
 	Server `json:",inline"`
 	// ServerCertDir is the directory containing the server certificate and key.
 	ServerCertDir string `json:"serverCertDir"`
+	// CertManagement defines the certificate management configuration.
+	// +optional
+	CertManagement *WebhookCertManagement `json:"certManagement,omitempty"`
+}
+
+// WebhookCertManagement defines how webhook certificates are managed.
+type WebhookCertManagement struct {
+	// SecretName is the name of the secret containing the webhook server certificate.
+	// Default: grove-webhook-server-cert
+	// +optional
+	SecretName string `json:"secretName,omitempty"`
+	// CertManagerEnabled indicates whether to use cert-manager for certificate management.
+	// When true, the operator waits for cert-manager to provide certificates.
+	// When false, behavior depends on AutoProvision.
+	// This requires cert-manager to be installed in the cluster when set to true.
+	// Default: false
+	// +optional
+	CertManagerEnabled *bool `json:"certManagerEnabled,omitempty"`
+	// AutoProvision indicates whether to use cert-controller for automatic certificate generation.
+	// When true, cert-controller generates and manages certificates automatically.
+	// When false, certificates are expected to be provided externally (e.g., via Helm chart or manual Secret creation).
+	// This field is ignored when CertManagerEnabled is true.
+	// Default: true
+	// +optional
+	AutoProvision *bool `json:"autoProvision,omitempty"`
 }
 
 // Server contains information for HTTP(S) server configuration.

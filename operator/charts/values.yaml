@@ -46,6 +46,37 @@ config:
   server:
     webhooks:
       port: 9443
+      # serverCertDir is the directory path where certificate files are located.
+      # The operator will look for tls.crt and tls.key in this directory.
+      # Default: /etc/grove-operator/webhook-certs
+      serverCertDir: /etc/grove-operator/webhook-certs
+      certManagement:
+        # secretName is the name of the Kubernetes Secret containing webhook certificates.
+        # The Secret must contain tls.crt and tls.key (and optionally ca.crt).
+        # Default: "grove-webhook-server-cert"
+        secretName: grove-webhook-server-cert
+        
+        # certManagerEnabled controls cert-manager integration.
+        # - true: Use cert-manager for certificate management and CA injection
+        #         Chart will NOT create the Secret (cert-manager manages it)
+        #         Adds cert-manager.io/inject-ca-from annotation to webhook configs
+        # - false: Chart manages certificates directly (no cert-manager)
+        # Default: false
+        certManagerEnabled: false
+        
+        # certFilesPath specifies the directory containing certificate files within the chart.
+        # When set, Helm reads certificate files and creates the Secret.
+        # Expected files: server.crt, server.key, ca.crt
+        # Example: "pki-resources" reads from charts/pki-resources/
+        # 
+        # Behavior:
+        # - If certFilesPath is set: Chart creates Secret from files
+        # - If certFilesPath is empty and certManagerEnabled=false: Operator auto-generates certificates
+        # - If certManagerEnabled=true: certFilesPath is ignored (cert-manager manages Secret)
+        # 
+        # Set to empty string ("") to use auto-provision or external Secret.
+        # Default: "pki-resources"
+        certFilesPath: ""
     healthProbes:
       enable: false
       port: 9444

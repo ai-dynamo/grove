@@ -16,6 +16,11 @@ config.yaml: |
   server:
     webhooks:
       port: {{ .Values.config.server.webhooks.port }}
+      serverCertDir: {{ .Values.config.server.webhooks.serverCertDir }}
+      certManagement:
+        secretName: {{ .Values.config.server.webhooks.certManagement.secretName }}
+        certManagerEnabled: {{ .Values.config.server.webhooks.certManagement.certManagerEnabled }}
+        autoProvision: {{ if or .Values.config.server.webhooks.certManagement.certManagerEnabled .Values.config.server.webhooks.certManagement.certFilesPath }}false{{ else }}true{{ end }}
     healthProbes:
       port: {{ .Values.config.server.healthProbes.port }}
     metrics:

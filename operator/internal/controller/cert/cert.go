@@ -40,16 +40,42 @@ const (
 )
 
 // ManageWebhookCerts registers the cert-controller with the manager which will be used to manage
-// webhook certificates.
-func ManageWebhookCerts(mgr ctrl.Manager, certDir string, authorizerEnabled bool, certsReadyCh chan struct{}) error {
+// webhook certificates. The behavior depends on the configuration:
+// - If certManagerEnabled=true: waits for cert-manager to provide certificates
+// - If autoProvision=true: uses cert-controller for automatic certificate generation and management
+// - If autoProvision=false: waits for externally provided certificates (e.g., from Helm chart)
+func ManageWebhookCerts(mgr ctrl.Manager, certDir string, secretName string, authorizerEnabled bool, certManagerEnabled bool, autoProvision bool, certsReadyCh chan struct{}) error {
 	namespace, err := getOperatorNamespace()
 	if err != nil {
 		return err
 	}
+
+	logger := ctrl.Log.WithName("cert-management")
+
+	if certManagerEnabled {
+		logger.Info("Using cert-manager for certificate management",
+			"secretName", secretName, "certDir", certDir)
+		return nil
+	}
+
+	if !autoProvision {
+		logger.Info("Using externally provided certificates",
+			"certDir", certDir, "secretName", secretName)
+		return nil
+	}
+
+	// Auto-provision mode: Use cert-controller for certificate management
+	// cert-controller handles:
+	// - Generating certificates if they don't exist
+	// - Rotating certificates before expiry
+	// - Injecting CA bundle into webhook configurations
+	// - Monitoring certificate files and Secret for changes
+	logger.Info("Auto-provisioning certificates using cert-controller",
+		"secretName", secretName, "certDir", certDir)
 	rotator := &cert.CertRotator{
 		SecretKey: types.NamespacedName{
 			Namespace: namespace,
-			Name:      "grove-webhook-server-cert",
+			Name:      secretName,
 		},
 		CertDir:        certDir,
 		CAName:         certificateAuthorityName,

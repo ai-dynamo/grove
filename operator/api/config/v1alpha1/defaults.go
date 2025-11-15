@@ -80,6 +80,19 @@ func SetDefaults_ServerConfiguration(serverConfig *ServerConfiguration) {
 		serverConfig.Webhooks.ServerCertDir = defaultWebhookServerTLSServerCertDir
 	}
 
+	if serverConfig.Webhooks.CertManagement == nil {
+		serverConfig.Webhooks.CertManagement = &WebhookCertManagement{}
+	}
+	if serverConfig.Webhooks.CertManagement.CertManagerEnabled == nil {
+		serverConfig.Webhooks.CertManagement.CertManagerEnabled = ptr.To(false)
+	}
+	if serverConfig.Webhooks.CertManagement.AutoProvision == nil {
+		serverConfig.Webhooks.CertManagement.AutoProvision = ptr.To(true)
+	}
+	if serverConfig.Webhooks.CertManagement.SecretName == "" {
+		serverConfig.Webhooks.CertManagement.SecretName = "grove-webhook-server-cert"
+	}
+
 	if serverConfig.HealthProbes == nil {
 		serverConfig.HealthProbes = &Server{}
 	}

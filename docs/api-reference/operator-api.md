@@ -882,6 +882,24 @@ _Appears in:_
 | `metrics` _[Server](#server)_ | Metrics is the configuration for serving the metrics endpoint. |  |  |
 
 
+#### WebhookCertManagement
+
+
+
+WebhookCertManagement defines how webhook certificates are managed.
+
+
+
+_Appears in:_
+- [WebhookServer](#webhookserver)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `secretName` _string_ | SecretName is the name of the secret containing the webhook server certificate.<br />Default: grove-webhook-server-cert |  |  |
+| `certManagerEnabled` _boolean_ | CertManagerEnabled indicates whether to use cert-manager for certificate management.<br />When true, the operator waits for cert-manager to provide certificates.<br />When false, behavior depends on AutoProvision.<br />This requires cert-manager to be installed in the cluster when set to true.<br />Default: false |  |  |
+| `autoProvision` _boolean_ | AutoProvision indicates whether to use cert-controller for automatic certificate generation.<br />When true, cert-controller generates and manages certificates automatically.<br />When false, certificates are expected to be provided externally (e.g., via Helm chart or manual Secret creation).<br />This field is ignored when CertManagerEnabled is true.<br />Default: true |  |  |
+
+
 #### WebhookServer
 
 
@@ -898,5 +916,6 @@ _Appears in:_
 | `bindAddress` _string_ | BindAddress is the IP address on which to listen for the specified port. |  |  |
 | `port` _integer_ | Port is the port on which to serve requests. |  |  |
 | `serverCertDir` _string_ | ServerCertDir is the directory containing the server certificate and key. |  |  |
+| `certManagement` _[WebhookCertManagement](#webhookcertmanagement)_ | CertManagement defines the certificate management configuration. |  |  |
 
 
