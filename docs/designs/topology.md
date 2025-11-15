@@ -52,7 +52,7 @@ while allowing users to specify required constraints for strict placement (upper
 │  └──────────┬───────────┘          └──────────-─┬─────────┘             │
 │             │                                   │                       │
 │             │                                   │                       │
-│  Operator Config: topology.enabled=true         |                       |
+│  Operator Config: clusterTopology.enabled=true  │                       |                       |
 │             │                                   │                       │
 │             │ (validates against)               │ (referenced by)       │
 ├─────────────┼───────────────────────────────────┼───────────────────────┤
@@ -229,8 +229,8 @@ Deletion Workflow:
 2. Kubernetes blocks deletion (finalizer `grove.io/clustertopology` present)
 3. Controller reconciles:
     - Detects deletion request (deletion timestamp set)
-   - Checks if any PodCliqueSet (in any namespace) references this ClusterTopology (via `grove.io/topology-name` label)
-   - Checks if topology is enabled in operator config (`topology.enabled: true`)
+   - Checks if any PodCliqueSet (in any namespace) references this ClusterTopology (via `grove.io/cluster-topology-name` label)
+   - Checks if topology is enabled in operator config (`clusterTopology.enabled: true`)
    - If ANY PodCliqueSet references this topology OR topology is enabled: Keeps finalizer, deletion blocked
    - If NO PodCliqueSet references this topology AND topology is disabled: Removes finalizer, deletion proceeds
 4. Once finalizer removed, Kubernetes deletes ClusterTopology
@@ -238,8 +238,8 @@ Deletion Workflow:
 Key Points:
 
 - Admin must satisfy BOTH conditions before deletion:
-    - Delete all PodCliqueSet resources that reference this ClusterTopology (check `grove.io/topology-name` label)
-    - Disable TAS in operator config (`topology.enabled: false`) and restart operator
+    - Delete all PodCliqueSet resources that reference this ClusterTopology (check `grove.io/cluster-topology-name` label)
+    - Disable TAS in operator config (`clusterTopology.enabled: false`) and restart operator
 - Controller checks both conditions before allowing deletion
 - Controller continuously reconciles deletion requests
 - Prevents orphaned workloads with invalid topology configuration
@@ -258,12 +258,12 @@ topology:
 **Startup Behavior:**
 
 - Topology configuration loaded only at operator startup
-- Changes to `topology.enabled` or `name` require operator restart to take effect
-- If `topology.enabled: true`:
+- Changes to `clusterTopology.enabled` or `name` require operator restart to take effect
+- If `clusterTopology.enabled: true`:
     - `name` not specified → defaults to "grove-topology"
   - Operator looks for ClusterTopology with configured name (defaults to "grove-topology")
   - If ClusterTopology with that name doesn't exist → operator exits with ENOENT and crashloops
-- If `topology.enabled: false`: topology features disabled
+- If `clusterTopology.enabled: false`: topology features disabled
 - Admin must create ClusterTopology with matching name OR disable topology in operator config
 
 **Admin Responsibilities:**
@@ -273,22 +273,22 @@ topology:
 
 #### Enable/Disable Behavior
 
-**Enabling Topology (topology.enabled: false → true):**
+**Enabling Topology (clusterTopology.enabled: false → true):**
 
 1. Admin creates ClusterTopology CR with desired topology hierarchy
-2. Admin updates operator config: `topology.enabled: true`
+2. Admin updates operator config: `clusterTopology.enabled: true`
 3. Admin restarts operator (see Startup Behavior section for details)
 4. Operator validates ClusterTopology CR exists
 5. For existing workloads:
-    - Workloads with topology constraints: operator uses topology from PodCliqueSet label (`grove.io/topology-name`)
+    - Workloads with topology constraints: operator uses topology from PodCliqueSet label (`grove.io/cluster-topology-name`)
     - Workloads without topology constraints: no impact (checked via label presence)
 6. For new workloads:
     - Topology constraints validated against ClusterTopology CR
-   - Mutation webhook adds `grove.io/topology-name` label to PodCliqueSet (see Mutation Webhook section)
+   - Mutation webhook adds `grove.io/cluster-topology-name` label to PodCliqueSet (see Mutation Webhook section)
 
-**Disabling Topology (topology.enabled: true → false):**
+**Disabling Topology (clusterTopology.enabled: true → false):**
 
-1. Admin updates operator config: `topology.enabled: false`
+1. Admin updates operator config: `clusterTopology.enabled: false`
 2. Admin restarts operator
 3. For existing workloads:
     - Workloads with topology constraints: all topology constraints removed from PodGang, status updated
@@ -383,12 +383,12 @@ type PodCliqueTemplateSpec struct {
 
 The mutation webhook automatically modifies PodCliqueSet resources on CREATE operations:
 
-- **Label Addition**: Automatically adds `grove.io/topology-name` label to PodCliqueSet
+- **Label Addition**: Automatically adds `grove.io/cluster-topology-name` label to PodCliqueSet
 - **Label Value**: Set to the configured ClusterTopology name from operator config (e.g., "grove-topology")
-- **Condition**: Label only added when `topology.enabled: true` in operator configuration
+- **Condition**: Label only added when `clusterTopology.enabled: true` in operator configuration
 - **Purpose**: Enables workload-to-topology mapping for controller lifecycle management and deletion protection
 - **Immutability**: Once set, label cannot be changed (enforced by validation webhook)
-- **No Topology**: If topology disabled (`topology.enabled: false`), no label is added
+- **No Topology**: If topology disabled (`clusterTopology.enabled: false`), no label is added
 
 #### Validation Webhook
 
@@ -401,13 +401,13 @@ The mutation webhook automatically modifies PodCliqueSet resources on CREATE ope
 
 **Topology Enablement Validation:**
 
-- Webhook rejects PodCliqueSet with topology constraints when `topology.enabled: false`
+- Webhook rejects PodCliqueSet with topology constraints when `clusterTopology.enabled: false`
 - Error message: "topology support is not enabled in the operator"
 - Prevents workload admission failure when topology is disabled
 
 **Label Immutability:**
 
-- Webhook rejects changes to `grove.io/topology-name` label on PodCliqueSet after creation
+- Webhook rejects changes to `grove.io/cluster-topology-name` label on PodCliqueSet after creation
 - Label can only be set during PodCliqueSet creation (see Mutation Webhook section above)
 - Ensures topology reference remains consistent throughout resource lifecycle
 
