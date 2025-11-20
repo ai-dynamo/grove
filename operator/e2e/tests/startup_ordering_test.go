@@ -41,6 +41,7 @@ import (
 	"time"
 
 	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Test_SO1_InorderStartupOrderWithFullReplicas tests inorder startup with full replicas
@@ -70,7 +71,7 @@ func Test_SO1_InorderStartupOrderWithFullReplicas(t *testing.T) {
 		DynamicClient: dynamicClient,
 		Namespace:     "default",
 		Timeout:       5 * time.Minute,
-		Interval:      defaultPollInterval,
+		Interval:      defaultPollTimeout,
 		Workload: &WorkloadConfig{
 			Name:         "workload3",
 			YAMLPath:     "../yaml/workload3.yaml",
@@ -86,6 +87,7 @@ func Test_SO1_InorderStartupOrderWithFullReplicas(t *testing.T) {
 
 	logger.Info("3. Wait for pods to get scheduled and become ready")
 	if err := waitForPods(tc, expectedPods); err != nil {
+		debugPodState(tc)
 		t.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
 
@@ -154,7 +156,7 @@ func Test_SO2_InorderStartupOrderWithMinReplicas(t *testing.T) {
 		DynamicClient: dynamicClient,
 		Namespace:     "default",
 		Timeout:       5 * time.Minute,
-		Interval:      defaultPollInterval,
+		Interval:      defaultPollTimeout,
 		Workload: &WorkloadConfig{
 			Name:         "workload4",
 			YAMLPath:     "../yaml/workload4.yaml",
@@ -182,6 +184,7 @@ func Test_SO2_InorderStartupOrderWithMinReplicas(t *testing.T) {
 	// setup.go has waitForRunningPods(tc, count).
 	
 	if err := waitForRunningPods(tc, 10); err != nil {
+		debugPodState(tc)
 		t.Fatalf("Failed to wait for 10 pods to be running: %v", err)
 	}
 
@@ -221,6 +224,7 @@ func Test_SO2_InorderStartupOrderWithMinReplicas(t *testing.T) {
 	// So I will use `waitForPods(tc, 10)` which waits for Ready.
 	
 	if err := waitForPods(tc, 10); err != nil {
+		debugPodState(tc)
 		t.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
 	
@@ -334,6 +338,7 @@ func Test_SO3_ExplicitStartupOrderWithFullReplicas(t *testing.T) {
 
 	logger.Info("3. Wait for pods to get scheduled and become ready")
 	if err := waitForPods(tc, expectedPods); err != nil {
+		debugPodState(tc)
 		t.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
 
@@ -424,6 +429,7 @@ func Test_SO4_ExplicitStartupOrderWithMinReplicas(t *testing.T) {
 
 	// Wait for all 10 pods to become ready
 	if err := waitForPods(tc, 10); err != nil {
+		debugPodState(tc)
 		t.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
 	
@@ -598,4 +604,46 @@ func getPodsByCliquePattern(pods []v1.Pod, pattern string) []v1.Pod {
 		}
 	}
 	return result
+}
+
+// debugPodState logs detailed state information for all pods in the namespace.
+// This helps diagnose why pods might not be becoming Ready.
+func debugPodState(tc TestContext) {
+	pods, err := listPods(tc)
+	if err != nil {
+		logger.Errorf("Failed to list pods for debugging: %v", err)
+		return
+	}
+	logger.Infof("Debug: Found %d pods in namespace %s", len(pods.Items), tc.Namespace)
+	for _, pod := range pods.Items {
+		logger.Infof("Pod %s: Phase=%s, Reason=%s, Message=%s", pod.Name, pod.Status.Phase, pod.Status.Reason, pod.Status.Message)
+		for _, cond := range pod.Status.Conditions {
+			if cond.Status != v1.ConditionTrue {
+				logger.Infof("  Condition %s=%s: %s", cond.Type, cond.Status, cond.Message)
+			}
+		}
+		// Log init container statuses
+		for _, status := range pod.Status.InitContainerStatuses {
+			if !status.Ready {
+				logger.Infof("  InitContainer %s: Ready=%v, State=%+v", status.Name, status.Ready, status.State)
+			}
+		}
+		// Log container statuses
+		for _, status := range pod.Status.ContainerStatuses {
+			if !status.Ready {
+				logger.Infof("  Container %s: Ready=%v, State=%+v", status.Name, status.Ready, status.State)
+			}
+		}
+		// Events
+		events, err := tc.Clientset.CoreV1().Events(tc.Namespace).List(tc.Ctx, metav1.ListOptions{
+			FieldSelector: "involvedObject.name=" + pod.Name,
+		})
+		if err == nil {
+			for _, e := range events.Items {
+				if e.Type == "Warning" {
+					logger.Infof("  Event Warning: %s: %s", e.Reason, e.Message)
+				}
+			}
+		}
+	}
 }

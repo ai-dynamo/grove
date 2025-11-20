@@ -532,8 +532,8 @@ func InstallCoreComponents(ctx context.Context, restConfig *rest.Config, kaiConf
 				PullRepo:         fmt.Sprintf("registry:%s", registryPort),
 				Namespace:        "grove-system",
 				Env: map[string]string{
-					"VERSION":  "E2E_TESTS", //version required but it doesn't matter which for e2e tests
-					"LD_FLAGS": "",          // Empty for e2e tests
+					"VERSION":  "E2E_TESTS",
+					"LD_FLAGS": buildLDFlagsForE2E(),
 				},
 				Logger: logger,
 			}
@@ -982,4 +982,25 @@ func collectImagesFromNamespace(ctx context.Context, clientset *kubernetes.Clien
 
 	logger.Debugf("  Found %d unique images in namespace %s", len(images), namespace)
 	return images, nil
+}
+
+// buildLDFlagsForE2E generates ldflags for e2e tests to properly set version information.
+// This overrides the git placeholders in internal/version/version.go that would otherwise
+// contain invalid values like "$Format:%H$" which causes image reference parsing errors.
+func buildLDFlagsForE2E() string {
+	// Get current git commit hash (or use a placeholder for e2e tests)
+	gitCommit := "e2e-test-commit"
+
+	// Set build date to current time
+	buildDate := time.Now().Format("2006-01-02T15:04:05Z07:00")
+
+	// Set tree state to clean for e2e tests
+	treeState := "clean"
+
+	// Build the ldflags string
+	// Note: The module path changed from github.com/NVIDIA to github.com/ai-dynamo
+	ldflags := fmt.Sprintf("-X github.com/ai-dynamo/grove/operator/internal/version.gitCommit=%s -X github.com/ai-dynamo/grove/operator/internal/version.gitTreeState=%s -X github.com/ai-dynamo/grove/operator/internal/version.buildDate=%s -X github.com/ai-dynamo/grove/operator/internal/version.gitVersion=E2E_TESTS -X github.com/ai-dynamo/grove/operator/internal/version.programName=grove-operator",
+		gitCommit, treeState, buildDate)
+
+	return ldflags
 }
