@@ -120,7 +120,6 @@ func Test_SO2_InorderStartupOrderWithMinReplicas(t *testing.T) {
 	defer cleanup()
 
 	logger.Info("2. Deploy workload WL4, and verify 10 newly created pods")
-
 	tc := TestContext{
 		T:             t,
 		Ctx:           ctx,
@@ -212,8 +211,7 @@ func Test_SO3_ExplicitStartupOrderWithFullReplicas(t *testing.T) {
 	}
 
 	logger.Info("3. Wait for pods to get scheduled and become ready")
-	if err := waitForPods(tc, tc.Workload.ExpectedPods); err != nil {
-		debugPodState(tc)
+	if err := waitForReadyPods(tc, tc.Workload.ExpectedPods); err != nil {
 		t.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
 
@@ -561,7 +559,7 @@ func getPodsByCliquePattern(pods []v1.Pod, pattern string) []v1.Pod {
 }
 
 // debugPodState logs detailed state information for all pods in the namespace.
-// This helps diagnose why pods might not be becoming Ready.
+// Use this to help diagnose why pods might not be becoming Ready.
 func debugPodState(tc TestContext) {
 	pods, err := listPods(tc)
 	if err != nil {
