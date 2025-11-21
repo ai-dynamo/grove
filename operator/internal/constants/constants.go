@@ -96,3 +96,17 @@ const (
 	// ReasonPodCliqueSetReplicaDeleteFailed is an event reason which represents that the deletion of a PodCliqueSet replica failed.
 	ReasonPodCliqueSetReplicaDeleteFailed = "PodCliqueSetReplicaDeleteFailed"
 )
+
+// constants for ClusterTopology lifecycle events
+const (
+	// ReasonClusterTopologyCreateOrUpdateSuccessful is an event reason which represents a successful creation or update of a ClusterTopology.
+	ReasonClusterTopologyCreateOrUpdateSuccessful = "ClusterTopologyCreateOrUpdateSuccessful"
+	// ReasonClusterTopologyCreateOrUpdateFailed is an event reason which represents that the creation or update of a ClusterTopology failed.
+	ReasonClusterTopologyCreateOrUpdateFailed = "ClusterTopologyCreateOrUpdateFailed"
+	// ReasonClusterTopologyDeleteBlocked is an event reason which represents that the deletion of a ClusterTopology is blocked.
+	ReasonClusterTopologyDeleteBlocked = "ClusterTopologyDeleteBlocked"
+	// ReasonClusterTopologyDeleteSuccessful is an event reason which represents a successful deletion of a ClusterTopology.
+	ReasonClusterTopologyDeleteSuccessful = "ClusterTopologyDeleteSuccessful"
+	// ReasonClusterTopologyDeleteFailed is an event reason which represents that the deletion of a ClusterTopology failed.
+	ReasonClusterTopologyDeleteFailed = "ClusterTopologyDeleteFailed"
+)

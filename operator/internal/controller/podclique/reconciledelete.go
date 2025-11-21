@@ -63,7 +63,7 @@ func (r *Reconciler) deletePodCliqueResources(ctx context.Context, logger logr.L
 	logger.Info("Triggering delete of PodClique resources")
 	if runResult := utils.RunConcurrently(ctx, logger, deleteTasks); runResult.HasErrors() {
 		deletionErr := runResult.GetAggregatedError()
-		logger.Error(deletionErr, "Error deleting managed resources", "summary", runResult.GetSummary())
+		logger.Error(deletionErr, "failed to delete managed resources", "summary", runResult.GetSummary())
 		return ctrlcommon.ReconcileWithErrors("error deleting managed resources", deletionErr)
 	}
 	return ctrlcommon.ContinueReconcile()
