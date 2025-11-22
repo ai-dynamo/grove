@@ -101,7 +101,7 @@ func WaitForPods(ctx context.Context, restConfig *rest.Config, namespaces []stri
 
 			for _, pod := range pods.Items {
 				totalPods++
-				if isPodReady(&pod) {
+				if IsPodReady(&pod) {
 					readyPods++
 				} else {
 					allReady = false
@@ -307,8 +307,8 @@ func getGVRFromGVK(restMapper meta.RESTMapper, gvk schema.GroupVersionKind) (sch
 	return mapping.Resource, nil
 }
 
-// isPodReady checks if a pod is ready
-func isPodReady(pod *v1.Pod) bool {
+// IsPodReady checks if a pod is ready
+func IsPodReady(pod *v1.Pod) bool {
 	// First check that the pod is in Running phase
 	if pod.Status.Phase != v1.PodRunning {
 		return false
@@ -408,7 +408,7 @@ func CountPodsByPhase(pods *v1.PodList) PodPhaseCount {
 func CountReadyPods(pods *v1.PodList) int {
 	readyCount := 0
 	for _, pod := range pods.Items {
-		if isPodReady(&pod) {
+		if IsPodReady(&pod) {
 			readyCount++
 		}
 	}
