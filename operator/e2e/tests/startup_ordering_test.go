@@ -93,8 +93,8 @@ func Test_SO1_InorderStartupOrderWithFullReplicas(t *testing.T) {
 	logger.Info("   pcs-0-pc-a")
 	logger.Info("   pcs-0-sg-x-0-pc-b, pcs-0-sg-x-1-pc-b")
 	logger.Info("   pcs-0-sg-x-0-pc-c, pcs-0-sg-x-1-pc-c")
-	verifyCliqueGroupStartupOrder(t, tc, "pc-a", 2, "pc-b", 2)
-	verifyCliqueGroupStartupOrder(t, tc, "pc-b", 2, "pc-c", 6)
+	verifyPodCliqueStartupOrder(t, tc, "pc-a", 2, "pc-b", 2)
+	verifyPodCliqueStartupOrder(t, tc, "pc-b", 2, "pc-c", 6)
 
 	logger.Info("🎉 Inorder startup order with full replicas test completed successfully!")
 }
@@ -157,11 +157,11 @@ func Test_SO2_InorderStartupOrderWithMinReplicas(t *testing.T) {
 
 	// Verify complex startup ordering for scaling groups
 	verifyScalingGroupStartupOrder(t, tc, ScalingGroupOrderSpec{
-		PrefixGroups: []CliqueGroupSpec{
+		PrefixGroups: []PodCliqueSpec{
 			{Name: "pc-a", ExpectedCount: 2},
 		},
 		ScalingGroupReplicas: []string{"-sg-x-0-", "-sg-x-1-"},
-		WithinReplicaOrder: []CliqueGroupSpec{
+		WithinReplicaOrder: []PodCliqueSpec{
 			{Name: "pc-b", ExpectedCount: 2},
 			{Name: "pc-c", ExpectedCount: 6},
 		},
@@ -219,9 +219,9 @@ func Test_SO3_ExplicitStartupOrderWithFullReplicas(t *testing.T) {
 	logger.Info("   pcs-0-pc-a")
 	logger.Info("   pcs-0-sg-x-0-pc-c, pcs-0-sg-x-1-pc-c")
 	logger.Info("   pcs-0-sg-x-0-pc-b, pcs-0-sg-x-1-pc-b")
-	verifyCliqueGroupStartupOrder(t, tc, "pc-a", 2, "pc-c", 6)
-	verifyCliqueGroupStartupOrder(t, tc, "pc-a", 2, "pc-b", 2)
-	verifyCliqueGroupStartupOrder(t, tc, "pc-c", 6, "pc-b", 2)
+	verifyPodCliqueStartupOrder(t, tc, "pc-a", 2, "pc-c", 6)
+	verifyPodCliqueStartupOrder(t, tc, "pc-a", 2, "pc-b", 2)
+	verifyPodCliqueStartupOrder(t, tc, "pc-c", 6, "pc-b", 2)
 
 	logger.Info("🎉 Explicit startup order with full replicas test completed successfully!")
 }
@@ -289,11 +289,11 @@ func Test_SO4_ExplicitStartupOrderWithMinReplicas(t *testing.T) {
 	// Startup ordering is enforced WITHIN each gang, not globally across all gangs.
 	// Explicit startup: pc-a → pc-b → pc-c (pc-c has startsAfter: [pc-b])
 	verifyScalingGroupStartupOrder(t, tc, ScalingGroupOrderSpec{
-		PrefixGroups: []CliqueGroupSpec{
+		PrefixGroups: []PodCliqueSpec{
 			{Name: "pc-a", ExpectedCount: 2},
 		},
 		ScalingGroupReplicas: []string{"-sg-x-0-", "-sg-x-1-"},
-		WithinReplicaOrder: []CliqueGroupSpec{
+		WithinReplicaOrder: []PodCliqueSpec{
 			{Name: "pc-b", ExpectedCount: 2},
 			{Name: "pc-c", ExpectedCount: 6},
 		},
@@ -354,8 +354,8 @@ func getLatestPodTime(pods []v1.Pod) time.Time {
 	return latest
 }
 
-// CliqueGroupSpec defines a group of pods by clique name and expected count
-type CliqueGroupSpec struct {
+// PodCliqueSpec defines a group of pods by clique name and expected count
+type PodCliqueSpec struct {
 	Name          string // The clique name pattern (e.g., "pc-a", "pc-b")
 	ExpectedCount int    // Expected number of pods in this group
 }
@@ -363,14 +363,14 @@ type CliqueGroupSpec struct {
 // ScalingGroupOrderSpec defines the startup ordering verification for scaling groups
 type ScalingGroupOrderSpec struct {
 	// PrefixGroups are clique groups that should start before all scaling group replicas
-	PrefixGroups []CliqueGroupSpec
+	PrefixGroups []PodCliqueSpec
 
 	// ScalingGroupReplicas are the scaling group replica patterns to verify (e.g., "-sg-x-0-", "-sg-x-1-")
 	ScalingGroupReplicas []string
 
 	// WithinReplicaOrder defines the startup order within each scaling group replica
 	// Each element is a list of clique groups that should start in order
-	WithinReplicaOrder []CliqueGroupSpec
+	WithinReplicaOrder []PodCliqueSpec
 }
 
 // verifyScalingGroupStartupOrder verifies startup ordering for tests with scaling groups and minAvailable.
@@ -395,7 +395,8 @@ func verifyScalingGroupStartupOrder(t *testing.T, tc TestContext, spec ScalingGr
 		}
 	}
 
-	// Build a map of clique name -> pods for all groups
+	// Build a map of clique name pattern -> matching pods for all PodCliqueSpec test groups
+	// (both PrefixGroups and WithinReplicaOrder groups)
 	cliquePods := make(map[string][]v1.Pod)
 
 	// Collect prefix group pods
@@ -410,16 +411,10 @@ func verifyScalingGroupStartupOrder(t *testing.T, tc TestContext, spec ScalingGr
 		}
 	}
 
-	// Verify counts for prefix groups
-	for _, group := range spec.PrefixGroups {
-		pods := cliquePods[group.Name]
-		if len(pods) != group.ExpectedCount {
-			t.Fatalf("Expected %d running %s pods, got %d", group.ExpectedCount, group.Name, len(pods))
-		}
-	}
-
-	// Verify counts for within-replica order groups
-	for _, group := range spec.WithinReplicaOrder {
+	// Verify counts for all groups (prefix and within-replica order)
+	allGroups := append([]PodCliqueSpec{}, spec.PrefixGroups...)
+	allGroups = append(allGroups, spec.WithinReplicaOrder...)
+	for _, group := range allGroups {
 		pods := cliquePods[group.Name]
 		if len(pods) != group.ExpectedCount {
 			t.Fatalf("Expected %d running %s pods, got %d", group.ExpectedCount, group.Name, len(pods))
@@ -463,10 +458,10 @@ func verifyScalingGroupStartupOrder(t *testing.T, tc TestContext, spec ScalingGr
 	}
 }
 
-// verifyCliqueGroupStartupOrder combines pod fetching, filtering, count verification, and startup order verification.
+// verifyPodCliqueStartupOrder combines pod fetching, filtering, count verification, and startup order verification.
 // It fetches the latest pod state, gets pods matching the clique names, verifies their counts,
 // and then verifies that all pods in the "before" group started before all pods in the "after" group.
-func verifyCliqueGroupStartupOrder(t *testing.T, tc TestContext,
+func verifyPodCliqueStartupOrder(t *testing.T, tc TestContext,
 	beforeClique string, beforeCount int,
 	afterClique string, afterCount int) {
 	t.Helper()
