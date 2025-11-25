@@ -3,18 +3,19 @@ apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
 metadata:
   name: podcliqueset-defaulting-webhook
+  namespace: {{ .Release.Namespace }}
+  {{- if .Values.webhooks.podCliqueSetDefaultingWebhook.annotations }}
+  annotations:
+    {{- toYaml .Values.webhooks.podCliqueSetDefaultingWebhook.annotations | nindent 4 }}
+  {{- end }}
   labels:
 {{- include "operator.pcs.defaulting.webhook.labels" . | nindent 4 }}
 webhooks:
   - admissionReviewVersions:
       - v1
     clientConfig:
-      {{- if .Values.config.server.webhooks.secretName }}
-      # CA Bundle from secret
-      {{- $secret := lookup "v1" "Secret" .Release.Namespace .Values.config.server.webhooks.secretName }}
-      {{- if $secret }}
-      caBundle: {{ index $secret.data "ca.crt" }}
-      {{- end }}
+      {{- if .Values.webhooks.podCliqueSetDefaultingWebhook.caBundle }}
+      caBundle: {{ .Values.webhooks.podCliqueSetDefaultingWebhook.caBundle }}
       {{- end }}
       service:
         name: {{ required ".Values.service.name is required" .Values.service.name }}
