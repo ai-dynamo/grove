@@ -4,18 +4,19 @@ apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
   name: authorizer-webhook
+  namespace: {{ .Release.Namespace }}
+  {{- if .Values.webhooks.authorizerWebhook.annotations }}
+  annotations:
+    {{- toYaml .Values.webhooks.authorizerWebhook.annotations | nindent 4 }}
+  {{- end }}
   labels:
 {{- include "operator.authorizer.webhook.labels" . | nindent 4 }}
 webhooks:
   - admissionReviewVersions:
       - v1
     clientConfig:
-      {{- if .Values.config.server.webhooks.secretName }}
-      # CA Bundle from secret
-      {{- $secret := lookup "v1" "Secret" .Release.Namespace .Values.config.server.webhooks.secretName }}
-      {{- if $secret }}
-      caBundle: {{ index $secret.data "ca.crt" }}
-      {{- end }}
+      {{- if .Values.webhooks.authorizerWebhook.caBundle }}
+      caBundle: {{ .Values.webhooks.authorizerWebhook.caBundle }}
       {{- end }}
       service:
         name: {{ required ".Values.service.name is required" .Values.service.name }}
