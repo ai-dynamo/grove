@@ -2432,10 +2432,10 @@ func scalePodClique(tc TestContext, cliqueName string, replicas int32, expectedT
 		})
 		elapsed := time.Since(startTime)
 		if err != nil {
-			logger.Infof("[scalePodClique] Scale %s FAILED after %v: %v", cliqueName, elapsed, err)
+			logger.Debugf("[scalePodClique] Scale %s FAILED after %v: %v", cliqueName, elapsed, err)
 			return fmt.Errorf("failed to wait for pods after scaling PodClique %s: %w", cliqueName, err)
 		}
-		logger.Infof("[scalePodClique] Scale %s completed in %v (pods=%d)", cliqueName, elapsed, expectedTotalPods)
+		logger.Debugf("[scalePodClique] Scale %s completed in %v (pods=%d)", cliqueName, elapsed, expectedTotalPods)
 		return nil
 	})
 	return g
