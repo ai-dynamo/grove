@@ -360,7 +360,7 @@ func Test_RU10_RollingUpdateInsufficientResources(t *testing.T) {
 	for _, pod := range existingPods.Items {
 		existingPodNames[pod.Name] = true
 	}
-	logger.Infof("Captured %d existing pods before rolling update", len(existingPodNames))
+	logger.Debugf("Captured %d existing pods before rolling update", len(existingPodNames))
 
 	tracker := newRollingUpdateTracker()
 	if err := tracker.Start(ctx, clientset, tc.Namespace, tc.getLabelSelector()); err != nil {
@@ -1585,9 +1585,9 @@ func triggerRollingUpdate(tc TestContext, expectedReplicas int32, cliqueNames ..
 		err := waitForRollingUpdateComplete(tc, expectedReplicas)
 		elapsed := time.Since(startTime)
 		if err != nil {
-			logger.Infof("[triggerRollingUpdate] Rolling update FAILED after %v: %v", elapsed, err)
+			logger.Debugf("[triggerRollingUpdate] Rolling update FAILED after %v: %v", elapsed, err)
 		} else {
-			logger.Infof("[triggerRollingUpdate] Rolling update completed in %v", elapsed)
+			logger.Debugf("[triggerRollingUpdate] Rolling update completed in %v", elapsed)
 		}
 		return err
 	})
@@ -2615,18 +2615,18 @@ func capturePodCliqueStatus(tc TestContext) {
 	pclqGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliques"}
 	pcsGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquesets"}
 
-	logger.Info("=== PodCliqueSet Status ===")
+	logger.Debug("=== PodCliqueSet Status ===")
 	pcsList, err := tc.DynamicClient.Resource(pcsGVR).Namespace(tc.Namespace).List(tc.Ctx, metav1.ListOptions{})
 	if err != nil {
 		logger.Errorf("Failed to list PodCliqueSets: %v", err)
 	} else {
 		for _, pcs := range pcsList.Items {
 			status, _, _ := unstructured.NestedMap(pcs.Object, "status")
-			logger.Infof("PCS %s: status=%v", pcs.GetName(), status)
+			logger.Debugf("PCS %s: status=%v", pcs.GetName(), status)
 		}
 	}
 
-	logger.Info("=== PodClique Status ===")
+	logger.Debug("=== PodClique Status ===")
 	pclqList, err := tc.DynamicClient.Resource(pclqGVR).Namespace(tc.Namespace).List(tc.Ctx, metav1.ListOptions{})
 	if err != nil {
 		logger.Errorf("Failed to list PodCliques: %v", err)
@@ -2637,19 +2637,19 @@ func capturePodCliqueStatus(tc TestContext) {
 			replicas, _, _ := unstructured.NestedInt64(spec, "replicas")
 			readyReplicas, _, _ := unstructured.NestedInt64(status, "readyReplicas")
 			updatedReplicas, _, _ := unstructured.NestedInt64(status, "updatedReplicas")
-			logger.Infof("PCLQ %s: replicas=%d, readyReplicas=%d, updatedReplicas=%d",
+			logger.Debugf("PCLQ %s: replicas=%d, readyReplicas=%d, updatedReplicas=%d",
 				pclq.GetName(), replicas, readyReplicas, updatedReplicas)
 		}
 	}
 
-	logger.Info("=== Pod Status ===")
+	logger.Debug("=== Pod Status ===")
 	pods, err := listPods(tc)
 	if err != nil {
 		logger.Errorf("Failed to list pods: %v", err)
 	} else {
 		for _, pod := range pods.Items {
 			pclq := pod.Labels["grove.io/podclique"]
-			logger.Infof("Pod %s: phase=%s, pclq=%s, ready=%v",
+			logger.Debugf("Pod %s: phase=%s, pclq=%s, ready=%v",
 				pod.Name, pod.Status.Phase, pclq, isPodReady(&pod))
 		}
 	}
