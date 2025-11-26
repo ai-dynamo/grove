@@ -60,7 +60,7 @@ func (w *updateWork) getPodNamesPendingUpdate(deletionExpectedPodUIDs []types.UI
 // getNextPodToUpdate selects the next ready pod with old template hash to update, prioritizing oldest pods first
 func (w *updateWork) getNextPodToUpdate() *corev1.Pod {
 	if len(w.oldTemplateHashReadyPods) > 0 {
-		slices.SortFunc(w.oldTemplateHashPendingPods, func(a, b *corev1.Pod) int {
+		slices.SortFunc(w.oldTemplateHashReadyPods, func(a, b *corev1.Pod) int {
 			return a.CreationTimestamp.Compare(b.CreationTimestamp.Time)
 		})
 		return w.oldTemplateHashReadyPods[0]
@@ -208,12 +208,27 @@ func isCurrentPodUpdateComplete(sc *syncContext, work *updateWork) bool {
 	// Get the pod corresponding to the currently updating pod. If the pod exists and still does not have a deletion timestamp
 	// then the current update is not complete
 	currentlyUpdatingPodName := sc.pclq.Status.RollingUpdateProgress.ReadyPodsSelectedToUpdate.Current
-	pod, ok := lo.Find(sc.existingPCLQPods, func(pod *corev1.Pod) bool {
+	currentPod, ok := lo.Find(sc.existingPCLQPods, func(pod *corev1.Pod) bool {
 		return currentlyUpdatingPodName == pod.Name
 	})
-	if ok && !k8sutils.IsResourceTerminating(pod.ObjectMeta) {
+	if ok && !k8sutils.IsResourceTerminating(currentPod.ObjectMeta) {
 		return false
 	}
+
+	/*
+		// If we can find the pod, verify its specific hostname slot has a ready replacement with new template hash
+		if ok {
+			expectedHostname := currentPod.Spec.Hostname
+			hasReplacement := lo.ContainsBy(work.newTemplateHashReadyPods, func(pod *corev1.Pod) bool {
+				return pod.Spec.Hostname == expectedHostname
+			})
+			if !hasReplacement {
+				return false // Specific hostname slot not yet filled with ready replacement
+			}
+		}
+	*/
+
+	// Also verify count as a sanity check
 	podsSelectedToUpdate := len(sc.pclq.Status.RollingUpdateProgress.ReadyPodsSelectedToUpdate.Completed) + 1
 	return len(work.newTemplateHashReadyPods) >= podsSelectedToUpdate
 }
