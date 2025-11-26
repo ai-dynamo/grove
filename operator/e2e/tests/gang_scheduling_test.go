@@ -297,7 +297,7 @@ func Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas(t *testing.T) {
 
 	logger.Info("6. Scale PCSG replicas to 3 and verify 4 new pending pods")
 	pcsgName := "workload1-0-sg-x"
-	scalePCSGAndWait(tc, pcsgName, 3, 14, 4)
+	scalePCSGInstanceAndWait(tc, pcsgName, 3, 14, 4)
 
 	logger.Info("7. Uncordon 4 nodes and verify scaled pods get scheduled")
 	uncordonNodesAndWaitForPods(tc, nodesToCordon[1:5], 14)
@@ -308,7 +308,7 @@ func Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas(t *testing.T) {
 
 	logger.Info("9. Scale PCSG replicas to 3 and verify 4 new pending pods")
 	secondReplicaPCSGName := "workload1-1-sg-x"
-	scalePCSGAndWait(tc, secondReplicaPCSGName, 3, 28, 4)
+	scalePCSGInstanceAndWait(tc, secondReplicaPCSGName, 3, 28, 4)
 
 	logger.Info("10. Uncordon remaining nodes and verify all pods get scheduled")
 	uncordonNodesAndWaitForPods(tc, nodesToCordon[15:19], 28)
@@ -479,7 +479,7 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 	expectedPodsAfterScaling := 14
 	expectedNewPendingPods := 4
 
-	scalePCSGAndWait(tc, pcsgName, 3, expectedPodsAfterScaling, expectedNewPendingPods)
+	scalePCSGInstanceAndWait(tc, pcsgName, 3, expectedPodsAfterScaling, expectedNewPendingPods)
 
 	logger.Info("9. Verify all newly created pods are pending due to insufficient resources")
 	if err := verifyPodsArePendingWithUnschedulableEvents(tc, false, 4); err != nil {
@@ -630,7 +630,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	pcsgName := "workload2-0-sg-x"
 	expectedPodsAfterScaling := 14
 	expectedNewPendingPods := 4
-	scalePCSGAndWait(tc, pcsgName, 3, expectedPodsAfterScaling, expectedNewPendingPods)
+	scalePCSGInstanceAndWait(tc, pcsgName, 3, expectedPodsAfterScaling, expectedNewPendingPods)
 
 	logger.Info("12. Uncordon 2 nodes and verify 2 more pods get scheduled (pcs-0-{sg-x-2-pc-b=1, sg-x-2-pc-c=1})")
 	twoMoreNodesToUncordon := nodesToCordon[8:10]
@@ -720,7 +720,7 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 	logger.Info("4. Set pcs-0-sg-x resource replicas equal to 3, verify 4 more newly created pods")
 	pcsgName := "workload2-0-sg-x"
 	expectedPodsAfterScaling := 14
-	scalePCSGAndWait(tc, pcsgName, 3, expectedPodsAfterScaling, expectedPodsAfterScaling)
+	scalePCSGInstanceAndWait(tc, pcsgName, 3, expectedPodsAfterScaling, expectedPodsAfterScaling)
 
 	logger.Info("5. Verify all 14 newly created pods are pending due to insufficient resources")
 	verifyAllPodsArePendingWithSleep(tc)
@@ -1091,7 +1091,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 
 	logger.Info("7. Set pcs-0-sg-x resource replicas equal to 3, then verify 4 newly created pods")
 	pcsgName := "workload2-0-sg-x"
-	scalePCSGAndWait(tc, pcsgName, 3, 14, 4)
+	scalePCSGInstanceAndWait(tc, pcsgName, 3, 14, 4)
 
 	logger.Info("8. Verify all newly created pods are pending due to insufficient resources")
 	expectedRunning := 10 // Initial 10 pods from first wave
@@ -1139,7 +1139,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 
 	logger.Info("16. Set pcs-1-sg-x resource replicas equal to 3, then verify 4 newly created pods")
 	secondReplicaPCSGName := "workload2-1-sg-x"
-	scalePCSGAndWait(tc, secondReplicaPCSGName, 3, 28, 4)
+	scalePCSGInstanceAndWait(tc, secondReplicaPCSGName, 3, 28, 4)
 
 	logger.Info("17. Verify all newly created pods are pending due to insufficient resources")
 	expectedRunning = 24 // All previous pods should be running
@@ -1240,10 +1240,10 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 	logger.Info("6. Set both pcs-0-sg-x and pcs-1-sg-x resource replicas equal to 3, verify 8 newly created pods")
 
 	pcsg1Name := "workload2-0-sg-x"
-	scalePCSGAndWait(tc, pcsg1Name, 3, 24, 24)
+	scalePCSGInstanceAndWait(tc, pcsg1Name, 3, 24, 24)
 
 	pcsg2Name := "workload2-1-sg-x"
-	scalePCSGAndWait(tc, pcsg2Name, 3, 28, 28)
+	scalePCSGInstanceAndWait(tc, pcsg2Name, 3, 28, 28)
 
 	logger.Info("7. Verify all 28 created pods are pending due to insufficient resources")
 	if err := waitForPodCountAndPhases(tc, 28, 0, 28); err != nil {
