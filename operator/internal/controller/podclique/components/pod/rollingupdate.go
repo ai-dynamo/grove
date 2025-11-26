@@ -215,19 +215,6 @@ func isCurrentPodUpdateComplete(sc *syncContext, work *updateWork) bool {
 		return false
 	}
 
-	/*
-		// If we can find the pod, verify its specific hostname slot has a ready replacement with new template hash
-		if ok {
-			expectedHostname := currentPod.Spec.Hostname
-			hasReplacement := lo.ContainsBy(work.newTemplateHashReadyPods, func(pod *corev1.Pod) bool {
-				return pod.Spec.Hostname == expectedHostname
-			})
-			if !hasReplacement {
-				return false // Specific hostname slot not yet filled with ready replacement
-			}
-		}
-	*/
-
 	// Also verify count as a sanity check
 	podsSelectedToUpdate := len(sc.pclq.Status.RollingUpdateProgress.ReadyPodsSelectedToUpdate.Completed) + 1
 	return len(work.newTemplateHashReadyPods) >= podsSelectedToUpdate
