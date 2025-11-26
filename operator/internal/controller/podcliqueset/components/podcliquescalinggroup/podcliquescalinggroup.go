@@ -207,6 +207,8 @@ func (r _resource) buildResource(pcsg *grovecorev1alpha1.PodCliqueScalingGroup, 
 			fmt.Sprintf("Error setting controller reference for PodCliqueScalingGroup: %v", client.ObjectKeyFromObject(pcsg)),
 		)
 	}
+	// Only set replicas when creating the PCSG to allow external scaling (HPA, direct patching)
+	// Post-creation scaling must be done directly on the PCSG resource, not via PCS template
 	if !pcsgExists {
 		pcsg.Spec.Replicas = *pcsgConfig.Replicas
 	}
