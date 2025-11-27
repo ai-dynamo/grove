@@ -15,8 +15,8 @@ webhooks:
   - admissionReviewVersions:
       - v1
     clientConfig:
-      {{- if .Values.webhooks.authorizerWebhook.caBundle }}
-      caBundle: {{ .Values.webhooks.authorizerWebhook.caBundle }}
+      {{- if .Values.webhooks.caBundle }}
+      caBundle: {{ .Values.webhooks.caBundle }}
       {{- end }}
       service:
         name: {{ required ".Values.service.name is required" .Values.service.name }}
