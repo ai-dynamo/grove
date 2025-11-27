@@ -14,8 +14,8 @@ webhooks:
   - admissionReviewVersions:
       - v1
     clientConfig:
-      {{- if .Values.webhooks.podCliqueSetDefaultingWebhook.caBundle }}
-      caBundle: {{ .Values.webhooks.podCliqueSetDefaultingWebhook.caBundle }}
+      {{- if .Values.webhooks.caBundle }}
+      caBundle: {{ .Values.webhooks.caBundle }}
       {{- end }}
       service:
         name: {{ required ".Values.service.name is required" .Values.service.name }}
