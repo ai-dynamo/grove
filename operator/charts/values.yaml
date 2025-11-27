@@ -164,34 +164,27 @@ leaseRoleBinding:
     app.kubernetes.io/part-of: grove
 
 webhooks:
+  # Shared CA bundle for all webhooks. This is the base64-encoded CA certificate
+  # that signed the webhook server's TLS certificate.
+  caBundle: ""
   podCliqueSetValidationWebhook:
     labels:
       app.kubernetes.io/component: operator-pcs-validating-webhook
       app.kubernetes.io/name: pcs-validating-webhook
       app.kubernetes.io/part-of: grove
     annotations: {}
-    caBundle: ""
   podCliqueSetDefaultingWebhook:
     labels:
       app.kubernetes.io/component: operator-pcs-defaulting-webhook
       app.kubernetes.io/name: pcs-defaulting-webhook
       app.kubernetes.io/part-of: grove
     annotations: {}
-    caBundle: ""
-  clusterTopologyValidationWebhook:
-    labels:
-      app.kubernetes.io/component: operator-clustertopology-validating-webhook
-      app.kubernetes.io/name: clustertopology-validating-webhook
-      app.kubernetes.io/part-of: grove
-    annotations: {}
-    caBundle: ""
   authorizerWebhook:
     labels:
       app.kubernetes.io/component: operator-authorizer-webhook
       app.kubernetes.io/name: authorizer-webhook
       app.kubernetes.io/part-of: grove
     annotations: {}
-    caBundle: ""
 
 webhookServerSecret:
   labels:
