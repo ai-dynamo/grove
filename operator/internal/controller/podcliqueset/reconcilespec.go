@@ -214,8 +214,8 @@ func getOrderedKindsForSync() []component.Kind {
 		component.KindHorizontalPodAutoscaler,
 		component.KindPodCliqueSetReplica,
 		component.KindComputeDomain,
+		component.KindPodGang, // Create/Update PodGang (handles both initial creation and updating with pod references)
 		component.KindPodClique,
 		component.KindPodCliqueScalingGroup,
-		component.KindPodGang,
 	}
 }

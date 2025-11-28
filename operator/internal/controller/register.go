@@ -17,17 +17,41 @@
 package controller
 
 import (
+	"fmt"
+
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset"
+	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend"
+	backendcontroller "github.com/ai-dynamo/grove/operator/internal/schedulerbackend/controller"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 // RegisterControllers registers all controllers with the manager.
-func RegisterControllers(mgr ctrl.Manager, controllerConfig configv1alpha1.ControllerConfiguration, topologyAwareSchedulingConfig configv1alpha1.TopologyAwareSchedulingConfiguration, networkConfig configv1alpha1.NetworkAcceleration) error {
+func RegisterControllers(mgr ctrl.Manager, config configv1alpha1.OperatorConfiguration) error {
+	controllerConfig := config.Controllers
+	topologyAwareSchedulingConfig := config.TopologyAwareScheduling
+	networkConfig := config.Network
+
 	pcsReconciler := podcliqueset.NewReconciler(mgr, controllerConfig.PodCliqueSet, topologyAwareSchedulingConfig, networkConfig)
+	// Get scheduler name from configuration
+	schedulerName := config.SchedulerName
+	if schedulerName == "" {
+		schedulerName = "default-scheduler" // Default to default-scheduler
+	}
+
+	// Initialize global backend with the configured scheduler
+	if err := schedulerbackend.Initialize(
+		mgr.GetClient(),
+		mgr.GetScheme(),
+		mgr.GetEventRecorderFor("scheduler-backend"),
+		schedulerName,
+	); err != nil {
+		return fmt.Errorf("failed to initialize scheduler backend: %w", err)
+	}
+
 	if err := pcsReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
@@ -39,5 +63,15 @@ func RegisterControllers(mgr ctrl.Manager, controllerConfig configv1alpha1.Contr
 	if err := pcsgReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
+
+	// Backend controller for PodGang -> scheduler-specific CR conversion
+	backendReconciler, err := backendcontroller.NewReconciler(mgr)
+	if err != nil {
+		return fmt.Errorf("failed to create backend reconciler: %w", err)
+	}
+	if err := backendReconciler.RegisterWithManager(mgr); err != nil {
+		return err
+	}
+
 	return nil
 }
