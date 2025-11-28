@@ -102,6 +102,13 @@ func (r _resource) computeExpectedWorkloads(sc *syncContext) error {
 			fqn:   workloadName,
 			pclqs: identifyConstituentPCLQsForWorkload(sc, pcsReplica),
 		})
+
+		// Create scaled Workloads for PCSG replicas beyond minAvailable
+		scaledWorkloads, err := r.computeScaledPCSGWorkloads(sc, pcsReplica)
+		if err != nil {
+			return err
+		}
+		expectedWorkloads = append(expectedWorkloads, scaledWorkloads...)
 	}
 
 	sc.expectedWorkloads = expectedWorkloads
@@ -168,6 +175,103 @@ func buildNonPCSGPodCliqueInfosForBaseWorkload(sc *syncContext, pclqTemplateSpec
 		minAvailable: minAvailable,
 		replicas:     pclqTemplateSpec.Spec.Replicas,
 	}
+}
+
+// computeScaledPCSGWorkloads creates Workload resources for scaled PCSG replicas (beyond minAvailable).
+// This mirrors the PodGang controller's logic for creating scaled PodGangs.
+func (r _resource) computeScaledPCSGWorkloads(sc *syncContext, pcsReplica int32) ([]workloadInfo, error) {
+	scaledWorkloads := make([]workloadInfo, 0)
+
+	// Get existing PCSGs to determine current replicas
+	existingPCSGs, err := r.getExistingPodCliqueScalingGroups(sc, pcsReplica)
+	if err != nil {
+		return nil, err
+	}
+
+	// For each PCSG config, create scaled Workloads for replicas beyond minAvailable
+	for _, pcsgConfig := range sc.pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(
+			apicommon.ResourceNameReplica{Name: sc.pcs.Name, Replica: int(pcsReplica)},
+			pcsgConfig.Name,
+		)
+
+		minAvailable := int(*pcsgConfig.MinAvailable)
+
+		// Determine current replicas from PCSG resource if it exists, otherwise use template
+		replicas := int(*pcsgConfig.Replicas)
+		pcsg, ok := lo.Find(existingPCSGs, func(sg grovecorev1alpha1.PodCliqueScalingGroup) bool {
+			return sg.Name == pcsgFQN
+		})
+		if ok {
+			replicas = int(pcsg.Spec.Replicas)
+		}
+
+		// Create scaled Workloads for replicas starting from minAvailable
+		// The first 0..(minAvailable-1) replicas are in the base Workload
+		// Scaled Workloads use 0-based indexing
+		scaledReplicas := replicas - minAvailable
+		for workloadIndex, pcsgReplica := 0, minAvailable; workloadIndex < scaledReplicas; workloadIndex, pcsgReplica = workloadIndex+1, pcsgReplica+1 {
+			workloadName := apicommon.CreatePodGangNameFromPCSGFQN(pcsgFQN, workloadIndex)
+			pclqs, err := identifyConstituentPCLQsForScaledPCSGWorkload(sc, pcsgFQN, pcsgReplica, pcsgConfig.CliqueNames)
+			if err != nil {
+				return nil, err
+			}
+			scaledWorkloads = append(scaledWorkloads, workloadInfo{
+				fqn:   workloadName,
+				pclqs: pclqs,
+			})
+		}
+	}
+
+	return scaledWorkloads, nil
+}
+
+// getExistingPodCliqueScalingGroups fetches PCSGs for a specific PCS replica.
+func (r _resource) getExistingPodCliqueScalingGroups(sc *syncContext, pcsReplica int32) ([]grovecorev1alpha1.PodCliqueScalingGroup, error) {
+	pcsgList := &grovecorev1alpha1.PodCliqueScalingGroupList{}
+	labels := lo.Assign(
+		apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(sc.pcs.Name),
+		map[string]string{
+			apicommon.LabelPodCliqueSetReplicaIndex: fmt.Sprintf("%d", pcsReplica),
+		},
+	)
+	if err := r.client.List(sc.ctx, pcsgList,
+		client.InNamespace(sc.pcs.Namespace),
+		client.MatchingLabels(labels)); err != nil {
+		return nil, groveerr.WrapError(err,
+			errCodeListPodCliqueScalingGroup,
+			component.OperationSync,
+			fmt.Sprintf("failed to list PodCliqueScalingGroups for PCS %v replica %d", client.ObjectKeyFromObject(sc.pcs), pcsReplica),
+		)
+	}
+	return pcsgList.Items, nil
+}
+
+// identifyConstituentPCLQsForScaledPCSGWorkload identifies PCLQs for a scaled PCSG Workload.
+func identifyConstituentPCLQsForScaledPCSGWorkload(sc *syncContext, pcsgFQN string, pcsgReplica int, cliqueNames []string) ([]pclqInfo, error) {
+	constituentPCLQs := make([]pclqInfo, 0, len(cliqueNames))
+	for _, pclqName := range cliqueNames {
+		pclqTemplate, ok := lo.Find(sc.pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec) bool {
+			return pclqName == pclqTemplateSpec.Name
+		})
+		if !ok {
+			return nil, fmt.Errorf("PodCliqueScalingGroup references a PodClique that does not exist in the PodCliqueSet: %s", pclqName)
+		}
+
+		pclqFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsgFQN, Replica: pcsgReplica}, pclqName)
+
+		minAvailable := pclqTemplate.Spec.Replicas
+		if pclqTemplate.Spec.MinAvailable != nil {
+			minAvailable = *pclqTemplate.Spec.MinAvailable
+		}
+
+		constituentPCLQs = append(constituentPCLQs, pclqInfo{
+			fqn:          pclqFQN,
+			minAvailable: minAvailable,
+			replicas:     pclqTemplate.Spec.Replicas,
+		})
+	}
+	return constituentPCLQs, nil
 }
 
 // runSyncFlow executes the sync flow for Workload resources.

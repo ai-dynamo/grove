@@ -146,6 +146,15 @@ func (r _resource) runSyncFlow(logger logr.Logger, sc *syncContext) syncFlowResu
 			result.recordError(err)
 		}
 		logger.Info("created unassigned and scheduled gated pods", "numberOfCreatedPods", numScheduleGatedPods)
+
+		// Refresh pod list to include newly created pods so they can have their scheduling gates removed in this reconciliation
+		refreshedPods, err := componentutils.GetPCLQPods(sc.ctx, r.client, sc.pcs.Name, sc.pclq)
+		if err != nil {
+			logger.Error(err, "failed to refresh pod list after creating new pods")
+		} else {
+			sc.existingPCLQPods = refreshedPods
+			logger.V(1).Info("refreshed pod list after creating new pods", "numPods", len(refreshedPods))
+		}
 	} else if diff > 0 {
 		if err := r.deleteExcessPods(sc, logger, diff); err != nil {
 			result.recordError(err)

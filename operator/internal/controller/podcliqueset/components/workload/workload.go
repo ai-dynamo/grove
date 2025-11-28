@@ -39,14 +39,15 @@ import (
 )
 
 const (
-	errCodeListWorkloads          grovecorev1alpha1.ErrorCode = "ERR_LIST_WORKLOADS"
-	errCodeDeleteWorkloads        grovecorev1alpha1.ErrorCode = "ERR_DELETE_WORKLOADS"
-	errCodeDeleteExcessWorkload   grovecorev1alpha1.ErrorCode = "ERR_DELETE_EXCESS_WORKLOAD"
-	errCodeListPods               grovecorev1alpha1.ErrorCode = "ERR_LIST_PODS_FOR_PODCLIQUESET"
-	errCodeListPodCliques         grovecorev1alpha1.ErrorCode = "ERR_LIST_PODCLIQUES_FOR_PODCLIQUESET"
-	errCodeComputeExistingWorkload grovecorev1alpha1.ErrorCode = "ERR_COMPUTE_EXISTING_WORKLOAD"
-	errCodeSetControllerReference grovecorev1alpha1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
-	errCodeCreateOrPatchWorkload  grovecorev1alpha1.ErrorCode = "ERR_CREATE_OR_PATCH_WORKLOAD"
+	errCodeListWorkloads                grovecorev1alpha1.ErrorCode = "ERR_LIST_WORKLOADS"
+	errCodeDeleteWorkloads              grovecorev1alpha1.ErrorCode = "ERR_DELETE_WORKLOADS"
+	errCodeDeleteExcessWorkload         grovecorev1alpha1.ErrorCode = "ERR_DELETE_EXCESS_WORKLOAD"
+	errCodeListPods                     grovecorev1alpha1.ErrorCode = "ERR_LIST_PODS_FOR_PODCLIQUESET"
+	errCodeListPodCliques               grovecorev1alpha1.ErrorCode = "ERR_LIST_PODCLIQUES_FOR_PODCLIQUESET"
+	errCodeListPodCliqueScalingGroup    grovecorev1alpha1.ErrorCode = "ERR_LIST_PODCLIQUESCALINGGROUPS"
+	errCodeComputeExistingWorkload      grovecorev1alpha1.ErrorCode = "ERR_COMPUTE_EXISTING_WORKLOAD"
+	errCodeSetControllerReference       grovecorev1alpha1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
+	errCodeCreateOrPatchWorkload        grovecorev1alpha1.ErrorCode = "ERR_CREATE_OR_PATCH_WORKLOAD"
 )
 
 type _resource struct {

@@ -55,10 +55,7 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 		}).
 		For(&grovecorev1alpha1.PodClique{},
 			builder.WithPredicates(
-				predicate.And(
-					predicate.GenerationChangedPredicate{},
-					managedPodCliquePredicate(),
-				),
+				managedPodCliquePredicate(),
 			),
 		).
 		Owns(&corev1.Pod{}, builder.WithPredicates(podPredicate())).
@@ -72,17 +69,17 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(mapPodCliqueScalingGroupToPCLQs()),
 			builder.WithPredicates(podCliqueScalingGroupPredicate()),
 		).
-	Watches(
-		&groveschedulerv1alpha1.PodGang{},
-		handler.EnqueueRequestsFromMapFunc(mapPodGangToPCLQs()),
-		builder.WithPredicates(podGangPredicate()),
-	).
-	Watches(
-		&schedulingv1alpha1.Workload{},
-		handler.EnqueueRequestsFromMapFunc(mapWorkloadToPCLQs()),
-		builder.WithPredicates(workloadPredicate()),
-	).
-	Complete(r)
+		Watches(
+			&groveschedulerv1alpha1.PodGang{},
+			handler.EnqueueRequestsFromMapFunc(mapPodGangToPCLQs()),
+			builder.WithPredicates(podGangPredicate()),
+		).
+		Watches(
+			&schedulingv1alpha1.Workload{},
+			handler.EnqueueRequestsFromMapFunc(mapWorkloadToPCLQs()),
+			builder.WithPredicates(workloadPredicate()),
+		).
+		Complete(r)
 }
 
 // managedPodCliquePredicate filters PodClique events to only process managed PodCliques owned by expected resources
