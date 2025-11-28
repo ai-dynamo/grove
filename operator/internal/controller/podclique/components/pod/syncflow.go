@@ -37,6 +37,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
+	schedulingv1alpha1 "k8s.io/api/scheduling/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -243,27 +244,56 @@ func (r _resource) checkAndRemovePodSchedulingGates(sc *syncContext, logger logr
 	tasks := make([]utils.Task, 0, len(sc.existingPCLQPods))
 	skippedScheduleGatedPods := make([]string, 0, len(sc.existingPCLQPods))
 
-	// Pre-compute if the base PodGang is scheduled once for all pods in this PodClique
-	// All pods in the same PodClique have the same base PodGang
-	basePodGangScheduled, basePodGangName, err := r.checkBasePodGangScheduledForPodClique(sc.ctx, logger, sc.pclq)
-	if err != nil {
-		logger.Error(err, "Error checking if base PodGang is scheduled for PodClique - will requeue")
-		return nil, groveerr.WrapError(err,
-			errCodeRemovePodSchedulingGate,
-			component.OperationSync,
-			"failed to check if base PodGang is scheduled for PodClique",
-		)
+	// Check if we should use Workload API or PodGang API based on schedulerName
+	usingWorkloadAPI := shouldUseWorkloadAPI(&sc.pclq.Spec.PodSpec)
+
+	var gangReady bool
+	var gangName string
+	var err error
+
+	if usingWorkloadAPI {
+		// Using Workload API (default kube-scheduler) - operator manages gate removal
+		// Check if the Workload is ready for this PodClique
+		gangReady, gangName, err = r.checkWorkloadReadyForPodClique(sc.ctx, logger, sc.pclq)
+		if err != nil {
+			logger.Error(err, "Error checking if Workload is ready for PodClique - will requeue")
+			return nil, groveerr.WrapError(err,
+				errCodeRemovePodSchedulingGate,
+				component.OperationSync,
+				"failed to check if Workload is ready for PodClique",
+			)
+		}
+		logger.V(1).Info("Using Workload API - operator will manage scheduling gates based on Workload status",
+			"podClique", client.ObjectKeyFromObject(sc.pclq),
+			"workloadName", gangName,
+			"workloadReady", gangReady)
+	} else {
+		// Using PodGang API (grove scheduler) - operator manages gate removal
+		// Pre-compute if the base PodGang is scheduled once for all pods in this PodClique
+		// All pods in the same PodClique have the same base PodGang
+		gangReady, gangName, err = r.checkBasePodGangScheduledForPodClique(sc.ctx, logger, sc.pclq)
+		if err != nil {
+			logger.Error(err, "Error checking if base PodGang is scheduled for PodClique - will requeue")
+			return nil, groveerr.WrapError(err,
+				errCodeRemovePodSchedulingGate,
+				component.OperationSync,
+				"failed to check if base PodGang is scheduled for PodClique",
+			)
+		}
 	}
 
 	for i, p := range sc.existingPCLQPods {
 		if hasPodGangSchedulingGate(p) {
 			podObjectKey := client.ObjectKeyFromObject(p)
-			if !slices.Contains(sc.podNamesUpdatedInPCLQPodGangs, p.Name) {
+
+			// For PodGang API, check if pod is in PodGang
+			if !usingWorkloadAPI && !slices.Contains(sc.podNamesUpdatedInPCLQPodGangs, p.Name) {
 				logger.Info("Pod has scheduling gate but it has not yet been updated in PodGang", "podObjectKey", podObjectKey)
 				skippedScheduleGatedPods = append(skippedScheduleGatedPods, p.Name)
 				continue
 			}
-			shouldSkip := r.shouldSkipPodSchedulingGateRemoval(logger, p, basePodGangScheduled, basePodGangName)
+
+			shouldSkip := r.shouldSkipPodSchedulingGateRemoval(logger, p, gangReady, gangName, usingWorkloadAPI)
 			if shouldSkip {
 				skippedScheduleGatedPods = append(skippedScheduleGatedPods, p.Name)
 				continue
@@ -344,6 +374,71 @@ func (r _resource) isBasePodGangScheduled(ctx context.Context, logger logr.Logge
 	return true, nil
 }
 
+// checkWorkloadReadyForPodClique checks if the Workload associated with this PodClique is ready for scheduling.
+// A Workload is considered ready when ALL of its PodGroups have sufficient scheduled replicas.
+func (r _resource) checkWorkloadReadyForPodClique(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) (bool, string, error) {
+	// Get the Workload name from the PodClique labels
+	workloadName, hasWorkloadLabel := pclq.GetLabels()[common.LabelPodGang]
+	if !hasWorkloadLabel {
+		// No Workload associated - should not happen for Workload API mode
+		logger.Info("PodClique has no Workload label", "podClique", client.ObjectKeyFromObject(pclq))
+		return false, "", nil
+	}
+
+	// Get the Workload object
+	workload := &schedulingv1alpha1.Workload{}
+	workloadKey := client.ObjectKey{Name: workloadName, Namespace: pclq.Namespace}
+	if err := r.client.Get(ctx, workloadKey, workload); err != nil {
+		if apierrors.IsNotFound(err) {
+			// Workload not found yet - return error to trigger requeue
+			// This can happen when PodClique is created before Workload
+			logger.V(1).Info("Workload not found yet, will requeue", "workloadName", workloadName)
+			return false, workloadName, groveerr.WrapError(err,
+				errCodeGetPodGang, // Reuse error code
+				component.OperationSync,
+				fmt.Sprintf("Workload %s not found yet for PodClique %s", workloadName, pclq.Name),
+			)
+		}
+		return false, workloadName, groveerr.WrapError(err,
+			errCodeGetPodGang, // Reuse error code
+			component.OperationSync,
+			fmt.Sprintf("failed to get Workload %v", workloadKey),
+		)
+	}
+
+	// Check if all PodGroups in the Workload have sufficient scheduled replicas
+	for _, podGroup := range workload.Spec.PodGroups {
+		pclqName := podGroup.Name
+		podClique := &grovecorev1alpha1.PodClique{}
+		pclqKey := client.ObjectKey{Name: pclqName, Namespace: pclq.Namespace}
+		if err := r.client.Get(ctx, pclqKey, podClique); err != nil {
+			return false, workloadName, groveerr.WrapError(err,
+				errCodeGetPodClique,
+				component.OperationSync,
+				fmt.Sprintf("failed to get PodClique %s in namespace %s for Workload readiness check", pclqName, pclq.Namespace),
+			)
+		}
+
+		// For gang scheduling, check if MinCount is satisfied
+		// We check Replicas (total pods created) rather than ScheduledReplicas (pods that passed scheduling)
+		// because pods are gated and cannot be scheduled until we remove the gate
+		if podGroup.Policy.Gang != nil {
+			minCount := podGroup.Policy.Gang.MinCount
+			if podClique.Status.Replicas < minCount {
+				logger.V(1).Info("Workload not ready: PodClique has insufficient created pods",
+					"workloadName", workloadName,
+					"pclqName", pclqName,
+					"createdReplicas", podClique.Status.Replicas,
+					"minCount", minCount)
+				return false, workloadName, nil
+			}
+		}
+	}
+
+	logger.Info("Workload is ready - all PodGroups meet gang scheduling requirements", "workloadName", workloadName)
+	return true, workloadName, nil
+}
+
 // checkBasePodGangScheduledForPodClique determines if there's a base PodGang for the PodClique. If there is one,
 // this function checks if it is scheduled.
 func (r _resource) checkBasePodGangScheduledForPodClique(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) (bool, string, error) {
@@ -362,10 +457,25 @@ func (r _resource) checkBasePodGangScheduledForPodClique(ctx context.Context, lo
 	return scheduled, basePodGangName, nil
 }
 
-// shouldSkipPodSchedulingGateRemoval implements the core PodGang scheduling gate logic.
+// shouldSkipPodSchedulingGateRemoval implements the scheduling gate removal logic.
 // It returns true if the pod scheduling gate removal should be skipped, false otherwise.
-func (r _resource) shouldSkipPodSchedulingGateRemoval(logger logr.Logger, pod *corev1.Pod, basePodGangReady bool, basePodGangName string) bool {
-	if basePodGangName == "" {
+func (r _resource) shouldSkipPodSchedulingGateRemoval(logger logr.Logger, pod *corev1.Pod, gangReady bool, gangName string, usingWorkloadAPI bool) bool {
+	if usingWorkloadAPI {
+		// WORKLOAD API MODE: Simple logic - remove gate when Workload is ready
+		if gangReady {
+			logger.Info("Workload is ready, proceeding with gate removal",
+				"podObjectKey", client.ObjectKeyFromObject(pod),
+				"workloadName", gangName)
+			return false
+		}
+		logger.V(1).Info("Workload not ready yet, skipping gate removal",
+			"podObjectKey", client.ObjectKeyFromObject(pod),
+			"workloadName", gangName)
+		return true
+	}
+
+	// PODGANG API MODE: Base/Scaled logic
+	if gangName == "" {
 		// BASE PODGANG POD: This PodClique has no base PodGang dependency
 		// These pods form the core gang and get their gates removed immediately once assigned to PodGang
 		// They represent the minimum viable cluster (first minAvailable replicas) that must start together
@@ -374,15 +484,15 @@ func (r _resource) shouldSkipPodSchedulingGateRemoval(logger logr.Logger, pod *c
 		return false
 	}
 	// SCALED PODGANG POD: This PodClique depends on a base PodGang
-	if basePodGangReady {
+	if gangReady {
 		logger.Info("Base PodGang is ready, proceeding with gate removal for scaled PodGang pod",
 			"podObjectKey", client.ObjectKeyFromObject(pod),
-			"basePodGangName", basePodGangName)
+			"basePodGangName", gangName)
 		return false
 	}
 	logger.Info("Scaled PodGang pod has scheduling gate but base PodGang is not ready yet, skipping scheduling gate removal",
 		"podObjectKey", client.ObjectKeyFromObject(pod),
-		"basePodGangName", basePodGangName)
+		"basePodGangName", gangName)
 	return true
 }
 

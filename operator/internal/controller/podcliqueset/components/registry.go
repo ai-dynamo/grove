@@ -29,6 +29,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/satokensecret"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/service"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/serviceaccount"
+	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/workload"
 
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -47,6 +48,7 @@ func CreateOperatorRegistry(mgr manager.Manager, eventRecorder record.EventRecor
 	reg.Register(component.KindPodCliqueScalingGroup, podcliquescalinggroup.New(cl, mgr.GetScheme(), eventRecorder))
 	reg.Register(component.KindHorizontalPodAutoscaler, hpa.New(cl, mgr.GetScheme()))
 	reg.Register(component.KindPodGang, podgang.New(cl, mgr.GetScheme(), eventRecorder))
+	reg.Register(component.KindWorkload, workload.New(cl, mgr.GetScheme(), eventRecorder))
 	reg.Register(component.KindPodCliqueSetReplica, podcliquesetreplica.New(cl, eventRecorder))
 	return reg
 }

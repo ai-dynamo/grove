@@ -160,15 +160,31 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 	}
 	pod.Spec = *pclq.Spec.PodSpec.DeepCopy()
 	pod.Spec.SchedulingGates = []corev1.PodSchedulingGate{{Name: podGangSchedulingGate}}
+
+	// Set workloadRef if using default kube-scheduler (Kubernetes 1.35+ Workload API)
+	// This must be set during Pod creation, cannot be patched later
+	if shouldUseWorkloadAPI(&pod.Spec) {
+		pod.Spec.WorkloadRef = &corev1.WorkloadReference{
+			Name:     podGangName, // Workload name (e.g., "simple1-0")
+			PodGroup: pclq.Name,   // PodGroup name within the Workload (e.g., "simple1-0-pca")
+		}
+	}
+
 	// Add GROVE specific Pod environment variables
 	addEnvironmentVariables(pod, pclq, pcsName, pcsReplicaIndex, podIndex)
 	// Configure hostname and subdomain for service discovery
 	configurePodHostname(pcsName, pcsReplicaIndex, pclq.Name, pod, podIndex)
+
 	// If there is a need to enforce a Startup-Order then configure the init container and add it to the Pod Spec.
 	if len(pclq.Spec.StartsAfter) != 0 {
 		return configurePodInitContainer(pcs, pclq, pod)
 	}
 	return nil
+}
+
+// shouldUseWorkloadAPI determines if Kubernetes Workload API should be used based on schedulerName
+func shouldUseWorkloadAPI(podSpec *corev1.PodSpec) bool {
+	return podSpec.SchedulerName == "" || podSpec.SchedulerName == "default-scheduler"
 }
 
 // Delete removes all Pods associated with the specified PodClique

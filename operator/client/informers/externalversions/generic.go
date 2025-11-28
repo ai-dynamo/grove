@@ -61,6 +61,8 @@ func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Grove().V1alpha1().PodCliqueScalingGroups().Informer()}, nil
 	case v1alpha1.SchemeGroupVersion.WithResource("podcliquesets"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Grove().V1alpha1().PodCliqueSets().Informer()}, nil
+	case v1alpha1.SchemeGroupVersion.WithResource("workloads"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Grove().V1alpha1().Workloads().Informer()}, nil
 
 	}
 

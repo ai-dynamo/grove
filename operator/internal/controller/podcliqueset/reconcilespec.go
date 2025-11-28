@@ -25,6 +25,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	pcscomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -149,7 +150,7 @@ func (r *Reconciler) initRollingUpdateProgress(ctx context.Context, pcs *groveco
 // syncPodCliqueSetResources synchronizes all managed child resources in order.
 func (r *Reconciler) syncPodCliqueSetResources(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	continueReconcileAndRequeueKinds := make([]component.Kind, 0)
-	for _, kind := range getOrderedKindsForSync() {
+	for _, kind := range getOrderedKindsForSync(pcs) {
 		operator, err := r.operatorRegistry.GetOperator(kind)
 		if err != nil {
 			return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("error getting operator for kind: %s", kind), err)
@@ -199,8 +200,9 @@ func (r *Reconciler) recordIncompleteReconcile(ctx context.Context, logger logr.
 }
 
 // getOrderedKindsForSync returns the ordered list of component kinds to synchronize.
-func getOrderedKindsForSync() []component.Kind {
-	return []component.Kind{
+// It dynamically selects between PodGang and Workload based on the scheduler type.
+func getOrderedKindsForSync(pcs *grovecorev1alpha1.PodCliqueSet) []component.Kind {
+	baseKinds := []component.Kind{
 		component.KindServiceAccount,
 		component.KindRole,
 		component.KindRoleBinding,
@@ -210,6 +212,11 @@ func getOrderedKindsForSync() []component.Kind {
 		component.KindPodCliqueSetReplica,
 		component.KindPodClique,
 		component.KindPodCliqueScalingGroup,
-		component.KindPodGang,
 	}
+	
+	// Use Workload API for default kube-scheduler (1.35+), otherwise use PodGang API
+	if pcscomponent.ShouldUseWorkloadAPI(pcs) {
+		return append(baseKinds, component.KindWorkload)
+	}
+	return append(baseKinds, component.KindPodGang)
 }
