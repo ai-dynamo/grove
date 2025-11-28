@@ -28,6 +28,7 @@ import (
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
+	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -159,11 +160,22 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 		)
 	}
 	pod.Spec = *pclq.Spec.PodSpec.DeepCopy()
-	pod.Spec.SchedulingGates = []corev1.PodSchedulingGate{{Name: podGangSchedulingGate}}
+
+	// Use backend to prepare Pod spec based on scheduler requirements
+	// This adds schedulerName, scheduling gates, annotations, etc.
+	if err = schedulerbackend.PreparePod(pod); err != nil {
+		return groveerr.WrapError(err,
+			errCodeBuildPodResource,
+			component.OperationSync,
+			fmt.Sprintf("failed to prepare pod spec with scheduler backend"),
+		)
+	}
+
 	// Add GROVE specific Pod environment variables
 	addEnvironmentVariables(pod, pclq, pcsName, pcsReplicaIndex, podIndex)
 	// Configure hostname and subdomain for service discovery
 	configurePodHostname(pcsName, pcsReplicaIndex, pclq.Name, pod, podIndex)
+
 	// If there is a need to enforce a Startup-Order then configure the init container and add it to the Pod Spec.
 	if len(pclq.Spec.StartsAfter) != 0 {
 		return configurePodInitContainer(pcs, pclq, pod)

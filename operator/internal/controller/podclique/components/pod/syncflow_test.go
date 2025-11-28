@@ -562,3 +562,9 @@ func createTestPodClique(name string, minAvailable, scheduledReplicas int32) *gr
 		},
 	}
 }
+
+// hasPodGangSchedulingGate checks if a pod has the podgang scheduling gate
+func hasPodGangSchedulingGate(pod *corev1.Pod) bool {
+	return hasSpecificSchedulingGate(pod, podGangSchedulingGate)
+}
+

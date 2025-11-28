@@ -113,7 +113,6 @@ func (v *pcsValidator) validatePodCliqueTemplates(fldPath *field.Path) ([]string
 
 	cliqueNames := make([]string, 0, len(cliqueTemplateSpecs))
 	cliqueRoles := make([]string, 0, len(cliqueTemplateSpecs))
-	schedulerNames := make([]string, 0, len(cliqueTemplateSpecs))
 	for _, cliqueTemplateSpec := range cliqueTemplateSpecs {
 		warns, errs := v.validatePodCliqueTemplateSpec(cliqueTemplateSpec, fldPath, scalingGroupCliqueNames)
 		if len(errs) != 0 {
@@ -124,21 +123,10 @@ func (v *pcsValidator) validatePodCliqueTemplates(fldPath *field.Path) ([]string
 		}
 		cliqueNames = append(cliqueNames, cliqueTemplateSpec.Name)
 		cliqueRoles = append(cliqueRoles, cliqueTemplateSpec.Spec.RoleName)
-		schedulerNames = append(schedulerNames, cliqueTemplateSpec.Spec.PodSpec.SchedulerName)
 	}
 
 	allErrs = append(allErrs, sliceMustHaveUniqueElements(cliqueNames, fldPath.Child("name"), "cliqueTemplateSpec names must be unique")...)
 	allErrs = append(allErrs, sliceMustHaveUniqueElements(cliqueRoles, fldPath.Child("roleName"), "cliqueTemplateSpec.Spec roleNames must be unique")...)
-
-	uniqueSchedulerNames := lo.Uniq(lo.Map(schedulerNames, func(item string, _ int) string {
-		if item == "" {
-			return "default-scheduler"
-		}
-		return item
-	}))
-	if len(uniqueSchedulerNames) > 1 {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("spec").Child("podSpec").Child("schedulerName"), uniqueSchedulerNames[0], "the schedulerName for all pods have to be the same"))
-	}
 
 	if v.isStartupTypeExplicit() {
 		allErrs = append(allErrs, validateCliqueDependencies(cliqueTemplateSpecs, fldPath)...)
@@ -417,6 +405,13 @@ func (v *pcsValidator) validatePodSpec(spec corev1.PodSpec, fldPath *field.Path)
 		if !utils.IsEmptyStringType(spec.NodeName) {
 			allErrs = append(allErrs, field.Invalid(specFldPath.Child("nodeName"), spec.NodeName, "must not be set"))
 		}
+	}
+
+	// Prevent users from specifying schedulerName in PodSpec
+	// The operator will set this based on the OperatorConfiguration.SchedulerName
+	if !utils.IsEmptyStringType(spec.SchedulerName) {
+		allErrs = append(allErrs, field.Forbidden(specFldPath.Child("schedulerName"), 
+			"schedulerName must not be set in PodSpec, it is controlled by the operator configuration"))
 	}
 
 	return warnings, allErrs
