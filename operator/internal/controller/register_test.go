@@ -49,19 +49,22 @@ func TestRegisterControllers(t *testing.T) {
 		mgr, err := ctrl.NewManager(cfg, ctrl.Options{})
 		require.NoError(t, err)
 
-		controllerConfig := configv1alpha1.ControllerConfiguration{
-			PodCliqueSet: configv1alpha1.PodCliqueSetControllerConfiguration{
-				ConcurrentSyncs: ptr.To(1),
-			},
-			PodClique: configv1alpha1.PodCliqueControllerConfiguration{
-				ConcurrentSyncs: ptr.To(1),
-			},
-			PodCliqueScalingGroup: configv1alpha1.PodCliqueScalingGroupControllerConfiguration{
-				ConcurrentSyncs: ptr.To(1),
+		operatorConfig := configv1alpha1.OperatorConfiguration{
+			SchedulerName: "kai-scheduler",
+			Controllers: configv1alpha1.ControllerConfiguration{
+				PodCliqueSet: configv1alpha1.PodCliqueSetControllerConfiguration{
+					ConcurrentSyncs: ptr.To(1),
+				},
+				PodClique: configv1alpha1.PodCliqueControllerConfiguration{
+					ConcurrentSyncs: ptr.To(1),
+				},
+				PodCliqueScalingGroup: configv1alpha1.PodCliqueScalingGroupControllerConfiguration{
+					ConcurrentSyncs: ptr.To(1),
+				},
 			},
 		}
 
-		err = RegisterControllers(mgr, controllerConfig, configv1alpha1.TopologyAwareSchedulingConfiguration{}, configv1alpha1.NetworkAcceleration{})
+		err = RegisterControllers(mgr, operatorConfig)
 		require.NoError(t, err)
 	})
 
@@ -70,19 +73,22 @@ func TestRegisterControllers(t *testing.T) {
 		mgr, err := ctrl.NewManager(cfg, ctrl.Options{})
 		require.NoError(t, err)
 
-		controllerConfig := configv1alpha1.ControllerConfiguration{
-			PodCliqueSet: configv1alpha1.PodCliqueSetControllerConfiguration{
-				ConcurrentSyncs: ptr.To(5),
-			},
-			PodClique: configv1alpha1.PodCliqueControllerConfiguration{
-				ConcurrentSyncs: ptr.To(10),
-			},
-			PodCliqueScalingGroup: configv1alpha1.PodCliqueScalingGroupControllerConfiguration{
-				ConcurrentSyncs: ptr.To(3),
+		operatorConfig := configv1alpha1.OperatorConfiguration{
+			SchedulerName: "kai-scheduler",
+			Controllers: configv1alpha1.ControllerConfiguration{
+				PodCliqueSet: configv1alpha1.PodCliqueSetControllerConfiguration{
+					ConcurrentSyncs: ptr.To(5),
+				},
+				PodClique: configv1alpha1.PodCliqueControllerConfiguration{
+					ConcurrentSyncs: ptr.To(10),
+				},
+				PodCliqueScalingGroup: configv1alpha1.PodCliqueScalingGroupControllerConfiguration{
+					ConcurrentSyncs: ptr.To(3),
+				},
 			},
 		}
 
-		err = RegisterControllers(mgr, controllerConfig, configv1alpha1.TopologyAwareSchedulingConfiguration{}, configv1alpha1.NetworkAcceleration{})
+		err = RegisterControllers(mgr, operatorConfig)
 		require.NoError(t, err)
 	})
 }

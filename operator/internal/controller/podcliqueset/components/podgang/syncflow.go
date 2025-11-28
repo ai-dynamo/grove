@@ -433,6 +433,7 @@ func (r _resource) runSyncFlow(sc *syncContext) syncFlowResult {
 		result.errs = append(result.errs, err)
 		return result
 	}
+	// Create/update PodGangs and populate PodReferences if all pods are ready
 	return r.createOrUpdatePodGangs(sc)
 }
 
@@ -462,20 +463,15 @@ func (r _resource) deleteExcessPodGangs(sc *syncContext) error {
 	return nil
 }
 
-// createOrUpdatePodGangs creates or updates all expected PodGangs when ready.
+// createOrUpdatePodGangs creates or updates all expected PodGangs.
+// PodGangs are created with empty podReferences, Initialized=False.
 func (r _resource) createOrUpdatePodGangs(sc *syncContext) syncFlowResult {
 	result := syncFlowResult{}
-	pendingPodGangNames := sc.getPodGangNamesPendingCreation()
+
+	// Step 1: Create or update all expected PodGangs with basic structure
 	for _, podGang := range sc.expectedPodGangs {
 		sc.logger.Info("[createOrUpdatePodGangs] processing PodGang", "fqn", podGang.fqn)
-		isPodGangPendingCreation := slices.Contains(pendingPodGangNames, podGang.fqn)
-		// check the health of each podclique
-		numPendingPods := r.getPodsPendingCreationOrAssociation(sc, podGang)
-		if isPodGangPendingCreation && numPendingPods > 0 {
-			sc.logger.Info("skipping creation of PodGang as all desired replicas have not yet been created or assigned", "fqn", podGang.fqn, "numPendingPodsToCreateOrAssociate", numPendingPods)
-			result.recordPodGangPendingCreation(podGang.fqn)
-			continue
-		}
+
 		if err := r.createOrUpdatePodGang(sc, podGang); err != nil {
 			sc.logger.Error(err, "failed to create PodGang", "PodGangName", podGang.fqn)
 			result.recordError(err)
@@ -483,7 +479,209 @@ func (r _resource) createOrUpdatePodGangs(sc *syncContext) syncFlowResult {
 		}
 		result.recordPodGangCreation(podGang.fqn)
 	}
+
+	// Step 2: For existing PodGangs, try to update PodReferences if all pods are created
+	// Skip newly created PodGangs as their pods won't be ready yet
+	for _, podGangName := range sc.existingPodGangNames {
+		if err := r.updatePodGangWithPodReferences(sc, podGangName); err != nil {
+			// Check if this is a "waiting for pods" error
+			var groveErr *groveerr.GroveError
+			if errors.As(err, &groveErr) && groveErr.Code == groveerr.ErrCodeRequeueAfter {
+				// Expected error: pods not ready yet, record but continue with other PodGangs
+				sc.logger.Info("PodGang waiting for pods to be created, will retry in next reconcile",
+					"podGang", podGangName)
+				result.recordError(err)
+			} else {
+				// Unexpected error: log and record, but continue with other PodGangs
+				sc.logger.Error(err, "Failed to update PodGang with pod references",
+					"podGang", podGangName)
+				result.recordError(err)
+			}
+		}
+	}
+
 	return result
+}
+
+// updatePodGangWithPodReferences updates a PodGang with pod references and sets Initialized condition.
+func (r _resource) updatePodGangWithPodReferences(sc *syncContext, podGangName string) error {
+	// Find the podGangInfo from expectedPodGangs
+	podGangInfo, found := r.findPodGangInfo(sc, podGangName)
+	if !found {
+		return nil
+	}
+
+	// Verify all pods are created before proceeding
+	if err := r.verifyAllPodsCreated(sc, podGangName, podGangInfo); err != nil {
+		return err
+	}
+
+	// Update pod references using Patch (no need to fetch from API server!)
+	if err := r.patchPodGangWithPodReferences(sc, podGangName, podGangInfo); err != nil {
+		return err
+	}
+
+	// Update status to set Initialized=True (idempotent - no need to check current state)
+	return r.patchPodGangInitializedStatus(sc, podGangName)
+}
+
+// patchPodGangInitializedStatus sets Initialized condition to True
+func (r _resource) patchPodGangInitializedStatus(sc *syncContext, podGangName string) error {
+	// Create a PodGang object with only the status we want to patch
+	statusPatch := &groveschedulerv1alpha1.PodGang{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      podGangName,
+			Namespace: sc.pcs.Namespace,
+		},
+	}
+
+	// Set Initialized condition to True and Phase to Pending
+	setInitializedCondition(statusPatch, metav1.ConditionTrue, "AllPodsCreated", "All pods have been created and references populated")
+	statusPatch.Status.Phase = groveschedulerv1alpha1.PodGangPhasePending
+
+	// Patch status (idempotent - if already True, no change will be made)
+	if err := r.client.Status().Patch(sc.ctx, statusPatch, client.Merge); err != nil {
+		// Log but don't fail - status update is not critical
+		sc.logger.Error(err, "Failed to patch PodGang status with Initialized condition",
+			"podGang", podGangName)
+		return nil // Don't fail the entire operation for status updates
+	}
+
+	sc.logger.Info("Successfully updated PodGang with pod references and set Initialized=True",
+		"podGang", podGangName)
+	return nil
+}
+
+// patchPodGangWithPodReferences uses strategic merge patch to update pod references
+func (r _resource) patchPodGangWithPodReferences(sc *syncContext, podGangName string, podGangInfo *podGangInfo) error {
+	// Build PodGroups with pod references from syncContext
+	podGroups := r.buildPodGroupsFromContext(sc, podGangInfo)
+
+	// Create patch object
+	patchPodGang := &groveschedulerv1alpha1.PodGang{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      podGangName,
+			Namespace: sc.pcs.Namespace,
+		},
+		Spec: groveschedulerv1alpha1.PodGangSpec{
+			PodGroups: podGroups,
+		},
+	}
+
+	// Apply patch
+	if err := r.client.Patch(sc.ctx, patchPodGang, client.Merge); err != nil {
+		return groveerr.WrapError(err,
+			errCodeCreateOrPatchPodGang,
+			component.OperationSync,
+			fmt.Sprintf("Failed to patch PodGang %s with pod references", podGangName),
+		)
+	}
+
+	sc.logger.Info("Successfully patched PodGang with pod references",
+		"podGang", podGangName,
+		"numPodGroups", len(podGroups))
+	return nil
+}
+
+// buildPodGroupsFromContext constructs PodGroups with pod references from syncContext data
+func (r _resource) buildPodGroupsFromContext(sc *syncContext, podGangInfo *podGangInfo) []groveschedulerv1alpha1.PodGroup {
+	podsByGroup := r.groupPodsByPodClique(sc, podGangInfo)
+
+	podGroups := make([]groveschedulerv1alpha1.PodGroup, 0, len(podGangInfo.pclqs))
+	for _, pclqInfo := range podGangInfo.pclqs {
+		pods := podsByGroup[pclqInfo.fqn]
+
+		// Build podReferences list
+		podReferences := make([]groveschedulerv1alpha1.NamespacedName, 0, len(pods))
+		for _, pod := range pods {
+			podReferences = append(podReferences, groveschedulerv1alpha1.NamespacedName{
+				Namespace: pod.Namespace,
+				Name:      pod.Name,
+			})
+		}
+
+		// Sort for consistency
+		sort.Slice(podReferences, func(i, j int) bool {
+			return podReferences[i].Name < podReferences[j].Name
+		})
+
+		podGroups = append(podGroups, groveschedulerv1alpha1.PodGroup{
+			Name:               pclqInfo.fqn,
+			PodReferences:      podReferences,
+			MinReplicas:        pclqInfo.minAvailable,
+			TopologyConstraint: pclqInfo.topologyConstraint, // Preserve PodClique-level topology constraint
+		})
+	}
+
+	return podGroups
+}
+
+// findPodGangInfo locates the podGangInfo from expectedPodGangs
+func (r _resource) findPodGangInfo(sc *syncContext, podGangName string) (*podGangInfo, bool) {
+	podGangInfo, found := lo.Find(sc.expectedPodGangs, func(pg *podGangInfo) bool {
+		return pg.fqn == podGangName
+	})
+	if !found {
+		sc.logger.Info("PodGang not found in expectedPodGangs, skipping update",
+			"podGang", podGangName)
+		return nil, false
+	}
+	return podGangInfo, true
+}
+
+// verifyAllPodsCreated checks if all required pods exist before updating PodGang
+func (r _resource) verifyAllPodsCreated(sc *syncContext, podGangName string, podGangInfo *podGangInfo) error {
+	for _, pclqInfo := range podGangInfo.pclqs {
+		pods, ok := sc.existingPCLQPods[pclqInfo.fqn]
+		if !ok || len(pods) < int(pclqInfo.minAvailable) {
+			sc.logger.Info("Not all pods created yet for PodClique",
+				"podGang", podGangName,
+				"podClique", pclqInfo.fqn,
+				"expected", pclqInfo.minAvailable,
+				"actual", len(pods))
+			return groveerr.New(groveerr.ErrCodeRequeueAfter,
+				component.OperationSync,
+				fmt.Sprintf("Waiting for all pods to be created for PodGang %s", podGangName),
+			)
+		}
+	}
+	return nil
+}
+
+// groupPodsByPodClique organizes pods by their PodClique names
+func (r _resource) groupPodsByPodClique(sc *syncContext, podGangInfo *podGangInfo) map[string][]corev1.Pod {
+	podsByGroup := make(map[string][]corev1.Pod)
+	for _, pclqInfo := range podGangInfo.pclqs {
+		if pods, ok := sc.existingPCLQPods[pclqInfo.fqn]; ok {
+			podsByGroup[pclqInfo.fqn] = pods
+		}
+	}
+	return podsByGroup
+}
+
+// setInitializedCondition sets the PodGangInitialized condition.
+func setInitializedCondition(pg *groveschedulerv1alpha1.PodGang, status metav1.ConditionStatus, reason, message string) {
+	condition := metav1.Condition{
+		Type:               string(groveschedulerv1alpha1.PodGangConditionTypeInitialized),
+		Status:             status,
+		ObservedGeneration: pg.Generation,
+		LastTransitionTime: metav1.Now(),
+		Reason:             reason,
+		Message:            message,
+	}
+
+	// Update or append condition
+	found := false
+	for i, cond := range pg.Status.Conditions {
+		if cond.Type == string(groveschedulerv1alpha1.PodGangConditionTypeInitialized) {
+			pg.Status.Conditions[i] = condition
+			found = true
+			break
+		}
+	}
+	if !found {
+		pg.Status.Conditions = append(pg.Status.Conditions, condition)
+	}
 }
 
 // getPodsForPodCliquesPendingCreation counts expected pods from non-existent PodCliques.
@@ -540,6 +738,7 @@ func (r _resource) createOrUpdatePodGang(sc *syncContext, pgInfo *podGangInfo) e
 	}
 	pg := emptyPodGang(pgObjectKey)
 	sc.logger.Info("CreateOrPatch PodGang", "objectKey", pgObjectKey)
+
 	_, err := controllerutil.CreateOrPatch(sc.ctx, r.client, pg, func() error {
 		return r.buildResource(sc.pcs, pgInfo, pg)
 	})
@@ -551,33 +750,32 @@ func (r _resource) createOrUpdatePodGang(sc *syncContext, pgInfo *podGangInfo) e
 			fmt.Sprintf("Failed to CreateOrPatch PodGang %v", pgObjectKey),
 		)
 	}
+
+	// Update status with Initialized=False condition and Phase if not already set
+	// This needs to be done separately since CreateOrPatch doesn't handle status subresource
+	if !hasInitializedCondition(pg) {
+		original := pg.DeepCopy()
+		setInitializedCondition(pg, metav1.ConditionFalse, "PodsNotCreated", "Waiting for all pods to be created")
+		pg.Status.Phase = groveschedulerv1alpha1.PodGangPhasePending // Set initial phase
+		if err := r.client.Status().Patch(sc.ctx, pg, client.MergeFrom(original)); err != nil {
+			sc.logger.Error(err, "Failed to set Initialized condition on PodGang", "podGang", pg.Name)
+			// Don't fail the entire operation for status update errors
+		}
+	}
+
 	r.eventRecorder.Eventf(sc.pcs, corev1.EventTypeNormal, constants.ReasonPodGangCreateOrUpdateSuccessful, "Created/Updated PodGang %v", pgObjectKey)
 	sc.logger.Info("Triggered CreateOrPatch of PodGang", "objectKey", pgObjectKey)
 	return nil
 }
 
-// createPodGroupsForPodGang constructs PodGroups from constituent PodCliques.
-func createPodGroupsForPodGang(namespace string, pgInfo *podGangInfo) []groveschedulerv1alpha1.PodGroup {
-	podGroups := lo.Map(pgInfo.pclqs, func(pi pclqInfo, _ int) groveschedulerv1alpha1.PodGroup {
-		namespacedNames := lo.Map(pi.associatedPodNames, func(associatedPodName string, _ int) groveschedulerv1alpha1.NamespacedName {
-			return groveschedulerv1alpha1.NamespacedName{
-				Namespace: namespace,
-				Name:      associatedPodName,
-			}
-		})
-		// sorting the slice of NamespaceName. This prevents unnecessary updates to the PodGang resource if the only thing
-		// that is difference is the order of NamespaceNames.
-		sort.Slice(namespacedNames, func(i, j int) bool {
-			return namespacedNames[i].Name < namespacedNames[j].Name
-		})
-		return groveschedulerv1alpha1.PodGroup{
-			Name:               pi.fqn,
-			PodReferences:      namespacedNames,
-			MinReplicas:        pi.minAvailable,
-			TopologyConstraint: pi.topologyConstraint,
+// hasInitializedCondition checks if PodGang has Initialized condition.
+func hasInitializedCondition(pg *groveschedulerv1alpha1.PodGang) bool {
+	for _, cond := range pg.Status.Conditions {
+		if cond.Type == string(groveschedulerv1alpha1.PodGangConditionTypeInitialized) {
+			return true
 		}
-	})
-	return podGroups
+	}
+	return false
 }
 
 // Convenience types and methods on these types that are used during sync flow run.
@@ -656,9 +854,6 @@ func (sc *syncContext) determinePCSGReplicas(pcsgFQN string, pcsgConfig grovecor
 
 // syncFlowResult captures the result of a sync flow run.
 type syncFlowResult struct {
-	// podsGangsPendingCreation are the names of PodGangs that could not be created in this sync run.
-	// It could be due to all PCLQs not present, or it could be due to presence of at least one PCLQ that is not ready.
-	podsGangsPendingCreation []string
 	// createdPodGangNames are the names of the PodGangs that got created during the sync flow run.
 	createdPodGangNames []string
 	// errs are the list of errors during the sync flow run.
@@ -675,19 +870,9 @@ func (sfr *syncFlowResult) recordError(err error) {
 	sfr.errs = append(sfr.errs, err)
 }
 
-// hasPodGangsPendingCreation returns true if any PodGangs are waiting to be created.
-func (sfr *syncFlowResult) hasPodGangsPendingCreation() bool {
-	return len(sfr.podsGangsPendingCreation) > 0
-}
-
 // recordPodGangCreation adds a PodGang to the created list.
 func (sfr *syncFlowResult) recordPodGangCreation(podGangName string) {
 	sfr.createdPodGangNames = append(sfr.createdPodGangNames, podGangName)
-}
-
-// recordPodGangPendingCreation adds a PodGang to the pending creation list.
-func (sfr *syncFlowResult) recordPodGangPendingCreation(podGangName string) {
-	sfr.podsGangsPendingCreation = append(sfr.podsGangsPendingCreation, podGangName)
 }
 
 // getAggregatedError combines all errors into a single error.

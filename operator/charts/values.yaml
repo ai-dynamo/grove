@@ -58,6 +58,10 @@ config:
       concurrentSyncs: 3
     podClique:
       concurrentSyncs: 3
+  # SchedulerName is the name of the scheduler backend with which this instance of Grove operator will run
+  # Valid values: "kai-scheduler" or "default-scheduler"
+  # Default: "default-scheduler"
+  schedulerName: ""
   logLevel: info
   logFormat: json
   topologyAwareScheduling:

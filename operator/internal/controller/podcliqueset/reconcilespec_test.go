@@ -127,9 +127,9 @@ func TestGetOrderedKindsForSync(t *testing.T) {
 		component.KindHorizontalPodAutoscaler,
 		component.KindPodCliqueSetReplica,
 		component.KindComputeDomain,
+		component.KindPodGang,
 		component.KindPodClique,
 		component.KindPodCliqueScalingGroup,
-		component.KindPodGang,
 	}
 
 	assert.Equal(t, len(expectedKinds), len(kinds))
