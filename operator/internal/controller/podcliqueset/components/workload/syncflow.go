@@ -217,12 +217,22 @@ func (r _resource) deleteExcessWorkloads(sc *syncContext) error {
 	return nil
 }
 
-// createOrUpdateWorkloads creates or updates all expected Workloads.
+// createOrUpdateWorkloads creates or updates all expected Workloads when ready.
 func (r _resource) createOrUpdateWorkloads(sc *syncContext) syncFlowResult {
 	result := syncFlowResult{}
+	pendingWorkloadNames := sc.getWorkloadNamesPendingCreation()
 
 	for _, workload := range sc.expectedWorkloads {
 		sc.logger.Info("[createOrUpdateWorkloads] processing Workload", "fqn", workload.fqn)
+		isWorkloadPendingCreation := slices.Contains(pendingWorkloadNames, workload.fqn)
+
+		// Check if all pods for this workload have been created
+		numPendingPods := r.getPodsPendingCreation(sc, workload)
+		if isWorkloadPendingCreation && numPendingPods > 0 {
+			sc.logger.Info("skipping creation of Workload as all desired replicas have not yet been created", "fqn", workload.fqn, "numPendingPodsToCreate", numPendingPods)
+			result.recordWorkloadPendingCreation(workload.fqn)
+			continue
+		}
 
 		if err := r.createOrUpdateWorkload(sc, workload); err != nil {
 			sc.logger.Error(err, "failed to create Workload", "WorkloadName", workload.fqn)
@@ -232,6 +242,32 @@ func (r _resource) createOrUpdateWorkloads(sc *syncContext) syncFlowResult {
 		result.recordWorkloadCreation(workload.fqn)
 	}
 	return result
+}
+
+// getPodsPendingCreation counts pods not yet created for the Workload.
+func (r _resource) getPodsPendingCreation(sc *syncContext, workload workloadInfo) int {
+	var numPodsPending int
+	for _, pclq := range workload.pclqs {
+		// Check if PodClique exists
+		pclqExists := lo.ContainsBy(sc.pclqs, func(existingPclq grovecorev1alpha1.PodClique) bool {
+			return existingPclq.Name == pclq.fqn
+		})
+		if !pclqExists {
+			// PodClique doesn't exist yet, count its expected pods as pending
+			numPodsPending += int(pclq.replicas)
+			continue
+		}
+
+		// PodClique exists, check if it has created all its pods
+		// For Workload API, we only need to check if pods exist (not if they have specific labels)
+		// because pods associate with Workload through spec.workloadRef, not labels
+		foundPclq, _ := lo.Find(sc.pclqs, func(existingPclq grovecorev1alpha1.PodClique) bool {
+			return existingPclq.Name == pclq.fqn
+		})
+		// Check the PodClique status to see how many pods have been created
+		numPodsPending += max(0, int(pclq.replicas)-int(foundPclq.Status.Replicas))
+	}
+	return numPodsPending
 }
 
 // createOrUpdateWorkload creates or updates a single Workload resource.
@@ -283,6 +319,16 @@ type syncContext struct {
 	expectedWorkloads     []workloadInfo
 	existingWorkloadNames []string
 	pclqs                 []grovecorev1alpha1.PodClique
+}
+
+// getWorkloadNamesPendingCreation returns names of Workloads that don't exist yet.
+func (sc *syncContext) getWorkloadNamesPendingCreation() []string {
+	expectedWorkloadNames := lo.Map(sc.expectedWorkloads, func(wl workloadInfo, _ int) string {
+		return wl.fqn
+	})
+	return lo.Filter(expectedWorkloadNames, func(name string, _ int) bool {
+		return !slices.Contains(sc.existingWorkloadNames, name)
+	})
 }
 
 // workloadInfo holds information about a workload to be created/updated.

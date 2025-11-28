@@ -30,6 +30,7 @@ import (
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
+	schedulingv1alpha1 "k8s.io/api/scheduling/v1alpha1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -71,12 +72,17 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(mapPodCliqueScalingGroupToPCLQs()),
 			builder.WithPredicates(podCliqueScalingGroupPredicate()),
 		).
-		Watches(
-			&groveschedulerv1alpha1.PodGang{},
-			handler.EnqueueRequestsFromMapFunc(mapPodGangToPCLQs()),
-			builder.WithPredicates(podGangPredicate()),
-		).
-		Complete(r)
+	Watches(
+		&groveschedulerv1alpha1.PodGang{},
+		handler.EnqueueRequestsFromMapFunc(mapPodGangToPCLQs()),
+		builder.WithPredicates(podGangPredicate()),
+	).
+	Watches(
+		&schedulingv1alpha1.Workload{},
+		handler.EnqueueRequestsFromMapFunc(mapWorkloadToPCLQs()),
+		builder.WithPredicates(workloadPredicate()),
+	).
+	Complete(r)
 }
 
 // managedPodCliquePredicate filters PodClique events to only process managed PodCliques owned by expected resources
@@ -269,6 +275,35 @@ func extractPCLQNameFromPodName(podName string) string {
 
 // podGangPredicate allows all PodGang create and update events to trigger PodClique reconciliation
 func podGangPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc:  func(_ event.CreateEvent) bool { return true },
+		DeleteFunc:  func(_ event.DeleteEvent) bool { return false },
+		UpdateFunc:  func(_ event.UpdateEvent) bool { return true },
+		GenericFunc: func(_ event.GenericEvent) bool { return false },
+	}
+}
+
+// mapWorkloadToPCLQs maps a Workload to one or more reconcile.Request(s) for its constituent PodClique's.
+func mapWorkloadToPCLQs() handler.MapFunc {
+	return func(_ context.Context, obj client.Object) []reconcile.Request {
+		workload, ok := obj.(*schedulingv1alpha1.Workload)
+		if !ok {
+			return nil
+		}
+		requests := make([]reconcile.Request, 0, len(workload.Spec.PodGroups))
+		for _, podGroup := range workload.Spec.PodGroups {
+			// The PodGroup name is the PodClique FQN
+			pclqFQN := podGroup.Name
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pclqFQN, Namespace: workload.Namespace},
+			})
+		}
+		return requests
+	}
+}
+
+// workloadPredicate allows all Workload create and update events to trigger PodClique reconciliation
+func workloadPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc:  func(_ event.CreateEvent) bool { return true },
 		DeleteFunc:  func(_ event.DeleteEvent) bool { return false },
