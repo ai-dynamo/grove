@@ -106,6 +106,12 @@ test-envtest:
 	@echo "> Running envtest for operator"
 	@make --directory=operator test-envtest
 
+# Runs e2e tests for the operator
+.PHONY: test-e2e
+test-e2e:
+	@echo "> Running e2e tests for operator"
+	@make --directory=operator test-e2e
+
 # Runs all tests (unit + envtest)
 .PHONY: test
 test: test-unit test-envtest

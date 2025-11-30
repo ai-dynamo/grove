@@ -92,6 +92,14 @@ test-envtest: $(SETUP_ENVTEST)
 	@echo "Running envtest with CRD validation..."
 	@KUBEBUILDER_ASSETS=$$($(SETUP_ENVTEST) use -p path) go test ./internal/webhook/admission/clustertopology/validation -v -run TestClusterTopologyCRDValidation
 
+# Run e2e tests
+.PHONY: test-e2e
+test-e2e:
+	@echo "> Preparing charts (copying CRDs)..."
+	@$(MODULE_HACK_DIR)/prepare-charts.sh
+	@echo "> Running e2e tests..."
+	@cd e2e && go test -tags=e2e ./tests/... -v -timeout 30m
+
 # Make targets for local development and testing
 # -------------------------------------------------------------
 # Starts a local k8s cluster using kind.
