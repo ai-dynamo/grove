@@ -463,7 +463,7 @@ func Test_GT4_GangTerminationMinReplicasPCSGOwned(t *testing.T) {
 
 	// Find and delete remaining pods from workload2-0-sg-x-1-pc-c
 	deletedPodsSgx1 := []string{firstPodSgx1}
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		// Same reasoning: delete Ready pods only, so we validate behavior after healthy losses
 		podName := findAndDeleteReadyPodFromPodCliqueExcluding(tc, pods, "workload2-0-sg-x-1-pc-c", deletedPodsSgx1, fmt.Sprintf("pod %d from sg-x-1", i+2))
 		deletedPodsSgx1 = append(deletedPodsSgx1, podName)
