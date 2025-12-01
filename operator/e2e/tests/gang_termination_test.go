@@ -524,14 +524,7 @@ func findReadyPodFromPodCliqueExcluding(pods *v1.PodList, podCliqueName string, 
 		if podCliqueLabel, exists := pod.Labels["grove.io/podclique"]; exists && podCliqueLabel == podCliqueName {
 			if pod.Status.Phase == v1.PodRunning && utils.IsPodReady(pod) {
 				// Check if this pod should be excluded
-				shouldExclude := false
-				for _, excludeName := range excludePods {
-					if pod.Name == excludeName {
-						shouldExclude = true
-						break
-					}
-				}
-				if !shouldExclude {
+				if !slices.Contains(excludePods, pod.Name) {
 					return pod
 				}
 			}
