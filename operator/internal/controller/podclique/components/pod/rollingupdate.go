@@ -208,10 +208,10 @@ func isCurrentPodUpdateComplete(sc *syncContext, work *updateWork) bool {
 	// Get the pod corresponding to the currently updating pod. If the pod exists and still does not have a deletion timestamp
 	// then the current update is not complete
 	currentlyUpdatingPodName := sc.pclq.Status.RollingUpdateProgress.ReadyPodsSelectedToUpdate.Current
-	currentPod, ok := lo.Find(sc.existingPCLQPods, func(pod *corev1.Pod) bool {
+	pod, ok := lo.Find(sc.existingPCLQPods, func(pod *corev1.Pod) bool {
 		return currentlyUpdatingPodName == pod.Name
 	})
-	if ok && !k8sutils.IsResourceTerminating(currentPod.ObjectMeta) {
+	if ok && !k8sutils.IsResourceTerminating(pod.ObjectMeta) {
 		return false
 	}
 
