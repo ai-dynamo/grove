@@ -118,16 +118,6 @@ func scalePodCliqueScalingGroup(tc TestContext, name string, replicas int) error
 	return utils.ScalePodCliqueScalingGroupWithClient(tc.Ctx, tc.DynamicClient, tc.Namespace, name, replicas, tc.Timeout, tc.Interval)
 }
 
-// scalePCSGInPCS scales a PCSG by modifying the PCS template's podCliqueScalingGroups[].replicas field.
-// NOTE: This only affects NEW PCS replicas created after the change. Existing PCSG instances are NOT updated
-// because the PCS controller only sets PCSG replicas during initial creation to support HPA scaling.
-// DEPRECATED: Use scalePCSGAcrossAllReplicasAndWait to scale existing PCSG instances directly.
-// pcsName is the name of the PodCliqueSet (e.g., "workload1")
-// pcsgName is the name of the PCSG as defined in the PCS template (e.g., "sg-x")
-func scalePCSGInPCS(tc TestContext, pcsName, pcsgName string, replicas int) error {
-	return utils.ScalePCSGInPCSWithClient(tc.Ctx, tc.DynamicClient, tc.Namespace, pcsName, pcsgName, replicas)
-}
-
 // scalePodCliqueSet is a wrapper around utils.ScalePodCliqueSetWithClient that accepts TestContext
 func scalePodCliqueSet(tc TestContext, name string, replicas int) error {
 	return utils.ScalePodCliqueSetWithClient(tc.Ctx, tc.DynamicClient, tc.Namespace, name, replicas)
@@ -338,25 +328,6 @@ func waitForPodConditions(tc TestContext, expectedTotalPods, expectedPending int
 	})
 
 	return lastTotal, lastRunning, lastPending, err
-}
-
-// scalePCSGAndWait attempts to scale a PCSG via the PCS template and waits for the expected pod conditions.
-// WARNING: This only affects NEW PCS replicas created after the change. Existing PCSG instances are NOT updated.
-// DEPRECATED: Use scalePCSGAcrossAllReplicasAndWait instead to scale existing PCSG instances directly.
-// pcsName is the name of the PodCliqueSet (e.g., "workload1")
-// pcsgName is the name of the PCSG as defined in the PCS template (e.g., "sg-x")
-func scalePCSGAndWait(tc TestContext, pcsName, pcsgName string, replicas int32, expectedTotalPods, expectedPending int) {
-	tc.T.Helper()
-
-	if err := scalePCSGInPCS(tc, pcsName, pcsgName, int(replicas)); err != nil {
-		tc.T.Fatalf("Failed to scale PodCliqueScalingGroup %s in PCS %s: %v", pcsgName, pcsName, err)
-	}
-
-	totalPods, runningPods, pendingPods, err := waitForPodConditions(tc, expectedTotalPods, expectedPending)
-	if err != nil {
-		tc.T.Fatalf("Failed to wait for expected pod conditions after PCSG scaling: %v. Final state: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
-			err, totalPods, runningPods, pendingPods, expectedTotalPods, expectedPending)
-	}
 }
 
 // scalePCSGInstanceAndWait scales a specific PCSG instance directly and waits for the expected pod conditions.
