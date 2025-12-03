@@ -19,10 +19,12 @@
 package tests
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"slices"
 	"strconv"
+	"testing"
 	"time"
 
 	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
@@ -995,5 +997,153 @@ func scalePodCliqueInPCS(tc TestContext, cliqueName string, replicas int32) erro
 	}
 
 	return nil
+}
+
+// RollingUpdateTestConfig holds configuration for rolling update test setup
+type RollingUpdateTestConfig struct {
+	// Required
+	WorkerNodes  int // Number of worker nodes required for the test
+	ExpectedPods int // Expected pods after initial deployment
+
+	// Optional - PCS scaling before tracker starts
+	InitialPCSReplicas int32 // If > 0, scale PCS to this many replicas before starting tracker
+	PostScalePods      int   // Expected pods after initial PCS scaling (required if InitialPCSReplicas > 0)
+
+	// Optional - SIGTERM patch
+	PatchSIGTERM bool // If true, patch containers to ignore SIGTERM before scaling
+
+	// Optional - PCSG scaling
+	InitialPCSGReplicas int32  // If > 0, scale PCSGs to this many replicas
+	PCSGName            string // Name of the PCSG scaling group (e.g., "sg-x")
+	PostPCSGScalePods   int    // Expected pods after PCSG scaling
+
+	// Optional - defaults can be overridden
+	WorkloadName string // Defaults to "workload1"
+	WorkloadYAML string // Defaults to "../yaml/workload1.yaml"
+	Namespace    string // Defaults to "default"
+}
+
+// setupRollingUpdateTest initializes a rolling update test with the given configuration.
+// It handles:
+// 1. Cluster preparation with required worker nodes
+// 2. TestContext creation with standard parameters
+// 3. Workload deployment and pod verification
+// 4. Optional SIGTERM patch application (before scaling to apply to original workload)
+// 5. Optional PCS scaling to initial replicas
+// 6. Optional PCSG scaling
+// 7. Tracker creation and startup
+//
+// Returns:
+//   - tc: TestContext for the test
+//   - cleanup: Function that should be deferred by the caller (stops tracker and cleans up cluster)
+//   - tracker: Started rolling update tracker - caller can use tracker.getEvents() after stopping
+func setupRollingUpdateTest(t *testing.T, cfg RollingUpdateTestConfig) (TestContext, func(), *rollingUpdateTracker) {
+	t.Helper()
+	ctx := context.Background()
+
+	// Apply defaults
+	if cfg.WorkloadName == "" {
+		cfg.WorkloadName = "workload1"
+	}
+	if cfg.WorkloadYAML == "" {
+		cfg.WorkloadYAML = "../yaml/workload1.yaml"
+	}
+	if cfg.Namespace == "" {
+		cfg.Namespace = "default"
+	}
+
+	// Step 1: Prepare test cluster
+	clientset, restConfig, dynamicClient, clusterCleanup := prepareTestCluster(ctx, t, cfg.WorkerNodes)
+
+	// Step 2: Create TestContext
+	tc := TestContext{
+		T:             t,
+		Ctx:           ctx,
+		Clientset:     clientset,
+		RestConfig:    restConfig,
+		DynamicClient: dynamicClient,
+		Namespace:     cfg.Namespace,
+		Timeout:       defaultPollTimeout,
+		Interval:      defaultPollInterval,
+		Workload: &WorkloadConfig{
+			Name:         cfg.WorkloadName,
+			YAMLPath:     cfg.WorkloadYAML,
+			Namespace:    cfg.Namespace,
+			ExpectedPods: cfg.ExpectedPods,
+		},
+	}
+
+	// Step 3: Deploy workload and verify initial pods
+	pods, err := deployAndVerifyWorkload(tc)
+	if err != nil {
+		clusterCleanup()
+		t.Fatalf("Failed to deploy workload: %v", err)
+	}
+
+	if err := waitForPods(tc, cfg.ExpectedPods); err != nil {
+		clusterCleanup()
+		t.Fatalf("Failed to wait for pods to be ready: %v", err)
+	}
+
+	if len(pods.Items) != cfg.ExpectedPods {
+		clusterCleanup()
+		t.Fatalf("Expected %d pods, but found %d", cfg.ExpectedPods, len(pods.Items))
+	}
+
+	// Step 4: Optional SIGTERM patch (must happen before scaling to apply to original workload)
+	if cfg.PatchSIGTERM {
+		if err := patchPCSWithSIGTERMIgnoringCommand(tc); err != nil {
+			clusterCleanup()
+			t.Fatalf("Failed to patch PCS with SIGTERM-ignoring command: %v", err)
+		}
+
+		tcLongTimeout := tc
+		tcLongTimeout.Timeout = 2 * time.Minute
+		if err := waitForRollingUpdateComplete(tcLongTimeout, 1); err != nil {
+			clusterCleanup()
+			t.Fatalf("Failed to wait for SIGTERM patch rolling update to complete: %v", err)
+		}
+	}
+
+	// Step 5: Optional PCS scaling
+	if cfg.InitialPCSReplicas > 0 {
+		scalePCSAndWait(tc, cfg.WorkloadName, cfg.InitialPCSReplicas, cfg.PostScalePods, 0)
+
+		if err := waitForPods(tc, cfg.PostScalePods); err != nil {
+			clusterCleanup()
+			t.Fatalf("Failed to wait for pods to be ready after PCS scaling: %v", err)
+		}
+	}
+
+	// Step 6: Optional PCSG scaling
+	if cfg.InitialPCSGReplicas > 0 && cfg.PCSGName != "" {
+		// Scale across all PCS replicas
+		pcsReplicas := int32(1)
+		if cfg.InitialPCSReplicas > 0 {
+			pcsReplicas = cfg.InitialPCSReplicas
+		}
+		scalePCSGAcrossAllReplicasAndWait(tc, cfg.WorkloadName, cfg.PCSGName, pcsReplicas, cfg.InitialPCSGReplicas, cfg.PostPCSGScalePods, 0)
+	}
+
+	// Step 7: Create and start tracker
+	tracker := newRollingUpdateTracker()
+	if err := tracker.Start(tc); err != nil {
+		clusterCleanup()
+		t.Fatalf("Failed to start tracker: %v", err)
+	}
+
+	if err := tracker.WaitForReady(); err != nil {
+		tracker.Stop()
+		clusterCleanup()
+		t.Fatalf("Failed to wait for tracker to be ready: %v", err)
+	}
+
+	// Create combined cleanup function
+	cleanup := func() {
+		tracker.Stop()
+		clusterCleanup()
+	}
+
+	return tc, cleanup, tracker
 }
 
