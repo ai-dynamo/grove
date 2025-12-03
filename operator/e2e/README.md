@@ -8,15 +8,22 @@ This directory contains the E2E test infrastructure for the Grove Operator, incl
 
 The following tools must be installed:
 - **Docker** - For running containers and k3d
-- **k3d** (v5.x) - For creating local Kubernetes clusters
 - **skaffold** (v2.x) - For deploying Grove operator
 - **helm** - For deploying Helm charts
 - **Go** (1.24.5+) - For running the tests
 
+The following tools are nice to have
+- **k3d** (v5.x) - For creating local Kubernetes clusters
+
 On macOS with Homebrew:
 ```bash
-brew install docker k3d skaffold helm go
+brew install docker skaffold helm go
 ```
+To install k3d
+```bash
+brew install k3d
+```
+
 
 ### Running Locally
 
@@ -35,7 +42,7 @@ The test suite will:
 1. Copy CRDs to Helm charts (via `prepare-charts.sh`)
 2. Create a k3d cluster with 28 worker nodes
 3. Install Grove, Kai Scheduler, and GPU Operator
-4. Run all gang scheduling tests (~10-15 minutes)
+4. Run all e2e testing suites
 5. Clean up the cluster
 
 ### Running in CI/CD
@@ -91,21 +98,12 @@ images:
 
 ## Troubleshooting
 
-### Docker Authentication Errors
-
-If you see errors like "Pull failed due to an unauthenticated request":
-```bash
-docker login
-```
-
-The e2e tests check for cached images before pulling, but some images may need to be pulled fresh.
-
 ### "No matches for kind PodCliqueSet" Error
 
 This means CRDs weren't copied to the Helm charts. The `make test-e2e` target automatically runs `prepare-charts.sh`, but if you're running tests manually:
 ```bash
 ./hack/prepare-charts.sh
-cd e2e && go test -tags=e2e ./tests/... -v
+cd e2e && go clean -testcache && go test -tags=e2e ./tests/... -v ---timeout 45m
 ```
 
 ### Stale k3d Cluster

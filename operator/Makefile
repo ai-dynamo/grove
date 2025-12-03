@@ -98,7 +98,7 @@ test-e2e:
 	@echo "> Preparing charts (copying CRDs)..."
 	@$(MODULE_HACK_DIR)/prepare-charts.sh
 	@echo "> Running e2e tests..."
-	@cd e2e && go test -tags=e2e ./tests/... -v -timeout 30m
+	@cd e2e && go test -tags=e2e ./tests/... -v -timeout 45m
 
 # Make targets for local development and testing
 # -------------------------------------------------------------

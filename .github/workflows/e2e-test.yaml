@@ -26,7 +26,7 @@ jobs:
     # Run on non-draft PRs or draft PRs with 'run-e2e' label
     if: github.event.pull_request.draft == false || contains(github.event.pull_request.labels.*.name, 'run-e2e')
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -47,16 +47,12 @@ jobs:
           sudo install skaffold /usr/local/bin/
           skaffold version
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Run e2e tests
         run: make test-e2e
 
+      # The test code handles cleanup via Teardown(), but this step provides
+      # extra safety in case of timeout or panic. Also good practice to ensure
+      # clean state even though GitHub Actions runners are ephemeral.
       - name: Cleanup k3d cluster
         if: always()
         run: |
