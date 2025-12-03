@@ -624,8 +624,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	}
 
 	logger.Info("9. Wait for scheduled pods to become ready (already verified above)")
-
-	logger.Info("11. Verify all newly created pods are pending due to insufficient resources (verified in scalePCSGAndWait)")
+	logger.Info("11. Verify all newly created pods are pending due to insufficient resources (verified in scalePCSGInstanceAndWait)")
 	logger.Info("10. Set pcs-0-sg-x resource replicas equal to 3, then verify 4 newly created pods")
 	pcsgName := "workload2-0-sg-x"
 	expectedPodsAfterScaling := 14
