@@ -51,6 +51,7 @@ type HelmChartDependency struct {
 type HelmCharts struct {
 	KaiScheduler HelmChartDependency `yaml:"kaiScheduler"`
 	GPUOperator  HelmChartDependency `yaml:"gpuOperator"`
+	CertManager  HelmChartDependency `yaml:"certManager"`
 }
 
 // Dependencies represents all E2E test dependencies
