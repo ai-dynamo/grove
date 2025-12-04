@@ -224,6 +224,7 @@ func newInstallClient(actionConfig *action.Configuration, config *HelmInstallCon
 	client.CreateNamespace = config.CreateNamespace
 	client.Wait = config.Wait
 	client.Version = config.ChartVersion
+	client.Replace = true // Allow replacing failed releases on retry
 
 	return client
 }
