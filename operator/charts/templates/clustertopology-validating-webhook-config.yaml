@@ -5,10 +5,17 @@ metadata:
   name: clustertopology-validating-webhook
   labels:
 {{- include "operator.clustertopology.validating.webhook.labels" . | nindent 4 }}
+  {{- if .Values.webhooks.clusterTopologyValidationWebhook.annotations }}
+  annotations:
+    {{- toYaml .Values.webhooks.clusterTopologyValidationWebhook.annotations | nindent 4 }}
+  {{- end }}
 webhooks:
   - admissionReviewVersions:
       - v1
     clientConfig:
+      {{- if .Values.webhooks.caBundle }}
+      caBundle: {{ .Values.webhooks.caBundle }}
+      {{- end }}
       service:
         name: {{ required ".Values.service.name is required" .Values.service.name }}
         namespace: {{ .Release.Namespace }}
