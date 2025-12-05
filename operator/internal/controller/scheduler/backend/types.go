@@ -77,10 +77,6 @@ type SchedulerBackend interface {
 	ShouldRemoveSchedulingGate(ctx context.Context, logger logr.Logger, pod *corev1.Pod, podClique client.Object) (bool, string, error)
 }
 
-// Note: The global backend registry has been replaced by BackendManager
-// See manager.go for the new singleton pattern implementation
-// BackendFactory is now defined in manager.go as a function type
-
 // MutatePod applies scheduler-specific mutations to a Pod
 // This is the main entry point for the pod component
 func MutatePod(pod *corev1.Pod, gangName string, podGroupName string) error {
@@ -104,85 +100,6 @@ func MutatePod(pod *corev1.Pod, gangName string, podGroupName string) error {
 	return backend.MutatePodSpec(pod, gangName, podGroupName)
 }
 
-// PodGangInfo contains the information needed to create a gang scheduling resource
-// This is the internal representation that backends translate to their specific CRs
-type PodGangInfo struct {
-	// Name is the name of the gang
-	Name string
-	// Namespace is the namespace of the gang
-	Namespace string
-	// PodGroups contains groups of pods that should be scheduled together
-	PodGroups []PodGroupInfo
-	// TopologyConstraint defines topology constraints for the entire gang
-	TopologyConstraint *TopologyConstraint
-	// TopologyConstraintGroupConfigs defines topology constraints for groups of pod groups
-	TopologyConstraintGroupConfigs []TopologyConstraintGroupConfig
-	// PriorityClassName is the priority class for the gang
-	PriorityClassName string
-	// ReuseReservationRef references a previous gang for reservation reuse
-	ReuseReservationRef *NamespacedName
-}
-
-// PodGroupInfo represents a group of pods within a gang
-type PodGroupInfo struct {
-	// Name is the name of this pod group
-	Name string
-	// PodReferences are the pods in this group
-	PodReferences []NamespacedName
-	// MinReplicas is the minimum number of replicas that must be scheduled
-	MinReplicas int32
-	// TopologyConstraint defines topology constraints for this pod group
-	TopologyConstraint *TopologyConstraint
-}
-
-// TopologyConstraint defines topology placement constraints
-type TopologyConstraint struct {
-	// PackConstraint defines how pods should be packed across topology domains
-	PackConstraint *TopologyPackConstraint
-}
-
-// TopologyPackConstraint defines required and preferred topology packing
-type TopologyPackConstraint struct {
-	// Required topology key that must be satisfied
-	Required *string
-	// Preferred topology key for best-effort placement
-	Preferred *string
-}
-
-// TopologyConstraintGroupConfig defines topology constraints for a group of pod groups
-type TopologyConstraintGroupConfig struct {
-	// PodGroupNames are the names of pod groups in this topology group
-	PodGroupNames []string
-	// TopologyConstraint for this group
-	TopologyConstraint *TopologyConstraint
-}
-
-// NamespacedName identifies a resource by namespace and name
-type NamespacedName struct {
-	Namespace string
-	Name      string
-}
-
-// GangStatus represents the status of a gang scheduling resource
-type GangStatus struct {
-	// Phase is the current phase of the gang
-	Phase GangPhase
-	// IsReady indicates if the gang is ready for pod scheduling
-	IsReady bool
-	// PlacementScore is the network optimality score (0.0 to 1.0)
-	PlacementScore *float64
-}
-
-// GangPhase represents the phase of a gang
-type GangPhase string
-
-const (
-	// GangPhasePending indicates the gang is pending scheduling
-	GangPhasePending GangPhase = "Pending"
-	// GangPhaseStarting indicates scheduling has started
-	GangPhaseStarting GangPhase = "Starting"
-	// GangPhaseRunning indicates all pods are scheduled
-	GangPhaseRunning GangPhase = "Running"
-	// GangPhaseFailed indicates gang scheduling failed
-	GangPhaseFailed GangPhase = "Failed"
-)
+// Note: All PodGang-related types (PodGangSpec, PodGroup, TopologyConstraint, etc.)
+// are defined in scheduler/api/core/v1alpha1/podgang.go
+// This backend package uses those API types directly to avoid duplication

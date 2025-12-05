@@ -54,13 +54,6 @@ type Backend struct {
 }
 
 // Factory creates Workload backend instances
-type Factory struct{}
-
-// CreateBackend creates a new Workload backend
-func (f *Factory) CreateBackend(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder) (backend.SchedulerBackend, error) {
-	return New(cl, scheme, eventRecorder), nil
-}
-
 // New creates a new Workload backend instance
 // This is exported for direct use by components that need a backend with client access
 func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder) *Backend {
