@@ -25,7 +25,6 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	pcscomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -214,9 +213,7 @@ func getOrderedKindsForSync(pcs *grovecorev1alpha1.PodCliqueSet) []component.Kin
 		component.KindPodCliqueScalingGroup,
 	}
 	
-	// Use Workload API for default kube-scheduler (1.35+), otherwise use PodGang API
-	if pcscomponent.ShouldUseWorkloadAPI(pcs) {
-		return append(baseKinds, component.KindWorkload)
-	}
+	// NEW ARCHITECTURE: Always create PodGang as the unified intermediate representation
+	// Backend Controllers will convert PodGang to scheduler-specific CRs (Workload/PodGroup)
 	return append(baseKinds, component.KindPodGang)
 }

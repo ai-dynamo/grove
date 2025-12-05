@@ -249,78 +249,65 @@ func selectExcessPodsToDelete(sc *syncContext, logger logr.Logger) []*corev1.Pod
 }
 
 // checkAndRemovePodSchedulingGates removes scheduling gates from pods when their dependencies are satisfied
+// This method delegates the gate removal logic to the appropriate scheduler backend
 func (r _resource) checkAndRemovePodSchedulingGates(sc *syncContext, logger logr.Logger) ([]string, error) {
 	tasks := make([]utils.Task, 0, len(sc.existingPCLQPods))
 	skippedScheduleGatedPods := make([]string, 0, len(sc.existingPCLQPods))
 
-	// Check if we should use Workload API or PodGang API based on schedulerName
-	usingWorkloadAPI := shouldUseWorkloadAPI(&sc.pclq.Spec.PodSpec)
-
-	var gangReady bool
-	var gangName string
-	var err error
-
-	if usingWorkloadAPI {
-		// Using Workload API (default kube-scheduler) - operator manages gate removal
-		// Check if the Workload is ready for this PodClique
-		gangReady, gangName, err = r.checkWorkloadReadyForPodClique(sc.ctx, logger, sc.pclq)
-		if err != nil {
-			logger.Error(err, "Error checking if Workload is ready for PodClique - will requeue")
-			return nil, groveerr.WrapError(err,
-				errCodeRemovePodSchedulingGate,
-				component.OperationSync,
-				"failed to check if Workload is ready for PodClique",
-			)
-		}
-		logger.V(1).Info("Using Workload API - operator will manage scheduling gates based on Workload status",
-			"podClique", client.ObjectKeyFromObject(sc.pclq),
-			"workloadName", gangName,
-			"workloadReady", gangReady)
-	} else {
-		// Using PodGang API (grove scheduler) - operator manages gate removal
-		// Pre-compute if the base PodGang is scheduled once for all pods in this PodClique
-		// All pods in the same PodClique have the same base PodGang
-		gangReady, gangName, err = r.checkBasePodGangScheduledForPodClique(sc.ctx, logger, sc.pclq)
-		if err != nil {
-			logger.Error(err, "Error checking if base PodGang is scheduled for PodClique - will requeue")
-			return nil, groveerr.WrapError(err,
-				errCodeRemovePodSchedulingGate,
-				component.OperationSync,
-				"failed to check if base PodGang is scheduled for PodClique",
-			)
-		}
+	// Get or create a backend instance for this scheduler (cached for efficiency)
+	schedulerName := sc.pclq.Spec.PodSpec.SchedulerName
+	schedBackend, err := r.getOrCreateSchedulerBackend(schedulerName)
+	if err != nil {
+		// No backend available for this scheduler - skip gate removal
+		logger.V(1).Info("No backend available for scheduler, skipping gate removal",
+			"schedulerName", schedulerName,
+			"error", err.Error())
+		return nil, nil
 	}
 
+	gateName := schedBackend.GetSchedulingGateName()
+	logger.V(1).Info("Using backend for scheduling gate management",
+		"schedulerName", schedulerName,
+		"backend", schedBackend.Name(),
+		"gateName", gateName)
+
 	for i, p := range sc.existingPCLQPods {
-		if hasPodGangSchedulingGate(p) {
-			podObjectKey := client.ObjectKeyFromObject(p)
-
-			// For PodGang API, check if pod is in PodGang
-			if !usingWorkloadAPI && !slices.Contains(sc.podNamesUpdatedInPCLQPodGangs, p.Name) {
-				logger.Info("Pod has scheduling gate but it has not yet been updated in PodGang", "podObjectKey", podObjectKey)
-				skippedScheduleGatedPods = append(skippedScheduleGatedPods, p.Name)
-				continue
-			}
-
-			shouldSkip := r.shouldSkipPodSchedulingGateRemoval(logger, p, gangReady, gangName, usingWorkloadAPI)
-			if shouldSkip {
-				skippedScheduleGatedPods = append(skippedScheduleGatedPods, p.Name)
-				continue
-			}
-			task := utils.Task{
-				Name: fmt.Sprintf("RemoveSchedulingGate-%s-%d", p.Name, i),
-				Fn: func(ctx context.Context) error {
-					podClone := p.DeepCopy()
-					p.Spec.SchedulingGates = nil
-					if err := client.IgnoreNotFound(r.client.Patch(ctx, p, client.MergeFrom(podClone))); err != nil {
-						return err
-					}
-					logger.Info("Removed scheduling gate from pod", "podObjectKey", podObjectKey)
-					return nil
-				},
-			}
-			tasks = append(tasks, task)
+		// Check if pod has the backend's specific scheduling gate
+		if !hasSpecificSchedulingGate(p, gateName) {
+			continue
 		}
+
+		podObjectKey := client.ObjectKeyFromObject(p)
+
+		// Ask the backend if the gate should be removed
+		shouldRemove, reason, err := schedBackend.ShouldRemoveSchedulingGate(sc.ctx, logger, p, sc.pclq)
+		if err != nil {
+			logger.Error(err, "Error checking if scheduling gate should be removed for pod",
+				"podObjectKey", podObjectKey)
+			return nil, groveerr.WrapError(err,
+				errCodeRemovePodSchedulingGate,
+				component.OperationSync,
+				fmt.Sprintf("failed to check if scheduling gate should be removed for pod %v", podObjectKey),
+			)
+		}
+
+		if !shouldRemove {
+			logger.V(1).Info("Skipping scheduling gate removal for pod",
+				"podObjectKey", podObjectKey,
+				"reason", reason)
+			skippedScheduleGatedPods = append(skippedScheduleGatedPods, p.Name)
+			continue
+		}
+
+		// Create task to remove the specific gate
+		pod := p // Capture for closure
+		task := utils.Task{
+			Name: fmt.Sprintf("RemoveSchedulingGate-%s-%d", pod.Name, i),
+			Fn: func(ctx context.Context) error {
+				return r.removeSpecificSchedulingGate(ctx, logger, pod, gateName)
+			},
+		}
+		tasks = append(tasks, task)
 	}
 
 	if len(tasks) > 0 {
@@ -505,11 +492,30 @@ func (r _resource) shouldSkipPodSchedulingGateRemoval(logger logr.Logger, pod *c
 	return true
 }
 
-// hasPodGangSchedulingGate checks if a pod has the PodGang scheduling gate
-func hasPodGangSchedulingGate(pod *corev1.Pod) bool {
-	return slices.ContainsFunc(pod.Spec.SchedulingGates, func(schedulingGate corev1.PodSchedulingGate) bool {
-		return podGangSchedulingGate == schedulingGate.Name
+// hasSpecificSchedulingGate checks if a pod has a specific scheduling gate by name
+func hasSpecificSchedulingGate(pod *corev1.Pod, gateName string) bool {
+	return slices.ContainsFunc(pod.Spec.SchedulingGates, func(g corev1.PodSchedulingGate) bool {
+		return g.Name == gateName
 	})
+}
+
+// removeSpecificSchedulingGate removes a specific scheduling gate from a pod
+func (r _resource) removeSpecificSchedulingGate(ctx context.Context, logger logr.Logger, pod *corev1.Pod, gateName string) error {
+	podClone := pod.DeepCopy()
+
+	// Remove the specific gate
+	pod.Spec.SchedulingGates = slices.DeleteFunc(pod.Spec.SchedulingGates, func(g corev1.PodSchedulingGate) bool {
+		return g.Name == gateName
+	})
+
+	if err := client.IgnoreNotFound(r.client.Patch(ctx, pod, client.MergeFrom(podClone))); err != nil {
+		return err
+	}
+
+	logger.Info("Removed scheduling gate from pod",
+		"podObjectKey", client.ObjectKeyFromObject(pod),
+		"gateName", gateName)
+	return nil
 }
 
 // createPods creates the specified number of new pods for the PodClique with proper indexing and concurrency control

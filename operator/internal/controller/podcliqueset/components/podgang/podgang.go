@@ -121,7 +121,7 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjectMeta
 
 // buildResource configures a PodGang with pod groups and priority.
 func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgInfo podGangInfo, pg *groveschedulerv1alpha1.PodGang) error {
-	pg.Labels = getLabels(pcs.Name)
+	pg.Labels = getLabels(pcs)
 	if err := controllerutil.SetControllerReference(pcs, pg, r.scheme); err != nil {
 		return groveerr.WrapError(
 			err,
@@ -155,10 +155,28 @@ func emptyPodGang(objKey client.ObjectKey) *groveschedulerv1alpha1.PodGang {
 }
 
 // getLabels constructs labels for a PodGang resource.
-func getLabels(pcsName string) map[string]string {
-	return lo.Assign(
-		apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcsName),
+func getLabels(pcs *grovecorev1alpha1.PodCliqueSet) map[string]string {
+	labels := lo.Assign(
+		apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name),
 		map[string]string{
 			apicommon.LabelComponentKey: apicommon.LabelComponentNamePodGang,
 		})
+	
+	// Add scheduler-backend label so Backend Controllers can identify which PodGang to handle
+	// Check scheduler name from the first clique (all cliques should have same scheduler)
+	schedulerName := ""
+	if len(pcs.Spec.Template.Cliques) > 0 {
+		schedulerName = pcs.Spec.Template.Cliques[0].Spec.PodSpec.SchedulerName
+	}
+	
+	// Determine backend based on schedulerName
+	if schedulerName == "" || schedulerName == "default-scheduler" {
+		// Use Workload backend for default kube-scheduler
+		labels[apicommon.LabelSchedulerBackend] = "workload"
+	} else {
+		// Use KAI backend for custom schedulers
+		labels[apicommon.LabelSchedulerBackend] = "kai"
+	}
+	
+	return labels
 }

@@ -21,12 +21,14 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset"
+	backendcontroller "github.com/ai-dynamo/grove/operator/internal/controller/scheduler/backend/controller"
+	"github.com/go-logr/logr"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 // RegisterControllers registers all controllers with the manager.
-func RegisterControllers(mgr ctrl.Manager, controllerConfig configv1alpha1.ControllerConfiguration) error {
+func RegisterControllers(mgr ctrl.Manager, logger logr.Logger, controllerConfig configv1alpha1.ControllerConfiguration) error {
 	pcsReconciler := podcliqueset.NewReconciler(mgr, controllerConfig.PodCliqueSet)
 	if err := pcsReconciler.RegisterWithManager(mgr); err != nil {
 		return err
@@ -39,5 +41,11 @@ func RegisterControllers(mgr ctrl.Manager, controllerConfig configv1alpha1.Contr
 	if err := pcsgReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
+	
+	// Setup backend controllers for PodGang -> scheduler-specific CR conversion
+	if err := backendcontroller.SetupBackendControllers(mgr, logger); err != nil {
+		return err
+	}
+	
 	return nil
 }
