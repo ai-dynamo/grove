@@ -44,17 +44,25 @@ while allowing users to specify required constraints for strict placement (upper
 │                        Topology Architecture                            │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
-│  Admin Layer:                                                           │
+│  Admin Layer (OperatorConfiguration):                                   │
+│  ┌────────────────────────────────────────────┐                         │
+│  │ topology:                                  │                         │
+│  │   enabled: true                            │                         │
+│  │   levels:                                  │                         │
+│  │     - domain: rack                         │                         │
+│  │       key: "topology.kubernetes.io/rack"   │                         │
+│  │     - domain: host                         │                         │
+│  │       key: "kubernetes.io/hostname"        │                         │
+│  └──────────────┬─────────────────────────────┘                         │
+│                 │ (operator generates)                                  │
+│                 ▼                                                       │
 │  ┌──────────────────────┐          ┌──────────────────────┐             │
-│  │ ClusterTopology      │          │ Kueue Topology       │             │
-│  │ "grove-topology"     │          │ "grove-topology"     │             │
-│  │                      │          │ (manual creation)    │             │
-│  └──────────┬───────────┘          └──────────-─┬─────────┘             │
+│  │ ClusterTopology      │          │ KAI Topology         │             │
+│  │ "grove-topology"     │─────────▶│ "grove-topology"     │             │
+│  │ (operator-managed)   │  Manage  │ (operator-managed)   │             │
+│  └──────────┬───────────┘          └──────────┬───────────┘             │
 │             │                                   │                       │
-│             │                                   │                       │
-│  Operator Config: clusterTopology.enabled=true  │                       |                       |
-│             │                                   │                       │
-│             │ (validates against)               │ (referenced by)       │
+│             │ (validates against)               │ (used by)             │
 ├─────────────┼───────────────────────────────────┼───────────────────────┤
 │             │                                   │                       │
 │  User Layer:                                    │                       │
@@ -68,9 +76,7 @@ while allowing users to specify required constraints for strict placement (upper
 │                                              ▼                          │
 │                                    ┌────────────────────┐               │
 │                                    │ PodGang            │───────▶ KAI   │
-│                                    │ • Annotation:      │     Scheduler │
-│                                    │   topology-name    │               │
-│                                    │ • 3-level topology │               │
+│                                    │ • 3-level topology │     Scheduler │
 │                                    │   (required+       │               │
 │                                    │    preferred)      │               │
 │                                    └────────────────────┘               │
@@ -88,8 +94,9 @@ narrowest scope.
 
 **Characteristics:**
 
-- **Cluster-scoped resource**: Can have multiple ClusterTopology resources defined
-- **Default name**: In operator configuration, clusterTopologyName defaults to "grove-topology" when not specified
+- **Cluster-scoped resource**: Only one ClusterTopology resource managed by operator: "grove-topology"
+- **Operator-managed resource**: Created and managed by Grove operator based on OperatorConfiguration
+- **Fixed name**: Always named "grove-topology" (no user configuration)
 - **Partially immutable**: After creation, only `key` field values can be updated; `domain` fields and level ordering
   are immutable
 - **List-ordered hierarchy**: Index 0 represents the broadest category (e.g., region), and the final index represents the narrowest (e.g., host).
@@ -126,19 +133,86 @@ const (
 // Region > Zone > DataCenter > Block > Rack > Host > Numa
 
 // ClusterTopology defines the topology hierarchy for the cluster.
-// This resource is immutable after creation.
 type ClusterTopology struct {
     metav1.TypeMeta   `json:",inline"`
     metav1.ObjectMeta `json:"metadata,omitempty"`
 
-    Spec ClusterTopologySpec `json:"spec,omitempty"`
+    Spec ClusterTopologySpec `json:"spec"`
+    // Status defines the observed state of ClusterTopology
+    Status ClusterTopologyStatus `json:"status,omitempty"`
 }
 
+type ClusterTopologyStatus struct {
+    // Conditions represent the latest available observations of the ClusterTopology's state
+    Conditions []metav1.Condition `json:"conditions,omitempty"`
+    // ObservedGeneration is the most recent generation observed by the controller
+    ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
+    // LastErrors captures the last errors observed by the controller when reconciling the ClusterTopology
+    LastErrors []LastError `json:"lastErrors,omitempty"`
+}
+```
+
+**Condition Constants:**
+
+```go
+// ClusterTopology condition types
+const (
+    ConditionTypeReady = "Ready"
+)
+
+// ClusterTopology condition reasons
+const (
+    ConditionReasonTopologyReady = "TopologyReady"
+    ConditionReasonKAITopologyCreationFailed = "KAITopologyCreationOrUpdateFailed"
+)
+```
+
+**Ready Condition Semantics:**
+
+- **Condition Type**: `Ready`
+- **Status Values**:
+  - `True` = ClusterTopology is ready and KAI Topology CR successfully created
+  - `False` = ClusterTopology has errors or KAI Topology creation failed
+  - `Unknown` = Status cannot be determined or reconciliation in progress
+- **Reasons**:
+  - `TopologyReady` - ClusterTopology configured and KAI Topology created successfully
+  - `KAITopologyCreationOrUpdateFailed` - Failed to create/update KAI Topology CR
+- **Message**: Human-readable details including KAI Topology creation status
+
+**Status Examples:**
+
+Success Case (ClusterTopology ready, KAI Topology created):
+```yaml
+status:
+  observedGeneration: 1
+  conditions:
+    - type: Ready
+      status: "True"
+      reason: TopologyReady
+      message: "ClusterTopology configured and KAI Topology created successfully"
+      lastTransitionTime: "2025-12-07T10:00:00Z"
+```
+
+Failure Case (KAI Topology creation failed):
+```yaml
+status:
+  observedGeneration: 1
+  conditions:
+    - type: Ready
+      status: "False"
+      reason: KAITopologyCreationFailed
+      message: "Failed to create KAI Topology CR: <error details>"
+      lastTransitionTime: "2025-12-07T10:00:00Z"
+  lastErrors:
+    - code: "KAI_TOPOLOGY_CREATE_ERROR"
+      description: "Failed to create KAI Topology resource"
+      observedAt: "2025-12-07T10:00:00Z"
+```
+
+```go
 type ClusterTopologySpec struct {
     // Levels is an ordered list of topology levels from broadest to narrowest scope.
     // The order in this list defines the hierarchy (index 0 = highest level).
-    // This field is immutable after creation.
-    // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="levels list is immutable"
     // +kubebuilder:validation:MinItems=1
     // +kubebuilder:validation:MaxItems=8
     Levels []TopologyLevel `json:"levels"`
@@ -163,11 +237,13 @@ type TopologyLevel struct {
 
 **Example ClusterTopology:**
 
+Note: This CR is auto-generated by the operator - do not create manually.
+
 ```yaml
 apiVersion: grove.io/v1alpha1
 kind: ClusterTopology
 metadata:
-   name: my-cluster-topology  # User chooses name
+   name: grove-topology  # Operator-managed name (always "grove-topology")
 spec:
   levels:
     - domain: region
@@ -186,15 +262,34 @@ spec:
       key: "topology.kubernetes.io/numa"
 ```
 
-**Creating ClusterTopology:**
+**Configuring ClusterTopology:**
 
-1. Customize example above with your cluster's actual `key` values
-2. Choose a name for your topology:
-   - Use custom name (e.g., "my-cluster-topology") OR
-   - Use default name "grove-topology" (no config needed)
-3. Create resource: `kubectl apply -f clustertopology.yaml`
-4. If using custom name: configure operator with topology name in operator config
-5. See Admin Responsibilities section for additional setup requirements
+The ClusterTopology CR is generated and managed by the Grove operator. To configure it:
+
+1. Define topology levels in OperatorConfiguration under `topology.levels` (see OperatorConfiguration section below)
+2. Set `topology.enabled: true` in OperatorConfiguration
+3. Restart the Grove operator
+4. Operator creates ClusterTopology CR named "grove-topology"
+5. Operator creates and continuously reconciles KAI Topology CR
+6. If configuration is invalid or CR creation fails → operator exits with error
+
+**OperatorConfiguration Example:**
+
+```yaml
+# In OperatorConfiguration
+topology:
+  enabled: true
+  levels:
+    - domain: rack
+      key: "topology.kubernetes.io/rack"
+    - domain: host
+      key: "kubernetes.io/hostname"
+```
+
+Notes:
+- Levels can be specified in any order - operator automatically sorts to canonical order
+- Operator validates configuration at startup, exits if invalid
+- Changes require operator restart to take effect
 
 **Validation:**
 
@@ -202,8 +297,8 @@ spec:
 - Each level `domain` and `key` must be unique
 - Admins can skip intermediate levels (e.g., define only region, rack, host)
 - Partially immutable after creation (see Characteristics above for details)
-- Deletion protection via controller finalizer (blocks deletion while PodCliqueSet resources reference this topology OR
-  topology is enabled)
+- Authorization validation via validation webhook (blocks create/update/delete by non-operator service accounts)
+- Validation performed at operator startup (not by webhooks for ClusterTopology)
 
 **Mutation Webhook:**
 
@@ -217,97 +312,191 @@ The mutation webhook automatically modifies ClusterTopology resources on CREATE 
 
 #### ClusterTopology Controller
 
-The ClusterTopology controller manages the ClusterTopology resource lifecycle:
+The ClusterTopology controller manages the ClusterTopology resource lifecycle and KAI Topology synchronization.
 
-**Deletion Protection**
+**KAI Topology CR Generation and Reconciliation**
 
-Prevents ClusterTopology deletion while in use, requiring both conditions for deletion using Kubernetes finalizer.
+The controller continuously reconciles KAI Topology CR to keep it synchronized with ClusterTopology:
 
-Deletion Workflow:
+- On ClusterTopology creation → Create corresponding KAI Topology CR
+- On ClusterTopology update → Update KAI Topology CR to match
+- On reconciliation → Verify KAI Topology exists and matches ClusterTopology spec
+- Name: Always matches ClusterTopology name ("grove-topology")
+- Namespace: Cluster-scoped like ClusterTopology
+- Status: Success/failure reflected in ClusterTopology Ready condition (reason: TopologyReady or KAITopologyCreationFailed)
 
-1. Admin runs `kubectl delete clustertopology <name>`
-2. Kubernetes blocks deletion (finalizer `grove.io/clustertopology` present)
-3. Controller reconciles:
-    - Detects deletion request (deletion timestamp set)
-   - Checks if any PodCliqueSet (in any namespace) references this ClusterTopology (via `grove.io/cluster-topology-name` label)
-   - Checks if topology is enabled in operator config (`clusterTopology.enabled: true`)
-   - If ANY PodCliqueSet references this topology OR topology is enabled: Keeps finalizer, deletion blocked
-   - If NO PodCliqueSet references this topology AND topology is disabled: Removes finalizer, deletion proceeds
-4. Once finalizer removed, Kubernetes deletes ClusterTopology
+**Authorization Validation**
+
+Prevents ClusterTopology creation, modification, or deletion by non-operator service accounts.
+
+Validation Mechanism:
+
+1. Validation webhook intercepts CREATE, UPDATE, and DELETE operations on ClusterTopology
+2. Webhook verifies the service account of the request
+3. If service account is the operator's service account → Allow operation
+4. If service account is any other (kubectl, UI, etc.) → Reject with error
+
+This ensures only the operator can manage the ClusterTopology resource.
+
+Example Workflows:
+
+**Create Operation:**
+1. User runs `kubectl create -f clustertopology.yaml`
+2. Validation webhook intercepts the CREATE request
+3. Webhook checks service account:
+   - If not operator service account → Reject with error: "ClusterTopology can only be created by the operator"
+   - If operator service account → Allow (operator is creating at startup)
+
+**Update Operation:**
+1. User runs `kubectl edit clustertopology grove-topology`
+2. Validation webhook intercepts the UPDATE request
+3. Webhook checks service account:
+   - If not operator service account → Reject with error: "ClusterTopology can only be modified by the operator"
+   - If operator service account → Allow (operator is updating from config changes)
+
+**Delete Operation:**
+1. User runs `kubectl delete clustertopology grove-topology`
+2. Validation webhook intercepts the DELETE request
+3. Webhook checks service account:
+   - If not operator service account → Reject with error: "ClusterTopology can only be deleted by the operator"
+   - If operator service account → Allow (operator is deleting during config change/shutdown)
 
 Key Points:
 
-- Admin must satisfy BOTH conditions before deletion:
-    - Delete all PodCliqueSet resources that reference this ClusterTopology (check `grove.io/cluster-topology-name` label)
-    - Disable TAS in operator config (`clusterTopology.enabled: false`) and restart operator
-- Controller checks both conditions before allowing deletion
-- Controller continuously reconciles deletion requests
-- Prevents orphaned workloads with invalid topology configuration
-- Prevents accidental deletion of active topology configurations
+- Only the operator can create, modify, or delete ClusterTopology (operator-managed resource)
+- External access attempts (kubectl, UI, API calls) are blocked
+- Operator manages ClusterTopology lifecycle based on configuration
+- No finalizer needed - webhook provides authorization validation
+
+**Webhook Availability Limitation**
+
+Current limitation: Webhooks are unavailable when the operator is down.
+
+Impact:
+- Cannot validate ClusterTopology CREATE/UPDATE/DELETE operations when operator unavailable
+- Affects unmanaged ClusterTopology resources (if any were allowed)
+- Not a practical concern for Grove's managed topology workflow
+
+Scope:
+- Grove only supports operator-managed ClusterTopology ("grove-topology")
+- Users cannot and should not create unmanaged ClusterTopology resources
+- The webhook limitation only matters if unmanaged topologies were supported
+
+Potential Solution:
+- Deploy webhooks in a separate pod from the operator controller
+- Ensures webhook availability even when operator controller crashes
+- Adds deployment and operational complexity
+
+Current Decision:
+- Not implementing separate webhook deployment
+- Overhead not justified for managed-only topology model
+- Webhook unavailability during operator downtime is acceptable trade-off
 
 #### Operator Configuration
 
-Operator enables/disables topology features via operator config:
+Operator enables/disables topology features and defines topology levels via operator config:
 
 ```yaml
 topology:
   enabled: true
-  name: "my-cluster-topology"  # Optional, defaults to "grove-topology"
+  levels:
+    - domain: rack
+      key: "topology.kubernetes.io/rack"
+    - domain: host
+      key: "kubernetes.io/hostname"
 ```
 
 **Startup Behavior:**
 
 - Topology configuration loaded only at operator startup
-- Changes to `clusterTopology.enabled` or `name` require operator restart to take effect
-- If `clusterTopology.enabled: true`:
-    - `name` not specified → defaults to "grove-topology"
-  - Operator looks for ClusterTopology with configured name (defaults to "grove-topology")
-  - If ClusterTopology with that name doesn't exist → operator exits with ENOENT and crashloops
-- If `clusterTopology.enabled: false`: topology features disabled
-- Admin must create ClusterTopology with matching name OR disable topology in operator config
+- Changes to `topology.enabled` or `levels` require operator restart to take effect
+- If `topology.enabled: true`:
+  - Operator generates ClusterTopology CR named "grove-topology"
+  - Operator validates topology config at startup
+  - If config invalid (duplicate domains, invalid keys, etc.) → operator exits with error
+  - If ClusterTopology CR creation fails → operator exits with error
+  - Operator generates KAI Topology CR
+  - If KAI Topology creation fails → reflected in ClusterTopology Ready condition and LastErrors (not operator failure)
+- If `topology.enabled: false`: topology features disabled
+
+**Configuration Validation:**
+
+At operator startup, Grove validates topology configuration:
+
+- All domain values must be from predefined set (region, zone, datacenter, block, rack, host, numa)
+- Each domain must be unique within levels list
+- Each key must be unique within levels list
+- Keys must be valid Kubernetes label keys
+- If validation fails → operator exits with descriptive error
+- No webhook validation performed (validation only at startup)
 
 **Admin Responsibilities:**
 
-- Manually create Kueue Topology with same name as Grove ClusterTopology for KAI scheduler
-- Ensure topology levels align between Grove ClusterTopology and Kueue Topology
+- Define topology levels in OperatorConfiguration
+- Restart operator when changing topology configuration
+- Grove operator automatically creates and manages both ClusterTopology and KAI Topology CRs
 
 #### Enable/Disable Behavior
 
-**Enabling Topology (clusterTopology.enabled: false → true):**
+**Enabling Topology (topology.enabled: false → true):**
 
-1. Admin creates ClusterTopology CR with desired topology hierarchy
-2. Admin updates operator config: `clusterTopology.enabled: true`
-3. Admin restarts operator (see Startup Behavior section for details)
-4. Operator validates ClusterTopology CR exists
-5. For existing workloads:
-    - Workloads with topology constraints: operator uses topology from PodCliqueSet label (`grove.io/cluster-topology-name`)
-    - Workloads without topology constraints: no impact (checked via label presence)
-6. For new workloads:
-    - Topology constraints validated against ClusterTopology CR
-   - Mutation webhook adds `grove.io/cluster-topology-name` label to PodCliqueSet (see Mutation Webhook section)
+1. Admin defines topology levels in operator config
+2. Admin sets `topology.enabled: true`
+3. Admin restarts operator
+4. Operator generates ClusterTopology CR "grove-topology"
+5. Operator generates KAI Topology CR "grove-topology"
+6. For existing workloads: operator validates constraints, removes invalid ones, updates status
+7. For new workloads: validation webhook validates constraints
 
-**Disabling Topology (clusterTopology.enabled: true → false):**
+**Disabling Topology (topology.enabled: true → false):**
 
-1. Admin updates operator config: `clusterTopology.enabled: false`
+1. Admin updates operator config: `topology.enabled: false`
 2. Admin restarts operator
 3. For existing workloads:
-    - Workloads with topology constraints: all topology constraints removed from PodGang, status updated
-    - Workloads without topology constraints: no impact
+   - Workloads with invalid constraints: remove required constraints that don't align
+   - Keep preferred constraints (always valid)
+   - Update PodCliqueSet status to reflect constraint removal
 4. For new workloads:
-    - Workloads with topology constraints: validation webhook rejects with error "topology support is not enabled in the
-      operator"
-    - Workloads without topology constraints: no impact
+   - Workloads with topology constraints: validation webhook rejects with error "topology support is not enabled in the operator"
+   - Workloads without topology constraints: no impact
 
-**Updating ClusterTopology CR:**
+**Updating ClusterTopology:**
 
-1. Admin disables topology per above workflow
-2. Restart operator
-3. Admin edits ClusterTopology CR (only `key` field values can be changed; `domain` fields immutable)
-4. Admin enables topology per above workflow
-5. Restart operator
-6. Operator reconciles existing workloads with updated topology configuration
+1. Admin updates topology levels in OperatorConfiguration
+2. Admin restarts operator
+3. Operator detects config change
+4. Operator updates ClusterTopology CR to match new config
+5. Operator updates KAI Topology CR to match
+6. For existing workloads: validate constraints against new topology
+   - Remove invalid required constraints
+   - Keep preferred constraints
+   - Update status fields
 
-*note: in the future, we may support dynamic updates to ClusterTopology without disabling topology first.*
+*note: in the future, we may support dynamic updates to ClusterTopology without operator restart.*
+
+**Workload Constraint Handling During Topology Changes:**
+
+When topology is disabled or levels change:
+
+For Existing Workloads:
+- If constraint references non-existent level:
+  - Remove required constraint only
+  - Keep preferred constraint (always uses strictest level)
+  - Update PodCliqueSet status with constraint removal reason
+- If constraint still valid:
+  - No changes to constraints
+- Changes affect only unscheduled pods
+- Already scheduled pods retain their placement
+
+For New Workloads:
+- Validation webhook rejects workloads with invalid constraints
+- Error message indicates which constraint is invalid
+- Users must update workload spec to match available topology levels
+
+Preferred Constraint Updates:
+- When lowest topology level changes (e.g., host → numa)
+- Operator updates preferred constraint to new strictest level
+- Applies to all three levels (PodGang, TopologyConstraintGroup, PodGroup)
 
 ### 2. Operator API Changes (Grove CRDs)
 
@@ -381,14 +570,10 @@ type PodCliqueTemplateSpec struct {
 
 #### Mutation Webhook
 
-The mutation webhook automatically modifies PodCliqueSet resources on CREATE operations:
+The mutation webhook for PodCliqueSet resources:
 
-- **Label Addition**: Automatically adds `grove.io/cluster-topology-name` label to PodCliqueSet
-- **Label Value**: Set to the configured ClusterTopology name from operator config (e.g., "grove-topology")
-- **Condition**: Label only added when `clusterTopology.enabled: true` in operator configuration
-- **Purpose**: Enables workload-to-topology mapping for controller lifecycle management and deletion protection
-- **Immutability**: Once set, label cannot be changed (enforced by validation webhook)
-- **No Topology**: If topology disabled (`clusterTopology.enabled: false`), no label is added
+- **Label Removal**: No longer adds `grove.io/cluster-topology-name` label to PodCliqueSet
+- **Reason**: Label removed as operator now directly manages single ClusterTopology ("grove-topology")
 
 #### Validation Webhook
 
@@ -401,15 +586,26 @@ The mutation webhook automatically modifies PodCliqueSet resources on CREATE ope
 
 **Topology Enablement Validation:**
 
-- Webhook rejects PodCliqueSet with topology constraints when `clusterTopology.enabled: false`
+- Webhook rejects PodCliqueSet with topology constraints when `topology.enabled: false`
 - Error message: "topology support is not enabled in the operator"
 - Prevents workload admission failure when topology is disabled
 
-**Label Immutability:**
+**Validation Location:**
 
-- Webhook rejects changes to `grove.io/cluster-topology-name` label on PodCliqueSet after creation
-- Label can only be set during PodCliqueSet creation (see Mutation Webhook section above)
-- Ensures topology reference remains consistent throughout resource lifecycle
+- ClusterTopology validation occurs in OperatorConfiguration validation at startup (not webhooks)
+- PodCliqueSet constraints validated by webhook against ClusterTopology
+
+**Authorization Validation:**
+
+- Validation webhook checks CREATE, UPDATE, and DELETE operations on ClusterTopology
+- Verifies the service account making the request
+- Only permits operations from the operator's service account
+- Rejects unauthorized access attempts from kubectl, UI, or other clients
+- This ensures only the operator can manage the ClusterTopology resource
+- Error messages:
+  - CREATE: "ClusterTopology can only be created by the operator"
+  - UPDATE: "ClusterTopology can only be modified by the operator"
+  - DELETE: "ClusterTopology can only be deleted by the operator"
 
 ### 3. Scheduler API Changes (Contract with KAI)
 
@@ -441,20 +637,6 @@ type PodGangSpec struct {
     PriorityClassName string `json:"priorityClassName,omitempty"`
 }
 ```
-
-**PodGang Metadata:**
-
-The operator adds topology information to PodGang metadata via annotation:
-
-```yaml
-# Annotation added to PodGang
-metadata:
-  annotations:
-    grove.io/topology-name: "<user-configured-name>"
-```
-
-This annotation allows the scheduler to locate the Kueue Topology resource without requiring a spec field, providing
-flexibility for future API changes.
 
 **TopologyConstraintGroupConfig:**
 
@@ -528,10 +710,6 @@ Fields Added:
   PodCliqueScalingGroup (optional pointer)
 - `PodGroup.TopologyConstraint *TopologyConstraint` - PodClique-level packing from PodClique (optional pointer)
 
-Annotations Added:
-
-- `grove.io/topology-name: "<user-configured-name>"` - Annotation on PodGang metadata referencing topology name
-
 Fields Removed:
 
 - `PodGangSpec.SpreadConstraints` - Not implemented; spread will be part of TopologyConstraint in future
@@ -540,14 +718,12 @@ Fields Removed:
 
 #### Translation Logic
 
-The operator translates Grove operator API to Grove Scheduler API with three-level topology constraint hierarchy:
+The operator translates Grove operator API to Grove Scheduler API with three-level topology constraint hierarchy.
 
-**Topology Annotation:**
+**Scheduler Topology Discovery:**
 
-- Operator adds annotation `grove.io/topology-name: "<topology-name>"` to PodGang metadata
-- Annotation value matches the ClusterTopology name from operator configuration
-- KAI scheduler uses this annotation to locate the corresponding Kueue Topology CRD
-- Annotation approach provides API flexibility for future changes without breaking spec
+- KAI scheduler uses fixed ClusterTopology name "grove-topology" to locate KAI Topology CR
+- No annotation needed since topology name is fixed and known
 
 **Constraint Translation (Required and Preferred):**
 
@@ -627,11 +803,765 @@ spec:
 
 ## Security and RBAC
 
-Grove operator requires read access to ClusterTopology and permission to manage finalizers:
+Grove operator requires permissions to manage ClusterTopology and KAI Topology resources:
 
 ```yaml
 rules:
   - apiGroups: [ "grove.io" ]
-    resources: [ "clustertopologies", "clustertopologies/finalizers" ]
-    verbs: [ "get", "list", "watch", "update" ]
+    resources: [ "clustertopologies", "clustertopologies/status" ]
+    verbs: [ "get", "list", "watch", "create", "update", "patch", "delete" ]
+  - apiGroups: [ "<kai-topology-api-group>" ]  # API group for KAI Topology (to be determined)
+    resources: [ "topologies" ]
+    verbs: [ "get", "list", "watch", "create", "update", "patch", "delete" ]
 ```
+
+**Permission Requirements:**
+
+ClusterTopology:
+- `create`: Generate ClusterTopology CR at startup
+- `update`/`patch`: Update spec when config changes, update status
+- `delete`: Clean up when topology disabled
+- `status`: Update readiness and KAI Topology creation status
+
+KAI Topology:
+- `create`: Generate KAI Topology CR at startup
+- `update`/`patch`: Keep KAI Topology synchronized with ClusterTopology
+- `delete`: Clean up when topology disabled
+
+## Workload Status Updates
+
+When topology constraints become invalid (due to topology disable or level changes), Grove updates PodCliqueSet status to inform users about constraint validity.
+
+### Status Fields
+
+```go
+type PodCliqueSetStatus struct {
+    // ... existing fields ...
+
+    // TopologyConstraintStatus provides information about topology constraint validity
+    // +optional
+    TopologyConstraintStatus *TopologyConstraintStatus `json:"topologyConstraintStatus,omitempty"`
+}
+
+type TopologyConstraintStatus struct {
+    // Valid indicates whether current topology constraints are valid
+    Valid bool `json:"valid"`
+    // Message provides human-readable details about constraint status
+    Message string `json:"message,omitempty"`
+    // InvalidConstraints lists constraints that were removed
+    InvalidConstraints []string `json:"invalidConstraints,omitempty"`
+    // LastUpdateTime is when constraint status was last updated
+    LastUpdateTime *metav1.Time `json:"lastUpdateTime,omitempty"`
+}
+```
+
+### Status Update Scenarios
+
+**Topology Disabled:**
+
+When topology is disabled in operator configuration:
+- Status indicates required constraints removed
+- Message: "Required constraints removed: topology disabled in operator configuration"
+- InvalidConstraints: Lists removed constraint levels
+- Example: If PodCliqueSet had `packDomain: rack`, InvalidConstraints would be `["rack"]`
+
+**Topology Level Removed:**
+
+When a specific topology level is removed from ClusterTopology:
+- Status indicates which level is no longer valid
+- Message: "Required constraint 'block' removed: level not in ClusterTopology"
+- InvalidConstraints: Lists the specific removed level (e.g., `["block"]`)
+- Other valid constraints remain active
+
+**Topology Re-enabled:**
+
+When topology is re-enabled and constraints become valid again:
+- Status cleared to indicate all constraints are valid
+- Valid set to `true`
+- Message and InvalidConstraints fields cleared
+- LastUpdateTime updated to reflect change
+
+**Constraint Behavior:**
+
+- Only **required** constraints are removed when invalid
+- **Preferred** constraints are always kept (they use strictest available level)
+- Changes affect only **unscheduled pods**
+- Already scheduled pods retain their placement
+- Users can inspect status to understand why constraints were removed
+
+## Open Questions
+
+### Should PodGang Include Topology Name Annotation?
+
+**Current Design:**
+- ClusterTopology is always named "grove-topology" (fixed constant)
+- KAI scheduler knows to look for KAI Topology CR with this hardcoded name
+- No annotation on PodGang indicating which topology to use
+
+**Alternative Approach:**
+
+Add annotation to PodGang metadata:
+
+```yaml
+metadata:
+  annotations:
+    grove.io/topology-name: "grove-topology"
+```
+
+**Benefits:**
+
+1. **Decoupling**: KAI doesn't need to hardcode "grove-topology" name
+2. **Future Multi-Topology Support**: Could support multiple ClusterTopology CRs in the future
+3. **Explicit Contract**: Clear indication of which topology a PodGang uses
+4. **No KAI Changes Needed**: KAI reads annotation instead of assuming fixed name
+
+**Trade-offs:**
+
+1. **Added Complexity**: Reintroduces annotation we removed for simplicity
+2. **Consistency**: Annotation must always be set when topology enabled
+3. **Migration**: Existing design assumes fixed name; would need transition plan
+
+**Recommendation:** Consider adding annotation for future flexibility, even if currently only one topology supported.
+
+### Should Admins Be Able to Configure Topology Name?
+
+**Current Design:**
+- ClusterTopology name is hardcoded as "grove-topology" throughout the system
+- Operator always creates and manages ClusterTopology with this fixed name
+- KAI scheduler and all components assume this name
+
+**Alternative Approach:**
+
+Allow admins to configure the topology name in OperatorConfiguration:
+
+```yaml
+topology:
+  enabled: true
+  name: "grove-topology"  # Default value, admin can customize
+  levels:
+    - domain: rack
+      key: "topology.kubernetes.io/rack"
+    - domain: host
+      key: "kubernetes.io/hostname"
+```
+
+**Benefits:**
+
+1. **Admin Flexibility**: Admins can use custom naming that aligns with organizational conventions
+2. **Cluster Control**: Better control over cluster resource naming
+3. **Environment Distinction**: Different names for dev/staging/prod clusters if needed
+
+**Trade-offs:**
+
+1. **Added Complexity**: Additional configuration field to manage and validate
+2. **Name Propagation**: Configured name must be passed consistently through the system
+3. **Cross-Resource Consistency**: Must ensure ClusterTopology and KAI Topology use same configured name
+4. **Validation**: Need to validate name format and uniqueness
+
+**Recommendation:** Evaluate whether naming flexibility justifies the added configuration complexity. Default to "grove-topology" if configurable.
+
+## Operational Scenarios
+
+This section demonstrates how the topology-aware scheduling design handles different operational flows, helping users understand system behavior in various situations.
+
+### Scenario 1: Initial Setup - TAS Enabled with Valid Config
+
+**Initial State:**
+- Grove operator not yet started
+- OperatorConfiguration ready with topology config
+
+**Flow:**
+
+1. Admin configures topology in OperatorConfiguration:
+   ```yaml
+   topology:
+     enabled: true
+     levels:
+       - domain: rack
+         key: "topology.kubernetes.io/rack"
+       - domain: host
+         key: "kubernetes.io/hostname"
+   ```
+
+2. Admin starts/restarts Grove operator
+
+3. Operator validates config at startup:
+   - Checks domain values are from predefined set ✓
+   - Checks each domain is unique ✓
+   - Checks each key is unique ✓
+   - Checks keys are valid Kubernetes label keys ✓
+
+4. Operator creates ClusterTopology CR "grove-topology" with levels reordered canonically (rack < host)
+
+5. Operator creates KAI Topology CR "grove-topology"
+
+6. ClusterTopology status updated:
+   ```yaml
+   status:
+     observedGeneration: 1
+     conditions:
+       - type: Ready
+         status: "True"
+         reason: TopologyReady
+         message: "ClusterTopology configured and KAI Topology created successfully"
+   ```
+
+**Key Behaviors:**
+- Config validation happens at operator startup (fail-fast)
+- Both ClusterTopology and KAI Topology CRs created automatically
+- Levels automatically reordered to canonical ordering
+- Ready condition reflects successful setup
+
+**Related Design Sections:** [Operator Configuration](#operator-configuration), [ClusterTopology Controller](#clustertopology-controller)
+
+---
+
+### Scenario 2: TAS Disabled
+
+**Initial State:**
+- TAS previously enabled with workloads using topology constraints
+- Some PodCliqueSets running with `packDomain: "rack"`
+
+**Flow:**
+
+1. Admin updates OperatorConfiguration:
+   ```yaml
+   topology:
+     enabled: false
+   ```
+
+2. Admin restarts operator
+
+3. Operator detects TAS is disabled
+
+4. For existing workloads:
+   - Operator reconciles each PodCliqueSet
+   - Removes **required** constraints from PodGang
+   - Keeps **preferred** constraints (no-op, harmless)
+   - Updates PodCliqueSet status:
+     ```yaml
+     topologyConstraintStatus:
+       valid: false
+       message: "Required constraints removed: topology disabled in operator configuration"
+       invalidConstraints: ["rack"]
+     ```
+
+5. For new workloads:
+   - Validation webhook rejects any PodCliqueSet with topology constraints
+   - Error: "topology support is not enabled in the operator"
+
+**Key Behaviors:**
+- Existing workloads gracefully degraded (only required constraints removed)
+- Already scheduled pods continue running (no rescheduling)
+- New workloads with topology constraints blocked at admission
+- Status clearly indicates why constraints were removed
+
+**Related Design Sections:** [Enable/Disable Behavior](#enabledisable-behavior), [Validation Webhook](#validation-webhook)
+
+---
+
+### Scenario 3: TAS Enabled with Invalid Config
+
+**Initial State:**
+- Grove operator not running
+- OperatorConfiguration has invalid topology config
+
+**Flow:**
+
+1. Admin sets invalid config (e.g., duplicate domains):
+   ```yaml
+   topology:
+     enabled: true
+     levels:
+       - domain: rack
+         key: "topology.kubernetes.io/rack"
+       - domain: rack  # Duplicate!
+         key: "topology.kubernetes.io/other-rack"
+   ```
+
+2. Admin attempts to start operator
+
+3. Operator startup validation fails:
+   - Detects duplicate domain "rack"
+   - Logs descriptive error: "duplicate topology domain 'rack' in configuration"
+
+4. Operator exits with error code
+
+5. No ClusterTopology CR created (no partial state)
+
+**Key Behaviors:**
+- Fail-fast at operator startup (before creating any resources)
+- Clear error messages for troubleshooting
+- No partial or inconsistent state left behind
+- Operator won't start until config is fixed
+
+**Related Design Sections:** [Operator Configuration](#operator-configuration), [Configuration Validation](#configuration-validation)
+
+---
+
+### Scenario 4: Valid Workload Submission
+
+**Initial State:**
+- TAS enabled
+- ClusterTopology exists with levels: rack, host
+
+**Flow:**
+
+1. User submits PodCliqueSet:
+   ```yaml
+   apiVersion: grove.io/v1alpha1
+   kind: PodCliqueSet
+   metadata:
+     name: inference-workload
+   spec:
+     replicas: 2
+     template:
+       topologyConstraint:
+         packDomain: "rack"
+   ```
+
+2. Validation webhook intercepts CREATE request and checks:
+   - TAS is enabled in operator ✓
+   - "rack" exists in ClusterTopology levels ✓
+   - Hierarchy constraints satisfied (no child resources yet) ✓
+
+3. Workload admitted successfully
+
+4. Operator reconciles PodCliqueSet:
+   - Translates "rack" domain → "topology.kubernetes.io/rack" key (required)
+   - Adds "kubernetes.io/hostname" key (preferred, auto-generated from strictest level)
+   - Creates PodGang with topology constraints:
+     ```yaml
+     spec:
+       topologyConstraint:
+         packConstraint:
+           required: "topology.kubernetes.io/rack"
+           preferred: "kubernetes.io/hostname"
+     ```
+
+5. KAI scheduler reads PodGang and schedules pods:
+   - Replica 0: All pods on one rack (e.g., rack-a)
+   - Replica 1: All pods on one rack (e.g., rack-b)
+
+**Key Behaviors:**
+- Validation at admission time (early failure detection)
+- Automatic translation from domain names to cluster-specific keys
+- Automatic preferred constraint generation for optimization
+- Per-replica constraint behavior (each replica independently constrained)
+
+**Related Design Sections:** [Validation Webhook](#validation-webhook), [Translation Logic](#translation-logic)
+
+---
+
+### Scenario 5: Invalid Workload Submission - Constraint Not in ClusterTopology
+
+**Initial State:**
+- TAS enabled
+- ClusterTopology exists with levels: rack, host (no "block" level)
+
+**Flow:**
+
+1. User submits PodCliqueSet with non-existent level:
+   ```yaml
+   spec:
+     template:
+       topologyConstraint:
+         packDomain: "block"  # Not in ClusterTopology!
+   ```
+
+2. Validation webhook intercepts CREATE request and checks:
+   - TAS is enabled ✓
+   - "block" exists in ClusterTopology ✗
+
+3. Webhook rejects request with error:
+   ```
+   admission webhook "podcliqueset.grove.io" denied the request:
+   topology level 'block' not defined in ClusterTopology 'grove-topology'
+   ```
+
+4. Workload not admitted (kubectl returns error to user)
+
+**Key Behaviors:**
+- Fail-fast at admission time (prevents invalid workloads)
+- Clear error message indicating which level is missing
+- User can fix by either changing constraint or asking admin to add level
+
+**Related Design Sections:** [Validation Webhook](#validation-webhook)
+
+---
+
+### Scenario 6: Invalid Workload Submission - TAS Disabled
+
+**Initial State:**
+- TAS disabled (`topology.enabled: false`)
+- No ClusterTopology CR exists
+
+**Flow:**
+
+1. User submits PodCliqueSet with topology constraint:
+   ```yaml
+   spec:
+     template:
+       topologyConstraint:
+         packDomain: "rack"
+   ```
+
+2. Validation webhook intercepts CREATE request and checks:
+   - TAS is enabled ✗
+
+3. Webhook rejects request with error:
+   ```
+   admission webhook "podcliqueset.grove.io" denied the request:
+   topology support is not enabled in the operator
+   ```
+
+4. Workload not admitted
+
+**Key Behaviors:**
+- Cannot submit topology constraints when TAS disabled
+- Clear error message indicating TAS is disabled
+- Prevents confusion about why topology isn't working
+
+**Related Design Sections:** [Validation Webhook](#validation-webhook), [Topology Enablement Validation](#topology-enablement-validation)
+
+---
+
+### Scenario 7: Updating Topology Configuration - Adding Level
+
+**Initial State:**
+- TAS enabled
+- ClusterTopology with levels: rack, host
+- Workloads running with "rack" constraints
+
+**Flow:**
+
+1. Admin updates OperatorConfiguration to add "block" level:
+   ```yaml
+   topology:
+     enabled: true
+     levels:
+       - domain: rack
+         key: "topology.kubernetes.io/rack"
+       - domain: block
+         key: "topology.kubernetes.io/block"
+       - domain: host
+         key: "kubernetes.io/hostname"
+   ```
+
+2. Admin restarts operator
+
+3. Operator detects configuration change
+
+4. Operator updates ClusterTopology CR:
+   - Adds "block" level
+   - Reorders to canonical order: rack < block < host
+
+5. Operator updates KAI Topology CR to match
+
+6. For existing workloads:
+   - Required constraints still valid ("rack", "host" still present)
+   - Preferred constraint still "kubernetes.io/hostname" (still strictest)
+   - No PodGang updates needed
+   - No status changes
+
+7. New workloads can now use "block" level
+
+**Key Behaviors:**
+- Backward compatible (existing levels preserved)
+- Automatic canonical ordering
+- Existing workloads completely unaffected
+- New capability added seamlessly
+
+**Related Design Sections:** [Updating ClusterTopology](#updating-clustertopology)
+
+---
+
+### Scenario 8: Updating Topology Configuration - Removing Level
+
+**Initial State:**
+- TAS enabled
+- ClusterTopology with levels: rack, block, host
+- Workload "wl-1" using "block" constraint
+- Workload "wl-2" using "rack" constraint
+
+**Flow:**
+
+1. Admin updates config to remove "block":
+   ```yaml
+   topology:
+     enabled: true
+     levels:
+       - domain: rack
+         key: "topology.kubernetes.io/rack"
+       - domain: host
+         key: "kubernetes.io/hostname"
+   ```
+
+2. Admin restarts operator
+
+3. Operator detects "block" level removed
+
+4. Operator updates ClusterTopology CR (removes "block" level)
+
+5. Operator updates KAI Topology CR
+
+6. For workload "wl-1" (was using "block"):
+   - Operator reconciles PodCliqueSet
+   - Removes required constraint from PodGang
+   - Keeps preferred constraint ("kubernetes.io/hostname")
+   - Updates PodCliqueSet status:
+     ```yaml
+     topologyConstraintStatus:
+       valid: false
+       message: "Required constraint 'block' removed: level not in ClusterTopology"
+       invalidConstraints: ["block"]
+     ```
+   - Already scheduled pods continue running (no rescheduling)
+   - New pods scheduled without "block" constraint
+
+7. For workload "wl-2" (using "rack"):
+   - No changes (constraint still valid)
+
+8. New workloads cannot use "block" (webhook rejects)
+
+**Key Behaviors:**
+- Graceful degradation for affected workloads
+- Only required constraints removed (preferred kept)
+- Status clearly indicates what happened
+- No disruption to scheduled pods
+- Unaffected workloads continue normally
+
+**Related Design Sections:** [Updating ClusterTopology](#updating-clustertopology), [Workload Constraint Handling During Topology Changes](#workload-constraint-handling-during-topology-changes)
+
+---
+
+### Scenario 9: KAI Topology Creation Failure
+
+**Initial State:**
+- TAS enabled with valid config
+- KAI Topology API unavailable or permission denied
+
+**Flow:**
+
+1. Operator starts with valid topology configuration
+
+2. Operator creates ClusterTopology CR "grove-topology" successfully
+
+3. Operator attempts to create KAI Topology CR
+
+4. KAI Topology creation fails (error: "API not available")
+
+5. Operator does NOT exit (non-fatal error)
+
+6. Operator updates ClusterTopology status:
+   ```yaml
+   status:
+     observedGeneration: 1
+     conditions:
+       - type: Ready
+         status: "False"
+         reason: KAITopologyCreationFailed
+         message: "Failed to create KAI Topology CR: API not available"
+     lastErrors:
+       - code: "KAI_TOPOLOGY_CREATE_ERROR"
+         description: "Failed to create KAI Topology resource: API not available"
+         observedAt: "2025-12-07T10:00:00Z"
+   ```
+
+7. Operator continues running normally
+
+8. ClusterTopology controller continues reconciliation (automatic retry)
+
+9. Once KAI API becomes available, next reconciliation succeeds and status updated to Ready=True
+
+**Key Behaviors:**
+- Non-fatal error (operator stays running)
+- Status reflects failure with details
+- Automatic retry through reconciliation loop
+- Clear error information for troubleshooting
+
+**Related Design Sections:** [KAI Topology CR Generation and Reconciliation](#kai-topology-cr-generation-and-reconciliation), [Startup Behavior](#startup-behavior)
+
+---
+
+### Scenario 10: Hierarchy Constraint Violation
+
+**Initial State:**
+- TAS enabled
+- ClusterTopology with levels: rack, host
+
+**Flow:**
+
+1. User submits PodCliqueSet with hierarchy violation:
+   ```yaml
+   apiVersion: grove.io/v1alpha1
+   kind: PodCliqueSet
+   spec:
+     template:
+       topologyConstraint:
+         packDomain: "host"  # Parent: index 1 (stricter)
+       scalingGroups:
+         - name: workers
+           config:
+             topologyConstraint:
+               packDomain: "rack"  # Child: index 0 (less strict!) ✗
+   ```
+
+2. Validation webhook checks hierarchy:
+   - Parent (PCS) constraint: "host" (index 1 in levels)
+   - Child (PCSG) constraint: "rack" (index 0 in levels)
+   - Validation: Child index (0) < Parent index (1) ✗
+   - Rule: Child must be >= parent (stricter or equal)
+
+3. Webhook rejects with error:
+   ```
+   admission webhook "podcliqueset.grove.io" denied the request:
+   child topology constraint 'rack' must be equal to or stricter than parent constraint 'host'
+   ```
+
+4. Workload not admitted
+
+**Key Behaviors:**
+- Hierarchy validation at admission time
+- Child must be equal to or stricter than parent (higher index)
+- Clear error explaining the violation
+- Prevents invalid constraint hierarchies
+
+**Related Design Sections:** [Validation Webhook](#validation-webhook), [Hierarchy Constraints](#hierarchy-constraints)
+
+---
+
+### Scenario 11: Dynamic Constraint Update on Running Workload
+
+**Initial State:**
+- PodCliqueSet "inference-wl" running with `packDomain: "rack"`
+- Replica 0: 3 pods scheduled on rack-a
+- Replica 1: 3 pods scheduled on rack-b
+
+**Flow:**
+
+1. User updates PodCliqueSet to stricter constraint:
+   ```yaml
+   spec:
+     template:
+       topologyConstraint:
+         packDomain: "host"  # Changed from "rack" to "host"
+   ```
+
+2. Validation webhook checks update:
+   - Hierarchy still valid (no child resources affected) ✓
+   - "host" exists in ClusterTopology ✓
+
+3. Update accepted
+
+4. Operator reconciles PodCliqueSet:
+   - Detects topology constraint change
+   - Updates PodGang:
+     - Required: "topology.kubernetes.io/rack" → "kubernetes.io/hostname"
+     - Preferred: "kubernetes.io/hostname" (unchanged)
+
+5. For already scheduled pods:
+   - Replica 0 pods remain on rack-a (no rescheduling)
+   - Replica 1 pods remain on rack-b (no rescheduling)
+
+6. For new pods (e.g., scale-up, pod replacement):
+   - Scheduled with new "host" constraint
+   - Each replica constrained to single host
+
+**Key Behaviors:**
+- Topology constraints are mutable
+- Changes only affect unscheduled pods
+- No disruption to running pods
+- Allows runtime constraint tightening/loosening
+
+**Related Design Sections:** [Mutable Topology Constraints](#mutable-topology-constraints)
+
+---
+
+### Scenario 12: Complete TAS Lifecycle
+
+This scenario demonstrates the full lifecycle of topology-aware scheduling from initial disabled state through various operational phases.
+
+**Phase 1: Initial State (TAS Disabled)**
+
+- Cluster running with `topology.enabled: false`
+- Workloads running without topology constraints
+- No ClusterTopology CR exists
+
+**Phase 2: Enable TAS**
+
+1. Admin configures topology:
+   ```yaml
+   topology:
+     enabled: true
+     levels:
+       - domain: rack
+         key: "topology.kubernetes.io/rack"
+       - domain: host
+         key: "kubernetes.io/hostname"
+   ```
+
+2. Admin restarts operator
+
+3. Operator creates ClusterTopology + KAI Topology CRs
+
+4. ClusterTopology status: Ready=True
+
+5. Existing workloads:
+   - Continue running unchanged (no topology constraints)
+   - PodGangs gain preferred constraints automatically (optimization)
+
+**Phase 3: Submit New Workload with Topology**
+
+1. User creates PodCliqueSet:
+   ```yaml
+   spec:
+     template:
+       topologyConstraint:
+         packDomain: "rack"
+   ```
+
+2. Workload admitted and scheduled with rack affinity
+
+**Phase 4: Update Topology (Add Level)**
+
+1. Admin adds "block" level between rack and host
+
+2. Admin restarts operator
+
+3. ClusterTopology updated: rack < block < host
+
+4. Existing workload continues working (rack still valid)
+
+5. New workloads can now use "block" level
+
+**Phase 5: Update Topology (Remove Level)**
+
+1. Admin removes "block" level
+
+2. Admin restarts operator
+
+3. Any workloads using "block":
+   - Required constraint removed
+   - Status updated to reflect removal
+
+**Phase 6: Disable TAS**
+
+1. Admin sets `topology.enabled: false`
+
+2. Admin restarts operator
+
+3. Existing workloads with topology:
+   - Required constraints removed from PodGang
+   - Preferred constraints kept (harmless)
+   - Status updated: "topology disabled"
+
+4. New workload submissions with topology rejected
+
+**Key Behaviors:**
+- Complete lifecycle coverage
+- Graceful transitions at each phase
+- Status always reflects current state
+- No data loss or disruption during transitions
+
+**Related Design Sections:** [Enable/Disable Behavior](#enabledisable-behavior), [Updating ClusterTopology](#updating-clustertopology)
