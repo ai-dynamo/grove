@@ -17,8 +17,8 @@ applications require:
 
 - Provide flexible, cluster-agnostic topology hierarchy definition via ClusterTopology CRD
 - Enable packing constraints for network locality across all Grove scalable resources
-- Immutable topology configuration ensuring scheduling consistency
-- Hierarchical constraint validation (child stricter than parent)
+- Mutable topology configuration allowing runtime updates
+- Flexible topology level ordering without enforced hierarchy
 
 ## Non-Goals
 
@@ -89,19 +89,17 @@ while allowing users to specify required constraints for strict placement (upper
 #### ClusterTopology CR
 
 ClusterTopology is a cluster-scoped CR that defines consistent naming for cluster topology hierarchy to be used by
-workload designers. It maps topology level domains to Kubernetes node labels and establishes ordering from broadest to
-narrowest scope.
+workload designers. It maps topology level domains to Kubernetes node labels.
 
 **Characteristics:**
 
 - **Cluster-scoped resource**: Only one ClusterTopology resource managed by operator: "grove-topology"
 - **Operator-managed resource**: Created and managed by Grove operator based on OperatorConfiguration
 - **Fixed name**: Always named "grove-topology" (no user configuration)
-- **Partially immutable**: After creation, only `key` field values can be updated; `domain` fields and level ordering
-  are immutable
-- **List-ordered hierarchy**: Index 0 represents the broadest category (e.g., region), and the final index represents the narrowest (e.g., host).
-- **Supported topology levels**: Region > Zone > DataCenter > Block > Rack > Host > Numa (broadest to narrowest)
-- **Webhook-validated**: Webhook validates constraint hierarchy and immutability
+- **Fully mutable**: All fields can be updated after creation (levels count, domain values, key values)
+- **Flexible ordering**: Levels can be specified in any order - no hierarchical ordering enforced
+- **Supported topology levels**: Region, Zone, DataCenter, Block, Rack, Host, Numa
+- **Webhook-validated**: Webhook validates domain/key uniqueness, key format, and authorization
 
 **TopologyDomain Definitions:**
 
@@ -128,9 +126,6 @@ const (
     TopologyDomainHost       TopologyDomain = "host"
     TopologyDomainNuma       TopologyDomain = "numa"
 )
-
-// Topology ordering (broadest to narrowest):
-// Region > Zone > DataCenter > Block > Rack > Host > Numa
 
 // ClusterTopology defines the topology hierarchy for the cluster.
 type ClusterTopology struct {
@@ -189,7 +184,7 @@ status:
     - type: Ready
       status: "True"
       reason: TopologyReady
-      message: "ClusterTopology configured and KAI Topology created successfully"
+      message: ""
       lastTransitionTime: "2025-12-07T10:00:00Z"
 ```
 
@@ -200,7 +195,7 @@ status:
   conditions:
     - type: Ready
       status: "False"
-      reason: KAITopologyCreationFailed
+      reason: KAITopologyCreationOrUpdateFailed
       message: "Failed to create KAI Topology CR: <error details>"
       lastTransitionTime: "2025-12-07T10:00:00Z"
   lastErrors:
@@ -211,8 +206,8 @@ status:
 
 ```go
 type ClusterTopologySpec struct {
-    // Levels is an ordered list of topology levels from broadest to narrowest scope.
-    // The order in this list defines the hierarchy (index 0 = highest level).
+    // Levels is a list of topology levels.
+    // Levels can be specified in any order - no hierarchical ordering enforced.
     // +kubebuilder:validation:MinItems=1
     // +kubebuilder:validation:MaxItems=8
     Levels []TopologyLevel `json:"levels"`
@@ -287,28 +282,28 @@ topology:
 ```
 
 Notes:
-- Levels can be specified in any order - operator automatically sorts to canonical order
+- Levels can be specified in any order - no automatic reordering performed
 - Operator validates configuration at startup, exits if invalid
 - Changes require operator restart to take effect
 
-**Validation:**
 
-- Level names must be from predefined set: region, zone, datacenter, block, rack, host, numa (enum validation)
-- Each level `domain` and `key` must be unique
-- Admins can skip intermediate levels (e.g., define only region, rack, host)
-- Partially immutable after creation (see Characteristics above for details)
-- Authorization validation via validation webhook (blocks create/update/delete by non-operator service accounts)
-- Validation performed at operator startup (not by webhooks for ClusterTopology)
+**A. Webhook Validation**
 
-**Mutation Webhook:**
+The validation webhook (`operator/internal/webhook/admission/clustertopology/validation/`) enforces business logic constraints:
 
-The mutation webhook automatically modifies ClusterTopology resources on CREATE operations:
+- **On CREATE**: Validates domain uniqueness, key uniqueness, and key format (valid Kubernetes label key)
+- **On UPDATE**: Runs same CREATE validations (uniqueness, format)
+- **Authorization**: Only operator service account can CREATE/UPDATE/DELETE ClusterTopology
+- **Important**: No hierarchical order enforcement - levels can be specified in any order
+- **Important**: Resource is fully mutable - all fields can be updated after creation
 
-- **Level Reordering**: Automatically reorders levels to match predefined ordering (Region > Zone > DataCenter > Block >
-  Rack > Host > Numa)
-- **Subset Support**: Admins can define any subset of levels; webhook reorders only the levels provided
-- **Consistency**: Ensures all ClusterTopology resources follow the same ordering convention across the cluster
-- **Example**: If admin defines levels as `[host, rack, region]`, webhook reorders to `[region, rack, host]`
+**B. Operator Startup Validation**
+
+The operator validates topology configuration in OperatorConfiguration at startup:
+
+- Validates `topology.levels` configuration before creating ClusterTopology CR
+- Fails fast with descriptive error if configuration is invalid
+- Separate from ClusterTopology CR validation layers above
 
 #### ClusterTopology Controller
 
@@ -338,35 +333,10 @@ Validation Mechanism:
 
 This ensures only the operator can manage the ClusterTopology resource.
 
-Example Workflows:
-
-**Create Operation:**
-1. User runs `kubectl create -f clustertopology.yaml`
-2. Validation webhook intercepts the CREATE request
-3. Webhook checks service account:
-   - If not operator service account → Reject with error: "ClusterTopology can only be created by the operator"
-   - If operator service account → Allow (operator is creating at startup)
-
-**Update Operation:**
-1. User runs `kubectl edit clustertopology grove-topology`
-2. Validation webhook intercepts the UPDATE request
-3. Webhook checks service account:
-   - If not operator service account → Reject with error: "ClusterTopology can only be modified by the operator"
-   - If operator service account → Allow (operator is updating from config changes)
-
-**Delete Operation:**
-1. User runs `kubectl delete clustertopology grove-topology`
-2. Validation webhook intercepts the DELETE request
-3. Webhook checks service account:
-   - If not operator service account → Reject with error: "ClusterTopology can only be deleted by the operator"
-   - If operator service account → Allow (operator is deleting during config change/shutdown)
-
 Key Points:
 
 - Only the operator can create, modify, or delete ClusterTopology (operator-managed resource)
-- External access attempts (kubectl, UI, API calls) are blocked
 - Operator manages ClusterTopology lifecycle based on configuration
-- No finalizer needed - webhook provides authorization validation
 
 **Webhook Availability Limitation**
 
@@ -421,14 +391,15 @@ topology:
 
 **Configuration Validation:**
 
-At operator startup, Grove validates topology configuration:
+At operator startup, Grove validates topology configuration in OperatorConfiguration:
 
 - All domain values must be from predefined set (region, zone, datacenter, block, rack, host, numa)
 - Each domain must be unique within levels list
 - Each key must be unique within levels list
 - Keys must be valid Kubernetes label keys
 - If validation fails → operator exits with descriptive error
-- No webhook validation performed (validation only at startup)
+- Note: This validates OperatorConfiguration topology config, not ClusterTopology CR
+- Note: ClusterTopology CR has separate validation layers (API server + webhook - see Validation section above)
 
 **Admin Responsibilities:**
 
@@ -830,64 +801,109 @@ KAI Topology:
 
 ## Workload Status Updates
 
-When topology constraints become invalid (due to topology disable or level changes), Grove updates PodCliqueSet status to inform users about constraint validity.
+When topology constraints become invalid (due to topology disable or level changes), Grove updates PodCliqueSet status to inform users about constraint validity using standard Kubernetes conditions.
 
 ### Status Fields
+
+Grove uses `metav1.Condition` to report topology constraint status, following Kubernetes API conventions:
 
 ```go
 type PodCliqueSetStatus struct {
     // ... existing fields ...
 
-    // TopologyConstraintStatus provides information about topology constraint validity
+    // Conditions represent the latest available observations of PodCliqueSet state
     // +optional
-    TopologyConstraintStatus *TopologyConstraintStatus `json:"topologyConstraintStatus,omitempty"`
-}
-
-type TopologyConstraintStatus struct {
-    // Valid indicates whether current topology constraints are valid
-    Valid bool `json:"valid"`
-    // Message provides human-readable details about constraint status
-    Message string `json:"message,omitempty"`
-    // InvalidConstraints lists constraints that were removed
-    InvalidConstraints []string `json:"invalidConstraints,omitempty"`
-    // LastUpdateTime is when constraint status was last updated
-    LastUpdateTime *metav1.Time `json:"lastUpdateTime,omitempty"`
+    // +patchMergeKey=type
+    // +patchStrategy=merge
+    // +listType=map
+    // +listMapKey=type
+    Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
 }
 ```
 
+**Condition Type:** `TopologyConstraints`
+
+**Condition Status Values:**
+- `True` - All topology constraints are valid and satisfied
+- `False` - One or more topology constraints are invalid
+- `Unknown` - Topology constraint validity cannot be determined
+
+**Condition Reasons:**
+- `TopologyLevelsAvailable` - All required topology levels exist in ClusterTopology
+- `TopologyLevelNotFound` - Required topology level not found in ClusterTopology
+- `TopologyDisabled` - Topology support disabled in operator configuration
+- `TopologyLevelsRemoved` - Multiple topology levels removed from ClusterTopology
+
 ### Status Update Scenarios
+
+**Topology Constraints Valid:**
+
+When all topology constraints are satisfied:
+
+```yaml
+status:
+  conditions:
+  - type: TopologyConstraints
+    status: "True"
+    observedGeneration: 5
+    lastTransitionTime: "2025-12-08T10:00:00Z"
+    reason: TopologyLevelsAvailable
+    message: "All topology constraints satisfied"
+```
 
 **Topology Disabled:**
 
 When topology is disabled in operator configuration:
-- Status indicates required constraints removed
-- Message: "Required constraints removed: topology disabled in operator configuration"
-- InvalidConstraints: Lists removed constraint levels
-- Example: If PodCliqueSet had `packDomain: rack`, InvalidConstraints would be `["rack"]`
 
-**Topology Level Removed:**
+```yaml
+status:
+  conditions:
+  - type: TopologyConstraints
+    status: "False"
+    observedGeneration: 5
+    lastTransitionTime: "2025-12-08T10:05:00Z"
+    reason: TopologyDisabled
+    message: "Topology support disabled in operator configuration. Required constraints removed."
+```
+
+**Topology Level Not Found:**
 
 When a specific topology level is removed from ClusterTopology:
-- Status indicates which level is no longer valid
-- Message: "Required constraint 'block' removed: level not in ClusterTopology"
-- InvalidConstraints: Lists the specific removed level (e.g., `["block"]`)
-- Other valid constraints remain active
 
-**Topology Re-enabled:**
+```yaml
+status:
+  conditions:
+  - type: TopologyConstraints
+    status: "False"
+    observedGeneration: 5
+    lastTransitionTime: "2025-12-08T10:10:00Z"
+    reason: TopologyLevelNotFound
+    message: "Topology level 'block' not found in ClusterTopology 'grove-topology'. Remove packDomain or update ClusterTopology."
+```
 
-When topology is re-enabled and constraints become valid again:
-- Status cleared to indicate all constraints are valid
-- Valid set to `true`
-- Message and InvalidConstraints fields cleared
-- LastUpdateTime updated to reflect change
+**Multiple Topology Levels Removed:**
+
+When multiple topology levels are removed from ClusterTopology:
+
+```yaml
+status:
+  conditions:
+  - type: TopologyConstraints
+    status: "False"
+    observedGeneration: 5
+    lastTransitionTime: "2025-12-08T10:15:00Z"
+    reason: TopologyLevelsRemoved
+    message: "Topology levels removed from ClusterTopology: [block, rack]. Update packDomain constraints."
+```
 
 **Constraint Behavior:**
 
-- Only **required** constraints are removed when invalid
-- **Preferred** constraints are always kept (they use strictest available level)
+- Only **required** constraints are validated and reported in condition status
+- **Preferred** constraints are always valid (they use strictest available level)
 - Changes affect only **unscheduled pods**
 - Already scheduled pods retain their placement
-- Users can inspect status to understand why constraints were removed
+- Users can inspect condition status to understand constraint validity
+- `ObservedGeneration` tracks which PodCliqueSet generation the condition reflects
 
 ## Open Questions
 
@@ -991,7 +1007,7 @@ This section demonstrates how the topology-aware scheduling design handles diffe
    - Checks each key is unique ✓
    - Checks keys are valid Kubernetes label keys ✓
 
-4. Operator creates ClusterTopology CR "grove-topology" with levels reordered canonically (rack < host)
+4. Operator creates ClusterTopology CR "grove-topology" with levels as specified in configuration
 
 5. Operator creates KAI Topology CR "grove-topology"
 
@@ -1009,7 +1025,7 @@ This section demonstrates how the topology-aware scheduling design handles diffe
 **Key Behaviors:**
 - Config validation happens at operator startup (fail-fast)
 - Both ClusterTopology and KAI Topology CRs created automatically
-- Levels automatically reordered to canonical ordering
+- Levels used as specified - no automatic reordering
 - Ready condition reflects successful setup
 
 **Related Design Sections:** [Operator Configuration](#operator-configuration), [ClusterTopology Controller](#clustertopology-controller)
@@ -1040,10 +1056,13 @@ This section demonstrates how the topology-aware scheduling design handles diffe
    - Keeps **preferred** constraints (no-op, harmless)
    - Updates PodCliqueSet status:
      ```yaml
-     topologyConstraintStatus:
-       valid: false
-       message: "Required constraints removed: topology disabled in operator configuration"
-       invalidConstraints: ["rack"]
+     conditions:
+     - type: TopologyConstraints
+       status: "False"
+       observedGeneration: 5
+       lastTransitionTime: "2025-12-08T10:00:00Z"
+       reason: TopologyDisabled
+       message: "Topology support disabled in operator configuration. Required constraints removed."
      ```
 
 5. For new workloads:
@@ -1254,7 +1273,7 @@ This section demonstrates how the topology-aware scheduling design handles diffe
 
 4. Operator updates ClusterTopology CR:
    - Adds "block" level
-   - Reorders to canonical order: rack < block < host
+   - Levels used as specified in configuration
 
 5. Operator updates KAI Topology CR to match
 
@@ -1268,7 +1287,7 @@ This section demonstrates how the topology-aware scheduling design handles diffe
 
 **Key Behaviors:**
 - Backward compatible (existing levels preserved)
-- Automatic canonical ordering
+- Levels used as specified in configuration
 - Existing workloads completely unaffected
 - New capability added seamlessly
 
@@ -1311,10 +1330,13 @@ This section demonstrates how the topology-aware scheduling design handles diffe
    - Keeps preferred constraint ("kubernetes.io/hostname")
    - Updates PodCliqueSet status:
      ```yaml
-     topologyConstraintStatus:
-       valid: false
-       message: "Required constraint 'block' removed: level not in ClusterTopology"
-       invalidConstraints: ["block"]
+     conditions:
+     - type: TopologyConstraints
+       status: "False"
+       observedGeneration: 5
+       lastTransitionTime: "2025-12-08T10:00:00Z"
+       reason: TopologyLevelNotFound
+       message: "Topology level 'block' not found in ClusterTopology 'grove-topology'. Remove packDomain or update ClusterTopology."
      ```
    - Already scheduled pods continue running (no rescheduling)
    - New pods scheduled without "block" constraint
