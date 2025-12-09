@@ -35,7 +35,7 @@ func TestGetWebhooks(t *testing.T) {
 		// Expect 3 webhooks: podcliqueset-defaulting, podcliqueset-validating, clustertopology-validating
 		require.Len(t, webhooks, 3)
 		// Check that defaulting and validating webhooks are present
-		assert.Equal(t, cert.Mutating, webhooks[0].Type)  // podcliqueset-defaulting-webhook
+		assert.Equal(t, cert.Mutating, webhooks[0].Type)   // podcliqueset-defaulting-webhook
 		assert.Equal(t, cert.Validating, webhooks[1].Type) // podcliqueset-validating-webhook
 		assert.Equal(t, cert.Validating, webhooks[2].Type) // clustertopology-validating-webhook
 	})
