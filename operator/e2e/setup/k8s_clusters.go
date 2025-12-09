@@ -41,6 +41,7 @@ import (
 	k3d "github.com/k3d-io/k3d/v5/pkg/types"
 	"github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -311,6 +312,13 @@ func SetupCompleteK3DCluster(ctx context.Context, cfg ClusterConfig, skaffoldYAM
 	if err := utils.WaitForPodsInNamespace(ctx, gpuOperatorConfig.Namespace, gpuOperatorConfig.RestConfig, 0, defaultPollTimeout, defaultPollInterval, gpuOperatorConfig.Logger); err != nil {
 		cleanup()
 		return nil, nil, fmt.Errorf("NVIDIA GPU Operator not ready: %w", err)
+	}
+
+	// Wait for Grove webhook service endpoints to be available
+	// This ensures the webhook is ready to handle requests before tests start
+	if err := waitForWebhookReady(ctx, clientset, logger); err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("grove webhook not ready: %w", err)
 	}
 
 	// Find any deployed images that are not in the prepull list
@@ -1003,4 +1011,50 @@ func buildLDFlagsForE2E() string {
 		gitCommit, treeState, buildDate)
 
 	return ldflags
+}
+
+// waitForWebhookReady waits for the Grove webhook service endpoints to be available.
+// This ensures the webhook server is fully registered with the Kubernetes API server
+// and can handle admission requests before tests start.
+func waitForWebhookReady(ctx context.Context, clientset *kubernetes.Clientset, logger *utils.Logger) error {
+	const (
+		webhookNamespace   = "grove-system"
+		webhookServiceName = "grove-operator"
+		webhookPort        = 9443
+	)
+
+	logger.Info("⏳ Waiting for Grove webhook service endpoints to be ready...")
+
+	return utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+		// Check if the service has endpoints
+		endpoints, err := clientset.CoreV1().Endpoints(webhookNamespace).Get(ctx, webhookServiceName, metav1.GetOptions{})
+		if err != nil {
+			if k8serrors.IsNotFound(err) {
+				logger.Debug("  Webhook endpoints not found yet, waiting...")
+				return false, nil
+			}
+			return false, fmt.Errorf("failed to get webhook endpoints: %w", err)
+		}
+
+		// Check if there are any ready addresses for the webhook port
+		for _, subset := range endpoints.Subsets {
+			// Check if this subset has the webhook port
+			hasWebhookPort := false
+			for _, port := range subset.Ports {
+				if port.Port == webhookPort {
+					hasWebhookPort = true
+					break
+				}
+			}
+
+			// If this subset has ready addresses with the webhook port, we're good
+			if hasWebhookPort && len(subset.Addresses) > 0 {
+				logger.Info("✅ Grove webhook service endpoints are ready")
+				return true, nil
+			}
+		}
+
+		logger.Debug("  Webhook endpoints exist but no ready addresses yet, waiting...")
+		return false, nil
+	})
 }
