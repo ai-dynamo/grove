@@ -41,8 +41,10 @@ import (
 	k3d "github.com/k3d-io/k3d/v5/pkg/types"
 	"github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
-	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -314,9 +316,9 @@ func SetupCompleteK3DCluster(ctx context.Context, cfg ClusterConfig, skaffoldYAM
 		return nil, nil, fmt.Errorf("NVIDIA GPU Operator not ready: %w", err)
 	}
 
-	// Wait for Grove webhook service endpoints to be available
+	// Wait for Grove webhook to be ready by actually testing it
 	// This ensures the webhook is ready to handle requests before tests start
-	if err := waitForWebhookReady(ctx, clientset, logger); err != nil {
+	if err := waitForWebhookReady(ctx, restConfig, logger); err != nil {
 		cleanup()
 		return nil, nil, fmt.Errorf("grove webhook not ready: %w", err)
 	}
@@ -1013,48 +1015,91 @@ func buildLDFlagsForE2E() string {
 	return ldflags
 }
 
-// waitForWebhookReady waits for the Grove webhook service endpoints to be available.
+// waitForWebhookReady waits for the Grove webhook to be ready by actually testing it.
 // This ensures the webhook server is fully registered with the Kubernetes API server
 // and can handle admission requests before tests start.
-func waitForWebhookReady(ctx context.Context, clientset *kubernetes.Clientset, logger *utils.Logger) error {
-	const (
-		webhookNamespace   = "grove-system"
-		webhookServiceName = "grove-operator"
-		webhookPort        = 9443
-	)
+// We do this by making a dry-run request to create a minimal PodCliqueSet - if the webhook
+// is ready, the request will be processed (may fail validation, but that's fine).
+// If the webhook is not ready, we'll get "no endpoints available" or similar errors.
+func waitForWebhookReady(ctx context.Context, restConfig *rest.Config, logger *utils.Logger) error {
+	logger.Info("⏳ Waiting for Grove webhook to be ready...")
 
-	logger.Info("⏳ Waiting for Grove webhook service endpoints to be ready...")
+	dynamicClient, err := dynamic.NewForConfig(restConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+
+	// Define the GVR for PodCliqueSet
+	pcsGVR := schema.GroupVersionResource{
+		Group:    "grove.io",
+		Version:  "v1alpha1",
+		Resource: "podcliquesets",
+	}
+
+	// Create a minimal PodCliqueSet for testing the webhook
+	// This doesn't need to be valid - we just need the webhook to process it
+	testPCS := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "grove.io/v1alpha1",
+			"kind":       "PodCliqueSet",
+			"metadata": map[string]interface{}{
+				"name":      "webhook-ready-test",
+				"namespace": "default",
+			},
+			"spec": map[string]interface{}{
+				"replicas": int64(1),
+				"template": map[string]interface{}{
+					"cliques": []interface{}{
+						map[string]interface{}{
+							"name": "test",
+							"spec": map[string]interface{}{
+								"replicas": int64(1),
+								"podSpec": map[string]interface{}{
+									"containers": []interface{}{
+										map[string]interface{}{
+											"name":  "test",
+											"image": "nginx:latest",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
 
 	return utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
-		// Check if the service has endpoints
-		endpoints, err := clientset.CoreV1().Endpoints(webhookNamespace).Get(ctx, webhookServiceName, metav1.GetOptions{})
+		// Try to create the PodCliqueSet with dry-run mode
+		// This will invoke the webhook without actually creating the resource
+		_, err := dynamicClient.Resource(pcsGVR).Namespace("default").Create(
+			ctx,
+			testPCS,
+			metav1.CreateOptions{
+				DryRun: []string{metav1.DryRunAll},
+			},
+		)
+
 		if err != nil {
-			if k8serrors.IsNotFound(err) {
-				logger.Debug("  Webhook endpoints not found yet, waiting...")
+			errStr := err.Error()
+			// These errors indicate the webhook is not ready yet
+			if strings.Contains(errStr, "no endpoints available") ||
+				strings.Contains(errStr, "connection refused") ||
+				strings.Contains(errStr, "i/o timeout") ||
+				strings.Contains(errStr, "Bad Gateway") ||
+				strings.Contains(errStr, "Service Unavailable") {
+				logger.Debugf("  Webhook not ready yet: %v", err)
 				return false, nil
 			}
-			return false, fmt.Errorf("failed to get webhook endpoints: %w", err)
+			// Any other error (including validation errors) means the webhook responded
+			// which is what we want to confirm
+			logger.Infof("✅ Grove webhook is ready (responded with: %v)", err)
+			return true, nil
 		}
 
-		// Check if there are any ready addresses for the webhook port
-		for _, subset := range endpoints.Subsets {
-			// Check if this subset has the webhook port
-			hasWebhookPort := false
-			for _, port := range subset.Ports {
-				if port.Port == webhookPort {
-					hasWebhookPort = true
-					break
-				}
-			}
-
-			// If this subset has ready addresses with the webhook port, we're good
-			if hasWebhookPort && len(subset.Addresses) > 0 {
-				logger.Info("✅ Grove webhook service endpoints are ready")
-				return true, nil
-			}
-		}
-
-		logger.Debug("  Webhook endpoints exist but no ready addresses yet, waiting...")
-		return false, nil
+		// Success means the webhook processed the request
+		logger.Info("✅ Grove webhook is ready")
+		return true, nil
 	})
 }
