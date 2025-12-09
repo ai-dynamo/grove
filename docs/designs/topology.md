@@ -241,8 +241,8 @@ spec:
 
 The Manged ClusterTopology CR is generated and managed sole by the Grove operator. To configure it:
 
-1. Define topology levels in OperatorConfiguration under `topology.levels` (see OperatorConfiguration section below)
-2. Set `topology.enabled: true` in OperatorConfiguration
+1. Define topology levels in OperatorConfiguration under `clusterTopology.levels` (see OperatorConfiguration section below)
+2. Set `clusterTopology.enabled: true` in OperatorConfiguration
 3. Restart the Grove operator
 4. Operator creates ClusterTopology CR named "grove-topology"
 5. Operator creates and continuously reconciles KAI Topology CR
@@ -300,7 +300,7 @@ CRDs for various schedulers or topology consumers, allowing Grove to support mul
 Operator enables/disables topology features and defines topology levels via operator config:
 
 ```yaml
-topology:
+clusterTopology:
   enabled: true
   levels:
     - domain: rack
@@ -315,7 +315,7 @@ topology:
 type OperatorConfiguration struct {
     // Topology configuration for cluster topology hierarchy
     // +optional
-    Topology *TopologyConfiguration `json:"topology,omitempty"`
+    ClusterTopology *TopologyConfiguration `json:"clusterTopology,omitempty"`
 }
 
 type TopologyConfiguration struct {
@@ -331,15 +331,15 @@ type TopologyConfiguration struct {
 **Startup Behavior:**
 
 - Topology configuration loaded only at operator startup
-- Changes to `topology.enabled` or `levels` require operator restart to take effect
-- If `topology.enabled: true`:
+- Changes to `clusterTopology.enabled` or `levels` require operator restart to take effect
+- If `clusterTopology.enabled: true`:
   - Operator generates ClusterTopology CR named "grove-topology"
   - Operator validates topology config at startup
   - If config invalid (duplicate domains, invalid keys, etc.) → operator exits with error
   - If ClusterTopology CR creation fails → operator exits with error
   - Operator generates KAI Topology CR
   - If KAI Topology creation fails → reflected in ClusterTopology Ready condition and LastErrors (not operator failure)
-- If `topology.enabled: false`: topology features disabled
+- If `clusterTopology.enabled: false`: topology features disabled
 
 **Configuration Validation:**
 
@@ -361,15 +361,15 @@ At operator startup, Grove validates topology configuration in OperatorConfigura
 
 #### Enable/Disable Behavior
 
-**Enabling Topology (topology.enabled: false → true):**
+**Enabling Topology (clusterTopology.enabled: false → true):**
 
 ***For existing workloads:***
 * operator validates constraints, removes invalid ones, updates status
 
-***For new workloads:*** 
+***For new workloads:***
 * validation webhook validates constraints
 
-**Disabling Topology (topology.enabled: true → false):**
+**Disabling Topology (clusterTopology.enabled: true → false):**
 
 For existing workloads:
    - remove all topology constraints (required/preferrd) in PodGang
@@ -530,7 +530,7 @@ status:
 
 **Topology Enablement Validation:**
 
-- Webhook rejects PodCliqueSet with topology constraints when `topology.enabled: false`
+- Webhook rejects PodCliqueSet with topology constraints when `clusterTopology.enabled: false`
 - Error message: "topology support is not enabled in the operator"
 - Prevents workload admission failure when topology is disabled
 
@@ -784,7 +784,7 @@ Integration tests validate topology components in isolation using table-driven t
 Allow admins to configure the topology name in OperatorConfiguration:
 
 ```yaml
-topology:
+clusterTopology:
   enabled: true
   name: "grove-topology"  # Default value, admin can customize
   levels:
