@@ -54,7 +54,13 @@ jobs:
 
       - name: Install skaffold
         run: |
-          curl -Lo skaffold https://storage.googleapis.com/skaffold/releases/latest/skaffold-linux-amd64
+          ARCH=$(uname -m)
+          if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+            SKAFFOLD_ARCH="arm64"
+          else
+            SKAFFOLD_ARCH="amd64"
+          fi
+          curl -Lo skaffold https://storage.googleapis.com/skaffold/releases/latest/skaffold-linux-${SKAFFOLD_ARCH}
           sudo install skaffold /usr/local/bin/
           skaffold version
 
