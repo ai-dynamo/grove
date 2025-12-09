@@ -29,13 +29,13 @@ jobs:
     timeout-minutes: 60
     steps:
 
-
-
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Install build-essential for make
-        run: sudo apt install build-essential -y
+        run: |
+          sudo apt-get update
+          sudo apt install build-essential -y
 
       - name: Set up Go
         uses: actions/setup-go@v4
