@@ -28,8 +28,14 @@ jobs:
     runs-on: cpu-amd-m5-2xlarge
     timeout-minutes: 60
     steps:
+
+
+
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Install build-essential for make etc
+        run: sudo apt install build-essential
 
       - name: Set up Go
         uses: actions/setup-go@v4
