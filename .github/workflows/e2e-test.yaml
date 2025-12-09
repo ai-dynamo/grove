@@ -25,7 +25,7 @@ jobs:
   e2e:
     # Run on non-draft PRs or draft PRs with 'run-e2e' label
     if: github.event.pull_request.draft == false || contains(github.event.pull_request.labels.*.name, 'run-e2e')
-    runs-on: cpu-arm-r8g-4xlarge
+    runs-on: cpu-amd-m5-2xlarge
     timeout-minutes: 60
     steps:
 
@@ -54,13 +54,7 @@ jobs:
 
       - name: Install skaffold
         run: |
-          ARCH=$(uname -m)
-          if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-            SKAFFOLD_ARCH="arm64"
-          else
-            SKAFFOLD_ARCH="amd64"
-          fi
-          curl -Lo skaffold https://storage.googleapis.com/skaffold/releases/latest/skaffold-linux-${SKAFFOLD_ARCH}
+          curl -Lo skaffold https://storage.googleapis.com/skaffold/releases/latest/skaffold-linux-amd64
           sudo install skaffold /usr/local/bin/
           skaffold version
 
