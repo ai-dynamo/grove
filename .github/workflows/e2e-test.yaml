@@ -25,9 +25,14 @@ jobs:
   e2e:
     # Run on non-draft PRs or draft PRs with 'run-e2e' label
     if: github.event.pull_request.draft == false || contains(github.event.pull_request.labels.*.name, 'run-e2e')
-    runs-on: cpu-amd-m5-2xlarge
+    runs-on: github-ci
     timeout-minutes: 60
     steps:
+
+      - name: Print runner specs
+        run: |
+          echo "CPUs: $(nproc)"
+          echo "RAM: $(free -h | awk '/^Mem:/ {print $2}')"
 
       - name: Checkout code
         uses: actions/checkout@v4
