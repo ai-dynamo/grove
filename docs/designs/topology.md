@@ -95,11 +95,14 @@ workload designers. It maps topology level domains to Kubernetes node labels.
 
 - **Cluster-scoped resource**: Only one ClusterTopology resource managed by operator: "grove-topology"
 - **Operator-managed resource**: Created and managed by Grove operator based on OperatorConfiguration
-- **Fixed name**: Always named "grove-topology" (no user configuration)
-- **Fully mutable**: All fields can be updated after creation (levels count, domain values, key values)
-- **Flexible ordering**: Levels can be specified in any order - no hierarchical ordering enforced
+- **User-created CRs allowed**: Users can create additional ClusterTopology CRs but Grove does not use them
+- **Fixed name for managed CR**: Operator-managed CR always named "grove-topology"
+- **Mutability**:
+  - **Operator-managed CR** ("grove-topology"): Only modified by operator at startup (not runtime)
+  - **User-created CRs**: Fully mutable - can be modified anytime
+- **Flexible ordering**: Levels can be specified in any order - no hierarchical ordering enforced in OperatorConfiguration
 - **Supported topology levels**: Region, Zone, DataCenter, Block, Rack, Host, Numa
-- **Webhook-validated**: Webhook validates domain/key uniqueness, key format, and authorization
+- **Webhook-validated**: Webhook validates domain/key uniqueness, key format, and authorization (only operator can modify "grove-topology")
 
 **TopologyDomain Definitions:**
 
@@ -316,9 +319,18 @@ The controller continuously reconciles KAI Topology CR to keep it synchronized w
 - On ClusterTopology creation → Create corresponding KAI Topology CR
 - On ClusterTopology update → Update KAI Topology CR to match
 - On reconciliation → Verify KAI Topology exists and matches ClusterTopology spec
-- Name: Always matches ClusterTopology name ("grove-topology")
+- Name: Always matches ClusterTopology name (e.g., "grove-topology" for managed CR)
 - Namespace: Cluster-scoped like ClusterTopology
 - Status: Success/failure reflected in ClusterTopology Ready condition (reason: TopologyReady or KAITopologyCreationFailed)
+
+**Reconciliation Details:**
+
+- **Owner Reference**: ClusterTopology owns KAI Topology CR for automatic cascading deletion
+- **Reconciliation Trigger**: Triggered on ClusterTopology creation, spec changes, or KAI Topology events
+- **Drift Detection**: If KAI Topology is manually modified, operator resets it to match ClusterTopology spec
+- **Deletion Policy**: If KAI Topology is deleted externally, operator automatically recreates it
+- **Continuous Sync**: Controller watches both ClusterTopology and KAI Topology resources
+- **Conflict Resolution**: ClusterTopology spec is always the source of truth
 
 **Authorization Validation**
 
@@ -374,6 +386,40 @@ topology:
       key: "topology.kubernetes.io/rack"
     - domain: host
       key: "kubernetes.io/hostname"
+```
+
+**OperatorConfiguration API Structure:**
+
+```go
+type OperatorConfiguration struct {
+    // Topology configuration for cluster topology hierarchy
+    // +optional
+    Topology *TopologyConfiguration `json:"topology,omitempty"`
+}
+
+type TopologyConfiguration struct {
+    // Enabled indicates whether topology-aware scheduling is enabled
+    Enabled bool `json:"enabled"`
+
+    // Levels is a list of topology levels for the cluster
+    // Order in this list does not affect hierarchy (semantic order used for validation)
+    // +kubebuilder:validation:MinItems=1
+    // +kubebuilder:validation:MaxItems=7
+    Levels []TopologyLevel `json:"levels"`
+}
+
+type TopologyLevel struct {
+    // Domain is the predefined level identifier
+    // +kubebuilder:validation:Required
+    // +kubebuilder:validation:Enum=region;zone;datacenter;block;rack;host;numa
+    Domain TopologyDomain `json:"domain"`
+
+    // Key is the node label key for this topology domain
+    // +kubebuilder:validation:Required
+    // +kubebuilder:validation:MinLength=1
+    // +kubebuilder:validation:MaxLength=63
+    Key string `json:"key"`
+}
 ```
 
 **Startup Behavior:**
@@ -443,7 +489,7 @@ At operator startup, Grove validates topology configuration in OperatorConfigura
    - Keep preferred constraints
    - Update status fields
 
-*note: in the future, we may support dynamic updates to ClusterTopology without operator restart.*
+*note: in the future, we may support dynamic runtime updates to the operator-managed ClusterTopology ("grove-topology") without requiring operator restart.*
 
 **Workload Constraint Handling During Topology Changes:**
 
@@ -465,9 +511,10 @@ For New Workloads:
 - Users must update workload spec to match available topology levels
 
 Preferred Constraint Updates:
-- When lowest topology level changes (e.g., host → numa)
+- When strictest (narrowest) topology level changes (e.g., host → numa)
 - Operator updates preferred constraint to new strictest level
 - Applies to all three levels (PodGang, TopologyConstraintGroup, PodGroup)
+- Strictest = narrowest = most specific locality (numa is strictest if configured)
 
 ### 2. Operator API Changes (Grove CRDs)
 
@@ -550,10 +597,15 @@ The mutation webhook for PodCliqueSet resources:
 
 **Hierarchy Constraints:**
 
-- Child PackDomain must be equal to or stricter than parent (stricter = higher index in levels list)
+- Child PackDomain must be semantically equal to or stricter than parent
+- **Semantic Order** (narrowest to broadest): numa < host < rack < block < datacenter < zone < region
+- Stricter means semantically narrower/more specific (e.g., host is stricter than rack)
+- Validation uses semantic order, NOT OperatorConfiguration list index
 - PodCliqueSet → PodCliqueScalingGroup → PodClique hierarchy
 - Referenced PackDomain name must exist in ClusterTopology.Spec.Levels
 - Validation applies on both CREATE and UPDATE operations
+
+**Example**: If parent has `packDomain: "rack"`, child can use `rack` (equal), `host` (stricter), or `numa` (strictest), but NOT `block` or broader domains.
 
 **Topology Enablement Validation:**
 
@@ -568,15 +620,21 @@ The mutation webhook for PodCliqueSet resources:
 
 **Authorization Validation:**
 
-- Validation webhook checks CREATE, UPDATE, and DELETE operations on ClusterTopology
-- Verifies the service account making the request
-- Only permits operations from the operator's service account
-- Rejects unauthorized access attempts from kubectl, UI, or other clients
-- This ensures only the operator can manage the ClusterTopology resource
-- Error messages:
-  - CREATE: "ClusterTopology can only be created by the operator"
-  - UPDATE: "ClusterTopology can only be modified by the operator"
-  - DELETE: "ClusterTopology can only be deleted by the operator"
+The validation webhook enforces authorization for the operator-managed ClusterTopology CR ("grove-topology"):
+
+- **For "grove-topology" CR**:
+  - CREATE: Only operator service account can create
+  - UPDATE: Only operator service account can modify
+  - DELETE: Only operator service account can delete
+  - Rejects unauthorized access attempts from kubectl, UI, or other clients
+  - Error messages: "ClusterTopology 'grove-topology' can only be [created|modified|deleted] by the operator"
+
+- **For user-created ClusterTopology CRs**:
+  - Users can freely CREATE, UPDATE, and DELETE their own ClusterTopology CRs
+  - No authorization restrictions (standard RBAC applies)
+  - Grove does not use these CRs - they are ignored by the operator
+
+**Purpose**: Prevents users from corrupting the operator-managed topology configuration while allowing custom ClusterTopology CRs for other purposes.
 
 ### 3. Scheduler API Changes (Contract with KAI)
 
@@ -710,10 +768,25 @@ The operator translates user's level names to keys and builds required/preferred
 **Preferred Constraints (Auto-Generated):**
 
 - Operator ALWAYS generates preferred constraint at all three levels
-- Uses key of strictest level (e.g., `"kubernetes.io/hostname"` for "host" level)
+- Uses key of strictest (narrowest) level configured in ClusterTopology
+- Example: If levels include "host", preferred = `"kubernetes.io/hostname"`
 - Writes to PodGang: `TopologyConstraint.PackConstraint.Preferred = "kubernetes.io/hostname"`
 - Enables out-of-box optimization even without user configuration
 - Scheduler can fallback to less strict levels if preferred cannot be satisfied
+
+**Edge Cases:**
+
+1. **Single-Level ClusterTopology**: If only one level is configured:
+   - Preferred constraint = same level as required (if required is set)
+   - Example: Only "rack" configured → preferred = "topology.kubernetes.io/rack"
+   - If no required constraint set by user, preferred still uses the single level
+
+2. **Strictest Level Changes During Topology Update**:
+   - Initial topology: rack, host (strictest = host)
+   - Updated topology: rack, host, numa (strictest = numa)
+   - Operator updates preferred constraints to "topology.kubernetes.io/numa" for all affected PodGangs
+   - Changes only affect new/unscheduled pods
+   - Already scheduled pods retain their placement
 
 **Three-Level Translation:**
 
@@ -904,6 +977,622 @@ status:
 - Already scheduled pods retain their placement
 - Users can inspect condition status to understand constraint validity
 - `ObservedGeneration` tracks which PodCliqueSet generation the condition reflects
+
+## Testing
+
+This section defines testing strategies for topology-aware scheduling, covering integration tests and E2E test scenarios.
+
+### Integration Tests
+
+Integration tests validate topology components in isolation using table-driven tests and envtest clusters.
+
+#### Webhook Validation Tests
+
+**Test File**: `operator/internal/webhook/admission/clustertopology/validation/clustertopology_test.go`
+
+**ClusterTopology Validation**:
+- Valid single-level topology
+- Valid multi-level topology
+- Duplicate domain rejection
+- Duplicate key rejection
+- Invalid key format rejection
+- Domain uniqueness validation
+- Key uniqueness validation
+
+**Authorization Validation**:
+- Operator service account can CREATE "grove-topology"
+- User service account cannot CREATE "grove-topology"
+- User service account CAN CREATE user-named ClusterTopology CRs
+- Operator service account can UPDATE "grove-topology"
+- User service account cannot UPDATE "grove-topology"
+- User service account CAN UPDATE their own ClusterTopology CRs
+
+**PodCliqueSet Hierarchy Validation**:
+- Valid hierarchy using semantic order (host parent, numa child)
+- Invalid hierarchy rejection (host parent, rack child)
+- Semantic order validation (not OperatorConfiguration list index)
+- Equal constraints allowed (rack parent, rack child)
+
+**Test File**: `operator/internal/webhook/admission/clustertopology/validation/clustertopology_crd_test.go`
+
+Uses envtest for full CRD validation including webhook integration.
+
+#### Controller Reconciliation Tests
+
+**Test File**: `operator/internal/controller/clustertopology/reconcile_test.go`
+
+**KAI Topology CR Generation**:
+- Create KAI Topology on ClusterTopology creation
+- Update KAI Topology on ClusterTopology spec change
+- Set owner reference from ClusterTopology to KAI Topology
+- Update status condition on success (Ready=True, reason=TopologyReady)
+- Update status condition on failure (Ready=False, reason=KAITopologyCreationFailed)
+
+**Drift Detection**:
+- Detect manual KAI Topology modification
+- Reset KAI Topology to match ClusterTopology spec
+- Recreate deleted KAI Topology automatically
+
+**Status Updates**:
+- Set TopologyReady condition when KAI Topology successfully created
+- Set KAITopologyCreationFailed condition when creation fails
+- Update ObservedGeneration field to match ClusterTopology generation
+
+### E2E Test Scenarios
+
+**Test File**: `operator/e2e/tests/topology_test.go`
+
+All E2E tests use `//go:build e2e` build tag and follow Grove's E2E testing patterns with numbered steps, logger output, and polling utilities.
+
+#### Category 1: Topology Setup and Lifecycle
+
+**E2E-TOP-1: Initial Setup with Valid Topology**
+
+Setup: Fresh cluster, topology configuration with rack+host levels
+
+Steps:
+1. Configure OperatorConfiguration with `topology.enabled=true` and rack+host levels
+2. Start Grove operator
+3. Verify ClusterTopology "grove-topology" created with correct spec
+4. Verify KAI Topology "grove-topology" created
+5. Verify ClusterTopology Ready condition status=True, reason=TopologyReady
+
+Assert: Both ClusterTopology and KAI Topology CRs exist with matching specs
+
+**E2E-TOP-2: Topology Disabled → Enabled Transition**
+
+Setup: Cluster with existing PodCliqueSets running without topology constraints
+
+Steps:
+1. Enable topology in OperatorConfiguration (rack+host levels)
+2. Restart Grove operator
+3. Verify ClusterTopology "grove-topology" created
+4. Verify existing PodCliqueSets gain preferred constraints in their PodGangs
+5. Deploy new PodCliqueSet with `packDomain: rack`
+6. Verify pods scheduled respecting topology constraint
+
+Assert: New topology constraints work, existing workloads gain preferred constraints without disruption
+
+**E2E-TOP-3: Topology Enabled → Disabled Transition**
+
+Setup: Topology enabled, running PodCliqueSet with `packDomain: rack`
+
+Steps:
+1. Disable topology in OperatorConfiguration (`enabled: false`)
+2. Restart Grove operator
+3. Verify PodCliqueSet TopologyConstraints condition status=False, reason=TopologyDisabled
+4. Verify PodGang required constraint removed from spec
+5. Verify PodGang preferred constraint kept (harmless)
+6. Attempt to create new PodCliqueSet with topology constraint
+7. Verify webhook rejects with error: "topology support is not enabled in the operator"
+
+Assert: Existing workload degraded gracefully with clear status, new topology workloads rejected
+
+**E2E-TOP-4: Add New Topology Level**
+
+Setup: Topology with rack+host levels, running PodCliqueSet
+
+Steps:
+1. Update OperatorConfiguration to add "numa" level
+2. Restart Grove operator
+3. Verify ClusterTopology updated with numa level
+4. Verify existing PodCliqueSet preferred constraint updated to numa key
+5. Deploy new PodCliqueSet with `packDomain: numa`
+6. Verify pods scheduled with numa-level constraint
+
+Assert: New level becomes available, existing workloads automatically updated with new strictest preferred constraint
+
+**E2E-TOP-5: Remove Topology Level**
+
+Setup: Topology with rack+block+host levels, PodCliqueSet with `packDomain: block`
+
+Steps:
+1. Remove "block" level from OperatorConfiguration
+2. Restart Grove operator
+3. Verify ClusterTopology updated (block level removed)
+4. Verify PodCliqueSet TopologyConstraints condition status=False, reason=TopologyLevelNotFound
+5. Verify condition message includes "block"
+6. Verify ObservedGeneration matches current generation
+7. Verify existing pods continue running (not rescheduled)
+
+Assert: Status accurately reflects level removal, pods retain placement
+
+**E2E-TOP-6: KAI Topology Creation Failure and Recovery**
+
+Setup: KAI Topology API unavailable initially
+
+Steps:
+1. Start operator with valid topology configuration
+2. Verify ClusterTopology "grove-topology" created
+3. Verify ClusterTopology Ready condition status=False, reason=KAITopologyCreationFailed
+4. Verify LastErrors includes KAI Topology creation error details
+5. Make KAI Topology API available
+6. Wait for controller reconciliation
+7. Verify KAI Topology CR created successfully
+8. Verify ClusterTopology Ready condition status=True, reason=TopologyReady
+
+Assert: Operator handles KAI API failures gracefully with automatic retry
+
+#### Category 2: Workload Topology Constraints
+
+**E2E-TOP-7: PodCliqueSet with Rack-Level Constraint**
+
+Setup: Topology with rack+host levels, cluster nodes labeled with rack topology (rack-a, rack-b)
+
+Steps:
+1. Label nodes: 2 nodes with rack-a, 2 nodes with rack-b
+2. Deploy PodCliqueSet with replicas=2, 2 pods per replica, `packDomain: rack`
+3. Verify PodGang created with required="topology.kubernetes.io/rack"
+4. Verify PodGang preferred="kubernetes.io/hostname" (strictest level)
+5. Wait for all pods to be scheduled and running
+6. Verify replica 0: all pods on nodes within same rack
+7. Verify replica 1: all pods on nodes within same rack
+8. Verify replicas can be on different racks (independence)
+
+Assert: Per-replica rack packing enforced, each replica independently constrained
+
+**E2E-TOP-8: PodCliqueSet with Host-Level Constraint**
+
+Setup: Topology with rack+host levels, 4 nodes available
+
+Steps:
+1. Deploy PodCliqueSet with replicas=2, 3 pods per replica, `packDomain: host`
+2. Verify PodGang created with required="kubernetes.io/hostname"
+3. Wait for all pods to be scheduled
+4. Verify replica 0: all 3 pods on same host
+5. Verify replica 1: all 3 pods on same host
+6. Verify different replicas can be on different hosts
+
+Assert: Per-replica host packing enforced, strictest locality constraint respected
+
+**E2E-TOP-9: Multi-Level Hierarchy Constraints**
+
+Setup: Topology with rack+host levels
+
+Steps:
+1. Deploy PodCliqueSet with hierarchy:
+   - PCS template: `packDomain: rack`
+   - PCSG config: `packDomain: host` (stricter than rack)
+   - PodClique template: `packDomain: host` (equal to PCSG)
+2. Verify webhook accepts workload (semantic hierarchy valid)
+3. Verify pods scheduled respecting all three constraint levels
+4. Attempt to deploy invalid hierarchy (rack parent, block child)
+5. Verify webhook rejects with semantic order validation error
+
+Assert: Semantic hierarchy validation works correctly, prevents invalid configurations
+
+**E2E-TOP-10: Workload Rejected When Topology Disabled**
+
+Setup: Topology disabled (`topology.enabled: false`)
+
+Steps:
+1. Attempt to create PodCliqueSet with `packDomain: rack`
+2. Verify webhook rejects request
+3. Verify error message: "topology support is not enabled in the operator"
+
+Assert: Cannot submit topology constraints when topology feature disabled
+
+**E2E-TOP-11: Workload Rejected with Non-Existent Level**
+
+Setup: Topology enabled with rack+host only (no "block" level)
+
+Steps:
+1. Attempt to create PodCliqueSet with `packDomain: block`
+2. Verify webhook rejects request
+3. Verify error message: "topology level 'block' not defined in ClusterTopology 'grove-topology'"
+
+Assert: Topology constraint references must exist in ClusterTopology
+
+#### Category 3: Scheduling and Placement
+
+**E2E-TOP-12: Pod Packing Within Single Rack**
+
+Setup: 4 nodes across 2 racks (2 nodes per rack)
+
+Steps:
+1. Label nodes with rack topology (rack-a, rack-b)
+2. Deploy PodCliqueSet with 4 pods, `packDomain: rack`
+3. Wait for all pods scheduled and running
+4. Verify all 4 pods placed on nodes within single rack domain
+5. Scale to 8 pods
+6. Verify all 8 pods still within same rack (or new rack if capacity insufficient)
+
+Assert: KAI scheduler respects rack packing constraint, all pods within one rack domain
+
+**E2E-TOP-13: Pod Packing Within Single Host**
+
+Setup: 4 nodes with sufficient capacity per node
+
+Steps:
+1. Deploy PodCliqueSet with 3 pods, `packDomain: host`
+2. Wait for all pods scheduled and running
+3. Verify all 3 pods placed on same host node
+4. Verify node has sufficient capacity for co-location
+
+Assert: KAI scheduler respects host packing constraint, strictest locality enforced
+
+**E2E-TOP-14: Multiple Replicas Across Topology Domains**
+
+Setup: 4 nodes across 2 racks (2 nodes per rack)
+
+Steps:
+1. Deploy PodCliqueSet with replicas=2, 2 pods per replica, `packDomain: rack`
+2. Wait for all pods scheduled
+3. Verify replica 0: all pods on nodes within one rack (e.g., rack-a)
+4. Verify replica 1: all pods on nodes within one rack (e.g., rack-b or rack-a)
+5. Verify each replica independently constrained (can be different racks)
+
+Assert: Per-replica packing enforced, replica independence maintained
+
+**E2E-TOP-15: Preferred Constraint Optimization with Fallback**
+
+Setup: Topology with rack+host levels, intentionally constrained host capacity
+
+Steps:
+1. Deploy PodCliqueSet with `packDomain: rack` (required=rack, preferred=host auto-generated)
+2. Verify PodGang preferred="kubernetes.io/hostname"
+3. Deploy sufficient pods to exceed single host capacity
+4. Verify some pods co-located on same host (preferred optimization)
+5. Verify additional pods spread across multiple hosts within same rack
+6. Verify all pods still within required rack constraint
+
+Assert: Preferred constraint optimizes placement without blocking scheduling when capacity insufficient
+
+#### Category 4: Dynamic Updates
+
+**E2E-TOP-16: Update Topology Constraint (Rack → Host)**
+
+Setup: Running PodCliqueSet with `packDomain: rack`, 3 running pods
+
+Steps:
+1. Note current pod placement (all on rack-a)
+2. Update PodCliqueSet spec: change `packDomain: rack` to `packDomain: host`
+3. Verify webhook accepts update
+4. Verify PodGang required constraint updated to "kubernetes.io/hostname"
+5. Verify existing 3 pods not rescheduled (retain placement)
+6. Scale PodCliqueSet to 6 pods
+7. Verify new 3 pods respect updated host constraint (all on same host)
+
+Assert: Topology constraint updates affect only new/unscheduled pods, existing pods unaffected
+
+**E2E-TOP-17: Topology Level Removed - Status Condition Updated**
+
+Setup: PodCliqueSet with `packDomain: block`, topology configured with rack+block+host
+
+Steps:
+1. Verify PodCliqueSet running with TopologyConstraints condition status=True
+2. Remove "block" level from OperatorConfiguration
+3. Restart Grove operator
+4. Wait for PodCliqueSet reconciliation
+5. Verify TopologyConstraints condition status=False, reason=TopologyLevelNotFound
+6. Verify condition message: "Topology level 'block' not found in ClusterTopology"
+7. Verify ObservedGeneration updated to current generation
+8. Verify PodGang required constraint removed, preferred constraint kept
+9. Verify existing pods continue running
+
+Assert: Status condition accurately reflects topology level removal with clear messaging
+
+**E2E-TOP-18: Strictest Level Changes - Preferred Constraint Auto-Update**
+
+Setup: Topology with rack+host, PodCliqueSet without explicit packDomain (auto-preferred only)
+
+Steps:
+1. Deploy PodCliqueSet (no explicit topology constraint)
+2. Verify PodGang preferred="kubernetes.io/hostname" (current strictest)
+3. Update OperatorConfiguration to add "numa" level (new strictest)
+4. Restart Grove operator
+5. Wait for PodGang reconciliation
+6. Verify PodGang preferred updated to "topology.kubernetes.io/numa"
+7. Verify existing pods not rescheduled
+8. Trigger new pod creation (scale up or pod replacement)
+9. Verify new pods scheduled with numa-level optimization
+
+Assert: Preferred constraint automatically updates to new strictest level, applies to new pods only
+
+**E2E-TOP-19: Scaling with Topology Constraints**
+
+Setup: PodCliqueSet with `packDomain: rack`, replicas=1
+
+Steps:
+1. Verify initial replica 0 pods all on one rack
+2. Scale PodCliqueSet to replicas=3
+3. Wait for all replicas to be running
+4. Verify each of the 3 replicas independently packed within a rack
+5. Verify replica 1 and replica 2 can be on different racks from replica 0
+6. Scale down to replicas=1
+7. Verify remaining replica still respects rack constraint
+
+Assert: Scaling up and down preserves topology constraints for each replica
+
+#### Category 5: Status and Observability
+
+**E2E-TOP-20: TopologyConstraints Condition True (Valid Configuration)**
+
+Setup: Topology enabled, valid PodCliqueSet with `packDomain: rack`
+
+Steps:
+1. Deploy PodCliqueSet with topology constraint
+2. Wait for PodCliqueSet to be reconciled
+3. Verify TopologyConstraints condition exists in status
+4. Verify condition status="True"
+5. Verify condition reason=TopologyLevelsAvailable
+6. Verify condition observedGeneration matches PodCliqueSet metadata.generation
+7. Verify condition message indicates all constraints satisfied
+
+Assert: Healthy topology constraint status correctly reported via standard Kubernetes conditions
+
+**E2E-TOP-21: TopologyConstraints Condition False (Topology Disabled)**
+
+Setup: Topology initially enabled with running PodCliqueSet, then disabled
+
+Steps:
+1. Deploy PodCliqueSet with `packDomain: rack`
+2. Verify initial TopologyConstraints condition status=True
+3. Disable topology in OperatorConfiguration
+4. Restart Grove operator
+5. Wait for PodCliqueSet reconciliation
+6. Verify TopologyConstraints condition status="False"
+7. Verify condition reason=TopologyDisabled
+8. Verify condition message indicates topology support disabled
+9. Verify observedGeneration updated
+
+Assert: Topology disable event reflected in status condition with appropriate reason
+
+**E2E-TOP-22: TopologyConstraints Condition False (Level Not Found)**
+
+Setup: Topology with rack+block+host, PodCliqueSet with `packDomain: block`
+
+Steps:
+1. Verify initial TopologyConstraints condition status=True
+2. Remove "block" level from topology configuration
+3. Restart Grove operator
+4. Wait for PodCliqueSet reconciliation
+5. Verify TopologyConstraints condition status="False"
+6. Verify condition reason=TopologyLevelNotFound
+7. Verify condition message: "Topology level 'block' not found in ClusterTopology 'grove-topology'"
+8. Verify observedGeneration updated
+
+Assert: Missing topology level reflected in status with clear error message
+
+**E2E-TOP-23: ObservedGeneration Tracking**
+
+Setup: PodCliqueSet with topology constraint
+
+Steps:
+1. Deploy PodCliqueSet (metadata.generation=1)
+2. Wait for reconciliation
+3. Verify TopologyConstraints condition observedGeneration=1
+4. Update PodCliqueSet spec (triggers generation increment to 2)
+5. Wait for reconciliation
+6. Verify TopologyConstraints condition observedGeneration=2
+7. Verify condition reflects current generation status
+
+Assert: ObservedGeneration correctly tracks resource generation for stale status detection
+
+### Test Implementation Guidelines
+
+#### Integration Test Structure
+
+Integration tests use table-driven format with `testify/assert`:
+
+```go
+// File: operator/internal/webhook/admission/podcliqueset/validation/topology_hierarchy_test.go
+
+func TestValidateTopologyHierarchy(t *testing.T) {
+    tests := []struct {
+        name           string
+        parentDomain   string
+        childDomain    string
+        expectedErr    bool
+        expectedErrMsg string
+    }{
+        {
+            name:         "valid hierarchy - numa child of host",
+            parentDomain: "host",
+            childDomain:  "numa",
+            expectedErr:  false,
+        },
+        {
+            name:           "invalid hierarchy - rack child of host",
+            parentDomain:   "host",
+            childDomain:    "rack",
+            expectedErr:    true,
+            expectedErrMsg: "must be equal to or stricter than parent",
+        },
+        // Additional test cases covering all semantic order combinations
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            // Create test objects with parent/child constraints
+            // Call validation function
+            // Assert expected error behavior
+        })
+    }
+}
+```
+
+#### E2E Test Structure
+
+E2E tests follow Grove's standard pattern with numbered steps and TestContext:
+
+```go
+// File: operator/e2e/tests/topology_test.go
+//go:build e2e
+
+func Test_TOP1_InitialSetupWithValidTopology(t *testing.T) {
+    logger := testlogger.NewLogger(t)
+
+    logger.Info("Step 1: Prepare test cluster with 4 nodes")
+    cluster, clients, cleanup := prepareTestCluster(t, 4)
+    defer cleanup()
+
+    logger.Info("Step 2: Configure topology with rack and host levels")
+    // Update OperatorConfiguration ConfigMap
+    // Restart Grove operator deployment
+
+    logger.Info("Step 3: Verify ClusterTopology created")
+    ctx := NewTestContext(clients, "default", 2*time.Minute, 2*time.Second)
+    err := ctx.PollForCondition(func() (bool, error) {
+        ct, err := ctx.GetClusterTopology("grove-topology")
+        if err != nil {
+            return false, err
+        }
+        return ct != nil && len(ct.Spec.Levels) == 2, nil
+    })
+    assert.NoError(t, err)
+
+    logger.Info("Step 4: Verify KAI Topology created")
+    err = ctx.PollForCondition(func() (bool, error) {
+        // Check KAI Topology CR exists with matching spec
+    })
+    assert.NoError(t, err)
+
+    logger.Info("Step 5: Verify ClusterTopology Ready condition")
+    ct := ctx.GetClusterTopology("grove-topology")
+    condition := meta.FindStatusCondition(ct.Status.Conditions, "Ready")
+    assert.Equal(t, "True", string(condition.Status))
+    assert.Equal(t, "TopologyReady", condition.Reason)
+}
+```
+
+#### Node Labeling Utilities
+
+E2E tests require node topology labels for validation:
+
+```go
+// setupTopologyLabels labels nodes with topology information for testing
+func setupTopologyLabels(ctx TestContext, rackTopology map[string]string) {
+    nodes, err := ctx.ListNodes()
+    require.NoError(t, err)
+
+    for _, node := range nodes.Items {
+        if rackLabel, ok := rackTopology[node.Name]; ok {
+            ctx.LabelNode(node.Name, "topology.kubernetes.io/rack", rackLabel)
+        }
+        // Host labels (kubernetes.io/hostname) already present by default
+    }
+}
+
+// Example usage:
+// setupTopologyLabels(ctx, map[string]string{
+//     "node-1": "rack-a",
+//     "node-2": "rack-a",
+//     "node-3": "rack-b",
+//     "node-4": "rack-b",
+// })
+```
+
+#### Assertion Utilities
+
+```go
+// verifyPodGangTopologyConstraint verifies topology constraints in PodGang spec
+func verifyPodGangTopologyConstraint(t *testing.T, ctx TestContext, pgName, required, preferred string) {
+    pg := ctx.GetPodGang(pgName)
+    require.NotNil(t, pg.Spec.TopologyConstraint)
+    require.NotNil(t, pg.Spec.TopologyConstraint.PackConstraint)
+
+    if required != "" {
+        assert.Equal(t, required, *pg.Spec.TopologyConstraint.PackConstraint.Required)
+    }
+    if preferred != "" {
+        assert.Equal(t, preferred, *pg.Spec.TopologyConstraint.PackConstraint.Preferred)
+    }
+}
+
+// verifyPodsPackedInDomain verifies all pods are within same topology domain value
+func verifyPodsPackedInDomain(t *testing.T, ctx TestContext, pods []corev1.Pod, labelKey string) {
+    if len(pods) == 0 {
+        return
+    }
+
+    // Get expected domain value from first pod's node
+    firstPodNode := ctx.GetNode(pods[0].Spec.NodeName)
+    expectedValue := firstPodNode.Labels[labelKey]
+    require.NotEmpty(t, expectedValue, "Node %s missing label %s", firstPodNode.Name, labelKey)
+
+    // Verify all pods on nodes with same domain value
+    for _, pod := range pods {
+        node := ctx.GetNode(pod.Spec.NodeName)
+        assert.Equal(t, expectedValue, node.Labels[labelKey],
+            "Pod %s scheduled on node %s with different %s (expected %s, got %s)",
+            pod.Name, node.Name, labelKey, expectedValue, node.Labels[labelKey])
+    }
+}
+
+// verifyTopologyConstraintsCondition verifies PodCliqueSet status condition
+func verifyTopologyConstraintsCondition(t *testing.T, ctx TestContext, pcsName, expectedStatus, expectedReason string) {
+    pcs := ctx.GetPodCliqueSet(pcsName)
+    condition := meta.FindStatusCondition(pcs.Status.Conditions, "TopologyConstraints")
+    require.NotNil(t, condition, "TopologyConstraints condition not found")
+    assert.Equal(t, expectedStatus, string(condition.Status))
+    assert.Equal(t, expectedReason, condition.Reason)
+    assert.NotZero(t, condition.ObservedGeneration)
+}
+```
+
+### Test Coverage Goals
+
+#### Integration Test Coverage
+
+- ✅ Authorization enforcement (operator-managed "grove-topology" vs. user CRs)
+- ✅ PodCliqueSet hierarchy validation using semantic order
+- ✅ Controller reconciliation logic for KAI Topology CR sync
+- ✅ Status condition updates (Ready, TopologyConstraints)
+- ✅ Drift detection and automatic correction
+
+#### E2E Test Coverage
+
+- ✅ Complete topology lifecycle (enable/disable/update)
+- ✅ All operational scenarios from design document (Scenarios 1-12)
+- ✅ Workload admission validation (enabled/disabled, level existence)
+- ✅ Actual pod scheduling with topology constraints (rack, host levels)
+- ✅ Per-replica constraint behavior and independence
+- ✅ Dynamic constraint updates (affect only new pods)
+- ✅ Status condition propagation (True/False/Unknown states)
+- ✅ ObservedGeneration tracking for stale status detection
+- ✅ Multi-level hierarchy constraint validation
+- ✅ Preferred constraint auto-generation and updates
+
+#### Test Organization
+
+Tests organized by scope and execution speed:
+
+1. **Unit Tests** (fast, no cluster):
+   - Validation functions
+   - Domain comparison logic
+   - Status computation helpers
+
+2. **Integration Tests** (envtest cluster):
+   - Webhook validation end-to-end
+   - Controller reconciliation
+   - CRD schema validation
+
+3. **E2E Tests** (full k3d cluster):
+   - Complete workflows
+   - Actual scheduling behavior
+   - Multi-component interaction
+   - Operator lifecycle integration
 
 ## Open Questions
 
@@ -1421,19 +2110,20 @@ This section demonstrates how the topology-aware scheduling design handles diffe
    spec:
      template:
        topologyConstraint:
-         packDomain: "host"  # Parent: index 1 (stricter)
+         packDomain: "host"  # Parent: host (narrower/stricter)
        scalingGroups:
          - name: workers
            config:
              topologyConstraint:
-               packDomain: "rack"  # Child: index 0 (less strict!) ✗
+               packDomain: "rack"  # Child: rack (broader/less strict!) ✗
    ```
 
-2. Validation webhook checks hierarchy:
-   - Parent (PCS) constraint: "host" (index 1 in levels)
-   - Child (PCSG) constraint: "rack" (index 0 in levels)
-   - Validation: Child index (0) < Parent index (1) ✗
-   - Rule: Child must be >= parent (stricter or equal)
+2. Validation webhook checks hierarchy using semantic order:
+   - Parent (PCS) constraint: "host"
+   - Child (PCSG) constraint: "rack"
+   - Semantic order: numa < host < rack < block < datacenter < zone < region
+   - Validation: rack is broader than host ✗
+   - Rule: Child must be semantically equal to or stricter (narrower) than parent
 
 3. Webhook rejects with error:
    ```
@@ -1445,7 +2135,7 @@ This section demonstrates how the topology-aware scheduling design handles diffe
 
 **Key Behaviors:**
 - Hierarchy validation at admission time
-- Child must be equal to or stricter than parent (higher index)
+- Child must be semantically equal to or stricter (narrower) than parent
 - Clear error explaining the violation
 - Prevents invalid constraint hierarchies
 
