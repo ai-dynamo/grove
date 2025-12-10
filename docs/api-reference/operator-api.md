@@ -900,7 +900,7 @@ _Appears in:_
 | `bindAddress` _string_ | BindAddress is the IP address on which to listen for the specified port. |  |  |
 | `port` _integer_ | Port is the port on which to serve requests. |  |  |
 | `serverCertDir` _string_ | ServerCertDir is the directory containing the server certificate and key. |  |  |
-| `secretName` _string_ | SecretName is the name of the Kubernetes Secret containing webhook certificates.<br />The Secret must contain tls.crt, tls.key, and ca.crt. |  |  |
-| `autoProvision` _boolean_ | AutoProvision enables automatic certificate generation and management via cert-controller.<br />When true: cert-controller automatically generates self-signed certificates and stores them in the Secret.<br />When false: certificates are expected to be provided externally (e.g., by cert-manager, cluster admin).<br />Default: true (auto-generate certificates for easy setup) |  |  |
+| `secretName` _string_ | SecretName is the name of the Kubernetes Secret containing webhook certificates.<br />The Secret must contain tls.crt, tls.key, and ca.crt. | grove-webhook-server-cert |  |
+| `autoProvision` _boolean_ | AutoProvision enables automatic certificate generation and management via cert-controller.<br />When true: cert-controller automatically generates self-signed certificates and stores them in the Secret.<br />When false: certificates are expected to be provided externally (e.g., by cert-manager, cluster admin).<br />Default: true (auto-generate certificates for easy setup) | true |  |
 
 

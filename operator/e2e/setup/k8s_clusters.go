@@ -541,8 +541,8 @@ func InstallCoreComponents(ctx context.Context, restConfig *rest.Config, kaiConf
 				PullRepo:         fmt.Sprintf("registry:%s", registryPort),
 				Namespace:        OperatorNamespace,
 				Env: map[string]string{
-					"VERSION":  "E2E_TESTS",
-					"LD_FLAGS": buildLDFlagsForE2E(),
+					"VERSION":  "E2E_TESTS", // Empty for e2e tests
+					"LD_FLAGS": "",
 				},
 				Logger: logger,
 			}

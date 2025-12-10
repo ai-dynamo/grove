@@ -5,7 +5,6 @@ package tests
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -48,9 +47,8 @@ spec:
 
 func TestCertManagerIntegration(t *testing.T) {
 	// 1. Prepare cluster
-	// We need enough nodes for workload1 (10 pods)
 	ctx := context.Background()
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 10)
+	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 1)
 	defer cleanup()
 
 	// 2. Install cert-manager
@@ -67,6 +65,7 @@ func TestCertManagerIntegration(t *testing.T) {
 		Namespace:       deps.HelmCharts.CertManager.Namespace,
 		CreateNamespace: true,
 		Wait:            true,
+		Timeout:         10 * time.Minute, // cert-manager needs time to download images and start
 		RepoURL:         deps.HelmCharts.CertManager.RepoURL,
 		Values: map[string]interface{}{
 			"installCRDs": true,
@@ -111,39 +110,26 @@ func TestCertManagerIntegration(t *testing.T) {
 		t.Fatalf("Certificate secret was not created: %v", err)
 	}
 
-	// 5. Update Grove to use the external secret
+	// 5. Update Grove to use the external secret via Helm upgrade
 	logger.Info("Upgrading Grove to use cert-manager secret...")
 
-	// Resolve chart path relative to this test file
-	// We assume we are in operator/e2e/tests
-	// Chart is in operator/charts -> ../../charts
-	wd, _ := os.Getwd()
-	logger.Debugf("Current working directory: %s", wd)
-	
-	// If running from root, path is operator/charts
-	// If running from operator/e2e/tests, path is ../../charts
-	// Let's try to find it.
 	chartPath := "../../charts"
-	if _, err := os.Stat(chartPath); os.IsNotExist(err) {
-		// Try absolute path or other relative path if test running from elsewhere
-		// Assuming standard structure
-		chartPath = "../../../operator/charts" // If running from deep inside? No.
-		// Try absolute path based on known structure
-		// /root/kang_1/grove/operator/charts
-		chartPath = "/root/kang_1/grove/operator/charts"
-	}
-	
-	absChartPath, _ := filepath.Abs(chartPath)
-	logger.Infof("Using chart path: %s", absChartPath)
+	logger.Infof("Using chart path: %s", chartPath)
+
+	// Delete the old auto-provisioned webhook secret if it exists
+	logger.Info("Deleting old webhook secret if exists...")
+	_ = clientset.CoreV1().Secrets("grove-system").Delete(ctx, "grove-webhook-server-cert", metav1.DeleteOptions{})
+	time.Sleep(30 * time.Second)
 
 	groveUpgradeConfig := &setup.HelmInstallConfig{
 		RestConfig:   restConfig,
 		ReleaseName:  "grove-operator",
-		ChartRef:     absChartPath,
-		ChartVersion: "0.1.0-dev", // Use dummy version or match current
+		ChartRef:     chartPath,
+		ChartVersion: "0.1.0-dev",
 		Namespace:    "grove-system",
 		Wait:         true,
-		ReuseValues:  true, // Keep existing values (image, etc.)
+		Timeout:      10 * time.Minute, // Allow time for pod restart
+		ReuseValues:  true,             // Reuse existing values (like image config)
 		Values: map[string]interface{}{
 			"config": map[string]interface{}{
 				"server": map[string]interface{}{
@@ -153,14 +139,49 @@ func TestCertManagerIntegration(t *testing.T) {
 					},
 				},
 			},
+			"webhooks": map[string]interface{}{
+				"podCliqueSetValidationWebhook": map[string]interface{}{
+					"annotations": map[string]interface{}{
+						"cert-manager.io/inject-ca-from": "grove-system/grove-webhook-server-cert",
+					},
+				},
+				"podCliqueSetDefaultingWebhook": map[string]interface{}{
+					"annotations": map[string]interface{}{
+						"cert-manager.io/inject-ca-from": "grove-system/grove-webhook-server-cert",
+					},
+				},
+				"clusterTopologyValidationWebhook": map[string]interface{}{
+					"annotations": map[string]interface{}{
+						"cert-manager.io/inject-ca-from": "grove-system/grove-webhook-server-cert",
+					},
+				},
+				"authorizerWebhook": map[string]interface{}{
+					"annotations": map[string]interface{}{
+						"cert-manager.io/inject-ca-from": "grove-system/grove-webhook-server-cert",
+					},
+				},
+			},
 		},
 		HelmLoggerFunc: logger.Debugf,
 		Logger:         logger,
 	}
 
+	logger.Info("Starting Helm upgrade (this may take several minutes)...")
 	if _, err := setup.UpgradeHelmChart(groveUpgradeConfig); err != nil {
+		// Get more info about what went wrong
+		logger.Error("Helm upgrade failed, checking Grove pods status...")
+		pods, podErr := clientset.CoreV1().Pods("grove-system").List(ctx, metav1.ListOptions{})
+		if podErr == nil {
+			logger.Infof("Found %d pods in grove-system:", len(pods.Items))
+			for _, pod := range pods.Items {
+				logger.Infof("  - %s: %s (Ready: %v)", pod.Name, pod.Status.Phase, pod.Status.Conditions)
+			}
+		}
 		t.Fatalf("Failed to upgrade Grove: %v", err)
 	}
+
+	time.Sleep(30 * time.Second)
+	logger.Info("✅ Grove upgraded successfully")
 
 	// 6. Deploy a workload to verify webhooks
 	logger.Info("Deploying workload to verify webhooks...")
@@ -208,4 +229,3 @@ func applyYAMLContent(ctx context.Context, restConfig *rest.Config, content stri
 	_, err = utils.ApplyYAMLFile(ctx, tmpfile.Name(), "", restConfig, logger)
 	return err
 }
-

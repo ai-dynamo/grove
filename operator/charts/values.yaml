@@ -52,8 +52,8 @@ config:
       serverCertDir: /etc/grove-operator/webhook-certs
       # secretName is the name of the Kubernetes Secret containing webhook certificates.
       # The Secret must contain tls.crt, tls.key, and ca.crt.
-      # Default: ""
-      secretName: ""
+      # Default: "grove-webhook-server-cert"
+      secretName: "grove-webhook-server-cert"
       # autoProvision enables automatic certificate generation via cert-controller.
       # When true (default): cert-controller automatically generates self-signed certificates.
       #   - Best for development/testing
@@ -63,8 +63,8 @@ config:
       #   - Best for production
       #   - Use your own CA or Let's Encrypt
       #   - Requires Secret to exist before operator starts
-      # Default: if secretName is not set, then autoProvision is true, otherwise it is false
-      # autoProvision: true
+      # Default:  true to use cert-controller for automatic certificate generation
+      autoProvision: true
     healthProbes:
       enable: false
       port: 9444
