@@ -31,7 +31,7 @@ applications require:
 ## Proposal
 
 Grove implements topology-aware scheduling through a ClusterTopology CRD,
-operator configuration to enable/disable features, and user-specified TopologyConstraints in workloads.
+operator configuration to enable/disable features, and user-specified topology constraints in workloads.
 The operator automatically generates preferred constraints (lower bound) for optimization
 while allowing users to specify required constraints for strict placement (upper bound).
 
@@ -479,7 +479,7 @@ type PodCliqueSetStatus struct {
 }
 ```
 
-**Condition Type:** `TopologyConstraints`
+**Condition Type:** `TopologyConstraintSatisfied`
 
 **Condition Status Values:**
 - `True` - All topology constraints are valid and satisfied
@@ -492,7 +492,7 @@ type PodCliqueSetStatus struct {
 
 ### Status Update Scenarios
 
-**TopologyConstraints Condition States:**
+**TopologyConstraintSatisfied Condition States:**
 
 | Status | Reason                | Scenario              | Message Example                                                        |
 |--------|-----------------------|-----------------------|------------------------------------------------------------------------|
@@ -505,7 +505,7 @@ type PodCliqueSetStatus struct {
 ```yaml
 status:
   conditions:
-  - type: TopologyConstraints
+  - type: TopologyConstraintSatisfied
     status: "False"
     observedGeneration: 5
     lastTransitionTime: "2025-12-08T10:10:00Z"
