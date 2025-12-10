@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	"helm.sh/helm/v3/pkg/action"
@@ -62,6 +63,8 @@ type HelmInstallConfig struct {
 	RepoURL string
 	// ReuseValues reuses the last release's values and merges in the new values.
 	ReuseValues bool
+	// Timeout is the time to wait for Kubernetes operations (default: 5 minutes).
+	Timeout time.Duration
 }
 
 // Validate validates and sets defaults for the configuration.
@@ -266,6 +269,11 @@ func newInstallClient(actionConfig *action.Configuration, config *HelmInstallCon
 	client.Version = config.ChartVersion
 	client.Replace = true // Allow replacing failed releases on retry
 
+	// Set timeout
+	if config.Timeout > 0 {
+		client.Timeout = config.Timeout
+	}
+
 	return client
 }
 
@@ -276,6 +284,11 @@ func newUpgradeClient(actionConfig *action.Configuration, config *HelmInstallCon
 	client.Wait = config.Wait
 	client.Version = config.ChartVersion
 	client.ReuseValues = config.ReuseValues
+
+	// Set timeout
+	if config.Timeout > 0 {
+		client.Timeout = config.Timeout
+	}
 
 	return client
 }
