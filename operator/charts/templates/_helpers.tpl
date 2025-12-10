@@ -18,7 +18,7 @@ config.yaml: |
       port: {{ .Values.config.server.webhooks.port }}
       serverCertDir: {{ .Values.config.server.webhooks.serverCertDir }}
       secretName: {{ .Values.config.server.webhooks.secretName | default "grove-webhook-server-cert" }}
-      autoProvision: {{ if .Values.config.server.webhooks.secretName }}false{{ else }}true{{ end }}
+      autoProvision: {{ if hasKey .Values.config.server.webhooks "autoProvision" }}{{ .Values.config.server.webhooks.autoProvision }}{{ else }}true{{ end }}
     healthProbes:
       port: {{ .Values.config.server.healthProbes.port }}
     metrics:
