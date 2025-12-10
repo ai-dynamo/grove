@@ -25,10 +25,11 @@ jobs:
   e2e:
     # Run on non-draft PRs or draft PRs with 'run-e2e' label
     if: github.event.pull_request.draft == false || contains(github.event.pull_request.labels.*.name, 'run-e2e')
+    # use Nvidia hosted runner with 8 vCPUs and 30GB RAM
     runs-on: cpu-amd-m5-2xlarge
     timeout-minutes: 60
     steps:
-
+      # print runner specs so we have a record incase of failures
       - name: Print runner specs
         run: |
           echo "CPUs: $(nproc)"
@@ -37,6 +38,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Nvidia hosted runners don't have make installed by default
       - name: Install build-essential for make
         run: |
           sudo apt-get update
