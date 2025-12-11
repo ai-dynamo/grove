@@ -9,6 +9,7 @@ metadata:
 spec:
   replicas: 1
   template:
+    terminationDelay: 10s
     cliqueStartupType: CliqueStartupTypeExplicit
     cliques:
       - name: pc-a
@@ -20,6 +21,7 @@ spec:
           minAvailable: 2
           podSpec:
             schedulerName: kai-scheduler
+            terminationGracePeriodSeconds: 1
             affinity:
               nodeAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:
@@ -51,6 +53,7 @@ spec:
             - pc-c
           podSpec:
             schedulerName: kai-scheduler
+            terminationGracePeriodSeconds: 1
             affinity:
               nodeAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:
@@ -82,6 +85,7 @@ spec:
             - pc-a
           podSpec:
             schedulerName: kai-scheduler
+            terminationGracePeriodSeconds: 1
             affinity:
               nodeAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:
