@@ -21,7 +21,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +50,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/yaml"
 )
 
 const (
@@ -1015,11 +1018,11 @@ func buildLDFlagsForE2E() string {
 	return ldflags
 }
 
-// waitForWebhookReady waits for the Grove webhook to be ready by actually testing it.
+// waitForWebhookReady waits for the webhook server to be ready.
 // This ensures the webhook server is fully registered with the Kubernetes API server
 // and can handle admission requests before tests start.
-// We do this by making a dry-run request to create a minimal PodCliqueSet - if the webhook
-// is ready, the request will be processed (may fail validation, but that's fine).
+// We do this by making a dry-run request to create a PodCliqueSet using workload1.yaml -
+// if the webhook is ready, the request will be processed (may fail validation, but that's fine).
 // If the webhook is not ready, we'll get "no endpoints available" or similar errors.
 func waitForWebhookReady(ctx context.Context, restConfig *rest.Config, logger *utils.Logger) error {
 	logger.Info("⏳ Waiting for Grove webhook to be ready...")
@@ -1036,39 +1039,24 @@ func waitForWebhookReady(ctx context.Context, restConfig *rest.Config, logger *u
 		Resource: "podcliquesets",
 	}
 
-	// Create a minimal PodCliqueSet for testing the webhook
-	// This doesn't need to be valid - we just need the webhook to process it
-	testPCS := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "grove.io/v1alpha1",
-			"kind":       "PodCliqueSet",
-			"metadata": map[string]interface{}{
-				"name":      "webhook-ready-test",
-				"namespace": "default",
-			},
-			"spec": map[string]interface{}{
-				"replicas": int64(1),
-				"template": map[string]interface{}{
-					"cliques": []interface{}{
-						map[string]interface{}{
-							"name": "test",
-							"spec": map[string]interface{}{
-								"replicas": int64(1),
-								"podSpec": map[string]interface{}{
-									"containers": []interface{}{
-										map[string]interface{}{
-											"name":  "test",
-											"image": "nginx:latest",
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
+	// Get the path to workload1.yaml relative to this source file
+	_, currentFile, _, _ := runtime.Caller(0)
+	workload1YAMLPath := filepath.Join(filepath.Dir(currentFile), "../yaml/workload1.yaml")
+
+	// Read workload1.yaml to get a real PodCliqueSet for testing the webhook
+	workloadYAML, err := os.ReadFile(workload1YAMLPath)
+	if err != nil {
+		return fmt.Errorf("failed to read workload1.yaml: %w", err)
 	}
+
+	testPCS := &unstructured.Unstructured{}
+	if err := yaml.Unmarshal(workloadYAML, &testPCS.Object); err != nil {
+		return fmt.Errorf("failed to parse workload1.yaml: %w", err)
+	}
+
+	// Override the name and namespace for the webhook test
+	testPCS.SetName("webhook-ready-test")
+	testPCS.SetNamespace("default")
 
 	return utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		// Try to create the PodCliqueSet with dry-run mode
