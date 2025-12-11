@@ -78,7 +78,7 @@ func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger log
 		return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, fmt.Sprintf("CurrentGenerationHash is not up-to-date for PodCliqueSet: %v", pcsObjectKey))
 	}
 	r.pcsGenerationHashExpectations.Delete(pcsObjectName)
- 
+
 	newGenerationHash := computeGenerationHash(pcs)
 	if pcs.Status.CurrentGenerationHash == nil {
 		// update the generation hash and continue reconciliation. No rolling update is required.
