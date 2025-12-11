@@ -60,6 +60,25 @@ const (
 	defaultPollInterval = 5 * time.Second
 )
 
+// transientErrors contains error substrings that indicate a webhook is not ready yet
+var transientErrors = []string{
+	"no endpoints available",
+	"connection refused",
+	"i/o timeout",
+	"Bad Gateway",
+	"Service Unavailable",
+}
+
+// isTransient checks if an error string contains any transient error patterns
+func isTransient(errStr string) bool {
+	for _, s := range transientErrors {
+		if strings.Contains(errStr, s) {
+			return true
+		}
+	}
+	return false
+}
+
 // NodeTaint represents a Kubernetes node taint
 type NodeTaint struct {
 	Key    string
@@ -1072,11 +1091,7 @@ func waitForWebhookReady(ctx context.Context, restConfig *rest.Config, logger *u
 		if err != nil {
 			errStr := err.Error()
 			// These errors indicate the webhook is not ready yet
-			if strings.Contains(errStr, "no endpoints available") ||
-				strings.Contains(errStr, "connection refused") ||
-				strings.Contains(errStr, "i/o timeout") ||
-				strings.Contains(errStr, "Bad Gateway") ||
-				strings.Contains(errStr, "Service Unavailable") {
+			if isTransient(errStr) {
 				logger.Debugf("  Webhook not ready yet: %v", err)
 				return false, nil
 			}
