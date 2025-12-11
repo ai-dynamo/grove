@@ -141,12 +141,14 @@ type WebhookServer struct {
 	// SecretName is the name of the Kubernetes Secret containing webhook certificates.
 	// The Secret must contain tls.crt, tls.key, and ca.crt.
 	// +optional
+	// +kubebuilder:default="grove-webhook-server-cert"
 	SecretName string `json:"secretName,omitempty"`
 	// AutoProvision enables automatic certificate generation and management via cert-controller.
 	// When true: cert-controller automatically generates self-signed certificates and stores them in the Secret.
 	// When false: certificates are expected to be provided externally (e.g., by cert-manager, cluster admin).
 	// Default: true (auto-generate certificates for easy setup)
 	// +optional
+	// +kubebuilder:default=true
 	AutoProvision *bool `json:"autoProvision,omitempty"`
 }
 
