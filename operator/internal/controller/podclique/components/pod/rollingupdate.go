@@ -60,7 +60,7 @@ func (w *updateWork) getPodNamesPendingUpdate(deletionExpectedPodUIDs []types.UI
 // getNextPodToUpdate selects the next ready pod with old template hash to update, prioritizing oldest pods first
 func (w *updateWork) getNextPodToUpdate() *corev1.Pod {
 	if len(w.oldTemplateHashReadyPods) > 0 {
-		slices.SortFunc(w.oldTemplateHashPendingPods, func(a, b *corev1.Pod) int {
+		slices.SortFunc(w.oldTemplateHashReadyPods, func(a, b *corev1.Pod) int {
 			return a.CreationTimestamp.Compare(b.CreationTimestamp.Time)
 		})
 		return w.oldTemplateHashReadyPods[0]
@@ -214,6 +214,8 @@ func isCurrentPodUpdateComplete(sc *syncContext, work *updateWork) bool {
 	if ok && !k8sutils.IsResourceTerminating(pod.ObjectMeta) {
 		return false
 	}
+
+	// Also verify count as a sanity check
 	podsSelectedToUpdate := len(sc.pclq.Status.RollingUpdateProgress.ReadyPodsSelectedToUpdate.Completed) + 1
 	return len(work.newTemplateHashReadyPods) >= podsSelectedToUpdate
 }
