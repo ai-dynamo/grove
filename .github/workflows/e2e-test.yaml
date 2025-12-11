@@ -25,7 +25,7 @@ jobs:
   e2e:
     # Run on non-draft PRs or draft PRs with 'run-e2e' label
     if: github.event.pull_request.draft == false || contains(github.event.pull_request.labels.*.name, 'run-e2e')
-    # use nvidia self-hosted runner with 8 vCPUs and 30GB of ram (on AWS)
+    # use NVIDIA self-hosted runner with 8 vCPUs and 30GB of ram (on AWS)
     # the tests are unstable using the default runner with 4 vCPUs and 16GB of ram
     runs-on: cpu-amd-m5-2xlarge
     timeout-minutes: 60
@@ -39,7 +39,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # nvidia hosted runners don't have make installed by default
+      # NVIDIA self-hosted runners don't have make installed by default
       - name: Install build-essential for make
         run: |
           sudo apt-get update
