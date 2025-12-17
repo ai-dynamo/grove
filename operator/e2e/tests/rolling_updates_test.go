@@ -48,7 +48,7 @@ func Test_RU7_RollingUpdatePCSPodClique(t *testing.T) {
 	tcLongTimeout.Timeout = 1 * time.Minute
 	if err := waitForRollingUpdateComplete(tcLongTimeout, 1); err != nil {
 		logger.Info("=== Rolling update timed out - capturing operator logs ===")
-		captureOperatorLogs(tc, "grove-system", "grove-operator")
+		captureOperatorLogs(tc, "grove-system", "grove-operator", containsRollingUpdateTag)
 		t.Fatalf("Failed to wait for rolling update to complete: %v", err)
 	}
 
@@ -206,17 +206,10 @@ func Test_RU10_RollingUpdateInsufficientResources(t *testing.T) {
 	logger.Debugf("Captured %d existing pods before rolling update", len(existingPodNames))
 
 	tracker := newRollingUpdateTracker()
-	if err := tracker.Start(ctx, clientset, tc.Namespace, tc.getLabelSelector()); err != nil {
+	if err := tracker.Start(tc); err != nil {
 		t.Fatalf("Failed to start tracker: %v", err)
 	}
 	defer tracker.Stop()
-
-	// Wait to ensure the pod watcher is fully established before triggering the rolling update.
-	// This prevents a race condition where early pod events (deletions/additions) could be
-	// missed if the watcher hasn't fully subscribed to the API server's watch stream.
-	if err := tracker.WaitForReady(); err != nil {
-		t.Fatalf("Failed to wait for tracker to be ready: %v", err)
-	}
 
 	logger.Info("4. Change the specification of pc-a")
 	err = triggerPodCliqueRollingUpdate(ctx, dynamicClient, tc.Namespace, "workload1", "pc-a")
@@ -284,10 +277,10 @@ func Test_RU11_RollingUpdateWithPCSScaleOut(t *testing.T) {
 	logger.Info("4. Scale out the PCS during the rolling update (in parallel)")
 	scaleWait := scalePCS(tcLongTimeout, "workload1", 3, 30, 0, 100) // 100ms delay so update is "first"
 
-	if err := updateWait.Wait(); err != nil {
+	if err := <-updateWait; err != nil {
 		t.Fatalf("Rolling update failed: %v", err)
 	}
-	if err := scaleWait.Wait(); err != nil {
+	if err := <-scaleWait; err != nil {
 		t.Fatalf("Scale operation failed: %v", err)
 	}
 
@@ -351,10 +344,10 @@ func Test_RU12_RollingUpdateWithPCSScaleInDuringUpdate(t *testing.T) {
 	logger.Info("5. Verify the update goes through successfully")
 	updateWait := waitForRollingUpdate(tcLongTimeout, 1)
 
-	if err := updateWait.Wait(); err != nil {
+	if err := <-updateWait; err != nil {
 		t.Fatalf("Rolling update failed: %v", err)
 	}
-	if err := scaleWait.Wait(); err != nil {
+	if err := <-scaleWait; err != nil {
 		t.Fatalf("Scale operation failed: %v", err)
 	}
 
@@ -453,10 +446,10 @@ func Test_RU14_RollingUpdateWithPCSGScaleOutDuringUpdate(t *testing.T) {
 	// After scaling sg-x to 3 replicas: 2 PCS replicas x (2 pc-a + 3 sg-x x 4 pods) = 2 x 14 = 28 pods
 
 	logger.Info("6. Verify it should not be updated again before the rolling update ends")
-	if err := updateWait.Wait(); err != nil {
+	if err := <-updateWait; err != nil {
 		t.Fatalf("Rolling update failed: %v", err)
 	}
-	if err := scaleWait.Wait(); err != nil {
+	if err := <-scaleWait; err != nil {
 		t.Fatalf("Scale operation failed: %v", err)
 	}
 
@@ -508,10 +501,10 @@ func Test_RU15_RollingUpdateWithPCSGScaleOutBeforeUpdate(t *testing.T) {
 	logger.Info("5. Verify the scaled out replica is created with the correct specifications")
 	logger.Info("6. Verify it should not be updated again before the rolling update ends")
 
-	if err := updateWait.Wait(); err != nil {
+	if err := <-updateWait; err != nil {
 		t.Fatalf("Rolling update failed: %v", err)
 	}
-	if err := scaleWait.Wait(); err != nil {
+	if err := <-scaleWait; err != nil {
 		t.Fatalf("Scale operation failed: %v", err)
 	}
 
@@ -563,10 +556,10 @@ func Test_RU16_RollingUpdateWithPCSGScaleInDuringUpdate(t *testing.T) {
 
 	logger.Info("6. Verify the update goes through successfully")
 
-	if err := updateWait.Wait(); err != nil {
+	if err := <-updateWait; err != nil {
 		t.Fatalf("Rolling update failed: %v", err)
 	}
-	if err := scaleWait.Wait(); err != nil {
+	if err := <-scaleWait; err != nil {
 		t.Fatalf("Scale operation failed: %v", err)
 	}
 
@@ -624,10 +617,10 @@ func Test_RU17_RollingUpdateWithPCSGScaleInBeforeUpdate(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	updateWait := triggerRollingUpdate(tcLongTimeout, 2, "pc-a", "pc-b", "pc-c")
 
-	if err := updateWait.Wait(); err != nil {
+	if err := <-updateWait; err != nil {
 		t.Fatalf("Rolling update failed: %v", err)
 	}
-	if err := scaleWait.Wait(); err != nil {
+	if err := <-scaleWait; err != nil {
 		t.Fatalf("Scale operation failed: %v", err)
 	}
 
@@ -698,10 +691,6 @@ func Test_RU18_RollingUpdateWithPodCliqueScaleOutDuringUpdate(t *testing.T) {
 	}
 	defer tracker.Stop()
 
-	if err := tracker.WaitForReady(); err != nil {
-		t.Fatalf("Failed to wait for tracker to be ready: %v", err)
-	}
-
 	logger.Info("3. Change the specification of pc-a, pc-b and pc-c")
 	tcLongTimeout := tc
 	tcLongTimeout.Timeout = 4 * time.Minute // Extra headroom for rolling update + scale
@@ -714,14 +703,14 @@ func Test_RU18_RollingUpdateWithPodCliqueScaleOutDuringUpdate(t *testing.T) {
 	logger.Info("6. Verify they should not be updated again before the rolling update ends")
 	scaleWait := scalePodClique(tcLongTimeout, "pc-a", 4, 24, 100) // 100ms delay so update is "first"
 
-	if err := updateWait.Wait(); err != nil {
+	if err := <-updateWait; err != nil {
 		// Capture diagnostics on failure
 		logger.Info("=== Rolling update failed - capturing diagnostics ===")
-		captureOperatorLogs(tc, "grove-system", "grove-operator")
+		captureOperatorLogs(tc, "grove-system", "grove-operator", containsRollingUpdateTag)
 		capturePodCliqueStatus(tc)
 		t.Fatalf("Rolling update failed: %v", err)
 	}
-	if err := scaleWait.Wait(); err != nil {
+	if err := <-scaleWait; err != nil {
 		t.Fatalf("Scale operation failed: %v", err)
 	}
 
@@ -773,10 +762,10 @@ func Test_RU19_RollingUpdateWithPodCliqueScaleOutBeforeUpdate(t *testing.T) {
 	logger.Info("5. Verify the scaled pods are created with the correct specifications")
 	logger.Info("6. Verify they should not be updated again before the rolling update ends")
 
-	if err := updateWait.Wait(); err != nil {
+	if err := <-updateWait; err != nil {
 		t.Fatalf("Rolling update failed: %v", err)
 	}
-	if err := scaleWait.Wait(); err != nil {
+	if err := <-scaleWait; err != nil {
 		t.Fatalf("Scale operation failed: %v", err)
 	}
 
@@ -834,10 +823,10 @@ func Test_RU20_RollingUpdateWithPodCliqueScaleInDuringUpdate(t *testing.T) {
 	scaleWait := scalePodClique(tcLongTimeout, "pc-a", 2, 20, 100) // 100ms delay so update is "first"
 
 	logger.Info("6. Verify the update goes through successfully")
-	if err := updateWait.Wait(); err != nil {
+	if err := <-updateWait; err != nil {
 		t.Fatalf("Rolling update failed: %v", err)
 	}
-	if err := scaleWait.Wait(); err != nil {
+	if err := <-scaleWait; err != nil {
 		t.Fatalf("Scale operation failed: %v", err)
 	}
 
@@ -897,10 +886,10 @@ func Test_RU21_RollingUpdateWithPodCliqueScaleInBeforeUpdate(t *testing.T) {
 
 	logger.Info("6. Verify the update goes through successfully")
 
-	if err := updateWait.Wait(); err != nil {
+	if err := <-updateWait; err != nil {
 		t.Fatalf("Rolling update failed: %v", err)
 	}
-	if err := scaleWait.Wait(); err != nil {
+	if err := <-scaleWait; err != nil {
 		t.Fatalf("Scale operation failed: %v", err)
 	}
 

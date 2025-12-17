@@ -42,17 +42,14 @@ type rollingUpdateTracker struct {
 	mu      sync.Mutex
 	watcher watch.Interface
 	cancel  context.CancelFunc
-	ready   chan struct{}
 }
 
 // newRollingUpdateTracker creates a new rolling update tracker
 func newRollingUpdateTracker() *rollingUpdateTracker {
-	return &rollingUpdateTracker{
-		ready: make(chan struct{}),
-	}
+	return &rollingUpdateTracker{}
 }
 
-// Start begins watching pod events.
+// Start begins watching pod events and blocks until the watcher is ready.
 // Uses tc.Ctx, tc.Clientset, tc.Namespace, and tc.getLabelSelector() for watch configuration.
 func (t *rollingUpdateTracker) Start(tc TestContext) error {
 	watcherCtx, cancel := context.WithCancel(tc.Ctx)
@@ -67,9 +64,10 @@ func (t *rollingUpdateTracker) Start(tc TestContext) error {
 	}
 	t.watcher = watcher
 
+	ready := make(chan struct{})
 	go func() {
 		// Signal that the watcher goroutine is running and ready to receive events
-		close(t.ready)
+		close(ready)
 
 		for {
 			select {
@@ -86,7 +84,14 @@ func (t *rollingUpdateTracker) Start(tc TestContext) error {
 		}
 	}()
 
-	return nil
+	// Wait for the watcher goroutine to be ready
+	select {
+	case <-ready:
+		return nil
+	case <-time.After(5 * time.Second):
+		cancel()
+		return fmt.Errorf("timeout waiting for watcher to be ready")
+	}
 }
 
 // Stop stops the watcher and cleans up resources
@@ -96,17 +101,6 @@ func (t *rollingUpdateTracker) Stop() {
 	}
 	if t.cancel != nil {
 		t.cancel()
-	}
-}
-
-// WaitForReady waits for the watcher goroutine to be running and ready to receive events
-// This prevents a race condition where early pod events could be missed
-func (t *rollingUpdateTracker) WaitForReady() error {
-	select {
-	case <-t.ready:
-		return nil
-	case <-time.After(5 * time.Second):
-		return fmt.Errorf("timeout waiting for watcher to be ready")
 	}
 }
 
@@ -125,4 +119,3 @@ func (t *rollingUpdateTracker) getEvents() []podEvent {
 	defer t.mu.Unlock()
 	return append([]podEvent{}, t.events...)
 }
-

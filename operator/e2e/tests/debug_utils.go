@@ -19,6 +19,8 @@
 package tests
 
 import (
+	"strings"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -28,7 +30,8 @@ import (
 // captureOperatorLogs fetches and logs the operator logs from the specified namespace and deployment.
 // Uses tc.Ctx and tc.Clientset but takes namespace and deploymentPrefix as parameters since they
 // typically differ from the test namespace (e.g., "grove-system" vs "default").
-func captureOperatorLogs(tc TestContext, namespace, deploymentPrefix string) {
+// The filterFn parameter allows filtering which log lines to output - if nil, all lines are logged.
+func captureOperatorLogs(tc TestContext, namespace, deploymentPrefix string, filterFn func(string) bool) {
 	// List pods in the namespace
 	pods, err := tc.Clientset.CoreV1().Pods(namespace).List(tc.Ctx, metav1.ListOptions{})
 	if err != nil {
@@ -61,12 +64,12 @@ func captureOperatorLogs(tc TestContext, namespace, deploymentPrefix string) {
 				for {
 					n, err := logStream.Read(buf)
 					if n > 0 {
-						// Print logs line by line, filtering for [ROLLING_UPDATE] tags
+						// Print logs line by line, applying the filter function if provided
 						lines := string(buf[:n])
-						for _, line := range splitLines(lines) {
+						for _, line := range strings.Split(lines, "\n") {
 							if len(line) > 0 {
-								// Print all lines, but highlight rolling update related ones
-								if containsRollingUpdateTag(line) {
+								// Print lines that match the filter (or all lines if no filter)
+								if filterFn == nil || filterFn(line) {
 									logger.Debugf("[OP-LOG] %s", line)
 								}
 							}
@@ -80,22 +83,6 @@ func captureOperatorLogs(tc TestContext, namespace, deploymentPrefix string) {
 			}
 		}
 	}
-}
-
-// splitLines splits a string into lines
-func splitLines(s string) []string {
-	var lines []string
-	start := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\n' {
-			lines = append(lines, s[start:i])
-			start = i + 1
-		}
-	}
-	if start < len(s) {
-		lines = append(lines, s[start:])
-	}
-	return lines
 }
 
 // containsRollingUpdateTag checks if a line contains rolling update related tags
@@ -167,4 +154,3 @@ func isPodReady(pod *corev1.Pod) bool {
 	}
 	return false
 }
-

@@ -28,7 +28,6 @@ import (
 	"time"
 
 	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -37,18 +36,19 @@ import (
 	"k8s.io/client-go/util/retry"
 )
 
-// triggerRollingUpdate triggers a rolling update on the specified cliques and returns an errgroup.Group
-// that completes when the rolling update finishes.
+// triggerRollingUpdate triggers a rolling update on the specified cliques and returns a channel
+// that receives an error (or nil) when the rolling update finishes.
 // Uses tc.Workload.Name as the PCS name and tc.Timeout for the wait timeout.
-func triggerRollingUpdate(tc TestContext, expectedReplicas int32, cliqueNames ...string) *errgroup.Group {
-	g := new(errgroup.Group)
-	g.Go(func() error {
+func triggerRollingUpdate(tc TestContext, expectedReplicas int32, cliqueNames ...string) <-chan error {
+	errCh := make(chan error, 1)
+	go func() {
 		startTime := time.Now()
 
 		// Trigger synchronously first
 		for _, cliqueName := range cliqueNames {
 			if err := triggerPodCliqueRollingUpdate(tc, cliqueName); err != nil {
-				return fmt.Errorf("failed to update PodClique %s spec: %w", cliqueName, err)
+				errCh <- fmt.Errorf("failed to update PodClique %s spec: %w", cliqueName, err)
+				return
 			}
 		}
 		logger.Debugf("[triggerRollingUpdate] Triggered update on %v, waiting for completion...", cliqueNames)
@@ -61,9 +61,9 @@ func triggerRollingUpdate(tc TestContext, expectedReplicas int32, cliqueNames ..
 		} else {
 			logger.Debugf("[triggerRollingUpdate] Rolling update completed in %v", elapsed)
 		}
-		return err
-	})
-	return g
+		errCh <- err
+	}()
+	return errCh
 }
 
 // triggerPodCliqueRollingUpdate triggers a rolling update by adding/updating an environment variable in a PodClique.
@@ -144,7 +144,6 @@ func triggerPodCliqueRollingUpdate(tc TestContext, cliqueName string) error {
 // patchPCSWithSIGTERMIgnoringCommand patches all containers in the PCS to use a command that ignores SIGTERM
 // and sets the termination grace period to 5 seconds. This makes pods ignore graceful shutdown but still
 // allows rolling updates to progress in a reasonable time for testing.
-// Uses tc.Workload.Name as the PCS name.
 func patchPCSWithSIGTERMIgnoringCommand(tc TestContext) error {
 	pcsGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquesets"}
 	pcsName := tc.Workload.Name
@@ -185,15 +184,15 @@ func patchPCSWithSIGTERMIgnoringCommand(tc TestContext) error {
 	})
 }
 
-// waitForRollingUpdate starts polling for rolling update completion in the background and returns an errgroup.Group.
+// waitForRollingUpdate starts polling for rolling update completion in the background and returns a channel.
 // Use this when you need to trigger an update separately (e.g., when doing something between trigger and wait).
 // For the common case, use triggerRollingUpdate which combines trigger + wait.
-func waitForRollingUpdate(tc TestContext, expectedReplicas int32) *errgroup.Group {
-	g := new(errgroup.Group)
-	g.Go(func() error {
-		return waitForRollingUpdateComplete(tc, expectedReplicas)
-	})
-	return g
+func waitForRollingUpdate(tc TestContext, expectedReplicas int32) <-chan error {
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- waitForRollingUpdateComplete(tc, expectedReplicas)
+	}()
+	return errCh
 }
 
 // waitForRollingUpdateComplete waits for rolling update to complete by checking UpdatedReplicas.
@@ -873,13 +872,13 @@ func getCount(m map[string]map[string]int, key1, key2 string) int {
 	return m[key1][key2]
 }
 
-// scalePodClique scales a PodClique and returns an errgroup.Group that completes when the expected pod count is reached.
+// scalePodClique scales a PodClique and returns a channel that receives an error when the expected pod count is reached.
 // Uses tc.Workload.Name as the PCS name.
-// The operation runs asynchronously - call Wait() on the returned Group to block until complete.
+// The operation runs asynchronously - receive from the returned channel to block until complete.
 // If delayMs > 0, the operation will sleep for that duration before starting.
-func scalePodClique(tc TestContext, cliqueName string, replicas int32, expectedTotalPods, delayMs int) *errgroup.Group {
-	g := new(errgroup.Group)
-	g.Go(func() error {
+func scalePodClique(tc TestContext, cliqueName string, replicas int32, expectedTotalPods, delayMs int) <-chan error {
+	errCh := make(chan error, 1)
+	go func() {
 		startTime := time.Now()
 
 		if delayMs > 0 {
@@ -889,7 +888,8 @@ func scalePodClique(tc TestContext, cliqueName string, replicas int32, expectedT
 		logger.Debugf("[scalePodClique] Scaling %s to %d replicas, expecting %d total pods", cliqueName, replicas, expectedTotalPods)
 
 		if err := scalePodCliqueInPCS(tc, cliqueName, replicas); err != nil {
-			return fmt.Errorf("failed to scale PodClique %s: %w", cliqueName, err)
+			errCh <- fmt.Errorf("failed to scale PodClique %s: %w", cliqueName, err)
+			return
 		}
 
 		logger.Debugf("[scalePodClique] Scale patch applied, waiting for pods...")
@@ -910,12 +910,13 @@ func scalePodClique(tc TestContext, cliqueName string, replicas int32, expectedT
 		elapsed := time.Since(startTime)
 		if err != nil {
 			logger.Debugf("[scalePodClique] Scale %s FAILED after %v: %v", cliqueName, elapsed, err)
-			return fmt.Errorf("failed to wait for pods after scaling PodClique %s: %w", cliqueName, err)
+			errCh <- fmt.Errorf("failed to wait for pods after scaling PodClique %s: %w", cliqueName, err)
+			return
 		}
 		logger.Debugf("[scalePodClique] Scale %s completed in %v (pods=%d)", cliqueName, elapsed, expectedTotalPods)
-		return nil
-	})
-	return g
+		errCh <- nil
+	}()
+	return errCh
 }
 
 // scalePodCliqueInPCS scales all PodClique instances for a given clique name across all PCS replicas.
@@ -1132,12 +1133,6 @@ func setupRollingUpdateTest(t *testing.T, cfg RollingUpdateTestConfig) (TestCont
 		t.Fatalf("Failed to start tracker: %v", err)
 	}
 
-	if err := tracker.WaitForReady(); err != nil {
-		tracker.Stop()
-		clusterCleanup()
-		t.Fatalf("Failed to wait for tracker to be ready: %v", err)
-	}
-
 	// Create combined cleanup function
 	cleanup := func() {
 		tracker.Stop()
@@ -1146,4 +1141,3 @@ func setupRollingUpdateTest(t *testing.T, cfg RollingUpdateTestConfig) (TestCont
 
 	return tc, cleanup, tracker
 }
-
