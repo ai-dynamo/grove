@@ -66,7 +66,7 @@ func ApplyYAMLFile(ctx context.Context, yamlFilePath string, namespace string, r
 		return nil, fmt.Errorf("failed to read YAML file %s: %w", yamlFilePath, err)
 	}
 
-	return applyYAMLData(ctx, yamlData, namespace, restConfig, logger)
+	return ApplyYAMLData(ctx, yamlData, namespace, restConfig, logger)
 }
 
 // WaitForPods waits for pods to be ready in the specified namespaces
@@ -131,8 +131,8 @@ func WaitForPods(ctx context.Context, restConfig *rest.Config, namespaces []stri
 	})
 }
 
-// applyYAMLData is the common function that applies YAML data to Kubernetes
-func applyYAMLData(ctx context.Context, yamlData []byte, namespace string, restConfig *rest.Config, logger *Logger) ([]AppliedResource, error) {
+// ApplyYAMLData is the common function that applies YAML data to Kubernetes
+func ApplyYAMLData(ctx context.Context, yamlData []byte, namespace string, restConfig *rest.Config, logger *Logger) ([]AppliedResource, error) {
 	dynamicClient, restMapper, err := createKubernetesClients(restConfig)
 	if err != nil {
 		return nil, err
