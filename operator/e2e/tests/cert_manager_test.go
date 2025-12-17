@@ -20,7 +20,8 @@ package tests
 
 import (
 	"context"
-	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -28,7 +29,6 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/rest"
 )
 
 const (
@@ -80,8 +80,6 @@ func TestCertManagerIntegration(t *testing.T) {
 		ChartVersion:    deps.HelmCharts.CertManager.Version,
 		Namespace:       deps.HelmCharts.CertManager.Namespace,
 		CreateNamespace: true,
-		Wait:            true,
-		Timeout:         10 * time.Minute, // cert-manager needs time to download images and start
 		RepoURL:         deps.HelmCharts.CertManager.RepoURL,
 		Values: map[string]interface{}{
 			"installCRDs": true,
@@ -95,27 +93,27 @@ func TestCertManagerIntegration(t *testing.T) {
 		t.Fatalf("Failed to install cert-manager: %v", err)
 	}
 
-	// Wait for cert-manager webhook to be ready (InstallHelmChart with Wait=true should handle it, but to be safe)
-	if err := utils.WaitForPodsInNamespace(ctx, cmConfig.Namespace, restConfig, 3, 2*time.Minute, 5*time.Second, logger); err != nil {
+	// Wait for cert-manager pods to be ready
+	if err := utils.WaitForPodsInNamespace(ctx, cmConfig.Namespace, restConfig, 3, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("cert-manager pods not ready: %v", err)
 	}
 
 	// 3. Create Issuer and Certificate
 	logger.Info("Creating ClusterIssuer and Certificate...")
-	if err := applyYAMLContent(ctx, restConfig, certManagerIssuerYAML); err != nil {
+	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerIssuerYAML), "", restConfig, logger); err != nil {
 		t.Fatalf("Failed to apply ClusterIssuer: %v", err)
 	}
 
 	// Wait a bit for ClusterIssuer
 	time.Sleep(5 * time.Second)
 
-	if err := applyYAMLContent(ctx, restConfig, certManagerCertificateYAML); err != nil {
+	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerCertificateYAML), "", restConfig, logger); err != nil {
 		t.Fatalf("Failed to apply Certificate: %v", err)
 	}
 
 	// 4. Wait for Secret to be created
 	logger.Info("Waiting for certificate secret to be created...")
-	err = utils.PollForCondition(ctx, 1*time.Minute, 2*time.Second, func() (bool, error) {
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		_, err := clientset.CoreV1().Secrets("grove-system").Get(ctx, "grove-webhook-server-cert", metav1.GetOptions{})
 		if err != nil {
 			return false, nil
@@ -129,13 +127,14 @@ func TestCertManagerIntegration(t *testing.T) {
 	// 5. Update Grove to use the external secret via Helm upgrade
 	logger.Info("Upgrading Grove to use cert-manager secret...")
 
-	chartPath := "../../charts"
+	// Get the path to the charts directory relative to this source file
+	_, currentFile, _, _ := runtime.Caller(0)
+	chartPath := filepath.Join(filepath.Dir(currentFile), "../../charts")
 	logger.Infof("Using chart path: %s", chartPath)
 
 	// Delete the old auto-provisioned webhook secret if it exists
 	logger.Info("Deleting old webhook secret if exists...")
 	_ = clientset.CoreV1().Secrets("grove-system").Delete(ctx, "grove-webhook-server-cert", metav1.DeleteOptions{})
-	time.Sleep(30 * time.Second)
 
 	groveUpgradeConfig := &setup.HelmInstallConfig{
 		RestConfig:   restConfig,
@@ -143,9 +142,7 @@ func TestCertManagerIntegration(t *testing.T) {
 		ChartRef:     chartPath,
 		ChartVersion: "0.1.0-dev",
 		Namespace:    "grove-system",
-		Wait:         true,
-		Timeout:      10 * time.Minute, // Allow time for pod restart
-		ReuseValues:  true,             // Reuse existing values (like image config)
+		ReuseValues:  true, // Reuse existing values (like image config)
 		Values: map[string]interface{}{
 			"config": map[string]interface{}{
 				"server": map[string]interface{}{
@@ -182,27 +179,29 @@ func TestCertManagerIntegration(t *testing.T) {
 		Logger:         logger,
 	}
 
-	logger.Info("Starting Helm upgrade (this may take several minutes)...")
+	logger.Info("Starting Helm upgrade...")
 	if _, err := setup.UpgradeHelmChart(groveUpgradeConfig); err != nil {
-		// Get more info about what went wrong
-		logger.Error("Helm upgrade failed, checking Grove pods status...")
 		pods, podErr := clientset.CoreV1().Pods("grove-system").List(ctx, metav1.ListOptions{})
 		if podErr == nil {
 			logger.Infof("Found %d pods in grove-system:", len(pods.Items))
 			for _, pod := range pods.Items {
-				logger.Infof("  - %s: %s (Ready: %v)", pod.Name, pod.Status.Phase, pod.Status.Conditions)
+				logger.Debugf("  - %s: %s (Ready: %v)", pod.Name, pod.Status.Phase, pod.Status.Conditions)
 			}
 		}
 		t.Fatalf("Failed to upgrade Grove: %v", err)
 	}
 
-	time.Sleep(30 * time.Second)
+	// Wait for Grove operator pod to be ready after restart
+	if err := utils.WaitForPodsInNamespace(ctx, "grove-system", restConfig, 1, defaultPollTimeout, defaultPollInterval, logger); err != nil {
+		t.Fatalf("Grove operator pod not ready after upgrade: %v", err)
+	}
 	logger.Info("✅ Grove upgraded successfully")
 
 	// 6. Deploy a workload to verify webhooks
 	logger.Info("Deploying workload to verify webhooks...")
 
-	workloadPath := "../yaml/workload1.yaml"
+	// Get the path to the workload YAML file relative to this source file
+	workloadPath := filepath.Join(filepath.Dir(currentFile), "../yaml/workload1.yaml")
 	tc := TestContext{
 		T:             t,
 		Ctx:           ctx,
@@ -210,8 +209,8 @@ func TestCertManagerIntegration(t *testing.T) {
 		DynamicClient: dynamicClient,
 		RestConfig:    restConfig,
 		Namespace:     "default",
-		Timeout:       2 * time.Minute,
-		Interval:      5 * time.Second,
+		Timeout:       defaultPollTimeout,
+		Interval:      defaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload1", // Matches metadata.name in yaml
 			YAMLPath:     workloadPath,
@@ -225,23 +224,4 @@ func TestCertManagerIntegration(t *testing.T) {
 	}
 
 	logger.Info("✅ Cert-manager integration test passed!")
-}
-
-// helper to apply YAML string
-func applyYAMLContent(ctx context.Context, restConfig *rest.Config, content string) error {
-	tmpfile, err := os.CreateTemp("", "manifest-*.yaml")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmpfile.Name())
-
-	if _, err := tmpfile.WriteString(content); err != nil {
-		return err
-	}
-	if err := tmpfile.Close(); err != nil {
-		return err
-	}
-
-	_, err = utils.ApplyYAMLFile(ctx, tmpfile.Name(), "", restConfig, logger)
-	return err
 }
