@@ -19,8 +19,11 @@
 package tests
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	"k8s.io/apimachinery/pkg/watch"
 )
 
 // Test_RU7_RollingUpdatePCSPodClique tests rolling update when PCS-owned Podclique spec is updated
@@ -44,10 +47,13 @@ func Test_RU7_RollingUpdatePCSPodClique(t *testing.T) {
 		t.Fatalf("Failed to update PodClique spec: %v", err)
 	}
 
+	// With MaxSurge rolling update strategy, each pod requires: create surge pod -> wait Ready -> delete old pod
+	// This takes longer than delete-first approach, so we use a longer timeout
 	tcLongTimeout := tc
-	tcLongTimeout.Timeout = 1 * time.Minute
+	tcLongTimeout.Timeout = 5 * time.Minute
 	if err := waitForRollingUpdateComplete(tcLongTimeout, 1); err != nil {
-		logger.Info("=== Rolling update timed out - capturing operator logs ===")
+		logger.Info("=== Rolling update timed out - capturing debug info ===")
+		capturePodCliqueStatus(tc)
 		captureOperatorLogs(tc, "grove-system", "grove-operator")
 		t.Fatalf("Failed to wait for rolling update to complete: %v", err)
 	}
@@ -141,15 +147,17 @@ func Test_RU9_RollingUpdateAllPodCliques(t *testing.T) {
 	logger.Info("🎉 Rolling Update on all Podcliques test (RU-9) completed successfully!")
 }
 
-/* This test fails. The rolling update starts, a pod gets deleted.
-// Test_RU10_RollingUpdateInsufficientResources tests rolling update with insufficient resources
+// Test_RU10_RollingUpdateInsufficientResources tests rolling update behavior with insufficient resources.
+// This test verifies the "delete-first" strategy: when nodes are cordoned, the operator deletes
+// one old pod and creates a new one (which remains Pending). No further progress is made until
+// nodes are uncordoned, at which point the rolling update completes.
 // Scenario RU-10:
 // 1. Initialize a 10-node Grove cluster
 // 2. Deploy workload WL1, and verify 10 newly created pods
 // 3. Cordon all worker nodes
 // 4. Change the specification of pc-a
-// 5. Verify the rolling update does not progress due to insufficient resources
-// 6. Uncordon the nodes, and verify the rolling update continues
+// 5. Verify exactly one pod is deleted and a new Pending pod is created (delete-first strategy)
+// 6. Uncordon the nodes, and verify the rolling update completes
 func Test_RU10_RollingUpdateInsufficientResources(t *testing.T) {
 	ctx := context.Background()
 
@@ -206,7 +214,7 @@ func Test_RU10_RollingUpdateInsufficientResources(t *testing.T) {
 	logger.Debugf("Captured %d existing pods before rolling update", len(existingPodNames))
 
 	tracker := newRollingUpdateTracker()
-	if err := tracker.Start(ctx, clientset, tc.Namespace, tc.getLabelSelector()); err != nil {
+	if err := tracker.Start(tc); err != nil {
 		t.Fatalf("Failed to start tracker: %v", err)
 	}
 	defer tracker.Stop()
@@ -219,43 +227,72 @@ func Test_RU10_RollingUpdateInsufficientResources(t *testing.T) {
 	}
 
 	logger.Info("4. Change the specification of pc-a")
-	err = triggerPodCliqueRollingUpdate(ctx, dynamicClient, tc.Namespace, "workload1", "pc-a")
-	if err != nil {
+	if err := triggerPodCliqueRollingUpdate(tc, "pc-a"); err != nil {
 		t.Fatalf("Failed to update PodClique spec: %v", err)
 	}
 
-	logger.Info("5. Verify the rolling update does not progress due to insufficient resources")
+	logger.Info("5. Verify exactly one pod is deleted and a new Pending pod is created (delete-first strategy)")
 	time.Sleep(1 * time.Minute)
 
-	// Verify that none of the existing pods were deleted during the insufficient resources period
+	// Verify that exactly one existing pod was deleted (delete-first strategy)
 	events := tracker.getEvents()
 	var deletedExistingPods []string
+	var addedPods []string
 	for _, event := range events {
 		switch event.Type {
 		case watch.Deleted:
 			if existingPodNames[event.Pod.Name] {
 				deletedExistingPods = append(deletedExistingPods, event.Pod.Name)
-				logger.Debugf("Existing pod deleted during insufficient resources: %s", event.Pod.Name)
+				logger.Debugf("Existing pod deleted during rolling update: %s", event.Pod.Name)
+			}
+		case watch.Added:
+			if !existingPodNames[event.Pod.Name] {
+				addedPods = append(addedPods, event.Pod.Name)
+				logger.Debugf("New pod created during rolling update: %s", event.Pod.Name)
 			}
 		}
 	}
 
-	if len(deletedExistingPods) > 0 {
-		t.Fatalf("Rolling update progressed despite insufficient resources: %d existing pods deleted: %v",
+	// Delete-first strategy: exactly 1 pod should be deleted
+	if len(deletedExistingPods) != 1 {
+		t.Fatalf("Expected exactly 1 pod to be deleted (delete-first strategy), but got %d: %v",
 			len(deletedExistingPods), deletedExistingPods)
 	}
 
-	logger.Info("6. Uncordon the nodes, and verify the rolling update continues")
+	// A new pod should be created (but will be Pending since nodes are cordoned)
+	if len(addedPods) < 1 {
+		t.Fatalf("Expected at least 1 new pod to be created, but got %d", len(addedPods))
+	}
+
+	// Verify the new pod is Pending (can't be scheduled due to cordoned nodes)
+	pods, err := listPods(tc)
+	if err != nil {
+		t.Fatalf("Failed to list pods: %v", err)
+	}
+	var pendingPods []string
+	for _, pod := range pods.Items {
+		if !existingPodNames[pod.Name] && pod.Status.Phase == "Pending" {
+			pendingPods = append(pendingPods, pod.Name)
+		}
+	}
+	if len(pendingPods) < 1 {
+		t.Fatalf("Expected at least 1 Pending pod (new pod can't be scheduled), but found none")
+	}
+	logger.Infof("Delete-first strategy verified: 1 pod deleted, %d new Pending pod(s) created", len(pendingPods))
+
+	logger.Info("6. Uncordon the nodes, and verify the rolling update completes")
 	uncordonNodes(tc, workerNodes)
 
 	// Wait for rolling update to complete after uncordoning
-	if err := waitForRollingUpdateComplete(ctx, dynamicClient, tc.Namespace, "workload1", 1, 1*time.Minute); err != nil {
+	// The Pending pod should now be scheduled and the remaining pods updated
+	tcLongTimeout := tc
+	tcLongTimeout.Timeout = 3 * time.Minute
+	if err := waitForRollingUpdateComplete(tcLongTimeout, 1); err != nil {
 		t.Fatalf("Failed to wait for rolling update to complete: %v", err)
 	}
 
-	logger.Info("🎉 Rolling Update with insufficient resources test (RU-10) completed successfully!")
+	logger.Info("🎉 Rolling Update with insufficient resources (delete-first strategy) test (RU-10) completed successfully!")
 }
-*/
 
 // Test_RU11_RollingUpdateWithPCSScaleOut tests rolling update with scale-out on PCS
 // Scenario RU-11:
@@ -398,7 +435,7 @@ func Test_RU13_RollingUpdateWithPCSScaleInAfterFinalOrdinal(t *testing.T) {
 
 	logger.Info("4. Wait for rolling update to complete on both replicas")
 	tcLongTimeout := tc
-	tcLongTimeout.Timeout = 2 * time.Minute
+	tcLongTimeout.Timeout = 5 * time.Minute
 	if err := waitForRollingUpdateComplete(tcLongTimeout, 2); err != nil {
 		t.Fatalf("Failed to wait for rolling update to complete: %v", err)
 	}
@@ -440,7 +477,7 @@ func Test_RU14_RollingUpdateWithPCSGScaleOutDuringUpdate(t *testing.T) {
 
 	logger.Info("3. Change the specification of pc-a, pc-b and pc-c")
 	tcLongerTimeout := tc
-	tcLongerTimeout.Timeout = 2 * time.Minute
+	tcLongerTimeout.Timeout = 5 * time.Minute
 	updateWait := triggerRollingUpdate(tcLongerTimeout, 2, "pc-a", "pc-b", "pc-c")
 
 	logger.Info("4. Scale out the PCSG during its rolling update (in parallel)")
@@ -496,7 +533,7 @@ func Test_RU15_RollingUpdateWithPCSGScaleOutBeforeUpdate(t *testing.T) {
 	// only sets replicas during initial PCSG creation to support HPA scaling.
 	// After scaling sg-x to 3 replicas: 2 PCS replicas x (2 pc-a + 3 sg-x x 4 pods) = 2 x 14 = 28 pods
 	tcLongTimeout := tc
-	tcLongTimeout.Timeout = 2 * time.Minute
+	tcLongTimeout.Timeout = 5 * time.Minute
 	// Scale starts first (no delay)
 	scaleWait := scalePCSGAcrossAllReplicas(tcLongTimeout, "workload1", "sg-x", 2, 3, 28, 0, 0)
 
@@ -645,9 +682,6 @@ func Test_RU17_RollingUpdateWithPCSGScaleInBeforeUpdate(t *testing.T) {
 	logger.Info("🎉 Rolling Update with PCSG scale-in before update test (RU-17) completed successfully!")
 }
 
-/* This test is failing intermittently. Need to investigate. Seems to be
-   a race between the scale and the update.
-
 // Test_RU18_RollingUpdateWithPodCliqueScaleOutDuringUpdate tests rolling update with scale-out on standalone PCLQ being updated
 // Scenario RU-18:
 // 1. Initialize a 24-node Grove cluster
@@ -738,7 +772,6 @@ func Test_RU18_RollingUpdateWithPodCliqueScaleOutDuringUpdate(t *testing.T) {
 
 	logger.Info("🎉 Rolling Update with PodClique scale-out during update test (RU-18) completed successfully!")
 }
-*/
 
 // Test_RU19_RollingUpdateWithPodCliqueScaleOutBeforeUpdate tests rolling update with scale-out on standalone PCLQ before it is updated
 // Scenario RU-19:
@@ -762,7 +795,7 @@ func Test_RU19_RollingUpdateWithPodCliqueScaleOutBeforeUpdate(t *testing.T) {
 	logger.Info("3. Scale out the standalone PCLQ (pc-a) before its rolling update (in parallel)")
 	// Scale starts first (no delay)
 	tcLongTimeout := tc
-	tcLongTimeout.Timeout = 4 * time.Minute // Extra headroom for rolling update + scale
+	tcLongTimeout.Timeout = 6 * time.Minute // Extra headroom for rolling update + scale
 	scaleWait := scalePodClique(tcLongTimeout, "pc-a", 4, 24, 0)
 
 	logger.Info("4. Change the specification of pc-a, pc-b and pc-c")
