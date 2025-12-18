@@ -27,6 +27,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
+const logBufferSize = 64 * 1024 // 64KB
+
 // captureOperatorLogs fetches and logs the operator logs from the specified namespace and deployment.
 // Uses tc.Ctx and tc.Clientset but takes namespace and deploymentPrefix as parameters since they
 // typically differ from the test namespace (e.g., "grove-system" vs "default").
@@ -59,8 +61,7 @@ func captureOperatorLogs(tc TestContext, namespace, deploymentPrefix string, fil
 					continue
 				}
 
-				// Read logs
-				buf := make([]byte, 64*1024) // 64KB buffer
+				buf := make([]byte, logBufferSize)
 				for {
 					n, err := logStream.Read(buf)
 					if n > 0 {
@@ -87,14 +88,17 @@ func captureOperatorLogs(tc TestContext, namespace, deploymentPrefix string, fil
 
 // containsRollingUpdateTag checks if a line contains rolling update related tags
 func containsRollingUpdateTag(line string) bool {
-	tags := []string{"[ROLLING_UPDATE]", "rolling update", "processPendingUpdates", "deleteOldPending", "nextPodToUpdate"}
+	tags := []string{
+		"[ROLLING_UPDATE]",
+		"rolling update",
+		"processPendingUpdates",
+		"deleteOldPending",
+		"nextPodToUpdate",
+	}
+
 	for _, tag := range tags {
-		if len(line) >= len(tag) {
-			for i := 0; i <= len(line)-len(tag); i++ {
-				if line[i:i+len(tag)] == tag {
-					return true
-				}
-			}
+		if strings.Contains(line, tag) {
+			return true
 		}
 	}
 	return false
