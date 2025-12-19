@@ -26,9 +26,9 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
-	"github.com/ai-dynamo/grove/operator/internal/controller/scheduler/backend"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
+	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -163,7 +163,7 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 
 	// Use backend to mutate Pod spec based on scheduler requirements
 	// This adds scheduling gates, workloadRef (for default scheduler), annotations, etc.
-	if err = backend.MutatePod(pod, podGangName, pclq.Name); err != nil {
+	if err = schedulerbackend.MutatePod(pod, podGangName, pclq.Name); err != nil {
 		return groveerr.WrapError(err,
 			errCodeBuildPodResource,
 			component.OperationSync,
@@ -181,13 +181,6 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 		return configurePodInitContainer(pcs, pclq, pod)
 	}
 	return nil
-}
-
-// shouldUseWorkloadAPI determines if Kubernetes Workload API should be used based on schedulerName
-// DEPRECATED: This function is now handled by backend.MutatePod()
-// Keeping for backward compatibility during migration
-func shouldUseWorkloadAPI(podSpec *corev1.PodSpec) bool {
-	return podSpec.SchedulerName == "" || podSpec.SchedulerName == "default-scheduler"
 }
 
 // Delete removes all Pods associated with the specified PodClique

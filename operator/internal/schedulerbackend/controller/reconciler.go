@@ -20,7 +20,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ai-dynamo/grove/operator/internal/controller/scheduler/backend"
+	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend"
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -33,7 +33,7 @@ import (
 type BackendReconciler struct {
 	client.Client
 	Scheme  *runtime.Scheme
-	Backend backend.SchedulerBackend
+	Backend schedulerbackend.SchedulerBackend
 	Logger  logr.Logger
 }
 
@@ -111,4 +111,9 @@ func (r *BackendReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&groveschedulerv1alpha1.PodGang{}).
 		Named(fmt.Sprintf("backend-%s", r.Backend.Name())).
 		Complete(r)
+}
+
+// RegisterWithManager registers the backend controller with the manager
+func (r *BackendReconciler) RegisterWithManager(mgr ctrl.Manager) error {
+	return r.SetupWithManager(mgr)
 }

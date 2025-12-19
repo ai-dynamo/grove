@@ -63,6 +63,11 @@ type OperatorConfiguration struct {
 	LogFormat        LogFormat                    `json:"logFormat"`
 	Authorizer       AuthorizerConfig             `json:"authorizer"`
 	ClusterTopology  ClusterTopologyConfiguration `json:"clusterTopology"`
+	// SchedulerName is the name of the scheduler backend with which this instance of Grove operator will run.
+	// Valid values: "kai-scheduler" or "grove-scheduler"
+	// Defaults to "kai-scheduler" if not specified.
+	// +optional
+	SchedulerName string `json:"schedulerName,omitempty"`
 }
 
 // LeaderElectionConfiguration defines the configuration for the leader election.

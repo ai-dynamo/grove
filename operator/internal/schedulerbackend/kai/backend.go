@@ -22,7 +22,6 @@ import (
 
 	"github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	"github.com/ai-dynamo/grove/operator/internal/controller/scheduler/backend"
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
@@ -59,25 +58,13 @@ type Backend struct {
 	eventRecorder record.EventRecorder
 }
 
-// Factory creates KAI backend instances
 // New creates a new KAI backend instance
-// This is exported for direct use by components that need a backend with client access
 func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder) *Backend {
 	return &Backend{
 		client:        cl,
 		scheme:        scheme,
 		eventRecorder: eventRecorder,
 	}
-}
-
-// init registers the KAI backend factory
-func init() {
-	// Register factory for kai-scheduler and grove-scheduler
-	factory := func(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder) backend.SchedulerBackend {
-		return New(cl, scheme, eventRecorder)
-	}
-	backend.RegisterBackendFactory("kai-scheduler", factory)
-	backend.RegisterBackendFactory("grove-scheduler", factory)
 }
 
 // Name returns the backend name

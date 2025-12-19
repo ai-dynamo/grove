@@ -14,7 +14,7 @@
 // limitations under the License.
 // */
 
-package backend
+package schedulerbackend
 
 import (
 	"context"
@@ -80,15 +80,10 @@ type SchedulerBackend interface {
 // MutatePod applies scheduler-specific mutations to a Pod
 // This is the main entry point for the pod component
 func MutatePod(pod *corev1.Pod, gangName string, podGroupName string) error {
-	// Get backend from global manager
-	manager, err := GetGlobalManager()
-	if err != nil {
-		return fmt.Errorf("backend manager not initialized: %w", err)
-	}
-
-	backend, err := manager.GetBackend(pod.Spec.SchedulerName)
-	if err != nil {
-		return fmt.Errorf("failed to get backend for scheduler %s: %w", pod.Spec.SchedulerName, err)
+	// Get backend instance
+	backend := Get()
+	if backend == nil {
+		return fmt.Errorf("backend not initialized")
 	}
 
 	// Apply scheduling gate

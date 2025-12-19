@@ -27,10 +27,10 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
-	"github.com/ai-dynamo/grove/operator/internal/controller/scheduler/backend"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 	"github.com/ai-dynamo/grove/operator/internal/index"
+	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -255,26 +255,15 @@ func (r _resource) checkAndRemovePodSchedulingGates(sc *syncContext, logger logr
 	tasks := make([]utils.Task, 0, len(sc.existingPCLQPods))
 	skippedScheduleGatedPods := make([]string, 0, len(sc.existingPCLQPods))
 
-	// Get backend from global manager
-	backendManager, err := backend.GetGlobalManager()
-	if err != nil {
-		logger.Error(err, "Backend manager not initialized, skipping gate removal")
-		return nil, nil
-	}
-
-	schedulerName := sc.pclq.Spec.PodSpec.SchedulerName
-	schedBackend, err := backendManager.GetBackend(schedulerName)
-	if err != nil {
-		// No backend available for this scheduler - skip gate removal
-		logger.V(1).Info("No backend available for scheduler, skipping gate removal",
-			"schedulerName", schedulerName,
-			"error", err.Error())
+	// Get configured backend
+	schedBackend := schedulerbackend.Get()
+	if schedBackend == nil {
+		logger.Error(fmt.Errorf("backend not initialized"), "Backend not initialized, skipping gate removal")
 		return nil, nil
 	}
 
 	gateName := schedBackend.GetSchedulingGateName()
 	logger.V(1).Info("Using backend for scheduling gate management",
-		"schedulerName", schedulerName,
 		"backend", schedBackend.Name(),
 		"gateName", gateName)
 

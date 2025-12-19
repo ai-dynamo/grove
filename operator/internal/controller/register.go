@@ -17,28 +17,39 @@
 package controller
 
 import (
+	"fmt"
+
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset"
-	"github.com/ai-dynamo/grove/operator/internal/controller/scheduler/backend"
-	backendcontroller "github.com/ai-dynamo/grove/operator/internal/controller/scheduler/backend/controller"
+	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend"
+	backendcontroller "github.com/ai-dynamo/grove/operator/internal/schedulerbackend/controller"
 	"github.com/go-logr/logr"
 
 	ctrl "sigs.k8s.io/controller-runtime"
-
-	// Import backend packages to trigger their init() functions which register factories
-	_ "github.com/ai-dynamo/grove/operator/internal/controller/scheduler/backend/kai"
-	_ "github.com/ai-dynamo/grove/operator/internal/controller/scheduler/backend/workload"
 )
 
 // RegisterControllers registers all controllers with the manager.
-func RegisterControllers(mgr ctrl.Manager, logger logr.Logger, controllerConfig configv1alpha1.ControllerConfiguration) error {
-	// Initialize global backend manager first
-	// This must be done before any controller that uses backends
-	backend.InitializeGlobalManager(mgr.GetClient(), mgr.GetScheme(), mgr.GetEventRecorderFor("backend-manager"))
-	logger.Info("Initialized global backend manager")
+func RegisterControllers(mgr ctrl.Manager, logger logr.Logger, config configv1alpha1.OperatorConfiguration) error {
+	// Get scheduler name from configuration
+	schedulerName := config.SchedulerName
+	if schedulerName == "" {
+		schedulerName = "kai-scheduler" // Default to kai-scheduler
+	}
 
+	// Initialize global backend with the configured scheduler
+	if err := schedulerbackend.Initialize(
+		mgr.GetClient(),
+		mgr.GetScheme(),
+		mgr.GetEventRecorderFor("scheduler-backend"),
+		schedulerName,
+	); err != nil {
+		return fmt.Errorf("failed to initialize scheduler backend: %w", err)
+	}
+	logger.Info("Initialized scheduler backend", "schedulerName", schedulerName)
+
+	controllerConfig := config.Controllers
 	pcsReconciler := podcliqueset.NewReconciler(mgr, controllerConfig.PodCliqueSet)
 	if err := pcsReconciler.RegisterWithManager(mgr); err != nil {
 		return err
@@ -52,8 +63,12 @@ func RegisterControllers(mgr ctrl.Manager, logger logr.Logger, controllerConfig 
 		return err
 	}
 
-	// Setup backend controllers for PodGang -> scheduler-specific CR conversion
-	if err := backendcontroller.SetupBackendControllers(mgr, logger); err != nil {
+	// Backend controller for PodGang -> scheduler-specific CR conversion
+	backendReconciler, err := backendcontroller.NewReconciler(mgr, logger)
+	if err != nil {
+		return fmt.Errorf("failed to create backend reconciler: %w", err)
+	}
+	if err := backendReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
 
