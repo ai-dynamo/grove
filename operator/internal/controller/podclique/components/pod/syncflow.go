@@ -30,7 +30,6 @@ import (
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 	"github.com/ai-dynamo/grove/operator/internal/index"
-	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -249,44 +248,24 @@ func selectExcessPodsToDelete(sc *syncContext, logger logr.Logger) []*corev1.Pod
 	return candidatePodsToDelete
 }
 
-// checkAndRemovePodSchedulingGates removes scheduling gates from pods when their dependencies are satisfied
-// This method delegates the gate removal logic to the appropriate scheduler backend
+// checkAndRemovePodSchedulingGates removes scheduling gates from pods when PodGang is initialized
 func (r _resource) checkAndRemovePodSchedulingGates(sc *syncContext, logger logr.Logger) ([]string, error) {
 	tasks := make([]utils.Task, 0, len(sc.existingPCLQPods))
 	skippedScheduleGatedPods := make([]string, 0, len(sc.existingPCLQPods))
 
-	// Get configured backend
-	schedBackend := schedulerbackend.Get()
-	if schedBackend == nil {
-		logger.Error(fmt.Errorf("backend not initialized"), "Backend not initialized, skipping gate removal")
-		return nil, nil
-	}
-
-	gateName := schedBackend.GetSchedulingGateName()
-	logger.V(1).Info("Using backend for scheduling gate management",
-		"backend", schedBackend.Name(),
-		"gateName", gateName)
+	// The scheduling gate name is fixed
+	const schedulingGateName = "grove.io/podgang"
 
 	for i, p := range sc.existingPCLQPods {
-		// Check if pod has the backend's specific scheduling gate
-		if !hasSpecificSchedulingGate(p, gateName) {
+		// Check if pod has the scheduling gate
+		if !hasSpecificSchedulingGate(p, schedulingGateName) {
 			continue
 		}
 
 		podObjectKey := client.ObjectKeyFromObject(p)
 
-		// Ask the backend if the gate should be removed
-		shouldRemove, reason, err := schedBackend.ShouldRemoveSchedulingGate(sc.ctx, logger, p, sc.pclq)
-		if err != nil {
-			logger.Error(err, "Error checking if scheduling gate should be removed for pod",
-				"podObjectKey", podObjectKey)
-			return nil, groveerr.WrapError(err,
-				errCodeRemovePodSchedulingGate,
-				component.OperationSync,
-				fmt.Sprintf("failed to check if scheduling gate should be removed for pod %v", podObjectKey),
-			)
-		}
-
+		// Check if PodGang is initialized (all pods created and ready)
+		shouldRemove, reason := r.shouldRemoveSchedulingGate(sc.ctx, logger, p)
 		if !shouldRemove {
 			logger.V(1).Info("Skipping scheduling gate removal for pod",
 				"podObjectKey", podObjectKey,
@@ -300,7 +279,7 @@ func (r _resource) checkAndRemovePodSchedulingGates(sc *syncContext, logger logr
 		task := utils.Task{
 			Name: fmt.Sprintf("RemoveSchedulingGate-%s-%d", pod.Name, i),
 			Fn: func(ctx context.Context) error {
-				return r.removeSpecificSchedulingGate(ctx, logger, pod, gateName)
+				return r.removeSpecificSchedulingGate(ctx, logger, pod, schedulingGateName)
 			},
 		}
 		tasks = append(tasks, task)
@@ -320,6 +299,51 @@ func (r _resource) checkAndRemovePodSchedulingGates(sc *syncContext, logger logr
 	}
 
 	return skippedScheduleGatedPods, nil
+}
+
+// shouldRemoveSchedulingGate checks if the scheduling gate should be removed based on PodGang status
+func (r _resource) shouldRemoveSchedulingGate(ctx context.Context, logger logr.Logger, pod *corev1.Pod) (bool, string) {
+	// Get PodGang name from pod labels
+	podGangName, hasPodGangLabel := pod.Labels[common.LabelPodGang]
+	if !hasPodGangLabel {
+		return false, "pod has no podgang label"
+	}
+
+	// Fetch the PodGang
+	podGang := &groveschedulerv1alpha1.PodGang{}
+	podGangKey := client.ObjectKey{Name: podGangName, Namespace: pod.Namespace}
+	if err := r.client.Get(ctx, podGangKey, podGang); err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, "podgang not found"
+		}
+		logger.Error(err, "Failed to get PodGang", "podGangName", podGangName)
+		return false, "failed to get podgang"
+	}
+
+	// Check if PodGang is initialized (all pods created)
+	if !isPodGangInitialized(podGang) {
+		return false, "podgang not initialized"
+	}
+
+	// Check if all PodGroups have enough pod references
+	for _, pg := range podGang.Spec.PodGroups {
+		if int32(len(pg.PodReferences)) < pg.MinReplicas {
+			return false, "not all pod references populated"
+		}
+	}
+
+	return true, "podgang initialized and ready"
+}
+
+// isPodGangInitialized checks if PodGang has Initialized condition set to True
+func isPodGangInitialized(podGang *groveschedulerv1alpha1.PodGang) bool {
+	for _, cond := range podGang.Status.Conditions {
+		if cond.Type == string(groveschedulerv1alpha1.PodGangConditionTypeInitialized) &&
+			cond.Status == metav1.ConditionTrue {
+			return true
+		}
+	}
+	return false
 }
 
 // isBasePodGangScheduled checks if the base PodGang (identified by name) is scheduled, returning errors for API failures.

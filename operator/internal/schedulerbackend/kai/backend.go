@@ -21,11 +21,8 @@ import (
 	"fmt"
 
 	"github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
-	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -56,14 +53,16 @@ type Backend struct {
 	client        client.Client
 	scheme        *runtime.Scheme
 	eventRecorder record.EventRecorder
+	schedulerName string // The scheduler name from configuration
 }
 
 // New creates a new KAI backend instance
-func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder) *Backend {
+func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, schedulerName string) *Backend {
 	return &Backend{
 		client:        cl,
 		scheme:        scheme,
 		eventRecorder: eventRecorder,
+		schedulerName: schedulerName,
 	}
 }
 
@@ -72,18 +71,14 @@ func (b *Backend) Name() string {
 	return BackendName
 }
 
-// Matches returns true if this PodGang should be handled by KAI backend
-// Checks for label: grove.io/scheduler-backend: kai
-func (b *Backend) Matches(podGang *groveschedulerv1alpha1.PodGang) bool {
-	if podGang.Labels == nil {
-		return false
-	}
-	return podGang.Labels["grove.io/scheduler-backend"] == BackendLabelValue
+// Init initializes the KAI backend
+// For KAI backend, no special initialization is needed currently
+func (b *Backend) Init() error {
+	return nil
 }
 
-// Sync converts PodGang to KAI PodGroup (similar to posgroups.yaml format)
-func (b *Backend) Sync(ctx context.Context, logger logr.Logger, podGang *groveschedulerv1alpha1.PodGang) error {
-	logger.Info("Syncing PodGang to KAI PodGroup", "podGang", podGang.Name)
+// SyncPodGang converts PodGang to KAI PodGroup and synchronizes it
+func (b *Backend) SyncPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
 
 	// Convert PodGang to PodGroup
 	podGroup := b.convertPodGangToPodGroup(podGang)
@@ -103,7 +98,6 @@ func (b *Backend) Sync(ctx context.Context, logger logr.Logger, podGang *grovesc
 		}
 
 		// Create new PodGroup
-		logger.Info("Creating KAI PodGroup", "name", podGroup.GetName())
 		if err := b.client.Create(ctx, podGroup); err != nil {
 			return fmt.Errorf("failed to create PodGroup: %w", err)
 		}
@@ -112,7 +106,6 @@ func (b *Backend) Sync(ctx context.Context, logger logr.Logger, podGang *grovesc
 
 	// Update existing PodGroup
 	podGroup.SetResourceVersion(existing.GetResourceVersion())
-	logger.Info("Updating KAI PodGroup", "name", podGroup.GetName())
 	if err := b.client.Update(ctx, podGroup); err != nil {
 		return fmt.Errorf("failed to update PodGroup: %w", err)
 	}
@@ -120,9 +113,8 @@ func (b *Backend) Sync(ctx context.Context, logger logr.Logger, podGang *grovesc
 	return nil
 }
 
-// Delete removes the PodGroup owned by this PodGang
-func (b *Backend) Delete(ctx context.Context, logger logr.Logger, podGang *groveschedulerv1alpha1.PodGang) error {
-	logger.Info("Deleting KAI PodGroup", "podGang", podGang.Name)
+// OnPodGangDelete removes the PodGroup owned by this PodGang
+func (b *Backend) OnPodGangDelete(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
 
 	podGroup := &unstructured.Unstructured{}
 	podGroup.SetGroupVersionKind(podGroupGVK())
@@ -139,177 +131,35 @@ func (b *Backend) Delete(ctx context.Context, logger logr.Logger, podGang *grove
 	return nil
 }
 
-// CheckReady checks if the PodGroup is ready for scheduling
-func (b *Backend) CheckReady(ctx context.Context, logger logr.Logger, podGang *groveschedulerv1alpha1.PodGang) (bool, string, error) {
-	podGroupName := b.getPodGroupName(podGang)
+// PreparePod adds KAI scheduler-specific configuration to the Pod
+// This includes: schedulerName, scheduling gates, and annotations
+func (b *Backend) PreparePod(pod *corev1.Pod) {
+	// Set scheduler name from configuration
+	pod.Spec.SchedulerName = b.schedulerName
 
-	podGroup := &unstructured.Unstructured{}
-	podGroup.SetGroupVersionKind(podGroupGVK())
+	// NOTE: We don't set schedulingGates here because KAI scheduler's mutating webhook
+	// will add them automatically when it intercepts the Pod creation.
+	// Grove operator will remove the gates later when PodGang is initialized.
+	//
+	// pod.Spec.SchedulingGates = []corev1.PodSchedulingGate{
+	// 	{Name: SchedulingGateName},
+	// }
 
-	err := b.client.Get(ctx, client.ObjectKey{
-		Namespace: podGang.Namespace,
-		Name:      podGroupName,
-	}, podGroup)
-
-	if err != nil {
-		if client.IgnoreNotFound(err) == nil {
-			// PodGroup doesn't exist yet - not ready
-			return false, podGroupName, nil
-		}
-		return false, podGroupName, fmt.Errorf("failed to get PodGroup: %w", err)
-	}
-
-	// Check PodGroup status
-	// In run.ai PodGroup, check status.schedulingConditions
-	conditions, found, _ := unstructured.NestedSlice(podGroup.Object, "status", "schedulingConditions")
-	if !found || len(conditions) == 0 {
-		return false, podGroupName, nil
-	}
-
-	// Check if any condition indicates readiness
-	// For now, if PodGroup exists and has conditions, consider it being processed
-	isReady := false // TODO: Implement proper readiness check based on conditions
-
-	logger.V(1).Info("Checked KAI PodGroup readiness",
-		"podGroupName", podGroupName,
-		"isReady", isReady)
-
-	return isReady, podGroupName, nil
-}
-
-// GetSchedulingGateName returns the scheduling gate name used by this backend
-func (b *Backend) GetSchedulingGateName() string {
-	return SchedulingGateName
-}
-
-// ShouldRemoveSchedulingGate checks if the PodGang is ready for this PodClique
-// For KAI/Grove scheduler:
-// - Base PodGang pods: remove gate immediately after pod is created
-// - Scaled PodGang pods: remove gate when the base PodGang is scheduled
-func (b *Backend) ShouldRemoveSchedulingGate(ctx context.Context, logger logr.Logger, pod *corev1.Pod, podCliqueObj client.Object) (bool, string, error) {
-	podClique, ok := podCliqueObj.(*grovecorev1alpha1.PodClique)
-	if !ok {
-		return false, "", fmt.Errorf("expected PodClique object, got %T", podCliqueObj)
-	}
-
-	// NEW REQUIREMENT: Check if PodGang has Initialized=True condition
-	// This ensures all pods are created before gates are removed
-	podGangName := pod.Labels[common.LabelPodGang]
-	if podGangName == "" {
-		return false, "pod missing podgang label", nil
-	}
-
-	podGang := &groveschedulerv1alpha1.PodGang{}
-	podGangKey := client.ObjectKey{Name: podGangName, Namespace: pod.Namespace}
-	if err := b.client.Get(ctx, podGangKey, podGang); err != nil {
-		if apierrors.IsNotFound(err) {
-			logger.V(1).Info("PodGang not found yet", "podGangName", podGangName)
-			return false, "podgang not found", nil
-		}
-		return false, "", fmt.Errorf("failed to get PodGang %v: %w", podGangKey, err)
-	}
-
-	// Check if PodGang has Initialized condition set to True
-	if !isPodGangInitialized(podGang) {
-		logger.V(1).Info("PodGang not initialized yet, waiting for all pods to be created",
-			"podGangName", podGangName,
-			"pod", pod.Name)
-		return false, "podgang not initialized", nil
-	}
-
-	// Check if this PodClique has a base PodGang dependency
-	basePodGangName, hasBasePodGangLabel := podClique.GetLabels()[common.LabelBasePodGang]
-	if !hasBasePodGangLabel {
-		// This is a base PodGang pod - remove gate immediately (if initialized)
-		logger.Info("Proceeding with gate removal for base PodGang pod",
-			"podObjectKey", client.ObjectKeyFromObject(pod))
-		return true, "base podgang pod and initialized", nil
-	}
-
-	// This is a scaled PodGang pod - check if base PodGang is scheduled
-	basePodGang := &groveschedulerv1alpha1.PodGang{}
-	basePodGangKey := client.ObjectKey{Name: basePodGangName, Namespace: podClique.Namespace}
-	if err := b.client.Get(ctx, basePodGangKey, basePodGang); err != nil {
-		if apierrors.IsNotFound(err) {
-			logger.V(1).Info("Base PodGang not found yet", "basePodGangName", basePodGangName)
-			return false, "base podgang not found", nil
-		}
-		return false, "", fmt.Errorf("failed to get base PodGang %v: %w", basePodGangKey, err)
-	}
-
-	// Check if all PodGroups in the base PodGang have sufficient scheduled replicas
-	for _, podGroup := range basePodGang.Spec.PodGroups {
-		pclqName := podGroup.Name
-		pclq := &grovecorev1alpha1.PodClique{}
-		pclqKey := client.ObjectKey{Name: pclqName, Namespace: podClique.Namespace}
-		if err := b.client.Get(ctx, pclqKey, pclq); err != nil {
-			return false, "", fmt.Errorf("failed to get PodClique %s for base PodGang readiness check: %w", pclqName, err)
-		}
-
-		// Check if MinReplicas is satisfied (use ScheduledReplicas for base PodGang check)
-		if pclq.Status.ScheduledReplicas < podGroup.MinReplicas {
-			logger.Info("Scaled PodGang pod has scheduling gate but base PodGang is not ready yet",
-				"podObjectKey", client.ObjectKeyFromObject(pod),
-				"basePodGangName", basePodGangName,
-				"pclqName", pclqName,
-				"scheduledReplicas", pclq.Status.ScheduledReplicas,
-				"minReplicas", podGroup.MinReplicas)
-			return false, fmt.Sprintf("base podgang not ready: %s has %d/%d scheduled pods", pclqName, pclq.Status.ScheduledReplicas, podGroup.MinReplicas), nil
-		}
-	}
-
-	logger.Info("Base PodGang is ready, proceeding with gate removal for scaled PodGang pod",
-		"podObjectKey", client.ObjectKeyFromObject(pod),
-		"basePodGangName", basePodGangName)
-	return true, "base podgang ready", nil
-}
-
-// isPodGangInitialized checks if PodGang has Initialized condition set to True.
-func isPodGangInitialized(podGang *groveschedulerv1alpha1.PodGang) bool {
-	// First check if Initialized condition is True
-	hasInitializedCondition := false
-	for _, cond := range podGang.Status.Conditions {
-		if cond.Type == string(groveschedulerv1alpha1.PodGangConditionTypeInitialized) &&
-			cond.Status == metav1.ConditionTrue {
-			hasInitializedCondition = true
-			break
-		}
-	}
-
-	if !hasInitializedCondition {
-		return false
-	}
-
-	// Also verify that all PodGroups have enough podReferences to meet minReplicas
-	// This ensures pods don't get scheduled if we don't have enough members for gang scheduling
-	for _, pg := range podGang.Spec.PodGroups {
-		if int32(len(pg.PodReferences)) < pg.MinReplicas {
-			return false
-		}
-	}
-
-	return true
-}
-
-// MutatePodSpec mutates the Pod spec to add KAI-specific requirements
-// For KAI scheduler, we don't need WorkloadRef (KAI reads PodGang directly)
-// But we can add helpful annotations for tracking
-func (b *Backend) MutatePodSpec(pod *corev1.Pod, gangName string, podGroupName string) error {
-	// KAI scheduler consumes PodGang directly, so we don't need WorkloadRef
-	// We can add annotations for better observability
+	// Add annotations for observability
 	if pod.Annotations == nil {
 		pod.Annotations = make(map[string]string)
 	}
-
-	// Add annotations to help track the gang membership
-	pod.Annotations["kai.scheduler/podgang"] = gangName
-	pod.Annotations["kai.scheduler/podgroup"] = podGroupName
-
-	return nil
+	
+	// Get PodGang and PodGroup names from labels
+	if podGangName, ok := pod.Labels[common.LabelPodGang]; ok {
+		pod.Annotations["kai.scheduler/podgang"] = podGangName
+	}
+	if podCliqueName, ok := pod.Labels[common.LabelPodClique]; ok {
+		pod.Annotations["kai.scheduler/podgroup"] = podCliqueName
+	}
 }
 
 // convertPodGangToPodGroup converts PodGang to KAI PodGroup (run.ai format)
-// Format similar to posgroups.yaml
 func (b *Backend) convertPodGangToPodGroup(podGang *groveschedulerv1alpha1.PodGang) *unstructured.Unstructured {
 	podGroup := &unstructured.Unstructured{}
 	podGroup.SetGroupVersionKind(podGroupGVK())

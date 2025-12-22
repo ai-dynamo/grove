@@ -161,13 +161,13 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 	}
 	pod.Spec = *pclq.Spec.PodSpec.DeepCopy()
 
-	// Use backend to mutate Pod spec based on scheduler requirements
-	// This adds scheduling gates, workloadRef (for default scheduler), annotations, etc.
-	if err = schedulerbackend.MutatePod(pod, podGangName, pclq.Name); err != nil {
+	// Use backend to prepare Pod spec based on scheduler requirements
+	// This adds schedulerName, scheduling gates, annotations, etc.
+	if err = schedulerbackend.PreparePod(pod); err != nil {
 		return groveerr.WrapError(err,
 			errCodeBuildPodResource,
 			component.OperationSync,
-			fmt.Sprintf("failed to mutate pod spec for scheduler %s", pod.Spec.SchedulerName),
+			fmt.Sprintf("failed to prepare pod spec with scheduler backend"),
 		)
 	}
 

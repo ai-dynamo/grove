@@ -26,7 +26,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
 // BackendReconciler reconciles PodGang objects and converts them to scheduler-specific CRs
@@ -53,64 +55,58 @@ func (r *BackendReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, nil
 	}
 
-	// 2. Check if this backend should handle this PodGang
-	if !r.Backend.Matches(podGang) {
-		logger.V(1).Info("PodGang does not match this backend, skipping")
-		return ctrl.Result{}, nil
-	}
-
 	logger.Info("Processing PodGang with backend")
 
-	// 3. Handle deletion
+	// 2. Handle deletion
 	if !podGang.DeletionTimestamp.IsZero() {
 		logger.Info("PodGang is being deleted")
-		if err := r.Backend.Delete(ctx, logger, podGang); err != nil {
+		if err := r.Backend.OnPodGangDelete(ctx, podGang); err != nil {
 			logger.Error(err, "Failed to delete backend resources")
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
 	}
 
-	// 4. Sync PodGang to backend-specific CR
-	if err := r.Backend.Sync(ctx, logger, podGang); err != nil {
+	// 3. Sync PodGang to backend-specific CR
+	if err := r.Backend.SyncPodGang(ctx, podGang); err != nil {
 		logger.Error(err, "Failed to sync PodGang to backend")
 		return ctrl.Result{}, err
 	}
 
 	logger.Info("Successfully synced PodGang to backend")
-
-	// 5. Update PodGang status based on backend readiness
-	if err := r.updatePodGangStatus(ctx, logger, podGang); err != nil {
-		logger.Error(err, "Failed to update PodGang status")
-		// Don't fail the reconciliation for status update errors
-	}
-
 	return ctrl.Result{}, nil
-}
-
-// updatePodGangStatus updates PodGang status based on backend CR readiness
-func (r *BackendReconciler) updatePodGangStatus(ctx context.Context, logger logr.Logger, podGang *groveschedulerv1alpha1.PodGang) error {
-	isReady, resourceName, err := r.Backend.CheckReady(ctx, logger, podGang)
-	if err != nil {
-		return fmt.Errorf("failed to check backend readiness: %w", err)
-	}
-
-	// Update status if changed
-	if isReady {
-		logger.Info("Backend resource is ready", "resource", resourceName)
-		// TODO: Update PodGang.Status.Phase to Running
-		// TODO: Add condition for backend resource readiness
-	}
-
-	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager
 func (r *BackendReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&groveschedulerv1alpha1.PodGang{}).
+		WithEventFilter(podGangSpecChangePredicate()).
 		Named(fmt.Sprintf("backend-%s", r.Backend.Name())).
 		Complete(r)
+}
+
+// podGangSpecChangePredicate filters PodGang events to only process spec changes
+// Status-only updates (like Initialized condition) are ignored
+func podGangSpecChangePredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			// Always process creation events
+			return true
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			// Process deletion events to clean up backend resources
+			return true
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			// Only process if generation changed (spec was modified)
+			// Generation doesn't change for status-only updates
+			return e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration()
+		},
+		GenericFunc: func(_ event.GenericEvent) bool {
+			return false
+		},
+	}
 }
 
 // RegisterWithManager registers the backend controller with the manager

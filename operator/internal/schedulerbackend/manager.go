@@ -48,13 +48,13 @@ func Initialize(client client.Client, scheme *runtime.Scheme, eventRecorder reco
 		// Create the appropriate backend based on scheduler name
 		switch schedulerName {
 		case "kai-scheduler", "grove-scheduler":
-			globalBackend = kai.New(client, scheme, eventRecorder)
+			globalBackend = kai.New(client, scheme, eventRecorder, schedulerName)
 
 		// Future backends - uncomment and implement as needed:
 		// case "default-scheduler", "kube-scheduler":
-		//     globalBackend = kube.New(client, scheme, eventRecorder)
+		//     globalBackend = kube.New(client, scheme, eventRecorder, schedulerName)
 		// case "volcano":
-		//     globalBackend = volcano.New(client, scheme, eventRecorder)
+		//     globalBackend = volcano.New(client, scheme, eventRecorder, schedulerName)
 
 		default:
 			initErr = fmt.Errorf("unsupported scheduler %q (supported: kai-scheduler, grove-scheduler)", schedulerName)
@@ -62,6 +62,13 @@ func Initialize(client client.Client, scheme *runtime.Scheme, eventRecorder reco
 		}
 
 		globalSchedulerName = schedulerName
+
+		// Initialize the backend
+		if err := globalBackend.Init(); err != nil {
+			initErr = fmt.Errorf("failed to initialize backend: %w", err)
+			globalBackend = nil
+			return
+		}
 	})
 	return initErr
 }
