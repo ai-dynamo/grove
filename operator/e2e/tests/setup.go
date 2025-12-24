@@ -20,6 +20,7 @@ package tests
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"testing"
@@ -29,6 +30,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -107,7 +109,10 @@ func uncordonNode(tc TestContext, nodeName string) error {
 	return utils.SetNodeSchedulable(tc.Ctx, tc.Clientset, nodeName, true)
 }
 
-// scalePodCliqueScalingGroup is a wrapper around utils.ScalePodCliqueScalingGroupWithClient that accepts TestContext
+// scalePodCliqueScalingGroup is a wrapper around utils.ScalePodCliqueScalingGroupWithClient that accepts TestContext.
+// This scales the PCSG instance directly by patching its spec.replicas field.
+// This is the correct approach for scaling existing PCSGs since the PCS controller only sets PCSG replicas
+// during initial creation to support HPA scaling.
 func scalePodCliqueScalingGroup(tc TestContext, name string, replicas int) error {
 	return utils.ScalePodCliqueScalingGroupWithClient(tc.Ctx, tc.DynamicClient, tc.Namespace, name, replicas, tc.Timeout, tc.Interval)
 }
@@ -324,17 +329,46 @@ func waitForPodConditions(tc TestContext, expectedTotalPods, expectedPending int
 	return lastTotal, lastRunning, lastPending, err
 }
 
-// scalePCSGAndWait scales a PCSG and waits for the expected pod conditions to be reached.
-func scalePCSGAndWait(tc TestContext, pcsgName string, replicas int32, expectedTotalPods, expectedPending int) {
+// scalePCSGInstanceAndWait scales a specific PCSG instance directly and waits for the expected pod conditions.
+// pcsgInstanceName is the full PCSG instance name (e.g., "workload1-0-sg-x")
+// This scales only the specified PCSG instance, not all instances across PCS replicas.
+// Use this for tests that need asymmetric PCSG configurations across PCS replicas.
+func scalePCSGInstanceAndWait(tc TestContext, pcsgInstanceName string, replicas int32, expectedTotalPods, expectedPending int) {
 	tc.T.Helper()
 
-	if err := scalePodCliqueScalingGroup(tc, pcsgName, int(replicas)); err != nil {
-		tc.T.Fatalf("Failed to scale PodCliqueScalingGroup %s: %v", pcsgName, err)
+	if err := scalePodCliqueScalingGroup(tc, pcsgInstanceName, int(replicas)); err != nil {
+		tc.T.Fatalf("Failed to scale PodCliqueScalingGroup instance %s: %v", pcsgInstanceName, err)
 	}
 
 	totalPods, runningPods, pendingPods, err := waitForPodConditions(tc, expectedTotalPods, expectedPending)
 	if err != nil {
-		tc.T.Fatalf("Failed to wait for expected pod conditions after PCSG scaling: %v. Final state: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
+		tc.T.Fatalf("Failed to wait for expected pod conditions after PCSG instance scaling: %v. Final state: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
+			err, totalPods, runningPods, pendingPods, expectedTotalPods, expectedPending)
+	}
+}
+
+// scalePCSGAcrossAllReplicasAndWait scales a PCSG across all PCS replicas by directly patching each PCSG instance.
+// pcsName is the name of the PodCliqueSet (e.g., "workload1")
+// pcsgName is the name of the PCSG as defined in the PCS template (e.g., "sg-x")
+// pcsReplicas is the number of PCS replicas (each has its own PCSG instance)
+//
+// This function scales PCSG instances directly (e.g., "workload1-0-sg-x", "workload1-1-sg-x") rather than
+// modifying the PCS template. This is necessary because the PCS controller only sets PCSG replicas during
+// initial creation to support HPA scaling - post-creation scaling must be done directly on the PCSG resource.
+func scalePCSGAcrossAllReplicasAndWait(tc TestContext, pcsName, pcsgName string, pcsReplicas, pcsgReplicas int32, expectedTotalPods, expectedPending int) {
+	tc.T.Helper()
+
+	// Scale each PCSG instance across all PCS replicas
+	for replicaIndex := int32(0); replicaIndex < pcsReplicas; replicaIndex++ {
+		pcsgInstanceName := fmt.Sprintf("%s-%d-%s", pcsName, replicaIndex, pcsgName)
+		if err := scalePodCliqueScalingGroup(tc, pcsgInstanceName, int(pcsgReplicas)); err != nil {
+			tc.T.Fatalf("Failed to scale PodCliqueScalingGroup instance %s: %v", pcsgInstanceName, err)
+		}
+	}
+
+	totalPods, runningPods, pendingPods, err := waitForPodConditions(tc, expectedTotalPods, expectedPending)
+	if err != nil {
+		tc.T.Fatalf("Failed to wait for expected pod conditions after PCSG scaling across all replicas: %v. Final state: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
 			err, totalPods, runningPods, pendingPods, expectedTotalPods, expectedPending)
 	}
 }
@@ -507,4 +541,95 @@ func waitForRunningPods(tc TestContext, expectedRunning int) error {
 		count := utils.CountPodsByPhase(pods)
 		return count.Running == expectedRunning, nil
 	})
+}
+
+// scalePCS scales a PCS and returns a channel that receives an error when the expected pod count is reached.
+// The operation runs asynchronously - receive from the returned channel to block until complete.
+// If delayMs > 0, the operation will sleep for that duration before starting.
+func scalePCS(tc TestContext, pcsName string, replicas int32, expectedTotalPods, expectedPending, delayMs int) <-chan error {
+	errCh := make(chan error, 1)
+	go func() {
+		startTime := time.Now()
+
+		if delayMs > 0 {
+			time.Sleep(time.Duration(delayMs) * time.Millisecond)
+		}
+
+		if err := scalePodCliqueSet(tc, pcsName, int(replicas)); err != nil {
+			errCh <- fmt.Errorf("failed to scale PodCliqueSet %s: %w", pcsName, err)
+			return
+		}
+
+		totalPods, runningPods, pendingPods, err := waitForPodConditions(tc, expectedTotalPods, expectedPending)
+		elapsed := time.Since(startTime)
+		if err != nil {
+			logger.Infof("[scalePCS] Scale %s FAILED after %v: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
+				pcsName, elapsed, totalPods, runningPods, pendingPods, expectedTotalPods, expectedPending)
+			errCh <- fmt.Errorf("failed to wait for expected pod conditions after PCS scaling: %w. Final state: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
+				err, totalPods, runningPods, pendingPods, expectedTotalPods, expectedPending)
+			return
+		}
+		logger.Infof("[scalePCS] Scale %s completed in %v (replicas=%d, pods=%d)", pcsName, elapsed, replicas, totalPods)
+		errCh <- nil
+	}()
+	return errCh
+}
+
+// scalePCSGAcrossAllReplicas scales a PCSG across all PCS replicas and returns a channel.
+// The operation runs asynchronously - receive from the returned channel to block until complete.
+// If delayMs > 0, the operation will sleep for that duration before starting.
+func scalePCSGAcrossAllReplicas(tc TestContext, pcsName, pcsgName string, pcsReplicas, pcsgReplicas int32, expectedTotalPods, expectedPending, delayMs int) <-chan error {
+	errCh := make(chan error, 1)
+	go func() {
+		startTime := time.Now()
+
+		if delayMs > 0 {
+			time.Sleep(time.Duration(delayMs) * time.Millisecond)
+		}
+
+		// Scale each PCSG instance across all PCS replicas
+		for replicaIndex := int32(0); replicaIndex < pcsReplicas; replicaIndex++ {
+			pcsgInstanceName := fmt.Sprintf("%s-%d-%s", pcsName, replicaIndex, pcsgName)
+			if err := scalePodCliqueScalingGroup(tc, pcsgInstanceName, int(pcsgReplicas)); err != nil {
+				errCh <- fmt.Errorf("failed to scale PodCliqueScalingGroup instance %s: %w", pcsgInstanceName, err)
+				return
+			}
+		}
+
+		totalPods, runningPods, pendingPods, err := waitForPodConditions(tc, expectedTotalPods, expectedPending)
+		elapsed := time.Since(startTime)
+		if err != nil {
+			logger.Infof("[scalePCSGAcrossAllReplicas] Scale %s FAILED after %v: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
+				pcsgName, elapsed, totalPods, runningPods, pendingPods, expectedTotalPods, expectedPending)
+			errCh <- fmt.Errorf("failed to wait for expected pod conditions after PCSG scaling across all replicas: %w. Final state: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
+				err, totalPods, runningPods, pendingPods, expectedTotalPods, expectedPending)
+			return
+		}
+		logger.Infof("[scalePCSGAcrossAllReplicas] Scale %s completed in %v (pcsgReplicas=%d, pods=%d)", pcsgName, elapsed, pcsgReplicas, totalPods)
+		errCh <- nil
+	}()
+	return errCh
+}
+
+// convertUnstructuredToTyped converts an unstructured map to a typed object
+func convertUnstructuredToTyped(u map[string]interface{}, typed interface{}) error {
+	data, err := json.Marshal(u)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, typed)
+}
+
+// convertTypedToUnstructured converts a typed object to an unstructured object
+func convertTypedToUnstructured(typed interface{}) (*unstructured.Unstructured, error) {
+	data, err := json.Marshal(typed)
+	if err != nil {
+		return nil, err
+	}
+	var unstructuredMap map[string]interface{}
+	err = json.Unmarshal(data, &unstructuredMap)
+	if err != nil {
+		return nil, err
+	}
+	return &unstructured.Unstructured{Object: unstructuredMap}, nil
 }
