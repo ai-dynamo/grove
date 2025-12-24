@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	"helm.sh/helm/v3/pkg/action"
@@ -60,6 +61,10 @@ type HelmInstallConfig struct {
 	Logger *utils.Logger
 	// RepoURL is the base URL of the Helm repository (optional, for direct chart downloads).
 	RepoURL string
+	// ReuseValues reuses the last release's values and merges in the new values.
+	ReuseValues bool
+	// Timeout is the time to wait for Kubernetes operations (default: 5 minutes).
+	Timeout time.Duration
 }
 
 // Validate validates and sets defaults for the configuration.
@@ -130,6 +135,44 @@ func InstallHelmChart(config *HelmInstallConfig) (*release.Release, error) {
 	}
 
 	config.HelmLoggerFunc("✅ Release '%s' installed successfully. Status: %s", rel.Name, rel.Info.Status)
+	return rel, nil
+}
+
+// UpgradeHelmChart upgrades a Helm chart with the given configuration.
+func UpgradeHelmChart(config *HelmInstallConfig) (*release.Release, error) {
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+
+	// Initialize Helm action configuration
+	config.HelmLoggerFunc("Setting up Helm configuration for upgrade of %s...", config.ReleaseName)
+	actionConfig, err := setupHelmAction(config)
+	if err != nil {
+		return nil, err
+	}
+
+	// Resolve chart location (download from HTTP or locate via Helm)
+	chartPath, err := resolveChart(actionConfig, config)
+	if err != nil {
+		return nil, err
+	}
+
+	// Load and validate the chart
+	config.HelmLoggerFunc("Loading chart from %s...", chartPath)
+	chart, err := loader.Load(chartPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load chart: %w", err)
+	}
+
+	// Upgrade the chart
+	config.HelmLoggerFunc("Upgrading release %s in namespace %s...", config.ReleaseName, config.Namespace)
+	upgradeClient := newUpgradeClient(actionConfig, config)
+	rel, err := upgradeClient.Run(config.ReleaseName, chart, config.Values)
+	if err != nil {
+		return nil, fmt.Errorf("helm upgrade failed: %w", err)
+	}
+
+	config.HelmLoggerFunc("✅ Release '%s' upgraded successfully. Status: %s", rel.Name, rel.Info.Status)
 	return rel, nil
 }
 
@@ -225,6 +268,27 @@ func newInstallClient(actionConfig *action.Configuration, config *HelmInstallCon
 	client.Wait = config.Wait
 	client.Version = config.ChartVersion
 	client.Replace = true // Allow replacing failed releases on retry
+
+	// Set timeout
+	if config.Timeout > 0 {
+		client.Timeout = config.Timeout
+	}
+
+	return client
+}
+
+// newUpgradeClient creates and configures a Helm upgrade action client from the provided configuration.
+func newUpgradeClient(actionConfig *action.Configuration, config *HelmInstallConfig) *action.Upgrade {
+	client := action.NewUpgrade(actionConfig)
+	client.Namespace = config.Namespace
+	client.Wait = config.Wait
+	client.Version = config.ChartVersion
+	client.ReuseValues = config.ReuseValues
+
+	// Set timeout
+	if config.Timeout > 0 {
+		client.Timeout = config.Timeout
+	}
 
 	return client
 }
