@@ -193,8 +193,39 @@ type AuthorizerConfig struct {
 type ClusterTopologyConfiguration struct {
 	// Enabled indicates whether topology-aware scheduling is enabled.
 	Enabled bool `json:"enabled"`
-	// Name is the ClusterTopology resource name to use.
-	// Defaults to "grove-topology" if not specified when topology is enabled.
+	// Levels is an ordered list of topology levels from broadest to narrowest scope.
+	// Used to create/update the ClusterTopology CR at operator startup.
 	// +optional
-	Name string `json:"name,omitempty"`
+	Levels []TopologyLevel `json:"levels,omitempty"`
+}
+
+// TopologyDomain represents a predefined topology level in the hierarchy.
+type TopologyDomain string
+
+const (
+	// TopologyDomainRegion represents the region level in the topology hierarchy.
+	TopologyDomainRegion TopologyDomain = "region"
+	// TopologyDomainZone represents the zone level in the topology hierarchy.
+	TopologyDomainZone TopologyDomain = "zone"
+	// TopologyDomainDataCenter represents the datacenter level in the topology hierarchy.
+	TopologyDomainDataCenter TopologyDomain = "datacenter"
+	// TopologyDomainBlock represents the block level in the topology hierarchy.
+	TopologyDomainBlock TopologyDomain = "block"
+	// TopologyDomainRack represents the rack level in the topology hierarchy.
+	TopologyDomainRack TopologyDomain = "rack"
+	// TopologyDomainHost represents the host level in the topology hierarchy.
+	TopologyDomainHost TopologyDomain = "host"
+	// TopologyDomainNuma represents the numa level in the topology hierarchy.
+	TopologyDomainNuma TopologyDomain = "numa"
+)
+
+// MaxTopologyLevels is the maximum number of topology levels supported.
+const MaxTopologyLevels = 7
+
+// TopologyLevel defines a single level in the topology hierarchy.
+type TopologyLevel struct {
+	// Domain is the predefined level identifier used in TopologyConstraint references.
+	Domain TopologyDomain `json:"domain"`
+	// Key is the node label key that identifies this topology domain.
+	Key string `json:"key"`
 }

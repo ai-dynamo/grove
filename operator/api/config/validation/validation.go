@@ -114,11 +114,50 @@ func mustBeGreaterThanZeroDuration(duration metav1.Duration, fldPath *field.Path
 }
 
 // validateClusterTopologyConfiguration validates the cluster topology configuration.
-// When cluster topology is enabled, it ensures the topology name is provided.
+// When cluster topology is enabled, it ensures the topology name and levels are provided,
+// and validates domain and key uniqueness.
 func validateClusterTopologyConfiguration(clusterTopologyCfg configv1alpha1.ClusterTopologyConfiguration, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-	if clusterTopologyCfg.Enabled && len(strings.TrimSpace(clusterTopologyCfg.Name)) == 0 {
-		allErrs = append(allErrs, field.Required(fldPath.Child("name"), "clusterTopology name is required"))
+
+	if !clusterTopologyCfg.Enabled {
+		return allErrs
+	}
+
+	allErrs = validateClusterTopologyLevels(clusterTopologyCfg.Levels, fldPath.Child("levels"))
+
+	return allErrs
+}
+
+func validateClusterTopologyLevels(levels []configv1alpha1.TopologyLevel, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	if len(levels) == 0 {
+		allErrs = append(allErrs, field.Required(fldPath, "levels are required when topology is enabled"))
+	}
+
+	if len(levels) > configv1alpha1.MaxTopologyLevels {
+		allErrs = append(allErrs, field.TooMany(fldPath, len(levels), configv1alpha1.MaxTopologyLevels))
+	}
+
+	allErrs = append(allErrs, validateLevelsUniqueness(levels, fldPath)...)
+
+	return allErrs
+}
+
+func validateLevelsUniqueness(levels []configv1alpha1.TopologyLevel, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	seenDomains := make(map[string]int)
+	seenKeys := make(map[string]int)
+	for i, level := range levels {
+		if _, exists := seenKeys[level.Key]; exists {
+			allErrs = append(allErrs, field.Duplicate(fldPath.Index(i).Child("key"), level.Key))
+		} else {
+			seenKeys[level.Key] = i
+		}
+		if _, exists := seenDomains[string(level.Domain)]; exists {
+			allErrs = append(allErrs, field.Duplicate(fldPath.Index(i).Child("domain"), level.Domain))
+		} else {
+			seenDomains[string(level.Domain)] = i
+		}
 	}
 	return allErrs
 }

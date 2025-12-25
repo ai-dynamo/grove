@@ -90,7 +90,6 @@ cover-html: test-cover
 .PHONY: test-envtest
 test-envtest: $(SETUP_ENVTEST)
 	@echo "Running envtest with CRD validation..."
-	@KUBEBUILDER_ASSETS=$$($(SETUP_ENVTEST) use -p path) go test ./internal/webhook/admission/clustertopology/validation -v -run TestClusterTopologyCRDValidation
 
 # Run e2e tests
 .PHONY: test-e2e

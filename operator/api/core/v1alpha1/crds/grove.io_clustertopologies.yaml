@@ -72,6 +72,7 @@ spec:
                         Examples: "topology.kubernetes.io/zone", "kubernetes.io/hostname"
                       maxLength: 63
                       minLength: 1
+                      pattern: ^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]/)?([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$
                       type: string
                   required:
                   - domain
@@ -80,6 +81,12 @@ spec:
                 maxItems: 7
                 minItems: 1
                 type: array
+                x-kubernetes-validations:
+                - message: domain must be unique across all levels
+                  rule: self.all(x, self.filter(y, y.domain == x.domain).size() ==
+                    1)
+                - message: key must be unique across all levels
+                  rule: self.all(x, self.filter(y, y.key == x.key).size() == 1)
             required:
             - levels
             type: object

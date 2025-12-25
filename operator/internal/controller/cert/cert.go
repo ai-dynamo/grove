@@ -22,7 +22,6 @@ import (
 	"strings"
 
 	"github.com/ai-dynamo/grove/operator/internal/constants"
-	clustertopologyvalidation "github.com/ai-dynamo/grove/operator/internal/webhook/admission/clustertopology/validation"
 	authorizationwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/authorization"
 	defaultingwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/defaulting"
 	validatingwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/validation"
@@ -87,10 +86,6 @@ func getWebhooks(authorizerEnabled bool) []cert.WebhookInfo {
 		{
 			Type: cert.Validating,
 			Name: validatingwebhook.Name,
-		},
-		{
-			Type: cert.Validating,
-			Name: clustertopologyvalidation.Name,
 		},
 	}
 	if authorizerEnabled {

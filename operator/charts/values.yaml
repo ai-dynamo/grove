@@ -62,7 +62,6 @@ config:
   logFormat: json
   clusterTopology:
     enabled: false
-    name: "grove-topology"
   authorizer:
     enabled: false
     exemptServiceAccountUserNames:
@@ -124,11 +123,6 @@ webhooks:
     labels:
       app.kubernetes.io/component: operator-pcs-defaulting-webhook
       app.kubernetes.io/name: pcs-defaulting-webhook
-      app.kubernetes.io/part-of: grove
-  clusterTopologyValidationWebhook:
-    labels:
-      app.kubernetes.io/component: operator-clustertopology-validating-webhook
-      app.kubernetes.io/name: clustertopology-validating-webhook
       app.kubernetes.io/part-of: grove
   authorizerWebhook:
     labels:

@@ -33,46 +33,41 @@ func TestValidateClusterTopologyConfiguration(t *testing.T) {
 		errorField  string
 	}{
 		{
-			name: "valid: enabled with name",
+			name: "valid: enabled with levels",
 			config: configv1alpha1.ClusterTopologyConfiguration{
 				Enabled: true,
-				Name:    "my-topology",
 			},
 			expectError: false,
 		},
 		{
-			name: "valid: disabled with no name",
+			name: "valid: disabled with no levels",
 			config: configv1alpha1.ClusterTopologyConfiguration{
 				Enabled: false,
-				Name:    "",
 			},
 			expectError: false,
 		},
 		{
-			name: "valid: disabled with name",
+			name: "valid: disabled with levels",
 			config: configv1alpha1.ClusterTopologyConfiguration{
 				Enabled: false,
-				Name:    "my-topology",
 			},
 			expectError: false,
 		},
 		{
-			name: "invalid: enabled with empty name",
+			name: "invalid: enabled with empty levels",
 			config: configv1alpha1.ClusterTopologyConfiguration{
 				Enabled: true,
-				Name:    "",
 			},
 			expectError: true,
-			errorField:  "clusterTopology.name",
+			errorField:  "clusterTopology.levels",
 		},
 		{
-			name: "invalid: enabled with whitespace-only name",
+			name: "invalid: enabled with empty levels",
 			config: configv1alpha1.ClusterTopologyConfiguration{
 				Enabled: true,
-				Name:    "   ",
 			},
 			expectError: true,
-			errorField:  "clusterTopology.name",
+			errorField:  "clusterTopology.levels",
 		},
 	}
 

@@ -34,8 +34,12 @@ config.yaml: |
   {{- if .Values.config.clusterTopology }}
   clusterTopology:
     enabled: {{ .Values.config.clusterTopology.enabled }}
-    {{- if .Values.config.clusterTopology.name }}
-    name: {{ .Values.config.clusterTopology.name }}
+    {{- if .Values.config.clusterTopology.levels }}
+    levels:
+    {{- range .Values.config.clusterTopology.levels }}
+      - domain: {{ .domain }}
+        key: {{ .key }}
+    {{- end }}
     {{- end }}
   {{- end }}
   {{- if .Values.config.authorizer.enabled }}
