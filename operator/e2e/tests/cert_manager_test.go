@@ -29,6 +29,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 const (
@@ -223,5 +224,106 @@ func TestCertManagerIntegration(t *testing.T) {
 		t.Fatalf("Failed to verify workload: %v", err)
 	}
 
-	logger.Info("✅ Cert-manager integration test passed!")
+	logger.Info("✅ Auto-Provision to cert-manager test passed!")
+
+	logger.Info("🔄 Starting transition back to Auto-Provision mode...")
+
+	// 7. Delete the Cert-Manager Secret and Certificate to force re-generation
+	logger.Info("Deleting cert-manager assets to force operator fallback...")
+	_ = clientset.CoreV1().Secrets("grove-system").Delete(ctx, "grove-webhook-server-cert", metav1.DeleteOptions{})
+
+	certGVR := schema.GroupVersionResource{
+		Group:    "cert-manager.io",
+		Version:  "v1",
+		Resource: "certificates",
+	}
+	_ = dynamicClient.Resource(certGVR).Namespace("grove-system").Delete(ctx, "grove-webhook-server-cert", metav1.DeleteOptions{})
+
+	// 8. Delete the Issuer
+	issuerGVR := schema.GroupVersionResource{
+		Group:    "cert-manager.io",
+		Version:  "v1",
+		Resource: "clusterissuers",
+	}
+	_ = dynamicClient.Resource(issuerGVR).Delete(ctx, "selfsigned-issuer", metav1.DeleteOptions{})
+
+	logger.Info("Waiting for secret to be fully deleted from the API server...")
+	err = utils.PollForCondition(ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
+		_, err := clientset.CoreV1().Secrets("grove-system").Get(ctx, "grove-webhook-server-cert", metav1.GetOptions{})
+		if err != nil {
+			return true, nil
+		}
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("Timeout waiting for secret deletion: %v", err)
+	}
+
+	logger.Info("Secret is gone. Proceeding with Helm upgrade...")
+
+	// 9. Upgrade Grove to turn Auto-Provision back ON
+	groveAutoProvisionConfig := &setup.HelmInstallConfig{
+		RestConfig:   restConfig,
+		ReleaseName:  "grove-operator",
+		ChartRef:     chartPath,
+		ChartVersion: "0.1.0-dev",
+		Namespace:    "grove-system",
+		ReuseValues:  true,
+		Values: map[string]interface{}{
+			"installCRDs": true,
+			"config": map[string]interface{}{
+				"server": map[string]interface{}{
+					"webhooks": map[string]interface{}{
+						"autoProvision": true,
+						"secretName":    "grove-webhook-server-cert",
+					},
+				},
+			},
+			"webhooks": map[string]interface{}{
+				"podCliqueSetValidationWebhook":    map[string]interface{}{"annotations": map[string]interface{}{"cert-manager.io/inject-ca-from": nil}},
+				"podCliqueSetDefaultingWebhook":    map[string]interface{}{"annotations": map[string]interface{}{"cert-manager.io/inject-ca-from": nil}},
+				"clusterTopologyValidationWebhook": map[string]interface{}{"annotations": map[string]interface{}{"cert-manager.io/inject-ca-from": nil}},
+				"authorizerWebhook":                map[string]interface{}{"annotations": map[string]interface{}{"cert-manager.io/inject-ca-from": nil}},
+			},
+		},
+		HelmLoggerFunc: logger.Debugf,
+		Logger:         logger,
+	}
+
+	logger.Info("Upgrading Grove to restore auto-provisioning...")
+	if _, err := setup.UpgradeHelmChart(groveAutoProvisionConfig); err != nil {
+		t.Fatalf("Failed to revert to auto-provision: %v", err)
+	}
+
+	// 10. Wait for Grove to provision its own secret
+	logger.Info("Waiting for Grove to auto-provision a new secret...")
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+		s, err := clientset.CoreV1().Secrets("grove-system").Get(ctx, "grove-webhook-server-cert", metav1.GetOptions{})
+		if err != nil {
+			return false, nil
+		}
+		// Verify it has actual data
+		return len(s.Data["tls.crt"]) > 0, nil
+	})
+	if err != nil {
+		t.Fatalf("Grove failed to recover and auto-provision secret: %v", err)
+	}
+
+	// 11. Delete old workload
+	logger.Info("Cleaning up old workload...")
+	deleteGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquesets"}
+	_ = dynamicClient.Resource(deleteGVR).Namespace("default").Delete(ctx, "workload1", metav1.DeleteOptions{})
+
+	utils.PollForCondition(ctx, 20*time.Second, 1*time.Second, func() (bool, error) {
+		_, err := dynamicClient.Resource(deleteGVR).Namespace("default").Get(ctx, "workload1", metav1.GetOptions{})
+		return err != nil, nil // Success if error (NotFound)
+	})
+
+	// 12. Redeploy workload to verify everything works end-to-end
+	logger.Info("Deploying new workload for cert-manager to autoprovision flow")
+	if _, err := deployAndVerifyWorkload(tc); err != nil {
+		t.Fatalf("Failed to verify workload: %v", err)
+	}
+
+	logger.Info("✅ Full round-trip cert integration test passed!")
 }
