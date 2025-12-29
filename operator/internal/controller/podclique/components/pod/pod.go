@@ -26,6 +26,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	"github.com/ai-dynamo/grove/operator/internal/controller/scheduler/backend"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
@@ -159,16 +160,34 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 		)
 	}
 	pod.Spec = *pclq.Spec.PodSpec.DeepCopy()
-	pod.Spec.SchedulingGates = []corev1.PodSchedulingGate{{Name: podGangSchedulingGate}}
+
+	// Use backend to mutate Pod spec based on scheduler requirements
+	// This adds scheduling gates, workloadRef (for default scheduler), annotations, etc.
+	if err = backend.MutatePod(pod, podGangName, pclq.Name); err != nil {
+		return groveerr.WrapError(err,
+			errCodeBuildPodResource,
+			component.OperationSync,
+			fmt.Sprintf("failed to mutate pod spec for scheduler %s", pod.Spec.SchedulerName),
+		)
+	}
+
 	// Add GROVE specific Pod environment variables
 	addEnvironmentVariables(pod, pclq, pcsName, pcsReplicaIndex, podIndex)
 	// Configure hostname and subdomain for service discovery
 	configurePodHostname(pcsName, pcsReplicaIndex, pclq.Name, pod, podIndex)
+
 	// If there is a need to enforce a Startup-Order then configure the init container and add it to the Pod Spec.
 	if len(pclq.Spec.StartsAfter) != 0 {
 		return configurePodInitContainer(pcs, pclq, pod)
 	}
 	return nil
+}
+
+// shouldUseWorkloadAPI determines if Kubernetes Workload API should be used based on schedulerName
+// DEPRECATED: This function is now handled by backend.MutatePod()
+// Keeping for backward compatibility during migration
+func shouldUseWorkloadAPI(podSpec *corev1.PodSpec) bool {
+	return podSpec.SchedulerName == "" || podSpec.SchedulerName == "default-scheduler"
 }
 
 // Delete removes all Pods associated with the specified PodClique

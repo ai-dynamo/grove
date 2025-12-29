@@ -19,6 +19,19 @@ rules:
   - patch
   - update
 - apiGroups:
+  - scheduling.k8s.io
+  resources:
+  - workloads
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+  - delete
+  - deletecollection
+  - patch
+  - update
+- apiGroups:
   - grove.io
   resources:
   - podcliquesets
