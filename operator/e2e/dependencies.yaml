@@ -31,6 +31,16 @@ images:
     version: v0.12.0
   - name: ghcr.io/nvidia/kai-scheduler/scheduler
     version: v0.12.0
+  
+  # Cert-manager
+  - name: quay.io/jetstack/cert-manager-controller
+    version: v1.19.2
+  - name: quay.io/jetstack/cert-manager-webhook
+    version: v1.19.2
+  - name: quay.io/jetstack/cert-manager-cainjector
+    version: v1.19.2
+  - name: quay.io/jetstack/cert-manager-ctl
+    version: v1.19.2
 
 # Helm charts used in E2E tests
 helmCharts:
@@ -53,6 +63,6 @@ helmCharts:
   certManager:
     releaseName: cert-manager
     chartRef: cert-manager
-    version: v1.14.4
+    version: v1.19.2
     namespace: cert-manager
     repoURL: https://charts.jetstack.io
