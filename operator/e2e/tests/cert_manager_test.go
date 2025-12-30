@@ -30,6 +30,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -84,7 +85,7 @@ func TestAutoProvisionToCertManager(t *testing.T) {
 		t.Fatalf("Failed to apply ClusterIssuer: %v", err)
 	}
 
-	time.Sleep(5 * time.Second) // Small buffer for Issuer
+	waitForClusterIssuer(t, ctx, dynamicClient, "selfsigned-issuer")
 
 	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerCertificateYAML), "", restConfig, logger); err != nil {
 		t.Fatalf("Failed to apply Certificate: %v", err)
@@ -138,7 +139,7 @@ func TestCertManagerToAutoProvision(t *testing.T) {
 		t.Fatalf("Failed to apply ClusterIssuer: %v", err)
 	}
 
-	time.Sleep(2 * time.Second) // Small buffer for Issuer
+	waitForClusterIssuer(t, ctx, dynamicClient, "selfsigned-issuer")
 
 	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerCertificateYAML), "", restConfig, logger); err != nil {
 		t.Fatalf("Failed to apply Certificate: %v", err)
@@ -292,4 +293,46 @@ func createTestContext(t *testing.T, ctx context.Context, clientset *kubernetes.
 			ExpectedPods: 10,
 		},
 	}
+}
+
+func waitForClusterIssuer(t *testing.T, ctx context.Context, dynamicClient dynamic.Interface, name string) {
+	logger.Infof("Waiting for ClusterIssuer %s to be Ready...", name)
+
+	issuerGVR := schema.GroupVersionResource{
+		Group:    "cert-manager.io",
+		Version:  "v1",
+		Resource: "clusterissuers",
+	}
+
+	err := utils.PollForCondition(ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
+		issuer, err := dynamicClient.Resource(issuerGVR).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return false, nil
+		}
+
+		return checkReadyStatus(issuer), nil
+	})
+
+	if err != nil {
+		t.Fatalf("ClusterIssuer %s failed to become Ready: %v", name, err)
+	}
+}
+
+func checkReadyStatus(obj *unstructured.Unstructured) bool {
+	conditions, found, err := unstructured.NestedSlice(obj.Object, "status", "conditions")
+	if err != nil || !found {
+		return false
+	}
+
+	for _, c := range conditions {
+		condition, ok := c.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		if condition["type"] == "Ready" && condition["status"] == "True" {
+			return true
+		}
+	}
+	return false
 }
