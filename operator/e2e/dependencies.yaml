@@ -40,7 +40,7 @@ images:
   - name: quay.io/jetstack/cert-manager-cainjector
     version: v1.19.2
   - name: quay.io/jetstack/cert-manager-ctl
-    version: v1.19.2
+    version: v1.14.4
 
 # Helm charts used in E2E tests
 helmCharts:
