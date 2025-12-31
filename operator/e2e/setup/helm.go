@@ -176,6 +176,43 @@ func UpgradeHelmChart(config *HelmInstallConfig) (*release.Release, error) {
 	return rel, nil
 }
 
+// UninstallHelmChart uninstalls a Helm release.
+func UninstallHelmChart(config *HelmInstallConfig) error {
+	if config.ReleaseName == "" {
+		return fmt.Errorf("release name is required for uninstall")
+	}
+	if config.Namespace == "" {
+		return fmt.Errorf("namespace is required for uninstall")
+	}
+
+	// Initialize Helm action configuration
+	if config.HelmLoggerFunc == nil {
+		config.HelmLoggerFunc = func(_ string, _ ...interface{}) {}
+	}
+	config.HelmLoggerFunc("Setting up Helm configuration for uninstall of %s...", config.ReleaseName)
+	actionConfig, err := setupHelmAction(config)
+	if err != nil {
+		return err
+	}
+
+	// Uninstall the release
+	config.HelmLoggerFunc("Uninstalling release %s from namespace %s...", config.ReleaseName, config.Namespace)
+	uninstallClient := action.NewUninstall(actionConfig)
+
+	// Set timeout if provided
+	if config.Timeout > 0 {
+		uninstallClient.Timeout = config.Timeout
+	}
+
+	_, err = uninstallClient.Run(config.ReleaseName)
+	if err != nil {
+		return fmt.Errorf("helm uninstall failed: %w", err)
+	}
+
+	config.HelmLoggerFunc("✅ Release '%s' uninstalled successfully", config.ReleaseName)
+	return nil
+}
+
 // setupHelmAction sets up Helm action configuration.
 func setupHelmAction(config *HelmInstallConfig) (*action.Configuration, error) {
 	actionConfig := new(action.Configuration)
