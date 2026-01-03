@@ -284,10 +284,8 @@ func getExpectedPCLQPodTemplateHashMap(pcs *grovecorev1alpha1.PodCliqueSet, pcsg
 	pclqFQNToHash := make(map[string]string)
 	pcsgPCLQNames := pcsg.Spec.CliqueNames
 	for _, pcsgCliqueName := range pcsgPCLQNames {
-		pclqTemplateSpec, ok := lo.Find(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec) bool {
-			return pclqTemplateSpec.Name == pcsgCliqueName
-		})
-		if !ok {
+		pclqTemplateSpec := componentutils.FindPodCliqueTemplateSpecByName(pcs, pcsgCliqueName)
+		if pclqTemplateSpec == nil {
 			continue
 		}
 		podTemplateHash := componentutils.ComputePCLQPodTemplateHash(pclqTemplateSpec, pcs.Spec.Template.PriorityClassName)

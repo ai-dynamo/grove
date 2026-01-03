@@ -26,24 +26,24 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
-func TestValidateClusterTopologyConfiguration(t *testing.T) {
+func TestValidateTopologyAwareSchedulingConfiguration(t *testing.T) {
 	tests := []struct {
 		name           string
-		config         configv1alpha1.ClusterTopologyConfiguration
+		config         configv1alpha1.TopologyAwareSchedulingConfiguration
 		expectErrors   int
 		expectedFields []string
 		expectedTypes  []field.ErrorType
 	}{
 		{
 			name: "valid: disabled with no levels",
-			config: configv1alpha1.ClusterTopologyConfiguration{
+			config: configv1alpha1.TopologyAwareSchedulingConfiguration{
 				Enabled: false,
 			},
 			expectErrors: 0,
 		},
 		{
 			name: "valid: disabled with levels (levels are ignored when disabled)",
-			config: configv1alpha1.ClusterTopologyConfiguration{
+			config: configv1alpha1.TopologyAwareSchedulingConfiguration{
 				Enabled: false,
 				Levels: []corev1alpha1.TopologyLevel{
 					{Domain: corev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
@@ -53,7 +53,7 @@ func TestValidateClusterTopologyConfiguration(t *testing.T) {
 		},
 		{
 			name: "valid: enabled with single level",
-			config: configv1alpha1.ClusterTopologyConfiguration{
+			config: configv1alpha1.TopologyAwareSchedulingConfiguration{
 				Enabled: true,
 				Levels: []corev1alpha1.TopologyLevel{
 					{Domain: corev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
@@ -63,7 +63,7 @@ func TestValidateClusterTopologyConfiguration(t *testing.T) {
 		},
 		{
 			name: "valid: enabled with multiple levels",
-			config: configv1alpha1.ClusterTopologyConfiguration{
+			config: configv1alpha1.TopologyAwareSchedulingConfiguration{
 				Enabled: true,
 				Levels: []corev1alpha1.TopologyLevel{
 					{Domain: corev1alpha1.TopologyDomainRegion, Key: "topology.kubernetes.io/region"},
@@ -75,7 +75,7 @@ func TestValidateClusterTopologyConfiguration(t *testing.T) {
 		},
 		{
 			name: "valid: enabled with all supported domains",
-			config: configv1alpha1.ClusterTopologyConfiguration{
+			config: configv1alpha1.TopologyAwareSchedulingConfiguration{
 				Enabled: true,
 				Levels: []corev1alpha1.TopologyLevel{
 					{Domain: corev1alpha1.TopologyDomainRegion, Key: "topology.kubernetes.io/region"},
@@ -91,7 +91,7 @@ func TestValidateClusterTopologyConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: enabled with empty levels",
-			config: configv1alpha1.ClusterTopologyConfiguration{
+			config: configv1alpha1.TopologyAwareSchedulingConfiguration{
 				Enabled: true,
 				Levels:  []corev1alpha1.TopologyLevel{},
 			},
@@ -101,7 +101,7 @@ func TestValidateClusterTopologyConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: enabled with nil levels",
-			config: configv1alpha1.ClusterTopologyConfiguration{
+			config: configv1alpha1.TopologyAwareSchedulingConfiguration{
 				Enabled: true,
 				Levels:  nil,
 			},
@@ -111,7 +111,7 @@ func TestValidateClusterTopologyConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: unsupported domain",
-			config: configv1alpha1.ClusterTopologyConfiguration{
+			config: configv1alpha1.TopologyAwareSchedulingConfiguration{
 				Enabled: true,
 				Levels: []corev1alpha1.TopologyLevel{
 					{Domain: "invalid-domain", Key: "some.key"},
@@ -123,7 +123,7 @@ func TestValidateClusterTopologyConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: duplicate domains",
-			config: configv1alpha1.ClusterTopologyConfiguration{
+			config: configv1alpha1.TopologyAwareSchedulingConfiguration{
 				Enabled: true,
 				Levels: []corev1alpha1.TopologyLevel{
 					{Domain: corev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
@@ -136,7 +136,7 @@ func TestValidateClusterTopologyConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: duplicate keys",
-			config: configv1alpha1.ClusterTopologyConfiguration{
+			config: configv1alpha1.TopologyAwareSchedulingConfiguration{
 				Enabled: true,
 				Levels: []corev1alpha1.TopologyLevel{
 					{Domain: corev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
@@ -149,7 +149,7 @@ func TestValidateClusterTopologyConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: duplicate domains and keys",
-			config: configv1alpha1.ClusterTopologyConfiguration{
+			config: configv1alpha1.TopologyAwareSchedulingConfiguration{
 				Enabled: true,
 				Levels: []corev1alpha1.TopologyLevel{
 					{Domain: corev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
@@ -162,7 +162,7 @@ func TestValidateClusterTopologyConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: multiple unsupported domains",
-			config: configv1alpha1.ClusterTopologyConfiguration{
+			config: configv1alpha1.TopologyAwareSchedulingConfiguration{
 				Enabled: true,
 				Levels: []corev1alpha1.TopologyLevel{
 					{Domain: corev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
@@ -176,7 +176,7 @@ func TestValidateClusterTopologyConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: multiple validation errors - unsupported domain and duplicates",
-			config: configv1alpha1.ClusterTopologyConfiguration{
+			config: configv1alpha1.TopologyAwareSchedulingConfiguration{
 				Enabled: true,
 				Levels: []corev1alpha1.TopologyLevel{
 					{Domain: corev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
@@ -192,7 +192,7 @@ func TestValidateClusterTopologyConfiguration(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			errs := validateClusterTopologyConfiguration(test.config, field.NewPath("clusterTopology"))
+			errs := validateTopologyAwareSchedulingConfig(test.config, field.NewPath("clusterTopology"))
 
 			assert.Len(t, errs, test.expectErrors, "expected %d validation errors but got %d: %v", test.expectErrors, len(errs), errs)
 

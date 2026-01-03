@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
@@ -38,28 +39,32 @@ import (
 )
 
 const (
-	errCodeListPodGangs            grovecorev1alpha1.ErrorCode = "ERR_LIST_PODGANGS"
-	errCodeDeletePodGangs          grovecorev1alpha1.ErrorCode = "ERR_DELETE_PODGANGS"
-	errCodeDeleteExcessPodGang     grovecorev1alpha1.ErrorCode = "ERR_DELETE_EXCESS_PODGANG"
-	errCodeListPods                grovecorev1alpha1.ErrorCode = "ERR_LIST_PODS_FOR_PODCLIQUESET"
-	errCodeListPodCliques          grovecorev1alpha1.ErrorCode = "ERR_LIST_PODCLIQUES_FOR_PODCLIQUESET"
-	errCodeComputeExistingPodGangs grovecorev1alpha1.ErrorCode = "ERR_COMPUTE_EXISTING_PODGANG"
-	errCodeSetControllerReference  grovecorev1alpha1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
-	errCodeCreateOrPatchPodGang    grovecorev1alpha1.ErrorCode = "ERR_CREATE_OR_PATCH_PODGANG"
+	errCodeListPodGangs               grovecorev1alpha1.ErrorCode = "ERR_LIST_PODGANGS"
+	errCodeDeletePodGangs             grovecorev1alpha1.ErrorCode = "ERR_DELETE_PODGANGS"
+	errCodeDeleteExcessPodGang        grovecorev1alpha1.ErrorCode = "ERR_DELETE_EXCESS_PODGANG"
+	errCodeListPods                   grovecorev1alpha1.ErrorCode = "ERR_LIST_PODS_FOR_PODCLIQUESET"
+	errCodeListPodCliques             grovecorev1alpha1.ErrorCode = "ERR_LIST_PODCLIQUES_FOR_PODCLIQUESET"
+	errCodeListPodCliqueScalingGroups grovecorev1alpha1.ErrorCode = "ERR_LIST_PODCLIQUESCALINGGROUPS_FOR_PODCLIQUESET"
+	errCodeComputeExistingPodGangs    grovecorev1alpha1.ErrorCode = "ERR_COMPUTE_EXISTING_PODGANG"
+	errCodeSetControllerReference     grovecorev1alpha1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
+	errCodeCreateOrPatchPodGang       grovecorev1alpha1.ErrorCode = "ERR_CREATE_OR_PATCH_PODGANG"
+	errCodeGetClusterTopologyLevels   grovecorev1alpha1.ErrorCode = "ERR_GET_CLUSTER_TOPOLOGY_LEVELS"
 )
 
 type _resource struct {
 	client        client.Client
 	scheme        *runtime.Scheme
 	eventRecorder record.EventRecorder
+	tasConfig     configv1alpha1.TopologyAwareSchedulingConfiguration
 }
 
 // New creates a new instance of PodGang components operator.
-func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder) component.Operator[grovecorev1alpha1.PodCliqueSet] {
+func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, tasConfig configv1alpha1.TopologyAwareSchedulingConfiguration) component.Operator[grovecorev1alpha1.PodCliqueSet] {
 	return &_resource{
 		client:        client,
 		scheme:        scheme,
 		eventRecorder: eventRecorder,
+		tasConfig:     tasConfig,
 	}
 }
 
@@ -120,18 +125,20 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjectMeta
 }
 
 // buildResource configures a PodGang with pod groups and priority.
-func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgInfo podGangInfo, pg *groveschedulerv1alpha1.PodGang) error {
+func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGangInfo, pg *groveschedulerv1alpha1.PodGang) error {
 	pg.Labels = getLabels(pcs.Name)
 	if err := controllerutil.SetControllerReference(pcs, pg, r.scheme); err != nil {
 		return groveerr.WrapError(
 			err,
 			errCodeSetControllerReference,
 			component.OperationSync,
-			fmt.Sprintf("failed to set the controller reference on PodGang %s to PodCliqueSet %v", pgInfo.fqn, client.ObjectKeyFromObject(pcs)),
+			fmt.Sprintf("failed to set the controller reference on PodGang %s to PodCliqueSet %v", pgi.fqn, client.ObjectKeyFromObject(pcs)),
 		)
 	}
-	pg.Spec.PodGroups = createPodGroupsForPodGang(pg.Namespace, pgInfo)
+	pg.Spec.PodGroups = createPodGroupsForPodGang(pg.Namespace, pgi)
 	pg.Spec.PriorityClassName = pcs.Spec.Template.PriorityClassName
+	pg.Spec.TopologyConstraint = pgi.topologyConstraint
+	pg.Spec.TopologyConstraintGroupConfigs = pgi.pcsgTopologyConstraints
 	return nil
 }
 

@@ -126,10 +126,8 @@ func GetPCSGsByPCSReplicaIndex(ctx context.Context, cl client.Client, pcsObjKey 
 func GetPCLQTemplateHashes(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[string]string {
 	pclqTemplateSpecs := make([]*grovecorev1alpha1.PodCliqueTemplateSpec, 0, len(pcsg.Spec.CliqueNames))
 	for _, cliqueName := range pcsg.Spec.CliqueNames {
-		pclqTemplateSpec, ok := lo.Find(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec) bool {
-			return cliqueName == pclqTemplateSpec.Name
-		})
-		if !ok {
+		pclqTemplateSpec := FindPodCliqueTemplateSpecByName(pcs, cliqueName)
+		if pclqTemplateSpec == nil {
 			continue
 		}
 		pclqTemplateSpecs = append(pclqTemplateSpecs, pclqTemplateSpec)

@@ -638,8 +638,8 @@ allowing workload operators a consistent way to reference topology levels when d
 
 
 _Appears in:_
-- [ClusterTopologyConfiguration](#clustertopologyconfiguration)
 - [ClusterTopologySpec](#clustertopologyspec)
+- [TopologyAwareSchedulingConfiguration](#topologyawareschedulingconfiguration)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
@@ -687,23 +687,6 @@ _Appears in:_
 | `burst` _integer_ | Burst allows extra queries to accumulate when a client is exceeding its rate. |  |  |
 | `contentType` _string_ | ContentType is the content type used when sending data to the server from this client. |  |  |
 | `acceptContentTypes` _string_ | AcceptContentTypes defines the Accept header sent by clients when connecting to the server,<br />overriding the default value of 'application/json'. This field will control all connections<br />to the server used by a particular client. |  |  |
-
-
-#### ClusterTopologyConfiguration
-
-
-
-ClusterTopologyConfiguration defines the configuration for topology-aware scheduling.
-
-
-
-_Appears in:_
-- [OperatorConfiguration](#operatorconfiguration)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `enabled` _boolean_ | Enabled indicates whether topology-aware scheduling is enabled. |  |  |
-| `levels` _[TopologyLevel](#topologylevel) array_ | Levels is an ordered list of topology levels from broadest to narrowest scope.<br />Used to create/update the ClusterTopology CR at operator startup. |  |  |
 
 
 #### ControllerConfiguration
@@ -881,6 +864,23 @@ _Appears in:_
 | `webhooks` _[WebhookServer](#webhookserver)_ | Webhooks is the configuration for the HTTP(S) webhook server. |  |  |
 | `healthProbes` _[Server](#server)_ | HealthProbes is the configuration for serving the healthz and readyz endpoints. |  |  |
 | `metrics` _[Server](#server)_ | Metrics is the configuration for serving the metrics endpoint. |  |  |
+
+
+#### TopologyAwareSchedulingConfiguration
+
+
+
+TopologyAwareSchedulingConfiguration defines the configuration for topology-aware scheduling.
+
+
+
+_Appears in:_
+- [OperatorConfiguration](#operatorconfiguration)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `enabled` _boolean_ | Enabled indicates whether topology-aware scheduling is enabled. |  |  |
+| `levels` _[TopologyLevel](#topologylevel) array_ | Levels is an ordered list of topology levels from broadest to narrowest scope.<br />Used to create/update the TopologyAwareScheduling CR at operator startup. |  |  |
 
 
 #### WebhookServer

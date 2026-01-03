@@ -114,12 +114,12 @@ func synchronizeTopology(ctx context.Context, mgr ctrl.Manager, operatorCfg *con
 	if err != nil {
 		return fmt.Errorf("failed to create client for topology synchronization: %w", err)
 	}
-	if !operatorCfg.ClusterTopology.Enabled {
-		logger.Info("cluster topology is disabled, deleting existing ClusterTopology if any")
+	if !operatorCfg.TopologyAwareScheduling.Enabled {
+		logger.Info("cluster topology is disabled, deleting existing ClusterTopology resource if any")
 		return clustertopology.DeleteClusterTopology(ctx, cl, corev1alpha1.DefaultClusterTopologyName)
 	}
 	// create or update ClusterTopology based on configuration
-	clusterTopology, err := clustertopology.EnsureClusterTopology(ctx, cl, logger, corev1alpha1.DefaultClusterTopologyName, operatorCfg.ClusterTopology.Levels)
+	clusterTopology, err := clustertopology.EnsureClusterTopology(ctx, cl, logger, corev1alpha1.DefaultClusterTopologyName, operatorCfg.TopologyAwareScheduling.Levels)
 	if err != nil {
 		return err
 	}

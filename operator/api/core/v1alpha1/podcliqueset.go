@@ -191,8 +191,7 @@ type TopologyConstraint struct {
 	// Note: Does NOT constrain all replicas to the same rack together.
 	// Different replicas can be in different topology domains.
 	// +kubebuilder:validation:Enum=region;zone;datacenter;block;rack;host;numa
-	// +optional
-	PackDomain *TopologyDomain `json:"packDomain,omitempty"`
+	PackDomain TopologyDomain `json:"packDomain"`
 }
 
 // PodCliqueScalingGroupConfig is a group of PodClique's that are scaled together.
