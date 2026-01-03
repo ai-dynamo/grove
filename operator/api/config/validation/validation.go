@@ -37,7 +37,7 @@ func ValidateOperatorConfiguration(config *configv1alpha1.OperatorConfiguration)
 	allErrs = append(allErrs, validateLeaderElectionConfiguration(config.LeaderElection, field.NewPath("leaderElection"))...)
 	allErrs = append(allErrs, validateClientConnectionConfiguration(config.ClientConnection, field.NewPath("clientConnection"))...)
 	allErrs = append(allErrs, validateControllerConfiguration(config.Controllers, field.NewPath("controllers"))...)
-	allErrs = append(allErrs, validateClusterTopologyConfiguration(config.ClusterTopology, field.NewPath("clusterTopology"))...)
+	allErrs = append(allErrs, validateTopologyAwareSchedulingConfig(config.TopologyAwareScheduling, field.NewPath("topologyAwareScheduling"))...)
 	return allErrs
 }
 
@@ -116,10 +116,10 @@ func mustBeGreaterThanZeroDuration(duration metav1.Duration, fldPath *field.Path
 	return allErrs
 }
 
-// validateClusterTopologyConfiguration validates the cluster topology configuration.
+// validateTopologyAwareSchedulingConfig validates the cluster topology configuration.
 // When cluster topology is enabled, it ensures the topology name and levels are provided,
 // and validates domain and key uniqueness.
-func validateClusterTopologyConfiguration(clusterTopologyCfg configv1alpha1.ClusterTopologyConfiguration, fldPath *field.Path) field.ErrorList {
+func validateTopologyAwareSchedulingConfig(clusterTopologyCfg configv1alpha1.TopologyAwareSchedulingConfiguration, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	if !clusterTopologyCfg.Enabled {
 		return allErrs

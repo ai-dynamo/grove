@@ -170,11 +170,21 @@ func GetExpectedPCLQPodTemplateHash(pcs *grovecorev1alpha1.PodCliqueSet, pclqObj
 	if err != nil {
 		return "", err
 	}
-	matchingPCLQTemplateSpec, ok := lo.Find(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec) bool {
-		return cliqueName == pclqTemplateSpec.Name
-	})
-	if !ok {
+	matchingPCLQTemplateSpec := FindPodCliqueTemplateSpecByName(pcs, cliqueName)
+	if matchingPCLQTemplateSpec == nil {
 		return "", fmt.Errorf("pod clique template not found for cliqueName: %s", cliqueName)
 	}
 	return ComputePCLQPodTemplateHash(matchingPCLQTemplateSpec, pcs.Spec.Template.PriorityClassName), nil
+}
+
+// FindPodCliqueTemplateSpecByName retrieves the PodCliqueTemplateSpec from the PodCliqueSet by its name.
+// If there is no matching PodCliqueTemplateSpec, it returns nil.
+func FindPodCliqueTemplateSpecByName(pcs *grovecorev1alpha1.PodCliqueSet, pclqName string) *grovecorev1alpha1.PodCliqueTemplateSpec {
+	matchingPCLQTemplateSpec, ok := lo.Find(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec) bool {
+		return pclqName == pclqTemplateSpec.Name
+	})
+	if !ok {
+		return nil
+	}
+	return matchingPCLQTemplateSpec
 }

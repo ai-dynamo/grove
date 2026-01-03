@@ -9264,6 +9264,8 @@ spec:
                               - host
                               - numa
                               type: string
+                          required:
+                          - packDomain
                           type: object
                       required:
                       - name
@@ -9854,6 +9856,8 @@ spec:
                               - host
                               - numa
                               type: string
+                          required:
+                          - packDomain
                           type: object
                       required:
                       - cliqueNames
@@ -9899,6 +9903,8 @@ spec:
                         - host
                         - numa
                         type: string
+                    required:
+                    - packDomain
                     type: object
                 required:
                 - cliques

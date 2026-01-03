@@ -160,10 +160,13 @@ func TestMinAvailableWithHPAScaling(t *testing.T) {
 
 			// Test the PodGang creation logic
 			r := &_resource{client: fakeClient}
-			ctx := context.Background()
+			sc := &syncContext{
+				ctx: context.Background(),
+				pcs: pcs,
+			}
 
 			// Test scaled PodGang creation - this should read the scaled PCSG
-			expectedPodGangs, err := r.getExpectedPodGangsForPCSG(ctx, pcs, 0)
+			expectedPodGangs, err := r.getExpectedScaledPodGangsForPCSG(sc, 0)
 			require.NoError(t, err)
 
 			// Verify scaled PodGangs
@@ -175,8 +178,8 @@ func TestMinAvailableWithHPAScaling(t *testing.T) {
 				"Scaled PodGangs should match expected after scaling")
 
 			// Test base PodGang logic - this should be independent of scaling
-			sc := &syncContext{pcs: pcs}
-			basePodGangs := getExpectedPodGangForPCSReplicas(sc)
+			basePodGangs, err := getExpectedBasePodGangForPCSReplicas(sc)
+			require.NoError(t, err)
 			require.Len(t, basePodGangs, 1, "Should have exactly one base PodGang")
 			assert.Equal(t, tt.expectedBasePodGang, basePodGangs[0].fqn,
 				"Base PodGang name should be correct and unchanged by scaling")

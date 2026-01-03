@@ -29,6 +29,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
@@ -56,6 +57,65 @@ func TestEnsureClusterTopologyWhenNonExists(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, topology)
 	assert.Equal(t, topologyName, topology.Name)
+	assert.Equal(t, topologyLevels, topology.Spec.Levels)
+
+	// Verify it was actually created
+	fetched := &corev1alpha1.ClusterTopology{}
+	err = cl.Get(ctx, client.ObjectKey{Name: topologyName}, fetched)
+	require.NoError(t, err)
+	assert.Equal(t, topologyLevels, fetched.Spec.Levels)
+}
+
+func TestEnsureClusterTopologyWhenHostDomainIsMissing(t *testing.T) {
+	// Setup
+	ctx := context.Background()
+	cl := testutils.CreateDefaultFakeClient(nil)
+	logger := logr.Discard()
+
+	topologyLevels := []corev1alpha1.TopologyLevel{
+		{Domain: corev1alpha1.TopologyDomainZone, Key: corev1.LabelTopologyZone},
+		{Domain: corev1alpha1.TopologyDomainRegion, Key: corev1.LabelTopologyRegion},
+		// Host domain is intentionally missing
+	}
+
+	// Test
+	topology, err := EnsureClusterTopology(ctx, cl, logger, topologyName, topologyLevels)
+
+	// Assert
+	require.NoError(t, err)
+	assert.NotNil(t, topology)
+	assert.Equal(t, topologyName, topology.Name)
+	// Host domain should be added automatically
+	expectedLevels := append(topologyLevels, corev1alpha1.TopologyLevel{Domain: corev1alpha1.TopologyDomainHost, Key: corev1.LabelHostname})
+	corev1alpha1.SortTopologyLevels(expectedLevels)
+	assert.Equal(t, expectedLevels, topology.Spec.Levels)
+	// Verify it was actually created
+	fetched := &corev1alpha1.ClusterTopology{}
+	err = cl.Get(ctx, client.ObjectKey{Name: topologyName}, fetched)
+	require.NoError(t, err)
+	assert.Equal(t, expectedLevels, fetched.Spec.Levels)
+}
+
+func TestEnsureClusterTopologyHostDomainKeyNotOverridden(t *testing.T) {
+	// Setup
+	ctx := context.Background()
+	cl := testutils.CreateDefaultFakeClient(nil)
+	logger := logr.Discard()
+
+	topologyLevels := []corev1alpha1.TopologyLevel{
+		{Domain: corev1alpha1.TopologyDomainHost, Key: "custom-hostname-key"},
+		{Domain: corev1alpha1.TopologyDomainZone, Key: corev1.LabelTopologyZone},
+	}
+
+	// Test
+	topology, err := EnsureClusterTopology(ctx, cl, logger, topologyName, topologyLevels)
+
+	// Assert
+	require.NoError(t, err)
+	assert.NotNil(t, topology)
+	assert.Equal(t, topologyName, topology.Name)
+	// Host domain key should not be overridden
+	corev1alpha1.SortTopologyLevels(topologyLevels)
 	assert.Equal(t, topologyLevels, topology.Spec.Levels)
 
 	// Verify it was actually created
@@ -323,8 +383,8 @@ func TestEnsureKAITopologyWhenNoChangeRequired(t *testing.T) {
 			ResourceVersion: "1",
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion:         "grove.io/v1alpha1",
-					Kind:               "ClusterTopology",
+					APIVersion:         corev1alpha1.SchemeGroupVersion.String(),
+					Kind:               apicommonconstants.KindClusterTopology,
 					Name:               clusterTopology.Name,
 					UID:                clusterTopology.UID,
 					Controller:         ptr.To(true),
@@ -371,14 +431,14 @@ func TestEnsureKAITopologyWithUnknownOwner(t *testing.T) {
 		},
 	}
 
-	// Create existing KAI Topology owned by different ClusterTopology
+	// Create existing KAI Topology owned by different TopologyAwareScheduling
 	existingKAITopology := &kaitopologyv1alpha1.Topology{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: topologyName,
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion:         "grove.io/v1alpha1",
-					Kind:               "ClusterTopology",
+					APIVersion:         corev1alpha1.SchemeGroupVersion.String(),
+					Kind:               apicommonconstants.KindClusterTopology,
 					Name:               "different-owner",
 					UID:                "different-uid",
 					Controller:         ptr.To(true),
@@ -466,7 +526,7 @@ func TestEnsureKAITopologyWhenCreateError(t *testing.T) {
 func TestEnsureKAITopologyWhenDeleteError(t *testing.T) {
 	// Setup
 	ctx := context.Background()
-	// New topology levels that ClusterTopology will have
+	// New topology levels that TopologyAwareScheduling will have
 	topologyLevels := []corev1alpha1.TopologyLevel{
 		{Domain: corev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
 		{Domain: corev1alpha1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
@@ -487,8 +547,8 @@ func TestEnsureKAITopologyWhenDeleteError(t *testing.T) {
 			Name: topologyName,
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion:         "grove.io/v1alpha1",
-					Kind:               "ClusterTopology",
+					APIVersion:         corev1alpha1.SchemeGroupVersion.String(),
+					Kind:               apicommonconstants.KindClusterTopology,
 					Name:               clusterTopology.Name,
 					UID:                clusterTopology.UID,
 					Controller:         ptr.To(true),
@@ -498,7 +558,7 @@ func TestEnsureKAITopologyWhenDeleteError(t *testing.T) {
 		},
 		Spec: kaitopologyv1alpha1.TopologySpec{
 			Levels: []kaitopologyv1alpha1.TopologyLevel{
-				{NodeLabel: "old-label"}, // Different from ClusterTopology levels
+				{NodeLabel: "old-label"}, // Different from TopologyAwareScheduling levels
 			},
 		},
 	}
@@ -541,8 +601,8 @@ func TestEnsureKAITopologyWhenCreateFailsDuringRecreate(t *testing.T) {
 			Name: topologyName,
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion:         "grove.io/v1alpha1",
-					Kind:               "ClusterTopology",
+					APIVersion:         corev1alpha1.SchemeGroupVersion.String(),
+					Kind:               apicommonconstants.KindClusterTopology,
 					Name:               clusterTopology.Name,
 					UID:                clusterTopology.UID,
 					Controller:         ptr.To(true),
