@@ -85,18 +85,13 @@ func TestAutoProvisionToCertManager(t *testing.T) {
 	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerIssuerYAML), "", restConfig, logger); err != nil {
 		t.Fatalf("Failed to apply ClusterIssuer: %v", err)
 	}
-
 	waitForClusterIssuer(t, ctx, dynamicClient, "selfsigned-issuer")
 
 	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerCertificateYAML), "", restConfig, logger); err != nil {
 		t.Fatalf("Failed to apply Certificate: %v", err)
 	}
-
 	// 4. Wait for Secret to be created by Cert-Manager
 	waitForSecret(t, ctx, clientset, "grove-webhook-server-cert", true)
-
-	// Delete the old auto-provisioned webhook secret if it exists
-	_ = clientset.CoreV1().Secrets("grove-system").Delete(ctx, "grove-webhook-server-cert", metav1.DeleteOptions{})
 
 	// 5. Upgrade Grove to External Mode
 	logger.Info("Upgrading Grove to use external certs...")
@@ -134,35 +129,31 @@ func TestCertManagerToAutoProvision(t *testing.T) {
 	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerIssuerYAML), "", restConfig, logger); err != nil {
 		t.Fatalf("Failed to apply ClusterIssuer: %v", err)
 	}
-
 	waitForClusterIssuer(t, ctx, dynamicClient, "selfsigned-issuer")
 
 	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerCertificateYAML), "", restConfig, logger); err != nil {
 		t.Fatalf("Failed to apply Certificate: %v", err)
 	}
 
-	// 4. Wait for Secret to be created by Cert-Manager
-	waitForSecret(t, ctx, clientset, "grove-webhook-server-cert", true)
-
-	// 5. Upgrade Grove to External Mode
+	// 4. Upgrade Grove to External Mode
 	upgradeGrove(t, ctx, clientset, chartPath, restConfig, false) // autoProvision = false
 	waitForSecret(t, ctx, clientset, "grove-webhook-server-cert", true)
 
-	// 6. Remove Cert-Manager assets before switching
+	// 5. Remove Cert-Manager assets before switching
 	logger.Info("Purging Cert-Manager assets...")
 	deleteCertManagerResources(ctx, clientset, dynamicClient)
 
-	// 7. Wait for secret deletion to avoid Helm ownership errors
+	// 6. Wait for secret deletion to avoid Helm ownership errors
 	waitForSecret(t, ctx, clientset, "grove-webhook-server-cert", false)
 
-	// 8. Downgrade Grove to Auto-Provision Mode
+	// 7. Downgrade Grove to Auto-Provision Mode
 	logger.Info("Upgrading Grove back to Auto-Provision mode...")
 	upgradeGrove(t, ctx, clientset, chartPath, restConfig, true)
 
-	// 9. Wait for Operator to generate its own secret
+	// 8. Wait for Operator to generate its own secret
 	waitForSecret(t, ctx, clientset, "grove-webhook-server-cert", true)
 
-	// 10. Deploy and Verify via Workload
+	// 9. Deploy and Verify via Workload
 	tc := createTestContext(t, ctx, clientset, dynamicClient, restConfig)
 	if _, err := deployAndVerifyWorkload(tc); err != nil {
 		t.Fatalf("Failed to verify workload after reverting to Auto-Provision: %v", err)
