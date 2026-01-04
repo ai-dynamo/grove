@@ -43,6 +43,8 @@ const (
 	// AnnotationDisableManagedResourceProtection is an annotation set by an operator on a PodCliqueSet to explicitly
 	// disable protection of managed resources for a PodCliqueSet.
 	AnnotationDisableManagedResourceProtection = "grove.io/disable-managed-resource-protection"
+	// AnnotationTopologyName is an annotation set on PodGang to allow KAI scheduler to discover which topology to use.
+	AnnotationTopologyName = "grove.io/topology-name"
 )
 
 // Constants for Grove environment variables
