@@ -57,9 +57,7 @@ What should happen when a cluster admin enables MNNVL but preconditions are not 
 | Scenario | Description | Severity | Decision and Rationale |
 |--------|-------------|----------|-----------------------|
 | **S1: CRD not installed** | ComputeDomain CRD is not available (DRA not installed). | Cluster-level, affects all workloads | Enabling ComputeDomain support in the OperatorConfig must cause the Grove operator to **exit with error on startup**. Treated as an admin error. |
-| **Failed to create CD** | Operator failed to create a ComputeDomain for a PCS replica. | PCS replica level, low | PCS should still be deployed **without** CD and RCT usage. Status must be updated accordingly. |
-| **S2: Driver too old** | GPU driver version `< 570.150.x`, MNNVL not supported. | Node-level, may affect subset of workloads | Operator must **exit with error on startup**. Treated as an admin error. |
-| **S3: Conflicting ResourceClaims** | User-defined ResourceClaimTemplate conflicts with Grove injection. | PCS-level, user configuration error | Validation webhooks must reject malformed PCS definitions. |
+| **Failed to create CD** | Operator failed to create a ComputeDomain for a PCS replica. | PCS replica level, low | PCS should still be deployed **without** CD and RCT usage. This is a **permanent state** — the operator will not retry CD creation. Status must be updated accordingly. |
 
 ---
 
