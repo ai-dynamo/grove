@@ -39,8 +39,7 @@ function build_ld_flags() {
 
   FLAGS="-X $PACKAGE_PATH/version.gitCommit=$(git rev-parse --verify HEAD)
          -X $PACKAGE_PATH/version.gitTreeState=$tree_state
-         -X $PACKAGE_PATH/version.buildDate=$build_date
-         -X $PACKAGE_PATH/version.programName=$PROGRAM_NAME"
+         -X $PACKAGE_PATH/version.buildDate=$build_date"
 
   # The k8s.component-base/version.gitVersion can not be set to the version of grove
   # due to the error: "emulation version 1.33 is not between [1.31, 0.1.0-dev]".

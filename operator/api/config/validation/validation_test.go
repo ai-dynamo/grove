@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	"github.com/stretchr/testify/assert"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -27,66 +28,182 @@ import (
 
 func TestValidateClusterTopologyConfiguration(t *testing.T) {
 	tests := []struct {
-		name        string
-		config      configv1alpha1.ClusterTopologyConfiguration
-		expectError bool
-		errorField  string
+		name           string
+		config         configv1alpha1.ClusterTopologyConfiguration
+		expectErrors   int
+		expectedFields []string
+		expectedTypes  []field.ErrorType
 	}{
 		{
-			name: "valid: enabled with name",
-			config: configv1alpha1.ClusterTopologyConfiguration{
-				Enabled: true,
-				Name:    "my-topology",
-			},
-			expectError: false,
-		},
-		{
-			name: "valid: disabled with no name",
+			name: "valid: disabled with no levels",
 			config: configv1alpha1.ClusterTopologyConfiguration{
 				Enabled: false,
-				Name:    "",
 			},
-			expectError: false,
+			expectErrors: 0,
 		},
 		{
-			name: "valid: disabled with name",
+			name: "valid: disabled with levels (levels are ignored when disabled)",
 			config: configv1alpha1.ClusterTopologyConfiguration{
 				Enabled: false,
-				Name:    "my-topology",
+				Levels: []corev1alpha1.TopologyLevel{
+					{Domain: corev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
+				},
 			},
-			expectError: false,
+			expectErrors: 0,
 		},
 		{
-			name: "invalid: enabled with empty name",
+			name: "valid: enabled with single level",
 			config: configv1alpha1.ClusterTopologyConfiguration{
 				Enabled: true,
-				Name:    "",
+				Levels: []corev1alpha1.TopologyLevel{
+					{Domain: corev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
+				},
 			},
-			expectError: true,
-			errorField:  "clusterTopology.name",
+			expectErrors: 0,
 		},
 		{
-			name: "invalid: enabled with whitespace-only name",
+			name: "valid: enabled with multiple levels",
 			config: configv1alpha1.ClusterTopologyConfiguration{
 				Enabled: true,
-				Name:    "   ",
+				Levels: []corev1alpha1.TopologyLevel{
+					{Domain: corev1alpha1.TopologyDomainRegion, Key: "topology.kubernetes.io/region"},
+					{Domain: corev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
+					{Domain: corev1alpha1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
+				},
 			},
-			expectError: true,
-			errorField:  "clusterTopology.name",
+			expectErrors: 0,
+		},
+		{
+			name: "valid: enabled with all supported domains",
+			config: configv1alpha1.ClusterTopologyConfiguration{
+				Enabled: true,
+				Levels: []corev1alpha1.TopologyLevel{
+					{Domain: corev1alpha1.TopologyDomainRegion, Key: "topology.kubernetes.io/region"},
+					{Domain: corev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
+					{Domain: corev1alpha1.TopologyDomainDataCenter, Key: "topology.kubernetes.io/datacenter"},
+					{Domain: corev1alpha1.TopologyDomainBlock, Key: "topology.kubernetes.io/block"},
+					{Domain: corev1alpha1.TopologyDomainRack, Key: "topology.kubernetes.io/rack"},
+					{Domain: corev1alpha1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
+					{Domain: corev1alpha1.TopologyDomainNuma, Key: "topology.kubernetes.io/numa"},
+				},
+			},
+			expectErrors: 0,
+		},
+		{
+			name: "invalid: enabled with empty levels",
+			config: configv1alpha1.ClusterTopologyConfiguration{
+				Enabled: true,
+				Levels:  []corev1alpha1.TopologyLevel{},
+			},
+			expectErrors:   1,
+			expectedFields: []string{"clusterTopology.levels"},
+			expectedTypes:  []field.ErrorType{field.ErrorTypeRequired},
+		},
+		{
+			name: "invalid: enabled with nil levels",
+			config: configv1alpha1.ClusterTopologyConfiguration{
+				Enabled: true,
+				Levels:  nil,
+			},
+			expectErrors:   1,
+			expectedFields: []string{"clusterTopology.levels"},
+			expectedTypes:  []field.ErrorType{field.ErrorTypeRequired},
+		},
+		{
+			name: "invalid: unsupported domain",
+			config: configv1alpha1.ClusterTopologyConfiguration{
+				Enabled: true,
+				Levels: []corev1alpha1.TopologyLevel{
+					{Domain: "invalid-domain", Key: "some.key"},
+				},
+			},
+			expectErrors:   1,
+			expectedFields: []string{"clusterTopology.levels[0].domain"},
+			expectedTypes:  []field.ErrorType{field.ErrorTypeInvalid},
+		},
+		{
+			name: "invalid: duplicate domains",
+			config: configv1alpha1.ClusterTopologyConfiguration{
+				Enabled: true,
+				Levels: []corev1alpha1.TopologyLevel{
+					{Domain: corev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
+					{Domain: corev1alpha1.TopologyDomainZone, Key: "another.zone.key"},
+				},
+			},
+			expectErrors:   1,
+			expectedFields: []string{"clusterTopology.levels[1].domain"},
+			expectedTypes:  []field.ErrorType{field.ErrorTypeDuplicate},
+		},
+		{
+			name: "invalid: duplicate keys",
+			config: configv1alpha1.ClusterTopologyConfiguration{
+				Enabled: true,
+				Levels: []corev1alpha1.TopologyLevel{
+					{Domain: corev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
+					{Domain: corev1alpha1.TopologyDomainHost, Key: "topology.kubernetes.io/zone"},
+				},
+			},
+			expectErrors:   1,
+			expectedFields: []string{"clusterTopology.levels[1].key"},
+			expectedTypes:  []field.ErrorType{field.ErrorTypeDuplicate},
+		},
+		{
+			name: "invalid: duplicate domains and keys",
+			config: configv1alpha1.ClusterTopologyConfiguration{
+				Enabled: true,
+				Levels: []corev1alpha1.TopologyLevel{
+					{Domain: corev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
+					{Domain: corev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
+				},
+			},
+			expectErrors:   2,
+			expectedFields: []string{"clusterTopology.levels[1].domain", "clusterTopology.levels[1].key"},
+			expectedTypes:  []field.ErrorType{field.ErrorTypeDuplicate, field.ErrorTypeDuplicate},
+		},
+		{
+			name: "invalid: multiple unsupported domains",
+			config: configv1alpha1.ClusterTopologyConfiguration{
+				Enabled: true,
+				Levels: []corev1alpha1.TopologyLevel{
+					{Domain: corev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
+					{Domain: "invalid1", Key: "key1"},
+					{Domain: "invalid2", Key: "key2"},
+				},
+			},
+			expectErrors:   2,
+			expectedFields: []string{"clusterTopology.levels[1].domain", "clusterTopology.levels[2].domain"},
+			expectedTypes:  []field.ErrorType{field.ErrorTypeInvalid, field.ErrorTypeInvalid},
+		},
+		{
+			name: "invalid: multiple validation errors - unsupported domain and duplicates",
+			config: configv1alpha1.ClusterTopologyConfiguration{
+				Enabled: true,
+				Levels: []corev1alpha1.TopologyLevel{
+					{Domain: corev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
+					{Domain: "invalid", Key: "invalid.key"},
+					{Domain: corev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
+				},
+			},
+			expectErrors:   3,
+			expectedFields: []string{"clusterTopology.levels[1].domain", "clusterTopology.levels[2].domain", "clusterTopology.levels[2].key"},
+			expectedTypes:  []field.ErrorType{field.ErrorTypeInvalid, field.ErrorTypeDuplicate, field.ErrorTypeDuplicate},
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			errs := validateClusterTopologyConfiguration(tt.config, field.NewPath("clusterTopology"))
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			errs := validateClusterTopologyConfiguration(test.config, field.NewPath("clusterTopology"))
 
-			if tt.expectError {
-				assert.NotEmpty(t, errs, "expected validation errors but got none")
-				if len(errs) > 0 {
-					assert.Equal(t, tt.errorField, errs[0].Field)
+			assert.Len(t, errs, test.expectErrors, "expected %d validation errors but got %d: %v", test.expectErrors, len(errs), errs)
+
+			if test.expectErrors > 0 {
+				// Verify each expected error
+				for i, expectedField := range test.expectedFields {
+					assert.Equal(t, expectedField, errs[i].Field, "error %d: expected field %s but got %s", i, expectedField, errs[i].Field)
+					if i < len(test.expectedTypes) {
+						assert.Equal(t, test.expectedTypes[i], errs[i].Type, "error %d: expected type %s but got %s", i, test.expectedTypes[i], errs[i].Type)
+					}
 				}
-			} else {
-				assert.Empty(t, errs, "expected no validation errors but got: %v", errs)
 			}
 		})
 	}

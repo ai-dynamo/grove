@@ -25,6 +25,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	"k8s.io/client-go/rest"
@@ -144,7 +145,11 @@ func runSkaffoldBuild(ctx context.Context, absSkaffoldPath, skaffoldDir, kubecon
 	// Add the skaffold.yaml path
 	args = append(args, "-f", absSkaffoldPath)
 
-	cmd := exec.CommandContext(ctx, "skaffold", args...)
+	// Add timeout to prevent indefinite hangs (normal builds should complete in <10 minutes)
+	buildCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(buildCtx, "skaffold", args...)
 	cmd.Dir = skaffoldDir
 
 	// Set up environment variables

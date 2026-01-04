@@ -17,21 +17,15 @@
 package version
 
 import (
+	"encoding/json"
 	"fmt"
-	"io"
-	"os"
 	"runtime"
-
-	"github.com/spf13/pflag"
-	apimachineryversion "k8s.io/apimachinery/pkg/version"
 )
 
 // These variables will be set during building the grove operator via LD_FLAGS
 // These variables have been borrowed from k8s.io/component-base repository. We do not want
 // the dependencies that k8s.io/component-base pulls in as the attempt is the keep a lean set of dependencies.
 var (
-	// programName is the name of the operator.
-	programName = "grove-operator"
 	// gitVersion is the semantic version for grove operator.
 	gitVersion = "v0.0.0-master+$Format:%H$"
 	// gitCommit is the SHA1 from git, output of $(git rev-parse HEAD)
@@ -39,18 +33,23 @@ var (
 	// gitTreeState is the state of git tree, either "clean" or "dirty"
 	gitTreeState = ""
 	// buildDate is the date (in ISO8601 format) at which the build was done. Output of $(date -u +'%Y-%m-%dT%H:%M:%SZ')
-	buildDate   = "1970-01-01T00:00:00Z"
-	versionFlag bool
+	buildDate = "1970-01-01T00:00:00Z"
 )
 
-// AddFlags adds the --version flag to the flag.FlagSet.
-func AddFlags(fs *pflag.FlagSet) {
-	fs.BoolVar(&versionFlag, "version", false, "version prints the version information and quits")
+// GroveInfo holds version and build information about the grove operator.
+type GroveInfo struct {
+	GitVersion   string `json:"gitVersion"`
+	GitCommit    string `json:"gitCommit"`
+	GitTreeState string `json:"gitTreeState"`
+	BuildDate    string `json:"buildDate"`
+	GoVersion    string `json:"goVersion"`
+	Compiler     string `json:"compiler"`
+	Platform     string `json:"platform"`
 }
 
-// Get returns the version details for the grove operator.
-func Get() apimachineryversion.Info {
-	return apimachineryversion.Info{
+// New creates a new GroveInfo with the build and version information.
+func New() GroveInfo {
+	return GroveInfo{
 		GitVersion:   gitVersion,
 		GitCommit:    gitCommit,
 		GitTreeState: gitTreeState,
@@ -61,11 +60,16 @@ func Get() apimachineryversion.Info {
 	}
 }
 
-// PrintVersionAndExitIfRequested will check if --version is passed and if it is
-// then it will print the version information and quit.
-func PrintVersionAndExitIfRequested() {
-	if versionFlag {
-		_, _ = fmt.Fprintf(io.Writer(os.Stdout), "%s %v\n", programName, Get())
-		os.Exit(0)
+// Version returns the version information for Grove operator.
+func (g GroveInfo) Version() string {
+	return g.GitVersion
+}
+
+// Verbose returns a detailed multi-line string with version and build information.
+func (g GroveInfo) Verbose() string {
+	infoBytes, err := json.Marshal(g)
+	if err != nil {
+		return fmt.Sprintf("error generating verbose version information: %v\n", err)
 	}
+	return string(infoBytes)
 }

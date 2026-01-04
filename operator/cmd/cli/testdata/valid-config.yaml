@@ -1,0 +1,38 @@
+apiVersion: operator.config.grove.io/v1alpha1
+kind: OperatorConfiguration
+runtimeClientConnection:
+  qps: 100
+  burst: 150
+leaderElection:
+  enabled: true
+  leaseDuration: 15s
+  renewDeadline: 10s
+  retryPeriod: 2s
+  resourceLock: leases
+  resourceName: grove-operator-leader-election
+  resourceNamespace: default
+server:
+  webhooks:
+    bindAddress: 0.0.0.0
+    port: 9443
+    serverCertDir: /etc/grove-operator/webhook-certs
+  healthProbes:
+    bindAddress: 0.0.0.0
+    port: 9444
+  metrics:
+    bindAddress: 0.0.0.0
+    port: 9445
+controllers:
+  podCliqueSet:
+    concurrentSyncs: 3
+  podClique:
+    concurrentSyncs: 3
+  podCliqueScalingGroup:
+    concurrentSyncs: 2
+logLevel: info
+logFormat: json
+authorizer:
+  enabled: false
+clusterTopology:
+  enabled: false
+

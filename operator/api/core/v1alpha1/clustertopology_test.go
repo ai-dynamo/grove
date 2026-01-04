@@ -18,117 +18,136 @@ package v1alpha1
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
-func TestTopologyDomainComparison(t *testing.T) {
+func TestSupportedTopologyDomains(t *testing.T) {
+	expectedDomains := []TopologyDomain{
+		TopologyDomainRegion,
+		TopologyDomainZone,
+		TopologyDomainDataCenter,
+		TopologyDomainBlock,
+		TopologyDomainRack,
+		TopologyDomainHost,
+		TopologyDomainNuma,
+	}
+
+	domains := SupportedTopologyDomains()
+
+	// Verify all expected domains are present and no duplicates
+	seen := make(map[TopologyDomain]bool)
+	for _, domain := range domains {
+		assert.False(t, seen[domain], "domain %s should not be duplicated", domain)
+		seen[domain] = true
+	}
+	// Verify all expected domains are included
+	for _, expected := range expectedDomains {
+		assert.True(t, seen[expected], "domain %s should be in the returned list", expected)
+	}
+}
+
+func TestSortTopologyLevels(t *testing.T) {
 	tests := []struct {
-		name                 string
-		domain               TopologyDomain
-		other                TopologyDomain
-		expectedCompare      int
-		expectedBroaderThan  bool
-		expectedNarrowerThan bool
+		name     string
+		input    []TopologyLevel
+		expected []TopologyLevel
 	}{
 		{
-			name:                 "region vs zone",
-			domain:               TopologyDomainRegion,
-			other:                TopologyDomainZone,
-			expectedCompare:      -1,
-			expectedBroaderThan:  true,
-			expectedNarrowerThan: false,
+			name:     "empty slice",
+			input:    []TopologyLevel{},
+			expected: []TopologyLevel{},
 		},
 		{
-			name:                 "zone vs region",
-			domain:               TopologyDomainZone,
-			other:                TopologyDomainRegion,
-			expectedCompare:      1,
-			expectedBroaderThan:  false,
-			expectedNarrowerThan: true,
+			name: "single level",
+			input: []TopologyLevel{
+				{Domain: TopologyDomainZone, Key: "zone-key"},
+			},
+			expected: []TopologyLevel{
+				{Domain: TopologyDomainZone, Key: "zone-key"},
+			},
 		},
 		{
-			name:                 "region vs region (equal)",
-			domain:               TopologyDomainRegion,
-			other:                TopologyDomainRegion,
-			expectedCompare:      0,
-			expectedBroaderThan:  false,
-			expectedNarrowerThan: false,
+			name: "already sorted",
+			input: []TopologyLevel{
+				{Domain: TopologyDomainRegion, Key: "region-key"},
+				{Domain: TopologyDomainZone, Key: "zone-key"},
+				{Domain: TopologyDomainHost, Key: "host-key"},
+			},
+			expected: []TopologyLevel{
+				{Domain: TopologyDomainRegion, Key: "region-key"},
+				{Domain: TopologyDomainZone, Key: "zone-key"},
+				{Domain: TopologyDomainHost, Key: "host-key"},
+			},
 		},
 		{
-			name:                 "host vs numa",
-			domain:               TopologyDomainHost,
-			other:                TopologyDomainNuma,
-			expectedCompare:      -1,
-			expectedBroaderThan:  true,
-			expectedNarrowerThan: false,
+			name: "reverse sorted",
+			input: []TopologyLevel{
+				{Domain: TopologyDomainHost, Key: "host-key"},
+				{Domain: TopologyDomainZone, Key: "zone-key"},
+				{Domain: TopologyDomainRegion, Key: "region-key"},
+			},
+			expected: []TopologyLevel{
+				{Domain: TopologyDomainRegion, Key: "region-key"},
+				{Domain: TopologyDomainZone, Key: "zone-key"},
+				{Domain: TopologyDomainHost, Key: "host-key"},
+			},
 		},
 		{
-			name:                 "region vs numa (multiple levels apart)",
-			domain:               TopologyDomainRegion,
-			other:                TopologyDomainNuma,
-			expectedCompare:      -6,
-			expectedBroaderThan:  true,
-			expectedNarrowerThan: false,
+			name: "random order",
+			input: []TopologyLevel{
+				{Domain: TopologyDomainRack, Key: "rack-key"},
+				{Domain: TopologyDomainRegion, Key: "region-key"},
+				{Domain: TopologyDomainNuma, Key: "numa-key"},
+				{Domain: TopologyDomainZone, Key: "zone-key"},
+			},
+			expected: []TopologyLevel{
+				{Domain: TopologyDomainRegion, Key: "region-key"},
+				{Domain: TopologyDomainZone, Key: "zone-key"},
+				{Domain: TopologyDomainRack, Key: "rack-key"},
+				{Domain: TopologyDomainNuma, Key: "numa-key"},
+			},
 		},
 		{
-			name:                 "numa vs region (multiple levels apart)",
-			domain:               TopologyDomainNuma,
-			other:                TopologyDomainRegion,
-			expectedCompare:      6,
-			expectedBroaderThan:  false,
-			expectedNarrowerThan: true,
-		},
-		{
-			name:                 "datacenter vs rack",
-			domain:               TopologyDomainDataCenter,
-			other:                TopologyDomainRack,
-			expectedCompare:      -2,
-			expectedBroaderThan:  true,
-			expectedNarrowerThan: false,
-		},
-		{
-			name:                 "rack vs datacenter",
-			domain:               TopologyDomainRack,
-			other:                TopologyDomainDataCenter,
-			expectedCompare:      2,
-			expectedBroaderThan:  false,
-			expectedNarrowerThan: true,
-		},
-		{
-			name:                 "rack vs zone (narrower vs broader)",
-			domain:               TopologyDomainRack,
-			other:                TopologyDomainZone,
-			expectedCompare:      3,
-			expectedBroaderThan:  false,
-			expectedNarrowerThan: true,
-		},
-		{
-			name:                 "zone vs rack (broader vs narrower)",
-			domain:               TopologyDomainZone,
-			other:                TopologyDomainRack,
-			expectedCompare:      -3,
-			expectedBroaderThan:  true,
-			expectedNarrowerThan: false,
+			name: "all domains",
+			input: []TopologyLevel{
+				{Domain: TopologyDomainNuma, Key: "numa-key"},
+				{Domain: TopologyDomainHost, Key: "host-key"},
+				{Domain: TopologyDomainRack, Key: "rack-key"},
+				{Domain: TopologyDomainBlock, Key: "block-key"},
+				{Domain: TopologyDomainDataCenter, Key: "dc-key"},
+				{Domain: TopologyDomainZone, Key: "zone-key"},
+				{Domain: TopologyDomainRegion, Key: "region-key"},
+			},
+			expected: []TopologyLevel{
+				{Domain: TopologyDomainRegion, Key: "region-key"},
+				{Domain: TopologyDomainZone, Key: "zone-key"},
+				{Domain: TopologyDomainDataCenter, Key: "dc-key"},
+				{Domain: TopologyDomainBlock, Key: "block-key"},
+				{Domain: TopologyDomainRack, Key: "rack-key"},
+				{Domain: TopologyDomainHost, Key: "host-key"},
+				{Domain: TopologyDomainNuma, Key: "numa-key"},
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Test Compare()
-			gotCompare := tt.domain.Compare(tt.other)
-			if gotCompare != tt.expectedCompare {
-				t.Errorf("Compare() = %v, want %v", gotCompare, tt.expectedCompare)
+			// Make a copy to avoid modifying test data
+			input := make([]TopologyLevel, len(tt.input))
+			copy(input, tt.input)
+
+			// Sort the input
+			SortTopologyLevels(input)
+
+			// Check if sorted correctly
+			if len(input) != len(tt.expected) {
+				t.Fatalf("length mismatch: got %d, want %d", len(input), len(tt.expected))
 			}
 
-			// Test BroaderThan()
-			gotBroaderThan := tt.domain.BroaderThan(tt.other)
-			if gotBroaderThan != tt.expectedBroaderThan {
-				t.Errorf("BroaderThan() = %v, want %v", gotBroaderThan, tt.expectedBroaderThan)
-			}
-
-			// Test NarrowerThan()
-			gotNarrowerThan := tt.domain.NarrowerThan(tt.other)
-			if gotNarrowerThan != tt.expectedNarrowerThan {
-				t.Errorf("NarrowerThan() = %v, want %v", gotNarrowerThan, tt.expectedNarrowerThan)
+			for i := range input {
+				assert.Equal(t, input[i].Domain, tt.expected[i].Domain, "at index %d: got domain %v, want %v", i, input[i].Domain, tt.expected[i].Domain)
+				assert.Equal(t, input[i].Key, tt.expected[i].Key, "at index %d: got key %v, want %v", i, input[i].Key, tt.expected[i].Key)
 			}
 		})
 	}

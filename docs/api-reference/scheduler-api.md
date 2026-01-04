@@ -159,6 +159,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
+| `name` _string_ | Name is the name of the topology constraint group.<br />It will drive from the corresponding PCSG name. |  |  |
 | `podGroupNames` _string array_ | PodGroupNames is the list of PodGroup names in the topology constraint group. |  |  |
 | `topologyConstraint` _[TopologyConstraint](#topologyconstraint)_ | TopologyConstraint defines topology packing constraints for this group.<br />Enables PCSG-level topology constraints.<br />Updated by operator when PodCliqueScalingGroup topology constraints change. |  |  |
 

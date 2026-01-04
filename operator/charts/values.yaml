@@ -62,7 +62,21 @@ config:
   logFormat: json
   clusterTopology:
     enabled: false
-    name: "grove-topology"
+#    levels:
+#      - domain: zone
+#        key: topology.kubernetes.io/zone
+#      - domain: datacenter
+#        key: <provider-specific-datacenter-node-label-key>
+#      - domain: block
+#        key: <provider-specific-block-node-label-key>
+#      - domain: rack
+#        key: <provider-specific-rack-node-label-key>
+#      - domain: host
+#        key: kubernetes.io/hostname
+#      - domain: region
+#        key: topology.kubernetes.io/region
+#      - domain: numa
+#        key: <provider-specific-numa-node-label-key>
   authorizer:
     enabled: false
     exemptServiceAccountUserNames:
@@ -114,6 +128,20 @@ clusterRoleBinding:
     app.kubernetes.io/name: grove-operator
     app.kubernetes.io/part-of: grove
 
+leaseRole:
+  name: grove:system:grove-operator-lease
+  labels:
+    app.kubernetes.io/component: operator-lease-role
+    app.kubernetes.io/name: grove-operator
+    app.kubernetes.io/part-of: grove
+
+leaseRoleBinding:
+  name: grove:system:grove-operator-lease
+  labels:
+    app.kubernetes.io/component: operator-lease-rolebinding
+    app.kubernetes.io/name: grove-operator
+    app.kubernetes.io/part-of: grove
+
 webhooks:
   podCliqueSetValidationWebhook:
     labels:
@@ -124,11 +152,6 @@ webhooks:
     labels:
       app.kubernetes.io/component: operator-pcs-defaulting-webhook
       app.kubernetes.io/name: pcs-defaulting-webhook
-      app.kubernetes.io/part-of: grove
-  clusterTopologyValidationWebhook:
-    labels:
-      app.kubernetes.io/component: operator-clustertopology-validating-webhook
-      app.kubernetes.io/name: clustertopology-validating-webhook
       app.kubernetes.io/part-of: grove
   authorizerWebhook:
     labels:

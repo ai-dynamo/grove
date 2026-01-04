@@ -167,6 +167,11 @@ spec:
                   description: TopologyConstraintGroupConfig defines topology constraints
                     for a group of PodGroups.
                   properties:
+                    name:
+                      description: |-
+                        Name is the name of the topology constraint group.
+                        It will drive from the corresponding PCSG name.
+                      type: string
                     podGroupNames:
                       description: PodGroupNames is the list of PodGroup names in
                         the topology constraint group.
@@ -200,6 +205,7 @@ spec:
                           type: object
                       type: object
                   required:
+                  - name
                   - podGroupNames
                   type: object
                 type: array

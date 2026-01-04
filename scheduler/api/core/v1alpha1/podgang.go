@@ -115,6 +115,9 @@ type TopologyPackConstraint struct {
 
 // TopologyConstraintGroupConfig defines topology constraints for a group of PodGroups.
 type TopologyConstraintGroupConfig struct {
+	// Name is the name of the topology constraint group.
+	// It will drive from the corresponding PCSG name.
+	Name string `json:"name"`
 	// PodGroupNames is the list of PodGroup names in the topology constraint group.
 	PodGroupNames []string `json:"podGroupNames"`
 	// TopologyConstraint defines topology packing constraints for this group.

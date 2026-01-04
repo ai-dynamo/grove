@@ -26,7 +26,6 @@ import (
 	"github.com/ai-dynamo/grove/operator/initc/cmd/opts"
 	"github.com/ai-dynamo/grove/operator/initc/internal"
 	"github.com/ai-dynamo/grove/operator/internal/logger"
-	"github.com/ai-dynamo/grove/operator/internal/version"
 )
 
 var (
@@ -41,9 +40,8 @@ func main() {
 		log.Error(err, "Failed to generate configuration for the init container from the flags")
 		os.Exit(1)
 	}
-	version.PrintVersionAndExitIfRequested()
 
-	log.Info("Starting grove init container", "version", version.Get())
+	log.Info("Starting grove init container")
 
 	podCliqueDependencies, err := config.GetPodCliqueDependencies()
 	if err != nil {

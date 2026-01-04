@@ -23,7 +23,6 @@ import (
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
-	ctvalidation "github.com/ai-dynamo/grove/operator/internal/webhook/admission/clustertopology/validation"
 	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/authorization"
 	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/defaulting"
 	pcsvalidation "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/validation"
@@ -31,8 +30,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
-// RegisterWebhooks registers the webhooks with the controller manager.
-func RegisterWebhooks(mgr manager.Manager, authorizerConfig configv1alpha1.AuthorizerConfig) error {
+// Register registers the webhooks with the controller manager.
+func Register(mgr manager.Manager, authorizerConfig configv1alpha1.AuthorizerConfig) error {
 	defaultingWebhook := defaulting.NewHandler(mgr)
 	slog.Info("Registering webhook with manager", "handler", defaulting.Name)
 	if err := defaultingWebhook.RegisterWithManager(mgr); err != nil {
@@ -42,11 +41,6 @@ func RegisterWebhooks(mgr manager.Manager, authorizerConfig configv1alpha1.Autho
 	slog.Info("Registering webhook with manager", "handler", pcsvalidation.Name)
 	if err := pcsValidatingWebhook.RegisterWithManager(mgr); err != nil {
 		return fmt.Errorf("failed adding %s webhook handler: %v", pcsvalidation.Name, err)
-	}
-	ctValidatingWebhook := ctvalidation.NewHandler(mgr)
-	slog.Info("Registering webhook with manager", "handler", ctvalidation.Name)
-	if err := ctValidatingWebhook.RegisterWithManager(mgr); err != nil {
-		return fmt.Errorf("failed adding %s webhook handler: %v", ctvalidation.Name, err)
 	}
 	if authorizerConfig.Enabled {
 		serviceAccountName, ok := os.LookupEnv(constants.EnvVarServiceAccountName)

@@ -17,7 +17,16 @@
 package v1alpha1
 
 import (
+	"slices"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+const (
+	// DefaultClusterTopologyName is the name of the default ClusterTopology resource managed by the operator.
+	// Currently, Grove operator generates and maintains a single ClusterTopology resource per cluster. There is no support
+	// for externally created ClusterTopology resources. However, this may change in the future to allow more flexibility.
+	DefaultClusterTopologyName = "grove-topology"
 )
 
 // +genclient
@@ -52,12 +61,32 @@ type ClusterTopologySpec struct {
 	// This field is immutable after creation.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=7
+	// +kubebuilder:validation:XValidation:rule="self.all(x, self.filter(y, y.domain == x.domain).size() == 1)",message="domain must be unique across all levels"
+	// +kubebuilder:validation:XValidation:rule="self.all(x, self.filter(y, y.key == x.key).size() == 1)",message="key must be unique across all levels"
 	Levels []TopologyLevel `json:"levels"`
 }
 
-// TopologyDomain represents a predefined topology level in the hierarchy.
-// Topology ordering (broadest to narrowest):
-// Region > Zone > DataCenter > Block > Rack > Host > Numa
+// TopologyLevel defines a single level in the topology hierarchy.
+// Maps a platform-agnostic domain to a platform-specific node label key,
+// allowing workload operators a consistent way to reference topology levels when defining TopologyConstraint's.
+type TopologyLevel struct {
+	// Domain is a platform provider-agnostic level identifier.
+	// Must be one of: region, zone, datacenter, block, rack, host, numa
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Enum=region;zone;datacenter;block;rack;host;numa
+	Domain TopologyDomain `json:"domain"`
+
+	// Key is the node label key that identifies this topology domain.
+	// Must be a valid Kubernetes label key (qualified name).
+	// Examples: "topology.kubernetes.io/zone", "kubernetes.io/hostname"
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]/)?([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$`
+	Key string `json:"key"`
+}
+
+// TopologyDomain represents a level in the cluster topology hierarchy.
 type TopologyDomain string
 
 const (
@@ -77,8 +106,20 @@ const (
 	TopologyDomainNuma TopologyDomain = "numa"
 )
 
+// SupportedTopologyDomains returns all supported topology domain values.
+func SupportedTopologyDomains() []TopologyDomain {
+	topologyDomains := make([]TopologyDomain, 0, len(topologyDomainOrder))
+	for domain := range topologyDomainOrder {
+		topologyDomains = append(topologyDomains, domain)
+	}
+	return topologyDomains
+}
+
 // topologyDomainOrder defines the hierarchical order of topology domains from broadest to narrowest.
 // Lower value = broader scope (e.g., Region is broader than Zone).
+// Context: TopologyDomain is used when defining TopologyConstraint in workload specifications. TopologyConstraint at different
+// levels (PodClique, PodCliqueScalingGroup and PodCliqueSet) captures required packing guarantees that a scheduler backend
+// must provide.
 var topologyDomainOrder = map[TopologyDomain]int{
 	TopologyDomainRegion:     0,
 	TopologyDomainZone:       1,
@@ -89,63 +130,9 @@ var topologyDomainOrder = map[TopologyDomain]int{
 	TopologyDomainNuma:       6,
 }
 
-// Compare compares this domain with another domain.
-// Returns:
-//   - negative value if this domain is broader than other
-//   - zero if domains are equal
-//   - positive value if this domain is narrower than other
-//
-// This method assumes both domains are valid (enforced by kubebuilder validation).
-func (d TopologyDomain) Compare(other TopologyDomain) int {
-	return topologyDomainOrder[d] - topologyDomainOrder[other]
-}
-
-// BroaderThan returns true if this domain represents a broader scope than the other domain.
-// For example, Region.BroaderThan(Zone) returns true.
-func (d TopologyDomain) BroaderThan(other TopologyDomain) bool {
-	return d.Compare(other) < 0
-}
-
-// NarrowerThan returns true if this domain represents a narrower scope than the other domain.
-// For example, Zone.NarrowerThan(Region) returns true.
-func (d TopologyDomain) NarrowerThan(other TopologyDomain) bool {
-	return d.Compare(other) > 0
-}
-
-// TopologyLevel defines a single level in the topology hierarchy.
-type TopologyLevel struct {
-	// Domain is the predefined level identifier used in TopologyConstraint references.
-	// Must be one of: region, zone, datacenter, block, rack, host, numa
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=region;zone;datacenter;block;rack;host;numa
-	Domain TopologyDomain `json:"domain"`
-
-	// Key is the node label key that identifies this topology domain.
-	// Must be a valid Kubernetes label key (qualified name).
-	// Examples: "topology.kubernetes.io/zone", "kubernetes.io/hostname"
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=63
-	Key string `json:"key"`
-}
-
-// Compare compares this topology level with another level based on their domains.
-// Returns:
-//   - negative value if this level is broader than other
-//   - zero if levels have equal domain scope
-//   - positive value if this level is narrower than other
-func (l TopologyLevel) Compare(other TopologyLevel) int {
-	return l.Domain.Compare(other.Domain)
-}
-
-// BroaderThan returns true if this level represents a broader scope than the other level.
-// For example, a Region level is broader than a Zone level.
-func (l TopologyLevel) BroaderThan(other TopologyLevel) bool {
-	return l.Domain.BroaderThan(other.Domain)
-}
-
-// NarrowerThan returns true if this level represents a narrower scope than the other level.
-// For example, a Zone level is narrower than a Region level.
-func (l TopologyLevel) NarrowerThan(other TopologyLevel) bool {
-	return l.Domain.NarrowerThan(other.Domain)
+// SortTopologyLevels sorts a slice of TopologyLevel from broadest to narrowest scope, sorting by their Domain.
+func SortTopologyLevels(levels []TopologyLevel) {
+	slices.SortFunc(levels, func(a, b TopologyLevel) int {
+		return topologyDomainOrder[a.Domain] - topologyDomainOrder[b.Domain]
+	})
 }

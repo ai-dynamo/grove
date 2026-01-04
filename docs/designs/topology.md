@@ -172,6 +172,7 @@ Domain TopologyDomain `json:"domain"`
 // +kubebuilder:validation:Required
 // +kubebuilder:validation:MinLength=1
 // +kubebuilder:validation:MaxLength=63
+// +kubebuilder:validation:Pattern=`^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]/)?([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$`
 Key string `json:"key"`
 }
 
@@ -568,6 +569,9 @@ type PodGangSpec struct {
 ```go
 // TopologyConstraintGroupConfig defines topology constraints for a group of PodGroups.
 type TopologyConstraintGroupConfig struct {
+    // Name is the name of the topology constraint group.
+    // It will drive from the corresponding PCSG name.
+    Name string `json:"name"`   
     // TopologyConstraint defines topology packing constraints for this group.
     // Enables PCSG-level topology constraints.
     // Updated by operator when PodCliqueScalingGroup topology constraints change.

@@ -23,7 +23,6 @@ import (
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
-	"github.com/ai-dynamo/grove/operator/internal/version"
 
 	"github.com/spf13/pflag"
 )
@@ -43,11 +42,10 @@ type CLIOptions struct {
 }
 
 // RegisterFlags registers all the flags that are defined for the init container.
-func (c *CLIOptions) RegisterFlags(fs *pflag.FlagSet) {
+func (c *CLIOptions) RegisterFlags() {
 	// --podcliques=<podclique-fqn>:<minAvailable-replicas>
 	// --podcliques=podclique-a:3 --podcliques=podclique-b:4 and so on for each PodClique.
 	pflag.StringArrayVarP(&c.podCliques, "podcliques", "p", nil, "podclique name and minAvailable replicas seperated by comma, repeated for each podclique")
-	version.AddFlags(fs)
 }
 
 // GetPodCliqueDependencies returns the PodClique information as a map with the minAvailable associated with each PodClique name.
@@ -91,7 +89,7 @@ func InitializeCLIOptions() (CLIOptions, error) {
 	config := CLIOptions{
 		podCliques: make([]string, 0),
 	}
-	config.RegisterFlags(pflag.CommandLine)
+	config.RegisterFlags()
 	pflag.Parse()
 	return config, nil
 }

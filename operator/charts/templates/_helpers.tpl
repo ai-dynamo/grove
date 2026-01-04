@@ -34,8 +34,12 @@ config.yaml: |
   {{- if .Values.config.clusterTopology }}
   clusterTopology:
     enabled: {{ .Values.config.clusterTopology.enabled }}
-    {{- if .Values.config.clusterTopology.name }}
-    name: {{ .Values.config.clusterTopology.name }}
+    {{- if .Values.config.clusterTopology.levels }}
+    levels:
+    {{- range .Values.config.clusterTopology.levels }}
+      - domain: {{ .domain }}
+        key: {{ .key }}
+    {{- end }}
     {{- end }}
   {{- end }}
   {{- if .Values.config.authorizer.enabled }}
@@ -148,6 +152,20 @@ release: "{{ .Release.Name }}"
 {{- define "operator.server.secret.labels" -}}
 {{- include "common.chart.labels" . }}
 {{- range $key, $val := .Values.webhookServerSecret.labels }}
+{{ $key }}: {{ $val }}
+{{- end }}
+{{- end -}}
+
+{{- define "operator.lease.role.labels" -}}
+{{- include "common.chart.labels" . }}
+{{- range $key, $val := .Values.leaseRole.labels }}
+{{ $key }}: {{ $val }}
+{{- end }}
+{{- end -}}
+
+{{- define "operator.lease.rolebinding.labels" -}}
+{{- include "common.chart.labels" . }}
+{{- range $key, $val := .Values.leaseRoleBinding.labels }}
 {{ $key }}: {{ $val }}
 {{- end }}
 {{- end -}}

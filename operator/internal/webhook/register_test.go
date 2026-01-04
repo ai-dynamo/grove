@@ -91,7 +91,7 @@ func TestRegisterWebhooks_WithoutAuthorizer(t *testing.T) {
 		Enabled: false,
 	}
 
-	err := RegisterWebhooks(mgr, authorizerConfig)
+	err := Register(mgr, authorizerConfig)
 	require.NoError(t, err)
 }
 
@@ -120,7 +120,7 @@ func TestRegisterWebhooks_WithAuthorizerMissingEnvVar(t *testing.T) {
 		Enabled: true,
 	}
 
-	err = RegisterWebhooks(mgr, authorizerConfig)
+	err = Register(mgr, authorizerConfig)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), constants.EnvVarServiceAccountName)
 }
@@ -149,7 +149,7 @@ func TestRegisterWebhooks_WithAuthorizerMissingNamespaceFile(t *testing.T) {
 		Enabled: true,
 	}
 
-	err := RegisterWebhooks(mgr, authorizerConfig)
+	err := Register(mgr, authorizerConfig)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "error reading namespace file")
 }
@@ -194,7 +194,7 @@ func TestRegisterWebhooks_WithAuthorizerSuccess(t *testing.T) {
 		Enabled: true,
 	}
 
-	err = RegisterWebhooks(mgr, authorizerConfig)
+	err = Register(mgr, authorizerConfig)
 	// Will error because it tries to read the hardcoded namespace file path
 	require.Error(t, err)
 }

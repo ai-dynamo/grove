@@ -49,12 +49,14 @@ spec:
                   The order in this list defines the hierarchy (index 0 = broadest level).
                   This field is immutable after creation.
                 items:
-                  description: TopologyLevel defines a single level in the topology
-                    hierarchy.
+                  description: |-
+                    TopologyLevel defines a single level in the topology hierarchy.
+                    Maps a platform-agnostic domain to a platform-specific node label key,
+                    allowing workload operators a consistent way to reference topology levels when defining TopologyConstraint's.
                   properties:
                     domain:
                       description: |-
-                        Domain is the predefined level identifier used in TopologyConstraint references.
+                        Domain is a platform provider-agnostic level identifier.
                         Must be one of: region, zone, datacenter, block, rack, host, numa
                       enum:
                       - region
@@ -72,6 +74,7 @@ spec:
                         Examples: "topology.kubernetes.io/zone", "kubernetes.io/hostname"
                       maxLength: 63
                       minLength: 1
+                      pattern: ^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]/)?([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$
                       type: string
                   required:
                   - domain
@@ -80,6 +83,12 @@ spec:
                 maxItems: 7
                 minItems: 1
                 type: array
+                x-kubernetes-validations:
+                - message: domain must be unique across all levels
+                  rule: self.all(x, self.filter(y, y.domain == x.domain).size() ==
+                    1)
+                - message: key must be unique across all levels
+                  rule: self.all(x, self.filter(y, y.key == x.key).size() == 1)
             required:
             - levels
             type: object

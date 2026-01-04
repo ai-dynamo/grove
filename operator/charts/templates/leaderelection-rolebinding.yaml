@@ -1,0 +1,15 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ required ".Values.leaseRoleBinding.name is required" .Values.leaseRoleBinding.name }}
+  labels:
+{{- include "operator.lease.rolebinding.labels" . | nindent 4 }}
+  namespace: '{{ .Release.Namespace }}'
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ required ".Values.leaseRole.name is required" .Values.leaseRole.name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ required ".Values.serviceAccount.name is required" .Values.serviceAccount.name }}
+    namespace: '{{ .Release.Namespace }}'

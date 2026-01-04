@@ -76,9 +76,8 @@ func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger log
 	// if the generationHash is not reflected correctly yet, requeue. Allow the informer cache to catch-up.
 	if !r.isGenerationHashExpectationSatisfied(pcsObjectName, pcs.Status.CurrentGenerationHash) {
 		return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, fmt.Sprintf("CurrentGenerationHash is not up-to-date for PodCliqueSet: %v", pcsObjectKey))
-	} else {
-		r.pcsGenerationHashExpectations.Delete(pcsObjectName)
 	}
+	r.pcsGenerationHashExpectations.Delete(pcsObjectName)
 
 	newGenerationHash := computeGenerationHash(pcs)
 	if pcs.Status.CurrentGenerationHash == nil {

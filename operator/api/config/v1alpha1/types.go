@@ -17,6 +17,8 @@
 package v1alpha1
 
 import (
+	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -55,14 +57,14 @@ var (
 type OperatorConfiguration struct {
 	metav1.TypeMeta  `json:",inline"`
 	ClientConnection ClientConnectionConfiguration `json:"runtimeClientConnection"`
-	LeaderElection   LeaderElectionConfiguration
-	Server           ServerConfiguration          `json:"server"`
-	Debugging        *DebuggingConfiguration      `json:"debugging,omitempty"`
-	Controllers      ControllerConfiguration      `json:"controllers"`
-	LogLevel         LogLevel                     `json:"logLevel"`
-	LogFormat        LogFormat                    `json:"logFormat"`
-	Authorizer       AuthorizerConfig             `json:"authorizer"`
-	ClusterTopology  ClusterTopologyConfiguration `json:"clusterTopology"`
+	LeaderElection   LeaderElectionConfiguration   `json:"leaderElection"`
+	Server           ServerConfiguration           `json:"server"`
+	Debugging        *DebuggingConfiguration       `json:"debugging,omitempty"`
+	Controllers      ControllerConfiguration       `json:"controllers"`
+	LogLevel         LogLevel                      `json:"logLevel"`
+	LogFormat        LogFormat                     `json:"logFormat"`
+	Authorizer       AuthorizerConfig              `json:"authorizer"`
+	ClusterTopology  ClusterTopologyConfiguration  `json:"clusterTopology"`
 }
 
 // LeaderElectionConfiguration defines the configuration for the leader election.
@@ -193,8 +195,8 @@ type AuthorizerConfig struct {
 type ClusterTopologyConfiguration struct {
 	// Enabled indicates whether topology-aware scheduling is enabled.
 	Enabled bool `json:"enabled"`
-	// Name is the ClusterTopology resource name to use.
-	// Defaults to "grove-topology" if not specified when topology is enabled.
+	// Levels is an ordered list of topology levels from broadest to narrowest scope.
+	// Used to create/update the ClusterTopology CR at operator startup.
 	// +optional
-	Name string `json:"name,omitempty"`
+	Levels []corev1alpha1.TopologyLevel `json:"levels,omitempty"`
 }

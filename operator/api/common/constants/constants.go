@@ -16,6 +16,15 @@
 
 package constants
 
+const (
+	// OperatorName is the name of the Grove operator.
+	OperatorName = "grove-operator"
+	// OperatorConfigGroupName is the name of the group for Grove operator configuration.
+	OperatorConfigGroupName = "operator.config.grove.io"
+	// OperatorGroupName is the name of the group for all Grove custom resources.
+	OperatorGroupName = "grove.io"
+)
+
 // Constants for finalizers.
 const (
 	// FinalizerPodCliqueSet is the finalizer for PodCliqueSet that is added to `.metadata.finalizers[]` slice. This will be placed on all PodCliqueSet resources
@@ -107,4 +116,6 @@ const (
 	KindPodClique = "PodClique"
 	// KindPodCliqueScalingGroup is the kind for a PodCliqueScalingGroup resource.
 	KindPodCliqueScalingGroup = "PodCliqueScalingGroup"
+	// KindClusterTopology is the kind for a ClusterTopology resource.
+	KindClusterTopology = "ClusterTopology"
 )

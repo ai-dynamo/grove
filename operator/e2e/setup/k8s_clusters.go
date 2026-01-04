@@ -1031,7 +1031,7 @@ func buildLDFlagsForE2E() string {
 
 	// Build the ldflags string
 	// Note: The module path changed from github.com/NVIDIA to github.com/ai-dynamo
-	ldflags := fmt.Sprintf("-X github.com/ai-dynamo/grove/operator/internal/version.gitCommit=%s -X github.com/ai-dynamo/grove/operator/internal/version.gitTreeState=%s -X github.com/ai-dynamo/grove/operator/internal/version.buildDate=%s -X github.com/ai-dynamo/grove/operator/internal/version.gitVersion=E2E_TESTS -X github.com/ai-dynamo/grove/operator/internal/version.programName=grove-operator",
+	ldflags := fmt.Sprintf("-X github.com/ai-dynamo/grove/operator/internal/version.gitCommit=%s -X github.com/ai-dynamo/grove/operator/internal/version.gitTreeState=%s -X github.com/ai-dynamo/grove/operator/internal/version.buildDate=%s -X github.com/ai-dynamo/grove/operator/internal/version.gitVersion=E2E_TESTS",
 		gitCommit, treeState, buildDate)
 
 	return ldflags

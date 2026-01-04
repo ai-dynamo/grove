@@ -17,16 +17,15 @@
 package v1alpha1
 
 import (
+	"github.com/ai-dynamo/grove/operator/api/common/constants"
+
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-// GroupName is the group name used in this package
-const GroupName = "operator.config.grove.io"
-
 var (
 	// SchemeGroupVersion is group version used to register these objects
-	SchemeGroupVersion = schema.GroupVersion{Group: GroupName, Version: "v1alpha1"}
+	SchemeGroupVersion = schema.GroupVersion{Group: constants.OperatorConfigGroupName, Version: "v1alpha1"}
 	// SchemeBuilder is used to add go types to the GroupVersionKind scheme
 	SchemeBuilder = runtime.NewSchemeBuilder(addKnownTypes, addDefaultingFuncs)
 	// AddToScheme is a reference to the Scheme Builder's AddToScheme function.

@@ -33,8 +33,6 @@ build:
             - VERSION
         flags:
           - -v
-        ldflags:
-          - '{{.LD_FLAGS}}'
         main: ./initc/cmd
 deploy:
   helm: # see https://skaffold.dev/docs/deployers/helm/
