@@ -31,12 +31,12 @@ config.yaml: |
   {{- end }}
   logLevel: {{ .Values.config.logLevel | default "info" }}
   logFormat: {{ .Values.config.logFormat | default "json" }}
-  {{- if .Values.config.clusterTopology }}
-  clusterTopology:
-    enabled: {{ .Values.config.clusterTopology.enabled }}
-    {{- if .Values.config.clusterTopology.levels }}
+  {{- if .Values.config.topologyAwareScheduling }}
+  topologyAwareScheduling:
+    enabled: {{ .Values.config.topologyAwareScheduling.enabled }}
+    {{- if .Values.config.topologyAwareScheduling.levels }}
     levels:
-    {{- range .Values.config.clusterTopology.levels }}
+    {{- range .Values.config.topologyAwareScheduling.levels }}
       - domain: {{ .domain }}
         key: {{ .key }}
     {{- end }}

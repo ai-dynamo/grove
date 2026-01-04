@@ -128,9 +128,11 @@ func (r _resource) getExistingPCLQsForPCS(ctx context.Context, pcs *grovecorev1a
 		return nil, err
 	}
 
-	return lo.Filter(pclqList.Items, func(pclq grovecorev1alpha1.PodClique, _ int) bool {
-		return metav1.IsControlledBy(&pclq, pcs)
-	}), nil
+	// Return all PodCliques with matching labels. PodCliques can be owned either:
+	// 1. Directly by PCS (standalone cliques)
+	// 2. By PCSG (scaling group member cliques) - PCSG itself is owned by PCS
+	// Label matching ensures they belong to this PCS, no ownership filter needed.
+	return pclqList.Items, nil
 }
 
 // computeExpectedPodGangs computes expected PodGangs based on PCS replicas and scaling groups.

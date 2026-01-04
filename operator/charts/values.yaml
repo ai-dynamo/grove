@@ -60,23 +60,17 @@ config:
       concurrentSyncs: 3
   logLevel: info
   logFormat: json
-  clusterTopology:
-    enabled: false
-#    levels:
-#      - domain: zone
-#        key: topology.kubernetes.io/zone
-#      - domain: datacenter
-#        key: <provider-specific-datacenter-node-label-key>
-#      - domain: block
-#        key: <provider-specific-block-node-label-key>
-#      - domain: rack
-#        key: <provider-specific-rack-node-label-key>
-#      - domain: host
-#        key: kubernetes.io/hostname
-#      - domain: region
-#        key: topology.kubernetes.io/region
-#      - domain: numa
-#        key: <provider-specific-numa-node-label-key>
+  topologyAwareScheduling:
+    enabled: true
+    levels:
+      - domain: zone
+        key: topology.kubernetes.io/zone
+      - domain: block
+        key: topology.kubernetes.io/block
+      - domain: rack
+        key: topology.kubernetes.io/rack
+      - domain: host
+        key: topology.kubernetes.io/host
   authorizer:
     enabled: false
     exemptServiceAccountUserNames:
