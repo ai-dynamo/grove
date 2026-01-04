@@ -38,13 +38,27 @@ const (
 	certificateAuthorityOrganization = "Grove"
 )
 
-// ManageWebhookCerts registers the cert-controller with the manager which will be used to manage
-// webhook certificates.
-func ManageWebhookCerts(mgr ctrl.Manager, certDir string, authorizerEnabled bool, certsReadyCh chan struct{}) error {
+// ManageWebhookCerts manages webhook certificates based on the AutoProvision configuration.
+// When AutoProvision=true: uses cert-controller for automatic certificate generation and management.
+// When AutoProvision=false: waits for externally provided certificates (e.g., from cert-manager, cluster admin).
+func ManageWebhookCerts(mgr ctrl.Manager, certDir string, secretName string, authorizerEnabled bool, autoProvision bool, certsReadyCh chan struct{}) error {
 	namespace, err := getOperatorNamespace()
 	if err != nil {
 		return err
 	}
+
+	logger := ctrl.Log.WithName("cert-management")
+
+	if !autoProvision {
+		logger.Info("Using externally provided certificates",
+			"certDir", certDir, "secretName", secretName)
+		// Certificates are managed externally, signal ready immediately
+		close(certsReadyCh)
+		return nil
+	}
+
+	logger.Info("Auto-provisioning certificates using cert-controller",
+		"secretName", secretName, "certDir", certDir)
 	rotator := &cert.CertRotator{
 		SecretKey: types.NamespacedName{
 			Namespace: namespace,
