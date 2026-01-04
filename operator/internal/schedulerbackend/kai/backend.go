@@ -78,57 +78,66 @@ func (b *Backend) Init() error {
 }
 
 // SyncPodGang converts PodGang to KAI PodGroup and synchronizes it
+// TODO: Currently disabled - will be implemented in phase 2
 func (b *Backend) SyncPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
-
-	// Convert PodGang to PodGroup
-	podGroup := b.convertPodGangToPodGroup(podGang)
-
-	// Create or update PodGroup
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(podGroupGVK())
-
-	err := b.client.Get(ctx, client.ObjectKey{
-		Namespace: podGroup.GetNamespace(),
-		Name:      podGroup.GetName(),
-	}, existing)
-
-	if err != nil {
-		if client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("failed to get existing PodGroup: %w", err)
-		}
-
-		// Create new PodGroup
-		if err := b.client.Create(ctx, podGroup); err != nil {
-			return fmt.Errorf("failed to create PodGroup: %w", err)
-		}
-		return nil
-	}
-
-	// Update existing PodGroup
-	podGroup.SetResourceVersion(existing.GetResourceVersion())
-	if err := b.client.Update(ctx, podGroup); err != nil {
-		return fmt.Errorf("failed to update PodGroup: %w", err)
-	}
-
+	// Phase 1: Skip PodGroup creation/update
+	// Phase 2: Will convert PodGang to PodGroup and synchronize
 	return nil
+
+	// Convert PodGang to PodGroup (disabled)
+	// podGroup := b.convertPodGangToPodGroup(podGang)
+	//
+	// // Create or update PodGroup
+	// existing := &unstructured.Unstructured{}
+	// existing.SetGroupVersionKind(podGroupGVK())
+	//
+	// err := b.client.Get(ctx, client.ObjectKey{
+	// 	Namespace: podGroup.GetNamespace(),
+	// 	Name:      podGroup.GetName(),
+	// }, existing)
+	//
+	// if err != nil {
+	// 	if client.IgnoreNotFound(err) != nil {
+	// 		return fmt.Errorf("failed to get existing PodGroup: %w", err)
+	// 	}
+	//
+	// 	// Create new PodGroup
+	// 	if err := b.client.Create(ctx, podGroup); err != nil {
+	// 		return fmt.Errorf("failed to create PodGroup: %w", err)
+	// 	}
+	// 	return nil
+	// }
+	//
+	// // Update existing PodGroup
+	// podGroup.SetResourceVersion(existing.GetResourceVersion())
+	// if err := b.client.Update(ctx, podGroup); err != nil {
+	// 	return fmt.Errorf("failed to update PodGroup: %w", err)
+	// }
+	//
+	// return nil
 }
 
 // OnPodGangDelete removes the PodGroup owned by this PodGang
+// TODO: Currently disabled - will be implemented in phase 2
 func (b *Backend) OnPodGangDelete(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
-
-	podGroup := &unstructured.Unstructured{}
-	podGroup.SetGroupVersionKind(podGroupGVK())
-	podGroup.SetName(b.getPodGroupName(podGang))
-	podGroup.SetNamespace(podGang.Namespace)
-
-	if err := b.client.Delete(ctx, podGroup); err != nil {
-		if client.IgnoreNotFound(err) == nil {
-			return nil // Already deleted
-		}
-		return fmt.Errorf("failed to delete PodGroup: %w", err)
-	}
-
+	// Phase 1: Skip PodGroup deletion
+	// Phase 2: Will delete PodGroup when PodGang is deleted
 	return nil
+
+	// Delete PodGroup (disabled)
+	// podGroup := &unstructured.Unstructured{}
+	// podGroup.SetGroupVersionKind(podGroupGVK())
+	// podGroup.SetName(b.getPodGroupName(podGang))
+	// podGroup.SetNamespace(podGang.Namespace)
+	//
+	// if err := b.client.Delete(ctx, podGroup); err != nil {
+	// 	if client.IgnoreNotFound(err) == nil {
+	// 		return nil // Already deleted
+	// 	}
+	// 	return fmt.Errorf("failed to delete PodGroup: %w", err)
+	// }
+	//
+	// return nil
 }
 
 // PreparePod adds KAI scheduler-specific configuration to the Pod
@@ -149,7 +158,7 @@ func (b *Backend) PreparePod(pod *corev1.Pod) {
 	if pod.Annotations == nil {
 		pod.Annotations = make(map[string]string)
 	}
-	
+
 	// Get PodGang and PodGroup names from labels
 	if podGangName, ok := pod.Labels[common.LabelPodGang]; ok {
 		pod.Annotations["kai.scheduler/podgang"] = podGangName
