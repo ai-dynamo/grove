@@ -642,6 +642,13 @@ func (in *PodCliqueSetStatus) DeepCopyInto(out *PodCliqueSetStatus) {
 		*out = new(int64)
 		**out = **in
 	}
+	if in.Conditions != nil {
+		in, out := &in.Conditions, &out.Conditions
+		*out = make([]v1.Condition, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
 	if in.LastErrors != nil {
 		in, out := &in.LastErrors, &out.LastErrors
 		*out = make([]LastError, len(*in))

@@ -80,7 +80,7 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs 
 	// externally defined ClusterTopology CR. Hence, fetching ClusterTopology CR here to keep the code future-proof.
 	sc.tasEnabled = r.tasConfig.Enabled
 	if r.tasConfig.Enabled {
-		sc.topologyLevels, err = r.getClusterTopologyLevels(ctx)
+		sc.topologyLevels, err = componentutils.GetClusterTopologyLevels(ctx, r.client, grovecorev1alpha1.DefaultClusterTopologyName)
 		if err != nil {
 			return nil, groveerr.WrapError(err,
 				errCodeGetClusterTopologyLevels,
@@ -421,17 +421,6 @@ func (r _resource) getExistingPodsByPCLQForPCS(ctx context.Context, pcsObjectKey
 	}
 
 	return podsByPCLQ, nil
-}
-
-func (r _resource) getClusterTopologyLevels(ctx context.Context) ([]grovecorev1alpha1.TopologyLevel, error) {
-	if !r.tasConfig.Enabled {
-		return nil, nil
-	}
-	clusterTopology := &grovecorev1alpha1.ClusterTopology{}
-	if err := r.client.Get(ctx, client.ObjectKey{Name: grovecorev1alpha1.DefaultClusterTopologyName}, clusterTopology); err != nil {
-		return nil, err
-	}
-	return clusterTopology.Spec.Levels, nil
 }
 
 // runSyncFlow executes the PodGang synchronization workflow.

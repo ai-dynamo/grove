@@ -140,4 +140,5 @@ rules:
   - watch
   - patch
   - update
+  - delete
 
