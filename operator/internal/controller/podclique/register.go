@@ -18,6 +18,7 @@ package podclique
 
 import (
 	"context"
+	"strings"
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
@@ -73,11 +74,6 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 			&groveschedulerv1alpha1.PodGang{},
 			handler.EnqueueRequestsFromMapFunc(mapPodGangToPCLQs()),
 			builder.WithPredicates(podGangPredicate()),
-		).
-		Watches(
-			&schedulingv1alpha1.Workload{},
-			handler.EnqueueRequestsFromMapFunc(mapWorkloadToPCLQs()),
-			builder.WithPredicates(workloadPredicate()),
 		).
 		Complete(r)
 }
@@ -251,14 +247,23 @@ func mapPodGangToPCLQs() handler.MapFunc {
 		}
 		requests := make([]reconcile.Request, 0, len(podGang.Spec.PodGroups))
 		for _, podGroup := range podGang.Spec.PodGroups {
-			// The PodGroup name is the PodClique FQN
-			pclqFQN := podGroup.Name
+			if len(podGroup.PodReferences) == 0 {
+				continue
+			}
+			podRefName := podGroup.PodReferences[0].Name
+			pclqFQN := extractPCLQNameFromPodName(podRefName)
 			requests = append(requests, reconcile.Request{
 				NamespacedName: types.NamespacedName{Name: pclqFQN, Namespace: podGang.Namespace},
 			})
 		}
 		return requests
 	}
+}
+
+// extractPCLQNameFromPodName extracts the PodClique name from a Pod name by removing the replica index suffix
+func extractPCLQNameFromPodName(podName string) string {
+	endIndex := strings.LastIndex(podName, "-")
+	return podName[:endIndex]
 }
 
 // podGangPredicate filters PodGang events to only trigger when Initialized=True

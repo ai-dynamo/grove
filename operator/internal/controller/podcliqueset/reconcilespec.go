@@ -211,8 +211,8 @@ func getOrderedKindsForSync(pcs *grovecorev1alpha1.PodCliqueSet) []component.Kin
 		component.KindHeadlessService,
 		component.KindHorizontalPodAutoscaler,
 		component.KindPodCliqueSetReplica,
+		component.KindPodGang,               // Create/Update PodGang (handles both initial creation and updating with pod references)
 		component.KindPodClique,             // Create PodClique (which creates Pods)
 		component.KindPodCliqueScalingGroup, // Create PCSG
-		component.KindPodGang,               // Create/Update PodGang (handles both initial creation and updating with pod references)
 	}
 }
