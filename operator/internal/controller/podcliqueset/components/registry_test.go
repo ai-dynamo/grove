@@ -19,6 +19,7 @@ package components
 import (
 	"testing"
 
+	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 
@@ -50,7 +51,7 @@ func TestCreateOperatorRegistry(t *testing.T) {
 		mgr := &mockManager{client: cl, scheme: scheme}
 		eventRecorder := record.NewFakeRecorder(10)
 
-		registry := CreateOperatorRegistry(mgr, eventRecorder)
+		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{})
 
 		require.NotNil(t, registry)
 
@@ -84,7 +85,7 @@ func TestCreateOperatorRegistry(t *testing.T) {
 		mgr := &mockManager{client: cl, scheme: scheme}
 		eventRecorder := record.NewFakeRecorder(10)
 
-		registry := CreateOperatorRegistry(mgr, eventRecorder)
+		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{})
 
 		// Verify PodClique operator
 		pclqOp, err := registry.GetOperator(component.KindPodClique)

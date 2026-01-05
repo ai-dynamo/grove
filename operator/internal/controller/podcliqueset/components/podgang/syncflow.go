@@ -209,7 +209,7 @@ func buildStandalonePCLQInfosForBasePodGang(sc *syncContext, pcsReplica int) []p
 		// Check if this PodClique belongs to a scaling group
 		pcsgConfig := componentutils.FindScalingGroupConfigForClique(sc.pcs.Spec.Template.PodCliqueScalingGroupConfigs, pclqTemplateSpec.Name)
 		if pcsgConfig == nil { // Standalone PodClique
-			pclqFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: sc.pcs.Name, Replica: int(pcsReplica)}, pclqTemplateSpec.Name)
+			pclqFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: sc.pcs.Name, Replica: pcsReplica}, pclqTemplateSpec.Name)
 			pclqInfos = append(pclqInfos, buildPodCliqueInfo(sc, pclqTemplateSpec, pclqFQN, false))
 		}
 	}
@@ -355,29 +355,6 @@ func determinePodCliqueReplicas(sc *syncContext, pclqTemplateSpec *grovecorev1al
 		return pclqTemplateSpec.Spec.Replicas
 	}
 	return matchingPCLQ.Spec.Replicas
-}
-
-// identifyConstituentPCLQsForPCSGPodGang identifies PCLQs for a scaled PCSG PodGang.
-func identifyConstituentPCLQsForPCSGPodGang(pcs *grovecorev1alpha1.PodCliqueSet, pcsgFQN string, pcsgReplica int, cliqueNames []string) ([]pclqInfo, error) {
-	constituentPCLQs := make([]pclqInfo, 0, len(cliqueNames))
-	for _, pclqName := range cliqueNames {
-		pclqTemplate, ok := lo.Find(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec) bool {
-			return pclqName == pclqTemplateSpec.Name
-		})
-		if !ok {
-			return nil, fmt.Errorf("PodCliqueScalingGroup references a PodClique that does not exist in the PodCliqueSet: %s", pclqName)
-		}
-
-		pclqFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsgFQN, Replica: pcsgReplica}, pclqName)
-
-		// Create pclqInfo using consistent logic (note: we use template replicas here since this is for scaling group instances)
-		constituentPCLQs = append(constituentPCLQs, pclqInfo{
-			fqn:          pclqFQN,
-			replicas:     pclqTemplate.Spec.Replicas, // For scaling group instances, always use template replicas
-			minAvailable: *pclqTemplate.Spec.MinAvailable,
-		})
-	}
-	return constituentPCLQs, nil
 }
 
 // getExistingPCSGsForPCS fetches all existing PCSGs for the PodCliqueSet.
