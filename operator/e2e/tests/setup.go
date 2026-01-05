@@ -64,7 +64,7 @@ func init() {
 
 const (
 	// defaultPollTimeout is the timeout for most polling conditions
-	defaultPollTimeout = 60 * time.Second
+	defaultPollTimeout = 2 * time.Minute
 	// defaultPollInterval is the interval for most polling conditions
 	defaultPollInterval = 5 * time.Second
 )
