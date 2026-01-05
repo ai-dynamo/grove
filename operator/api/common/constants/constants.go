@@ -116,10 +116,10 @@ const (
 	ConditionReasonClusterTopologyNotFound = "ClusterTopologyNotFound"
 	// ConditionReasonTopologyLevelsUnavailable indicates that the one or more required topology levels defined on a
 	// PodCliqueSet for topology-aware scheduling are no longer defined in the ClusterTopology resource.
-	ConditionReasonTopologyLevelsUnavailable = "ClusterTopologyDomainsUnavailable"
+	ConditionReasonTopologyLevelsUnavailable = "ClusterTopologyLevelsUnavailable"
 	// ConditionReasonAllTopologyLevelsAvailable indicates that all required topology levels defined on a
 	// PodCliqueSet for topology-aware scheduling are defined in the ClusterTopology resource.
-	ConditionReasonAllTopologyLevelsAvailable = "AllClusterTopologyDomainsAvailable"
+	ConditionReasonAllTopologyLevelsAvailable = "AllClusterTopologyLevelsAvailable"
 )
 
 const (

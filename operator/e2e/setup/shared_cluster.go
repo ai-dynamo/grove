@@ -25,6 +25,7 @@ import (
 
 	"github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
+	"github.com/ai-dynamo/grove/operator/internal/utils/ioutil"
 	"github.com/docker/docker/api/types/image"
 	dockerclient "github.com/docker/docker/client"
 	v1 "k8s.io/api/core/v1"
@@ -106,7 +107,7 @@ func (scm *SharedClusterManager) Setup(ctx context.Context, testImages []string)
 	// Configuration for maximum cluster size needed (28 worker nodes + 3 server nodes)
 	customCfg := ClusterConfig{
 		Name:              "shared-e2e-test-cluster",
-		ControlPlaneNodes: 3,
+		ControlPlaneNodes: 1,
 		WorkerNodes:       30,     // Maximum needed across all tests
 		WorkerMemory:      "150m", // 150m memory per agent node to fit one workload pod
 		Image:             "rancher/k3s:v1.33.5-k3s1",
@@ -448,7 +449,7 @@ func setupRegistryTestImages(registryPort string, images []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create Docker client: %w", err)
 	}
-	defer cli.Close()
+	defer ioutil.CloseQuietly(cli)
 
 	// Process each image
 	for _, imageName := range images {
@@ -462,7 +463,7 @@ func setupRegistryTestImages(registryPort string, images []string) error {
 
 		// Consume the pull output to avoid blocking
 		_, err = io.Copy(io.Discard, pullReader)
-		pullReader.Close()
+		ioutil.CloseQuietly(pullReader)
 		if err != nil {
 			return fmt.Errorf("failed to read pull output for %s: %w", imageName, err)
 		}
@@ -481,7 +482,7 @@ func setupRegistryTestImages(registryPort string, images []string) error {
 
 		// Consume the push output to avoid blocking
 		_, err = io.Copy(io.Discard, pushReader)
-		pushReader.Close()
+		ioutil.CloseQuietly(pushReader)
 		if err != nil {
 			return fmt.Errorf("failed to read push output for %s: %w", registryImage, err)
 		}
