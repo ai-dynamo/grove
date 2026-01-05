@@ -61,6 +61,8 @@ type PodCliqueSetSpec struct {
 type PodCliqueSetStatus struct {
 	// ObservedGeneration is the most recent generation observed by the controller.
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
+	// Conditions represents the latest available observations of the PodCliqueSet by its controller.
+	Conditions []metav1.Condition `json:"conditions"`
 	// LastErrors captures the last errors observed by the controller when reconciling the PodCliqueSet.
 	LastErrors []LastError `json:"lastErrors,omitempty"`
 	// Replicas is the total number of PodCliqueSet replicas created.
