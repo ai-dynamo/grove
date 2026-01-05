@@ -169,7 +169,7 @@ _Appears in:_
 
 
 TopologyPackConstraint defines a topology packing constraint.
-Each of Required and Preferred fields hold a topologyKey, e.g. "kubernetes.io/hostname" ( these are label keys added on nodes).
+Each of Required and Preferred fields hold a topologyKey, e.g. "kubernetes.io/hostname" ( these are key of labels added on nodes).
 
 
 
