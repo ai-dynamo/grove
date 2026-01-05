@@ -177,7 +177,7 @@ func (r *Reconciler) mutateTopologyLevelUnavailableConditions(ctx context.Contex
 		return nil
 	}
 	// compute the new TopologyLevelsUnavailable condition based on ClusterTopology and PodCliqueSet TopologyConstraints.
-	newCond, err := r.computeTopologyLevelsUnavailableCondition(ctx, logger, pcs)
+	newCond, err := r.computeTopologyLevelsUnavailableCondition(ctx, pcs)
 	if err != nil {
 		return err
 	}
@@ -192,7 +192,7 @@ func (r *Reconciler) mutateTopologyLevelUnavailableConditions(ctx context.Contex
 	return nil
 }
 
-func (r *Reconciler) computeTopologyLevelsUnavailableCondition(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) (*metav1.Condition, error) {
+func (r *Reconciler) computeTopologyLevelsUnavailableCondition(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (*metav1.Condition, error) {
 	var cond *metav1.Condition
 	// Get the TopologyLevel's from ClusterTopology custom resource.
 	topologyLevels, err := componentutils.GetClusterTopologyLevels(ctx, r.client, grovecorev1alpha1.DefaultClusterTopologyName)
