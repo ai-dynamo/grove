@@ -243,6 +243,10 @@ func (r _resource) checkAndRemovePodSchedulingGates(sc *syncContext, logger logr
 	tasks := make([]utils.Task, 0, len(sc.existingPCLQPods))
 	skippedScheduleGatedPods := make([]string, 0, len(sc.existingPCLQPods))
 
+	logger.Info("checkAndRemovePodSchedulingGates called",
+		"existingPCLQPodsCount", len(sc.existingPCLQPods),
+		"podNamesUpdatedInPCLQPodGangs", sc.podNamesUpdatedInPCLQPodGangs)
+
 	// Pre-compute if the base PodGang is scheduled once for all pods in this PodClique
 	// All pods in the same PodClique have the same base PodGang
 	basePodGangScheduled, basePodGangName, err := r.checkBasePodGangScheduledForPodClique(sc.ctx, logger, sc.pclq)
@@ -256,6 +260,9 @@ func (r _resource) checkAndRemovePodSchedulingGates(sc *syncContext, logger logr
 	}
 
 	for i, p := range sc.existingPCLQPods {
+		logger.Info("Checking pod for scheduling gate",
+			"podName", p.Name,
+			"hasPodGangSchedulingGate", hasPodGangSchedulingGate(p))
 		if hasPodGangSchedulingGate(p) {
 			podObjectKey := client.ObjectKeyFromObject(p)
 			if !slices.Contains(sc.podNamesUpdatedInPCLQPodGangs, p.Name) {

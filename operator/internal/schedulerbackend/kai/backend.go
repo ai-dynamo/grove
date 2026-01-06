@@ -32,7 +32,7 @@ const (
 	// BackendName is the name of the KAI backend
 	BackendName = "kai"
 	// SchedulingGateName is the name of the scheduling gate used by KAI
-	SchedulingGateName = "grove.io/podgang"
+	SchedulingGateName = "grove.io/podgang-pending-creation"
 	// BackendLabelValue is the label value to identify KAI backend
 	BackendLabelValue = "kai"
 )
@@ -143,13 +143,9 @@ func (b *Backend) PreparePod(pod *corev1.Pod) {
 	// Set scheduler name from configuration
 	pod.Spec.SchedulerName = b.schedulerName
 
-	// NOTE: We don't set schedulingGates here because KAI scheduler's mutating webhook
-	// will add them automatically when it intercepts the Pod creation.
-	// Grove operator will remove the gates later when PodGang is initialized.
-	//
-	// pod.Spec.SchedulingGates = []corev1.PodSchedulingGate{
-	// 	{Name: SchedulingGateName},
-	// }
+	pod.Spec.SchedulingGates = []corev1.PodSchedulingGate{
+		{Name: SchedulingGateName},
+	}
 
 	// Add annotations for observability
 	if pod.Annotations == nil {

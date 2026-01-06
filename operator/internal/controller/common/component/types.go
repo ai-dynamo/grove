@@ -75,7 +75,7 @@ const (
 	KindPod Kind = "Pod"
 	// KindPodCliqueScalingGroup indicates that the resource is a PodCliqueScalingGroup.
 	KindPodCliqueScalingGroup Kind = "PodCliqueScalingGroup"
-	// KindPodGang indicates that the resource is a PodGang (Grove custom scheduler API).
+	// KindPodGang indicates that the resource is a PodGang.
 	KindPodGang Kind = "PodGang"
 	// KindPodCliqueSetReplica indicates that the resource is a PodCliqueSet replica.
 	KindPodCliqueSetReplica Kind = "PodCliqueSetReplica"
