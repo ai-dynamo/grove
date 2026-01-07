@@ -22,6 +22,7 @@ import (
 	"reflect"
 	"slices"
 
+	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	kaitopologyv1alpha1 "github.com/NVIDIA/KAI-scheduler/pkg/apis/kai/v1alpha1"
@@ -36,8 +37,35 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
-// EnsureClusterTopology ensures that the ClusterTopology is created or updated in the cluster.
-func EnsureClusterTopology(ctx context.Context, cl client.Client, logger logr.Logger, name string, topologyLevels []corev1alpha1.TopologyLevel) (*corev1alpha1.ClusterTopology, error) {
+// SynchronizeTopology synchronizes Grove ClusterTopology and KAI scheduler Topology resources based on the operator configuration.
+func SynchronizeTopology(ctx context.Context, cl client.Client, logger logr.Logger, operatorCfg *configv1alpha1.OperatorConfiguration) error {
+	if !operatorCfg.TopologyAwareScheduling.Enabled {
+		logger.Info("cluster topology is disabled, deleting existing ClusterTopology resource if any")
+		return deleteClusterTopology(ctx, cl, corev1alpha1.DefaultClusterTopologyName)
+	}
+	// create or update ClusterTopology based on configuration
+	clusterTopology, err := ensureClusterTopology(ctx, cl, logger, corev1alpha1.DefaultClusterTopologyName, operatorCfg.TopologyAwareScheduling.Levels)
+	if err != nil {
+		return err
+	}
+	// create or update KAI Topology based on ClusterTopology
+	return ensureKAITopology(ctx, cl, logger, corev1alpha1.DefaultClusterTopologyName, clusterTopology)
+}
+
+// deleteClusterTopology deletes the ClusterTopology with the given name.
+func deleteClusterTopology(ctx context.Context, cl client.Client, name string) error {
+	if err := client.IgnoreNotFound(cl.Delete(ctx, &corev1alpha1.ClusterTopology{
+		ObjectMeta: ctrl.ObjectMeta{
+			Name: name,
+		},
+	})); err != nil {
+		return fmt.Errorf("failed to delete ClusterTopology %s: %w", name, err)
+	}
+	return nil
+}
+
+// ensureClusterTopology ensures that the ClusterTopology is created or updated in the cluster.
+func ensureClusterTopology(ctx context.Context, cl client.Client, logger logr.Logger, name string, topologyLevels []corev1alpha1.TopologyLevel) (*corev1alpha1.ClusterTopology, error) {
 	desiredTopology := buildClusterTopology(name, topologyLevels)
 	existingTopology := &corev1alpha1.ClusterTopology{}
 	err := cl.Get(ctx, client.ObjectKey{Name: name}, existingTopology)
@@ -64,8 +92,43 @@ func EnsureClusterTopology(ctx context.Context, cl client.Client, logger logr.Lo
 	return existingTopology, nil
 }
 
-// EnsureKAITopology ensures that the corresponding KAI Topology resource is created.
-func EnsureKAITopology(ctx context.Context, cl client.Client, logger logr.Logger, name string, clusterTopology *corev1alpha1.ClusterTopology) error {
+func buildClusterTopology(name string, topologyLevels []corev1alpha1.TopologyLevel) *corev1alpha1.ClusterTopology {
+	sortedTopologyLevels := make([]corev1alpha1.TopologyLevel, len(topologyLevels))
+	copy(sortedTopologyLevels, topologyLevels)
+
+	// check if required TopologyDomain (host) is present, if not add it.
+	// kubernetes.io/hostname label is added by the Kubelet (see https://kubernetes.io/docs/reference/node/node-labels/)
+	// Therefore it is assumed that the host topology level will always be available. In case the admin fails to specify it,
+	// we correct that error by explicitly adding it when creating/updating the ClusterTopology resource.
+	hostTopologyDomainPresent := slices.ContainsFunc(topologyLevels, func(t corev1alpha1.TopologyLevel) bool {
+		return t.Domain == corev1alpha1.TopologyDomainHost
+	})
+	if !hostTopologyDomainPresent {
+		sortedTopologyLevels = append(sortedTopologyLevels, corev1alpha1.TopologyLevel{
+			Domain: corev1alpha1.TopologyDomainHost,
+			Key:    corev1.LabelHostname,
+		})
+	}
+
+	// Sort topology levels to have a consistent order, arranging from broadest to narrowest domain.
+	corev1alpha1.SortTopologyLevels(sortedTopologyLevels)
+
+	return &corev1alpha1.ClusterTopology{
+		ObjectMeta: ctrl.ObjectMeta{
+			Name: name,
+		},
+		Spec: corev1alpha1.ClusterTopologySpec{
+			Levels: sortedTopologyLevels,
+		},
+	}
+}
+
+func isClusterTopologyChanged(oldTopology, newTopology *corev1alpha1.ClusterTopology) bool {
+	return !reflect.DeepEqual(oldTopology.Spec, newTopology.Spec)
+}
+
+// ensureKAITopology ensures that the corresponding KAI Topology resource is created.
+func ensureKAITopology(ctx context.Context, cl client.Client, logger logr.Logger, name string, clusterTopology *corev1alpha1.ClusterTopology) error {
 	desiredTopology, err := buildKAITopology(name, clusterTopology, cl.Scheme())
 	if err != nil {
 		return fmt.Errorf("failed to build KAI Topology: %w", err)
@@ -99,50 +162,6 @@ func EnsureKAITopology(ctx context.Context, cl client.Client, logger logr.Logger
 		logger.Info("Recreated KAI Topology with updated levels", "name", name)
 	}
 	return nil
-}
-
-// DeleteClusterTopology deletes the ClusterTopology with the given name.
-func DeleteClusterTopology(ctx context.Context, cl client.Client, name string) error {
-	if err := client.IgnoreNotFound(cl.Delete(ctx, &corev1alpha1.ClusterTopology{
-		ObjectMeta: ctrl.ObjectMeta{
-			Name: name,
-		},
-	})); err != nil {
-		return fmt.Errorf("failed to delete ClusterTopology %s: %w", name, err)
-	}
-	return nil
-}
-
-func buildClusterTopology(name string, topologyLevels []corev1alpha1.TopologyLevel) *corev1alpha1.ClusterTopology {
-	sortedTopologyLevels := make([]corev1alpha1.TopologyLevel, len(topologyLevels))
-	copy(sortedTopologyLevels, topologyLevels)
-
-	// check if required TopologyDomain (host) is present, if not add it.
-	hostTopologyDomainPresent := slices.ContainsFunc(topologyLevels, func(t corev1alpha1.TopologyLevel) bool {
-		return t.Domain == corev1alpha1.TopologyDomainHost
-	})
-	if !hostTopologyDomainPresent {
-		sortedTopologyLevels = append(sortedTopologyLevels, corev1alpha1.TopologyLevel{
-			Domain: corev1alpha1.TopologyDomainHost,
-			Key:    corev1.LabelHostname,
-		})
-	}
-
-	// Sort topology levels to have a consistent order, arranging from broadest to narrowest domain.
-	corev1alpha1.SortTopologyLevels(sortedTopologyLevels)
-
-	return &corev1alpha1.ClusterTopology{
-		ObjectMeta: ctrl.ObjectMeta{
-			Name: name,
-		},
-		Spec: corev1alpha1.ClusterTopologySpec{
-			Levels: sortedTopologyLevels,
-		},
-	}
-}
-
-func isClusterTopologyChanged(oldTopology, newTopology *corev1alpha1.ClusterTopology) bool {
-	return !reflect.DeepEqual(oldTopology.Spec, newTopology.Spec)
 }
 
 func buildKAITopology(name string, clusterTopology *corev1alpha1.ClusterTopology, scheme *runtime.Scheme) (*kaitopologyv1alpha1.Topology, error) {

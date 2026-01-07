@@ -17,7 +17,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -77,7 +76,12 @@ func main() {
 	// NOTE: In this version of the operator the synchronization will additionally ensure that the KAI Topology resource
 	// is created based on the ClusterTopology. When we introduce support for pluggable scheduler backends,
 	// handling of scheduler specified resources will be delegated to the backend scheduler controller.
-	if err = synchronizeTopology(ctx, mgr, operatorConfig); err != nil {
+	cl, err := client.New(mgr.GetConfig(), client.Options{Scheme: mgr.GetScheme()})
+	if err != nil {
+		logger.Error(err, "failed to create client for topology synchronization", "cluster-topology", corev1alpha1.DefaultClusterTopologyName)
+		handleErrorAndExit(err, cli.ExitErrSynchronizeTopology)
+	}
+	if err = clustertopology.SynchronizeTopology(ctx, cl, logger, operatorConfig); err != nil {
 		logger.Error(err, "failed to synchronize cluster topology")
 		handleErrorAndExit(err, cli.ExitErrSynchronizeTopology)
 	}
@@ -107,24 +111,6 @@ func main() {
 		logger.Error(err, "Error starting controller manager")
 		handleErrorAndExit(err, cli.ExitErrStart)
 	}
-}
-
-func synchronizeTopology(ctx context.Context, mgr ctrl.Manager, operatorCfg *configv1alpha1.OperatorConfiguration) error {
-	cl, err := client.New(mgr.GetConfig(), client.Options{Scheme: mgr.GetScheme()})
-	if err != nil {
-		return fmt.Errorf("failed to create client for topology synchronization: %w", err)
-	}
-	if !operatorCfg.TopologyAwareScheduling.Enabled {
-		logger.Info("cluster topology is disabled, deleting existing ClusterTopology resource if any")
-		return clustertopology.DeleteClusterTopology(ctx, cl, corev1alpha1.DefaultClusterTopologyName)
-	}
-	// create or update ClusterTopology based on configuration
-	clusterTopology, err := clustertopology.EnsureClusterTopology(ctx, cl, logger, corev1alpha1.DefaultClusterTopologyName, operatorCfg.TopologyAwareScheduling.Levels)
-	if err != nil {
-		return err
-	}
-	// create or update KAI Topology based on ClusterTopology
-	return clustertopology.EnsureKAITopology(ctx, cl, logger, corev1alpha1.DefaultClusterTopologyName, clusterTopology)
 }
 
 func printFlags() {
