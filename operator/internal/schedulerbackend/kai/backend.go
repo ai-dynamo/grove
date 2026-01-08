@@ -91,14 +91,10 @@ func (b *Backend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.P
 }
 
 // PreparePod adds KAI scheduler-specific configuration to the Pod
-// This includes: schedulerName, scheduling gates, and annotations
+// This includes: schedulerName, and annotations
 func (b *Backend) PreparePod(pod *corev1.Pod) {
 	// Set scheduler name from configuration
 	pod.Spec.SchedulerName = b.schedulerName
-
-	pod.Spec.SchedulingGates = []corev1.PodSchedulingGate{
-		{Name: SchedulingGateName},
-	}
 
 	// Add annotations for observability
 	if pod.Annotations == nil {
