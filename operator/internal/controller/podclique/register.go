@@ -55,7 +55,10 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 		}).
 		For(&grovecorev1alpha1.PodClique{},
 			builder.WithPredicates(
-				managedPodCliquePredicate(),
+				predicate.And(
+					predicate.GenerationChangedPredicate{},
+					managedPodCliquePredicate(),
+				),
 			),
 		).
 		Owns(&corev1.Pod{}, builder.WithPredicates(podPredicate())).
@@ -268,26 +271,13 @@ func extractPCLQNameFromPodName(podName string) string {
 // podGangPredicate filters PodGang events to only trigger when Initialized=True
 func podGangPredicate() predicate.Predicate {
 	return predicate.Funcs{
-		CreateFunc: func(e event.CreateEvent) bool {
-			// Only trigger if PodGang is created with Initialized=True (unlikely but possible)
-			initialized := isPodGangInitialized(e.Object)
-			if initialized {
-				ctrl.Log.V(1).Info("PodGang created with Initialized=True, triggering PodClique reconcile",
-					"podGang", client.ObjectKeyFromObject(e.Object))
-			}
-			return initialized
-		},
+		CreateFunc: func(_ event.CreateEvent) bool { return false },
 		DeleteFunc: func(_ event.DeleteEvent) bool { return false },
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			// Only trigger when PodGang transitions to Initialized=True
 			oldInitialized := isPodGangInitialized(e.ObjectOld)
 			newInitialized := isPodGangInitialized(e.ObjectNew)
-			transitioned := !oldInitialized && newInitialized
-			if transitioned {
-				ctrl.Log.Info("PodGang transitioned to Initialized=True, triggering PodClique reconcile to remove scheduling gates",
-					"podGang", client.ObjectKeyFromObject(e.ObjectNew))
-			}
-			return transitioned
+			return !oldInitialized && newInitialized
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 	}
