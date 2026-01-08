@@ -26,6 +26,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/clustertopology"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
@@ -80,7 +81,7 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs 
 	// externally defined ClusterTopology CR. Hence, fetching ClusterTopology CR here to keep the code future-proof.
 	sc.tasEnabled = r.tasConfig.Enabled
 	if r.tasConfig.Enabled {
-		sc.topologyLevels, err = componentutils.GetClusterTopologyLevels(ctx, r.client, grovecorev1alpha1.DefaultClusterTopologyName)
+		sc.topologyLevels, err = clustertopology.GetClusterTopologyLevels(ctx, r.client, grovecorev1alpha1.DefaultClusterTopologyName)
 		if err != nil {
 			return nil, groveerr.WrapError(err,
 				errCodeGetClusterTopologyLevels,

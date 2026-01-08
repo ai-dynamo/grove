@@ -23,6 +23,7 @@ import (
 
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/clustertopology"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
@@ -195,7 +196,7 @@ func (r *Reconciler) mutateTopologyLevelUnavailableConditions(ctx context.Contex
 func (r *Reconciler) computeTopologyLevelsUnavailableCondition(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (*metav1.Condition, error) {
 	var cond *metav1.Condition
 	// Get the TopologyLevel's from ClusterTopology custom resource.
-	topologyLevels, err := componentutils.GetClusterTopologyLevels(ctx, r.client, grovecorev1alpha1.DefaultClusterTopologyName)
+	topologyLevels, err := clustertopology.GetClusterTopologyLevels(ctx, r.client, grovecorev1alpha1.DefaultClusterTopologyName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// ClusterTopology resource not found, set condition to Unknown
