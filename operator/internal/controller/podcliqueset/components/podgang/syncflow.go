@@ -129,8 +129,8 @@ func (r _resource) getExistingPCLQsForPCS(ctx context.Context, pcs *grovecorev1a
 	}
 
 	// Return all PodCliques with matching labels. PodCliques can be owned either:
-	// 1. Directly by PCS (standalone cliques)
-	// 2. By PCSG (scaling group member cliques) - PCSG itself is owned by PCS
+	// 1. Directly by PCS (standalone pclqs)
+	// 2. By PCSG (scaling group member pclqs) - PCSG itself is owned by PCS
 	// Label matching ensures they belong to this PCS, no ownership filter needed.
 	return pclqList.Items, nil
 }
@@ -316,10 +316,7 @@ func createTopologyPackConstraint(sc *syncContext, resourceKind string, nsName t
 	// NOTE: Currently there is no provision in the PodCliqueSet API to specify preferred topology constraint.
 	// Operator assumes the densest level as preferred. If a provision is introduced in the API allowing users to specify
 	// preferred topology constraints in future then this logic will need to be updated accordingly.
-	preferredTopologyLevel := sc.topologyLevels[len(sc.topologyLevels)-1]
-	pgPackConstraint := groveschedulerv1alpha1.TopologyPackConstraint{
-		Preferred: ptr.To(preferredTopologyLevel.Key),
-	}
+	pgPackConstraint := &groveschedulerv1alpha1.TopologyPackConstraint{}
 	// If requiredTopologyConstraint is specified, set the required topology key accordingly.
 	if requiredTopologyConstraint != nil {
 		requiredTopologyLevel, found := lo.Find(sc.topologyLevels, func(topologyLevel grovecorev1alpha1.TopologyLevel) bool {
@@ -335,7 +332,7 @@ func createTopologyPackConstraint(sc *syncContext, resourceKind string, nsName t
 			pgPackConstraint.Required = ptr.To(requiredTopologyLevel.Key)
 		}
 	}
-	return &groveschedulerv1alpha1.TopologyConstraint{PackConstraint: &pgPackConstraint}
+	return &groveschedulerv1alpha1.TopologyConstraint{PackConstraint: pgPackConstraint}
 }
 
 // determinePodCliqueReplicas determines replica count considering HPA mutations.
