@@ -268,16 +268,33 @@ func extractPCLQNameFromPodName(podName string) string {
 	return podName[:endIndex]
 }
 
-// podGangPredicate filters PodGang events to only trigger when Initialized=True
+// podGangPredicate filters PodGang events to trigger on initialization and spec updates
 func podGangPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(_ event.CreateEvent) bool { return false },
 		DeleteFunc: func(_ event.DeleteEvent) bool { return false },
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			// Only trigger when PodGang transitions to Initialized=True
+			oldPG, okOld := e.ObjectOld.(*groveschedulerv1alpha1.PodGang)
+			newPG, okNew := e.ObjectNew.(*groveschedulerv1alpha1.PodGang)
+			if !okOld || !okNew {
+				return false
+			}
+
+			// Trigger when PodGang transitions to Initialized=True
 			oldInitialized := isPodGangInitialized(e.ObjectOld)
 			newInitialized := isPodGangInitialized(e.ObjectNew)
-			return !oldInitialized && newInitialized
+			if !oldInitialized && newInitialized {
+				return true
+			}
+
+			// Also trigger when PodGang spec changes (e.g., scale out/in adds/removes pod references)
+			// This ensures scheduling gates are removed from newly added pods
+			// Check if metadata.generation changed (Kubernetes increments this on spec changes)
+			if newInitialized && oldPG.GetGeneration() != newPG.GetGeneration() {
+				return true
+			}
+
+			return false
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 	}
