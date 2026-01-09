@@ -19,7 +19,6 @@ spec:
           replicas: 2
           minAvailable: 2
           podSpec:
-            schedulerName: kai-scheduler
             affinity:
               nodeAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:
@@ -50,7 +49,6 @@ spec:
           startsAfter:
             - pc-c
           podSpec:
-            schedulerName: kai-scheduler
             affinity:
               nodeAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:
@@ -81,7 +79,6 @@ spec:
           startsAfter:
             - pc-a
           podSpec:
-            schedulerName: kai-scheduler
             affinity:
               nodeAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:

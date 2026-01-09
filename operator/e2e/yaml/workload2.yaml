@@ -18,7 +18,6 @@ spec:
           replicas: 2
           minAvailable: 1
           podSpec:
-            schedulerName: kai-scheduler
             affinity:
               nodeAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:
@@ -47,7 +46,6 @@ spec:
           replicas: 1
           minAvailable: 1
           podSpec:
-            schedulerName: kai-scheduler
             affinity:
               nodeAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:
@@ -76,7 +74,6 @@ spec:
           replicas: 3
           minAvailable: 1
           podSpec:
-            schedulerName: kai-scheduler
             affinity:
               nodeAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:

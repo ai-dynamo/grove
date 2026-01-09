@@ -46,6 +46,7 @@ const (
 	errCodeComputeExistingPodGangs grovecorev1alpha1.ErrorCode = "ERR_COMPUTE_EXISTING_PODGANG"
 	errCodeSetControllerReference  grovecorev1alpha1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
 	errCodeCreateOrPatchPodGang    grovecorev1alpha1.ErrorCode = "ERR_CREATE_OR_PATCH_PODGANG"
+	errCodeUpdatePodGang           grovecorev1alpha1.ErrorCode = "ERR_UPDATE_PODGANG_WITH_POD_REFS"
 )
 
 type _resource struct {
@@ -83,6 +84,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 }
 
 // Sync creates, updates, or deletes PodGang resources to match the desired state.
+// NEW FLOW: PodGangs are created with empty podReferences before Pods are created.
 func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
 	logger.Info("Syncing PodGang resources")
 	sc, err := r.prepareSyncFlow(ctx, logger, pcs)
@@ -92,12 +94,6 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 	result := r.runSyncFlow(sc)
 	if result.hasErrors() {
 		return result.getAggregatedError()
-	}
-	if result.hasPodGangsPendingCreation() {
-		return groveerr.New(groveerr.ErrCodeRequeueAfter,
-			component.OperationSync,
-			fmt.Sprintf("PodGangs pending creation: %v", result.podsGangsPendingCreation),
-		)
 	}
 	return nil
 }
@@ -119,7 +115,9 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjectMeta
 	return nil
 }
 
-// buildResource configures a PodGang with pod groups and priority.
+// buildResource configures a PodGang with initial empty pod groups.
+// NEW FLOW: PodGang is created BEFORE Pods with empty podReferences.
+// After Pods are created, updatePodGangWithPodReferences() will populate the references and set Initialized=True.
 func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgInfo podGangInfo, pg *groveschedulerv1alpha1.PodGang) error {
 	pg.Labels = getLabels(pcs.Name)
 	if err := controllerutil.SetControllerReference(pcs, pg, r.scheme); err != nil {
@@ -130,9 +128,43 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgInfo pod
 			fmt.Sprintf("failed to set the controller reference on PodGang %s to PodCliqueSet %v", pgInfo.fqn, client.ObjectKeyFromObject(pcs)),
 		)
 	}
-	pg.Spec.PodGroups = createPodGroupsForPodGang(pg.Namespace, pgInfo)
+	// Only set PodGroups if they don't exist yet (initial creation)
+	// Once populated, we preserve existing podReferences to avoid clearing them on subsequent reconciles
+	if len(pg.Spec.PodGroups) == 0 {
+		// Create PodGroups with EMPTY podReferences initially
+		pg.Spec.PodGroups = createEmptyPodGroupsForPodGang(pgInfo)
+	} else {
+		// PodGroups already exist - preserve them but update MinReplicas if needed
+		expectedPodGroups := make(map[string]int32)
+		for _, pclq := range pgInfo.pclqs {
+			expectedPodGroups[pclq.fqn] = pclq.minAvailable
+		}
+
+		// Update MinReplicas for existing PodGroups
+		for i := range pg.Spec.PodGroups {
+			podGroup := &pg.Spec.PodGroups[i]
+			if expectedMinReplicas, ok := expectedPodGroups[podGroup.Name]; ok {
+				podGroup.MinReplicas = expectedMinReplicas
+			}
+		}
+	}
 	pg.Spec.PriorityClassName = pcs.Spec.Template.PriorityClassName
+
+	// Note: Initialized condition will be set to False via status patch after create
 	return nil
+}
+
+// createEmptyPodGroupsForPodGang creates PodGroups with empty podReferences.
+// These will be populated later when pods are created.
+func createEmptyPodGroupsForPodGang(pgInfo podGangInfo) []groveschedulerv1alpha1.PodGroup {
+	podGroups := lo.Map(pgInfo.pclqs, func(pclq pclqInfo, _ int) groveschedulerv1alpha1.PodGroup {
+		return groveschedulerv1alpha1.PodGroup{
+			Name:          pclq.fqn,
+			PodReferences: []groveschedulerv1alpha1.NamespacedName{}, // Empty initially!
+			MinReplicas:   pclq.minAvailable,
+		}
+	})
+	return podGroups
 }
 
 // getPodGangSelectorLabels returns labels for selecting all PodGangs of a PodCliqueSet.

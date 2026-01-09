@@ -508,6 +508,11 @@ configs:
 		return nil, cleanup, fmt.Errorf("could not create rest config: %w", err)
 	}
 
+	// Increase rate limiter settings for e2e tests to prevent throttling
+	// Default QPS is 5.0 and Burst is 10, which is too low for tests with frequent API calls
+	restConfig.QPS = 100.0  // Allow 100 queries per second
+	restConfig.Burst = 200  // Allow initial burst of 200 queries
+
 	return restConfig, cleanup, nil
 }
 
