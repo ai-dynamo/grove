@@ -59,7 +59,7 @@ func init() {
 	}
 
 	// increase logger verbosity for debugging
-	logger = utils.NewTestLogger(utils.InfoLevel)
+	logger = utils.NewTestLogger(utils.DebugLevel)
 }
 
 const (
