@@ -29,6 +29,17 @@ jobs:
     # the tests are unstable using the default runner with 4 vCPUs and 16GB of ram
     runs-on: cpu-amd-m5-2xlarge
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - test_name: gang_scheduling
+            test_pattern: "^Test_GS"
+          - test_name: rolling_updates
+            test_pattern: "^Test_RU"
+          - test_name: startup_ordering
+            test_pattern: "^Test_SO"
+    name: E2E - ${{ matrix.test_name }}
     steps:
       # print runner specs so we have a record incase of failures
       - name: Print runner specs
@@ -61,8 +72,13 @@ jobs:
           sudo install skaffold /usr/local/bin/
           skaffold version
 
-      - name: Run e2e tests
-        run: make test-e2e
+      - name: Run e2e tests - ${{ matrix.test_name }}
+        run: |
+          cd operator
+          echo "> Preparing charts (copying CRDs)..."
+          ./hack/prepare-charts.sh
+          echo "> Running e2e tests for ${{ matrix.test_name }}..."
+          cd e2e && go test -tags=e2e ./tests/... -v -timeout 45m -run '${{ matrix.test_pattern }}'
 
       # The test code handles cleanup via Teardown(), but this step provides
       # extra safety in case of timeout or panic. Also good practice to ensure
@@ -76,8 +92,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-test-logs
+          name: e2e-test-logs-${{ matrix.test_name }}
           path: /tmp/e2e-*.log
           if-no-files-found: ignore
           retention-days: 7
-
