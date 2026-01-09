@@ -1,0 +1,47 @@
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: single-node-disaggregated
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    cliques:
+    - name: prefill
+      spec:
+        roleName: prefill
+        replicas: 3
+        podSpec:
+          tolerations:
+          - key: fake-node
+            operator: Equal
+            value: "true"
+            effect: NoSchedule
+          containers:
+          - name: prefill
+            image: nginx:latest
+            command: ["/bin/sh"]
+            args: ["-c", "echo 'Prefill Worker on node:' && hostname && sleep 3600"]
+            resources:
+              requests:
+                cpu: "2"
+                memory: "4Gi"
+    - name: decode
+      spec:
+        roleName: decode
+        replicas: 2
+        podSpec:
+          tolerations:
+          - key: fake-node
+            operator: Equal
+            value: "true"
+            effect: NoSchedule
+          containers:
+          - name: decode
+            image: nginx:latest
+            command: ["/bin/sh"]
+            args: ["-c", "echo 'Decode Worker on node:' && hostname && sleep 3600"]
+            resources:
+              requests:
+                cpu: "1"
+                memory: "2Gi"

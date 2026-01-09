@@ -276,9 +276,7 @@ func (pri *pcsReplicaInfo) getNumScheduledPods(pcs *grovecorev1alpha1.PodCliqueS
 
 	for _, pcsg := range pri.pcsgs {
 		for _, cliqueName := range pcsg.Spec.CliqueNames {
-			pclqTemplateSpec, _ := lo.Find(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec) bool {
-				return pclqTemplateSpec.Name == cliqueName
-			})
+			pclqTemplateSpec := componentutils.FindPodCliqueTemplateSpecByName(pcs, cliqueName)
 			noScheduled += int(pcsg.Status.ScheduledReplicas * *pclqTemplateSpec.Spec.MinAvailable)
 		}
 	}

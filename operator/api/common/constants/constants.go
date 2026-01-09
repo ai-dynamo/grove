@@ -43,6 +43,8 @@ const (
 	// AnnotationDisableManagedResourceProtection is an annotation set by an operator on a PodCliqueSet to explicitly
 	// disable protection of managed resources for a PodCliqueSet.
 	AnnotationDisableManagedResourceProtection = "grove.io/disable-managed-resource-protection"
+	// AnnotationTopologyName is an annotation set on PodGang to allow KAI scheduler to discover which topology to use.
+	AnnotationTopologyName = "grove.io/topology-name"
 )
 
 // Constants for Grove environment variables
@@ -87,6 +89,9 @@ const (
 	// ConditionTypePodCliqueScheduled indicates that the PodClique has been successfully scheduled.
 	// This condition is set to true when number of scheduled pods in the PodClique is greater than or equal to PodCliqueSpec.MinAvailable.
 	ConditionTypePodCliqueScheduled = "PodCliqueScheduled"
+	// ConditionTopologyLevelsUnavailable indicates that the required topology levels defined on a PodCliqueSet for topology-aware scheduling are no longer available.
+	// This can happen when the ClusterTopology resource is modified which removes one or more levels required by the PodCliqueSet.
+	ConditionTopologyLevelsUnavailable = "TopologyLevelsUnavailable"
 )
 
 // Constants for Condition Reasons.
@@ -107,6 +112,14 @@ const (
 	ConditionReasonSufficientAvailablePCSGReplicas = "SufficientAvailablePodCliqueScalingGroupReplicas"
 	// ConditionReasonUpdateInProgress indicates that the resource is undergoing rolling update.
 	ConditionReasonUpdateInProgress = "UpdateInProgress"
+	// ConditionReasonClusterTopologyNotFound indicates that the ClusterTopology resource required for topology-aware scheduling was not found.
+	ConditionReasonClusterTopologyNotFound = "ClusterTopologyNotFound"
+	// ConditionReasonTopologyLevelsUnavailable indicates that the one or more required topology levels defined on a
+	// PodCliqueSet for topology-aware scheduling are no longer defined in the ClusterTopology resource.
+	ConditionReasonTopologyLevelsUnavailable = "ClusterTopologyLevelsUnavailable"
+	// ConditionReasonAllTopologyLevelsAvailable indicates that all required topology levels defined on a
+	// PodCliqueSet for topology-aware scheduling are defined in the ClusterTopology resource.
+	ConditionReasonAllTopologyLevelsAvailable = "AllClusterTopologyLevelsAvailable"
 )
 
 const (

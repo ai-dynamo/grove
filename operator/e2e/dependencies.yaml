@@ -18,19 +18,19 @@ images:
   
   # Kai Scheduler components
   - name: ghcr.io/nvidia/kai-scheduler/admission
-    version: v0.9.3
+    version: v0.12.0
   - name: ghcr.io/nvidia/kai-scheduler/binder
-    version: v0.9.3
+    version: v0.12.0
   - name: ghcr.io/nvidia/kai-scheduler/operator
-    version: v0.9.3
+    version: v0.12.0
   - name: ghcr.io/nvidia/kai-scheduler/podgroupcontroller
-    version: v0.9.3
+    version: v0.12.0
   - name: ghcr.io/nvidia/kai-scheduler/podgrouper
-    version: v0.9.3
+    version: v0.12.0
   - name: ghcr.io/nvidia/kai-scheduler/queuecontroller
-    version: v0.9.3
+    version: v0.12.0
   - name: ghcr.io/nvidia/kai-scheduler/scheduler
-    version: v0.9.3
+    version: v0.12.0
 
 # Helm charts used in E2E tests
 helmCharts:
@@ -38,7 +38,7 @@ helmCharts:
   kaiScheduler:
     releaseName: kai-scheduler
     chartRef: oci://ghcr.io/nvidia/kai-scheduler/kai-scheduler
-    version: v0.9.3
+    version: v0.12.0
     namespace: kai-scheduler
   
   # NVIDIA GPU Operator - manages GPU resources and device plugins
