@@ -100,20 +100,18 @@ type TopologyConstraint struct {
 // TopologyPackConstraint defines a topology packing constraint.
 // Each of Required and Preferred fields hold a topologyKey, e.g. "kubernetes.io/hostname" ( these are key of labels added on nodes).
 type TopologyPackConstraint struct {
-	// Required defines a topology constraint that must be satisfied as a hard requirement and serves as an upper
-	// bound for topology packing. The workload will not be scheduled if this constraint cannot be satisfied.
-	// Generally, it is easier for the scheduler to satisfy constraints on topology domains with larger compute capacity,
-	// (e.g. zone or datacenter), than smaller domains, (e.g. host or numa).
-	// Holds topologyKey (not level name) translated from user's packLevel specification.
+	// Required defines a topology constraint that must be satisfied as a hard requirement. The workload will not be
+	// scheduled if this constraint cannot be satisfied. Generally, it is easier for the scheduler to satisfy constraints
+	// on topology domains with larger compute capacity, (e.g. zone or datacenter), than smaller domains, (e.g. host or
+	// numa). Holds topologyKey (not level name) translated from user's packLevel specification.
 	// Example: "topology.kubernetes.io/rack"
 	// +optional
 	Required *string `json:"required,omitempty"`
 	// Preferred defines best-effort topology constraint. Topology domains that provide the most optimized performance
-	// with dense packing (e.g. host or numa) are typically used as preferred constraints. It is usually a stricter
-	// constraint than the one that is defined in Required and serves as a lower bound for topology packing.
-	// Since it is preferred constraint, it is therefore not binding on the scheduler to mandatorily satisfy this packing constraint.
-	// Scheduler can fall back to higher topology levels (upto Required constraint) if preferred cannot be satisfied.
-	// It might be harder to satisfy these constraints if the topology domains are limited in compute capacity.
+	// with dense packing (e.g. host or numa) are typically used as preferred constraints for topology packing. It might be
+	// harder to satisfy these constraints if the topology domains are limited in compute capacity. Since it is preferred
+	// constraint, it is therefore not binding on the scheduler to mandatorily satisfy this packing constraint. Scheduler
+	// can fall back to higher topology levels (upto Required constraint) if preferred cannot be satisfied.
 	// Example: "kubernetes.io/hostname"
 	// +optional
 	Preferred *string `json:"preferred,omitempty"`
