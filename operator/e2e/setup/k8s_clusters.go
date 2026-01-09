@@ -113,9 +113,9 @@ type ClusterConfig struct {
 func DefaultClusterConfig() ClusterConfig {
 	return ClusterConfig{
 		Name:              "test-k3d-cluster",
-		ControlPlaneNodes: 1,
+		ControlPlaneNodes: 3,
 		WorkerNodes:       2,
-		Image:             "rancher/k3s:v1.28.8-k3s1",
+		Image:             ":rancher/k3s:v1.28.8-k3s1",
 		HostPort:          "6550",
 		LoadBalancerPort:  "8080:80",
 		WorkerMemory:      "150m",
