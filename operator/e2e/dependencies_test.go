@@ -62,34 +62,17 @@ func TestGetDependencies(t *testing.T) {
 	if deps.HelmCharts.KaiScheduler.Namespace == "" {
 		t.Error("Kai Scheduler namespace should not be empty")
 	}
-
-	// Verify GPU Operator helm chart
-	if deps.HelmCharts.GPUOperator.ReleaseName == "" {
-		t.Error("GPU Operator release name should not be empty")
-	}
-	if deps.HelmCharts.GPUOperator.ChartRef == "" {
-		t.Error("GPU Operator chart ref should not be empty")
-	}
-	if deps.HelmCharts.GPUOperator.Version == "" {
-		t.Error("GPU Operator version should not be empty")
-	}
-	if deps.HelmCharts.GPUOperator.Namespace == "" {
-		t.Error("GPU Operator namespace should not be empty")
-	}
-	if deps.HelmCharts.GPUOperator.RepoURL == "" {
-		t.Error("GPU Operator repo URL should not be empty")
-	}
 }
 
-// TestGetImagesToPrepull verifies that the GetImagesToPrepull method returns
+// TestGetImagesToPrePull verifies that the GetImagesToPrePull method returns
 // properly formatted image names in name:version format.
-func TestGetImagesToPrepull(t *testing.T) {
+func TestGetImagesToPrePull(t *testing.T) {
 	deps, err := GetDependencies()
 	if err != nil {
 		t.Fatalf("Failed to load dependencies: %v", err)
 	}
 
-	images := deps.GetImagesToPrepull()
+	images := deps.GetImagesToPrePull()
 	if len(images) == 0 {
 		t.Error("Expected at least one image to prepull")
 	}
@@ -227,7 +210,6 @@ func TestSpecificExpectedImages(t *testing.T) {
 	// Test that specific expected images are present
 	expectedImages := []string{
 		"registry.k8s.io/nfd/node-feature-discovery",
-		"nvcr.io/nvidia/gpu-operator",
 		"ghcr.io/nvidia/kai-scheduler/admission",
 		"ghcr.io/nvidia/kai-scheduler/scheduler",
 	}
@@ -257,7 +239,6 @@ func TestHelmChartsRequiredFields(t *testing.T) {
 		chart HelmChartDependency
 	}{
 		{"KaiScheduler", deps.HelmCharts.KaiScheduler},
-		{"GPUOperator", deps.HelmCharts.GPUOperator},
 	}
 
 	for _, tt := range tests {

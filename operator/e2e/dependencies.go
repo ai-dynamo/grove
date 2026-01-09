@@ -93,8 +93,8 @@ func loadDependencies() (*Dependencies, error) {
 	return &deps, nil
 }
 
-// GetImagesToPrepull returns a slice of full image names (name:version) for pre-pulling
-func (d *Dependencies) GetImagesToPrepull() []string {
+// GetImagesToPrePull returns a slice of full image names (name:version) for pre-pulling
+func (d *Dependencies) GetImagesToPrePull() []string {
 	images := make([]string, 0, len(d.Images))
 	for _, img := range d.Images {
 		images = append(images, img.FullImageName())

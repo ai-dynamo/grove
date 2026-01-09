@@ -227,7 +227,7 @@ func SetupCompleteK3DCluster(ctx context.Context, cfg ClusterConfig, skaffoldYAM
 	if err != nil {
 		return nil, enhancedCleanup, fmt.Errorf("failed to load dependencies: %w", err)
 	}
-	imagesToPrepull := deps.GetImagesToPrepull()
+	imagesToPrepull := deps.GetImagesToPrePull()
 
 	// Pre-pull and push images to local registry if enabled
 	if cfg.EnableRegistry {

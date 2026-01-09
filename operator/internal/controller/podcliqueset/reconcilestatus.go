@@ -193,6 +193,11 @@ func (r *Reconciler) mutateTopologyLevelUnavailableConditions(ctx context.Contex
 	return nil
 }
 
+// computeTopologyLevelsUnavailableCondition computes the TopologyLevelsUnavailable condition for the PodCliqueSet.
+// It checks the PodCliqueSet's topology constraints against the available topology levels defined in the ClusterTopology.
+// If any topology levels used by the PodCliqueSet are not available in the ClusterTopology, it sets the condition to True.
+// If all topology levels are available, it sets the condition to False.
+// If the ClusterTopology resource is not found, it sets the condition to Unknown.
 func (r *Reconciler) computeTopologyLevelsUnavailableCondition(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (*metav1.Condition, error) {
 	var cond *metav1.Condition
 	// Get the TopologyLevel's from ClusterTopology custom resource.
@@ -240,6 +245,9 @@ func (r *Reconciler) computeTopologyLevelsUnavailableCondition(ctx context.Conte
 	return cond, nil
 }
 
+// getUniqueTopologyDomainsInPodCliqueSet extracts unique topology domains from the PodCliqueSet's topology constraints.
+// It inspects the PodCliqueSet template, all PodClique templates, and all PodCliqueScalingGroup configs
+// to gather the topology domains specified in their topology constraints and returns a list of unique domains.
 func getUniqueTopologyDomainsInPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) []grovecorev1alpha1.TopologyDomain {
 	topologyDomains := sets.New[grovecorev1alpha1.TopologyDomain]()
 	if pcs.Spec.Template.TopologyConstraint != nil {

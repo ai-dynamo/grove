@@ -40,11 +40,3 @@ helmCharts:
     chartRef: oci://ghcr.io/nvidia/kai-scheduler/kai-scheduler
     version: v0.12.0
     namespace: kai-scheduler
-  
-  # NVIDIA GPU Operator - manages GPU resources and device plugins
-  gpuOperator:
-    releaseName: nvidia-gpu-operator
-    chartRef: gpu-operator
-    version: v25.3.4
-    namespace: gpu-operator
-    repoURL: https://helm.ngc.nvidia.com/nvidia
