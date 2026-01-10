@@ -142,7 +142,7 @@ func (r _resource) computeExpectedPodGangs(sc *syncContext) error {
 
 	// For each PodCliqueSet replica, a base PodGang is expected to be created.
 	// A base PodGang constitutes the minimum viable set of PodCliques that must be scheduled together.
-	basePodGangs, err := getExpectedBasePodGangForPCSReplicas(sc)
+	basePodGangs, err := buildExpectedBasePodGangForPCSReplicas(sc)
 	if err != nil {
 		return err
 	}
@@ -153,7 +153,7 @@ func (r _resource) computeExpectedPodGangs(sc *syncContext) error {
 	// Each scaled replica of a PCSG is gang scheduled as is represented by its own PodGang resource.
 	if len(sc.pcs.Spec.Template.PodCliqueScalingGroupConfigs) > 0 {
 		for pcsReplica := range sc.pcs.Spec.Replicas {
-			expectedPodGangsForPCSG, err := r.getExpectedScaledPodGangsForPCSG(sc, int(pcsReplica))
+			expectedPodGangsForPCSG, err := r.buildExpectedScaledPodGangsForPCSG(sc, int(pcsReplica))
 			if err != nil {
 				return err
 			}
@@ -164,11 +164,11 @@ func (r _resource) computeExpectedPodGangs(sc *syncContext) error {
 	return nil
 }
 
-// getExpectedBasePodGangForPCSReplicas creates the BASE PodGangs for each PodCliqueSet replica.
+// buildExpectedBasePodGangForPCSReplicas builds the BASE PodGangs for each PodCliqueSet replica.
 // These are the foundational PodGangs that contain:
 // 1. Standalone PodCliques (not part of any scaling group)
 // 2. PodCliques that are part of PodCliqueScalingGroup replicas [0, minAvailable-1]
-func getExpectedBasePodGangForPCSReplicas(sc *syncContext) ([]*podGangInfo, error) {
+func buildExpectedBasePodGangForPCSReplicas(sc *syncContext) ([]*podGangInfo, error) {
 	expectedPodGangs := make([]*podGangInfo, 0, int(sc.pcs.Spec.Replicas))
 	for pcsReplica := range int(sc.pcs.Spec.Replicas) {
 		basePodGang, err := buildExpectedBasePodGangForPCSReplica(sc, pcsReplica)
@@ -180,7 +180,7 @@ func getExpectedBasePodGangForPCSReplicas(sc *syncContext) ([]*podGangInfo, erro
 	return expectedPodGangs, nil
 }
 
-// buildExpectedBasePodGangForPCSReplica constructs the base PodGang info for a given PodCliqueSet replica.
+// buildExpectedBasePodGangForPCSReplica builds the base PodGang info for a given PodCliqueSet replica.
 func buildExpectedBasePodGangForPCSReplica(sc *syncContext, pcsReplica int) (*podGangInfo, error) {
 	podGangFQN := apicommon.GenerateBasePodGangName(apicommon.ResourceNameReplica{Name: sc.pcs.Name, Replica: pcsReplica})
 	pg := &podGangInfo{
@@ -235,7 +235,7 @@ func buildPCSGGroupPackConstraintsAndPCLQsForBasePodGang(sc *syncContext, pcsRep
 	return pcsgPackConstraints, pclqInfos, nil
 }
 
-func (r _resource) getExpectedScaledPodGangsForPCSG(sc *syncContext, pcsReplica int) ([]*podGangInfo, error) {
+func (r _resource) buildExpectedScaledPodGangsForPCSG(sc *syncContext, pcsReplica int) ([]*podGangInfo, error) {
 	var expectedPodGangs []*podGangInfo
 	for _, pcsgConfig := range sc.pcs.Spec.Template.PodCliqueScalingGroupConfigs {
 		pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: sc.pcs.Name, Replica: pcsReplica}, pcsgConfig.Name)
@@ -258,6 +258,8 @@ func (r _resource) getExpectedScaledPodGangsForPCSG(sc *syncContext, pcsReplica 
 	return expectedPodGangs, nil
 }
 
+// doBuildPCSGGroupPackConstraintsAndPCLQs builds TopologyConstraintGroupConfigs and pclqInfos for a given PCSG and replica range.
+// This function is used for both base PodGang and scaled PodGangs.
 func doBuildPCSGGroupPackConstraintsAndPCLQs(sc *syncContext, pcsReplica int, pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig, pcsgReplicaStartIndex, pcsgReplicaEndIndex int) ([]groveschedulerv1alpha1.TopologyConstraintGroupConfig, []pclqInfo, error) {
 	var (
 		pclqInfos           []pclqInfo
@@ -312,11 +314,6 @@ func createTopologyPackConstraint(sc *syncContext, resourceKind string, nsName t
 	if !sc.tasEnabled {
 		return nil
 	}
-	// It is expected that the configuredTopologyLevels are already sorted from broadest to narrowest, preferred topology
-	// level is the densest packing and the most optimal one as well. Hence, we pick the last element in the slice and set it as preferred.
-	// NOTE: Currently there is no provision in the PodCliqueSet API to specify preferred topology constraint.
-	// Operator assumes the densest level as preferred. If a provision is introduced in the API allowing users to specify
-	// preferred topology constraints in future then this logic will need to be updated accordingly.
 	pgPackConstraint := &groveschedulerv1alpha1.TopologyPackConstraint{}
 	// If requiredTopologyConstraint is specified, set the required topology key accordingly.
 	if requiredTopologyConstraint != nil {
