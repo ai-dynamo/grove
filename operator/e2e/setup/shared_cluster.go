@@ -195,22 +195,33 @@ func (scm *SharedClusterManager) Setup(ctx context.Context, testImages []string)
 	return nil
 }
 
-// PrepareForTest prepares the cluster for a specific test by cordoning the appropriate nodes
+// PrepareForTest prepares the cluster for a specific test by cordoning the appropriate nodes.
+// It ensures exactly `requiredWorkerNodes` nodes are schedulable by cordoning excess nodes.
 func (scm *SharedClusterManager) PrepareForTest(ctx context.Context, requiredWorkerNodes int) error {
 	if !scm.isSetup {
 		return fmt.Errorf("shared cluster not setup")
 	}
 
-	if requiredWorkerNodes > len(scm.workerNodes) {
-		return fmt.Errorf("required worker nodes (%d) is greater than the number of worker nodes in the cluster (%d)", requiredWorkerNodes, len(scm.workerNodes))
-	} else if requiredWorkerNodes < len(scm.workerNodes) {
+	totalWorkerNodes := len(scm.workerNodes)
+	if requiredWorkerNodes > totalWorkerNodes {
+		return fmt.Errorf("required worker nodes (%d) is greater than the number of worker nodes in the cluster (%d)", requiredWorkerNodes, totalWorkerNodes)
+	}
+
+	if requiredWorkerNodes < totalWorkerNodes {
 		// Cordon nodes that are not needed for this test
 		nodesToCordon := scm.workerNodes[requiredWorkerNodes:]
-		for _, nodeName := range nodesToCordon {
+		scm.logger.Debugf("🔧 Preparing cluster: keeping %d nodes schedulable, cordoning %d nodes", requiredWorkerNodes, len(nodesToCordon))
+
+		for i, nodeName := range nodesToCordon {
+			scm.logger.Debugf("  Cordoning node %d/%d: %s", i+1, len(nodesToCordon), nodeName)
 			if err := utils.SetNodeSchedulable(ctx, scm.clientset, nodeName, false); err != nil {
+				scm.logger.Errorf("Failed to cordon node %s (attempt to cordon node %d/%d): %v", nodeName, i+1, len(nodesToCordon), err)
 				return fmt.Errorf("failed to cordon node %s: %w", nodeName, err)
 			}
 		}
+		scm.logger.Debugf("✅ Successfully cordoned %d nodes", len(nodesToCordon))
+	} else {
+		scm.logger.Debugf("🔧 Preparing cluster: all %d worker nodes will be schedulable", requiredWorkerNodes)
 	}
 
 	return nil
@@ -310,14 +321,18 @@ func (scm *SharedClusterManager) listRemainingPods(ctx context.Context, namespac
 	}
 }
 
-// resetNodeStates uncordons all worker nodes to reset cluster state
+// resetNodeStates uncordons all worker nodes to reset cluster state for the next test
 func (scm *SharedClusterManager) resetNodeStates(ctx context.Context) error {
-	for _, nodeName := range scm.workerNodes {
+	scm.logger.Debugf("🔄 Resetting node states: uncordoning %d worker nodes", len(scm.workerNodes))
+
+	for i, nodeName := range scm.workerNodes {
 		if err := utils.SetNodeSchedulable(ctx, scm.clientset, nodeName, true); err != nil {
-			scm.logger.Warnf("failed to uncordon node %s: %v", nodeName, err)
+			scm.logger.Errorf("Failed to uncordon node %s (node %d/%d): %v", nodeName, i+1, len(scm.workerNodes), err)
 			return fmt.Errorf("failed to uncordon node %s: %w", nodeName, err)
 		}
 	}
+
+	scm.logger.Debugf("✅ Successfully reset all %d worker nodes to schedulable", len(scm.workerNodes))
 	return nil
 }
 

@@ -42,6 +42,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
+	"k8s.io/client-go/util/retry"
 )
 
 // AppliedResource holds information about an applied Kubernetes resource
@@ -322,28 +323,39 @@ func isPodReady(pod *v1.Pod) bool {
 	return false
 }
 
-// SetNodeSchedulable a Kubernetes node to be unschedulable or schedulable
+// SetNodeSchedulable sets a Kubernetes node to be unschedulable (cordoned) or schedulable (uncordoned).
+// This function uses retry logic to handle optimistic concurrency conflicts that can occur
+// when multiple controllers or processes are updating node objects concurrently.
 func SetNodeSchedulable(ctx context.Context, clientset kubernetes.Interface, nodeName string, schedulable bool) error {
-	node, err := clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to get node %s: %w", nodeName, err)
+	action := "uncordon"
+	if !schedulable {
+		action = "cordon"
 	}
 
-	// NOTE: schedulable is the opposite of unschedulable in the node spec
-	// so we invert it to make it more intuitive in the function parameters
-	if node.Spec.Unschedulable == !schedulable {
-		// Already in desired state
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Fetch the latest version of the node
+		node, err := clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get node %s for %s: %w", nodeName, action, err)
+		}
+
+		// NOTE: schedulable is the opposite of unschedulable in the node spec
+		// so we invert it to make it more intuitive in the function parameters
+		if node.Spec.Unschedulable == !schedulable {
+			// Already in desired state, no update needed
+			return nil
+		}
+
+		// NOTE: schedulable is the opposite of unschedulable in the node spec
+		// so we invert it to make it more intuitive in the function parameters
+		node.Spec.Unschedulable = !schedulable
+		_, err = clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+		if err != nil {
+			// RetryOnConflict will automatically retry on conflict errors
+			return fmt.Errorf("failed to %s node %s: %w", action, nodeName, err)
+		}
 		return nil
-	}
-
-	// NOTE: schedulable is the opposite of unschedulable in the node spec
-	// so we invert it to make it more intuitive in the function parameters
-	node.Spec.Unschedulable = !schedulable
-	_, err = clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update node %s: %w", nodeName, err)
-	}
-	return nil
+	})
 }
 
 // ListPods lists pods in a namespace with an optional label selector
