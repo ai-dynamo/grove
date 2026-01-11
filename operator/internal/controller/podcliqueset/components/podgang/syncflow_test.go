@@ -93,8 +93,8 @@ func TestMinAvailableWithHPAScaling(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
 			// Create test PodCliqueSet
 			pcs := &grovecorev1alpha1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
@@ -117,8 +117,8 @@ func TestMinAvailableWithHPAScaling(t *testing.T) {
 						PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
 							{
 								Name:         "test-sg",
-								Replicas:     &tt.scaledReplicas, // This simulates HPA scaling
-								MinAvailable: tt.minAvailable,
+								Replicas:     &test.scaledReplicas, // This simulates HPA scaling
+								MinAvailable: test.minAvailable,
 								CliqueNames:  []string{"test-clique"},
 							},
 						},
@@ -147,8 +147,8 @@ func TestMinAvailableWithHPAScaling(t *testing.T) {
 					},
 				},
 				Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
-					Replicas:     tt.scaledReplicas, // This is what HPA modifies
-					MinAvailable: tt.minAvailable,
+					Replicas:     test.scaledReplicas, // This is what HPA modifies
+					MinAvailable: test.minAvailable,
 					CliqueNames:  []string{"test-clique"},
 				},
 			}
@@ -160,10 +160,13 @@ func TestMinAvailableWithHPAScaling(t *testing.T) {
 
 			// Test the PodGang creation logic
 			r := &_resource{client: fakeClient}
-			ctx := context.Background()
+			sc := &syncContext{
+				ctx: context.Background(),
+				pcs: pcs,
+			}
 
 			// Test scaled PodGang creation - this should read the scaled PCSG
-			expectedPodGangs, err := r.getExpectedPodGangsForPCSG(ctx, pcs, 0)
+			expectedPodGangs, err := r.buildExpectedScaledPodGangsForPCSG(sc, 0)
 			require.NoError(t, err)
 
 			// Verify scaled PodGangs
@@ -171,20 +174,20 @@ func TestMinAvailableWithHPAScaling(t *testing.T) {
 			for _, pg := range expectedPodGangs {
 				actualScaledPodGangs = append(actualScaledPodGangs, pg.fqn)
 			}
-			assert.Equal(t, tt.expectedScaledPodGangs, actualScaledPodGangs,
+			assert.Equal(t, test.expectedScaledPodGangs, actualScaledPodGangs,
 				"Scaled PodGangs should match expected after scaling")
 
 			// Test base PodGang logic - this should be independent of scaling
-			sc := &syncContext{pcs: pcs}
-			basePodGangs := getExpectedPodGangForPCSReplicas(sc)
+			basePodGangs, err := buildExpectedBasePodGangForPCSReplicas(sc)
+			require.NoError(t, err)
 			require.Len(t, basePodGangs, 1, "Should have exactly one base PodGang")
-			assert.Equal(t, tt.expectedBasePodGang, basePodGangs[0].fqn,
+			assert.Equal(t, test.expectedBasePodGang, basePodGangs[0].fqn,
 				"Base PodGang name should be correct and unchanged by scaling")
 
 			// Verify base PodGang only contains replicas 0 to (minAvailable-1)
 			minAvail := int32(1)
-			if tt.minAvailable != nil {
-				minAvail = *tt.minAvailable
+			if test.minAvailable != nil {
+				minAvail = *test.minAvailable
 			}
 			expectedBasePodCliques := int(minAvail)
 			actualBasePodCliques := len(basePodGangs[0].pclqs)
@@ -226,8 +229,8 @@ func TestGetPodsPendingCreation(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
 			// Create test PodCliqueSet
 			pcs := &grovecorev1alpha1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
@@ -264,8 +267,8 @@ func TestGetPodsPendingCreation(t *testing.T) {
 						PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
 							{
 								Name:         "prefill",
-								Replicas:     &tt.pcsgTemplateReplicas,
-								MinAvailable: tt.pcsgMinAvailable,
+								Replicas:     &test.pcsgTemplateReplicas,
+								MinAvailable: test.pcsgMinAvailable,
 								CliqueNames:  []string{"prefill-leader", "prefill-worker"},
 							},
 						},
@@ -288,7 +291,7 @@ func TestGetPodsPendingCreation(t *testing.T) {
 			require.NoError(t, err)
 
 			// Validate the number of expected PodGangs
-			assert.Equal(t, len(tt.expectedPendingPodsPerPodGang), len(sc.expectedPodGangs))
+			assert.Equal(t, len(test.expectedPendingPodsPerPodGang), len(sc.expectedPodGangs))
 
 			// Verify pending pods per PodGang and total number of pending pods
 			var totalNumPendingPods int
@@ -297,10 +300,535 @@ func TestGetPodsPendingCreation(t *testing.T) {
 				isPodGangPendingCreation := slices.Contains(pendingPodGangNames, podGang.fqn)
 				assert.True(t, isPodGangPendingCreation)
 				numPendingPods := r.getPodsPendingCreationOrAssociation(sc, podGang)
-				assert.Equal(t, tt.expectedPendingPodsPerPodGang[i], numPendingPods)
+				assert.Equal(t, test.expectedPendingPodsPerPodGang[i], numPendingPods)
 				totalNumPendingPods += numPendingPods
 			}
-			assert.Equal(t, tt.totalNumPendingPods, totalNumPendingPods)
+			assert.Equal(t, test.totalNumPendingPods, totalNumPendingPods)
+		})
+	}
+}
+
+// TestComputeExpectedPodGangs tests the computeExpectedPodGangs function
+func TestComputeExpectedPodGangs(t *testing.T) {
+	tests := []struct {
+		name                      string
+		pcsReplicas               int32
+		pclqs                     []*grovecorev1alpha1.PodCliqueTemplateSpec
+		pcsgConfigs               []grovecorev1alpha1.PodCliqueScalingGroupConfig
+		expectedNumPodGangs       int
+		expectedBasePodGangNames  []string
+		expectedScaledPodGangFQNs []string
+	}{
+		{
+			name:        "Simple PCS with standalone PCLQs only",
+			pcsReplicas: 2,
+			pclqs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{
+					Name: "worker",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						Replicas:     3,
+						MinAvailable: ptr.To(int32(2)),
+					},
+				},
+			},
+			pcsgConfigs:               nil,
+			expectedNumPodGangs:       2,
+			expectedBasePodGangNames:  []string{"test-pcs-0", "test-pcs-1"},
+			expectedScaledPodGangFQNs: []string{},
+		},
+		{
+			name:        "PCS with PCSG having minAvailable=1",
+			pcsReplicas: 1,
+			pclqs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{
+					Name: "sg-worker",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						Replicas:     2,
+						MinAvailable: ptr.To(int32(2)),
+					},
+				},
+			},
+			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				{
+					Name:         "scaling-group",
+					Replicas:     ptr.To(int32(3)),
+					MinAvailable: ptr.To(int32(1)),
+					CliqueNames:  []string{"sg-worker"},
+				},
+			},
+			expectedNumPodGangs:       3,
+			expectedBasePodGangNames:  []string{"test-pcs-0"},
+			expectedScaledPodGangFQNs: []string{"test-pcs-0-scaling-group-0", "test-pcs-0-scaling-group-1"},
+		},
+		{
+			name:        "PCS with mixed standalone PCLQ and PCSG",
+			pcsReplicas: 1,
+			pclqs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{
+					Name: "standalone",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						Replicas:     2,
+						MinAvailable: ptr.To(int32(1)),
+					},
+				},
+				{
+					Name: "scalable",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						Replicas:     3,
+						MinAvailable: ptr.To(int32(2)),
+					},
+				},
+			},
+			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				{
+					Name:         "sg",
+					Replicas:     ptr.To(int32(4)),
+					MinAvailable: ptr.To(int32(2)),
+					CliqueNames:  []string{"scalable"},
+				},
+			},
+			expectedNumPodGangs:       3,
+			expectedBasePodGangNames:  []string{"test-pcs-0"},
+			expectedScaledPodGangFQNs: []string{"test-pcs-0-sg-0", "test-pcs-0-sg-1"},
+		},
+		{
+			name:        "Multiple PCS replicas with PCSG",
+			pcsReplicas: 2,
+			pclqs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{
+					Name: "worker",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						Replicas:     2,
+						MinAvailable: ptr.To(int32(1)),
+					},
+				},
+			},
+			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				{
+					Name:         "worker-sg",
+					Replicas:     ptr.To(int32(2)),
+					MinAvailable: ptr.To(int32(1)),
+					CliqueNames:  []string{"worker"},
+				},
+			},
+			expectedNumPodGangs:      4,
+			expectedBasePodGangNames: []string{"test-pcs-0", "test-pcs-1"},
+			expectedScaledPodGangFQNs: []string{
+				"test-pcs-0-worker-sg-0",
+				"test-pcs-1-worker-sg-0",
+			},
+		},
+		{
+			name:        "PCSG with minAvailable equals replicas",
+			pcsReplicas: 1,
+			pclqs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{
+					Name: "worker",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						Replicas:     2,
+						MinAvailable: ptr.To(int32(2)),
+					},
+				},
+			},
+			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				{
+					Name:         "sg",
+					Replicas:     ptr.To(int32(2)),
+					MinAvailable: ptr.To(int32(2)),
+					CliqueNames:  []string{"worker"},
+				},
+			},
+			expectedNumPodGangs:       1,
+			expectedBasePodGangNames:  []string{"test-pcs-0"},
+			expectedScaledPodGangFQNs: []string{},
+		},
+		{
+			name:        "Multiple PCSGs in one PCS replica",
+			pcsReplicas: 1,
+			pclqs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{Name: "worker-a", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To(int32(2))}},
+				{Name: "worker-b", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To(int32(2))}},
+			},
+			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				{Name: "sg-a", Replicas: ptr.To(int32(3)), MinAvailable: ptr.To(int32(1)), CliqueNames: []string{"worker-a"}},
+				{Name: "sg-b", Replicas: ptr.To(int32(2)), MinAvailable: ptr.To(int32(1)), CliqueNames: []string{"worker-b"}},
+			},
+			expectedNumPodGangs:       4,
+			expectedBasePodGangNames:  []string{"test-pcs-0"},
+			expectedScaledPodGangFQNs: []string{"test-pcs-0-sg-a-0", "test-pcs-0-sg-a-1", "test-pcs-0-sg-b-0"},
+		},
+		{
+			name:        "Multiple cliques in one PCSG",
+			pcsReplicas: 1,
+			pclqs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To(int32(2))}},
+				{Name: "helper", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
+			},
+			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				{Name: "sg", Replicas: ptr.To(int32(3)), MinAvailable: ptr.To(int32(1)), CliqueNames: []string{"worker", "helper"}},
+			},
+			expectedNumPodGangs:       3,
+			expectedBasePodGangNames:  []string{"test-pcs-0"},
+			expectedScaledPodGangFQNs: []string{"test-pcs-0-sg-0", "test-pcs-0-sg-1"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			// Setup
+			pcs := &grovecorev1alpha1.PodCliqueSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pcs",
+					Namespace: "default",
+					UID:       "test-uid-123",
+				},
+				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+					Replicas: test.pcsReplicas,
+					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+						Cliques:                      test.pclqs,
+						PodCliqueScalingGroupConfigs: test.pcsgConfigs,
+					},
+				},
+			}
+			fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs).Build()
+			r := &_resource{client: fakeClient}
+			sc := &syncContext{
+				ctx:            context.Background(),
+				pcs:            pcs,
+				logger:         ctrllogger.FromContext(context.Background()),
+				existingPCSGs:  []grovecorev1alpha1.PodCliqueScalingGroup{},
+				existingPCLQs:  []grovecorev1alpha1.PodClique{},
+				tasEnabled:     false,
+				topologyLevels: nil,
+			}
+
+			// Test
+			err := r.computeExpectedPodGangs(sc)
+
+			// Assert
+			require.NoError(t, err)
+			assert.Equal(t, test.expectedNumPodGangs, len(sc.expectedPodGangs))
+
+			// Verify base PodGang names
+			var basePodGangNames []string
+			var scaledPodGangNames []string
+			for _, pg := range sc.expectedPodGangs {
+				if slices.Contains(test.expectedBasePodGangNames, pg.fqn) {
+					basePodGangNames = append(basePodGangNames, pg.fqn)
+				} else {
+					scaledPodGangNames = append(scaledPodGangNames, pg.fqn)
+				}
+			}
+			assert.ElementsMatch(t, test.expectedBasePodGangNames, basePodGangNames)
+			assert.ElementsMatch(t, test.expectedScaledPodGangFQNs, scaledPodGangNames)
+		})
+	}
+}
+
+// TestComputeExpectedPodGangsWithTopologyConstraints tests topology constraint handling
+func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
+	tests := []struct {
+		name                        string
+		pcsTopologyConstraint       *grovecorev1alpha1.TopologyConstraint
+		pcsgTopologyConstraint      *grovecorev1alpha1.TopologyConstraint
+		pclqTopologyConstraint      *grovecorev1alpha1.TopologyConstraint
+		expectPGPackConstraintSet   bool
+		expectPCSGPackConstraintSet bool
+		expectPCLQPackConstraintSet bool
+	}{
+		{
+			name: "PCS level topology constraint",
+			pcsTopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+				PackDomain: "rack",
+			},
+			expectPGPackConstraintSet:   true,
+			expectPCSGPackConstraintSet: false,
+			expectPCLQPackConstraintSet: false,
+		},
+		{
+			name: "PCSG level topology constraint",
+			pcsgTopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+				PackDomain: "host",
+			},
+			expectPGPackConstraintSet:   false,
+			expectPCSGPackConstraintSet: true,
+			expectPCLQPackConstraintSet: false,
+		},
+		{
+			name: "PCLQ level topology constraint",
+			pclqTopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+				PackDomain: "host",
+			},
+			expectPGPackConstraintSet:   false,
+			expectPCSGPackConstraintSet: false,
+			expectPCLQPackConstraintSet: true,
+		},
+		{
+			name:                        "No topology constraints",
+			expectPGPackConstraintSet:   false,
+			expectPCSGPackConstraintSet: false,
+			expectPCLQPackConstraintSet: false,
+		},
+		{
+			name: "All levels with topology constraints",
+			pcsTopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+				PackDomain: "rack",
+			},
+			pcsgTopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+				PackDomain: "host",
+			},
+			pclqTopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+				PackDomain: "host",
+			},
+			expectPGPackConstraintSet:   true,
+			expectPCSGPackConstraintSet: true,
+			expectPCLQPackConstraintSet: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			// Setup
+			pcs := &grovecorev1alpha1.PodCliqueSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pcs",
+					Namespace: "default",
+				},
+				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+					Replicas: 1,
+					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+						TopologyConstraint: test.pcsTopologyConstraint,
+						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+							{
+								Name:               "worker",
+								TopologyConstraint: test.pclqTopologyConstraint,
+								Spec: grovecorev1alpha1.PodCliqueSpec{
+									Replicas:     2,
+									MinAvailable: ptr.To(int32(1)),
+								},
+							},
+						},
+						PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+							{
+								Name:               "sg",
+								Replicas:           ptr.To(int32(2)),
+								MinAvailable:       ptr.To(int32(1)),
+								CliqueNames:        []string{"worker"},
+								TopologyConstraint: test.pcsgTopologyConstraint,
+							},
+						},
+					},
+				},
+			}
+
+			fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs).Build()
+			r := &_resource{client: fakeClient}
+			sc := &syncContext{
+				ctx:           context.Background(),
+				pcs:           pcs,
+				logger:        ctrllogger.FromContext(context.Background()),
+				existingPCSGs: []grovecorev1alpha1.PodCliqueScalingGroup{},
+				existingPCLQs: []grovecorev1alpha1.PodClique{},
+				tasEnabled:    true,
+				topologyLevels: []grovecorev1alpha1.TopologyLevel{
+					{Domain: "rack", Key: "topology.kubernetes.io/rack"},
+					{Domain: "host", Key: "kubernetes.io/hostname"},
+				},
+			}
+
+			// Test
+			err := r.computeExpectedPodGangs(sc)
+			require.NoError(t, err)
+			require.NotEmpty(t, sc.expectedPodGangs)
+
+			// Find base PodGang (name format: test-pcs-0)
+			var basePodGang *podGangInfo
+			for _, pg := range sc.expectedPodGangs {
+				if pg.fqn == "test-pcs-0" {
+					basePodGang = pg
+					break
+				}
+			}
+			require.NotNil(t, basePodGang, "base PodGang should exist")
+
+			// Check PCS-level topology constraint
+			if test.expectPGPackConstraintSet {
+				require.NotNil(t, basePodGang.topologyConstraint, "topology constraint should exist")
+				require.NotNil(t, basePodGang.topologyConstraint.PackConstraint, "pack constraint should exist")
+				assert.NotNil(t, basePodGang.topologyConstraint.PackConstraint.Required, "required pack constraint should be set")
+			} else {
+				if basePodGang.topologyConstraint != nil && basePodGang.topologyConstraint.PackConstraint != nil {
+					assert.Nil(t, basePodGang.topologyConstraint.PackConstraint.Required, "required pack constraint should not be set")
+				}
+			}
+
+			// Check PCSG-level topology constraints
+			if test.expectPCSGPackConstraintSet {
+				require.NotEmpty(t, basePodGang.pcsgTopologyConstraints, "PCSG topology constraints should exist")
+				assert.NotNil(t, basePodGang.pcsgTopologyConstraints[0].TopologyConstraint, "PCSG topology constraint should exist")
+				require.NotNil(t, basePodGang.pcsgTopologyConstraints[0].TopologyConstraint.PackConstraint, "PCSG pack constraint should exist")
+				assert.NotNil(t, basePodGang.pcsgTopologyConstraints[0].TopologyConstraint.PackConstraint.Required, "PCSG required pack constraint should be set")
+			} else {
+				if len(basePodGang.pcsgTopologyConstraints) > 0 &&
+					basePodGang.pcsgTopologyConstraints[0].TopologyConstraint != nil &&
+					basePodGang.pcsgTopologyConstraints[0].TopologyConstraint.PackConstraint != nil {
+					assert.Nil(t, basePodGang.pcsgTopologyConstraints[0].TopologyConstraint.PackConstraint.Required, "PCSG required pack constraint should not be set")
+				}
+			}
+
+			// Check PCLQ-level topology constraints
+			require.NotEmpty(t, basePodGang.pclqs, "base PodGang should have PodCliques")
+			pclqInfo := basePodGang.pclqs[0]
+			if test.expectPCLQPackConstraintSet {
+				require.NotNil(t, pclqInfo.packConstraint, "PCLQ pack constraint should exist")
+				require.NotNil(t, pclqInfo.packConstraint.PackConstraint, "PCLQ pack constraint should exist")
+				assert.NotNil(t, pclqInfo.packConstraint.PackConstraint.Required, "PCLQ required pack constraint should be set")
+			} else {
+				if pclqInfo.packConstraint != nil && pclqInfo.packConstraint.PackConstraint != nil {
+					assert.Nil(t, pclqInfo.packConstraint.PackConstraint.Required, "PCLQ required pack constraint should not be set")
+				}
+			}
+		})
+	}
+}
+
+// TestDeterminePCSGReplicas tests the determinePCSGReplicas method
+func TestDeterminePCSGReplicas(t *testing.T) {
+	tests := []struct {
+		name             string
+		pcsgFQN          string
+		pcsgConfig       grovecorev1alpha1.PodCliqueScalingGroupConfig
+		existingPCSGs    []grovecorev1alpha1.PodCliqueScalingGroup
+		expectedReplicas int
+	}{
+		{
+			name:    "Returns existing PCSG replicas when PCSG exists",
+			pcsgFQN: "test-pcs-0-worker-sg",
+			pcsgConfig: grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				Name:         "worker-sg",
+				Replicas:     ptr.To(int32(3)),
+				MinAvailable: ptr.To(int32(1)),
+				CliqueNames:  []string{"worker"},
+			},
+			existingPCSGs: []grovecorev1alpha1.PodCliqueScalingGroup{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-pcs-0-worker-sg",
+						Namespace: "default",
+					},
+					Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
+						Replicas:     5, // HPA scaled to 5
+						MinAvailable: ptr.To(int32(1)),
+						CliqueNames:  []string{"worker"},
+					},
+				},
+			},
+			expectedReplicas: 5, // Should use actual PCSG replicas
+		},
+		{
+			name:    "Returns template replicas when PCSG does not exist",
+			pcsgFQN: "test-pcs-0-worker-sg",
+			pcsgConfig: grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				Name:         "worker-sg",
+				Replicas:     ptr.To(int32(3)),
+				MinAvailable: ptr.To(int32(1)),
+				CliqueNames:  []string{"worker"},
+			},
+			existingPCSGs:    []grovecorev1alpha1.PodCliqueScalingGroup{},
+			expectedReplicas: 3, // Should use template replicas
+		},
+		{
+			name:    "Finds the correct PCSG among multiple existing PCSGs and returns its replicas",
+			pcsgFQN: "test-pcs-1-worker-sg",
+			pcsgConfig: grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				Name:         "worker-sg",
+				Replicas:     ptr.To(int32(3)),
+				MinAvailable: ptr.To(int32(1)),
+				CliqueNames:  []string{"worker"},
+			},
+			existingPCSGs: []grovecorev1alpha1.PodCliqueScalingGroup{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-pcs-0-worker-sg",
+						Namespace: "default",
+					},
+					Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
+						Replicas:     10,
+						MinAvailable: ptr.To(int32(1)),
+						CliqueNames:  []string{"worker"},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-pcs-1-worker-sg", // This one should match
+						Namespace: "default",
+					},
+					Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
+						Replicas:     7,
+						MinAvailable: ptr.To(int32(1)),
+						CliqueNames:  []string{"worker"},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-pcs-0-other-sg",
+						Namespace: "default",
+					},
+					Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
+						Replicas:     15,
+						MinAvailable: ptr.To(int32(2)),
+						CliqueNames:  []string{"other"},
+					},
+				},
+			},
+			expectedReplicas: 7, // Should find and use the matching PCSG replicas
+		},
+		{
+			name:    "Returns the template replicas when no existing PCSG matches",
+			pcsgFQN: "test-pcs-2-worker-sg",
+			pcsgConfig: grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				Name:         "worker-sg",
+				Replicas:     ptr.To(int32(4)),
+				MinAvailable: ptr.To(int32(2)),
+				CliqueNames:  []string{"worker"},
+			},
+			existingPCSGs: []grovecorev1alpha1.PodCliqueScalingGroup{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-pcs-0-worker-sg",
+						Namespace: "default",
+					},
+					Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
+						Replicas:     10,
+						MinAvailable: ptr.To(int32(2)),
+						CliqueNames:  []string{"worker"},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-pcs-1-worker-sg",
+						Namespace: "default",
+					},
+					Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
+						Replicas:     8,
+						MinAvailable: ptr.To(int32(2)),
+						CliqueNames:  []string{"worker"},
+					},
+				},
+			},
+			expectedReplicas: 4, // Should use template replicas as none match
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			sc := &syncContext{
+				existingPCSGs: test.existingPCSGs,
+			}
+
+			actualReplicas := sc.determinePCSGReplicas(test.pcsgFQN, test.pcsgConfig)
+			assert.Equal(t, test.expectedReplicas, actualReplicas,
+				"determinePCSGReplicas should return expected replica count")
 		})
 	}
 }

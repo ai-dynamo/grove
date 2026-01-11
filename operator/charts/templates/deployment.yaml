@@ -15,6 +15,7 @@ spec:
       labels:
 {{- include "operator.deployment.labels" . | nindent 8 }}
     spec:
+      restartPolicy: Always
       {{- if .Values.priorityClass.enabled }}
       priorityClassName: {{ required ".Values.priorityClass.name is required" .Values.priorityClass.name }}
       {{- end }}

@@ -227,7 +227,7 @@ func SetupCompleteK3DCluster(ctx context.Context, cfg ClusterConfig, skaffoldYAM
 	if err != nil {
 		return nil, enhancedCleanup, fmt.Errorf("failed to load dependencies: %w", err)
 	}
-	imagesToPrepull := deps.GetImagesToPrepull()
+	imagesToPrepull := deps.GetImagesToPrePull()
 
 	// Pre-pull and push images to local registry if enabled
 	if cfg.EnableRegistry {
@@ -275,33 +275,8 @@ func SetupCompleteK3DCluster(ctx context.Context, cfg ClusterConfig, skaffoldYAM
 		Logger:         logger,
 	}
 
-	// Use GPU Operator configuration from dependencies
-	gpuOperatorConfig := &HelmInstallConfig{
-		ReleaseName:     deps.HelmCharts.GPUOperator.ReleaseName,
-		ChartRef:        deps.HelmCharts.GPUOperator.ChartRef,
-		ChartVersion:    deps.HelmCharts.GPUOperator.Version,
-		Namespace:       deps.HelmCharts.GPUOperator.Namespace,
-		RestConfig:      restConfig,
-		CreateNamespace: true,
-		Wait:            false,
-		GenerateName:    false,
-		RepoURL:         deps.HelmCharts.GPUOperator.RepoURL,
-		Values: map[string]interface{}{
-			"tolerations":        tolerations,
-			"driver":             map[string]interface{}{"enabled": false},
-			"toolkit":            map[string]interface{}{"enabled": false},
-			"devicePlugin":       map[string]interface{}{"enabled": false},
-			"dcgmExporter":       map[string]interface{}{"enabled": false},
-			"gfd":                map[string]interface{}{"enabled": false},
-			"migManager":         map[string]interface{}{"enabled": false},
-			"nodeStatusExporter": map[string]interface{}{"enabled": false},
-		},
-		HelmLoggerFunc: logger.Debugf,
-		Logger:         logger,
-	}
-
-	logger.Info("🚀 Installing Grove, Kai Scheduler, and NVIDIA GPU Operator...")
-	if err := InstallCoreComponents(ctx, restConfig, kaiConfig, gpuOperatorConfig, skaffoldYAMLPath, cfg.RegistryPort, logger); err != nil {
+	logger.Info("🚀 Installing Grove, Kai Scheduler...")
+	if err := InstallCoreComponents(ctx, restConfig, kaiConfig, skaffoldYAMLPath, cfg.RegistryPort, logger); err != nil {
 		cleanup()
 		return nil, nil, fmt.Errorf("component installation failed: %w", err)
 	}
@@ -333,10 +308,10 @@ func SetupCompleteK3DCluster(ctx context.Context, cfg ClusterConfig, skaffoldYAM
 
 	// Nvidia Operator seems to take the longest to be ready, so we wait for it last
 	// to get the most done while waiting. (0 = skip count validation)
-	if err := utils.WaitForPodsInNamespace(ctx, gpuOperatorConfig.Namespace, gpuOperatorConfig.RestConfig, 0, defaultPollTimeout, defaultPollInterval, gpuOperatorConfig.Logger); err != nil {
-		cleanup()
-		return nil, nil, fmt.Errorf("NVIDIA GPU Operator not ready: %w", err)
-	}
+	//if err := utils.WaitForPodsInNamespace(ctx, gpuOperatorConfig.Namespace, gpuOperatorConfig.RestConfig, 0, defaultPollTimeout, defaultPollInterval, gpuOperatorConfig.Logger); err != nil {
+	//	cleanup()
+	//	return nil, nil, fmt.Errorf("NVIDIA GPU Operator not ready: %w", err)
+	//}
 
 	// Wait for Grove webhook to be ready by actually testing it
 	// This ensures the webhook is ready to handle requests before tests start
@@ -346,7 +321,7 @@ func SetupCompleteK3DCluster(ctx context.Context, cfg ClusterConfig, skaffoldYAM
 	}
 
 	// Find any deployed images that are not in the prepull list
-	namespacesToCheck := []string{kaiConfig.Namespace, gpuOperatorConfig.Namespace}
+	namespacesToCheck := []string{kaiConfig.Namespace /*gpuOperatorConfig.Namespace*/}
 	missingImages := findMissingImages(ctx, clientset, namespacesToCheck, imagesToPrepull, logger)
 
 	// Warn about missing images to help keep the prepull list up to date
@@ -511,8 +486,8 @@ configs:
 	return restConfig, cleanup, nil
 }
 
-// InstallCoreComponents installs the core components (Grove via Skaffold, Kai Scheduler and NVIDIA GPU Operator via Helm)
-func InstallCoreComponents(ctx context.Context, restConfig *rest.Config, kaiConfig *HelmInstallConfig, nvidiaConfig *HelmInstallConfig, skaffoldYAMLPath string, registryPort string, logger *utils.Logger) error {
+// InstallCoreComponents installs the core components (Grove via Skaffold and Kai Scheduler via Helm)
+func InstallCoreComponents(ctx context.Context, restConfig *rest.Config, kaiConfig *HelmInstallConfig, skaffoldYAMLPath string, registryPort string, logger *utils.Logger) error {
 	// use wait group to wait for all installations to complete
 	var wg sync.WaitGroup
 
@@ -583,27 +558,6 @@ func InstallCoreComponents(ctx context.Context, restConfig *rest.Config, kaiConf
 			logger.Debug("✅ Grove installation completed successfully")
 		}
 	}()
-
-	// Install NVIDIA GPU Operator
-	if nvidiaConfig != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			logger.Debug("🚀 Starting NVIDIA GPU Operator installation...")
-
-			installFunc := func() error {
-				_, err := InstallHelmChart(nvidiaConfig)
-				return err
-			}
-
-			err := retryInstallation(installFunc, "NVIDIA GPU Operator", maxRetries, retryDelay, logger)
-			if err != nil {
-				errChan <- err
-			} else {
-				logger.Debug("✅ NVIDIA GPU Operator installation completed successfully")
-			}
-		}()
-	}
 
 	// Wait for all installations to complete
 	wg.Wait()

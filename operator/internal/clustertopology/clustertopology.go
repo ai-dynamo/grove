@@ -20,12 +20,15 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 
-	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	kaitopologyv1alpha1 "github.com/NVIDIA/KAI-scheduler/pkg/apis/kai/v1alpha1"
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -34,10 +37,46 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
-// EnsureClusterTopology ensures that the ClusterTopology is created or updated in the cluster.
-func EnsureClusterTopology(ctx context.Context, cl client.Client, logger logr.Logger, name string, topologyLevels []corev1alpha1.TopologyLevel) (*corev1alpha1.ClusterTopology, error) {
+// SynchronizeTopology synchronizes Grove ClusterTopology and KAI scheduler Topology resources based on the operator configuration.
+func SynchronizeTopology(ctx context.Context, cl client.Client, logger logr.Logger, operatorCfg *configv1alpha1.OperatorConfiguration) error {
+	if !operatorCfg.TopologyAwareScheduling.Enabled {
+		logger.Info("cluster topology is disabled, deleting existing ClusterTopology resource if any")
+		return deleteClusterTopology(ctx, cl, grovecorev1alpha1.DefaultClusterTopologyName)
+	}
+	// create or update ClusterTopology based on configuration
+	clusterTopology, err := ensureClusterTopology(ctx, cl, logger, grovecorev1alpha1.DefaultClusterTopologyName, operatorCfg.TopologyAwareScheduling.Levels)
+	if err != nil {
+		return err
+	}
+	// create or update KAI Topology based on ClusterTopology
+	return ensureKAITopology(ctx, cl, logger, grovecorev1alpha1.DefaultClusterTopologyName, clusterTopology)
+}
+
+// GetClusterTopologyLevels retrieves the TopologyLevels from the specified ClusterTopology resource.
+func GetClusterTopologyLevels(ctx context.Context, cl client.Client, name string) ([]grovecorev1alpha1.TopologyLevel, error) {
+	clusterTopology := &grovecorev1alpha1.ClusterTopology{}
+	if err := cl.Get(ctx, client.ObjectKey{Name: name}, clusterTopology); err != nil {
+		return nil, err
+	}
+	return clusterTopology.Spec.Levels, nil
+}
+
+// deleteClusterTopology deletes the ClusterTopology with the given name.
+func deleteClusterTopology(ctx context.Context, cl client.Client, name string) error {
+	if err := client.IgnoreNotFound(cl.Delete(ctx, &grovecorev1alpha1.ClusterTopology{
+		ObjectMeta: ctrl.ObjectMeta{
+			Name: name,
+		},
+	})); err != nil {
+		return fmt.Errorf("failed to delete ClusterTopology %s: %w", name, err)
+	}
+	return nil
+}
+
+// ensureClusterTopology ensures that the ClusterTopology is created or updated in the cluster.
+func ensureClusterTopology(ctx context.Context, cl client.Client, logger logr.Logger, name string, topologyLevels []grovecorev1alpha1.TopologyLevel) (*grovecorev1alpha1.ClusterTopology, error) {
 	desiredTopology := buildClusterTopology(name, topologyLevels)
-	existingTopology := &corev1alpha1.ClusterTopology{}
+	existingTopology := &grovecorev1alpha1.ClusterTopology{}
 	err := cl.Get(ctx, client.ObjectKey{Name: name}, existingTopology)
 	if err != nil {
 		// If not found, create a new ClusterTopology
@@ -62,8 +101,44 @@ func EnsureClusterTopology(ctx context.Context, cl client.Client, logger logr.Lo
 	return existingTopology, nil
 }
 
-// EnsureKAITopology ensures that the corresponding KAI ClusterTopology resource is created.
-func EnsureKAITopology(ctx context.Context, cl client.Client, logger logr.Logger, name string, clusterTopology *corev1alpha1.ClusterTopology) error {
+// buildClusterTopology constructs a ClusterTopology resource based on the provided topology levels.
+// The function checks if required TopologyDomain (host) is present, if not add it.
+// kubernetes.io/hostname label is added by the Kubelet (see https://kubernetes.io/docs/reference/node/node-labels/)
+// Therefore it is assumed that the host topology level will always be available. In case the admin fails to specify it,
+// we correct that error by explicitly adding it when creating/updating the ClusterTopology resource.
+func buildClusterTopology(name string, topologyLevels []grovecorev1alpha1.TopologyLevel) *grovecorev1alpha1.ClusterTopology {
+	sortedTopologyLevels := make([]grovecorev1alpha1.TopologyLevel, len(topologyLevels))
+	copy(sortedTopologyLevels, topologyLevels)
+
+	hostTopologyDomainPresent := slices.ContainsFunc(topologyLevels, func(t grovecorev1alpha1.TopologyLevel) bool {
+		return t.Domain == grovecorev1alpha1.TopologyDomainHost
+	})
+	if !hostTopologyDomainPresent {
+		sortedTopologyLevels = append(sortedTopologyLevels, grovecorev1alpha1.TopologyLevel{
+			Domain: grovecorev1alpha1.TopologyDomainHost,
+			Key:    corev1.LabelHostname,
+		})
+	}
+
+	// Sort topology levels to have a consistent order, arranging from broadest to narrowest domain.
+	grovecorev1alpha1.SortTopologyLevels(sortedTopologyLevels)
+
+	return &grovecorev1alpha1.ClusterTopology{
+		ObjectMeta: ctrl.ObjectMeta{
+			Name: name,
+		},
+		Spec: grovecorev1alpha1.ClusterTopologySpec{
+			Levels: sortedTopologyLevels,
+		},
+	}
+}
+
+func isClusterTopologyChanged(oldTopology, newTopology *grovecorev1alpha1.ClusterTopology) bool {
+	return !reflect.DeepEqual(oldTopology.Spec, newTopology.Spec)
+}
+
+// ensureKAITopology ensures that the corresponding KAI Topology resource is created.
+func ensureKAITopology(ctx context.Context, cl client.Client, logger logr.Logger, name string, clusterTopology *grovecorev1alpha1.ClusterTopology) error {
 	desiredTopology, err := buildKAITopology(name, clusterTopology, cl.Scheme())
 	if err != nil {
 		return fmt.Errorf("failed to build KAI Topology: %w", err)
@@ -99,38 +174,8 @@ func EnsureKAITopology(ctx context.Context, cl client.Client, logger logr.Logger
 	return nil
 }
 
-// DeleteClusterTopology deletes the ClusterTopology with the given name.
-func DeleteClusterTopology(ctx context.Context, cl client.Client, name string) error {
-	if err := client.IgnoreNotFound(cl.Delete(ctx, &corev1alpha1.ClusterTopology{
-		ObjectMeta: ctrl.ObjectMeta{
-			Name: name,
-		},
-	})); err != nil {
-		return fmt.Errorf("failed to delete ClusterTopology %s: %w", name, err)
-	}
-	return nil
-}
-
-func buildClusterTopology(name string, topologyLevels []corev1alpha1.TopologyLevel) *corev1alpha1.ClusterTopology {
-	sortedTopologyLevels := make([]corev1alpha1.TopologyLevel, len(topologyLevels))
-	copy(sortedTopologyLevels, topologyLevels)
-	corev1alpha1.SortTopologyLevels(sortedTopologyLevels)
-	return &corev1alpha1.ClusterTopology{
-		ObjectMeta: ctrl.ObjectMeta{
-			Name: name,
-		},
-		Spec: corev1alpha1.ClusterTopologySpec{
-			Levels: sortedTopologyLevels,
-		},
-	}
-}
-
-func isClusterTopologyChanged(oldTopology, newTopology *corev1alpha1.ClusterTopology) bool {
-	return !reflect.DeepEqual(oldTopology.Spec, newTopology.Spec)
-}
-
-func buildKAITopology(name string, clusterTopology *corev1alpha1.ClusterTopology, scheme *runtime.Scheme) (*kaitopologyv1alpha1.Topology, error) {
-	kaiTopologyLevels := lo.Map(clusterTopology.Spec.Levels, func(clusterTopologyLevel corev1alpha1.TopologyLevel, _ int) kaitopologyv1alpha1.TopologyLevel {
+func buildKAITopology(name string, clusterTopology *grovecorev1alpha1.ClusterTopology, scheme *runtime.Scheme) (*kaitopologyv1alpha1.Topology, error) {
+	kaiTopologyLevels := lo.Map(clusterTopology.Spec.Levels, func(clusterTopologyLevel grovecorev1alpha1.TopologyLevel, _ int) kaitopologyv1alpha1.TopologyLevel {
 		return kaitopologyv1alpha1.TopologyLevel{
 			NodeLabel: clusterTopologyLevel.Key,
 		}

@@ -55,16 +55,16 @@ var (
 
 // OperatorConfiguration defines the configuration for the Grove operator.
 type OperatorConfiguration struct {
-	metav1.TypeMeta  `json:",inline"`
-	ClientConnection ClientConnectionConfiguration `json:"runtimeClientConnection"`
-	LeaderElection   LeaderElectionConfiguration   `json:"leaderElection"`
-	Server           ServerConfiguration           `json:"server"`
-	Debugging        *DebuggingConfiguration       `json:"debugging,omitempty"`
-	Controllers      ControllerConfiguration       `json:"controllers"`
-	LogLevel         LogLevel                      `json:"logLevel"`
-	LogFormat        LogFormat                     `json:"logFormat"`
-	Authorizer       AuthorizerConfig              `json:"authorizer"`
-	ClusterTopology  ClusterTopologyConfiguration  `json:"clusterTopology"`
+	metav1.TypeMeta         `json:",inline"`
+	ClientConnection        ClientConnectionConfiguration        `json:"runtimeClientConnection"`
+	LeaderElection          LeaderElectionConfiguration          `json:"leaderElection"`
+	Server                  ServerConfiguration                  `json:"server"`
+	Debugging               *DebuggingConfiguration              `json:"debugging,omitempty"`
+	Controllers             ControllerConfiguration              `json:"controllers"`
+	LogLevel                LogLevel                             `json:"logLevel"`
+	LogFormat               LogFormat                            `json:"logFormat"`
+	Authorizer              AuthorizerConfig                     `json:"authorizer"`
+	TopologyAwareScheduling TopologyAwareSchedulingConfiguration `json:"topologyAwareScheduling"`
 }
 
 // LeaderElectionConfiguration defines the configuration for the leader election.
@@ -191,12 +191,12 @@ type AuthorizerConfig struct {
 	ExemptServiceAccountUserNames []string `json:"exemptServiceAccountUserNames,omitempty"`
 }
 
-// ClusterTopologyConfiguration defines the configuration for topology-aware scheduling.
-type ClusterTopologyConfiguration struct {
+// TopologyAwareSchedulingConfiguration defines the configuration for topology-aware scheduling.
+type TopologyAwareSchedulingConfiguration struct {
 	// Enabled indicates whether topology-aware scheduling is enabled.
 	Enabled bool `json:"enabled"`
 	// Levels is an ordered list of topology levels from broadest to narrowest scope.
-	// Used to create/update the ClusterTopology CR at operator startup.
+	// Used to create/update the TopologyAwareScheduling CR at operator startup.
 	// +optional
 	Levels []corev1alpha1.TopologyLevel `json:"levels,omitempty"`
 }

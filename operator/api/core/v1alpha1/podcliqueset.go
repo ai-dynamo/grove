@@ -61,6 +61,9 @@ type PodCliqueSetSpec struct {
 type PodCliqueSetStatus struct {
 	// ObservedGeneration is the most recent generation observed by the controller.
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
+	// Conditions represents the latest available observations of the PodCliqueSet by its controller.
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 	// LastErrors captures the last errors observed by the controller when reconciling the PodCliqueSet.
 	LastErrors []LastError `json:"lastErrors,omitempty"`
 	// Replicas is the total number of PodCliqueSet replicas created.
@@ -191,8 +194,7 @@ type TopologyConstraint struct {
 	// Note: Does NOT constrain all replicas to the same rack together.
 	// Different replicas can be in different topology domains.
 	// +kubebuilder:validation:Enum=region;zone;datacenter;block;rack;host;numa
-	// +optional
-	PackDomain *TopologyDomain `json:"packDomain,omitempty"`
+	PackDomain TopologyDomain `json:"packDomain"`
 }
 
 // PodCliqueScalingGroupConfig is a group of PodClique's that are scaled together.
