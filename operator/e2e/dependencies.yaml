@@ -34,11 +34,11 @@ images:
   
   # Cert-manager
   - name: quay.io/jetstack/cert-manager-controller
-    version: v1.19.2
+    version: v1.14.4
   - name: quay.io/jetstack/cert-manager-webhook
-    version: v1.19.2
+    version: v1.14.4
   - name: quay.io/jetstack/cert-manager-cainjector
-    version: v1.19.2
+    version: v1.14.4
   - name: quay.io/jetstack/cert-manager-ctl
     version: v1.14.4
 
