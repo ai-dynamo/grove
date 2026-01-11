@@ -1,3 +1,5 @@
+//go:build e2e
+
 // /*
 // Copyright 2025 The Grove Authors.
 //
@@ -13,8 +15,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 // */
-
-//go:build e2e
 
 package tests
 
@@ -67,21 +67,25 @@ spec:
 `
 )
 
-func TestAutoProvisionToCertManager(t *testing.T) {
-	// 1. Prepare cluster
+// Test_CM1_AutoProvisionToCertManager tests transitioning from auto-provisioned certs to cert-manager
+// Scenario CM-1:
+// 1. Initialize Grove with auto-provision mode
+// 2. Install cert-manager and create Certificate
+// 3. Upgrade Grove to use cert-manager (autoProvision=false)
+// 4. Deploy and verify workload with cert-manager certs
+func Test_CM1_AutoProvisionToCertManager(t *testing.T) {
 	ctx := context.Background()
+
+	logger.Info("1. Initialize Grove with auto-provision mode")
 	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 1)
-	defer cleanup()
 
-	// 2. Install cert-manager
+	logger.Info("2. Install cert-manager and create Certificate")
 	deps, _ := e2e.GetDependencies()
-
-	logger.Info("Installing cert-manager...")
 	installCertManager(t, ctx, restConfig, deps)
 	defer uninstallCertManager(t, restConfig, deps)
+	defer cleanup()
 
-	// 3. Create Issuer and Certificate
-	logger.Info("Creating ClusterIssuer and Certificate...")
+	// Create Issuer and Certificate
 	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerIssuerYAML), "", restConfig, logger); err != nil {
 		t.Fatalf("Failed to apply ClusterIssuer: %v", err)
 	}
@@ -90,42 +94,47 @@ func TestAutoProvisionToCertManager(t *testing.T) {
 	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerCertificateYAML), "", restConfig, logger); err != nil {
 		t.Fatalf("Failed to apply Certificate: %v", err)
 	}
-	// 4. Wait for Secret to be created by Cert-Manager
+
+	// Wait for Secret to be created by Cert-Manager
 	waitForSecret(t, ctx, clientset, "grove-webhook-server-cert", true)
 
-	// 5. Upgrade Grove to External Mode
-	logger.Info("Upgrading Grove to use external certs...")
+	logger.Info("3. Upgrade Grove to use cert-manager (autoProvision=false)")
 	_, currentFile, _, _ := runtime.Caller(0)
-
-	// Get the path to the charts directory relative to this source file
 	chartPath := filepath.Join(filepath.Dir(currentFile), "../../charts")
 	upgradeGrove(t, ctx, clientset, chartPath, restConfig, false) // false = autoProvision off
 
-	// 6. Deploy and Verify Workload
+	logger.Info("4. Deploy and verify workload with cert-manager certs")
 	tc := createTestContext(t, ctx, clientset, dynamicClient, restConfig)
 	if _, err := deployAndVerifyWorkload(tc); err != nil {
 		t.Fatalf("Failed to verify workload in Cert-Manager mode: %v", err)
 	}
-	logger.Info("✅ Auto-Provision to Cert-Manager transition successful")
+
+	logger.Info("🎉 Auto-Provision to Cert-Manager transition test completed successfully!")
 }
 
-func TestCertManagerToAutoProvision(t *testing.T) {
-	// 1. Prepare cluster
+// Test_CM2_CertManagerToAutoProvision tests transitioning from cert-manager back to auto-provision
+// Scenario CM-2:
+// 1. Initialize Grove with cert-manager
+// 2. Upgrade Grove to cert-manager mode and verify
+// 3. Remove cert-manager resources
+// 4. Upgrade Grove back to auto-provision mode
+// 5. Deploy and verify workload with auto-provisioned certs
+func Test_CM2_CertManagerToAutoProvision(t *testing.T) {
 	ctx := context.Background()
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 1)
-	defer cleanup()
 
-	// 2. Install cert-manager
+	logger.Info("1. Initialize Grove with cert-manager")
+	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 1)
+
+	// Install cert-manager
 	deps, _ := e2e.GetDependencies()
 	_, currentFile, _, _ := runtime.Caller(0)
 	chartPath := filepath.Join(filepath.Dir(currentFile), "../../charts")
 
-	logger.Info("Installing cert-manager...")
 	installCertManager(t, ctx, restConfig, deps)
 	defer uninstallCertManager(t, restConfig, deps)
+	defer cleanup()
 
-	// 3. Create Issuer and Certificate
-	logger.Info("Creating ClusterIssuer and Certificate...")
+	// Create Issuer and Certificate
 	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerIssuerYAML), "", restConfig, logger); err != nil {
 		t.Fatalf("Failed to apply ClusterIssuer: %v", err)
 	}
@@ -135,31 +144,25 @@ func TestCertManagerToAutoProvision(t *testing.T) {
 		t.Fatalf("Failed to apply Certificate: %v", err)
 	}
 
-	// 4. Upgrade Grove to External Mode
+	logger.Info("2. Upgrade Grove to cert-manager mode and verify")
 	upgradeGrove(t, ctx, clientset, chartPath, restConfig, false) // autoProvision = false
 	waitForSecret(t, ctx, clientset, "grove-webhook-server-cert", true)
 
-	// 5. Remove Cert-Manager assets before switching
-	logger.Info("Purging Cert-Manager assets...")
+	logger.Info("3. Remove cert-manager resources")
 	deleteCertManagerResources(ctx, clientset, dynamicClient)
-
-	// 6. Wait for secret deletion to avoid Helm ownership errors
 	waitForSecret(t, ctx, clientset, "grove-webhook-server-cert", false)
 
-	// 7. Downgrade Grove to Auto-Provision Mode
-	logger.Info("Upgrading Grove back to Auto-Provision mode...")
+	logger.Info("4. Upgrade Grove back to auto-provision mode")
 	upgradeGrove(t, ctx, clientset, chartPath, restConfig, true)
-
-	// 8. Wait for Operator to generate its own secret
 	waitForSecret(t, ctx, clientset, "grove-webhook-server-cert", true)
 
-	// 9. Deploy and Verify via Workload
+	logger.Info("5. Deploy and verify workload with auto-provisioned certs")
 	tc := createTestContext(t, ctx, clientset, dynamicClient, restConfig)
 	if _, err := deployAndVerifyWorkload(tc); err != nil {
 		t.Fatalf("Failed to verify workload after reverting to Auto-Provision: %v", err)
 	}
 
-	logger.Info("✅ Cert-Manager to Auto-Provision transition successful")
+	logger.Info("🎉 Cert-Manager to Auto-Provision transition test completed successfully!")
 }
 
 // upgradeGrove handles the Helm upgrade for both tests
@@ -199,7 +202,6 @@ func upgradeGrove(t *testing.T, ctx context.Context, clientset *kubernetes.Clien
 		Logger:         logger,
 	}
 
-	logger.Info("Starting Helm upgrade...")
 	if _, err := setup.UpgradeHelmChart(config); err != nil {
 		pods, podErr := clientset.CoreV1().Pods("grove-system").List(ctx, metav1.ListOptions{})
 		if podErr == nil {
@@ -212,14 +214,14 @@ func upgradeGrove(t *testing.T, ctx context.Context, clientset *kubernetes.Clien
 	}
 
 	// Wait for Grove operator pod to be ready after upgrade
-	logger.Info("Waiting for Grove operator pod to be ready...")
 	if err := utils.WaitForPodsInNamespace(ctx, "grove-system", restConfig, 1, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Grove operator pod not ready after upgrade: %v", err)
 	}
-	logger.Info("✅ Grove upgraded successfully")
 }
 
 func waitForSecret(t *testing.T, ctx context.Context, clientset *kubernetes.Clientset, name string, shouldExist bool) {
+	t.Helper()
+
 	err := utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		_, err := clientset.CoreV1().Secrets("grove-system").Get(ctx, name, metav1.GetOptions{})
 		if shouldExist {
@@ -237,19 +239,16 @@ func deleteCertManagerResources(ctx context.Context, clientset *kubernetes.Clien
 	issuerGVR := schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "clusterissuers"}
 
 	// Delete Certificate first (cert-manager resource)
-	logger.Info("Deleting cert-manager Certificate...")
 	if err := dynamicClient.Resource(certGVR).Namespace("grove-system").Delete(ctx, "grove-webhook-server-cert", metav1.DeleteOptions{}); err != nil {
 		logger.Warnf("Failed to delete Certificate (may not exist): %v", err)
 	}
 
 	// Delete the Secret managed by cert-manager
-	logger.Info("Deleting webhook secret...")
 	if err := clientset.CoreV1().Secrets("grove-system").Delete(ctx, "grove-webhook-server-cert", metav1.DeleteOptions{}); err != nil {
 		logger.Warnf("Failed to delete Secret (may not exist): %v", err)
 	}
 
 	// Delete ClusterIssuer last
-	logger.Info("Deleting cert-manager ClusterIssuer...")
 	if err := dynamicClient.Resource(issuerGVR).Delete(ctx, "selfsigned-issuer", metav1.DeleteOptions{}); err != nil {
 		logger.Warnf("Failed to delete ClusterIssuer (may not exist): %v", err)
 	}
@@ -257,6 +256,7 @@ func deleteCertManagerResources(ctx context.Context, clientset *kubernetes.Clien
 
 func installCertManager(t *testing.T, ctx context.Context, restConfig *rest.Config, deps *e2e.Dependencies) {
 	t.Helper()
+
 	cmConfig := &setup.HelmInstallConfig{
 		RestConfig:      restConfig,
 		ReleaseName:     deps.HelmCharts.CertManager.ReleaseName,
@@ -272,19 +272,19 @@ func installCertManager(t *testing.T, ctx context.Context, restConfig *rest.Conf
 		Logger:         logger,
 	}
 
-	logger.Info("Installing cert-manager via Helm...")
 	if _, err := setup.InstallHelmChart(cmConfig); err != nil {
 		t.Fatalf("Failed to install cert-manager: %v", err)
 	}
 
 	// Ensure cert-manager is actually up and running before returning
-	logger.Info("Waiting for cert-manager pods to be ready...")
 	if err := utils.WaitForPodsInNamespace(ctx, cmConfig.Namespace, restConfig, 3, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("cert-manager pods failed to become ready: %v", err)
 	}
 }
 
 func createTestContext(t *testing.T, ctx context.Context, clientset *kubernetes.Clientset, dynamicClient dynamic.Interface, restConfig *rest.Config) TestContext {
+	t.Helper()
+
 	_, currentFile, _, _ := runtime.Caller(0)
 	workloadPath := filepath.Join(filepath.Dir(currentFile), "../yaml/workload1.yaml")
 
@@ -308,7 +308,6 @@ func createTestContext(t *testing.T, ctx context.Context, clientset *kubernetes.
 
 func waitForClusterIssuer(t *testing.T, ctx context.Context, dynamicClient dynamic.Interface, name string) {
 	t.Helper()
-	logger.Infof("Waiting for ClusterIssuer %s to be Ready...", name)
 
 	issuerGVR := schema.GroupVersionResource{
 		Group:    "cert-manager.io",
@@ -350,6 +349,8 @@ func checkReadyStatus(obj *unstructured.Unstructured) bool {
 }
 
 func uninstallCertManager(t *testing.T, restConfig *rest.Config, deps *e2e.Dependencies) {
+	t.Helper()
+
 	cmConfig := &setup.HelmInstallConfig{
 		RestConfig:     restConfig,
 		ReleaseName:    deps.HelmCharts.CertManager.ReleaseName,
@@ -358,10 +359,7 @@ func uninstallCertManager(t *testing.T, restConfig *rest.Config, deps *e2e.Depen
 		Logger:         logger,
 	}
 
-	logger.Info("Uninstalling cert-manager...")
 	if err := setup.UninstallHelmChart(cmConfig); err != nil {
 		logger.Warnf("Failed to uninstall cert-manager (may not exist): %v", err)
-	} else {
-		logger.Info("✅ cert-manager uninstalled successfully")
 	}
 }
