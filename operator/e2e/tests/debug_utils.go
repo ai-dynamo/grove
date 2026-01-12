@@ -173,8 +173,10 @@ const (
 	operatorNamespace = "grove-system"
 	// operatorDeploymentPrefix is the prefix for operator pod names
 	operatorDeploymentPrefix = "grove-operator"
-	// operatorLogLines is the number of log lines to capture from the operator
-	operatorLogLines = 500
+	// operatorLogLines is the number of log lines to capture from the operator.
+	// Set to 2000 to ensure we capture logs from before the failure occurred,
+	// not just the steady-state logs after the failure.
+	operatorLogLines = 2000
 	// eventLookbackDuration is how far back to look for events
 	eventLookbackDuration = 10 * time.Minute
 )
@@ -280,7 +282,17 @@ func dumpOperatorLogs(tc TestContext) {
 
 // dumpGroveResources dumps all Grove resources as YAML at INFO level.
 func dumpGroveResources(tc TestContext) {
+	logger.Info("================================================================================")
+	logger.Info("=== GROVE RESOURCES ===")
+	logger.Info("================================================================================")
+
+	if tc.DynamicClient == nil {
+		logger.Info("[DIAG] DynamicClient is nil, cannot list Grove resources")
+		return
+	}
+
 	for _, rt := range groveResourceTypes {
+		logger.Infof("[DIAG] Listing %s in namespace %s...", rt.name, tc.Namespace)
 		resources, err := tc.DynamicClient.Resource(rt.gvr).Namespace(tc.Namespace).List(tc.Ctx, metav1.ListOptions{})
 		if err != nil {
 			logger.Infof("[DIAG] Failed to list %s: %v", rt.name, err)
@@ -292,10 +304,11 @@ func dumpGroveResources(tc TestContext) {
 			continue
 		}
 
+		logger.Infof("[DIAG] Found %d %s", len(resources.Items), rt.name)
 		for _, resource := range resources.Items {
-			logger.Info("================================================================================")
-			logger.Infof("=== %s: %s ===", rt.singular, resource.GetName())
-			logger.Info("================================================================================")
+			logger.Info("--------------------------------------------------------------------------------")
+			logger.Infof("--- %s: %s ---", rt.singular, resource.GetName())
+			logger.Info("--------------------------------------------------------------------------------")
 
 			yamlBytes, err := yaml.Marshal(resource.Object)
 			if err != nil {
@@ -312,21 +325,33 @@ func dumpGroveResources(tc TestContext) {
 }
 
 // dumpPodDetails dumps detailed pod information at INFO level.
+// Lists ALL pods in the namespace (not filtered by workload label selector)
+// to ensure we capture all relevant pods during failure diagnostics.
 func dumpPodDetails(tc TestContext) {
 	logger.Info("================================================================================")
 	logger.Info("=== POD DETAILS ===")
 	logger.Info("================================================================================")
 
-	pods, err := listPods(tc)
+	if tc.Clientset == nil {
+		logger.Info("[DIAG] Clientset is nil, cannot list pods")
+		return
+	}
+
+	// List ALL pods in the namespace, not just workload pods
+	// This ensures we capture all relevant pods during failure diagnostics
+	logger.Infof("[DIAG] Listing all pods in namespace %s...", tc.Namespace)
+	pods, err := tc.Clientset.CoreV1().Pods(tc.Namespace).List(tc.Ctx, metav1.ListOptions{})
 	if err != nil {
 		logger.Infof("[DIAG] Failed to list pods: %v", err)
 		return
 	}
 
 	if len(pods.Items) == 0 {
-		logger.Infof("[DIAG] No pods found in namespace %s with selector %s", tc.Namespace, tc.getLabelSelector())
+		logger.Infof("[DIAG] No pods found in namespace %s", tc.Namespace)
 		return
 	}
+
+	logger.Infof("[DIAG] Found %d pods in namespace %s", len(pods.Items), tc.Namespace)
 
 	// Print header
 	logger.Infof("%-40s %-12s %-10s %-45s %s", "NAME", "PHASE", "READY", "NODE", "CONDITIONS")
@@ -391,6 +416,12 @@ func dumpRecentEvents(tc TestContext) {
 	logger.Infof("=== KUBERNETES EVENTS (last %v) ===", eventLookbackDuration)
 	logger.Info("================================================================================")
 
+	if tc.Clientset == nil {
+		logger.Info("[DIAG] Clientset is nil, cannot list events")
+		return
+	}
+
+	logger.Infof("[DIAG] Listing events in namespace %s...", tc.Namespace)
 	events, err := tc.Clientset.CoreV1().Events(tc.Namespace).List(tc.Ctx, metav1.ListOptions{})
 	if err != nil {
 		logger.Infof("[DIAG] Failed to list events: %v", err)
