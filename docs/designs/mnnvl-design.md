@@ -18,7 +18,7 @@ This design document details the plan to enable the Grove operator to automatica
 
 The MNNVL support feature in Grove is guided by three core design principles:
 
-**Simplicity:** Currently, Kubernetes workloads can take advantage of NVIDIA MNNVL accelerated hardware by explicitly adding NVIDIA ComputeDomain APIs to their workloads. With this feature, when applicable, Grove will abstract the MNNVL hardware from users by automatically creating ComputeDomain custom resources, enabling ComputeDomains support to workloads, and managing the lifecycle of the CRs.
+**Simplicity:** Currently, Kubernetes workloads can take advantage of NVIDIA MNNVL accelerated hardware by explicitly adding NVIDIA ComputeDomain APIs to their workloads. With this feature, when applicable, Grove will abstract the MNNVL hardware from users by automatically creating ComputeDomain resources, enabling ComputeDomains support to workloads, and managing the lifecycle of the CRs.
 
 Power users who require custom ComputeDomain can opt-out of automatic MNNVL management and specify their own `resourceClaims` directly in the pod spec template.
 
@@ -52,7 +52,7 @@ The following key goals, derived from the requirements document, guide the MNNVL
 * **Homogeneous Cluster Support:** The feature will only support clusters with the exact same type of GPUs on all nodes. (AKA homogeneous cluster)
   * Grove does not validate or enforce cluster homogeneity—it is the cluster admin's responsibility to enable this feature only on clusters that meet this requirement. Enabling MNNVL on heterogeneous clusters may result in undefined scheduling behavior.
 * **Global Configuration:** A global configuration for the feature is required. If the cluster does not support MNNVL, the Grove Operator will exit with a non-zero exit code.
-* **Opt-Out***
+* **Opt-Out**
   * An immutable, granular-level opt-out option must be available in the PCS.
 * **Workload Impact:**
   * Enabling/Disabling of MNNVL feature should not impact a currently running workload.
@@ -187,7 +187,7 @@ Before creating the `CD`, the controller checks the `grove.io/mnnvl-enabled` ann
 
 Since the annotation is set by the mutating webhook at PCS creation time (based on feature enablement and GPU requirements), the controller logic is simplified to a single annotation check.
 
-**Backward Compatibility:** Existing PCS resources created before the MNNVL feature was enabled will not have the `grove.io/mnnvl-enabled` annotation. These workloads will continue to operate without ComputeDomains, even after the feature is enabled globally. To enable MNNVL for an existing workload, the PCS must be deleted and recreated.
+**Backward Compatibility:** Existing PCS resources created before the MNNVL feature was deployed will not have the `grove.io/mnnvl-enabled` annotation. These workloads will continue to operate without ComputeDomains, even after the feature is enabled globally. To enable MNNVL for an existing workload, the PCS must be deleted and recreated.
 
 If MNNVL is enabled, the controller creates a `ComputeDomain` resource for each PCS replica. The CD is named `{pcs-name}-{replica-index}` and references an RCT with the same name. The PCS is set as the owner reference to enable automatic garbage collection. The `app.kubernetes.io/part-of` and `grove.io/podcliqueset-replica-index` labels will be used to determine which ComputeDomain is associated with a specific PCS replica. 
 
