@@ -288,7 +288,7 @@ func (scm *SharedClusterManager) deleteAllResources(ctx context.Context, group, 
 // isSystemPod checks if a pod is a system pod that should be ignored during cleanup
 func isSystemPod(pod *v1.Pod) bool {
 	// Skip pods managed by DaemonSets or system namespaces
-	if pod.Namespace == "kube-system" || pod.Namespace == "grove-system" {
+	if pod.Namespace == "kube-system" || pod.Namespace == OperatorNamespace {
 		return true
 	}
 
