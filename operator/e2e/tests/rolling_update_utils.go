@@ -1134,6 +1134,7 @@ func setupRollingUpdateTest(t *testing.T, cfg RollingUpdateTestConfig) (TestCont
 	}
 
 	// Create combined cleanup function
+	// Note: clusterCleanup already handles diagnostics collection on failure
 	cleanup := func() {
 		tracker.Stop()
 		clusterCleanup()
