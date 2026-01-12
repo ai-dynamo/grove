@@ -282,7 +282,7 @@ func SetupCompleteK3DCluster(ctx context.Context, cfg ClusterConfig, skaffoldYAM
 	}
 
 	// Wait for Grove pods to be ready (0 = skip count validation)
-	if err := utils.WaitForPodsInNamespace(ctx, "grove-system", restConfig, 0, defaultPollTimeout, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPodsInNamespace(ctx, OperatorNamespace, restConfig, 0, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		cleanup()
 
 		return nil, nil, fmt.Errorf("grove pods not ready: %w", err)
@@ -537,7 +537,7 @@ func InstallCoreComponents(ctx context.Context, restConfig *rest.Config, kaiConf
 				Profiles:         []string{"debug"},
 				PushRepo:         fmt.Sprintf("localhost:%s", registryPort),
 				PullRepo:         fmt.Sprintf("registry:%s", registryPort),
-				Namespace:        "grove-system",
+				Namespace:        OperatorNamespace,
 				Env: map[string]string{
 					"VERSION":  "E2E_TESTS",
 					"LD_FLAGS": buildLDFlagsForE2E(),
