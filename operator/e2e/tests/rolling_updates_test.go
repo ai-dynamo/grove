@@ -47,8 +47,7 @@ func Test_RU7_RollingUpdatePCSPodClique(t *testing.T) {
 	tcLongTimeout := tc
 	tcLongTimeout.Timeout = 1 * time.Minute
 	if err := waitForRollingUpdateComplete(tcLongTimeout, 1); err != nil {
-		logger.Info("=== Rolling update timed out - capturing operator logs ===")
-		captureOperatorLogs(tc, "grove-system", "grove-operator", containsRollingUpdateTag)
+		// Diagnostics will be collected automatically by cleanup on test failure
 		t.Fatalf("Failed to wait for rolling update to complete: %v", err)
 	}
 
@@ -714,10 +713,7 @@ func Test_RU18_RollingUpdateWithPodCliqueScaleOutDuringUpdate(t *testing.T) {
 	scaleWait := scalePodClique(tcLongTimeout, "pc-a", 4, 24, 100) // 100ms delay so update is "first"
 
 	if err := <-updateWait; err != nil {
-		// Capture diagnostics on failure
-		logger.Info("=== Rolling update failed - capturing diagnostics ===")
-		captureOperatorLogs(tc, "grove-system", "grove-operator", containsRollingUpdateTag)
-		capturePodCliqueStatus(tc)
+		// Diagnostics will be collected automatically by cleanup on test failure
 		t.Fatalf("Rolling update failed: %v", err)
 	}
 	if err := <-scaleWait; err != nil {
