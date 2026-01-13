@@ -354,9 +354,16 @@ func (scm *SharedClusterManager) waitForAllGroveManagedResourcesAndPodsDeleted(c
 				Resource: rt.resource,
 			}
 
-			resourceList, err := scm.dynamicClient.Resource(gvr).List(ctx, metav1.ListOptions{
+			// PodCliqueSets are user-created top-level resources and don't have the managed-by label,
+			// so we need to check for them without the label selector
+			listOptions := metav1.ListOptions{
 				LabelSelector: labelSelector,
-			})
+			}
+			if rt.resource == "podcliquesets" {
+				listOptions = metav1.ListOptions{}
+			}
+
+			resourceList, err := scm.dynamicClient.Resource(gvr).List(ctx, listOptions)
 			if err != nil {
 				// If we can't list the resource type, assume it doesn't exist or is being deleted
 				continue
@@ -405,9 +412,15 @@ func (scm *SharedClusterManager) listRemainingGroveManagedResources(ctx context.
 			Resource: rt.resource,
 		}
 
-		resourceList, err := scm.dynamicClient.Resource(gvr).List(ctx, metav1.ListOptions{
+		// PodCliqueSets are user-created top-level resources and don't have the managed-by label
+		listOptions := metav1.ListOptions{
 			LabelSelector: labelSelector,
-		})
+		}
+		if rt.resource == "podcliquesets" {
+			listOptions = metav1.ListOptions{}
+		}
+
+		resourceList, err := scm.dynamicClient.Resource(gvr).List(ctx, listOptions)
 		if err != nil {
 			scm.logger.Errorf("Failed to list %s: %v", rt.name, err)
 			continue
