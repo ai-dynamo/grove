@@ -141,6 +141,7 @@ func waitForPodCountAndPhases(tc TestContext, expectedTotal, expectedRunning, ex
 // with the specified number of worker nodes and returns the necessary clients and a cleanup function.
 // The cleanup function will fatally fail the test if workload cleanup fails.
 // On test failure, it automatically collects diagnostics before cleanup.
+// On cleanup failure, it also collects diagnostics to help debug why cleanup failed.
 func prepareTestCluster(ctx context.Context, t *testing.T, requiredWorkerNodes int) (*kubernetes.Clientset, *rest.Config, dynamic.Interface, func()) {
 	t.Helper()
 
@@ -157,22 +158,29 @@ func prepareTestCluster(ctx context.Context, t *testing.T, requiredWorkerNodes i
 
 	// Create cleanup function that collects diagnostics on failure
 	cleanup := func() {
+		// Create a TestContext for diagnostics collection
+		// Uses "default" namespace since that's where most test workloads run
+		diagnosticsTc := TestContext{
+			T:             t,
+			Ctx:           ctx,
+			Clientset:     clientset,
+			RestConfig:    restConfig,
+			DynamicClient: dynamicClient,
+			Namespace:     "default",
+		}
+
 		// Collect diagnostics BEFORE cleaning up if test failed
 		if t.Failed() {
-			// Create a minimal TestContext for diagnostics collection
-			// Uses "default" namespace since that's where most test workloads run
-			diagnosticsTc := TestContext{
-				T:             t,
-				Ctx:           ctx,
-				Clientset:     clientset,
-				RestConfig:    restConfig,
-				DynamicClient: dynamicClient,
-				Namespace:     "default",
-			}
 			CollectAllDiagnostics(diagnosticsTc)
 		}
 
 		if err := sharedCluster.CleanupWorkloads(ctx); err != nil {
+			// Collect diagnostics on cleanup failure to help debug why cleanup failed
+			// This captures operator logs, remaining resources, pod states, and events
+			logger.Error("================================================================================")
+			logger.Error("=== CLEANUP FAILURE - COLLECTING DIAGNOSTICS ===")
+			logger.Error("================================================================================")
+			CollectAllDiagnostics(diagnosticsTc)
 			t.Fatalf("Failed to cleanup workloads: %v", err)
 		}
 	}
