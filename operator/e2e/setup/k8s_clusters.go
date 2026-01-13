@@ -422,7 +422,7 @@ configs:
 				Host:     "0.0.0.0",
 				HostPort: cfg.RegistryPort,
 				// Use GHCR-hosted Distribution registry to avoid Docker Hub rate limits
-				Image: "ghcr.io/distribution/distribution:2",
+				Image: "ghcr.io/distribution/distribution:3.0.0",
 			},
 			Config: registriesYAML,
 		}
