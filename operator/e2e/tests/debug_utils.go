@@ -107,11 +107,39 @@ func dumpOperatorLogs(tc TestContext) {
 			continue
 		}
 		foundOperator = true
-		logger.Infof("--- Operator Pod: %s (Phase: %s) ---", pod.Name, pod.Status.Phase)
+
+		// Calculate total restart count across all containers
+		totalRestarts := int32(0)
+		for _, cs := range pod.Status.ContainerStatuses {
+			totalRestarts += cs.RestartCount
+		}
+
+		logger.Infof("--- Operator Pod: %s (Phase: %s, Restarts: %d) ---", pod.Name, pod.Status.Phase, totalRestarts)
+
+		// Log detailed container status information
+		for _, cs := range pod.Status.ContainerStatuses {
+			stateStr := "Unknown"
+			if cs.State.Running != nil {
+				stateStr = fmt.Sprintf("Running (started: %s)", cs.State.Running.StartedAt.Format("15:04:05"))
+			} else if cs.State.Waiting != nil {
+				stateStr = fmt.Sprintf("Waiting (%s: %s)", cs.State.Waiting.Reason, cs.State.Waiting.Message)
+			} else if cs.State.Terminated != nil {
+				stateStr = fmt.Sprintf("Terminated (%s, exit: %d)", cs.State.Terminated.Reason, cs.State.Terminated.ExitCode)
+			}
+			logger.Infof("  Container %s: Ready=%v, RestartCount=%d, State=%s",
+				cs.Name, cs.Ready, cs.RestartCount, stateStr)
+
+			// Log last termination state if there were restarts
+			if cs.RestartCount > 0 && cs.LastTerminationState.Terminated != nil {
+				lt := cs.LastTerminationState.Terminated
+				logger.Infof("    LastTermination: %s (exit: %d) at %s, reason: %s",
+					lt.Reason, lt.ExitCode, lt.FinishedAt.Format("15:04:05"), lt.Message)
+			}
+		}
 
 		// Get logs for each container
 		for _, container := range pod.Spec.Containers {
-			logger.Infof("--- Container: %s ---", container.Name)
+			logger.Infof("--- Container: %s Logs ---", container.Name)
 
 			tailLines := int64(operatorLogLines)
 			req := tc.Clientset.CoreV1().Pods(setup.OperatorNamespace).GetLogs(pod.Name, &corev1.PodLogOptions{
