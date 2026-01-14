@@ -30,17 +30,11 @@ import (
 
 // TestGetSelectorLabelsForPods_PCSGOwnedPodClique tests that getSelectorLabelsForPods
 // returns the correct selector labels for PCSG-owned PodCliques.
-//
-// BUG: The current implementation uses GetFirstOwnerName() which returns the PCSG name
-// for PCSG-owned PodCliques, but pods are labeled with the PCS name (from LabelPartOfKey).
-// This causes a label mismatch during deletion, orphaning pods.
-//
-// This test will FAIL with the current buggy code and PASS after the fix.
 func TestGetSelectorLabelsForPods_PCSGOwnedPodClique(t *testing.T) {
 	const (
-		pcsName  = "workload1"               // The PodCliqueSet name
-		pcsgName = "workload1-0-sg-x"        // The PodCliqueScalingGroup name (owner)
-		pclqName = "workload1-0-sg-x-0-pc-a" // The PodClique name
+		pcsName  = "workload1"
+		pcsgName = "workload1-0-sg-x"
+		pclqName = "workload1-0-sg-x-0-pc-a"
 	)
 
 	tests := []struct {
@@ -63,13 +57,13 @@ func TestGetSelectorLabelsForPods_PCSGOwnedPodClique(t *testing.T) {
 					{
 						APIVersion: "grove.io/v1alpha1",
 						Kind:       "PodCliqueSet",
-						Name:       pcsName, // Owner is PCS
+						Name:       pcsName,
 					},
 				},
 			},
 			expectedLabels: map[string]string{
 				common.LabelManagedByKey: common.LabelManagedByValue,
-				common.LabelPartOfKey:    pcsName, // Should be PCS name
+				common.LabelPartOfKey:    pcsName,
 				common.LabelPodClique:    "workload1-0-pc-a",
 			},
 			description: "PCS-owned PodCliques work correctly (owner name == PCS name)",
@@ -80,7 +74,7 @@ func TestGetSelectorLabelsForPods_PCSGOwnedPodClique(t *testing.T) {
 				Name:      pclqName,
 				Namespace: "default",
 				Labels: map[string]string{
-					common.LabelPartOfKey:             pcsName, // Pods are labeled with PCS name
+					common.LabelPartOfKey:             pcsName,
 					common.LabelManagedByKey:          common.LabelManagedByValue,
 					common.LabelPodClique:             pclqName,
 					common.LabelPodCliqueScalingGroup: pcsgName,
@@ -89,13 +83,13 @@ func TestGetSelectorLabelsForPods_PCSGOwnedPodClique(t *testing.T) {
 					{
 						APIVersion: "grove.io/v1alpha1",
 						Kind:       "PodCliqueScalingGroup",
-						Name:       pcsgName, // Owner is PCSG, NOT PCS!
+						Name:       pcsgName,
 					},
 				},
 			},
 			expectedLabels: map[string]string{
 				common.LabelManagedByKey: common.LabelManagedByValue,
-				common.LabelPartOfKey:    pcsName, // Should be PCS name, NOT pcsgName!
+				common.LabelPartOfKey:    pcsName,
 				common.LabelPodClique:    pclqName,
 			},
 			description: "PCSG-owned PodCliques should use PCS name from labels, not owner reference",
@@ -119,12 +113,9 @@ func TestGetSelectorLabelsForPods_PCSGOwnedPodClique(t *testing.T) {
 				}
 			}
 
-			// Specifically check the LabelPartOfKey which is the root cause of the bug
+			// Specifically check the LabelPartOfKey
 			if actualLabels[common.LabelPartOfKey] != tt.expectedLabels[common.LabelPartOfKey] {
-				t.Errorf("BUG DETECTED: LabelPartOfKey mismatch!\n"+
-					"  Expected (PCS name): %q\n"+
-					"  Got (owner name):    %q\n"+
-					"  This causes pods to be orphaned during PCSG-owned PodClique deletion.",
+				t.Errorf("LabelPartOfKey: expected %q, got %q",
 					tt.expectedLabels[common.LabelPartOfKey],
 					actualLabels[common.LabelPartOfKey])
 			}
