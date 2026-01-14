@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -32,36 +33,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/utils/ptr"
 )
-
-// Temporary helper function for remaining tests - to be refactored
-func createDummyPodCliqueSet(name string) *grovecorev1alpha1.PodCliqueSet {
-	return testutils.NewPodCliqueSetBuilder(name, "default", uuid.NewUUID()).
-		WithReplicas(1).
-		WithTerminationDelay(4 * time.Hour).
-		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
-		WithPodCliqueTemplateSpec(
-			testutils.NewPodCliqueTemplateSpecBuilder("test").
-				WithReplicas(1).
-				WithRoleName("dummy-role").
-				WithMinAvailable(1).
-				Build()).
-		Build()
-}
-
-func createDummyPodCliqueTemplate(name string) *grovecorev1alpha1.PodCliqueTemplateSpec {
-	return testutils.NewPodCliqueTemplateSpecBuilder(name).
-		WithReplicas(1).
-		WithRoleName(fmt.Sprintf("dummy-%s-role", name)).
-		WithMinAvailable(1).
-		Build()
-}
-
-func createScalingGroupConfig(name string, cliqueNames []string) grovecorev1alpha1.PodCliqueScalingGroupConfig {
-	return grovecorev1alpha1.PodCliqueScalingGroupConfig{
-		Name:        name,
-		CliqueNames: cliqueNames,
-	}
-}
 
 func TestResourceNamingValidation(t *testing.T) {
 	testCases := []struct {
@@ -154,7 +125,7 @@ func TestResourceNamingValidation(t *testing.T) {
 
 			pcs := pcsBuilder.Build()
 
-			validator := newPCSValidator(pcs, admissionv1.Create)
+			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig())
 			warnings, err := validator.validate()
 
 			if tc.expectError {
@@ -279,7 +250,7 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			pcs := createDummyPodCliqueSet(tc.pcsName)
+			pcs := createTestPodCliqueSet(tc.pcsName)
 
 			// Add PodClique templates
 			for _, cliqueName := range tc.cliqueTemplates {
@@ -289,7 +260,7 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 			// Add scaling groups
 			pcs.Spec.Template.PodCliqueScalingGroupConfigs = tc.scalingGroups
 
-			validator := newPCSValidator(pcs, admissionv1.Create)
+			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig())
 			warnings, err := validator.validate()
 
 			if tc.expectError {
@@ -404,9 +375,19 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			fldPath := field.NewPath("spec").Child("template").Child("cliques")
+			// Create old and new PCS objects
+			oldPCS := createTestPodCliqueSet("test")
+			oldPCS.Spec.Template.StartupType = tc.startupType
+			oldPCS.Spec.Template.Cliques = tc.oldCliques
 
-			validationErrors := validatePodCliqueUpdate(tc.newCliques, tc.oldCliques, tc.startupType, fldPath)
+			newPCS := createTestPodCliqueSet("test")
+			newPCS.Spec.Template.StartupType = tc.startupType
+			newPCS.Spec.Template.Cliques = tc.newCliques
+
+			// Create validator and validate update
+			validator := newPCSValidator(newPCS, admissionv1.Update, defaultTASConfig())
+			fldPath := field.NewPath("spec").Child("template").Child("cliques")
+			validationErrors := validator.validatePodCliqueUpdate(oldPCS.Spec.Template.Cliques, fldPath)
 
 			if tc.expectError {
 				assert.NotEmpty(t, validationErrors, "Expected validation errors for test case: %s", tc.name)
@@ -434,12 +415,12 @@ func TestImmutableFieldsValidation(t *testing.T) {
 		{
 			name: "Valid: PriorityClassName can be updated",
 			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
-				pcs := createDummyPodCliqueSet("test")
+				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.PriorityClassName = "old-priority"
 				return pcs
 			},
 			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
-				pcs := createDummyPodCliqueSet("test")
+				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.PriorityClassName = "new-priority"
 				return pcs
 			},
@@ -448,12 +429,12 @@ func TestImmutableFieldsValidation(t *testing.T) {
 		{
 			name: "Invalid: RoleName is immutable",
 			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
-				pcs := createDummyPodCliqueSet("test")
+				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.Cliques[0].Spec.RoleName = "old-role"
 				return pcs
 			},
 			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
-				pcs := createDummyPodCliqueSet("test")
+				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.Cliques[0].Spec.RoleName = "new-role"
 				return pcs
 			},
@@ -463,12 +444,12 @@ func TestImmutableFieldsValidation(t *testing.T) {
 		{
 			name: "Invalid: MinAvailable is immutable",
 			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
-				pcs := createDummyPodCliqueSet("test")
+				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.Cliques[0].Spec.MinAvailable = ptr.To(int32(1))
 				return pcs
 			},
 			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
-				pcs := createDummyPodCliqueSet("test")
+				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.Cliques[0].Spec.MinAvailable = ptr.To(int32(2))
 				return pcs
 			},
@@ -478,7 +459,7 @@ func TestImmutableFieldsValidation(t *testing.T) {
 		{
 			name: "Invalid: StartsAfter is immutable",
 			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
-				pcs := createDummyPodCliqueSet("test")
+				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.StartupType = ptr.To(grovecorev1alpha1.CliqueStartupTypeExplicit)
 				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createDummyPodCliqueTemplate("clique2"))
 				pcs.Spec.Template.Cliques[0].Spec.StartsAfter = []string{}
@@ -486,7 +467,7 @@ func TestImmutableFieldsValidation(t *testing.T) {
 				return pcs
 			},
 			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
-				pcs := createDummyPodCliqueSet("test")
+				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.StartupType = ptr.To(grovecorev1alpha1.CliqueStartupTypeExplicit)
 				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createDummyPodCliqueTemplate("clique2"))
 				pcs.Spec.Template.Cliques[0].Spec.StartsAfter = []string{}
@@ -499,14 +480,14 @@ func TestImmutableFieldsValidation(t *testing.T) {
 		{
 			name: "Edge case: Multiple immutable field violations",
 			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
-				pcs := createDummyPodCliqueSet("test")
+				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.Cliques[0].Spec.RoleName = "old-role"
 				pcs.Spec.Template.Cliques[0].Spec.MinAvailable = ptr.To(int32(1))
 				pcs.Spec.Template.Cliques[0].Spec.StartsAfter = []string{"dep1"}
 				return pcs
 			},
 			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
-				pcs := createDummyPodCliqueSet("test")
+				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.Cliques[0].Spec.RoleName = "new-role"
 				pcs.Spec.Template.Cliques[0].Spec.MinAvailable = ptr.To(int32(2))
 				pcs.Spec.Template.Cliques[0].Spec.StartsAfter = []string{"dep1", "dep2"}
@@ -522,7 +503,7 @@ func TestImmutableFieldsValidation(t *testing.T) {
 			oldPCS := tc.setupOldPCS()
 			newPCS := tc.setupNewPCS()
 
-			validator := newPCSValidator(newPCS, admissionv1.Update)
+			validator := newPCSValidator(newPCS, admissionv1.Update, defaultTASConfig())
 			err := validator.validateUpdate(oldPCS)
 
 			if tc.expectError {
@@ -684,8 +665,17 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			// Create old and new PCS objects
+			oldPCS := createTestPodCliqueSet("test")
+			oldPCS.Spec.Template.PodCliqueScalingGroupConfigs = tc.oldConfigs
+
+			newPCS := createTestPodCliqueSet("test")
+			newPCS.Spec.Template.PodCliqueScalingGroupConfigs = tc.newConfigs
+
+			// Create validator and validate update
+			validator := newPCSValidator(newPCS, admissionv1.Update, defaultTASConfig())
 			fldPath := field.NewPath("spec", "template", "podCliqueScalingGroupConfigs")
-			validationErrors := validatePodCliqueScalingGroupConfigsUpdate(tc.newConfigs, tc.oldConfigs, fldPath)
+			validationErrors := validator.validatePodCliqueScalingGroupConfigsUpdate(tc.oldConfigs, fldPath)
 
 			if tc.expectedErrors {
 				assert.NotEmpty(t, validationErrors, "Expected validation errors for test case: %s", tc.name)
@@ -699,5 +689,245 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 				assert.Empty(t, validationErrors, "Expected no validation errors for test case: %s", tc.name)
 			}
 		})
+	}
+}
+
+// TestValidateCliqueDependencies tests validation of clique dependencies for cycles and unknown cliques.
+func TestValidateCliqueDependencies(t *testing.T) {
+	fldPath := field.NewPath("spec", "template", "cliques")
+
+	tests := []struct {
+		// name identifies this test case
+		name string
+		// cliques is the list of clique templates to validate
+		cliques []*grovecorev1alpha1.PodCliqueTemplateSpec
+		// expectError indicates whether validation should fail
+		expectError bool
+		// errorContains is a substring expected in the error message
+		errorContains string
+	}{
+		{
+			name: "valid dependencies with no cycles",
+			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{
+					Name: "clique1",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						StartsAfter: []string{},
+					},
+				},
+				{
+					Name: "clique2",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						StartsAfter: []string{"clique1"},
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "circular dependency between two cliques",
+			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{
+					Name: "clique1",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						StartsAfter: []string{"clique2"},
+					},
+				},
+				{
+					Name: "clique2",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						StartsAfter: []string{"clique1"},
+					},
+				},
+			},
+			expectError:   true,
+			errorContains: "circular dependencies",
+		},
+		{
+			name: "dependency on unknown clique",
+			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{
+					Name: "clique1",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						StartsAfter: []string{"unknown-clique"},
+					},
+				},
+			},
+			expectError:   true,
+			errorContains: "unknown clique names found",
+		},
+		{
+			name: "three-way circular dependency",
+			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{
+					Name: "clique1",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						StartsAfter: []string{"clique3"},
+					},
+				},
+				{
+					Name: "clique2",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						StartsAfter: []string{"clique1"},
+					},
+				},
+				{
+					Name: "clique3",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						StartsAfter: []string{"clique2"},
+					},
+				},
+			},
+			expectError:   true,
+			errorContains: "circular dependencies",
+		},
+		{
+			name: "no dependencies passes validation",
+			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{
+					Name: "clique1",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						StartsAfter: []string{},
+					},
+				},
+			},
+			expectError: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			errs := validateCliqueDependencies(test.cliques, fldPath)
+			if test.expectError {
+				assert.NotEmpty(t, errs)
+				if test.errorContains != "" {
+					errorString := ""
+					for _, err := range errs {
+						errorString += err.Error()
+					}
+					assert.Contains(t, errorString, test.errorContains)
+				}
+			} else {
+				assert.Empty(t, errs)
+			}
+		})
+	}
+}
+
+// TestValidateScaleConfig tests validation of autoscaling configuration.
+func TestValidateScaleConfig(t *testing.T) {
+	fldPath := field.NewPath("spec", "autoScalingConfig")
+
+	tests := []struct {
+		// name identifies this test case
+		name string
+		// scaleConfig is the autoscaling configuration to validate
+		scaleConfig *grovecorev1alpha1.AutoScalingConfig
+		// minAvailable is the minimum available pods
+		minAvailable int32
+		// expectError indicates whether validation should fail
+		expectError bool
+		// errorContains is a substring expected in the error message
+		errorContains string
+	}{
+		{
+			name: "valid scale config",
+			scaleConfig: &grovecorev1alpha1.AutoScalingConfig{
+				MinReplicas: ptr.To(int32(2)),
+				MaxReplicas: 5,
+			},
+			minAvailable: 1,
+			expectError:  false,
+		},
+		{
+			name: "minReplicas less than minAvailable returns error",
+			scaleConfig: &grovecorev1alpha1.AutoScalingConfig{
+				MinReplicas: ptr.To(int32(1)),
+				MaxReplicas: 5,
+			},
+			minAvailable:  2,
+			expectError:   true,
+			errorContains: "must be greater than or equal to podCliqueSpec.minAvailable",
+		},
+		{
+			name: "maxReplicas less than minReplicas returns error",
+			scaleConfig: &grovecorev1alpha1.AutoScalingConfig{
+				MinReplicas: ptr.To(int32(5)),
+				MaxReplicas: 3,
+			},
+			minAvailable:  1,
+			expectError:   true,
+			errorContains: "must be greater than or equal to podCliqueSpec.minReplicas",
+		},
+		{
+			name: "minReplicas equal to maxReplicas passes validation",
+			scaleConfig: &grovecorev1alpha1.AutoScalingConfig{
+				MinReplicas: ptr.To(int32(5)),
+				MaxReplicas: 5,
+			},
+			minAvailable: 1,
+			expectError:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errs := validateScaleConfig(tt.scaleConfig, tt.minAvailable, fldPath)
+			if tt.expectError {
+				assert.NotEmpty(t, errs)
+				if tt.errorContains != "" {
+					errorString := ""
+					for _, err := range errs {
+						errorString += err.Error()
+					}
+					assert.Contains(t, errorString, tt.errorContains)
+				}
+			} else {
+				assert.Empty(t, errs)
+			}
+		})
+	}
+}
+
+// ---------------------------- Helper Functions ----------------------------
+
+// defaultTASConfig returns a default TAS configuration with TAS disabled.
+// This is used for all podcliqueset validation tests since topology constraint
+// validation is tested separately in topologyconstraints_v1_test.go.
+func defaultTASConfig() groveconfigv1alpha1.TopologyAwareSchedulingConfiguration {
+	return groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{
+		Enabled: false,
+	}
+}
+
+// createTestPodCliqueSet creates a basic PodCliqueSet for testing.
+func createTestPodCliqueSet(name string) *grovecorev1alpha1.PodCliqueSet {
+	return testutils.NewPodCliqueSetBuilder(name, "default", uuid.NewUUID()).
+		WithReplicas(1).
+		WithTerminationDelay(4 * time.Hour).
+		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder("test").
+				WithReplicas(1).
+				WithRoleName("dummy-role").
+				WithMinAvailable(1).
+				Build()).
+		Build()
+}
+
+// createDummyPodCliqueTemplate creates a basic PodCliqueTemplateSpec for testing.
+func createDummyPodCliqueTemplate(name string) *grovecorev1alpha1.PodCliqueTemplateSpec {
+	return testutils.NewPodCliqueTemplateSpecBuilder(name).
+		WithReplicas(1).
+		WithRoleName(fmt.Sprintf("dummy-%s-role", name)).
+		WithMinAvailable(1).
+		Build()
+}
+
+// createScalingGroupConfig creates a basic PodCliqueScalingGroupConfig for testing.
+func createScalingGroupConfig(name string, cliqueNames []string) grovecorev1alpha1.PodCliqueScalingGroupConfig {
+	return grovecorev1alpha1.PodCliqueScalingGroupConfig{
+		Name:        name,
+		CliqueNames: cliqueNames,
 	}
 }

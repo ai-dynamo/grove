@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strings"
 
+	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 
@@ -41,15 +42,22 @@ var allowedStartupTypes = sets.New(grovecorev1alpha1.CliqueStartupTypeInOrder, g
 
 // pcsValidator validates PodCliqueSet resources for create and update operations.
 type pcsValidator struct {
-	operation admissionv1.Operation
-	pcs       *grovecorev1alpha1.PodCliqueSet
+	operation       admissionv1.Operation
+	pcs             *grovecorev1alpha1.PodCliqueSet
+	tasEnabled      bool
+	topologyDomains []string
 }
 
 // newPCSValidator creates a new PodCliqueSet validator for the given operation.
-func newPCSValidator(pcs *grovecorev1alpha1.PodCliqueSet, operation admissionv1.Operation) *pcsValidator {
+func newPCSValidator(pcs *grovecorev1alpha1.PodCliqueSet, operation admissionv1.Operation, tasConfig groveconfigv1alpha1.TopologyAwareSchedulingConfiguration) *pcsValidator {
+	topologyDomains := lo.Map(tasConfig.Levels, func(level grovecorev1alpha1.TopologyLevel, _ int) string {
+		return string(level.Domain)
+	})
 	return &pcsValidator{
-		operation: operation,
-		pcs:       pcs,
+		operation:       operation,
+		pcs:             pcs,
+		tasEnabled:      tasConfig.Enabled,
+		topologyDomains: topologyDomains,
 	}
 }
 
@@ -94,6 +102,7 @@ func (v *pcsValidator) validatePodGangTemplateSpec(fldPath *field.Path) ([]strin
 	}
 	allErrs = append(allErrs, v.validatePodCliqueScalingGroupConfigs(fldPath.Child("podCliqueScalingGroups"))...)
 	allErrs = append(allErrs, v.validateTerminationDelay(fldPath.Child("terminationDelay"))...)
+	allErrs = append(allErrs, v.validateTopologyConstraints()...)
 
 	return warnings, allErrs
 }
@@ -254,6 +263,11 @@ func (v *pcsValidator) validateTerminationDelay(fldPath *field.Path) field.Error
 	}
 
 	return allErrs
+}
+
+func (v *pcsValidator) validateTopologyConstraints() field.ErrorList {
+	topoConstraintsValidator := newTopologyConstraintsValidator(v.pcs, v.tasEnabled, v.topologyDomains)
+	return topoConstraintsValidator.validate()
 }
 
 // validatePodCliqueTemplateSpec validates a single PodClique template specification including metadata and spec.
@@ -428,32 +442,33 @@ func (v *pcsValidator) validatePodSpec(spec corev1.PodSpec, fldPath *field.Path)
 func (v *pcsValidator) validateUpdate(oldPCS *grovecorev1alpha1.PodCliqueSet) error {
 	allErrs := field.ErrorList{}
 	fldPath := field.NewPath("spec")
-	allErrs = append(allErrs, validatePodCliqueSetSpecUpdate(&v.pcs.Spec, &oldPCS.Spec, fldPath)...)
+	allErrs = append(allErrs, v.validatePodCliqueSetSpecUpdate(oldPCS, fldPath)...)
 	return allErrs.ToAggregate()
 }
 
 // validatePodCliqueSetSpecUpdate validates updates to the PodCliqueSet specification.
-func validatePodCliqueSetSpecUpdate(newSpec, oldSpec *grovecorev1alpha1.PodCliqueSetSpec, fldPath *field.Path) field.ErrorList {
+func (v *pcsValidator) validatePodCliqueSetSpecUpdate(oldPCS *grovecorev1alpha1.PodCliqueSet, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-	allErrs = append(allErrs, validatePodGangTemplateSpecUpdate(&newSpec.Template, &oldSpec.Template, fldPath.Child("template"))...)
+	allErrs = append(allErrs, v.validatePodGangTemplateSpecUpdate(oldPCS, fldPath.Child("template"))...)
 	return allErrs
 }
 
 // validatePodGangTemplateSpecUpdate validates updates to the template specification ensuring immutability of critical fields.
-func validatePodGangTemplateSpecUpdate(newSpec, oldSpec *grovecorev1alpha1.PodCliqueSetTemplateSpec, fldPath *field.Path) field.ErrorList {
+func (v *pcsValidator) validatePodGangTemplateSpecUpdate(oldPCS *grovecorev1alpha1.PodCliqueSet, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
-	allErrs = append(allErrs, validatePodCliqueUpdate(newSpec.Cliques, oldSpec.Cliques, newSpec.StartupType, fldPath.Child("cliques"))...)
-	allErrs = append(allErrs, apivalidation.ValidateImmutableField(newSpec.StartupType, oldSpec.StartupType, fldPath.Child("cliqueStartupType"))...)
-	allErrs = append(allErrs, validatePodCliqueScalingGroupConfigsUpdate(newSpec.PodCliqueScalingGroupConfigs, oldSpec.PodCliqueScalingGroupConfigs, fldPath.Child("podCliqueScalingGroups"))...)
+	allErrs = append(allErrs, v.validatePodCliqueUpdate(oldPCS.Spec.Template.Cliques, fldPath.Child("cliques"))...)
+	allErrs = append(allErrs, apivalidation.ValidateImmutableField(v.pcs.Spec.Template.StartupType, oldPCS.Spec.Template.StartupType, fldPath.Child("cliqueStartupType"))...)
+	allErrs = append(allErrs, v.validatePodCliqueScalingGroupConfigsUpdate(oldPCS.Spec.Template.PodCliqueScalingGroupConfigs, fldPath.Child("podCliqueScalingGroups"))...)
+	allErrs = append(allErrs, v.validateTopologyConstraintsUpdate(oldPCS)...)
 
 	return allErrs
 }
 
 // validatePodCliqueScalingGroupConfigsUpdate validates immutable fields in PodCliqueScalingGroupConfigs.
-func validatePodCliqueScalingGroupConfigsUpdate(newConfigs, oldConfigs []grovecorev1alpha1.PodCliqueScalingGroupConfig, fldPath *field.Path) field.ErrorList {
+func (v *pcsValidator) validatePodCliqueScalingGroupConfigsUpdate(oldConfigs []grovecorev1alpha1.PodCliqueScalingGroupConfig, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-
+	newConfigs := v.pcs.Spec.Template.PodCliqueScalingGroupConfigs
 	// Validate that scaling group composition hasn't changed
 	if len(newConfigs) != len(oldConfigs) {
 		allErrs = append(allErrs, field.Forbidden(fldPath, "not allowed to add or remove PodCliqueScalingGroupConfigs"))
@@ -482,15 +497,19 @@ func validatePodCliqueScalingGroupConfigsUpdate(newConfigs, oldConfigs []groveco
 	return allErrs
 }
 
+func (v *pcsValidator) validateTopologyConstraintsUpdate(oldPCS *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
+	return newTopologyConstraintsValidator(v.pcs, v.tasEnabled, v.topologyDomains).validateUpdate(oldPCS)
+}
+
 // requiresOrderValidation checks if the StartupType requires clique order validation.
 func requiresOrderValidation(startupType *grovecorev1alpha1.CliqueStartupType) bool {
 	return startupType != nil && (*startupType == grovecorev1alpha1.CliqueStartupTypeInOrder || *startupType == grovecorev1alpha1.CliqueStartupTypeExplicit)
 }
 
 // validatePodCliqueUpdate validates that PodClique updates maintain composition, order (when required), and immutable fields.
-func validatePodCliqueUpdate(newCliques, oldCliques []*grovecorev1alpha1.PodCliqueTemplateSpec, startupType *grovecorev1alpha1.CliqueStartupType, fldPath *field.Path) field.ErrorList {
+func (v *pcsValidator) validatePodCliqueUpdate(oldCliques []*grovecorev1alpha1.PodCliqueTemplateSpec, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-
+	newCliques := v.pcs.Spec.Template.Cliques
 	if len(newCliques) != len(oldCliques) {
 		allErrs = append(allErrs, field.Forbidden(fldPath, "not allowed to change clique composition"))
 	}
@@ -503,7 +522,7 @@ func validatePodCliqueUpdate(newCliques, oldCliques []*grovecorev1alpha1.PodCliq
 	lo.ForEach(oldCliques, func(clique *grovecorev1alpha1.PodCliqueTemplateSpec, i int) {
 		oldCliqueIndexMap[clique.Name] = lo.Tuple2[int, *grovecorev1alpha1.PodCliqueTemplateSpec]{A: i, B: clique}
 	})
-	orderIsEnforced := requiresOrderValidation(startupType)
+	orderIsEnforced := requiresOrderValidation(v.pcs.Spec.Template.StartupType)
 	// Validate each new clique against its corresponding old clique
 	for newCliqueIndex, newClique := range newCliques {
 		oldIndexCliqueTuple, exists := oldCliqueIndexMap[newClique.Name]

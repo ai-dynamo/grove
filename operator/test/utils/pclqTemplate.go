@@ -97,6 +97,12 @@ func (b *PodCliqueTemplateSpecBuilder) WithPodSpec(podSpec corev1.PodSpec) *PodC
 	return b
 }
 
+// WithTopologyConstraint sets the TopologyConstraint for the PodCliqueTemplateSpec.
+func (b *PodCliqueTemplateSpecBuilder) WithTopologyConstraint(constraint *grovecorev1alpha1.TopologyConstraint) *PodCliqueTemplateSpecBuilder {
+	b.pclqTemplateSpec.TopologyConstraint = constraint
+	return b
+}
+
 // Build creates a PodCliqueTemplateSpec object.
 func (b *PodCliqueTemplateSpecBuilder) Build() *grovecorev1alpha1.PodCliqueTemplateSpec {
 	b.withDefaultPodSpec()
@@ -113,6 +119,18 @@ func createDefaultPodCliqueTemplateSpec(name string) *grovecorev1alpha1.PodCliqu
 		Name: name,
 		Spec: grovecorev1alpha1.PodCliqueSpec{
 			Replicas: 1,
+		},
+	}
+}
+
+// NewBasicPodCliqueTemplateSpec creates a basic PodClique template without topology constraints.
+// This is a convenience function for tests that need a simple PodClique with default configuration.
+func NewBasicPodCliqueTemplateSpec(name string) *grovecorev1alpha1.PodCliqueTemplateSpec {
+	return &grovecorev1alpha1.PodCliqueTemplateSpec{
+		Name: name,
+		Spec: grovecorev1alpha1.PodCliqueSpec{
+			Replicas: 1,
+			RoleName: name + "-role",
 		},
 	}
 }

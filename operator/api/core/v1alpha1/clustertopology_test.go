@@ -47,6 +47,191 @@ func TestSupportedTopologyDomains(t *testing.T) {
 	}
 }
 
+func TestIsTopologyDomainNarrower(t *testing.T) {
+	tests := []struct {
+		name     string
+		domain   TopologyDomain
+		other    TopologyDomain
+		expected bool
+	}{
+		// Same domain comparisons - should all return false
+		{
+			name:     "region compared to region",
+			domain:   TopologyDomainRegion,
+			other:    TopologyDomainRegion,
+			expected: false,
+		},
+		{
+			name:     "zone compared to zone",
+			domain:   TopologyDomainZone,
+			other:    TopologyDomainZone,
+			expected: false,
+		},
+		{
+			name:     "datacenter compared to datacenter",
+			domain:   TopologyDomainDataCenter,
+			other:    TopologyDomainDataCenter,
+			expected: false,
+		},
+		{
+			name:     "block compared to block",
+			domain:   TopologyDomainBlock,
+			other:    TopologyDomainBlock,
+			expected: false,
+		},
+		{
+			name:     "rack compared to rack",
+			domain:   TopologyDomainRack,
+			other:    TopologyDomainRack,
+			expected: false,
+		},
+		{
+			name:     "host compared to host",
+			domain:   TopologyDomainHost,
+			other:    TopologyDomainHost,
+			expected: false,
+		},
+		{
+			name:     "numa compared to numa",
+			domain:   TopologyDomainNuma,
+			other:    TopologyDomainNuma,
+			expected: false,
+		},
+		// Narrower domain comparisons - should return true
+		{
+			name:     "zone is narrower than region",
+			domain:   TopologyDomainZone,
+			other:    TopologyDomainRegion,
+			expected: true,
+		},
+		{
+			name:     "datacenter is narrower than zone",
+			domain:   TopologyDomainDataCenter,
+			other:    TopologyDomainZone,
+			expected: true,
+		},
+		{
+			name:     "block is narrower than datacenter",
+			domain:   TopologyDomainBlock,
+			other:    TopologyDomainDataCenter,
+			expected: true,
+		},
+		{
+			name:     "rack is narrower than block",
+			domain:   TopologyDomainRack,
+			other:    TopologyDomainBlock,
+			expected: true,
+		},
+		{
+			name:     "host is narrower than rack",
+			domain:   TopologyDomainHost,
+			other:    TopologyDomainRack,
+			expected: true,
+		},
+		{
+			name:     "numa is narrower than host",
+			domain:   TopologyDomainNuma,
+			other:    TopologyDomainHost,
+			expected: true,
+		},
+		{
+			name:     "numa is narrower than region (broadest)",
+			domain:   TopologyDomainNuma,
+			other:    TopologyDomainRegion,
+			expected: true,
+		},
+		{
+			name:     "host is narrower than region",
+			domain:   TopologyDomainHost,
+			other:    TopologyDomainRegion,
+			expected: true,
+		},
+		{
+			name:     "rack is narrower than region",
+			domain:   TopologyDomainRack,
+			other:    TopologyDomainRegion,
+			expected: true,
+		},
+		{
+			name:     "numa is narrower than zone",
+			domain:   TopologyDomainNuma,
+			other:    TopologyDomainZone,
+			expected: true,
+		},
+		{
+			name:     "host is narrower than datacenter",
+			domain:   TopologyDomainHost,
+			other:    TopologyDomainDataCenter,
+			expected: true,
+		},
+
+		// Broader domain comparisons - should return false
+		{
+			name:     "region is not narrower than zone",
+			domain:   TopologyDomainRegion,
+			other:    TopologyDomainZone,
+			expected: false,
+		},
+		{
+			name:     "zone is not narrower than datacenter",
+			domain:   TopologyDomainZone,
+			other:    TopologyDomainDataCenter,
+			expected: false,
+		},
+		{
+			name:     "datacenter is not narrower than block",
+			domain:   TopologyDomainDataCenter,
+			other:    TopologyDomainBlock,
+			expected: false,
+		},
+		{
+			name:     "block is not narrower than rack",
+			domain:   TopologyDomainBlock,
+			other:    TopologyDomainRack,
+			expected: false,
+		},
+		{
+			name:     "rack is not narrower than host",
+			domain:   TopologyDomainRack,
+			other:    TopologyDomainHost,
+			expected: false,
+		},
+		{
+			name:     "host is not narrower than numa",
+			domain:   TopologyDomainHost,
+			other:    TopologyDomainNuma,
+			expected: false,
+		},
+		{
+			name:     "region is not narrower than numa (narrowest)",
+			domain:   TopologyDomainRegion,
+			other:    TopologyDomainNuma,
+			expected: false,
+		},
+		{
+			name:     "region is not narrower than rack",
+			domain:   TopologyDomainRegion,
+			other:    TopologyDomainRack,
+			expected: false,
+		},
+		{
+			name:     "zone is not narrower than numa",
+			domain:   TopologyDomainZone,
+			other:    TopologyDomainNuma,
+			expected: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := tc.domain.IsTopologyDomainNarrower(tc.other)
+			assert.Equal(t, tc.expected, result,
+				"IsTopologyDomainNarrower(%s, %s) = %v, want %v",
+				tc.domain, tc.other, result, tc.expected)
+		})
+	}
+}
+
 func TestSortTopologyLevels(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -131,23 +316,23 @@ func TestSortTopologyLevels(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
 			// Make a copy to avoid modifying test data
-			input := make([]TopologyLevel, len(tt.input))
-			copy(input, tt.input)
+			input := make([]TopologyLevel, len(tc.input))
+			copy(input, tc.input)
 
 			// Sort the input
 			SortTopologyLevels(input)
 
 			// Check if sorted correctly
-			if len(input) != len(tt.expected) {
-				t.Fatalf("length mismatch: got %d, want %d", len(input), len(tt.expected))
+			if len(input) != len(tc.expected) {
+				t.Fatalf("length mismatch: got %d, want %d", len(input), len(tc.expected))
 			}
 
 			for i := range input {
-				assert.Equal(t, input[i].Domain, tt.expected[i].Domain, "at index %d: got domain %v, want %v", i, input[i].Domain, tt.expected[i].Domain)
-				assert.Equal(t, input[i].Key, tt.expected[i].Key, "at index %d: got key %v, want %v", i, input[i].Key, tt.expected[i].Key)
+				assert.Equal(t, input[i].Domain, tc.expected[i].Domain, "at index %d: got domain %v, want %v", i, input[i].Domain, tc.expected[i].Domain)
+				assert.Equal(t, input[i].Key, tc.expected[i].Key, "at index %d: got key %v, want %v", i, input[i].Key, tc.expected[i].Key)
 			}
 		})
 	}

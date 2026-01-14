@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 
+	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/errors"
 
@@ -39,13 +40,15 @@ const (
 
 // Handler is a handler for validating PodCliqueSet resources.
 type Handler struct {
-	logger logr.Logger
+	logger    logr.Logger
+	tasConfig configv1alpha1.TopologyAwareSchedulingConfiguration
 }
 
 // NewHandler creates a new handler for PodCliqueSet Webhook.
-func NewHandler(mgr manager.Manager) *Handler {
+func NewHandler(mgr manager.Manager, tasConfig configv1alpha1.TopologyAwareSchedulingConfiguration) *Handler {
 	return &Handler{
-		logger: mgr.GetLogger().WithName("webhook").WithName(Name),
+		logger:    mgr.GetLogger().WithName("webhook").WithName(Name),
+		tasConfig: tasConfig,
 	}
 }
 
@@ -56,7 +59,7 @@ func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admis
 	if err != nil {
 		return nil, errors.WrapError(err, ErrValidateCreatePodCliqueSet, string(admissionv1.Create), "failed to cast object to PodCliqueSet")
 	}
-	return newPCSValidator(pcs, admissionv1.Create).validate()
+	return newPCSValidator(pcs, admissionv1.Create, h.tasConfig).validate()
 }
 
 // ValidateUpdate validates a PodCliqueSet update request.
@@ -70,7 +73,7 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 	if err != nil {
 		return nil, errors.WrapError(err, ErrValidateUpdatePodCliqueSet, string(admissionv1.Update), "failed to cast old object to PodCliqueSet")
 	}
-	validator := newPCSValidator(newPCS, admissionv1.Update)
+	validator := newPCSValidator(newPCS, admissionv1.Update, h.tasConfig)
 	warnings, err := validator.validate()
 	if err != nil {
 		return warnings, err

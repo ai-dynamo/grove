@@ -106,6 +106,11 @@ const (
 	TopologyDomainNuma TopologyDomain = "numa"
 )
 
+// IsTopologyDomainNarrower returns true if the current TopologyDomain is narrower in scope than the other TopologyDomain.
+func (d TopologyDomain) IsTopologyDomainNarrower(other TopologyDomain) bool {
+	return topologyDomainOrder[d] > topologyDomainOrder[other]
+}
+
 // SupportedTopologyDomains returns all supported topology domain values.
 func SupportedTopologyDomains() []TopologyDomain {
 	topologyDomains := make([]TopologyDomain, 0, len(topologyDomainOrder))

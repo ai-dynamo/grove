@@ -62,7 +62,7 @@ func RegisterControllersAndWebhooks(mgr ctrl.Manager, logger logr.Logger, operat
 	if err := registerControllersWithMgr(mgr, operatorCfg.Controllers, operatorCfg.TopologyAwareScheduling); err != nil {
 		return err
 	}
-	if err := registerWebhooksWithMgr(mgr, operatorCfg.Authorizer); err != nil {
+	if err := registerWebhooksWithMgr(mgr, operatorCfg.Authorizer, operatorCfg.TopologyAwareScheduling); err != nil {
 		return err
 	}
 	return nil

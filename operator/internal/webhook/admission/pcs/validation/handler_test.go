@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -46,7 +47,7 @@ func TestNewHandler(t *testing.T) {
 		Logger: logr.Discard(),
 	}
 
-	handler := NewHandler(mgr)
+	handler := NewHandler(mgr, getDefaultTASConfig())
 	require.NotNil(t, handler)
 	assert.NotNil(t, handler.logger)
 }
@@ -112,7 +113,7 @@ func TestValidateCreate(t *testing.T) {
 				Logger: logr.Discard(),
 			}
 
-			handler := NewHandler(mgr)
+			handler := NewHandler(mgr, getDefaultTASConfig())
 
 			ctx := context.Background()
 			warnings, err := handler.ValidateCreate(ctx, tt.obj)
@@ -132,6 +133,7 @@ func TestValidateCreate(t *testing.T) {
 
 // TestValidateUpdate tests validation of PodCliqueSet update requests.
 func TestValidateUpdate(t *testing.T) {
+	startupType := ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)
 	tests := []struct {
 		// name identifies this test case
 		name string
@@ -149,7 +151,7 @@ func TestValidateUpdate(t *testing.T) {
 			oldObj: testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
 				WithReplicas(2).
 				WithTerminationDelay(4 * time.Hour).
-				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithCliqueStartupType(startupType).
 				WithPodCliqueTemplateSpec(
 					testutils.NewPodCliqueTemplateSpecBuilder("test").
 						WithReplicas(1).
@@ -160,7 +162,7 @@ func TestValidateUpdate(t *testing.T) {
 			newObj: testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
 				WithReplicas(1).
 				WithTerminationDelay(4 * time.Hour).
-				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithCliqueStartupType(startupType).
 				WithPodCliqueTemplateSpec(
 					testutils.NewPodCliqueTemplateSpecBuilder("test").
 						WithReplicas(1).
@@ -171,15 +173,35 @@ func TestValidateUpdate(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name:          "wrong new object type fails validation",
-			oldObj:        &corev1.Pod{},
-			newObj:        createDummyPodCliqueSet("test"),
+			name:   "wrong new object type fails validation",
+			oldObj: &corev1.Pod{},
+			newObj: testutils.NewPodCliqueSetBuilder("test", "default", uuid.NewUUID()).
+				WithReplicas(1).
+				WithTerminationDelay(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithPodCliqueTemplateSpec(
+					testutils.NewPodCliqueTemplateSpecBuilder("test").
+						WithReplicas(1).
+						WithRoleName("test-role").
+						WithMinAvailable(1).
+						Build()).
+				Build(),
 			expectError:   true,
 			errorContains: "failed to cast new object to PodCliqueSet",
 		},
 		{
-			name:          "wrong old object type fails validation",
-			oldObj:        createDummyPodCliqueSet("test"),
+			name: "wrong old object type fails validation",
+			oldObj: testutils.NewPodCliqueSetBuilder("test", "default", uuid.NewUUID()).
+				WithReplicas(1).
+				WithTerminationDelay(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithPodCliqueTemplateSpec(
+					testutils.NewPodCliqueTemplateSpecBuilder("test").
+						WithReplicas(1).
+						WithRoleName("test-role").
+						WithMinAvailable(1).
+						Build()).
+				Build(),
 			newObj:        &corev1.Pod{},
 			expectError:   true,
 			errorContains: "failed to cast old object to PodCliqueSet",
@@ -222,7 +244,7 @@ func TestValidateUpdate(t *testing.T) {
 				Logger: logr.Discard(),
 			}
 
-			handler := NewHandler(mgr)
+			handler := NewHandler(mgr, getDefaultTASConfig())
 
 			ctx := context.Background()
 			warnings, err := handler.ValidateUpdate(ctx, tt.newObj, tt.oldObj)
@@ -249,11 +271,22 @@ func TestValidateDelete(t *testing.T) {
 		Logger: logr.Discard(),
 	}
 
-	handler := NewHandler(mgr)
+	handler := NewHandler(mgr, getDefaultTASConfig())
 
 	// Deletion validation always succeeds
 	ctx := context.Background()
-	warnings, err := handler.ValidateDelete(ctx, createDummyPodCliqueSet("test"))
+	pcs := testutils.NewPodCliqueSetBuilder("test", "default", uuid.NewUUID()).
+		WithReplicas(1).
+		WithTerminationDelay(4 * time.Hour).
+		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder("test").
+				WithReplicas(1).
+				WithRoleName("test-role").
+				WithMinAvailable(1).
+				Build()).
+		Build()
+	warnings, err := handler.ValidateDelete(ctx, pcs)
 	assert.NoError(t, err)
 	assert.Empty(t, warnings)
 }
@@ -269,8 +302,18 @@ func TestCastToPodCliqueSet(t *testing.T) {
 		expectError bool
 	}{
 		{
-			name:        "valid PodCliqueSet casts successfully",
-			obj:         createDummyPodCliqueSet("test"),
+			name: "valid PodCliqueSet casts successfully",
+			obj: testutils.NewPodCliqueSetBuilder("test", "default", uuid.NewUUID()).
+				WithReplicas(1).
+				WithTerminationDelay(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithPodCliqueTemplateSpec(
+					testutils.NewPodCliqueTemplateSpecBuilder("test").
+						WithReplicas(1).
+						WithRoleName("test-role").
+						WithMinAvailable(1).
+						Build()).
+				Build(),
 			expectError: false,
 		},
 		{
@@ -339,12 +382,21 @@ func TestLogValidatorFunctionInvocation(t *testing.T) {
 				Logger: logr.Discard(),
 			}
 
-			handler := NewHandler(mgr)
+			handler := NewHandler(mgr, getDefaultTASConfig())
 
 			// This function doesn't return an error, but we can verify it doesn't panic
 			assert.NotPanics(t, func() {
 				handler.logValidatorFunctionInvocation(tt.ctx)
 			})
 		})
+	}
+}
+
+// ---------------------------- Helper Functions ----------------------------
+
+// getDefaultTASConfig returns a default TAS configuration with TAS disabled.
+func getDefaultTASConfig() groveconfigv1alpha1.TopologyAwareSchedulingConfiguration {
+	return groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{
+		Enabled: false,
 	}
 }

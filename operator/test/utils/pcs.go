@@ -142,6 +142,12 @@ func (b *PodCliqueSetBuilder) WithPodCliqueSetGenerationHash(pcsGenerationHash *
 	return b
 }
 
+// WithTopologyConstraint sets the TopologyConstraint for the PodCliqueSet template.
+func (b *PodCliqueSetBuilder) WithTopologyConstraint(constraint *grovecorev1alpha1.TopologyConstraint) *PodCliqueSetBuilder {
+	b.pcs.Spec.Template.TopologyConstraint = constraint
+	return b
+}
+
 // Build creates a PodCliqueSet object.
 func (b *PodCliqueSetBuilder) Build() *grovecorev1alpha1.PodCliqueSet {
 	return b.pcs
