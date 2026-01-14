@@ -113,43 +113,20 @@ If the cluster lacks MNNVL support, the Grove operator will terminate and log an
 
 ### PCS MNNVL Eligibility Determination
 
-When a PodCliqueSet is created, a **mutating admission webhook** automatically determines and records the MNNVL enablement status by setting the `grove.io/mnnvl-enabled` annotation.
+When a PodCliqueSet is created, webhooks determine and enforce the MNNVL enablement status.
 
+#### Mutating Webhook (on Create)
 
-The webhook behavior:
+The mutating webhook adds the `grove.io/mnnvl-enabled: "true"` annotation **only** when all conditions are met:
 
-1. **If annotation already exists** → Do not override (respects user opt-out)
-2. **If MNNVL feature is disabled** in `OperatorConfiguration` → Do not add annotation
-3. **If MNNVL feature is enabled**:
-   - PCS has GPU containers (`nvidia.com/gpu`) → Set `grove.io/mnnvl-enabled: "true"`
-   - PCS has no GPU containers → Set `grove.io/mnnvl-enabled: "false"`
+1. Annotation does not already exist
+2. MNNVL feature is enabled in `OperatorConfiguration`
+3. PCS has at least one container requesting GPU (`nvidia.com/gpu`)
 
-**Opt-out Behavior:**
-
-If the annotation already exists on the PCS (user explicitly set it), the webhook does **not** override it. Users can opt-out of MNNVL support for a specific `PodCliqueSet` by explicitly setting `grove.io/mnnvl-enabled: "false"` in the PCS manifest **before creation**.
-When a PCS is submitted with this annotation already set, the mutating webhook will **not override** the user's choice. This allows workloads to explicitly disable MNNVL even when the feature is globally enabled and the workload requires GPUs.
+If any condition is false, **no annotation is added**.
 
 ```yaml
-apiVersion: grove.io/v1alpha1
-kind: PodCliqueSet
-metadata:
-  name: my-pcs
-  annotations:
-    grove.io/mnnvl-enabled: "false"  # Explicit opt-out
-spec:
-  # ... GPU workload that won't use MNNVL
-```
-
-When opting out, the operator will not create a `ComputeDomain` for that PCS.
-
-**Immutability:**
-
-A **validating admission webhook** ensures the `grove.io/mnnvl-enabled` annotation is immutable after PCS creation. Any attempt to add, modify, or remove the annotation on an existing PCS is rejected.
-
-**Example:**
-
-```yaml
-# User submits PCS without annotation
+# User submits PCS without annotation (feature enabled, has GPU)
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
@@ -167,7 +144,7 @@ spec:
                   limits:
                     nvidia.com/gpu: "8"
 
-# After mutation webhook (if feature enabled):
+# After mutation webhook:
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
@@ -177,6 +154,35 @@ metadata:
 spec:
   # ... same spec
 ```
+
+#### Validating Webhook (on Create)
+
+A validating webhook runs **on PCS creation only** to reject invalid MNNVL configurations:
+
+- **Reject** if `grove.io/mnnvl-enabled: "true"` is set but MNNVL feature is **disabled** globally
+
+This prevents users from explicitly requesting MNNVL when the cluster doesn't support it.
+
+#### Validating Webhook (on Update)
+
+A validating webhook ensures the `grove.io/mnnvl-enabled` annotation is **immutable** after PCS creation. Any attempt to add, modify, or remove the annotation on an existing PCS is rejected.
+
+#### Opt-out Behavior
+
+Users can opt-out of MNNVL for a specific PCS by explicitly setting `grove.io/mnnvl-enabled: "false"` **before creation**. When the mutating webhook sees the annotation already exists, it does not override it.
+
+```yaml
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: my-pcs
+  annotations:
+    grove.io/mnnvl-enabled: "false"  # Explicit opt-out
+spec:
+  # ... GPU workload that won't use MNNVL
+```
+
+When opting out, the operator will not create a `ComputeDomain` for that PCS.
 
 ## ComputeDomain lifecycle management
 
