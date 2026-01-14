@@ -198,9 +198,14 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pclqObjectMet
 	return nil
 }
 
-// getSelectorLabelsForPods creates label selector map for identifying pods belonging to a PodClique
+// getSelectorLabelsForPods creates label selector map for identifying pods belonging to a PodClique.
+// NOTE: We must get the PCS name from labels, not from owner reference.
+// For PCSG-owned PodCliques, the owner is the PodCliqueScalingGroup (not PodCliqueSet),
+// but pods are always labeled with the PCS name via LabelPartOfKey.
+// Using GetFirstOwnerName() would return the PCSG name, causing a label mismatch
+// that prevents pods from being deleted during PodClique cleanup.
 func getSelectorLabelsForPods(pclqObjectMeta metav1.ObjectMeta) map[string]string {
-	pcsName := k8sutils.GetFirstOwnerName(pclqObjectMeta)
+	pcsName := pclqObjectMeta.Labels[apicommon.LabelPartOfKey]
 	return lo.Assign(
 		apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcsName),
 		map[string]string{
