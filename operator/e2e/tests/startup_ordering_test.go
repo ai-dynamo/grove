@@ -36,6 +36,7 @@ package tests
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -156,14 +157,15 @@ func Test_SO2_InorderStartupOrderWithMinReplicas(t *testing.T) {
 	logger.Info("   Within sg-x-1 (scaled): pc-b → pc-c (independent)")
 
 	// Verify complex startup ordering for scaling groups
+	// minAvailable values from workload4.yaml: pc-a=1, pc-b=1, pc-c=1
 	verifyScalingGroupStartupOrder(t, tc, ScalingGroupOrderSpec{
 		PrefixGroups: []PodCliqueSpec{
-			{Name: "pc-a", ExpectedCount: 2},
+			{Name: "pc-a", ExpectedCount: 2, MinAvailable: 1},
 		},
 		ScalingGroupReplicas: []string{"-sg-x-0-", "-sg-x-1-"},
 		WithinReplicaOrder: []PodCliqueSpec{
-			{Name: "pc-b", ExpectedCount: 2},
-			{Name: "pc-c", ExpectedCount: 6},
+			{Name: "pc-b", ExpectedCount: 2, MinAvailable: 1},
+			{Name: "pc-c", ExpectedCount: 6, MinAvailable: 1},
 		},
 	})
 
@@ -288,14 +290,15 @@ func Test_SO4_ExplicitStartupOrderWithMinReplicas(t *testing.T) {
 	// - sg-x-1 (replica 1) is a scaled PodGang (independent)
 	// Startup ordering is enforced WITHIN each gang, not globally across all gangs.
 	// Explicit startup: pc-a → pc-b → pc-c (pc-c has startsAfter: [pc-b])
+	// minAvailable values from workload6.yaml: pc-a=1, pc-b=1, pc-c=1
 	verifyScalingGroupStartupOrder(t, tc, ScalingGroupOrderSpec{
 		PrefixGroups: []PodCliqueSpec{
-			{Name: "pc-a", ExpectedCount: 2},
+			{Name: "pc-a", ExpectedCount: 2, MinAvailable: 1},
 		},
 		ScalingGroupReplicas: []string{"-sg-x-0-", "-sg-x-1-"},
 		WithinReplicaOrder: []PodCliqueSpec{
-			{Name: "pc-b", ExpectedCount: 2},
-			{Name: "pc-c", ExpectedCount: 6},
+			{Name: "pc-b", ExpectedCount: 2, MinAvailable: 1},
+			{Name: "pc-c", ExpectedCount: 6, MinAvailable: 1},
 		},
 	})
 
@@ -335,29 +338,42 @@ func getEarliestPodTime(pods []v1.Pod) time.Time {
 	return earliest
 }
 
-// Helper function to get the latest Ready transition time from a list of pods
-func getLatestPodTime(pods []v1.Pod) time.Time {
-	if len(pods) == 0 {
+// Helper function to get the Nth earliest Ready transition time from a list of pods.
+// n is 1-based (n=1 returns the earliest, n=2 returns the second earliest, etc.)
+// This is used to verify minAvailable-based startup ordering where only n pods need to be ready.
+func getNthEarliestPodTime(pods []v1.Pod, n int) time.Time {
+	if len(pods) == 0 || n <= 0 {
 		return time.Time{}
 	}
 
-	var latest time.Time
+	// Collect all valid ready times
+	var readyTimes []time.Time
 	for _, pod := range pods {
 		readyTime := getReadyConditionTransitionTime(pod)
-		if readyTime.IsZero() {
-			continue // Skip pods without a valid Ready timestamp
-		}
-		if readyTime.After(latest) {
-			latest = readyTime
+		if !readyTime.IsZero() {
+			readyTimes = append(readyTimes, readyTime)
 		}
 	}
-	return latest
+
+	// If we don't have enough pods with ready times, return zero
+	if len(readyTimes) < n {
+		return time.Time{}
+	}
+
+	// Sort times in ascending order (earliest first)
+	slices.SortFunc(readyTimes, func(a, b time.Time) int {
+		return a.Compare(b)
+	})
+
+	// Return the Nth earliest (1-indexed, so n-1 in 0-indexed array)
+	return readyTimes[n-1]
 }
 
 // PodCliqueSpec defines a group of pods by clique name and expected count
 type PodCliqueSpec struct {
 	Name          string // The clique name pattern (e.g., "pc-a", "pc-b")
 	ExpectedCount int    // Expected number of pods in this group
+	MinAvailable  int    // Minimum pods that must be ready before dependents can start (0 = all pods required)
 }
 
 // ScalingGroupOrderSpec defines the startup ordering verification for scaling groups
@@ -430,10 +446,12 @@ func verifyScalingGroupStartupOrder(t *testing.T, tc TestContext, spec ScalingGr
 		}
 
 		// Verify each prefix group starts before scaling groups
+		// Use minAvailable from the prefix group - this is the number of pods that must
+		// be ready before dependent pods can start (per the init container implementation)
 		for _, group := range spec.PrefixGroups {
 			prefixPods := cliquePods[group.Name]
 			if len(prefixPods) > 0 && len(allScalingGroupPods) > 0 {
-				verifyGroupStartupOrder(t, prefixPods, allScalingGroupPods, group.Name, "scaling-groups")
+				verifyGroupStartupOrderWithMinAvailable(t, prefixPods, allScalingGroupPods, group.Name, "scaling-groups", group.MinAvailable)
 			}
 		}
 	}
@@ -452,7 +470,10 @@ func verifyScalingGroupStartupOrder(t *testing.T, tc TestContext, spec ScalingGr
 			if len(beforePods) > 0 && len(afterPods) > 0 {
 				beforeName := replicaPattern + beforeGroup.Name
 				afterName := replicaPattern + afterGroup.Name
-				verifyGroupStartupOrder(t, beforePods, afterPods, beforeName, afterName)
+				// Use minAvailable from the before group
+				// Note: For within-replica ordering, minAvailable may need to be scaled down
+				// proportionally since we're only looking at pods within a single replica
+				verifyGroupStartupOrderWithMinAvailable(t, beforePods, afterPods, beforeName, afterName, beforeGroup.MinAvailable)
 			}
 		}
 	}
@@ -488,8 +509,15 @@ func verifyPodCliqueStartupOrder(t *testing.T, tc TestContext,
 	verifyGroupStartupOrder(t, groupBefore, groupAfter, beforeClique, afterClique)
 }
 
-// Helper function to verify that all pods in groupBefore started before all pods in groupAfter
-func verifyGroupStartupOrder(t *testing.T, groupBefore, groupAfter []v1.Pod, beforeName, afterName string) {
+// verifyGroupStartupOrderWithMinAvailable verifies startup ordering with minAvailable semantics.
+// The implementation enforces that minAvailable pods from the parent group must be ready
+// before dependent pods can start. This function verifies that at least minAvailable pods
+// from groupBefore had their Ready condition set before any pod in groupAfter became Ready.
+//
+// minAvailable: The number of pods from groupBefore that must be ready before groupAfter starts.
+//
+//	If 0, defaults to requiring all pods in groupBefore to be ready first.
+func verifyGroupStartupOrderWithMinAvailable(t *testing.T, groupBefore, groupAfter []v1.Pod, beforeName, afterName string, minAvailable int) {
 	t.Helper() // Mark as helper for better error reporting
 
 	if len(groupBefore) == 0 {
@@ -499,20 +527,26 @@ func verifyGroupStartupOrder(t *testing.T, groupBefore, groupAfter []v1.Pod, bef
 		t.Fatalf("Group %s has no pods", afterName)
 	}
 
-	// Get the latest time from the "before" group
-	latestBefore := getLatestPodTime(groupBefore)
+	// If minAvailable is 0, default to requiring all pods
+	if minAvailable <= 0 {
+		minAvailable = len(groupBefore)
+	}
+
+	// Get the Nth earliest time from the "before" group (where N = minAvailable)
+	// This is the time when minAvailable pods became ready
+	nthEarliestBefore := getNthEarliestPodTime(groupBefore, minAvailable)
 	// Get the earliest time from the "after" group
 	earliestAfter := getEarliestPodTime(groupAfter)
 
 	// Check for pods without Ready timestamps
-	if latestBefore.IsZero() {
+	if nthEarliestBefore.IsZero() {
 		// Debug: Show which pods don't have Ready timestamps
-		logger.Errorf("Group %s has no pods with valid Ready timestamps. Debugging pod states:", beforeName)
+		logger.Errorf("Group %s doesn't have %d pods with valid Ready timestamps. Debugging pod states:", beforeName, minAvailable)
 		for i, pod := range groupBefore {
 			readyTime := getReadyConditionTransitionTime(pod)
 			logger.Errorf("  Pod[%d] %s: Phase=%s, ReadyTime=%v", i, pod.Name, pod.Status.Phase, readyTime)
 		}
-		t.Fatalf("Group %s has no pods with valid Ready condition timestamps (pods may not be ready yet)", beforeName)
+		t.Fatalf("Group %s doesn't have %d pods with valid Ready condition timestamps (pods may not be ready yet)", beforeName, minAvailable)
 	}
 	if earliestAfter.IsZero() {
 		// Debug: Show which pods don't have Ready timestamps
@@ -524,14 +558,21 @@ func verifyGroupStartupOrder(t *testing.T, groupBefore, groupAfter []v1.Pod, bef
 		t.Fatalf("Group %s has no pods with valid Ready condition timestamps (pods may not be ready yet)", afterName)
 	}
 
-	// Verify the ordering: all pods in groupBefore should start before any pod in groupAfter
-	if earliestAfter.Before(latestBefore) {
-		t.Fatalf("Startup order violation: group %s (earliest at %v) started before group %s (latest at %v)",
-			afterName, earliestAfter, beforeName, latestBefore)
+	// Verify the ordering: at least minAvailable pods in groupBefore should be ready before any pod in groupAfter
+	// The Nth earliest pod in groupBefore should have become ready before the earliest pod in groupAfter
+	if earliestAfter.Before(nthEarliestBefore) {
+		t.Fatalf("Startup order violation: group %s (earliest at %v) started before group %s had %d pods ready (pod #%d ready at %v)",
+			afterName, earliestAfter, beforeName, minAvailable, minAvailable, nthEarliestBefore)
 	}
 
-	logger.Debugf("✓ Verified startup order: %s (latest: %v) → %s (earliest: %v)",
-		beforeName, latestBefore, afterName, earliestAfter)
+	logger.Debugf("✓ Verified startup order: %s (%d pods ready by %v) → %s (earliest: %v)",
+		beforeName, minAvailable, nthEarliestBefore, afterName, earliestAfter)
+}
+
+// Helper function to verify that all pods in groupBefore started before all pods in groupAfter.
+// This is a convenience wrapper for verifyGroupStartupOrderWithMinAvailable with minAvailable=0 (all pods).
+func verifyGroupStartupOrder(t *testing.T, groupBefore, groupAfter []v1.Pod, beforeName, afterName string) {
+	verifyGroupStartupOrderWithMinAvailable(t, groupBefore, groupAfter, beforeName, afterName, 0)
 }
 
 // Helper function to get pods by clique name pattern.
