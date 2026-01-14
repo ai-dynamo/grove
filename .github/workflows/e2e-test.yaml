@@ -21,6 +21,12 @@ on:
     types: [opened, synchronize, reopened, labeled, ready_for_review]
     branches: ["main"]
 
+# Cancel in-progress runs when a new run is triggered for the same PR
+# This prevents stale E2E test runs from consuming resources
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   e2e:
     # Run on non-draft PRs or draft PRs with 'run-e2e' label
