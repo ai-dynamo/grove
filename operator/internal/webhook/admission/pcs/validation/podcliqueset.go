@@ -42,10 +42,10 @@ var allowedStartupTypes = sets.New(grovecorev1alpha1.CliqueStartupTypeInOrder, g
 
 // pcsValidator validates PodCliqueSet resources for create and update operations.
 type pcsValidator struct {
-	operation       admissionv1.Operation
-	pcs             *grovecorev1alpha1.PodCliqueSet
-	tasEnabled      bool
-	topologyDomains []string
+	operation              admissionv1.Operation
+	pcs                    *grovecorev1alpha1.PodCliqueSet
+	tasEnabled             bool
+	clusterTopologyDomains []string
 }
 
 // newPCSValidator creates a new PodCliqueSet validator for the given operation.
@@ -54,10 +54,10 @@ func newPCSValidator(pcs *grovecorev1alpha1.PodCliqueSet, operation admissionv1.
 		return string(level.Domain)
 	})
 	return &pcsValidator{
-		operation:       operation,
-		pcs:             pcs,
-		tasEnabled:      tasConfig.Enabled,
-		topologyDomains: topologyDomains,
+		operation:              operation,
+		pcs:                    pcs,
+		tasEnabled:             tasConfig.Enabled,
+		clusterTopologyDomains: topologyDomains,
 	}
 }
 
@@ -266,7 +266,7 @@ func (v *pcsValidator) validateTerminationDelay(fldPath *field.Path) field.Error
 }
 
 func (v *pcsValidator) validateTopologyConstraints() field.ErrorList {
-	topoConstraintsValidator := newTopologyConstraintsValidator(v.pcs, v.tasEnabled, v.topologyDomains)
+	topoConstraintsValidator := newTopologyConstraintsValidator(v.pcs, v.tasEnabled, v.clusterTopologyDomains)
 	return topoConstraintsValidator.validate()
 }
 
@@ -498,7 +498,7 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigsUpdate(oldConfigs []g
 }
 
 func (v *pcsValidator) validateTopologyConstraintsUpdate(oldPCS *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
-	return newTopologyConstraintsValidator(v.pcs, v.tasEnabled, v.topologyDomains).validateUpdate(oldPCS)
+	return newTopologyConstraintsValidator(v.pcs, v.tasEnabled, v.clusterTopologyDomains).validateUpdate(oldPCS)
 }
 
 // requiresOrderValidation checks if the StartupType requires clique order validation.

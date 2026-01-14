@@ -68,36 +68,6 @@ func TestEnsureClusterTopologyWhenNonExists(t *testing.T) {
 	assert.Equal(t, topologyLevels, fetched.Spec.Levels)
 }
 
-func TestEnsureClusterTopologyWhenHostDomainIsMissing(t *testing.T) {
-	// Setup
-	ctx := context.Background()
-	cl := testutils.CreateDefaultFakeClient(nil)
-	logger := logr.Discard()
-
-	topologyLevels := []grovecorev1alpha1.TopologyLevel{
-		{Domain: grovecorev1alpha1.TopologyDomainZone, Key: corev1.LabelTopologyZone},
-		{Domain: grovecorev1alpha1.TopologyDomainRegion, Key: corev1.LabelTopologyRegion},
-		// Host domain is intentionally missing
-	}
-
-	// Test
-	topology, err := ensureClusterTopology(ctx, cl, logger, topologyName, topologyLevels)
-
-	// Assert
-	require.NoError(t, err)
-	assert.NotNil(t, topology)
-	assert.Equal(t, topologyName, topology.Name)
-	// Host domain should be added automatically
-	expectedLevels := append(topologyLevels, grovecorev1alpha1.TopologyLevel{Domain: grovecorev1alpha1.TopologyDomainHost, Key: corev1.LabelHostname})
-	grovecorev1alpha1.SortTopologyLevels(expectedLevels)
-	assert.Equal(t, expectedLevels, topology.Spec.Levels)
-	// Verify it was actually created
-	fetched := &grovecorev1alpha1.ClusterTopology{}
-	err = cl.Get(ctx, client.ObjectKey{Name: topologyName}, fetched)
-	require.NoError(t, err)
-	assert.Equal(t, expectedLevels, fetched.Spec.Levels)
-}
-
 func TestEnsureClusterTopologyHostDomainKeyNotOverridden(t *testing.T) {
 	// Setup
 	ctx := context.Background()
@@ -860,16 +830,13 @@ func TestSynchronizeTopologyWhenEnabledWithEmptyLevels(t *testing.T) {
 	fetchedClusterTopology := &grovecorev1alpha1.ClusterTopology{}
 	err = cl.Get(ctx, client.ObjectKey{Name: grovecorev1alpha1.DefaultClusterTopologyName}, fetchedClusterTopology)
 	require.NoError(t, err)
-	assert.Len(t, fetchedClusterTopology.Spec.Levels, 1)
-	assert.Equal(t, grovecorev1alpha1.TopologyDomainHost, fetchedClusterTopology.Spec.Levels[0].Domain)
-	assert.Equal(t, corev1.LabelHostname, fetchedClusterTopology.Spec.Levels[0].Key)
+	assert.Len(t, fetchedClusterTopology.Spec.Levels, 0)
 
 	// Verify KAI Topology was created
 	fetchedKAITopology := &kaitopologyv1alpha1.Topology{}
 	err = cl.Get(ctx, client.ObjectKey{Name: grovecorev1alpha1.DefaultClusterTopologyName}, fetchedKAITopology)
 	require.NoError(t, err)
-	assert.Len(t, fetchedKAITopology.Spec.Levels, 1)
-	assert.Equal(t, corev1.LabelHostname, fetchedKAITopology.Spec.Levels[0].NodeLabel)
+	assert.Len(t, fetchedKAITopology.Spec.Levels, 0)
 }
 
 func TestSynchronizeTopologyWhenClusterTopologyCreationFails(t *testing.T) {

@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"slices"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
@@ -28,7 +27,6 @@ import (
 	kaitopologyv1alpha1 "github.com/NVIDIA/KAI-scheduler/pkg/apis/kai/v1alpha1"
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -109,17 +107,6 @@ func ensureClusterTopology(ctx context.Context, cl client.Client, logger logr.Lo
 func buildClusterTopology(name string, topologyLevels []grovecorev1alpha1.TopologyLevel) *grovecorev1alpha1.ClusterTopology {
 	sortedTopologyLevels := make([]grovecorev1alpha1.TopologyLevel, len(topologyLevels))
 	copy(sortedTopologyLevels, topologyLevels)
-
-	hostTopologyDomainPresent := slices.ContainsFunc(topologyLevels, func(t grovecorev1alpha1.TopologyLevel) bool {
-		return t.Domain == grovecorev1alpha1.TopologyDomainHost
-	})
-	if !hostTopologyDomainPresent {
-		sortedTopologyLevels = append(sortedTopologyLevels, grovecorev1alpha1.TopologyLevel{
-			Domain: grovecorev1alpha1.TopologyDomainHost,
-			Key:    corev1.LabelHostname,
-		})
-	}
-
 	// Sort topology levels to have a consistent order, arranging from broadest to narrowest domain.
 	grovecorev1alpha1.SortTopologyLevels(sortedTopologyLevels)
 
