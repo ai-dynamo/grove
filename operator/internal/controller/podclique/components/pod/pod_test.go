@@ -38,8 +38,8 @@ import (
 // This test will FAIL with the current buggy code and PASS after the fix.
 func TestGetSelectorLabelsForPods_PCSGOwnedPodClique(t *testing.T) {
 	const (
-		pcsName  = "workload1"           // The PodCliqueSet name
-		pcsgName = "workload1-0-sg-x"    // The PodCliqueScalingGroup name (owner)
+		pcsName  = "workload1"               // The PodCliqueSet name
+		pcsgName = "workload1-0-sg-x"        // The PodCliqueScalingGroup name (owner)
 		pclqName = "workload1-0-sg-x-0-pc-a" // The PodClique name
 	)
 
