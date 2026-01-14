@@ -56,10 +56,11 @@ func (v *topologyConstraintsValidator) validate() field.ErrorList {
 		return v.disallowConstraintsForCreateWhenTASIsDisabled(pcsTemplateFLDPath)
 	}
 
-	var allErrs field.ErrorList
-	allErrs = append(allErrs, v.validateTopologyDomainsExistInClusterTopology(pcsTemplateFLDPath)...)
-	allErrs = append(allErrs, v.validateHierarchicalTopologyConstraints(pcsTemplateFLDPath)...)
-	return allErrs
+	errs := v.validateTopologyDomainsExistInClusterTopology(pcsTemplateFLDPath)
+	if len(errs) > 0 {
+		return errs
+	}
+	return v.validateHierarchicalTopologyConstraints(pcsTemplateFLDPath)
 }
 
 // validateUpdate performs validation specific to PodCliqueSet updates.

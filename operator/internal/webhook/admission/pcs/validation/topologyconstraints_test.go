@@ -27,7 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
-func TestValidateTASDisabledWithConstraintsV2(t *testing.T) {
+func TestValidateTASDisabledWithConstraints(t *testing.T) {
 	tests := []struct {
 		name                  string
 		pcsTopologyConstraint *grovecorev1alpha1.TopologyConstraint
@@ -113,7 +113,7 @@ func TestValidateTASDisabledWithConstraintsV2(t *testing.T) {
 	}
 }
 
-func TestValidateTASEnabledWhenDomainNotInClusterTopologyV2(t *testing.T) {
+func TestValidateTASEnabledWhenDomainNotInClusterTopology(t *testing.T) {
 	clusterDomains := []string{
 		string(grovecorev1alpha1.TopologyDomainRegion),
 		string(grovecorev1alpha1.TopologyDomainZone),
@@ -172,6 +172,42 @@ func TestValidateTASEnabledWhenDomainNotInClusterTopologyV2(t *testing.T) {
 			},
 			errorMatchers: []errorMatcher{},
 		},
+		{
+			name: "Should return early on invalid domain and not run hierarchical validation",
+			// PCS has invalid domain (numa not in cluster topology: region, zone, rack)
+			// AND PCS is narrower than child (rack < zone) - would be hierarchical violation
+			// Should ONLY report domain error, NOT hierarchical error
+			pcsTopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: grovecorev1alpha1.TopologyDomainNuma},
+			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{
+					Name:               "worker",
+					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: grovecorev1alpha1.TopologyDomainZone},
+					Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
+				},
+			},
+			errorMatchers: []errorMatcher{
+				// Should ONLY get domain validation error, NOT hierarchical violation error
+				{errorType: field.ErrorTypeInvalid, field: "spec.template.topologyConstraint"},
+			},
+		},
+		{
+			name: "Should return early when child domain is invalid even if hierarchy would be violated",
+			// PCS is valid (rack is in cluster topology)
+			// Child has invalid domain (numa not in cluster topology)
+			// AND there's a hierarchical violation (rack is narrower than region if it existed)
+			// Should ONLY report child's domain error
+			pcsTopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: grovecorev1alpha1.TopologyDomainRack},
+			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{
+					Name:               "worker",
+					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: grovecorev1alpha1.TopologyDomainNuma},
+					Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
+				},
+			},
+			errorMatchers: []errorMatcher{
+				{errorType: field.ErrorTypeInvalid, field: "spec.template.cliques[0].topologyConstraint"},
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -184,7 +220,7 @@ func TestValidateTASEnabledWhenDomainNotInClusterTopologyV2(t *testing.T) {
 	}
 }
 
-func TestValidateHierarchyViolationsV2(t *testing.T) {
+func TestValidateHierarchyViolations(t *testing.T) {
 	clusterDomains := []string{
 		string(grovecorev1alpha1.TopologyDomainRegion),
 		string(grovecorev1alpha1.TopologyDomainZone),
@@ -311,7 +347,7 @@ func TestValidateHierarchyViolationsV2(t *testing.T) {
 	}
 }
 
-func TestValidateUpdateTopologyConstraintImmutabilityV2(t *testing.T) {
+func TestValidateUpdateTopologyConstraintImmutability(t *testing.T) {
 	clusterDomains := []string{
 		string(grovecorev1alpha1.TopologyDomainRegion),
 		string(grovecorev1alpha1.TopologyDomainZone),
