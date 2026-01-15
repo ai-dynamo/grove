@@ -27,6 +27,7 @@ import (
 	"github.com/go-logr/logr"
 	admissionv1 "k8s.io/api/admission/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
@@ -59,7 +60,13 @@ func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admis
 	if err != nil {
 		return nil, errors.WrapError(err, ErrValidateCreatePodCliqueSet, string(admissionv1.Create), "failed to cast object to PodCliqueSet")
 	}
-	return newPCSValidator(pcs, admissionv1.Create, h.tasConfig).validate()
+
+	v := newPCSValidator(pcs, admissionv1.Create, h.tasConfig)
+	var allErrs field.ErrorList
+	allErrs = append(allErrs, v.validateTopologyConstraintsOnCreate()...)
+	warnings, errs := v.validate()
+	allErrs = append(allErrs, errs...)
+	return warnings, allErrs.ToAggregate()
 }
 
 // ValidateUpdate validates a PodCliqueSet update request.
@@ -73,12 +80,12 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 	if err != nil {
 		return nil, errors.WrapError(err, ErrValidateUpdatePodCliqueSet, string(admissionv1.Update), "failed to cast old object to PodCliqueSet")
 	}
-	validator := newPCSValidator(newPCS, admissionv1.Update, h.tasConfig)
-	warnings, err := validator.validate()
-	if err != nil {
-		return warnings, err
+	v := newPCSValidator(newPCS, admissionv1.Update, h.tasConfig)
+	warnings, errs := v.validate()
+	if len(errs) > 0 {
+		return warnings, errs.ToAggregate()
 	}
-	return warnings, validator.validateUpdate(oldPCS)
+	return warnings, v.validateUpdate(oldPCS)
 }
 
 // ValidateDelete validates a PodCliqueSet delete request.

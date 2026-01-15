@@ -17,7 +17,6 @@
 package validation
 
 import (
-	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -28,7 +27,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	admissionv1 "k8s.io/api/admission/v1"
-	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/utils/ptr"
@@ -36,13 +34,11 @@ import (
 
 func TestResourceNamingValidation(t *testing.T) {
 	testCases := []struct {
-		description      string
-		pcsName          string
-		cliqueNames      []string
-		scalingGroups    []grovecorev1alpha1.PodCliqueScalingGroupConfig
-		expectError      bool
-		expectedErrMsg   string
-		expectedErrCount int
+		description   string
+		pcsName       string
+		cliqueNames   []string
+		scalingGroups []grovecorev1alpha1.PodCliqueScalingGroupConfig
+		errorMatchers []testutils.ErrorMatcher
 	}{
 		{
 			description: "Valid resource names",
@@ -51,53 +47,65 @@ func TestResourceNamingValidation(t *testing.T) {
 			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
 				createScalingGroupConfig("workers", []string{"prefill", "decode"}),
 			},
-			expectError: false,
 		},
 		{
-			description:      "PodClique template name exceeds character limit",
-			pcsName:          "verylongpodcliquesetnamethatisverylong",
-			cliqueNames:      []string{"verylongpodcliquenamethatexceedslimit"},
-			expectError:      true,
-			expectedErrMsg:   "combined resource name length",
-			expectedErrCount: 2,
+			description: "PodClique template name exceeds character limit",
+			pcsName:     "verylongpodcliquesetnamethatisverylong",
+			cliqueNames: []string{"verylongpodcliquenamethatexceedslimit"},
+			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				createScalingGroupConfig("workers-1", []string{"prefill-1", "decode-1"}),
+				createScalingGroupConfig("verylongpodcliquenamethatexceedslimit-2", []string{"prefill", "decode"}),
+				createScalingGroupConfig("verylongpodcliquenamethatexceedslimit-3", []string{"prefill", "decode"}),
+			},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].name"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[1].name"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[2].name"},
+			},
 		},
 		{
-			description:    "Empty PodClique template name",
-			pcsName:        "inference",
-			cliqueNames:    []string{""},
-			expectError:    true,
-			expectedErrMsg: "field cannot be empty",
+			description: "Empty PodClique template name",
+			pcsName:     "inference",
+			cliqueNames: []string{""},
+			errorMatchers: []testutils.ErrorMatcher{
+				// TODO: @unmarshall @renormalize only one should be required here, fix later
+				{ErrorType: field.ErrorTypeRequired, Field: "spec.template.cliques[0].name"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].name"},
+			},
 		},
 		{
-			description:    "PodClique template name with invalid characters",
-			pcsName:        "inference",
-			cliqueNames:    []string{"prefill_worker"},
-			expectError:    true,
-			expectedErrMsg: "invalid PodCliqueTemplateSpec name",
+			description: "PodClique template name with invalid characters",
+			pcsName:     "inference",
+			cliqueNames: []string{"prefill_worker"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].name"},
+			},
 		},
 		{
-			description:      "Scaling group with long names",
-			pcsName:          "verylongpodcliquesetname",
-			cliqueNames:      []string{"verylongpodcliquename"},
-			scalingGroups:    []grovecorev1alpha1.PodCliqueScalingGroupConfig{createScalingGroupConfig("verylongscalinggroup", []string{"verylongpodcliquename"})},
-			expectError:      true,
-			expectedErrMsg:   "combined resource name length",
-			expectedErrCount: 3,
+			description:   "Scaling group with long names",
+			pcsName:       "verylongpodcliquesetname",
+			cliqueNames:   []string{"verylongpodcliquename"},
+			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{createScalingGroupConfig("verylongscalinggroup", []string{"verylongpodcliquename"})},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].name"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].cliqueNames[0].name"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "metadata.name"},
+			},
 		},
 		{
-			description:    "Scaling group referencing non-existent PodClique",
-			pcsName:        "inference",
-			cliqueNames:    []string{"prefill"},
-			scalingGroups:  []grovecorev1alpha1.PodCliqueScalingGroupConfig{createScalingGroupConfig("workers", []string{"nonexistent"})},
-			expectError:    true,
-			expectedErrMsg: "unidentified PodClique names found",
+			description:   "Scaling group referencing non-existent PodClique",
+			pcsName:       "inference",
+			cliqueNames:   []string{"prefill"},
+			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{createScalingGroupConfig("workers", []string{"nonexistent"})},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].cliqueNames"},
+			},
 		},
 		{
 			description:   "Maximum valid character usage",
 			pcsName:       "pcs",
 			cliqueNames:   []string{"cliquename20charssss"},
 			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{createScalingGroupConfig("sg", []string{"cliquename20charssss"})},
-			expectError:   false,
 		},
 	}
 
@@ -126,19 +134,12 @@ func TestResourceNamingValidation(t *testing.T) {
 			pcs := pcsBuilder.Build()
 
 			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig())
-			warnings, err := validator.validate()
+			warnings, errs := validator.validate()
 
-			if tc.expectError {
-				assert.Error(t, err, "Expected validation error for test case: %s", tc.description)
-				assert.Contains(t, err.Error(), tc.expectedErrMsg, "Error message should contain expected text")
-				if tc.expectedErrCount > 0 {
-					var aggErr utilerrors.Aggregate
-					if errors.As(err, &aggErr) {
-						assert.Len(t, aggErr.Errors(), tc.expectedErrCount, "Expected specific number of validation errors")
-					}
-				}
+			if tc.errorMatchers != nil {
+				testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
 			} else {
-				assert.NoError(t, err, "Expected no validation error for test case: %s", tc.description)
+				assert.NoError(t, errs.ToAggregate(), "Expected no validation error for test case: %s", tc.description)
 			}
 
 			assert.Empty(t, warnings, "No warnings expected for these test cases")
@@ -152,8 +153,7 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 		pcsName         string
 		scalingGroups   []grovecorev1alpha1.PodCliqueScalingGroupConfig
 		cliqueTemplates []string
-		expectError     bool
-		expectedErrMsg  string
+		errorMatchers   []testutils.ErrorMatcher
 	}{
 		{
 			description: "Valid scaling group with Replicas and MinAvailable",
@@ -167,7 +167,6 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 				},
 			},
 			cliqueTemplates: []string{"prefill"},
-			expectError:     false,
 		},
 		{
 			description: "Invalid Replicas (negative value)",
@@ -181,8 +180,10 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 				},
 			},
 			cliqueTemplates: []string{"prefill"},
-			expectError:     true,
-			expectedErrMsg:  "must be greater than 0",
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].replicas"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].minAvailable"},
+			},
 		},
 		{
 			description: "Invalid MinAvailable (zero value)",
@@ -196,8 +197,9 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 				},
 			},
 			cliqueTemplates: []string{"prefill"},
-			expectError:     true,
-			expectedErrMsg:  "must be greater than 0",
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].minAvailable"},
+			},
 		},
 		{
 			description: "Invalid MinAvailable > Replicas",
@@ -211,8 +213,9 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 				},
 			},
 			cliqueTemplates: []string{"prefill"},
-			expectError:     true,
-			expectedErrMsg:  "minAvailable must not be greater than replicas",
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].minAvailable"},
+			},
 		},
 		{
 			description: "Invalid ScaleConfig.MinReplicas < MinAvailable",
@@ -230,8 +233,9 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 				},
 			},
 			cliqueTemplates: []string{"prefill"},
-			expectError:     true,
-			expectedErrMsg:  "scaleConfig.minReplicas must be greater than or equal to minAvailable",
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].scaleConfig.minReplicas"},
+			},
 		},
 		{
 			description: "Valid with partial configuration",
@@ -244,7 +248,6 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 				},
 			},
 			cliqueTemplates: []string{"prefill"},
-			expectError:     false,
 		},
 	}
 
@@ -261,15 +264,13 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 			pcs.Spec.Template.PodCliqueScalingGroupConfigs = tc.scalingGroups
 
 			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig())
-			warnings, err := validator.validate()
+			warnings, errs := validator.validate()
 
-			if tc.expectError {
-				assert.Error(t, err, "Expected validation error for test case: %s", tc.description)
-				assert.Contains(t, err.Error(), tc.expectedErrMsg, "Error message should contain expected text")
+			if tc.errorMatchers != nil {
+				testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
 			} else {
-				assert.NoError(t, err, "Expected no validation error for test case: %s", tc.description)
+				assert.NoError(t, errs.ToAggregate(), "Expected no validation error for test case: %s", tc.description)
 			}
-
 			assert.Empty(t, warnings, "No warnings expected for these test cases")
 		})
 	}

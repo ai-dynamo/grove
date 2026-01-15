@@ -15,14 +15,11 @@
 package validation
 
 import (
-	"fmt"
-	"strings"
 	"testing"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
-	"github.com/stretchr/testify/assert"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
@@ -33,13 +30,13 @@ func TestValidateTASDisabledWithConstraints(t *testing.T) {
 		pcsTopologyConstraint *grovecorev1alpha1.TopologyConstraint
 		cliques               []*grovecorev1alpha1.PodCliqueTemplateSpec
 		pcsgConfigs           []grovecorev1alpha1.PodCliqueScalingGroupConfig
-		errorMatchers         []errorMatcher
+		errorMatchers         []testutils.ErrorMatcher
 	}{
 		{
 			name:                  "Should not allow PCS level constraint when TAS is disabled",
 			pcsTopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: grovecorev1alpha1.TopologyDomainZone},
-			errorMatchers: []errorMatcher{
-				{errorType: field.ErrorTypeInvalid, field: "spec.template.topologyConstraint"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.topologyConstraint"},
 			},
 		},
 		{
@@ -51,8 +48,8 @@ func TestValidateTASDisabledWithConstraints(t *testing.T) {
 					Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
 				},
 			},
-			errorMatchers: []errorMatcher{
-				{errorType: field.ErrorTypeInvalid, field: "spec.template.cliques[0].topologyConstraint"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].topologyConstraint"},
 			},
 		},
 		{
@@ -64,8 +61,8 @@ func TestValidateTASDisabledWithConstraints(t *testing.T) {
 					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: grovecorev1alpha1.TopologyDomainRack},
 				},
 			},
-			errorMatchers: []errorMatcher{
-				{errorType: field.ErrorTypeInvalid, field: "spec.template.podCliqueScalingGroupConfigs[0].topologyConstraint"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroupConfigs[0].topologyConstraint"},
 			},
 		},
 		{
@@ -90,16 +87,16 @@ func TestValidateTASDisabledWithConstraints(t *testing.T) {
 					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: grovecorev1alpha1.TopologyDomainRack},
 				},
 			},
-			errorMatchers: []errorMatcher{
-				{errorType: field.ErrorTypeInvalid, field: "spec.template.topologyConstraint"},
-				{errorType: field.ErrorTypeInvalid, field: "spec.template.cliques[0].topologyConstraint"},
-				{errorType: field.ErrorTypeInvalid, field: "spec.template.cliques[1].topologyConstraint"},
-				{errorType: field.ErrorTypeInvalid, field: "spec.template.podCliqueScalingGroupConfigs[0].topologyConstraint"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.topologyConstraint"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].topologyConstraint"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[1].topologyConstraint"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroupConfigs[0].topologyConstraint"},
 			},
 		},
 		{
 			name:          "Should allow PCS create with no constraints when TAS is disabled",
-			errorMatchers: []errorMatcher{},
+			errorMatchers: []testutils.ErrorMatcher{},
 		},
 	}
 
@@ -108,7 +105,7 @@ func TestValidateTASDisabledWithConstraints(t *testing.T) {
 			pcs := buildTestPCS(tc.pcsTopologyConstraint, tc.cliques, tc.pcsgConfigs)
 			validator := newTopologyConstraintsValidator(pcs, false, []string{})
 			errs := validator.validate()
-			assertErrorMatches(t, errs, tc.errorMatchers)
+			testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
 		})
 	}
 }
@@ -125,13 +122,13 @@ func TestValidateTASEnabledWhenDomainNotInClusterTopology(t *testing.T) {
 		pcsTopologyConstraint *grovecorev1alpha1.TopologyConstraint
 		cliques               []*grovecorev1alpha1.PodCliqueTemplateSpec
 		pcsgConfigs           []grovecorev1alpha1.PodCliqueScalingGroupConfig
-		errorMatchers         []errorMatcher
+		errorMatchers         []testutils.ErrorMatcher
 	}{
 		{
 			name:                  "Should report error when PCS level domain not in cluster topology",
 			pcsTopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: grovecorev1alpha1.TopologyDomainHost},
-			errorMatchers: []errorMatcher{
-				{errorType: field.ErrorTypeInvalid, field: "spec.template.topologyConstraint"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.topologyConstraint"},
 			},
 		},
 		{
@@ -143,8 +140,8 @@ func TestValidateTASEnabledWhenDomainNotInClusterTopology(t *testing.T) {
 					Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
 				},
 			},
-			errorMatchers: []errorMatcher{
-				{errorType: field.ErrorTypeInvalid, field: "spec.template.cliques[0].topologyConstraint"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].topologyConstraint"},
 			},
 		},
 		{
@@ -156,8 +153,8 @@ func TestValidateTASEnabledWhenDomainNotInClusterTopology(t *testing.T) {
 					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: grovecorev1alpha1.TopologyDomainDataCenter},
 				},
 			},
-			errorMatchers: []errorMatcher{
-				{errorType: field.ErrorTypeInvalid, field: "spec.template.podCliqueScalingGroupConfigs[0].topologyConstraint"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroupConfigs[0].topologyConstraint"},
 			},
 		},
 		{
@@ -170,7 +167,7 @@ func TestValidateTASEnabledWhenDomainNotInClusterTopology(t *testing.T) {
 					Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
 				},
 			},
-			errorMatchers: []errorMatcher{},
+			errorMatchers: []testutils.ErrorMatcher{},
 		},
 		{
 			name: "Should return early on invalid domain and not run hierarchical validation",
@@ -185,9 +182,9 @@ func TestValidateTASEnabledWhenDomainNotInClusterTopology(t *testing.T) {
 					Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
 				},
 			},
-			errorMatchers: []errorMatcher{
+			errorMatchers: []testutils.ErrorMatcher{
 				// Should ONLY get domain validation error, NOT hierarchical violation error
-				{errorType: field.ErrorTypeInvalid, field: "spec.template.topologyConstraint"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.topologyConstraint"},
 			},
 		},
 		{
@@ -204,8 +201,8 @@ func TestValidateTASEnabledWhenDomainNotInClusterTopology(t *testing.T) {
 					Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
 				},
 			},
-			errorMatchers: []errorMatcher{
-				{errorType: field.ErrorTypeInvalid, field: "spec.template.cliques[0].topologyConstraint"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].topologyConstraint"},
 			},
 		},
 	}
@@ -215,7 +212,7 @@ func TestValidateTASEnabledWhenDomainNotInClusterTopology(t *testing.T) {
 			pcs := buildTestPCS(tc.pcsTopologyConstraint, tc.cliques, tc.pcsgConfigs)
 			validator := newTopologyConstraintsValidator(pcs, true, clusterDomains)
 			errs := validator.validate()
-			assertErrorMatches(t, errs, tc.errorMatchers)
+			testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
 		})
 	}
 }
@@ -234,7 +231,7 @@ func TestValidateHierarchyViolations(t *testing.T) {
 		pcsTopologyConstraint *grovecorev1alpha1.TopologyConstraint
 		cliques               []*grovecorev1alpha1.PodCliqueTemplateSpec
 		pcsgConfigs           []grovecorev1alpha1.PodCliqueScalingGroupConfig
-		errorMatchers         []errorMatcher
+		errorMatchers         []testutils.ErrorMatcher
 	}{
 		{
 			name:                  "Should allow PCS topology constraints broader than PodClique",
@@ -246,7 +243,7 @@ func TestValidateHierarchyViolations(t *testing.T) {
 					Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
 				},
 			},
-			errorMatchers: []errorMatcher{},
+			errorMatchers: []testutils.ErrorMatcher{},
 		},
 		{
 			name:                  "Should forbid PCS topology constraints narrower than PodClique",
@@ -258,8 +255,8 @@ func TestValidateHierarchyViolations(t *testing.T) {
 					Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
 				},
 			},
-			errorMatchers: []errorMatcher{
-				{errorType: field.ErrorTypeInvalid, field: "spec.template.topologyConstraint"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.topologyConstraint"},
 			},
 		},
 		{
@@ -272,8 +269,8 @@ func TestValidateHierarchyViolations(t *testing.T) {
 					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: grovecorev1alpha1.TopologyDomainRack},
 				},
 			},
-			errorMatchers: []errorMatcher{
-				{errorType: field.ErrorTypeInvalid, field: "spec.template.topologyConstraint"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.topologyConstraint"},
 			},
 		},
 		{
@@ -292,8 +289,8 @@ func TestValidateHierarchyViolations(t *testing.T) {
 					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: grovecorev1alpha1.TopologyDomainHost},
 				},
 			},
-			errorMatchers: []errorMatcher{
-				{errorType: field.ErrorTypeInvalid, field: "spec.template.podCliqueScalingGroupConfigs[0].topologyConstraint"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroupConfigs[0].topologyConstraint"},
 			},
 		},
 		{
@@ -306,7 +303,7 @@ func TestValidateHierarchyViolations(t *testing.T) {
 					Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
 				},
 			},
-			errorMatchers: []errorMatcher{},
+			errorMatchers: []testutils.ErrorMatcher{},
 		},
 		{
 			name:                  "Should disallow topology constraints at multiple levels",
@@ -330,9 +327,9 @@ func TestValidateHierarchyViolations(t *testing.T) {
 					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: grovecorev1alpha1.TopologyDomainHost},
 				},
 			},
-			errorMatchers: []errorMatcher{
-				{errorType: field.ErrorTypeInvalid, field: "spec.template.topologyConstraint"},
-				{errorType: field.ErrorTypeInvalid, field: "spec.template.podCliqueScalingGroupConfigs[0].topologyConstraint"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.topologyConstraint"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroupConfigs[0].topologyConstraint"},
 			},
 		},
 	}
@@ -342,7 +339,7 @@ func TestValidateHierarchyViolations(t *testing.T) {
 			pcs := buildTestPCS(tc.pcsTopologyConstraint, tc.cliques, tc.pcsgConfigs)
 			validator := newTopologyConstraintsValidator(pcs, true, clusterDomains)
 			errs := validator.validate()
-			assertErrorMatches(t, errs, tc.errorMatchers)
+			testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
 		})
 	}
 }
@@ -378,7 +375,7 @@ func TestValidateUpdateTopologyConstraintImmutability(t *testing.T) {
 		newCliques       []*grovecorev1alpha1.PodCliqueTemplateSpec
 		newPCSGConfigs   []grovecorev1alpha1.PodCliqueScalingGroupConfig
 
-		errorMatchers []errorMatcher
+		errorMatchers []testutils.ErrorMatcher
 	}{
 		{
 			name:             "Should allow when there are no changes to topology constraints",
@@ -386,50 +383,50 @@ func TestValidateUpdateTopologyConstraintImmutability(t *testing.T) {
 			oldCliques:       workerWithHost,
 			newPCSConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: zone},
 			newCliques:       workerWithHost,
-			errorMatchers:    []errorMatcher{},
+			errorMatchers:    []testutils.ErrorMatcher{},
 		},
 		{
 			name:             "Should disallow when PCS constraint are changed",
 			oldPCSConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: zone},
 			newPCSConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: rack},
-			errorMatchers: []errorMatcher{
-				{errorType: field.ErrorTypeForbidden, field: "spec.template.topologyConstraint"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint"},
 			},
 		},
 		{
 			name:             "Should disallow when PCS constraint are added",
 			newPCSConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: zone},
-			errorMatchers: []errorMatcher{
-				{errorType: field.ErrorTypeForbidden, field: "spec.template.topologyConstraint"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint"},
 			},
 		},
 		{
 			name:             "Should disallow when PCS constraint are removed",
 			oldPCSConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: zone},
-			errorMatchers: []errorMatcher{
-				{errorType: field.ErrorTypeForbidden, field: "spec.template.topologyConstraint"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint"},
 			},
 		},
 		{
 			name:       "Should disallow when PodClique constraint is changed",
 			oldCliques: workerWithZone,
 			newCliques: workerWithHost,
-			errorMatchers: []errorMatcher{
-				{errorType: field.ErrorTypeForbidden, field: "spec.template.cliques[0].topologyConstraint"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.cliques[0].topologyConstraint"},
 			},
 		},
 		{
 			name:       "Should disallow when PodClique constraint is added",
 			newCliques: workerWithHost,
-			errorMatchers: []errorMatcher{
-				{errorType: field.ErrorTypeForbidden, field: "spec.template.cliques[0].topologyConstraint"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.cliques[0].topologyConstraint"},
 			},
 		},
 		{
 			name:       "Should disallow when PodClique constraint is removed",
 			oldCliques: workerWithHost,
-			errorMatchers: []errorMatcher{
-				{errorType: field.ErrorTypeForbidden, field: "spec.template.cliques[0].topologyConstraint"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.cliques[0].topologyConstraint"},
 			},
 		},
 		{
@@ -440,8 +437,8 @@ func TestValidateUpdateTopologyConstraintImmutability(t *testing.T) {
 			newPCSGConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
 				{Name: "sg1", CliqueNames: []string{"worker"}, TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: rack}},
 			},
-			errorMatchers: []errorMatcher{
-				{errorType: field.ErrorTypeForbidden, field: "spec.template.podCliqueScalingGroupConfigs[0].topologyConstraint"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.podCliqueScalingGroupConfigs[0].topologyConstraint"},
 			},
 		},
 		{
@@ -452,8 +449,8 @@ func TestValidateUpdateTopologyConstraintImmutability(t *testing.T) {
 			newPCSGConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
 				{Name: "sg1", CliqueNames: []string{"worker"}, TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: zone}},
 			},
-			errorMatchers: []errorMatcher{
-				{errorType: field.ErrorTypeForbidden, field: "spec.template.podCliqueScalingGroupConfigs[0].topologyConstraint"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.podCliqueScalingGroupConfigs[0].topologyConstraint"},
 			},
 		},
 		{
@@ -464,8 +461,8 @@ func TestValidateUpdateTopologyConstraintImmutability(t *testing.T) {
 			newPCSGConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
 				{Name: "sg1", CliqueNames: []string{"worker"}},
 			},
-			errorMatchers: []errorMatcher{
-				{errorType: field.ErrorTypeForbidden, field: "spec.template.podCliqueScalingGroupConfigs[0].topologyConstraint"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.podCliqueScalingGroupConfigs[0].topologyConstraint"},
 			},
 		},
 		{
@@ -480,10 +477,10 @@ func TestValidateUpdateTopologyConstraintImmutability(t *testing.T) {
 				{Name: "worker1", TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: rack}, Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, RoleName: "worker1-role"}},
 				{Name: "worker2", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, RoleName: "worker2-role"}},
 			},
-			errorMatchers: []errorMatcher{
-				{errorType: field.ErrorTypeForbidden, field: "spec.template.topologyConstraint"},
-				{errorType: field.ErrorTypeForbidden, field: "spec.template.cliques[0].topologyConstraint"},
-				{errorType: field.ErrorTypeForbidden, field: "spec.template.cliques[1].topologyConstraint"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint"},
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.cliques[0].topologyConstraint"},
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.cliques[1].topologyConstraint"},
 			},
 		},
 	}
@@ -494,7 +491,7 @@ func TestValidateUpdateTopologyConstraintImmutability(t *testing.T) {
 			newPCS := buildTestPCS(tc.newPCSConstraint, tc.newCliques, tc.newPCSGConfigs)
 			validator := newTopologyConstraintsValidator(newPCS, true, clusterDomains)
 			errs := validator.validateUpdate(oldPCS)
-			assertErrorMatches(t, errs, tc.errorMatchers)
+			testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
 		})
 	}
 }
@@ -523,41 +520,4 @@ func buildTestPCS(pcsConstraint *grovecorev1alpha1.TopologyConstraint,
 	}
 
 	return builder.Build()
-}
-
-type errorMatcher struct {
-	field     string
-	errorType field.ErrorType
-}
-
-func (m errorMatcher) Matches(errs field.ErrorList) bool {
-	for _, err := range errs {
-		if err.Field == m.field && err.Type == m.errorType {
-			return true
-		}
-	}
-	return false
-}
-
-func assertErrorMatches(t *testing.T, errs field.ErrorList, expectedErrorMatchers []errorMatcher) {
-	unmatched := make([]errorMatcher, 0, len(expectedErrorMatchers))
-	for _, matcher := range expectedErrorMatchers {
-		if !matcher.Matches(errs) {
-			unmatched = append(unmatched, matcher)
-		}
-	}
-	assert.True(t, len(unmatched) == 0, aggregateMatchingErrorMessage(unmatched, errs))
-}
-
-func aggregateMatchingErrorMessage(unmatched []errorMatcher, errs field.ErrorList) string {
-	var sb strings.Builder
-	sb.WriteString("Expected error to consist of:\n")
-	for _, um := range unmatched {
-		sb.WriteString(fmt.Sprintf("  Field: %s, Type: %s\n", um.field, um.errorType))
-	}
-	sb.WriteString("But got errors:\n")
-	for _, err := range errs {
-		sb.WriteString(fmt.Sprintf("  Field: %s, Type: %s\n", err.Field, err.Type))
-	}
-	return sb.String()
 }
