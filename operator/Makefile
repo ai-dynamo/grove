@@ -57,6 +57,28 @@ build-initc:
 build-initc-%:
 	@GOOS=$$(echo $* | cut -d- -f 1) GOARCH=$$(echo $* | cut -d- -f 2) PACKAGE_PATH=${LD_PACKAGE_PATH} PROGRAM_NAME=${INITC_NAME} $(MODULE_HACK_DIR)/build-initc.sh
 
+# Builds arborist CLI tool for collecting cluster diagnostics.
+.PHONY: build-arborist
+build-arborist:
+	@echo "Building arborist..."
+	@go build -o bin/arborist ./cmd/arborist
+
+# Installs arborist CLI tool to GOPATH/bin.
+.PHONY: install-arborist
+install-arborist:
+	@echo "Installing arborist..."
+	@go install ./cmd/arborist
+
+# Builds setup-cluster tool for creating test clusters.
+.PHONY: build-setup-cluster
+build-setup-cluster:
+	@echo "Building setup-cluster..."
+	@go build -o bin/setup-cluster ./cmd/setup-cluster
+
+# Builds all CLI tools (arborist, setup-cluster).
+.PHONY: build-tools
+build-tools: build-arborist build-setup-cluster
+
 # Lints the codebase using GOLANGCI_LINT.
 .PHONY: lint
 lint: $(GOLANGCI_LINT)

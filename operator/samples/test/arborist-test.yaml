@@ -1,0 +1,28 @@
+# Simple PodCliqueSet for testing arborist diagnostics
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: arborist-test
+  labels:
+    app: arborist-test
+spec:
+  replicas: 1
+  template:
+    cliques:
+      - name: web
+        spec:
+          roleName: web
+          replicas: 2
+          podSpec:
+            tolerations:
+              - key: "node_role.e2e.grove.nvidia.com"
+                operator: "Equal"
+                value: "agent"
+                effect: "NoSchedule"
+            containers:
+              - name: nginx
+                image: nginx:alpine-slim
+                resources:
+                  requests:
+                    cpu: 10m
+                    memory: 32Mi
