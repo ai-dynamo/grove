@@ -43,7 +43,7 @@ const (
 	// cleanupTimeout is the maximum time to wait for all resources and pods to be deleted during cleanup.
 	// This needs to be long enough to allow for cascade deletion propagation through
 	// PodCliqueSet -> PodCliqueScalingGroup -> PodClique -> Pod
-	cleanupTimeout = 60 * time.Second
+	cleanupTimeout = 2 * time.Minute
 
 	// cleanupPollInterval is the interval between checks during cleanup polling
 	cleanupPollInterval = 1 * time.Second
@@ -85,6 +85,8 @@ type SharedClusterManager struct {
 	isSetup       bool
 	workerNodes   []string
 	registryPort  string
+	cleanupFailed bool   // Set to true if CleanupWorkloads fails, causing subsequent tests to fail
+	cleanupError  string // The error message from the failed cleanup
 }
 
 var (
@@ -205,7 +207,12 @@ func (scm *SharedClusterManager) Setup(ctx context.Context, testImages []string)
 
 // PrepareForTest prepares the cluster for a specific test by cordoning the appropriate nodes.
 // It ensures exactly `requiredWorkerNodes` nodes are schedulable by cordoning excess nodes.
+// Returns an error if a previous cleanup operation failed, preventing potentially corrupted test state.
 func (scm *SharedClusterManager) PrepareForTest(ctx context.Context, requiredWorkerNodes int) error {
+	if scm.cleanupFailed {
+		return fmt.Errorf("cannot prepare cluster: a previous test cleanup failed - cluster may have orphaned resources. Original error: %s", scm.cleanupError)
+	}
+
 	if !scm.isSetup {
 		return fmt.Errorf("shared cluster not setup")
 	}
@@ -461,6 +468,23 @@ func (scm *SharedClusterManager) GetWorkerNodes() []string {
 // IsSetup returns whether the shared cluster is setup
 func (scm *SharedClusterManager) IsSetup() bool {
 	return scm.isSetup
+}
+
+// MarkCleanupFailed marks that a cleanup operation has failed.
+// This causes all subsequent tests to fail immediately when they try to prepare the cluster.
+func (scm *SharedClusterManager) MarkCleanupFailed(err error) {
+	scm.cleanupFailed = true
+	scm.cleanupError = err.Error()
+}
+
+// HasCleanupFailed returns true if a previous cleanup operation failed.
+func (scm *SharedClusterManager) HasCleanupFailed() bool {
+	return scm.cleanupFailed
+}
+
+// GetCleanupError returns the error message from the failed cleanup, or empty string if no failure.
+func (scm *SharedClusterManager) GetCleanupError() string {
+	return scm.cleanupError
 }
 
 // Teardown cleans up the shared cluster
