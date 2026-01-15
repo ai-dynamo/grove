@@ -373,7 +373,7 @@ func getNthEarliestPodTime(pods []v1.Pod, n int) time.Time {
 type PodCliqueSpec struct {
 	Name          string // The clique name pattern (e.g., "pc-a", "pc-b")
 	ExpectedCount int    // Expected number of pods in this group
-	MinAvailable  int    // Minimum pods that must be ready before dependents can start (0 = all pods required)
+	MinAvailable  int    // Minimum pods that must be ready before dependents can start (must be > 0)
 }
 
 // ScalingGroupOrderSpec defines the startup ordering verification for scaling groups
@@ -514,9 +514,7 @@ func verifyPodCliqueStartupOrder(t *testing.T, tc TestContext,
 // before dependent pods can start. This function verifies that at least minAvailable pods
 // from groupBefore had their Ready condition set before any pod in groupAfter became Ready.
 //
-// minAvailable: The number of pods from groupBefore that must be ready before groupAfter starts.
-//
-//	If 0, defaults to requiring all pods in groupBefore to be ready first.
+// minAvailable: The number of pods from groupBefore that must be ready before groupAfter starts (must be > 0).
 func verifyGroupStartupOrderWithMinAvailable(t *testing.T, groupBefore, groupAfter []v1.Pod, beforeName, afterName string, minAvailable int) {
 	t.Helper() // Mark as helper for better error reporting
 
@@ -525,11 +523,6 @@ func verifyGroupStartupOrderWithMinAvailable(t *testing.T, groupBefore, groupAft
 	}
 	if len(groupAfter) == 0 {
 		t.Fatalf("Group %s has no pods", afterName)
-	}
-
-	// If minAvailable is 0, default to requiring all pods
-	if minAvailable <= 0 {
-		minAvailable = len(groupBefore)
 	}
 
 	// Get the Nth earliest time from the "before" group (where N = minAvailable)
@@ -570,9 +563,9 @@ func verifyGroupStartupOrderWithMinAvailable(t *testing.T, groupBefore, groupAft
 }
 
 // Helper function to verify that all pods in groupBefore started before all pods in groupAfter.
-// This is a convenience wrapper for verifyGroupStartupOrderWithMinAvailable with minAvailable=0 (all pods).
+// This is a convenience wrapper for verifyGroupStartupOrderWithMinAvailable requiring all pods.
 func verifyGroupStartupOrder(t *testing.T, groupBefore, groupAfter []v1.Pod, beforeName, afterName string) {
-	verifyGroupStartupOrderWithMinAvailable(t, groupBefore, groupAfter, beforeName, afterName, 0)
+	verifyGroupStartupOrderWithMinAvailable(t, groupBefore, groupAfter, beforeName, afterName, len(groupBefore))
 }
 
 // Helper function to get pods by clique name pattern.
