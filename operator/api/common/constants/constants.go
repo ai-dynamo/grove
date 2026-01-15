@@ -132,3 +132,17 @@ const (
 	// KindClusterTopology is the kind for a ClusterTopology resource.
 	KindClusterTopology = "ClusterTopology"
 )
+
+// Constants for NVIDIA ComputeDomain (used by MNNVL support)
+const (
+	// ComputeDomainGroup is the API group for NVIDIA ComputeDomain resources.
+	ComputeDomainGroup = "resource.nvidia.com"
+	// ComputeDomainVersion is the API version for NVIDIA ComputeDomain resources.
+	ComputeDomainVersion = "v1beta1"
+	// ComputeDomainKind is the Kind for NVIDIA ComputeDomain resources.
+	ComputeDomainKind = "ComputeDomain"
+	// ComputeDomainResource is the plural resource name for ComputeDomain.
+	ComputeDomainResource = "computedomains"
+	// ComputeDomainCRDName is the full CRD name for ComputeDomain.
+	ComputeDomainCRDName = ComputeDomainResource + "." + ComputeDomainGroup
+)

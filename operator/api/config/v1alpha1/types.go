@@ -65,6 +65,8 @@ type OperatorConfiguration struct {
 	LogFormat               LogFormat                            `json:"logFormat"`
 	Authorizer              AuthorizerConfig                     `json:"authorizer"`
 	TopologyAwareScheduling TopologyAwareSchedulingConfiguration `json:"topologyAwareScheduling"`
+	// +optional
+	MNNVL MNNVLConfiguration `json:"mnnvl,omitempty"` // MNNVL is the configuration for Multi-Node NVLink support.
 }
 
 // LeaderElectionConfiguration defines the configuration for the leader election.
@@ -199,4 +201,12 @@ type TopologyAwareSchedulingConfiguration struct {
 	// Used to create/update the TopologyAwareScheduling CR at operator startup.
 	// +optional
 	Levels []corev1alpha1.TopologyLevel `json:"levels,omitempty"`
+}
+
+// MNNVLConfiguration defines the configuration for MNNVL (Multi-Node NVLink) support.
+type MNNVLConfiguration struct {
+	// Enabled indicates whether MNNVL support is enabled.
+	// If the cluster doesn't have nvidia OpenDRA driver, the operator will exit with a non-zero exit code.
+	// Default: false
+	Enabled bool `json:"enabled"`
 }

@@ -43,6 +43,8 @@ const (
 	ExitErrInitializeManager
 	// ExitErrStart indicates that the application exited due to an error when starting the application.
 	ExitErrStart
+	// ExitErrMNNVLPrerequisites indicates that the application exited because MNNVL prerequisites are not met.
+	ExitErrMNNVLPrerequisites
 )
 
 var (

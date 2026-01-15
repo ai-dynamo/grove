@@ -55,6 +55,10 @@ config.yaml: |
       []
     {{- end }}
   {{- end }}
+  {{- if .Values.config.mnnvl }}
+  mnnvl:
+    enabled: {{ .Values.config.mnnvl.enabled | default false }}
+  {{- end }}
 
 {{- end -}}
 
