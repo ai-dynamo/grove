@@ -516,12 +516,14 @@ configs:
 		}
 	}
 
-	// Create cluster with retry logic
+	// Create cluster with retry logic and timeout
 	// k3d cluster creation can fail intermittently when starting many nodes (30+) due to
 	// the "thundering herd" effect - all agents trying to register with the server simultaneously.
-	// Retrying usually succeeds as the failure is transient.
+	// Additionally, ClusterRun can hang indefinitely if a node gets stuck during startup.
+	// We use a timeout to detect hangs and retry, which usually succeeds.
 	const maxClusterCreateRetries = 3
 	const clusterCreateRetryDelay = 5 * time.Second
+	const clusterCreateTimeout = 5 * time.Minute
 
 	logger.Debugf("🚀 Creating cluster '%s' with %d server(s) and %d worker node(s)...",
 		k3dConfig.Name, cfg.ControlPlaneNodes, cfg.WorkerNodes)
@@ -531,7 +533,7 @@ configs:
 		if attempt > 1 {
 			logger.Warnf("🔄 Retrying cluster creation (attempt %d/%d)...", attempt, maxClusterCreateRetries)
 
-			// Clean up failed cluster before retry
+			// Clean up failed cluster before retry - use original context for cleanup
 			_ = k3dclient.ClusterDelete(ctx, runtimes.Docker, &k3dConfig.Cluster, k3d.ClusterDeleteOpts{})
 
 			// Clean up registry if enabled (it may have been partially created)
@@ -542,7 +544,12 @@ configs:
 			time.Sleep(clusterCreateRetryDelay)
 		}
 
-		createErr = k3dclient.ClusterRun(ctx, runtimes.Docker, k3dConfig)
+		// Create a timeout context for this attempt
+		// ClusterRun can hang indefinitely if node startup gets stuck
+		attemptCtx, cancel := context.WithTimeout(ctx, clusterCreateTimeout)
+		createErr = k3dclient.ClusterRun(attemptCtx, runtimes.Docker, k3dConfig)
+		cancel() // Always cancel to release resources
+
 		if createErr == nil {
 			if attempt > 1 {
 				logger.Infof("✅ Cluster creation succeeded on attempt %d/%d", attempt, maxClusterCreateRetries)
@@ -550,7 +557,12 @@ configs:
 			break
 		}
 
-		logger.Errorf("❌ Cluster creation failed (attempt %d/%d): %v", attempt, maxClusterCreateRetries, createErr)
+		// Check if it was a timeout
+		if attemptCtx.Err() == context.DeadlineExceeded {
+			logger.Errorf("❌ Cluster creation timed out after %v (attempt %d/%d)", clusterCreateTimeout, attempt, maxClusterCreateRetries)
+		} else {
+			logger.Errorf("❌ Cluster creation failed (attempt %d/%d): %v", attempt, maxClusterCreateRetries, createErr)
+		}
 	}
 
 	if createErr != nil {
