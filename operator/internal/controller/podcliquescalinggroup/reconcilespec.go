@@ -158,6 +158,10 @@ func (r *Reconciler) recordIncompleteReconcile(ctx context.Context, logger logr.
 
 // updateObservedGeneration updates the PodCliqueScalingGroup status to reflect the current generation being processed
 func (r *Reconciler) updateObservedGeneration(ctx context.Context, logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) ctrlcommon.ReconcileStepResult {
+	if pcsg.Status.ObservedGeneration != nil && *pcsg.Status.ObservedGeneration == pcsg.Generation {
+		return ctrlcommon.ContinueReconcile()
+	}
+
 	original := pcsg.DeepCopy()
 	pcsg.Status.ObservedGeneration = &pcsg.Generation
 	if err := r.client.Status().Patch(ctx, pcsg, client.MergeFrom(original)); err != nil {
