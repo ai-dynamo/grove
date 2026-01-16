@@ -192,10 +192,9 @@ func upgradeGrove(t *testing.T, ctx context.Context, clientset *kubernetes.Clien
 				},
 			},
 			"webhooks": map[string]interface{}{
-				"podCliqueSetValidationWebhook":    map[string]interface{}{"annotations": annotations},
-				"podCliqueSetDefaultingWebhook":    map[string]interface{}{"annotations": annotations},
-				"clusterTopologyValidationWebhook": map[string]interface{}{"annotations": annotations},
-				"authorizerWebhook":                map[string]interface{}{"annotations": annotations},
+				"podCliqueSetValidationWebhook": map[string]interface{}{"annotations": annotations},
+				"podCliqueSetDefaultingWebhook": map[string]interface{}{"annotations": annotations},
+				"authorizerWebhook":             map[string]interface{}{"annotations": annotations},
 			},
 		},
 		HelmLoggerFunc: logger.Debugf,
