@@ -516,12 +516,45 @@ configs:
 		}
 	}
 
-	// Create cluster
+	// Create cluster with retry logic
+	// k3d cluster creation can fail intermittently when starting many nodes (30+) due to
+	// the "thundering herd" effect - all agents trying to register with the server simultaneously.
+	// Retrying usually succeeds as the failure is transient.
+	const maxClusterCreateRetries = 3
+	const clusterCreateRetryDelay = 5 * time.Second
+
 	logger.Debugf("🚀 Creating cluster '%s' with %d server(s) and %d worker node(s)...",
 		k3dConfig.Name, cfg.ControlPlaneNodes, cfg.WorkerNodes)
 
-	if err := k3dclient.ClusterRun(ctx, runtimes.Docker, k3dConfig); err != nil {
-		return nil, cleanup, fmt.Errorf("failed to create cluster: %w", err)
+	var createErr error
+	for attempt := 1; attempt <= maxClusterCreateRetries; attempt++ {
+		if attempt > 1 {
+			logger.Warnf("🔄 Retrying cluster creation (attempt %d/%d)...", attempt, maxClusterCreateRetries)
+
+			// Clean up failed cluster before retry
+			_ = k3dclient.ClusterDelete(ctx, runtimes.Docker, &k3dConfig.Cluster, k3d.ClusterDeleteOpts{})
+
+			// Clean up registry if enabled (it may have been partially created)
+			if cfg.EnableRegistry {
+				_ = ensureRegistryDoesNotExist(ctx, cfg.Name, logger)
+			}
+
+			time.Sleep(clusterCreateRetryDelay)
+		}
+
+		createErr = k3dclient.ClusterRun(ctx, runtimes.Docker, k3dConfig)
+		if createErr == nil {
+			if attempt > 1 {
+				logger.Infof("✅ Cluster creation succeeded on attempt %d/%d", attempt, maxClusterCreateRetries)
+			}
+			break
+		}
+
+		logger.Errorf("❌ Cluster creation failed (attempt %d/%d): %v", attempt, maxClusterCreateRetries, createErr)
+	}
+
+	if createErr != nil {
+		return nil, cleanup, fmt.Errorf("failed to create cluster after %d attempts: %w", maxClusterCreateRetries, createErr)
 	}
 
 	// Get kubeconfig
