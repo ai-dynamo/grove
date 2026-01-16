@@ -53,17 +53,17 @@ func UpgradeGrove(ctx context.Context, restConfig *rest.Config, values map[strin
 	// - ReuseValues: Preserves image configuration that Skaffold set during initial install
 	helmConfig := &HelmInstallConfig{
 		RestConfig:     restConfig,
-		ReleaseName:   OperatorDeploymentName,
-		ChartRef:      chartPath,
-		ChartVersion:  chartVersion,
-		Namespace:     OperatorNamespace,
-		ReuseValues:   true,
-		Values:        values,
+		ReleaseName:    OperatorDeploymentName,
+		ChartRef:       chartPath,
+		ChartVersion:   chartVersion,
+		Namespace:      OperatorNamespace,
+		ReuseValues:    true,
+		Values:         values,
 		HelmLoggerFunc: logger.Debugf,
-		Logger:        logger,
+		Logger:         logger,
 	}
 
-	logger.Info("Upgrading Grove operator")
+	logger.Debug("Upgrading Grove operator")
 
 	if _, err := UpgradeHelmChart(helmConfig); err != nil {
 		return fmt.Errorf("helm upgrade failed: %w", err)
@@ -74,7 +74,7 @@ func UpgradeGrove(ctx context.Context, restConfig *rest.Config, values map[strin
 		return fmt.Errorf("grove operator pod not ready after upgrade: %w", err)
 	}
 
-	logger.Info("Grove upgrade completed successfully")
+	logger.Debug("Grove upgrade completed successfully")
 	return nil
 }
 
