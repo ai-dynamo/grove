@@ -188,6 +188,10 @@ func (r *Reconciler) syncPCLQResources(ctx context.Context, logger logr.Logger, 
 
 // updateObservedGeneration updates the PodClique status to reflect the current generation being processed
 func (r *Reconciler) updateObservedGeneration(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
+	if pclq.Status.ObservedGeneration != nil && *pclq.Status.ObservedGeneration == pclq.Generation {
+		return ctrlcommon.ContinueReconcile()
+	}
+
 	original := pclq.DeepCopy()
 	pclq.Status.ObservedGeneration = &pclq.Generation
 	if err := r.client.Status().Patch(ctx, pclq, client.MergeFrom(original)); err != nil {

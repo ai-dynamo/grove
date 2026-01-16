@@ -176,6 +176,10 @@ func (r *Reconciler) syncPodCliqueSetResources(ctx context.Context, logger logr.
 
 // updateObservedGeneration updates the status to reflect the current observed generation.
 func (r *Reconciler) updateObservedGeneration(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
+	if pcs.Status.ObservedGeneration != nil && *pcs.Status.ObservedGeneration == pcs.Generation {
+		return ctrlcommon.ContinueReconcile()
+	}
+
 	original := pcs.DeepCopy()
 	pcs.Status.ObservedGeneration = &pcs.Generation
 	if err := r.client.Status().Patch(ctx, pcs, client.MergeFrom(original)); err != nil {
