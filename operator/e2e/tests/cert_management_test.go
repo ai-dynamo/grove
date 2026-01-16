@@ -19,7 +19,15 @@
 package tests
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
+	"fmt"
+	"net"
+	"net/http"
+	"net/url"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -35,6 +43,8 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/portforward"
+	"k8s.io/client-go/transport/spdy"
 )
 
 // certManagerGroveValues returns Grove Helm values for cert-manager mode.
@@ -127,17 +137,23 @@ spec:
 `
 )
 
-// Test_CM1_AutoProvisionToCertManager tests transitioning from auto-provisioned certs to cert-manager
+// Test_CM1_CertManagementRoundTrip tests the full certificate management round-trip:
+// auto-provision -> cert-manager -> auto-provision
 // Scenario CM-1:
 // 1. Initialize Grove with auto-provision mode
 // 2. Install cert-manager and create Certificate
 // 3. Upgrade Grove to use cert-manager (autoProvision=false)
-// 4. Deploy and verify workload with cert-manager certs
-func Test_CM1_AutoProvisionToCertManager(t *testing.T) {
+// 4. Verify cert-manager mode is active
+// 5. Deploy and verify workload with cert-manager certs
+// 6. Remove cert-manager resources
+// 7. Upgrade Grove back to auto-provision mode
+// 8. Verify auto-provision mode is active
+// 9. Delete and redeploy workload to test webhooks with auto-provisioned certs
+func Test_CM1_CertManagementRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
-	logger.Info("1. Initialize Grove with auto-provision mode")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 1)
+	logger.Info("1. Initialize Grove with auto-provision mode (10 nodes for workload)")
+	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 10)
 
 	logger.Info("2. Install cert-manager and create Certificate")
 	deps, _ := e2e.GetDependencies()
@@ -161,63 +177,75 @@ func Test_CM1_AutoProvisionToCertManager(t *testing.T) {
 	logger.Info("3. Upgrade Grove to use cert-manager (autoProvision=false)")
 	upgradeGroveToCertManager(t, ctx, restConfig)
 
-	logger.Info("4. Deploy and verify workload with cert-manager certs")
+	logger.Info("4. Verify cert-manager mode is active")
+	verifyCertManagerMode(t, ctx, clientset)
+	verifyWebhookServingCertificate(t, ctx, clientset, restConfig)
+
+	logger.Info("5. Deploy and verify workload with cert-manager certs")
 	tc := createTestContext(t, ctx, clientset, dynamicClient, restConfig)
 	if _, err := deployAndVerifyWorkload(tc); err != nil {
-		t.Fatalf("Failed to verify workload in Cert-Manager mode: %v", err)
+		t.Fatalf("Failed to deploy workload in Cert-Manager mode: %v", err)
 	}
 
-	logger.Info("Auto-Provision to Cert-Manager transition test completed successfully")
-}
-
-// Test_CM2_CertManagerToAutoProvision tests transitioning from cert-manager back to auto-provision
-// Scenario CM-2:
-// 1. Initialize Grove with cert-manager
-// 2. Upgrade Grove to cert-manager mode and verify
-// 3. Remove cert-manager resources
-// 4. Upgrade Grove back to auto-provision mode
-// 5. Deploy and verify workload with auto-provisioned certs
-func Test_CM2_CertManagerToAutoProvision(t *testing.T) {
-	ctx := context.Background()
-
-	logger.Info("1. Initialize Grove with cert-manager")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 1)
-
-	// Install cert-manager
-	deps, _ := e2e.GetDependencies()
-	installCertManager(t, ctx, restConfig, deps)
-	defer uninstallCertManager(t, restConfig, deps)
-	defer cleanup()
-
-	// Create Issuer and Certificate
-	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerIssuerYAML), "", restConfig, logger); err != nil {
-		t.Fatalf("Failed to apply ClusterIssuer: %v", err)
-	}
-	waitForClusterIssuer(t, ctx, dynamicClient, "selfsigned-issuer")
-
-	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerCertificateYAML), "", restConfig, logger); err != nil {
-		t.Fatalf("Failed to apply Certificate: %v", err)
+	// Wait for all pods to become ready to verify the webhook is working end-to-end
+	if err := waitForPods(tc, tc.Workload.ExpectedPods); err != nil {
+		t.Fatalf("Failed to wait for workload pods to be ready: %v", err)
 	}
 
-	logger.Info("2. Upgrade Grove to cert-manager mode and verify")
-	upgradeGroveToCertManager(t, ctx, restConfig)
-	waitForSecret(t, ctx, clientset, "grove-webhook-server-cert", true)
-
-	logger.Info("3. Remove cert-manager resources")
+	logger.Info("6. Remove cert-manager resources")
 	deleteCertManagerResources(ctx, clientset, dynamicClient)
 	waitForSecret(t, ctx, clientset, "grove-webhook-server-cert", false)
 
-	logger.Info("4. Upgrade Grove back to auto-provision mode")
+	logger.Info("7. Upgrade Grove back to auto-provision mode")
 	upgradeGroveToAutoProvision(t, ctx, restConfig)
 	waitForSecret(t, ctx, clientset, "grove-webhook-server-cert", true)
 
-	logger.Info("5. Deploy and verify workload with auto-provisioned certs")
-	tc := createTestContext(t, ctx, clientset, dynamicClient, restConfig)
+	logger.Info("8. Verify auto-provision mode is active")
+	verifyAutoProvisionMode(t, ctx, clientset)
+	verifyWebhookServingCertificate(t, ctx, clientset, restConfig)
+
+	logger.Info("9. Delete and redeploy workload to test webhooks with auto-provisioned certs")
+	// Delete the existing workload to test that webhooks work with new certs
+	deleteWorkload(t, ctx, dynamicClient, tc.Workload.Name, tc.Namespace)
+
+	// Redeploy workload - this will exercise the validating and mutating webhooks
 	if _, err := deployAndVerifyWorkload(tc); err != nil {
-		t.Fatalf("Failed to verify workload after reverting to Auto-Provision: %v", err)
+		t.Fatalf("Failed to deploy workload with auto-provisioned certs: %v", err)
 	}
 
-	logger.Info("🎉 Cert-Manager to Auto-Provision transition test completed successfully")
+	// Wait for all pods to become ready
+	if err := waitForPods(tc, tc.Workload.ExpectedPods); err != nil {
+		t.Fatalf("Workload pods not ready after redeploying with auto-provisioned certs: %v", err)
+	}
+
+	logger.Info("🎉 Certificate management round-trip test completed successfully")
+}
+
+func deleteWorkload(t *testing.T, ctx context.Context, dynamicClient dynamic.Interface, name, namespace string) {
+	t.Helper()
+
+	pcsGVR := schema.GroupVersionResource{
+		Group:    "grove.io",
+		Version:  "v1alpha1",
+		Resource: "podcliquesets",
+	}
+
+	// Delete the PodCliqueSet
+	logger.Debugf("Deleting PodCliqueSet %s/%s", namespace, name)
+	err := dynamicClient.Resource(pcsGVR).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		t.Fatalf("Failed to delete PodCliqueSet %s: %v", name, err)
+	}
+
+	// Wait for deletion to complete
+	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+		_, err := dynamicClient.Resource(pcsGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+		return errors.IsNotFound(err), nil
+	})
+	if err != nil {
+		t.Fatalf("Timeout waiting for PodCliqueSet %s to be deleted: %v", name, err)
+	}
+	logger.Debugf("PodCliqueSet %s/%s deleted", namespace, name)
 }
 
 func waitForSecret(t *testing.T, ctx context.Context, clientset *kubernetes.Clientset, name string, shouldExist bool) {
@@ -363,4 +391,324 @@ func uninstallCertManager(t *testing.T, restConfig *rest.Config, deps *e2e.Depen
 	if err := setup.UninstallHelmChart(cmConfig); err != nil {
 		logger.Warnf("Failed to uninstall cert-manager (may not exist): %v", err)
 	}
+}
+
+const (
+	// certManagerInjectAnnotation is the annotation cert-manager uses to inject CA bundles
+	certManagerInjectAnnotation = "cert-manager.io/inject-ca-from"
+	// certManagerCertNameAnnotation is the annotation cert-manager adds to secrets it manages
+	certManagerCertNameAnnotation = "cert-manager.io/certificate-name"
+	// groveWebhookSecretName is the name of the Grove webhook certificate secret
+	groveWebhookSecretName = "grove-webhook-server-cert"
+	// groveNamespace is the namespace where Grove is installed
+	groveNamespace = "grove-system"
+)
+
+// webhookNames lists the ValidatingWebhookConfiguration and MutatingWebhookConfiguration names to check
+var webhookConfigNames = []string{
+	"podcliqueset-validating-webhook",
+	"podcliqueset-defaulting-webhook",
+}
+
+// verifyCertManagerMode verifies that Grove is using cert-manager for certificate management.
+// It checks:
+// 1. Webhook configurations have the cert-manager.io/inject-ca-from annotation
+// 2. The certificate secret has cert-manager annotations
+func verifyCertManagerMode(t *testing.T, ctx context.Context, clientset *kubernetes.Clientset) {
+	t.Helper()
+
+	logger.Debug("Verifying cert-manager mode is active...")
+
+	// Check webhook configurations have cert-manager annotation
+	for _, webhookName := range webhookConfigNames {
+		if err := verifyWebhookHasCertManagerAnnotation(ctx, clientset, webhookName, true); err != nil {
+			t.Fatalf("Webhook %s does not have cert-manager annotation: %v", webhookName, err)
+		}
+	}
+
+	// Check secret has cert-manager annotations
+	if err := verifyWebhookSecretCertManagerStatus(ctx, clientset, true); err != nil {
+		t.Fatalf("Secret verification for cert-manager mode failed: %v", err)
+	}
+
+	logger.Debug("Verified: Grove is using cert-manager certificates")
+}
+
+// verifyAutoProvisionMode verifies that Grove is using auto-provisioned certificates.
+func verifyAutoProvisionMode(t *testing.T, ctx context.Context, clientset *kubernetes.Clientset) {
+	t.Helper()
+
+	logger.Debug("Verifying auto-provision mode is active...")
+
+	// Check secret does NOT have cert-manager annotations (proving it's managed by Grove's cert-controller)
+	if err := verifyWebhookSecretCertManagerStatus(ctx, clientset, false); err != nil {
+		t.Fatalf("Secret verification for auto-provision mode failed: %v", err)
+	}
+
+	logger.Debug("Verified: Grove is using auto-provisioned certificates (secret not managed by cert-manager)")
+}
+
+// verifyWebhookHasCertManagerAnnotation checks if a webhook configuration has the cert-manager annotation.
+// If shouldHave is true, it verifies the annotation exists; if false, it verifies the annotation is absent or empty.
+func verifyWebhookHasCertManagerAnnotation(ctx context.Context, clientset *kubernetes.Clientset, webhookName string, shouldHave bool) error {
+	// Try ValidatingWebhookConfiguration first
+	vwc, err := clientset.AdmissionregistrationV1().ValidatingWebhookConfigurations().Get(ctx, webhookName, metav1.GetOptions{})
+	if err == nil {
+		annotationValue := vwc.Annotations[certManagerInjectAnnotation]
+		hasAnnotation := annotationValue != ""
+
+		if shouldHave && !hasAnnotation {
+			return fmt.Errorf("ValidatingWebhookConfiguration %s missing cert-manager annotation", webhookName)
+		}
+		if !shouldHave && hasAnnotation {
+			return fmt.Errorf("ValidatingWebhookConfiguration %s has unexpected cert-manager annotation: %s", webhookName, annotationValue)
+		}
+		logger.Debugf("ValidatingWebhookConfiguration %s: cert-manager annotation present=%v (expected=%v)", webhookName, hasAnnotation, shouldHave)
+		return nil
+	}
+
+	// Try MutatingWebhookConfiguration
+	mwc, err := clientset.AdmissionregistrationV1().MutatingWebhookConfigurations().Get(ctx, webhookName, metav1.GetOptions{})
+	if err == nil {
+		annotationValue := mwc.Annotations[certManagerInjectAnnotation]
+		hasAnnotation := annotationValue != ""
+
+		if shouldHave && !hasAnnotation {
+			return fmt.Errorf("MutatingWebhookConfiguration %s missing cert-manager annotation", webhookName)
+		}
+		if !shouldHave && hasAnnotation {
+			return fmt.Errorf("MutatingWebhookConfiguration %s has unexpected cert-manager annotation: %s", webhookName, annotationValue)
+		}
+		logger.Debugf("MutatingWebhookConfiguration %s: cert-manager annotation present=%v (expected=%v)", webhookName, hasAnnotation, shouldHave)
+		return nil
+	}
+
+	return fmt.Errorf("webhook configuration %s not found as ValidatingWebhookConfiguration or MutatingWebhookConfiguration", webhookName)
+}
+
+// verifyWebhookSecretCertManagerStatus checks if the webhook certificate secret's cert-manager management status matches expectations.
+// If expectManaged is true, it verifies cert-manager annotations exist; if false, it verifies they are absent.
+func verifyWebhookSecretCertManagerStatus(ctx context.Context, clientset *kubernetes.Clientset, expectManaged bool) error {
+	secret, err := clientset.CoreV1().Secrets(groveNamespace).Get(ctx, groveWebhookSecretName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get secret %s/%s: %w", groveNamespace, groveWebhookSecretName, err)
+	}
+
+	// Check for cert-manager certificate name annotation
+	certName := secret.Annotations[certManagerCertNameAnnotation]
+	isManagedByCertManager := certName != ""
+
+	if expectManaged && !isManagedByCertManager {
+		return fmt.Errorf("secret %s is not managed by cert-manager (missing %s annotation)", groveWebhookSecretName, certManagerCertNameAnnotation)
+	}
+	if !expectManaged && isManagedByCertManager {
+		return fmt.Errorf("secret %s is unexpectedly managed by cert-manager (has %s=%s)", groveWebhookSecretName, certManagerCertNameAnnotation, certName)
+	}
+
+	logger.Debugf("Secret %s: managed by cert-manager=%v (expected=%v)", groveWebhookSecretName, isManagedByCertManager, expectManaged)
+	return nil
+}
+
+// verifyWebhookServingCertificate verifies that the webhook is actually serving the certificate from the Secret.
+// This connects to the webhook endpoint via TLS and compares the served certificate with the one in the Secret.
+func verifyWebhookServingCertificate(t *testing.T, ctx context.Context, clientset *kubernetes.Clientset, restConfig *rest.Config) {
+	t.Helper()
+
+	logger.Debug("Verifying webhook is serving the correct certificate...")
+
+	// Get the certificate from the Secret
+	expectedCert, err := getCertificateFromSecret(ctx, clientset)
+	if err != nil {
+		t.Fatalf("Failed to get certificate from secret: %v", err)
+	}
+	logger.Debugf("Expected certificate serial number: %s", expectedCert.SerialNumber.String())
+
+	// Get the certificate the webhook is actually serving
+	servedCert, err := getServedCertificate(ctx, clientset, restConfig)
+	if err != nil {
+		t.Fatalf("Failed to get served certificate from webhook: %v", err)
+	}
+	logger.Debugf("Served certificate serial number: %s", servedCert.SerialNumber.String())
+
+	// Compare the certificates
+	if !certificatesMatch(expectedCert, servedCert) {
+		t.Fatalf("Certificate mismatch: webhook is not serving the expected certificate.\n"+
+			"Expected serial: %s\n"+
+			"Served serial: %s\n"+
+			"Expected subject: %s\n"+
+			"Served subject: %s",
+			expectedCert.SerialNumber.String(),
+			servedCert.SerialNumber.String(),
+			expectedCert.Subject.String(),
+			servedCert.Subject.String())
+	}
+
+	logger.Debug("Verified: webhook is serving the correct certificate from the Secret")
+}
+
+// getCertificateFromSecret retrieves and parses the TLS certificate from the webhook Secret.
+func getCertificateFromSecret(ctx context.Context, clientset *kubernetes.Clientset) (*x509.Certificate, error) {
+	secret, err := clientset.CoreV1().Secrets(groveNamespace).Get(ctx, groveWebhookSecretName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get secret: %w", err)
+	}
+
+	certPEM, ok := secret.Data["tls.crt"]
+	if !ok {
+		return nil, fmt.Errorf("secret does not contain tls.crt")
+	}
+
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode PEM block from tls.crt")
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse certificate: %w", err)
+	}
+
+	return cert, nil
+}
+
+// getServedCertificate connects to the webhook service and retrieves the certificate it's serving.
+// It uses port-forwarding to connect to the operator pod.
+func getServedCertificate(ctx context.Context, clientset *kubernetes.Clientset, restConfig *rest.Config) (*x509.Certificate, error) {
+	// Find the grove-operator pod
+	pods, err := clientset.CoreV1().Pods(groveNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app.kubernetes.io/name=grove-operator",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list operator pods: %w", err)
+	}
+	if len(pods.Items) == 0 {
+		return nil, fmt.Errorf("no grove-operator pods found")
+	}
+
+	podName := pods.Items[0].Name
+	logger.Debugf("Using operator pod: %s", podName)
+
+	// Set up port forwarding
+	localPort, stopChan, err := setupPortForward(ctx, restConfig, groveNamespace, podName, 9443)
+	if err != nil {
+		return nil, fmt.Errorf("failed to set up port forwarding: %w", err)
+	}
+	defer close(stopChan)
+
+	// Give port-forward a moment to establish
+	time.Sleep(500 * time.Millisecond)
+
+	// Connect via TLS and get the certificate
+	cert, err := getTLSCertificate(fmt.Sprintf("localhost:%d", localPort))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get TLS certificate: %w", err)
+	}
+
+	return cert, nil
+}
+
+// setupPortForward creates a port-forward to the specified pod and returns the local port.
+func setupPortForward(ctx context.Context, restConfig *rest.Config, namespace, podName string, remotePort int) (int, chan struct{}, error) {
+	// Find a free local port
+	listener, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		return 0, nil, fmt.Errorf("failed to find free port: %w", err)
+	}
+	localPort := listener.Addr().(*net.TCPAddr).Port
+	listener.Close()
+
+	// Create the port-forward URL
+	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/portforward", namespace, podName)
+
+	transport, upgrader, err := spdy.RoundTripperFor(restConfig)
+	if err != nil {
+		return 0, nil, fmt.Errorf("failed to create round tripper: %w", err)
+	}
+
+	// Parse the URL properly
+	parsedURL, err := parsePortForwardURL(restConfig.Host, path)
+	if err != nil {
+		return 0, nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: transport}, http.MethodPost, parsedURL)
+
+	stopChan := make(chan struct{}, 1)
+	readyChan := make(chan struct{})
+
+	ports := []string{fmt.Sprintf("%d:%d", localPort, remotePort)}
+
+	// Create a buffer to capture output (we don't need to display it)
+	out := &bytes.Buffer{}
+	errOut := &bytes.Buffer{}
+
+	pf, err := portforward.New(dialer, ports, stopChan, readyChan, out, errOut)
+	if err != nil {
+		return 0, nil, fmt.Errorf("failed to create port forwarder: %w", err)
+	}
+
+	// Start port forwarding in a goroutine
+	errChan := make(chan error, 1)
+	go func() {
+		if err := pf.ForwardPorts(); err != nil {
+			errChan <- err
+		}
+	}()
+
+	// Wait for port-forward to be ready or error
+	select {
+	case <-readyChan:
+		logger.Debugf("Port forward established: localhost:%d -> %s:%d", localPort, podName, remotePort)
+	case err := <-errChan:
+		return 0, nil, fmt.Errorf("port forward failed: %w", err)
+	case <-time.After(10 * time.Second):
+		close(stopChan)
+		return 0, nil, fmt.Errorf("timeout waiting for port forward to be ready")
+	case <-ctx.Done():
+		close(stopChan)
+		return 0, nil, ctx.Err()
+	}
+
+	// Check for any errors in errOut
+	if errOut.Len() > 0 {
+		logger.Warnf("Port forward stderr: %s", errOut.String())
+	}
+
+	return localPort, stopChan, nil
+}
+
+// parsePortForwardURL parses the host and path into a proper URL for port forwarding.
+func parsePortForwardURL(host, path string) (*url.URL, error) {
+	u, err := url.Parse(host)
+	if err != nil {
+		return nil, err
+	}
+	u.Path = path
+	return u, nil
+}
+
+// getTLSCertificate connects to the specified address via TLS and returns the server's certificate.
+func getTLSCertificate(address string) (*x509.Certificate, error) {
+	// Connect with InsecureSkipVerify since we're just extracting the certificate
+	conn, err := tls.Dial("tcp", address, &tls.Config{
+		InsecureSkipVerify: true, //nolint:gosec // We need to connect without verification to extract the cert
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect: %w", err)
+	}
+	defer conn.Close()
+
+	// Get the peer certificates
+	certs := conn.ConnectionState().PeerCertificates
+	if len(certs) == 0 {
+		return nil, fmt.Errorf("no certificates received from server")
+	}
+
+	// Return the leaf certificate (first one)
+	return certs[0], nil
+}
+
+// certificatesMatch compares two certificates to determine if they are the same.
+// We compare the raw DER bytes for an exact match.
+func certificatesMatch(cert1, cert2 *x509.Certificate) bool {
+	return bytes.Equal(cert1.Raw, cert2.Raw)
 }
