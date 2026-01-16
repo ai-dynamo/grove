@@ -14,7 +14,7 @@
 // limitations under the License.
 // */
 
-// Package main provides the arborist CLI tool for collecting Grove cluster diagnostics.
+// Package main provides the kubectl-grove CLI plugin for managing Grove AI inference workloads.
 package main
 
 import (
@@ -26,8 +26,8 @@ import (
 func main() {
 	cli := &CLI{}
 	ctx := kong.Parse(cli,
-		kong.Name("arborist"),
-		kong.Description("Collect Grove cluster diagnostics for debugging and troubleshooting."),
+		kong.Name("kubectl-grove"),
+		kong.Description("kubectl plugin for managing Grove AI inference workloads on Kubernetes."),
 		kong.UsageOnError(),
 	)
 

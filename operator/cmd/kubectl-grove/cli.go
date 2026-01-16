@@ -28,10 +28,10 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-// Version is the arborist version, set at build time
+// Version is the kubectl-grove version, set at build time
 var Version = "dev"
 
-// CLI defines the arborist command-line interface
+// CLI defines the kubectl-grove command-line interface
 type CLI struct {
 	// Namespace is the namespace to collect diagnostics from
 	Namespace string `short:"n" help:"Namespace to collect diagnostics from." default:"default"`
@@ -59,15 +59,15 @@ type VersionFlag bool
 //
 //nolint:unparam // Kong requires this signature even though we always return nil
 func (v VersionFlag) BeforeApply(app *kong.Kong) error {
-	fmt.Printf("arborist version %s\n", Version)
+	fmt.Printf("kubectl-grove version %s\n", Version)
 	app.Exit(0)
 	return nil
 }
 
 // Run executes the diagnostics collection
 func (c *CLI) Run() error {
-	fmt.Println("Arborist - Grove Cluster Diagnostics")
-	fmt.Println("=====================================")
+	fmt.Println("kubectl-grove - Grove Cluster Diagnostics")
+	fmt.Println("==========================================")
 	fmt.Println()
 
 	// Build Kubernetes clients
