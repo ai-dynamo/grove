@@ -3,7 +3,6 @@ apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
   name: podcliqueset-validating-webhook
-  namespace: {{ .Release.Namespace }}
   {{- if .Values.webhooks.podCliqueSetValidationWebhook.annotations }}
   annotations:
     {{- toYaml .Values.webhooks.podCliqueSetValidationWebhook.annotations | nindent 4 }}
