@@ -34,6 +34,24 @@ func NewPodCliqueTemplateSpecBuilder(name string) *PodCliqueTemplateSpecBuilder 
 	}
 }
 
+// NewBasicPodCliqueTemplateSpec creates a basic PodClique template without topology constraints.
+// This is a convenience function for tests that need a simple PodClique with default configuration.
+func NewBasicPodCliqueTemplateSpec(name string) *grovecorev1alpha1.PodCliqueTemplateSpec {
+	return &grovecorev1alpha1.PodCliqueTemplateSpec{
+		Name: name,
+		Spec: grovecorev1alpha1.PodCliqueSpec{
+			Replicas: 1,
+			RoleName: name + "-role",
+		},
+	}
+}
+
+// Build creates a PodCliqueTemplateSpec object.
+func (b *PodCliqueTemplateSpecBuilder) Build() *grovecorev1alpha1.PodCliqueTemplateSpec {
+	b.withDefaultPodSpec()
+	return b.pclqTemplateSpec
+}
+
 // WithReplicas sets the number of replicas for the PodCliqueTemplateSpec.
 func (b *PodCliqueTemplateSpecBuilder) WithReplicas(replicas int32) *PodCliqueTemplateSpecBuilder {
 	b.pclqTemplateSpec.Spec.Replicas = replicas
@@ -103,12 +121,6 @@ func (b *PodCliqueTemplateSpecBuilder) WithTopologyConstraint(constraint *grovec
 	return b
 }
 
-// Build creates a PodCliqueTemplateSpec object.
-func (b *PodCliqueTemplateSpecBuilder) Build() *grovecorev1alpha1.PodCliqueTemplateSpec {
-	b.withDefaultPodSpec()
-	return b.pclqTemplateSpec
-}
-
 func (b *PodCliqueTemplateSpecBuilder) withDefaultPodSpec() *PodCliqueTemplateSpecBuilder {
 	b.pclqTemplateSpec.Spec.PodSpec = NewPodWithBuilderWithDefaultSpec("test-name", "test-ns").Build().Spec
 	return b
@@ -119,18 +131,6 @@ func createDefaultPodCliqueTemplateSpec(name string) *grovecorev1alpha1.PodCliqu
 		Name: name,
 		Spec: grovecorev1alpha1.PodCliqueSpec{
 			Replicas: 1,
-		},
-	}
-}
-
-// NewBasicPodCliqueTemplateSpec creates a basic PodClique template without topology constraints.
-// This is a convenience function for tests that need a simple PodClique with default configuration.
-func NewBasicPodCliqueTemplateSpec(name string) *grovecorev1alpha1.PodCliqueTemplateSpec {
-	return &grovecorev1alpha1.PodCliqueTemplateSpec{
-		Name: name,
-		Spec: grovecorev1alpha1.PodCliqueSpec{
-			Replicas: 1,
-			RoleName: name + "-role",
 		},
 	}
 }

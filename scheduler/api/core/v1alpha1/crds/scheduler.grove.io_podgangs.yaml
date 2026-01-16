@@ -139,7 +139,7 @@ spec:
               topologyConstraint:
                 description: |-
                   TopologyConstraint defines topology packing constraints for entire pod gang.
-                  Translated from PodCliqueSet.TopologyConstraint.
+                  This is the top level topology constraint that applies to all PodGroups in the PodGang.
                   Updated by operator on each reconciliation when PodCliqueSet topology constraints change.
                 properties:
                   packConstraint:
@@ -167,9 +167,8 @@ spec:
                     type: object
                 type: object
               topologyConstraintGroupConfigs:
-                description: |-
-                  TopologyConstraintGroupConfigs defines TopologyConstraints for a group of PodGroups when it is a strict subset
-                  of total number of PodGroups for topology-aware placement.
+                description: TopologyConstraintGroupConfigs defines TopologyConstraints
+                  for a strict subset of PodGroups.
                 items:
                   description: TopologyConstraintGroupConfig defines topology constraints
                     for a group of PodGroups.

@@ -52,12 +52,11 @@ type PodGangSpec struct {
 	// PodGroups is a list of member pod groups in the PodGang.
 	PodGroups []PodGroup `json:"podgroups"`
 	// TopologyConstraint defines topology packing constraints for entire pod gang.
-	// Translated from PodCliqueSet.TopologyConstraint.
+	// This is the top level topology constraint that applies to all PodGroups in the PodGang.
 	// Updated by operator on each reconciliation when PodCliqueSet topology constraints change.
 	// +optional
 	TopologyConstraint *TopologyConstraint `json:"topologyConstraint,omitempty"`
-	// TopologyConstraintGroupConfigs defines TopologyConstraints for a group of PodGroups when it is a strict subset
-	// of total number of PodGroups for topology-aware placement.
+	// TopologyConstraintGroupConfigs defines TopologyConstraints for a strict subset of PodGroups.
 	// +optional
 	TopologyConstraintGroupConfigs []TopologyConstraintGroupConfig `json:"topologyConstraintGroupConfigs,omitempty"`
 	// PriorityClassName is the name of the PriorityClass for the PodGang.

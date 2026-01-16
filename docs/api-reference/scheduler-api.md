@@ -85,8 +85,8 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `podgroups` _[PodGroup](#podgroup) array_ | PodGroups is a list of member pod groups in the PodGang. |  |  |
-| `topologyConstraint` _[TopologyConstraint](#topologyconstraint)_ | TopologyConstraint defines topology packing constraints for entire pod gang.<br />Translated from PodCliqueSet.TopologyConstraint.<br />Updated by operator on each reconciliation when PodCliqueSet topology constraints change. |  |  |
-| `topologyConstraintGroupConfigs` _[TopologyConstraintGroupConfig](#topologyconstraintgroupconfig) array_ | TopologyConstraintGroupConfigs defines TopologyConstraints for a group of PodGroups when it is a strict subset<br />of total number of PodGroups for topology-aware placement. |  |  |
+| `topologyConstraint` _[TopologyConstraint](#topologyconstraint)_ | TopologyConstraint defines topology packing constraints for entire pod gang.<br />This is the top level topology constraint that applies to all PodGroups in the PodGang.<br />Updated by operator on each reconciliation when PodCliqueSet topology constraints change. |  |  |
+| `topologyConstraintGroupConfigs` _[TopologyConstraintGroupConfig](#topologyconstraintgroupconfig) array_ | TopologyConstraintGroupConfigs defines TopologyConstraints for a strict subset of PodGroups. |  |  |
 | `priorityClassName` _string_ | PriorityClassName is the name of the PriorityClass for the PodGang. |  |  |
 | `reuseReservationRef` _[NamespacedName](#namespacedname)_ | ReuseReservationRef holds the reference to another PodGang resource scheduled previously.<br />During updates, an operator can suggest to reuse the reservation of the previous PodGang for a newer version of the<br />PodGang resource. This is a suggestion for the scheduler and not a requirement that must be met. If the scheduler plugin<br />finds that the reservation done previously was network optimised and there are no better alternatives available, then it<br />will reuse the reservation. If there are better alternatives available, then the scheduler will ignore this suggestion. |  |  |
 
