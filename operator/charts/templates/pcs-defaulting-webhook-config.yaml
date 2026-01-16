@@ -3,7 +3,6 @@ apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
 metadata:
   name: podcliqueset-defaulting-webhook
-  namespace: {{ .Release.Namespace }}
   {{- if .Values.webhooks.podCliqueSetDefaultingWebhook.annotations }}
   annotations:
     {{- toYaml .Values.webhooks.podCliqueSetDefaultingWebhook.annotations | nindent 4 }}
