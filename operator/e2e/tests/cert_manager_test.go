@@ -37,6 +37,66 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+// certManagerGroveValues returns Grove Helm values for cert-manager mode.
+// This disables auto-provisioning and configures webhook annotations for cert-manager CA injection.
+func certManagerGroveValues() map[string]interface{} {
+	certManagerAnnotation := map[string]interface{}{
+		"cert-manager.io/inject-ca-from": "grove-system/grove-webhook-server-cert",
+	}
+	return map[string]interface{}{
+		"installCRDs": true,
+		"config": map[string]interface{}{
+			"server": map[string]interface{}{
+				"webhooks": map[string]interface{}{
+					"autoProvision": false,
+					"secretName":    "grove-webhook-server-cert",
+				},
+			},
+		},
+		"webhooks": map[string]interface{}{
+			"podCliqueSetValidationWebhook": map[string]interface{}{"annotations": certManagerAnnotation},
+			"podCliqueSetDefaultingWebhook": map[string]interface{}{"annotations": certManagerAnnotation},
+			"authorizerWebhook":             map[string]interface{}{"annotations": certManagerAnnotation},
+		},
+	}
+}
+
+// autoProvisionGroveValues returns Grove Helm values for auto-provision mode (default).
+func autoProvisionGroveValues() map[string]interface{} {
+	return map[string]interface{}{
+		"installCRDs": true,
+		"config": map[string]interface{}{
+			"server": map[string]interface{}{
+				"webhooks": map[string]interface{}{
+					"autoProvision": true,
+					"secretName":    "grove-webhook-server-cert",
+				},
+			},
+		},
+		"webhooks": map[string]interface{}{
+			"podCliqueSetValidationWebhook": map[string]interface{}{"annotations": map[string]interface{}{}},
+			"podCliqueSetDefaultingWebhook": map[string]interface{}{"annotations": map[string]interface{}{}},
+			"authorizerWebhook":             map[string]interface{}{"annotations": map[string]interface{}{}},
+		},
+	}
+}
+
+// upgradeGroveToCertManager upgrades Grove to use cert-manager for certificate management.
+func upgradeGroveToCertManager(t *testing.T, ctx context.Context, restConfig *rest.Config) {
+	t.Helper()
+	if err := setup.UpgradeGrove(ctx, restConfig, certManagerGroveValues(), logger); err != nil {
+		t.Fatalf("Failed to upgrade Grove to cert-manager mode: %v", err)
+	}
+}
+
+// upgradeGroveToAutoProvision upgrades Grove to use auto-provisioned certificates.
+func upgradeGroveToAutoProvision(t *testing.T, ctx context.Context, restConfig *rest.Config) {
+	t.Helper()
+	if err := setup.UpgradeGrove(ctx, restConfig, autoProvisionGroveValues(), logger); err != nil {
+		t.Fatalf("Failed to upgrade Grove to auto-provision mode: %v", err)
+	}
+}
+
 const (
 	certManagerIssuerYAML = `
 apiVersion: cert-manager.io/v1
@@ -99,9 +159,7 @@ func Test_CM1_AutoProvisionToCertManager(t *testing.T) {
 	waitForSecret(t, ctx, clientset, "grove-webhook-server-cert", true)
 
 	logger.Info("3. Upgrade Grove to use cert-manager (autoProvision=false)")
-	_, currentFile, _, _ := runtime.Caller(0)
-	chartPath := filepath.Join(filepath.Dir(currentFile), "../../charts")
-	upgradeGrove(t, ctx, clientset, chartPath, restConfig, false) // false = autoProvision off
+	upgradeGroveToCertManager(t, ctx, restConfig)
 
 	logger.Info("4. Deploy and verify workload with cert-manager certs")
 	tc := createTestContext(t, ctx, clientset, dynamicClient, restConfig)
@@ -109,7 +167,7 @@ func Test_CM1_AutoProvisionToCertManager(t *testing.T) {
 		t.Fatalf("Failed to verify workload in Cert-Manager mode: %v", err)
 	}
 
-	logger.Info("🎉 Auto-Provision to Cert-Manager transition test completed successfully!")
+	logger.Info("Auto-Provision to Cert-Manager transition test completed successfully")
 }
 
 // Test_CM2_CertManagerToAutoProvision tests transitioning from cert-manager back to auto-provision
@@ -127,9 +185,6 @@ func Test_CM2_CertManagerToAutoProvision(t *testing.T) {
 
 	// Install cert-manager
 	deps, _ := e2e.GetDependencies()
-	_, currentFile, _, _ := runtime.Caller(0)
-	chartPath := filepath.Join(filepath.Dir(currentFile), "../../charts")
-
 	installCertManager(t, ctx, restConfig, deps)
 	defer uninstallCertManager(t, restConfig, deps)
 	defer cleanup()
@@ -145,7 +200,7 @@ func Test_CM2_CertManagerToAutoProvision(t *testing.T) {
 	}
 
 	logger.Info("2. Upgrade Grove to cert-manager mode and verify")
-	upgradeGrove(t, ctx, clientset, chartPath, restConfig, false) // autoProvision = false
+	upgradeGroveToCertManager(t, ctx, restConfig)
 	waitForSecret(t, ctx, clientset, "grove-webhook-server-cert", true)
 
 	logger.Info("3. Remove cert-manager resources")
@@ -153,7 +208,7 @@ func Test_CM2_CertManagerToAutoProvision(t *testing.T) {
 	waitForSecret(t, ctx, clientset, "grove-webhook-server-cert", false)
 
 	logger.Info("4. Upgrade Grove back to auto-provision mode")
-	upgradeGrove(t, ctx, clientset, chartPath, restConfig, true)
+	upgradeGroveToAutoProvision(t, ctx, restConfig)
 	waitForSecret(t, ctx, clientset, "grove-webhook-server-cert", true)
 
 	logger.Info("5. Deploy and verify workload with auto-provisioned certs")
@@ -162,60 +217,7 @@ func Test_CM2_CertManagerToAutoProvision(t *testing.T) {
 		t.Fatalf("Failed to verify workload after reverting to Auto-Provision: %v", err)
 	}
 
-	logger.Info("🎉 Cert-Manager to Auto-Provision transition test completed successfully!")
-}
-
-// upgradeGrove handles the Helm upgrade for both tests
-func upgradeGrove(t *testing.T, ctx context.Context, clientset *kubernetes.Clientset, chartPath string, restConfig *rest.Config, autoProvision bool) {
-	t.Helper()
-
-	annotations := map[string]interface{}{"cert-manager.io/inject-ca-from": nil}
-	if !autoProvision {
-		annotations = map[string]interface{}{"cert-manager.io/inject-ca-from": "grove-system/grove-webhook-server-cert"}
-	}
-
-	config := &setup.HelmInstallConfig{
-		RestConfig:   restConfig,
-		ReleaseName:  "grove-operator",
-		ChartRef:     chartPath,
-		ChartVersion: "0.1.0-dev",
-		Namespace:    "grove-system",
-		ReuseValues:  true, // Reuse existing values (like image config)
-		Values: map[string]interface{}{
-			"installCRDs": true,
-			"config": map[string]interface{}{
-				"server": map[string]interface{}{
-					"webhooks": map[string]interface{}{
-						"autoProvision": autoProvision,
-						"secretName":    "grove-webhook-server-cert",
-					},
-				},
-			},
-			"webhooks": map[string]interface{}{
-				"podCliqueSetValidationWebhook": map[string]interface{}{"annotations": annotations},
-				"podCliqueSetDefaultingWebhook": map[string]interface{}{"annotations": annotations},
-				"authorizerWebhook":             map[string]interface{}{"annotations": annotations},
-			},
-		},
-		HelmLoggerFunc: logger.Debugf,
-		Logger:         logger,
-	}
-
-	if _, err := setup.UpgradeHelmChart(config); err != nil {
-		pods, podErr := clientset.CoreV1().Pods("grove-system").List(ctx, metav1.ListOptions{})
-		if podErr == nil {
-			logger.Infof("Found %d pods in grove-system:", len(pods.Items))
-			for _, pod := range pods.Items {
-				logger.Debugf("  - %s: %s (Ready: %v)", pod.Name, pod.Status.Phase, pod.Status.Conditions)
-			}
-		}
-		t.Fatalf("Failed to upgrade Grove: %v", err)
-	}
-
-	// Wait for Grove operator pod to be ready after upgrade
-	if err := utils.WaitForPodsInNamespace(ctx, "grove-system", restConfig, 1, defaultPollTimeout, defaultPollInterval, logger); err != nil {
-		t.Fatalf("Grove operator pod not ready after upgrade: %v", err)
-	}
+	logger.Info("🎉 Cert-Manager to Auto-Provision transition test completed successfully")
 }
 
 func waitForSecret(t *testing.T, ctx context.Context, clientset *kubernetes.Clientset, name string, shouldExist bool) {
