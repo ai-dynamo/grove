@@ -85,11 +85,11 @@ func TestMinAvailableWithHPAScaling(t *testing.T) {
 			},
 		},
 		{
-			name:                "Scale to exactly minAvailable",
-			minAvailable:        ptr.To(int32(2)),
-			initialReplicas:     4,
-			scaledReplicas:      2,
-			expectedBasePodGang: "test-pcs-0", // Contains replicas 0-1
+			name:                   "Scale to exactly minAvailable",
+			minAvailable:           ptr.To(int32(2)),
+			initialReplicas:        4,
+			scaledReplicas:         2,
+			expectedBasePodGang:    "test-pcs-0", // Contains replicas 0-1
 			expectedScaledPodGangs: []string{
 				// No scaled PodGangs when replicas == minAvailable
 			},
