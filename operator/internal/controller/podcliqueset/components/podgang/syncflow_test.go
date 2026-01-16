@@ -85,11 +85,11 @@ func TestMinAvailableWithHPAScaling(t *testing.T) {
 			},
 		},
 		{
-			name:                   "Scale to exactly minAvailable",
-			minAvailable:           ptr.To(int32(2)),
-			initialReplicas:        4,
-			scaledReplicas:         2,
-			expectedBasePodGang:    "test-pcs-0", // Contains replicas 0-1
+			name:                "Scale to exactly minAvailable",
+			minAvailable:        ptr.To(int32(2)),
+			initialReplicas:     4,
+			scaledReplicas:      2,
+			expectedBasePodGang: "test-pcs-0", // Contains replicas 0-1
 			expectedScaledPodGangs: []string{
 				// No scaled PodGangs when replicas == minAvailable
 			},
@@ -698,6 +698,9 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 						"test-pcs-0-scaling-group-0-decode-leader": topologyLevelHost,
 						"test-pcs-0-scaling-group-0-decode-worker": topologyLevelHost,
 					},
+					pcsgConstraints: map[string]grovecorev1alpha1.TopologyLevel{
+						"test-pcs-0-scaling-group-0": topologyLevelRack,
+					},
 				},
 				{
 					fqn:           "test-pcs-0-scaling-group-0",
@@ -757,6 +760,9 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 						"test-pcs-0-router":                        topologyLevelZone,
 						"test-pcs-0-scaling-group-0-decode-leader": topologyLevelHost,
 						"test-pcs-0-scaling-group-0-decode-worker": topologyLevelHost,
+					},
+					pcsgConstraints: map[string]grovecorev1alpha1.TopologyLevel{
+						"test-pcs-0-scaling-group-0": topologyLevelRack,
 					},
 				},
 				{
@@ -851,6 +857,7 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 
 			// Test
 			err := r.computeExpectedPodGangs(sc)
+			// Assert
 			require.NoError(t, err)
 
 			basePodGangFQN := apicommon.GenerateBasePodGangName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: 0})
@@ -880,11 +887,7 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 						assert.Nil(t, computedPodGang.topologyConstraint)
 					} else {
 						// assert pod gang topology constraint is set correctly
-						assert.NotNil(t, computedPodGang.topologyConstraint)
-						assert.NotNil(t, computedPodGang.topologyConstraint.PackConstraint)
-						assert.Nil(t, computedPodGang.topologyConstraint.PackConstraint.Preferred)
-						assert.NotNil(t, computedPodGang.topologyConstraint.PackConstraint.Required)
-						assert.Equal(t, expectedPGConstraint.topologyLevel.Key, *computedPodGang.topologyConstraint.PackConstraint.Required)
+						assertRequiredTopologyConstraint(t, computedPodGang.topologyConstraint, expectedPGConstraint.topologyLevel.Key)
 					}
 
 					// verify pclq topology constraints
@@ -894,24 +897,27 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 							assert.Nil(t, pclq.topologyConstraint)
 						} else {
 							// assert pclq topology constraint is set correctly
-							assert.NotNil(t, pclq.topologyConstraint)
-							assert.NotNil(t, pclq.topologyConstraint.PackConstraint)
-							assert.Nil(t, pclq.topologyConstraint.PackConstraint.Preferred)
-							assert.Equal(t, expectedPCLQConstraint.Key, *pclq.topologyConstraint.PackConstraint.Required)
+							assertRequiredTopologyConstraint(t, pclq.topologyConstraint, expectedPCLQConstraint.Key)
 						}
 					}
 
-					// verify pcsg topology constraints
+					// iterate over expected PCSG Constraints and verify computed pcsg topology constraints
 					for pcsgFQN, expectedPCSGTC := range expectedPGConstraint.pcsgConstraints {
 						actualPCSGTC, found := lo.Find(computedPodGang.pcsgTopologyConstraints, func(pcsgTC groveschedulerv1alpha1.TopologyConstraintGroupConfig) bool {
 							return pcsgTC.Name == pcsgFQN
 						})
 						assert.True(t, found, "Expected PCSG topology constraint for %s not found", pcsgFQN)
 						// assert pcsg topology constraint is set correctly
-						assert.NotNil(t, actualPCSGTC.TopologyConstraint)
-						assert.NotNil(t, actualPCSGTC.TopologyConstraint.PackConstraint)
-						assert.Nil(t, actualPCSGTC.TopologyConstraint.PackConstraint.Preferred)
-						assert.Equal(t, expectedPCSGTC.Key, *actualPCSGTC.TopologyConstraint.PackConstraint.Required)
+						assertRequiredTopologyConstraint(t, actualPCSGTC.TopologyConstraint, expectedPCSGTC.Key)
+					}
+
+					// iterate over computed PCSG topology constraints to ensure that expectations are properly defined.
+					// This ensures that developer mistakes are caught when defining the topology constraint expectations.
+					for _, actualPCSGTC := range computedPodGang.pcsgTopologyConstraints {
+						_, exists := expectedPGConstraint.pcsgConstraints[actualPCSGTC.Name]
+						if !exists {
+							t.Errorf("Unexpected PCSG topology constraint for %s found in PodGang %s", actualPCSGTC.Name, computedPodGang.fqn)
+						}
 					}
 				}
 			}
@@ -928,6 +934,14 @@ func mustNotHaveAnyTopologyConstraints(t *testing.T, podGangs []*podGangInfo) {
 		}
 		assert.Nil(t, pg.pcsgTopologyConstraints)
 	}
+}
+
+func assertRequiredTopologyConstraint(t *testing.T, got *groveschedulerv1alpha1.TopologyConstraint, wantedKey string) {
+	assert.NotNil(t, got)
+	assert.NotNil(t, got.PackConstraint)
+	assert.Nil(t, got.PackConstraint.Preferred)
+	assert.NotNil(t, got.PackConstraint.Required)
+	assert.Equal(t, wantedKey, *got.PackConstraint.Required)
 }
 
 // TestDeterminePCSGReplicas tests the determinePCSGReplicas method
