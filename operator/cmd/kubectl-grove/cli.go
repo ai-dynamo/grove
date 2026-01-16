@@ -26,6 +26,7 @@ import (
 	"github.com/alecthomas/kong"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -48,6 +49,9 @@ type CLI struct {
 	Topology    TopologyCmd    `cmd:"" help:"Visualize pod placement topology."`
 	Health      HealthCmd      `cmd:"" help:"Show gang health dashboard."`
 	Plan        PlanCmd        `cmd:"" help:"Manage AIConfigurator deployment plans."`
+	TUI         TUICmd         `cmd:"" help:"Interactive terminal UI for Grove resources."`
+	Metrics     MetricsCmd     `cmd:"" help:"Show live inference metrics from pods."`
+	Compare     CompareCmd     `cmd:"" help:"Compare stored plan with actual deployment."`
 }
 
 // StatusCmd wraps the commands.StatusCmd for CLI integration.
@@ -181,6 +185,75 @@ func (p *PlanDiffCmd) Run(globals *CLI) error {
 	return cmd.Execute(clientset, dynamicClient, nil)
 }
 
+// TUICmd wraps the commands.TUICmd for CLI integration.
+type TUICmd struct {
+	Namespace string `short:"n" help:"Namespace to query." default:"default"`
+}
+
+// Run executes the TUI command.
+func (t *TUICmd) Run(globals *CLI) error {
+	cmd := &commands.TUICmd{
+		Namespace:  t.Namespace,
+		Kubeconfig: globals.Kubeconfig,
+		Context:    globals.Context,
+	}
+	return cmd.Run()
+}
+
+// MetricsCmd wraps the commands.MetricsCmd for CLI integration.
+type MetricsCmd struct {
+	Name      string `arg:"" help:"Name of the PodCliqueSet to show metrics for."`
+	Namespace string `short:"n" help:"Namespace to query." default:"default"`
+	Watch     bool   `short:"w" help:"Watch for changes and update display."`
+	JSON      bool   `help:"Output in JSON format."`
+	Role      string `help:"Filter by role (e.g., prefill, decode)."`
+}
+
+// Run executes the metrics command.
+func (m *MetricsCmd) Run(globals *CLI) error {
+	clientset, _, err := buildClients(globals.Kubeconfig, globals.Context)
+	if err != nil {
+		return fmt.Errorf("failed to build Kubernetes clients: %w", err)
+	}
+	restConfig, err := buildRestConfig(globals.Kubeconfig, globals.Context)
+	if err != nil {
+		return fmt.Errorf("failed to build REST config: %w", err)
+	}
+	cmd := &commands.MetricsCmd{
+		Clientset:  clientset,
+		RestConfig: restConfig,
+		Namespace:  m.Namespace,
+		Name:       m.Name,
+		Watch:      m.Watch,
+		JSON:       m.JSON,
+		Role:       m.Role,
+	}
+	return cmd.Run(context.Background())
+}
+
+// CompareCmd wraps the commands.CompareCmd for CLI integration.
+type CompareCmd struct {
+	Name      string `arg:"" help:"Name of the PodCliqueSet to compare."`
+	Namespace string `short:"n" help:"Namespace to query." default:"default"`
+	JSON      bool   `help:"Output in JSON format."`
+	Verbose   bool   `help:"Show verbose output including per-pod placement."`
+}
+
+// Run executes the compare command.
+func (c *CompareCmd) Run(globals *CLI) error {
+	clientset, dynamicClient, err := buildClients(globals.Kubeconfig, globals.Context)
+	if err != nil {
+		return fmt.Errorf("failed to build Kubernetes clients: %w", err)
+	}
+	cmd := &commands.CompareCmd{
+		Name:      c.Name,
+		Namespace: c.Namespace,
+		JSON:      c.JSON,
+		Verbose:   c.Verbose,
+	}
+	return cmd.Execute(clientset, dynamicClient)
+}
+
 // DiagnosticsCmd represents the diagnostics subcommand.
 type DiagnosticsCmd struct {
 	// Namespace is the namespace to collect diagnostics from
@@ -292,22 +365,9 @@ func (g *GenerateCmd) Run(_ *CLI) error {
 
 // buildClients creates Kubernetes clients from kubeconfig
 func buildClients(kubeconfig, kubeContext string) (*kubernetes.Clientset, dynamic.Interface, error) {
-	// Build config from kubeconfig
-	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	if kubeconfig != "" {
-		loadingRules.ExplicitPath = kubeconfig
-	}
-
-	configOverrides := &clientcmd.ConfigOverrides{}
-	if kubeContext != "" {
-		configOverrides.CurrentContext = kubeContext
-	}
-
-	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
-
-	config, err := kubeConfig.ClientConfig()
+	config, err := buildRestConfig(kubeconfig, kubeContext)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to load kubeconfig: %w", err)
+		return nil, nil, err
 	}
 
 	// Create clientset
@@ -323,5 +383,28 @@ func buildClients(kubeconfig, kubeContext string) (*kubernetes.Clientset, dynami
 	}
 
 	return clientset, dynamicClient, nil
+}
+
+// buildRestConfig creates a REST config from kubeconfig
+func buildRestConfig(kubeconfig, kubeContext string) (*rest.Config, error) {
+	// Build config from kubeconfig
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if kubeconfig != "" {
+		loadingRules.ExplicitPath = kubeconfig
+	}
+
+	configOverrides := &clientcmd.ConfigOverrides{}
+	if kubeContext != "" {
+		configOverrides.CurrentContext = kubeContext
+	}
+
+	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
+
+	config, err := kubeConfig.ClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load kubeconfig: %w", err)
+	}
+
+	return config, nil
 }
 
