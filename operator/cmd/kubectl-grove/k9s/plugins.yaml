@@ -1,0 +1,235 @@
+# Grove k9s Plugins
+#
+# Installation:
+#   Copy this file to ~/.config/k9s/plugins.yaml
+#   Or merge with your existing plugins.yaml
+#
+# Usage:
+#   1. Start k9s
+#   2. Navigate to PodCliqueSets: :podcliquesets or :pcs (if alias configured)
+#   3. Select a resource and use the shortcuts below
+#
+# Prerequisites:
+#   - kubectl-grove must be installed and in PATH
+#   - Grove CRDs must be installed in the cluster
+#
+# See also: k9s/aliases.yaml for CRD shortcuts
+
+plugins:
+  # ============================================================================
+  # PodCliqueSet Commands
+  # ============================================================================
+
+  # Show topology visualization for a PodCliqueSet
+  # Displays hierarchical view of pod placement across zones, racks, and hosts
+  grove-topology:
+    shortCut: Shift-T
+    description: "[grove] Show topology visualization"
+    scopes:
+      - podcliquesets
+    command: kubectl-grove
+    background: false
+    args:
+      - topology
+      - $NAME
+      - -n
+      - $NAMESPACE
+
+  # Show detailed status for a PodCliqueSet
+  grove-status:
+    shortCut: Shift-S
+    description: "[grove] Show PodCliqueSet status"
+    scopes:
+      - podcliquesets
+    command: kubectl-grove
+    background: false
+    args:
+      - status
+      - $NAME
+      - -n
+      - $NAMESPACE
+
+  # Show gang health dashboard
+  # Displays health of all PodCliques and PodGangs in a PodCliqueSet
+  grove-health:
+    shortCut: Shift-H
+    description: "[grove] Show health dashboard"
+    scopes:
+      - podcliquesets
+    command: kubectl-grove
+    background: false
+    args:
+      - health
+      - $NAME
+      - -n
+      - $NAMESPACE
+
+  # Show live inference metrics from pods
+  # Scrapes Prometheus metrics from SGLang/vLLM/TRT-LLM pods
+  grove-metrics:
+    shortCut: Shift-M
+    description: "[grove] Show live inference metrics"
+    scopes:
+      - podcliquesets
+    command: kubectl-grove
+    background: false
+    args:
+      - metrics
+      - $NAME
+      - -n
+      - $NAMESPACE
+
+  # Compare stored plan with actual deployment
+  grove-compare:
+    shortCut: Shift-C
+    description: "[grove] Compare plan vs actual"
+    scopes:
+      - podcliquesets
+    command: kubectl-grove
+    background: false
+    args:
+      - compare
+      - $NAME
+      - -n
+      - $NAMESPACE
+
+  # ============================================================================
+  # Global Commands (available from any view)
+  # ============================================================================
+
+  # Open Grove TUI - interactive terminal UI
+  grove-tui:
+    shortCut: Ctrl-G
+    description: "[grove] Open interactive TUI"
+    scopes:
+      - all
+    command: kubectl-grove
+    background: false
+    args:
+      - tui
+      - -n
+      - $NAMESPACE
+
+  # Show status for all PodCliqueSets in namespace
+  grove-status-all:
+    shortCut: Ctrl-Shift-S
+    description: "[grove] Show all PodCliqueSet status"
+    scopes:
+      - all
+    command: kubectl-grove
+    background: false
+    args:
+      - status
+      - --all
+      - -n
+      - $NAMESPACE
+
+  # Collect diagnostics
+  grove-diagnostics:
+    shortCut: Ctrl-Shift-D
+    description: "[grove] Collect diagnostics"
+    scopes:
+      - all
+    command: sh
+    background: false
+    args:
+      - -c
+      - |
+        kubectl-grove diagnostics -n $NAMESPACE -o /tmp/grove-diagnostics-$(date +%Y%m%d-%H%M%S) && \
+        echo "Diagnostics saved to /tmp/grove-diagnostics-*" && \
+        read -p "Press Enter to continue..."
+
+  # ============================================================================
+  # PodClique Commands
+  # ============================================================================
+
+  # Show health for parent PodCliqueSet from a PodClique
+  grove-clique-health:
+    shortCut: Shift-H
+    description: "[grove] Show parent PodCliqueSet health"
+    scopes:
+      - podcliques
+    command: sh
+    background: false
+    args:
+      - -c
+      - |
+        PCS=$(kubectl get podclique $NAME -n $NAMESPACE -o jsonpath='{.metadata.labels.grove\.io/podcliqueset}' 2>/dev/null)
+        if [ -n "$PCS" ]; then
+          kubectl-grove health "$PCS" -n $NAMESPACE
+        else
+          echo "Error: Could not find parent PodCliqueSet"
+          read -p "Press Enter to continue..."
+        fi
+
+  # ============================================================================
+  # PodGang Commands
+  # ============================================================================
+
+  # Show topology for the PodGang's parent PodCliqueSet
+  grove-gang-topology:
+    shortCut: Shift-T
+    description: "[grove] Show parent topology"
+    scopes:
+      - podgangs
+    command: sh
+    background: false
+    args:
+      - -c
+      - |
+        PCS=$(kubectl get podgang $NAME -n $NAMESPACE -o jsonpath='{.metadata.labels.grove\.io/podcliqueset-name}' 2>/dev/null)
+        if [ -n "$PCS" ]; then
+          kubectl-grove topology "$PCS" -n $NAMESPACE
+        else
+          echo "Error: Could not find parent PodCliqueSet"
+          read -p "Press Enter to continue..."
+        fi
+
+  # ============================================================================
+  # Watch Mode Commands
+  # ============================================================================
+
+  # Watch topology in real-time
+  grove-topology-watch:
+    shortCut: Shift-W
+    description: "[grove] Watch topology (live)"
+    scopes:
+      - podcliquesets
+    command: kubectl-grove
+    background: false
+    args:
+      - topology
+      - $NAME
+      - -n
+      - $NAMESPACE
+      - --watch
+
+  # Watch health in real-time
+  grove-health-watch:
+    shortCut: Ctrl-H
+    description: "[grove] Watch health (live)"
+    scopes:
+      - podcliquesets
+    command: kubectl-grove
+    background: false
+    args:
+      - health
+      - $NAME
+      - -n
+      - $NAMESPACE
+      - --watch
+
+  # Watch metrics in real-time
+  grove-metrics-watch:
+    shortCut: Ctrl-M
+    description: "[grove] Watch metrics (live)"
+    scopes:
+      - podcliquesets
+    command: kubectl-grove
+    background: false
+    args:
+      - metrics
+      - $NAME
+      - -n
+      - $NAMESPACE
+      - --watch

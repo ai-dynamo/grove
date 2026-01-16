@@ -1,0 +1,37 @@
+# Grove k9s Aliases
+#
+# Installation:
+#   Merge this with your ~/.config/k9s/aliases.yaml
+#
+# Usage:
+#   Type the alias in k9s command mode (press :)
+#   Examples:
+#     :pcs     - List PodCliqueSets
+#     :pc      - List PodCliques
+#     :pg      - List PodGangs
+#     :ct      - List ClusterTopologies
+#
+# Note: k9s must be restarted after modifying aliases
+
+aliases:
+  # Grove Operator CRDs
+  pcs: podcliquesets.grove.io
+  podcliqueset: podcliquesets.grove.io
+  podcliquesets: podcliquesets.grove.io
+
+  pc: podcliques.grove.io
+  podclique: podcliques.grove.io
+  podcliques: podcliques.grove.io
+
+  pcsg: podcliquescalinggroups.grove.io
+  podcliquescalinggroup: podcliquescalinggroups.grove.io
+
+  # Grove Scheduler CRDs
+  pg: podgangs.scheduler.grove.io
+  podgang: podgangs.scheduler.grove.io
+  podgangs: podgangs.scheduler.grove.io
+
+  # ClusterTopology (cluster-scoped)
+  ct: clustertopologies.grove.io
+  clustertopology: clustertopologies.grove.io
+  topo: clustertopologies.grove.io

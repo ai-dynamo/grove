@@ -20,6 +20,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -33,6 +34,46 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
+
+// ANSI color codes for terminal output
+const (
+	colorReset   = "\033[0m"
+	colorRed     = "\033[31m"
+	colorGreen   = "\033[32m"
+	colorYellow  = "\033[33m"
+	colorBlue    = "\033[34m"
+	colorMagenta = "\033[35m"
+	colorCyan    = "\033[36m"
+	colorWhite   = "\033[37m"
+	colorBold    = "\033[1m"
+	colorDim     = "\033[2m"
+
+	// Background colors
+	bgRed    = "\033[41m"
+	bgGreen  = "\033[42m"
+	bgYellow = "\033[43m"
+)
+
+// colorEnabled checks if color output should be used
+func colorEnabled() bool {
+	// Disable colors if NO_COLOR env is set or if not a TTY
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	// Check if stdout is a terminal
+	if fileInfo, _ := os.Stdout.Stat(); (fileInfo.Mode() & os.ModeCharDevice) == 0 {
+		return false
+	}
+	return true
+}
+
+// colorize wraps text with ANSI color codes if colors are enabled
+func colorize(text, color string) string {
+	if !colorEnabled() {
+		return text
+	}
+	return color + text + colorReset
+}
 
 // TopologyCmd represents the topology command
 type TopologyCmd struct {
@@ -366,14 +407,17 @@ func (t *TopologyCmd) renderTopology(info *TopologyInfo) string {
 	// Render topology tree
 	sb.WriteString(t.renderTopologyTree(tree, info))
 
-	// Render warnings
+	// Render warnings with colors
 	warnings := t.generateWarnings(info, tree)
 	if len(warnings) > 0 {
 		sb.WriteString("\n")
 		for _, w := range warnings {
-			sb.WriteString(fmt.Sprintf("!! Warning: %s\n", w.Message))
+			warningIcon := colorize("⚠", colorYellow)
+			warningLabel := colorize("Warning:", colorYellow+colorBold)
+			sb.WriteString(fmt.Sprintf("%s %s %s\n", warningIcon, warningLabel, w.Message))
 			if w.Recommendation != "" {
-				sb.WriteString(fmt.Sprintf("   Recommendation: %s\n", w.Recommendation))
+				recLabel := colorize("→", colorCyan)
+				sb.WriteString(fmt.Sprintf("   %s %s\n", recLabel, w.Recommendation))
 			}
 		}
 	}
@@ -390,53 +434,27 @@ func (t *TopologyCmd) renderHeader(info *TopologyInfo) string {
 		topologyName = info.ClusterTopology.Name
 	}
 
-	// Build hierarchy string from topology levels
+	// Build hierarchy string from topology levels with colored arrows
 	hierarchyParts := make([]string, 0)
 	if info.ClusterTopology != nil {
 		for _, level := range info.ClusterTopology.Spec.Levels {
-			hierarchyParts = append(hierarchyParts, string(level.Domain))
+			hierarchyParts = append(hierarchyParts, colorize(string(level.Domain), colorCyan))
 		}
 	}
-	hierarchy := strings.Join(hierarchyParts, " -> ")
+	hierarchy := strings.Join(hierarchyParts, colorize(" → ", colorDim))
 
-	title := fmt.Sprintf(" ClusterTopology: %s ", topologyName)
-	contentLine := fmt.Sprintf("| Hierarchy: %-60s |", hierarchy)
+	// Colorized title
+	titleLabel := colorize("ClusterTopology:", colorBold)
+	titleName := colorize(topologyName, colorGreen)
 
-	// Calculate box width
-	width := len(contentLine)
-	if len(title)+4 > width {
-		width = len(title) + 4
-	}
-
-	// Top border
-	sb.WriteString("+")
-	sb.WriteString(strings.Repeat("-", len(title)))
-	sb.WriteString(strings.Repeat("-", width-len(title)-2))
-	sb.WriteString("+\n")
-
-	// Title
-	sb.WriteString("|")
-	sb.WriteString(title)
-	sb.WriteString(strings.Repeat(" ", width-len(title)-2))
-	sb.WriteString("|\n")
-
-	// Separator
-	sb.WriteString("|")
-	sb.WriteString(strings.Repeat("-", width-2))
-	sb.WriteString("|\n")
+	sb.WriteString(fmt.Sprintf("╭─ %s %s ─╮\n", titleLabel, titleName))
 
 	// Hierarchy content
-	if hierarchy != "" {
-		hierarchyLine := fmt.Sprintf("| Hierarchy: %s", hierarchy)
-		sb.WriteString(hierarchyLine)
-		sb.WriteString(strings.Repeat(" ", width-len(hierarchyLine)-1))
-		sb.WriteString("|\n")
+	if len(hierarchyParts) > 0 {
+		sb.WriteString(fmt.Sprintf("│ %s %s\n", colorize("Hierarchy:", colorDim), hierarchy))
 	}
 
-	// Bottom border
-	sb.WriteString("+")
-	sb.WriteString(strings.Repeat("-", width-2))
-	sb.WriteString("+\n")
+	sb.WriteString("╰" + strings.Repeat("─", 40) + "╯\n")
 
 	return sb.String()
 }
@@ -459,14 +477,31 @@ func (t *TopologyCmd) renderPodCliqueSetInfo(info *TopologyInfo) string {
 		packDomain = string(info.PodCliqueSet.Spec.Template.TopologyConstraint.PackDomain)
 	}
 
-	sb.WriteString(fmt.Sprintf("PodCliqueSet: %s", pcsName))
+	pcsLabel := colorize("PodCliqueSet:", colorBold)
+	pcsNameColored := colorize(pcsName, colorMagenta)
+	sb.WriteString(fmt.Sprintf("%s %s", pcsLabel, pcsNameColored))
+
 	if placementScore >= 0 {
-		sb.WriteString(fmt.Sprintf("    PlacementScore: %.2f %s", placementScore, renderScoreBar(placementScore)))
+		scoreLabel := colorize("PlacementScore:", colorDim)
+		scoreValue := fmt.Sprintf("%.2f", placementScore)
+		// Color score value based on quality
+		var scoreColor string
+		switch {
+		case placementScore >= 0.9:
+			scoreColor = colorGreen
+		case placementScore >= 0.7:
+			scoreColor = colorYellow
+		default:
+			scoreColor = colorRed
+		}
+		sb.WriteString(fmt.Sprintf("    %s %s %s", scoreLabel, colorize(scoreValue, scoreColor), renderScoreBar(placementScore)))
 	}
 	sb.WriteString("\n")
 
 	if packDomain != "" {
-		sb.WriteString(fmt.Sprintf("\nTopologyConstraint: packDomain=%s\n", packDomain))
+		constraintLabel := colorize("TopologyConstraint:", colorDim)
+		packDomainValue := colorize(packDomain, colorCyan)
+		sb.WriteString(fmt.Sprintf("\n%s packDomain=%s\n", constraintLabel, packDomainValue))
 	}
 
 	return sb.String()
@@ -494,7 +529,7 @@ func (t *TopologyCmd) getAveragePlacementScore(info *TopologyInfo) float64 {
 	return total / float64(count)
 }
 
-// renderScoreBar renders a visual bar for the placement score
+// renderScoreBar renders a visual bar for the placement score with colors
 func renderScoreBar(score float64) string {
 	const barLength = 10
 	filled := int(score * barLength)
@@ -505,18 +540,23 @@ func renderScoreBar(score float64) string {
 		filled = 0
 	}
 
-	bar := strings.Repeat("#", filled)
-
-	// Add partial fill for fractional part
-	remaining := int((score*barLength - float64(filled)) * 10)
-	if remaining >= 5 && filled < barLength {
-		bar += "+"
-		filled++
+	// Color based on score
+	var barColor string
+	switch {
+	case score >= 0.9:
+		barColor = colorGreen // Excellent
+	case score >= 0.7:
+		barColor = colorYellow // Good
+	case score >= 0.5:
+		barColor = colorYellow // Fair
+	default:
+		barColor = colorRed // Poor
 	}
 
-	bar += strings.Repeat("-", barLength-filled)
+	filledPart := colorize(strings.Repeat("█", filled), barColor)
+	emptyPart := colorize(strings.Repeat("░", barLength-filled), colorDim)
 
-	return "[" + bar + "]"
+	return "[" + filledPart + emptyPart + "]"
 }
 
 // buildTopologyTree builds a tree structure from topology information
@@ -654,13 +694,16 @@ func (t *TopologyCmd) renderTopologyTree(roots []*TopologyNode, info *TopologyIn
 	for i, root := range roots {
 		isLast := i == len(roots)-1
 
-		// Render domain header
-		status := "[optimal]"
+		// Render domain header with colors
+		var status string
 		if root.IsFragmented {
-			status = "[fragmented] !!"
+			status = colorize("[fragmented]", colorRed+colorBold) + " " + colorize("!!", colorRed)
+		} else {
+			status = colorize("[optimal]", colorGreen)
 		}
-		sb.WriteString(fmt.Sprintf("\n%s %s  %d GPUs allocated\n",
-			root.Name, status, root.AllocatedGPUs))
+		domainName := colorize(root.Name, colorBold)
+		gpuInfo := colorize(fmt.Sprintf("%d GPUs allocated", root.AllocatedGPUs), colorDim)
+		sb.WriteString(fmt.Sprintf("\n%s %s  %s\n", domainName, status, gpuInfo))
 
 		// Render children (hosts)
 		for j, child := range root.Children {
@@ -690,16 +733,44 @@ func (t *TopologyCmd) renderTopologyTree(roots []*TopologyNode, info *TopologyIn
 				}
 
 				podName := placement.Pod.Name
-				podStatus := string(placement.Pod.Status.Phase)
+				podPhase := placement.Pod.Status.Phase
+
+				// Color pod status based on phase
+				var podStatus string
+				switch podPhase {
+				case corev1.PodRunning:
+					podStatus = colorize("Running", colorGreen)
+				case corev1.PodPending:
+					podStatus = colorize("Pending", colorYellow)
+				case corev1.PodFailed:
+					podStatus = colorize("Failed", colorRed)
+				case corev1.PodSucceeded:
+					podStatus = colorize("Succeeded", colorBlue)
+				default:
+					podStatus = colorize(string(podPhase), colorWhite)
+				}
+
+				// Color role badge based on pod labels
+				roleBadge := ""
+				if role, ok := placement.Pod.Labels["grove.io/role"]; ok {
+					switch role {
+					case "prefill":
+						roleBadge = colorize("[P]", colorCyan) + " "
+					case "decode":
+						roleBadge = colorize("[D]", colorMagenta) + " "
+					default:
+						roleBadge = colorize(fmt.Sprintf("[%s]", role[:1]), colorWhite) + " "
+					}
+				}
 
 				// Get GPU info
 				gpuInfo := ""
 				if placement.GPUCount > 0 {
-					gpuInfo = fmt.Sprintf("  gpu:%d", placement.GPUCount)
+					gpuInfo = colorize(fmt.Sprintf("  gpu:%d", placement.GPUCount), colorDim)
 				}
 
-				sb.WriteString(fmt.Sprintf("%s%s%s  %s%s\n",
-					childPrefix, podPrefix, podName, podStatus, gpuInfo))
+				sb.WriteString(fmt.Sprintf("%s%s%s%s  %s%s\n",
+					childPrefix, podPrefix, roleBadge, podName, podStatus, gpuInfo))
 			}
 		}
 
@@ -711,10 +782,10 @@ func (t *TopologyCmd) renderTopologyTree(roots []*TopologyNode, info *TopologyIn
 	return sb.String()
 }
 
-// renderGPUBar renders a GPU usage bar
+// renderGPUBar renders a GPU usage bar with colors based on utilization
 func renderGPUBar(allocated, total int64) string {
 	if total == 0 {
-		return "[--------]"
+		return colorize("[--------]", colorDim)
 	}
 
 	const barLength = 8
@@ -723,8 +794,24 @@ func renderGPUBar(allocated, total int64) string {
 		filled = barLength
 	}
 
-	bar := strings.Repeat("#", filled) + strings.Repeat("-", barLength-filled)
-	return "[" + bar + "]"
+	utilization := float64(allocated) / float64(total)
+
+	// Color based on utilization level
+	var barColor string
+	switch {
+	case utilization >= 0.9:
+		barColor = colorRed // Nearly full
+	case utilization >= 0.7:
+		barColor = colorYellow // High usage
+	case utilization >= 0.3:
+		barColor = colorGreen // Good usage
+	default:
+		barColor = colorCyan // Low usage
+	}
+
+	filledPart := colorize(strings.Repeat("█", filled), barColor)
+	emptyPart := colorize(strings.Repeat("░", barLength-filled), colorDim)
+	return "[" + filledPart + emptyPart + "]"
 }
 
 // generateWarnings generates warnings for suboptimal placements
