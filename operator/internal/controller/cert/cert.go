@@ -62,7 +62,7 @@ func ManageWebhookCerts(mgr ctrl.Manager, certDir string, secretName string, aut
 	rotator := &cert.CertRotator{
 		SecretKey: types.NamespacedName{
 			Namespace: namespace,
-			Name:      "grove-webhook-server-cert",
+			Name:      secretName,
 		},
 		CertDir:        certDir,
 		CAName:         certificateAuthorityName,
