@@ -29,10 +29,14 @@ func main() {
 		kong.Name("kubectl-grove"),
 		kong.Description("kubectl plugin for managing Grove AI inference workloads on Kubernetes."),
 		kong.UsageOnError(),
+		kong.ConfigureHelp(kong.HelpOptions{
+			Compact: true,
+		}),
 	)
 
 	err := ctx.Run(cli)
 	if err != nil {
+		ctx.FatalIfErrorf(err)
 		os.Exit(1)
 	}
 }
