@@ -107,6 +107,8 @@ jobs:
             test_pattern: "^Test_SO"
           - test_name: Topology_Aware_Scheduling
             test_pattern: "^Test_TAS"
+          - test_name: cert_management
+            test_pattern: "^Test_CM"
     name: E2E - ${{ matrix.test_name }}
     steps:
       # print runner specs so we have a record incase of failures
