@@ -102,6 +102,12 @@ This make target leverages Grove [Helm](https://helm.sh/) charts and [Skaffold](
   - Grove Scheduler CRDs - `podgangs.scheduler.grove.io`.
 - All Grove operator resources defined as a part of [Grove Helm chart templates](../operator/charts/templates).
 
+## Certificate Management
+
+By default, Grove automatically generates and manages TLS certificates for its webhook server. For production environments, you may want to use certificates from your organization's PKI or a certificate manager like cert-manager.
+
+See the [Certificate Management Guide](user-guide/certificate-management.md) for detailed configuration options.
+
 ## Verify Installation
 
 Follow the instructions in the [quickstart guide](quickstart.md) to deploy a PodCliqueSet and validate your installation.
