@@ -791,30 +791,6 @@ func hasInitializedCondition(pg *groveschedulerv1alpha1.PodGang) bool {
 	return false
 }
 
-// createPodGroupsForPodGang constructs PodGroups from constituent PodCliques.
-func createPodGroupsForPodGang(namespace string, pgInfo *podGangInfo) []groveschedulerv1alpha1.PodGroup {
-	podGroups := lo.Map(pgInfo.pclqs, func(pi pclqInfo, _ int) groveschedulerv1alpha1.PodGroup {
-		namespacedNames := lo.Map(pi.associatedPodNames, func(associatedPodName string, _ int) groveschedulerv1alpha1.NamespacedName {
-			return groveschedulerv1alpha1.NamespacedName{
-				Namespace: namespace,
-				Name:      associatedPodName,
-			}
-		})
-		// sorting the slice of NamespaceName. This prevents unnecessary updates to the PodGang resource if the only thing
-		// that is difference is the order of NamespaceNames.
-		sort.Slice(namespacedNames, func(i, j int) bool {
-			return namespacedNames[i].Name < namespacedNames[j].Name
-		})
-		return groveschedulerv1alpha1.PodGroup{
-			Name:               pi.fqn,
-			PodReferences:      namespacedNames,
-			MinReplicas:        pi.minAvailable,
-			TopologyConstraint: pi.topologyConstraint,
-		}
-	})
-	return podGroups
-}
-
 // Convenience types and methods on these types that are used during sync flow run.
 // ------------------------------------------------------------------------------------------------
 

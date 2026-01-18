@@ -21,6 +21,7 @@ import (
 	"sync"
 
 	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend/kai"
+	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend/kube"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -36,29 +37,30 @@ var (
 
 // Initialize creates the global backend instance based on schedulerName
 // This should be called once during operator startup
-// Supported scheduler names: "kai-scheduler", "grove-scheduler"
-// Future: "default-scheduler", "kube-scheduler", "volcano"
+// Supported scheduler names: "kai-scheduler", "kube-scheduler"
+// Future: "volcano"
 func Initialize(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, schedulerName string) error {
 	var initErr error
 	initOnce.Do(func() {
 		// Default to "kai-scheduler" if not specified
 		if schedulerName == "" {
-			schedulerName = "kai-scheduler"
+			schedulerName = "kube-scheduler"
 		}
 
 		// Create the appropriate backend based on scheduler name
 		switch schedulerName {
-		case "kai-scheduler", "grove-scheduler":
+		case "kai-scheduler":
 			globalBackend = kai.New(client, scheme, eventRecorder, schedulerName)
 
+		case "kube-scheduler":
+			globalBackend = kube.New(client, scheme, eventRecorder, schedulerName)
+
 		// Future backends - uncomment and implement as needed:
-		// case "default-scheduler", "kube-scheduler":
-		//     globalBackend = kube.New(client, scheme, eventRecorder, schedulerName)
 		// case "volcano":
 		//     globalBackend = volcano.New(client, scheme, eventRecorder, schedulerName)
 
 		default:
-			initErr = fmt.Errorf("unsupported scheduler %q (supported: kai-scheduler, grove-scheduler)", schedulerName)
+			initErr = fmt.Errorf("unsupported scheduler %q (supported: kai-scheduler, kube-scheduler)", schedulerName)
 			return
 		}
 

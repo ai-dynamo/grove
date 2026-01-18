@@ -552,7 +552,7 @@ func TestRegisterControllersAndWebhooks(t *testing.T) {
 				tc.waitFn(logger, ch)
 			}
 		}
-		registerControllersWithMgr = func(_ ctrl.Manager, config configv1alpha1.OperatorConfiguration) error {
+		registerControllersWithMgr = func(_ ctrl.Manager, _ configv1alpha1.OperatorConfiguration) error {
 			controllersCalled = true
 			return tc.controllerErr
 		}
