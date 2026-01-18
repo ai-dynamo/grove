@@ -43,15 +43,16 @@ type CLI struct {
 	Version VersionFlag `short:"v" help:"Print version and exit."`
 
 	// Subcommands
-	Diagnostics DiagnosticsCmd `cmd:"" help:"Collect diagnostics from Grove resources."`
-	Generate    GenerateCmd    `cmd:"" help:"Generate Grove manifests using AIConfigurator."`
-	Status      StatusCmd      `cmd:"" help:"Show status of Grove PodCliqueSets."`
-	Topology    TopologyCmd    `cmd:"" help:"Visualize pod placement topology."`
-	Health      HealthCmd      `cmd:"" help:"Show gang health dashboard."`
-	Plan        PlanCmd        `cmd:"" help:"Manage AIConfigurator deployment plans."`
-	TUI         TUICmd         `cmd:"" help:"Interactive terminal UI for Grove resources."`
-	Metrics     MetricsCmd     `cmd:"" help:"Show live inference metrics from pods."`
-	Compare     CompareCmd     `cmd:"" help:"Compare stored plan with actual deployment."`
+	Diagnostics DiagnosticsCmd          `cmd:"" help:"Collect diagnostics from Grove resources."`
+	Generate    GenerateCmd             `cmd:"" help:"Generate Grove manifests using AIConfigurator."`
+	Status      StatusCmd               `cmd:"" help:"Show status of Grove PodCliqueSets."`
+	Topology    TopologyCmd             `cmd:"" help:"Visualize pod placement topology."`
+	Health      HealthCmd               `cmd:"" help:"Show gang health dashboard."`
+	Plan        PlanCmd                 `cmd:"" help:"Manage AIConfigurator deployment plans."`
+	TUI         TUICmd                  `cmd:"" help:"Interactive terminal UI for Grove resources."`
+	Metrics     MetricsCmd              `cmd:"" help:"Show live inference metrics from pods."`
+	Compare     CompareCmd              `cmd:"" help:"Compare stored plan with actual deployment."`
+	Completion  completionCmd `cmd:"" help:"Generate shell completion scripts."`
 }
 
 // StatusCmd wraps the commands.StatusCmd for CLI integration.
@@ -70,7 +71,7 @@ func (s *StatusCmd) Run(globals *CLI) error {
 	cmd := &commands.StatusCmd{
 		Name:      s.Name,
 		All:       s.All,
-		Namespace: s.Namespace,
+		Namespace: resolveNamespace(globals.Kubeconfig, globals.Context, s.Namespace),
 	}
 	return cmd.Execute(dynamicClient)
 }
@@ -86,7 +87,7 @@ type TopologyCmd struct {
 func (t *TopologyCmd) Run(globals *CLI) error {
 	cmd := &commands.TopologyCmd{
 		Name:       t.Name,
-		Namespace:  t.Namespace,
+		Namespace:  resolveNamespace(globals.Kubeconfig, globals.Context, t.Namespace),
 		Watch:      t.Watch,
 		Kubeconfig: globals.Kubeconfig,
 		Context:    globals.Context,
@@ -111,7 +112,7 @@ func (h *HealthCmd) Run(globals *CLI) error {
 	cmd := &commands.HealthCmd{
 		Clientset:     clientset,
 		DynamicClient: dynamicClient,
-		Namespace:     h.Namespace,
+		Namespace:     resolveNamespace(globals.Kubeconfig, globals.Context, h.Namespace),
 		Name:          h.Name,
 		All:           h.All,
 		Watch:         h.Watch,
@@ -142,7 +143,7 @@ func (p *PlanStoreCmd) Run(globals *CLI) error {
 	cmd := &commands.PlanStoreCmd{
 		Name:      p.Name,
 		File:      p.File,
-		Namespace: p.Namespace,
+		Namespace: resolveNamespace(globals.Kubeconfig, globals.Context, p.Namespace),
 	}
 	return cmd.Execute(clientset)
 }
@@ -161,7 +162,7 @@ func (p *PlanShowCmd) Run(globals *CLI) error {
 	}
 	cmd := &commands.PlanShowCmd{
 		Name:      p.Name,
-		Namespace: p.Namespace,
+		Namespace: resolveNamespace(globals.Kubeconfig, globals.Context, p.Namespace),
 	}
 	return cmd.Execute(clientset, nil)
 }
@@ -180,7 +181,7 @@ func (p *PlanDiffCmd) Run(globals *CLI) error {
 	}
 	cmd := &commands.PlanDiffCmd{
 		Name:      p.Name,
-		Namespace: p.Namespace,
+		Namespace: resolveNamespace(globals.Kubeconfig, globals.Context, p.Namespace),
 	}
 	return cmd.Execute(clientset, dynamicClient, nil)
 }
@@ -199,7 +200,7 @@ func (t *TUICmd) Run(globals *CLI) error {
 	cmd := &commands.TUICmd{
 		Clientset:     clientset,
 		DynamicClient: dynamicClient,
-		Namespace:     t.Namespace,
+		Namespace:     resolveNamespace(globals.Kubeconfig, globals.Context, t.Namespace),
 	}
 	return cmd.Run()
 }
@@ -226,7 +227,7 @@ func (m *MetricsCmd) Run(globals *CLI) error {
 	cmd := &commands.MetricsCmd{
 		Clientset:  clientset,
 		RestConfig: restConfig,
-		Namespace:  m.Namespace,
+		Namespace:  resolveNamespace(globals.Kubeconfig, globals.Context, m.Namespace),
 		Name:       m.Name,
 		Watch:      m.Watch,
 		JSON:       m.JSON,
@@ -251,7 +252,7 @@ func (c *CompareCmd) Run(globals *CLI) error {
 	}
 	cmd := &commands.CompareCmd{
 		Name:      c.Name,
-		Namespace: c.Namespace,
+		Namespace: resolveNamespace(globals.Kubeconfig, globals.Context, c.Namespace),
 		JSON:      c.JSON,
 		Verbose:   c.Verbose,
 	}
@@ -275,35 +276,56 @@ type GenerateCmd struct {
 	// Model is the model name (e.g., QWEN3_32B, LLAMA3_70B)
 	Model string `help:"Model name (e.g., QWEN3_32B, LLAMA3_70B)." required:""`
 
+	// HuggingFaceID is the optional HuggingFace model ID
+	HuggingFaceID string `help:"HuggingFace model ID (optional, e.g., Qwen/Qwen3-32B)." name:"hf-id"`
+
 	// System is the hardware system type (e.g., h200_sxm, a100_sxm)
-	System string `help:"Hardware system type (e.g., h200_sxm, a100_sxm)." required:""`
+	System string `help:"Hardware system type (e.g., h200_sxm, h100_sxm, a100_sxm)." required:""`
+
+	// DecodeSystem is the optional system for decode workers in disaggregated mode
+	DecodeSystem string `help:"Hardware system for decode workers (disagg mode only)." name:"decode-system"`
 
 	// TotalGPUs is the total number of GPUs available
 	TotalGPUs int `help:"Total number of GPUs available." required:"" name:"total-gpus"`
 
-	// Backend is the inference backend (e.g., sglang, vllm)
-	Backend string `help:"Inference backend (e.g., sglang, vllm)." required:""`
+	// Backend is the inference backend (e.g., sglang, vllm, trtllm)
+	Backend string `help:"Inference backend (sglang, vllm, trtllm)." required:""`
+
+	// BackendVersion is the optional backend version
+	BackendVersion string `help:"Specific backend version (optional)." name:"backend-version"`
 
 	// ISL is the input sequence length
-	ISL int `help:"Input sequence length." required:"" name:"isl"`
+	ISL int `help:"Input sequence length." required:"" name:"isl" default:"4000"`
 
 	// OSL is the output sequence length
-	OSL int `help:"Output sequence length." required:"" name:"osl"`
+	OSL int `help:"Output sequence length." required:"" name:"osl" default:"1000"`
+
+	// Prefix is the prefix cache length
+	Prefix int `help:"Prefix cache length." name:"prefix" default:"0"`
 
 	// TTFT is the target time-to-first-token in milliseconds
-	TTFT int `help:"Target time-to-first-token in milliseconds." required:"" name:"ttft"`
+	TTFT int `help:"Target time-to-first-token in milliseconds." required:"" name:"ttft" default:"2000"`
 
 	// TPOT is the target time-per-output-token in milliseconds
-	TPOT int `help:"Target time-per-output-token in milliseconds." required:"" name:"tpot"`
+	TPOT int `help:"Target time-per-output-token in milliseconds." required:"" name:"tpot" default:"30"`
+
+	// RequestLatency is the optional end-to-end request latency target
+	RequestLatency int `help:"End-to-end request latency target in milliseconds (optional)." name:"request-latency"`
+
+	// DatabaseMode is the AIConfigurator database mode
+	DatabaseMode string `help:"AIConfigurator database mode (SILICON, HYBRID, EMPIRICAL, SOL)." name:"database-mode" default:"SILICON"`
 
 	// SaveDir is the output directory for generated manifests
-	SaveDir string `help:"Output directory for generated manifests." required:"" name:"save-dir" placeholder:"DIR"`
+	SaveDir string `help:"Output directory for generated manifests and AIConfigurator output." required:"" name:"save-dir" placeholder:"DIR"`
 
 	// Namespace is the Kubernetes namespace for the generated manifests
 	Namespace string `help:"Kubernetes namespace for generated manifests." default:"default" short:"n"`
 
 	// Image is the container image for worker pods
-	Image string `help:"Container image for worker pods." default:"nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.5.1"`
+	Image string `help:"Container image for worker pods (uses AIConfigurator default if not specified)." placeholder:"IMAGE"`
+
+	// Debug enables debug mode for AIConfigurator
+	Debug bool `help:"Enable debug mode for AIConfigurator." name:"debug"`
 }
 
 // VersionFlag is a custom flag type that prints the version and exits
@@ -337,14 +359,15 @@ func (d *DiagnosticsCmd) Run(globals *CLI) error {
 		outputDir = fmt.Sprintf("grove-diagnostics-%s", timestamp)
 	}
 
-	fmt.Printf("Collecting diagnostics from namespace: %s\n", d.Namespace)
+	namespace := resolveNamespace(globals.Kubeconfig, globals.Context, d.Namespace)
+	fmt.Printf("Collecting diagnostics from namespace: %s\n", namespace)
 	fmt.Printf("Operator namespace: %s\n", d.OperatorNamespace)
 	fmt.Printf("Output directory: %s\n", outputDir)
 	fmt.Println()
 
 	// Create diagnostic context
 	ctx := context.Background()
-	dc := diagnostics.NewDiagnosticContext(ctx, clientset, dynamicClient, d.Namespace)
+	dc := diagnostics.NewDiagnosticContext(ctx, clientset, dynamicClient, namespace)
 	dc.OperatorNamespace = d.OperatorNamespace
 
 	// Create file output
@@ -410,4 +433,190 @@ func buildRestConfig(kubeconfig, kubeContext string) (*rest.Config, error) {
 	}
 
 	return config, nil
+}
+
+// completionCmd generates shell completion scripts.
+type completionCmd struct {
+	Shell string `arg:"" enum:"bash,zsh,fish" help:"Shell type (bash, zsh, fish)."`
+}
+
+// Run generates completion scripts for the specified shell.
+func (c *completionCmd) Run() error {
+	switch c.Shell {
+	case "bash":
+		fmt.Print(bashCompletion)
+	case "zsh":
+		fmt.Print(zshCompletion)
+	case "fish":
+		fmt.Print(fishCompletion)
+	default:
+		return fmt.Errorf("unsupported shell: %s", c.Shell)
+	}
+	return nil
+}
+
+const bashCompletion = `# kubectl-grove bash completion
+# Add to ~/.bashrc: eval "$(kubectl-grove completion bash)"
+
+_kubectl_grove_completions() {
+    local cur prev commands
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    commands="status topology health metrics tui generate plan compare diagnostics completion"
+
+    case "${prev}" in
+        kubectl-grove|grove)
+            COMPREPLY=( $(compgen -W "${commands}" -- "${cur}") )
+            return 0
+            ;;
+        -n|--namespace)
+            # Complete with kubectl namespaces
+            COMPREPLY=( $(compgen -W "$(kubectl get namespaces -o name 2>/dev/null | cut -d/ -f2)" -- "${cur}") )
+            return 0
+            ;;
+        plan)
+            COMPREPLY=( $(compgen -W "store show diff" -- "${cur}") )
+            return 0
+            ;;
+        completion)
+            COMPREPLY=( $(compgen -W "bash zsh fish" -- "${cur}") )
+            return 0
+            ;;
+    esac
+
+    # Complete flags
+    if [[ "${cur}" == -* ]]; then
+        COMPREPLY=( $(compgen -W "-n --namespace --kubeconfig --context -w --watch -a --all -v --version -h --help" -- "${cur}") )
+        return 0
+    fi
+}
+
+complete -F _kubectl_grove_completions kubectl-grove
+complete -F _kubectl_grove_completions kubectl grove
+`
+
+const zshCompletion = `#compdef kubectl-grove
+
+# kubectl-grove zsh completion
+# Add to ~/.zshrc: eval "$(kubectl-grove completion zsh)"
+
+_kubectl_grove() {
+    local -a commands
+    commands=(
+        'status:Show status of Grove PodCliqueSets'
+        'topology:Visualize pod placement topology'
+        'health:Show gang health dashboard'
+        'metrics:Show live inference metrics from pods'
+        'tui:Interactive terminal UI for Grove resources'
+        'generate:Generate Grove manifests using AIConfigurator'
+        'plan:Manage AIConfigurator deployment plans'
+        'compare:Compare stored plan with actual deployment'
+        'diagnostics:Collect diagnostics from Grove resources'
+        'completion:Generate shell completion scripts'
+    )
+
+    _arguments -C \
+        '(-n --namespace)'{-n,--namespace}'[Namespace to query]:namespace:_kubectl_grove_namespaces' \
+        '--kubeconfig[Path to kubeconfig file]:file:_files' \
+        '--context[Kubernetes context to use]:context:' \
+        '(-v --version)'{-v,--version}'[Print version and exit]' \
+        '(-h --help)'{-h,--help}'[Show help]' \
+        '1:command:->command' \
+        '*::arg:->args'
+
+    case "$state" in
+        command)
+            _describe -t commands 'kubectl-grove commands' commands
+            ;;
+        args)
+            case "$words[1]" in
+                plan)
+                    _values 'plan subcommand' store show diff
+                    ;;
+                completion)
+                    _values 'shell' bash zsh fish
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+_kubectl_grove_namespaces() {
+    local -a namespaces
+    namespaces=(${(f)"$(kubectl get namespaces -o name 2>/dev/null | cut -d/ -f2)"})
+    _describe -t namespaces 'namespaces' namespaces
+}
+
+compdef _kubectl_grove kubectl-grove
+compdef _kubectl_grove kubectl grove
+`
+
+const fishCompletion = `# kubectl-grove fish completion
+# Add to ~/.config/fish/completions/kubectl-grove.fish
+
+# Disable file completion by default
+complete -c kubectl-grove -f
+
+# Commands
+complete -c kubectl-grove -n "__fish_use_subcommand" -a status -d "Show status of Grove PodCliqueSets"
+complete -c kubectl-grove -n "__fish_use_subcommand" -a topology -d "Visualize pod placement topology"
+complete -c kubectl-grove -n "__fish_use_subcommand" -a health -d "Show gang health dashboard"
+complete -c kubectl-grove -n "__fish_use_subcommand" -a metrics -d "Show live inference metrics from pods"
+complete -c kubectl-grove -n "__fish_use_subcommand" -a tui -d "Interactive terminal UI for Grove resources"
+complete -c kubectl-grove -n "__fish_use_subcommand" -a generate -d "Generate Grove manifests using AIConfigurator"
+complete -c kubectl-grove -n "__fish_use_subcommand" -a plan -d "Manage AIConfigurator deployment plans"
+complete -c kubectl-grove -n "__fish_use_subcommand" -a compare -d "Compare stored plan with actual deployment"
+complete -c kubectl-grove -n "__fish_use_subcommand" -a diagnostics -d "Collect diagnostics from Grove resources"
+complete -c kubectl-grove -n "__fish_use_subcommand" -a completion -d "Generate shell completion scripts"
+
+# Plan subcommands
+complete -c kubectl-grove -n "__fish_seen_subcommand_from plan" -a store -d "Store an AIConfigurator plan"
+complete -c kubectl-grove -n "__fish_seen_subcommand_from plan" -a show -d "Show a stored plan"
+complete -c kubectl-grove -n "__fish_seen_subcommand_from plan" -a diff -d "Compare stored plan with deployed configuration"
+
+# Completion subcommand
+complete -c kubectl-grove -n "__fish_seen_subcommand_from completion" -a "bash zsh fish"
+
+# Global flags
+complete -c kubectl-grove -s n -l namespace -d "Namespace to query" -xa "(kubectl get namespaces -o name 2>/dev/null | cut -d/ -f2)"
+complete -c kubectl-grove -l kubeconfig -d "Path to kubeconfig file" -r
+complete -c kubectl-grove -l context -d "Kubernetes context to use"
+complete -c kubectl-grove -s v -l version -d "Print version and exit"
+complete -c kubectl-grove -s h -l help -d "Show help"
+
+# Watch flag for applicable commands
+complete -c kubectl-grove -n "__fish_seen_subcommand_from topology health metrics" -s w -l watch -d "Watch for changes"
+complete -c kubectl-grove -n "__fish_seen_subcommand_from status health" -s a -l all -d "Show all PodCliqueSets"
+`
+
+// resolveNamespace returns the namespace to use, respecting kubeconfig context.
+// If flagValue is explicitly set (not empty and not "default"), use it.
+// Otherwise, try to get the namespace from kubeconfig current context.
+// Falls back to "default" if no namespace is configured anywhere.
+func resolveNamespace(kubeconfig, kubeContext, flagValue string) string {
+	// If user explicitly set a non-default namespace, use it
+	if flagValue != "" && flagValue != "default" {
+		return flagValue
+	}
+
+	// Try to get namespace from kubeconfig
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if kubeconfig != "" {
+		loadingRules.ExplicitPath = kubeconfig
+	}
+
+	configOverrides := &clientcmd.ConfigOverrides{}
+	if kubeContext != "" {
+		configOverrides.CurrentContext = kubeContext
+	}
+
+	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
+	namespace, _, err := kubeConfig.Namespace()
+	if err != nil || namespace == "" {
+		return "default"
+	}
+
+	return namespace
 }

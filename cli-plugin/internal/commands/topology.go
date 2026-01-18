@@ -21,8 +21,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"sort"
 	"strings"
+	"syscall"
+	"time"
 
 	operatorv1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	schedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -158,7 +161,8 @@ type Warning struct {
 
 // Run executes the topology command
 func (t *TopologyCmd) Run() error {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// Build Kubernetes clients
 	clientset, dynamicClient, err := t.buildClients()
@@ -166,6 +170,17 @@ func (t *TopologyCmd) Run() error {
 		return fmt.Errorf("failed to build Kubernetes clients: %w", err)
 	}
 
+	// If not in watch mode, do a single render
+	if !t.Watch {
+		return t.renderOnce(ctx, clientset, dynamicClient)
+	}
+
+	// Watch mode: render continuously
+	return t.runWatchMode(ctx, clientset, dynamicClient)
+}
+
+// renderOnce does a single topology render
+func (t *TopologyCmd) renderOnce(ctx context.Context, clientset *kubernetes.Clientset, dynamicClient dynamic.Interface) error {
 	// Collect topology information
 	info, err := t.collectTopologyInfo(ctx, clientset, dynamicClient)
 	if err != nil {
@@ -177,6 +192,53 @@ func (t *TopologyCmd) Run() error {
 	fmt.Print(output)
 
 	return nil
+}
+
+// runWatchMode runs the topology command in watch mode
+func (t *TopologyCmd) runWatchMode(ctx context.Context, clientset *kubernetes.Clientset, dynamicClient dynamic.Interface) error {
+	// Set up signal handling for graceful exit
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Create ticker for refresh interval (2 seconds)
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	// Initial render
+	t.clearScreen()
+	if err := t.renderOnce(ctx, clientset, dynamicClient); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	}
+	t.printWatchFooter()
+
+	for {
+		select {
+		case <-sigChan:
+			fmt.Println("\nExiting watch mode...")
+			return nil
+		case <-ticker.C:
+			t.clearScreen()
+			if err := t.renderOnce(ctx, clientset, dynamicClient); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			}
+			t.printWatchFooter()
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+// clearScreen clears the terminal screen
+func (t *TopologyCmd) clearScreen() {
+	// ANSI escape code to clear screen and move cursor to top-left
+	fmt.Print("\033[2J\033[H")
+}
+
+// printWatchFooter prints the footer for watch mode
+func (t *TopologyCmd) printWatchFooter() {
+	timestamp := time.Now().Format("15:04:05")
+	footer := colorize(fmt.Sprintf("\n[Watch mode - refreshing every 2s] Last update: %s  Press Ctrl+C to exit", timestamp), colorDim)
+	fmt.Println(footer)
 }
 
 // buildClients creates Kubernetes clients from kubeconfig

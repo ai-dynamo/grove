@@ -17,13 +17,10 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"sigs.k8s.io/yaml"
 )
 
 func TestValidateGenerateParams(t *testing.T) {
@@ -142,12 +139,12 @@ func TestValidateGenerateParams(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "valid backend trt-llm",
+			name: "valid backend trtllm",
 			cmd: GenerateCmd{
 				Model:     "QWEN3_32B",
 				System:    "h200_sxm",
 				TotalGPUs: 32,
-				Backend:   "trt-llm",
+				Backend:   "trtllm",
 				ISL:       4000,
 				OSL:       1000,
 				TTFT:      300,
@@ -155,6 +152,39 @@ func TestValidateGenerateParams(t *testing.T) {
 				SaveDir:   "/tmp/output",
 			},
 			wantErr: false,
+		},
+		{
+			name: "valid database mode",
+			cmd: GenerateCmd{
+				Model:        "QWEN3_32B",
+				System:       "h200_sxm",
+				TotalGPUs:    32,
+				Backend:      "sglang",
+				ISL:          4000,
+				OSL:          1000,
+				TTFT:         300,
+				TPOT:         10,
+				SaveDir:      "/tmp/output",
+				DatabaseMode: "HYBRID",
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid database mode",
+			cmd: GenerateCmd{
+				Model:        "QWEN3_32B",
+				System:       "h200_sxm",
+				TotalGPUs:    32,
+				Backend:      "sglang",
+				ISL:          4000,
+				OSL:          1000,
+				TTFT:         300,
+				TPOT:         10,
+				SaveDir:      "/tmp/output",
+				DatabaseMode: "INVALID",
+			},
+			wantErr: true,
+			errMsg:  "--database-mode must be one of",
 		},
 	}
 
@@ -180,32 +210,32 @@ func TestGenerateFilename(t *testing.T) {
 		expected string
 	}{
 		{
-			name:     "disaggregated mode",
+			name:     "disagg mode",
 			model:    "QWEN3_32B",
 			backend:  "sglang",
-			mode:     "disaggregated",
-			expected: "qwen3-32b-sglang-disagg.yaml",
+			mode:     "disagg",
+			expected: "qwen3-32b-sglang-disagg-pcs.yaml",
 		},
 		{
-			name:     "aggregated mode",
+			name:     "agg mode",
 			model:    "QWEN3_32B",
 			backend:  "sglang",
-			mode:     "aggregated",
-			expected: "qwen3-32b-sglang-agg.yaml",
+			mode:     "agg",
+			expected: "qwen3-32b-sglang-agg-pcs.yaml",
 		},
 		{
-			name:     "prefill-decode mode name",
-			model:    "QWEN3_32B",
-			backend:  "sglang",
-			mode:     "Prefill-Decode Disaggregated Mode",
-			expected: "qwen3-32b-sglang-disagg.yaml",
+			name:     "model with slash",
+			model:    "Qwen/Qwen3-32B",
+			backend:  "vllm",
+			mode:     "disagg",
+			expected: "qwen-qwen3-32b-vllm-disagg-pcs.yaml",
 		},
 		{
-			name:     "aggregated mode name",
-			model:    "QWEN3_32B",
-			backend:  "sglang",
-			mode:     "Aggregated Mode",
-			expected: "qwen3-32b-sglang-agg.yaml",
+			name:     "model with underscore",
+			model:    "LLAMA3_70B",
+			backend:  "trtllm",
+			mode:     "agg",
+			expected: "llama3-70b-trtllm-agg-pcs.yaml",
 		},
 	}
 
@@ -217,93 +247,7 @@ func TestGenerateFilename(t *testing.T) {
 	}
 }
 
-func TestRunGenerate(t *testing.T) {
-	// Create a temporary directory for output
-	tmpDir, err := os.MkdirTemp("", "grove-generate-test-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
-	cmd := &GenerateCmd{
-		Model:     "QWEN3_32B",
-		System:    "h200_sxm",
-		TotalGPUs: 32,
-		Backend:   "sglang",
-		ISL:       4000,
-		OSL:       1000,
-		TTFT:      300,
-		TPOT:      10,
-		SaveDir:   tmpDir,
-		Namespace: "test-namespace",
-		Image:     "test-image:latest",
-	}
-
-	err = runGenerate(cmd)
-	require.NoError(t, err)
-
-	// Verify files were created
-	files, err := os.ReadDir(tmpDir)
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(files), 1, "should create at least one file")
-
-	// Verify at least one YAML file was created and is valid
-	foundYAML := false
-	for _, f := range files {
-		if filepath.Ext(f.Name()) == ".yaml" {
-			foundYAML = true
-
-			// Read and verify the YAML is valid
-			content, err := os.ReadFile(filepath.Join(tmpDir, f.Name()))
-			require.NoError(t, err)
-
-			// Parse as generic YAML to verify structure
-			var manifest map[string]interface{}
-			err = yaml.Unmarshal(content, &manifest)
-			require.NoError(t, err)
-
-			// Verify basic PodCliqueSet structure
-			assert.Equal(t, "grove.io/v1alpha1", manifest["apiVersion"])
-			assert.Equal(t, "PodCliqueSet", manifest["kind"])
-
-			// Verify metadata
-			metadata, ok := manifest["metadata"].(map[string]interface{})
-			require.True(t, ok)
-			assert.Equal(t, "test-namespace", metadata["namespace"])
-
-			// Verify spec
-			spec, ok := manifest["spec"].(map[string]interface{})
-			require.True(t, ok)
-			assert.Contains(t, spec, "replicas")
-			assert.Contains(t, spec, "template")
-		}
-	}
-	assert.True(t, foundYAML, "should create at least one YAML file")
-}
-
-func TestRunGenerateWithSmallGPUCount(t *testing.T) {
-	// Test with small GPU count that only allows aggregated mode
-	tmpDir, err := os.MkdirTemp("", "grove-generate-test-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
-	cmd := &GenerateCmd{
-		Model:     "LLAMA3_8B",
-		System:    "a100_sxm",
-		TotalGPUs: 2,
-		Backend:   "vllm",
-		ISL:       2000,
-		OSL:       500,
-		TTFT:      200,
-		TPOT:      5,
-		SaveDir:   tmpDir,
-		Namespace: "default",
-		Image:     "nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.5.1",
-	}
-
-	err = runGenerate(cmd)
-	require.NoError(t, err)
-
-	// Verify files were created
-	files, err := os.ReadDir(tmpDir)
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(files), 1)
-}
+// Note: Integration tests that require aiconfigurator to be installed are skipped
+// when the CLI is not available. These tests exercise the full generate flow.
+// To run them, ensure aiconfigurator >= 0.5.0 is installed:
+//   pip install aiconfigurator

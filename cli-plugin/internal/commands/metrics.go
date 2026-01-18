@@ -24,7 +24,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -35,6 +37,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
 )
 
@@ -447,33 +450,78 @@ func (s *MetricsScraper) fetchMetrics(ctx context.Context, pod *corev1.Pod, port
 }
 
 // fetchViaPortForward fetches metrics using kubectl port-forward
-// Note: This simplified implementation falls back to direct HTTP request.
-// A full implementation would establish a port-forward tunnel using the SPDY protocol.
 func (s *MetricsScraper) fetchViaPortForward(ctx context.Context, pod *corev1.Pod, port int) ([]byte, error) {
-	// Attempt to verify we have the required config for port-forwarding
 	if s.restConfig == nil {
 		return nil, fmt.Errorf("rest config not available for port-forward")
 	}
 
-	// Verify SPDY transport can be created (this validates the config)
-	_, _, err := spdy.RoundTripperFor(s.restConfig)
+	// Build the port-forward URL
+	reqURL, err := url.Parse(s.restConfig.Host)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse host URL: %w", err)
+	}
+	reqURL.Path = fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/portforward", s.namespace, pod.Name)
+
+	// Create SPDY transport
+	transport, upgrader, err := spdy.RoundTripperFor(s.restConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create round tripper: %w", err)
 	}
 
-	// For this implementation, we fall back to direct HTTP request to pod IP.
-	// This works in clusters where pod networking is accessible.
-	// For environments requiring port-forward (e.g., local kubectl), a full
-	// port-forward implementation using channels and goroutines would be needed.
-	url := fmt.Sprintf("http://%s:%d%s", pod.Status.PodIP, port, MetricsPath)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	// Find a free local port
+	localPort, err := getFreePort()
+	if err != nil {
+		return nil, fmt.Errorf("failed to find free port: %w", err)
+	}
+
+	// Set up port-forward channels
+	stopChan := make(chan struct{}, 1)
+	readyChan := make(chan struct{})
+	errChan := make(chan error, 1)
+
+	// Create the port-forwarder
+	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: transport}, "POST", reqURL)
+	ports := []string{fmt.Sprintf("%d:%d", localPort, port)}
+
+	// Use io.Discard for output to avoid cluttering the terminal
+	pf, err := portforward.New(dialer, ports, stopChan, readyChan, io.Discard, io.Discard)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create port forwarder: %w", err)
+	}
+
+	// Start port-forwarding in a goroutine
+	go func() {
+		if err := pf.ForwardPorts(); err != nil {
+			errChan <- err
+		}
+	}()
+
+	// Wait for port-forward to be ready or error
+	select {
+	case <-readyChan:
+		// Port-forward is ready
+	case err := <-errChan:
+		return nil, fmt.Errorf("port-forward failed: %w", err)
+	case <-ctx.Done():
+		close(stopChan)
+		return nil, ctx.Err()
+	case <-time.After(10 * time.Second):
+		close(stopChan)
+		return nil, fmt.Errorf("port-forward timed out waiting for ready")
+	}
+
+	// Make the HTTP request through the port-forward
+	defer close(stopChan)
+
+	localURL := fmt.Sprintf("http://localhost:%d%s", localPort, MetricsPath)
+	req, err := http.NewRequestWithContext(ctx, "GET", localURL, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to fetch metrics via port-forward: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -482,6 +530,16 @@ func (s *MetricsScraper) fetchViaPortForward(ctx context.Context, pod *corev1.Po
 	}
 
 	return io.ReadAll(resp.Body)
+}
+
+// getFreePort finds an available local port
+func getFreePort() (int, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer listener.Close()
+	return listener.Addr().(*net.TCPAddr).Port, nil
 }
 
 // extractMetrics extracts relevant metrics based on engine type

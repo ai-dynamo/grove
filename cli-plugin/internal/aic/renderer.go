@@ -18,6 +18,7 @@ package aic
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -28,7 +29,7 @@ import (
 	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 )
 
-// Renderer generates Grove manifests from AIConfigurator plans.
+// Renderer generates Grove manifests from AIConfigurator output.
 type Renderer struct {
 	// namespace is the Kubernetes namespace for generated resources
 	namespace string
@@ -45,10 +46,44 @@ func NewRenderer(namespace, image string) *Renderer {
 	}
 }
 
-// RenderPodCliqueSet generates a PodCliqueSet YAML manifest from a plan.
-func (r *Renderer) RenderPodCliqueSet(plan GeneratorPlan, model, backend string) (string, error) {
-	// Generate resource name from model and backend
-	name := r.generateResourceName(model, backend, plan.Mode)
+// RenderDeploymentYAML generates PodCliqueSet YAML from a deployment plan.
+func (r *Renderer) RenderDeploymentYAML(plan *DeploymentPlan) error {
+	yamlContent, err := r.RenderPodCliqueSet(plan)
+	if err != nil {
+		return fmt.Errorf("failed to render %s YAML: %w", plan.Mode, err)
+	}
+
+	// Write YAML to file
+	if err := os.WriteFile(plan.OutputPath, []byte(yamlContent), 0644); err != nil {
+		return fmt.Errorf("failed to write YAML to %s: %w", plan.OutputPath, err)
+	}
+
+	return nil
+}
+
+// RenderPodCliqueSet generates a PodCliqueSet YAML manifest from a deployment plan.
+func (r *Renderer) RenderPodCliqueSet(plan *DeploymentPlan) (string, error) {
+	// Use namespace and image from plan if provided, otherwise use renderer defaults
+	namespace := r.namespace
+	if plan.Namespace != "" {
+		namespace = plan.Namespace
+	}
+
+	// Image priority: plan.Image > r.image > config.K8s.K8sImage > default
+	image := r.image
+	if plan.Image != "" {
+		image = plan.Image
+	}
+	if image == "" && plan.Config != nil && plan.Config.K8s.K8sImage != "" {
+		image = plan.Config.K8s.K8sImage
+	}
+	if image == "" {
+		// Final fallback to a sensible default
+		image = "nvcr.io/nvidia/ai-dynamo/vllm-runtime:latest"
+	}
+
+	// Generate resource name
+	name := r.generateResourceName(plan.ModelName, plan.BackendName, plan.Mode)
 
 	// Create the PodCliqueSet
 	pcs := &corev1alpha1.PodCliqueSet{
@@ -58,19 +93,19 @@ func (r *Renderer) RenderPodCliqueSet(plan GeneratorPlan, model, backend string)
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: r.namespace,
+			Namespace: namespace,
 			Labels: map[string]string{
 				"app.kubernetes.io/name":       name,
 				"app.kubernetes.io/component":  "inference",
 				"app.kubernetes.io/managed-by": "kubectl-grove",
-				"grove.io/model":               strings.ToLower(model),
-				"grove.io/backend":             strings.ToLower(backend),
+				"grove.io/model":               strings.ToLower(plan.ModelName),
+				"grove.io/backend":             strings.ToLower(plan.BackendName),
 			},
 		},
 		Spec: corev1alpha1.PodCliqueSetSpec{
 			Replicas: 1,
 			Template: corev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: r.generateCliques(plan, model, backend),
+				Cliques: r.generateCliques(plan, image),
 			},
 		},
 	}
@@ -84,47 +119,72 @@ func (r *Renderer) RenderPodCliqueSet(plan GeneratorPlan, model, backend string)
 	return string(yamlBytes), nil
 }
 
-// generateCliques generates the PodClique templates for a plan.
-func (r *Renderer) generateCliques(plan GeneratorPlan, model, backend string) []*corev1alpha1.PodCliqueTemplateSpec {
+// generateCliques generates the PodClique templates from a deployment plan.
+func (r *Renderer) generateCliques(plan *DeploymentPlan, image string) []*corev1alpha1.PodCliqueTemplateSpec {
 	var cliques []*corev1alpha1.PodCliqueTemplateSpec
+	config := plan.Config
 
-	if plan.Mode == "disaggregated" {
+	if plan.Mode == DeploymentModeDisagg {
 		// Disaggregated mode: separate prefill and decode cliques
-		if plan.PrefillWorkers > 0 {
+		if config.Workers.PrefillWorkers > 0 {
+			prefillParams := GetWorkerParams(config.Params.Prefill)
+			gpusPerWorker := config.Workers.PrefillGPUsPerWorker
+			if gpusPerWorker == 0 {
+				gpusPerWorker = prefillParams.TensorParallelSize
+			}
+
 			prefillClique := r.createCliqueTemplate(
 				"prefill",
 				"prefill",
-				plan.PrefillWorkers,
-				plan.PrefillTP,
-				model,
-				backend,
+				config.Workers.PrefillWorkers,
+				gpusPerWorker,
+				prefillParams,
+				plan.ModelName,
+				plan.BackendName,
+				image,
 				true,
 			)
 			cliques = append(cliques, prefillClique)
 		}
 
-		if plan.DecodeWorkers > 0 {
+		if config.Workers.DecodeWorkers > 0 {
+			decodeParams := GetWorkerParams(config.Params.Decode)
+			gpusPerWorker := config.Workers.DecodeGPUsPerWorker
+			if gpusPerWorker == 0 {
+				gpusPerWorker = decodeParams.TensorParallelSize
+			}
+
 			decodeClique := r.createCliqueTemplate(
 				"decode",
 				"decode",
-				plan.DecodeWorkers,
-				plan.DecodeTP,
-				model,
-				backend,
+				config.Workers.DecodeWorkers,
+				gpusPerWorker,
+				decodeParams,
+				plan.ModelName,
+				plan.BackendName,
+				image,
 				false,
 			)
 			cliques = append(cliques, decodeClique)
 		}
 	} else {
 		// Aggregated mode: single worker clique
-		if plan.AggregatedWorkers > 0 {
+		if config.Workers.AggWorkers > 0 {
+			aggParams := GetWorkerParams(config.Params.Agg)
+			gpusPerWorker := config.Workers.AggGPUsPerWorker
+			if gpusPerWorker == 0 {
+				gpusPerWorker = aggParams.TensorParallelSize
+			}
+
 			workerClique := r.createCliqueTemplate(
 				"worker",
 				"worker",
-				plan.AggregatedWorkers,
-				plan.AggregatedTP,
-				model,
-				backend,
+				config.Workers.AggWorkers,
+				gpusPerWorker,
+				aggParams,
+				plan.ModelName,
+				plan.BackendName,
+				image,
 				false,
 			)
 			cliques = append(cliques, workerClique)
@@ -137,15 +197,30 @@ func (r *Renderer) generateCliques(plan GeneratorPlan, model, backend string) []
 // createCliqueTemplate creates a PodClique template specification.
 func (r *Renderer) createCliqueTemplate(
 	name, roleName string,
-	replicas, tp int,
-	model, backend string,
+	replicas, gpusPerWorker int,
+	params WorkerParams,
+	model, backend, image string,
 	isPrefillWorker bool,
 ) *corev1alpha1.PodCliqueTemplateSpec {
 	// Build container args based on backend
-	args := r.buildContainerArgs(model, backend, isPrefillWorker)
+	args := r.buildContainerArgs(model, backend, params, isPrefillWorker)
 
 	// Calculate GPU resources
-	gpuQuantity := resource.MustParse(fmt.Sprintf("%d", tp))
+	gpuQuantity := resource.MustParse(fmt.Sprintf("%d", gpusPerWorker))
+
+	// Build environment variables
+	envVars := []corev1.EnvVar{
+		{
+			Name:  "TENSOR_PARALLEL_SIZE",
+			Value: fmt.Sprintf("%d", params.TensorParallelSize),
+		},
+	}
+	if params.PipelineParallelSize > 0 {
+		envVars = append(envVars, corev1.EnvVar{
+			Name:  "PIPELINE_PARALLEL_SIZE",
+			Value: fmt.Sprintf("%d", params.PipelineParallelSize),
+		})
+	}
 
 	return &corev1alpha1.PodCliqueTemplateSpec{
 		Name: name,
@@ -159,7 +234,7 @@ func (r *Renderer) createCliqueTemplate(
 				Containers: []corev1.Container{
 					{
 						Name:       "worker",
-						Image:      r.image,
+						Image:      image,
 						WorkingDir: "/workspace/components/backends/vllm",
 						Command:    []string{"python3", "-m", "dynamo.vllm"},
 						Args:       args,
@@ -171,12 +246,7 @@ func (r *Renderer) createCliqueTemplate(
 								"nvidia.com/gpu": gpuQuantity,
 							},
 						},
-						Env: []corev1.EnvVar{
-							{
-								Name:  "TENSOR_PARALLEL_SIZE",
-								Value: fmt.Sprintf("%d", tp),
-							},
-						},
+						Env: envVars,
 					},
 				},
 				RestartPolicy: corev1.RestartPolicyAlways,
@@ -186,9 +256,19 @@ func (r *Renderer) createCliqueTemplate(
 }
 
 // buildContainerArgs builds the container arguments based on backend and worker type.
-func (r *Renderer) buildContainerArgs(model, backend string, isPrefillWorker bool) []string {
+func (r *Renderer) buildContainerArgs(model, backend string, params WorkerParams, isPrefillWorker bool) []string {
 	args := []string{
 		"--model", model,
+	}
+
+	// Add tensor parallelism
+	if params.TensorParallelSize > 0 {
+		args = append(args, "--tensor-parallel-size", fmt.Sprintf("%d", params.TensorParallelSize))
+	}
+
+	// Add pipeline parallelism
+	if params.PipelineParallelSize > 0 {
+		args = append(args, "--pipeline-parallel-size", fmt.Sprintf("%d", params.PipelineParallelSize))
 	}
 
 	// Add prefill worker flag if applicable
@@ -210,9 +290,9 @@ func (r *Renderer) generateResourceName(model, backend, mode string) string {
 	name = fmt.Sprintf("%s-%s", name, strings.ToLower(backend))
 
 	// Add mode suffix
-	if mode == "disaggregated" {
+	if mode == DeploymentModeDisagg {
 		name = fmt.Sprintf("%s-disagg", name)
-	} else if mode == "aggregated" {
+	} else if mode == DeploymentModeAgg {
 		name = fmt.Sprintf("%s-agg", name)
 	}
 

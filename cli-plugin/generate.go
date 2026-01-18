@@ -38,57 +38,98 @@ func runGenerate(g *GenerateCmd) error {
 	}
 
 	// Check if AIConfigurator is available
-	aicExecutor := aic.NewExecutor()
-	if !aicExecutor.IsAvailable() {
-		fmt.Println("Note: AIConfigurator CLI not found in PATH, using mock configuration")
+	if err := aic.CheckAIConfiguratorAvailable(); err != nil {
+		return err
 	}
 
-	// Build AIConfigurator input parameters
-	params := aic.Params{
-		Model:     g.Model,
-		System:    g.System,
-		TotalGPUs: g.TotalGPUs,
-		Backend:   g.Backend,
-		ISL:       g.ISL,
-		OSL:       g.OSL,
-		TTFT:      g.TTFT,
-		TPOT:      g.TPOT,
+	version := aic.GetAIConfiguratorVersion()
+	if version != "" {
+		fmt.Printf("Using AIConfigurator version: %s\n", version)
 	}
 
-	// Run AIConfigurator (or mock)
-	result, err := aicExecutor.Run(params)
-	if err != nil {
+	// Build AIConfigurator task config
+	taskConfig := &aic.TaskConfig{
+		ModelName:        g.Model,
+		HuggingFaceID:    g.HuggingFaceID,
+		SystemName:       g.System,
+		DecodeSystemName: g.DecodeSystem,
+		TotalGPUs:        g.TotalGPUs,
+		BackendName:      g.Backend,
+		BackendVersion:   g.BackendVersion,
+		ISL:              g.ISL,
+		OSL:              g.OSL,
+		Prefix:           g.Prefix,
+		TTFT:             float64(g.TTFT),
+		TPOT:             float64(g.TPOT),
+		RequestLatency:   float64(g.RequestLatency),
+		DatabaseMode:     g.DatabaseMode,
+		SaveDir:          g.SaveDir,
+		Debug:            g.Debug,
+	}
+
+	// Execute AIConfigurator
+	executor := aic.NewExecutor()
+	if err := executor.Execute(taskConfig); err != nil {
 		return fmt.Errorf("AIConfigurator execution failed: %w", err)
 	}
 
-	fmt.Println("\u2713 AIConfigurator completed successfully")
-	fmt.Println()
+	// Locate the output directory
+	outputDir, err := aic.LocateOutputDirectory(taskConfig)
+	if err != nil {
+		return fmt.Errorf("failed to locate AIConfigurator output: %w", err)
+	}
 
-	// Generate manifests for each plan
+	fmt.Printf("\nFound AIConfigurator output: %s\n", outputDir)
+
+	// Parse the generator configs
+	aggConfig, disaggConfig, err := aic.ParseGeneratorConfigs(outputDir)
+	if err != nil {
+		return fmt.Errorf("failed to parse AIConfigurator output: %w", err)
+	}
+
+	// Generate PodCliqueSet manifests
 	renderer := aic.NewRenderer(g.Namespace, g.Image)
 	var generatedFiles []aic.GeneratedFile
 
-	for i, plan := range result.Plans {
-		// Generate filename
-		filename := generateFilename(g.Model, g.Backend, plan.Mode)
-		filePath := filepath.Join(g.SaveDir, filename)
-
-		// Render the PodCliqueSet manifest
-		manifest, err := renderer.RenderPodCliqueSet(plan, g.Model, g.Backend)
-		if err != nil {
-			return fmt.Errorf("failed to render manifest for plan %d: %w", i+1, err)
-		}
-
-		// Write the manifest file
-		if err := os.WriteFile(filePath, []byte(manifest), 0644); err != nil {
-			return fmt.Errorf("failed to write manifest file: %w", err)
-		}
-
-		generatedFiles = append(generatedFiles, aic.GeneratedFile{
-			Path: filePath,
-			Plan: plan,
-		})
+	// Generate disaggregated mode manifest
+	disaggPlan := &aic.DeploymentPlan{
+		Mode:          aic.DeploymentModeDisagg,
+		Config:        disaggConfig,
+		OutputPath:    filepath.Join(g.SaveDir, generateFilename(g.Model, g.Backend, "disagg")),
+		ModelName:     g.Model,
+		BackendName:   g.Backend,
+		HuggingFaceID: g.HuggingFaceID,
+		Namespace:     g.Namespace,
+		Image:         g.Image,
 	}
+
+	if err := renderer.RenderDeploymentYAML(disaggPlan); err != nil {
+		return fmt.Errorf("failed to render disaggregated manifest: %w", err)
+	}
+	generatedFiles = append(generatedFiles, aic.GeneratedFile{
+		Path: disaggPlan.OutputPath,
+		Plan: disaggPlan,
+	})
+
+	// Generate aggregated mode manifest
+	aggPlan := &aic.DeploymentPlan{
+		Mode:          aic.DeploymentModeAgg,
+		Config:        aggConfig,
+		OutputPath:    filepath.Join(g.SaveDir, generateFilename(g.Model, g.Backend, "agg")),
+		ModelName:     g.Model,
+		BackendName:   g.Backend,
+		HuggingFaceID: g.HuggingFaceID,
+		Namespace:     g.Namespace,
+		Image:         g.Image,
+	}
+
+	if err := renderer.RenderDeploymentYAML(aggPlan); err != nil {
+		return fmt.Errorf("failed to render aggregated manifest: %w", err)
+	}
+	generatedFiles = append(generatedFiles, aic.GeneratedFile{
+		Path: aggPlan.OutputPath,
+		Plan: aggPlan,
+	})
 
 	// Print summary
 	printGenerateSummary(generatedFiles)
@@ -127,7 +168,7 @@ func validateGenerateParams(g *GenerateCmd) error {
 	}
 
 	// Validate backend
-	validBackends := []string{"sglang", "vllm", "trt-llm"}
+	validBackends := []string{aic.BackendSGLang, aic.BackendVLLM, aic.BackendTRTLLM}
 	isValidBackend := false
 	for _, vb := range validBackends {
 		if strings.EqualFold(g.Backend, vb) {
@@ -139,6 +180,21 @@ func validateGenerateParams(g *GenerateCmd) error {
 		return fmt.Errorf("--backend must be one of: %s", strings.Join(validBackends, ", "))
 	}
 
+	// Validate database mode if provided
+	if g.DatabaseMode != "" {
+		validModes := []string{aic.DatabaseModeSilicon, aic.DatabaseModeHybrid, aic.DatabaseModeEmpirical, aic.DatabaseModeSOL}
+		isValidMode := false
+		for _, vm := range validModes {
+			if strings.EqualFold(g.DatabaseMode, vm) {
+				isValidMode = true
+				break
+			}
+		}
+		if !isValidMode {
+			return fmt.Errorf("--database-mode must be one of: %s", strings.Join(validModes, ", "))
+		}
+	}
+
 	return nil
 }
 
@@ -146,54 +202,59 @@ func validateGenerateParams(g *GenerateCmd) error {
 func generateFilename(model, backend, mode string) string {
 	// Normalize model name for filename
 	modelName := strings.ToLower(strings.ReplaceAll(model, "_", "-"))
+	modelName = strings.ReplaceAll(modelName, "/", "-")
 	backendName := strings.ToLower(backend)
 
-	// Generate filename based on mode
-	var suffix string
-	switch strings.ToLower(mode) {
-	case "disaggregated", "prefill-decode disaggregated mode":
-		suffix = "disagg"
-	case "aggregated", "aggregated mode":
-		suffix = "agg"
-	default:
-		suffix = strings.ToLower(strings.ReplaceAll(mode, " ", "-"))
-	}
-
-	return fmt.Sprintf("%s-%s-%s.yaml", modelName, backendName, suffix)
+	return fmt.Sprintf("%s-%s-%s-pcs.yaml", modelName, backendName, mode)
 }
 
 // printGenerateSummary prints a summary of the generated files.
 func printGenerateSummary(files []aic.GeneratedFile) {
-	for i, file := range files {
-		fmt.Printf("Plan %d: %s\n", i+1, file.Plan.ModeName)
+	fmt.Println("\n" + strings.Repeat("=", 60))
+	fmt.Println("Generated PodCliqueSet Manifests")
+	fmt.Println(strings.Repeat("=", 60))
+
+	for _, file := range files {
+		plan := file.Plan
+		config := plan.Config
+
+		fmt.Printf("\n%s Mode:\n", strings.ToUpper(plan.Mode))
 		fmt.Printf("  File: %s\n", file.Path)
 		fmt.Println("  Configuration:")
 
-		if file.Plan.PrefillWorkers > 0 {
-			fmt.Printf("    - Prefill Workers: %d (tp%d, %d GPU each)\n",
-				file.Plan.PrefillWorkers, file.Plan.PrefillTP, file.Plan.PrefillTP)
+		if plan.Mode == aic.DeploymentModeDisagg {
+			if config.Workers.PrefillWorkers > 0 {
+				prefillParams := aic.GetWorkerParams(config.Params.Prefill)
+				fmt.Printf("    - Prefill Workers: %d (tp%d, %d GPUs each)\n",
+					config.Workers.PrefillWorkers,
+					prefillParams.TensorParallelSize,
+					config.Workers.PrefillGPUsPerWorker)
+			}
+			if config.Workers.DecodeWorkers > 0 {
+				decodeParams := aic.GetWorkerParams(config.Params.Decode)
+				fmt.Printf("    - Decode Workers: %d (tp%d, %d GPUs each)\n",
+					config.Workers.DecodeWorkers,
+					decodeParams.TensorParallelSize,
+					config.Workers.DecodeGPUsPerWorker)
+			}
+		} else {
+			if config.Workers.AggWorkers > 0 {
+				aggParams := aic.GetWorkerParams(config.Params.Agg)
+				fmt.Printf("    - Workers: %d (tp%d, %d GPUs each)\n",
+					config.Workers.AggWorkers,
+					aggParams.TensorParallelSize,
+					config.Workers.AggGPUsPerWorker)
+			}
 		}
-		if file.Plan.DecodeWorkers > 0 {
-			fmt.Printf("    - Decode Workers: %d (tp%d, %d GPUs)\n",
-				file.Plan.DecodeWorkers, file.Plan.DecodeTP, file.Plan.DecodeTP)
-		}
-		if file.Plan.AggregatedWorkers > 0 {
-			fmt.Printf("    - Workers: %d (tp%d, %d GPUs each)\n",
-				file.Plan.AggregatedWorkers, file.Plan.AggregatedTP, file.Plan.AggregatedTP)
-		}
-		fmt.Printf("    - Total GPU Usage: %d\n", file.Plan.TotalGPUUsage)
-
-		fmt.Println("  Expected Performance:")
-		fmt.Printf("    - Throughput: %.0f tok/s/gpu\n", file.Plan.Throughput)
-		fmt.Printf("    - TTFT: %.0fms\n", file.Plan.TTFT)
-		fmt.Printf("    - TPOT: %.2fms\n", file.Plan.TPOT)
-		fmt.Println()
 	}
 
 	// Print deployment instructions
 	if len(files) > 0 {
+		fmt.Println("\n" + strings.Repeat("-", 60))
 		fmt.Println("To deploy:")
-		fmt.Printf("  kubectl apply -f %s\n", files[0].Path)
+		for _, file := range files {
+			fmt.Printf("  kubectl apply -f %s\n", file.Path)
+		}
 		fmt.Println()
 		fmt.Println("To store plan for later comparison:")
 		fmt.Printf("  kubectl grove plan store my-inference -f %s\n", files[0].Path)

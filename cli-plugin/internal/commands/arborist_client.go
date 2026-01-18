@@ -20,6 +20,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 
 	operatorv1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
@@ -59,6 +60,7 @@ func (c *ArboristClient) GetAllPodCliqueSets(ctx context.Context) ([]operatorv1a
 	for _, item := range list.Items {
 		var pcs operatorv1alpha1.PodCliqueSet
 		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(item.Object, &pcs); err != nil {
+			log.Printf("Warning: failed to convert PodCliqueSet %s: %v", item.GetName(), err)
 			continue
 		}
 		podCliqueSets = append(podCliqueSets, pcs)
@@ -100,6 +102,7 @@ func (c *ArboristClient) GetPodCliquesForPodCliqueSet(ctx context.Context, pcsNa
 	for _, item := range list.Items {
 		var clique operatorv1alpha1.PodClique
 		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(item.Object, &clique); err != nil {
+			log.Printf("Warning: failed to convert PodClique %s: %v", item.GetName(), err)
 			continue
 		}
 		cliques = append(cliques, clique)
@@ -126,6 +129,7 @@ func (c *ArboristClient) GetPodGangsForPodCliqueSet(ctx context.Context, pcsName
 	for _, item := range list.Items {
 		var gang schedulerv1alpha1.PodGang
 		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(item.Object, &gang); err != nil {
+			log.Printf("Warning: failed to convert PodGang %s: %v", item.GetName(), err)
 			continue
 		}
 		gangs = append(gangs, gang)
