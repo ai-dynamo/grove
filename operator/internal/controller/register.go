@@ -34,7 +34,7 @@ func RegisterControllers(mgr ctrl.Manager, config configv1alpha1.OperatorConfigu
 	// Get scheduler name from configuration
 	schedulerName := config.SchedulerName
 	if schedulerName == "" {
-		schedulerName = "kai-scheduler" // Default to kai-scheduler
+		schedulerName = "default-scheduler" // Default to default-scheduler
 	}
 
 	// Initialize global backend with the configured scheduler

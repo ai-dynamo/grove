@@ -143,7 +143,7 @@ func (v *pcsValidator) validatePodCliqueTemplates(fldPath *field.Path) ([]string
 	// Validate scheduler names: all must be the same
 	uniqueSchedulerNames := lo.Uniq(lo.Map(schedulerNames, func(item string, _ int) string {
 		if item == "" {
-			return "kube-scheduler"
+			return "default-scheduler"
 		}
 		return item
 	}))
