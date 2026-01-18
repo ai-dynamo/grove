@@ -83,4 +83,3 @@ func (b *Backend) PreparePod(pod *corev1.Pod) {
 	// Set scheduler name from configuration
 	pod.Spec.SchedulerName = b.schedulerName
 }
-
