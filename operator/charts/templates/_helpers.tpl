@@ -26,7 +26,7 @@ config.yaml: |
     podClique:
       concurrentSyncs: {{ .Values.config.controllers.podClique.concurrentSyncs }}
   {{- if .Values.config.schedulerName }}
-  schedulerName: {{ .Values.config.schedulerName | default "kai-scheduler" }}
+  schedulerName: {{ .Values.config.schedulerName | default "default-scheduler" }}
   {{- end }}
   {{- if .Values.config.debugging }}
   debugging:
