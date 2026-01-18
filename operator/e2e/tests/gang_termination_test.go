@@ -22,6 +22,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -312,7 +313,18 @@ func Test_GT3_GangTerminationMinReplicasPCSOwned(t *testing.T) {
 	logger.Info("Gang-termination with min-replicas PCS-owned test (GT-3) completed successfully!")
 }
 
-// Test_GT4_GangTerminationMinReplicasPCSGOwned tests gang-termination behavior with min-replicas when a PCSG-owned PodClique is breached
+// Test_GT4_GangTerminationMinReplicasPCSGOwned tests PCSG-level gang-termination behavior when a PCSG replica is breached
+// but the PCSG's overall minAvailable is NOT breached. In this case, only the breached PCSG replica should be
+// gang-terminated, not the entire PCS replica.
+//
+// Workload WL2 has:
+// - pc-a: 2 replicas (PCS-owned, standalone)
+// - sg-x: PCSG with 2 replicas (minAvailable=1), each containing pc-b (1 pod) and pc-c (3 pods, minAvailable=1)
+//
+// When sg-x-1's pc-c loses all pods (breaching pc-c's minAvailable), the PCSG should:
+// - Gang-terminate only sg-x-1 (sg-x-1-pc-b and sg-x-1-pc-c)
+// - NOT terminate sg-x-0 or pc-a (since PCSG's minAvailable=1 is still satisfied by sg-x-0)
+//
 // Scenario GT-4:
 // 1. Initialize a 10-node Grove cluster
 // 2. Deploy workload WL2, and verify 10 newly created pods
@@ -328,7 +340,7 @@ func Test_GT3_GangTerminationMinReplicasPCSOwned(t *testing.T) {
 // 12. Verify that workload pods do not get gang-terminated
 // 13. Cordon nodes and then delete 2 remaining ready pods from PCSG-owned podclique pcs-0-sg-x-1-pc-c
 // 14. Wait for TerminationDelay seconds
-// 15. Verify that all pods in the workload get gang-terminated and recreated
+// 15. Verify that only PCSG replica sg-x-1 pods get gang-terminated and recreated (not the entire workload)
 func Test_GT4_GangTerminationMinReplicasPCSGOwned(t *testing.T) {
 	ctx := context.Background()
 
@@ -436,6 +448,27 @@ func Test_GT4_GangTerminationMinReplicasPCSGOwned(t *testing.T) {
 		t.Fatalf("Failed to list workload pods: %v", err)
 	}
 
+	// Capture pod UIDs BEFORE deleting the remaining pods - we need to track which pods should be terminated
+	// and which should remain unchanged
+	podsBeforeFinalDeletion, err := listPods(tc)
+	if err != nil {
+		t.Fatalf("Failed to list workload pods: %v", err)
+	}
+
+	// Identify pods that belong to sg-x-1 (should be terminated) vs other components (should remain)
+	sgx1PodUIDs := make(map[string]string)  // Pods in sg-x-1 (should be gang-terminated)
+	otherPodUIDs := make(map[string]string) // Pods NOT in sg-x-1 (should remain unchanged)
+	for _, pod := range podsBeforeFinalDeletion.Items {
+		clique := pod.Labels["grove.io/podclique"]
+		// sg-x-1 pods have clique names like "workload2-0-sg-x-1-pc-b" or "workload2-0-sg-x-1-pc-c"
+		if strings.Contains(clique, "-sg-x-1-") {
+			sgx1PodUIDs[pod.Name] = string(pod.UID)
+		} else {
+			otherPodUIDs[pod.Name] = string(pod.UID)
+		}
+	}
+	logger.Debugf("Pods in sg-x-1 (to be terminated): %d, Other pods (should remain): %d", len(sgx1PodUIDs), len(otherPodUIDs))
+
 	// Find and delete remaining pods from workload2-0-sg-x-1-pc-c
 	deletedPodsSgx1 := []string{firstPodSgx1}
 	for i := range 2 {
@@ -449,20 +482,121 @@ func Test_GT4_GangTerminationMinReplicasPCSGOwned(t *testing.T) {
 		}
 	}
 
-	// Capture pod UIDs before final gang termination
+	logger.Infof("14. Wait for TerminationDelay (%v) seconds", TerminationDelay)
+	time.Sleep(TerminationDelay)
+
+	logger.Info("15. Verify that only PCSG replica sg-x-1 pods get gang-terminated (not the entire workload)")
+	// sg-x-1 should have 4 pods: 1 from pc-b + 3 from pc-c
+	expectedSgx1Pods := 4
+	verifyPCSGReplicaGangTermination(tc, totalPods, sgx1PodUIDs, otherPodUIDs, expectedSgx1Pods)
+
+	logger.Info("PCSG-level gang-termination test (GT-4) completed successfully!")
+}
+
+// Test_GT5_GangTerminationPCSGMinAvailableBreach tests PCSG-level minAvailable breach that delegates to PCS-level gang termination.
+// When both PCSG replicas are breached, the PCSG's own minAvailable becomes unsatisfied, and it should delegate
+// to PCS-level gang termination (terminating the entire workload, including standalone pc-a).
+//
+// Workload WL2 has:
+// - pc-a: 2 replicas (PCS-owned, standalone)
+// - sg-x: PCSG with 2 replicas (minAvailable=1), each containing pc-b (1 pod) and pc-c (3 pods, minAvailable=1)
+//
+// Key difference from GT-4:
+// | Test | Breach                 | PCSG minAvailable       | Result                        |
+// |------|------------------------|-------------------------|-------------------------------|
+// | GT-4 | Only sg-x-1            | Still satisfied (1 ≥ 1) | Only sg-x-1 terminated        |
+// | GT-5 | Both sg-x-0 AND sg-x-1 | Breached (0 < 1)        | Entire PCS replica terminated |
+//
+// Scenario GT-5:
+// 1. Initialize a 10-node Grove cluster
+// 2. Deploy workload WL2, and verify 10 newly created pods
+// 3. Wait for pods to get scheduled and become ready
+// 4. Delete all 3 pods from sg-x-0-pc-c (breach sg-x-0)
+// 5. Immediately delete all 3 pods from sg-x-1-pc-c (breach sg-x-1)
+//    (Must do steps 4-5 quickly, within TerminationDelay window)
+// 6. Wait for TerminationDelay seconds
+// 7. Verify that ALL pods in the workload get gang-terminated and recreated (including pc-a)
+func Test_GT5_GangTerminationPCSGMinAvailableBreach(t *testing.T) {
+	ctx := context.Background()
+
+	logger.Info("1. Initialize a 10-node Grove cluster")
+	totalPods := 10 // pc-a: 2 replicas, pc-b: 1*2 (scaling group), pc-c: 3*2 (scaling group) = 2+2+6=10
+	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, totalPods)
+	defer cleanup()
+
+	logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
+	tc := TestContext{
+		T:             t,
+		Ctx:           ctx,
+		Clientset:     clientset,
+		RestConfig:    restConfig,
+		DynamicClient: dynamicClient,
+		Namespace:     "default",
+		Timeout:       defaultPollTimeout,
+		Interval:      defaultPollInterval,
+		Workload: &WorkloadConfig{
+			Name:         "workload2",
+			YAMLPath:     "../yaml/workload2-gt.yaml",
+			Namespace:    "default",
+			ExpectedPods: totalPods,
+		},
+	}
+
+	pods, err := deployAndVerifyWorkload(tc)
+	if err != nil {
+		t.Fatalf("Failed to deploy workload: %v", err)
+	}
+
+	logger.Info("3. Wait for pods to get scheduled and become ready")
+	if err := waitForReadyPods(tc, totalPods); err != nil {
+		t.Fatalf("Failed to wait for pods to be ready: %v", err)
+	}
+
+	// Verify pods are distributed across distinct nodes
+	listPodsAndAssertDistinctNodes(tc)
+
+	logger.Info("4. Delete all 3 pods from sg-x-0-pc-c (breach sg-x-0)")
 	pods, err = listPods(tc)
 	if err != nil {
 		t.Fatalf("Failed to list workload pods: %v", err)
 	}
-	podUIDsBeforeFinalDeletion := capturePodUIDs(pods)
 
-	logger.Infof("14. Wait for TerminationDelay (%v) seconds", TerminationDelay)
+	// Delete all 3 pods from sg-x-0-pc-c
+	deletedPodsSgx0 := deleteAllPodsFromPodClique(tc, pods, "workload2-0-sg-x-0-pc-c")
+	if len(deletedPodsSgx0) != 3 {
+		t.Fatalf("Expected to delete 3 pods from sg-x-0-pc-c, but deleted %d", len(deletedPodsSgx0))
+	}
+
+	logger.Info("5. Immediately delete all 3 pods from sg-x-1-pc-c (breach sg-x-1)")
+	// Refresh pod list
+	pods, err = listPods(tc)
+	if err != nil {
+		t.Fatalf("Failed to list workload pods: %v", err)
+	}
+
+	// Delete all 3 pods from sg-x-1-pc-c
+	deletedPodsSgx1 := deleteAllPodsFromPodClique(tc, pods, "workload2-0-sg-x-1-pc-c")
+	if len(deletedPodsSgx1) != 3 {
+		t.Fatalf("Expected to delete 3 pods from sg-x-1-pc-c, but deleted %d", len(deletedPodsSgx1))
+	}
+
+	// Capture pod UIDs after deletions for later verification
+	// Note: We need to capture these AFTER the deletions to track what remains
+	pods, err = listPods(tc)
+	if err != nil {
+		t.Fatalf("Failed to list workload pods: %v", err)
+	}
+	originalPodUIDs := capturePodUIDs(pods)
+
+	logger.Infof("6. Wait for TerminationDelay (%v) seconds", TerminationDelay)
 	time.Sleep(TerminationDelay)
 
-	logger.Info("15. Verify that all pods in the workload get gang-terminated and recreated")
-	verifyGangTermination(tc, totalPods, podUIDsBeforeFinalDeletion)
+	logger.Info("7. Verify that ALL pods in the workload get gang-terminated and recreated (including pc-a)")
+	// With both PCSG replicas breached, PCSG minAvailable (0 < 1) is violated
+	// This should trigger PCS-level gang termination, which terminates ALL pods including pc-a
+	verifyGangTermination(tc, totalPods, originalPodUIDs)
 
-	logger.Info("Gang-termination with min-replicas PCSG-owned test (GT-4) completed successfully!")
+	logger.Info("PCSG minAvailable breach → PCS-level gang-termination test (GT-5) completed successfully!")
 }
 
 // Helper functions
@@ -552,6 +686,38 @@ func findAndDeleteReadyPodFromPodCliqueExcluding(tc TestContext, pods *v1.PodLis
 	}
 
 	return targetPod.Name
+}
+
+// deleteAllPodsFromPodClique finds all ready pods from the specified podclique, cordons their nodes, and deletes them.
+// Returns the names of all deleted pods. This is used in GT-5 to quickly breach multiple PCSG replicas
+// within the TerminationDelay window.
+func deleteAllPodsFromPodClique(tc TestContext, pods *v1.PodList, podCliqueName string) []string {
+	var deletedPods []string
+
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if podCliqueLabel, exists := pod.Labels["grove.io/podclique"]; exists && podCliqueLabel == podCliqueName {
+			if pod.Status.Phase == v1.PodRunning && k8sutils.IsPodReady(pod) {
+				// Cordon the node
+				if err := cordonNode(tc, pod.Spec.NodeName); err != nil {
+					tc.T.Fatalf("Failed to cordon node %s: %v", pod.Spec.NodeName, err)
+				}
+
+				// Delete the pod
+				logger.Debugf("Deleting pod %s from node %s (podclique: %s)", pod.Name, pod.Spec.NodeName, podCliqueName)
+				if err := tc.Clientset.CoreV1().Pods(tc.Namespace).Delete(tc.Ctx, pod.Name, metav1.DeleteOptions{}); err != nil {
+					tc.T.Fatalf("Failed to delete pod %s: %v", pod.Name, err)
+				}
+				deletedPods = append(deletedPods, pod.Name)
+			}
+		}
+	}
+
+	if len(deletedPods) == 0 {
+		tc.T.Fatalf("Failed to find any ready pods from podclique %s", podCliqueName)
+	}
+
+	return deletedPods
 }
 
 // verifyNoGangTermination verifies that gang-termination has not occurred by checking that original pod UIDs still exist
@@ -698,5 +864,132 @@ func verifyGangTermination(tc TestContext, expectedPods int, originalPodUIDs map
 			logger.Errorf("Old pods remaining: %d/%d", oldUIDs, len(originalPodUIDs))
 		}
 		tc.T.Fatalf("Failed to verify gang-termination and recreation: %v", err)
+	}
+}
+
+// verifyPCSGReplicaGangTermination verifies that only the specified PCSG replica's pods were gang-terminated
+// while other pods in the workload remained unchanged. This tests PCSG-level gang termination where only
+// a single PCSG replica is breached but the PCSG's overall minAvailable is still satisfied.
+func verifyPCSGReplicaGangTermination(tc TestContext, expectedTotalPods int, terminatedPodUIDs, unchangedPodUIDs map[string]string, expectedTerminatedPods int) {
+	tc.T.Helper()
+
+	pollCount := 0
+	err := pollForCondition(tc, func() (bool, error) {
+		pollCount++
+		pods, err := tc.Clientset.CoreV1().Pods(tc.Namespace).List(tc.Ctx, metav1.ListOptions{
+			LabelSelector: tc.getLabelSelector(),
+		})
+		if err != nil {
+			return false, err
+		}
+
+		// Track current state
+		currentUIDs := make(map[string]string)
+		nonTerminatingCount := 0
+		terminatingCount := 0
+		newTerminatedPods := 0      // Pods that were in terminatedPodUIDs but now have new UIDs
+		unchangedPodsRemaining := 0 // Pods that were in unchangedPodUIDs and still have same UIDs
+
+		for _, pod := range pods.Items {
+			currentUIDs[pod.Name] = string(pod.UID)
+
+			if pod.DeletionTimestamp != nil {
+				terminatingCount++
+				continue
+			}
+			nonTerminatingCount++
+
+			// Check if this pod was supposed to be terminated (sg-x-1 pods)
+			// We look for pods with similar names (same clique) but different UIDs
+			for origName, origUID := range terminatedPodUIDs {
+				clique := pod.Labels["grove.io/podclique"]
+				origClique := strings.TrimSuffix(origName, origName[strings.LastIndex(origName, "-"):])
+				if strings.HasPrefix(clique, "workload2-0-sg-x-1-") && string(pod.UID) != origUID {
+					// This is a new pod for a sg-x-1 clique
+					newTerminatedPods++
+					break
+				}
+				_ = origClique // avoid unused variable
+			}
+		}
+
+		// Check that unchanged pods still have same UIDs
+		for origName, origUID := range unchangedPodUIDs {
+			if currentUID, exists := currentUIDs[origName]; exists && currentUID == origUID {
+				unchangedPodsRemaining++
+			}
+		}
+
+		// Count how many sg-x-1 pods now exist (should be expectedTerminatedPods with new UIDs)
+		sgx1PodsCount := 0
+		for _, pod := range pods.Items {
+			if pod.DeletionTimestamp != nil {
+				continue
+			}
+			clique := pod.Labels["grove.io/podclique"]
+			if strings.Contains(clique, "-sg-x-1-") {
+				sgx1PodsCount++
+			}
+		}
+
+		// Success criteria:
+		// 1. Total non-terminating pods equals expected total
+		// 2. sg-x-1 has the expected number of pods (recreated)
+		// 3. Unchanged pods (pc-a, sg-x-0-*) still have original UIDs
+		success := nonTerminatingCount == expectedTotalPods &&
+			sgx1PodsCount == expectedTerminatedPods &&
+			unchangedPodsRemaining == len(unchangedPodUIDs)
+
+		status := "OK"
+		if !success {
+			status = "WAITING"
+		}
+		logger.Debugf("%s [Poll %d] total=%d, non-terminating=%d/%d, terminating=%d, sg-x-1=%d/%d, unchanged=%d/%d",
+			status, pollCount, len(pods.Items), nonTerminatingCount, expectedTotalPods,
+			terminatingCount, sgx1PodsCount, expectedTerminatedPods,
+			unchangedPodsRemaining, len(unchangedPodUIDs))
+
+		return success, nil
+	})
+
+	if err != nil {
+		// Add detailed diagnostics on failure
+		pods, listErr := utils.ListPods(tc.Ctx, tc.Clientset, tc.Namespace, tc.getLabelSelector())
+		if listErr == nil {
+			logger.Errorf("PCSG replica gang-termination verification failed. Current pods:")
+			sgx1Count := 0
+			otherCount := 0
+			for _, pod := range pods.Items {
+				clique := pod.Labels["grove.io/podclique"]
+				isSgx1 := strings.Contains(clique, "-sg-x-1-")
+				if isSgx1 {
+					sgx1Count++
+				} else {
+					otherCount++
+				}
+				// Check if UID changed
+				var uidStatus string
+				if origUID, wasTerminated := terminatedPodUIDs[pod.Name]; wasTerminated {
+					if string(pod.UID) == origUID {
+						uidStatus = "SAME-UID (should be NEW)"
+					} else {
+						uidStatus = "NEW-UID (correct)"
+					}
+				} else if origUID, wasUnchanged := unchangedPodUIDs[pod.Name]; wasUnchanged {
+					if string(pod.UID) == origUID {
+						uidStatus = "SAME-UID (correct)"
+					} else {
+						uidStatus = "NEW-UID (should be SAME)"
+					}
+				} else {
+					uidStatus = "NEW-POD"
+				}
+				logger.Debugf("  Pod %s: clique=%s, phase=%s, uid=%s, %s, terminating=%v",
+					pod.Name, clique, pod.Status.Phase, pod.UID, uidStatus, pod.DeletionTimestamp != nil)
+			}
+			logger.Errorf("Summary: sg-x-1 pods=%d (expected %d), other pods=%d (expected %d)",
+				sgx1Count, expectedTerminatedPods, otherCount, len(unchangedPodUIDs))
+		}
+		tc.T.Fatalf("Failed to verify PCSG replica gang-termination: %v", err)
 	}
 }
