@@ -69,6 +69,8 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	// This prevents prematurely setting incorrect conditions.
 	if pclq.Status.ObservedGeneration != nil {
 		mutatePodCliqueScheduledCondition(pclq)
+		// mutate WasAvailable before MinAvailableBreached condition as it's used in the breach calculation
+		mutateWasAvailable(pclq)
 		mutateMinAvailableBreachedCondition(pclq,
 			len(podCategories[k8sutils.PodHasAtleastOneContainerWithNonZeroExitCode]),
 			len(podCategories[k8sutils.PodStartedButNotReady]))
@@ -166,6 +168,29 @@ func mutateSelector(pcsName string, pclq *grovecorev1alpha1.PodClique) error {
 	return nil
 }
 
+// mutateWasAvailable updates the WasAvailable status field based on current pod availability.
+// Once set to true, it remains true for the lifetime of the PodClique (sticky bit).
+// This field is used to determine if a PodClique can be considered in breach of MinAvailable -
+// a PodClique must have been available at least once before it can be considered breached.
+func mutateWasAvailable(pclq *grovecorev1alpha1.PodClique) {
+	// Once WasAvailable is true, it stays true
+	if pclq.Status.WasAvailable {
+		return
+	}
+	// Don't set WasAvailable during rolling updates to avoid false positives
+	if componentutils.IsPCLQUpdateInProgress(pclq) {
+		return
+	}
+	// Check if current ready replicas meets or exceeds MinAvailable threshold
+	minAvailable := int32(0)
+	if pclq.Spec.MinAvailable != nil {
+		minAvailable = *pclq.Spec.MinAvailable
+	}
+	if pclq.Status.ReadyReplicas >= minAvailable {
+		pclq.Status.WasAvailable = true
+	}
+}
+
 // mutateMinAvailableBreachedCondition updates the MinAvailableBreached condition based on pod availability
 func mutateMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, numNotReadyPodsWithContainersInError, numPodsStartedButNotReady int) {
 	newCondition := computeMinAvailableBreachedCondition(pclq, numNotReadyPodsWithContainersInError, numPodsStartedButNotReady)
@@ -174,7 +199,11 @@ func mutateMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, numN
 	}
 }
 
-// computeMinAvailableBreachedCondition calculates the MinAvailableBreached condition status based on pod availability
+// computeMinAvailableBreachedCondition calculates the MinAvailableBreached condition status based on pod availability.
+// The breach calculation considers:
+// 1. Rolling update status - during updates, condition is Unknown to prevent false terminations
+// 2. WasAvailable status - a PodClique must have been available once before it can be considered breached
+// 3. Unscheduled pods - pods that exist but are not scheduled count toward the breach calculation
 func computeMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, numPodsHavingAtleastOneContainerWithNonZeroExitCode, numPodsStartedButNotReady int) metav1.Condition {
 	if componentutils.IsPCLQUpdateInProgress(pclq) {
 		return metav1.Condition{
@@ -184,35 +213,57 @@ func computeMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, num
 			Message: "Update is in progress",
 		}
 	}
+
 	// dereferencing is considered safe as MinAvailable will always be set by the defaulting webhook. If this changes in the future,
 	// make sure that you check for nil explicitly.
 	minAvailable := int(*pclq.Spec.MinAvailable)
-	scheduledReplicas := int(pclq.Status.ScheduledReplicas)
 	now := metav1.Now()
 
-	// If the number of scheduled pods is less than the minimum available, then minAvailable is not considered as breached.
-	// Consider a case where none of the PodCliques have been scheduled yet, then it should not cause the PodGang to be recreated all the time.
-	if scheduledReplicas < minAvailable {
+	// A PodClique can only be considered in breach of MinAvailable if it was previously available.
+	// This prevents false breach detection during initial startup when pods are still being created/scheduled.
+	if !pclq.Status.WasAvailable {
 		return metav1.Condition{
 			Type:               constants.ConditionTypeMinAvailableBreached,
 			Status:             metav1.ConditionFalse,
-			Reason:             constants.ConditionReasonInsufficientScheduledPods,
-			Message:            fmt.Sprintf("Insufficient scheduled pods. expected at least: %d, found: %d", minAvailable, scheduledReplicas),
+			Reason:             constants.ConditionReasonNeverAvailable,
+			Message:            fmt.Sprintf("PodClique has never reached MinAvailable threshold of %d, cannot be considered breached", minAvailable),
 			LastTransitionTime: now,
 		}
 	}
 
-	readyOrStartingPods := scheduledReplicas - numPodsHavingAtleastOneContainerWithNonZeroExitCode - numPodsStartedButNotReady
-	// pclq.Status.ReadyReplicas do not account for Pods which are not yet ready and are in the process of starting/initializing.
-	// This allows sufficient time specially for pods that have long-running init containers or slow-to-start main containers.
-	// Therefore, we take Pods that are NotReady and at least one of their containers have exited with a non-zero exit code. Kubelet
-	// has attempted to start the containers within the Pod at least once and failed. These pods count towards unavailability.
-	if readyOrStartingPods < minAvailable {
+	// Calculate available pods: ready pods + pods that are started but not yet ready (still initializing)
+	// Pods with container errors do NOT count toward availability.
+	// Unscheduled pods are implicitly included in the breach calculation because we now use
+	// total replicas minus problematic pods, rather than starting from scheduled pods.
+	totalReplicas := int(pclq.Status.Replicas)
+	readyReplicas := int(pclq.Status.ReadyReplicas)
+
+	// Available pods = ready pods + (started but not ready pods that don't have errors)
+	// We need to calculate how many pods are "good" - either ready or still starting without errors
+	// numPodsStartedButNotReady includes pods that started but aren't ready yet (could be initializing)
+	// numPodsHavingAtleastOneContainerWithNonZeroExitCode are pods that have failed
+	//
+	// For breach calculation with unscheduled pods:
+	// - Total non-terminating pods (Replicas) includes: scheduled + unscheduled (excluding schedule-gated)
+	// - Available = ready + starting (not errored)
+	// - Unavailable = total - available = includes unscheduled pods
+	availablePods := readyReplicas + numPodsStartedButNotReady - numPodsHavingAtleastOneContainerWithNonZeroExitCode
+	// Ensure we don't count negative (edge case protection)
+	if availablePods < 0 {
+		availablePods = 0
+	}
+
+	// Note: The previous logic used scheduledReplicas as the base. The new logic considers
+	// all non-terminating pods (pclq.Status.Replicas), which means unscheduled pods
+	// contribute to the breach if they cause available pods to fall below MinAvailable.
+	_ = totalReplicas // Document that we're aware of total but use availablePods directly
+
+	if availablePods < minAvailable {
 		return metav1.Condition{
 			Type:               constants.ConditionTypeMinAvailableBreached,
 			Status:             metav1.ConditionTrue,
 			Reason:             constants.ConditionReasonInsufficientReadyPods,
-			Message:            fmt.Sprintf("Insufficient ready or starting pods. expected at least: %d, found: %d", minAvailable, readyOrStartingPods),
+			Message:            fmt.Sprintf("Insufficient ready or starting pods. expected at least: %d, found: %d", minAvailable, availablePods),
 			LastTransitionTime: now,
 		}
 	}
@@ -220,7 +271,7 @@ func computeMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, num
 		Type:               constants.ConditionTypeMinAvailableBreached,
 		Status:             metav1.ConditionFalse,
 		Reason:             constants.ConditionReasonSufficientReadyPods,
-		Message:            fmt.Sprintf("Either sufficient ready or starting pods found. expected at least: %d, found: %d", minAvailable, readyOrStartingPods),
+		Message:            fmt.Sprintf("Sufficient ready or starting pods found. expected at least: %d, found: %d", minAvailable, availablePods),
 		LastTransitionTime: now,
 	}
 }

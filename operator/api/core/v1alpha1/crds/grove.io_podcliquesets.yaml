@@ -9834,6 +9834,13 @@ spec:
                           required:
                           - maxReplicas
                           type: object
+                        terminationDelay:
+                          description: |-
+                            TerminationDelay overrides the PodCliqueSet-level terminationDelay for this scaling group.
+                            Can only be set if PodCliqueSetTemplateSpec.TerminationDelay is set (gang termination is enabled).
+                            When set, this value is used instead of the PodCliqueSet-level terminationDelay for gang termination
+                            decisions affecting this scaling group's replicas.
+                          type: string
                         topologyConstraint:
                           description: |-
                             TopologyConstraint defines topology placement requirements for PodCliqueScalingGroup.
@@ -9880,7 +9887,8 @@ spec:
                       If a PodGang remains a candidate past TerminationDelay then it will be terminated. This allows additional time
                       to the kube-scheduler to re-schedule sufficient pods in the PodGang that will result in having the total number of
                       running pods go above the threshold.
-                      Defaults to 4 hours.
+                      When not set (nil), gang termination is disabled for the entire PodCliqueSet.
+                      When set, gang termination is enabled and PodCliqueScalingGroups may optionally override this value.
                     type: string
                   topologyConstraint:
                     description: TopologyConstraint defines topology placement requirements

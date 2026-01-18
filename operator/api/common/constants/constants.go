@@ -112,6 +112,9 @@ const (
 	ConditionReasonSufficientAvailablePCSGReplicas = "SufficientAvailablePodCliqueScalingGroupReplicas"
 	// ConditionReasonUpdateInProgress indicates that the resource is undergoing rolling update.
 	ConditionReasonUpdateInProgress = "UpdateInProgress"
+	// ConditionReasonNeverAvailable indicates that the PodClique has never reached its MinAvailable threshold.
+	// A PodClique must have been available at least once before it can be considered in breach of MinAvailable.
+	ConditionReasonNeverAvailable = "NeverAvailable"
 	// ConditionReasonClusterTopologyNotFound indicates that the ClusterTopology resource required for topology-aware scheduling was not found.
 	ConditionReasonClusterTopologyNotFound = "ClusterTopologyNotFound"
 	// ConditionReasonTopologyLevelsUnavailable indicates that the one or more required topology levels defined on a

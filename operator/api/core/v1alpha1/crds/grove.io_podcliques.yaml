@@ -9117,11 +9117,20 @@ spec:
                   updated and are at the desired revision of the PodClique.
                 format: int32
                 type: integer
+              wasAvailable:
+                default: false
+                description: |-
+                  WasAvailable indicates whether the PodClique has ever reached its MinAvailable threshold.
+                  Once set to true, it remains true for the lifetime of the PodClique.
+                  This field is used for gang termination: a PodClique can only be considered in breach of
+                  MinAvailable if it was previously available (WasAvailable=true).
+                type: boolean
             required:
             - readyReplicas
             - scheduleGatedReplicas
             - scheduledReplicas
             - updatedReplicas
+            - wasAvailable
             type: object
         required:
         - spec
