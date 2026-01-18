@@ -171,8 +171,10 @@ func Test_CM1_CertManagementRoundTrip(t *testing.T) {
 		t.Fatalf("Failed to apply Certificate: %v", err)
 	}
 
-	// Wait for Secret to be created by Cert-Manager
-	waitForSecret(t, ctx, clientset, "grove-webhook-server-cert", true)
+	// Wait for cert-manager to actually take over the secret.
+	// This is critical because the secret may already exist from auto-provision mode,
+	// and we need to wait for cert-manager to update it (not just check existence).
+	waitForSecretManagedByCertManager(t, ctx, clientset, "grove-webhook-server-cert")
 
 	logger.Info("3. Upgrade Grove to use cert-manager (autoProvision=false)")
 	upgradeGroveToCertManager(t, ctx, restConfig)
@@ -260,6 +262,32 @@ func waitForSecret(t *testing.T, ctx context.Context, clientset *kubernetes.Clie
 	})
 	if err != nil {
 		t.Fatalf("Timeout waiting for secret %s (shouldExist=%v): %v", name, shouldExist, err)
+	}
+}
+
+// waitForSecretManagedByCertManager waits for a secret to exist AND be managed by cert-manager.
+// This is important because when transitioning from auto-provision to cert-manager mode,
+// the secret may already exist from auto-provision, and we need to wait for cert-manager
+// to actually update it (which is indicated by the cert-manager.io/certificate-name annotation).
+func waitForSecretManagedByCertManager(t *testing.T, ctx context.Context, clientset *kubernetes.Clientset, name string) {
+	t.Helper()
+
+	logger.Debugf("Waiting for secret %s to be managed by cert-manager...", name)
+	err := utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+		secret, err := clientset.CoreV1().Secrets("grove-system").Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return false, nil // Secret doesn't exist yet, keep waiting
+		}
+		// Check if cert-manager has taken ownership of this secret
+		certName := secret.Annotations[certManagerCertNameAnnotation]
+		if certName != "" {
+			logger.Debugf("Secret %s is now managed by cert-manager (certificate: %s)", name, certName)
+			return true, nil
+		}
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("Timeout waiting for secret %s to be managed by cert-manager: %v", name, err)
 	}
 }
 
@@ -511,36 +539,52 @@ func verifyWebhookSecretCertManagerStatus(ctx context.Context, clientset *kubern
 
 // verifyWebhookServingCertificate verifies that the webhook is actually serving the certificate from the Secret.
 // This connects to the webhook endpoint via TLS and compares the served certificate with the one in the Secret.
+// It includes retry logic to handle timing issues with:
+// - Kubernetes secret volume propagation delays
+// - The certwatcher's 10-second polling interval for detecting certificate changes
 func verifyWebhookServingCertificate(t *testing.T, ctx context.Context, clientset *kubernetes.Clientset, restConfig *rest.Config) {
 	t.Helper()
 
-	logger.Debug("Verifying webhook is serving the correct certificate...")
+	logger.Debug("Verifying webhook is serving the correct certificate (with retries for cert reload timing)...")
 
-	// Get the certificate from the Secret
-	expectedCert, err := getCertificateFromSecret(ctx, clientset)
+	// Retry for up to 30 seconds to account for:
+	// - Kubernetes secret volume update propagation (can take up to the kubelet sync period)
+	// - certwatcher 10-second polling interval
+	var lastExpectedSerial, lastServedSerial string
+	err := utils.PollForCondition(ctx, 30*time.Second, 2*time.Second, func() (bool, error) {
+		// Get the certificate from the Secret
+		expectedCert, err := getCertificateFromSecret(ctx, clientset)
+		if err != nil {
+			logger.Debugf("Failed to get certificate from secret: %v", err)
+			return false, nil
+		}
+		lastExpectedSerial = expectedCert.SerialNumber.String()
+
+		// Get the certificate the webhook is actually serving
+		servedCert, err := getServedCertificate(ctx, clientset, restConfig)
+		if err != nil {
+			logger.Debugf("Failed to get served certificate from webhook: %v", err)
+			return false, nil
+		}
+		lastServedSerial = servedCert.SerialNumber.String()
+
+		// Compare the certificates
+		if certificatesMatch(expectedCert, servedCert) {
+			logger.Debugf("Certificate match! Serial: %s", lastExpectedSerial)
+			return true, nil
+		}
+
+		logger.Debugf("Certificate mismatch (will retry): expected serial=%s, served serial=%s",
+			lastExpectedSerial, lastServedSerial)
+		return false, nil
+	})
+
 	if err != nil {
-		t.Fatalf("Failed to get certificate from secret: %v", err)
-	}
-	logger.Debugf("Expected certificate serial number: %s", expectedCert.SerialNumber.String())
-
-	// Get the certificate the webhook is actually serving
-	servedCert, err := getServedCertificate(ctx, clientset, restConfig)
-	if err != nil {
-		t.Fatalf("Failed to get served certificate from webhook: %v", err)
-	}
-	logger.Debugf("Served certificate serial number: %s", servedCert.SerialNumber.String())
-
-	// Compare the certificates
-	if !certificatesMatch(expectedCert, servedCert) {
-		t.Fatalf("Certificate mismatch: webhook is not serving the expected certificate.\n"+
+		t.Fatalf("Certificate mismatch: webhook is not serving the expected certificate after retries.\n"+
 			"Expected serial: %s\n"+
 			"Served serial: %s\n"+
-			"Expected subject: %s\n"+
-			"Served subject: %s",
-			expectedCert.SerialNumber.String(),
-			servedCert.SerialNumber.String(),
-			expectedCert.Subject.String(),
-			servedCert.Subject.String())
+			"This may indicate the operator has not reloaded the certificate from the secret.",
+			lastExpectedSerial, lastServedSerial)
 	}
 
 	logger.Debug("Verified: webhook is serving the correct certificate from the Secret")
