@@ -18,8 +18,13 @@ package setup
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +32,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	"github.com/ai-dynamo/grove/operator/internal/utils/ioutil"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/registry"
 	dockerclient "github.com/docker/docker/client"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -495,6 +501,67 @@ func (scm *SharedClusterManager) Teardown() {
 	}
 }
 
+// getDockerAuthForImage returns the base64-encoded auth string for pulling from Docker Hub
+// by reading credentials from ~/.docker/config.json
+func getDockerAuthForImage(imageName string) string {
+	// Determine the registry for the image
+	registryHost := "https://index.docker.io/v1/" // Default Docker Hub
+	if strings.Contains(imageName, "/") {
+		parts := strings.SplitN(imageName, "/", 2)
+		// Check if the first part looks like a registry (contains a dot or is localhost)
+		if strings.Contains(parts[0], ".") || strings.Contains(parts[0], ":") {
+			registryHost = parts[0]
+		}
+	}
+
+	// Read Docker config
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	configPath := filepath.Join(homeDir, ".docker", "config.json")
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return ""
+	}
+
+	var config struct {
+		Auths map[string]struct {
+			Auth string `json:"auth"`
+		} `json:"auths"`
+	}
+
+	if err := json.Unmarshal(configData, &config); err != nil {
+		return ""
+	}
+
+	// Try to find auth for the registry
+	if auth, ok := config.Auths[registryHost]; ok && auth.Auth != "" {
+		// The auth is already base64 encoded in the config, but we need to re-encode
+		// as a JSON object for the Docker API
+		decoded, err := base64.StdEncoding.DecodeString(auth.Auth)
+		if err != nil {
+			return ""
+		}
+		parts := strings.SplitN(string(decoded), ":", 2)
+		if len(parts) != 2 {
+			return ""
+		}
+		authConfig := registry.AuthConfig{
+			Username: parts[0],
+			Password: parts[1],
+		}
+		encodedJSON, err := json.Marshal(authConfig)
+		if err != nil {
+			return ""
+		}
+		return base64.StdEncoding.EncodeToString(encodedJSON)
+	}
+
+	return ""
+}
+
 // setupRegistryTestImages sets up test images in the registry
 func setupRegistryTestImages(registryPort string, images []string) error {
 	if len(images) == 0 {
@@ -514,17 +581,25 @@ func setupRegistryTestImages(registryPort string, images []string) error {
 	for _, imageName := range images {
 		registryImage := fmt.Sprintf("localhost:%s/%s", registryPort, imageName)
 
-		// Step 1: Pull the image
-		pullReader, err := cli.ImagePull(ctx, imageName, image.PullOptions{})
+		// Step 1: Check if image already exists locally, otherwise pull it
+		_, _, err = cli.ImageInspectWithRaw(ctx, imageName)
 		if err != nil {
-			return fmt.Errorf("failed to pull %s: %w", imageName, err)
-		}
+			// Image doesn't exist locally, need to pull it
+			pullOpts := image.PullOptions{}
+			if authStr := getDockerAuthForImage(imageName); authStr != "" {
+				pullOpts.RegistryAuth = authStr
+			}
+			pullReader, pullErr := cli.ImagePull(ctx, imageName, pullOpts)
+			if pullErr != nil {
+				return fmt.Errorf("failed to pull %s: %w", imageName, pullErr)
+			}
 
-		// Consume the pull output to avoid blocking
-		_, err = io.Copy(io.Discard, pullReader)
-		ioutil.CloseQuietly(pullReader)
-		if err != nil {
-			return fmt.Errorf("failed to read pull output for %s: %w", imageName, err)
+			// Consume the pull output to avoid blocking
+			_, pullErr = io.Copy(io.Discard, pullReader)
+			ioutil.CloseQuietly(pullReader)
+			if pullErr != nil {
+				return fmt.Errorf("failed to read pull output for %s: %w", imageName, pullErr)
+			}
 		}
 
 		// Step 2: Tag the image for the local registry
