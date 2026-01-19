@@ -895,8 +895,12 @@ func prepullImages(ctx context.Context, images []string, registryPort string, lo
 
 			logger.Debugf("  🔄 Pulling image: %s", img)
 
-			// Pull the image using Docker API
-			pullReader, err := dockerClient.ImagePull(ctx, img, image.PullOptions{})
+			// Pull the image using Docker API with auth
+			pullOpts := image.PullOptions{}
+			if authStr := getDockerAuthForImage(img); authStr != "" {
+				pullOpts.RegistryAuth = authStr
+			}
+			pullReader, err := dockerClient.ImagePull(ctx, img, pullOpts)
 			if err != nil {
 				errChan <- fmt.Errorf("failed to pull %s: %w", img, err)
 				return
