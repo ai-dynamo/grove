@@ -217,6 +217,24 @@ func computeMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique) met
 	minAvailable := int(*pclq.Spec.MinAvailable)
 	now := metav1.Now()
 
+	// Only ready pods count toward availability for breach detection.
+	// Starting pods (pods that have started but aren't ready yet) do NOT count.
+	// This ensures that a PodClique is considered in breach as soon as ready pods
+	// drop below MinAvailable, regardless of how many pods are still starting.
+	readyReplicas := int(pclq.Status.ReadyReplicas)
+
+	// If we have sufficient ready pods, there's no breach - no need to check WasAvailable
+	if readyReplicas >= minAvailable {
+		return metav1.Condition{
+			Type:               constants.ConditionTypeMinAvailableBreached,
+			Status:             metav1.ConditionFalse,
+			Reason:             constants.ConditionReasonSufficientReadyPods,
+			Message:            fmt.Sprintf("Sufficient ready pods found. Expected at least: %d, found: %d", minAvailable, readyReplicas),
+			LastTransitionTime: now,
+		}
+	}
+
+	// At this point, readyReplicas < minAvailable. Check if this is a real breach or just startup.
 	// A PodClique can only be considered in breach of MinAvailable if it was previously available.
 	// This prevents false breach detection during initial startup when pods are still being created/scheduled.
 	if !pclq.Status.WasAvailable {
@@ -229,26 +247,12 @@ func computeMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique) met
 		}
 	}
 
-	// Only ready pods count toward availability for breach detection.
-	// Starting pods (pods that have started but aren't ready yet) do NOT count.
-	// This ensures that a PodClique is considered in breach as soon as ready pods
-	// drop below MinAvailable, regardless of how many pods are still starting.
-	readyReplicas := int(pclq.Status.ReadyReplicas)
-
-	if readyReplicas < minAvailable {
-		return metav1.Condition{
-			Type:               constants.ConditionTypeMinAvailableBreached,
-			Status:             metav1.ConditionTrue,
-			Reason:             constants.ConditionReasonInsufficientReadyPods,
-			Message:            fmt.Sprintf("Insufficient ready pods. expected at least: %d, found: %d", minAvailable, readyReplicas),
-			LastTransitionTime: now,
-		}
-	}
+	// WasAvailable is true and readyReplicas < minAvailable - this is a real breach
 	return metav1.Condition{
 		Type:               constants.ConditionTypeMinAvailableBreached,
-		Status:             metav1.ConditionFalse,
-		Reason:             constants.ConditionReasonSufficientReadyPods,
-		Message:            fmt.Sprintf("Sufficient ready pods found. expected at least: %d, found: %d", minAvailable, readyReplicas),
+		Status:             metav1.ConditionTrue,
+		Reason:             constants.ConditionReasonInsufficientReadyPods,
+		Message:            fmt.Sprintf("Insufficient ready pods. Expected at least: %d, found: %d", minAvailable, readyReplicas),
 		LastTransitionTime: now,
 	}
 }
