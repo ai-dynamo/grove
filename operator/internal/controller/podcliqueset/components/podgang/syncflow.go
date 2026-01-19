@@ -546,11 +546,11 @@ func (r _resource) patchPodGangInitializedStatus(sc *syncContext, podGang *grove
 			Namespace: sc.pcs.Namespace,
 		},
 	}
-	
+
 	// Set Initialized condition to True and Phase to Pending
 	setInitializedCondition(statusPatch, metav1.ConditionTrue, "AllPodsCreated", "All pods have been created and references populated")
 	statusPatch.Status.Phase = groveschedulerv1alpha1.PodGangPhasePending
-	
+
 	// Patch status (idempotent - if already True, no change will be made)
 	if err := r.client.Status().Patch(sc.ctx, statusPatch, client.Merge); err != nil {
 		// Log but don't fail - status update is not critical
@@ -558,7 +558,7 @@ func (r _resource) patchPodGangInitializedStatus(sc *syncContext, podGang *grove
 			"podGang", podGang.Name)
 		return nil // Don't fail the entire operation for status updates
 	}
-	
+
 	sc.logger.Info("Successfully updated PodGang with pod references and set Initialized=True",
 		"podGang", podGang.Name)
 	return nil
@@ -568,7 +568,7 @@ func (r _resource) patchPodGangInitializedStatus(sc *syncContext, podGang *grove
 func (r _resource) patchPodGangWithPodReferences(sc *syncContext, podGang *groveschedulerv1alpha1.PodGang, podGangInfo *podGangInfo) error {
 	// Build PodGroups with pod references from syncContext
 	podGroups := r.buildPodGroupsFromContext(sc, podGangInfo)
-	
+
 	// Create patch object
 	patchPodGang := &groveschedulerv1alpha1.PodGang{
 		ObjectMeta: metav1.ObjectMeta{
@@ -579,7 +579,7 @@ func (r _resource) patchPodGangWithPodReferences(sc *syncContext, podGang *grove
 			PodGroups: podGroups,
 		},
 	}
-	
+
 	// Apply patch
 	if err := r.client.Patch(sc.ctx, patchPodGang, client.Merge); err != nil {
 		return groveerr.WrapError(err,
@@ -588,7 +588,7 @@ func (r _resource) patchPodGangWithPodReferences(sc *syncContext, podGang *grove
 			fmt.Sprintf("Failed to patch PodGang %s with pod references", podGang.Name),
 		)
 	}
-	
+
 	sc.logger.Info("Successfully patched PodGang with pod references",
 		"podGang", podGang.Name,
 		"numPodGroups", len(podGroups))
@@ -598,11 +598,11 @@ func (r _resource) patchPodGangWithPodReferences(sc *syncContext, podGang *grove
 // buildPodGroupsFromContext constructs PodGroups with pod references from syncContext data
 func (r _resource) buildPodGroupsFromContext(sc *syncContext, podGangInfo *podGangInfo) []groveschedulerv1alpha1.PodGroup {
 	podsByGroup := r.groupPodsByPodClique(sc, podGangInfo)
-	
+
 	podGroups := make([]groveschedulerv1alpha1.PodGroup, 0, len(podGangInfo.pclqs))
 	for _, pclqInfo := range podGangInfo.pclqs {
 		pods := podsByGroup[pclqInfo.fqn]
-		
+
 		// Build podReferences list
 		podReferences := make([]groveschedulerv1alpha1.NamespacedName, 0, len(pods))
 		for _, pod := range pods {
@@ -611,19 +611,19 @@ func (r _resource) buildPodGroupsFromContext(sc *syncContext, podGangInfo *podGa
 				Name:      pod.Name,
 			})
 		}
-		
+
 		// Sort for consistency
 		sort.Slice(podReferences, func(i, j int) bool {
 			return podReferences[i].Name < podReferences[j].Name
 		})
-		
+
 		podGroups = append(podGroups, groveschedulerv1alpha1.PodGroup{
 			Name:          pclqInfo.fqn,
 			PodReferences: podReferences,
 			MinReplicas:   pclqInfo.minAvailable,
 		})
 	}
-	
+
 	return podGroups
 }
 
@@ -668,34 +668,6 @@ func (r _resource) groupPodsByPodClique(sc *syncContext, podGangInfo *podGangInf
 		}
 	}
 	return podsByGroup
-}
-
-// isInitialized checks if PodGang has Initialized condition set to True
-// and all PodGroups have non-empty podReferences.
-func isInitialized(podGang *groveschedulerv1alpha1.PodGang) bool {
-	// First check if Initialized condition is True
-	hasInitializedCondition := false
-	for _, cond := range podGang.Status.Conditions {
-		if cond.Type == string(groveschedulerv1alpha1.PodGangConditionTypeInitialized) &&
-			cond.Status == metav1.ConditionTrue {
-			hasInitializedCondition = true
-			break
-		}
-	}
-
-	if !hasInitializedCondition {
-		return false
-	}
-
-	// Also verify that all PodGroups have enough podReferences to meet minReplicas
-	// This ensures we don't skip initialization if spec was somehow reset or incomplete
-	for _, pg := range podGang.Spec.PodGroups {
-		if int32(len(pg.PodReferences)) < pg.MinReplicas {
-			return false
-		}
-	}
-
-	return true
 }
 
 // setInitializedCondition sets the PodGangInitialized condition.
