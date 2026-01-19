@@ -1,0 +1,86 @@
+# Workload 8: SP-1 - Full 3-Level Hierarchy with Cascading Constraints
+# Test scenario: PCS (block) → PCSG (rack) → PCLQ (host) - demonstrating constraint inheritance
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: tas-hierarchy
+  labels:
+    app: tas-hierarchy
+spec:
+  replicas: 1
+  template:
+    topologyConstraint:
+      packDomain: block  # PCS level - broadest
+    podCliqueScalingGroups:
+      - name: inference-group
+        replicas: 2
+        minAvailable: 2
+        topologyConstraint:
+          packDomain: rack  # PCSG level - stricter than parent
+        cliqueNames:
+          - prefill
+          - decode
+    cliques:
+      - name: prefill
+        labels:
+          kai.scheduler/queue: test
+        topologyConstraint:
+          packDomain: host  # PCLQ level - strictest
+        spec:
+          roleName: prefill
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: prefill
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 30Mi
+      - name: decode
+        labels:
+          kai.scheduler/queue: test
+        topologyConstraint:
+          packDomain: host  # PCLQ level - strictest
+        spec:
+          roleName: decode
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: decode
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 30Mi
