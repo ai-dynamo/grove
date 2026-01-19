@@ -17,13 +17,19 @@
 package podclique
 
 import (
+	"context"
 	"testing"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
+	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // TestPcsHasNoActiveRollingUpdate tests the pcsHasNoActiveRollingUpdate function
@@ -101,4 +107,85 @@ func TestGetOrderedKindsForSync(t *testing.T) {
 	kinds := getOrderedKindsForSync()
 	assert.Equal(t, 1, len(kinds))
 	assert.Equal(t, component.KindPod, kinds[0])
+}
+
+// TestUpdateObservedGeneration tests the updateObservedGeneration function for PodClique
+func TestUpdateObservedGeneration(t *testing.T) {
+	const (
+		testNamespace = "test-namespace"
+		testPCSName   = "test-pcs"
+	)
+
+	tests := []struct {
+		name               string
+		setupPCLQ          func() *grovecorev1alpha1.PodClique
+		expectPatchSkipped bool
+		expectedGeneration int64
+	}{
+		{
+			name: "patch_skipped_when_observed_equals_generation",
+			setupPCLQ: func() *grovecorev1alpha1.PodClique {
+				pclq := testutils.NewPodCliqueBuilder(testPCSName, uuid.NewUUID(), "worker", testNamespace, 0).Build()
+				pclq.Generation = 5
+				pclq.Status.ObservedGeneration = ptr.To(int64(5))
+				return pclq
+			},
+			expectPatchSkipped: true,
+			expectedGeneration: 5,
+		},
+		{
+			name: "patch_made_when_observed_is_nil",
+			setupPCLQ: func() *grovecorev1alpha1.PodClique {
+				pclq := testutils.NewPodCliqueBuilder(testPCSName, uuid.NewUUID(), "worker", testNamespace, 0).Build()
+				pclq.Generation = 3
+				pclq.Status.ObservedGeneration = nil
+				return pclq
+			},
+			expectPatchSkipped: false,
+			expectedGeneration: 3,
+		},
+		{
+			name: "patch_made_when_observed_differs_from_generation",
+			setupPCLQ: func() *grovecorev1alpha1.PodClique {
+				pclq := testutils.NewPodCliqueBuilder(testPCSName, uuid.NewUUID(), "worker", testNamespace, 0).Build()
+				pclq.Generation = 7
+				pclq.Status.ObservedGeneration = ptr.To(int64(4))
+				return pclq
+			},
+			expectPatchSkipped: false,
+			expectedGeneration: 7,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pclq := tt.setupPCLQ()
+			originalObservedGen := pclq.Status.ObservedGeneration
+
+			fakeClient := testutils.SetupFakeClient(pclq)
+			reconciler := &Reconciler{client: fakeClient}
+
+			result := reconciler.updateObservedGeneration(context.Background(), logr.Discard(), pclq)
+
+			require.False(t, result.HasErrors(), "updateObservedGeneration should not return errors")
+
+			// Verify the result continues reconciliation
+			_, err := result.Result()
+			assert.NoError(t, err)
+
+			// Fetch the updated object from the fake client
+			updatedPCLQ := &grovecorev1alpha1.PodClique{}
+			err = fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pclq), updatedPCLQ)
+			require.NoError(t, err)
+
+			// Verify ObservedGeneration is set correctly
+			require.NotNil(t, updatedPCLQ.Status.ObservedGeneration, "ObservedGeneration should not be nil after update")
+			assert.Equal(t, tt.expectedGeneration, *updatedPCLQ.Status.ObservedGeneration)
+
+			if tt.expectPatchSkipped {
+				// If patch was skipped, the ObservedGeneration should remain unchanged
+				assert.Equal(t, originalObservedGen, updatedPCLQ.Status.ObservedGeneration)
+			}
+		})
+	}
 }
