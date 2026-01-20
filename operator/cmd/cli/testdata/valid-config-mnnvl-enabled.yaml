@@ -35,6 +35,6 @@ authorizer:
   enabled: false
 clusterTopology:
   enabled: false
-mnnvl:
-  enabled: true
+network:
+  autoMNNVLEnabled: true
 

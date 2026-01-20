@@ -130,7 +130,7 @@ func TestLoadAndValidateOperatorConfig(t *testing.T) {
 				assert.Equal(t, 9445, config.Server.Metrics.Port)
 				assert.NotNil(t, config.Controllers.PodCliqueSet.ConcurrentSyncs)
 				assert.Equal(t, 3, *config.Controllers.PodCliqueSet.ConcurrentSyncs)
-				assert.False(t, config.MNNVL.Enabled, "MNNVL should be disabled by default")
+				assert.False(t, config.Network.AutoMNNVLEnabled, "MNNVL should be disabled by default")
 			},
 		},
 		{
@@ -138,7 +138,7 @@ func TestLoadAndValidateOperatorConfig(t *testing.T) {
 			configFile: "testdata/valid-config-mnnvl-enabled.yaml",
 			validateFunc: func(t *testing.T, config *configv1alpha1.OperatorConfiguration) {
 				require.NotNil(t, config)
-				assert.True(t, config.MNNVL.Enabled, "MNNVL should be enabled")
+				assert.True(t, config.Network.AutoMNNVLEnabled, "MNNVL should be enabled")
 			},
 		},
 		{

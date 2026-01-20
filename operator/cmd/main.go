@@ -31,11 +31,10 @@ import (
 	grovectrl "github.com/ai-dynamo/grove/operator/internal/controller"
 	"github.com/ai-dynamo/grove/operator/internal/controller/cert"
 	grovelogger "github.com/ai-dynamo/grove/operator/internal/logger"
+	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	groveversion "github.com/ai-dynamo/grove/operator/internal/version"
 
 	"github.com/spf13/pflag"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/discovery"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -65,9 +64,9 @@ func main() {
 	logger.Info("Starting grove operator", "grove-info", groveInfo.Verbose())
 	printFlags()
 
-	// Validate MNNVL prerequisites if the feature is enabled
-	if err := validateMNNVLPrerequisites(operatorConfig); err != nil {
-		logger.Error(err, "MNNVL prerequisites validation failed")
+	// Run MNNVL preflight checks if the feature is enabled
+	if err := mnnvl.Preflight(operatorConfig); err != nil {
+		logger.Error(err, "MNNVL preflight check failed")
 		handleErrorAndExit(err, cli.ExitErrMNNVLPrerequisites)
 	}
 
@@ -127,58 +126,6 @@ func printFlags() {
 		flagKVs = append(flagKVs, f.Name, f.Value.String())
 	})
 	logger.Info("Running with flags", flagKVs...)
-}
-
-// validateMNNVLPrerequisites checks if MNNVL prerequisites are met when the feature is enabled.
-// If MNNVL is enabled, it verifies that the ComputeDomain CRD is installed in the cluster.
-func validateMNNVLPrerequisites(operatorCfg *configv1alpha1.OperatorConfiguration) error {
-	if !operatorCfg.MNNVL.Enabled {
-		return nil
-	}
-
-	logger.Info("MNNVL support is enabled, validating prerequisites")
-
-	// Check for ComputeDomain CRD using discovery client
-	cfg, err := ctrl.GetConfig()
-	if err != nil {
-		return fmt.Errorf("failed to get cluster config for MNNVL validation: %w", err)
-	}
-
-	discoveryClient, err := discovery.NewDiscoveryClientForConfig(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to create discovery client for MNNVL validation: %w", err)
-	}
-
-	// Check if the ComputeDomain CRD exists
-	_, apiResourceList, err := discoveryClient.ServerGroupsAndResources()
-	if err != nil {
-		// Handle partial discovery errors gracefully
-		if !discovery.IsGroupDiscoveryFailedError(err) {
-			return fmt.Errorf("failed to discover API resources: %w", err)
-		}
-	}
-
-	if !isComputeDomainCRDPresent(apiResourceList) {
-		return fmt.Errorf("MNNVL is enabled but ComputeDomain CRD (%s) is not installed. "+
-			"Please install the NVIDIA DRA driver or disable MNNVL in the operator configuration", apicommonconstants.ComputeDomainCRDName)
-	}
-
-	logger.Info("ComputeDomain CRD found, MNNVL prerequisites validated")
-	return nil
-}
-
-// isComputeDomainCRDPresent checks if the ComputeDomain CRD is present in the API resource list.
-// This is extracted as a separate function to enable unit testing.
-func isComputeDomainCRDPresent(apiResourceList []*metav1.APIResourceList) bool {
-	computeDomainGroupVersion := apicommonconstants.ComputeDomainGroup + "/" + apicommonconstants.ComputeDomainVersion
-	for _, resourceList := range apiResourceList {
-		for _, resource := range resourceList.APIResources {
-			if resource.Name == apicommonconstants.ComputeDomainResource && resourceList.GroupVersion == computeDomainGroupVersion {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // handleErrorAndExit gracefully handles errors before exiting the program.

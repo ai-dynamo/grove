@@ -781,6 +781,22 @@ _Appears in:_
 | `error` | ErrorLevel is a log level where only errors are logged.<br /> |
 
 
+#### NetworkAcceleration
+
+
+
+NetworkAcceleration defines the configuration for network acceleration features.
+
+
+
+_Appears in:_
+- [OperatorConfiguration](#operatorconfiguration)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `autoMNNVLEnabled` _boolean_ | AutoMNNVLEnabled indicates whether automatic MNNVL (Multi-Node NVLink) support is enabled.<br />When enabled, the operator will automatically create and manage ComputeDomain resources<br />for GPU workloads. If the cluster doesn't have the NVIDIA OpenDRA driver installed,<br />the operator will exit with a non-zero exit code.<br />Default: false |  |  |
+
+
 
 
 #### PodCliqueControllerConfiguration

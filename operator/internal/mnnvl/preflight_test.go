@@ -14,12 +14,10 @@
 // limitations under the License.
 // */
 
-package main
+package mnnvl
 
 import (
 	"testing"
-
-	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -45,9 +43,9 @@ func TestIsComputeDomainCRDPresent(t *testing.T) {
 			name: "ComputeDomain CRD present with correct group version",
 			apiResourceList: []*metav1.APIResourceList{
 				{
-					GroupVersion: apicommonconstants.ComputeDomainGroup + "/" + apicommonconstants.ComputeDomainVersion,
+					GroupVersion: ComputeDomainGroup + "/" + ComputeDomainVersion,
 					APIResources: []metav1.APIResource{
-						{Name: apicommonconstants.ComputeDomainResource},
+						{Name: ComputeDomainResource},
 					},
 				},
 			},
@@ -64,10 +62,10 @@ func TestIsComputeDomainCRDPresent(t *testing.T) {
 					},
 				},
 				{
-					GroupVersion: apicommonconstants.ComputeDomainGroup + "/" + apicommonconstants.ComputeDomainVersion,
+					GroupVersion: ComputeDomainGroup + "/" + ComputeDomainVersion,
 					APIResources: []metav1.APIResource{
 						{Name: "resourceclaims"},
-						{Name: apicommonconstants.ComputeDomainResource},
+						{Name: ComputeDomainResource},
 					},
 				},
 			},
@@ -77,7 +75,7 @@ func TestIsComputeDomainCRDPresent(t *testing.T) {
 			name: "wrong resource name",
 			apiResourceList: []*metav1.APIResourceList{
 				{
-					GroupVersion: apicommonconstants.ComputeDomainGroup + "/" + apicommonconstants.ComputeDomainVersion,
+					GroupVersion: ComputeDomainGroup + "/" + ComputeDomainVersion,
 					APIResources: []metav1.APIResource{
 						{Name: "wrongresource"},
 					},
@@ -91,7 +89,7 @@ func TestIsComputeDomainCRDPresent(t *testing.T) {
 				{
 					GroupVersion: "wrong.group/v1beta1",
 					APIResources: []metav1.APIResource{
-						{Name: apicommonconstants.ComputeDomainResource},
+						{Name: ComputeDomainResource},
 					},
 				},
 			},
@@ -101,9 +99,9 @@ func TestIsComputeDomainCRDPresent(t *testing.T) {
 			name: "wrong version",
 			apiResourceList: []*metav1.APIResourceList{
 				{
-					GroupVersion: apicommonconstants.ComputeDomainGroup + "/v2",
+					GroupVersion: ComputeDomainGroup + "/v2",
 					APIResources: []metav1.APIResource{
-						{Name: apicommonconstants.ComputeDomainResource},
+						{Name: ComputeDomainResource},
 					},
 				},
 			},
@@ -115,7 +113,7 @@ func TestIsComputeDomainCRDPresent(t *testing.T) {
 				{
 					GroupVersion: "resource.nvidia.com/v1",
 					APIResources: []metav1.APIResource{
-						{Name: apicommonconstants.ComputeDomainResource},
+						{Name: ComputeDomainResource},
 					},
 				},
 			},
@@ -125,7 +123,7 @@ func TestIsComputeDomainCRDPresent(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			result := isComputeDomainCRDPresent(test.apiResourceList)
+			result := IsComputeDomainCRDPresent(test.apiResourceList)
 			assert.Equal(t, test.expected, result)
 		})
 	}
