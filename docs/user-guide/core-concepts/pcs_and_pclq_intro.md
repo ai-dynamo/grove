@@ -31,11 +31,11 @@ spec:
           - name: model-worker
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Model Worker (Aggregated) on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Model Worker (Aggregated) on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "1"
-                memory: "2Gi"
+                cpu: "10m"
+                memory: "32Mi"
 ```
 
 ### **Key Points:**
@@ -135,11 +135,11 @@ spec:
           - name: prefill
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Prefill Worker on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Prefill Worker on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "2"
-                memory: "4Gi"
+                cpu: "10m"
+                memory: "32Mi"
     - name: decode
       spec:
         roleName: decode
@@ -154,11 +154,11 @@ spec:
           - name: decode
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Decode Worker on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Decode Worker on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "1"
-                memory: "2Gi"
+                cpu: "10m"
+                memory: "32Mi"
 ```
 
 ### **Key Points:**
@@ -193,7 +193,7 @@ You can scale the `prefill` and `decode` PodCliques the same way the [`model-wor
 
 Additionally, the `single-node-disaggregated` PodCliqueSet can be scaled the same way the `single-node-aggregated` PodCliqueSet was scaled in the previous example. We show an example to demonstrate how when PodCliqueSets are scaled, all constituent PodCliques are replicated, underscoring why scaling PodCliqueSets should be treated as scaling the entire system (useful for canary deployments, A/B testing, or high availability across zones).
 ```bash
-kubectl scale pcs single-node-aggregated --replicas=2
+kubectl scale pcs single-node-disaggregated --replicas=2
 ```
 After running this you will observe
 ```bash

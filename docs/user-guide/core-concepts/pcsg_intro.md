@@ -36,11 +36,11 @@ spec:
           - name: model-leader
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Model Leader (Aggregated) on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Model Leader (Aggregated) on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "2"
-                memory: "4Gi"
+                cpu: "10m"
+                memory: "32Mi"
     - name: worker
       spec:
         roleName: worker
@@ -55,11 +55,11 @@ spec:
           - name: model-worker
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Model Worker (Aggregated) on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Model Worker (Aggregated) on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "4"
-                memory: "8Gi"
+                cpu: "10m"
+                memory: "32Mi"
     podCliqueScalingGroups:
     - name: model-instance
       cliqueNames: [leader, worker]
@@ -207,11 +207,11 @@ spec:
           - name: prefill-leader
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Prefill Leader on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Prefill Leader on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "2"
-                memory: "4Gi"
+                cpu: "10m"
+                memory: "32Mi"
     - name: pworker
       spec:
         roleName: pworker
@@ -226,11 +226,11 @@ spec:
           - name: prefill-worker
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Prefill Worker on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Prefill Worker on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "4"
-                memory: "8Gi"
+                cpu: "10m"
+                memory: "32Mi"
     - name: dleader
       spec:
         roleName: dleader
@@ -245,11 +245,11 @@ spec:
           - name: decode-leader
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Decode Leader on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Decode Leader on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "1"
-                memory: "2Gi"
+                cpu: "10m"
+                memory: "32Mi"
     - name: dworker
       spec:
         roleName: dworker
@@ -264,11 +264,11 @@ spec:
           - name: decode-worker
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Decode Worker on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Decode Worker on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "2"
-                memory: "4Gi"
+                cpu: "10m"
+                memory: "32Mi"
     podCliqueScalingGroups:
     - name: prefill
       cliqueNames: [pleader, pworker]

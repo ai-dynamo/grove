@@ -1,3 +1,13 @@
+# Example: Single-Node Aggregated Inference
+# Documentation: docs/user-guide/core-concepts/pcs_and_pclq_intro.md
+#
+# Demonstrates a simple PodCliqueSet with a single standalone PodClique where
+# each pod is a complete model instance that can service requests independently.
+#
+# NOTE: This example uses fake-node tolerations for the local KIND demo cluster
+# created with `make kind-up FAKE_NODES=40`. Remove the tolerations when deploying
+# to a real cluster.
+---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
@@ -21,8 +31,8 @@ spec:
           - name: model-worker
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Model Worker (Aggregated) on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Model Worker (Aggregated) on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "1"
-                memory: "2Gi"
+                cpu: "10m"
+                memory: "32Mi"
