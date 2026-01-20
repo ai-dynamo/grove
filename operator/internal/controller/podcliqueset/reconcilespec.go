@@ -211,6 +211,7 @@ func getOrderedKindsForSync() []component.Kind {
 		component.KindHeadlessService,
 		component.KindHorizontalPodAutoscaler,
 		component.KindPodCliqueSetReplica,
+		component.KindComputeDomain,
 		component.KindPodClique,
 		component.KindPodCliqueScalingGroup,
 		component.KindPodGang,

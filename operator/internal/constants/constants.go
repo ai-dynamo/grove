@@ -96,3 +96,15 @@ const (
 	// ReasonPodCliqueSetReplicaDeleteFailed is an event reason which represents that the deletion of a PodCliqueSet replica failed.
 	ReasonPodCliqueSetReplicaDeleteFailed = "PodCliqueSetReplicaDeleteFailed"
 )
+
+// constants for ComputeDomain lifecycle events
+const (
+	// ReasonComputeDomainCreateSuccessful is an event reason which represents a successful creation of a ComputeDomain.
+	ReasonComputeDomainCreateSuccessful = "ComputeDomainCreateSuccessful"
+	// ReasonComputeDomainCreateFailed is an event reason which represents that the creation of a ComputeDomain failed.
+	ReasonComputeDomainCreateFailed = "ComputeDomainCreateFailed"
+	// ReasonComputeDomainDeleteSuccessful is an event reason which represents a successful deletion of a ComputeDomain.
+	ReasonComputeDomainDeleteSuccessful = "ComputeDomainDeleteSuccessful"
+	// ReasonComputeDomainDeleteFailed is an event reason which represents that the deletion of a ComputeDomain failed.
+	ReasonComputeDomainDeleteFailed = "ComputeDomainDeleteFailed"
+)

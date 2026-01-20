@@ -17,6 +17,8 @@
 // Package mnnvl provides utilities and constants for Multi-Node NVLink (MNNVL) support.
 package mnnvl
 
+import "k8s.io/apimachinery/pkg/runtime/schema"
+
 // Constants for NVIDIA ComputeDomain (used by MNNVL support)
 const (
 	// ComputeDomainGroup is the API group for NVIDIA ComputeDomain resources.
@@ -30,6 +32,13 @@ const (
 	// ComputeDomainCRDName is the full CRD name for ComputeDomain.
 	ComputeDomainCRDName = ComputeDomainResource + "." + ComputeDomainGroup
 )
+
+// ComputeDomainGVK is the GroupVersionKind for NVIDIA ComputeDomain resources.
+var ComputeDomainGVK = schema.GroupVersionKind{
+	Group:   ComputeDomainGroup,
+	Version: ComputeDomainVersion,
+	Kind:    ComputeDomainKind,
+}
 
 // MNNVL annotation and finalizer constants
 const (

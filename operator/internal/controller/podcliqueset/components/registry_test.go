@@ -67,6 +67,7 @@ func TestCreateOperatorRegistry(t *testing.T) {
 			component.KindHorizontalPodAutoscaler,
 			component.KindPodGang,
 			component.KindPodCliqueSetReplica,
+			component.KindComputeDomain,
 		}
 
 		allOps := registry.GetAllOperators()
