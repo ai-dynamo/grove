@@ -1,0 +1,44 @@
+# Workload 10: EC-1 - Insufficient Nodes for Constraint
+# Test scenario: PCS with rack constraint requesting more pods than can fit in any single rack
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: tas-insuffic
+  labels:
+    app: tas-insuffic
+spec:
+  replicas: 1
+  template:
+    topologyConstraint:
+      packDomain: rack  # All pods must be in same rack
+    cliques:
+      - name: worker
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: worker
+          replicas: 10  # Exceeds capacity of any single rack
+          minAvailable: 10  # All-or-nothing gang scheduling
+          podSpec:
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 500Mi  # Large enough to prevent 10 pods fitting in 1 rack (2 nodes)

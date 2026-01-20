@@ -1,0 +1,52 @@
+# Workload 9: SP-3 - PCSG Scaling with Topology Constraints and MinAvailable
+# Test scenario: 3 PCSG replicas with rack constraint demonstrating scaling coordination
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: tas-pcsg-scale
+  labels:
+    app: tas-pcsg-scale
+spec:
+  replicas: 1
+  template:
+    topologyConstraint:
+      packDomain: rack
+    podCliqueScalingGroups:
+      - name: inference-group
+        replicas: 3
+        minAvailable: 1
+        topologyConstraint:
+          packDomain: rack
+        cliqueNames:
+          - worker
+    cliques:
+      - name: worker
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: worker
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 80Mi

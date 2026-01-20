@@ -1,0 +1,44 @@
+# Workload: ZL1 - Zone-Level Topology Constraint
+# Test scenario: PCS with zone constraint (widest domain), PCLQ without constraint
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: tas-zone-level
+  labels:
+    app: tas-zone-level
+spec:
+  replicas: 1
+  template:
+    topologyConstraint:
+      packDomain: zone
+    cliques:
+      - name: worker
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: worker
+          replicas: 4
+          minAvailable: 4
+          podSpec:
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 30Mi
