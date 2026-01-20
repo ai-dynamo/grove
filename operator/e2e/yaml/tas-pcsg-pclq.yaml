@@ -1,0 +1,52 @@
+# Workload: SP5 - PCSG+PCLQ Topology (no PCS constraint)
+# Test scenario: No PCS constraint, PCSG with rack constraint, PCLQ with host constraint
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: tas-pcsg-pclq
+  labels:
+    app: tas-pcsg-pclq
+spec:
+  replicas: 1
+  template:
+    podCliqueScalingGroups:
+      - name: workers
+        replicas: 2
+        minAvailable: 2
+        topologyConstraint:
+          packDomain: rack
+        cliqueNames:
+          - worker
+    cliques:
+      - name: worker
+        labels:
+          kai.scheduler/queue: test
+        topologyConstraint:
+          packDomain: host
+        spec:
+          roleName: worker
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 30Mi

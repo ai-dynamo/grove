@@ -55,4 +55,26 @@ profiles:
         path: /deploy/helm/releases/0/setValues
         value:
           replicaCount: 1
-          config.leaderElection.enabled: false
+          config:
+            leaderElection:
+              enabled: false
+  - name: topology-test
+    patches:
+      - op: add
+        path: /deploy/helm/releases/0/setValues
+        value:
+          replicaCount: 1
+          config:
+            leaderElection:
+              enabled: false
+            topologyAwareScheduling:
+              enabled: true
+              levels:
+                - domain: zone
+                  key: "kubernetes.io/zone"
+                - domain: block
+                  key: "kubernetes.io/block"
+                - domain: rack
+                  key: "kubernetes.io/rack"
+                - domain: host
+                  key: "kubernetes.io/hostname"

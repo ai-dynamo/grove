@@ -1,0 +1,48 @@
+# Workload: SL3 - No Topology Constraints
+# Test scenario: No constraints at PCS, PCSG, or PCLQ levels (pure gang scheduling)
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: tas-no-constraint
+  labels:
+    app: tas-no-constraint
+spec:
+  replicas: 1
+  template:
+    podCliqueScalingGroups:
+      - name: workers
+        replicas: 2
+        minAvailable: 2
+        cliqueNames:
+          - worker
+    cliques:
+      - name: worker
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: worker
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 30Mi

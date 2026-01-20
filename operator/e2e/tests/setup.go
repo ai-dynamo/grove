@@ -181,12 +181,7 @@ func prepareTestCluster(ctx context.Context, t *testing.T, requiredWorkerNodes i
 			logger.Error("=== CLEANUP FAILURE - COLLECTING DIAGNOSTICS ===")
 			logger.Error("================================================================================")
 			CollectAllDiagnostics(diagnosticsTc)
-
-			// Mark cleanup as failed - this will cause all subsequent tests to fail immediately
-			// when they try to prepare the cluster, preventing potentially corrupted test state
-			sharedCluster.MarkCleanupFailed(err)
-
-			t.Fatalf("Failed to cleanup workloads: %v. All subsequent tests will fail.", err)
+			t.Fatalf("Failed to cleanup workloads: %v", err)
 		}
 	}
 
@@ -642,11 +637,7 @@ func scalePCSGAcrossAllReplicas(tc TestContext, pcsName, pcsgName string, pcsRep
 
 // convertUnstructuredToTyped converts an unstructured map to a typed object
 func convertUnstructuredToTyped(u map[string]interface{}, typed interface{}) error {
-	data, err := json.Marshal(u)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(data, typed)
+	return utils.ConvertUnstructuredToTyped(u, typed)
 }
 
 // convertTypedToUnstructured converts a typed object to an unstructured object

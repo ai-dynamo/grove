@@ -1,0 +1,76 @@
+# Workload 7: BP-1 - PCS with Multiple PodCliques Having Different Constraints
+# Test scenario: PCS with no constraint, but individual cliques have different constraints (rack vs block)
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: tas-indep-clq
+  labels:
+    app: tas-indep-clq
+spec:
+  replicas: 1
+  template:
+    # NO topology constraint at PCS level
+    cliques:
+      - name: worker-rack
+        labels:
+          kai.scheduler/queue: test
+        topologyConstraint:
+          packDomain: rack  # Rack-level packing
+        spec:
+          roleName: worker-rack
+          replicas: 3
+          minAvailable: 3
+          podSpec:
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker-rack
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 80Mi
+      - name: worker-block
+        labels:
+          kai.scheduler/queue: test
+        topologyConstraint:
+          packDomain: block  # Block-level packing (stricter)
+        spec:
+          roleName: worker-block
+          replicas: 4
+          minAvailable: 4
+          podSpec:
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker-block
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 80Mi
