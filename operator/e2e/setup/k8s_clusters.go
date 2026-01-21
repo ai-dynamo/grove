@@ -889,13 +889,22 @@ func prepullImages(ctx context.Context, images []string, registryPort string, lo
 
 			logger.Debugf("  🔄 Pulling image: %s", img)
 
-			// Pull the image using the common helper function
-			var outputWriter io.Writer
-			if logger.GetLevel() == utils.DebugLevel {
-				outputWriter = logger.WriterLevel(utils.DebugLevel)
+			// Pull the image using Docker API
+			pullReader, err := dockerClient.ImagePull(ctx, img, image.PullOptions{})
+			if err != nil {
+				errChan <- fmt.Errorf("failed to pull %s: %w", img, err)
+				return
 			}
-			if err := pullImageIfNotExists(ctx, dockerClient, img, outputWriter); err != nil {
-				errChan <- err
+
+			// We need to read the output to ensure the pull completes
+			if logger.GetLevel() == utils.DebugLevel {
+				_, err = io.Copy(logger.WriterLevel(utils.DebugLevel), pullReader)
+			} else {
+				_, err = io.Copy(io.Discard, pullReader)
+			}
+			pullReader.Close()
+			if err != nil {
+				errChan <- fmt.Errorf("failed to read pull output for %s: %w", img, err)
 				return
 			}
 

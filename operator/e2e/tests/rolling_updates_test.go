@@ -20,9 +20,11 @@ package tests
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	"k8s.io/apimachinery/pkg/watch"
 )
 
@@ -223,37 +225,50 @@ func Test_RU10_RollingUpdateInsufficientResources(t *testing.T) {
 	}
 
 	logger.Info("5. Verify exactly one pod is deleted and a new Pending pod is created (delete-first strategy)")
-	time.Sleep(1 * time.Minute)
 
-	// Verify that exactly one existing pod was deleted (delete-first strategy)
-	events := tracker.getEvents()
-	var deletedExistingPods []string
-	var addedPods []string
-	for _, event := range events {
-		switch event.Type {
-		case watch.Deleted:
-			if existingPodNames[event.Pod.Name] {
-				deletedExistingPods = append(deletedExistingPods, event.Pod.Name)
-				logger.Debugf("Existing pod deleted during rolling update: %s", event.Pod.Name)
-			}
-		case watch.Added:
-			if !existingPodNames[event.Pod.Name] {
-				addedPods = append(addedPods, event.Pod.Name)
-				logger.Debugf("New pod created during rolling update: %s", event.Pod.Name)
+	// Poll until we see exactly 1 pod deleted and 1 new pod created, verifying delete-first behavior
+	pollErr := utils.PollForCondition(ctx, 2*time.Minute, 2*time.Second, func() (bool, error) {
+		events := tracker.getEvents()
+		var deletedExistingPods []string
+		var addedPods []string
+
+		for _, event := range events {
+			switch event.Type {
+			case watch.Deleted:
+				if existingPodNames[event.Pod.Name] {
+					deletedExistingPods = append(deletedExistingPods, event.Pod.Name)
+					logger.Debugf("Existing pod deleted during rolling update: %s", event.Pod.Name)
+				}
+			case watch.Added:
+				if !existingPodNames[event.Pod.Name] {
+					addedPods = append(addedPods, event.Pod.Name)
+					logger.Debugf("New pod created during rolling update: %s", event.Pod.Name)
+				}
 			}
 		}
-	}
 
-	// Delete-first strategy: exactly 1 pod should be deleted
-	if len(deletedExistingPods) != 1 {
-		t.Fatalf("Expected exactly 1 pod to be deleted (delete-first strategy), but got %d: %v",
-			len(deletedExistingPods), deletedExistingPods)
-	}
+		// Check if we've reached the expected delete-first state
+		deletedCount := len(deletedExistingPods)
+		addedCount := len(addedPods)
 
-	// A new pod should be created (but will be Pending since nodes are cordoned)
-	if len(addedPods) != 1 {
-		t.Fatalf("Expected exactly 1 new pod to be created, but got %d: %v",
-			len(addedPods), addedPods)
+		// If more than 1 pod was deleted, the test should fail (not delete-first)
+		if deletedCount > 1 {
+			return false, fmt.Errorf("rolling update progressed beyond first deletion - expected 1 pod deleted but got %d: %v (not delete-first strategy)", deletedCount, deletedExistingPods)
+		}
+
+		// Success: exactly 1 deleted and 1 new pod created
+		if deletedCount == 1 && addedCount == 1 {
+			logger.Infof("✅ Delete-first strategy verified: 1 pod deleted (%v), 1 new pod created (%v)", deletedExistingPods, addedPods)
+			return true, nil
+		}
+
+		// Still waiting for the condition
+		logger.Debugf("Waiting for delete-first state: deleted=%d (want 1), added=%d (want 1)", deletedCount, addedCount)
+		return false, nil
+	})
+
+	if pollErr != nil {
+		t.Fatalf("Failed to verify delete-first strategy: %v", pollErr)
 	}
 
 	logger.Info("6. Uncordon the nodes, and verify the rolling update completes")

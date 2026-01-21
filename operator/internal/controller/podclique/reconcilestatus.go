@@ -124,17 +124,13 @@ func mutateReplicas(pclq *grovecorev1alpha1.PodClique, podCategories map[corev1.
 // mutateUpdatedReplica calculates and sets the number of pods with the expected template hash
 func mutateUpdatedReplica(pclq *grovecorev1alpha1.PodClique, existingPods []*corev1.Pod) {
 	var expectedPodTemplateHash string
-	// If the PCLQ update is in progress then take the expected PodTemplateHash from the PodClique.Status.RollingUpdateProgress.PodTemplateHash field
-	// else take it from the PodClique.Status.CurrentPodTemplateHash field
-	if componentutils.IsPCLQUpdateInProgress(pclq) {
-		expectedPodTemplateHash = pclq.Status.RollingUpdateProgress.PodTemplateHash
-	} else if componentutils.IsLastPCLQUpdateCompleted(pclq) {
-		// Rolling update just completed (UpdateEndedAt is set) - use the new hash from RollingUpdateProgress.
-		// This handles the window between markRollingUpdateEnd() and mutateCurrentHashes() where
-		// CurrentPodTemplateHash hasn't been updated yet but the rolling update has finished.
+	// If RollingUpdateProgress exists (update in progress or recently completed), use the target hash from it.
+	// This covers both the active update phase and the window after completion before CurrentPodTemplateHash is synced.
+	if pclq.Status.RollingUpdateProgress != nil {
 		expectedPodTemplateHash = pclq.Status.RollingUpdateProgress.PodTemplateHash
 	} else if pclq.Status.CurrentPodTemplateHash != nil {
-		// CurrentPodTemplateHash will be set if RollingUpdateProgress is nil or if the last update has completed.
+		// Steady state: no rolling update tracking exists.
+		// Use the stable current hash for pods that have been reconciled.
 		expectedPodTemplateHash = *pclq.Status.CurrentPodTemplateHash
 	}
 	// If expectedPodTemplateHash is empty, it means that the PCLQ has never been successfully reconciled and therefore no pods should be considered as updated.
