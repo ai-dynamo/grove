@@ -166,20 +166,6 @@ func stripRegistryDomain(img string) string {
 	return img
 }
 
-// DeleteCluster deletes a k3d cluster by name with a fresh context (ignores parent context cancellation).
-func DeleteCluster(clusterName string, logger *utils.Logger) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	logger.Debug("🗑️ Deleting cluster...")
-	cluster := &k3d.Cluster{Name: clusterName}
-	if err := k3dclient.ClusterDelete(ctx, runtimes.Docker, cluster, k3d.ClusterDeleteOpts{}); err != nil {
-		return fmt.Errorf("failed to delete cluster: %w", err)
-	}
-	logger.Info("✅ Cluster deleted successfully")
-	return nil
-}
-
 // GetKubeconfig fetches and returns the kubeconfig for a k3d cluster.
 func GetKubeconfig(ctx context.Context, clusterName string) (*clientcmdapi.Config, error) {
 	cluster, err := k3dclient.ClusterGet(ctx, runtimes.Docker, &k3d.Cluster{Name: clusterName})
@@ -517,9 +503,13 @@ configs:
 	}
 
 	// this is the cleanup function, we always return it now so the caller can decide to use it or not
+	// Note: we create a fresh context here rather than using the passed-in ctx, because cleanup
+	// may be called after the parent context is cancelled (e.g., after Ctrl+C signal)
 	cleanup := func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
 		logger.Debug("🗑️ Deleting cluster...")
-		if err := k3dclient.ClusterDelete(ctx, runtimes.Docker, &k3dConfig.Cluster, k3d.ClusterDeleteOpts{}); err != nil {
+		if err := k3dclient.ClusterDelete(cleanupCtx, runtimes.Docker, &k3dConfig.Cluster, k3d.ClusterDeleteOpts{}); err != nil {
 			logger.Errorf("Failed to delete cluster: %v", err)
 		} else {
 			logger.Info("✅ Cluster deleted successfully")

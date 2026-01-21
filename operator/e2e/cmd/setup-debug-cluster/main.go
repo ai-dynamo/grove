@@ -146,22 +146,14 @@ func run(cli *CLI) error {
 	// Set up the cluster
 	logger.Info("🚀 Setting up K3D cluster with Grove operator...")
 
-	_, cleanupFunc, err := setup.SetupCompleteK3DCluster(runCtx, cfg, skaffoldPath, logger)
+	_, cleanup, err := setup.SetupCompleteK3DCluster(runCtx, cfg, skaffoldPath, logger)
 	if err != nil {
 		logger.Errorf("Failed to setup K3D cluster: %v", err)
-		if cleanupFunc != nil {
+		if cleanup != nil {
 			logger.Info("Running cleanup...")
-			cleanupFunc()
+			cleanup()
 		}
 		return fmt.Errorf("failed to setup K3D cluster: %w", err)
-	}
-
-	// Wrap cleanup to use DeleteCluster which creates a fresh context
-	// This ensures cleanup works even if the main context is cancelled
-	cleanup := func() {
-		if err := setup.DeleteCluster(cfg.Name, logger); err != nil {
-			logger.Errorf("Failed to delete cluster: %v", err)
-		}
 	}
 
 	// Setup test images in registry (matching what e2e tests do)
