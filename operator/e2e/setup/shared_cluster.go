@@ -113,41 +113,11 @@ func (scm *SharedClusterManager) Setup(ctx context.Context, testImages []string)
 	// Track whether setup completed successfully
 	var setupSuccessful bool
 
-	// Configuration for maximum cluster size needed (28 worker nodes + 3 server nodes)
-	customCfg := ClusterConfig{
-		Name:              "shared-e2e-test-cluster",
-		ControlPlaneNodes: 1,
-		WorkerNodes:       30,     // Maximum needed across all tests
-		WorkerMemory:      "150m", // 150m memory per agent node to fit one workload pod
-		Image:             "rancher/k3s:v1.33.5-k3s1",
-		HostPort:          "6560", // Use a different port to avoid conflicts
-		LoadBalancerPort:  "8090:80",
-		EnableRegistry:    true,
-		RegistryPort:      "5001",
-		NodeLabels: []NodeLabel{
-			{
-				Key: "node_role.e2e.grove.nvidia.com",
-				// k3s refers to worker nodes as agent nodes
-				Value:       "agent",
-				NodeFilters: []string{"agent:*"},
-			},
-			// we currently don't want GPUs in e2e tests as validator is causing issues
-			{
-				Key:   "nvidia.com/gpu.deploy.operands",
-				Value: "false",
-				// k3s refers to worker nodes as agent nodes
-				NodeFilters: []string{"server:*", "agent:*"},
-			},
-		},
-		WorkerNodeTaints: []NodeTaint{
-			{
-				Key: "node_role.e2e.grove.nvidia.com",
-				// k3s refers to worker nodes as agent nodes
-				Value:  "agent",
-				Effect: "NoSchedule",
-			},
-		},
-	}
+	// Use the centralized cluster config with overrides for shared test cluster
+	customCfg := DefaultClusterConfig()
+	customCfg.Name = "shared-e2e-test-cluster"
+	customCfg.HostPort = "6560"         // Use a different port to avoid conflicts
+	customCfg.LoadBalancerPort = "8090:80"
 
 	scm.registryPort = customCfg.RegistryPort
 
@@ -182,7 +152,7 @@ func (scm *SharedClusterManager) Setup(ctx context.Context, testImages []string)
 	scm.dynamicClient = dynamicClient
 
 	// Setup test images in registry
-	if err := setupRegistryTestImages(scm.registryPort, testImages); err != nil {
+	if err := SetupRegistryTestImages(scm.registryPort, testImages); err != nil {
 		return fmt.Errorf("failed to setup registry test images: %w", err)
 	}
 
@@ -495,8 +465,8 @@ func (scm *SharedClusterManager) Teardown() {
 	}
 }
 
-// setupRegistryTestImages sets up test images in the registry
-func setupRegistryTestImages(registryPort string, images []string) error {
+// SetupRegistryTestImages pulls images and pushes them to the local k3d registry.
+func SetupRegistryTestImages(registryPort string, images []string) error {
 	if len(images) == 0 {
 		return nil
 	}

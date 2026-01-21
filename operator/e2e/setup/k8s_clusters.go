@@ -50,6 +50,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"sigs.k8s.io/yaml"
 )
 
@@ -109,18 +110,43 @@ type ClusterConfig struct {
 	RegistryPort      string      // Port for the Docker registry (e.g., "5001")
 }
 
-// DefaultClusterConfig returns a sensible default cluster configuration
+// DefaultClusterConfig returns the default cluster configuration used by e2e tests.
+// This includes all the node labels and taints required for Grove e2e testing.
+// The setup-debug-cluster tool and SharedClusterManager both use this as their base config.
 func DefaultClusterConfig() ClusterConfig {
 	return ClusterConfig{
-		Name:              "test-k3d-cluster",
+		Name:              "grove-e2e-cluster",
 		ControlPlaneNodes: 1,
-		WorkerNodes:       2,
-		Image:             "rancher/k3s:v1.28.8-k3s1",
+		WorkerNodes:       30,     // Maximum needed across all tests
+		WorkerMemory:      "150m", // 150m memory per agent node to fit one workload pod
+		Image:             "rancher/k3s:v1.33.5-k3s1",
 		HostPort:          "6550",
 		LoadBalancerPort:  "8080:80",
-		WorkerMemory:      "150m",
-		EnableRegistry:    false,
+		EnableRegistry:    true,
 		RegistryPort:      "5001",
+		NodeLabels: []NodeLabel{
+			{
+				Key: "node_role.e2e.grove.nvidia.com",
+				// k3s refers to worker nodes as agent nodes
+				Value:       "agent",
+				NodeFilters: []string{"agent:*"},
+			},
+			// Disable GPU deployment on all nodes (validator causes issues)
+			{
+				Key:   "nvidia.com/gpu.deploy.operands",
+				Value: "false",
+				// k3s refers to worker nodes as agent nodes
+				NodeFilters: []string{"server:*", "agent:*"},
+			},
+		},
+		WorkerNodeTaints: []NodeTaint{
+			{
+				Key: "node_role.e2e.grove.nvidia.com",
+				// k3s refers to worker nodes as agent nodes
+				Value:  "agent",
+				Effect: "NoSchedule",
+			},
+		},
 	}
 }
 
@@ -138,6 +164,35 @@ func stripRegistryDomain(img string) string {
 	}
 	// No registry domain, use full path
 	return img
+}
+
+// DeleteCluster deletes a k3d cluster by name with a fresh context (ignores parent context cancellation).
+func DeleteCluster(clusterName string, logger *utils.Logger) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	logger.Debug("🗑️ Deleting cluster...")
+	cluster := &k3d.Cluster{Name: clusterName}
+	if err := k3dclient.ClusterDelete(ctx, runtimes.Docker, cluster, k3d.ClusterDeleteOpts{}); err != nil {
+		return fmt.Errorf("failed to delete cluster: %w", err)
+	}
+	logger.Info("✅ Cluster deleted successfully")
+	return nil
+}
+
+// GetKubeconfig fetches and returns the kubeconfig for a k3d cluster.
+func GetKubeconfig(ctx context.Context, clusterName string) (*clientcmdapi.Config, error) {
+	cluster, err := k3dclient.ClusterGet(ctx, runtimes.Docker, &k3d.Cluster{Name: clusterName})
+	if err != nil {
+		return nil, fmt.Errorf("could not get cluster: %w", err)
+	}
+
+	kubeconfig, err := k3dclient.KubeconfigGet(ctx, runtimes.Docker, cluster)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get kubeconfig from k3d: %w", err)
+	}
+
+	return kubeconfig, nil
 }
 
 // ensureClusterDoesNotExist removes any stale k3d cluster with the same name from previous runs.
@@ -161,29 +216,27 @@ func ensureClusterDoesNotExist(ctx context.Context, clusterName string, logger *
 }
 
 // ensureRegistryDoesNotExist removes any stale k3d registry container from previous runs.
-func ensureRegistryDoesNotExist(ctx context.Context, clusterName string, logger *utils.Logger) error {
-	registryContainerName := fmt.Sprintf("k3d-%s-registry", clusterName)
-
+// It looks for containers named "registry" (the name used in our k3d config).
+// If another container is using the registry port, it returns an error with details.
+func ensureRegistryDoesNotExist(ctx context.Context, registryPort string, logger *utils.Logger) error {
 	dockerClient, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
 	if err != nil {
 		return fmt.Errorf("failed to create Docker client: %w", err)
 	}
 	defer dockerClient.Close()
 
+	// Look for the registry container by name - k3d creates it as just "registry"
+	// based on the Name field in SimpleConfigRegistryCreateConfig
 	filterArgs := filters.NewArgs()
-	filterArgs.Add("name", registryContainerName)
+	filterArgs.Add("name", "registry")
 
 	containers, err := dockerClient.ContainerList(ctx, container.ListOptions{All: true, Filters: filterArgs})
 	if err != nil {
 		return fmt.Errorf("failed to list Docker containers: %w", err)
 	}
 
-	if len(containers) == 0 {
-		return nil
-	}
-
 	for _, c := range containers {
-		displayName := registryContainerName
+		displayName := "registry"
 		if len(c.Names) > 0 {
 			displayName = strings.TrimPrefix(c.Names[0], "/")
 		}
@@ -192,6 +245,25 @@ func ensureRegistryDoesNotExist(ctx context.Context, clusterName string, logger 
 
 		if err := dockerClient.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true, RemoveVolumes: true}); err != nil {
 			return fmt.Errorf("failed to remove existing registry container %s: %w", displayName, err)
+		}
+	}
+
+	// Check if any other container is using the registry port
+	allContainers, err := dockerClient.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		return fmt.Errorf("failed to list all Docker containers: %w", err)
+	}
+
+	for _, c := range allContainers {
+		for _, port := range c.Ports {
+			if fmt.Sprintf("%d", port.PublicPort) == registryPort {
+				displayName := c.ID[:12]
+				if len(c.Names) > 0 {
+					displayName = strings.TrimPrefix(c.Names[0], "/")
+				}
+
+				return fmt.Errorf("port %s is already in use by container %s (%s). Please stop or remove this container, or use a different registry port with --registry-port", registryPort, displayName, c.ID[:12])
+			}
 		}
 	}
 
@@ -439,7 +511,7 @@ configs:
 	}
 
 	if cfg.EnableRegistry {
-		if err := ensureRegistryDoesNotExist(ctx, cfg.Name, logger); err != nil {
+		if err := ensureRegistryDoesNotExist(ctx, cfg.RegistryPort, logger); err != nil {
 			return nil, nil, err
 		}
 	}

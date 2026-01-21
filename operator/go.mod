@@ -6,6 +6,7 @@ require (
 	github.com/NVIDIA/KAI-scheduler v0.12.0
 	github.com/ai-dynamo/grove/operator/api v0.0.0
 	github.com/ai-dynamo/grove/scheduler/api v0.0.0
+	github.com/alecthomas/kong v1.13.0
 	github.com/docker/docker v28.3.3+incompatible
 	github.com/go-logr/logr v1.4.3
 	github.com/go-logr/zapr v1.3.0
