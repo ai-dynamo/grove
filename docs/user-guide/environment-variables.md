@@ -93,7 +93,7 @@ spec:
               echo ""
               echo "=== Pod Information ==="
               echo "Pod Name: $(hostname)"
-              echo "Pod Namespace: $GROVE_PCS_NAME-$GROVE_PCS_INDEX"
+              echo "PCS Replica: $GROVE_PCS_NAME-$GROVE_PCS_INDEX"
               echo ""
               echo "Sleeping..."
               sleep infinity

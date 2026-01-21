@@ -129,9 +129,9 @@ Let's plan names for a multi-node disaggregated inference system with a frontend
   - Worker PodClique: `dworker` (7 chars)
 
 **Resulting pod names:**
-- Frontend: `mn-disagg-0-frontend-a7b3c` (28 chars) ✅
-- Prefill leader: `mn-disagg-0-prefill-0-pleader-a7b3c` (36 chars) ✅
-- Prefill worker: `mn-disagg-0-prefill-0-pworker-a7b3c` (36 chars) ✅
+- Frontend: `mn-disagg-0-frontend-a7b3c` (26 chars) ✅
+- Prefill leader: `mn-disagg-0-prefill-0-pleader-a7b3c` (35 chars) ✅
+- Prefill worker: `mn-disagg-0-prefill-0-pworker-a7b3c` (35 chars) ✅
 - Decode leader: `mn-disagg-0-decode-0-dleader-a7b3c` (34 chars) ✅
 - Decode worker: `mn-disagg-0-decode-0-dworker-a7b3c` (34 chars) ✅
 
@@ -390,13 +390,13 @@ The PCSG names clearly identify the two scaling groups.
 Let's verify our names fit within the 63-character limit:
 
 - Longest pod name: `multinode-disaggregated-0-prefill-1-pworker-klm56`
-  - Characters: 45 (well under 63) ✅
+  - Characters: 49 (well under 63) ✅
 
 - PodClique names (max): `multinode-disaggregated-0-prefill-1-pworker`
-  - Characters: 40 (under 63) ✅
+  - Characters: 43 (under 63) ✅
 
 - PCSG names: `multinode-disaggregated-0-prefill`
-  - Characters: 32 (under 63) ✅
+  - Characters: 33 (under 63) ✅
 
 All resource names are comfortably within the limit!
 
