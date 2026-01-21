@@ -35,10 +35,6 @@ const (
 	// logBufferSize is the size of the buffer for reading logs from the operator (debugging purposes)
 	logBufferSize = 64 * 1024 // 64KB
 
-	// operatorLogLines is the number of log lines to capture from the operator.
-	// Set to 2000 to ensure we capture logs from before the failure occurred,
-	// not just the steady-state logs after the failure.
-	operatorLogLines = 2000
 	// eventLookbackDuration is how far back to look for events
 	eventLookbackDuration = 10 * time.Minute
 )
@@ -88,10 +84,10 @@ func CollectAllDiagnostics(tc TestContext) {
 }
 
 // dumpOperatorLogs captures and prints operator logs at INFO level.
-// Captures the last operatorLogLines lines from all containers in the operator pod.
+// Captures all logs from all containers in the operator pod.
 func dumpOperatorLogs(tc TestContext) {
 	logger.Info("================================================================================")
-	logger.Infof("=== OPERATOR LOGS (last %d lines) ===", operatorLogLines)
+	logger.Info("=== OPERATOR LOGS (all) ===")
 	logger.Info("================================================================================")
 
 	// List pods in the operator namespace
@@ -141,10 +137,8 @@ func dumpOperatorLogs(tc TestContext) {
 		for _, container := range pod.Spec.Containers {
 			logger.Infof("--- Container: %s Logs ---", container.Name)
 
-			tailLines := int64(operatorLogLines)
 			req := tc.Clientset.CoreV1().Pods(setup.OperatorNamespace).GetLogs(pod.Name, &corev1.PodLogOptions{
 				Container: container.Name,
-				TailLines: &tailLines,
 			})
 
 			logStream, err := req.Stream(tc.Ctx)
