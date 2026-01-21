@@ -98,10 +98,10 @@ function kind::parse_flags() {
   done
 }
 
-function kind::clamp_mss_to_pmtu() {
-  # https://github.com/kubernetes/test-infra/issues/23741
+function kind::warn_mtu_issues() {
   if [[ "$OSTYPE" != "darwin"* ]]; then
-    iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+    echo "NOTE: If you experience network timeouts, you may have MTU/PMTU issues with Docker networking."
+    echo "See: https://github.com/kubernetes/test-infra/issues/23741"
   fi
 }
 
@@ -391,7 +391,7 @@ function kind::setup_fake_nodes() {
 function main() {
   kind::check_prerequisites
   kind::parse_flags "$@"
-  kind::clamp_mss_to_pmtu
+  kind::warn_mtu_issues
   kind::create_cluster
   kind::setup_fake_nodes
   printf "\n\033[0;33m📌 NOTE: To target the newly created kind cluster, please run the following command:\n\n export KUBECONFIG=${KUBECONFIG}\n\033[0m\n"
