@@ -53,7 +53,7 @@ Without gang termination, a workload that loses critical pods remains in a degra
 
 - **Ready Pods Only (PCLQ level):** Only ready pods count toward availability—starting pods are not considered
 - **Sticky WasAvailable:** Once a PodClique has reached MinAvailable, the WasAvailable flag never reverts, even if the workload is later degraded and recovers
-- **No Partial Recovery:** When gang termination triggers, the affected replica (PCS or PCSG) is deleted in its entirety, healthy PodCliqueswithin that replica are not preserved.
+- **No Partial Recovery:** When gang termination triggers, the affected replica (PCS or PCSG) is deleted in its entirety, healthy PodCliques within that replica are not preserved.
 - **Single TerminationDelay per PCS:** While PCSGs can override the delay, standalone PCLQs within a PCS all use the PCS-level delay
 
 # Design Details
