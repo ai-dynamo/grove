@@ -71,7 +71,7 @@ func Test_SO1_InorderStartupOrderWithFullReplicas(t *testing.T) {
 		DynamicClient: dynamicClient,
 		Namespace:     "default",
 		Timeout:       5 * time.Minute,
-		Interval:      defaultPollTimeout,
+		Interval:      defaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload3",
 			YAMLPath:     "../yaml/workload3.yaml",
@@ -129,7 +129,7 @@ func Test_SO2_InorderStartupOrderWithMinReplicas(t *testing.T) {
 		DynamicClient: dynamicClient,
 		Namespace:     "default",
 		Timeout:       5 * time.Minute,
-		Interval:      defaultPollTimeout,
+		Interval:      defaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload4",
 			YAMLPath:     "../yaml/workload4.yaml",
