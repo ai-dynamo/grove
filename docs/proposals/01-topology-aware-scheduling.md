@@ -53,6 +53,10 @@ Workload developers can specify topology constraints at three hierarchical level
 
 After validation, the operator translates the topology domain names (e.g., "rack", "host") into cluster-specific topology keys (e.g., "topology.kubernetes.io/zone", "kubernetes.io/hostname") and configures these hierarchical topology keys in the `PodGang` API . The `PodGang` serves as an intermediate representation that will eventually be mapped to the specific types that the configured scheduler backend understands. This abstraction allows workload portability across clusters with different topology configurations and scheduler implementations.
 
+**Workload portability across clusters**
+
+Grove via `ClusterTopology` defines a uniform set of 
+
 ### User Stories
 
 #### Story 1
@@ -164,6 +168,14 @@ There are ways in which you can either minimize the need for on-demand scaling o
 
   However these might not always give you the best packing as they only offer best-effort placement of newly launched nodes. So the best bet is to club placement policies with capacity reservation.
 
+#### Workload Portability
+
+`PodCliqueSet` with strict topology constraints may not always be portable across clusters which are created with different topology configurations. For example: A workload requiring "block" level packing may fail on a cluster that does not define this topology level.
+
+**Mitigation**
+
+Validating webhook for `PodCliqueSet` will reject resources that are created with unsupported topology constraints.
+
 ## Design Details
 
 > NOTE: For brevity we will refer to topology aware scheduling as `TAS`.
@@ -226,6 +238,8 @@ Topology domains are arranged from broadest to narrowest.
 | `rack`       | Physical rack containing multiple hosts             |
 | `host`       | Individual host (virtual/server)                    |
 | `Numa`       | NUMA (Non-Uniform Memory Access) node within a host |
+
+A topology domain provides an infrastructure agnostic identifier for a topology level and thus allows the same workload to be deployed across clusters hosted by any cloud provider or private data centers. Across `GCP`, `AWS` and `Azure` it has been observed that the network topology node labels differ. It was thus a natural choice to define a uniform topology convention which can be used by workload designers when creating `PodCliqueSet` resources. Using `ClusterTopology` CR, Grove operator then maps these uniform topology domains to infrastructure provider specific topology node labels. 
 
 #### Validation
 
@@ -496,49 +510,132 @@ These two validation rules ensure that workloads can only reference valid topolo
 
 ### PodGang: Scheduler API Enhancements
 
+Grove operator translates the hierarchical topology constraints to infrastructure specific node labels in the `PodGang` scheduler API. 
+
+The following additional types have been defined to capture the topology constraints. Provision has been made to capture:
+
+* `Required` topology constraints which are hard requirements for the scheduler to consider.  These are generally equal to or broader than `Preferred` topology constraints.
+* `Preferred` topology constraints are soft requirements and often point to the best possible packing that can be achieved.
+
+```go
+// TopologyConstraint defines topology packing constraints with required and preferred levels.
+type TopologyConstraint struct {
+	// PackConstraint defines topology packing constraint with required and preferred levels.
+	// Operator translates user's level name to corresponding topologyKeys.
+	// +optional
+	PackConstraint *TopologyPackConstraint `json:"packConstraint,omitempty"`
+}
+
+// TopologyPackConstraint defines a topology packing constraint.
+// Each of Required and Preferred fields hold a topologyKey, e.g. "kubernetes.io/hostname" ( these are key of labels added on nodes).
+type TopologyPackConstraint struct {
+	// Required defines a topology constraint that must be satisfied as a hard requirement. The workload will not be
+	// scheduled if this constraint cannot be satisfied. Generally, it is easier for the scheduler to satisfy constraints
+	// on topology domains with larger compute capacity, (e.g. zone or datacenter), than smaller domains, (e.g. host or
+	// numa). Holds topologyKey (not level name) translated from user's packLevel specification.
+	// Example: "topology.kubernetes.io/rack"
+	// +optional
+	Required *string `json:"required,omitempty"`
+	// Preferred defines best-effort topology constraint. Topology domains that provide the most optimized performance
+	// with dense packing (e.g. host or numa) are typically used as preferred constraints for topology packing. It might be
+	// harder to satisfy these constraints if the topology domains are limited in compute  capacity. Since it is preferred
+	// constraint, it is therefore not binding on the scheduler to mandatorily satisfy this packing constraint. Scheduler
+	// can fall back to higher topology levels (upto Required constraint) if preferred cannot be satisfied.
+	// Example: "kubernetes.io/hostname"
+	// +optional
+	Preferred *string `json:"preferred,omitempty"`
+}
+```
+
+`TopologyConstraint`s can be defined at multiple levels:
+
+**PodGangSpec.TopologyConstraint**
+
+This is the top level constraint defined at the `PodGang` level that applies to al the `PodGroup`s in the `PodGang`.  We have two varients of `PodGang`s:
+
+* `PodGang` that comprises of minimum number of replicas across all standalone `PodClique` and `PodCliqueScalingGroup`s that together make a workload functional. At present we also name this as the `base` PodGang. For the base PodGang, `TopologyConstraint` is the value of `PodCliqueSetTemplateSpec.TopologyConstraint` (`spec.template.topologyConstraint`)
+* `PodGang`that is created for every replica of `PodCliqueScalingGroup` above the `minAvailable` as specified in `spec.template.podCliqueScalingGroups[x].minAvailable`. At present we call these as `scaled` PodGang. For the scaled PodGang, `TopologyConstraint` is the value of `PodCliqueScalingGroupConfig.TopologyConstraint` (`spec.template.podCliqueScalingGroups[x].topologyConstraint`). 
+  * In case there is no topology constraint defined at `spec.template.podCliqueScalingGroups[x].topologyConstraint` then it will inherit the topology constraint  defined at `spec.template.topologyConstraint` if defined.
+  
+
+**PodGangSpec.TopologyConstraintGroupConfigs**
+
+Users can define topology constraints that are applied for all constituent `PodClique`s in a `PodCliqueScalingGroup` (`spec.template.podCliqueScalingGroups[x].topologyConstraint`).
+
+> NOTE: This field is used only for `Base` PodGangs. For `Scaled` PodGangs this will be empty.
 
 
+**PodGroup.TopologyConstraint**
 
+Users can define topology constraints at the `PodClique` level (`spec.template.cliques[x].topologyConstraint`) This will be captured in `PodGroup.TopologyConstraint`. 
 
+```go
+// PodGangSpec defines the specification of a PodGang.
+type PodGangSpec struct {
+	// PodGroups is a list of member pod groups in the PodGang.
+	PodGroups []PodGroup `json:"podgroups"`
+	// TopologyConstraint defines topology packing constraints for entire pod gang.
+	// This is the top level topology constraint that applies to all PodGroups in the PodGang.
+	// Updated by operator on each reconciliation when PodCliqueSet topology constraints change.
+	// +optional
+	TopologyConstraint *TopologyConstraint `json:"topologyConstraint,omitempty"`
+	// TopologyConstraintGroupConfigs defines TopologyConstraints for a strict subset of PodGroups.
+	// +optional
+	TopologyConstraintGroupConfigs []TopologyConstraintGroupConfig `json:"topologyConstraintGroupConfigs,omitempty"`
+  ...
+}
 
+// PodGroup defines a set of pods in a PodGang that share the same PodTemplateSpec.
+type PodGroup struct {
+	// Name is the name of the PodGroup.
+	Name string `json:"name"`
+  ...
+	// TopologyConstraint defines topology packing constraints for this PodGroup.
+	// Enables PodClique-level topology constraints.
+	// Updated by operator when PodClique topology constraints change.
+	// +optional
+	TopologyConstraint *TopologyConstraint `json:"topologyConstraint,omitempty"`
+}
 
-
-
-
-
-
-
- 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-<!-- 
-This section may include API specifications (GO API/YAML) and certain flow control diagrams that will help reviewers to know how the proposal will be implemented.
--->
+```
 
 ### Monitoring
 
-<!--
-This section contains details of events, metrics, status conditions and other status fields that will aid in determining health of the feature, or help measure any service level objectives that might be optionally defined.
--->
+**PodCliqueSet Status Conditions**
+
+It is possible that one or more topology constraints defined on a deployed `PodCliqueSet` are no longer available because the cluster admin decided to make changes to the `ClusterTopology`. It is therefore important to create visibility that one or more topology levels are no longer available. A new `metav1.Condition` has been introduced for `PodCliqueSet`.
+
+```go
+// PodCliqueSetStatus defines the status of a PodCliqueSet.
+type PodCliqueSetStatus struct {
+  ...
+	// Conditions represents the latest available observations of the PodCliqueSet by its controller.
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	...
+}
+
+```
+
+Condition: `TopologyLevelsUnavailable`
+Condition States:
+
+| Status    | Reason                              | Description                                                  |
+| --------- | ----------------------------------- | ------------------------------------------------------------ |
+| `Unknown` | `ClusterTopologyNotFound`           | When `ClusterTopology` CR is not longer existing             |
+| `True`    | `ClusterTopologyLevelsUnavailable`  | When one or more topology levels used by a deployed `PodCliqueSet` are no longer present in `ClusterTopology` |
+| `False`   | `AllClusterTopologyLevelsAvailable` | All topology levels used by a deployed `PodCliqueSet` are amongst the supported topology levels as defined in `ClusterTopology` |
+
+
 
 ### Dependencies
 
 **Scheduler backend with Topology Aware Scheduling Support**
 
-Currently the only scheduler backend that supports hierarchical TAS is [KAI Scheduler](https://github.com/NVIDIA/KAI-Scheduler). See [here](https://github.com/NVIDIA/KAI-Scheduler/tree/main/docs/topology) for more information. However, Grove Operator is not limited to one scheduler backend and any other scheduler providing TAS functionality can be plugged in as well.
+Currently the only scheduler backend that supports hierarchical TAS is [KAI Scheduler](https://github.com/NVIDIA/KAI-Scheduler). See [here](https://github.com/NVIDIA/KAI-Scheduler/tree/main/docs/topology) for more information. 
+Follow [instructions](https://github.com/NVIDIA/KAI-Scheduler?tab=readme-ov-file#installation) to install KAI scheduler which also will install the required `Topology` CR which gets automatically created by Grove operator.
+
+> NOTE: However, Grove Operator is not limited to one scheduler backend and any other scheduler providing TAS functionality can be plugged in as well.
 
 **Nodes labeled with Topology specific labels**
 
