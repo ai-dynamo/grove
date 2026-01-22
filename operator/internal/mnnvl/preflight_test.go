@@ -17,31 +17,27 @@
 package mnnvl
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	fakediscovery "k8s.io/client-go/discovery/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
-func TestIsComputeDomainCRDPresent(t *testing.T) {
+func Test_validateComputeDomainCRD(t *testing.T) {
 	tests := []struct {
-		name            string
-		apiResourceList []*metav1.APIResourceList
-		expected        bool
+		name        string
+		resources   []*metav1.APIResourceList
+		reactor     func(action k8stesting.Action) (bool, runtime.Object, error)
+		expectError bool
+		errorMsg    string
 	}{
 		{
-			name:            "empty resource list",
-			apiResourceList: []*metav1.APIResourceList{},
-			expected:        false,
-		},
-		{
-			name:            "nil resource list",
-			apiResourceList: nil,
-			expected:        false,
-		},
-		{
-			name: "ComputeDomain CRD present with correct group version",
-			apiResourceList: []*metav1.APIResourceList{
+			name: "CRD present - success",
+			resources: []*metav1.APIResourceList{
 				{
 					GroupVersion: ComputeDomainGroup + "/" + ComputeDomainVersion,
 					APIResources: []metav1.APIResource{
@@ -49,16 +45,24 @@ func TestIsComputeDomainCRDPresent(t *testing.T) {
 					},
 				},
 			},
-			expected: true,
+			expectError: false,
 		},
 		{
-			name: "ComputeDomain CRD present among other resources",
-			apiResourceList: []*metav1.APIResourceList{
+			name: "CRD present among many resources - success",
+			resources: []*metav1.APIResourceList{
 				{
 					GroupVersion: "v1",
 					APIResources: []metav1.APIResource{
 						{Name: "pods"},
 						{Name: "services"},
+						{Name: "configmaps"},
+					},
+				},
+				{
+					GroupVersion: "apps/v1",
+					APIResources: []metav1.APIResource{
+						{Name: "deployments"},
+						{Name: "statefulsets"},
 					},
 				},
 				{
@@ -66,14 +70,27 @@ func TestIsComputeDomainCRDPresent(t *testing.T) {
 					APIResources: []metav1.APIResource{
 						{Name: "resourceclaims"},
 						{Name: ComputeDomainResource},
+						{Name: "resourceclaimtemplates"},
 					},
 				},
 			},
-			expected: true,
+			expectError: false,
 		},
 		{
-			name: "wrong resource name",
-			apiResourceList: []*metav1.APIResourceList{
+			name:        "empty resources - error",
+			resources:   []*metav1.APIResourceList{},
+			expectError: true,
+			errorMsg:    "MNNVL is enabled but ComputeDomain CRD",
+		},
+		{
+			name:        "nil resources - error",
+			resources:   nil,
+			expectError: true,
+			errorMsg:    "MNNVL is enabled but ComputeDomain CRD",
+		},
+		{
+			name: "wrong resource name - error",
+			resources: []*metav1.APIResourceList{
 				{
 					GroupVersion: ComputeDomainGroup + "/" + ComputeDomainVersion,
 					APIResources: []metav1.APIResource{
@@ -81,11 +98,12 @@ func TestIsComputeDomainCRDPresent(t *testing.T) {
 					},
 				},
 			},
-			expected: false,
+			expectError: true,
+			errorMsg:    "MNNVL is enabled but ComputeDomain CRD",
 		},
 		{
-			name: "wrong group",
-			apiResourceList: []*metav1.APIResourceList{
+			name: "wrong API group - error",
+			resources: []*metav1.APIResourceList{
 				{
 					GroupVersion: "wrong.group/v1beta1",
 					APIResources: []metav1.APIResource{
@@ -93,11 +111,12 @@ func TestIsComputeDomainCRDPresent(t *testing.T) {
 					},
 				},
 			},
-			expected: false,
+			expectError: true,
+			errorMsg:    "MNNVL is enabled but ComputeDomain CRD",
 		},
 		{
-			name: "wrong version",
-			apiResourceList: []*metav1.APIResourceList{
+			name: "wrong API version - error",
+			resources: []*metav1.APIResourceList{
 				{
 					GroupVersion: ComputeDomainGroup + "/v2",
 					APIResources: []metav1.APIResource{
@@ -105,26 +124,39 @@ func TestIsComputeDomainCRDPresent(t *testing.T) {
 					},
 				},
 			},
-			expected: false,
+			expectError: true,
+			errorMsg:    "MNNVL is enabled but ComputeDomain CRD",
 		},
 		{
-			name: "correct resource but different group version",
-			apiResourceList: []*metav1.APIResourceList{
-				{
-					GroupVersion: "resource.nvidia.com/v1",
-					APIResources: []metav1.APIResource{
-						{Name: ComputeDomainResource},
-					},
-				},
+			name:      "discovery error - returns error",
+			resources: []*metav1.APIResourceList{},
+			reactor: func(action k8stesting.Action) (bool, runtime.Object, error) {
+				return true, nil, errors.New("connection refused")
 			},
-			expected: false,
+			expectError: true,
+			errorMsg:    "failed to discover API resources",
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			result := IsComputeDomainCRDPresent(test.apiResourceList)
-			assert.Equal(t, test.expected, result)
+			fake := &k8stesting.Fake{
+				Resources: test.resources,
+			}
+			fakeDiscovery := &fakediscovery.FakeDiscovery{Fake: fake}
+
+			if test.reactor != nil {
+				fake.AddReactor("*", "*", test.reactor)
+			}
+
+			err := validateComputeDomainCRD(fakeDiscovery)
+
+			if test.expectError {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), test.errorMsg)
+			} else {
+				assert.NoError(t, err)
+			}
 		})
 	}
 }

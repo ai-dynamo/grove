@@ -85,8 +85,8 @@ config:
       - system:kube-controller-manager
       - system:serviceaccount:kai-scheduler:pod-grouper
       - system:serviceaccount:kai-scheduler:binder
-  mnnvl:
-    enabled: false
+  network:
+    autoMNNVLEnabled: false
 
 configMap:
   labels:

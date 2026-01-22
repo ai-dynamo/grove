@@ -37,17 +37,33 @@ func Preflight(operatorCfg *configv1alpha1.OperatorConfiguration) error {
 
 	logger.Info("MNNVL support is enabled, validating prerequisites")
 
+	discoveryClient, err := newDiscoveryClient()
+	if err != nil {
+		return err
+	}
+
+	return validateComputeDomainCRD(discoveryClient)
+}
+
+// newDiscoveryClient creates a new Kubernetes discovery client using the in-cluster
+// or kubeconfig configuration.
+func newDiscoveryClient() (discovery.DiscoveryInterface, error) {
 	cfg, err := ctrl.GetConfig()
 	if err != nil {
-		return fmt.Errorf("failed to get cluster config for MNNVL validation: %w", err)
+		return nil, fmt.Errorf("failed to get cluster config for MNNVL validation: %w", err)
 	}
 
 	discoveryClient, err := discovery.NewDiscoveryClientForConfig(cfg)
 	if err != nil {
-		return fmt.Errorf("failed to create discovery client for MNNVL validation: %w", err)
+		return nil, fmt.Errorf("failed to create discovery client for MNNVL validation: %w", err)
 	}
 
-	// Check if the ComputeDomain CRD exists
+	return discoveryClient, nil
+}
+
+// validateComputeDomainCRD checks if the ComputeDomain CRD is installed in the cluster.
+// It uses the provided discovery interface to query the API server.
+func validateComputeDomainCRD(discoveryClient discovery.DiscoveryInterface) error {
 	_, apiResourceList, err := discoveryClient.ServerGroupsAndResources()
 	if err != nil {
 		// Handle partial discovery errors gracefully
@@ -56,7 +72,7 @@ func Preflight(operatorCfg *configv1alpha1.OperatorConfiguration) error {
 		}
 	}
 
-	if !IsComputeDomainCRDPresent(apiResourceList) {
+	if !isComputeDomainCRDPresent(apiResourceList) {
 		return fmt.Errorf("MNNVL is enabled but ComputeDomain CRD (%s) is not installed. "+
 			"Please install the NVIDIA DRA driver or disable MNNVL in the operator configuration", ComputeDomainCRDName)
 	}
@@ -65,8 +81,8 @@ func Preflight(operatorCfg *configv1alpha1.OperatorConfiguration) error {
 	return nil
 }
 
-// IsComputeDomainCRDPresent checks if the ComputeDomain CRD is present in the API resource list.
-func IsComputeDomainCRDPresent(apiResourceList []*metav1.APIResourceList) bool {
+// isComputeDomainCRDPresent checks if the ComputeDomain CRD is present in the API resource list.
+func isComputeDomainCRDPresent(apiResourceList []*metav1.APIResourceList) bool {
 	computeDomainGroupVersion := ComputeDomainGroup + "/" + ComputeDomainVersion
 	for _, resourceList := range apiResourceList {
 		for _, resource := range resourceList.APIResources {
