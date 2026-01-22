@@ -20,11 +20,15 @@ package tests
 
 import (
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
+	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -37,6 +41,11 @@ const (
 
 	// eventLookbackDuration is how far back to look for events
 	eventLookbackDuration = 10 * time.Minute
+
+	// DiagnosticsToStdoutEnvVar is the environment variable that controls diagnostics output.
+	// If set to any non-empty value, diagnostics are printed to stdout.
+	// If not set or empty, diagnostics are written to a timestamped file.
+	DiagnosticsToStdoutEnvVar = "GROVE_E2E_DIAG_TO_STDOUT"
 )
 
 // isPodReady checks if a pod is ready
@@ -64,28 +73,92 @@ var groveResourceTypes = []groveResourceType{
 	{"PodGangs", schema.GroupVersionResource{Group: "scheduler.grove.io", Version: "v1alpha1", Resource: "podgangs"}, "PODGANG"},
 }
 
+// createDiagnosticsWriter creates an io.Writer for diagnostics output.
+// If GROVE_E2E_DIAG_TO_STDOUT is set, returns os.Stdout.
+// Otherwise, creates a timestamped file using the test name in the current directory.
+// The caller is responsible for closing the returned io.Closer (may be nil for stdout).
+func createDiagnosticsWriter(testName string) (io.Writer, io.Closer, string, error) {
+	if os.Getenv(DiagnosticsToStdoutEnvVar) != "" {
+		return os.Stdout, nil, "", nil
+	}
+
+	// Sanitize test name for use in filename (replace / with _)
+	sanitizedName := strings.ReplaceAll(testName, "/", "_")
+
+	// Create a timestamped file with test name
+	timestamp := time.Now().Format("2006-01-02_15-04-05")
+	filename := fmt.Sprintf("%s_%s.log", sanitizedName, timestamp)
+
+	// Try to create the file in the current directory
+	file, err := os.Create(filename)
+	if err != nil {
+		// Fall back to a temp directory if we can't write to current dir
+		filename = filepath.Join(os.TempDir(), filename)
+		file, err = os.Create(filename)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("failed to create diagnostics file: %w", err)
+		}
+	}
+
+	return file, file, filename, nil
+}
+
 // CollectAllDiagnostics collects and prints all diagnostic information at INFO level.
 // This should be called when a test fails, before cleanup runs.
 // All output is at INFO level to ensure visibility regardless of log level settings.
+//
+// Diagnostics are written to a timestamped file using the test name (e.g., TestRollingUpdate_2025-01-22_15-04-05.log).
+// Set the DiagnosticsToStdoutEnvVar environment variable to output to stdout instead.
 func CollectAllDiagnostics(tc TestContext) {
+	// Get test name for the diagnostics file
+	testName := "unknown_test"
+	if tc.T != nil {
+		testName = tc.T.Name()
+	}
+
+	// Create diagnostics output writer
+	writer, closer, filename, err := createDiagnosticsWriter(testName)
+	if err != nil {
+		logger.Errorf("Failed to create diagnostics writer, falling back to stdout: %v", err)
+		writer = os.Stdout
+		filename = ""
+	}
+	if closer != nil {
+		defer closer.Close()
+	}
+
+	// Save reference to stdout logger, then shadow with diagnostics logger
+	stdoutLogger := logger
+	logger := utils.NewTestLoggerWithOutput(utils.InfoLevel, writer)
+
+	// Log where diagnostics are being written (to main test output)
+	if filename != "" {
+		stdoutLogger.Infof("Writing diagnostics to file: %s", filename)
+	}
+
 	logger.Info("================================================================================")
 	logger.Info("=== COLLECTING FAILURE DIAGNOSTICS ===")
 	logger.Info("================================================================================")
 
 	// Collect each type of diagnostic, continuing even if one fails
-	dumpOperatorLogs(tc)
-	dumpGroveResources(tc)
-	dumpPodDetails(tc)
-	dumpRecentEvents(tc)
+	dumpOperatorLogs(tc, logger)
+	dumpGroveResources(tc, logger)
+	dumpPodDetails(tc, logger)
+	dumpRecentEvents(tc, logger)
 
 	logger.Info("================================================================================")
 	logger.Info("=== END OF FAILURE DIAGNOSTICS ===")
 	logger.Info("================================================================================")
+
+	// Log completion message (to main test output)
+	if filename != "" {
+		stdoutLogger.Infof("Diagnostics collection complete. Output written to: %s", filename)
+	}
 }
 
 // dumpOperatorLogs captures and prints operator logs at INFO level.
 // Captures all logs from all containers in the operator pod.
-func dumpOperatorLogs(tc TestContext) {
+func dumpOperatorLogs(tc TestContext, logger *utils.Logger) {
 	logger.Info("================================================================================")
 	logger.Info("=== OPERATOR LOGS (all) ===")
 	logger.Info("================================================================================")
@@ -175,7 +248,7 @@ func dumpOperatorLogs(tc TestContext) {
 }
 
 // dumpGroveResources dumps all Grove resources as YAML at INFO level.
-func dumpGroveResources(tc TestContext) {
+func dumpGroveResources(tc TestContext, logger *utils.Logger) {
 	logger.Info("================================================================================")
 	logger.Info("=== GROVE RESOURCES ===")
 	logger.Info("================================================================================")
@@ -221,7 +294,7 @@ func dumpGroveResources(tc TestContext) {
 // dumpPodDetails dumps detailed pod information at INFO level.
 // Lists ALL pods in the namespace (not filtered by workload label selector)
 // to ensure we capture all relevant pods during failure diagnostics.
-func dumpPodDetails(tc TestContext) {
+func dumpPodDetails(tc TestContext, logger *utils.Logger) {
 	logger.Info("================================================================================")
 	logger.Info("=== POD DETAILS ===")
 	logger.Info("================================================================================")
@@ -305,7 +378,7 @@ func dumpPodDetails(tc TestContext) {
 }
 
 // dumpRecentEvents dumps Kubernetes events from the last eventLookbackDuration at INFO level.
-func dumpRecentEvents(tc TestContext) {
+func dumpRecentEvents(tc TestContext, logger *utils.Logger) {
 	logger.Info("================================================================================")
 	logger.Infof("=== KUBERNETES EVENTS (last %v) ===", eventLookbackDuration)
 	logger.Info("================================================================================")
