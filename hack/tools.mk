@@ -27,6 +27,7 @@ YQ                := $(TOOLS_BIN_DIR)/yq
 GO_ADD_LICENSE    := $(TOOLS_BIN_DIR)/addlicense
 SKAFFOLD          := $(TOOLS_BIN_DIR)/skaffold
 CRD_REF_DOCS      := $(TOOLS_BIN_DIR)/crd-ref-docs
+MDTOC			  := $(TOOLS_BIN_DIR)/mdtoc
 
 # default tool versions
 # -------------------------------------------------------------------------
@@ -38,6 +39,7 @@ YQ_VERSION                ?= v4.48.1
 GO_ADD_LICENSE_VERSION    ?= v1.2.0
 SKAFFOLD_VERSION          ?= v2.16.1
 CRD_REF_DOCS_VERSION      ?= v0.2.0
+MDTOC_VERSION             ?= latest
 
 export PATH := $(abspath $(TOOLS_BIN_DIR)):$(PATH)
 
@@ -86,3 +88,6 @@ $(SKAFFOLD):
 
 $(CRD_REF_DOCS):
 	GOBIN=$(abspath $(TOOLS_BIN_DIR)) go install github.com/elastic/crd-ref-docs@$(CRD_REF_DOCS_VERSION)
+
+$(MDTOC):
+	GOBIN=$(abspath $(TOOLS_BIN_DIR)) go install sigs.k8s.io/mdtoc@latest

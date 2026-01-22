@@ -116,3 +116,13 @@ test-e2e:
 .PHONY: test
 test: test-unit test-envtest
 	@echo "> All tests passed"
+
+# Updates the docs/proposals table of contents
+.PHONY: update-toc
+update-toc: $(MDTOC)
+	@$(REPO_HACK_DIR)/update-toc.sh
+
+# Verifies that the docs/proposals table of contents is up to date
+.PHONY: verify-toc
+verify-toc: $(MDTOC)
+	@$(REPO_HACK_DIR)/verify-toc.sh

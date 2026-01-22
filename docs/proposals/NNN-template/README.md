@@ -1,8 +1,32 @@
 # GREP-NNN: Short descriptive title
 
+<!-- toc -->
+- [Summary](#summary)
+- [Motivation](#motivation)
+  - [Goals](#goals)
+  - [Non-Goals](#non-goals)
+- [Proposal](#proposal)
+  - [User Stories (<em>Optional</em>)](#user-stories-optional)
+    - [Story 1 (<em>Optional</em>)](#story-1-optional)
+    - [Story 2 (<em>Optional</em>)](#story-2-optional)
+  - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
+- [Design Details](#design-details)
+  - [Monitoring](#monitoring)
+  - [Dependencies (<em>Optional</em>)](#dependencies-optional)
+  - [Test Plan](#test-plan)
+  - [Graduation Criteria](#graduation-criteria)
+- [Implementation History (<em>Optional</em>)](#implementation-history-optional)
+- [Alternatives (<em>Optional</em>)](#alternatives-optional)
+- [Appendix (<em>Optional</em>)](#appendix-optional)
+<!-- /toc -->
+
 <!--
-Include a table of contents as it helps to navigate easily in the document. This can be easily
-generated using https://github.com/kubernetes-sigs/mdtoc 
+Include a table of contents as it helps to navigate easily in the document.
+
+Ensure the TOC is wrapped with
+   <code>&lt;!-- toc --&gt;&lt;!-- /toc --&gt;</code>
+tags, and then generate by invoking the make target `update-toc`.
+
 -->
 
 ## Summary

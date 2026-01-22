@@ -1,5 +1,36 @@
 # GREP-001: Topology Aware Scheduling
 
+<!-- toc -->
+- [Summary](#summary)
+- [Motivation](#motivation)
+  - [Goals](#goals)
+  - [Non-Goals](#non-goals)
+- [Proposal](#proposal)
+  - [User Stories](#user-stories)
+    - [Story 1](#story-1)
+    - [Story 2](#story-2)
+    - [Story 3](#story-3)
+  - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
+    - [Topology Constraints Only Guaranteed for Initial Deployment](#topology-constraints-only-guaranteed-for-initial-deployment)
+    - [Operational Complexity](#operational-complexity)
+    - [Topology Configuration Drift](#topology-configuration-drift)
+    - [Topology Aware Cluster Autoscaling](#topology-aware-cluster-autoscaling)
+    - [Workload Portability](#workload-portability)
+- [Design Details](#design-details)
+  - [Cluster Admin API](#cluster-admin-api)
+    - [Supported Topology domains:](#supported-topology-domains)
+    - [Validation](#validation)
+    - [Operator Startup behavior](#operator-startup-behavior)
+    - [Topology Configuration Updates](#topology-configuration-updates)
+  - [ClusterTopology custom resource](#clustertopology-custom-resource)
+  - [Topology Constraints in PodCliqueSet](#topology-constraints-in-podcliqueset)
+    - [Validation](#validation-1)
+  - [PodGang: Scheduler API Enhancements](#podgang-scheduler-api-enhancements)
+  - [Monitoring](#monitoring)
+  - [Dependencies](#dependencies)
+  - [Test Plan](#test-plan)
+<!-- /toc -->
+
 ## Summary
 
 AI Inference workloads require low-latency data transfer between model layers or shards. While Grove already enables hierarchical `Gang scheduling` in a `PodCliqueSet` spec, it currently lacks the capability to leverage existing cluster topology and an ability for the workload operators to declaratively define hierarchical topology constraints. This GREP introduces a new custom resource allowing cluster administrators to define topology levels for a cluster and enhances the `PodCliqueSet` API allowing users to specify topology constraints on different parts of their AI workload.
