@@ -3,7 +3,8 @@ apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
   name: podcliqueset-validating-webhook
-  {{- if .Values.webhooks.podCliqueSetValidationWebhook.annotations }}
+  {{- /* Only include annotations in manual cert mode (certProvisionMode=manual) */ -}}
+  {{- if and (eq .Values.config.server.webhooks.certProvisionMode "manual") .Values.webhooks.podCliqueSetValidationWebhook.annotations }}
   annotations:
     {{- toYaml .Values.webhooks.podCliqueSetValidationWebhook.annotations | nindent 4 }}
   {{- end }}

@@ -21,6 +21,7 @@ import (
 	"os"
 	"strings"
 
+	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	authorizationwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/authorization"
 	defaultingwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/defaulting"
@@ -38,10 +39,10 @@ const (
 	certificateAuthorityOrganization = "Grove"
 )
 
-// ManageWebhookCerts manages webhook certificates based on the AutoProvision configuration.
-// When AutoProvision=true: uses cert-controller for automatic certificate generation and management.
-// When AutoProvision=false: waits for externally provided certificates (e.g., from cert-manager, cluster admin).
-func ManageWebhookCerts(mgr ctrl.Manager, certDir string, secretName string, authorizerEnabled bool, autoProvision bool, certsReadyCh chan struct{}) error {
+// ManageWebhookCerts manages webhook certificates based on the CertProvisionMode configuration.
+// When mode=auto: uses cert-controller for automatic certificate generation and management.
+// When mode=manual: waits for externally provided certificates (e.g., from cert-manager, cluster admin).
+func ManageWebhookCerts(mgr ctrl.Manager, certDir string, secretName string, authorizerEnabled bool, certProvisionMode configv1alpha1.CertProvisionMode, certsReadyCh chan struct{}) error {
 	namespace, err := getOperatorNamespace()
 	if err != nil {
 		return err
@@ -49,8 +50,8 @@ func ManageWebhookCerts(mgr ctrl.Manager, certDir string, secretName string, aut
 
 	logger := ctrl.Log.WithName("cert-management")
 
-	if !autoProvision {
-		logger.Info("Using externally provided certificates",
+	if certProvisionMode == configv1alpha1.CertProvisionModeManual {
+		logger.Info("Using externally provided certificates (manual mode)",
 			"certDir", certDir, "secretName", secretName)
 		// Certificates are managed externally, signal ready immediately
 		close(certsReadyCh)
@@ -58,7 +59,7 @@ func ManageWebhookCerts(mgr ctrl.Manager, certDir string, secretName string, aut
 	}
 
 	logger.Info("Auto-provisioning certificates using cert-controller",
-		"secretName", secretName, "certDir", certDir)
+		"secretName", secretName, "certDir", certDir, "mode", certProvisionMode)
 	rotator := &cert.CertRotator{
 		SecretKey: types.NamespacedName{
 			Namespace: namespace,

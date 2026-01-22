@@ -23,12 +23,63 @@ import (
 	"path/filepath"
 	"runtime"
 
+	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	"gopkg.in/yaml.v3"
 	"k8s.io/client-go/rest"
 )
 
-// UpgradeGrove upgrades the Grove operator with the specified Helm values.
+// GroveConfig holds typed configuration options for updating the Grove operator.
+// This struct provides a user-friendly interface that gets translated to Helm values internally.
+type GroveConfig struct {
+	// InstallCRDs controls whether CRDs should be installed/updated.
+	InstallCRDs bool
+	// Webhooks contains webhook-specific configuration.
+	Webhooks WebhooksConfig
+}
+
+// WebhooksConfig holds configuration for Grove's webhook server.
+type WebhooksConfig struct {
+	// CertProvisionMode controls how webhook certificates are provisioned.
+	// Use configv1alpha1.CertProvisionModeAuto for automatic provisioning,
+	// configv1alpha1.CertProvisionModeManual for external cert management.
+	CertProvisionMode configv1alpha1.CertProvisionMode
+	// SecretName is the name of the Kubernetes secret containing TLS certificates.
+	SecretName string
+	// Annotations to apply to webhook configurations (e.g., for cert-manager CA injection).
+	// These annotations are applied to all webhook configurations.
+	Annotations map[string]string
+}
+
+// toHelmValues converts the typed GroveConfig to a Helm values map.
+func (c *GroveConfig) toHelmValues() map[string]interface{} {
+	// Convert annotations to interface{} map for Helm
+	annotations := make(map[string]interface{})
+	for k, v := range c.Webhooks.Annotations {
+		annotations[k] = v
+	}
+
+	webhookAnnotations := map[string]interface{}{"annotations": annotations}
+
+	return map[string]interface{}{
+		"installCRDs": c.InstallCRDs,
+		"config": map[string]interface{}{
+			"server": map[string]interface{}{
+				"webhooks": map[string]interface{}{
+					"certProvisionMode": string(c.Webhooks.CertProvisionMode),
+					"secretName":        c.Webhooks.SecretName,
+				},
+			},
+		},
+		"webhooks": map[string]interface{}{
+			"podCliqueSetValidationWebhook": webhookAnnotations,
+			"podCliqueSetDefaultingWebhook": webhookAnnotations,
+			"authorizerWebhook":             webhookAnnotations,
+		},
+	}
+}
+
+// UpdateGroveConfiguration updates the Grove operator configuration.
 //
 // This uses Helm upgrade (rather than Skaffold) because:
 // 1. Grove is initially installed via Skaffold, which uses Helm under the hood
@@ -36,13 +87,13 @@ import (
 // 3. Helm upgrade with ReuseValues preserves the image configuration that Skaffold set
 //
 // This approach avoids wasteful rebuilds while staying compatible with the Skaffold installation.
-func UpgradeGrove(ctx context.Context, restConfig *rest.Config, values map[string]interface{}, logger *utils.Logger) error {
-	chartPath, err := getGroveChartPath()
+func UpdateGroveConfiguration(ctx context.Context, restConfig *rest.Config, config *GroveConfig, logger *utils.Logger) error {
+	chartDir, err := getGroveChartDir()
 	if err != nil {
-		return fmt.Errorf("failed to get Grove chart path: %w", err)
+		return fmt.Errorf("failed to get Grove chart directory: %w", err)
 	}
 
-	chartVersion, err := getChartVersion(chartPath)
+	chartVersion, err := getChartVersion(chartDir)
 	if err != nil {
 		return fmt.Errorf("failed to get chart version: %w", err)
 	}
@@ -54,16 +105,16 @@ func UpgradeGrove(ctx context.Context, restConfig *rest.Config, values map[strin
 	helmConfig := &HelmInstallConfig{
 		RestConfig:     restConfig,
 		ReleaseName:    OperatorDeploymentName,
-		ChartRef:       chartPath,
+		ChartRef:       chartDir,
 		ChartVersion:   chartVersion,
 		Namespace:      OperatorNamespace,
 		ReuseValues:    true,
-		Values:         values,
+		Values:         config.toHelmValues(),
 		HelmLoggerFunc: logger.Debugf,
 		Logger:         logger,
 	}
 
-	logger.Debug("Upgrading Grove operator")
+	logger.Debug("Updating Grove operator configuration")
 
 	if _, err := UpgradeHelmChart(helmConfig); err != nil {
 		return fmt.Errorf("helm upgrade failed: %w", err)
@@ -74,7 +125,7 @@ func UpgradeGrove(ctx context.Context, restConfig *rest.Config, values map[strin
 		return fmt.Errorf("grove operator pod not ready after upgrade: %w", err)
 	}
 
-	logger.Debug("Grove upgrade completed successfully")
+	logger.Debug("Grove configuration update completed successfully")
 	return nil
 }
 
@@ -84,37 +135,38 @@ type chartYAML struct {
 }
 
 // getChartVersion reads the version from Chart.yaml in the given chart directory.
+// The chartDir parameter should be the path to a Helm chart directory. Chart.yaml is
+// a required file per the Helm chart specification and will always exist for valid charts.
 // We read from Chart.yaml rather than hardcoding the version to maintain a single source
-// of truth. This ensures the upgrade uses the same version as the chart itself, avoiding
-// configuration drift between the chart definition and the e2e test code.
-func getChartVersion(chartPath string) (string, error) {
-	chartFile := filepath.Join(chartPath, "Chart.yaml")
+// of truth, avoiding configuration drift between the chart definition and the e2e test code.
+func getChartVersion(chartDir string) (string, error) {
+	chartFile := filepath.Join(chartDir, "Chart.yaml")
 	data, err := os.ReadFile(chartFile)
 	if err != nil {
-		return "", fmt.Errorf("failed to read Chart.yaml: %w", err)
+		return "", fmt.Errorf("failed to read %s: %w", chartFile, err)
 	}
 
 	var chart chartYAML
 	if err := yaml.Unmarshal(data, &chart); err != nil {
-		return "", fmt.Errorf("failed to parse Chart.yaml: %w", err)
+		return "", fmt.Errorf("failed to parse %s: %w", chartFile, err)
 	}
 
 	if chart.Version == "" {
-		return "", fmt.Errorf("version not found in Chart.yaml")
+		return "", fmt.Errorf("version not found in %s", chartFile)
 	}
 
 	return chart.Version, nil
 }
 
-// getGroveChartPath returns the absolute path to the Grove Helm chart.
+// getGroveChartDir returns the absolute path to the Grove Helm chart directory.
 // It uses runtime.Caller to find the path relative to this source file.
-func getGroveChartPath() (string, error) {
+func getGroveChartDir() (string, error) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
 		return "", fmt.Errorf("failed to get current file path")
 	}
 	// This file is at operator/e2e/setup/grove.go
-	// Chart is at operator/charts
-	chartPath := filepath.Join(filepath.Dir(currentFile), "../../charts")
-	return filepath.Abs(chartPath)
+	// Chart directory is at operator/charts
+	chartDir := filepath.Join(filepath.Dir(currentFile), "../../charts")
+	return filepath.Abs(chartDir)
 }

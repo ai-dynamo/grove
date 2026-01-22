@@ -145,14 +145,23 @@ type WebhookServer struct {
 	// +optional
 	// +kubebuilder:default="grove-webhook-server-cert"
 	SecretName string `json:"secretName,omitempty"`
-	// AutoProvision enables automatic certificate generation and management via cert-controller.
-	// When true: cert-controller automatically generates self-signed certificates and stores them in the Secret.
-	// When false: certificates are expected to be provided externally (e.g., by cert-manager, cluster admin).
-	// Default: true (auto-generate certificates for easy setup)
+	// CertProvisionMode controls how webhook certificates are provisioned.
 	// +optional
-	// +kubebuilder:default=true
-	AutoProvision *bool `json:"autoProvision,omitempty"`
+	// +kubebuilder:default="auto"
+	CertProvisionMode CertProvisionMode `json:"certProvisionMode,omitempty"`
 }
+
+// CertProvisionMode defines how webhook certificates are provisioned.
+// +kubebuilder:validation:Enum=auto;manual
+type CertProvisionMode string
+
+const (
+	// CertProvisionModeAuto enables automatic certificate generation and management via cert-controller.
+	// cert-controller automatically generates self-signed certificates and stores them in the Secret.
+	CertProvisionModeAuto CertProvisionMode = "auto"
+	// CertProvisionModeManual expects certificates to be provided externally (e.g., by cert-manager, cluster admin).
+	CertProvisionModeManual CertProvisionMode = "manual"
+)
 
 // Server contains information for HTTP(S) server configuration.
 type Server struct {
