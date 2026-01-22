@@ -54,17 +54,17 @@ config:
       # The Secret must contain tls.crt, tls.key, and ca.crt.
       # Default: "grove-webhook-server-cert"
       secretName: "grove-webhook-server-cert"
-      # autoProvision enables automatic certificate generation via cert-controller.
-      # When true (default): cert-controller automatically generates self-signed certificates.
-      #   - Best for development/testing
-      #   - No manual certificate management needed
-      #   - Certificates auto-rotate before expiry
-      # When false: certificates must be provided externally (e.g., cert-manager, manual).
-      #   - Best for production
-      #   - Use your own CA or Let's Encrypt
-      #   - Requires Secret to exist before operator starts
-      # Default:  true to use cert-controller for automatic certificate generation
-      autoProvision: true
+      # certProvisionMode controls how webhook certificates are provisioned.
+      # Values:
+      #   "auto" (default): cert-controller automatically generates self-signed certificates.
+      #     - Best for development/testing
+      #     - No manual certificate management needed
+      #     - Certificates auto-rotate before expiry
+      #   "manual": certificates must be provided externally (e.g., cert-manager, cluster admin).
+      #     - Best for production
+      #     - Use your own CA or Let's Encrypt
+      #     - Requires Secret to exist before operator starts
+      certProvisionMode: auto
     healthProbes:
       enable: false
       port: 9444

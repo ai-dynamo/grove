@@ -33,6 +33,7 @@ import (
 	"testing"
 	"time"
 
+	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
@@ -47,63 +48,48 @@ import (
 	"k8s.io/client-go/transport/spdy"
 )
 
-// certManagerGroveValues returns Grove Helm values for cert-manager mode.
-// This disables auto-provisioning and configures webhook annotations for cert-manager CA injection.
-func certManagerGroveValues() map[string]interface{} {
-	certManagerAnnotation := map[string]interface{}{
-		"cert-manager.io/inject-ca-from": "grove-system/grove-webhook-server-cert",
-	}
-	return map[string]interface{}{
-		"installCRDs": true,
-		"config": map[string]interface{}{
-			"server": map[string]interface{}{
-				"webhooks": map[string]interface{}{
-					"autoProvision": false,
-					"secretName":    "grove-webhook-server-cert",
-				},
+// certManagerGroveConfig returns Grove configuration for cert-manager mode.
+// This uses manual cert provisioning and configures webhook annotations for cert-manager CA injection.
+func certManagerGroveConfig() *setup.GroveConfig {
+	return &setup.GroveConfig{
+		InstallCRDs: true,
+		Webhooks: setup.WebhooksConfig{
+			CertProvisionMode: configv1alpha1.CertProvisionModeManual,
+			SecretName:        "grove-webhook-server-cert",
+			Annotations: map[string]string{
+				"cert-manager.io/inject-ca-from": "grove-system/grove-webhook-server-cert",
 			},
 		},
-		"webhooks": map[string]interface{}{
-			"podCliqueSetValidationWebhook": map[string]interface{}{"annotations": certManagerAnnotation},
-			"podCliqueSetDefaultingWebhook": map[string]interface{}{"annotations": certManagerAnnotation},
-			"authorizerWebhook":             map[string]interface{}{"annotations": certManagerAnnotation},
+	}
+}
+
+// autoProvisionGroveConfig returns Grove configuration for auto-provision mode (default).
+// Note: Annotations are intentionally omitted - the Helm templates only include annotations
+// when certProvisionMode is "manual", so any previous cert-manager annotations are automatically
+// cleared when switching back to auto mode.
+func autoProvisionGroveConfig() *setup.GroveConfig {
+	return &setup.GroveConfig{
+		InstallCRDs: true,
+		Webhooks: setup.WebhooksConfig{
+			CertProvisionMode: configv1alpha1.CertProvisionModeAuto,
+			SecretName:        "grove-webhook-server-cert",
 		},
 	}
 }
 
-// autoProvisionGroveValues returns Grove Helm values for auto-provision mode (default).
-func autoProvisionGroveValues() map[string]interface{} {
-	return map[string]interface{}{
-		"installCRDs": true,
-		"config": map[string]interface{}{
-			"server": map[string]interface{}{
-				"webhooks": map[string]interface{}{
-					"autoProvision": true,
-					"secretName":    "grove-webhook-server-cert",
-				},
-			},
-		},
-		"webhooks": map[string]interface{}{
-			"podCliqueSetValidationWebhook": map[string]interface{}{"annotations": map[string]interface{}{}},
-			"podCliqueSetDefaultingWebhook": map[string]interface{}{"annotations": map[string]interface{}{}},
-			"authorizerWebhook":             map[string]interface{}{"annotations": map[string]interface{}{}},
-		},
-	}
-}
-
-// upgradeGroveToCertManager upgrades Grove to use cert-manager for certificate management.
-func upgradeGroveToCertManager(t *testing.T, ctx context.Context, restConfig *rest.Config) {
+// updateGroveToCertManager updates Grove to use cert-manager for certificate management.
+func updateGroveToCertManager(t *testing.T, ctx context.Context, restConfig *rest.Config) {
 	t.Helper()
-	if err := setup.UpgradeGrove(ctx, restConfig, certManagerGroveValues(), logger); err != nil {
-		t.Fatalf("Failed to upgrade Grove to cert-manager mode: %v", err)
+	if err := setup.UpdateGroveConfiguration(ctx, restConfig, certManagerGroveConfig(), logger); err != nil {
+		t.Fatalf("Failed to update Grove to cert-manager mode: %v", err)
 	}
 }
 
-// upgradeGroveToAutoProvision upgrades Grove to use auto-provisioned certificates.
-func upgradeGroveToAutoProvision(t *testing.T, ctx context.Context, restConfig *rest.Config) {
+// updateGroveToAutoProvision updates Grove to use auto-provisioned certificates.
+func updateGroveToAutoProvision(t *testing.T, ctx context.Context, restConfig *rest.Config) {
 	t.Helper()
-	if err := setup.UpgradeGrove(ctx, restConfig, autoProvisionGroveValues(), logger); err != nil {
-		t.Fatalf("Failed to upgrade Grove to auto-provision mode: %v", err)
+	if err := setup.UpdateGroveConfiguration(ctx, restConfig, autoProvisionGroveConfig(), logger); err != nil {
+		t.Fatalf("Failed to update Grove to auto-provision mode: %v", err)
 	}
 }
 
@@ -142,7 +128,7 @@ spec:
 // Scenario CM-1:
 // 1. Initialize Grove with auto-provision mode
 // 2. Install cert-manager and create Certificate
-// 3. Upgrade Grove to use cert-manager (autoProvision=false)
+// 3. Upgrade Grove to use cert-manager (certProvisionMode=manual)
 // 4. Verify cert-manager mode is active
 // 5. Deploy and verify workload with cert-manager certs
 // 6. Remove cert-manager resources
@@ -176,8 +162,8 @@ func Test_CM1_CertManagementRoundTrip(t *testing.T) {
 	// and we need to wait for cert-manager to update it (not just check existence).
 	waitForSecretManagedByCertManager(t, ctx, clientset, "grove-webhook-server-cert")
 
-	logger.Info("3. Upgrade Grove to use cert-manager (autoProvision=false)")
-	upgradeGroveToCertManager(t, ctx, restConfig)
+	logger.Info("3. Upgrade Grove to use cert-manager (certProvisionMode=manual)")
+	updateGroveToCertManager(t, ctx, restConfig)
 
 	logger.Info("4. Verify cert-manager mode is active")
 	verifyCertManagerMode(t, ctx, clientset)
@@ -199,7 +185,7 @@ func Test_CM1_CertManagementRoundTrip(t *testing.T) {
 	waitForSecret(t, ctx, clientset, "grove-webhook-server-cert", false)
 
 	logger.Info("7. Upgrade Grove back to auto-provision mode")
-	upgradeGroveToAutoProvision(t, ctx, restConfig)
+	updateGroveToAutoProvision(t, ctx, restConfig)
 	waitForSecret(t, ctx, clientset, "grove-webhook-server-cert", true)
 
 	logger.Info("8. Verify auto-provision mode is active")
@@ -398,7 +384,7 @@ func checkReadyStatus(obj *unstructured.Unstructured) bool {
 			continue
 		}
 
-		if condition["type"] == "Ready" && condition["status"] == "True" {
+		if condition["type"] == "Ready" && condition["status"] == string(metav1.ConditionTrue) {
 			return true
 		}
 	}

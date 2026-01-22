@@ -3,7 +3,8 @@ apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
 metadata:
   name: podcliqueset-defaulting-webhook
-  {{- if .Values.webhooks.podCliqueSetDefaultingWebhook.annotations }}
+  {{- /* Only include annotations in manual cert mode (certProvisionMode=manual) */ -}}
+  {{- if and (eq .Values.config.server.webhooks.certProvisionMode "manual") .Values.webhooks.podCliqueSetDefaultingWebhook.annotations }}
   annotations:
     {{- toYaml .Values.webhooks.podCliqueSetDefaultingWebhook.annotations | nindent 4 }}
   {{- end }}

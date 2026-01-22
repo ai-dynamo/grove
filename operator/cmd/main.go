@@ -99,7 +99,7 @@ func main() {
 		operatorConfig.Server.Webhooks.ServerCertDir,
 		operatorConfig.Server.Webhooks.SecretName,
 		operatorConfig.Authorizer.Enabled,
-		*operatorConfig.Server.Webhooks.AutoProvision,
+		operatorConfig.Server.Webhooks.CertProvisionMode,
 		webhookCertsReadyCh,
 	); err != nil {
 		logger.Error(err, "failed to setup cert rotation")

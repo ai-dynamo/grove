@@ -61,8 +61,8 @@ To use external certificates, configure the following Helm values:
 config:
   server:
     webhooks:
-      # Disable auto-provisioning
-      autoProvision: false
+      # Use manual certificate provisioning (external)
+      certProvisionMode: manual
       # Name of the Secret containing your certificates
       secretName: "grove-webhook-server-cert"
 
@@ -184,7 +184,7 @@ webhooks:
 
 ```bash
 helm upgrade -i grove oci://ghcr.io/ai-dynamo/grove/grove-charts:<tag> \
-  --set config.server.webhooks.autoProvision=false \
+  --set config.server.webhooks.certProvisionMode=manual \
   --set webhooks.podCliqueSetValidationWebhook.annotations."cert-manager\.io/inject-ca-from"="<namespace>/grove-webhook-cert" \
   --set webhooks.podCliqueSetDefaultingWebhook.annotations."cert-manager\.io/inject-ca-from"="<namespace>/grove-webhook-cert" \
   --set webhooks.authorizerWebhook.annotations."cert-manager\.io/inject-ca-from"="<namespace>/grove-webhook-cert"
@@ -254,7 +254,7 @@ kubectl create secret generic grove-webhook-server-cert \
 CA_BUNDLE=$(cat ca.crt | base64 | tr -d '\n')
 
 helm upgrade -i grove oci://ghcr.io/ai-dynamo/grove/grove-charts:<tag> \
-  --set config.server.webhooks.autoProvision=false \
+  --set config.server.webhooks.certProvisionMode=manual \
   --set webhooks.caBundle="${CA_BUNDLE}"
 ```
 
@@ -268,7 +268,7 @@ helm upgrade -i grove oci://ghcr.io/ai-dynamo/grove/grove-charts:<tag> \
 
 ```bash
 helm upgrade grove oci://ghcr.io/ai-dynamo/grove/grove-charts:<tag> \
-  --set config.server.webhooks.autoProvision=false \
+  --set config.server.webhooks.certProvisionMode=manual \
   --set webhooks.caBundle="${CA_BUNDLE}"
 ```
 
@@ -280,7 +280,7 @@ helm upgrade grove oci://ghcr.io/ai-dynamo/grove/grove-charts:<tag> \
 
 ```bash
 helm upgrade grove oci://ghcr.io/ai-dynamo/grove/grove-charts:<tag> \
-  --set config.server.webhooks.autoProvision=true \
+  --set config.server.webhooks.certProvisionMode=auto \
   --set webhooks.caBundle=""
 ```
 
@@ -290,7 +290,7 @@ The cert-controller will generate new certificates on the next operator restart.
 
 | Helm Value | Type | Default | Description |
 |------------|------|---------|-------------|
-| `config.server.webhooks.autoProvision` | bool | `true` | Enable automatic certificate generation |
+| `config.server.webhooks.certProvisionMode` | string | `auto` | Certificate provisioning mode: `auto` (cert-controller generates certs) or `manual` (external certs) |
 | `config.server.webhooks.secretName` | string | `grove-webhook-server-cert` | Name of the Secret containing certificates |
 | `webhooks.caBundle` | string | `""` | Base64-encoded CA certificate for webhook configurations |
 | `webhooks.podCliqueSetValidationWebhook.annotations` | map | `{}` | Annotations for the validation webhook (e.g., cert-manager injection) |
@@ -313,7 +313,7 @@ The cert-controller will generate new certificates on the next operator restart.
 **Symptom:** Operator pod crashes with certificate-related errors.
 
 **Causes and solutions:**
-1. **Missing Secret:** When `autoProvision=false`, the Secret must exist before the operator starts
+1. **Missing Secret:** When `certProvisionMode=manual`, the Secret must exist before the operator starts
 2. **Invalid certificate format:** Ensure `tls.crt` and `tls.key` are valid PEM-encoded files
 3. **Missing `ca.crt`:** The Secret must contain all three keys: `tls.crt`, `tls.key`, and `ca.crt`
 
