@@ -93,7 +93,12 @@ cover-html: test-cover
 #   make test-e2e TEST_PATTERN=Test_GS       # Run all gang scheduling tests
 #   make test-e2e TEST_PATTERN=Test_GS1      # Run specific test
 #   make test-e2e TEST_PATTERN=Test_TAS      # Run all topology tests
+#
+# Diagnostics: On test failure, diagnostics are written to timestamped .log files.
+# The GROVE_E2E_DIAG_DIR env var controls the output directory (default: operator/).
+# Set GROVE_E2E_DIAG_TO_STDOUT=1 to print diagnostics to stdout instead.
 .PHONY: test-e2e
+test-e2e: export GROVE_E2E_DIAG_DIR = $(MODULE_ROOT)
 test-e2e:
 	@echo "> Preparing charts (copying CRDs)..."
 	@$(MODULE_HACK_DIR)/prepare-charts.sh

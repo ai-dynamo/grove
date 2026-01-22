@@ -46,6 +46,11 @@ const (
 	// If set to any non-empty value, diagnostics are printed to stdout.
 	// If not set or empty, diagnostics are written to a timestamped file.
 	DiagnosticsToStdoutEnvVar = "GROVE_E2E_DIAG_TO_STDOUT"
+
+	// DiagnosticsDirEnvVar is the environment variable that specifies the directory
+	// where diagnostics files should be written. If not set, files are written to
+	// the current directory. This is ignored if DiagnosticsToStdoutEnvVar is set.
+	DiagnosticsDirEnvVar = "GROVE_E2E_DIAG_DIR"
 )
 
 // isPodReady checks if a pod is ready
@@ -74,8 +79,10 @@ var groveResourceTypes = []groveResourceType{
 }
 
 // createDiagnosticsWriter creates an io.Writer for diagnostics output.
-// If GROVE_E2E_DIAG_TO_STDOUT is set, returns os.Stdout.
-// Otherwise, creates a timestamped file using the test name in the current directory.
+// If DiagnosticsToStdoutEnvVar env is set, returns os.Stdout.
+// Otherwise, creates a timestamped file using the test name.
+// If DiagnosticsToStdoutEnvVar env var is set, the file is created in that directory.
+// Otherwise, the file is created in the current directory (with fallback to temp dir).
 // The caller is responsible for closing the returned io.Closer (may be nil for stdout).
 func createDiagnosticsWriter(testName string) (io.Writer, io.Closer, string, error) {
 	if os.Getenv(DiagnosticsToStdoutEnvVar) != "" {
@@ -87,20 +94,33 @@ func createDiagnosticsWriter(testName string) (io.Writer, io.Closer, string, err
 
 	// Create a timestamped file with test name
 	timestamp := time.Now().Format("2006-01-02_15-04-05")
-	filename := fmt.Sprintf("%s_%s.log", sanitizedName, timestamp)
+	baseFilename := fmt.Sprintf("%s_%s.log", sanitizedName, timestamp)
+
+	// Determine the directory for the diagnostics file
+	diagDir := os.Getenv(DiagnosticsDirEnvVar)
+	if diagDir != "" {
+		// Use the specified directory
+		filename := filepath.Join(diagDir, baseFilename)
+		file, err := os.Create(filename)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("failed to create diagnostics file in %s: %w", diagDir, err)
+		}
+		return file, file, filename, nil
+	}
 
 	// Try to create the file in the current directory
-	file, err := os.Create(filename)
+	file, err := os.Create(baseFilename)
 	if err != nil {
 		// Fall back to a temp directory if we can't write to current dir
-		filename = filepath.Join(os.TempDir(), filename)
+		filename := filepath.Join(os.TempDir(), baseFilename)
 		file, err = os.Create(filename)
 		if err != nil {
 			return nil, nil, "", fmt.Errorf("failed to create diagnostics file: %w", err)
 		}
+		return file, file, filename, nil
 	}
 
-	return file, file, filename, nil
+	return file, file, baseFilename, nil
 }
 
 // CollectAllDiagnostics collects and prints all diagnostic information at INFO level.
@@ -108,7 +128,8 @@ func createDiagnosticsWriter(testName string) (io.Writer, io.Closer, string, err
 // All output is at INFO level to ensure visibility regardless of log level settings.
 //
 // Diagnostics are written to a timestamped file using the test name (e.g., TestRollingUpdate_2025-01-22_15-04-05.log).
-// Set the DiagnosticsToStdoutEnvVar environment variable to output to stdout instead.
+// Set DiagnosticsDirEnvVar env var to specify the output directory for diagnostics files.
+// Set DiagnosticsToStdoutEnvVar env var to output to stdout instead of a file.
 func CollectAllDiagnostics(tc TestContext) {
 	// Get test name for the diagnostics file
 	testName := "unknown_test"
