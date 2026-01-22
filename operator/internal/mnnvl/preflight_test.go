@@ -130,7 +130,7 @@ func Test_validateComputeDomainCRD(t *testing.T) {
 		{
 			name:      "discovery error - returns error",
 			resources: []*metav1.APIResourceList{},
-			reactor: func(action k8stesting.Action) (bool, runtime.Object, error) {
+			reactor: func(_ k8stesting.Action) (bool, runtime.Object, error) {
 				return true, nil, errors.New("connection refused")
 			},
 			expectError: true,

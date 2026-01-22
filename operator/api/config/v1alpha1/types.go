@@ -207,7 +207,7 @@ type TopologyAwareSchedulingConfiguration struct {
 type NetworkAcceleration struct {
 	// AutoMNNVLEnabled indicates whether automatic MNNVL (Multi-Node NVLink) support is enabled.
 	// When enabled, the operator will automatically create and manage ComputeDomain resources
-	// for GPU workloads. If the cluster doesn't have the NVIDIA OpenDRA driver installed,
+	// for GPU workloads. If the cluster doesn't have the NVIDIA DRA driver installed,
 	// the operator will exit with a non-zero exit code.
 	// Default: false
 	AutoMNNVLEnabled bool `json:"autoMNNVLEnabled"`
