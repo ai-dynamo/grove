@@ -81,6 +81,8 @@ jobs:
           skaffold version
 
       - name: Run e2e tests - ${{ matrix.test_name }}
+        env:
+          GROVE_E2E_DIAG_TO_STDOUT: "1"
         run: |
           cd operator
           echo "> Preparing charts (copying CRDs)..."
