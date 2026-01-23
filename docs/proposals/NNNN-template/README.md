@@ -1,4 +1,4 @@
-# GREP-NNN: Short descriptive title
+# GREP-NNNN: Short descriptive title
 
 <!-- toc -->
 - [Summary](#summary)
