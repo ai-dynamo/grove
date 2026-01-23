@@ -33,7 +33,7 @@
 
 ## Summary
 
-AI Inference workloads require low-latency data transfer between model layers or shards. While Grove already enables hierarchical `Gang scheduling` in a `PodCliqueSet` spec, it currently lacks the capability to leverage existing cluster topology and an ability for the workload operators to declaratively define hierarchical topology constraints. This GREP introduces a new custom resource allowing cluster administrators to define topology levels for a cluster and enhances the `PodCliqueSet` API allowing users to specify topology constraints on different parts of their AI workload.
+AI Inference workloads require low-latency data transfer between model layers or shards. Topology-aware placement of such workloads is critical to maximize performance on GPU scale-out clusters. This GREP proposes a unified topology model in Grove and introduces new API for users to define scheduling constraints that will guarantee topology optimized placement of their workloads.
 
 ## Motivation
 
