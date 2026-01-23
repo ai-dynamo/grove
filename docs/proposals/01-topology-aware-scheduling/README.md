@@ -68,7 +68,7 @@ Since different inference workloads have distinct communication patterns and pac
 Grove implements topology-aware scheduling through a two layer approach:
 
 **Admin Layer:** 
-In the first iteration, Grove exclusively manages the ClusterTopology CR lifecycle. Administrators configure topology hierarchy solely through `OperatorConfiguration`, and Grove creates a single operator-managed `ClusterTopology` resource named "grove-topology". This ensures a predictable, centrally-managed topology configuration.
+Grove defines a ClusterTopology CRD and exclusively manages the lifecycle of a ClusterTopology CR of a reserved name. Administrators configure topology hierarchy solely through `OperatorConfiguration`, and Grove creates a single operator-managed `ClusterTopology` resource named "grove-topology". This ensures a predictable, centrally-managed topology configuration.
 
 > NOTE: Support for externally-created `ClusterTopology` custom resources will be added in subsequent iterations, allowing more flexible topology management scenarios. However, this is explicitly out of scope for the initial implementation.
 
@@ -100,7 +100,7 @@ As an AI application developer running disaggregated inference workloads at scal
 
 #### Story 3
 
-As a software developer of benchmarking applications, when I request only 2 GPUs from a 8-GPU node, I want the two GPUs to be allocated on the same NUMA node along with all the CPUs. This will optimize communication costs between the host and device resulting in benchmark performance improvements.
+As a software developer of benchmarking applications, when I request only 2 GPUs from a 8-GPU node, I want the two GPUs to be allocated on the same NUMA node along with all the CPUs. This will optimize communication costs between the host and device resulting in benchmark performance improvements. On GPU generations before NVSwitch, this optimization is also critical to optimize GPU-GPU communication costs over NVLink.
 
 ### Limitations/Risks & Mitigations
 
@@ -114,7 +114,7 @@ Topology-aware scheduling constraints are only guaranteed to be honored during t
 This will result in creation of additional Pods. There is no guarantee that the topology constraints will be honoured for these additional Pods as that is subject to resource availability.
 
 *Scale-Out of PodCliqueScalingGroup:*
-This results in creation of a new `PodGang`. At present there is no way to correlate multiple `PodGang`s  as belonging to a single PCS replica. If there is a topology constraint defined at the `PodCliqueSet` level, then without the correlation amongst `PodGang`s it is not possible to enforce that all Pods that are part of the correlated PodGangs respect the topology constraint defined for a `PodCliqueSet` replica.
+This results in creation of a new `PodGang`. At present there is no way to correlate multiple `PodGang`s to KAI scheduler as belonging to a single PCS replica. If there is a topology constraint defined at the `PodCliqueSet` level, then without the association amongst `PodGang`s it is not possible to enforce that all Pods that are part of the correlated PodGangs respect the topology constraint defined for a `PodCliqueSet` replica.
 
 Consider the following example:
 
@@ -148,7 +148,7 @@ spec:
           - p-leader     
 ```
 
-In the above `PodCliqueSet` for replica index 1 and 2 of `prefill` PodCliqueScalingGroup two new scaled `PodGang`s will be created. Each such `PodGang` will have `p-leader` and `p-leader` PodClique Pods which should all be scheduled such that they are packed within topology domain `block`. However there is no way to communicate that these `block` topology domains should be within the same `zone` (topology constraint on a PodCliqueSet replica) for a single PodCliqueSet replica.
+In the above `PodCliqueSet` for replica indexes 1 and 2 (above the `minAvailable`) of `prefill` PodCliqueScalingGroup two new scaled `PodGang`s will be created. Each `PodGang` will have `p-leader` and `p-worker` PodClique Pods which should all be scheduled such that they are packed within topology domain `block`. However there is no guarantee that these `block` topology domains should be within the same `zone` (topology constraint on a PodCliqueSet replica) for a single PodCliqueSet replica.
 
 **Pod Rescheduling Scenarios**
 
@@ -225,7 +225,7 @@ type OperatorConfiguration struct {
 type TopologyAwareSchedulingConfiguration struct {
 	// Enabled indicates whether topology-aware scheduling is enabled.
 	Enabled bool `json:"enabled"`
-	// Levels is a list of topology levels. It need not be ordered from broadest to narrowest.
+	// Levels is a list of topology levels.
 	// Used to create/update the ClusterTopology CR at operator startup.
 	// +optional
 	Levels []corev1alpha1.TopologyLevel `json:"levels,omitempty"`
@@ -258,7 +258,7 @@ topologyAwareScheduling:
 
 #### Supported Topology domains:
 
-Topology domains are arranged from broadest to narrowest.
+Topology domains are sorted by their total network distance in descending order from maximum to minimum.
 
 | Domain       | Description                                         |
 | ------------ | --------------------------------------------------- |
@@ -317,7 +317,7 @@ In the first iteration, since `ClusterTopology` is completely managed by the  op
 
 ### ClusterTopology custom resource
 
-`ClusterTopology` is a custom resource that defines an ordered list of topology levels from broadest to the narrowest. Each `TopologyLevel` is a pair of topology domain and a node label key specific for the infrastructure provider.
+`ClusterTopology` is a custom resource that defines an ordered list of topology levels from largest to smallest network distance. Each `TopologyLevel` is a pair of topology domain and a node label key specific for the infrastructure provider.
 
 ClusterTopology Go API:
 
@@ -337,8 +337,8 @@ const (
 
 // ClusterTopologySpec defines the topology hierarchy specification.
 type ClusterTopologySpec struct {
-    // Levels is an ordered list of topology levels from broadest to narrowest scope.
-    // The order in this list defines the hierarchy (index 0 = broadest level).
+    // Levels is an ordered list of topology levels.
+    // The order in this list defines the hierarchy (index 0 = highest level with maximum total network distance).
     // This field is immutable after creation.
     // +kubebuilder:validation:MinItems=1
     // +kubebuilder:validation:MaxItems=7
@@ -421,8 +421,8 @@ type PodCliqueScalingGroupConfig struct {
 
 `TopolgyConstraint` defined at the `PodCliqueScalingGroup` level should be:
 
-* Equal to or narrower than the one that is defined at `PodCliqueSet` level. 
-* Equal to or broader than the constraints defined for each constituent `PodClique`.
+* Equal to or lower than the one that is defined at `PodCliqueSet` level. 
+* Equal to or higher than the constraints defined for each constituent `PodClique`.
 
 At `PodClique` level you can set the topology constraint using:
 
@@ -438,7 +438,7 @@ type PodCliqueTemplateSpec struct {
 }
 ```
 
-`TopologyConstraint` defined at the `PodClique` level should be narrower than or equal to the ones defined for the parent resources a.k.a (`PodCliqueScalingGroup` and `PodCliqueSet`).
+`TopologyConstraint` defined at the `PodClique` level should be lower than or equal to the ones defined for the parent resources a.k.a (`PodCliqueScalingGroup` and `PodCliqueSet`).
 
 Example PodCliqueSet with topology constraints (For brevity many parts of the PodCliqueSet spec has been omitted):
 
@@ -525,17 +525,17 @@ Existing validating webhook which validates `PodCliqueSet`, has been enhanced to
 
 *Rule-2: Check for Hierarchical strictness*
 
-As you traverse down the resource hierarchy (PodCliqueSet → PodCliqueScalingGroup → PodClique), topology constraints must become equal or stricter (broader to narrower). A child resource cannot specify a broader topology domain than its parent. If this rule is violated, then the creation of the `PodCliqueSet` will be rejected by the validating webhook.
+As you traverse down the resource hierarchy (PodCliqueSet → PodCliqueScalingGroup → PodClique), topology constraint levels must become equal or lower. A child resource cannot specify a broader topology domain than its parent. If this rule is violated, then the creation of the `PodCliqueSet` will be rejected by the validating webhook.
 
 Example:
 
 | Parent | Child   | Valid? | Reason                                                       |
 | ------ | ------- | ------ | ------------------------------------------------------------ |
-| `rack` | `host`  | ✅ Yes  | `host` is stricter (narrower) than `rack`                    |
+| `rack` | `host`  | ✅ Yes  | `host` is lower than `rack`                    |
 | `rack` | `rack`  | ✅ Yes  | Equal is allowed                                             |
-| `rack` | `numa`  | ✅ Yes  | `numa` is strictest                                          |
-| `host` | `rack`  | ❌ No   | `rack` is broader than `host`                                |
-| `zone` | `block` | ❌ No   | `block` is broader than `zone` (zone is more specific in semantic hierarchy) |
+| `rack` | `numa`  | ✅ Yes  | `numa` is lowest                                          |
+| `host` | `rack`  | ❌ No   | `rack` is higher than `host`                                |
+| `zone` | `block` | ✅ Yes   | `zone` is higher than `block` |
 
 These two validation rules ensure that workloads can only reference valid topology levels and maintain logical topology nesting throughout the resource hierarchy.
 
@@ -545,7 +545,7 @@ Grove operator translates the hierarchical topology constraints to infrastructur
 
 The following additional types have been defined to capture the topology constraints. Provision has been made to capture:
 
-* `Required` topology constraints which are hard requirements for the scheduler to consider.  These are generally equal to or broader than `Preferred` topology constraints.
+* `Required` topology constraints which are hard requirements for the scheduler to consider.  These constraints are guaranteed to be satisfied.
 * `Preferred` topology constraints are soft requirements and often point to the best possible packing that can be achieved.
 
 ```go
