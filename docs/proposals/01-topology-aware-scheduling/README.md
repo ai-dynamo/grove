@@ -29,7 +29,8 @@
   - [Monitoring](#monitoring)
   - [Dependencies](#dependencies)
   - [Test Plan](#test-plan)
-  <!-- /toc -->
+- [Alternatives](#alternatives)
+<!-- /toc -->
 
 ## Summary
 
@@ -687,3 +688,9 @@ To enable the scheduler to select/filter nodes that satisfy the topology constra
 * Reconciler specific tests that inspect `PodCliqueSet` topology constraints and update the `PodGang` resource are present at `operator/internal/controller/podcliqueset/components/podgang/syncflow_test.go`
 
 **E2E tests** are defined in [Issue#305](https://github.com/ai-dynamo/grove/issues/305).
+
+## Alternatives
+
+An alternative was discussed to allow cluster admin to externally create `ClusterTopology` CR and provide a controller in Grove whose responsibility would be to reconcile creates/updates/deletes on externally managed `ClusterTopology` resource. Grove operator can then be started by specifying the name  of the `ClusterTopology` CR.
+
+In the initial iteration, we wanted to take complete control over the lifecycle of the `ClusterTopology` CR and also reduce the effort for a cluster admin to manage such resource(s). In future we will auto-detect cluster topology via tools similar to [Topograph](https://github.com/NVIDIA/topograph) and extend it to also automatically create `ClusterTopolofy` CR.

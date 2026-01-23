@@ -29,7 +29,7 @@ tidy:
 
 # Checks the entire codebase by linting and formatting the code base, and checking for uncommitted changes
 .PHONY: check
-check: generate add-license-headers format generate-api-docs lint
+check: generate add-license-headers format generate-api-docs lint verify-toc
 	@echo "> Checking for uncommitted changes"
 	@if [ -n "$$(git status --porcelain)" ]; then \
 		echo "ERROR: Git tree is dirty after running validation steps."; \
