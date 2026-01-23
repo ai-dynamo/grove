@@ -29,7 +29,7 @@
   - [Monitoring](#monitoring)
   - [Dependencies](#dependencies)
   - [Test Plan](#test-plan)
-<!-- /toc -->
+  <!-- /toc -->
 
 ## Summary
 
@@ -80,7 +80,7 @@ Additionally, `Grove` operator will also create and manage any custom topology r
 Workload developers can specify topology constraints at three hierarchical levels (`PodCliqueSet`, `PodCliqueScalingGroup`, and `PodClique`) using domain names. The operator validates these constraints against the operator-managed ClusterTopology using two key validation rules:
 
 1. *Domain existence*: All topology domains referenced in workload's topology constraints must exist in the ClusterTopology CR. This ensures workloads only reference valid, configured topology levels.
-2. *Topology Constraint Hierarchy*:  Constraints must become equal or stricter (broader to narrower) as you traverse down the hierarchy from PodCliqueSet → PodCliqueScalingGroup → PodClique. A child resource cannot specify a broader topology domain than its parent. For example, if PodCliqueSet specifies `rack`, then PodCliqueScalingGroup can specify `rack` (equal), `host` (stricter), or `numa` (strictest), but not `zone` or `region` (broader). 
+2. *Topology Constraint Hierarchy*:  Topology levels are ordered by their total network distance in each level, from maximum (`region`) down to minimum (`numa`). When topology constraints are hierarchically applied to a workload from  PodCliqueSet → PodCliqueScalingGroup → PodClique, each level's  constraints must be set to equal or lower than the parent level workload primitive. A child resource cannot specify a higher topology domain  than its parent. For example, if PodCliqueSet specifies `rack`, then PodCliqueScalingGroup can specify `rack` (equal), `host` (lower), or `numa` (lowest), but not `zone` or `region` (higher).  
 
 After validation, the operator translates the topology domain names (e.g., "rack", "host") into cluster-specific topology keys (e.g., "topology.kubernetes.io/zone", "kubernetes.io/hostname") and configures these hierarchical topology keys in the `PodGang` API . The `PodGang` serves as an intermediate representation that will eventually be mapped to the specific types that the configured scheduler backend understands. This abstraction allows workload portability across clusters with different topology configurations and scheduler implementations.
 
@@ -168,7 +168,12 @@ Providing a way to define cluster topology entails that the cluster administrato
 * Ensure that the nodes are correctly labeled with the topology information.
 * Define appropriate topology levels in `OperatorConfiguration` when configuring the `Grove` operator.
 
-While validations will be provided to ensure that an admin does not configure an unsupported topology domain, however there is no way for `Grove` operator to ensure that the node labels that are mapped to each topology domain are in line with the ones that will be put onto nodes in a kubernetes cluster. 
+While validations will be provided to ensure that an admin does not configure an unsupported topology domain, however there is no way for `Grove` operator to ensure that the node labels that are mapped to each topology domain are in line with the ones that will be put onto nodes in a kubernetes cluster.
+
+**Mitigation**
+
+* Adequate documentation will be provided to the cluster administrators to help them properly configure topology levels in `OperatorConfiguration`.
+* Tools like [Topograph](https://github.com/NVIDIA/topograph) can be leveraged to automate discovery of cluster network topology and ensuring that topology levels are added as labels on Kubernetes Node(s).
 
 #### Topology Configuration Drift
 
