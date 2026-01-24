@@ -32,12 +32,19 @@ spec:
               echo "GROVE_HEADLESS_SERVICE=$GROVE_HEADLESS_SERVICE"
               echo "GROVE_PCLQ_POD_INDEX=$GROVE_PCLQ_POD_INDEX"
               echo ""
-              echo "=== Pod Information ==="
-              echo "Pod Name: $(hostname)"
-              echo "Pod Namespace: $GROVE_PCS_NAME-$GROVE_PCS_INDEX"
+              echo "=== Pod Name vs Hostname ==="
+              echo "Pod Name (random suffix): $POD_NAME"
+              echo "Hostname (deterministic): $(hostname)"
+              echo ""
+              echo "My FQDN: $GROVE_PCLQ_NAME-$GROVE_PCLQ_POD_INDEX.$GROVE_HEADLESS_SERVICE"
               echo ""
               echo "Sleeping..."
               sleep infinity
+            env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
             resources:
               requests:
                 cpu: "10m"

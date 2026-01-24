@@ -1,6 +1,6 @@
 # Pod Naming Scheme
 
-This guide explains Grove's hierarchical pod naming scheme and best practices for naming your resources. **Grove's naming convention is designed to be self-documenting**: when you run `kubectl get pods`, the pod names immediately tell you which PodCliqueSet, PodClique, and (if applicable) PodCliqueScalingGroup each pod belongs to, reflecting the complete hierarchy of your system.
+This guide explains Grove's hierarchical pod naming scheme and best practices for naming your resources. **Grove's naming convention is designed to be self-documenting**: when you run `kubectl get pods`, the pod names immediately tell you which PodCliqueSet, PodCliqueScalingGroup (if applicable), and PodClique each pod belongs to, reflecting the complete hierarchy of your system.
 
 ## Why Hierarchical Naming Matters
 

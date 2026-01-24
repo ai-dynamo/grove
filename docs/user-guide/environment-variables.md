@@ -20,7 +20,56 @@ Grove automatically injects environment variables into every container and init 
 - **Coordination**: Understanding your role in a distributed system
 - **Configuration**: Self-configuring based on your position in the hierarchy
 
-**Key insight:** Pod discovery in Grove is **index-based**, not name-based. While Kubernetes assigns each pod a name with a random suffix (e.g., `my-service-0-frontend-abc12`), you never need to know these suffixes for service discovery. Instead, Grove's environment variables let you construct deterministic addresses using the PodClique name and pod index (e.g., `my-service-0-frontend-0.<headless-service>`).
+However, before we get to the environment variables it is important to first make a distinction between a Pod's Name and its Hostname.
+
+## Understanding Pod Names vs. Hostnames in Kubernetes
+
+A common source of confusion is the difference between a pod's **name** and its **hostname**. Understanding this distinction is essential for using Grove's environment variables correctly.
+
+### Pod Name (Kubernetes Resource Identifier)
+
+The **pod name** is the unique identifier for the Pod resource in Kubernetes (stored in `metadata.name`). When Grove creates pods, it uses Kubernetes' `generateName` feature, which appends a random 5-character suffix to ensure uniqueness:
+
+```
+<pclq-name>-<random-suffix>
+Example: env-demo-standalone-0-frontend-abc12
+```
+
+This name is what you see when running `kubectl get pods`. However, you **cannot use this name for DNS-based service discovery** because the random suffix is unpredictable.
+
+### Hostname (DNS-Resolvable Identity)
+
+The **hostname** is a separate field (`spec.hostname`) that Grove explicitly sets on each pod. Unlike the pod name, the hostname follows a **deterministic pattern**:
+
+```
+<pclq-name>-<pod-index>
+Example: env-demo-standalone-0-frontend-0
+```
+
+Grove also sets the pod's **subdomain** (`spec.subdomain`) to match the headless service name. Grove automatically creates a headless service for each PodCliqueSet replica, so you don't need to create one yourself. In Kubernetes, when a pod has both `hostname` and `subdomain` set, and a matching headless service exists, the pod becomes DNS-resolvable at:
+
+```
+<hostname>.<subdomain>.<namespace>.svc.cluster.local
+```
+
+For example:
+```
+env-demo-standalone-0-frontend-0.env-demo-standalone-0.default.svc.cluster.local
+```
+
+### Why This Matters
+
+| Attribute | Pod Name | Hostname |
+|-----------|----------|----------|
+| Source | `metadata.name` | `spec.hostname` |
+| Pattern | `<pclq-name>-<random-suffix>` | `<pclq-name>-<pod-index>` |
+| Predictable? | ❌ No (random suffix) | ✅ Yes (index-based) |
+| DNS resolvable? | ❌ No | ✅ Yes (with headless service) |
+| Use case | `kubectl` commands, logs | Service discovery, pod-to-pod communication |
+
+**The environment variables Grove provides (`GROVE_PCLQ_NAME`, `GROVE_PCLQ_POD_INDEX`, `GROVE_HEADLESS_SERVICE`) give you the building blocks to construct the hostname-based FQDN, not the pod name.** This is why pod discovery in Grove is deterministic and doesn't require knowledge of random suffixes.
+
+With this explained we can now get into the environment variables Grove provides.
 
 ## Environment Variables Reference
 
@@ -91,12 +140,19 @@ spec:
               echo "GROVE_HEADLESS_SERVICE=$GROVE_HEADLESS_SERVICE"
               echo "GROVE_PCLQ_POD_INDEX=$GROVE_PCLQ_POD_INDEX"
               echo ""
-              echo "=== Pod Information ==="
-              echo "Pod Name: $(hostname)"
-              echo "PCS Replica: $GROVE_PCS_NAME-$GROVE_PCS_INDEX"
+              echo "=== Pod Name vs Hostname ==="
+              echo "Pod Name (random suffix): $POD_NAME"
+              echo "Hostname (deterministic): $(hostname)"
+              echo ""
+              echo "My FQDN: $GROVE_PCLQ_NAME-$GROVE_PCLQ_POD_INDEX.$GROVE_HEADLESS_SERVICE"
               echo ""
               echo "Sleeping..."
               sleep infinity
+            env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
             resources:
               requests:
                 cpu: "10m"
@@ -145,18 +201,21 @@ GROVE_PCLQ_NAME=env-demo-standalone-0-frontend
 GROVE_HEADLESS_SERVICE=env-demo-standalone-0.default.svc.cluster.local
 GROVE_PCLQ_POD_INDEX=0
 
-=== Pod Information ===
-Pod Name: env-demo-standalone-0-frontend-abc12
-Pod Namespace: env-demo-standalone-0
+=== Pod Name vs Hostname ===
+Pod Name (random suffix): env-demo-standalone-0-frontend-abc12
+Hostname (deterministic): env-demo-standalone-0-frontend-0
+
+My FQDN: env-demo-standalone-0-frontend-0.env-demo-standalone-0.default.svc.cluster.local
 
 Sleeping...
 ```
 
 **Key Observations:**
-- The pod name (`env-demo-standalone-0-frontend-abc12`) follows the pattern `<pcs-name>-<pcs-index>-<pclq-name>-<suffix>`
+- The **pod name** (`env-demo-standalone-0-frontend-abc12`) has a random suffix—this is the Kubernetes resource identifier, not used for DNS
+- The **hostname** (constructed as `$GROVE_PCLQ_NAME-$GROVE_PCLQ_POD_INDEX`) is deterministic—this is what you use for service discovery
 - `GROVE_PCLQ_NAME` contains the fully qualified PodClique name without the random suffix
 - `GROVE_PCLQ_POD_INDEX` tells us this is the first pod (index 0) in the PodClique
-- `GROVE_HEADLESS_SERVICE` provides the FQDN for the headless service serving all pods in this PodCliqueSet replica
+- `GROVE_HEADLESS_SERVICE` provides the FQDN for the headless service, so the full DNS address is: `$GROVE_PCLQ_NAME-$GROVE_PCLQ_POD_INDEX.$GROVE_HEADLESS_SERVICE`
 
 ### Cleanup
 
@@ -448,7 +507,3 @@ nslookup $GROVE_HEADLESS_SERVICE
 
 5. **Designed for Distributed Systems**  
    Grove’s environment variables are intentionally low-level and composable. They are meant to support a wide range of distributed system patterns—leader election, sharding, rendezvous, collective communication—without imposing a fixed discovery or coordination model.
-
-
-
-
