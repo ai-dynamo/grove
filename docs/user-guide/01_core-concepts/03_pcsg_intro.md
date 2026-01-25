@@ -74,11 +74,11 @@ spec:
 
 ### **Deploy:**
 
-In this example, we will deploy the file: [multi-node-aggregated.yaml](../../../operator/samples/user-guide/core-concepts/multi-node-aggregated.yaml)
+In this example, we will deploy the file: [multi-node-aggregated.yaml](../../../operator/samples/user-guide/01_core-concepts/multi-node-aggregated.yaml)
 ```bash
 # NOTE: Run the following commands from the `/path/to/grove/operator` directory,
 # where `/path/to/grove` is the root of your cloned Grove repository.
-kubectl apply -f samples/user-guide/core-concepts/multi-node-aggregated.yaml
+kubectl apply -f samples/user-guide/01_core-concepts/multi-node-aggregated.yaml
 kubectl get pods -l app.kubernetes.io/part-of=multinode-aggregated -o wide
 ```
 
@@ -288,11 +288,11 @@ spec:
 
 ### **Deploy**
 
-In this example, we will deploy the file: [multi-node-disaggregated.yaml](../../../operator/samples/user-guide/core-concepts/multi-node-disaggregated.yaml)
+In this example, we will deploy the file: [multi-node-disaggregated.yaml](../../../operator/samples/user-guide/01_core-concepts/multi-node-disaggregated.yaml)
 ```bash
 # NOTE: Run the following commands from the `/path/to/grove/operator` directory,
 # where `/path/to/grove` is the root of your cloned Grove repository.
-kubectl apply -f samples/user-guide/core-concepts/multi-node-disaggregated.yaml
+kubectl apply -f samples/user-guide/01_core-concepts/multi-node-disaggregated.yaml
 kubectl get pods -l app.kubernetes.io/part-of=multinode-disaggregated -o wide
 ```
 

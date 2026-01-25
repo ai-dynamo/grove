@@ -5,8 +5,8 @@ This section explains the environment variables that Grove automatically injects
 ## Prerequisites
 
 Before starting this section:
-- Review the [core concepts tutorial](../core-concepts/01_overview.md) to understand Grove's primitives
-- Read the [Pod Naming guide](../pod-and-resource-naming-conventions/01_overview.md) to understand Grove's naming conventions
+- Review the [core concepts tutorial](../01_core-concepts/01_overview.md) to understand Grove's primitives
+- Read the [Pod Naming guide](../02_pod-and-resource-naming-conventions/01_overview.md) to understand Grove's naming conventions
 - Set up a cluster following the [installation guide](../../installation.md), the two options are:
   - [A local KIND demo cluster](../../installation.md#local-kind-cluster-set-up): Create the cluster with `make kind-up FAKE_NODES=40`, set `KUBECONFIG` env variable as directed, and run `make deploy`
   - [A remote Kubernetes cluster](../../installation.md#remote-cluster-set-up) with [Grove installed from package](../../installation.md#install-grove-from-package)

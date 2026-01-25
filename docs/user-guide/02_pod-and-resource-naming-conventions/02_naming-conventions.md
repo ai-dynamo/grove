@@ -8,7 +8,7 @@ Grove's naming scheme serves two critical purposes:
 
 1. **Immediate Visual Understanding**: Pod names encode the complete hierarchy, so `kubectl get pods` output is self-explanatory. You can instantly see which pods belong together and how they're organized.
 
-2. **Programmatic Pod Discovery**: The hierarchical structure enables pods to discover and communicate with each other using fully qualified domain names (FQDNs). The [Environment Variables guide](../environment-variables-for-pod-discovery/01_overview.md) demonstrates how to programmatically construct these FQDNs using Grove's injected environment variables.
+2. **Programmatic Pod Discovery**: The hierarchical structure enables pods to discover and communicate with each other using fully qualified domain names (FQDNs). The [Environment Variables guide](../03_environment-variables-for-pod-discovery/01_overview.md) demonstrates how to programmatically construct these FQDNs using Grove's injected environment variables.
 
 ## Pod Naming Patterns
 
@@ -176,5 +176,5 @@ Now that you understand Grove's naming scheme and best practices:
 
 - **See it in action**: Continue to the [Hands-On Example](./03_hands-on-example.md) to deploy an example system and observe the naming hierarchy firsthand.
 
-- **Learn programmatic discovery**: Head to the [Environment Variables guide](../environment-variables-for-pod-discovery/01_overview.md) to learn how to use these names programmatically for pod discovery, including how Grove injects environment variables and how to construct FQDNs for pod-to-pod communication.
+- **Learn programmatic discovery**: Head to the [Environment Variables guide](../03_environment-variables-for-pod-discovery/01_overview.md) to learn how to use these names programmatically for pod discovery, including how Grove injects environment variables and how to construct FQDNs for pod-to-pod communication.
 

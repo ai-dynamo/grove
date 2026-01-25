@@ -1,10 +1,10 @@
-# Example: Complete Inference Pipeline
-# Documentation: docs/user-guide/core-concepts/04_takeaways.md
-#
-# Demonstrates a complete inference system with multiple components:
-# - Single-node components: Frontend, Vision Encoder
-# - Multi-node components: Prefill PCSG, Decode PCSG
-# Shows how Grove can represent an arbitrary number of single-node and multi-node components.
+# Example: Multi-Node Disaggregated Inference with Frontend
+# Documentation: docs/user-guide/02_pod-and-resource-naming-conventions/03_hands-on-example.md
+# 
+# Demonstrates Grove's hierarchical pod naming scheme with:
+# - A standalone frontend PodClique
+# - Prefill PodCliqueScalingGroup (pleader + pworker)
+# - Decode PodCliqueScalingGroup (dleader + dworker)
 #
 # NOTE: This example uses fake-node tolerations for the local KIND demo cluster
 # created with `make kind-up FAKE_NODES=40`. Remove the tolerations when deploying
@@ -13,16 +13,15 @@
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
-  name: comp-inf-ppln
+  name: multinode-disaggregated
   namespace: default
 spec:
   replicas: 1
   template:
     cliques:
-    #single node components
+    # Standalone PodClique
     - name: frontend
       spec:
-        roleName: frontend
         replicas: 2
         podSpec:
           tolerations:
@@ -34,31 +33,12 @@ spec:
           - name: frontend
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Frontend Service on node:' && hostname && sleep infinity"]
+            args: ["-c", "echo 'Frontend' && hostname && sleep infinity"]
             resources:
               requests:
                 cpu: "10m"
                 memory: "32Mi"
-    - name: vision-encoder
-      spec:
-        roleName: vision-encoder
-        replicas: 1
-        podSpec:
-          tolerations:
-          - key: fake-node
-            operator: Equal
-            value: "true"
-            effect: NoSchedule
-          containers:
-          - name: vision-encoder
-            image: nginx:latest
-            command: ["/bin/sh"]
-            args: ["-c", "echo 'Vision Encoder on node:' && hostname && sleep infinity"]
-            resources:
-              requests:
-                cpu: "10m"
-                memory: "32Mi"
-    # Multi-node components
+    # Prefill PodCliqueScalingGroup PodCliques
     - name: pleader
       spec:
         roleName: pleader
@@ -70,10 +50,10 @@ spec:
             value: "true"
             effect: NoSchedule
           containers:
-          - name: prefill-leader
+          - name: pleader
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Prefill Leader on node:' && hostname && sleep infinity"]
+            args: ["-c", "echo 'Prefill Leader' && hostname && sleep infinity"]
             resources:
               requests:
                 cpu: "10m"
@@ -81,7 +61,7 @@ spec:
     - name: pworker
       spec:
         roleName: pworker
-        replicas: 4
+        replicas: 3
         podSpec:
           tolerations:
           - key: fake-node
@@ -89,14 +69,15 @@ spec:
             value: "true"
             effect: NoSchedule
           containers:
-          - name: prefill-worker
+          - name: pworker
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Prefill Worker on node:' && hostname && sleep infinity"]
+            args: ["-c", "echo 'Prefill Worker' && hostname && sleep infinity"]
             resources:
               requests:
                 cpu: "10m"
                 memory: "32Mi"
+    # Decode PodCliqueScalingGroup PodCliques
     - name: dleader
       spec:
         roleName: dleader
@@ -108,10 +89,10 @@ spec:
             value: "true"
             effect: NoSchedule
           containers:
-          - name: decode-leader
+          - name: dleader
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Decode Leader on node:' && hostname && sleep infinity"]
+            args: ["-c", "echo 'Decode Leader' && hostname && sleep infinity"]
             resources:
               requests:
                 cpu: "10m"
@@ -127,10 +108,10 @@ spec:
             value: "true"
             effect: NoSchedule
           containers:
-          - name: decode-worker
+          - name: dworker
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Decode Worker on node:' && hostname && sleep infinity"]
+            args: ["-c", "echo 'Decode Worker' && hostname && sleep infinity"]
             resources:
               requests:
                 cpu: "10m"
@@ -138,7 +119,10 @@ spec:
     podCliqueScalingGroups:
     - name: prefill
       cliqueNames: [pleader, pworker]
-      replicas: 1
-    - name: decode-cluster
+      replicas: 2
+    - name: decode
       cliqueNames: [dleader, dworker]
       replicas: 1
+
+
+

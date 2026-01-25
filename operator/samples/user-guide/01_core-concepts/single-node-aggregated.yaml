@@ -1,5 +1,5 @@
 # Example: Single-Node Aggregated Inference
-# Documentation: docs/user-guide/core-concepts/02_pcs_and_pclq_intro.md
+# Documentation: docs/user-guide/01_core-concepts/02_pcs_and_pclq_intro.md
 #
 # Demonstrates a simple PodCliqueSet with a single standalone PodClique where
 # each pod is a complete model instance that can service requests independently.

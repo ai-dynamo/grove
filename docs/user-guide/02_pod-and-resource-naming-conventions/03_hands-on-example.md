@@ -148,12 +148,12 @@ This is why `pleader`/`pworker` and `dleader`/`dworker` are the intended and rec
 
 ## Deploy and Observe
 
-In this example, we will deploy the file: [multinode-disaggregated-with-frontend.yaml](../../../operator/samples/user-guide/pod-and-resource-naming-conventions/multinode-disaggregated-with-frontend.yaml)
+In this example, we will deploy the file: [multinode-disaggregated-with-frontend.yaml](../../../operator/samples/user-guide/02_pod-and-resource-naming-conventions/multinode-disaggregated-with-frontend.yaml)
 
 ```bash
 # NOTE: Run the following commands from the `/path/to/grove/operator` directory,
 # where `/path/to/grove` is the root of your cloned Grove repository.
-kubectl apply -f samples/user-guide/pod-and-resource-naming-conventions/multinode-disaggregated-with-frontend.yaml
+kubectl apply -f samples/user-guide/02_pod-and-resource-naming-conventions/multinode-disaggregated-with-frontend.yaml
 
 # Get all pods - observe the self-documenting names
 kubectl get pods -l app.kubernetes.io/part-of=multinode-disaggregated -o wide
@@ -280,5 +280,5 @@ kubectl delete pcs multinode-disaggregated
 
 Now that you've seen the naming conventions in action, check out:
 - The [Key Takeaways](./02_naming-conventions.md#key-takeaways) section for a summary of naming best practices
-- The [Environment Variables guide](../environment-variables-for-pod-discovery/01_overview.md) to learn how to use these names programmatically for pod discovery
+- The [Environment Variables guide](../03_environment-variables-for-pod-discovery/01_overview.md) to learn how to use these names programmatically for pod discovery
 

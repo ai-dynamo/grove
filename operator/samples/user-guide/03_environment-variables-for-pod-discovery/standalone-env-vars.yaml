@@ -1,5 +1,5 @@
 # Example: Standalone PodClique Environment Variables
-# Documentation: docs/user-guide/environment-variables-for-pod-discovery/03_hands-on-examples.md
+# Documentation: docs/user-guide/03_environment-variables-for-pod-discovery/03_hands-on-examples.md
 #
 # Demonstrates the environment variables Grove injects into standalone PodCliques:
 # - GROVE_PCS_NAME, GROVE_PCS_INDEX, GROVE_PCLQ_NAME

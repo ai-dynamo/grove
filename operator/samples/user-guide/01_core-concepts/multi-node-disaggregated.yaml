@@ -1,5 +1,5 @@
 # Example: Multi-Node Disaggregated Inference
-# Documentation: docs/user-guide/core-concepts/03_pcsg_intro.md
+# Documentation: docs/user-guide/01_core-concepts/03_pcsg_intro.md
 #
 # Demonstrates a multi-node disaggregated serving scenario where
 # both prefill and decode components are multi-node with their own PCSGs.

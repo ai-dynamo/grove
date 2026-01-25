@@ -1,5 +1,5 @@
 # Example: PodCliqueScalingGroup Environment Variables with Leader-Worker Discovery
-# Documentation: docs/user-guide/environment-variables-for-pod-discovery/03_hands-on-examples.md
+# Documentation: docs/user-guide/03_environment-variables-for-pod-discovery/03_hands-on-examples.md
 #
 # Demonstrates PCSG-specific environment variables and leader-worker communication:
 # - GROVE_PCSG_NAME, GROVE_PCSG_INDEX, GROVE_PCSG_TEMPLATE_NUM_PODS
