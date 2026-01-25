@@ -34,7 +34,7 @@ spec:
               echo ""
               echo "=== Pod Name vs Hostname ==="
               echo "Pod Name (random suffix): $POD_NAME"
-              echo "Hostname (deterministic): $(hostname)"
+              echo "Hostname (deterministic): $GROVE_PCLQ_NAME-$GROVE_PCLQ_POD_INDEX"
               echo ""
               echo "My FQDN: $GROVE_PCLQ_NAME-$GROVE_PCLQ_POD_INDEX.$GROVE_HEADLESS_SERVICE"
               echo ""
