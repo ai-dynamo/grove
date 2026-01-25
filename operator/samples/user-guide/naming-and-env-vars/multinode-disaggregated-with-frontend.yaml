@@ -1,5 +1,5 @@
 # Example: Multi-Node Disaggregated Inference with Frontend
-# Documentation: docs/user-guide/pod-naming.md
+# Documentation: docs/user-guide/pod-and-resource-naming-conventions/03_hands-on-example.md
 # 
 # Demonstrates Grove's hierarchical pod naming scheme with:
 # - A standalone frontend PodClique
