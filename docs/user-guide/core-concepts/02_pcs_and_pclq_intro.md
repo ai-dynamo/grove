@@ -2,7 +2,7 @@
 
 In this guide we go over some hands-on examples showcasing how to use a PodCliqueSet and PodCliques.
 
-Refer to [Overview](./overview.md) for instructions on how to run the examples in this guide.
+Refer to [Overview](./01_overview.md) for instructions on how to run the examples in this guide.
 
 ## Example 1: Single-Node Aggregated Inference
 
@@ -219,4 +219,4 @@ To teardown the example delete the `single-node-disaggregated` PodCliqueSet, the
 kubectl delete pcs single-node-disaggregated
 ```
 
-In the [next guide](./pcsg_intro.md) we showcase how to use PodCliqueScalingGroup to represent multi-node components
+In the [next guide](./03_pcsg_intro.md) we showcase how to use PodCliqueScalingGroup to represent multi-node components

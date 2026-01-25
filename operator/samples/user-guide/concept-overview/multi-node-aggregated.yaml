@@ -1,5 +1,5 @@
 # Example: Multi-Node Aggregated Inference
-# Documentation: docs/user-guide/core-concepts/pcsg_intro.md
+# Documentation: docs/user-guide/core-concepts/03_pcsg_intro.md
 #
 # Demonstrates PodCliqueScalingGroup for multi-node deployments with a
 # leader-worker topology. Scaling the PCSG replicates the entire unit

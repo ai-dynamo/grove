@@ -1,5 +1,5 @@
 # Example: Single-Node Disaggregated Inference
-# Documentation: docs/user-guide/core-concepts/pcs_and_pclq_intro.md
+# Documentation: docs/user-guide/core-concepts/02_pcs_and_pclq_intro.md
 #
 # Demonstrates disaggregated serving with separate PodCliques for prefill and
 # decode operations, allowing independent scaling of each component.

@@ -1,8 +1,8 @@
 # PodCliqueScalingGroup
 
-In the [previous guide](./pcs_and_pclq_intro.md) we covered some hands on examples on how to use PodCliqueSet and PodCliques. In this guide we go over some hands-on examples on how to use PodCliqueScalingGroup to represent multinode components.
+In the [previous guide](./02_pcs_and_pclq_intro.md) we covered some hands on examples on how to use PodCliqueSet and PodCliques. In this guide we go over some hands-on examples on how to use PodCliqueScalingGroup to represent multinode components.
 
-Refer to [Overview](./overview.md) for instructions on how to run the examples in this guide.
+Refer to [Overview](./01_overview.md) for instructions on how to run the examples in this guide.
 
 ## Example 3: Multi-Node Aggregated Inference
 
@@ -325,4 +325,4 @@ To teardown the example delete the `multinode-disaggregated` PodCliqueSet, the o
 ```bash
 kubectl delete pcs multinode-disaggregated
 ```
-In the [next guide](./takeaways.md) we showcase how Grove can represent an arbitrary number of components and summarize the key takeaways.
+In the [next guide](./04_takeaways.md) we showcase how Grove can represent an arbitrary number of components and summarize the key takeaways.

@@ -1,5 +1,5 @@
 # Example: Complete Inference Pipeline
-# Documentation: docs/user-guide/core-concepts/takeaways.md
+# Documentation: docs/user-guide/core-concepts/04_takeaways.md
 #
 # Demonstrates a complete inference system with multiple components:
 # - Single-node components: Frontend, Vision Encoder
