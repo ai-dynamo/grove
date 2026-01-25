@@ -1,112 +1,6 @@
-# Environment Variables For Pod-Discovery
+# Hands-On Examples
 
-This guide explains the environment variables that Grove automatically injects into your pods and shows practical examples of using them for service discovery, coordination, and configuration in distributed systems.
-
-## Prerequisites
-
-Before starting this guide:
-- Review the [core concepts tutorial](./core-concepts/overview.md) to understand Grove's primitives
-- Read the [Pod Naming guide](./pod-and-resource-naming-conventions/01_overview.md) to understand Grove's naming conventions
-- Set up a cluster following the [installation guide](../installation.md), the two options are:
-  - [A local KIND demo cluster](../installation.md#local-kind-cluster-set-up): Create the cluster with `make kind-up FAKE_NODES=40`, set `KUBECONFIG` env variable as directed, and run `make deploy`
-  - [A remote Kubernetes cluster](../installation.md#remote-cluster-set-up) with [Grove installed from package](../installation.md#install-grove-from-package)
-
-> **Note:** The examples in this guide require at least one real node to run actual containers and inspect environment variables in pod logs. The KIND cluster created with `make kind-up FAKE_NODES=40` includes one real control-plane node alongside the fake nodes, which is sufficient for these examples.
-
-## Overview
-
-Grove automatically injects environment variables into every container and init container in your pods. These environment variables provide runtime information that your application can use for:
-- **Service discovery**: Finding other pods in your system
-- **Coordination**: Understanding your role in a distributed system
-- **Configuration**: Self-configuring based on your position in the hierarchy
-
-However, before we get to the environment variables it is important to first make a distinction between a Pod's Name and its Hostname.
-
-## Understanding Pod Names vs. Hostnames in Kubernetes
-
-A common source of confusion is the difference between a pod's **name** and its **hostname**. Understanding this distinction is essential for using Grove's environment variables correctly.
-
-### Pod Name (Kubernetes Resource Identifier)
-
-The **pod name** is the unique identifier for the Pod resource in Kubernetes (stored in `metadata.name`). When Grove creates pods, it uses Kubernetes' `generateName` feature, which appends a random 5-character suffix to ensure uniqueness:
-
-```
-<pclq-name>-<random-suffix>
-Example: env-demo-standalone-0-frontend-abc12
-```
-
-This name is what you see when running `kubectl get pods`. However, you **cannot use this name for DNS-based service discovery** because the random suffix is unpredictable.
-
-### Hostname (DNS-Resolvable Identity)
-
-The **hostname** is a separate field (`spec.hostname`) that Grove explicitly sets on each pod. Unlike the pod name, the hostname follows a **deterministic pattern**:
-
-```
-<pclq-name>-<pod-index>
-Example: env-demo-standalone-0-frontend-0
-```
-
-Grove also sets the pod's **subdomain** (`spec.subdomain`) to match the headless service name. Grove automatically creates a headless service for each PodCliqueSet replica, so you don't need to create one yourself. In Kubernetes, when a pod has both `hostname` and `subdomain` set, and a matching headless service exists, the pod becomes DNS-resolvable at:
-
-```
-<hostname>.<subdomain>.<namespace>.svc.cluster.local
-```
-
-For example:
-```
-env-demo-standalone-0-frontend-0.env-demo-standalone-0.default.svc.cluster.local
-```
-
-### Why This Matters
-
-| Attribute | Pod Name | Hostname |
-|-----------|----------|----------|
-| Source | `metadata.name` | `spec.hostname` |
-| Pattern | `<pclq-name>-<random-suffix>` | `<pclq-name>-<pod-index>` |
-| Predictable? | ❌ No (random suffix) | ✅ Yes (index-based) |
-| DNS resolvable? | ❌ No | ✅ Yes (with headless service) |
-| Use case | `kubectl` commands, logs | Service discovery, pod-to-pod communication |
-
-**The environment variables Grove provides (`GROVE_PCLQ_NAME`, `GROVE_PCLQ_POD_INDEX`, `GROVE_HEADLESS_SERVICE`) give you the building blocks to construct the hostname-based FQDN, not the pod name.** This is why pod discovery in Grove is deterministic and doesn't require knowledge of random suffixes.
-
-With this explained we can now get into the environment variables Grove provides.
-
-## Environment Variables Reference
-
-### Available in All Pods
-
-These environment variables are injected into every pod managed by Grove:
-
-| Environment Variable | Description | Example Value |
-|---------------------|-------------|---------------|
-| `GROVE_PCS_NAME` | Name of the PodCliqueSet (as specified in metadata.name) | `my-service` |
-| `GROVE_PCS_INDEX` | Replica index of the PodCliqueSet (0-based) | `0` |
-| `GROVE_PCLQ_NAME` | Fully qualified PodClique resource name (see structure below) | `my-service-0-frontend` |
-| `GROVE_HEADLESS_SERVICE` | FQDN of the headless service for the PodCliqueSet replica | `my-service-0.default.svc.cluster.local` |
-| `GROVE_PCLQ_POD_INDEX` | Index of this pod within its PodClique (0-based) | `2` |
-
-**Understanding `GROVE_PCLQ_NAME`:**
-- For **standalone PodCliques**: `<pcs-name>-<pcs-index>-<pclq-template-name>`
-  - Example: `my-service-0-frontend`
-- For **PodCliques in a PCSG**: `<pcs-name>-<pcs-index>-<pcsg-template-name>-<pcsg-index>-<pclq-template-name>`
-  - Example: `my-service-0-model-instance-0-leader`
-
-### Additional Variables for PodCliqueScalingGroup Pods
-
-If a pod belongs to a PodClique that is part of a PodCliqueScalingGroup, these additional environment variables are available:
-
-| Environment Variable | Description | Example Value |
-|---------------------|-------------|---------------|
-| `GROVE_PCSG_NAME` | Fully qualified PCSG resource name (see structure below) | `my-service-0-model-instance` |
-| `GROVE_PCSG_INDEX` | Replica index of the PodCliqueScalingGroup (0-based) | `1` |
-| `GROVE_PCSG_TEMPLATE_NUM_PODS` | Total number of pods in the PCSG template | `4` |
-
-**Understanding `GROVE_PCSG_NAME`:**
-- Structure: `<pcs-name>-<pcs-index>-<pcsg-template-name>`
-- Example: `my-service-0-model-instance`
-- **Note:** This does NOT include the PCSG replica index. To construct a sibling PodClique name within the same PCSG replica, use: `$GROVE_PCSG_NAME-$GROVE_PCSG_INDEX-<pclq-template-name>`
-
-**Note:** `GROVE_PCSG_TEMPLATE_NUM_PODS` represents the total number of pods defined in the PodCliqueScalingGroup template, calculated as the sum of replicas across all PodCliques in the PCSG. For example, if a PCSG has 1 leader replica and 3 worker replicas, this value would be 4. This value does not change based on scaling, so is only guaranteed to be accurate at startup.
+This guide walks through deploying example PodCliqueSets, observing the environment variables that Grove injects, and using them to construct FQDNs for pod discovery. Make sure you've read the [Environment Variables Reference](./02_env_var_reference.md) guide first to understand the environment variables we'll see in action.
 
 ## Example 1: Standalone PodClique Environment Variables
 
@@ -161,7 +55,7 @@ spec:
 
 ### Deploy and Inspect
 
-In this example, we will deploy the file: [standalone-env-vars.yaml](../../operator/samples/user-guide/naming-and-env-vars/standalone-env-vars.yaml)
+In this example, we will deploy the file: [standalone-env-vars.yaml](../../../operator/samples/user-guide/naming-and-env-vars/standalone-env-vars.yaml)
 
 ```bash
 # NOTE: Run the following commands from the `/path/to/grove/operator` directory,
@@ -212,10 +106,10 @@ Sleeping...
 
 **Key Observations:**
 - The **pod name** (`env-demo-standalone-0-frontend-abc12`) has a random suffix—this is the Kubernetes resource identifier, not used for DNS
-- The **hostname** (constructed as `$GROVE_PCLQ_NAME-$GROVE_PCLQ_POD_INDEX`) is deterministic—this is what you use for service discovery
+- The **hostname** (constructed as `$GROVE_PCLQ_NAME-$GROVE_PCLQ_POD_INDEX`) is deterministic—this is what you use for pod discovery
 - `GROVE_PCLQ_NAME` contains the fully qualified PodClique name without the random suffix
 - `GROVE_PCLQ_POD_INDEX` tells us this is the first pod (index 0) in the PodClique
-- `GROVE_HEADLESS_SERVICE` provides the FQDN for the headless service, so the full DNS address is: `$GROVE_PCLQ_NAME-$GROVE_PCLQ_POD_INDEX.$GROVE_HEADLESS_SERVICE`
+- `GROVE_HEADLESS_SERVICE` provides the headless service domain, which you combine with the hostname to construct the pod's FQDN: `$GROVE_PCLQ_NAME-$GROVE_PCLQ_POD_INDEX.$GROVE_HEADLESS_SERVICE`
 
 ### Cleanup
 
@@ -312,7 +206,7 @@ spec:
 
 ### Deploy and Inspect
 
-In this example, we will deploy the file: [pcsg-env-vars.yaml](../../operator/samples/user-guide/naming-and-env-vars/pcsg-env-vars.yaml)
+In this example, we will deploy the file: [pcsg-env-vars.yaml](../../../operator/samples/user-guide/naming-and-env-vars/pcsg-env-vars.yaml)
 
 ```bash
 # NOTE: Run the following commands from the `/path/to/grove/operator` directory,
@@ -420,90 +314,7 @@ kubectl delete pcs env-demo-pcsg
 
 ---
 
-## Common Patterns for Using Environment Variables
+## Next Steps
 
-Here are some common patterns for using Grove environment variables in your applications:
+Now that you've seen the environment variables in action, continue to [Common Patterns and Takeaways](./04_common-patterns-and-takeaways.md) for reusable patterns you can adapt for your applications and a summary of key concepts.
 
-### Pattern 1: Constructing Pod FQDNs
-
-To construct the FQDN for any pod in your PodClique:
-
-```bash
-# For your own FQDN
-MY_FQDN="$GROVE_PCLQ_NAME-$GROVE_PCLQ_POD_INDEX.$GROVE_HEADLESS_SERVICE"
-
-# For another pod in the same PodClique (e.g., pod index 3)
-OTHER_POD_INDEX=3
-OTHER_POD_FQDN="$GROVE_PCLQ_NAME-$OTHER_POD_INDEX.$GROVE_HEADLESS_SERVICE"
-```
-
-### Pattern 2: Finding the Leader in a PCSG
-
-If you're in a worker pod and need to connect to the leader (assuming the leader PodClique is named "leader"):
-
-```bash
-# Construct the leader's PodClique name: PCSG name + PCSG index + "-leader"
-LEADER_PCLQ_NAME="$GROVE_PCSG_NAME-$GROVE_PCSG_INDEX-leader"
-
-# Leader is typically at index 0
-LEADER_FQDN="$LEADER_PCLQ_NAME-0.$GROVE_HEADLESS_SERVICE"
-```
-
-### Pattern 3: Discovering All Peers in a PodClique
-
-If you need to construct addresses for all pods in your PodClique:
-
-```bash
-# Assuming you have a way to know the total number of replicas in your PodClique
-# (this could be passed in as a custom env var or ConfigMap)
-TOTAL_REPLICAS=5
-
-for i in $(seq 0 $((TOTAL_REPLICAS - 1))); do
-  PEER_FQDN="$GROVE_PCLQ_NAME-$i.$GROVE_HEADLESS_SERVICE"
-  echo "Peer $i: $PEER_FQDN"
-done
-```
-
-### Pattern 4: Determining Your Role in a PCSG
-
-You can use the `GROVE_PCLQ_NAME` to determine which role this pod plays:
-
-```bash
-# Extract the role from the PodClique name
-# The role is typically the last component after the final hyphen
-ROLE=$(echo $GROVE_PCLQ_NAME | awk -F- '{print $NF}')
-
-if [ "$ROLE" = "leader" ]; then
-  echo "I am a leader pod"
-elif [ "$ROLE" = "worker" ]; then
-  echo "I am a worker pod"
-fi
-```
-
-### Pattern 5: Using Headless Service for Service Discovery
-
-The `GROVE_HEADLESS_SERVICE` provides a DNS name that resolves to all pods in the PodCliqueSet replica:
-
-```bash
-# This will return DNS records for all pods in the same PodCliqueSet replica
-nslookup $GROVE_HEADLESS_SERVICE
-```
-
----
-
-## Key Takeaways
-
-1. **Automatic Context Injection**  
-   Grove injects a consistent set of environment variables into every pod, giving each container precise runtime context about *where it sits* in the PodCliqueSet hierarchy.
-
-2. **Explicit, Predictable Addressing**  
-   Grove does not hide service topology. Instead, it provides the building blocks (`GROVE_PCS_NAME`, `GROVE_PCLQ_NAME`, `GROVE_PCSG_NAME`, indices, and the headless service) so applications can **explicitly construct the addresses they need**, including those of other PodCliques.
-
-3. **Stable Pod Identity**  
-   `GROVE_PCLQ_POD_INDEX` gives each pod a stable, deterministic identity within its PodClique, making it easy to assign ranks, shard work, or implement leader/worker logic.
-
-4. **Scaling-Group Awareness**  
-   For pods in a PodCliqueScalingGroup, Grove exposes additional variables that identify the PCSG replica and its composition. This allows components to understand which *logical unit (super-pod)* they belong to and how many peers are expected.
-
-5. **Designed for Distributed Systems**  
-   Grove’s environment variables are intentionally low-level and composable. They are meant to support a wide range of distributed system patterns—leader election, sharding, rendezvous, collective communication—without imposing a fixed discovery or coordination model.

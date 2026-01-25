@@ -280,5 +280,5 @@ kubectl delete pcs multinode-disaggregated
 
 Now that you've seen the naming conventions in action, check out:
 - The [Key Takeaways](./02_naming-conventions.md#key-takeaways) section for a summary of naming best practices
-- The [Environment Variables guide](../environment-variables.md) to learn how to use these names programmatically for service discovery
+- The [Environment Variables guide](../environment-variables-for-pod-discovery/01_overview.md) to learn how to use these names programmatically for pod discovery
 

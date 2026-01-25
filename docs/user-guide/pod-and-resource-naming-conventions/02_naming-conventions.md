@@ -8,15 +8,7 @@ Grove's naming scheme serves two critical purposes:
 
 1. **Immediate Visual Understanding**: Pod names encode the complete hierarchy, so `kubectl get pods` output is self-explanatory. You can instantly see which pods belong together and how they're organized.
 
-2. **Programmatic Service Discovery**: The hierarchical structure enables pods to discover and communicate with each other using fully qualified domain names (FQDNs). The [Environment Variables guide](../environment-variables.md) demonstrates how to programmatically construct these FQDNs using Grove's injected environment variables.
-
-## Prerequisites
-
-Before starting this guide:
-- Review the [core concepts tutorial](../core-concepts/overview.md) to understand Grove's primitives
-- Set up a cluster following the [installation guide](../../installation.md), the two options are:
-  - [A local KIND demo cluster](../../installation.md#local-kind-cluster-set-up) Create the cluster with `make kind-up FAKE_NODES=40`, set `KUBECONFIG` env variable as directed, and run `make deploy`
-  - [A remote Kubernetes cluster](../../installation.md#remote-cluster-set-up) with [Grove installed from package](../../installation.md#install-grove-from-package)
+2. **Programmatic Pod Discovery**: The hierarchical structure enables pods to discover and communicate with each other using fully qualified domain names (FQDNs). The [Environment Variables guide](../environment-variables-for-pod-discovery/01_overview.md) demonstrates how to programmatically construct these FQDNs using Grove's injected environment variables.
 
 ## Pod Naming Patterns
 
@@ -184,5 +176,5 @@ Now that you understand Grove's naming scheme and best practices:
 
 - **See it in action**: Continue to the [Hands-On Example](./03_hands-on-example.md) to deploy an example system and observe the naming hierarchy firsthand.
 
-- **Learn programmatic discovery**: Head to the [Environment Variables guide](../environment-variables.md) to learn how to use these names programmatically for service discovery, including how Grove injects environment variables and how to construct FQDNs for pod-to-pod communication.
+- **Learn programmatic discovery**: Head to the [Environment Variables guide](../environment-variables-for-pod-discovery/01_overview.md) to learn how to use these names programmatically for pod discovery, including how Grove injects environment variables and how to construct FQDNs for pod-to-pod communication.
 
