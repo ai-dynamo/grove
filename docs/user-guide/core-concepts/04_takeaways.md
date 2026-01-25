@@ -149,11 +149,11 @@ spec:
 
 **Deploy and explore:**
 
-In this example, we will deploy the file: [complete-inference-pipeline.yaml](../../../operator/samples/user-guide/concept-overview/complete-inference-pipeline.yaml)
+In this example, we will deploy the file: [complete-inference-pipeline.yaml](../../../operator/samples/user-guide/core-concepts/complete-inference-pipeline.yaml)
 ```bash
 # NOTE: Run the following commands from the `/path/to/grove/operator` directory,
 # where `/path/to/grove` is the root of your cloned Grove repository.
-kubectl apply -f samples/user-guide/concept-overview/complete-inference-pipeline.yaml
+kubectl apply -f samples/user-guide/core-concepts/complete-inference-pipeline.yaml
 kubectl get pods -l app.kubernetes.io/part-of=comp-inf-ppln -o wide
 ```
 

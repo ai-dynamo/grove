@@ -55,12 +55,12 @@ spec:
 
 ### Deploy and Inspect
 
-In this example, we will deploy the file: [standalone-env-vars.yaml](../../../operator/samples/user-guide/naming-and-env-vars/standalone-env-vars.yaml)
+In this example, we will deploy the file: [standalone-env-vars.yaml](../../../operator/samples/user-guide/environment-variables-for-pod-discovery/standalone-env-vars.yaml)
 
 ```bash
 # NOTE: Run the following commands from the `/path/to/grove/operator` directory,
 # where `/path/to/grove` is the root of your cloned Grove repository.
-kubectl apply -f samples/user-guide/naming-and-env-vars/standalone-env-vars.yaml
+kubectl apply -f samples/user-guide/environment-variables-for-pod-discovery/standalone-env-vars.yaml
 
 # Wait for pods to be ready (skip if you are manually verifying they are ready)
 kubectl wait --for=condition=ready pod -l app.kubernetes.io/part-of=env-demo-standalone --timeout=60s
@@ -206,12 +206,12 @@ spec:
 
 ### Deploy and Inspect
 
-In this example, we will deploy the file: [pcsg-env-vars.yaml](../../../operator/samples/user-guide/naming-and-env-vars/pcsg-env-vars.yaml)
+In this example, we will deploy the file: [pcsg-env-vars.yaml](../../../operator/samples/user-guide/environment-variables-for-pod-discovery/pcsg-env-vars.yaml)
 
 ```bash
 # NOTE: Run the following commands from the `/path/to/grove/operator` directory,
 # where `/path/to/grove` is the root of your cloned Grove repository.
-kubectl apply -f samples/user-guide/naming-and-env-vars/pcsg-env-vars.yaml
+kubectl apply -f samples/user-guide/environment-variables-for-pod-discovery/pcsg-env-vars.yaml
 
 # Wait for pods to be ready (skip if you are manually verifying they are ready)
 kubectl wait --for=condition=ready pod -l app.kubernetes.io/part-of=env-demo-pcsg --timeout=60s

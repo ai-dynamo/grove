@@ -148,12 +148,12 @@ This is why `pleader`/`pworker` and `dleader`/`dworker` are the intended and rec
 
 ## Deploy and Observe
 
-In this example, we will deploy the file: [multinode-disaggregated-with-frontend.yaml](../../../operator/samples/user-guide/naming-and-env-vars/multinode-disaggregated-with-frontend.yaml)
+In this example, we will deploy the file: [multinode-disaggregated-with-frontend.yaml](../../../operator/samples/user-guide/pod-and-resource-naming-conventions/multinode-disaggregated-with-frontend.yaml)
 
 ```bash
 # NOTE: Run the following commands from the `/path/to/grove/operator` directory,
 # where `/path/to/grove` is the root of your cloned Grove repository.
-kubectl apply -f samples/user-guide/naming-and-env-vars/multinode-disaggregated-with-frontend.yaml
+kubectl apply -f samples/user-guide/pod-and-resource-naming-conventions/multinode-disaggregated-with-frontend.yaml
 
 # Get all pods - observe the self-documenting names
 kubectl get pods -l app.kubernetes.io/part-of=multinode-disaggregated -o wide
