@@ -14,6 +14,12 @@
 // limitations under the License.
 // */
 
+// Package setup provides internal testing utilities for configuring and managing
+// Grove operator installations during e2e tests. This package is not intended for
+// production use and its API may change without notice.
+//
+// Functions are exported to allow access from e2e test packages (e.g., operator/e2e/tests)
+// which need to modify Grove configuration during test scenarios.
 package setup
 
 import (
