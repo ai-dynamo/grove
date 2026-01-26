@@ -42,15 +42,18 @@ const (
 	// eventLookbackDuration is how far back to look for events
 	eventLookbackDuration = 10 * time.Minute
 
-	// DiagnosticsToStdoutEnvVar is the environment variable that controls diagnostics output.
-	// If set to any non-empty value, diagnostics are printed to stdout.
-	// If not set or empty, diagnostics are written to a timestamped file.
-	DiagnosticsToStdoutEnvVar = "GROVE_E2E_DIAG_TO_STDOUT"
+	// DiagnosticsModeEnvVar controls diagnostic output mode.
+	// Values: "stdout", "file", "both" (default: "file")
+	DiagnosticsModeEnvVar = "GROVE_E2E_DIAG_MODE"
 
-	// DiagnosticsDirEnvVar is the environment variable that specifies the directory
-	// where diagnostics files should be written. If not set, files are written to
-	// the current directory. This is ignored if DiagnosticsToStdoutEnvVar is set.
+	// DiagnosticsDirEnvVar specifies the directory for diagnostic files.
+	// Used when mode is "file" or "both". Default: current directory (fallback to /tmp).
 	DiagnosticsDirEnvVar = "GROVE_E2E_DIAG_DIR"
+
+	// Diagnostics mode constants
+	DiagnosticsModeStdout = "stdout"
+	DiagnosticsModeFile   = "file"
+	DiagnosticsModeBoth   = "both"
 )
 
 // isPodReady checks if a pod is ready
@@ -78,34 +81,91 @@ var groveResourceTypes = []groveResourceType{
 	{"PodGangs", schema.GroupVersionResource{Group: "scheduler.grove.io", Version: "v1alpha1", Resource: "podgangs"}, "PODGANG"},
 }
 
-// createDiagnosticsWriter creates an io.Writer for diagnostics output.
-// If DiagnosticsToStdoutEnvVar env is set, returns os.Stdout.
-// Otherwise, creates a timestamped file using the test name.
-// If DiagnosticsToStdoutEnvVar env var is set, the file is created in that directory.
-// Otherwise, the file is created in the current directory (with fallback to temp dir).
-// The caller is responsible for closing the returned io.Closer (may be nil for stdout).
-func createDiagnosticsWriter(testName string) (io.Writer, io.Closer, string, error) {
-	if os.Getenv(DiagnosticsToStdoutEnvVar) != "" {
-		return os.Stdout, nil, "", nil
+// diagnosticsOutput holds the writers and file handle for diagnostics output
+type diagnosticsOutput struct {
+	writer   io.Writer
+	file     *os.File
+	filename string
+}
+
+// Close closes the file if one was opened
+func (d *diagnosticsOutput) Close() error {
+	if d.file != nil {
+		return d.file.Close()
+	}
+	return nil
+}
+
+// createDiagnosticsOutput creates writer(s) for diagnostics output based on GROVE_E2E_DIAG_MODE.
+// Mode values:
+//   - "stdout": write to stdout only
+//   - "file": write to timestamped file only (default)
+//   - "both": write to both stdout and file
+//
+// When writing to file, GROVE_E2E_DIAG_DIR specifies the directory (default: current dir, fallback to /tmp).
+func createDiagnosticsOutput(testName string) (*diagnosticsOutput, error) {
+	mode := os.Getenv(DiagnosticsModeEnvVar)
+	if mode == "" {
+		mode = DiagnosticsModeFile // default
 	}
 
+	output := &diagnosticsOutput{}
+	var writers []io.Writer
+
+	// Add stdout if mode is stdout or both
+	if mode == DiagnosticsModeStdout || mode == DiagnosticsModeBoth {
+		writers = append(writers, os.Stdout)
+	}
+
+	// Add file if mode is file or both
+	if mode == DiagnosticsModeFile || mode == DiagnosticsModeBoth {
+		file, filename, err := createDiagnosticsFile(testName)
+		if err != nil {
+			// If we can't create a file but stdout is available, continue with stdout only
+			if mode == DiagnosticsModeBoth {
+				logger.Infof("[DIAG] Warning: failed to create diagnostics file: %v (continuing with stdout only)", err)
+			} else {
+				return nil, err
+			}
+		} else {
+			output.file = file
+			output.filename = filename
+			writers = append(writers, file)
+		}
+	}
+
+	if len(writers) == 0 {
+		return nil, fmt.Errorf("no valid diagnostics output configured (mode=%s)", mode)
+	}
+
+	// Use MultiWriter if we have multiple outputs
+	if len(writers) == 1 {
+		output.writer = writers[0]
+	} else {
+		output.writer = io.MultiWriter(writers...)
+	}
+
+	return output, nil
+}
+
+// createDiagnosticsFile creates a timestamped diagnostics file
+func createDiagnosticsFile(testName string) (*os.File, string, error) {
 	// Sanitize test name for use in filename (replace / with _)
 	sanitizedName := strings.ReplaceAll(testName, "/", "_")
 
 	// Create a timestamped file with test name
 	timestamp := time.Now().Format("2006-01-02_15-04-05")
-	baseFilename := fmt.Sprintf("%s_%s.log", sanitizedName, timestamp)
+	baseFilename := fmt.Sprintf("e2e-diag-%s_%s.log", sanitizedName, timestamp)
 
 	// Determine the directory for the diagnostics file
 	diagDir := os.Getenv(DiagnosticsDirEnvVar)
 	if diagDir != "" {
-		// Use the specified directory
 		filename := filepath.Join(diagDir, baseFilename)
 		file, err := os.Create(filename)
 		if err != nil {
-			return nil, nil, "", fmt.Errorf("failed to create diagnostics file in %s: %w", diagDir, err)
+			return nil, "", fmt.Errorf("failed to create diagnostics file in %s: %w", diagDir, err)
 		}
-		return file, file, filename, nil
+		return file, filename, nil
 	}
 
 	// Try to create the file in the current directory
@@ -115,21 +175,24 @@ func createDiagnosticsWriter(testName string) (io.Writer, io.Closer, string, err
 		filename := filepath.Join(os.TempDir(), baseFilename)
 		file, err = os.Create(filename)
 		if err != nil {
-			return nil, nil, "", fmt.Errorf("failed to create diagnostics file: %w", err)
+			return nil, "", fmt.Errorf("failed to create diagnostics file: %w", err)
 		}
-		return file, file, filename, nil
+		return file, filename, nil
 	}
 
-	return file, file, baseFilename, nil
+	return file, baseFilename, nil
 }
 
 // CollectAllDiagnostics collects and prints all diagnostic information at INFO level.
 // This should be called when a test fails, before cleanup runs.
 // All output is at INFO level to ensure visibility regardless of log level settings.
 //
-// Diagnostics are written to a timestamped file using the test name (e.g., TestRollingUpdate_2025-01-22_15-04-05.log).
-// Set DiagnosticsDirEnvVar env var to specify the output directory for diagnostics files.
-// Set DiagnosticsToStdoutEnvVar env var to output to stdout instead of a file.
+// Output is controlled by GROVE_E2E_DIAG_MODE env var:
+//   - "stdout": print to stdout only
+//   - "file": write to timestamped file only (default)
+//   - "both": write to both stdout and file
+//
+// Set GROVE_E2E_DIAG_DIR env var to specify the output directory for diagnostics files.
 func CollectAllDiagnostics(tc TestContext) {
 	// Get test name for the diagnostics file
 	testName := "unknown_test"
@@ -137,24 +200,21 @@ func CollectAllDiagnostics(tc TestContext) {
 		testName = tc.T.Name()
 	}
 
-	// Create diagnostics output writer
-	writer, closer, filename, err := createDiagnosticsWriter(testName)
+	// Create diagnostics output
+	output, err := createDiagnosticsOutput(testName)
 	if err != nil {
-		logger.Errorf("Failed to create diagnostics writer, falling back to stdout: %v", err)
-		writer = os.Stdout
-		filename = ""
+		logger.Errorf("Failed to create diagnostics output, falling back to stdout: %v", err)
+		output = &diagnosticsOutput{writer: os.Stdout}
 	}
-	if closer != nil {
-		defer closer.Close()
-	}
+	defer output.Close()
 
 	// Save reference to stdout logger, then shadow with diagnostics logger
 	stdoutLogger := logger
-	logger := utils.NewTestLoggerWithOutput(utils.InfoLevel, writer)
+	logger := utils.NewTestLoggerWithOutput(utils.InfoLevel, output.writer)
 
 	// Log where diagnostics are being written (to main test output)
-	if filename != "" {
-		stdoutLogger.Infof("Writing diagnostics to file: %s", filename)
+	if output.filename != "" {
+		stdoutLogger.Infof("Writing diagnostics to file: %s", output.filename)
 	}
 
 	logger.Info("================================================================================")
@@ -172,8 +232,8 @@ func CollectAllDiagnostics(tc TestContext) {
 	logger.Info("================================================================================")
 
 	// Log completion message (to main test output)
-	if filename != "" {
-		stdoutLogger.Infof("Diagnostics collection complete. Output written to: %s", filename)
+	if output.filename != "" {
+		stdoutLogger.Infof("Diagnostics collection complete. Output written to: %s", output.filename)
 	}
 }
 

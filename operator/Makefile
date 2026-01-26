@@ -89,14 +89,16 @@ cover-html: test-cover
 # Run e2e tests
 # Usage: make test-e2e [TEST_PATTERN=<pattern>]
 # Examples:
-#   make test-e2e                    # Run all tests
-#   make test-e2e TEST_PATTERN=Test_GS       # Run all gang scheduling tests
-#   make test-e2e TEST_PATTERN=Test_GS1      # Run specific test
-#   make test-e2e TEST_PATTERN=Test_TAS      # Run all topology tests
+#   make test-e2e                              # Run all tests
+#   make test-e2e TEST_PATTERN=Test_GS         # Run gang scheduling tests
+#   make test-e2e TEST_PATTERN=Test_GS1        # Run specific test
+#   make test-e2e TEST_PATTERN=Test_TAS        # Run topology tests
+#   GROVE_E2E_DIAG_MODE=both make test-e2e     # Output to stdout and file
+#   GROVE_E2E_DIAG_MODE=stdout make test-e2e   # Output to stdout only
 #
-# Diagnostics: On test failure, diagnostics are written to timestamped .log files.
-# The GROVE_E2E_DIAG_DIR env var controls the output directory (default: operator/).
-# Set GROVE_E2E_DIAG_TO_STDOUT=1 to print diagnostics to stdout instead.
+# Environment variables:
+#   GROVE_E2E_DIAG_MODE - Diagnostic output mode: stdout, file, both (default: file)
+#   GROVE_E2E_DIAG_DIR  - Directory for diagnostic files (default: operator/)
 .PHONY: test-e2e
 test-e2e: export GROVE_E2E_DIAG_DIR = $(MODULE_ROOT)
 test-e2e:
