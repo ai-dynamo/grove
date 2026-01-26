@@ -82,7 +82,8 @@ jobs:
 
       - name: Run e2e tests - ${{ matrix.test_name }}
         env:
-          GROVE_E2E_DIAG_TO_STDOUT: "1"
+          GROVE_E2E_DIAG_MODE: "file"
+          GROVE_E2E_DIAG_DIR: "/tmp"
         run: |
           cd operator
           echo "> Preparing charts (copying CRDs)..."
