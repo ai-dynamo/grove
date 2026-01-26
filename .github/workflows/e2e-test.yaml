@@ -82,14 +82,12 @@ jobs:
 
       - name: Run e2e tests - ${{ matrix.test_name }}
         env:
+          # Override diagnostics for CI: write to /tmp for artifact upload
           GROVE_E2E_DIAG_MODE: "file"
           GROVE_E2E_DIAG_DIR: "/tmp"
         run: |
           cd operator
-          echo "> Preparing charts (copying CRDs)..."
-          ./hack/prepare-charts.sh
-          echo "> Running e2e tests for ${{ matrix.test_name }}..."
-          cd e2e && go test -tags=e2e ./tests/... -v -timeout 45m -run '${{ matrix.test_pattern }}'
+          make test-e2e TEST_PATTERN='${{ matrix.test_pattern }}'
 
       # The test code handles cleanup via Teardown(), but this step provides
       # extra safety in case of timeout or panic. Also good practice to ensure
