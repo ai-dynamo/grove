@@ -49,9 +49,6 @@ const (
 
 	// labelComponentNameComputeDomain is the component name for ComputeDomain resources.
 	labelComponentNameComputeDomain = "pcs-computedomain"
-
-	// GPU resource name
-	resourceNvidiaGPU corev1.ResourceName = "nvidia.com/gpu"
 )
 
 type _resource struct {
@@ -126,23 +123,11 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjMeta me
 	deleteTasks := make([]utils.Task, 0, len(existingCDFQNs))
 	for _, cdName := range existingCDFQNs {
 		cdName := cdName // Capture loop variable
+		cdObjKey := client.ObjectKey{Name: cdName, Namespace: pcsObjMeta.Namespace}
 		task := utils.Task{
 			Name: "DeleteComputeDomain-" + cdName,
 			Fn: func(ctx context.Context) error {
-				cdObjKey := client.ObjectKey{Name: cdName, Namespace: pcsObjMeta.Namespace}
-
-				// First remove the finalizer
-				if err := r.removeFinalizerFromCD(ctx, logger, cdObjKey); err != nil {
-					return fmt.Errorf("failed to remove finalizer from ComputeDomain %s: %w", cdName, err)
-				}
-
-				// Then delete the CD
-				if err := client.IgnoreNotFound(r.client.Delete(ctx, emptyComputeDomain(cdObjKey))); err != nil {
-					return fmt.Errorf("failed to delete ComputeDomain %s: %w", cdName, err)
-				}
-
-				logger.Info("Deleted ComputeDomain", "objectKey", cdObjKey)
-				return nil
+				return r.deleteCD(ctx, logger, cdObjKey)
 			},
 		}
 		deleteTasks = append(deleteTasks, task)
@@ -245,7 +230,9 @@ func (r _resource) buildResource(cd *unstructured.Unstructured, pcs *grovecorev1
 			fmt.Sprintf("Failed to set owner reference for ComputeDomain: %s", cd.GetName()))
 	}
 
-	// Set the spec with ResourceClaimTemplate reference
+	// Set the spec with ResourceClaimTemplate reference.
+	// Note: We intentionally do NOT set the numNodes field to keep the ComputeDomain elastic,
+	// allowing it to dynamically scale with the PodCliqueSet workload.
 	if err := unstructured.SetNestedField(cd.Object, rctName, "spec", "channel", "resourceClaimTemplateName"); err != nil {
 		return groveerr.WrapError(err, errSyncComputeDomain, component.OperationSync,
 			fmt.Sprintf("Failed to set resourceClaimTemplateName for ComputeDomain: %s", cd.GetName()))
@@ -265,7 +252,7 @@ func (r _resource) triggerDeletionOfExcessComputeDomains(ctx context.Context, lo
 	}
 
 	logger.Info("Triggering deletion of excess ComputeDomains", "count", len(cdFQNsToDelete))
-	deleteTasks := r.createDeleteTasks(logger, pcs, cdFQNsToDelete)
+	deleteTasks := r.buildDeletionTasks(logger, pcs, cdFQNsToDelete)
 	return r.triggerDeletionOfComputeDomains(ctx, logger, client.ObjectKeyFromObject(pcs), deleteTasks)
 }
 
@@ -304,8 +291,8 @@ func getCDFQNsToDelete(pcsName string, desiredReplicas int, existingCDFQNs []str
 	return cdFQNsToDelete, nil
 }
 
-// createDeleteTasks generates deletion tasks for the specified ComputeDomains.
-func (r _resource) createDeleteTasks(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, targetCDFQNs []string) []utils.Task {
+// buildDeletionTasks generates deletion tasks for the specified ComputeDomains.
+func (r _resource) buildDeletionTasks(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, targetCDFQNs []string) []utils.Task {
 	deleteTasks := make([]utils.Task, 0, len(targetCDFQNs))
 	for _, cdName := range targetCDFQNs {
 		cdName := cdName // Capture loop variable
@@ -313,23 +300,12 @@ func (r _resource) createDeleteTasks(logger logr.Logger, pcs *grovecorev1alpha1.
 		task := utils.Task{
 			Name: "DeleteComputeDomain-" + cdObjKey.Name,
 			Fn: func(ctx context.Context) error {
-				// First remove the finalizer
-				if err := r.removeFinalizerFromCD(ctx, logger, cdObjKey); err != nil {
-					logger.Error(err, "Failed to remove finalizer from ComputeDomain", "objectKey", cdObjKey)
-					r.eventRecorder.Eventf(pcs, corev1.EventTypeWarning, constants.ReasonComputeDomainDeleteFailed,
-						"Failed to remove finalizer from ComputeDomain %s: %v", cdObjKey.Name, err)
-					return err
-				}
-
-				// Then delete the CD
-				cd := emptyComputeDomain(cdObjKey)
-				if err := client.IgnoreNotFound(r.client.Delete(ctx, cd)); err != nil {
+				if err := r.deleteCD(ctx, logger, cdObjKey); err != nil {
 					logger.Error(err, "Failed to delete ComputeDomain", "objectKey", cdObjKey)
 					r.eventRecorder.Eventf(pcs, corev1.EventTypeWarning, constants.ReasonComputeDomainDeleteFailed,
 						"Failed to delete ComputeDomain %s: %v", cdObjKey.Name, err)
 					return err
 				}
-				logger.Info("Deleted ComputeDomain", "objectKey", cdObjKey)
 				r.eventRecorder.Eventf(pcs, corev1.EventTypeNormal, constants.ReasonComputeDomainDeleteSuccessful,
 					"Deleted ComputeDomain %s", cdObjKey.Name)
 				return nil
@@ -338,6 +314,22 @@ func (r _resource) createDeleteTasks(logger logr.Logger, pcs *grovecorev1alpha1.
 		deleteTasks = append(deleteTasks, task)
 	}
 	return deleteTasks
+}
+
+// deleteCD removes the finalizer and deletes a ComputeDomain.
+func (r _resource) deleteCD(ctx context.Context, logger logr.Logger, cdObjKey client.ObjectKey) error {
+	// First remove the finalizer
+	if err := r.removeFinalizerFromCD(ctx, logger, cdObjKey); err != nil {
+		return fmt.Errorf("failed to remove finalizer from ComputeDomain %s: %w", cdObjKey.Name, err)
+	}
+
+	// Then delete the CD
+	if err := client.IgnoreNotFound(r.client.Delete(ctx, emptyComputeDomain(cdObjKey))); err != nil {
+		return fmt.Errorf("failed to delete ComputeDomain %s: %w", cdObjKey.Name, err)
+	}
+
+	logger.Info("Deleted ComputeDomain", "objectKey", cdObjKey)
+	return nil
 }
 
 // removeFinalizerFromCD removes the protection finalizer from a ComputeDomain.
@@ -383,41 +375,12 @@ func getSelectorLabels(pcsName string) map[string]string {
 }
 
 // hasMNNVLEnabled checks if PCS has MNNVL enabled via the grove.io/auto-mnnvl annotation.
-// Returns true only if the annotation exists and is set to "true".
+// Returns true only if the annotation exists and is set to "enabled".
 func hasMNNVLEnabled(pcs *grovecorev1alpha1.PodCliqueSet) bool {
 	if pcs.Annotations == nil {
 		return false
 	}
-	val, exists := pcs.Annotations[mnnvl.AnnotationAutoMNNVL]
-	return exists && val == "true"
-}
-
-// pcsRequiresGPU checks if any container in the PCS template requests nvidia.com/gpu.
-func pcsRequiresGPU(pcs *grovecorev1alpha1.PodCliqueSet) bool {
-	for _, clique := range pcs.Spec.Template.Cliques {
-		for _, container := range clique.Spec.PodSpec.Containers {
-			if hasGPUResource(container.Resources) {
-				return true
-			}
-		}
-		for _, container := range clique.Spec.PodSpec.InitContainers {
-			if hasGPUResource(container.Resources) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// hasGPUResource checks if a container's resources include nvidia.com/gpu.
-func hasGPUResource(resources corev1.ResourceRequirements) bool {
-	if _, ok := resources.Requests[resourceNvidiaGPU]; ok {
-		return true
-	}
-	if _, ok := resources.Limits[resourceNvidiaGPU]; ok {
-		return true
-	}
-	return false
+	return pcs.Annotations[mnnvl.AnnotationAutoMNNVL] == mnnvl.AnnotationAutoMNNVLEnabled
 }
 
 // parseReplicaIndexFromName extracts the replica index from a ComputeDomain name.

@@ -24,6 +24,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -218,12 +219,12 @@ func TestHasMNNVLEnabled(t *testing.T) {
 		},
 		{
 			description: "annotation set to false - not enabled",
-			annotations: map[string]string{mnnvl.AnnotationAutoMNNVL: "false"},
+			annotations: map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled},
 			expected:    false,
 		},
 		{
 			description: "annotation set to true - enabled",
-			annotations: map[string]string{mnnvl.AnnotationAutoMNNVL: "true"},
+			annotations: map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled},
 			expected:    true,
 		},
 		{
@@ -235,7 +236,7 @@ func TestHasMNNVLEnabled(t *testing.T) {
 			description: "mixed annotations with enabled",
 			annotations: map[string]string{
 				"other":                   "value",
-				mnnvl.AnnotationAutoMNNVL: "true",
+				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
 			},
 			expected: true,
 		},
@@ -253,69 +254,6 @@ func TestHasMNNVLEnabled(t *testing.T) {
 				},
 			}
 			result := hasMNNVLEnabled(pcs)
-			assert.Equal(t, tc.expected, result)
-		})
-	}
-}
-
-func TestPcsRequiresGPU(t *testing.T) {
-	testCases := []struct {
-		description string
-		pcs         *grovecorev1alpha1.PodCliqueSet
-		expected    bool
-	}{
-		{
-			description: "no GPU requests",
-			pcs:         createPCSWithResources(nil, nil),
-			expected:    false,
-		},
-		{
-			description: "GPU in requests",
-			pcs: createPCSWithResources(
-				corev1.ResourceList{resourceNvidiaGPU: resource.MustParse("1")},
-				nil,
-			),
-			expected: true,
-		},
-		{
-			description: "GPU in limits",
-			pcs: createPCSWithResources(
-				nil,
-				corev1.ResourceList{resourceNvidiaGPU: resource.MustParse("1")},
-			),
-			expected: true,
-		},
-		{
-			description: "GPU in both requests and limits",
-			pcs: createPCSWithResources(
-				corev1.ResourceList{resourceNvidiaGPU: resource.MustParse("1")},
-				corev1.ResourceList{resourceNvidiaGPU: resource.MustParse("2")},
-			),
-			expected: true,
-		},
-		{
-			description: "CPU and memory only",
-			pcs: createPCSWithResources(
-				corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse("1"),
-					corev1.ResourceMemory: resource.MustParse("1Gi"),
-				},
-				nil,
-			),
-			expected: false,
-		},
-		{
-			description: "GPU in init container",
-			pcs:         createPCSWithInitContainerGPU(),
-			expected:    true,
-		},
-	}
-
-	t.Parallel()
-	for _, tc := range testCases {
-		t.Run(tc.description, func(t *testing.T) {
-			t.Parallel()
-			result := pcsRequiresGPU(tc.pcs)
 			assert.Equal(t, tc.expected, result)
 		})
 	}
@@ -647,59 +585,17 @@ func createPCSWithResources(requests, limits corev1.ResourceList) *grovecorev1al
 	}
 }
 
-// createPCSWithInitContainerGPU creates a PCS with GPU in init container
-func createPCSWithInitContainerGPU() *grovecorev1alpha1.PodCliqueSet {
-	return &grovecorev1alpha1.PodCliqueSet{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      testPCSName,
-			Namespace: testPCSNamespace,
-			UID:       "pcs-uid-123",
-		},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Replicas: 1,
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{
-						Name: "clique1",
-						Spec: grovecorev1alpha1.PodCliqueSpec{
-							PodSpec: corev1.PodSpec{
-								InitContainers: []corev1.Container{
-									{
-										Name:  "init-container",
-										Image: "alpine",
-										Resources: corev1.ResourceRequirements{
-											Requests: corev1.ResourceList{
-												resourceNvidiaGPU: resource.MustParse("1"),
-											},
-										},
-									},
-								},
-								Containers: []corev1.Container{
-									{
-										Name:  "container1",
-										Image: "alpine",
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-}
-
 // createPCSWithMNNVLEnabled creates a PCS with MNNVL enabled annotation
 func createPCSWithMNNVLEnabled(replicas int32) *grovecorev1alpha1.PodCliqueSet {
 	pcs := createPCSWithGPU(replicas)
-	pcs.Annotations = map[string]string{mnnvl.AnnotationAutoMNNVL: "true"}
+	pcs.Annotations = map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled}
 	return pcs
 }
 
 // createPCSWithMNNVLDisabled creates a PCS with MNNVL disabled annotation (opt-out)
 func createPCSWithMNNVLDisabled() *grovecorev1alpha1.PodCliqueSet {
 	pcs := createPCSWithGPU(1)
-	pcs.Annotations = map[string]string{mnnvl.AnnotationAutoMNNVL: "false"}
+	pcs.Annotations = map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled}
 	return pcs
 }
 
@@ -711,7 +607,7 @@ func createPCSWithoutGPU() *grovecorev1alpha1.PodCliqueSet {
 // createPCSWithGPU creates a PCS with GPU requirements and specified replicas
 func createPCSWithGPU(replicas int32) *grovecorev1alpha1.PodCliqueSet {
 	pcs := createPCSWithResources(
-		corev1.ResourceList{resourceNvidiaGPU: resource.MustParse("1")},
+		corev1.ResourceList{constants.GPUResourceName: resource.MustParse("1")},
 		nil,
 	)
 	pcs.Spec.Replicas = replicas

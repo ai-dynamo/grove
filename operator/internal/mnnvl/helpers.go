@@ -40,6 +40,9 @@ func hasGPURequirement(pcs *grovecorev1alpha1.PodCliqueSet) bool {
 }
 
 // hasGPUInContainers checks if any container in the slice requests GPU resources.
+// TODO: This check is incomplete - it only looks at Resources.Limits and Resources.Requests.
+// Pods can also require GPUs via resourceClaims (Dynamic Resource Allocation).
+// This should be extended in a future PR to handle all GPU requirement patterns.
 func hasGPUInContainers(containers []corev1.Container) bool {
 	for _, container := range containers {
 		// Check limits

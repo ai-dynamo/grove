@@ -59,5 +59,5 @@ const (
 	// FinalizerComputeDomain is the finalizer added to ComputeDomains to prevent accidental
 	// deletion while workloads are using them. This finalizer is removed by the PCS controller
 	// during scale-in or PCS deletion.
-	FinalizerComputeDomain = "grove.io/computedomain.resource.nvidia.com"
+	FinalizerComputeDomain = "grove.io/" + ComputeDomainCRDName
 )
