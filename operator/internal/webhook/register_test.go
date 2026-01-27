@@ -91,7 +91,7 @@ func TestRegisterWebhooks_WithoutAuthorizer(t *testing.T) {
 		Enabled: false,
 	}
 
-	err := Register(mgr, authorizerConfig, configv1alpha1.TopologyAwareSchedulingConfiguration{})
+	err := Register(mgr, authorizerConfig, configv1alpha1.TopologyAwareSchedulingConfiguration{}, configv1alpha1.NetworkAcceleration{})
 	require.NoError(t, err)
 }
 
@@ -120,7 +120,7 @@ func TestRegisterWebhooks_WithAuthorizerMissingEnvVar(t *testing.T) {
 		Enabled: true,
 	}
 
-	err = Register(mgr, authorizerConfig, configv1alpha1.TopologyAwareSchedulingConfiguration{})
+	err = Register(mgr, authorizerConfig, configv1alpha1.TopologyAwareSchedulingConfiguration{}, configv1alpha1.NetworkAcceleration{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), constants.EnvVarServiceAccountName)
 }
@@ -149,7 +149,7 @@ func TestRegisterWebhooks_WithAuthorizerMissingNamespaceFile(t *testing.T) {
 		Enabled: true,
 	}
 
-	err := Register(mgr, authorizerConfig, configv1alpha1.TopologyAwareSchedulingConfiguration{})
+	err := Register(mgr, authorizerConfig, configv1alpha1.TopologyAwareSchedulingConfiguration{}, configv1alpha1.NetworkAcceleration{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "error reading namespace file")
 }
@@ -194,7 +194,7 @@ func TestRegisterWebhooks_WithAuthorizerSuccess(t *testing.T) {
 		Enabled: true,
 	}
 
-	err = Register(mgr, authorizerConfig, configv1alpha1.TopologyAwareSchedulingConfiguration{})
+	err = Register(mgr, authorizerConfig, configv1alpha1.TopologyAwareSchedulingConfiguration{}, configv1alpha1.NetworkAcceleration{})
 	// Will error because it tries to read the hardcoded namespace file path
 	require.Error(t, err)
 }

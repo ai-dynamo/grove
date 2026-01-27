@@ -148,6 +148,12 @@ func (b *PodCliqueSetBuilder) WithTopologyConstraint(constraint *grovecorev1alph
 	return b
 }
 
+// WithAnnotations sets the annotations for the PodCliqueSet.
+func (b *PodCliqueSetBuilder) WithAnnotations(annotations map[string]string) *PodCliqueSetBuilder {
+	b.pcs.Annotations = annotations
+	return b
+}
+
 // Build creates a PodCliqueSet object.
 func (b *PodCliqueSetBuilder) Build() *grovecorev1alpha1.PodCliqueSet {
 	return b.pcs

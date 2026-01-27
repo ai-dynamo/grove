@@ -31,13 +31,13 @@ import (
 )
 
 // Register registers the webhooks with the controller manager.
-func Register(mgr manager.Manager, authorizerConfig configv1alpha1.AuthorizerConfig, tasConfig configv1alpha1.TopologyAwareSchedulingConfiguration) error {
-	defaultingWebhook := defaulting.NewHandler(mgr)
+func Register(mgr manager.Manager, authorizerConfig configv1alpha1.AuthorizerConfig, tasConfig configv1alpha1.TopologyAwareSchedulingConfiguration, networkConfig configv1alpha1.NetworkAcceleration) error {
+	defaultingWebhook := defaulting.NewHandler(mgr, networkConfig)
 	slog.Info("Registering webhook with manager", "handler", defaulting.Name)
 	if err := defaultingWebhook.RegisterWithManager(mgr); err != nil {
 		return fmt.Errorf("failed adding %s webhook handler: %v", defaulting.Name, err)
 	}
-	pcsValidatingWebhook := pcsvalidation.NewHandler(mgr, tasConfig)
+	pcsValidatingWebhook := pcsvalidation.NewHandler(mgr, tasConfig, networkConfig)
 	slog.Info("Registering webhook with manager", "handler", pcsvalidation.Name)
 	if err := pcsValidatingWebhook.RegisterWithManager(mgr); err != nil {
 		return fmt.Errorf("failed adding %s webhook handler: %v", pcsvalidation.Name, err)

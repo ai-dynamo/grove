@@ -20,7 +20,9 @@ import (
 	"context"
 	"fmt"
 
+	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
@@ -31,13 +33,15 @@ import (
 
 // Handler sets default values on PodCliqueSet resources.
 type Handler struct {
-	logger logr.Logger
+	logger        logr.Logger
+	networkConfig configv1alpha1.NetworkAcceleration
 }
 
 // NewHandler returns a new instance of defaulting webhook handler.
-func NewHandler(mgr manager.Manager) *Handler {
+func NewHandler(mgr manager.Manager, networkConfig configv1alpha1.NetworkAcceleration) *Handler {
 	return &Handler{
-		logger: mgr.GetLogger().WithName("webhook").WithName(Name),
+		logger:        mgr.GetLogger().WithName("webhook").WithName(Name),
+		networkConfig: networkConfig,
 	}
 }
 
@@ -54,5 +58,11 @@ func (h *Handler) Default(ctx context.Context, obj runtime.Object) error {
 	}
 	h.logger.Info("Applying defaults", "PodCliqueSet", k8sutils.CreateObjectKeyForCreateWebhooks(pcs, req))
 	defaultPodCliqueSet(pcs)
+
+	// Apply MNNVL auto-annotation if conditions are met
+	if mnnvl.MutateAutoMNNVL(pcs, h.networkConfig.AutoMNNVLEnabled) {
+		h.logger.Info("Added auto-mnnvl annotation", "PodCliqueSet", k8sutils.CreateObjectKeyForCreateWebhooks(pcs, req))
+	}
+
 	return nil
 }

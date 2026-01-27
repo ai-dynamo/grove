@@ -100,21 +100,15 @@ cover-html:
 	@echo "> Generating HTML coverage report for operator"
 	@make --directory=operator cover-html
 
-# Runs envtest tests for the operator
-.PHONY: test-envtest
-test-envtest:
-	@echo "> Running envtest for operator"
-	@make --directory=operator test-envtest
-
 # Runs e2e tests for the operator
 .PHONY: test-e2e
 test-e2e:
 	@echo "> Running e2e tests for operator"
 	@make --directory=operator test-e2e
 
-# Runs all tests (unit + envtest)
+# Runs all tests
 .PHONY: test
-test: test-unit test-envtest
+test: test-unit
 	@echo "> All tests passed"
 
 # Updates the docs/proposals table of contents

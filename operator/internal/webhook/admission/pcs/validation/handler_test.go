@@ -47,7 +47,7 @@ func TestNewHandler(t *testing.T) {
 		Logger: logr.Discard(),
 	}
 
-	handler := NewHandler(mgr, getDefaultTASConfig())
+	handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig())
 	require.NotNil(t, handler)
 	assert.NotNil(t, handler.logger)
 }
@@ -113,7 +113,7 @@ func TestValidateCreate(t *testing.T) {
 				Logger: logr.Discard(),
 			}
 
-			handler := NewHandler(mgr, getDefaultTASConfig())
+			handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig())
 
 			ctx := context.Background()
 			warnings, err := handler.ValidateCreate(ctx, tt.obj)
@@ -244,7 +244,7 @@ func TestValidateUpdate(t *testing.T) {
 				Logger: logr.Discard(),
 			}
 
-			handler := NewHandler(mgr, getDefaultTASConfig())
+			handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig())
 
 			ctx := context.Background()
 			warnings, err := handler.ValidateUpdate(ctx, tt.newObj, tt.oldObj)
@@ -271,7 +271,7 @@ func TestValidateDelete(t *testing.T) {
 		Logger: logr.Discard(),
 	}
 
-	handler := NewHandler(mgr, getDefaultTASConfig())
+	handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig())
 
 	// Deletion validation always succeeds
 	ctx := context.Background()
@@ -382,7 +382,7 @@ func TestLogValidatorFunctionInvocation(t *testing.T) {
 				Logger: logr.Discard(),
 			}
 
-			handler := NewHandler(mgr, getDefaultTASConfig())
+			handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig())
 
 			// This function doesn't return an error, but we can verify it doesn't panic
 			assert.NotPanics(t, func() {
@@ -398,5 +398,12 @@ func TestLogValidatorFunctionInvocation(t *testing.T) {
 func getDefaultTASConfig() groveconfigv1alpha1.TopologyAwareSchedulingConfiguration {
 	return groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{
 		Enabled: false,
+	}
+}
+
+// getDefaultNetworkConfig returns a default network configuration with MNNVL disabled.
+func getDefaultNetworkConfig() groveconfigv1alpha1.NetworkAcceleration {
+	return groveconfigv1alpha1.NetworkAcceleration{
+		AutoMNNVLEnabled: false,
 	}
 }

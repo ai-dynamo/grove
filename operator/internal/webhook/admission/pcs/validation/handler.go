@@ -23,6 +23,7 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/errors"
+	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 
 	"github.com/go-logr/logr"
 	admissionv1 "k8s.io/api/admission/v1"
@@ -41,15 +42,17 @@ const (
 
 // Handler is a handler for validating PodCliqueSet resources.
 type Handler struct {
-	logger    logr.Logger
-	tasConfig configv1alpha1.TopologyAwareSchedulingConfiguration
+	logger        logr.Logger
+	tasConfig     configv1alpha1.TopologyAwareSchedulingConfiguration
+	networkConfig configv1alpha1.NetworkAcceleration
 }
 
 // NewHandler creates a new handler for PodCliqueSet Webhook.
-func NewHandler(mgr manager.Manager, tasConfig configv1alpha1.TopologyAwareSchedulingConfiguration) *Handler {
+func NewHandler(mgr manager.Manager, tasConfig configv1alpha1.TopologyAwareSchedulingConfiguration, networkConfig configv1alpha1.NetworkAcceleration) *Handler {
 	return &Handler{
-		logger:    mgr.GetLogger().WithName("webhook").WithName(Name),
-		tasConfig: tasConfig,
+		logger:        mgr.GetLogger().WithName("webhook").WithName(Name),
+		tasConfig:     tasConfig,
+		networkConfig: networkConfig,
 	}
 }
 
@@ -66,6 +69,15 @@ func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admis
 	allErrs = append(allErrs, v.validateTopologyConstraintsOnCreate()...)
 	warnings, errs := v.validate()
 	allErrs = append(allErrs, errs...)
+
+	// Validate MNNVL annotation: reject if annotation="true" but feature is disabled
+	if err := mnnvl.ValidateAutoMNNVLOnCreate(pcs, h.networkConfig.AutoMNNVLEnabled); err != nil {
+		allErrs = append(allErrs, field.Invalid(
+			field.NewPath("metadata", "annotations", mnnvl.AnnotationAutoMNNVL),
+			pcs.Annotations[mnnvl.AnnotationAutoMNNVL],
+			err.Error()))
+	}
+
 	return warnings, allErrs.ToAggregate()
 }
 
@@ -80,6 +92,12 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 	if err != nil {
 		return nil, errors.WrapError(err, ErrValidateUpdatePodCliqueSet, string(admissionv1.Update), "failed to cast old object to PodCliqueSet")
 	}
+
+	// Validate MNNVL annotation immutability
+	if err := mnnvl.ValidateAutoMNNVLOnUpdate(oldPCS, newPCS); err != nil {
+		return nil, errors.WrapError(err, ErrValidateUpdatePodCliqueSet, string(admissionv1.Update), err.Error())
+	}
+
 	v := newPCSValidator(newPCS, admissionv1.Update, h.tasConfig)
 	warnings, errs := v.validate()
 	if len(errs) > 0 {
