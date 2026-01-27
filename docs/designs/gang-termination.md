@@ -78,7 +78,7 @@ Without gang termination, a workload that loses critical pods remains in a degra
 
 ### MinAvailableBreached Condition
 
-A status condition (`ConditionTypeMinAvailableBreached`) set on PodClique and PodCliqueScalingGroup resources when available replicas fall below `MinAvailable`. The condition includes:
+A status condition (`MinAvailableBreached`) set on PodClique and PodCliqueScalingGroup resources when available replicas fall below `MinAvailable`. The condition includes:
 
 - `Status`: True (breached), False (not breached), or Unknown (update in progress)
 - `LastTransitionTime`: When the condition last changed, used for tracking termination delay
