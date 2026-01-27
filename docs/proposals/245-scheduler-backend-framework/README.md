@@ -35,7 +35,7 @@ Grove currently only supports the KAI scheduler. As more customers and scheduler
 
 ## Motivation
 
-Many scenarios and customers today use different schedulers, including the Kubernetes default scheduler and schedulers built on the scheduler plugin framework. These schedulers require appropriate support from Grove, especially as the Kubernetes community continues to improve AI workload scheduling capabilities, including gang scheduling and topology-aware scheduling (TAS). Even the KAI scheduler required significant modifications to support Grove's PodGang API. 
+Many scenarios and customers today use different schedulers, including the Kubernetes default scheduler and schedulers built on the scheduler plugin framework. These schedulers require appropriate support from Grove, especially as the Kubernetes community continues to improve AI workload scheduling capabilities, including gang scheduling and topology-aware scheduling (TAS). Even the KAI scheduler required modifications to support Grove's PodGang API. 
 
 The current tight coupling between Grove and specific scheduler implementations creates several challenges:
 
@@ -105,7 +105,7 @@ As a cluster administrator, I want to migrate from one scheduler to another (e.g
 
 **Limitation**: Grove can only be configured with one scheduler backend per deployment. Users cannot mix schedulers for different workloads within the same Grove installation.
 
-**Mitigation**: This is acceptable for most use cases as clusters typically standardize on a single scheduler. Users requiring multiple schedulers can run separate Grove installations with different configurations in different namespaces or clusters.
+**Mitigation**: This is acceptable for most use cases as clusters typically standardize on a single scheduler. Users requiring multiple schedulers can run separate Grove installations with different configurations in different clusters.
 
 #### Backend Implementation Responsibility
 
@@ -142,7 +142,7 @@ As a cluster administrator, I want to migrate from one scheduler to another (e.g
 
 The Scheduler Backend Framework introduces a clean separation between Grove's control plane logic and scheduler-specific implementations. The architecture is organized into four distinct layers:
 
-<img src="assets/scheduler-backend-architecture.excalidraw.png" alt="scheduler-backend-architecture" style="zoom:50%;" />
+<img src="assets/scheduler-backend-framework.png" alt="scheduler-backend-architecture" style="zoom:50%;" />
 
 #### Layer 1: Configuration Layer
 User-facing configuration that defines which scheduler backend to use:
@@ -170,7 +170,7 @@ Kubernetes schedulers that actually place pods:
 
 **Key Data Flow:**
 1. Operator startup → `Initialize(schedulerName)` → Backend Manager initializes backend
-2. PodCliqueSet Controller creates PodGang → Backend Controller watches → `SyncPodGang()` creates scheduler CRs
+2. PodCliqueSet Controller creates PodGang with `Initialized=False` → Backend Controller watches → `SyncPodGang()` creates scheduler CRs
 3. PodClique Controller creates Pods → `PreparePod()` sets schedulerName and annotations
 4. PodCliqueSet fills PodReferences → Sets `Initialized=True` → Gates removed → Scheduler places pods
 
@@ -315,33 +315,6 @@ type OperatorConfiguration struct {
 	
 	// ... other existing fields ...
 }
-```
-
-Example OperatorConfiguration YAML:
-
-```yaml
-apiVersion: operator.config.grove.io/v1alpha1
-kind: OperatorConfiguration
-metadata:
-  name: grove-config
-controllers:
-  podCliqueSet:
-    concurrentSyncs: 3
-  podClique:
-    concurrentSyncs: 3
-# Select the scheduler backend - "kai-scheduler" or "default-scheduler"
-schedulerName: "kai-scheduler"
-logLevel: info
-logFormat: json
-topologyAwareScheduling:
-  enabled: true
-  levels:
-    - domain: zone
-      key: "topology.kubernetes.io/zone"
-    - domain: rack
-      key: "topology.kubernetes.io/rack"
-    - domain: host
-      key: "kubernetes.io/hostname"
 ```
 
 **Helm Chart Configuration:**
@@ -491,7 +464,7 @@ const (
 )
 ```
 
-This condition signals that:
+We introduce Initialized as new PodGang Status Condition to signal that:
 - All expected pods have been created
 - PodGang.Spec.PodGroups[].PodReferences have been populated
 - Pods can now lift their scheduling gates and proceed with scheduling
@@ -563,59 +536,6 @@ func podGangSpecChangePredicate() predicate.Predicate {
 }
 ```
 
-### Integration with PodCliqueSet Controller
-
-The PodCliqueSet controller is modified to use the backend during PodGang reconciliation:
-
-```go
-func (r *PodCliqueSetReconciler) reconcilePodGang(ctx context.Context, pcs *corev1alpha1.PodCliqueSet) error {
-	// Get the configured backend
-	backend, err := r.backendRegistry.GetActiveBackend()
-	if err != nil {
-		return fmt.Errorf("failed to get scheduler backend: %w", err)
-	}
-	
-	podGang := &schedulerv1alpha1.PodGang{}
-	err = r.Get(ctx, types.NamespacedName{
-		Namespace: pcs.Namespace,
-		Name:      pcs.Name,
-	}, podGang)
-	
-	if apierrors.IsNotFound(err) {
-		// Create new PodGang
-		podGang = r.buildPodGang(pcs)
-		
-		// Call backend hook before creation
-		if err := backend.OnPodGangCreate(ctx, r.Client, podGang, pcs); err != nil {
-			return fmt.Errorf("backend OnPodGangCreate failed: %w", err)
-		}
-		
-		if err := r.Create(ctx, podGang); err != nil {
-			return fmt.Errorf("failed to create PodGang: %w", err)
-		}
-		
-		return nil
-	} else if err != nil {
-		return fmt.Errorf("failed to get PodGang: %w", err)
-	}
-	
-	// Update existing PodGang
-	oldPodGang := podGang.DeepCopy()
-	r.updatePodGang(podGang, pcs)
-	
-	// Call backend hook before update
-	if err := backend.OnPodGangUpdate(ctx, r.Client, oldPodGang, podGang, pcs); err != nil {
-		return fmt.Errorf("backend OnPodGangUpdate failed: %w", err)
-	}
-	
-	if err := r.Update(ctx, podGang); err != nil {
-		return fmt.Errorf("failed to update PodGang: %w", err)
-	}
-	
-	return nil
-}
-```
-
 ### Pod Template Mutation
 
 During pod creation, the backend mutates the pod specification:
@@ -641,114 +561,36 @@ func (r *PodCliqueSetReconciler) createPod(ctx context.Context, podGroup *schedu
 	
 	return nil
 }
-
-### Monitoring
-
-#### Metrics
-
-The Scheduler Backend Framework will expose the following Prometheus metrics:
-
-```go
-// Backend initialization metrics
-grove_scheduler_backend_initialization_duration_seconds
-  Labels: backend_name, status (success/failure)
-  
-// Backend operation metrics  
-grove_scheduler_backend_operation_duration_seconds
-  Labels: backend_name, operation (create/update/delete/status_update/mutate)
-  
-grove_scheduler_backend_operation_total
-  Labels: backend_name, operation, status (success/failure)
-  
-// Active backend info
-grove_scheduler_backend_info
-  Labels: backend_name, version
-  Value: 1 (gauge indicating active backend)
 ```
 
-#### Events
-
-The operator will emit Kubernetes events for backend-related activities:
-
-| Event Type | Reason | Message |
-|------------|--------|---------|
-| Normal | BackendInitialized | "Scheduler backend '%s' initialized successfully" |
-| Warning | BackendInitializationFailed | "Failed to initialize scheduler backend '%s': %v" |
-| Warning | BackendOperationFailed | "Backend operation '%s' failed for PodGang '%s': %v" |
-| Normal | BackendSwitched | "Switched from backend '%s' to '%s'" |
+### Monitoring
 
 #### Status Conditions
 
 A new condition will be added to the Grove operator's status:
 
-```go
-// Condition: SchedulerBackendReady
-// Status: True/False/Unknown
-// Reason: BackendInitialized/BackendInitializationFailed/BackendNotConfigured
-// Message: Detailed status of the backend initialization
-```
+Condition: `Initialized`
+Condition States:
 
-#### Logging
+| Status    | Reason                              | Description                                                  |
+| --------- | ----------------------------------- | ------------------------------------------------------------ |
+| `True`    | `AllPodsCreated`  | All pods have been created and references populated |
+| `False`   | `PodsNotCreated` | Waiting for all pods to be created and wait for all pods references to be filled in PodGang|
 
-Backend operations will be logged with structured logging:
-
-```go
-log.Info("Backend operation started",
-    "backend", backendName,
-    "operation", "OnPodGangCreate",
-    "podgang", podGangName)
-    
-log.Error(err, "Backend operation failed",
-    "backend", backendName,
-    "operation", "OnPodGangCreate",
-    "podgang", podGangName)
-```
 
 ### Dependencies
 
 #### Required Dependencies
 
-1. **Kubernetes 1.24+**: The framework uses features introduced in Kubernetes 1.24.
-
-2. **Controller Runtime v0.14+**: Required for client interfaces and controller patterns.
-
-3. **Scheduler Implementation**: Each backend requires its corresponding scheduler to be deployed:
+1. **Scheduler Implementation**: Each backend requires its corresponding scheduler to be deployed:
    - KAI Backend: [KAI Scheduler](https://github.com/NVIDIA/KAI-Scheduler) must be deployed
    - Default Backend (future): Standard Kubernetes scheduler with gang scheduling support
 
 #### Optional Dependencies
-
-1. **Monitoring Stack**: Prometheus and Grafana for metrics visualization (recommended for production).
-
-2. **Backend-Specific CRDs**: Some backends may require additional CRDs to be installed:
+1. **Backend-Specific CRDs**: Some backends may require additional CRDs to be installed:
    - KAI Backend: KAI PodGang CRD, Topology CRD (if TAS is enabled)
    - Future backends: Custom CRDs as defined by the scheduler implementation
 
-#### Backend Registration
-
-Backends must be compiled into the Grove operator binary. External/dynamic backend loading is not supported in the initial implementation. Backend packages should register themselves in their `init()` functions:
-
-```go
-package mybackend
-
-import "github.com/ai-dynamo/grove/operator/internal/controller/backend"
-
-func init() {
-    backend.Register("mybackend", NewMyBackend)
-}
-```
-
-To include a backend in the Grove operator build, import it in the main package:
-
-```go
-package main
-
-import (
-    _ "github.com/ai-dynamo/grove/operator/internal/controller/backend/kai"
-    _ "github.com/ai-dynamo/grove/operator/internal/controller/backend/default"
-    // Add new backends here
-)
-```
 
 ### Test Plan
 
@@ -759,21 +601,19 @@ Unit tests will be implemented for all framework components:
 **Backend Interface and Registry** (`operator/internal/controller/backend/`)
 - Test backend registration (success, duplicate registration)
 - Test backend retrieval (existing, non-existing)
-- Test backend listing
-- Test concurrent registration/retrieval
 
 **KAI Backend Implementation** (`operator/internal/controller/backend/kai/`)
-- Test initialization with various configurations
-- Test PodGang lifecycle hooks (create, update, delete, status update)
 - Test pod spec mutation
 - Test configuration validation
-- Test error handling and edge cases
 
 **Controller Integration** (`operator/internal/controller/podcliqueset/`)
-- Test PodGang reconciliation with backend hooks
+- Test PodGang creation with empty pods references
+- Test PodGang update with filling pods references
+
+**Controller Integration** (`operator/internal/controller/podclique/`)
 - Test backend errors and failure handling
-- Test backend switching scenarios
 - Test pod creation with backend mutation
+- Test lift schedulingGate after Initialized is true
 
 **OperatorConfiguration** (`operator/api/config/v1alpha1/`)
 - Test configuration validation
@@ -781,9 +621,10 @@ Unit tests will be implemented for all framework components:
 - Test default values
 - Test invalid backend names
 
-#### Integration Tests
 
-Integration tests will verify end-to-end workflows:
+#### E2E Tests
+
+All existing e2e tests should be passed and should add extra tests below:
 
 1. **Backend Initialization**
    - Verify operator starts with KAI backend configured
@@ -791,63 +632,29 @@ Integration tests will verify end-to-end workflows:
    - Verify backend-specific resources are created
    - Verify operator fails to start with invalid backend configuration
 
-2. **PodCliqueSet Lifecycle with KAI Backend**
-   - Create PodCliqueSet and verify PodGang creation
-   - Verify KAI backend hooks are called
-   - Verify pod specs have correct scheduler name and annotations
-   - Update PodCliqueSet and verify backend update hooks
-   - Delete PodCliqueSet and verify cleanup
-
-3. **Backend Failure Handling**
+2. **Backend Failure Handling**
    - Test operator behavior when backend hooks return errors
    - Verify appropriate events and status conditions
-   - Verify retry behavior
 
-4. **Multiple PodCliqueSets**
-   - Create multiple PodCliqueSets concurrently
-   - Verify backend handles concurrent operations correctly
-   - Verify no resource conflicts or race conditions
-
-#### E2E Tests
-
-End-to-end tests will verify real-world scenarios with actual schedulers:
-
-1. **KAI Scheduler Integration**
+3. **KAI Scheduler Integration**
    - Deploy Grove with KAI backend
    - Deploy KAI scheduler
    - Create PodCliqueSet with gang scheduling requirements
    - Verify pods are gang-scheduled by KAI
    - Verify topology constraints are honored (if TAS is enabled)
 
-2. **Workload Scheduling Scenarios**
-   - Test simple gang scheduling (all pods scheduled together)
-   - Test gang scheduling with topology constraints
-   - Test scaling PodCliqueSet replicas
-   - Test PodCliqueScalingGroup scaling
-
-3. **Failure and Recovery**
+4. **Failure and Recovery**
    - Test scheduler failure and recovery
    - Test operator restart with existing PodCliqueSets
    - Test pod failure within a gang
    - Test node failure and rescheduling
 
-#### Test Coverage Goals
-
-- Unit test coverage: ≥ 80% for all backend framework code
-- Integration test coverage: All major workflows covered
-- E2E test coverage: All supported scheduling scenarios covered
-
-#### Test Issue Tracking
-
-A dedicated issue will be created to track test implementation:
-- Issue: "Implement tests for GREP-245: Scheduler Backend Framework"
-- The issue will contain detailed test scenarios and acceptance criteria
 
 ### Graduation Criteria
 
 The Scheduler Backend Framework will follow a staged rollout approach:
 
-#### Alpha (v0.1.0)
+#### Alpha
 
 **Goals:**
 - Core backend interface defined and implemented
@@ -855,6 +662,7 @@ The Scheduler Backend Framework will follow a staged rollout approach:
 - KAI backend fully implemented as reference
 - Basic operator configuration support
 - Unit tests achieving ≥80% coverage
+- E2E tests with KAI scheduler
 
 **Success Criteria:**
 - KAI backend works with existing functionality (no regressions)
@@ -863,24 +671,19 @@ The Scheduler Backend Framework will follow a staged rollout approach:
 - Documentation covers backend interface and KAI implementation
 
 **Known Limitations:**
-- Only KAI backend supported
 - No support for backend switching without operator restart
-- Limited observability and metrics
 - Backend API may still evolve
 
-#### Beta (v0.2.0)
+#### Beta 
 
 **Goals:**
 - Backend interface stabilized (no breaking changes expected)
 - Comprehensive metrics and monitoring
-- Integration tests for all backend operations
-- E2E tests with KAI scheduler
 - Documentation for third-party backend development
 - At least one additional backend implemented (e.g., default scheduler support)
 
 **Success Criteria:**
 - No critical bugs reported in alpha
-- Backend switching via operator restart works reliably
 - Metrics provide sufficient observability into backend operations
 - Third-party developers can implement backends using documentation
 - Performance benchmarks show no degradation compared to pre-framework implementation
@@ -889,7 +692,7 @@ The Scheduler Backend Framework will follow a staged rollout approach:
 - Runtime backend switching not supported
 - Limited support for custom scheduler features beyond gang scheduling
 
-#### GA (v1.0.0)
+#### GA
 
 **Goals:**
 - Backend interface is stable and versioned
@@ -906,12 +709,6 @@ The Scheduler Backend Framework will follow a staged rollout approach:
 - Clear migration path from pre-framework Grove versions
 - Community adoption and positive feedback
 
-**Promotion Requirements:**
-- At least 3 months in beta
-- Production usage by multiple organizations
-- All beta success criteria met
-- Security review completed
-- API review completed and approved
 
 #### Future Enhancements (Post-GA)
 
@@ -925,12 +722,12 @@ The Scheduler Backend Framework will follow a staged rollout approach:
 
 Major milestones in the lifecycle of this GREP:
 
-- **2026-01-26**: Initial GREP proposal created and submitted for review
+- **2026-01-27**: Initial GREP proposal created and submitted for review
 - **TBD**: GREP proposal accepted and merged
 - **TBD**: Implementation started (Alpha phase)
-- **TBD**: Alpha release (v0.1.0)
-- **TBD**: Beta release (v0.2.0)
-- **TBD**: GA release (v1.0.0)
+- **TBD**: Alpha release 
+- **TBD**: Beta release 
+- **TBD**: GA release 
 
 ## Alternatives
 
@@ -950,69 +747,6 @@ Major milestones in the lifecycle of this GREP:
 - Code becomes increasingly complex with each scheduler addition
 - **Rejected**: Does not scale as Grove adoption grows across different scheduler ecosystems
 
-### Alternative 2: Webhook-Based Mutating Admission
-
-**Description**: Use Kubernetes admission webhooks to mutate PodGang and Pod resources based on annotations indicating the target scheduler.
-
-**Pros**:
-- Complete separation from Grove operator code
-- Dynamic registration without operator restarts
-- Could support multiple schedulers simultaneously
-
-**Cons**:
-- Adds operational complexity (webhook certificates, availability)
-- Performance overhead of webhook calls
-- Debugging and troubleshooting is more difficult
-- State management becomes complex
-- **Rejected**: The additional operational complexity and performance overhead outweigh the benefits for this use case
-
-### Alternative 3: CRD-Based Backend Configuration
-
-**Description**: Define scheduler backends as CRDs that users create and reference from PodCliqueSets.
-
-**Pros**:
-- Highly flexible and declarative
-- Supports multiple backends per cluster
-- Users can customize per-workload
-
-**Cons**:
-- Significantly more complex API surface
-- User experience degradation (more resources to manage)
-- Validation becomes challenging
-- Unclear ownership and lifecycle management
-- **Rejected**: Adds too much complexity for the primary use case of single-scheduler clusters
-
-### Alternative 4: Pluggable Backend with Dynamic Loading
-
-**Description**: Support loading backend implementations from external binaries or shared libraries at runtime.
-
-**Pros**:
-- Backends can be developed and deployed independently
-- No need to recompile Grove for new backends
-- Truly pluggable architecture
-
-**Cons**:
-- Security risks (loading untrusted code)
-- Version compatibility challenges
-- Platform-specific build requirements
-- Deployment and upgrade complexity
-- **Rejected**: While desirable for future enhancements, this adds too much complexity for the initial implementation. Can be revisited post-GA.
-
-### Alternative 5: Scheduler-Side Implementation
-
-**Description**: Push all integration logic to the scheduler side, with Grove only managing PodGang resources in a scheduler-agnostic way.
-
-**Pros**:
-- Grove remains completely scheduler-agnostic
-- Schedulers have full control over their integration
-
-**Cons**:
-- Requires more invasive changes to each scheduler
-- Duplicated logic across scheduler implementations
-- Grove loses ability to provide consistent user experience
-- Difficult to maintain common functionality (e.g., topology translation)
-- **Rejected**: Places too much burden on scheduler implementations and loses the value Grove provides in workload management
-
 ### Selected Approach: Interface-Based Backend Framework
 
 The selected approach (described in this GREP) provides the best balance of:
@@ -1022,198 +756,6 @@ The selected approach (described in this GREP) provides the best balance of:
 - **Simplicity**: Straightforward implementation without over-engineering
 - **Evolution Path**: Can evolve toward more advanced architectures (dynamic loading) in the future
 
-## Appendix
-
-### Related Documentation
-
-- **GREP-244: Topology Aware Scheduling**: Provides context on topology constraints that backends must support
-- **PodGang API Specification**: Core scheduler API that backends interact with
-- **PodCliqueSet API Documentation**: User-facing API that drives backend operations
-
-### References
-
-- [Kubernetes Scheduler Framework](https://kubernetes.io/docs/concepts/scheduling-eviction/scheduling-framework/)
-- [KAI Scheduler](https://github.com/NVIDIA/KAI-Scheduler)
-- [Gang Scheduling in Kubernetes](https://github.com/kubernetes-sigs/scheduler-plugins/tree/master/pkg/coscheduling)
-- [KEP Template](https://github.com/kubernetes/enhancements/blob/f90055d254c356b2c038a1bdf4610bf4acd8d7be/keps/NNNN-kep-template/README.md)
-
-### Example Backend Implementation Template
-
-For developers implementing new scheduler backends, here's a minimal template:
-
-```go
-
-// Backend implements the SchedulerBackend interface for your custom scheduler.
-type Backend struct {
-	client        client.Client
-	scheme        *runtime.Scheme
-	eventRecorder record.EventRecorder
-	schedulerName string
-}
-
-// New creates a new backend instance.
-func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, schedulerName string) *Backend {
-	return &Backend{
-		client:        cl,
-		scheme:        scheme,
-		eventRecorder: eventRecorder,
-		schedulerName: schedulerName,
-	}
-}
-
-// Name returns the backend name.
-func (b *Backend) Name() string {
-	return BackendName
-}
-
-// Init initializes the backend.
-// Use this to create global resources, validate configuration, etc.
-func (b *Backend) Init() error {
-	// Example: Create global scheduler-specific resources
-	// Example: Validate scheduler is available
-	return nil
-}
-
-// SyncPodGang synchronizes PodGang to scheduler-specific resources.
-// This is called by the Backend Controller when PodGang is created or spec changes.
-func (b *Backend) SyncPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
-	// Example: Create/update scheduler-specific CRs (PodGroup, Workload, etc.)
-	// Use owner references to link resources to PodGang for automatic cleanup
-	return nil
-}
-
-// OnPodGangDelete cleans up scheduler-specific resources.
-// If using owner references, this can be a no-op.
-func (b *Backend) OnPodGangDelete(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
-	// Example: Delete scheduler-specific resources if not using owner references
-	return nil
-}
-
-// PreparePod adds scheduler-specific configuration to pods.
-// Called during pod creation in PodClique controller.
-func (b *Backend) PreparePod(pod *corev1.Pod) {
-	// Set scheduler name
-	pod.Spec.SchedulerName = b.schedulerName
-	
-	// Add annotations for your scheduler
-	if pod.Annotations == nil {
-		pod.Annotations = make(map[string]string)
-	}
-	pod.Annotations["mybackend.io/example"] = "value"
-	
-	// Add labels if needed
-	if pod.Labels == nil {
-		pod.Labels = make(map[string]string)
-	}
-	pod.Labels["mybackend.io/managed"] = "true"
-}
-```
-
-**To add your backend to Grove:**
-
-1. Create a new package: `operator/internal/schedulerbackend/mybackend/`
-2. Add your backend to the manager's switch statement in `operator/internal/schedulerbackend/manager.go`:
-   ```go
-   case "mybackend-scheduler":
-       globalBackend = mybackend.New(client, scheme, eventRecorder, schedulerName)
-   ```
-3. Import your backend package in `operator/internal/controller/register.go`
-4. Rebuild the Grove operator
-
-### Migration Guide
-
-#### Migrating Existing KAI Deployments
-
-For existing Grove deployments using KAI scheduler, the migration is seamless:
-
-**Pre-Framework Behavior:**
-- Pods were created with KAI scheduler name hardcoded
-- PodGang was created after pods existed
-
-**Post-Framework Behavior:**
-- PodGang is created first (with empty PodReferences)
-- Pods are created with scheduler name from configuration
-- Backend handles scheduler-specific logic
-
-**Migration Steps:**
-
-1. **Update OperatorConfiguration** (Helm values or ConfigMap):
-   ```yaml
-   # Add this field to your OperatorConfiguration
-   schedulerName: "kai-scheduler"
-   ```
-
-2. **Helm Chart Update**:
-   ```yaml
-   # values.yaml
-   config:
-     schedulerName: "kai-scheduler"  # or "default-scheduler"
-   ```
-
-3. **Rolling Update**: Upgrade Grove operator to the version with backend framework
-
-4. **Validation**:
-   - Verify existing PodCliqueSets continue to work
-   - Check that new pods have correct schedulerName set
-   - Verify PodGang resources are created with `Initialized` condition
-
-5. **Monitor**:
-   - Check logs for backend initialization messages
-   - Verify no scheduling delays or failures
-   - Monitor PodGang status conditions
-
-**Backward Compatibility:**
-- If `schedulerName` is not specified, it defaults to `"default-scheduler"`
-- Existing KAI deployments should explicitly set `schedulerName: "kai-scheduler"`
-- No changes required to PodCliqueSet specs
-
-#### Switching Scheduler Backends
-
-To switch from one scheduler to another (e.g., KAI to default scheduler):
-
-1. **Update Configuration**:
-   ```yaml
-   schedulerName: "default-scheduler"  # Changed from "kai-scheduler"
-   ```
-
-2. **Restart Operator**: Rolling restart picks up new configuration
-
-3. **New Workloads**: Will use the new scheduler automatically
-
-4. **Existing Workloads**: Continue using their original scheduler until redeployed
-
-**Note**: Switching schedulers does not affect running workloads. Only new PodCliqueSets will use the new scheduler.
-
-#### Adding a New Scheduler Backend
-
-For developers adding support for a new scheduler:
-
-1. **Create Backend Package**: 
-   ```bash
-   mkdir operator/internal/schedulerbackend/myscheduler
-   ```
-
-2. **Implement Interface**: Create `backend.go` implementing `SchedulerBackend` interface
-
-3. **Update Manager**: Add your backend to `operator/internal/schedulerbackend/manager.go`:
-   ```go
-   case "myscheduler-name":
-       globalBackend = myscheduler.New(client, scheme, eventRecorder, schedulerName)
-   ```
-
-4. **Import Backend**: Add import in `operator/internal/controller/register.go`
-
-5. **Write Tests**: Implement unit and integration tests
-
-6. **Document**: Add usage documentation and examples
-
-7. **Build and Deploy**: Recompile Grove operator with your backend included
-
-**Example PR Structure:**
-- `operator/internal/schedulerbackend/myscheduler/backend.go` - Backend implementation
-- `operator/internal/schedulerbackend/myscheduler/backend_test.go` - Unit tests
-- `operator/internal/schedulerbackend/manager.go` - Add case for your scheduler
-- `docs/schedulers/myscheduler.md` - Usage documentation
 
 ### Glossary
 
@@ -1225,6 +767,4 @@ For developers adding support for a new scheduler:
 - **PodGang Initialized Condition**: A status condition indicating that PodGang has been populated with pod references and pods can proceed with scheduling
 - **PreparePod**: The backend method called during pod creation to inject scheduler-specific configuration (schedulerName, annotations, etc.)
 - **SyncPodGang**: The backend method called to create/update scheduler-specific custom resources in response to PodGang changes
-
-> NOTE: This GREP template has been inspired by [KEP Template](https://github.com/kubernetes/enhancements/blob/f90055d254c356b2c038a1bdf4610bf4acd8d7be/keps/NNNN-kep-template/README.md).
 
