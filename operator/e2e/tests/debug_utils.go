@@ -19,6 +19,7 @@
 package tests
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -81,19 +82,42 @@ var groveResourceTypes = []groveResourceType{
 	{"PodGangs", schema.GroupVersionResource{Group: "scheduler.grove.io", Version: "v1alpha1", Resource: "podgangs"}, "PODGANG"},
 }
 
-// diagnosticsOutput holds the writers and file handle for diagnostics output
-type diagnosticsOutput struct {
-	writer   io.Writer
-	file     *os.File
-	filename string
+// nopCloser wraps an io.Writer to implement io.WriteCloser with a no-op Close.
+// Used for os.Stdout which we don't want to actually close.
+type nopCloser struct {
+	io.Writer
 }
 
-// Close closes the file if one was opened
-func (d *diagnosticsOutput) Close() error {
-	if d.file != nil {
-		return d.file.Close()
+func (nopCloser) Close() error { return nil }
+
+// multiWriteCloser wraps multiple io.WriteCloser instances.
+// Write calls write to all; Close closes all.
+type multiWriteCloser struct {
+	writers []io.WriteCloser
+}
+
+func newMultiWriteCloser(writers ...io.WriteCloser) *multiWriteCloser {
+	return &multiWriteCloser{writers: writers}
+}
+
+func (m *multiWriteCloser) Write(p []byte) (n int, err error) {
+	for _, w := range m.writers {
+		n, err = w.Write(p)
+		if err != nil {
+			return n, err
+		}
 	}
-	return nil
+	return len(p), nil
+}
+
+func (m *multiWriteCloser) Close() error {
+	var errs []error
+	for _, w := range m.writers {
+		if err := w.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // createDiagnosticsOutput creates writer(s) for diagnostics output based on GROVE_E2E_DIAG_MODE.
@@ -103,49 +127,42 @@ func (d *diagnosticsOutput) Close() error {
 //   - "both": write to both stdout and file
 //
 // When writing to file, GROVE_E2E_DIAG_DIR specifies the directory (default: current dir, fallback to /tmp).
-func createDiagnosticsOutput(testName string) (*diagnosticsOutput, error) {
+// Returns the writer, filename (empty if stdout-only), and any error.
+func createDiagnosticsOutput(testName string) (io.WriteCloser, string, error) {
 	mode := os.Getenv(DiagnosticsModeEnvVar)
 	if mode == "" {
 		mode = DiagnosticsModeFile // default
 	}
 
-	output := &diagnosticsOutput{}
-	var writers []io.Writer
+	var writers []io.WriteCloser
+	var filename string
 
 	// Add stdout if mode is stdout or both
 	if mode == DiagnosticsModeStdout || mode == DiagnosticsModeBoth {
-		writers = append(writers, os.Stdout)
+		writers = append(writers, nopCloser{os.Stdout})
 	}
 
 	// Add file if mode is file or both
 	if mode == DiagnosticsModeFile || mode == DiagnosticsModeBoth {
-		file, filename, err := createDiagnosticsFile(testName)
+		file, name, err := createDiagnosticsFile(testName)
 		if err != nil {
 			// If we can't create a file but stdout is available, continue with stdout only
 			if mode == DiagnosticsModeBoth {
 				logger.Infof("[DIAG] Warning: failed to create diagnostics file: %v (continuing with stdout only)", err)
 			} else {
-				return nil, err
+				return nil, "", err
 			}
 		} else {
-			output.file = file
-			output.filename = filename
+			filename = name
 			writers = append(writers, file)
 		}
 	}
 
 	if len(writers) == 0 {
-		return nil, fmt.Errorf("no valid diagnostics output configured (mode=%s)", mode)
+		return nil, "", fmt.Errorf("no valid diagnostics output configured (mode=%s)", mode)
 	}
 
-	// Use MultiWriter if we have multiple outputs
-	if len(writers) == 1 {
-		output.writer = writers[0]
-	} else {
-		output.writer = io.MultiWriter(writers...)
-	}
-
-	return output, nil
+	return newMultiWriteCloser(writers...), filename, nil
 }
 
 // createDiagnosticsFile creates a timestamped diagnostics file
@@ -201,20 +218,20 @@ func CollectAllDiagnostics(tc TestContext) {
 	}
 
 	// Create diagnostics output
-	output, err := createDiagnosticsOutput(testName)
+	output, filename, err := createDiagnosticsOutput(testName)
 	if err != nil {
 		logger.Errorf("Failed to create diagnostics output, falling back to stdout: %v", err)
-		output = &diagnosticsOutput{writer: os.Stdout}
+		output = nopCloser{os.Stdout}
 	}
 	defer output.Close()
 
 	// Save reference to stdout logger, then shadow with diagnostics logger
 	stdoutLogger := logger
-	logger := utils.NewTestLoggerWithOutput(utils.InfoLevel, output.writer)
+	logger := utils.NewTestLoggerWithOutput(utils.InfoLevel, output)
 
 	// Log where diagnostics are being written (to main test output)
-	if output.filename != "" {
-		stdoutLogger.Infof("Writing diagnostics to file: %s", output.filename)
+	if filename != "" {
+		stdoutLogger.Infof("Writing diagnostics to file: %s", filename)
 	}
 
 	logger.Info("================================================================================")
@@ -232,8 +249,8 @@ func CollectAllDiagnostics(tc TestContext) {
 	logger.Info("================================================================================")
 
 	// Log completion message (to main test output)
-	if output.filename != "" {
-		stdoutLogger.Infof("Diagnostics collection complete. Output written to: %s", output.filename)
+	if filename != "" {
+		stdoutLogger.Infof("Diagnostics collection complete. Output written to: %s", filename)
 	}
 }
 
