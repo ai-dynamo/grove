@@ -163,6 +163,11 @@ const (
 	CertProvisionModeManual CertProvisionMode = "manual"
 )
 
+const (
+	// DefaultWebhookSecretName is the default name of the Secret containing webhook TLS certificates.
+	DefaultWebhookSecretName = "grove-webhook-server-cert"
+)
+
 // Server contains information for HTTP(S) server configuration.
 type Server struct {
 	// BindAddress is the IP address on which to listen for the specified port.
