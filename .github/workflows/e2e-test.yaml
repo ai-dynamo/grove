@@ -98,25 +98,46 @@ jobs:
           CLUSTER_NAME="shared-e2e-test-cluster"
           REGISTRY_PORT="5001"
           API_PORT="6560"
+          MAX_RETRIES=3
+          RETRY_COUNT=0
           
           echo "🚀 Creating k3d cluster '$CLUSTER_NAME'..."
           
-          # Create k3d cluster with registry
-          k3d cluster create "$CLUSTER_NAME" \
-            --servers 1 \
-            --agents 30 \
-            --image "rancher/k3s:v1.33.5-k3s1" \
-            --api-port "$API_PORT" \
-            --port "8090:80@loadbalancer" \
-            --registry-create "registry:0.0.0.0:$REGISTRY_PORT" \
-            --k3s-arg "--node-taint=node_role.e2e.grove.nvidia.com=agent:NoSchedule@agent:*" \
-            --k3s-node-label "node_role.e2e.grove.nvidia.com=agent@agent:*" \
-            --k3s-node-label "nvidia.com/gpu.deploy.operands=false@server:*" \
-            --k3s-node-label "nvidia.com/gpu.deploy.operands=false@agent:*" \
-            --agents-memory "150m" \
-            --wait
-          
-          echo "✅ Cluster created successfully"
+          # Retry loop for cluster creation (k3d rolls back entire cluster on any node failure)
+          until [ $RETRY_COUNT -ge $MAX_RETRIES ]; do
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            echo "📦 Cluster creation attempt $RETRY_COUNT of $MAX_RETRIES..."
+            
+            # Clean up any partial cluster from previous attempt
+            k3d cluster delete "$CLUSTER_NAME" 2>/dev/null || true
+            
+            # Create k3d cluster with registry
+            if k3d cluster create "$CLUSTER_NAME" \
+              --servers 1 \
+              --agents 30 \
+              --image "rancher/k3s:v1.33.5-k3s1" \
+              --api-port "$API_PORT" \
+              --port "8090:80@loadbalancer" \
+              --registry-create "registry:0.0.0.0:$REGISTRY_PORT" \
+              --k3s-arg "--node-taint=node_role.e2e.grove.nvidia.com=agent:NoSchedule@agent:*" \
+              --k3s-node-label "node_role.e2e.grove.nvidia.com=agent@agent:*" \
+              --k3s-node-label "nvidia.com/gpu.deploy.operands=false@server:*" \
+              --k3s-node-label "nvidia.com/gpu.deploy.operands=false@agent:*" \
+              --agents-memory "150m" \
+              --timeout "120s" \
+              --wait; then
+              echo "✅ Cluster created successfully on attempt $RETRY_COUNT"
+              break
+            fi
+            
+            if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+              echo "⚠️ Cluster creation failed, retrying in 10 seconds..."
+              sleep 10
+            else
+              echo "❌ Cluster creation failed after $MAX_RETRIES attempts"
+              exit 1
+            fi
+          done
           
           # Wait for nodes to be ready
           echo "⏳ Waiting for all nodes to be ready..."
