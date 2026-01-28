@@ -151,7 +151,9 @@ func (r *Reconciler) syncPodCliqueSetResources(ctx context.Context, logger logr.
 	for _, kind := range getOrderedKindsForSync() {
 		operator, err := r.operatorRegistry.GetOperator(kind)
 		if err != nil {
-			return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("error getting operator for kind: %s", kind), err)
+			// Skip operators that aren't registered (e.g., ComputeDomain when MNNVL is disabled)
+			logger.V(1).Info("Skipping unregistered operator", "kind", kind)
+			continue
 		}
 		logger.Info("Syncing PodCliqueSet resource", "kind", kind)
 		if err = operator.Sync(ctx, logger, pcs); err != nil {
@@ -211,6 +213,7 @@ func getOrderedKindsForSync() []component.Kind {
 		component.KindHeadlessService,
 		component.KindHorizontalPodAutoscaler,
 		component.KindPodCliqueSetReplica,
+		component.KindComputeDomain,
 		component.KindPodClique,
 		component.KindPodCliqueScalingGroup,
 		component.KindPodGang,

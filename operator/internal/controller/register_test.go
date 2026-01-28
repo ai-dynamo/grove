@@ -61,7 +61,7 @@ func TestRegisterControllers(t *testing.T) {
 			},
 		}
 
-		err = RegisterControllers(mgr, controllerConfig, configv1alpha1.TopologyAwareSchedulingConfiguration{})
+		err = RegisterControllers(mgr, controllerConfig, configv1alpha1.TopologyAwareSchedulingConfiguration{}, configv1alpha1.NetworkAcceleration{})
 		require.NoError(t, err)
 	})
 
@@ -82,7 +82,7 @@ func TestRegisterControllers(t *testing.T) {
 			},
 		}
 
-		err = RegisterControllers(mgr, controllerConfig, configv1alpha1.TopologyAwareSchedulingConfiguration{})
+		err = RegisterControllers(mgr, controllerConfig, configv1alpha1.TopologyAwareSchedulingConfiguration{}, configv1alpha1.NetworkAcceleration{})
 		require.NoError(t, err)
 	})
 }

@@ -30,13 +30,14 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/satokensecret"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/service"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/serviceaccount"
+	"github.com/ai-dynamo/grove/operator/internal/mnnvl/computedomain"
 
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
 // CreateOperatorRegistry initializes the operator registry for the PodCliqueSet reconciler
-func CreateOperatorRegistry(mgr manager.Manager, eventRecorder record.EventRecorder, topologyAwareSchedulingConfig configv1alpha1.TopologyAwareSchedulingConfiguration) component.OperatorRegistry[v1alpha1.PodCliqueSet] {
+func CreateOperatorRegistry(mgr manager.Manager, eventRecorder record.EventRecorder, topologyAwareSchedulingConfig configv1alpha1.TopologyAwareSchedulingConfiguration, networkConfig configv1alpha1.NetworkAcceleration) component.OperatorRegistry[v1alpha1.PodCliqueSet] {
 	cl := mgr.GetClient()
 	reg := component.NewOperatorRegistry[v1alpha1.PodCliqueSet]()
 	reg.Register(component.KindPodClique, podclique.New(cl, mgr.GetScheme(), eventRecorder))
@@ -49,5 +50,11 @@ func CreateOperatorRegistry(mgr manager.Manager, eventRecorder record.EventRecor
 	reg.Register(component.KindHorizontalPodAutoscaler, hpa.New(cl, mgr.GetScheme()))
 	reg.Register(component.KindPodGang, podgang.New(cl, mgr.GetScheme(), eventRecorder, topologyAwareSchedulingConfig))
 	reg.Register(component.KindPodCliqueSetReplica, podcliquesetreplica.New(cl, eventRecorder))
+
+	// Only register ComputeDomain operator if MNNVL is enabled
+	if networkConfig.AutoMNNVLEnabled {
+		reg.Register(component.KindComputeDomain, computedomain.New(cl, mgr.GetScheme(), eventRecorder))
+	}
+
 	return reg
 }
