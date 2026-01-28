@@ -120,20 +120,15 @@ func (m *multiWriteCloser) Close() error {
 	return errors.Join(errs...)
 }
 
-// createDiagnosticsOutput creates writer(s) for diagnostics output based on GROVE_E2E_DIAG_MODE.
+// createDiagnosticsOutput creates writer(s) for diagnostics output based on the provided mode.
 // Mode values:
 //   - "stdout": write to stdout only
 //   - "file": write to timestamped file only (default)
 //   - "both": write to both stdout and file
 //
-// When writing to file, GROVE_E2E_DIAG_DIR specifies the directory (default: current dir, fallback to /tmp).
+// The diagDir parameter specifies the directory for file output (empty string uses current dir, fallback to /tmp).
 // Returns the writer, filename (empty if stdout-only), and any error.
-func createDiagnosticsOutput(testName string) (io.WriteCloser, string, error) {
-	mode := os.Getenv(DiagnosticsModeEnvVar)
-	if mode == "" {
-		mode = DiagnosticsModeFile // default
-	}
-
+func createDiagnosticsOutput(testName, mode, diagDir string) (io.WriteCloser, string, error) {
 	var writers []io.WriteCloser
 	var filename string
 
@@ -144,7 +139,7 @@ func createDiagnosticsOutput(testName string) (io.WriteCloser, string, error) {
 
 	// Add file if mode is file or both
 	if mode == DiagnosticsModeFile || mode == DiagnosticsModeBoth {
-		file, name, err := createDiagnosticsFile(testName)
+		file, name, err := createDiagnosticsFile(testName, diagDir)
 		if err != nil {
 			// If we can't create a file but stdout is available, continue with stdout only
 			if mode == DiagnosticsModeBoth {
@@ -165,8 +160,9 @@ func createDiagnosticsOutput(testName string) (io.WriteCloser, string, error) {
 	return newMultiWriteCloser(writers...), filename, nil
 }
 
-// createDiagnosticsFile creates a timestamped diagnostics file
-func createDiagnosticsFile(testName string) (*os.File, string, error) {
+// createDiagnosticsFile creates a timestamped diagnostics file.
+// The diagDir parameter specifies the directory for the file (empty string uses current dir, fallback to /tmp).
+func createDiagnosticsFile(testName, diagDir string) (*os.File, string, error) {
 	// Sanitize test name for use in filename (replace / with _)
 	sanitizedName := strings.ReplaceAll(testName, "/", "_")
 
@@ -174,8 +170,7 @@ func createDiagnosticsFile(testName string) (*os.File, string, error) {
 	timestamp := time.Now().Format("2006-01-02_15-04-05")
 	baseFilename := fmt.Sprintf("e2e-diag-%s_%s.log", sanitizedName, timestamp)
 
-	// Determine the directory for the diagnostics file
-	diagDir := os.Getenv(DiagnosticsDirEnvVar)
+	// Use provided directory if specified
 	if diagDir != "" {
 		filename := filepath.Join(diagDir, baseFilename)
 		file, err := os.Create(filename)
@@ -204,13 +199,18 @@ func createDiagnosticsFile(testName string) (*os.File, string, error) {
 // This should be called when a test fails, before cleanup runs.
 // All output is at INFO level to ensure visibility regardless of log level settings.
 //
-// Output is controlled by GROVE_E2E_DIAG_MODE env var:
+// Output is controlled by tc.DiagMode (from GROVE_E2E_DIAG_MODE env var):
 //   - "stdout": print to stdout only
 //   - "file": write to timestamped file only (default)
 //   - "both": write to both stdout and file
-//
-// Set GROVE_E2E_DIAG_DIR env var to specify the output directory for diagnostics files.
 func CollectAllDiagnostics(tc TestContext) {
+	// Use diagnostics configuration from TestContext (set at test setup time)
+	mode := tc.DiagMode
+	if mode == "" {
+		mode = DiagnosticsModeFile // default fallback
+	}
+	diagDir := tc.DiagDir
+
 	// Get test name for the diagnostics file
 	testName := "unknown_test"
 	if tc.T != nil {
@@ -218,7 +218,7 @@ func CollectAllDiagnostics(tc TestContext) {
 	}
 
 	// Create diagnostics output
-	output, filename, err := createDiagnosticsOutput(testName)
+	output, filename, err := createDiagnosticsOutput(testName, mode, diagDir)
 	if err != nil {
 		logger.Errorf("Failed to create diagnostics output, falling back to stdout: %v", err)
 		output = nopCloser{os.Stdout}

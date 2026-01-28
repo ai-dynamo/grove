@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -82,6 +83,10 @@ type TestContext struct {
 	Interval      time.Duration
 	Nodes         []string
 	Workload      *WorkloadConfig // Optional: workload configuration for the test
+
+	// Diagnostics configuration (read from env vars at test setup time)
+	DiagMode string // Output mode: "stdout", "file", or "both" (default: "file")
+	DiagDir  string // Directory for diagnostics files (empty uses current dir)
 }
 
 // pollForCondition is a wrapper around utils.PollForCondition that accepts TestContext
@@ -145,6 +150,13 @@ func waitForPodCountAndPhases(tc TestContext, expectedTotal, expectedRunning, ex
 func prepareTestCluster(ctx context.Context, t *testing.T, requiredWorkerNodes int) (*kubernetes.Clientset, *rest.Config, dynamic.Interface, func()) {
 	t.Helper()
 
+	// Determine diagnostics configuration from environment variables at setup time for the test
+	diagMode := os.Getenv(DiagnosticsModeEnvVar)
+	if diagMode == "" {
+		diagMode = DiagnosticsModeFile // default
+	}
+	diagDir := os.Getenv(DiagnosticsDirEnvVar)
+
 	// Get the shared cluster instance
 	sharedCluster := setup.SharedCluster(logger)
 
@@ -167,6 +179,8 @@ func prepareTestCluster(ctx context.Context, t *testing.T, requiredWorkerNodes i
 			RestConfig:    restConfig,
 			DynamicClient: dynamicClient,
 			Namespace:     "default",
+			DiagMode:      diagMode,
+			DiagDir:       diagDir,
 		}
 
 		// Collect diagnostics BEFORE cleaning up if test failed
