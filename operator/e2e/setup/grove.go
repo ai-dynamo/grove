@@ -57,32 +57,49 @@ type WebhooksConfig struct {
 	Annotations map[string]string
 }
 
-// toHelmValues converts the typed GroveConfig to a Helm values map.
-func (c *GroveConfig) toHelmValues() map[string]interface{} {
-	// Convert annotations to interface{} map for Helm
-	annotations := make(map[string]interface{})
-	for k, v := range c.Webhooks.Annotations {
-		annotations[k] = v
-	}
+// helmValues mirrors the Helm values.yaml structure, using configv1alpha1 types
+// for config.server to ensure JSON field names stay synchronized with the API.
+type helmValues struct {
+	InstallCRDs bool              `json:"installCRDs"`
+	Config      helmConfigValues  `json:"config"`
+	Webhooks    helmWebhookValues `json:"webhooks"`
+}
 
-	webhookAnnotations := map[string]interface{}{"annotations": annotations}
+type helmConfigValues struct {
+	Server configv1alpha1.ServerConfiguration `json:"server"`
+}
 
-	return map[string]interface{}{
-		"installCRDs": c.InstallCRDs,
-		"config": map[string]interface{}{
-			"server": map[string]interface{}{
-				"webhooks": map[string]interface{}{
-					"certProvisionMode": string(c.Webhooks.CertProvisionMode),
-					"secretName":        c.Webhooks.SecretName,
+type helmWebhookValues struct {
+	PodCliqueSetValidationWebhook helmWebhookAnnotations `json:"podCliqueSetValidationWebhook"`
+	PodCliqueSetDefaultingWebhook helmWebhookAnnotations `json:"podCliqueSetDefaultingWebhook"`
+	AuthorizerWebhook             helmWebhookAnnotations `json:"authorizerWebhook"`
+}
+
+type helmWebhookAnnotations struct {
+	Annotations map[string]string `json:"annotations"`
+}
+
+// toHelmValues converts GroveConfig to a Helm values map.
+func (c *GroveConfig) toHelmValues() (map[string]interface{}, error) {
+	anns := helmWebhookAnnotations{Annotations: c.Webhooks.Annotations}
+	hv := helmValues{
+		InstallCRDs: c.InstallCRDs,
+		Config: helmConfigValues{
+			Server: configv1alpha1.ServerConfiguration{
+				Webhooks: configv1alpha1.WebhookServer{
+					CertProvisionMode: c.Webhooks.CertProvisionMode,
+					SecretName:        c.Webhooks.SecretName,
 				},
 			},
 		},
-		"webhooks": map[string]interface{}{
-			"podCliqueSetValidationWebhook": webhookAnnotations,
-			"podCliqueSetDefaultingWebhook": webhookAnnotations,
-			"authorizerWebhook":             webhookAnnotations,
+		Webhooks: helmWebhookValues{
+			PodCliqueSetValidationWebhook: anns,
+			PodCliqueSetDefaultingWebhook: anns,
+			AuthorizerWebhook:             anns,
 		},
 	}
+
+	return utils.ConvertTypedToUnstructured(hv)
 }
 
 // UpdateGroveConfiguration updates the Grove operator configuration.
@@ -92,16 +109,19 @@ func (c *GroveConfig) toHelmValues() map[string]interface{} {
 // 2. For config-only changes (like switching cert modes), rebuilding images is unnecessary
 // 3. Helm upgrade with ReuseValues preserves the image configuration that Skaffold set
 //
+// The chartDir parameter should be the path to the Grove Helm chart directory.
+// Use GetGroveChartDir() to obtain the default chart directory path.
+//
 // This approach avoids wasteful rebuilds while staying compatible with the Skaffold installation.
-func UpdateGroveConfiguration(ctx context.Context, restConfig *rest.Config, config *GroveConfig, logger *utils.Logger) error {
-	chartDir, err := getGroveChartDir()
-	if err != nil {
-		return fmt.Errorf("failed to get Grove chart directory: %w", err)
-	}
-
+func UpdateGroveConfiguration(ctx context.Context, restConfig *rest.Config, chartDir string, config *GroveConfig, logger *utils.Logger) error {
 	chartVersion, err := getChartVersion(chartDir)
 	if err != nil {
 		return fmt.Errorf("failed to get chart version: %w", err)
+	}
+
+	helmValues, err := config.toHelmValues()
+	if err != nil {
+		return fmt.Errorf("failed to convert config to helm values: %w", err)
 	}
 
 	// Configure Helm upgrade using shared constants to stay in sync with Skaffold installation.
@@ -115,7 +135,7 @@ func UpdateGroveConfiguration(ctx context.Context, restConfig *rest.Config, conf
 		ChartVersion:   chartVersion,
 		Namespace:      OperatorNamespace,
 		ReuseValues:    true,
-		Values:         config.toHelmValues(),
+		Values:         helmValues,
 		HelmLoggerFunc: logger.Debugf,
 		Logger:         logger,
 	}
@@ -164,9 +184,10 @@ func getChartVersion(chartDir string) (string, error) {
 	return chart.Version, nil
 }
 
-// getGroveChartDir returns the absolute path to the Grove Helm chart directory.
+// GetGroveChartDir returns the absolute path to the Grove Helm chart directory.
 // It uses runtime.Caller to find the path relative to this source file.
-func getGroveChartDir() (string, error) {
+// This function is exported for use by callers of UpdateGroveConfiguration.
+func GetGroveChartDir() (string, error) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
 		return "", fmt.Errorf("failed to get current file path")
