@@ -3,12 +3,20 @@ apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
 metadata:
   name: podcliqueset-defaulting-webhook
+  {{- /* Only include annotations in manual cert mode (certProvisionMode=manual) */ -}}
+  {{- if and (eq .Values.config.server.webhooks.certProvisionMode "manual") .Values.webhooks.podCliqueSetDefaultingWebhook.annotations }}
+  annotations:
+    {{- toYaml .Values.webhooks.podCliqueSetDefaultingWebhook.annotations | nindent 4 }}
+  {{- end }}
   labels:
 {{- include "operator.pcs.defaulting.webhook.labels" . | nindent 4 }}
 webhooks:
   - admissionReviewVersions:
       - v1
     clientConfig:
+      {{- if .Values.webhooks.caBundle }}
+      caBundle: {{ .Values.webhooks.caBundle }}
+      {{- end }}
       service:
         name: {{ required ".Values.service.name is required" .Values.service.name }}
         namespace: {{ .Release.Namespace }}

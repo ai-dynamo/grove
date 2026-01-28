@@ -32,6 +32,16 @@ images:
   - name: ghcr.io/nvidia/kai-scheduler/scheduler
     version: v0.13.0-rc1
 
+  # Cert-manager
+  - name: quay.io/jetstack/cert-manager-controller
+    version: v1.14.4
+  - name: quay.io/jetstack/cert-manager-webhook
+    version: v1.14.4
+  - name: quay.io/jetstack/cert-manager-cainjector
+    version: v1.14.4
+  - name: quay.io/jetstack/cert-manager-ctl
+    version: v1.14.4
+
 # Helm charts used in E2E tests
 helmCharts:
   # Kai Scheduler - gang scheduling for Kubernetes
@@ -40,3 +50,11 @@ helmCharts:
     chartRef: oci://ghcr.io/nvidia/kai-scheduler/kai-scheduler
     version: v0.13.0-rc1
     namespace: kai-scheduler
+
+  # cert-manager - for certificate management
+  certManager:
+    releaseName: cert-manager
+    chartRef: cert-manager
+    version: v1.14.4
+    namespace: cert-manager
+    repoURL: https://charts.jetstack.io

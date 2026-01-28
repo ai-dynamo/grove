@@ -671,6 +671,24 @@ _Appears in:_
 | `exemptServiceAccountUserNames` _string array_ | ExemptServiceAccountUserNames is a list of service account usernames that are exempt from authorizer checks.<br />Each service account username name in ExemptServiceAccountUserNames should be of the following format:<br />system:serviceaccount:<namespace>:<service-account-name>. ServiceAccounts are represented in this<br />format when checking the username in authenticationv1.UserInfo.Name. |  |  |
 
 
+#### CertProvisionMode
+
+_Underlying type:_ _string_
+
+CertProvisionMode defines how webhook certificates are provisioned.
+
+_Validation:_
+- Enum: [auto manual]
+
+_Appears in:_
+- [WebhookServer](#webhookserver)
+
+| Field | Description |
+| --- | --- |
+| `auto` | CertProvisionModeAuto enables automatic certificate generation and management via cert-controller.<br />cert-controller automatically generates self-signed certificates and stores them in the Secret.<br /> |
+| `manual` | CertProvisionModeManual expects certificates to be provided externally (e.g., by cert-manager, cluster admin).<br /> |
+
+
 #### ClientConnectionConfiguration
 
 
@@ -916,5 +934,7 @@ _Appears in:_
 | `bindAddress` _string_ | BindAddress is the IP address on which to listen for the specified port. |  |  |
 | `port` _integer_ | Port is the port on which to serve requests. |  |  |
 | `serverCertDir` _string_ | ServerCertDir is the directory containing the server certificate and key. |  |  |
+| `secretName` _string_ | SecretName is the name of the Kubernetes Secret containing webhook certificates.<br />The Secret must contain tls.crt, tls.key, and ca.crt. | grove-webhook-server-cert |  |
+| `certProvisionMode` _[CertProvisionMode](#certprovisionmode)_ | CertProvisionMode controls how webhook certificates are provisioned. | auto | Enum: [auto manual] <br /> |
 
 
