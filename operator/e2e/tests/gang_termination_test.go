@@ -519,11 +519,12 @@ func Test_GT4_GangTerminationMinReplicasPCSGOwned(t *testing.T) {
 // 1. Initialize a 10-node Grove cluster
 // 2. Deploy workload WL2, and verify 10 newly created pods
 // 3. Wait for pods to get scheduled and become ready
-// 4. Delete all 3 pods from sg-x-0-pc-c (breach sg-x-0)
-// 5. Immediately delete all 3 pods from sg-x-1-pc-c (breach sg-x-1)
-//    (Must do steps 4-5 quickly, within TerminationDelay window)
-// 6. Wait for TerminationDelay seconds
-// 7. Verify that ALL pods in the workload get gang-terminated and recreated (including pc-a)
+// 4. Cordon ALL nodes hosting workload pods to prevent replacement pods from scheduling
+// 5. Delete all 3 pods from sg-x-0-pc-c (breach sg-x-0)
+// 6. Immediately delete all 3 pods from sg-x-1-pc-c (breach sg-x-1)
+//    (Must do steps 5-6 quickly, within TerminationDelay window)
+// 7. Wait for TerminationDelay seconds
+// 8. Verify that ALL pods in the workload get gang-terminated and recreated (including pc-a)
 func Test_GT5_GangTerminationPCSGMinAvailableBreach(t *testing.T) {
 	ctx := context.Background()
 
