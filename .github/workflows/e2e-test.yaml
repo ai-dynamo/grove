@@ -1,0 +1,214 @@
+# /*
+# Copyright 2025 The Grove Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# */
+
+name: E2E Tests
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, ready_for_review]
+    branches: ["main"]
+
+# Cancel in-progress runs when a new run is triggered for the same PR
+# This prevents stale E2E test runs from consuming resources
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    # Run on non-draft PRs or draft PRs with 'run-e2e' label
+    if: github.event.pull_request.draft == false || contains(github.event.pull_request.labels.*.name, 'run-e2e')
+    # use NVIDIA self-hosted runner with 8 vCPUs and 30GB of ram (on AWS)
+    # the tests are unstable using the default runner with 4 vCPUs and 16GB of ram
+    runs-on: cpu-amd-m5-2xlarge
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - test_name: gang_scheduling
+            test_pattern: "^Test_GS"
+          - test_name: rolling_updates
+            test_pattern: "^Test_RU"
+          - test_name: startup_ordering
+            test_pattern: "^Test_SO"
+          - test_name: Topology_Aware_Scheduling
+            test_pattern: "^Test_TAS"
+    name: E2E - ${{ matrix.test_name }}
+    steps:
+      # print runner specs so we have a record incase of failures
+      - name: Print runner specs
+        run: |
+          echo "CPUs: $(nproc)"
+          echo "RAM: $(free -h | awk '/^Mem:/ {print $2}')"
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # NVIDIA self-hosted runners don't have make installed by default
+      - name: Install build-essential for make
+        run: |
+          sudo apt-get update
+          sudo apt install build-essential -y
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: "1.24.5"
+
+      - name: Install k3d
+        run: |
+          curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+          k3d version
+
+      - name: Install skaffold
+        run: |
+          curl -Lo skaffold https://storage.googleapis.com/skaffold/releases/latest/skaffold-linux-amd64
+          sudo install skaffold /usr/local/bin/
+          skaffold version
+
+      - name: Install Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm version
+
+      - name: Prepare charts
+        run: |
+          cd operator
+          echo "> Preparing charts (copying CRDs)..."
+          ./hack/prepare-charts.sh
+
+      - name: Create E2E cluster
+        id: create-cluster
+        run: |
+          set -e
+          CLUSTER_NAME="shared-e2e-test-cluster"
+          REGISTRY_PORT="5001"
+          API_PORT="6560"
+          
+          echo "🚀 Creating k3d cluster '$CLUSTER_NAME'..."
+          
+          # Create k3d cluster with registry
+          k3d cluster create "$CLUSTER_NAME" \
+            --servers 1 \
+            --agents 30 \
+            --image "rancher/k3s:v1.33.5-k3s1" \
+            --api-port "$API_PORT" \
+            --port "8090:80@loadbalancer" \
+            --registry-create "registry:0.0.0.0:$REGISTRY_PORT" \
+            --k3s-arg "--node-taint=node_role.e2e.grove.nvidia.com=agent:NoSchedule@agent:*" \
+            --k3s-node-label "node_role.e2e.grove.nvidia.com=agent@agent:*" \
+            --k3s-node-label "nvidia.com/gpu.deploy.operands=false@server:*" \
+            --k3s-node-label "nvidia.com/gpu.deploy.operands=false@agent:*" \
+            --agents-memory "150m" \
+            --wait
+          
+          echo "✅ Cluster created successfully"
+          
+          # Wait for nodes to be ready
+          echo "⏳ Waiting for all nodes to be ready..."
+          kubectl wait --for=condition=Ready nodes --all --timeout=5m
+          
+          # Install Kai Scheduler via Helm
+          echo "🚀 Installing Kai Scheduler..."
+          helm install kai-scheduler oci://ghcr.io/nvidia/kai-scheduler/kai-scheduler \
+            --version v0.13.0-rc1 \
+            --namespace kai-scheduler \
+            --create-namespace \
+            --set global.tolerations[0].key=node-role.kubernetes.io/control-plane \
+            --set global.tolerations[0].operator=Exists \
+            --set global.tolerations[0].effect=NoSchedule \
+            --set global.tolerations[1].key=node_role.e2e.grove.nvidia.com \
+            --set global.tolerations[1].operator=Equal \
+            --set global.tolerations[1].value=agent \
+            --set global.tolerations[1].effect=NoSchedule
+          
+          # Deploy Grove via Skaffold
+          echo "🚀 Deploying Grove operator via Skaffold..."
+          cd operator
+          skaffold run \
+            --default-repo "localhost:$REGISTRY_PORT" \
+            --profile topology-test \
+            --namespace grove-system \
+            --tag E2E_TESTS
+          cd ..
+          
+          # Wait for Grove pods to be ready
+          echo "⏳ Waiting for Grove pods to be ready..."
+          kubectl wait --for=condition=Ready pods --all -n grove-system --timeout=5m
+          
+          # Wait for Kai Scheduler pods to be ready
+          echo "⏳ Waiting for Kai Scheduler pods to be ready..."
+          kubectl wait --for=condition=Ready pods --all -n kai-scheduler --timeout=5m
+          
+          # Apply default queues for Kai Scheduler
+          echo "📋 Creating default Kai queues..."
+          kubectl apply -f operator/e2e/yaml/queues.yaml
+          
+          # Apply topology labels to worker nodes (hierarchical structure)
+          echo "🏷️ Applying topology labels to worker nodes..."
+          WORKER_NODES=$(kubectl get nodes -l '!node-role.kubernetes.io/control-plane' -o jsonpath='{.items[*].metadata.name}')
+          NODE_COUNT=0
+          for NODE in $WORKER_NODES; do
+            # Create hierarchical topology: region -> zone -> rack -> host
+            REGION=$((NODE_COUNT / 15))
+            ZONE=$(((NODE_COUNT % 15) / 5))
+            RACK=$(((NODE_COUNT % 5) / 2))
+            
+            kubectl label node "$NODE" \
+              "topology.kubernetes.io/region=region-$REGION" \
+              "topology.kubernetes.io/zone=zone-$ZONE" \
+              "topology.grove.io/rack=rack-$RACK" \
+              --overwrite
+            
+            NODE_COUNT=$((NODE_COUNT + 1))
+          done
+          echo "✅ Applied topology labels to $NODE_COUNT worker nodes"
+          
+          # Output environment variables for E2E tests
+          echo "E2E_USE_EXISTING_CLUSTER=true" >> $GITHUB_OUTPUT
+          echo "E2E_CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_OUTPUT
+          echo "E2E_REGISTRY_PORT=$REGISTRY_PORT" >> $GITHUB_OUTPUT
+          
+          echo "✅ Cluster setup complete!"
+
+      - name: Run e2e tests - ${{ matrix.test_name }}
+        env:
+          E2E_USE_EXISTING_CLUSTER: ${{ steps.create-cluster.outputs.E2E_USE_EXISTING_CLUSTER }}
+          E2E_CLUSTER_NAME: ${{ steps.create-cluster.outputs.E2E_CLUSTER_NAME }}
+          E2E_REGISTRY_PORT: ${{ steps.create-cluster.outputs.E2E_REGISTRY_PORT }}
+        run: |
+          cd operator/e2e
+          echo "> Using existing cluster: $E2E_CLUSTER_NAME"
+          echo "> Running e2e tests for ${{ matrix.test_name }}..."
+          go test -tags=e2e ./tests/... -v -timeout 45m -run '${{ matrix.test_pattern }}'
+
+      # The test code handles cleanup via Teardown(), but this step provides
+      # extra safety in case of timeout or panic. Also good practice to ensure
+      # clean state even though GitHub Actions runners are ephemeral.
+      - name: Cleanup k3d cluster
+        if: always()
+        run: |
+          k3d cluster delete shared-e2e-test-cluster || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-logs-${{ matrix.test_name }}
+          path: /tmp/e2e-*.log
+          if-no-files-found: ignore
+          retention-days: 7
