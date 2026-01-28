@@ -55,12 +55,6 @@ const (
 	// cleanupPollInterval is the interval between checks during cleanup polling
 	cleanupPollInterval = 1 * time.Second
 
-	// defaultDockerRegistry is the default Docker Hub registry URL
-	defaultDockerRegistry = "https://index.docker.io/v1/"
-
-	// defaultDockerConfigPath is the default path to Docker config file relative to home directory
-	defaultDockerConfigPath = ".docker/config.json"
-
 	// Environment variables for existing cluster mode
 	// When E2E_USE_EXISTING_CLUSTER is set to "true", the tests will connect to an existing
 	// cluster instead of creating a new one. This allows CI to separate cluster creation
@@ -580,86 +574,7 @@ func (scm *SharedClusterManager) Teardown() {
 	}
 }
 
-// parseRegistryFromImage extracts the registry host from an image name.
-// Returns the provided defaultRegistry if the image doesn't specify a custom registry.
-func parseRegistryFromImage(imageName string, defaultRegistry string) string {
-	if !strings.Contains(imageName, "/") {
-		return defaultRegistry
-	}
-
-	parts := strings.SplitN(imageName, "/", 2)
-	// Check if the first part looks like a registry (contains a dot or colon)
-	if strings.Contains(parts[0], ".") || strings.Contains(parts[0], ":") {
-		return parts[0]
-	}
-
-	return defaultRegistry
-}
-
-// encodeDockerAuth converts a base64-encoded username:password auth string
-// to a base64-encoded JSON auth config for the Docker API.
-func encodeDockerAuth(base64Auth string) (string, error) {
-	decoded, err := base64.StdEncoding.DecodeString(base64Auth)
-	if err != nil {
-		return "", fmt.Errorf("failed to decode auth string: %w", err)
-	}
-
-	parts := strings.SplitN(string(decoded), ":", 2)
-	if len(parts) != 2 {
-		return "", fmt.Errorf("invalid auth format: expected username:password")
-	}
-
-	authConfig := registry.AuthConfig{
-		Username: parts[0],
-		Password: parts[1],
-	}
-
-	encodedJSON, err := json.Marshal(authConfig)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal auth config: %w", err)
-	}
-
-	return base64.StdEncoding.EncodeToString(encodedJSON), nil
-}
-
-// getDockerAuthForImage returns the base64-encoded auth string for pulling an image
-// by reading credentials from the Docker config file.
-func getDockerAuthForImage(imageName string, registryURL string, configPath string) (string, error) {
-	registryHost := parseRegistryFromImage(imageName, registryURL)
-
-	// Read Docker config
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("failed to get user home directory: %w", err)
-	}
-
-	fullConfigPath := filepath.Join(homeDir, configPath)
-	configData, err := os.ReadFile(fullConfigPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to read Docker config from %s: %w", fullConfigPath, err)
-	}
-
-	var config struct {
-		Auths map[string]struct {
-			Auth string `json:"auth"`
-		} `json:"auths"`
-	}
-
-	if err := json.Unmarshal(configData, &config); err != nil {
-		return "", fmt.Errorf("failed to parse Docker config: %w", err)
-	}
-
-	// Try to find auth for the registry
-	auth, ok := config.Auths[registryHost]
-	if !ok || auth.Auth == "" {
-		return "", fmt.Errorf("no auth found for registry %s", registryHost)
-	}
-
-	return encodeDockerAuth(auth.Auth)
-}
-
-// SetupRegistryTestImages sets up test images in the registry by pulling them from Docker Hub
-// and pushing them to the local k3d registry.
+// SetupRegistryTestImages pulls images and pushes them to the local k3d registry.
 func SetupRegistryTestImages(registryPort string, images []string) error {
 	if len(images) == 0 {
 		return nil
@@ -678,27 +593,17 @@ func SetupRegistryTestImages(registryPort string, images []string) error {
 	for _, imageName := range images {
 		registryImage := fmt.Sprintf("localhost:%s/%s", registryPort, imageName)
 
-		// Step 1: Check if image already exists locally, otherwise pull it
-		_, _, err = cli.ImageInspectWithRaw(ctx, imageName)
+		// Step 1: Pull the image
+		pullReader, err := cli.ImagePull(ctx, imageName, image.PullOptions{})
 		if err != nil {
-			// Image doesn't exist locally, need to pull it
-			pullOpts := image.PullOptions{}
-			authStr, authErr := getDockerAuthForImage(imageName, defaultDockerRegistry, defaultDockerConfigPath)
-			if authErr == nil {
-				pullOpts.RegistryAuth = authStr
-			}
-			// Ignore auth errors and attempt pull without auth - may work for public images
-			pullReader, pullErr := cli.ImagePull(ctx, imageName, pullOpts)
-			if pullErr != nil {
-				return fmt.Errorf("failed to pull %s: %w", imageName, pullErr)
-			}
+			return fmt.Errorf("failed to pull %s: %w", imageName, err)
+		}
 
-			// Consume the pull output to avoid blocking
-			_, pullErr = io.Copy(io.Discard, pullReader)
-			ioutil.CloseQuietly(pullReader)
-			if pullErr != nil {
-				return fmt.Errorf("failed to read pull output for %s: %w", imageName, pullErr)
-			}
+		// Consume the pull output to avoid blocking
+		_, err = io.Copy(io.Discard, pullReader)
+		ioutil.CloseQuietly(pullReader)
+		if err != nil {
+			return fmt.Errorf("failed to read pull output for %s: %w", imageName, err)
 		}
 
 		// Step 2: Tag the image for the local registry
