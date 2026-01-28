@@ -45,17 +45,59 @@ func TestCreateOperatorRegistry(t *testing.T) {
 	_ = rbacv1.AddToScheme(scheme)
 	_ = autoscalingv2.AddToScheme(scheme)
 
-	// Test successful registry creation with all operators
-	t.Run("creates registry with all operators", func(t *testing.T) {
+	// Test registry creation with MNNVL disabled (default)
+	t.Run("creates registry without ComputeDomain when MNNVL is disabled", func(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 		mgr := &mockManager{client: cl, scheme: scheme}
 		eventRecorder := record.NewFakeRecorder(10)
 
-		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{})
+		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{}, groveconfigv1alpha1.NetworkAcceleration{
+			AutoMNNVLEnabled: false,
+		})
 
 		require.NotNil(t, registry)
 
-		// Verify all expected operators are registered
+		// Verify core operators are registered (without ComputeDomain)
+		expectedKinds := []component.Kind{
+			component.KindPodClique,
+			component.KindHeadlessService,
+			component.KindRole,
+			component.KindRoleBinding,
+			component.KindServiceAccount,
+			component.KindServiceAccountTokenSecret,
+			component.KindPodCliqueScalingGroup,
+			component.KindHorizontalPodAutoscaler,
+			component.KindPodGang,
+			component.KindPodCliqueSetReplica,
+		}
+
+		allOps := registry.GetAllOperators()
+		assert.Len(t, allOps, len(expectedKinds))
+
+		for _, kind := range expectedKinds {
+			op, err := registry.GetOperator(kind)
+			require.NoError(t, err, "operator for kind %s should be registered", kind)
+			assert.NotNil(t, op, "operator for kind %s should not be nil", kind)
+		}
+
+		// Verify ComputeDomain is NOT registered
+		_, err := registry.GetOperator(component.KindComputeDomain)
+		assert.Error(t, err, "ComputeDomain should not be registered when MNNVL is disabled")
+	})
+
+	// Test registry creation with MNNVL enabled
+	t.Run("creates registry with ComputeDomain when MNNVL is enabled", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
+		mgr := &mockManager{client: cl, scheme: scheme}
+		eventRecorder := record.NewFakeRecorder(10)
+
+		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{}, groveconfigv1alpha1.NetworkAcceleration{
+			AutoMNNVLEnabled: true,
+		})
+
+		require.NotNil(t, registry)
+
+		// Verify all operators including ComputeDomain are registered
 		expectedKinds := []component.Kind{
 			component.KindPodClique,
 			component.KindHeadlessService,
@@ -86,7 +128,9 @@ func TestCreateOperatorRegistry(t *testing.T) {
 		mgr := &mockManager{client: cl, scheme: scheme}
 		eventRecorder := record.NewFakeRecorder(10)
 
-		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{})
+		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{}, groveconfigv1alpha1.NetworkAcceleration{
+			AutoMNNVLEnabled: false,
+		})
 
 		// Verify PodClique operator
 		pclqOp, err := registry.GetOperator(component.KindPodClique)

@@ -521,16 +521,24 @@ func TestSyncIdempotent(t *testing.T) {
 // Delete Tests
 // ================================
 
-// TestDeleteRemovesAllComputeDomains tests that Delete removes all ComputeDomains.
+// TestDeleteRemovesAllComputeDomains tests that Delete removes all ComputeDomains when MNNVL is enabled.
 func TestDeleteRemovesAllComputeDomains(t *testing.T) {
+	// Create PCS with MNNVL enabled
+	pcs := createPCSWithMNNVLEnabled(3)
 	existingCDs := createTestCDs(testPCSName, testPCSNamespace, 3)
-	cl := createTestClientWithCDs(existingCDs)
+
+	// Create client with both PCS and CDs
+	builder := fake.NewClientBuilder().WithScheme(testScheme).WithObjects(pcs)
+	for _, cd := range existingCDs {
+		builder.WithObjects(cd)
+	}
+	cl := builder.Build()
 	operator := New(cl, testScheme, record.NewFakeRecorder(10))
 
 	pcsObjMeta := metav1.ObjectMeta{
 		Name:      testPCSName,
 		Namespace: testPCSNamespace,
-		UID:       "pcs-uid-123",
+		UID:       pcs.UID,
 	}
 
 	err := operator.Delete(context.Background(), logr.Discard(), pcsObjMeta)

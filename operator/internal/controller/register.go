@@ -26,8 +26,8 @@ import (
 )
 
 // RegisterControllers registers all controllers with the manager.
-func RegisterControllers(mgr ctrl.Manager, controllerConfig configv1alpha1.ControllerConfiguration, topologyAwareSchedulingConfig configv1alpha1.TopologyAwareSchedulingConfiguration) error {
-	pcsReconciler := podcliqueset.NewReconciler(mgr, controllerConfig.PodCliqueSet, topologyAwareSchedulingConfig)
+func RegisterControllers(mgr ctrl.Manager, controllerConfig configv1alpha1.ControllerConfiguration, topologyAwareSchedulingConfig configv1alpha1.TopologyAwareSchedulingConfiguration, networkConfig configv1alpha1.NetworkAcceleration) error {
+	pcsReconciler := podcliqueset.NewReconciler(mgr, controllerConfig.PodCliqueSet, topologyAwareSchedulingConfig, networkConfig)
 	if err := pcsReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
