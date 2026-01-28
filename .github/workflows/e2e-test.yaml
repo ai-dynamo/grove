@@ -169,12 +169,28 @@ jobs:
             --default-repo "localhost:$REGISTRY_PORT" \
             --profile topology-test \
             --namespace grove-system \
-            --tag E2E_TESTS
+            --tag E2E_TESTS \
+            --status-check-deadline 5m
           cd ..
           
           # Wait for Grove pods to be ready
           echo "⏳ Waiting for Grove pods to be ready..."
           kubectl wait --for=condition=Ready pods --all -n grove-system --timeout=5m
+          
+          # Wait for Grove webhook to be ready (polls until webhook responds)
+          echo "⏳ Waiting for Grove webhook to be ready..."
+          for i in $(seq 1 60); do
+            if kubectl create -f operator/e2e/yaml/workload1.yaml --dry-run=server -n default 2>&1 | grep -qE "(validated|denied|error|invalid)"; then
+              echo "✅ Grove webhook is ready"
+              break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "❌ Timed out waiting for Grove webhook"
+              exit 1
+            fi
+            echo "  Webhook not ready yet, retrying in 5s... ($i/60)"
+            sleep 5
+          done
           
           # Wait for Kai Scheduler pods to be ready
           echo "⏳ Waiting for Kai Scheduler pods to be ready..."
