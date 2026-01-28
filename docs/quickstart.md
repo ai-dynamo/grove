@@ -186,7 +186,7 @@ Only the Grove operator pod should remain.
 Now that you understand the basics, explore:
 
 - **[Installation Guide](installation.md)** - Learn more about local and remote cluster deployment
-- **[Core Concepts Tutorial](user-guide/core-concepts/overview.md)** - Step-by-step hands-on tutorial on Grove application development
+- **[Core Concepts Tutorial](user-guide/01_core-concepts/01_overview.md)** - Step-by-step hands-on tutorial on Grove application development
 - **[API Reference](api-reference/operator-api.md)** - Deep dive into all configuration options
 - **[Samples](../operator/samples/)** - Explore more examples
 

@@ -32,4 +32,4 @@ Grove provides three levels of scaling to match different operational needs:
 
 - **Scale PodClique replicas** (`kubectl scale pclq ...`) - Adjust the number of pods in a specific role. Use this for fine-tuning individual components (e.g., add more workers to an existing leader-worker group).
 
-In the [next guide](./pcs_and_pclq_intro.md) we go through some examples showcasing PodCliqueSet and PodClique
+In the [next guide](./02_pcs_and_pclq_intro.md) we go through some examples showcasing PodCliqueSet and PodClique

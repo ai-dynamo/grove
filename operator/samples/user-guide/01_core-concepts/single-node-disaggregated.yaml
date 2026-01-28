@@ -1,3 +1,13 @@
+# Example: Single-Node Disaggregated Inference
+# Documentation: docs/user-guide/01_core-concepts/02_pcs_and_pclq_intro.md
+#
+# Demonstrates disaggregated serving with separate PodCliques for prefill and
+# decode operations, allowing independent scaling of each component.
+#
+# NOTE: This example uses fake-node tolerations for the local KIND demo cluster
+# created with `make kind-up FAKE_NODES=40`. Remove the tolerations when deploying
+# to a real cluster.
+---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
@@ -21,11 +31,11 @@ spec:
           - name: prefill
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Prefill Worker on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Prefill Worker on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "2"
-                memory: "4Gi"
+                cpu: "10m"
+                memory: "32Mi"
     - name: decode
       spec:
         roleName: decode
@@ -40,8 +50,8 @@ spec:
           - name: decode
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Decode Worker on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Decode Worker on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "1"
-                memory: "2Gi"
+                cpu: "10m"
+                memory: "32Mi"

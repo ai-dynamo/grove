@@ -1,8 +1,8 @@
 # PodCliqueScalingGroup
 
-In the [previous guide](./pcs_and_pclq_intro.md) we covered some hands on examples on how to use PodCliqueSet and PodCliques. In this guide we go over some hands-on examples on how to use PodCliqueScalingGroup to represent multinode components.
+In the [previous guide](./02_pcs_and_pclq_intro.md) we covered some hands on examples on how to use PodCliqueSet and PodCliques. In this guide we go over some hands-on examples on how to use PodCliqueScalingGroup to represent multinode components.
 
-Refer to [Overview](./overview.md) for instructions on how to run the examples in this guide.
+Refer to [Overview](./01_overview.md) for instructions on how to run the examples in this guide.
 
 ## Example 3: Multi-Node Aggregated Inference
 
@@ -36,11 +36,11 @@ spec:
           - name: model-leader
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Model Leader (Aggregated) on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Model Leader (Aggregated) on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "2"
-                memory: "4Gi"
+                cpu: "10m"
+                memory: "32Mi"
     - name: worker
       spec:
         roleName: worker
@@ -55,11 +55,11 @@ spec:
           - name: model-worker
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Model Worker (Aggregated) on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Model Worker (Aggregated) on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "4"
-                memory: "8Gi"
+                cpu: "10m"
+                memory: "32Mi"
     podCliqueScalingGroups:
     - name: model-instance
       cliqueNames: [leader, worker]
@@ -74,11 +74,11 @@ spec:
 
 ### **Deploy:**
 
-In this example, we will deploy the file: [multi-node-aggregated.yaml](../../../operator/samples/user-guide/concept-overview/multi-node-aggregated.yaml)
+In this example, we will deploy the file: [multi-node-aggregated.yaml](../../../operator/samples/user-guide/01_core-concepts/multi-node-aggregated.yaml)
 ```bash
 # NOTE: Run the following commands from the `/path/to/grove/operator` directory,
 # where `/path/to/grove` is the root of your cloned Grove repository.
-kubectl apply -f samples/user-guide/concept-overview/multi-node-aggregated.yaml
+kubectl apply -f samples/user-guide/01_core-concepts/multi-node-aggregated.yaml
 kubectl get pods -l app.kubernetes.io/part-of=multinode-aggregated -o wide
 ```
 
@@ -207,11 +207,11 @@ spec:
           - name: prefill-leader
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Prefill Leader on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Prefill Leader on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "2"
-                memory: "4Gi"
+                cpu: "10m"
+                memory: "32Mi"
     - name: pworker
       spec:
         roleName: pworker
@@ -226,11 +226,11 @@ spec:
           - name: prefill-worker
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Prefill Worker on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Prefill Worker on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "4"
-                memory: "8Gi"
+                cpu: "10m"
+                memory: "32Mi"
     - name: dleader
       spec:
         roleName: dleader
@@ -245,11 +245,11 @@ spec:
           - name: decode-leader
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Decode Leader on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Decode Leader on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "1"
-                memory: "2Gi"
+                cpu: "10m"
+                memory: "32Mi"
     - name: dworker
       spec:
         roleName: dworker
@@ -264,11 +264,11 @@ spec:
           - name: decode-worker
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Decode Worker on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Decode Worker on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "2"
-                memory: "4Gi"
+                cpu: "10m"
+                memory: "32Mi"
     podCliqueScalingGroups:
     - name: prefill
       cliqueNames: [pleader, pworker]
@@ -288,11 +288,11 @@ spec:
 
 ### **Deploy**
 
-In this example, we will deploy the file: [multi-node-disaggregated.yaml](../../../operator/samples/user-guide/concept-overview/multi-node-disaggregated.yaml)
+In this example, we will deploy the file: [multi-node-disaggregated.yaml](../../../operator/samples/user-guide/01_core-concepts/multi-node-disaggregated.yaml)
 ```bash
 # NOTE: Run the following commands from the `/path/to/grove/operator` directory,
 # where `/path/to/grove` is the root of your cloned Grove repository.
-kubectl apply -f samples/user-guide/concept-overview/multi-node-disaggregated.yaml
+kubectl apply -f samples/user-guide/01_core-concepts/multi-node-disaggregated.yaml
 kubectl get pods -l app.kubernetes.io/part-of=multinode-disaggregated -o wide
 ```
 
@@ -325,4 +325,4 @@ To teardown the example delete the `multinode-disaggregated` PodCliqueSet, the o
 ```bash
 kubectl delete pcs multinode-disaggregated
 ```
-In the [next guide](./takeaways.md) we showcase how Grove can represent an arbitrary number of components and summarize the key takeaways.
+In the [next guide](./04_takeaways.md) we showcase how Grove can represent an arbitrary number of components and summarize the key takeaways.

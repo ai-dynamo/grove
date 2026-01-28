@@ -1,0 +1,88 @@
+# Example: PodCliqueScalingGroup Environment Variables with Leader-Worker Discovery
+# Documentation: docs/user-guide/03_environment-variables-for-pod-discovery/03_hands-on-examples.md
+#
+# Demonstrates PCSG-specific environment variables and leader-worker communication:
+# - GROVE_PCSG_NAME, GROVE_PCSG_INDEX, GROVE_PCSG_TEMPLATE_NUM_PODS
+# - How workers construct the leader's FQDN using environment variables
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: env-demo-pcsg
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    cliques:
+    - name: leader
+      spec:
+        roleName: leader
+        replicas: 1
+        podSpec:
+          containers:
+          - name: leader
+            image: busybox:latest
+            command: ["/bin/sh"]
+            args:
+            - "-c"
+            - |
+              echo "=== Leader Pod ==="
+              echo "GROVE_PCS_NAME=$GROVE_PCS_NAME"
+              echo "GROVE_PCS_INDEX=$GROVE_PCS_INDEX"
+              echo "GROVE_PCLQ_NAME=$GROVE_PCLQ_NAME"
+              echo "GROVE_PCSG_NAME=$GROVE_PCSG_NAME"
+              echo "GROVE_PCSG_INDEX=$GROVE_PCSG_INDEX"
+              echo "GROVE_PCLQ_POD_INDEX=$GROVE_PCLQ_POD_INDEX"
+              echo "GROVE_PCSG_TEMPLATE_NUM_PODS=$GROVE_PCSG_TEMPLATE_NUM_PODS"
+              echo ""
+              echo "My FQDN: $GROVE_PCLQ_NAME-$GROVE_PCLQ_POD_INDEX.$GROVE_HEADLESS_SERVICE"
+              echo ""
+              echo "Listening for worker connections..."
+              sleep infinity
+            resources:
+              requests:
+                cpu: "10m"
+                memory: "32Mi"
+    - name: worker
+      spec:
+        roleName: worker
+        replicas: 3
+        podSpec:
+          containers:
+          - name: worker
+            image: busybox:latest
+            command: ["/bin/sh"]
+            args:
+            - "-c"
+            - |
+              echo "=== Worker Pod ==="
+              echo "GROVE_PCS_NAME=$GROVE_PCS_NAME"
+              echo "GROVE_PCS_INDEX=$GROVE_PCS_INDEX"
+              echo "GROVE_PCLQ_NAME=$GROVE_PCLQ_NAME"
+              echo "GROVE_PCSG_NAME=$GROVE_PCSG_NAME"
+              echo "GROVE_PCSG_INDEX=$GROVE_PCSG_INDEX"
+              echo "GROVE_PCLQ_POD_INDEX=$GROVE_PCLQ_POD_INDEX"
+              echo "GROVE_PCSG_TEMPLATE_NUM_PODS=$GROVE_PCSG_TEMPLATE_NUM_PODS"
+              echo ""
+              echo "=== Constructing Leader Address ==="
+              # The leader PodClique name is: PCSG name + PCSG index + "-leader"
+              LEADER_PCLQ_NAME="$GROVE_PCSG_NAME-$GROVE_PCSG_INDEX-leader"
+              # Leader is always pod index 0 since there's only 1 leader replica
+              LEADER_POD_INDEX=0
+              # Construct the leader's FQDN
+              LEADER_FQDN="$LEADER_PCLQ_NAME-$LEADER_POD_INDEX.$GROVE_HEADLESS_SERVICE"
+              echo "Connecting to leader at: $LEADER_FQDN"
+              echo ""
+              echo "Sleeping..."
+              sleep infinity
+            resources:
+              requests:
+                cpu: "10m"
+                memory: "32Mi"
+    podCliqueScalingGroups:
+    - name: model-instance
+      cliqueNames: [leader, worker]
+      replicas: 2
+
+
+

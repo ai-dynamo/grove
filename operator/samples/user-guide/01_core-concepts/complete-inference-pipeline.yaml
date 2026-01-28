@@ -1,0 +1,144 @@
+# Example: Complete Inference Pipeline
+# Documentation: docs/user-guide/01_core-concepts/04_takeaways.md
+#
+# Demonstrates a complete inference system with multiple components:
+# - Single-node components: Frontend, Vision Encoder
+# - Multi-node components: Prefill PCSG, Decode PCSG
+# Shows how Grove can represent an arbitrary number of single-node and multi-node components.
+#
+# NOTE: This example uses fake-node tolerations for the local KIND demo cluster
+# created with `make kind-up FAKE_NODES=40`. Remove the tolerations when deploying
+# to a real cluster.
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: comp-inf-ppln
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    cliques:
+    #single node components
+    - name: frontend
+      spec:
+        roleName: frontend
+        replicas: 2
+        podSpec:
+          tolerations:
+          - key: fake-node
+            operator: Equal
+            value: "true"
+            effect: NoSchedule
+          containers:
+          - name: frontend
+            image: nginx:latest
+            command: ["/bin/sh"]
+            args: ["-c", "echo 'Frontend Service on node:' && hostname && sleep infinity"]
+            resources:
+              requests:
+                cpu: "10m"
+                memory: "32Mi"
+    - name: vision-encoder
+      spec:
+        roleName: vision-encoder
+        replicas: 1
+        podSpec:
+          tolerations:
+          - key: fake-node
+            operator: Equal
+            value: "true"
+            effect: NoSchedule
+          containers:
+          - name: vision-encoder
+            image: nginx:latest
+            command: ["/bin/sh"]
+            args: ["-c", "echo 'Vision Encoder on node:' && hostname && sleep infinity"]
+            resources:
+              requests:
+                cpu: "10m"
+                memory: "32Mi"
+    # Multi-node components
+    - name: pleader
+      spec:
+        roleName: pleader
+        replicas: 1
+        podSpec:
+          tolerations:
+          - key: fake-node
+            operator: Equal
+            value: "true"
+            effect: NoSchedule
+          containers:
+          - name: prefill-leader
+            image: nginx:latest
+            command: ["/bin/sh"]
+            args: ["-c", "echo 'Prefill Leader on node:' && hostname && sleep infinity"]
+            resources:
+              requests:
+                cpu: "10m"
+                memory: "32Mi"
+    - name: pworker
+      spec:
+        roleName: pworker
+        replicas: 4
+        podSpec:
+          tolerations:
+          - key: fake-node
+            operator: Equal
+            value: "true"
+            effect: NoSchedule
+          containers:
+          - name: prefill-worker
+            image: nginx:latest
+            command: ["/bin/sh"]
+            args: ["-c", "echo 'Prefill Worker on node:' && hostname && sleep infinity"]
+            resources:
+              requests:
+                cpu: "10m"
+                memory: "32Mi"
+    - name: dleader
+      spec:
+        roleName: dleader
+        replicas: 1
+        podSpec:
+          tolerations:
+          - key: fake-node
+            operator: Equal
+            value: "true"
+            effect: NoSchedule
+          containers:
+          - name: decode-leader
+            image: nginx:latest
+            command: ["/bin/sh"]
+            args: ["-c", "echo 'Decode Leader on node:' && hostname && sleep infinity"]
+            resources:
+              requests:
+                cpu: "10m"
+                memory: "32Mi"
+    - name: dworker
+      spec:
+        roleName: dworker
+        replicas: 2
+        podSpec:
+          tolerations:
+          - key: fake-node
+            operator: Equal
+            value: "true"
+            effect: NoSchedule
+          containers:
+          - name: decode-worker
+            image: nginx:latest
+            command: ["/bin/sh"]
+            args: ["-c", "echo 'Decode Worker on node:' && hostname && sleep infinity"]
+            resources:
+              requests:
+                cpu: "10m"
+                memory: "32Mi"
+    podCliqueScalingGroups:
+    - name: prefill
+      cliqueNames: [pleader, pworker]
+      replicas: 1
+    - name: decode-cluster
+      cliqueNames: [dleader, dworker]
+      replicas: 1
