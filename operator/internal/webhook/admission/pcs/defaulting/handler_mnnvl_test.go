@@ -45,7 +45,7 @@ func TestDefault_MNNVL(t *testing.T) {
 			description:        "feature enabled + GPU + no annotation -> adds annotation",
 			pcs:                createPCSWithGPU(nil),
 			autoMNNVLEnabled:   true,
-			expectedAnnotation: "true",
+			expectedAnnotation: mnnvl.AnnotationAutoMNNVLEnabled,
 		},
 		{
 			description:        "feature disabled + GPU -> no annotation added",
@@ -60,16 +60,16 @@ func TestDefault_MNNVL(t *testing.T) {
 			expectedAnnotation: "",
 		},
 		{
-			description:        "feature enabled + GPU + existing false annotation -> unchanged",
-			pcs:                createPCSWithGPU(map[string]string{mnnvl.AnnotationAutoMNNVL: "false"}),
+			description:        "feature enabled + GPU + existing disabled annotation -> unchanged",
+			pcs:                createPCSWithGPU(map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled}),
 			autoMNNVLEnabled:   true,
-			expectedAnnotation: "false",
+			expectedAnnotation: mnnvl.AnnotationAutoMNNVLDisabled,
 		},
 		{
-			description:        "feature enabled + GPU + existing true annotation -> unchanged",
-			pcs:                createPCSWithGPU(map[string]string{mnnvl.AnnotationAutoMNNVL: "true"}),
+			description:        "feature enabled + GPU + existing enabled annotation -> unchanged",
+			pcs:                createPCSWithGPU(map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled}),
 			autoMNNVLEnabled:   true,
-			expectedAnnotation: "true",
+			expectedAnnotation: mnnvl.AnnotationAutoMNNVLEnabled,
 		},
 	}
 

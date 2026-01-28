@@ -34,9 +34,18 @@ const (
 // MNNVL annotation and finalizer constants
 const (
 	// AnnotationAutoMNNVL is the annotation key used to indicate whether automatic MNNVL
-	// support should be enabled for a PodCliqueSet. When set to "true", the operator will
-	// automatically create and manage ComputeDomain resources for the workload.
+	// support should be enabled for a PodCliqueSet. Valid values are AnnotationAutoMNNVLEnabled
+	// and AnnotationAutoMNNVLDisabled.
 	AnnotationAutoMNNVL = "grove.io/auto-mnnvl"
+
+	// AnnotationAutoMNNVLEnabled is the value for AnnotationAutoMNNVL indicating that
+	// automatic MNNVL support should be enabled. The operator will automatically create
+	// and manage ComputeDomain resources for the workload.
+	AnnotationAutoMNNVLEnabled = "enabled"
+
+	// AnnotationAutoMNNVLDisabled is the value for AnnotationAutoMNNVL indicating that
+	// automatic MNNVL support should be disabled.
+	AnnotationAutoMNNVLDisabled = "disabled"
 
 	// FinalizerComputeDomain is the finalizer added to ComputeDomains to prevent accidental
 	// deletion while workloads are using them. This finalizer is removed by the PCS controller

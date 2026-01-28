@@ -60,9 +60,7 @@ func (h *Handler) Default(ctx context.Context, obj runtime.Object) error {
 	defaultPodCliqueSet(pcs)
 
 	// Apply MNNVL auto-annotation if conditions are met
-	if mnnvl.MutateAutoMNNVL(pcs, h.networkConfig.AutoMNNVLEnabled) {
-		h.logger.Info("Added auto-mnnvl annotation", "PodCliqueSet", k8sutils.CreateObjectKeyForCreateWebhooks(pcs, req))
-	}
+	mnnvl.MutateAutoMNNVL(h.logger, pcs, h.networkConfig.AutoMNNVLEnabled)
 
 	return nil
 }

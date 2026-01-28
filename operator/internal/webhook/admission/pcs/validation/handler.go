@@ -71,12 +71,7 @@ func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admis
 	allErrs = append(allErrs, errs...)
 
 	// Validate MNNVL annotation: reject if annotation="true" but feature is disabled
-	if err := mnnvl.ValidateAutoMNNVLOnCreate(pcs, h.networkConfig.AutoMNNVLEnabled); err != nil {
-		allErrs = append(allErrs, field.Invalid(
-			field.NewPath("metadata", "annotations", mnnvl.AnnotationAutoMNNVL),
-			pcs.Annotations[mnnvl.AnnotationAutoMNNVL],
-			err.Error()))
-	}
+	allErrs = append(allErrs, mnnvl.ValidateAutoMNNVLOnCreate(pcs, h.networkConfig.AutoMNNVLEnabled)...)
 
 	return warnings, allErrs.ToAggregate()
 }
@@ -93,13 +88,12 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 		return nil, errors.WrapError(err, ErrValidateUpdatePodCliqueSet, string(admissionv1.Update), "failed to cast old object to PodCliqueSet")
 	}
 
-	// Validate MNNVL annotation immutability
-	if err := mnnvl.ValidateAutoMNNVLOnUpdate(oldPCS, newPCS); err != nil {
-		return nil, errors.WrapError(err, ErrValidateUpdatePodCliqueSet, string(admissionv1.Update), err.Error())
-	}
-
 	v := newPCSValidator(newPCS, admissionv1.Update, h.tasConfig)
 	warnings, errs := v.validate()
+
+	// Validate MNNVL annotation immutability
+	errs = append(errs, mnnvl.ValidateAutoMNNVLOnUpdate(oldPCS, newPCS)...)
+
 	if len(errs) > 0 {
 		return warnings, errs.ToAggregate()
 	}

@@ -21,6 +21,7 @@ import (
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
+	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -29,58 +30,49 @@ func TestMutateAutoMNNVL(t *testing.T) {
 		description        string
 		pcs                *grovecorev1alpha1.PodCliqueSet
 		autoMNNVLEnabled   bool
-		expectMutation     bool
 		expectedAnnotation string
 	}{
 		{
-			description:        "feature enabled + GPU + no annotation -> add true",
+			description:        "feature enabled + GPU + no annotation -> add enabled",
 			pcs:                createPCSWithGPU(nil),
 			autoMNNVLEnabled:   true,
-			expectMutation:     true,
-			expectedAnnotation: "true",
+			expectedAnnotation: AnnotationAutoMNNVLEnabled,
 		},
 		{
-			description:        "feature enabled + GPU + existing false -> no change",
-			pcs:                createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: "false"}),
+			description:        "feature enabled + GPU + existing disabled -> no change",
+			pcs:                createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLDisabled}),
 			autoMNNVLEnabled:   true,
-			expectMutation:     false,
-			expectedAnnotation: "false",
+			expectedAnnotation: AnnotationAutoMNNVLDisabled,
 		},
 		{
-			description:        "feature enabled + GPU + existing true -> no change",
-			pcs:                createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: "true"}),
+			description:        "feature enabled + GPU + existing enabled -> no change",
+			pcs:                createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled}),
 			autoMNNVLEnabled:   true,
-			expectMutation:     false,
-			expectedAnnotation: "true",
+			expectedAnnotation: AnnotationAutoMNNVLEnabled,
 		},
 		{
 			description:        "feature enabled + no GPU -> no annotation",
 			pcs:                createPCSWithoutGPU(nil),
 			autoMNNVLEnabled:   true,
-			expectMutation:     false,
 			expectedAnnotation: "",
 		},
 		{
 			description:        "feature disabled + GPU -> no annotation",
 			pcs:                createPCSWithGPU(nil),
 			autoMNNVLEnabled:   false,
-			expectMutation:     false,
 			expectedAnnotation: "",
 		},
 		{
 			description:        "feature disabled + no GPU -> no annotation",
 			pcs:                createPCSWithoutGPU(nil),
 			autoMNNVLEnabled:   false,
-			expectMutation:     false,
 			expectedAnnotation: "",
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.description, func(t *testing.T) {
-			mutated := MutateAutoMNNVL(test.pcs, test.autoMNNVLEnabled)
-
-			assert.Equal(t, test.expectMutation, mutated)
+			MutateAutoMNNVL(logr.Discard(), test.pcs, test.autoMNNVLEnabled)
 
 			if test.expectedAnnotation == "" {
 				if test.pcs.Annotations != nil {
@@ -102,26 +94,26 @@ func TestValidateAutoMNNVLOnCreate(t *testing.T) {
 		expectError      bool
 	}{
 		{
-			description:      "annotation true + feature enabled -> no error",
-			pcs:              createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: "true"}),
+			description:      "annotation enabled + feature enabled -> no error",
+			pcs:              createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled}),
 			autoMNNVLEnabled: true,
 			expectError:      false,
 		},
 		{
-			description:      "annotation true + feature disabled -> error",
-			pcs:              createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: "true"}),
+			description:      "annotation enabled + feature disabled -> error",
+			pcs:              createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled}),
 			autoMNNVLEnabled: false,
 			expectError:      true,
 		},
 		{
-			description:      "annotation false + feature disabled -> no error",
-			pcs:              createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: "false"}),
+			description:      "annotation disabled + feature disabled -> no error",
+			pcs:              createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLDisabled}),
 			autoMNNVLEnabled: false,
 			expectError:      false,
 		},
 		{
-			description:      "annotation false + feature enabled -> no error",
-			pcs:              createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: "false"}),
+			description:      "annotation disabled + feature enabled -> no error",
+			pcs:              createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLDisabled}),
 			autoMNNVLEnabled: true,
 			expectError:      false,
 		},
@@ -147,13 +139,13 @@ func TestValidateAutoMNNVLOnCreate(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.description, func(t *testing.T) {
-			err := ValidateAutoMNNVLOnCreate(test.pcs, test.autoMNNVLEnabled)
+			errs := ValidateAutoMNNVLOnCreate(test.pcs, test.autoMNNVLEnabled)
 
 			if test.expectError {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), "MNNVL is not enabled")
+				assert.NotEmpty(t, errs, "expected validation errors")
+				assert.Contains(t, errs.ToAggregate().Error(), "MNNVL is not enabled")
 			} else {
-				assert.NoError(t, err)
+				assert.Empty(t, errs, "expected no validation errors")
 			}
 		})
 	}
@@ -174,62 +166,62 @@ func TestValidateAutoMNNVLOnUpdate(t *testing.T) {
 			expectError: false,
 		},
 		{
-			description: "annotation unchanged true -> no error",
-			oldPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: "true"}),
-			newPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: "true"}),
+			description: "annotation unchanged enabled -> no error",
+			oldPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled}),
+			newPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled}),
 			expectError: false,
 		},
 		{
-			description: "annotation unchanged false -> no error",
-			oldPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: "false"}),
-			newPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: "false"}),
+			description: "annotation unchanged disabled -> no error",
+			oldPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLDisabled}),
+			newPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLDisabled}),
 			expectError: false,
 		},
 		{
 			description: "annotation added -> error",
 			oldPCS:      createPCSWithGPU(nil),
-			newPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: "true"}),
+			newPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled}),
 			expectError: true,
 			errorMsg:    "cannot be added",
 		},
 		{
 			description: "annotation removed -> error",
-			oldPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: "true"}),
+			oldPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled}),
 			newPCS:      createPCSWithGPU(nil),
 			expectError: true,
 			errorMsg:    "cannot be removed",
 		},
 		{
-			description: "annotation changed true to false -> error",
-			oldPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: "true"}),
-			newPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: "false"}),
+			description: "annotation changed enabled to disabled -> error",
+			oldPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled}),
+			newPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLDisabled}),
 			expectError: true,
 			errorMsg:    "immutable",
 		},
 		{
-			description: "annotation changed false to true -> error",
-			oldPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: "false"}),
-			newPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: "true"}),
+			description: "annotation changed disabled to enabled -> error",
+			oldPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLDisabled}),
+			newPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled}),
 			expectError: true,
 			errorMsg:    "immutable",
 		},
 		{
 			description: "other annotations changed but mnnvl unchanged -> no error",
-			oldPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: "true", "other": "old"}),
-			newPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: "true", "other": "new"}),
+			oldPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled, "other": "old"}),
+			newPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled, "other": "new"}),
 			expectError: false,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.description, func(t *testing.T) {
-			err := ValidateAutoMNNVLOnUpdate(test.oldPCS, test.newPCS)
+			errs := ValidateAutoMNNVLOnUpdate(test.oldPCS, test.newPCS)
 
 			if test.expectError {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), test.errorMsg)
+				assert.NotEmpty(t, errs, "expected validation errors")
+				assert.Contains(t, errs.ToAggregate().Error(), test.errorMsg)
 			} else {
-				assert.NoError(t, err)
+				assert.Empty(t, errs, "expected no validation errors")
 			}
 		})
 	}

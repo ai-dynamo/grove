@@ -52,7 +52,7 @@ func NewBasicPodCliqueTemplateSpec(name string) *grovecorev1alpha1.PodCliqueTemp
 func (b *PodCliqueTemplateSpecBuilder) Build() *grovecorev1alpha1.PodCliqueTemplateSpec {
 	// Only apply default PodSpec if no containers were configured
 	if len(b.pclqTemplateSpec.Spec.PodSpec.Containers) == 0 && len(b.pclqTemplateSpec.Spec.PodSpec.InitContainers) == 0 {
-		b.withDefaultPodSpec()
+	b.withDefaultPodSpec()
 	}
 	return b.pclqTemplateSpec
 }
