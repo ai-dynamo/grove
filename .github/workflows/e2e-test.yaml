@@ -169,8 +169,7 @@ jobs:
             --default-repo "localhost:$REGISTRY_PORT" \
             --profile topology-test \
             --namespace grove-system \
-            --tag E2E_TESTS \
-            --status-check-deadline 5m
+            --tag E2E_TESTS
           cd ..
           
           # Wait for Grove pods to be ready
