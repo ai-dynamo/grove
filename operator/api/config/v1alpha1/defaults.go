@@ -80,7 +80,7 @@ func SetDefaults_ServerConfiguration(serverConfig *ServerConfiguration) {
 	}
 
 	if serverConfig.Webhooks.SecretName == "" {
-		serverConfig.Webhooks.SecretName = "grove-webhook-server-cert"
+		serverConfig.Webhooks.SecretName = DefaultWebhookSecretName
 	}
 
 	if serverConfig.Webhooks.CertProvisionMode == "" {

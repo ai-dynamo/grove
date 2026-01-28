@@ -131,13 +131,18 @@ func WaitForPods(ctx context.Context, restConfig *rest.Config, namespaces []stri
 	})
 }
 
-// ApplyYAMLData is the common function that applies YAML data to Kubernetes
+// ApplyYAMLData applies YAML data to Kubernetes, creating clients from restConfig.
+// Note this is a convenience function that creates clients on every call and is deprecated (issue 378)
 func ApplyYAMLData(ctx context.Context, yamlData []byte, namespace string, restConfig *rest.Config, logger *Logger) ([]AppliedResource, error) {
-	dynamicClient, restMapper, err := createKubernetesClients(restConfig)
+	dynamicClient, restMapper, err := CreateKubernetesClients(restConfig)
 	if err != nil {
 		return nil, err
 	}
+	return ApplyYAMLDataWithClients(ctx, yamlData, namespace, dynamicClient, restMapper, logger)
+}
 
+// ApplyYAMLDataWithClients applies YAML data to Kubernetes.
+func ApplyYAMLDataWithClients(ctx context.Context, yamlData []byte, namespace string, dynamicClient dynamic.Interface, restMapper meta.RESTMapper, logger *Logger) ([]AppliedResource, error) {
 	decoder := yamlutil.NewYAMLOrJSONDecoder(strings.NewReader(string(yamlData)), 4096)
 	var appliedResources []AppliedResource
 
@@ -166,8 +171,8 @@ func ApplyYAMLData(ctx context.Context, yamlData []byte, namespace string, restC
 	return appliedResources, nil
 }
 
-// createKubernetesClients creates the dynamic client and REST mapper
-func createKubernetesClients(restConfig *rest.Config) (dynamic.Interface, meta.RESTMapper, error) {
+// CreateKubernetesClients creates the dynamic client and REST mapper.
+func CreateKubernetesClients(restConfig *rest.Config) (dynamic.Interface, meta.RESTMapper, error) {
 	dynamicClient, err := dynamic.NewForConfig(restConfig)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create dynamic client: %w", err)

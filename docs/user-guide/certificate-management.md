@@ -64,7 +64,7 @@ config:
       # Use manual certificate provisioning (external)
       certProvisionMode: manual
       # Name of the Secret containing your certificates
-      secretName: "grove-webhook-server-cert"
+      secretName: "grove-webhook-server-cert" # or <custom-secret-name>
 
 webhooks:
   # Base64-encoded CA certificate that signed the webhook server certificate
