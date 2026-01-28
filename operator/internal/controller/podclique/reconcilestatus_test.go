@@ -202,7 +202,7 @@ func createPodWithHash(name string, templateHash string) *corev1.Pod {
 	}
 }
 
-func TestComputeMinAvailableBreachedCondition_FLIPDetection(t *testing.T) {
+func TestComputeMinAvailableBreachedCondition_TransitionDetection(t *testing.T) {
 	tests := []struct {
 		name           string
 		ctx            minAvailableBreachedContext
@@ -210,9 +210,9 @@ func TestComputeMinAvailableBreachedCondition_FLIPDetection(t *testing.T) {
 		expectedReason string
 		description    string
 	}{
-		// FLIP Detection Tests
+		// MinAvailableBreached Detection Tests
 		{
-			name: "FLIP detected: was available, now unavailable",
+			name: "Transition detected: was available, now unavailable",
 			ctx: minAvailableBreachedContext{
 				oldReadyReplicas:   3,
 				newReadyReplicas:   2,
@@ -225,7 +225,7 @@ func TestComputeMinAvailableBreachedCondition_FLIPDetection(t *testing.T) {
 			description:    "When ready pods drop from >= min to < min, breach should be detected",
 		},
 		{
-			name: "No FLIP: was never available",
+			name: "No transition: was never available",
 			ctx: minAvailableBreachedContext{
 				oldReadyReplicas:   2,
 				newReadyReplicas:   1,
@@ -238,7 +238,7 @@ func TestComputeMinAvailableBreachedCondition_FLIPDetection(t *testing.T) {
 			description:    "When was never available (old < min), no breach should be set",
 		},
 		{
-			name: "No FLIP: still starting up",
+			name: "No transition: still starting up",
 			ctx: minAvailableBreachedContext{
 				oldReadyReplicas:   0,
 				newReadyReplicas:   2,
@@ -287,7 +287,7 @@ func TestComputeMinAvailableBreachedCondition_FLIPDetection(t *testing.T) {
 			description:    "When pods recover to >= min, breach should clear",
 		},
 		{
-			name: "Persisted False, FLIP detected → True",
+			name: "Persisted False, transition detected → True",
 			ctx: minAvailableBreachedContext{
 				oldReadyReplicas: 3,
 				newReadyReplicas: 2,
@@ -301,7 +301,7 @@ func TestComputeMinAvailableBreachedCondition_FLIPDetection(t *testing.T) {
 			},
 			expectedStatus: metav1.ConditionTrue,
 			expectedReason: constants.ConditionReasonInsufficientReadyPods,
-			description:    "When persisted is False but FLIP detected, should set True",
+			description:    "When persisted is False but transition detected, should set True",
 		},
 
 		// Rolling Update Tests
@@ -333,7 +333,7 @@ func TestComputeMinAvailableBreachedCondition_FLIPDetection(t *testing.T) {
 			},
 			expectedStatus: metav1.ConditionFalse,
 			expectedReason: constants.ConditionReasonNeverAvailable,
-			description:    "After update completes with pods below threshold, no FLIP means no breach",
+			description:    "After update completes with pods below threshold, no transition means no breach",
 		},
 
 		// Currently Available Tests
@@ -392,7 +392,7 @@ func TestComputeMinAvailableBreachedCondition_FLIPDetection(t *testing.T) {
 			description:    "When partial pods are ready but never reached min, no breach",
 		},
 		{
-			name: "FLIP at exact boundary",
+			name: "Transition at exact boundary",
 			ctx: minAvailableBreachedContext{
 				oldReadyReplicas:   3,
 				newReadyReplicas:   2,
@@ -402,7 +402,7 @@ func TestComputeMinAvailableBreachedCondition_FLIPDetection(t *testing.T) {
 			},
 			expectedStatus: metav1.ConditionTrue,
 			expectedReason: constants.ConditionReasonInsufficientReadyPods,
-			description:    "FLIP from exactly min to below min should trigger breach",
+			description:    "Transition from exactly min to below min should trigger breach",
 		},
 	}
 
@@ -427,7 +427,7 @@ func TestComputeMinAvailableBreachedCondition_Messages(t *testing.T) {
 		messageContains string
 	}{
 		{
-			name: "FLIP message shows transition",
+			name: "Transition message shows breach",
 			ctx: minAvailableBreachedContext{
 				oldReadyReplicas:   3,
 				newReadyReplicas:   2,

@@ -516,15 +516,15 @@ func Test_GT4_GangTerminationMinReplicasPCSGOwned(t *testing.T) {
 // | GT-5 | Both sg-x-0 AND sg-x-1 | Breached (0 < 1)        | Entire PCS replica terminated |
 //
 // Scenario GT-5:
-// 1. Initialize a 10-node Grove cluster
-// 2. Deploy workload WL2, and verify 10 newly created pods
-// 3. Wait for pods to get scheduled and become ready
-// 4. Cordon ALL nodes hosting workload pods to prevent replacement pods from scheduling
-// 5. Delete all 3 pods from sg-x-0-pc-c (breach sg-x-0)
-// 6. Immediately delete all 3 pods from sg-x-1-pc-c (breach sg-x-1)
-//    (Must do steps 5-6 quickly, within TerminationDelay window)
-// 7. Wait for TerminationDelay seconds
-// 8. Verify that ALL pods in the workload get gang-terminated and recreated (including pc-a)
+//  1. Initialize a 10-node Grove cluster
+//  2. Deploy workload WL2, and verify 10 newly created pods
+//  3. Wait for pods to get scheduled and become ready
+//  4. Cordon ALL nodes hosting workload pods to prevent replacement pods from scheduling
+//  5. Delete all 3 pods from sg-x-0-pc-c (breach sg-x-0)
+//  6. Immediately delete all 3 pods from sg-x-1-pc-c (breach sg-x-1)
+//     (Must do steps 5-6 quickly, within TerminationDelay window)
+//  7. Wait for TerminationDelay seconds
+//  8. Verify that ALL pods in the workload get gang-terminated and recreated (including pc-a)
 func Test_GT5_GangTerminationPCSGMinAvailableBreach(t *testing.T) {
 	ctx := context.Background()
 
@@ -571,8 +571,8 @@ func Test_GT5_GangTerminationPCSGMinAvailableBreach(t *testing.T) {
 	}
 
 	// Cordon all nodes hosting workload pods BEFORE deleting any pods.
-	// This is critical for FLIP detection: if replacement pods become Ready before
-	// the status reconcile detects the FLIP (oldReadyReplicas >= minAvailable -> newReadyReplicas < minAvailable),
+	// This is critical for MinAvailableBreached detection: if replacement pods become Ready before
+	// the status reconcile detects the breach (oldReadyReplicas >= minAvailable -> newReadyReplicas < minAvailable),
 	// the breach won't be recorded because newReadyReplicas would still satisfy minAvailable.
 	cordonedNodes := cordonAllWorkloadPodNodes(tc, pods)
 	logger.Infof("Cordoned %d nodes hosting workload pods", len(cordonedNodes))
@@ -739,7 +739,7 @@ func deleteAllPodsFromPodClique(tc TestContext, pods *v1.PodList, podCliqueName 
 
 // cordonAllWorkloadPodNodes cordons all nodes that are hosting workload pods.
 // This is used to prevent replacement pods from becoming ready during gang termination tests,
-// which is critical for reliable FLIP detection.
+// which is critical for reliable MinAvailableBreached detection.
 func cordonAllWorkloadPodNodes(tc TestContext, pods *v1.PodList) []string {
 	cordonedNodes := make(map[string]bool)
 	var nodeNames []string
@@ -761,7 +761,7 @@ func cordonAllWorkloadPodNodes(tc TestContext, pods *v1.PodList) []string {
 
 // deletePodsFromPodCliqueWithoutCordon deletes all ready pods from the specified podclique
 // without cordoning nodes (assumes nodes are already cordoned).
-// This is used when nodes have been pre-cordoned to ensure FLIP detection works reliably.
+// This is used when nodes have been pre-cordoned to ensure MinAvailableBreached detection works reliably.
 func deletePodsFromPodCliqueWithoutCordon(tc TestContext, pods *v1.PodList, podCliqueName string) []string {
 	var deletedPods []string
 
@@ -1123,7 +1123,7 @@ func verifyPCSGReplicaGangTermination(tc TestContext, expectedTotalPods int, ter
 }
 
 // Test_GT6_NeverHealthyNoGangTermination tests that workloads that never became healthy
-// do NOT trigger gang termination. This validates the FLIP detection logic:
+// do NOT trigger gang termination. This validates the MinAvailableBreached detection logic:
 // MinAvailableBreached should only be True when transitioning from available to unavailable.
 //
 // Scenario GT-6:

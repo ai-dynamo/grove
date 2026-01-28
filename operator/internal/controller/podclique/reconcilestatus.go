@@ -36,10 +36,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// minAvailableBreachedContext contains the state needed for FLIP detection when computing
-// the MinAvailableBreached condition. FLIP detection ensures that the breach condition is
-// only set to True when transitioning from available to unavailable, preventing false
-// breach detection during initial startup when pods haven't reached MinAvailable yet.
+// minAvailableBreachedContext contains the state needed for computing the MinAvailableBreached
+// condition. This ensures the breach condition is only set to True when transitioning from
+// available to unavailable, preventing false breach detection during initial startup when
+// pods haven't reached MinAvailable yet.
 type minAvailableBreachedContext struct {
 	// oldReadyReplicas is the ReadyReplicas count before the current reconciliation mutation
 	oldReadyReplicas int32
@@ -73,7 +73,7 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 
 	podCategories := k8sutils.CategorizePodsByConditionType(logger, existingPods)
 
-	// Capture old state BEFORE mutation for FLIP detection
+	// Capture old state BEFORE mutation for MinAvailableBreached detection
 	oldReadyReplicas := pclq.Status.ReadyReplicas
 	existingBreachCondition := meta.FindStatusCondition(pclq.Status.Conditions, constants.ConditionTypeMinAvailableBreached)
 
@@ -91,7 +91,7 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	if pclq.Status.ObservedGeneration != nil {
 		mutatePodCliqueScheduledCondition(pclq)
 
-		// Build context for FLIP-based MinAvailableBreached condition computation
+		// Build context for MinAvailableBreached condition computation
 		breachCtx := minAvailableBreachedContext{
 			oldReadyReplicas:   oldReadyReplicas,
 			newReadyReplicas:   pclq.Status.ReadyReplicas,
@@ -195,7 +195,7 @@ func mutateSelector(pcsName string, pclq *grovecorev1alpha1.PodClique) error {
 }
 
 // mutateMinAvailableBreachedCondition updates the MinAvailableBreached condition based on pod availability
-// using FLIP detection to distinguish between "never available" and "was available then degraded" scenarios.
+// using transition detection to distinguish between "never available" and "was available then degraded" scenarios.
 func mutateMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, ctx minAvailableBreachedContext) {
 	newCondition := computeMinAvailableBreachedCondition(ctx)
 	if k8sutils.HasConditionChanged(pclq.Status.Conditions, newCondition) {
@@ -203,10 +203,10 @@ func mutateMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, ctx 
 	}
 }
 
-// computeMinAvailableBreachedCondition calculates the MinAvailableBreached condition status using FLIP detection.
+// computeMinAvailableBreachedCondition calculates the MinAvailableBreached condition status using transition detection.
 //
-// FLIP Detection Logic:
-// The condition is only set to True when a FLIP (transition from available to unavailable) is detected.
+// MinAvailableBreached Detection Logic:
+// The condition is only set to True when transitioning from available to unavailable.
 // This prevents false breach detection during initial startup when pods haven't reached MinAvailable yet.
 //
 // The logic handles three categories:
@@ -214,8 +214,8 @@ func mutateMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, ctx 
 //  2. Currently available (readyReplicas >= minAvailable) → False (clear any previous breach)
 //  3. Currently unavailable (readyReplicas < minAvailable):
 //     a. Already breached (persisted condition is True) → True (respect persisted state)
-//     b. FLIP detected (old >= min, new < min) → True (breach just occurred)
-//     c. No FLIP, never available → False with NeverAvailable reason
+//     b. Breach detected (old >= min, new < min) → True (breach just occurred)
+//     c. No transition, never available → False with NeverAvailable reason
 //
 // This approach ensures:
 // - Workloads that were healthy then degraded will be terminated (gang termination)
@@ -255,8 +255,8 @@ func computeMinAvailableBreachedCondition(ctx minAvailableBreachedContext) metav
 		}
 	}
 
-	// 3b. FLIP detected → set True (breach just occurred)
-	// A FLIP is when we transition from available to unavailable in this reconciliation cycle.
+	// 3b. Breach detected → set True (breach just occurred)
+	// A transition is when we go from available to unavailable in this reconciliation cycle.
 	if ctx.oldReadyReplicas >= ctx.minAvailable {
 		return metav1.Condition{
 			Type:    constants.ConditionTypeMinAvailableBreached,
@@ -266,7 +266,7 @@ func computeMinAvailableBreachedCondition(ctx minAvailableBreachedContext) metav
 		}
 	}
 
-	// 3c. No FLIP detected, never reached availability → False with NeverAvailable reason
+	// 3c. No breach detected, never reached availability → False with NeverAvailable reason
 	// This prevents false breach detection during startup when pods haven't reached MinAvailable yet.
 	return metav1.Condition{
 		Type:    constants.ConditionTypeMinAvailableBreached,
