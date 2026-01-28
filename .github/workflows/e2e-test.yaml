@@ -80,13 +80,121 @@ jobs:
           sudo install skaffold /usr/local/bin/
           skaffold version
 
-      - name: Run e2e tests - ${{ matrix.test_name }}
+      - name: Install Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm version
+
+      - name: Prepare charts
         run: |
           cd operator
           echo "> Preparing charts (copying CRDs)..."
           ./hack/prepare-charts.sh
+
+      - name: Create E2E cluster
+        id: create-cluster
+        run: |
+          set -e
+          CLUSTER_NAME="shared-e2e-test-cluster"
+          REGISTRY_PORT="5001"
+          API_PORT="6560"
+          
+          echo "🚀 Creating k3d cluster '$CLUSTER_NAME'..."
+          
+          # Create k3d cluster with registry
+          k3d cluster create "$CLUSTER_NAME" \
+            --servers 1 \
+            --agents 30 \
+            --image "rancher/k3s:v1.33.5-k3s1" \
+            --api-port "$API_PORT" \
+            --port "8090:80@loadbalancer" \
+            --registry-create "registry:0.0.0.0:$REGISTRY_PORT" \
+            --k3s-arg "--node-taint=node_role.e2e.grove.nvidia.com=agent:NoSchedule@agent:*" \
+            --k3s-node-label "node_role.e2e.grove.nvidia.com=agent@agent:*" \
+            --k3s-node-label "nvidia.com/gpu.deploy.operands=false@server:*" \
+            --k3s-node-label "nvidia.com/gpu.deploy.operands=false@agent:*" \
+            --agents-memory "150m" \
+            --wait
+          
+          echo "✅ Cluster created successfully"
+          
+          # Wait for nodes to be ready
+          echo "⏳ Waiting for all nodes to be ready..."
+          kubectl wait --for=condition=Ready nodes --all --timeout=5m
+          
+          # Install Kai Scheduler via Helm
+          echo "🚀 Installing Kai Scheduler..."
+          helm install kai-scheduler oci://ghcr.io/nvidia/kai-scheduler/kai-scheduler \
+            --version v0.13.0-rc1 \
+            --namespace kai-scheduler \
+            --create-namespace \
+            --set global.tolerations[0].key=node-role.kubernetes.io/control-plane \
+            --set global.tolerations[0].operator=Exists \
+            --set global.tolerations[0].effect=NoSchedule \
+            --set global.tolerations[1].key=node_role.e2e.grove.nvidia.com \
+            --set global.tolerations[1].operator=Equal \
+            --set global.tolerations[1].value=agent \
+            --set global.tolerations[1].effect=NoSchedule
+          
+          # Deploy Grove via Skaffold
+          echo "🚀 Deploying Grove operator via Skaffold..."
+          cd operator
+          skaffold run \
+            --default-repo "localhost:$REGISTRY_PORT" \
+            --profile topology-test \
+            --namespace grove-system \
+            --tag E2E_TESTS
+          cd ..
+          
+          # Wait for Grove pods to be ready
+          echo "⏳ Waiting for Grove pods to be ready..."
+          kubectl wait --for=condition=Ready pods --all -n grove-system --timeout=5m
+          
+          # Wait for Kai Scheduler pods to be ready
+          echo "⏳ Waiting for Kai Scheduler pods to be ready..."
+          kubectl wait --for=condition=Ready pods --all -n kai-scheduler --timeout=5m
+          
+          # Apply default queues for Kai Scheduler
+          echo "📋 Creating default Kai queues..."
+          kubectl apply -f operator/e2e/yaml/queues.yaml
+          
+          # Apply topology labels to worker nodes (hierarchical structure)
+          echo "🏷️ Applying topology labels to worker nodes..."
+          WORKER_NODES=$(kubectl get nodes -l '!node-role.kubernetes.io/control-plane' -o jsonpath='{.items[*].metadata.name}')
+          NODE_COUNT=0
+          for NODE in $WORKER_NODES; do
+            # Create hierarchical topology: region -> zone -> rack -> host
+            REGION=$((NODE_COUNT / 15))
+            ZONE=$(((NODE_COUNT % 15) / 5))
+            RACK=$(((NODE_COUNT % 5) / 2))
+            
+            kubectl label node "$NODE" \
+              "topology.kubernetes.io/region=region-$REGION" \
+              "topology.kubernetes.io/zone=zone-$ZONE" \
+              "topology.grove.io/rack=rack-$RACK" \
+              --overwrite
+            
+            NODE_COUNT=$((NODE_COUNT + 1))
+          done
+          echo "✅ Applied topology labels to $NODE_COUNT worker nodes"
+          
+          # Output environment variables for E2E tests
+          echo "E2E_USE_EXISTING_CLUSTER=true" >> $GITHUB_OUTPUT
+          echo "E2E_CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_OUTPUT
+          echo "E2E_REGISTRY_PORT=$REGISTRY_PORT" >> $GITHUB_OUTPUT
+          
+          echo "✅ Cluster setup complete!"
+
+      - name: Run e2e tests - ${{ matrix.test_name }}
+        env:
+          E2E_USE_EXISTING_CLUSTER: ${{ steps.create-cluster.outputs.E2E_USE_EXISTING_CLUSTER }}
+          E2E_CLUSTER_NAME: ${{ steps.create-cluster.outputs.E2E_CLUSTER_NAME }}
+          E2E_REGISTRY_PORT: ${{ steps.create-cluster.outputs.E2E_REGISTRY_PORT }}
+        run: |
+          cd operator/e2e
+          echo "> Using existing cluster: $E2E_CLUSTER_NAME"
           echo "> Running e2e tests for ${{ matrix.test_name }}..."
-          cd e2e && go test -tags=e2e ./tests/... -v -timeout 45m -run '${{ matrix.test_pattern }}'
+          go test -tags=e2e ./tests/... -v -timeout 45m -run '${{ matrix.test_pattern }}'
 
       # The test code handles cleanup via Teardown(), but this step provides
       # extra safety in case of timeout or panic. Also good practice to ensure
