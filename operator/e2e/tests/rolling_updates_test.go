@@ -20,6 +20,7 @@ package tests
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -226,20 +227,24 @@ func Test_RU10_RollingUpdateInsufficientResources(t *testing.T) {
 	time.Sleep(1 * time.Minute)
 
 	// Verify that exactly one existing pod was deleted (delete-first strategy)
-	events := tracker.getEvents()
 	var deletedExistingPods []string
 	var addedPods []string
-	for _, event := range events {
-		switch event.Type {
-		case watch.Deleted:
-			if existingPodNames[event.Pod.Name] {
-				deletedExistingPods = append(deletedExistingPods, event.Pod.Name)
-				logger.Debugf("Existing pod deleted during rolling update: %s", event.Pod.Name)
-			}
-		case watch.Added:
-			if !existingPodNames[event.Pod.Name] {
-				addedPods = append(addedPods, event.Pod.Name)
-				logger.Debugf("New pod created during rolling update: %s", event.Pod.Name)
+	pollErr := pollForCondition(tc, func() (bool, error) {
+		events := tracker.getEvents()
+		deletedExistingPods = nil
+		addedPods = nil
+		for _, event := range events {
+			switch event.Type {
+			case watch.Deleted:
+				if existingPodNames[event.Pod.Name] {
+					deletedExistingPods = append(deletedExistingPods, event.Pod.Name)
+					logger.Debugf("Existing pod deleted during rolling update: %s", event.Pod.Name)
+				}
+			case watch.Added:
+				if !existingPodNames[event.Pod.Name] {
+					addedPods = append(addedPods, event.Pod.Name)
+					logger.Debugf("New pod created during rolling update: %s", event.Pod.Name)
+				}
 			}
 		}
 
