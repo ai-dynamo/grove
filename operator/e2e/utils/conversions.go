@@ -14,8 +14,6 @@
 // limitations under the License.
 // */
 
-//go:build e2e
-
 package utils
 
 import (
@@ -29,4 +27,18 @@ func ConvertUnstructuredToTyped(u map[string]interface{}, typed interface{}) err
 		return err
 	}
 	return json.Unmarshal(data, typed)
+}
+
+// ConvertTypedToUnstructured converts a typed object to an unstructured map.
+// Useful for converting typed structs to Helm values maps.
+func ConvertTypedToUnstructured(typed interface{}) (map[string]interface{}, error) {
+	data, err := json.Marshal(typed)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }

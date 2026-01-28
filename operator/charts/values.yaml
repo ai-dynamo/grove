@@ -1,3 +1,6 @@
+# NOTE: The helmValues struct in operator/e2e/setup/grove.go generates values for this chart.
+# Keep both in sync when modifying.
+
 # ReplicaCount is the value for spec.replicas for the grove-operator deployment resource.
 replicaCount: 1
 

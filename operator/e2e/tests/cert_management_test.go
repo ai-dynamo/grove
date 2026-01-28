@@ -80,7 +80,11 @@ func autoProvisionGroveConfig() *setup.GroveConfig {
 // updateGroveToCertManager updates Grove to use cert-manager for certificate management.
 func updateGroveToCertManager(t *testing.T, ctx context.Context, restConfig *rest.Config) {
 	t.Helper()
-	if err := setup.UpdateGroveConfiguration(ctx, restConfig, certManagerGroveConfig(), logger); err != nil {
+	chartDir, err := setup.GetGroveChartDir()
+	if err != nil {
+		t.Fatalf("Failed to get Grove chart directory: %v", err)
+	}
+	if err := setup.UpdateGroveConfiguration(ctx, restConfig, chartDir, certManagerGroveConfig(), logger); err != nil {
 		t.Fatalf("Failed to update Grove to cert-manager mode: %v", err)
 	}
 }
@@ -88,7 +92,11 @@ func updateGroveToCertManager(t *testing.T, ctx context.Context, restConfig *res
 // updateGroveToAutoProvision updates Grove to use auto-provisioned certificates.
 func updateGroveToAutoProvision(t *testing.T, ctx context.Context, restConfig *rest.Config) {
 	t.Helper()
-	if err := setup.UpdateGroveConfiguration(ctx, restConfig, autoProvisionGroveConfig(), logger); err != nil {
+	chartDir, err := setup.GetGroveChartDir()
+	if err != nil {
+		t.Fatalf("Failed to get Grove chart directory: %v", err)
+	}
+	if err := setup.UpdateGroveConfiguration(ctx, restConfig, chartDir, autoProvisionGroveConfig(), logger); err != nil {
 		t.Fatalf("Failed to update Grove to auto-provision mode: %v", err)
 	}
 }

@@ -17,8 +17,11 @@
 package cert
 
 import (
+	"os"
 	"testing"
 	"time"
+
+	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 
 	"github.com/go-logr/logr"
 	cert "github.com/open-policy-agent/cert-controller/pkg/rotator"
@@ -67,6 +70,41 @@ func TestGetOperatorNamespace(t *testing.T) {
 		if err != nil {
 			assert.Error(t, err)
 		}
+	})
+}
+
+// TestGetOperatorNamespaceFromFile tests the namespace file reading logic with various inputs.
+func TestGetOperatorNamespaceFromFile(t *testing.T) {
+	t.Run("file does not exist", func(t *testing.T) {
+		_, err := getOperatorNamespaceFromFile("/nonexistent/path/to/namespace")
+		require.Error(t, err)
+	})
+
+	t.Run("file contains valid namespace", func(t *testing.T) {
+		// Create a temp file with a valid namespace
+		tmpFile, err := os.CreateTemp("", "namespace-test")
+		require.NoError(t, err)
+		defer os.Remove(tmpFile.Name())
+
+		_, err = tmpFile.WriteString("test-namespace")
+		require.NoError(t, err)
+		tmpFile.Close()
+
+		namespace, err := getOperatorNamespaceFromFile(tmpFile.Name())
+		require.NoError(t, err)
+		assert.Equal(t, "test-namespace", namespace)
+	})
+
+	t.Run("file is empty", func(t *testing.T) {
+		// Create an empty temp file
+		tmpFile, err := os.CreateTemp("", "namespace-test")
+		require.NoError(t, err)
+		defer os.Remove(tmpFile.Name())
+		tmpFile.Close()
+
+		_, err = getOperatorNamespaceFromFile(tmpFile.Name())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "operator namespace is empty")
 	})
 }
 
@@ -123,5 +161,108 @@ func TestWaitTillWebhookCertsReady(t *testing.T) {
 		case <-time.After(1 * time.Second):
 			t.Fatal("WaitTillWebhookCertsReady did not return after channel closed")
 		}
+	})
+}
+
+// TestManageWebhookCerts tests the certificate management behavior for different provision modes.
+func TestManageWebhookCerts(t *testing.T) {
+	// Test manual mode - should close channel immediately and return nil
+	t.Run("manual mode closes channel immediately", func(t *testing.T) {
+		certsReady := make(chan struct{})
+
+		// Call ManageWebhookCerts with manual mode
+		// Note: mgr is nil because manual mode doesn't use it
+		err := ManageWebhookCerts(nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionModeManual, certsReady)
+
+		// Should return no error
+		require.NoError(t, err)
+
+		// Channel should be closed
+		select {
+		case <-certsReady:
+			// Success - channel is closed
+		default:
+			t.Fatal("certsReady channel should be closed in manual mode")
+		}
+	})
+
+	// Test manual mode with authorizer enabled - should still work the same way
+	t.Run("manual mode with authorizer enabled", func(t *testing.T) {
+		certsReady := make(chan struct{})
+
+		err := ManageWebhookCerts(nil, "/tmp/certs", "test-secret", true, configv1alpha1.CertProvisionModeManual, certsReady)
+
+		require.NoError(t, err)
+
+		select {
+		case <-certsReady:
+			// Success - channel is closed
+		default:
+			t.Fatal("certsReady channel should be closed in manual mode even with authorizer enabled")
+		}
+	})
+
+	// Test auto mode - should fail in test environment because namespace file doesn't exist
+	// This verifies that auto mode attempts to read the namespace (different code path from manual)
+	t.Run("auto mode requires namespace file", func(t *testing.T) {
+		certsReady := make(chan struct{})
+
+		// Call ManageWebhookCerts with auto mode
+		// This should fail because the namespace file doesn't exist in the test environment
+		err := ManageWebhookCerts(nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionModeAuto, certsReady)
+
+		// Should return an error because namespace file doesn't exist
+		require.Error(t, err)
+
+		// Channel should NOT be closed (error occurred before that could happen in auto mode)
+		select {
+		case <-certsReady:
+			t.Fatal("certsReady channel should not be closed when auto mode fails")
+		default:
+			// Success - channel is still open
+		}
+	})
+
+	// Test that manual mode doesn't require namespace file
+	// This verifies the optimization that manual mode skips namespace lookup
+	t.Run("manual mode does not require namespace file", func(t *testing.T) {
+		certsReady := make(chan struct{})
+
+		// Even though namespace file doesn't exist, manual mode should succeed
+		err := ManageWebhookCerts(nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionModeManual, certsReady)
+
+		// Should succeed without needing namespace
+		require.NoError(t, err)
+	})
+
+	// Test unknown/invalid mode - should return an explicit error.
+	// This ensures new modes must be explicitly handled, preventing silent mishandling.
+	t.Run("unknown mode returns explicit error", func(t *testing.T) {
+		certsReady := make(chan struct{})
+
+		err := ManageWebhookCerts(nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionMode("unknown"), certsReady)
+
+		// Should return an explicit error about unsupported mode
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unsupported cert provision mode")
+		assert.Contains(t, err.Error(), "unknown")
+
+		// Channel should NOT be closed since we returned an error
+		select {
+		case <-certsReady:
+			t.Fatal("certsReady channel should not be closed when mode is unsupported")
+		default:
+			// Success - channel is still open
+		}
+	})
+
+	// Test empty mode string - should also return explicit error
+	t.Run("empty mode returns explicit error", func(t *testing.T) {
+		certsReady := make(chan struct{})
+
+		err := ManageWebhookCerts(nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionMode(""), certsReady)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unsupported cert provision mode")
 	})
 }

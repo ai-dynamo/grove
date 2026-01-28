@@ -42,24 +42,35 @@ const (
 // ManageWebhookCerts manages webhook certificates based on the CertProvisionMode configuration.
 // When mode=auto: uses cert-controller for automatic certificate generation and management.
 // When mode=manual: waits for externally provided certificates (e.g., from cert-manager, cluster admin).
+// Returns an error for unrecognized modes to ensure new modes are explicitly handled.
 func ManageWebhookCerts(mgr ctrl.Manager, certDir string, secretName string, authorizerEnabled bool, certProvisionMode configv1alpha1.CertProvisionMode, certsReadyCh chan struct{}) error {
-	namespace, err := getOperatorNamespace()
-	if err != nil {
-		return err
-	}
-
 	logger := ctrl.Log.WithName("cert-management")
 
-	if certProvisionMode == configv1alpha1.CertProvisionModeManual {
+	switch certProvisionMode {
+	case configv1alpha1.CertProvisionModeManual:
 		logger.Info("Using externally provided certificates (manual mode)",
 			"certDir", certDir, "secretName", secretName)
 		// Certificates are managed externally, signal ready immediately
 		close(certsReadyCh)
 		return nil
+
+	case configv1alpha1.CertProvisionModeAuto:
+		return setupAutoCertProvisioning(mgr, certDir, secretName, authorizerEnabled, certsReadyCh, logger)
+
+	default:
+		return fmt.Errorf("unsupported cert provision mode: %q", certProvisionMode)
+	}
+}
+
+// setupAutoCertProvisioning configures cert-controller for automatic certificate management.
+func setupAutoCertProvisioning(mgr ctrl.Manager, certDir string, secretName string, authorizerEnabled bool, certsReadyCh chan struct{}, logger logr.Logger) error {
+	namespace, err := getOperatorNamespace()
+	if err != nil {
+		return err
 	}
 
 	logger.Info("Auto-provisioning certificates using cert-controller",
-		"secretName", secretName, "certDir", certDir, "mode", certProvisionMode)
+		"secretName", secretName, "certDir", certDir)
 	rotator := &cert.CertRotator{
 		SecretKey: types.NamespacedName{
 			Namespace: namespace,
@@ -114,7 +125,13 @@ func getWebhooks(authorizerEnabled bool) []cert.WebhookInfo {
 
 // getOperatorNamespace reads the operator's namespace from namespace file
 func getOperatorNamespace() (string, error) {
-	data, err := os.ReadFile(constants.OperatorNamespaceFile)
+	return getOperatorNamespaceFromFile(constants.OperatorNamespaceFile)
+}
+
+// getOperatorNamespaceFromFile reads the operator's namespace from the specified file path.
+// This is extracted for testability.
+func getOperatorNamespaceFromFile(path string) (string, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
