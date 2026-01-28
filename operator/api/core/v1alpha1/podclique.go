@@ -121,12 +121,6 @@ type PodCliqueStatus struct {
 	// ScheduledReplicas is the number of Pods that have been scheduled by the kube-scheduler.
 	// +kubebuilder:default=0
 	ScheduledReplicas int32 `json:"scheduledReplicas"`
-	// WasAvailable indicates whether the PodClique has ever reached its MinAvailable threshold.
-	// Once set to true, it remains true for the lifetime of the PodClique.
-	// This field is used for gang termination: a PodClique can only be considered in breach of
-	// MinAvailable if it was previously available (WasAvailable=true).
-	// +kubebuilder:default=false
-	WasAvailable bool `json:"wasAvailable"`
 	// Selector is the label selector that determines which pods are part of the PodClique.
 	// PodClique is a unit of scale and this selector is used by HPA to scale the PodClique based on metrics captured for the pods that match this selector.
 	Selector *string `json:"hpaPodSelector,omitempty"`

@@ -26,15 +26,23 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ai-dynamo/grove/operator/api/common/constants"
+	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 const (
 	// TerminationDelay is a mirror of the value in the workload YAMLs.
 	TerminationDelay = 10 * time.Second
+)
+
+var (
+	// pclqGVR is the GroupVersionResource for PodClique resources
+	pclqGVR = schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliques"}
 )
 
 // Test_GT1_GangTerminationFullReplicasPCSOwned tests gang-termination behavior when a PCS-owned PodClique is breached
@@ -555,27 +563,35 @@ func Test_GT5_GangTerminationPCSGMinAvailableBreach(t *testing.T) {
 	// Verify pods are distributed across distinct nodes
 	listPodsAndAssertDistinctNodes(tc)
 
-	logger.Info("4. Delete all 3 pods from sg-x-0-pc-c (breach sg-x-0)")
+	logger.Info("4. Cordon ALL nodes hosting workload pods to prevent replacement pods from scheduling")
 	pods, err = listPods(tc)
 	if err != nil {
 		t.Fatalf("Failed to list workload pods: %v", err)
 	}
 
-	// Delete all 3 pods from sg-x-0-pc-c
-	deletedPodsSgx0 := deleteAllPodsFromPodClique(tc, pods, "workload2-0-sg-x-0-pc-c")
+	// Cordon all nodes hosting workload pods BEFORE deleting any pods.
+	// This is critical for FLIP detection: if replacement pods become Ready before
+	// the status reconcile detects the FLIP (oldReadyReplicas >= minAvailable -> newReadyReplicas < minAvailable),
+	// the breach won't be recorded because newReadyReplicas would still satisfy minAvailable.
+	cordonedNodes := cordonAllWorkloadPodNodes(tc, pods)
+	logger.Infof("Cordoned %d nodes hosting workload pods", len(cordonedNodes))
+
+	logger.Info("5. Delete all 3 pods from sg-x-0-pc-c (breach sg-x-0)")
+	// Delete all 3 pods from sg-x-0-pc-c (nodes already cordoned, so just delete)
+	deletedPodsSgx0 := deletePodsFromPodCliqueWithoutCordon(tc, pods, "workload2-0-sg-x-0-pc-c")
 	if len(deletedPodsSgx0) != 3 {
 		t.Fatalf("Expected to delete 3 pods from sg-x-0-pc-c, but deleted %d", len(deletedPodsSgx0))
 	}
 
-	logger.Info("5. Immediately delete all 3 pods from sg-x-1-pc-c (breach sg-x-1)")
+	logger.Info("6. Immediately delete all 3 pods from sg-x-1-pc-c (breach sg-x-1)")
 	// Refresh pod list
 	pods, err = listPods(tc)
 	if err != nil {
 		t.Fatalf("Failed to list workload pods: %v", err)
 	}
 
-	// Delete all 3 pods from sg-x-1-pc-c
-	deletedPodsSgx1 := deleteAllPodsFromPodClique(tc, pods, "workload2-0-sg-x-1-pc-c")
+	// Delete all 3 pods from sg-x-1-pc-c (nodes already cordoned, so just delete)
+	deletedPodsSgx1 := deletePodsFromPodCliqueWithoutCordon(tc, pods, "workload2-0-sg-x-1-pc-c")
 	if len(deletedPodsSgx1) != 3 {
 		t.Fatalf("Expected to delete 3 pods from sg-x-1-pc-c, but deleted %d", len(deletedPodsSgx1))
 	}
@@ -588,10 +604,10 @@ func Test_GT5_GangTerminationPCSGMinAvailableBreach(t *testing.T) {
 	}
 	originalPodUIDs := capturePodUIDs(pods)
 
-	logger.Infof("6. Wait for TerminationDelay (%v) seconds", TerminationDelay)
+	logger.Infof("7. Wait for TerminationDelay (%v) seconds", TerminationDelay)
 	time.Sleep(TerminationDelay)
 
-	logger.Info("7. Verify that ALL pods in the workload get gang-terminated and recreated (including pc-a)")
+	logger.Info("8. Verify that ALL pods in the workload get gang-terminated and recreated (including pc-a)")
 	// With both PCSG replicas breached, PCSG minAvailable (0 < 1) is violated
 	// This should trigger PCS-level gang termination, which terminates ALL pods including pc-a
 	verifyGangTermination(tc, totalPods, originalPodUIDs)
@@ -704,6 +720,55 @@ func deleteAllPodsFromPodClique(tc TestContext, pods *v1.PodList, podCliqueName 
 				}
 
 				// Delete the pod
+				logger.Debugf("Deleting pod %s from node %s (podclique: %s)", pod.Name, pod.Spec.NodeName, podCliqueName)
+				if err := tc.Clientset.CoreV1().Pods(tc.Namespace).Delete(tc.Ctx, pod.Name, metav1.DeleteOptions{}); err != nil {
+					tc.T.Fatalf("Failed to delete pod %s: %v", pod.Name, err)
+				}
+				deletedPods = append(deletedPods, pod.Name)
+			}
+		}
+	}
+
+	if len(deletedPods) == 0 {
+		tc.T.Fatalf("Failed to find any ready pods from podclique %s", podCliqueName)
+	}
+
+	return deletedPods
+}
+
+// cordonAllWorkloadPodNodes cordons all nodes that are hosting workload pods.
+// This is used to prevent replacement pods from becoming ready during gang termination tests,
+// which is critical for reliable FLIP detection.
+func cordonAllWorkloadPodNodes(tc TestContext, pods *v1.PodList) []string {
+	cordonedNodes := make(map[string]bool)
+	var nodeNames []string
+
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		nodeName := pod.Spec.NodeName
+		if nodeName != "" && !cordonedNodes[nodeName] {
+			if err := cordonNode(tc, nodeName); err != nil {
+				tc.T.Fatalf("Failed to cordon node %s: %v", nodeName, err)
+			}
+			cordonedNodes[nodeName] = true
+			nodeNames = append(nodeNames, nodeName)
+		}
+	}
+
+	return nodeNames
+}
+
+// deletePodsFromPodCliqueWithoutCordon deletes all ready pods from the specified podclique
+// without cordoning nodes (assumes nodes are already cordoned).
+// This is used when nodes have been pre-cordoned to ensure FLIP detection works reliably.
+func deletePodsFromPodCliqueWithoutCordon(tc TestContext, pods *v1.PodList, podCliqueName string) []string {
+	var deletedPods []string
+
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if podCliqueLabel, exists := pod.Labels["grove.io/podclique"]; exists && podCliqueLabel == podCliqueName {
+			if pod.Status.Phase == v1.PodRunning && k8sutils.IsPodReady(pod) {
+				// Delete the pod (node already cordoned)
 				logger.Debugf("Deleting pod %s from node %s (podclique: %s)", pod.Name, pod.Spec.NodeName, podCliqueName)
 				if err := tc.Clientset.CoreV1().Pods(tc.Namespace).Delete(tc.Ctx, pod.Name, metav1.DeleteOptions{}); err != nil {
 					tc.T.Fatalf("Failed to delete pod %s: %v", pod.Name, err)
@@ -867,6 +932,68 @@ func verifyGangTermination(tc TestContext, expectedPods int, originalPodUIDs map
 	}
 }
 
+// verifyGangTerminationOccurred verifies that gang termination occurred by checking
+// that all original pods were deleted. Unlike verifyGangTermination, this does NOT
+// require that new pods are fully recreated - it only checks that the old pods are gone.
+// This is useful for tests where recreation may be blocked (e.g., cordoned nodes) but
+// the key assertion is that gang termination was triggered.
+func verifyGangTerminationOccurred(tc TestContext, originalPodUIDs map[string]string) {
+	tc.T.Helper()
+
+	pollCount := 0
+	err := pollForCondition(tc, func() (bool, error) {
+		pollCount++
+		pods, err := tc.Clientset.CoreV1().Pods(tc.Namespace).List(tc.Ctx, metav1.ListOptions{
+			LabelSelector: tc.getLabelSelector(),
+		})
+		if err != nil {
+			return false, err
+		}
+
+		// Check if any original pod UIDs still exist
+		currentUIDs := make(map[string]bool)
+		for _, pod := range pods.Items {
+			currentUIDs[string(pod.UID)] = true
+		}
+
+		oldPodsRemaining := 0
+		for _, originalUID := range originalPodUIDs {
+			if currentUIDs[originalUID] {
+				oldPodsRemaining++
+			}
+		}
+
+		// Success: all original pods are gone (gang termination occurred)
+		success := oldPodsRemaining == 0
+		status := "OK"
+		if !success {
+			status = "WAITING"
+		}
+		logger.Debugf("%s [Poll %d] total_pods=%d, old_pods_remaining=%d/%d",
+			status, pollCount, len(pods.Items), oldPodsRemaining, len(originalPodUIDs))
+
+		return success, nil
+	})
+
+	if err != nil {
+		// Add detailed diagnostics on failure
+		pods, listErr := utils.ListPods(tc.Ctx, tc.Clientset, tc.Namespace, tc.getLabelSelector())
+		if listErr == nil {
+			oldUIDs := 0
+			for _, pod := range pods.Items {
+				if _, exists := originalPodUIDs[pod.Name]; exists && originalPodUIDs[pod.Name] == string(pod.UID) {
+					oldUIDs++
+					logger.Debugf("  OLD Pod %s: phase=%s, uid=%s", pod.Name, pod.Status.Phase, pod.UID)
+				}
+			}
+			logger.Errorf("Gang termination verification failed. Old pods remaining: %d/%d", oldUIDs, len(originalPodUIDs))
+		}
+		tc.T.Fatalf("Failed to verify gang-termination occurred: %v", err)
+	}
+
+	logger.Info("Gang termination verified: all original pods were deleted")
+}
+
 // verifyPCSGReplicaGangTermination verifies that only the specified PCSG replica's pods were gang-terminated
 // while other pods in the workload remained unchanged. This tests PCSG-level gang termination where only
 // a single PCSG replica is breached but the PCSG's overall minAvailable is still satisfied.
@@ -992,4 +1119,342 @@ func verifyPCSGReplicaGangTermination(tc TestContext, expectedTotalPods int, ter
 		}
 		tc.T.Fatalf("Failed to verify PCSG replica gang-termination: %v", err)
 	}
+}
+
+// Test_GT6_NeverHealthyNoGangTermination tests that workloads that never became healthy
+// do NOT trigger gang termination. This validates the FLIP detection logic:
+// MinAvailableBreached should only be True when transitioning from available to unavailable.
+//
+// Scenario GT-6:
+// 1. Initialize a 2-node Grove cluster
+// 2. Deploy workload WL3 (init container always fails - pods never become Ready)
+// 3. Wait for pods to be created and scheduled
+// 4. Wait for TerminationDelay + buffer
+// 5. Verify MinAvailableBreached condition is False with reason NeverAvailable
+// 6. Verify no gang termination occurred (same pods remain)
+func Test_GT6_NeverHealthyNoGangTermination(t *testing.T) {
+	ctx := context.Background()
+
+	logger.Info("1. Initialize a 2-node Grove cluster")
+	totalPods := 2 // pc-a: 2 replicas
+	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, totalPods)
+	defer cleanup()
+
+	logger.Info("2. Deploy workload WL3 (init container always fails - pods never become Ready)")
+	tc := TestContext{
+		T:             t,
+		Ctx:           ctx,
+		Clientset:     clientset,
+		RestConfig:    restConfig,
+		DynamicClient: dynamicClient,
+		Namespace:     "default",
+		Timeout:       defaultPollTimeout,
+		Interval:      defaultPollInterval,
+		Workload: &WorkloadConfig{
+			Name:         "workload3",
+			YAMLPath:     "../yaml/workload3-gt.yaml",
+			Namespace:    "default",
+			ExpectedPods: totalPods,
+		},
+	}
+
+	// Deploy workload but don't wait for pods to be ready (they never will be)
+	_, err := applyYAMLFile(tc, tc.Workload.YAMLPath)
+	if err != nil {
+		t.Fatalf("Failed to apply workload YAML: %v", err)
+	}
+
+	logger.Info("3. Wait for pods to be created and scheduled")
+	// Wait for pods to be created (they'll be scheduled but init container will fail)
+	_, err = waitForPodCount(tc, totalPods)
+	if err != nil {
+		t.Fatalf("Failed to wait for pods to be created: %v", err)
+	}
+
+	// Wait a bit for pods to be scheduled and init container to fail
+	logger.Info("3b. Wait for pods to be scheduled and init container to fail multiple times")
+	time.Sleep(15 * time.Second)
+
+	// Capture pod UIDs for later verification
+	pods, err := listPods(tc)
+	if err != nil {
+		t.Fatalf("Failed to list pods: %v", err)
+	}
+	originalPodUIDs := capturePodUIDs(pods)
+
+	logger.Infof("4. Wait for TerminationDelay (%v) + buffer to ensure gang termination would have triggered if breached", TerminationDelay)
+	time.Sleep(TerminationDelay + 5*time.Second)
+
+	logger.Info("5. Verify MinAvailableBreached condition is False with reason NeverAvailable")
+	// Get the PodClique and check its condition
+	pclqName := "workload3-0-pc-a" // PCS name + replica index + clique name
+	verifyMinAvailableBreachedCondition(tc, pclqName, metav1.ConditionFalse, constants.ConditionReasonNeverAvailable)
+
+	logger.Info("6. Verify no gang termination occurred (same pods remain)")
+	// Verify that the same pods still exist (no gang termination)
+	verifyNoGangTermination(tc, totalPods, originalPodUIDs)
+
+	logger.Info("Never-healthy workload test (GT-6) completed successfully!")
+}
+
+// Test_GT7_OperatorRestartPreservesBreach tests that gang termination proceeds correctly
+// after an operator restart. This validates that the persisted MinAvailableBreached=True
+// condition is respected after restart.
+//
+// Scenario GT-7:
+// 1. Initialize a 10-node Grove cluster
+// 2. Deploy workload WL1, wait for pods to become ready
+// 3. Cordon node and delete a pod to breach minAvailable
+// 4. Verify MinAvailableBreached=True condition is set
+// 5. Restart operator (before termination delay expires)
+// 6. Wait for TerminationDelay
+// 7. Verify gang termination occurred (breach was respected after restart)
+func Test_GT7_OperatorRestartPreservesBreach(t *testing.T) {
+	ctx := context.Background()
+
+	logger.Info("1. Initialize a 10-node Grove cluster")
+	totalPods := 10 // pc-a: 2 replicas, pc-b: 1*2 (scaling group), pc-c: 3*2 (scaling group) = 2+2+6=10
+	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, totalPods)
+	defer cleanup()
+
+	logger.Info("2. Deploy workload WL1, wait for pods to become ready")
+	tc := TestContext{
+		T:             t,
+		Ctx:           ctx,
+		Clientset:     clientset,
+		RestConfig:    restConfig,
+		DynamicClient: dynamicClient,
+		Namespace:     "default",
+		Timeout:       defaultPollTimeout,
+		Interval:      defaultPollInterval,
+		Workload: &WorkloadConfig{
+			Name:         "workload1",
+			YAMLPath:     "../yaml/workload1-gt.yaml",
+			Namespace:    "default",
+			ExpectedPods: totalPods,
+		},
+	}
+
+	pods, err := deployAndVerifyWorkload(tc)
+	if err != nil {
+		t.Fatalf("Failed to deploy workload: %v", err)
+	}
+
+	if err := waitForReadyPods(tc, totalPods); err != nil {
+		t.Fatalf("Failed to wait for pods to be ready: %v", err)
+	}
+
+	// Verify pods are distributed across distinct nodes
+	listPodsAndAssertDistinctNodes(tc)
+
+	logger.Info("3. Cordon node and delete a pod to breach minAvailable")
+	// Refresh pods list
+	pods, err = listPods(tc)
+	if err != nil {
+		t.Fatalf("Failed to refresh pod list: %v", err)
+	}
+
+	// Find and delete a pod from workload1-0-pc-a (PCS-owned, minAvailable=2)
+	targetPod := findReadyPodFromPodClique(pods, "workload1-0-pc-a")
+	if targetPod == nil {
+		t.Fatalf("Failed to find a ready pod from PCS-owned podclique workload1-0-pc-a")
+	}
+
+	// Cordon the node
+	if err := cordonNode(tc, targetPod.Spec.NodeName); err != nil {
+		t.Fatalf("Failed to cordon node %s: %v", targetPod.Spec.NodeName, err)
+	}
+
+	// Capture pod UIDs before gang termination
+	originalPodUIDs := capturePodUIDs(pods)
+
+	// Delete the target pod
+	logger.Debugf("Deleting pod %s from node %s", targetPod.Name, targetPod.Spec.NodeName)
+	if err := tc.Clientset.CoreV1().Pods(tc.Namespace).Delete(tc.Ctx, targetPod.Name, metav1.DeleteOptions{}); err != nil {
+		t.Fatalf("Failed to delete pod %s: %v", targetPod.Name, err)
+	}
+
+	logger.Info("4. Wait briefly for MinAvailableBreached=True to be set")
+	time.Sleep(3 * time.Second)
+
+	// Verify the breach condition is set
+	pclqName := "workload1-0-pc-a"
+	verifyMinAvailableBreachedCondition(tc, pclqName, metav1.ConditionTrue, constants.ConditionReasonInsufficientReadyPods)
+
+	logger.Info("5. Restart operator (before termination delay expires)")
+	if err := restartOperator(tc); err != nil {
+		t.Fatalf("Failed to restart operator: %v", err)
+	}
+
+	// Wait for operator to be ready again
+	if err := waitForOperatorReady(tc); err != nil {
+		t.Fatalf("Failed to wait for operator to be ready: %v", err)
+	}
+
+	logger.Infof("6. Wait for remaining TerminationDelay (%v)", TerminationDelay)
+	// We already spent ~3s + operator restart time, but wait for the full delay to be safe
+	time.Sleep(TerminationDelay)
+
+	logger.Info("7. Verify gang termination occurred (breach was respected after restart)")
+	// Only verify that old pods were deleted (gang termination occurred).
+	// We don't verify full recreation because a node is still cordoned,
+	// preventing all pods from being scheduled. The key test assertion is
+	// that the persisted MinAvailableBreached=True was respected after restart.
+	verifyGangTerminationOccurred(tc, originalPodUIDs)
+
+	logger.Info("Operator restart preserves breach test (GT-7) completed successfully!")
+}
+
+// verifyMinAvailableBreachedCondition verifies that the MinAvailableBreached condition
+// on a PodClique has the expected status and reason.
+func verifyMinAvailableBreachedCondition(tc TestContext, pclqName string, expectedStatus metav1.ConditionStatus, expectedReason string) {
+	tc.T.Helper()
+
+	err := pollForCondition(tc, func() (bool, error) {
+		pclq, err := tc.DynamicClient.Resource(pclqGVR).Namespace(tc.Namespace).Get(tc.Ctx, pclqName, metav1.GetOptions{})
+		if err != nil {
+			return false, fmt.Errorf("failed to get PodClique %s: %w", pclqName, err)
+		}
+
+		// Extract conditions from the status
+		status, found, err := unstructuredNestedMap(pclq.Object, "status")
+		if err != nil || !found {
+			logger.Debugf("PodClique %s has no status yet", pclqName)
+			return false, nil
+		}
+
+		conditions, found, err := unstructuredNestedSlice(status, "conditions")
+		if err != nil || !found {
+			logger.Debugf("PodClique %s has no conditions yet", pclqName)
+			return false, nil
+		}
+
+		// Find MinAvailableBreached condition
+		for _, cond := range conditions {
+			condMap, ok := cond.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			condType, _ := condMap["type"].(string)
+			if condType != constants.ConditionTypeMinAvailableBreached {
+				continue
+			}
+
+			condStatus, _ := condMap["status"].(string)
+			condReason, _ := condMap["reason"].(string)
+
+			logger.Debugf("PodClique %s MinAvailableBreached: status=%s, reason=%s (expected: status=%s, reason=%s)",
+				pclqName, condStatus, condReason, expectedStatus, expectedReason)
+
+			if condStatus == string(expectedStatus) && condReason == expectedReason {
+				return true, nil
+			}
+			return false, nil
+		}
+
+		logger.Debugf("PodClique %s does not have MinAvailableBreached condition yet", pclqName)
+		return false, nil
+	})
+
+	if err != nil {
+		tc.T.Fatalf("Failed to verify MinAvailableBreached condition on %s: %v", pclqName, err)
+	}
+}
+
+// unstructuredNestedMap extracts a nested map from an unstructured object
+func unstructuredNestedMap(obj map[string]interface{}, fields ...string) (map[string]interface{}, bool, error) {
+	var current interface{} = obj
+	for _, field := range fields {
+		m, ok := current.(map[string]interface{})
+		if !ok {
+			return nil, false, nil
+		}
+		current, ok = m[field]
+		if !ok {
+			return nil, false, nil
+		}
+	}
+	result, ok := current.(map[string]interface{})
+	return result, ok, nil
+}
+
+// unstructuredNestedSlice extracts a nested slice from a map
+func unstructuredNestedSlice(obj map[string]interface{}, fields ...string) ([]interface{}, bool, error) {
+	var current interface{} = obj
+	for _, field := range fields {
+		m, ok := current.(map[string]interface{})
+		if !ok {
+			return nil, false, nil
+		}
+		current, ok = m[field]
+		if !ok {
+			return nil, false, nil
+		}
+	}
+	result, ok := current.([]interface{})
+	return result, ok, nil
+}
+
+// restartOperator restarts the Grove operator by deleting its pod.
+// The deployment will automatically recreate the pod.
+func restartOperator(tc TestContext) error {
+	// List pods in the operator namespace
+	pods, err := tc.Clientset.CoreV1().Pods(setup.OperatorNamespace).List(tc.Ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to list pods in namespace %s: %w", setup.OperatorNamespace, err)
+	}
+
+	// Find and delete operator pods
+	deletedCount := 0
+	for _, pod := range pods.Items {
+		if strings.HasPrefix(pod.Name, setup.OperatorDeploymentName) {
+			logger.Debugf("Deleting operator pod %s to trigger restart", pod.Name)
+			if err := tc.Clientset.CoreV1().Pods(setup.OperatorNamespace).Delete(tc.Ctx, pod.Name, metav1.DeleteOptions{}); err != nil {
+				return fmt.Errorf("failed to delete operator pod %s: %w", pod.Name, err)
+			}
+			deletedCount++
+		}
+	}
+
+	if deletedCount == 0 {
+		return fmt.Errorf("no operator pods found with prefix %s in namespace %s", setup.OperatorDeploymentName, setup.OperatorNamespace)
+	}
+
+	logger.Debugf("Deleted %d operator pod(s)", deletedCount)
+	return nil
+}
+
+// waitForOperatorReady waits for the Grove operator to be ready after a restart.
+func waitForOperatorReady(tc TestContext) error {
+	return pollForCondition(tc, func() (bool, error) {
+		pods, err := tc.Clientset.CoreV1().Pods(setup.OperatorNamespace).List(tc.Ctx, metav1.ListOptions{})
+		if err != nil {
+			return false, err
+		}
+
+		for _, pod := range pods.Items {
+			if strings.HasPrefix(pod.Name, setup.OperatorDeploymentName) {
+				// Check if pod is Running and Ready
+				if pod.Status.Phase != v1.PodRunning {
+					logger.Debugf("Operator pod %s is not running yet: %s", pod.Name, pod.Status.Phase)
+					return false, nil
+				}
+
+				// Check Ready condition
+				for _, cond := range pod.Status.Conditions {
+					if cond.Type == v1.PodReady && cond.Status == v1.ConditionTrue {
+						logger.Debugf("Operator pod %s is ready", pod.Name)
+						return true, nil
+					}
+				}
+
+				logger.Debugf("Operator pod %s is running but not ready yet", pod.Name)
+				return false, nil
+			}
+		}
+
+		logger.Debugf("No operator pod found yet, waiting for deployment to recreate it")
+		return false, nil
+	})
 }
