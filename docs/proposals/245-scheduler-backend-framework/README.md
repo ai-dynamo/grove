@@ -377,13 +377,13 @@ The KAI scheduler backend serves as the reference implementation:
 ```go
 // Name returns the backend name.
 func (b *Backend) Name() string {
-	return BackendName
+    return BackendName
 }
 
 // Init initializes the KAI backend.
 // For KAI backend, no special initialization is needed currently.
 func (b *Backend) Init() error {
-	return nil
+    return nil
 }
 
 // SyncPodGang converts PodGang to KAI PodGroup and synchronizes it.
@@ -391,37 +391,37 @@ func (b *Backend) Init() error {
 // Phase 1: KAI scheduler still reads PodGang directly (existing behavior).
 // Phase 2: Will convert PodGang to PodGroup (scheduling.run.ai/v2alpha2) for cleaner separation.
 func (b *Backend) SyncPodGang(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
-	// Phase 1: Skip PodGroup creation/update
-	// Phase 2: Will convert PodGang to PodGroup and synchronize
-	return nil
+    // Phase 1: Skip PodGroup creation/update
+    // Phase 2: Will convert PodGang to PodGroup and synchronize
+    return nil
 }
 
 // OnPodGangDelete removes the PodGroup owned by this PodGang.
 // TODO: Currently disabled - will be implemented in phase 2.
 func (b *Backend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
-	// Phase 1: Skip PodGroup deletion
-	// Phase 2: Will delete PodGroup when PodGang is deleted
-	return nil
+    // Phase 1: Skip PodGroup deletion
+    // Phase 2: Will delete PodGroup when PodGang is deleted
+    return nil
 }
 
 // PreparePod adds KAI scheduler-specific configuration to the Pod.
 // This includes: schedulerName and annotations for observability.
 func (b *Backend) PreparePod(pod *corev1.Pod) {
-	// Set scheduler name from configuration
-	pod.Spec.SchedulerName = b.schedulerName
+    // Set scheduler name from configuration
+    pod.Spec.SchedulerName = b.schedulerName
 
-	// Add annotations for observability
-	if pod.Annotations == nil {
-		pod.Annotations = make(map[string]string)
-	}
+    // Add annotations for observability
+    if pod.Annotations == nil {
+        pod.Annotations = make(map[string]string)
+    }
 
-	// Get PodGang and PodClique names from labels
-	if podGangName, ok := pod.Labels[common.LabelPodGang]; ok {
-		pod.Annotations["kai.scheduler/podgang"] = podGangName
-	}
-	if podCliqueName, ok := pod.Labels[common.LabelPodClique]; ok {
-		pod.Annotations["kai.scheduler/podgroup"] = podCliqueName
-	}
+    // Get PodGang and PodClique names from labels
+    if podGangName, ok := pod.Labels[common.LabelPodGang]; ok {
+        pod.Annotations["kai.scheduler/podgang"] = podGangName
+    }
+    if podCliqueName, ok := pod.Labels[common.LabelPodClique]; ok {
+        pod.Annotations["kai.scheduler/podgroup"] = podCliqueName
+    }
 }
 ```
 
