@@ -48,10 +48,11 @@ config:
     resourceName: grove-operator-leader-election
   server:
     webhooks:
+      # NOTE to mantainers: If you change this default value, also update DefaultWebhookPort in operator/e2e/setup/constants.go
       port: 9443
       # serverCertDir is the directory path where certificate files are located.
       # The operator will look for tls.crt and tls.key in this directory.
-      # Default: /etc/grove-operator/webhook-certs
+      # NOTE to maintainers: If you change this, also update DefaultWebhookServerCertDir in operator/e2e/setup/constants.go
       serverCertDir: /etc/grove-operator/webhook-certs
       # secretName is the name of the Kubernetes Secret containing webhook certificates.
       # The Secret must contain tls.crt, tls.key, and ca.crt.

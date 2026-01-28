@@ -80,6 +80,9 @@ type helmWebhookAnnotations struct {
 }
 
 // toHelmValues converts GroveConfig to a Helm values map.
+// Note: We must include all required fields for webhooks (port, serverCertDir) because
+// Helm's merge behavior replaces entire nested objects rather than deep-merging.
+// Without these, the port would be set to 0, causing Service validation errors.
 func (c *GroveConfig) toHelmValues() (map[string]interface{}, error) {
 	anns := helmWebhookAnnotations{Annotations: c.Webhooks.Annotations}
 	hv := helmValues{
@@ -87,6 +90,10 @@ func (c *GroveConfig) toHelmValues() (map[string]interface{}, error) {
 		Config: helmConfigValues{
 			Server: configv1alpha1.ServerConfiguration{
 				Webhooks: configv1alpha1.WebhookServer{
+					Server: configv1alpha1.Server{
+						Port: DefaultWebhookPort,
+					},
+					ServerCertDir:     DefaultWebhookServerCertDir,
 					CertProvisionMode: c.Webhooks.CertProvisionMode,
 					SecretName:        c.Webhooks.SecretName,
 				},

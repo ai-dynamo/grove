@@ -24,4 +24,12 @@ const (
 	// OperatorDeploymentName is the name of the operator deployment (also the Helm release name).
 	// This is used to find operator pods for log collection during test failures.
 	OperatorDeploymentName = "grove-operator"
+
+	// DefaultWebhookPort is the default port for the webhook server.
+	// NOTE: If you change this, also update config.server.webhooks.port in operator/charts/values.yaml
+	DefaultWebhookPort = 9443
+
+	// DefaultWebhookServerCertDir is the default directory for webhook certificates.
+	// NOTE: If you change this, also update config.server.webhooks.serverCertDir in operator/charts/values.yaml
+	DefaultWebhookServerCertDir = "/etc/grove-operator/webhook-certs"
 )
