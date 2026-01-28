@@ -1,4 +1,4 @@
-# GREP-245: Scheduler Backend Framework
+# GREP-375: Scheduler Backend Framework
 
 <!-- toc -->
 - [Summary](#summary)
@@ -44,11 +44,9 @@
     - [Alpha](#alpha)
     - [Beta](#beta)
     - [GA](#ga)
-    - [Future Enhancements (Post-GA)](#future-enhancements-post-ga)
 - [Implementation History](#implementation-history)
 - [Alternatives](#alternatives)
   - [Alternative 1: Direct Scheduler Integration (Status Quo)](#alternative-1-direct-scheduler-integration-status-quo)
-  - [Selected Approach: Interface-Based Backend Framework](#selected-approach-interface-based-backend-framework)
   - [Glossary](#glossary)
 <!-- /toc -->
 
@@ -628,7 +626,7 @@ Condition States:
 
 #### Unit Tests
 
-Unit tests will be implemented for all framework components:
+Unit tests will be implemented for all framework related components:
 
 **Backend Interface and Registry** (`operator/internal/controller/backend/`)
 - Test backend registration (success, duplicate registration)
@@ -656,30 +654,7 @@ Unit tests will be implemented for all framework components:
 
 #### E2E Tests
 
-All existing e2e tests should be passed and should add extra tests below:
-
-1. **Backend Initialization**
-   - Verify operator starts with KAI backend configured
-   - Verify backend initialization is called
-   - Verify backend-specific resources are created
-   - Verify operator fails to start with invalid backend configuration
-
-2. **Backend Failure Handling**
-   - Test operator behavior when backend hooks return errors
-   - Verify appropriate events and status conditions
-
-3. **KAI Scheduler Integration**
-   - Deploy Grove with KAI backend
-   - Deploy KAI scheduler
-   - Create PodCliqueSet with gang scheduling requirements
-   - Verify pods are gang-scheduled by KAI
-   - Verify topology constraints are honored (if TAS is enabled)
-
-4. **Failure and Recovery**
-   - Test scheduler failure and recovery
-   - Test operator restart with existing PodCliqueSets
-   - Test pod failure within a gang
-   - Test node failure and rescheduling
+All existing e2e tests should be passed based on all supported schedulers.
 
 
 ### Graduation Criteria
@@ -687,46 +662,17 @@ All existing e2e tests should be passed and should add extra tests below:
 The Scheduler Backend Framework will follow a staged rollout approach:
 
 #### Alpha
-
-**Goals:**
 - Core backend interface defined and implemented
 - Backend registry functional
 - KAI backend fully implemented as reference
 - Basic operator configuration support
-- Unit tests achieving ≥80% coverage
-- E2E tests with KAI scheduler
-
-**Success Criteria:**
-- KAI backend works with existing functionality (no regressions)
-- Operator can be configured with backend selection
-- Backend hooks are called correctly during PodGang lifecycle
-- Documentation covers backend interface and KAI implementation
-
-**Known Limitations:**
-- No support for backend switching without operator restart
-- Backend API may still evolve
 
 #### Beta 
-
-**Goals:**
 - Backend interface stabilized (no breaking changes expected)
-- Comprehensive metrics and monitoring
 - Documentation for third-party backend development
 - At least one additional backend implemented (e.g., default scheduler support)
 
-**Success Criteria:**
-- No critical bugs reported in alpha
-- Metrics provide sufficient observability into backend operations
-- Third-party developers can implement backends using documentation
-- Performance benchmarks show no degradation compared to pre-framework implementation
-
-**Known Limitations:**
-- Runtime backend switching not supported
-- Limited support for custom scheduler features beyond gang scheduling
-
 #### GA
-
-**Goals:**
 - Backend interface is stable and versioned
 - Multiple production deployments using the framework
 - Comprehensive documentation and examples
@@ -734,32 +680,8 @@ The Scheduler Backend Framework will follow a staged rollout approach:
 - Performance optimizations complete
 - Support for at least 2-3 different scheduler backends
 
-**Success Criteria:**
-- Framework has been used in production for at least 2 releases
-- No major bugs or design flaws identified
-- Backend API is backward compatible within v1
-- Clear migration path from pre-framework Grove versions
-- Community adoption and positive feedback
-
-
-#### Future Enhancements (Post-GA)
-
-- Dynamic backend loading (plugin system)
-- Runtime backend switching for new workloads
-- Multi-backend support per cluster
-- Advanced backend capabilities (custom metrics, health checks, etc.)
-- Backend versioning and compatibility matrix
-
 ## Implementation History
-
-Major milestones in the lifecycle of this GREP:
-
 - **2026-01-27**: Initial GREP proposal created and submitted for review
-- **TBD**: GREP proposal accepted and merged
-- **TBD**: Implementation started (Alpha phase)
-- **TBD**: Alpha release 
-- **TBD**: Beta release 
-- **TBD**: GA release 
 
 ## Alternatives
 
@@ -778,15 +700,6 @@ Major milestones in the lifecycle of this GREP:
 - Difficult for third-party schedulers to integrate
 - Code becomes increasingly complex with each scheduler addition
 - **Rejected**: Does not scale as Grove adoption grows across different scheduler ecosystems
-
-### Selected Approach: Interface-Based Backend Framework
-
-The selected approach (described in this GREP) provides the best balance of:
-- **Extensibility**: Easy to add new backends
-- **Maintainability**: Clean separation of concerns
-- **User Experience**: Consistent API across schedulers
-- **Simplicity**: Straightforward implementation without over-engineering
-- **Evolution Path**: Can evolve toward more advanced architectures (dynamic loading) in the future
 
 
 ### Glossary
