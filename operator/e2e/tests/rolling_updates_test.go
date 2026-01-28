@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	"k8s.io/apimachinery/pkg/watch"
 )
 
@@ -48,10 +49,8 @@ func Test_RU7_RollingUpdatePCSPodClique(t *testing.T) {
 		t.Fatalf("Failed to update PodClique spec: %v", err)
 	}
 
-	// With MaxSurge rolling update strategy, each pod requires: create surge pod -> wait Ready -> delete old pod
-	// This takes longer than delete-first approach, so we use a longer timeout
 	tcLongTimeout := tc
-	tcLongTimeout.Timeout = 5 * time.Minute
+	tcLongTimeout.Timeout = 1 * time.Minute
 	if err := waitForRollingUpdateComplete(tcLongTimeout, 1); err != nil {
 		// Diagnostics will be collected automatically by cleanup on test failure
 		t.Fatalf("Failed to wait for rolling update to complete: %v", err)
@@ -224,15 +223,13 @@ func Test_RU10_RollingUpdateInsufficientResources(t *testing.T) {
 	}
 
 	logger.Info("5. Verify exactly one pod is deleted and a new Pending pod is created (delete-first strategy)")
-	time.Sleep(1 * time.Minute)
 
-	// Verify that exactly one existing pod was deleted (delete-first strategy)
-	var deletedExistingPods []string
-	var addedPods []string
-	pollErr := pollForCondition(tc, func() (bool, error) {
+	// Poll until we see exactly 1 pod deleted and 1 new pod created, verifying delete-first behavior
+	pollErr := utils.PollForCondition(ctx, 2*time.Minute, 2*time.Second, func() (bool, error) {
 		events := tracker.getEvents()
-		deletedExistingPods = nil
-		addedPods = nil
+		var deletedExistingPods []string
+		var addedPods []string
+
 		for _, event := range events {
 			switch event.Type {
 			case watch.Deleted:
@@ -270,18 +267,6 @@ func Test_RU10_RollingUpdateInsufficientResources(t *testing.T) {
 
 	if pollErr != nil {
 		t.Fatalf("Failed to verify delete-first strategy: %v", pollErr)
-	}
-
-	// Delete-first strategy: exactly 1 pod should be deleted
-	if len(deletedExistingPods) != 1 {
-		t.Fatalf("Expected exactly 1 pod to be deleted (delete-first strategy), but got %d: %v",
-			len(deletedExistingPods), deletedExistingPods)
-	}
-
-	// A new pod should be created (but will be Pending since nodes are cordoned)
-	if len(addedPods) != 1 {
-		t.Fatalf("Expected exactly 1 new pod to be created, but got %d: %v",
-			len(addedPods), addedPods)
 	}
 
 	logger.Info("6. Uncordon the nodes, and verify the rolling update completes")
