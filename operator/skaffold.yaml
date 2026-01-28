@@ -35,6 +35,7 @@ build:
           - -v
         main: ./initc/cmd
 deploy:
+  statusCheckDeadlineSeconds: 300
   helm: # see https://skaffold.dev/docs/deployers/helm/
     releases:
       - name: grove-operator
