@@ -19,12 +19,17 @@
 package tests
 
 import (
+	"errors"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
+	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -35,12 +40,21 @@ const (
 	// logBufferSize is the size of the buffer for reading logs from the operator (debugging purposes)
 	logBufferSize = 64 * 1024 // 64KB
 
-	// operatorLogLines is the number of log lines to capture from the operator.
-	// Set to 2000 to ensure we capture logs from before the failure occurred,
-	// not just the steady-state logs after the failure.
-	operatorLogLines = 2000
 	// eventLookbackDuration is how far back to look for events
 	eventLookbackDuration = 10 * time.Minute
+
+	// DiagnosticsModeEnvVar controls diagnostic output mode.
+	// Values: "stdout", "file", "both" (default: "file")
+	DiagnosticsModeEnvVar = "GROVE_E2E_DIAG_MODE"
+
+	// DiagnosticsDirEnvVar specifies the directory for diagnostic files.
+	// Used when mode is "file" or "both". Default: current directory (fallback to /tmp).
+	DiagnosticsDirEnvVar = "GROVE_E2E_DIAG_DIR"
+
+	// Diagnostics mode constants
+	DiagnosticsModeStdout = "stdout"
+	DiagnosticsModeFile   = "file"
+	DiagnosticsModeBoth   = "both"
 )
 
 // isPodReady checks if a pod is ready
@@ -68,30 +82,183 @@ var groveResourceTypes = []groveResourceType{
 	{"PodGangs", schema.GroupVersionResource{Group: "scheduler.grove.io", Version: "v1alpha1", Resource: "podgangs"}, "PODGANG"},
 }
 
+// nopCloser wraps an io.Writer to implement io.WriteCloser with a no-op Close.
+// Used for os.Stdout which we don't want to actually close.
+type nopCloser struct {
+	io.Writer
+}
+
+func (nopCloser) Close() error { return nil }
+
+// multiWriteCloser wraps multiple io.WriteCloser instances.
+// Write calls write to all; Close closes all.
+type multiWriteCloser struct {
+	writers []io.WriteCloser
+}
+
+func newMultiWriteCloser(writers ...io.WriteCloser) *multiWriteCloser {
+	return &multiWriteCloser{writers: writers}
+}
+
+func (m *multiWriteCloser) Write(p []byte) (n int, err error) {
+	for _, w := range m.writers {
+		n, err = w.Write(p)
+		if err != nil {
+			return n, err
+		}
+	}
+	return len(p), nil
+}
+
+func (m *multiWriteCloser) Close() error {
+	var errs []error
+	for _, w := range m.writers {
+		if err := w.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// createDiagnosticsOutput creates writer(s) for diagnostics output based on the provided mode.
+// Mode values:
+//   - "stdout": write to stdout only
+//   - "file": write to timestamped file only (default)
+//   - "both": write to both stdout and file
+//
+// The diagDir parameter specifies the directory for file output (empty string uses current dir, fallback to /tmp).
+// Returns the writer, filename (empty if stdout-only), and any error.
+func createDiagnosticsOutput(testName, mode, diagDir string) (io.WriteCloser, string, error) {
+	var writers []io.WriteCloser
+	var filename string
+
+	// Add stdout if mode is stdout or both
+	if mode == DiagnosticsModeStdout || mode == DiagnosticsModeBoth {
+		writers = append(writers, nopCloser{os.Stdout})
+	}
+
+	// Add file if mode is file or both
+	if mode == DiagnosticsModeFile || mode == DiagnosticsModeBoth {
+		file, name, err := createDiagnosticsFile(testName, diagDir)
+		if err != nil {
+			// If we can't create a file but stdout is available, continue with stdout only
+			if mode == DiagnosticsModeBoth {
+				logger.Infof("[DIAG] Warning: failed to create diagnostics file: %v (continuing with stdout only)", err)
+			} else {
+				return nil, "", err
+			}
+		} else {
+			filename = name
+			writers = append(writers, file)
+		}
+	}
+
+	if len(writers) == 0 {
+		return nil, "", fmt.Errorf("no valid diagnostics output configured (mode=%s)", mode)
+	}
+
+	return newMultiWriteCloser(writers...), filename, nil
+}
+
+// createDiagnosticsFile creates a timestamped diagnostics file.
+// The diagDir parameter specifies the directory for the file (empty string uses current dir, fallback to /tmp).
+func createDiagnosticsFile(testName, diagDir string) (*os.File, string, error) {
+	// Sanitize test name for use in filename (replace / with _)
+	sanitizedName := strings.ReplaceAll(testName, "/", "_")
+
+	// Create a timestamped file with test name
+	timestamp := time.Now().Format("2006-01-02_15-04-05")
+	baseFilename := fmt.Sprintf("e2e-diag-%s_%s.log", sanitizedName, timestamp)
+
+	// Use provided directory if specified
+	if diagDir != "" {
+		filename := filepath.Join(diagDir, baseFilename)
+		file, err := os.Create(filename)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to create diagnostics file in %s: %w", diagDir, err)
+		}
+		return file, filename, nil
+	}
+
+	// Try to create the file in the current directory
+	file, err := os.Create(baseFilename)
+	if err != nil {
+		// Fall back to a temp directory if we can't write to current dir
+		filename := filepath.Join(os.TempDir(), baseFilename)
+		file, err = os.Create(filename)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to create diagnostics file: %w", err)
+		}
+		return file, filename, nil
+	}
+
+	return file, baseFilename, nil
+}
+
 // CollectAllDiagnostics collects and prints all diagnostic information at INFO level.
 // This should be called when a test fails, before cleanup runs.
 // All output is at INFO level to ensure visibility regardless of log level settings.
+//
+// Output is controlled by tc.DiagMode (from GROVE_E2E_DIAG_MODE env var):
+//   - "stdout": print to stdout only
+//   - "file": write to timestamped file only (default)
+//   - "both": write to both stdout and file
 func CollectAllDiagnostics(tc TestContext) {
+	// Use diagnostics configuration from TestContext (set at test setup time)
+	mode := tc.DiagMode
+	if mode == "" {
+		mode = DiagnosticsModeFile // default fallback
+	}
+	diagDir := tc.DiagDir
+
+	// Get test name for the diagnostics file
+	testName := "unknown_test"
+	if tc.T != nil {
+		testName = tc.T.Name()
+	}
+
+	// Create diagnostics output
+	output, filename, err := createDiagnosticsOutput(testName, mode, diagDir)
+	if err != nil {
+		logger.Errorf("Failed to create diagnostics output, falling back to stdout: %v", err)
+		output = nopCloser{os.Stdout}
+	}
+	defer output.Close()
+
+	// Save reference to stdout logger, then shadow with diagnostics logger
+	stdoutLogger := logger
+	logger := utils.NewTestLoggerWithOutput(utils.InfoLevel, output)
+
+	// Log where diagnostics are being written (to main test output)
+	if filename != "" {
+		stdoutLogger.Infof("Writing diagnostics to file: %s", filename)
+	}
+
 	logger.Info("================================================================================")
 	logger.Info("=== COLLECTING FAILURE DIAGNOSTICS ===")
 	logger.Info("================================================================================")
 
 	// Collect each type of diagnostic, continuing even if one fails
-	dumpOperatorLogs(tc)
-	dumpGroveResources(tc)
-	dumpPodDetails(tc)
-	dumpRecentEvents(tc)
+	dumpOperatorLogs(tc, logger)
+	dumpGroveResources(tc, logger)
+	dumpPodDetails(tc, logger)
+	dumpRecentEvents(tc, logger)
 
 	logger.Info("================================================================================")
 	logger.Info("=== END OF FAILURE DIAGNOSTICS ===")
 	logger.Info("================================================================================")
+
+	// Log completion message (to main test output)
+	if filename != "" {
+		stdoutLogger.Infof("Diagnostics collection complete. Output written to: %s", filename)
+	}
 }
 
 // dumpOperatorLogs captures and prints operator logs at INFO level.
-// Captures the last operatorLogLines lines from all containers in the operator pod.
-func dumpOperatorLogs(tc TestContext) {
+// Captures all logs from all containers in the operator pod.
+func dumpOperatorLogs(tc TestContext, logger *utils.Logger) {
 	logger.Info("================================================================================")
-	logger.Infof("=== OPERATOR LOGS (last %d lines) ===", operatorLogLines)
+	logger.Info("=== OPERATOR LOGS (all) ===")
 	logger.Info("================================================================================")
 
 	// List pods in the operator namespace
@@ -141,10 +308,8 @@ func dumpOperatorLogs(tc TestContext) {
 		for _, container := range pod.Spec.Containers {
 			logger.Infof("--- Container: %s Logs ---", container.Name)
 
-			tailLines := int64(operatorLogLines)
 			req := tc.Clientset.CoreV1().Pods(setup.OperatorNamespace).GetLogs(pod.Name, &corev1.PodLogOptions{
 				Container: container.Name,
-				TailLines: &tailLines,
 			})
 
 			logStream, err := req.Stream(tc.Ctx)
@@ -181,7 +346,7 @@ func dumpOperatorLogs(tc TestContext) {
 }
 
 // dumpGroveResources dumps all Grove resources as YAML at INFO level.
-func dumpGroveResources(tc TestContext) {
+func dumpGroveResources(tc TestContext, logger *utils.Logger) {
 	logger.Info("================================================================================")
 	logger.Info("=== GROVE RESOURCES ===")
 	logger.Info("================================================================================")
@@ -227,7 +392,7 @@ func dumpGroveResources(tc TestContext) {
 // dumpPodDetails dumps detailed pod information at INFO level.
 // Lists ALL pods in the namespace (not filtered by workload label selector)
 // to ensure we capture all relevant pods during failure diagnostics.
-func dumpPodDetails(tc TestContext) {
+func dumpPodDetails(tc TestContext, logger *utils.Logger) {
 	logger.Info("================================================================================")
 	logger.Info("=== POD DETAILS ===")
 	logger.Info("================================================================================")
@@ -311,7 +476,7 @@ func dumpPodDetails(tc TestContext) {
 }
 
 // dumpRecentEvents dumps Kubernetes events from the last eventLookbackDuration at INFO level.
-func dumpRecentEvents(tc TestContext) {
+func dumpRecentEvents(tc TestContext, logger *utils.Logger) {
 	logger.Info("================================================================================")
 	logger.Infof("=== KUBERNETES EVENTS (last %v) ===", eventLookbackDuration)
 	logger.Info("================================================================================")
