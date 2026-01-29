@@ -80,7 +80,7 @@ func TestValidateCreate_MNNVL(t *testing.T) {
 			networkConfig := configv1alpha1.NetworkAcceleration{
 				AutoMNNVLEnabled: tt.autoMNNVLEnabled,
 			}
-			handler := NewHandler(mgr, getDefaultTASConfig(), networkConfig)
+			handler := NewHandler(mgr, getDefaultTASConfig(), networkConfig, "")
 
 			ctx := context.Background()
 			warnings, err := handler.ValidateCreate(ctx, tt.pcs)
@@ -159,7 +159,7 @@ func TestValidateUpdate_MNNVL(t *testing.T) {
 			}
 
 			// MNNVL validation on update doesn't depend on feature flag
-			handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig())
+			handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig(), "")
 
 			ctx := context.Background()
 			warnings, err := handler.ValidateUpdate(ctx, tt.oldPCS, tt.newPCS)
