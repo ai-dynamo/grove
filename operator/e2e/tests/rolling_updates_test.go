@@ -160,19 +160,20 @@ func Test_RU10_RollingUpdateInsufficientResources(t *testing.T) {
 	ctx := context.Background()
 
 	logger.Info("1. Initialize a 10-node Grove cluster")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 10)
+	adminClientSet, adminRESTConfig, adminDynamicClient, operatorDynamicClient, cleanup := prepareTestCluster(ctx, t, 10)
 	defer cleanup()
 
 	logger.Info("2. Deploy workload WL1, and verify 10 newly created pods")
 	tc := TestContext{
-		T:             t,
-		Ctx:           ctx,
-		Clientset:     clientset,
-		RestConfig:    restConfig,
-		DynamicClient: dynamicClient,
-		Namespace:     "default",
-		Timeout:       defaultPollTimeout,
-		Interval:      defaultPollInterval,
+		T:                     t,
+		Ctx:                   ctx,
+		RestConfig:            adminRESTConfig,
+		Clientset:             adminClientSet,
+		AdminDynamicClient:    adminDynamicClient,
+		OperatorDynamicClient: operatorDynamicClient,
+		Namespace:             "default",
+		Timeout:               defaultPollTimeout,
+		Interval:              defaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload1",
 			YAMLPath:     "../yaml/workload1.yaml",
@@ -703,7 +704,7 @@ func Test_RU18_RollingUpdateWithPodCliqueScaleOutDuringUpdate(t *testing.T) {
 		Ctx:           ctx,
 		Clientset:     clientset,
 		RestConfig:    restConfig,
-		DynamicClient: dynamicClient,
+		AdminDynamicClient: dynamicClient,
 		Namespace:     "default",
 		Timeout:       defaultPollTimeout,
 		Interval:      defaultPollInterval,

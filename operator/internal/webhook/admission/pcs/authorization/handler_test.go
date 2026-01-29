@@ -312,7 +312,7 @@ func TestHandleCreateOrUpdate(t *testing.T) {
 			allowed:  false,
 		},
 	}
-
+	logger := logr.Discard()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cl := testutils.NewTestClientBuilder().Build()
@@ -331,7 +331,7 @@ func TestHandleCreateOrUpdate(t *testing.T) {
 						Kind: metav1.GroupVersionKind(gvk),
 					},
 				}
-				resp := handler.handleCreateOrUpdate(req, client.ObjectKey{
+				resp := handler.handleCreateOrUpdate(req, logger, client.ObjectKey{
 					Namespace: "test-namespace",
 					Name:      "test-resource",
 				})
@@ -393,6 +393,7 @@ func TestHandleDelete(t *testing.T) {
 		},
 	}
 
+	logger := logr.Discard()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cl := testutils.NewTestClientBuilder().Build()
@@ -411,7 +412,7 @@ func TestHandleDelete(t *testing.T) {
 						Kind: metav1.GroupVersionKind(gvk),
 					},
 				}
-				resp := handler.handleDelete(req, client.ObjectKey{
+				resp := handler.handleDelete(req, logger, client.ObjectKey{
 					Namespace: "test-namespace",
 					Name:      "test-resource",
 				})

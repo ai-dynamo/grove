@@ -116,14 +116,14 @@ func (scm *SharedClusterManager) Setup(ctx context.Context, testImages []string)
 	// Use the centralized cluster config with overrides for shared test cluster
 	customCfg := DefaultClusterConfig()
 	customCfg.Name = "shared-e2e-test-cluster"
-	customCfg.HostPort = "6560"         // Use a different port to avoid conflicts
+	customCfg.HostPort = "6560" // Use a different port to avoid conflicts
 	customCfg.LoadBalancerPort = "8090:80"
 
 	scm.registryPort = customCfg.RegistryPort
 
 	scm.logger.Info("🚀 Setting up shared k3d cluster for all e2e tests...")
 
-	restConfig, cleanup, err := SetupCompleteK3DCluster(ctx, customCfg, relativeSkaffoldYAMLPath, scm.logger)
+	restConfig, cleanup, err := CreateK3DClusterWithComponents(ctx, customCfg, relativeSkaffoldYAMLPath, scm.logger)
 	// Defer cleanup on error - only call if setup was not successful and we have a cleanup function
 	defer func() {
 		if !setupSuccessful && cleanup != nil {

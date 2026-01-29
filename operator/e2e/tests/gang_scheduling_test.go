@@ -36,20 +36,21 @@ func Test_GS1_GangSchedulingWithFullReplicas(t *testing.T) {
 
 	logger.Info("1. Initialize a 10-node Grove cluster, then cordon 1 node")
 	// Setup test cluster with 10 worker nodes
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 10)
+	adminClientSet, adminRESTConfig, adminDynamicClient, operatorDynamicClient, cleanup := prepareTestCluster(ctx, t, 10)
 	defer cleanup()
 
 	// Create test context with workload configuration
 	expectedPods := 10 // pc-a: 2 replicas, pc-b: 1*2 (scaling group), pc-c: 3*2 (scaling group) = 2+2+6=10
 	tc := TestContext{
-		T:             t,
-		Ctx:           ctx,
-		Clientset:     clientset,
-		RestConfig:    restConfig,
-		DynamicClient: dynamicClient,
-		Namespace:     "default",
-		Timeout:       defaultPollTimeout,
-		Interval:      defaultPollInterval,
+		T:                     t,
+		Ctx:                   ctx,
+		Clientset:             adminClientSet,
+		RestConfig:            adminRESTConfig,
+		AdminDynamicClient:    adminDynamicClient,
+		OperatorDynamicClient: operatorDynamicClient,
+		Namespace:             "default",
+		Timeout:               defaultPollTimeout,
+		Interval:              defaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload1",
 			YAMLPath:     "../yaml/workload1.yaml",
@@ -99,19 +100,20 @@ func Test_GS2_GangSchedulingWithScalingFullReplicas(t *testing.T) {
 	// Setup cluster (shared or individual based on test run mode)
 	logger.Info("1. Initialize a 14-node Grove cluster, then cordon 5 nodes")
 
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 14)
+	adminClientSet, adminRESTConfig, adminDynamicClient, operatorDynamicClient, cleanup := prepareTestCluster(ctx, t, 14)
 	defer cleanup()
 
 	// Create test context
 	tc := TestContext{
-		T:             t,
-		Ctx:           ctx,
-		Clientset:     clientset,
-		RestConfig:    restConfig,
-		DynamicClient: dynamicClient,
-		Namespace:     "default",
-		Timeout:       defaultPollTimeout,
-		Interval:      defaultPollInterval,
+		T:                     t,
+		Ctx:                   ctx,
+		Clientset:             adminClientSet,
+		RestConfig:            adminRESTConfig,
+		AdminDynamicClient:    adminDynamicClient,
+		OperatorDynamicClient: operatorDynamicClient,
+		Namespace:             "default",
+		Timeout:               defaultPollTimeout,
+		Interval:              defaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload1",
 			YAMLPath:     "../yaml/workload1.yaml",
@@ -177,19 +179,20 @@ func Test_GS3_GangSchedulingWithPCSScalingFullReplicas(t *testing.T) {
 	ctx := context.Background()
 
 	logger.Info("1. Initialize a 20-node Grove cluster, then cordon 11 nodes")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 20)
+	adminClientSet, adminRESTConfig, adminDynamicClient, operatorDynamicClient, cleanup := prepareTestCluster(ctx, t, 20)
 	defer cleanup()
 
 	// Create test context
 	tc := TestContext{
-		T:             t,
-		Ctx:           ctx,
-		Clientset:     clientset,
-		DynamicClient: dynamicClient,
-		RestConfig:    restConfig,
-		Namespace:     "default",
-		Timeout:       defaultPollTimeout,
-		Interval:      defaultPollInterval,
+		T:                     t,
+		Ctx:                   ctx,
+		RestConfig:            adminRESTConfig,
+		Clientset:             adminClientSet,
+		AdminDynamicClient:    adminDynamicClient,
+		OperatorDynamicClient: operatorDynamicClient,
+		Namespace:             "default",
+		Timeout:               defaultPollTimeout,
+		Interval:              defaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload1",
 			YAMLPath:     "../yaml/workload1.yaml",
@@ -254,19 +257,20 @@ func Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas(t *testing.T) {
 
 	logger.Info("1. Initialize a 28-node Grove cluster, then cordon 19 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 28)
+	adminClientSet, adminRESTConfig, adminDynamicClient, operatorDynamicClient, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	// Create test context
 	tc := TestContext{
-		T:             t,
-		Ctx:           ctx,
-		Clientset:     clientset,
-		DynamicClient: dynamicClient,
-		RestConfig:    restConfig,
-		Namespace:     "default",
-		Timeout:       defaultPollTimeout,
-		Interval:      defaultPollInterval,
+		T:                     t,
+		Ctx:                   ctx,
+		RestConfig:            adminRESTConfig,
+		Clientset:             adminClientSet,
+		AdminDynamicClient:    adminDynamicClient,
+		OperatorDynamicClient: operatorDynamicClient,
+		Namespace:             "default",
+		Timeout:               defaultPollTimeout,
+		Interval:              defaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload1",
 			YAMLPath:     "../yaml/workload1.yaml",
@@ -331,19 +335,20 @@ func Test_GS5_GangSchedulingWithMinReplicas(t *testing.T) {
 
 	logger.Info("1. Initialize a 10-node Grove cluster, then cordon 8 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 10)
+	adminClientSet, adminRESTConfig, adminDynamicClient, operatorDynamicClient, cleanup := prepareTestCluster(ctx, t, 10)
 	defer cleanup()
 
 	// Create test context
 	tc := TestContext{
-		T:             t,
-		Ctx:           ctx,
-		Clientset:     clientset,
-		RestConfig:    restConfig,
-		DynamicClient: dynamicClient,
-		Namespace:     "default",
-		Timeout:       defaultPollTimeout,
-		Interval:      defaultPollInterval,
+		T:                     t,
+		Ctx:                   ctx,
+		RestConfig:            adminRESTConfig,
+		Clientset:             adminClientSet,
+		AdminDynamicClient:    adminDynamicClient,
+		OperatorDynamicClient: operatorDynamicClient,
+		Namespace:             "default",
+		Timeout:               defaultPollTimeout,
+		Interval:              defaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload2",
 			YAMLPath:     "../yaml/workload2.yaml",
@@ -410,19 +415,20 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 
 	logger.Info("1. Initialize a 14-node Grove cluster, then cordon 12 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 14)
+	adminClientSet, adminRESTConfig, adminDynamicClient, operatorDynamicClient, cleanup := prepareTestCluster(ctx, t, 14)
 	defer cleanup()
 
 	// Create test context
 	tc := TestContext{
-		T:             t,
-		Ctx:           ctx,
-		Clientset:     clientset,
-		DynamicClient: dynamicClient,
-		RestConfig:    restConfig,
-		Namespace:     "default",
-		Timeout:       defaultPollTimeout,
-		Interval:      defaultPollInterval,
+		T:                     t,
+		Ctx:                   ctx,
+		RestConfig:            adminRESTConfig,
+		Clientset:             adminClientSet,
+		AdminDynamicClient:    adminDynamicClient,
+		OperatorDynamicClient: operatorDynamicClient,
+		Namespace:             "default",
+		Timeout:               defaultPollTimeout,
+		Interval:              defaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload2",
 			YAMLPath:     "../yaml/workload2.yaml",
@@ -539,19 +545,20 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 
 	logger.Info("1. Initialize a 14-node Grove cluster, then cordon 12 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 14)
+	adminClientSet, adminRESTConfig, adminDynamicClient, operatorDynamicClient, cleanup := prepareTestCluster(ctx, t, 14)
 	defer cleanup()
 
 	// Create test context
 	tc := TestContext{
-		T:             t,
-		Ctx:           ctx,
-		Clientset:     clientset,
-		DynamicClient: dynamicClient,
-		RestConfig:    restConfig,
-		Namespace:     "default",
-		Timeout:       defaultPollTimeout,
-		Interval:      defaultPollInterval,
+		T:                     t,
+		Ctx:                   ctx,
+		RestConfig:            adminRESTConfig,
+		Clientset:             adminClientSet,
+		AdminDynamicClient:    adminDynamicClient,
+		OperatorDynamicClient: operatorDynamicClient,
+		Namespace:             "default",
+		Timeout:               defaultPollTimeout,
+		Interval:              defaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload2",
 			YAMLPath:     "../yaml/workload2.yaml",
@@ -677,19 +684,20 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 
 	logger.Info("1. Initialize a 14-node Grove cluster, then cordon 12 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 14)
+	adminClientSet, adminRESTConfig, adminDynamicClient, operatorDynamicClient, cleanup := prepareTestCluster(ctx, t, 14)
 	defer cleanup()
 
 	// Create test context
 	tc := TestContext{
-		T:             t,
-		Ctx:           ctx,
-		Clientset:     clientset,
-		DynamicClient: dynamicClient,
-		RestConfig:    restConfig,
-		Namespace:     "default",
-		Timeout:       defaultPollTimeout,
-		Interval:      defaultPollInterval,
+		T:                     t,
+		Ctx:                   ctx,
+		RestConfig:            adminRESTConfig,
+		Clientset:             adminClientSet,
+		AdminDynamicClient:    adminDynamicClient,
+		OperatorDynamicClient: operatorDynamicClient,
+		Namespace:             "default",
+		Timeout:               defaultPollTimeout,
+		Interval:              defaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload2",
 			YAMLPath:     "../yaml/workload2.yaml",
@@ -789,19 +797,20 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 
 	logger.Info("1. Initialize a 20-node Grove cluster, then cordon 18 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 20)
+	adminClientSet, adminRESTConfig, adminDynamicClient, operatorDynamicClient, cleanup := prepareTestCluster(ctx, t, 20)
 	defer cleanup()
 
 	// Create test context
 	tc := TestContext{
-		T:             t,
-		Ctx:           ctx,
-		Clientset:     clientset,
-		DynamicClient: dynamicClient,
-		RestConfig:    restConfig,
-		Namespace:     "default",
-		Timeout:       defaultPollTimeout,
-		Interval:      defaultPollInterval,
+		T:                     t,
+		Ctx:                   ctx,
+		RestConfig:            adminRESTConfig,
+		Clientset:             adminClientSet,
+		AdminDynamicClient:    adminDynamicClient,
+		OperatorDynamicClient: operatorDynamicClient,
+		Namespace:             "default",
+		Timeout:               defaultPollTimeout,
+		Interval:              defaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload2",
 			YAMLPath:     "../yaml/workload2.yaml",
@@ -909,19 +918,20 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 
 	logger.Info("1. Initialize a 20-node Grove cluster, then cordon 18 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 20)
+	adminClientSet, adminRESTConfig, adminDynamicClient, operatorDynamicClient, cleanup := prepareTestCluster(ctx, t, 20)
 	defer cleanup()
 
 	// Create test context
 	tc := TestContext{
-		T:             t,
-		Ctx:           ctx,
-		Clientset:     clientset,
-		DynamicClient: dynamicClient,
-		RestConfig:    restConfig,
-		Namespace:     "default",
-		Timeout:       defaultPollTimeout,
-		Interval:      defaultPollInterval,
+		T:                     t,
+		Ctx:                   ctx,
+		RestConfig:            adminRESTConfig,
+		Clientset:             adminClientSet,
+		AdminDynamicClient:    adminDynamicClient,
+		OperatorDynamicClient: operatorDynamicClient,
+		Namespace:             "default",
+		Timeout:               defaultPollTimeout,
+		Interval:              defaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload2",
 			YAMLPath:     "../yaml/workload2.yaml",
@@ -1030,19 +1040,20 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 
 	logger.Info("1. Initialize a 28-node Grove cluster, then cordon 26 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 28)
+	adminClientSet, adminRESTConfig, adminDynamicClient, operatorDynamicClient, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	// Create test context
 	tc := TestContext{
-		T:             t,
-		Ctx:           ctx,
-		Clientset:     clientset,
-		DynamicClient: dynamicClient,
-		RestConfig:    restConfig,
-		Namespace:     "default",
-		Timeout:       defaultPollTimeout,
-		Interval:      defaultPollInterval,
+		T:                     t,
+		Ctx:                   ctx,
+		RestConfig:            adminRESTConfig,
+		Clientset:             adminClientSet,
+		AdminDynamicClient:    adminDynamicClient,
+		OperatorDynamicClient: operatorDynamicClient,
+		Namespace:             "default",
+		Timeout:               defaultPollTimeout,
+		Interval:              defaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload2",
 			YAMLPath:     "../yaml/workload2.yaml",
@@ -1189,19 +1200,20 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 
 	logger.Info("1. Initialize a 28-node Grove cluster, then cordon 26 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 28)
+	adminClientSet, adminRESTConfig, adminDynamicClient, operatorDynamicClient, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	// Create test context
 	tc := TestContext{
-		T:             t,
-		Ctx:           ctx,
-		Clientset:     clientset,
-		DynamicClient: dynamicClient,
-		RestConfig:    restConfig,
-		Namespace:     "default",
-		Timeout:       defaultPollTimeout,
-		Interval:      defaultPollInterval,
+		T:                     t,
+		Ctx:                   ctx,
+		RestConfig:            adminRESTConfig,
+		Clientset:             adminClientSet,
+		AdminDynamicClient:    adminDynamicClient,
+		OperatorDynamicClient: operatorDynamicClient,
+		Namespace:             "default",
+		Timeout:               defaultPollTimeout,
+		Interval:              defaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload2",
 			YAMLPath:     "../yaml/workload2.yaml",

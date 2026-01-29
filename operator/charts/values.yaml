@@ -78,7 +78,7 @@ config:
     #      - domain: numa
     #        key: <provider-specific-numa-node-label-key>
   authorizer:
-    enabled: false
+    enabled: true
     exemptServiceAccountUserNames:
       - system:serviceaccount:kube-system:generic-garbage-collector
       - system:serviceaccount:kube-system:horizontal-pod-autoscaler
