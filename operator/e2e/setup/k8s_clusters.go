@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +47,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -801,6 +803,9 @@ func isNodeReady(node *v1.Node) bool {
 func replaceNotReadyNode(ctx context.Context, node *v1.Node, clientset *kubernetes.Clientset, logger *utils.Logger) error {
 	nodeName := node.Name
 
+	// Save the original node labels to check if topology labels need to be reapplied
+	originalLabels := node.Labels
+
 	// Step 1: Delete the node from Kubernetes
 	logger.Debugf("🗑️ Deleting node from Kubernetes: %s", nodeName)
 	if err := clientset.CoreV1().Nodes().Delete(ctx, nodeName, metav1.DeleteOptions{}); err != nil {
@@ -811,6 +816,30 @@ func replaceNotReadyNode(ctx context.Context, node *v1.Node, clientset *kubernet
 	logger.Debugf("🔄 Restarting Docker container for node: %s", nodeName)
 	if err := restartNodeContainer(ctx, nodeName, logger); err != nil {
 		return fmt.Errorf("failed to restart container for node %s: %w", nodeName, err)
+	}
+
+	// Step 3: Wait for the node to rejoin and become ready
+	logger.Debugf("⏳ Waiting for node to rejoin cluster: %s", nodeName)
+	if err := waitForSingleNodeReady(ctx, clientset, nodeName, defaultPollTimeout, logger); err != nil {
+		return fmt.Errorf("node %s did not rejoin cluster: %w", nodeName, err)
+	}
+
+	// Step 4: Reapply topology labels if they existed on the original node
+	// Check if this node had topology labels before replacement
+	hasTopologyLabels := false
+	for key := range originalLabels {
+		if key == TopologyLabelZone || key == TopologyLabelBlock || key == TopologyLabelRack {
+			hasTopologyLabels = true
+			break
+		}
+	}
+
+	if hasTopologyLabels {
+		logger.Debugf("🏷️  Reapplying topology labels to replaced node: %s", nodeName)
+		if err := reapplyTopologyLabelsToNode(ctx, clientset, nodeName, logger); err != nil {
+			// Log warning but don't fail - node is functional, just missing topology labels
+			logger.Warnf("⚠️  Failed to reapply topology labels to node %s: %v", nodeName, err)
+		}
 	}
 
 	return nil
@@ -1173,4 +1202,89 @@ func waitForWebhookReady(ctx context.Context, restConfig *rest.Config, logger *u
 		logger.Info("✅ Grove webhook is ready")
 		return true, nil
 	})
+}
+
+// waitForSingleNodeReady waits for a specific node to become ready after container restart
+func waitForSingleNodeReady(ctx context.Context, clientset *kubernetes.Clientset, nodeName string, timeout time.Duration, logger *utils.Logger) error {
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(defaultPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timeoutCtx.Done():
+			return fmt.Errorf("timeout waiting for node %s to become ready", nodeName)
+		case <-ticker.C:
+			node, err := clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+			if err != nil {
+				// Node might not have rejoined yet (k3d agent still starting up)
+				logger.Debugf("  Node %s not found yet (k3d agent still connecting), waiting...", nodeName)
+				continue
+			}
+
+			if isNodeReady(node) {
+				logger.Debugf("✅ Node %s has rejoined and is ready", nodeName)
+				return nil
+			}
+
+			logger.Debugf("  Node %s found but not ready yet, waiting...", nodeName)
+		}
+	}
+}
+
+// reapplyTopologyLabelsToNode reapplies topology labels to a single node after replacement
+func reapplyTopologyLabelsToNode(ctx context.Context, clientset *kubernetes.Clientset, nodeName string, logger *utils.Logger) error {
+	// Get all worker nodes to determine the index of this node
+	workerLabelSelector := GetWorkerNodeLabelSelector()
+	nodes, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{
+		LabelSelector: workerLabelSelector,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list worker nodes: %w", err)
+	}
+
+	// Sort nodes by name to maintain consistent indexing (same as applyTopologyLabels)
+	sortedNodes := make([]v1.Node, len(nodes.Items))
+	copy(sortedNodes, nodes.Items)
+	sort.Slice(sortedNodes, func(i, j int) bool { return sortedNodes[i].Name < sortedNodes[j].Name })
+
+	// Find the index of the target node
+	nodeIndex := -1
+	for idx, node := range sortedNodes {
+		if node.Name == nodeName {
+			nodeIndex = idx
+			break
+		}
+	}
+
+	if nodeIndex == -1 {
+		return fmt.Errorf("node %s not found in worker nodes list", nodeName)
+	}
+
+	// Apply topology labels based on the node's index (same logic as applyTopologyLabels)
+	topologyLabels := fmt.Sprintf(`{"metadata":{"labels":{"%s":"%s","%s":"%s","%s":"%s"}}}`,
+		TopologyLabelZone, GetZoneForNodeIndex(nodeIndex),
+		TopologyLabelBlock, GetBlockForNodeIndex(nodeIndex),
+		TopologyLabelRack, GetRackForNodeIndex(nodeIndex))
+
+	_, err = clientset.CoreV1().Nodes().Patch(
+		ctx,
+		nodeName,
+		k8stypes.StrategicMergePatchType,
+		[]byte(topologyLabels),
+		metav1.PatchOptions{},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to patch node %s with topology labels: %w", nodeName, err)
+	}
+
+	logger.Debugf("✅ Reapplied topology labels to node %s (index %d): zone=%s, block=%s, rack=%s",
+		nodeName, nodeIndex,
+		GetZoneForNodeIndex(nodeIndex),
+		GetBlockForNodeIndex(nodeIndex),
+		GetRackForNodeIndex(nodeIndex))
+
+	return nil
 }
