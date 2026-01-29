@@ -148,8 +148,8 @@ func TestDefault(t *testing.T) {
 			verify: func(t *testing.T, obj runtime.Object) {
 				pcs, ok := obj.(*grovecorev1alpha1.PodCliqueSet)
 				require.True(t, ok)
-				// Verify that the termination delay is set (this is one of the defaults applied)
-				assert.NotNil(t, pcs.Spec.Template.TerminationDelay)
+				// TerminationDelay should be nil by default (gang termination disabled)
+				assert.Nil(t, pcs.Spec.Template.TerminationDelay)
 			},
 		},
 		{
