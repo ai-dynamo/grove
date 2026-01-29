@@ -161,12 +161,12 @@ func Test_CM1_CertManagementRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create Kubernetes clients: %v", err)
 	}
-	if _, err := utils.ApplyYAMLDataWithClients(ctx, []byte(certManagerIssuerYAML), "", dynamicClient, restMapper, logger); err != nil {
+	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerIssuerYAML), "", dynamicClient, restMapper, logger); err != nil {
 		t.Fatalf("Failed to apply ClusterIssuer: %v", err)
 	}
 	waitForClusterIssuer(t, ctx, dynamicClient, "selfsigned-issuer")
 
-	if _, err := utils.ApplyYAMLDataWithClients(ctx, []byte(certManagerCertificateYAML), "", dynamicClient, restMapper, logger); err != nil {
+	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerCertificateYAML), "", dynamicClient, restMapper, logger); err != nil {
 		t.Fatalf("Failed to apply Certificate: %v", err)
 	}
 

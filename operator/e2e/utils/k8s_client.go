@@ -66,7 +66,11 @@ func ApplyYAMLFile(ctx context.Context, yamlFilePath string, namespace string, r
 		return nil, fmt.Errorf("failed to read YAML file %s: %w", yamlFilePath, err)
 	}
 
-	return ApplyYAMLData(ctx, yamlData, namespace, restConfig, logger)
+	dynamicClient, restMapper, err := CreateKubernetesClients(restConfig)
+	if err != nil {
+		return nil, err
+	}
+	return ApplyYAMLData(ctx, yamlData, namespace, dynamicClient, restMapper, logger)
 }
 
 // WaitForPods waits for pods to be ready in the specified namespaces
@@ -131,18 +135,8 @@ func WaitForPods(ctx context.Context, restConfig *rest.Config, namespaces []stri
 	})
 }
 
-// ApplyYAMLData applies YAML data to Kubernetes, creating clients from restConfig.
-// Note this is a convenience function that creates clients on every call and is deprecated (issue 378)
-func ApplyYAMLData(ctx context.Context, yamlData []byte, namespace string, restConfig *rest.Config, logger *Logger) ([]AppliedResource, error) {
-	dynamicClient, restMapper, err := CreateKubernetesClients(restConfig)
-	if err != nil {
-		return nil, err
-	}
-	return ApplyYAMLDataWithClients(ctx, yamlData, namespace, dynamicClient, restMapper, logger)
-}
-
-// ApplyYAMLDataWithClients applies YAML data to Kubernetes.
-func ApplyYAMLDataWithClients(ctx context.Context, yamlData []byte, namespace string, dynamicClient dynamic.Interface, restMapper meta.RESTMapper, logger *Logger) ([]AppliedResource, error) {
+// ApplyYAMLData applies YAML data to Kubernetes.
+func ApplyYAMLData(ctx context.Context, yamlData []byte, namespace string, dynamicClient dynamic.Interface, restMapper meta.RESTMapper, logger *Logger) ([]AppliedResource, error) {
 	decoder := yamlutil.NewYAMLOrJSONDecoder(strings.NewReader(string(yamlData)), 4096)
 	var appliedResources []AppliedResource
 
