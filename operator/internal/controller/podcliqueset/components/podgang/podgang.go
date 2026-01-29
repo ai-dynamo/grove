@@ -149,17 +149,27 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGa
 		// Create PodGroups with EMPTY podReferences initially
 		pg.Spec.PodGroups = createEmptyPodGroupsForPodGang(*pgi)
 	} else {
-		// PodGroups already exist - preserve them but update MinReplicas if needed
-		expectedPodGroups := make(map[string]int32)
+		// PodGroups already exist - preserve them but update MinReplicas and TopologyConstraint if needed
+		expectedPodGroups := make(map[string]struct {
+			minAvailable       int32
+			topologyConstraint *groveschedulerv1alpha1.TopologyConstraint
+		})
 		for _, pclq := range pgi.pclqs {
-			expectedPodGroups[pclq.fqn] = pclq.minAvailable
+			expectedPodGroups[pclq.fqn] = struct {
+				minAvailable       int32
+				topologyConstraint *groveschedulerv1alpha1.TopologyConstraint
+			}{
+				minAvailable:       pclq.minAvailable,
+				topologyConstraint: pclq.topologyConstraint,
+			}
 		}
 
-		// Update MinReplicas for existing PodGroups
+		// Update MinReplicas and TopologyConstraint for existing PodGroups
 		for i := range pg.Spec.PodGroups {
 			podGroup := &pg.Spec.PodGroups[i]
-			if expectedMinReplicas, ok := expectedPodGroups[podGroup.Name]; ok {
-				podGroup.MinReplicas = expectedMinReplicas
+			if expectedPG, ok := expectedPodGroups[podGroup.Name]; ok {
+				podGroup.MinReplicas = expectedPG.minAvailable
+				podGroup.TopologyConstraint = expectedPG.topologyConstraint
 			}
 		}
 	}
@@ -173,9 +183,10 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGa
 func createEmptyPodGroupsForPodGang(pgInfo podGangInfo) []groveschedulerv1alpha1.PodGroup {
 	podGroups := lo.Map(pgInfo.pclqs, func(pclq pclqInfo, _ int) groveschedulerv1alpha1.PodGroup {
 		return groveschedulerv1alpha1.PodGroup{
-			Name:          pclq.fqn,
-			PodReferences: []groveschedulerv1alpha1.NamespacedName{}, // Empty initially!
-			MinReplicas:   pclq.minAvailable,
+			Name:               pclq.fqn,
+			PodReferences:      []groveschedulerv1alpha1.NamespacedName{}, // Empty initially!
+			MinReplicas:        pclq.minAvailable,
+			TopologyConstraint: pclq.topologyConstraint, // Set PodClique-level topology constraint
 		}
 	})
 	return podGroups

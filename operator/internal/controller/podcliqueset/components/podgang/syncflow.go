@@ -606,9 +606,10 @@ func (r _resource) buildPodGroupsFromContext(sc *syncContext, podGangInfo *podGa
 		})
 
 		podGroups = append(podGroups, groveschedulerv1alpha1.PodGroup{
-			Name:          pclqInfo.fqn,
-			PodReferences: podReferences,
-			MinReplicas:   pclqInfo.minAvailable,
+			Name:               pclqInfo.fqn,
+			PodReferences:      podReferences,
+			MinReplicas:        pclqInfo.minAvailable,
+			TopologyConstraint: pclqInfo.topologyConstraint, // Preserve PodClique-level topology constraint
 		})
 	}
 
