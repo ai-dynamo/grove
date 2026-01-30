@@ -531,3 +531,45 @@ func scaleCRD(ctx context.Context, dynamicClient dynamic.Interface, gvr schema.G
 
 	return nil
 }
+
+// IsNodeReady checks if a node is in Ready state
+func IsNodeReady(node *v1.Node) bool {
+	for _, condition := range node.Status.Conditions {
+		if condition.Type == v1.NodeReady {
+			return condition.Status == v1.ConditionTrue
+		}
+	}
+	return false // If no Ready condition is found, consider the node not ready
+}
+
+// WaitForSingleNodeReady waits for a specific node to become ready after container restart
+func WaitForSingleNodeReady(ctx context.Context, clientset *kubernetes.Clientset, nodeName string, timeout time.Duration, logger *Logger) error {
+	const defaultPollInterval = 2 * time.Second
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(defaultPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timeoutCtx.Done():
+			return fmt.Errorf("timeout waiting for node %s to become ready", nodeName)
+		case <-ticker.C:
+			node, err := clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+			if err != nil {
+				// Node might not have rejoined yet (k3d agent still starting up)
+				logger.Debugf("  Node %s not found yet (k3d agent still connecting), waiting...", nodeName)
+				continue
+			}
+
+			if IsNodeReady(node) {
+				logger.Debugf("✅ Node %s has rejoined and is ready", nodeName)
+				return nil
+			}
+
+			logger.Debugf("  Node %s found but not ready yet, waiting...", nodeName)
+		}
+	}
+}
