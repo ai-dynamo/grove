@@ -13,7 +13,7 @@
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
-  name: multinode-disaggregated
+  name: mn-disagg
   namespace: default
 spec:
   replicas: 1

@@ -95,7 +95,7 @@ If a pod belongs to a PodClique that is part of a PodCliqueScalingGroup, these a
 - Example: `my-service-0-model-instance`
 - **Note:** This does NOT include the PCSG replica index. To construct a sibling PodClique name within the same PCSG replica, use: `$GROVE_PCSG_NAME-$GROVE_PCSG_INDEX-<pclq-template-name>`
 
-**Note:** `GROVE_PCSG_TEMPLATE_NUM_PODS` represents the total number of pods defined in the PodCliqueScalingGroup template, calculated as the sum of replicas across all PodCliques in the PCSG. For example, if a PCSG has 1 leader replica and 3 worker replicas, this value would be 4. This value does not change based on scaling, so is only guaranteed to be accurate at startup.
+**Note:** `GROVE_PCSG_TEMPLATE_NUM_PODS` represents the total number of pods defined in the PodCliqueScalingGroup template, calculated as the sum of replicas across all PodCliques in the PCSG. For example, if a PCSG has 1 leader replica and 3 worker replicas, this value would be 4. If you later scale up the number of workers in a PCSG replica (e.g., from 3 to 5), this environment variable will not update in already-running pods—it reflects the value at pod startup time.
 
 ## Next Steps
 

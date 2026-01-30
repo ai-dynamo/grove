@@ -13,7 +13,7 @@ Let's deploy an example with the structure of a multi-node disaggregated inferen
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
-  name: multinode-disaggregated
+  name: mn-disagg
   namespace: default
 spec:
   replicas: 1
@@ -156,25 +156,25 @@ In this example, we will deploy the file: [multinode-disaggregated-with-frontend
 kubectl apply -f samples/user-guide/02_pod-and-resource-naming-conventions/multinode-disaggregated-with-frontend.yaml
 
 # Get all pods - observe the self-documenting names
-kubectl get pods -l app.kubernetes.io/part-of=multinode-disaggregated -o wide
+kubectl get pods -l app.kubernetes.io/part-of=mn-disagg -o wide
 ```
 
 You should see output like:
 ```
-NAME                                               READY   STATUS    RESTARTS   AGE
-multinode-disaggregated-0-decode-0-dleader-abc12   1/1     Running   0          45s
-multinode-disaggregated-0-decode-0-dworker-def34   1/1     Running   0          45s
-multinode-disaggregated-0-decode-0-dworker-ghi56   1/1     Running   0          45s
-multinode-disaggregated-0-frontend-jkl78           1/1     Running   0          45s
-multinode-disaggregated-0-frontend-mno90           1/1     Running   0          45s
-multinode-disaggregated-0-prefill-0-pleader-pqr12  1/1     Running   0          45s
-multinode-disaggregated-0-prefill-0-pworker-stu34  1/1     Running   0          45s
-multinode-disaggregated-0-prefill-0-pworker-vwx56  1/1     Running   0          45s
-multinode-disaggregated-0-prefill-0-pworker-yza78  1/1     Running   0          45s
-multinode-disaggregated-0-prefill-1-pleader-bcd90  1/1     Running   0          45s
-multinode-disaggregated-0-prefill-1-pworker-efg12  1/1     Running   0          45s
-multinode-disaggregated-0-prefill-1-pworker-hij34  1/1     Running   0          45s
-multinode-disaggregated-0-prefill-1-pworker-klm56  1/1     Running   0          45s
+NAME                                   READY   STATUS    RESTARTS   AGE
+mn-disagg-0-decode-0-dleader-abc12     1/1     Running   0          45s
+mn-disagg-0-decode-0-dworker-def34     1/1     Running   0          45s
+mn-disagg-0-decode-0-dworker-ghi56     1/1     Running   0          45s
+mn-disagg-0-frontend-jkl78             1/1     Running   0          45s
+mn-disagg-0-frontend-mno90             1/1     Running   0          45s
+mn-disagg-0-prefill-0-pleader-pqr12    1/1     Running   0          45s
+mn-disagg-0-prefill-0-pworker-stu34    1/1     Running   0          45s
+mn-disagg-0-prefill-0-pworker-vwx56    1/1     Running   0          45s
+mn-disagg-0-prefill-0-pworker-yza78    1/1     Running   0          45s
+mn-disagg-0-prefill-1-pleader-bcd90    1/1     Running   0          45s
+mn-disagg-0-prefill-1-pworker-efg12    1/1     Running   0          45s
+mn-disagg-0-prefill-1-pworker-hij34    1/1     Running   0          45s
+mn-disagg-0-prefill-1-pworker-klm56    1/1     Running   0          45s
 ```
 
 ## Parsing the Naming Hierarchy
@@ -183,15 +183,15 @@ Looking at this output, you can immediately understand the system structure:
 
 **1. Standalone PodClique (frontend):**
 ```
-multinode-disaggregated-0-frontend-*
+mn-disagg-0-frontend-*
 ```
 - Simpler naming: `<pcs>-<pcs-idx>-<pclq>-<suffix>`
 - 2 frontend pods serving requests
 
 **2. PodCliqueScalingGroup (prefill) - 2 replicas:**
 ```
-multinode-disaggregated-0-prefill-0-*
-multinode-disaggregated-0-prefill-1-*
+mn-disagg-0-prefill-0-*
+mn-disagg-0-prefill-1-*
 ```
 - Deeper hierarchy: `<pcs>-<pcs-idx>-<pcsg>-<pcsg-idx>-<pclq>-<suffix>`
 - Each replica has 1 `pleader` + 3 `pworker` pods
@@ -199,7 +199,7 @@ multinode-disaggregated-0-prefill-1-*
 
 **3. PodCliqueScalingGroup (decode) - 1 replica:**
 ```
-multinode-disaggregated-0-decode-0-*
+mn-disagg-0-decode-0-*
 ```
 - Same deep hierarchy as prefill
 - Has 1 `dleader` + 2 `dworker` pods
@@ -223,18 +223,18 @@ kubectl get pclq
 
 Output:
 ```
-NAME                                       AGE
-multinode-disaggregated-0-decode-0-dleader  2m
-multinode-disaggregated-0-decode-0-dworker  2m
-multinode-disaggregated-0-frontend          2m
-multinode-disaggregated-0-prefill-0-pleader 2m
-multinode-disaggregated-0-prefill-0-pworker 2m
-multinode-disaggregated-0-prefill-1-pleader 2m
-multinode-disaggregated-0-prefill-1-pworker 2m
+NAME                           AGE
+mn-disagg-0-decode-0-dleader   2m
+mn-disagg-0-decode-0-dworker   2m
+mn-disagg-0-frontend           2m
+mn-disagg-0-prefill-0-pleader  2m
+mn-disagg-0-prefill-0-pworker  2m
+mn-disagg-0-prefill-1-pleader  2m
+mn-disagg-0-prefill-1-pworker  2m
 ```
 
 **Observations:**
-- Standalone PodClique: `multinode-disaggregated-0-frontend`
+- Standalone PodClique: `mn-disagg-0-frontend`
 - Prefill PCSG PodCliques: Names include `prefill-0` or `prefill-1` to show which replica
 - Decode PCSG PodCliques: Names include `decode-0`
 - All names are unique and under 63 characters
@@ -246,32 +246,26 @@ kubectl get pcsg
 
 Output:
 ```
-NAME                                AGE
-multinode-disaggregated-0-decode    2m
-multinode-disaggregated-0-prefill   2m
+NAME                    AGE
+mn-disagg-0-decode      2m
+mn-disagg-0-prefill     2m
 ```
 
 The PCSG names clearly identify the two scaling groups.
 
 ## Name Length Analysis
 
-Let's verify our names fit within the 63-character limit:
+Pod names have a 63-character limit (DNS label constraint). Let's verify our longest pod name fits:
 
-- Longest pod name: `multinode-disaggregated-0-prefill-1-pworker-klm56`
-  - Characters: 49 (well under 63) ✅
+- Longest pod name: `mn-disagg-0-prefill-1-pworker-klm56`
+  - Characters: 35 (well under 63) ✅
 
-- PodClique names (max): `multinode-disaggregated-0-prefill-1-pworker`
-  - Characters: 43 (under 63) ✅
-
-- PCSG names: `multinode-disaggregated-0-prefill`
-  - Characters: 33 (under 63) ✅
-
-All resource names are comfortably within the limit!
+With 28 characters of headroom, this naming scheme can scale to millions of replicas on both PCS and PCSG dimensions without hitting the limit.
 
 ## Cleanup
 
 ```bash
-kubectl delete pcs multinode-disaggregated
+kubectl delete pcs mn-disagg
 ```
 
 ---
