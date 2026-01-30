@@ -317,18 +317,7 @@ func isPodGangInitialized(obj client.Object) bool {
 		}
 	}
 
-	if !hasInitializedCondition {
-		return false
-	}
-
-	// Also verify that all PodGroups have enough podReferences to meet minReplicas
-	for _, pg := range podGang.Spec.PodGroups {
-		if int32(len(pg.PodReferences)) < pg.MinReplicas {
-			return false
-		}
-	}
-
-	return true
+	return hasInitializedCondition
 }
 
 // isManagedPod checks if a Pod is managed by Grove and owned by a PodClique
