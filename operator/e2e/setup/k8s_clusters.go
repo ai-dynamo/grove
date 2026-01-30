@@ -813,8 +813,7 @@ func replaceNotReadyNode(ctx context.Context, node *v1.Node, clientset *kubernet
 	// Step 4: Reapply original labels to the replaced node
 	logger.Debugf("🏷️  Reapplying original labels to replaced node: %s", nodeName)
 	if err := reapplyNodeLabels(ctx, clientset, nodeName, originalNodeLabels, logger); err != nil {
-		// Log warning but don't fail - node is functional, just missing labels
-		logger.Warnf("⚠️  Failed to reapply labels to node %s: %v", nodeName, err)
+		return fmt.Errorf("failed to reapply labels to node %s: %w", nodeName, err)
 	}
 
 	return nil
