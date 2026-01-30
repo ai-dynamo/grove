@@ -89,7 +89,7 @@ type OperatorConfiguration struct {
 	Network NetworkAcceleration `json:"network,omitempty"` // Network is the configuration for network acceleration features like MNNVL.
 	// SchedulerName is the name of the scheduler backend with which this instance of Grove operator will run.
 	// +required
-	// +kubebuilder:validation:Enum=kai;kube
+	// +kubebuilder:validation:Enum=kai-scheduler;default-scheduler
 	SchedulerName SchedulerName `json:"schedulerName"`
 }
 
