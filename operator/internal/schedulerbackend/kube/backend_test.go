@@ -35,13 +35,12 @@ func TestNew(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
 
-	backend := New(cl, cl.Scheme(), recorder, "default-scheduler")
+	backend := New(cl, cl.Scheme(), recorder)
 
 	require.NotNil(t, backend)
 	assert.Equal(t, cl, backend.client)
 	assert.Equal(t, cl.Scheme(), backend.scheme)
 	assert.Equal(t, recorder, backend.eventRecorder)
-	assert.Equal(t, "default-scheduler", backend.schedulerName)
 }
 
 // TestName tests the Name method returns the correct backend name.
@@ -49,10 +48,9 @@ func TestName(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
 
-	backend := New(cl, cl.Scheme(), recorder, "default-scheduler")
+	backend := New(cl, cl.Scheme(), recorder)
 
-	assert.Equal(t, BackendName, backend.Name())
-	assert.Equal(t, "Kube-Scheduler", backend.Name())
+	assert.Equal(t, SchedulerName, backend.Name())
 }
 
 // TestInit tests the Init method.
@@ -60,7 +58,7 @@ func TestInit(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
 
-	backend := New(cl, cl.Scheme(), recorder, "default-scheduler")
+	backend := New(cl, cl.Scheme(), recorder)
 
 	err := backend.Init()
 	require.NoError(t, err)
@@ -71,7 +69,7 @@ func TestSyncPodGang(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
 
-	backend := New(cl, cl.Scheme(), recorder, "default-scheduler")
+	backend := New(cl, cl.Scheme(), recorder)
 
 	// Create a sample PodGang
 	podGang := &groveschedulerv1alpha1.PodGang{
@@ -101,7 +99,7 @@ func TestOnPodGangDelete(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
 
-	backend := New(cl, cl.Scheme(), recorder, "default-scheduler")
+	backend := New(cl, cl.Scheme(), recorder)
 
 	// Create a sample PodGang
 	podGang := &groveschedulerv1alpha1.PodGang{
@@ -129,14 +127,11 @@ func TestOnPodGangDelete(t *testing.T) {
 // TestPreparePod tests the PreparePod method.
 func TestPreparePod(t *testing.T) {
 	tests := []struct {
-		name              string
-		schedulerName     string
-		inputPod          *corev1.Pod
-		expectedScheduler string
+		name     string
+		inputPod *corev1.Pod
 	}{
 		{
-			name:          "sets default scheduler name",
-			schedulerName: "default-scheduler",
+			name: "sets default scheduler name",
 			inputPod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pod",
@@ -144,11 +139,9 @@ func TestPreparePod(t *testing.T) {
 				},
 				Spec: corev1.PodSpec{},
 			},
-			expectedScheduler: "default-scheduler",
 		},
 		{
-			name:          "overwrites existing scheduler name",
-			schedulerName: "default-scheduler",
+			name: "overwrites existing scheduler name",
 			inputPod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pod",
@@ -158,11 +151,9 @@ func TestPreparePod(t *testing.T) {
 					SchedulerName: "old-scheduler",
 				},
 			},
-			expectedScheduler: "default-scheduler",
 		},
 		{
-			name:          "preserves existing pod configuration",
-			schedulerName: "default-scheduler",
+			name: "preserves existing pod configuration",
 			inputPod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pod",
@@ -183,11 +174,9 @@ func TestPreparePod(t *testing.T) {
 					},
 				},
 			},
-			expectedScheduler: "default-scheduler",
 		},
 		{
-			name:          "handles custom scheduler name",
-			schedulerName: "custom-default-scheduler",
+			name: "handles custom scheduler name",
 			inputPod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pod",
@@ -195,16 +184,13 @@ func TestPreparePod(t *testing.T) {
 				},
 				Spec: corev1.PodSpec{},
 			},
-			expectedScheduler: "custom-default-scheduler",
 		},
 		{
-			name:          "handles empty pod",
-			schedulerName: "default-scheduler",
+			name: "handles empty pod",
 			inputPod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{},
 				Spec:       corev1.PodSpec{},
 			},
-			expectedScheduler: "default-scheduler",
 		},
 	}
 
@@ -213,7 +199,7 @@ func TestPreparePod(t *testing.T) {
 			cl := testutils.CreateDefaultFakeClient(nil)
 			recorder := record.NewFakeRecorder(10)
 
-			backend := New(cl, cl.Scheme(), recorder, tt.schedulerName)
+			backend := New(cl, cl.Scheme(), recorder)
 
 			// Store original pod configuration for verification
 			originalLabels := make(map[string]string)
@@ -223,9 +209,6 @@ func TestPreparePod(t *testing.T) {
 			originalContainers := len(tt.inputPod.Spec.Containers)
 
 			backend.PreparePod(tt.inputPod)
-
-			// Verify scheduler name was set correctly
-			assert.Equal(t, tt.expectedScheduler, tt.inputPod.Spec.SchedulerName)
 
 			// Verify other pod configuration was preserved
 			assert.Equal(t, tt.inputPod.Name, tt.inputPod.Name)
@@ -238,18 +221,12 @@ func TestPreparePod(t *testing.T) {
 	}
 }
 
-// TestConstants tests that package constants are properly defined.
-func TestConstants(t *testing.T) {
-	assert.Equal(t, "Kube-Scheduler", BackendName)
-	assert.Equal(t, "kube", BackendLabelValue)
-}
-
 // TestKubeBackendIsMinimal tests that Kube backend has minimal implementation (all no-ops).
 func TestKubeBackendIsMinimal(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
 
-	backend := New(cl, cl.Scheme(), recorder, "default-scheduler")
+	backend := New(cl, cl.Scheme(), recorder)
 	ctx := context.Background()
 
 	// Test that Init is no-op

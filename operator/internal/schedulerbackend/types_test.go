@@ -21,6 +21,7 @@ import (
 	"sync"
 	"testing"
 
+	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -35,14 +36,14 @@ import (
 func TestPreparePod(t *testing.T) {
 	tests := []struct {
 		name          string
-		schedulerName string
+		schedulerName configv1alpha1.SchedulerName
 		inputPod      *corev1.Pod
 		expectError   bool
 		expectName    string
 	}{
 		{
 			name:          "prepare pod with kai backend",
-			schedulerName: "kai-scheduler",
+			schedulerName: configv1alpha1.SchedulerNameKai,
 			inputPod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pod",
@@ -55,7 +56,7 @@ func TestPreparePod(t *testing.T) {
 		},
 		{
 			name:          "prepare pod with kube backend",
-			schedulerName: "default-scheduler",
+			schedulerName: configv1alpha1.SchedulerNameKube,
 			inputPod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pod",

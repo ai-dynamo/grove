@@ -41,7 +41,7 @@ func TestReconcile(t *testing.T) {
 	tests := []struct {
 		name           string
 		podGang        *groveschedulerv1alpha1.PodGang
-		backendType    string
+		schedulerName  string
 		expectError    bool
 		setupMock      func(*groveschedulerv1alpha1.PodGang)
 		verifyBehavior func(*testing.T, ctrl.Result, error)
@@ -62,8 +62,8 @@ func TestReconcile(t *testing.T) {
 					},
 				},
 			},
-			backendType: "kai",
-			expectError: false,
+			schedulerName: "kai-scheduler",
+			expectError:   false,
 		},
 		{
 			name: "reconcile new podgang with kube backend",
@@ -81,8 +81,8 @@ func TestReconcile(t *testing.T) {
 					},
 				},
 			},
-			backendType: "kube",
-			expectError: false,
+			schedulerName: "default-scheduler",
+			expectError:   false,
 		},
 		{
 			name: "reconcile deleted podgang",
@@ -102,8 +102,8 @@ func TestReconcile(t *testing.T) {
 					},
 				},
 			},
-			backendType: "kai",
-			expectError: false,
+			schedulerName: "kai-scheduler",
+			expectError:   false,
 		},
 		{
 			name: "reconcile updated podgang",
@@ -122,8 +122,8 @@ func TestReconcile(t *testing.T) {
 					},
 				},
 			},
-			backendType: "kai",
-			expectError: false,
+			schedulerName: "kai-scheduler",
+			expectError:   false,
 		},
 	}
 
@@ -135,10 +135,10 @@ func TestReconcile(t *testing.T) {
 
 			// Create appropriate backend
 			var backend schedulerbackend.SchedulerBackend
-			if tt.backendType == "kai" {
-				backend = kai.New(cl, cl.Scheme(), recorder, "kai-scheduler")
+			if tt.schedulerName == "kai-scheduler" {
+				backend = kai.New(cl, cl.Scheme(), recorder)
 			} else {
-				backend = kube.New(cl, cl.Scheme(), recorder, "default-scheduler")
+				backend = kube.New(cl, cl.Scheme(), recorder)
 			}
 
 			reconciler := &BackendReconciler{
@@ -180,7 +180,7 @@ func TestReconcilePodGangNotFound(t *testing.T) {
 	// Setup client without any podgang
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
-	backend := kai.New(cl, cl.Scheme(), recorder, "kai-scheduler")
+	backend := kai.New(cl, cl.Scheme(), recorder)
 
 	reconciler := &BackendReconciler{
 		Client:  cl,
@@ -226,7 +226,7 @@ func TestReconcilePodGangWithDeletionTimestamp(t *testing.T) {
 
 	cl := testutils.CreateDefaultFakeClient([]client.Object{podGang})
 	recorder := record.NewFakeRecorder(10)
-	backend := kai.New(cl, cl.Scheme(), recorder, "kai-scheduler")
+	backend := kai.New(cl, cl.Scheme(), recorder)
 
 	reconciler := &BackendReconciler{
 		Client:  cl,
@@ -254,7 +254,7 @@ func TestReconcilePodGangWithDeletionTimestamp(t *testing.T) {
 func TestNewReconcilerWithBackend(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
-	backend := kai.New(cl, cl.Scheme(), recorder, "kai-scheduler")
+	backend := kai.New(cl, cl.Scheme(), recorder)
 
 	reconciler := NewReconcilerWithBackend(cl, cl.Scheme(), backend)
 

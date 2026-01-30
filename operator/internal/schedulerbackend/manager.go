@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"sync"
 
+	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend/kai"
 	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend/kube"
 
@@ -37,34 +38,23 @@ var (
 
 // Initialize creates the global backend instance based on schedulerName
 // This should be called once during operator startup
-// Supported scheduler names: "kai-scheduler", "kube-scheduler"
-// Future: "volcano"
-func Initialize(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, schedulerName string) error {
+// Supported scheduler names: "kai-scheduler", "default-scheduler"
+func Initialize(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, schedulerName configv1alpha1.SchedulerName) error {
 	var initErr error
 	initOnce.Do(func() {
-		// Default to "kai-scheduler" if not specified
-		if schedulerName == "" {
-			schedulerName = "default-scheduler"
-		}
-
 		// Create the appropriate backend based on scheduler name
 		switch schedulerName {
-		case "kai-scheduler":
-			globalBackend = kai.New(client, scheme, eventRecorder, schedulerName)
-
-		case "default-scheduler":
-			globalBackend = kube.New(client, scheme, eventRecorder, schedulerName)
-
-		// Future backends - uncomment and implement as needed:
-		// case "volcano":
-		//     globalBackend = volcano.New(client, scheme, eventRecorder, schedulerName)
-
+		case configv1alpha1.SchedulerNameKai:
+			globalBackend = kai.New(client, scheme, eventRecorder)
+		// Internal fallback case for backward compatibility
+		case configv1alpha1.SchedulerNameKube:
+			globalBackend = kube.New(client, scheme, eventRecorder)
 		default:
-			initErr = fmt.Errorf("unsupported scheduler %q (supported: kai-scheduler, kube-scheduler)", schedulerName)
+			initErr = fmt.Errorf("unsupported scheduler %q (supported: kai-scheduler, default-scheduler)", schedulerName)
 			return
 		}
 
-		globalSchedulerName = schedulerName
+		globalSchedulerName = string(schedulerName)
 
 		// Initialize the backend
 		if err := globalBackend.Init(); err != nil {

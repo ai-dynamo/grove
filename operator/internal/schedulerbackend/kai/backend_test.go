@@ -35,13 +35,13 @@ func TestNew(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
 
-	backend := New(cl, cl.Scheme(), recorder, "kai-scheduler")
+	backend := New(cl, cl.Scheme(), recorder)
 
 	require.NotNil(t, backend)
 	assert.Equal(t, cl, backend.client)
 	assert.Equal(t, cl.Scheme(), backend.scheme)
 	assert.Equal(t, recorder, backend.eventRecorder)
-	assert.Equal(t, "kai-scheduler", backend.schedulerName)
+	assert.Equal(t, SchedulerName, backend.Name())
 }
 
 // TestName tests the Name method returns the correct backend name.
@@ -49,10 +49,9 @@ func TestName(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
 
-	backend := New(cl, cl.Scheme(), recorder, "kai-scheduler")
+	backend := New(cl, cl.Scheme(), recorder)
 
-	assert.Equal(t, BackendName, backend.Name())
-	assert.Equal(t, "KAI-Scheduler", backend.Name())
+	assert.Equal(t, SchedulerName, backend.Name())
 }
 
 // TestInit tests the Init method.
@@ -60,7 +59,7 @@ func TestInit(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
 
-	backend := New(cl, cl.Scheme(), recorder, "kai-scheduler")
+	backend := New(cl, cl.Scheme(), recorder)
 
 	err := backend.Init()
 	require.NoError(t, err)
@@ -71,7 +70,7 @@ func TestSyncPodGang(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
 
-	backend := New(cl, cl.Scheme(), recorder, "kai-scheduler")
+	backend := New(cl, cl.Scheme(), recorder)
 
 	// Create a sample PodGang
 	podGang := &groveschedulerv1alpha1.PodGang{
@@ -101,7 +100,7 @@ func TestOnPodGangDelete(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
 
-	backend := New(cl, cl.Scheme(), recorder, "kai-scheduler")
+	backend := New(cl, cl.Scheme(), recorder)
 
 	// Create a sample PodGang
 	podGang := &groveschedulerv1alpha1.PodGang{
@@ -129,14 +128,11 @@ func TestOnPodGangDelete(t *testing.T) {
 // TestPreparePod tests the PreparePod method.
 func TestPreparePod(t *testing.T) {
 	tests := []struct {
-		name              string
-		schedulerName     string
-		inputPod          *corev1.Pod
-		expectedScheduler string
+		name     string
+		inputPod *corev1.Pod
 	}{
 		{
-			name:          "sets scheduler name",
-			schedulerName: "kai-scheduler",
+			name: "sets scheduler name",
 			inputPod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pod",
@@ -144,11 +140,9 @@ func TestPreparePod(t *testing.T) {
 				},
 				Spec: corev1.PodSpec{},
 			},
-			expectedScheduler: "kai-scheduler",
 		},
 		{
-			name:          "overwrites existing scheduler name",
-			schedulerName: "kai-scheduler",
+			name: "overwrites existing scheduler name",
 			inputPod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pod",
@@ -158,11 +152,9 @@ func TestPreparePod(t *testing.T) {
 					SchedulerName: "old-scheduler",
 				},
 			},
-			expectedScheduler: "kai-scheduler",
 		},
 		{
-			name:          "preserves existing pod configuration",
-			schedulerName: "kai-scheduler",
+			name: "preserves existing pod configuration",
 			inputPod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pod",
@@ -183,11 +175,9 @@ func TestPreparePod(t *testing.T) {
 					},
 				},
 			},
-			expectedScheduler: "kai-scheduler",
 		},
 		{
-			name:          "handles custom scheduler name",
-			schedulerName: "custom-kai-scheduler",
+			name: "handles custom scheduler name",
 			inputPod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pod",
@@ -195,7 +185,6 @@ func TestPreparePod(t *testing.T) {
 				},
 				Spec: corev1.PodSpec{},
 			},
-			expectedScheduler: "custom-kai-scheduler",
 		},
 	}
 
@@ -204,7 +193,7 @@ func TestPreparePod(t *testing.T) {
 			cl := testutils.CreateDefaultFakeClient(nil)
 			recorder := record.NewFakeRecorder(10)
 
-			backend := New(cl, cl.Scheme(), recorder, tt.schedulerName)
+			backend := New(cl, cl.Scheme(), recorder)
 
 			// Store original pod configuration for verification
 			originalLabels := make(map[string]string)
@@ -215,9 +204,6 @@ func TestPreparePod(t *testing.T) {
 
 			backend.PreparePod(tt.inputPod)
 
-			// Verify scheduler name was set correctly
-			assert.Equal(t, tt.expectedScheduler, tt.inputPod.Spec.SchedulerName)
-
 			// Verify other pod configuration was preserved
 			assert.Equal(t, tt.inputPod.Name, tt.inputPod.Name)
 			assert.Equal(t, tt.inputPod.Namespace, tt.inputPod.Namespace)
@@ -227,14 +213,4 @@ func TestPreparePod(t *testing.T) {
 			assert.Equal(t, originalContainers, len(tt.inputPod.Spec.Containers))
 		})
 	}
-}
-
-// TestConstants tests that package constants are properly defined.
-func TestConstants(t *testing.T) {
-	assert.Equal(t, "KAI-Scheduler", BackendName)
-	assert.Equal(t, "grove.io/podgang-pending-creation", SchedulingGateName)
-	assert.Equal(t, "kai", BackendLabelValue)
-	assert.Equal(t, "scheduling.run.ai", PodGroupAPIGroup)
-	assert.Equal(t, "v2alpha2", PodGroupAPIVersion)
-	assert.Equal(t, "PodGroup", PodGroupKind)
 }

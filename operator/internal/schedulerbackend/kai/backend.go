@@ -27,12 +27,8 @@ import (
 )
 
 const (
-	// BackendName is the name of the KAI backend
-	BackendName = "KAI-Scheduler"
-	// SchedulingGateName is the name of the scheduling gate used by KAI
-	SchedulingGateName = "grove.io/podgang-pending-creation"
-	// BackendLabelValue is the label value to identify KAI backend
-	BackendLabelValue = "kai"
+	// SchedulerName is the name of the KAI scheduler
+	SchedulerName = "kai-scheduler"
 )
 
 // PodGroup API constants (run.ai format)
@@ -48,22 +44,20 @@ type Backend struct {
 	client        client.Client
 	scheme        *runtime.Scheme
 	eventRecorder record.EventRecorder
-	schedulerName string // The scheduler name from configuration
 }
 
 // New creates a new KAI backend instance
-func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, schedulerName string) *Backend {
+func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder) *Backend {
 	return &Backend{
 		client:        cl,
 		scheme:        scheme,
 		eventRecorder: eventRecorder,
-		schedulerName: schedulerName,
 	}
 }
 
 // Name returns the backend name
 func (b *Backend) Name() string {
-	return BackendName
+	return SchedulerName
 }
 
 // Init initializes the KAI backend
@@ -92,5 +86,5 @@ func (b *Backend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.P
 // This includes: schedulerName, and annotations
 func (b *Backend) PreparePod(pod *corev1.Pod) {
 	// Set scheduler name from configuration
-	pod.Spec.SchedulerName = b.schedulerName
+	pod.Spec.SchedulerName = SchedulerName
 }

@@ -39,12 +39,12 @@ func TestNewReconcilerWithBackendKai(t *testing.T) {
 		{
 			name:         "create reconciler with kai backend",
 			backendType:  "kai",
-			expectedName: "KAI-Scheduler",
+			expectedName: "kai-scheduler",
 		},
 		{
 			name:         "create reconciler with kube backend",
 			backendType:  "kube",
-			expectedName: "Kube-Scheduler",
+			expectedName: "default-scheduler",
 		},
 	}
 
@@ -55,9 +55,9 @@ func TestNewReconcilerWithBackendKai(t *testing.T) {
 
 			var backend schedulerbackend.SchedulerBackend
 			if tt.backendType == "kai" {
-				backend = kai.New(cl, cl.Scheme(), recorder, "kai-scheduler")
+				backend = kai.New(cl, cl.Scheme(), recorder)
 			} else {
-				backend = kube.New(cl, cl.Scheme(), recorder, "default-scheduler")
+				backend = kube.New(cl, cl.Scheme(), recorder)
 			}
 
 			reconciler := NewReconcilerWithBackend(cl, cl.Scheme(), backend)
@@ -87,7 +87,7 @@ func TestNewReconcilerWithBackendNilBackend(t *testing.T) {
 func TestNewReconcilerWithBackendFields(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
-	backend := kai.New(cl, cl.Scheme(), recorder, "kai-scheduler")
+	backend := kai.New(cl, cl.Scheme(), recorder)
 
 	reconciler := NewReconcilerWithBackend(cl, cl.Scheme(), backend)
 
@@ -96,5 +96,5 @@ func TestNewReconcilerWithBackendFields(t *testing.T) {
 	assert.NotNil(t, reconciler.Client, "Client should not be nil")
 	assert.NotNil(t, reconciler.Scheme, "Scheme should not be nil")
 	assert.NotNil(t, reconciler.Backend, "Backend should not be nil")
-	assert.Equal(t, "KAI-Scheduler", reconciler.Backend.Name())
+	assert.Equal(t, "kai-scheduler", reconciler.Backend.Name())
 }

@@ -20,6 +20,7 @@ import (
 	"sync"
 	"testing"
 
+	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
@@ -31,28 +32,22 @@ import (
 func TestInitialize(t *testing.T) {
 	tests := []struct {
 		name          string
-		schedulerName string
+		schedulerName configv1alpha1.SchedulerName
 		wantErr       bool
 		errContains   string
 		expectedName  string
 	}{
 		{
-			name:          "kai-scheduler initialization",
-			schedulerName: "kai-scheduler",
+			name:          "kai scheduler initialization",
+			schedulerName: configv1alpha1.SchedulerNameKai,
 			wantErr:       false,
-			expectedName:  "KAI-Scheduler",
+			expectedName:  "kai-scheduler",
 		},
 		{
-			name:          "default-scheduler initialization",
-			schedulerName: "default-scheduler",
+			name:          "default scheduler initialization",
+			schedulerName: configv1alpha1.SchedulerNameKube,
 			wantErr:       false,
-			expectedName:  "Kube-Scheduler",
-		},
-		{
-			name:          "empty scheduler name defaults to default-scheduler",
-			schedulerName: "",
-			wantErr:       false,
-			expectedName:  "Kube-Scheduler",
+			expectedName:  "default-scheduler",
 		},
 		{
 			name:          "unsupported scheduler",
@@ -106,17 +101,17 @@ func TestInitializeOnce(t *testing.T) {
 	recorder := record.NewFakeRecorder(10)
 
 	// First initialization should succeed
-	err := Initialize(cl, cl.Scheme(), recorder, "kai-scheduler")
+	err := Initialize(cl, cl.Scheme(), recorder, configv1alpha1.SchedulerNameKai)
 	require.NoError(t, err)
-	assert.Equal(t, "kai-scheduler", GetSchedulerName())
+	assert.Equal(t, string(configv1alpha1.SchedulerNameKai), GetSchedulerName())
 	firstBackend := Get()
 	require.NotNil(t, firstBackend)
 
 	// Second initialization should be ignored (due to sync.Once)
-	err = Initialize(cl, cl.Scheme(), recorder, "default-scheduler")
+	err = Initialize(cl, cl.Scheme(), recorder, configv1alpha1.SchedulerNameKube)
 	require.NoError(t, err)
 	// Backend should still be kai-scheduler, not default-scheduler
-	assert.Equal(t, "kai-scheduler", GetSchedulerName())
+	assert.Equal(t, string(configv1alpha1.SchedulerNameKai), GetSchedulerName())
 	assert.Equal(t, firstBackend, Get())
 }
 
@@ -134,12 +129,12 @@ func TestGet(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
 
-	err := Initialize(cl, cl.Scheme(), recorder, "kai-scheduler")
+	err := Initialize(cl, cl.Scheme(), recorder, configv1alpha1.SchedulerNameKai)
 	require.NoError(t, err)
 
 	backend := Get()
 	require.NotNil(t, backend)
-	assert.Equal(t, "KAI-Scheduler", backend.Name())
+	assert.Equal(t, string(configv1alpha1.SchedulerNameKai), backend.Name())
 }
 
 // TestMustGet tests the MustGet function.
@@ -158,13 +153,13 @@ func TestMustGet(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
 
-	err := Initialize(cl, cl.Scheme(), recorder, "kai-scheduler")
+	err := Initialize(cl, cl.Scheme(), recorder, configv1alpha1.SchedulerNameKai)
 	require.NoError(t, err)
 
 	assert.NotPanics(t, func() {
 		backend := MustGet()
 		assert.NotNil(t, backend)
-		assert.Equal(t, "KAI-Scheduler", backend.Name())
+		assert.Equal(t, "kai-scheduler", backend.Name())
 	})
 }
 
@@ -178,13 +173,13 @@ func TestGetSchedulerName(t *testing.T) {
 	// Before initialization, GetSchedulerName should return empty string
 	assert.Equal(t, "", GetSchedulerName())
 
-	// After initialization with kai-scheduler
+	// After initialization with kai scheduler
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
 
-	err := Initialize(cl, cl.Scheme(), recorder, "kai-scheduler")
+	err := Initialize(cl, cl.Scheme(), recorder, configv1alpha1.SchedulerNameKai)
 	require.NoError(t, err)
-	assert.Equal(t, "kai-scheduler", GetSchedulerName())
+	assert.Equal(t, string(configv1alpha1.SchedulerNameKai), GetSchedulerName())
 }
 
 // TestIsInitialized tests the IsInitialized function.
@@ -201,7 +196,7 @@ func TestIsInitialized(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
 
-	err := Initialize(cl, cl.Scheme(), recorder, "kai-scheduler")
+	err := Initialize(cl, cl.Scheme(), recorder, configv1alpha1.SchedulerNameKai)
 	require.NoError(t, err)
 	assert.True(t, IsInitialized())
 }

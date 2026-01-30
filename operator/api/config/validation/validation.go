@@ -34,6 +34,7 @@ import (
 func ValidateOperatorConfiguration(config *configv1alpha1.OperatorConfiguration) field.ErrorList {
 	allErrs := field.ErrorList{}
 	allErrs = append(allErrs, validateLogConfiguration(config)...)
+	allErrs = append(allErrs, validateSchedulerConfiguration(config)...)
 	allErrs = append(allErrs, validateLeaderElectionConfiguration(config.LeaderElection, field.NewPath("leaderElection"))...)
 	allErrs = append(allErrs, validateClientConnectionConfiguration(config.ClientConnection, field.NewPath("clientConnection"))...)
 	allErrs = append(allErrs, validateControllerConfiguration(config.Controllers, field.NewPath("controllers"))...)
@@ -48,6 +49,17 @@ func validateLogConfiguration(config *configv1alpha1.OperatorConfiguration) fiel
 	}
 	if len(strings.TrimSpace(string(config.LogFormat))) > 0 && !sets.New(configv1alpha1.AllLogFormats...).Has(config.LogFormat) {
 		allErrs = append(allErrs, field.NotSupported(field.NewPath("logFormat"), config.LogFormat, configv1alpha1.AllLogFormats))
+	}
+	return allErrs
+}
+
+func validateSchedulerConfiguration(config *configv1alpha1.OperatorConfiguration) field.ErrorList {
+	allErrs := field.ErrorList{}
+	// SchedulerName is required
+	if len(strings.TrimSpace(string(config.SchedulerName))) == 0 {
+		allErrs = append(allErrs, field.Required(field.NewPath("schedulerName"), "schedulerName is required"))
+	} else if !sets.New(configv1alpha1.AllSchedulerNames...).Has(config.SchedulerName) {
+		allErrs = append(allErrs, field.NotSupported(field.NewPath("schedulerName"), config.SchedulerName, configv1alpha1.AllSchedulerNames))
 	}
 	return allErrs
 }

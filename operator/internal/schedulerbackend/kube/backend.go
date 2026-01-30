@@ -27,10 +27,8 @@ import (
 )
 
 const (
-	// BackendName is the name of the Kubernetes default scheduler backend
-	BackendName = "Kube-Scheduler"
-	// BackendLabelValue is the label value to identify kube backend
-	BackendLabelValue = "kube"
+	// SchedulerName is the name of the Kubernetes default scheduler
+	SchedulerName = "default-scheduler"
 )
 
 // Backend implements the SchedulerBackend interface for Kubernetes default scheduler
@@ -39,22 +37,20 @@ type Backend struct {
 	client        client.Client
 	scheme        *runtime.Scheme
 	eventRecorder record.EventRecorder
-	schedulerName string // The scheduler name from configuration
 }
 
 // New creates a new Kube backend instance
-func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, schedulerName string) *Backend {
+func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder) *Backend {
 	return &Backend{
 		client:        cl,
 		scheme:        scheme,
 		eventRecorder: eventRecorder,
-		schedulerName: schedulerName,
 	}
 }
 
 // Name returns the backend name
 func (b *Backend) Name() string {
-	return BackendName
+	return SchedulerName
 }
 
 // Init initializes the Kube backend
@@ -81,5 +77,5 @@ func (b *Backend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.P
 // This simply sets the scheduler name
 func (b *Backend) PreparePod(pod *corev1.Pod) {
 	// Set scheduler name from configuration
-	pod.Spec.SchedulerName = b.schedulerName
+	pod.Spec.SchedulerName = SchedulerName
 }

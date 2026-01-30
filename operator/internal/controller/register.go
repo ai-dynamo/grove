@@ -37,17 +37,12 @@ func RegisterControllers(mgr ctrl.Manager, config configv1alpha1.OperatorConfigu
 
 	pcsReconciler := podcliqueset.NewReconciler(mgr, controllerConfig.PodCliqueSet, topologyAwareSchedulingConfig, networkConfig)
 	// Get scheduler name from configuration
-	schedulerName := config.SchedulerName
-	if schedulerName == "" {
-		schedulerName = "default-scheduler" // Default to default-scheduler
-	}
-
 	// Initialize global backend with the configured scheduler
 	if err := schedulerbackend.Initialize(
 		mgr.GetClient(),
 		mgr.GetScheme(),
 		mgr.GetEventRecorderFor("scheduler-backend"),
-		schedulerName,
+		config.SchedulerName,
 	); err != nil {
 		return fmt.Errorf("failed to initialize scheduler backend: %w", err)
 	}
