@@ -60,7 +60,7 @@ Looking at this name, you can immediately tell:
 
 ### Kubernetes Name Length Limit
 
-Kubernetes has a **63-character limit** for resource names. Since Grove constructs full pod names by combining multiple components, you need to be mindful of name lengths when choosing names for your resources.
+Kubernetes has a **63-character limit** for pod names. Since Grove constructs full pod names by combining multiple components, you need to be mindful of name lengths when choosing names for your resources.
 
 **How Grove constructs names:**
 
