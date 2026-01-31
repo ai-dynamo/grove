@@ -43,6 +43,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/util/retry"
+
+	kubeutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 )
 
 // AppliedResource holds information about an applied Kubernetes resource
@@ -102,7 +104,7 @@ func WaitForPods(ctx context.Context, restConfig *rest.Config, namespaces []stri
 
 			for _, pod := range pods.Items {
 				totalPods++
-				if isPodReady(&pod) {
+				if kubeutils.IsPodReady(&pod) {
 					readyPods++
 				} else {
 					allReady = false
@@ -308,21 +310,6 @@ func getGVRFromGVK(restMapper meta.RESTMapper, gvk schema.GroupVersionKind) (sch
 	return mapping.Resource, nil
 }
 
-// isPodReady checks if a pod is ready
-func isPodReady(pod *v1.Pod) bool {
-	// First check that the pod is in Running phase
-	if pod.Status.Phase != v1.PodRunning {
-		return false
-	}
-	// Then check that the Ready condition is true
-	for _, condition := range pod.Status.Conditions {
-		if condition.Type == v1.PodReady && condition.Status == v1.ConditionTrue {
-			return true
-		}
-	}
-	return false
-}
-
 // SetNodeSchedulable sets a Kubernetes node to be unschedulable (cordoned) or schedulable (uncordoned).
 // This function uses retry logic to handle optimistic concurrency conflicts that can occur
 // when multiple controllers or processes are updating node objects concurrently.
@@ -420,7 +407,7 @@ func CountPodsByPhase(pods *v1.PodList) PodPhaseCount {
 func CountReadyPods(pods *v1.PodList) int {
 	readyCount := 0
 	for _, pod := range pods.Items {
-		if isPodReady(&pod) {
+		if kubeutils.IsPodReady(&pod) {
 			readyCount++
 		}
 	}
@@ -530,46 +517,4 @@ func scaleCRD(ctx context.Context, dynamicClient dynamic.Interface, gvr schema.G
 	}
 
 	return nil
-}
-
-// IsNodeReady checks if a node is in Ready state
-func IsNodeReady(node *v1.Node) bool {
-	for _, condition := range node.Status.Conditions {
-		if condition.Type == v1.NodeReady {
-			return condition.Status == v1.ConditionTrue
-		}
-	}
-	return false // If no Ready condition is found, consider the node not ready
-}
-
-// WaitForSingleNodeReady waits for a specific node to become ready after container restart
-func WaitForSingleNodeReady(ctx context.Context, clientset *kubernetes.Clientset, nodeName string, timeout time.Duration, logger *Logger) error {
-	const defaultPollInterval = 2 * time.Second
-
-	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	ticker := time.NewTicker(defaultPollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-timeoutCtx.Done():
-			return fmt.Errorf("timeout waiting for node %s to become ready", nodeName)
-		case <-ticker.C:
-			node, err := clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
-			if err != nil {
-				// Node might not have rejoined yet (k3d agent still starting up)
-				logger.Debugf("  Node %s not found yet (k3d agent still connecting), waiting...", nodeName)
-				continue
-			}
-
-			if IsNodeReady(node) {
-				logger.Debugf("✅ Node %s has rejoined and is ready", nodeName)
-				return nil
-			}
-
-			logger.Debugf("  Node %s found but not ready yet, waiting...", nodeName)
-		}
-	}
 }

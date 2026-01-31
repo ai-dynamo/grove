@@ -804,13 +804,7 @@ func replaceNotReadyNode(ctx context.Context, node *v1.Node, clientset *kubernet
 		return fmt.Errorf("failed to restart container for node %s: %w", nodeName, err)
 	}
 
-	// Step 3: Wait for the node to rejoin and become ready
-	logger.Debugf("⏳ Waiting for node to rejoin cluster: %s", nodeName)
-	if err := utils.WaitForSingleNodeReady(ctx, clientset, nodeName, defaultPollTimeout, logger); err != nil {
-		return fmt.Errorf("node %s did not rejoin cluster: %w", nodeName, err)
-	}
-
-	// Step 4: Reapply original labels to the replaced node
+	// Step 3: Reapply original labels to the replaced node
 	logger.Debugf("🏷️  Reapplying original labels to replaced node: %s", nodeName)
 	if err := reapplyNodeLabels(ctx, clientset, nodeName, originalNodeLabels, logger); err != nil {
 		return fmt.Errorf("failed to reapply labels to node %s: %w", nodeName, err)
