@@ -73,7 +73,7 @@ Refer to all Grove APIs here
 - Multi-Level Horizontal Auto-Scaling ✅
 - Startup Ordering ✅
 - Rolling Updates ✅
-- Topology-Aware Scheduling
+- Topology-Aware Scheduling ✅
 
 ### 2026 Priorities
 
