@@ -1,0 +1,44 @@
+# Workload 11: MR-1 - Multi-Replica with Rack Constraint
+# Test scenario: PCS with 2 replicas, each replica packs in separate rack
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: tas-multirep
+  labels:
+    app: tas-multirep
+spec:
+  replicas: 2  # Creates 2 separate PodGangs (one per replica)
+  template:
+    topologyConstraint:
+      packDomain: rack  # Each replica gang packs within its own rack
+    cliques:
+      - name: worker
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: worker
+          replicas: 2  # 2 pods per replica (total: 4 pods)
+          minAvailable: 2
+          podSpec:
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 80Mi  # Small footprint to ensure resources not a constraint
