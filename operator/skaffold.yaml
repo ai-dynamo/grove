@@ -45,6 +45,7 @@ deploy:
           deployment.env:
             - name: GROVE_INIT_CONTAINER_IMAGE
               value: "{{.CONTAINER_REGISTRY}}/grove-initc"
+          config.authorizer.enabled: true
         skipBuildDependencies: true
         createNamespace: true
         wait: true

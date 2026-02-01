@@ -20,8 +20,9 @@ const (
 	// OperatorNamespace is the namespace where the Grove operator is deployed for E2E tests.
 	// This is used during installation (via Skaffold) and for finding operator pods during diagnostics.
 	OperatorNamespace = "grove-system"
-
 	// OperatorDeploymentName is the name of the operator deployment (also the Helm release name).
 	// This is used to find operator pods for log collection during test failures.
 	OperatorDeploymentName = "grove-operator"
+	// ServiceAccountName is the name of the ServiceAccount used by the Grove operator.
+	ServiceAccountName = "grove-operator"
 )

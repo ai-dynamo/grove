@@ -78,7 +78,7 @@ type PodGroup struct {
 	// PodReferences is a list of references to the Pods that are part of this group.
 	PodReferences []NamespacedName `json:"podReferences"`
 	// MinReplicas is the number of replicas that needs to be gang scheduled.
-	// If the MinReplicas is greater than len(PodReferences) then scheduler makes the best effort to schedule as many pods beyond
+	// If the MinReplicas is lesser than len(PodReferences) then scheduler makes the best effort to schedule as many pods beyond
 	// MinReplicas. However, guaranteed gang scheduling is only provided for MinReplicas.
 	MinReplicas int32 `json:"minReplicas"`
 	// TopologyConstraint defines topology packing constraints for this PodGroup.

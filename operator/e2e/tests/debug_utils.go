@@ -186,14 +186,14 @@ func dumpGroveResources(tc TestContext) {
 	logger.Info("=== GROVE RESOURCES ===")
 	logger.Info("================================================================================")
 
-	if tc.DynamicClient == nil {
-		logger.Info("[DIAG] DynamicClient is nil, cannot list Grove resources")
+	if tc.AdminDynamicClient == nil {
+		logger.Info("[DIAG] AdminDynamicClient is nil, cannot list Grove resources")
 		return
 	}
 
 	for _, rt := range groveResourceTypes {
 		logger.Infof("[DIAG] Listing %s in namespace %s...", rt.name, tc.Namespace)
-		resources, err := tc.DynamicClient.Resource(rt.gvr).Namespace(tc.Namespace).List(tc.Ctx, metav1.ListOptions{})
+		resources, err := tc.AdminDynamicClient.Resource(rt.gvr).Namespace(tc.Namespace).List(tc.Ctx, metav1.ListOptions{})
 		if err != nil {
 			logger.Infof("[DIAG] Failed to list %s: %v", rt.name, err)
 			continue

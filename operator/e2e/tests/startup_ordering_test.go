@@ -59,19 +59,20 @@ func Test_SO1_InorderStartupOrderWithFullReplicas(t *testing.T) {
 
 	logger.Info("1. Initialize a 10-node Grove cluster")
 	totalPods := 10 // pc-a: 2 replicas, pc-b: 1*2 (scaling group), pc-c: 3*2 (scaling group) = 2+2+6=10
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, totalPods)
+	adminClientSet, adminRESTConfig, adminDynamicClient, operatorDynamicClient, cleanup := prepareTestCluster(ctx, t, totalPods)
 	defer cleanup()
 
 	logger.Info("2. Deploy workload WL3, and verify 10 newly created pods")
 	tc := TestContext{
-		T:             t,
-		Ctx:           ctx,
-		Clientset:     clientset,
-		RestConfig:    restConfig,
-		DynamicClient: dynamicClient,
-		Namespace:     "default",
-		Timeout:       5 * time.Minute,
-		Interval:      defaultPollInterval,
+		T:                     t,
+		Ctx:                   ctx,
+		RestConfig:            adminRESTConfig,
+		Clientset:             adminClientSet,
+		AdminDynamicClient:    adminDynamicClient,
+		OperatorDynamicClient: operatorDynamicClient,
+		Namespace:             "default",
+		Timeout:               5 * time.Minute,
+		Interval:              defaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload3",
 			YAMLPath:     "../yaml/workload3.yaml",
@@ -117,19 +118,20 @@ func Test_SO2_InorderStartupOrderWithMinReplicas(t *testing.T) {
 
 	logger.Info("1. Initialize a 10-node Grove cluster")
 	totalPods := 10 // pc-a: 2 replicas, pc-b: 1*2 (scaling group), pc-c: 3*2 (scaling group) = 2+2+6=10
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, totalPods)
+	adminClientSet, adminRESTConfig, adminDynamicClient, operatorDynamicClient, cleanup := prepareTestCluster(ctx, t, totalPods)
 	defer cleanup()
 
 	logger.Info("2. Deploy workload WL4, and verify 10 newly created pods")
 	tc := TestContext{
-		T:             t,
-		Ctx:           ctx,
-		Clientset:     clientset,
-		RestConfig:    restConfig,
-		DynamicClient: dynamicClient,
-		Namespace:     "default",
-		Timeout:       5 * time.Minute,
-		Interval:      defaultPollInterval,
+		T:                     t,
+		Ctx:                   ctx,
+		RestConfig:            adminRESTConfig,
+		Clientset:             adminClientSet,
+		AdminDynamicClient:    adminDynamicClient,
+		OperatorDynamicClient: operatorDynamicClient,
+		Namespace:             "default",
+		Timeout:               5 * time.Minute,
+		Interval:              defaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload4",
 			YAMLPath:     "../yaml/workload4.yaml",
@@ -186,19 +188,20 @@ func Test_SO3_ExplicitStartupOrderWithFullReplicas(t *testing.T) {
 
 	logger.Info("1. Initialize a 10-node Grove cluster")
 	totalPods := 10 // pc-a: 2 replicas, pc-b: 1*2 (scaling group), pc-c: 3*2 (scaling group) = 2+2+6=10
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, totalPods)
+	adminClientSet, adminRESTConfig, adminDynamicClient, operatorDynamicClient, cleanup := prepareTestCluster(ctx, t, totalPods)
 	defer cleanup()
 
 	logger.Info("2. Deploy workload WL5, and verify 10 newly created pods")
 	tc := TestContext{
-		T:             t,
-		Ctx:           ctx,
-		Clientset:     clientset,
-		RestConfig:    restConfig,
-		DynamicClient: dynamicClient,
-		Namespace:     "default",
-		Timeout:       5 * time.Minute,
-		Interval:      defaultPollInterval,
+		T:                     t,
+		Ctx:                   ctx,
+		RestConfig:            adminRESTConfig,
+		Clientset:             adminClientSet,
+		AdminDynamicClient:    adminDynamicClient,
+		OperatorDynamicClient: operatorDynamicClient,
+		Namespace:             "default",
+		Timeout:               5 * time.Minute,
+		Interval:              defaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload5",
 			YAMLPath:     "../yaml/workload5.yaml",
@@ -245,19 +248,20 @@ func Test_SO4_ExplicitStartupOrderWithMinReplicas(t *testing.T) {
 
 	logger.Info("1. Initialize a 10-node Grove cluster")
 	totalPods := 10 // pc-a: 2 replicas, pc-b: 1*2 (scaling group), pc-c: 3*2 (scaling group) = 2+2+6=10
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, totalPods)
+	adminClientSet, adminRESTConfig, adminDynamicClient, operatorDynamicClient, cleanup := prepareTestCluster(ctx, t, totalPods)
 	defer cleanup()
 
 	logger.Info("2. Deploy workload WL6, and verify 10 newly created pods")
 	tc := TestContext{
-		T:             t,
-		Ctx:           ctx,
-		Clientset:     clientset,
-		RestConfig:    restConfig,
-		DynamicClient: dynamicClient,
-		Namespace:     "default",
-		Timeout:       5 * time.Minute,
-		Interval:      defaultPollInterval,
+		T:                     t,
+		Ctx:                   ctx,
+		RestConfig:            adminRESTConfig,
+		Clientset:             adminClientSet,
+		AdminDynamicClient:    adminDynamicClient,
+		OperatorDynamicClient: operatorDynamicClient,
+		Namespace:             "default",
+		Timeout:               5 * time.Minute,
+		Interval:              defaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload6",
 			YAMLPath:     "../yaml/workload6.yaml",

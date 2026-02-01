@@ -76,16 +76,17 @@ const (
 // TestContext holds common test parameters that are shared across many utility functions.
 // This reduces repetitive parameter passing and makes function signatures cleaner.
 type TestContext struct {
-	T             *testing.T
-	Ctx           context.Context
-	Clientset     kubernetes.Interface
-	DynamicClient dynamic.Interface
-	RestConfig    *rest.Config
-	Namespace     string
-	Timeout       time.Duration
-	Interval      time.Duration
-	Nodes         []string
-	Workload      *WorkloadConfig // Optional: workload configuration for the test
+	T                     *testing.T
+	Ctx                   context.Context
+	Clientset             kubernetes.Interface
+	AdminDynamicClient    dynamic.Interface
+	OperatorDynamicClient dynamic.Interface
+	RestConfig            *rest.Config
+	Namespace             string
+	Timeout               time.Duration
+	Interval              time.Duration
+	Nodes                 []string
+	Workload              *WorkloadConfig // Optional: workload configuration for the test
 }
 
 // pollForCondition is a wrapper around utils.PollForCondition that accepts TestContext
@@ -118,12 +119,12 @@ func uncordonNode(tc TestContext, nodeName string) error {
 // This is the correct approach for scaling existing PCSGs since the PCS controller only sets PCSG replicas
 // during initial creation to support HPA scaling.
 func scalePodCliqueScalingGroup(tc TestContext, name string, replicas int) error {
-	return utils.ScalePodCliqueScalingGroupWithClient(tc.Ctx, tc.DynamicClient, tc.Namespace, name, replicas, tc.Timeout, tc.Interval)
+	return utils.ScalePodCliqueScalingGroupWithClient(tc.Ctx, tc.OperatorDynamicClient, tc.Namespace, name, replicas, tc.Timeout, tc.Interval)
 }
 
 // scalePodCliqueSet is a wrapper around utils.ScalePodCliqueSetWithClient that accepts TestContext
 func scalePodCliqueSet(tc TestContext, name string, replicas int) error {
-	return utils.ScalePodCliqueSetWithClient(tc.Ctx, tc.DynamicClient, tc.Namespace, name, replicas)
+	return utils.ScalePodCliqueSetWithClient(tc.Ctx, tc.OperatorDynamicClient, tc.Namespace, name, replicas)
 }
 
 // applyYAMLFile is a wrapper around utils.ApplyYAMLFile that accepts TestContext
@@ -146,31 +147,41 @@ func waitForPodCountAndPhases(tc TestContext, expectedTotal, expectedRunning, ex
 // The cleanup function will fatally fail the test if workload cleanup fails.
 // On test failure, it automatically collects diagnostics before cleanup.
 // On cleanup failure, it also collects diagnostics to help debug why cleanup failed.
-func prepareTestCluster(ctx context.Context, t *testing.T, requiredWorkerNodes int) (*kubernetes.Clientset, *rest.Config, dynamic.Interface, func()) {
+func prepareTestCluster(ctx context.Context, t *testing.T, requiredWorkerNodes int) (adminClientset *kubernetes.Clientset, adminRESTConfig *rest.Config, adminDynamicClient dynamic.Interface, operatorDynamicClient dynamic.Interface, cleanupFn func()) {
 	t.Helper()
+
+	var err error
 
 	// Get the shared cluster instance
 	sharedCluster := setup.SharedCluster(logger)
 
 	// Prepare cluster with required worker nodes
-	if err := sharedCluster.PrepareForTest(ctx, requiredWorkerNodes); err != nil {
+	if err = sharedCluster.PrepareForTest(ctx, requiredWorkerNodes); err != nil {
 		t.Fatalf("Failed to prepare shared cluster: %v", err)
 	}
 
 	// Get clients from shared cluster
-	clientset, restConfig, dynamicClient := sharedCluster.GetClients()
+	adminClientset, adminRESTConfig, adminDynamicClient = sharedCluster.GetClients()
+
+	// Create operator dynamic client that leverages the operator's service account to operate on Grove managed resources.
+	// If authorizer webhook is enabled then this client will have permissions to manage Grove resources.
+	operatorDynamicClient, err = setup.GetOperatorDynamicClient(ctx, adminRESTConfig, logger)
+	if err != nil {
+		t.Fatalf("Failed to create operator dynamic client: %v", err)
+	}
 
 	// Create cleanup function that collects diagnostics on failure
-	cleanup := func() {
+	cleanupFn = func() {
 		// Create a TestContext for diagnostics collection
 		// Uses "default" namespace since that's where most test workloads run
 		diagnosticsTc := TestContext{
-			T:             t,
-			Ctx:           ctx,
-			Clientset:     clientset,
-			RestConfig:    restConfig,
-			DynamicClient: dynamicClient,
-			Namespace:     "default",
+			T:                     t,
+			Ctx:                   ctx,
+			Clientset:             adminClientset,
+			RestConfig:            adminRESTConfig,
+			AdminDynamicClient:    adminDynamicClient,
+			OperatorDynamicClient: operatorDynamicClient,
+			Namespace:             "default",
 		}
 
 		// Collect diagnostics BEFORE cleaning up if test failed
@@ -178,7 +189,7 @@ func prepareTestCluster(ctx context.Context, t *testing.T, requiredWorkerNodes i
 			CollectAllDiagnostics(diagnosticsTc)
 		}
 
-		if err := sharedCluster.CleanupWorkloads(ctx); err != nil {
+		if err = sharedCluster.CleanupWorkloads(ctx); err != nil {
 			// Collect diagnostics on cleanup failure to help debug why cleanup failed
 			// This captures operator logs, remaining resources, pod states, and events
 			logger.Error("================================================================================")
@@ -194,7 +205,7 @@ func prepareTestCluster(ctx context.Context, t *testing.T, requiredWorkerNodes i
 		}
 	}
 
-	return clientset, restConfig, dynamicClient, cleanup
+	return
 }
 
 // getWorkerNodes retrieves the names of all worker nodes in the cluster,

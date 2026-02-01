@@ -64,14 +64,14 @@ func createTopologyTestContext(
 	expectedPods int,
 ) TestContext {
 	return TestContext{
-		T:             t,
-		Ctx:           ctx,
-		Clientset:     clientset,
-		RestConfig:    restConfig,
-		DynamicClient: dynamicClient,
-		Namespace:     "default",
-		Timeout:       defaultPollTimeout,
-		Interval:      defaultPollInterval,
+		T:                  t,
+		Ctx:                ctx,
+		Clientset:          clientset,
+		RestConfig:         restConfig,
+		AdminDynamicClient: dynamicClient,
+		Namespace:          "default",
+		Timeout:            defaultPollTimeout,
+		Interval:           defaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         workloadName,
 			YAMLPath:     yamlPath,
@@ -89,7 +89,7 @@ func createTopologyTestContext(
 func Test_TAS1_TopologyInfrastructure(t *testing.T) {
 	ctx := context.Background()
 
-	clientset, _, dynamicClient, cleanup := prepareTestCluster(ctx, t, 0)
+	clientset, _, dynamicClient, _, cleanup := prepareTestCluster(ctx, t, 0)
 	defer cleanup()
 
 	logger.Info("1. Verify ClusterTopology CR exists with correct 4-level hierarchy")
@@ -160,7 +160,7 @@ func Test_TAS2_MultipleCliquesWithDifferentConstraints(t *testing.T) {
 	ctx := context.Background()
 
 	logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 28)
+	clientset, restConfig, dynamicClient, _, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	expectedPods := 7 // worker-rack: 3 pods, worker-block: 4 pods
@@ -184,7 +184,7 @@ func Test_TAS2_MultipleCliquesWithDifferentConstraints(t *testing.T) {
 	}
 
 	logger.Info("5. Verify KAI PodGroup has correct SubGroups with topology constraints")
-	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
+	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.AdminDynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
 	if err != nil {
 		t.Fatalf("Failed to get PodGroup: %v", err)
 	}
@@ -215,7 +215,7 @@ func Test_TAS3_PCSOnlyConstraint(t *testing.T) {
 	ctx := context.Background()
 
 	logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 28)
+	clientset, restConfig, dynamicClient, _, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	expectedPods := 4 // 2 PCSG workers + 2 router standalone
@@ -234,7 +234,7 @@ func Test_TAS3_PCSOnlyConstraint(t *testing.T) {
 	}
 
 	logger.Info("4. Verify KAI PodGroup has correct SubGroups (PCS-only constraint)")
-	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
+	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.AdminDynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
 	if err != nil {
 		t.Fatalf("Failed to get PodGroup: %v", err)
 	}
@@ -265,7 +265,7 @@ func Test_TAS4_PCSGOnlyConstraint(t *testing.T) {
 	ctx := context.Background()
 
 	logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 28)
+	clientset, restConfig, dynamicClient, _, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	expectedPods := 4 // 2 PCSG workers + 2 router standalone
@@ -284,7 +284,7 @@ func Test_TAS4_PCSGOnlyConstraint(t *testing.T) {
 	}
 
 	logger.Info("5. Verify KAI PodGroup has correct SubGroups (PCSG-only constraint)")
-	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
+	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.AdminDynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
 	if err != nil {
 		t.Fatalf("Failed to get PodGroup: %v", err)
 	}
@@ -316,7 +316,7 @@ func Test_TAS5_HostLevelConstraint(t *testing.T) {
 	ctx := context.Background()
 
 	logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 28)
+	clientset, restConfig, dynamicClient, _, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	expectedPods := 2
@@ -343,7 +343,7 @@ func Test_TAS5_HostLevelConstraint(t *testing.T) {
 	}
 
 	logger.Info("4. Verify KAI PodGroup has correct SubGroups (PCLQ-only host constraint)")
-	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
+	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.AdminDynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
 	if err != nil {
 		t.Fatalf("Failed to get PodGroup: %v", err)
 	}
@@ -374,7 +374,7 @@ func Test_TAS6_StandalonePCLQOnlyPCSZoneConstraint(t *testing.T) {
 	ctx := context.Background()
 
 	logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 28)
+	clientset, restConfig, dynamicClient, _, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	expectedPods := 4
@@ -393,7 +393,7 @@ func Test_TAS6_StandalonePCLQOnlyPCSZoneConstraint(t *testing.T) {
 	}
 
 	logger.Info("4. Verify KAI PodGroup has correct SubGroups (Standalone PCLQ with PCS zone constraint)")
-	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
+	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.AdminDynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
 	if err != nil {
 		t.Fatalf("Failed to get PodGroup: %v", err)
 	}
@@ -418,7 +418,7 @@ func Test_TAS7_NoTopologyConstraint(t *testing.T) {
 	ctx := context.Background()
 
 	logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 28)
+	clientset, restConfig, dynamicClient, _, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	expectedPods := 4 // 2 PCSG replicas × 2 pods each
@@ -436,7 +436,7 @@ func Test_TAS7_NoTopologyConstraint(t *testing.T) {
 		t.Fatalf("Expected 4 pods, got %d", len(allPods))
 	}
 	logger.Info("4. Verify KAI PodGroup has correct SubGroups (no constraints)")
-	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
+	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.AdminDynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
 	if err != nil {
 		t.Fatalf("Failed to get PodGroup: %v", err)
 	}

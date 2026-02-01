@@ -146,7 +146,7 @@ func run(cli *CLI) error {
 	// Set up the cluster
 	logger.Info("🚀 Setting up K3D cluster with Grove operator...")
 
-	_, cleanup, err := setup.SetupCompleteK3DCluster(runCtx, cfg, skaffoldPath, logger)
+	_, cleanup, err := setup.CreateK3DClusterWithComponents(runCtx, cfg, skaffoldPath, logger)
 	if err != nil {
 		logger.Errorf("Failed to setup K3D cluster: %v", err)
 		if cleanup != nil {
@@ -341,4 +341,3 @@ func mergeKubeconfigs(existing, new *clientcmdapi.Config, _ string) *clientcmdap
 
 	return merged
 }
-

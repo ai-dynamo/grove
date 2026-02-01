@@ -79,7 +79,7 @@ func triggerPodCliqueRollingUpdate(tc TestContext, cliqueName string) error {
 	// Retry on conflict errors (optimistic concurrency control)
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// Get the unstructured PodCliqueSet
-		unstructuredPCS, err := tc.DynamicClient.Resource(pcsGVR).Namespace(tc.Namespace).Get(tc.Ctx, pcsName, metav1.GetOptions{})
+		unstructuredPCS, err := tc.AdminDynamicClient.Resource(pcsGVR).Namespace(tc.Namespace).Get(tc.Ctx, pcsName, metav1.GetOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to get PodCliqueSet: %w", err)
 		}
@@ -133,7 +133,7 @@ func triggerPodCliqueRollingUpdate(tc TestContext, cliqueName string) error {
 		}
 
 		// Update the resource - will return conflict error if resource was modified
-		_, err = tc.DynamicClient.Resource(pcsGVR).Namespace(tc.Namespace).Update(tc.Ctx, updatedUnstructured, metav1.UpdateOptions{})
+		_, err = tc.AdminDynamicClient.Resource(pcsGVR).Namespace(tc.Namespace).Update(tc.Ctx, updatedUnstructured, metav1.UpdateOptions{})
 		if err != nil {
 			return err
 		}
@@ -150,7 +150,7 @@ func patchPCSWithSIGTERMIgnoringCommand(tc TestContext) error {
 	pcsName := tc.Workload.Name
 
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		unstructuredPCS, err := tc.DynamicClient.Resource(pcsGVR).Namespace(tc.Namespace).Get(tc.Ctx, pcsName, metav1.GetOptions{})
+		unstructuredPCS, err := tc.AdminDynamicClient.Resource(pcsGVR).Namespace(tc.Namespace).Get(tc.Ctx, pcsName, metav1.GetOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to get PodCliqueSet: %w", err)
 		}
@@ -180,7 +180,7 @@ func patchPCSWithSIGTERMIgnoringCommand(tc TestContext) error {
 			return fmt.Errorf("failed to convert to unstructured: %w", err)
 		}
 
-		_, err = tc.DynamicClient.Resource(pcsGVR).Namespace(tc.Namespace).Update(tc.Ctx, updatedUnstructured, metav1.UpdateOptions{})
+		_, err = tc.AdminDynamicClient.Resource(pcsGVR).Namespace(tc.Namespace).Update(tc.Ctx, updatedUnstructured, metav1.UpdateOptions{})
 		return err
 	})
 }
@@ -205,7 +205,7 @@ func waitForRollingUpdateComplete(tc TestContext, expectedReplicas int32) error 
 	pollCount := 0
 	return pollForCondition(tc, func() (bool, error) {
 		pollCount++
-		unstructuredPCS, err := tc.DynamicClient.Resource(pcsGVR).Namespace(tc.Namespace).Get(tc.Ctx, pcsName, metav1.GetOptions{})
+		unstructuredPCS, err := tc.AdminDynamicClient.Resource(pcsGVR).Namespace(tc.Namespace).Get(tc.Ctx, pcsName, metav1.GetOptions{})
 		if err != nil {
 			return false, err
 		}
@@ -251,7 +251,7 @@ func waitForOrdinalUpdating(tc TestContext, ordinal int32) error {
 	pollCount := 0
 	return pollForCondition(tc, func() (bool, error) {
 		pollCount++
-		unstructuredPCS, err := tc.DynamicClient.Resource(pcsGVR).Namespace(tc.Namespace).Get(tc.Ctx, pcsName, metav1.GetOptions{})
+		unstructuredPCS, err := tc.AdminDynamicClient.Resource(pcsGVR).Namespace(tc.Namespace).Get(tc.Ctx, pcsName, metav1.GetOptions{})
 		if err != nil {
 			return false, err
 		}
@@ -951,7 +951,7 @@ func scalePodCliqueInPCS(tc TestContext, cliqueName string, replicas int32) erro
 	pcsName := tc.Workload.Name
 
 	// Get the PCS to find out how many replicas it has
-	unstructuredPCS, err := tc.DynamicClient.Resource(pcsGVR).Namespace(tc.Namespace).Get(tc.Ctx, pcsName, metav1.GetOptions{})
+	unstructuredPCS, err := tc.OperatorDynamicClient.Resource(pcsGVR).Namespace(tc.Namespace).Get(tc.Ctx, pcsName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to get PodCliqueSet: %w", err)
 	}
@@ -990,7 +990,7 @@ func scalePodCliqueInPCS(tc TestContext, cliqueName string, replicas int32) erro
 				return fmt.Errorf("failed to marshal patch: %w", err)
 			}
 
-			_, err = tc.DynamicClient.Resource(pclqGVR).Namespace(tc.Namespace).Patch(
+			_, err = tc.OperatorDynamicClient.Resource(pclqGVR).Namespace(tc.Namespace).Patch(
 				tc.Ctx, pclqName, types.MergePatchType, patchBytes, metav1.PatchOptions{})
 			return err
 		}); err != nil {
@@ -1055,18 +1055,19 @@ func setupRollingUpdateTest(t *testing.T, cfg RollingUpdateTestConfig) (TestCont
 	}
 
 	// Step 1: Prepare test cluster
-	clientset, restConfig, dynamicClient, clusterCleanup := prepareTestCluster(ctx, t, cfg.WorkerNodes)
+	adminClientSet, adminRESTConfig, adminDynamicClient, operatorDynamicClient, clusterCleanup := prepareTestCluster(ctx, t, cfg.WorkerNodes)
 
 	// Step 2: Create TestContext
 	tc := TestContext{
-		T:             t,
-		Ctx:           ctx,
-		Clientset:     clientset,
-		RestConfig:    restConfig,
-		DynamicClient: dynamicClient,
-		Namespace:     cfg.Namespace,
-		Timeout:       defaultPollTimeout,
-		Interval:      defaultPollInterval,
+		T:                     t,
+		Ctx:                   ctx,
+		RestConfig:            adminRESTConfig,
+		Clientset:             adminClientSet,
+		AdminDynamicClient:    adminDynamicClient,
+		OperatorDynamicClient: operatorDynamicClient,
+		Namespace:             cfg.Namespace,
+		Timeout:               defaultPollTimeout,
+		Interval:              defaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         cfg.WorkloadName,
 			YAMLPath:     cfg.WorkloadYAML,

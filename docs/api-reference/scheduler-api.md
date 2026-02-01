@@ -124,7 +124,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `name` _string_ | Name is the name of the PodGroup. |  |  |
 | `podReferences` _[NamespacedName](#namespacedname) array_ | PodReferences is a list of references to the Pods that are part of this group. |  |  |
-| `minReplicas` _integer_ | MinReplicas is the number of replicas that needs to be gang scheduled.<br />If the MinReplicas is greater than len(PodReferences) then scheduler makes the best effort to schedule as many pods beyond<br />MinReplicas. However, guaranteed gang scheduling is only provided for MinReplicas. |  |  |
+| `minReplicas` _integer_ | MinReplicas is the number of replicas that needs to be gang scheduled.<br />If the MinReplicas is lesser than len(PodReferences) then scheduler makes the best effort to schedule as many pods beyond<br />MinReplicas. However, guaranteed gang scheduling is only provided for MinReplicas. |  |  |
 | `topologyConstraint` _[TopologyConstraint](#topologyconstraint)_ | TopologyConstraint defines topology packing constraints for this PodGroup.<br />Enables PodClique-level topology constraints.<br />Updated by operator when PodClique topology constraints change. |  |  |
 
 

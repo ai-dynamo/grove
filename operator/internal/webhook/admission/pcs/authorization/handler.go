@@ -42,8 +42,9 @@ import (
 type Handler struct {
 	config                           groveconfigv1alpha1.AuthorizerConfig
 	client                           client.Client
+	mgr                              manager.Manager
 	decoder                          *requestDecoder
-	logger                           logr.Logger
+	baseLogger                       logr.Logger
 	reconcilerServiceAccountUserName string
 }
 
@@ -51,26 +52,27 @@ type Handler struct {
 func NewHandler(mgr manager.Manager, config groveconfigv1alpha1.AuthorizerConfig, reconcilerServiceAccountUserName string) *Handler {
 	return &Handler{
 		config:                           config,
+		mgr:                              mgr,
 		client:                           mgr.GetClient(),
 		decoder:                          newRequestDecoder(mgr),
-		logger:                           mgr.GetLogger().WithName("authorizer-webhook").WithName(Name),
+		baseLogger:                       mgr.GetLogger().WithName("authorizer-webhook").WithName(Name),
 		reconcilerServiceAccountUserName: reconcilerServiceAccountUserName,
 	}
 }
 
 // Handle handles requests and admits them if they are authorized.
 func (h *Handler) Handle(ctx context.Context, req admission.Request) admission.Response {
-	log := h.logger.WithValues("user", req.UserInfo.Username, "operation", req.Operation, "resource", req.Resource, "subresource", req.SubResource, "name", req.Name, "namespace", req.Namespace)
-	log.Info("Authorizer webhook invoked")
+	logger := h.baseLogger.WithValues("user", req.UserInfo.Username, "operation", req.Operation, "resource", req.Resource, "subresource", req.SubResource, "name", req.Name, "namespace", req.Namespace)
+	logger.V(5).Info("Authorizer webhook invoked")
 
 	// always allow `CONNECT` operations, irrespective of the user.
 	if req.Operation == admissionv1.Connect {
-		log.Info("Connect operation requested, which is always allowed for users with sufficient RBAC. Admitting.")
+		logger.Info("Connect operation requested, which is always allowed for users with sufficient RBAC. Admitting.")
 		return admission.Allowed(fmt.Sprintf("operation %s is allowed", req.Operation))
 	}
 
 	// Decode and convert the request object to `metav1.PartialObjectMeta`.
-	resourcePartialObjMeta, err := h.decoder.decode(log, req)
+	resourcePartialObjMeta, err := h.decoder.decode(logger, req)
 	if err != nil {
 		return admission.Errored(toAdmissionError(err), err)
 	}
@@ -88,22 +90,22 @@ func (h *Handler) Handle(ctx context.Context, req admission.Request) admission.R
 
 	// Check if protection of PodCliqueSet managed resources has been disabled by setting the annotation to "true".
 	if value, ok := pcsPartialObjectMetadata.Annotations[apiconstants.AnnotationDisableManagedResourceProtection]; ok && value == "true" {
-		log.Info("Resource has the \"grove.io/disable-managed-resource-protection\" annotation set to \"true\", authorized webhook bypassed. Admitting request.", "objectKey", resourceObjectKey)
+		logger.Info("Resource has the \"grove.io/disable-managed-resource-protection\" annotation set to \"true\", authorized webhook bypassed. Admitting request.", "objectKey", resourceObjectKey)
 		return admission.Allowed(fmt.Sprintf("admission allowed, resource protection is disabled for PodCliqueSet: %v", client.ObjectKeyFromObject(pcsPartialObjectMetadata)))
 	}
 
 	switch req.Operation {
 	case admissionv1.Create, admissionv1.Update:
-		return h.handleCreateOrUpdate(req, resourceObjectKey)
+		return h.handleCreateOrUpdate(req, logger, resourceObjectKey)
 	case admissionv1.Delete:
-		return h.handleDelete(req, resourceObjectKey)
+		return h.handleDelete(req, logger, resourceObjectKey)
 	default:
 		return admission.Denied("Unhandled operation. Admission denied.")
 	}
 }
 
 // handleCreateOrUpdate allows creation/updation of managed resources only if the request is from the reconciler service account, or one of the exempted service accounts.
-func (h *Handler) handleCreateOrUpdate(req admission.Request, resourceObjectKey client.ObjectKey) admission.Response {
+func (h *Handler) handleCreateOrUpdate(req admission.Request, logger logr.Logger, resourceObjectKey client.ObjectKey) admission.Response {
 	if req.UserInfo.Username == h.reconcilerServiceAccountUserName {
 		return admission.Allowed(fmt.Sprintf("admission allowed, creation/updation of resource: %v is initiated by the grove reconciler service account", resourceObjectKey))
 	}
@@ -112,13 +114,14 @@ func (h *Handler) handleCreateOrUpdate(req admission.Request, resourceObjectKey 
 		return admission.Allowed(fmt.Sprintf("admission allowed, creation/updation of resource: %v is initiated by exempt serviceaccount: %v", resourceObjectKey, req.UserInfo.Username))
 	}
 
+	logger.Info("admission denied for create/update operation", "objectKey", resourceObjectKey)
 	return admission.Denied(fmt.Sprintf("admission denied, creation/updation of resource: %v is not allowed", resourceObjectKey))
 }
 
 // handleDelete allows deletion of managed resources only if the request is either from the service account used by the reconcilers
 // or the request is coming from one of the exempted service accounts.
 // There is an exception to this, where no restriction are placed on Pods.
-func (h *Handler) handleDelete(req admission.Request, resourceObjectKey client.ObjectKey) admission.Response {
+func (h *Handler) handleDelete(req admission.Request, logger logr.Logger, resourceObjectKey client.ObjectKey) admission.Response {
 	if groupKindFromRequest(req) == podGVK.GroupKind() {
 		return admission.Allowed("admission allowed, deletion of resource: Pod is allowed for all users having sufficient RBAC")
 	}
@@ -131,6 +134,7 @@ func (h *Handler) handleDelete(req admission.Request, resourceObjectKey client.O
 		return admission.Allowed(fmt.Sprintf("admission allowed, deletion of resource: %v is initiated by exempt serviceaccount: %v", resourceObjectKey, req.UserInfo.Username))
 	}
 
+	logger.Info("admission denied for delete operation", "objectKey", resourceObjectKey)
 	return admission.Denied(fmt.Sprintf("admission denied, deletion of resource: %v is not allowed", resourceObjectKey))
 }
 
