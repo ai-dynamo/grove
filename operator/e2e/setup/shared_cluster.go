@@ -64,6 +64,8 @@ var groveManagedResourceTypes = []resourceType{
 	{"grove.io", "v1alpha1", "podcliquescalinggroups", "PodCliqueScalingGroups"},
 	{"scheduler.grove.io", "v1alpha1", "podgangs", "PodGangs"},
 	{"grove.io", "v1alpha1", "podcliques", "PodCliques"},
+	// KAI scheduler resources (owned by Grove PodGangs, cleaned up via garbage collection)
+	{"scheduling.run.ai", "v2alpha2", "podgroups", "KAI PodGroups"},
 	// Kubernetes core resources
 	{"", "v1", "services", "Services"},
 	{"", "v1", "serviceaccounts", "ServiceAccounts"},
@@ -116,7 +118,7 @@ func (scm *SharedClusterManager) Setup(ctx context.Context, testImages []string)
 	// Use the centralized cluster config with overrides for shared test cluster
 	customCfg := DefaultClusterConfig()
 	customCfg.Name = "shared-e2e-test-cluster"
-	customCfg.HostPort = "6560"         // Use a different port to avoid conflicts
+	customCfg.HostPort = "6560" // Use a different port to avoid conflicts
 	customCfg.LoadBalancerPort = "8090:80"
 
 	scm.registryPort = customCfg.RegistryPort
