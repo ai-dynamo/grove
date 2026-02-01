@@ -27,6 +27,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
+	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -215,6 +216,15 @@ func (r _resource) buildResource(pcsg *grovecorev1alpha1.PodCliqueScalingGroup, 
 	pcsg.Spec.MinAvailable = pcsgConfig.MinAvailable
 	pcsg.Spec.CliqueNames = pcsgConfig.CliqueNames
 	pcsg.Labels = getLabels(pcs, pcsReplica, client.ObjectKeyFromObject(pcsg))
+
+	// Propagate MNNVL annotation from PCS to PCSG
+	if mnnvl.IsAutoMNNVLEnabled(pcs.Annotations) {
+		if pcsg.Annotations == nil {
+			pcsg.Annotations = make(map[string]string)
+		}
+		pcsg.Annotations[mnnvl.AnnotationAutoMNNVL] = mnnvl.AnnotationAutoMNNVLEnabled
+	}
+
 	return nil
 }
 

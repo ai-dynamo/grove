@@ -40,7 +40,7 @@ var ComputeDomainGVK = schema.GroupVersionKind{
 	Kind:    ComputeDomainKind,
 }
 
-// MNNVL annotation and finalizer constants
+// MNNVL annotation, finalizer, and resource claim constants
 const (
 	// AnnotationAutoMNNVL is the annotation key used to indicate whether automatic MNNVL
 	// support should be enabled for a PodCliqueSet. Valid values are AnnotationAutoMNNVLEnabled
@@ -60,4 +60,7 @@ const (
 	// deletion while workloads are using them. This finalizer is removed by the PCS controller
 	// during scale-in or PCS deletion.
 	FinalizerComputeDomain = "grove.io/" + ComputeDomainCRDName
+
+	// MNNVLClaimName is the name used for the MNNVL resource claim in pod specs.
+	MNNVLClaimName = "mnnvl-claim"
 )
