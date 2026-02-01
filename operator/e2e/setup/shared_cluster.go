@@ -78,6 +78,8 @@ var groveManagedResourceTypes = []resourceType{
 	{"grove.io", "v1alpha1", "podcliquescalinggroups", "PodCliqueScalingGroups"},
 	{"scheduler.grove.io", "v1alpha1", "podgangs", "PodGangs"},
 	{"grove.io", "v1alpha1", "podcliques", "PodCliques"},
+	// KAI scheduler resources (owned by Grove PodGangs, cleaned up via garbage collection)
+	{"scheduling.run.ai", "v2alpha2", "podgroups", "KAI PodGroups"},
 	// Kubernetes core resources
 	{"", "v1", "services", "Services"},
 	{"", "v1", "serviceaccounts", "ServiceAccounts"},
@@ -442,12 +444,13 @@ func (scm *SharedClusterManager) waitForAllGroveManagedResourcesAndPodsDeleted(c
 				Resource: rt.resource,
 			}
 
-			// PodCliqueSets are user-created top-level resources and don't have the managed-by label,
-			// so we need to check for them without the label selector
+			// PodCliqueSets are user-created top-level resources and don't have the managed-by label.
+			// KAI PodGroups are created by KAI scheduler (owned by PodGangs) and don't have the managed-by label.
+			// Both need to be checked without the label selector.
 			listOptions := metav1.ListOptions{
 				LabelSelector: labelSelector,
 			}
-			if rt.resource == "podcliquesets" {
+			if rt.resource == "podcliquesets" || rt.resource == "podgroups" {
 				listOptions = metav1.ListOptions{}
 			}
 
@@ -500,11 +503,12 @@ func (scm *SharedClusterManager) listRemainingGroveManagedResources(ctx context.
 			Resource: rt.resource,
 		}
 
-		// PodCliqueSets are user-created top-level resources and don't have the managed-by label
+		// PodCliqueSets are user-created top-level resources and don't have the managed-by label.
+		// KAI PodGroups are created by KAI scheduler (owned by PodGangs) and don't have the managed-by label.
 		listOptions := metav1.ListOptions{
 			LabelSelector: labelSelector,
 		}
-		if rt.resource == "podcliquesets" {
+		if rt.resource == "podcliquesets" || rt.resource == "podgroups" {
 			listOptions = metav1.ListOptions{}
 		}
 
