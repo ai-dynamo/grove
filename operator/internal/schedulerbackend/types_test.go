@@ -73,7 +73,6 @@ func TestPreparePod(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Reset global state
 			globalBackend = nil
-			globalSchedulerName = ""
 			initOnce = sync.Once{}
 
 			// Initialize backend
@@ -99,7 +98,6 @@ func TestPreparePod(t *testing.T) {
 func TestPreparePodWhenNotInitialized(t *testing.T) {
 	// Reset global state to ensure backend is not initialized
 	globalBackend = nil
-	globalSchedulerName = ""
 	initOnce = sync.Once{}
 
 	pod := &corev1.Pod{

@@ -23,7 +23,6 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset"
-	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend"
 	backendcontroller "github.com/ai-dynamo/grove/operator/internal/schedulerbackend/controller"
 
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -36,17 +35,6 @@ func RegisterControllers(mgr ctrl.Manager, config configv1alpha1.OperatorConfigu
 	networkConfig := config.Network
 
 	pcsReconciler := podcliqueset.NewReconciler(mgr, controllerConfig.PodCliqueSet, topologyAwareSchedulingConfig, networkConfig)
-	// Get scheduler name from configuration
-	// Initialize global backend with the configured scheduler
-	if err := schedulerbackend.Initialize(
-		mgr.GetClient(),
-		mgr.GetScheme(),
-		mgr.GetEventRecorderFor("scheduler-backend"),
-		config.SchedulerName,
-	); err != nil {
-		return fmt.Errorf("failed to initialize scheduler backend: %w", err)
-	}
-
 	if err := pcsReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}

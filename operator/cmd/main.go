@@ -32,6 +32,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/cert"
 	grovelogger "github.com/ai-dynamo/grove/operator/internal/logger"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
+	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend"
 	groveversion "github.com/ai-dynamo/grove/operator/internal/version"
 
 	"github.com/spf13/pflag"
@@ -77,6 +78,17 @@ func main() {
 	}
 
 	ctx := ctrl.SetupSignalHandler()
+
+	// Initialize scheduler backend with the configured scheduler.
+	if err := schedulerbackend.Initialize(
+		mgr.GetClient(),
+		mgr.GetScheme(),
+		mgr.GetEventRecorderFor("scheduler-backend"),
+		operatorConfig.SchedulerName,
+	); err != nil {
+		logger.Error(err, "failed to initialize scheduler backend")
+		handleErrorAndExit(err, cli.ExitErrInitializeManager)
+	}
 
 	// Initialize or clean up ClusterTopology based on operator configuration.
 	// This must be done before starting the controllers that may depend on the ClusterTopology resource.
