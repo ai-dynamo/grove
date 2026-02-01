@@ -41,10 +41,9 @@ func IsNodeReady(node *v1.Node) bool {
 }
 
 // WaitAndGetReadyNode waits for a specific node to become ready after container restart and returns the ready node
-func WaitAndGetReadyNode(ctx context.Context, clientset *kubernetes.Clientset, nodeName string, timeout time.Duration, logger *Logger) (*v1.Node, error) {
-	var readyNode *v1.Node
-	err := PollForCondition(ctx, timeout, defaultPollInterval, func() (bool, error) {
-		node, err := clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+func WaitAndGetReadyNode(ctx context.Context, clientset *kubernetes.Clientset, nodeName string, timeout time.Duration, logger *Logger) (node *v1.Node, err error) {
+	err = PollForCondition(ctx, timeout, defaultPollInterval, func() (bool, error) {
+		node, err = clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
 		if err != nil {
 			// If node is not found, it's expected (k3d agent still starting up), continue waiting
 			if errors.IsNotFound(err) {
@@ -53,19 +52,12 @@ func WaitAndGetReadyNode(ctx context.Context, clientset *kubernetes.Clientset, n
 			}
 			return false, err
 		}
-
 		if IsNodeReady(node) {
 			logger.Debugf("✅ Node %s has rejoined and is ready", nodeName)
-			readyNode = node
 			return true, nil
 		}
-
-		logger.Debugf("  Node %s found but not ready yet, waiting...", nodeName)
+		logger.Debugf("⏳ Node %s found but not ready yet, waiting...", nodeName)
 		return false, nil
 	})
-
-	if err != nil {
-		return nil, err
-	}
-	return readyNode, nil
+	return
 }

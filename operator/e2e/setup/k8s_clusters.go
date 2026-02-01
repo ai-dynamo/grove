@@ -41,6 +41,7 @@ import (
 	k3dlogger "github.com/k3d-io/k3d/v5/pkg/logger"
 	"github.com/k3d-io/k3d/v5/pkg/runtimes"
 	k3d "github.com/k3d-io/k3d/v5/pkg/types"
+	"github.com/samber/lo"
 	"github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1182,12 +1183,7 @@ func waitForWebhookReady(ctx context.Context, restConfig *rest.Config, logger *u
 // reapplyNodeLabels reapplies the original labels to a replaced node
 func reapplyNodeLabels(ctx context.Context, clientset *kubernetes.Clientset, node *v1.Node, labels map[string]string, logger *utils.Logger) error {
 	// Merge original labels with current labels (preserving any new system labels)
-	if node.Labels == nil {
-		node.Labels = make(map[string]string)
-	}
-	for k, v := range labels {
-		node.Labels[k] = v
-	}
+	node.Labels = lo.Assign(node.Labels, labels)
 
 	// Update the node with the merged labels
 	_, err := clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
