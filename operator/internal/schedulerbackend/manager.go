@@ -31,9 +31,8 @@ import (
 
 var (
 	// Global singleton backend instance
-	globalBackend       SchedulerBackend
-	globalSchedulerName string
-	initOnce            sync.Once
+	globalBackend SchedulerBackend
+	initOnce      sync.Once
 )
 
 // Initialize creates the global backend instance based on schedulerName
@@ -54,8 +53,6 @@ func Initialize(client client.Client, scheme *runtime.Scheme, eventRecorder reco
 			return
 		}
 
-		globalSchedulerName = string(schedulerName)
-
 		// Initialize the backend
 		if err := globalBackend.Init(); err != nil {
 			initErr = fmt.Errorf("failed to initialize backend: %w", err)
@@ -70,23 +67,4 @@ func Initialize(client client.Client, scheme *runtime.Scheme, eventRecorder reco
 // Returns nil if not initialized (caller should check)
 func Get() SchedulerBackend {
 	return globalBackend
-}
-
-// MustGet returns the global backend instance or panics if not initialized
-// Use this only in contexts where initialization is guaranteed (e.g., after startup)
-func MustGet() SchedulerBackend {
-	if globalBackend == nil {
-		panic("backend not initialized, call Initialize first")
-	}
-	return globalBackend
-}
-
-// GetSchedulerName returns the configured scheduler name
-func GetSchedulerName() string {
-	return globalSchedulerName
-}
-
-// IsInitialized returns true if the backend has been initialized
-func IsInitialized() bool {
-	return globalBackend != nil
 }
