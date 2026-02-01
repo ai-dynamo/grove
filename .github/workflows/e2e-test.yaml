@@ -185,6 +185,9 @@ jobs:
           echo "    grove-operator=$GROVE_OPERATOR_TAG"
           echo "    grove-initc=$GROVE_INITC_TAG"
           
+          # Set CONTAINER_REGISTRY for skaffold helm template (used for init container image)
+          export CONTAINER_REGISTRY="$PULL_REPO"
+          
           skaffold deploy \
             --profile topology-test \
             --namespace grove-system \
