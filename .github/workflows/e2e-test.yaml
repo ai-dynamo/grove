@@ -225,19 +225,30 @@ jobs:
           kubectl apply -f operator/e2e/yaml/queues.yaml
           
           # Apply topology labels to worker nodes (hierarchical structure)
+          # Must match the labels expected by e2e tests (see operator/e2e/setup/topology.go)
           echo "🏷️ Applying topology labels to worker nodes..."
-          WORKER_NODES=$(kubectl get nodes -l '!node-role.kubernetes.io/control-plane' -o jsonpath='{.items[*].metadata.name}')
+          
+          # Get worker nodes sorted by name (matching Go code behavior)
+          WORKER_NODES=$(kubectl get nodes -l 'node_role.e2e.grove.nvidia.com=agent' -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | sort)
+          
+          # Topology distribution (from topology.go):
+          # - Zone: 28 nodes per zone (all in zone-0 for 30 nodes)
+          # - Block: 14 nodes per block
+          # - Rack: 7 nodes per rack
+          NODES_PER_ZONE=28
+          NODES_PER_BLOCK=14
+          NODES_PER_RACK=7
+          
           NODE_COUNT=0
           for NODE in $WORKER_NODES; do
-            # Create hierarchical topology: region -> zone -> rack -> host
-            REGION=$((NODE_COUNT / 15))
-            ZONE=$(((NODE_COUNT % 15) / 5))
-            RACK=$(((NODE_COUNT % 5) / 2))
+            ZONE=$((NODE_COUNT / NODES_PER_ZONE))
+            BLOCK=$((NODE_COUNT / NODES_PER_BLOCK))
+            RACK=$((NODE_COUNT / NODES_PER_RACK))
             
             kubectl label node "$NODE" \
-              "topology.kubernetes.io/region=region-$REGION" \
-              "topology.kubernetes.io/zone=zone-$ZONE" \
-              "topology.grove.io/rack=rack-$RACK" \
+              "kubernetes.io/zone=zone-$ZONE" \
+              "kubernetes.io/block=block-$BLOCK" \
+              "kubernetes.io/rack=rack-$RACK" \
               --overwrite
             
             NODE_COUNT=$((NODE_COUNT + 1))
