@@ -77,8 +77,6 @@ var groveManagedResourceTypes = []resourceType{
 	{"grove.io", "v1alpha1", "podcliquescalinggroups", "PodCliqueScalingGroups"},
 	{"scheduler.grove.io", "v1alpha1", "podgangs", "PodGangs"},
 	{"grove.io", "v1alpha1", "podcliques", "PodCliques"},
-	// KAI scheduler resources (owned by Grove PodGangs, cleaned up via garbage collection)
-	{"scheduling.run.ai", "v2alpha2", "podgroups", "KAI PodGroups"},
 	// Kubernetes core resources
 	{"", "v1", "services", "Services"},
 	{"", "v1", "serviceaccounts", "ServiceAccounts"},
@@ -275,15 +273,7 @@ func (scm *SharedClusterManager) CleanupWorkloads(ctx context.Context) error {
 		scm.logger.Warnf("failed to delete PodCliqueSets: %v", err)
 	}
 
-	// Step 2: Force delete any pods stuck on NotReady nodes
-	// When a node goes NotReady, the kubelet doesn't process deletions, so pods get stuck.
-	// Force deletion bypasses the kubelet and removes the pod from the API server.
-	if err := scm.forceDeletePodsOnUnhealthyNodes(ctx, "default"); err != nil {
-		scm.logger.Warnf("failed to force delete stuck pods: %v", err)
-	}
-
-	// Step 3: Poll for all resources and pods to be cleaned up
-	scm.logger.Infof("⏳ Waiting up to %v for all resources and pods to be deleted...", cleanupTimeout)
+	// Step 2: Poll for all resources and pods to be cleaned up
 	if err := scm.waitForAllGroveManagedResourcesAndPodsDeleted(ctx, cleanupTimeout, cleanupPollInterval); err != nil {
 		// List remaining resources and pods for debugging
 		scm.listRemainingGroveManagedResources(ctx)
@@ -291,67 +281,9 @@ func (scm *SharedClusterManager) CleanupWorkloads(ctx context.Context) error {
 		return fmt.Errorf("failed to delete all resources and pods: %w", err)
 	}
 
-	// Step 4: Reset node cordoning state
+	// Step 3: Reset node cordoning state
 	if err := scm.resetNodeStates(ctx); err != nil {
 		scm.logger.Warnf("failed to reset node states: %v", err)
-	}
-
-	return nil
-}
-
-// forceDeletePodsOnUnhealthyNodes force-deletes pods that are stuck on NotReady nodes.
-// When a node becomes NotReady, the kubelet stops responding and cannot process pod deletions.
-// Force deletion (grace period 0) removes the pod from the API server regardless of kubelet state.
-func (scm *SharedClusterManager) forceDeletePodsOnUnhealthyNodes(ctx context.Context, namespace string) error {
-	// First, identify unhealthy nodes
-	nodes, err := scm.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to list nodes: %w", err)
-	}
-
-	unhealthyNodes := make(map[string]bool)
-	for _, node := range nodes.Items {
-		for _, condition := range node.Status.Conditions {
-			if condition.Type == v1.NodeReady && condition.Status != v1.ConditionTrue {
-				unhealthyNodes[node.Name] = true
-				scm.logger.Warnf("⚠️ Node %s is not ready (status: %s)", node.Name, condition.Status)
-			}
-		}
-	}
-
-	if len(unhealthyNodes) == 0 {
-		return nil
-	}
-
-	// Find and force-delete pods on unhealthy nodes
-	pods, err := scm.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to list pods: %w", err)
-	}
-
-	gracePeriod := int64(0)
-	deleteOptions := metav1.DeleteOptions{
-		GracePeriodSeconds: &gracePeriod,
-	}
-
-	forceDeletedCount := 0
-	for _, pod := range pods.Items {
-		if isSystemPod(&pod) {
-			continue
-		}
-
-		if unhealthyNodes[pod.Spec.NodeName] {
-			scm.logger.Warnf("🔨 Force deleting pod %s stuck on unhealthy node %s", pod.Name, pod.Spec.NodeName)
-			if err := scm.clientset.CoreV1().Pods(namespace).Delete(ctx, pod.Name, deleteOptions); err != nil {
-				scm.logger.Warnf("failed to force delete pod %s: %v", pod.Name, err)
-			} else {
-				forceDeletedCount++
-			}
-		}
-	}
-
-	if forceDeletedCount > 0 {
-		scm.logger.Infof("✅ Force deleted %d pods stuck on unhealthy nodes", forceDeletedCount)
 	}
 
 	return nil
@@ -371,10 +303,7 @@ func (scm *SharedClusterManager) deleteAllResources(ctx context.Context, group, 
 		return fmt.Errorf("failed to list %s: %w", resource, err)
 	}
 
-	scm.logger.Infof("🗑️ Deleting %d %s resources...", len(resourceList.Items), resource)
-
 	// Delete each resource
-	deletedCount := 0
 	for _, item := range resourceList.Items {
 		namespace := item.GetNamespace()
 		name := item.GetName()
@@ -382,27 +311,9 @@ func (scm *SharedClusterManager) deleteAllResources(ctx context.Context, group, 
 		err := scm.dynamicClient.Resource(gvr).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 		if err != nil {
 			scm.logger.Warnf("failed to delete %s %s/%s: %v", resource, namespace, name, err)
-		} else {
-			deletedCount++
-			scm.logger.Debugf("  ✓ Deleted %s/%s", namespace, name)
 		}
 	}
 
-	// Verify deletion was initiated by checking for deletionTimestamp
-	verifyList, err := scm.dynamicClient.Resource(gvr).List(ctx, metav1.ListOptions{})
-	if err == nil {
-		for _, item := range verifyList.Items {
-			deletionTS := item.GetDeletionTimestamp()
-			finalizers := item.GetFinalizers()
-			if deletionTS != nil {
-				scm.logger.Debugf("  ⏳ %s/%s has deletionTimestamp=%v, finalizers=%v", item.GetNamespace(), item.GetName(), deletionTS.Time, finalizers)
-			} else {
-				scm.logger.Warnf("  ⚠️ %s/%s still exists without deletionTimestamp (delete may have failed)", item.GetNamespace(), item.GetName())
-			}
-		}
-	}
-
-	scm.logger.Infof("✅ Deletion initiated for %d/%d %s resources", deletedCount, len(resourceList.Items), resource)
 	return nil
 }
 
@@ -475,13 +386,12 @@ func (scm *SharedClusterManager) waitForAllGroveManagedResourcesAndPodsDeleted(c
 				Resource: rt.resource,
 			}
 
-			// PodCliqueSets are user-created top-level resources and don't have the managed-by label.
-			// KAI PodGroups are created by KAI scheduler (owned by PodGangs) and don't have the managed-by label.
-			// Both need to be checked without the label selector.
+			// PodCliqueSets are user-created top-level resources and don't have the managed-by label,
+			// so we need to check for them without the label selector
 			listOptions := metav1.ListOptions{
 				LabelSelector: labelSelector,
 			}
-			if rt.resource == "podcliquesets" || rt.resource == "podgroups" {
+			if rt.resource == "podcliquesets" {
 				listOptions = metav1.ListOptions{}
 			}
 
@@ -534,12 +444,11 @@ func (scm *SharedClusterManager) listRemainingGroveManagedResources(ctx context.
 			Resource: rt.resource,
 		}
 
-		// PodCliqueSets are user-created top-level resources and don't have the managed-by label.
-		// KAI PodGroups are created by KAI scheduler (owned by PodGangs) and don't have the managed-by label.
+		// PodCliqueSets are user-created top-level resources and don't have the managed-by label
 		listOptions := metav1.ListOptions{
 			LabelSelector: labelSelector,
 		}
-		if rt.resource == "podcliquesets" || rt.resource == "podgroups" {
+		if rt.resource == "podcliquesets" {
 			listOptions = metav1.ListOptions{}
 		}
 
@@ -550,16 +459,11 @@ func (scm *SharedClusterManager) listRemainingGroveManagedResources(ctx context.
 		}
 
 		if len(resourceList.Items) > 0 {
-			scm.logger.Errorf("Remaining %s (%d):", rt.name, len(resourceList.Items))
+			resourceNames := make([]string, 0, len(resourceList.Items))
 			for _, item := range resourceList.Items {
-				deletionTS := item.GetDeletionTimestamp()
-				finalizers := item.GetFinalizers()
-				deletionStatus := "no deletionTimestamp"
-				if deletionTS != nil {
-					deletionStatus = fmt.Sprintf("deletionTimestamp=%v", deletionTS.Time)
-				}
-				scm.logger.Errorf("  - %s/%s: %s, finalizers=%v", item.GetNamespace(), item.GetName(), deletionStatus, finalizers)
+				resourceNames = append(resourceNames, fmt.Sprintf("%s/%s", item.GetNamespace(), item.GetName()))
 			}
+			scm.logger.Errorf("Remaining %s: %v", rt.name, resourceNames)
 		}
 	}
 }
