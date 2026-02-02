@@ -16,10 +16,17 @@
 # */
 
 #
-# create-e2e-cluster.sh - Single source of truth for E2E test cluster creation
+# create-e2e-cluster.sh - k3d cluster setup for local E2E testing
 #
 # This script creates and configures a k3d cluster for Grove E2E tests.
-# It is used by both CI and local development to ensure consistent cluster setup.
+# It is OPTIONAL - the E2E tests work with any Kubernetes cluster that has:
+#   - Grove operator deployed and ready
+#   - Kai scheduler deployed and ready
+#   - Required node labels and topology configuration
+#
+# This script is provided as a convenience for local development and CI.
+# For other cluster types (kind, minikube, EKS, GKE, etc.), manually deploy
+# the required components and configure kubectl/KUBECONFIG.
 #
 # USAGE:
 #   ./hack/create-e2e-cluster.sh [OPTIONS]
@@ -43,16 +50,14 @@
 #   E2E_MAX_RETRIES       Max cluster creation retries (default: 3)
 #   E2E_SKAFFOLD_PROFILE  Skaffold profile for Grove (default: topology-test)
 #
-# OUTPUT ENVIRONMENT VARIABLES (for test consumption):
-#   After successful creation, the script outputs variables that can be
-#   sourced or exported for test execution:
+# OUTPUT:
+#   After successful creation, export these variables to run E2E tests:
 #
-#   E2E_USE_EXISTING_CLUSTER=true
-#   E2E_CLUSTER_NAME=<cluster-name>
-#   E2E_REGISTRY_PORT=<registry-port>
+#   export E2E_USE_EXISTING_CLUSTER=true
+#   export E2E_REGISTRY_PORT=5001
 #
 # EXAMPLES:
-#   # Create cluster with defaults
+#   # Create cluster with defaults (recommended for local development)
 #   ./hack/create-e2e-cluster.sh
 #
 #   # Create cluster with custom name
@@ -64,8 +69,17 @@
 #   # Delete an existing cluster
 #   ./hack/create-e2e-cluster.sh --delete
 #
-#   # Source the output for running tests
-#   eval $(./hack/create-e2e-cluster.sh 2>/dev/null | grep -E '^E2E_')
+# USING OTHER CLUSTER TYPES:
+#   For non-k3d clusters, ensure the following are deployed:
+#   1. Grove operator (in grove-system namespace)
+#   2. Kai scheduler (in kai-scheduler namespace)
+#   3. Worker nodes with label: node_role.e2e.grove.nvidia.com=agent
+#   4. Topology labels: kubernetes.io/zone, kubernetes.io/block, kubernetes.io/rack
+#
+#   Then run tests with:
+#   export E2E_USE_EXISTING_CLUSTER=true
+#   export E2E_REGISTRY_PORT=<your-registry-port>  # if using local registry
+#   make test-e2e
 #
 
 set -euo pipefail

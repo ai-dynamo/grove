@@ -14,34 +14,60 @@
 // limitations under the License.
 // */
 
-// Package setup provides utilities for connecting to k3d clusters for E2E testing.
+// Package setup provides utilities for connecting to Kubernetes clusters for E2E testing.
 //
-// Cluster creation is handled by the create-e2e-cluster.sh script, which must be run
-// before E2E tests. This package only handles connecting to existing clusters.
+// The cluster must be created beforehand with Grove operator, Kai scheduler, and required
+// test infrastructure already deployed. For local development with k3d, you can use:
+//
+//	./operator/hack/create-e2e-cluster.sh
+//
+// This package only handles connecting to existing clusters - it does not create clusters.
 package setup
 
 import (
-	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 
-	k3dclient "github.com/k3d-io/k3d/v5/pkg/client"
-	"github.com/k3d-io/k3d/v5/pkg/runtimes"
-	k3d "github.com/k3d-io/k3d/v5/pkg/types"
-	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
-// GetKubeconfig fetches and returns the kubeconfig for a k3d cluster.
-// The cluster must already exist (created via create-e2e-cluster.sh).
-func GetKubeconfig(ctx context.Context, clusterName string) (*clientcmdapi.Config, error) {
-	cluster, err := k3dclient.ClusterGet(ctx, runtimes.Docker, &k3d.Cluster{Name: clusterName})
-	if err != nil {
-		return nil, fmt.Errorf("could not get cluster '%s'. For local development run './operator/hack/create-e2e-cluster.sh' first: %w", clusterName, err)
+// GetRestConfig returns a REST config for connecting to a Kubernetes cluster.
+// It tries the following methods in order:
+//  1. KUBECONFIG environment variable (if set)
+//  2. Default kubeconfig at ~/.kube/config
+//  3. In-cluster config (when running inside a pod)
+//
+// For local development with k3d, run './operator/hack/create-e2e-cluster.sh' first
+// to create a cluster and configure kubectl.
+func GetRestConfig() (*rest.Config, error) {
+	// Try KUBECONFIG environment variable first
+	kubeconfigPath := os.Getenv("KUBECONFIG")
+	if kubeconfigPath == "" {
+		// Fall back to default location
+		homeDir, err := os.UserHomeDir()
+		if err == nil {
+			kubeconfigPath = filepath.Join(homeDir, ".kube", "config")
+		}
 	}
 
-	kubeconfig, err := k3dclient.KubeconfigGet(ctx, runtimes.Docker, cluster)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get kubeconfig from k3d: %w", err)
+	// Try to load from kubeconfig file
+	if kubeconfigPath != "" {
+		if _, err := os.Stat(kubeconfigPath); err == nil {
+			config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+			if err == nil {
+				return config, nil
+			}
+		}
 	}
 
-	return kubeconfig, nil
+	// Fall back to in-cluster config
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get kubernetes config: no KUBECONFIG found, ~/.kube/config not accessible, and not running in-cluster. "+
+			"For local development, run './operator/hack/create-e2e-cluster.sh' first: %w", err)
+	}
+
+	return config, nil
 }

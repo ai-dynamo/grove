@@ -86,23 +86,20 @@ cover-html: test-cover
 	@go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated at coverage.html"
 
-# Run e2e tests
+# Run e2e tests against an existing cluster
+# Requires: E2E_USE_EXISTING_CLUSTER=true and a pre-created cluster
 # Usage: make test-e2e [TEST_PATTERN=<pattern>] [DIAG_DIR=<path>] [DIAG_MODE=<mode>]
 # Examples:
 #   make test-e2e                              # Run all tests
 #   make test-e2e TEST_PATTERN=Test_GS         # Run gang scheduling tests
 #   make test-e2e TEST_PATTERN=Test_GS1        # Run specific test
 #   make test-e2e TEST_PATTERN=Test_TAS        # Run topology tests
-#   make test-e2e DIAG_DIR=e2e-diagnostics     # Output diagnostics to specific directory
-#   make test-e2e DIAG_MODE=both               # Output to stdout and file
-#   make test-e2e DIAG_MODE=stdout             # Output to stdout only
+#   GROVE_E2E_DIAG_MODE=both make test-e2e     # Output to stdout and file
+#   GROVE_E2E_DIAG_MODE=stdout make test-e2e   # Output to stdout only
 #
-# Variables:
-#   TEST_PATTERN - Test name pattern to match (optional)
-#   DIAG_DIR     - Directory for diagnostic files (default: operator/)
-#   DIAG_MODE    - Diagnostic output mode: stdout, file, both (default: file)
-DIAG_DIR ?= $(MODULE_ROOT)
-DIAG_MODE ?= file
+# Environment variables:
+#   GROVE_E2E_DIAG_MODE - Diagnostic output mode: stdout, file, both (default: file)
+#   GROVE_E2E_DIAG_DIR  - Directory for diagnostic files (default: operator/)
 .PHONY: test-e2e
 test-e2e: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
 test-e2e: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
@@ -111,6 +108,31 @@ test-e2e:
 	@$(MODULE_HACK_DIR)/prepare-charts.sh
 	@echo "> Running e2e tests..."
 	@cd e2e && go test -count=1 -tags=e2e ./tests/... -v -timeout 45m $(if $(TEST_PATTERN),-run $(TEST_PATTERN))
+
+# Create a k3d cluster for e2e testing (with Grove and Kai scheduler deployed)
+# This is optional - tests work with any Kubernetes cluster that has the required components
+.PHONY: e2e-cluster-up
+e2e-cluster-up:
+	@$(MODULE_HACK_DIR)/create-e2e-cluster.sh
+
+# Delete the k3d e2e test cluster
+.PHONY: e2e-cluster-down
+e2e-cluster-down:
+	@$(MODULE_HACK_DIR)/create-e2e-cluster.sh --delete
+
+# Full e2e test run: create k3d cluster, run tests, then cleanup
+# Usage: make test-e2e-full [TEST_PATTERN=<pattern>]
+# Examples:
+#   make test-e2e-full                          # Run all tests
+#   make test-e2e-full TEST_PATTERN=Test_GS     # Run gang scheduling tests only
+.PHONY: test-e2e-full
+test-e2e-full: e2e-cluster-up
+	@echo "> Running e2e tests..."
+	@E2E_USE_EXISTING_CLUSTER=true E2E_REGISTRY_PORT=5001 \
+		$(MAKE) test-e2e TEST_PATTERN=$(TEST_PATTERN) || \
+		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
+	@echo "> Tests passed, cleaning up cluster..."
+	@$(MAKE) e2e-cluster-down
 
 # Make targets for local development and testing
 # -------------------------------------------------------------
