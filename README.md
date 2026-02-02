@@ -78,6 +78,14 @@ Grove introduces four simple concepts:
 **Q1 2026**
 - Resource-Optimized Rolling Updates
 - Multi-Node NVLink Auto-Scaling Support
+- Automatic MNNVL Discovery
+- User Guides for All Supported Features
+
+**Q2 2026**
+- Terminal States for Training and Batch Workloads
+- Scheduler Plugin Architecture (with Support for Third-Party Scheduler Backends)
+- kubectl-grove CLI
+- Advanced Topology Scheduling
 
 ## Contributions
 
