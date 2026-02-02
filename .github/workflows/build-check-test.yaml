@@ -142,7 +142,16 @@ jobs:
           sudo install skaffold /usr/local/bin/
           skaffold version
 
+      - name: Install Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm version
+
       - name: Run e2e tests - ${{ matrix.test_name }}
+        env:
+          E2E_USE_EXISTING_CLUSTER: ${{ steps.create-cluster.outputs.E2E_USE_EXISTING_CLUSTER }}
+          E2E_CLUSTER_NAME: ${{ steps.create-cluster.outputs.E2E_CLUSTER_NAME }}
+          E2E_REGISTRY_PORT: ${{ steps.create-cluster.outputs.E2E_REGISTRY_PORT }}
         run: |
           mkdir -p e2e-diagnostics
           make test-e2e TEST_PATTERN='${{ matrix.test_pattern }}' DIAG_DIR=e2e-diagnostics
