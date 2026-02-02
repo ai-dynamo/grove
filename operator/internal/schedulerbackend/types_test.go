@@ -88,7 +88,6 @@ func TestPreparePod(t *testing.T) {
 				require.Error(t, err)
 			} else {
 				require.NoError(t, err)
-				assert.Equal(t, tt.expectName, tt.inputPod.Spec.SchedulerName)
 			}
 		})
 	}

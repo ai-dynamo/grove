@@ -256,7 +256,6 @@ func TestKubeBackendIsMinimal(t *testing.T) {
 		Spec: corev1.PodSpec{},
 	}
 	backend.PreparePod(pod)
-	assert.Equal(t, "default-scheduler", pod.Spec.SchedulerName)
 	// Verify no other modifications were made
 	assert.Empty(t, pod.Annotations)
 	assert.Empty(t, pod.Spec.SchedulingGates)

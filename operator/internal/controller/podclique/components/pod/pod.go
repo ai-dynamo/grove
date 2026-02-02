@@ -161,9 +161,10 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 	}
 	pod.Spec = *pclq.Spec.PodSpec.DeepCopy()
 	pod.Spec.SchedulingGates = []corev1.PodSchedulingGate{{Name: podGangSchedulingGate}}
+	pod.Spec.SchedulerName = schedulerbackend.Get().Name()
 
 	// Use backend to prepare Pod spec based on scheduler requirements
-	// This adds schedulerName, scheduling gates, annotations, etc.
+	// This adds labels, annotations, etc.
 	if err = schedulerbackend.PreparePod(pod); err != nil {
 		return groveerr.WrapError(err,
 			errCodeBuildPodResource,
