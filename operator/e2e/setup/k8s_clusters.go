@@ -70,6 +70,8 @@ var transientErrors = []string{
 	"i/o timeout",
 	"Bad Gateway",
 	"Service Unavailable",
+	"context deadline exceeded",
+	"x509: certificate signed by unknown authority",
 }
 
 // isTransient checks if an error string contains any transient error patterns
@@ -1125,6 +1127,11 @@ func waitForWebhookReady(ctx context.Context, restConfig *rest.Config, logger *u
 		return fmt.Errorf("failed to create dynamic client: %w", err)
 	}
 
+	clientset, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create clientset: %w", err)
+	}
+
 	// Define the GVR for PodCliqueSet
 	pcsGVR := schema.GroupVersionResource{
 		Group:    "grove.io",
@@ -1151,7 +1158,10 @@ func waitForWebhookReady(ctx context.Context, restConfig *rest.Config, logger *u
 	testPCS.SetName("webhook-ready-test")
 	testPCS.SetNamespace("default")
 
+	retryCount := 0
+	lastError := ""
 	return utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+		retryCount++
 		// Try to create the PodCliqueSet with dry-run mode
 		// This will invoke the webhook without actually creating the resource
 		_, err := dynamicClient.Resource(pcsGVR).Namespace("default").Create(
@@ -1166,7 +1176,17 @@ func waitForWebhookReady(ctx context.Context, restConfig *rest.Config, logger *u
 			errStr := err.Error()
 			// These errors indicate the webhook is not ready yet
 			if isTransient(errStr) {
-				logger.Debugf("  Webhook not ready yet: %v", err)
+				// Log periodically or when error changes to avoid spam
+				if errStr != lastError || retryCount%12 == 0 { // Log every minute or on change
+					logger.Infof("  Webhook not ready yet (attempt %d): %v", retryCount, err)
+					lastError = errStr
+				} else {
+					logger.Debugf("  Webhook not ready yet (attempt %d): %v", retryCount, err)
+				}
+				// After 2 minutes (24 retries at 5s interval), dump diagnostics
+				if retryCount == 24 {
+					logWebhookDiagnostics(ctx, clientset, logger)
+				}
 				return false, nil
 			}
 			// Any other error (including validation errors) means the webhook responded
@@ -1179,6 +1199,50 @@ func waitForWebhookReady(ctx context.Context, restConfig *rest.Config, logger *u
 		logger.Info("✅ Grove webhook is ready")
 		return true, nil
 	})
+}
+
+// logWebhookDiagnostics logs diagnostic information about the webhook setup
+func logWebhookDiagnostics(ctx context.Context, clientset *kubernetes.Clientset, logger *utils.Logger) {
+	logger.Info("  --- Webhook Diagnostics ---")
+
+	// Check webhook secret
+	secret, err := clientset.CoreV1().Secrets(OperatorNamespace).Get(ctx, "grove-webhook-server-cert", metav1.GetOptions{})
+	if err != nil {
+		logger.Infof("  Failed to get webhook secret: %v", err)
+	} else {
+		tlsCrt := secret.Data["tls.crt"]
+		tlsKey := secret.Data["tls.key"]
+		logger.Infof("  Webhook secret: tls.crt=%d bytes, tls.key=%d bytes", len(tlsCrt), len(tlsKey))
+	}
+
+	// Check Grove operator pod logs
+	pods, err := clientset.CoreV1().Pods(OperatorNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app=grove-operator",
+	})
+	if err != nil {
+		logger.Infof("  Failed to list grove-operator pods: %v", err)
+	} else {
+		for _, pod := range pods.Items {
+			logger.Infof("  Grove operator pod %s: phase=%s", pod.Name, pod.Status.Phase)
+			for _, cs := range pod.Status.ContainerStatuses {
+				logger.Infof("    Container %s: ready=%v, restarts=%d", cs.Name, cs.Ready, cs.RestartCount)
+			}
+		}
+	}
+
+	// Check service endpoints
+	endpoints, err := clientset.CoreV1().Endpoints(OperatorNamespace).Get(ctx, "grove-operator", metav1.GetOptions{})
+	if err != nil {
+		logger.Infof("  Failed to get grove-operator endpoints: %v", err)
+	} else {
+		addrCount := 0
+		for _, subset := range endpoints.Subsets {
+			addrCount += len(subset.Addresses)
+		}
+		logger.Infof("  Grove operator service endpoints: %d addresses", addrCount)
+	}
+
+	logger.Info("  --- End Diagnostics ---")
 }
 
 // reapplyNodeLabels reapplies the original labels to a replaced node

@@ -89,14 +89,17 @@ func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.Even
 // NOTE: Since we do not currently support Jobs, therefore we do not have to filter the pods that are reached their final state.
 // Pods created for Jobs can reach corev1.PodSucceeded state or corev1.PodFailed state but these are not relevant for us at the moment.
 // In future when these states become relevant then we have to list the pods and filter on their status.Phase.
-func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, pclqObjMeta metav1.ObjectMeta) ([]string, error) {
+func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Logger, pclqObjMeta metav1.ObjectMeta) ([]string, error) {
 	var podNames []string
+	selectorLabels := getSelectorLabelsForPods(pclqObjMeta)
+	pclqKey := k8sutils.GetObjectKeyFromObjectMeta(pclqObjMeta)
+
 	objMetaList := &metav1.PartialObjectMetadataList{}
 	objMetaList.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Pod"))
 	if err := r.client.List(ctx,
 		objMetaList,
 		client.InNamespace(pclqObjMeta.Namespace),
-		client.MatchingLabels(getSelectorLabelsForPods(pclqObjMeta)),
+		client.MatchingLabels(selectorLabels),
 	); err != nil {
 		return podNames, groveerr.WrapError(err,
 			errCodeGetPod,
@@ -104,11 +107,24 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 			"failed to list pods",
 		)
 	}
+
+	// Log details about found pods for debugging
+	matchedByLabels := len(objMetaList.Items)
 	for _, pod := range objMetaList.Items {
 		if metav1.IsControlledBy(&pod, &pclqObjMeta) {
 			podNames = append(podNames, pod.Name)
 		}
 	}
+
+	if matchedByLabels > 0 || len(podNames) > 0 {
+		logger.V(1).Info("GetExistingResourceNames found pods",
+			"PodClique", pclqKey,
+			"selectorLabels", selectorLabels,
+			"matchedByLabels", matchedByLabels,
+			"matchedByOwnerRef", len(podNames),
+			"podNames", podNames)
+	}
+
 	return podNames, nil
 }
 
@@ -173,17 +189,64 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 
 // Delete removes all Pods associated with the specified PodClique
 func (r _resource) Delete(ctx context.Context, logger logr.Logger, pclqObjectMeta metav1.ObjectMeta) error {
-	logger.Info("Triggering delete of all pods for the PodClique")
+	selectorLabels := getSelectorLabelsForPods(pclqObjectMeta)
+	pclqKey := k8sutils.GetObjectKeyFromObjectMeta(pclqObjectMeta)
+
+	// Log detailed information about the delete operation for debugging
+	logger.Info("Triggering delete of all pods for the PodClique",
+		"PodClique", pclqKey,
+		"selectorLabels", selectorLabels,
+		"pclqLabels", pclqObjectMeta.Labels)
+
+	// List pods before deletion to understand what exists
+	var podListBefore corev1.PodList
+	if err := r.client.List(ctx, &podListBefore,
+		client.InNamespace(pclqObjectMeta.Namespace),
+		client.MatchingLabels(selectorLabels)); err != nil {
+		logger.Error(err, "Failed to list pods before deletion", "selectorLabels", selectorLabels)
+	} else {
+		podNames := make([]string, 0, len(podListBefore.Items))
+		for _, pod := range podListBefore.Items {
+			podNames = append(podNames, pod.Name)
+		}
+		logger.Info("Pods found before DeleteAllOf",
+			"PodClique", pclqKey,
+			"count", len(podListBefore.Items),
+			"podNames", podNames)
+	}
+
 	if err := r.client.DeleteAllOf(ctx,
 		&corev1.Pod{},
 		client.InNamespace(pclqObjectMeta.Namespace),
-		client.MatchingLabels(getSelectorLabelsForPods(pclqObjectMeta))); err != nil {
+		client.MatchingLabels(selectorLabels)); err != nil {
 		return groveerr.WrapError(err,
 			errCodeDeletePod,
 			component.OperationDelete,
-			fmt.Sprintf("failed to delete all pods for PodClique %v", k8sutils.GetObjectKeyFromObjectMeta(pclqObjectMeta)),
+			fmt.Sprintf("failed to delete all pods for PodClique %v", pclqKey),
 		)
 	}
+
+	// List pods after deletion to verify
+	var podListAfter corev1.PodList
+	if err := r.client.List(ctx, &podListAfter,
+		client.InNamespace(pclqObjectMeta.Namespace),
+		client.MatchingLabels(selectorLabels)); err != nil {
+		logger.Error(err, "Failed to list pods after deletion", "selectorLabels", selectorLabels)
+	} else {
+		podInfo := make([]string, 0, len(podListAfter.Items))
+		for _, pod := range podListAfter.Items {
+			deletionStatus := "no deletionTimestamp"
+			if pod.DeletionTimestamp != nil {
+				deletionStatus = "has deletionTimestamp"
+			}
+			podInfo = append(podInfo, fmt.Sprintf("%s(%s, %s)", pod.Name, pod.Status.Phase, deletionStatus))
+		}
+		logger.Info("Pods remaining after DeleteAllOf",
+			"PodClique", pclqKey,
+			"count", len(podListAfter.Items),
+			"podInfo", podInfo)
+	}
+
 	pclqExpStoreKey, err := getPodCliqueExpectationsStoreKey(logger, component.OperationDelete, pclqObjectMeta)
 	if err != nil {
 		return err
@@ -194,7 +257,7 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pclqObjectMet
 			component.OperationDelete,
 			fmt.Sprintf("failed to delete expectations store for PodClique %v", pclqObjectMeta.Name))
 	}
-	logger.Info("Successfully deleted all pods for the PodClique")
+	logger.Info("Successfully deleted all pods for the PodClique", "PodClique", pclqKey)
 	return nil
 }
 

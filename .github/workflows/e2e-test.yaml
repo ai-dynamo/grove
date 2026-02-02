@@ -204,15 +204,28 @@ jobs:
           # Wait for Grove webhook to be ready (polls until webhook responds)
           echo "⏳ Waiting for Grove webhook to be ready..."
           for i in $(seq 1 60); do
-            if kubectl create -f operator/e2e/yaml/workload1.yaml --dry-run=server -n default 2>&1 | grep -qE "(validated|denied|error|invalid)"; then
+            WEBHOOK_OUTPUT=$(kubectl create -f operator/e2e/yaml/workload1.yaml --dry-run=server -n default 2>&1) || true
+            # Check if the webhook responded (success or any processing response)
+            # Pattern matches: validated responses, denials, errors, or successful dry-run
+            if echo "$WEBHOOK_OUTPUT" | grep -qE "(validated|denied|error|invalid|created|podcliqueset)"; then
               echo "✅ Grove webhook is ready"
+              echo "  Response: $WEBHOOK_OUTPUT"
               break
             fi
             if [ $i -eq 60 ]; then
               echo "❌ Timed out waiting for Grove webhook"
+              echo "  Last response: $WEBHOOK_OUTPUT"
+              # Collect diagnostics on timeout
+              echo "  --- Webhook configurations ---"
+              kubectl get validatingwebhookconfiguration,mutatingwebhookconfiguration -o wide || true
+              echo "  --- Grove operator logs (last 50 lines) ---"
+              kubectl logs -n grove-system -l app=grove-operator --tail=50 || true
+              echo "  --- Grove webhook secret ---"
+              kubectl get secret grove-webhook-server-cert -n grove-system -o yaml || true
               exit 1
             fi
             echo "  Webhook not ready yet, retrying in 5s... ($i/60)"
+            echo "  Response: $WEBHOOK_OUTPUT"
             sleep 5
           done
           
