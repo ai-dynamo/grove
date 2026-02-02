@@ -323,7 +323,7 @@ func (r _resource) buildResource(logger logr.Logger, pclq *grovecorev1alpha1.Pod
 
 	// Inject MNNVL resourceClaims if enabled on PCS
 	if mnnvl.IsAutoMNNVLEnabled(pcs.Annotations) {
-		mnnvl.InjectAutoMNNVLIntoPodSpec(logger, &pclq.Spec.PodSpec, apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplica})
+		mnnvl.InjectMNNVLIntoPodSpec(logger, &pclq.Spec.PodSpec, apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplica})
 	}
 
 	return nil

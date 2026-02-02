@@ -217,7 +217,9 @@ func (r _resource) buildResource(pcsg *grovecorev1alpha1.PodCliqueScalingGroup, 
 	pcsg.Spec.CliqueNames = pcsgConfig.CliqueNames
 	pcsg.Labels = getLabels(pcs, pcsReplica, client.ObjectKeyFromObject(pcsg))
 
-	// Propagate MNNVL annotation from PCS to PCSG
+	// Propagate MNNVL annotation from PCS to PCSG.
+	// Only propagate when enabled - if not enabled, PCSG controller has nothing to inject,
+	// so the annotation is not needed.
 	if mnnvl.IsAutoMNNVLEnabled(pcs.Annotations) {
 		if pcsg.Annotations == nil {
 			pcsg.Annotations = make(map[string]string)

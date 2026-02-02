@@ -29,7 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
-func TestInjectAutoMNNVLIntoPodSpec(t *testing.T) {
+func TestInjectMNNVLIntoPodSpec(t *testing.T) {
 	tests := []struct {
 		description                         string
 		podSpec                             *corev1.PodSpec
@@ -182,11 +182,11 @@ func TestInjectAutoMNNVLIntoPodSpec(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
 			// Call the function
-			InjectAutoMNNVLIntoPodSpec(logr.Discard(), tc.podSpec, tc.pcsNameReplica)
+			InjectMNNVLIntoPodSpec(logr.Discard(), tc.podSpec, tc.pcsNameReplica)
 
 			// Call twice for idempotency test
 			if tc.callTwice {
-				InjectAutoMNNVLIntoPodSpec(logr.Discard(), tc.podSpec, tc.pcsNameReplica)
+				InjectMNNVLIntoPodSpec(logr.Discard(), tc.podSpec, tc.pcsNameReplica)
 			}
 
 			// Skip remaining checks for nil PodSpec

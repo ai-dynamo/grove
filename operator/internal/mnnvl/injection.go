@@ -23,11 +23,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-// InjectAutoMNNVLIntoPodSpec injects MNNVL resourceClaims into the PodSpec if it has GPU requirements.
+// InjectMNNVLIntoPodSpec injects MNNVL resourceClaims into the PodSpec if it has GPU requirements.
 // It adds a PodResourceClaim referencing the generated RCT name, and adds claim references to each
 // container that requests GPU resources. The operation is idempotent.
 // Should only be called when MNNVL is enabled (check IsAutoMNNVLEnabled first).
-func InjectAutoMNNVLIntoPodSpec(logger logr.Logger, podSpec *corev1.PodSpec, pcsNameReplica apicommon.ResourceNameReplica) {
+func InjectMNNVLIntoPodSpec(logger logr.Logger, podSpec *corev1.PodSpec, pcsNameReplica apicommon.ResourceNameReplica) {
 	if podSpec == nil {
 		return
 	}
