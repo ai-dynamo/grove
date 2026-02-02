@@ -94,25 +94,26 @@ This document covers **Phase 1** of MNNVL support in Grove. See GREP-270 for the
 Enabling and disabling the feature will be done by the cluster admin by setting a flag in the Grove OperatorConfiguration.
 
 ```go
-// MNNVLConfiguration defines the configuration for MNNVL (Multi-Node NVLink) support.
-type MNNVLConfiguration struct {
-   // Enabled indicates whether MNNVL support is enabled.
-   // When true, the operator validates that the ComputeDomain CRD is installed at startup.
+// NetworkAcceleration defines the configuration for network acceleration features.
+type NetworkAcceleration struct {
+   // AutoMNNVLEnabled indicates whether automatic MNNVL (Multi-Node NVLink) support is enabled.
+   // When true, the operator validates that the ComputeDomain CRD is installed at startup
+   // and automatically creates ComputeDomain resources for GPU workloads.
    // When MNNVL support is enabled, cluster admin should ensure that the ComputeDomain CRD has been installed.
    // If this prerequisite fails then Grove will exit with a non-zero exit code.
    // Default: false
-   Enabled bool `json:"enabled"`
+   AutoMNNVLEnabled bool `json:"autoMNNVLEnabled"`
 }
 ```
 
-The default value of `Enabled` is `false`, meaning MNNVL support is disabled unless explicitly enabled by the cluster administrator.
+The default value of `AutoMNNVLEnabled` is `false`, meaning MNNVL support is disabled unless explicitly enabled by the cluster administrator.
 
 The value could be set from a Helm chart under the config attribute
 
 ```yaml
 config:
-	mnnvl:
-		enabled: false
+  network:
+    autoMNNVLEnabled: false
 ```
 
 > **Note:** Using the `OperatorConfiguration` for feature enablement is chosen for simplicity in Phase 1. However, a plugin-based approach would provide better decoupling between the MNNVL feature and Grove core, and should be considered for future phases.
@@ -129,7 +130,7 @@ When a PodCliqueSet is created, webhooks determine and enforce the MNNVL enablem
 
 #### Mutating Webhook (on Create)
 
-The mutating webhook adds the `grove.io/auto-mnnvl: "true"` annotation **only** when all conditions are met:
+The mutating webhook adds the `grove.io/auto-mnnvl: "enabled"` annotation **only** when all conditions are met:
 
 1. Annotation does not already exist
 2. MNNVL feature is enabled in `OperatorConfiguration`
@@ -162,7 +163,7 @@ kind: PodCliqueSet
 metadata:
   name: my-pcs
   annotations:
-    grove.io/auto-mnnvl: "true"  # Added by webhook
+    grove.io/auto-mnnvl: "enabled"  # Added by webhook
 spec:
   # ... same spec
 ```
@@ -171,9 +172,10 @@ spec:
 
 A validating webhook runs **on PCS creation only** to reject invalid MNNVL configurations:
 
-- **Reject** if `grove.io/auto-mnnvl: "true"` is set but MNNVL feature is **disabled** globally
+- **Reject** if annotation value is not `"enabled"` or `"disabled"` (e.g., `"true"`, `"false"`, empty string)
+- **Reject** if `grove.io/auto-mnnvl: "enabled"` is set but MNNVL feature is **disabled** globally
 
-This prevents users from explicitly requesting MNNVL when the cluster doesn't support it.
+This prevents users from explicitly requesting MNNVL when the cluster doesn't support it, and ensures only valid annotation values are accepted.
 
 #### Validating Webhook (on Update)
 
@@ -181,7 +183,7 @@ A validating webhook ensures the `grove.io/auto-mnnvl` annotation is **immutable
 
 #### Opt-out Behavior
 
-Users can opt-out of MNNVL for a specific PCS by explicitly setting `grove.io/auto-mnnvl: "false"` **before creation**. When the mutating webhook sees the annotation already exists, it does not override it.
+Users can opt-out of MNNVL for a specific PCS by explicitly setting `grove.io/auto-mnnvl: "disabled"` **before creation**. When the mutating webhook sees the annotation already exists, it does not override it.
 
 ```yaml
 apiVersion: grove.io/v1alpha1
@@ -189,7 +191,7 @@ kind: PodCliqueSet
 metadata:
   name: my-pcs
   annotations:
-    grove.io/auto-mnnvl: "false"  # Explicit opt-out
+    grove.io/auto-mnnvl: "disabled"  # Explicit opt-out
 spec:
   # ... GPU workload that won't use MNNVL
 ```
@@ -204,8 +206,8 @@ The PCS controller has a reconciliation flow for managing resources in a specifi
 
 Before creating the `CD`, the controller checks the `grove.io/auto-mnnvl` annotation on the PCS:
 
-- If `grove.io/auto-mnnvl: "true"` → Create ComputeDomains for each replica
-- If `grove.io/auto-mnnvl: "false"` or annotation is absent → Skip ComputeDomain creation
+- If `grove.io/auto-mnnvl: "enabled"` → Create ComputeDomains for each replica
+- If `grove.io/auto-mnnvl: "disabled"` or annotation is absent → Skip ComputeDomain creation
 
 Since the annotation is set by the mutating webhook at PCS creation time (based on feature enablement and GPU requirements), the controller logic is simplified to a single annotation check.
 
@@ -253,7 +255,7 @@ ComputeDomain creation follows the same observability pattern as other Grove-man
 
 Deleting a ComputeDomain while pods are actively using its RCT causes significant workload disruption. To prevent accidental deletion, Grove adds a **finalizer** to each ComputeDomain it creates.
 
-**Finalizer:** `grove.io/protect-computedomain`
+**Finalizer:** `grove.io/computedomains.resource.nvidia.com`
 
 With this finalizer, a ComputeDomain cannot be deleted until Grove explicitly removes the finalizer. This provides stronger protection than a watch-and-recreate approach, which would leave a gap where the workload is in a broken state.
 
@@ -263,7 +265,7 @@ kind: ComputeDomain
 metadata:
   name: my-pcs-0
   finalizers:
-    - grove.io/protect-computedomain
+    - grove.io/computedomains.resource.nvidia.com
   labels:
     app.kubernetes.io/managed-by: grove
     app.kubernetes.io/part-of: my-pcs
@@ -282,6 +284,8 @@ spec:
 - **Scale-in** → The replica is removed, Grove removes the finalizer for that CD before deleting it
 
 If a user attempts to delete a CD manually, it will remain in `Terminating` state until the PCS is deleted or scaled down.
+
+> **Note:** The finalizer name `grove.io/computedomains.resource.nvidia.com` follows the pattern `grove.io/{crd-name}` to clearly indicate which CRD is being protected.
 
 ### Scale-Out and Scale-In
 
@@ -302,7 +306,7 @@ The `resourceClaims` reference is injected into the PCLQ's pod spec template at 
 ### PCS Creating PCLQ
 
 When the PCS controller creates a PCLQ, it checks:
-1. Does the PCS have `grove.io/auto-mnnvl: "true"`?
+1. Does the PCS have `grove.io/auto-mnnvl: "enabled"`?
 2. Does the PCLQ's pod spec require GPU (`nvidia.com/gpu`)?
 
 If both conditions are true, the controller injects `resourceClaims` into the PCLQ's pod spec template before creation:
@@ -340,7 +344,7 @@ kind: PodCliqueScalingGroup
 metadata:
   name: my-pcs-0-scaling
   annotations:
-    grove.io/auto-mnnvl: "true"  # Propagated from PCS
+    grove.io/auto-mnnvl: "enabled"  # Propagated from PCS
   labels:
     app.kubernetes.io/part-of: my-pcs
     grove.io/podcliqueset-replica-index: "0"
@@ -351,7 +355,7 @@ spec:
 ### PCSG Creating PCLQ
 
 When the PCSG controller creates a PCLQ, it uses the **same injection logic** as the PCS controller:
-1. Check if PCSG has `grove.io/auto-mnnvl: "true"` annotation
+1. Check if PCSG has `grove.io/auto-mnnvl: "enabled"` annotation
 2. Check if the PCLQ's pod spec requires GPU
 
 If both are true, inject `resourceClaims` into the PCLQ's pod spec template.

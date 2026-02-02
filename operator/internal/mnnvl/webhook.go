@@ -65,7 +65,9 @@ func MutateAutoMNNVL(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, au
 }
 
 // ValidateAutoMNNVLOnCreate validates the MNNVL annotation on PCS creation.
-// Returns field errors if the annotation is set to "enabled" but the MNNVL feature is disabled.
+// Returns field errors if:
+// - The annotation value is invalid (not "enabled" or "disabled")
+// - The annotation is set to "enabled" but the MNNVL feature is disabled globally
 // This prevents users from explicitly requesting MNNVL when the cluster doesn't support it.
 func ValidateAutoMNNVLOnCreate(pcs *grovecorev1alpha1.PodCliqueSet, autoMNNVLEnabled bool) field.ErrorList {
 	value, exists := pcs.Annotations[AnnotationAutoMNNVL]
@@ -73,11 +75,24 @@ func ValidateAutoMNNVLOnCreate(pcs *grovecorev1alpha1.PodCliqueSet, autoMNNVLEna
 		return nil
 	}
 
+	annotationPath := field.NewPath("metadata", "annotations", AnnotationAutoMNNVL)
+
+	// Validate annotation value is one of the allowed values
+	if value != AnnotationAutoMNNVLEnabled && value != AnnotationAutoMNNVLDisabled {
+		return field.ErrorList{
+			field.Invalid(
+				annotationPath,
+				value,
+				fmt.Sprintf("must be %q or %q", AnnotationAutoMNNVLEnabled, AnnotationAutoMNNVLDisabled),
+			),
+		}
+	}
+
 	// If annotation is "enabled" but feature is disabled, reject
 	if value == AnnotationAutoMNNVLEnabled && !autoMNNVLEnabled {
 		return field.ErrorList{
 			field.Invalid(
-				field.NewPath("metadata", "annotations", AnnotationAutoMNNVL),
+				annotationPath,
 				value,
 				fmt.Sprintf("MNNVL is not enabled in the operator configuration. "+
 					"Either enable MNNVL globally or remove the %s annotation", AnnotationAutoMNNVL),
