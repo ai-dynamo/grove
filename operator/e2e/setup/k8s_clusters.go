@@ -18,6 +18,7 @@ package setup
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -41,12 +42,12 @@ import (
 	k3dlogger "github.com/k3d-io/k3d/v5/pkg/logger"
 	"github.com/k3d-io/k3d/v5/pkg/runtimes"
 	k3d "github.com/k3d-io/k3d/v5/pkg/types"
-	"github.com/samber/lo"
 	"github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -1182,13 +1183,20 @@ func waitForWebhookReady(ctx context.Context, restConfig *rest.Config, logger *u
 
 // reapplyNodeLabels reapplies the original labels to a replaced node
 func reapplyNodeLabels(ctx context.Context, clientset *kubernetes.Clientset, node *v1.Node, labels map[string]string, logger *utils.Logger) error {
-	// Merge original labels with current labels (preserving any new system labels)
-	node.Labels = lo.Assign(node.Labels, labels)
+	nodeTopologyLabelsPatch := &v1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels: labels,
+		},
+	}
 
-	// Update the node with the merged labels
-	_, err := clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+	patchBytes, err := json.Marshal(nodeTopologyLabelsPatch)
 	if err != nil {
-		return fmt.Errorf("failed to update node %s with labels: %w", node.Name, err)
+		return fmt.Errorf("failed to marshal patch data for node %s: %w", node.Name, err)
+	}
+
+	_, err = clientset.CoreV1().Nodes().Patch(ctx, node.Name, k8stypes.StrategicMergePatchType, patchBytes, metav1.PatchOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to patch node %s with labels: %w", node.Name, err)
 	}
 
 	logger.Debugf("✅ Reapplied original labels to node %s", node.Name)
