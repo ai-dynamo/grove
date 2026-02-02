@@ -39,9 +39,6 @@ import (
 )
 
 const (
-	// relativeSkaffoldYAMLPath is the path to the skaffold.yaml file relative to the e2e/tests directory
-	relativeSkaffoldYAMLPath = "../../skaffold.yaml"
-
 	// cleanupTimeout is the maximum time to wait for all resources and pods to be deleted during cleanup.
 	// This needs to be long enough to allow for cascade deletion propagation through
 	// PodCliqueSet -> PodCliqueScalingGroup -> PodClique -> Pod
@@ -50,16 +47,18 @@ const (
 	// cleanupPollInterval is the interval between checks during cleanup polling
 	cleanupPollInterval = 1 * time.Second
 
-	// Environment variables for existing cluster mode
-	// When E2E_USE_EXISTING_CLUSTER is set to "true", the tests will connect to an existing
-	// cluster instead of creating a new one. This allows CI to separate cluster creation
-	// from test execution.
+	// Default values for cluster configuration
+	defaultClusterName  = "shared-e2e-test-cluster"
+	defaultRegistryPort = "5001"
 
-	// EnvUseExistingCluster when set to "true" will skip cluster creation and connect to existing cluster
+	// Environment variables for cluster configuration.
+	// The cluster must be created beforehand using the create-e2e-cluster.sh script.
+
+	// EnvUseExistingCluster when set to "true" connects to an existing cluster (REQUIRED for E2E tests)
 	EnvUseExistingCluster = "E2E_USE_EXISTING_CLUSTER"
-	// EnvClusterName specifies the name of the existing k3d cluster to connect to
+	// EnvClusterName specifies the name of the k3d cluster to connect to
 	EnvClusterName = "E2E_CLUSTER_NAME"
-	// EnvRegistryPort specifies the registry port of the existing cluster
+	// EnvRegistryPort specifies the registry port of the cluster
 	EnvRegistryPort = "E2E_REGISTRY_PORT"
 )
 
@@ -120,35 +119,47 @@ func SharedCluster(logger *utils.Logger) *SharedClusterManager {
 	return sharedCluster
 }
 
-// Setup initializes the shared cluster with maximum required resources.
-// If E2E_USE_EXISTING_CLUSTER=true, it connects to an existing cluster instead of creating one.
-// This allows CI to separate cluster creation from test execution.
+// Setup initializes the shared cluster by connecting to an existing cluster.
+//
+// The cluster must be created beforehand using the create-e2e-cluster.sh script:
+//
+//	./operator/hack/create-e2e-cluster.sh
+//
+// Required environment variables:
+//   - E2E_USE_EXISTING_CLUSTER=true (required)
+//   - E2E_CLUSTER_NAME (optional, default: shared-e2e-test-cluster)
+//   - E2E_REGISTRY_PORT (optional, default: 5001)
 func (scm *SharedClusterManager) Setup(ctx context.Context, testImages []string) error {
 	if scm.isSetup {
 		return nil
 	}
 
-	// Check if we should use an existing cluster
-	if os.Getenv(EnvUseExistingCluster) == "true" {
-		return scm.setupExistingCluster(ctx, testImages)
+	// Require E2E_USE_EXISTING_CLUSTER=true - programmatic cluster creation is no longer supported
+	if os.Getenv(EnvUseExistingCluster) != "true" {
+		return fmt.Errorf("E2E tests require a pre-created cluster. Please run:\n\n" +
+			"  ./operator/hack/create-e2e-cluster.sh\n\n" +
+			"Then set environment variables:\n" +
+			"  export E2E_USE_EXISTING_CLUSTER=true\n" +
+			"  export E2E_CLUSTER_NAME=shared-e2e-test-cluster\n" +
+			"  export E2E_REGISTRY_PORT=5001")
 	}
 
-	return scm.setupNewCluster(ctx, testImages)
+	return scm.setupExistingCluster(ctx, testImages)
 }
 
-// setupExistingCluster connects to an existing k3d cluster without creating a new one.
+// setupExistingCluster connects to an existing k3d cluster.
 // It expects the cluster to already have Grove operator, Kai scheduler, etc. installed.
 func (scm *SharedClusterManager) setupExistingCluster(ctx context.Context, testImages []string) error {
 	// Get cluster name from env or use default
 	clusterName := os.Getenv(EnvClusterName)
 	if clusterName == "" {
-		clusterName = "shared-e2e-test-cluster"
+		clusterName = defaultClusterName
 	}
 
 	// Get registry port from env or use default
 	registryPort := os.Getenv(EnvRegistryPort)
 	if registryPort == "" {
-		registryPort = DefaultClusterConfig().RegistryPort
+		registryPort = defaultRegistryPort
 	}
 	scm.registryPort = registryPort
 
@@ -211,73 +222,6 @@ func (scm *SharedClusterManager) setupExistingCluster(ctx context.Context, testI
 
 	scm.logger.Infof("✅ Connected to existing cluster '%s' with %d worker nodes", clusterName, len(scm.workerNodes))
 	scm.isSetup = true
-	return nil
-}
-
-// setupNewCluster creates a new k3d cluster (original behavior)
-func (scm *SharedClusterManager) setupNewCluster(ctx context.Context, testImages []string) error {
-	// Track whether setup completed successfully
-	var setupSuccessful bool
-
-	// Use the centralized cluster config with overrides for shared test cluster
-	customCfg := DefaultClusterConfig()
-	customCfg.Name = "shared-e2e-test-cluster"
-	customCfg.HostPort = "6560" // Use a different port to avoid conflicts
-	customCfg.LoadBalancerPort = "8090:80"
-
-	scm.registryPort = customCfg.RegistryPort
-
-	scm.logger.Info("🚀 Setting up shared k3d cluster for all e2e tests...")
-
-	restConfig, cleanup, err := SetupCompleteK3DCluster(ctx, customCfg, relativeSkaffoldYAMLPath, scm.logger)
-	// Defer cleanup on error - only call if setup was not successful and we have a cleanup function
-	defer func() {
-		if !setupSuccessful && cleanup != nil {
-			cleanup()
-		}
-	}()
-	if err != nil {
-		return fmt.Errorf("failed to setup shared k3d cluster: %w", err)
-	}
-
-	scm.restConfig = restConfig
-	scm.cleanup = cleanup
-
-	// Create clientset from restConfig
-	clientset, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		return fmt.Errorf("failed to create clientset: %w", err)
-	}
-	scm.clientset = clientset
-
-	// Create dynamic client from restConfig
-	dynamicClient, err := dynamic.NewForConfig(restConfig)
-	if err != nil {
-		return fmt.Errorf("failed to create dynamic client: %w", err)
-	}
-	scm.dynamicClient = dynamicClient
-
-	// Setup test images in registry
-	if err := SetupRegistryTestImages(scm.registryPort, testImages); err != nil {
-		return fmt.Errorf("failed to setup registry test images: %w", err)
-	}
-
-	// Get list of worker nodes for cordoning management
-	nodes, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to list nodes: %w", err)
-	}
-
-	scm.workerNodes = make([]string, 0)
-	for _, node := range nodes.Items {
-		if _, isServer := node.Labels["node-role.kubernetes.io/control-plane"]; !isServer {
-			scm.workerNodes = append(scm.workerNodes, node.Name)
-		}
-	}
-
-	scm.logger.Infof("✅ Shared cluster setup complete with %d worker nodes", len(scm.workerNodes))
-	scm.isSetup = true
-	setupSuccessful = true
 	return nil
 }
 
