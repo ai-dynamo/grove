@@ -53,8 +53,6 @@ const (
 	// The cluster must be created beforehand with Grove operator and Kai scheduler deployed.
 	// For local development with k3d, use: ./operator/hack/create-e2e-cluster.sh
 
-	// EnvUseExistingCluster when set to "true" enables E2E test mode (REQUIRED)
-	EnvUseExistingCluster = "E2E_USE_EXISTING_CLUSTER"
 	// EnvRegistryPort specifies the container registry port for test images (optional)
 	EnvRegistryPort = "E2E_REGISTRY_PORT"
 )
@@ -127,9 +125,8 @@ func SharedCluster(logger *utils.Logger) *SharedClusterManager {
 //
 //	./operator/hack/create-e2e-cluster.sh
 //
-// Required environment variables:
-//   - E2E_USE_EXISTING_CLUSTER=true (required to enable E2E mode)
-//   - E2E_REGISTRY_PORT (optional, default: 5001, for pushing test images)
+// Optional environment variables:
+//   - E2E_REGISTRY_PORT (default: 5001, for pushing test images to local registry)
 //
 // The cluster connection is established via standard kubeconfig resolution:
 //   - KUBECONFIG environment variable, or
@@ -138,18 +135,6 @@ func SharedCluster(logger *utils.Logger) *SharedClusterManager {
 func (scm *SharedClusterManager) Setup(ctx context.Context, testImages []string) error {
 	if scm.isSetup {
 		return nil
-	}
-
-	// Require E2E_USE_EXISTING_CLUSTER=true to prevent accidental runs without proper setup
-	if os.Getenv(EnvUseExistingCluster) != "true" {
-		return fmt.Errorf("E2E tests require a pre-created cluster with Grove and Kai scheduler deployed.\n\n" +
-			"For local development with k3d, run:\n" +
-			"  ./operator/hack/create-e2e-cluster.sh\n\n" +
-			"Then set environment variables:\n" +
-			"  export E2E_USE_EXISTING_CLUSTER=true\n" +
-			"  export E2E_REGISTRY_PORT=5001\n\n" +
-			"For other cluster types, ensure Grove and Kai scheduler are deployed,\n" +
-			"then set E2E_USE_EXISTING_CLUSTER=true and configure KUBECONFIG.")
 	}
 
 	return scm.connectToCluster(ctx, testImages)
@@ -191,8 +176,7 @@ func (scm *SharedClusterManager) connectToCluster(ctx context.Context, testImage
 	// Setup test images in registry (if registry port is configured)
 	if scm.registryPort != "" && len(testImages) > 0 {
 		if err := SetupRegistryTestImages(scm.registryPort, testImages); err != nil {
-			scm.logger.Warnf("failed to setup registry test images (registry may not be available): %v", err)
-			// Don't fail - registry might not be needed for all cluster types
+			return fmt.Errorf("failed to setup registry test images: %w", err)
 		}
 	}
 
@@ -204,7 +188,7 @@ func (scm *SharedClusterManager) connectToCluster(ctx context.Context, testImage
 
 	scm.workerNodes = make([]string, 0)
 	for _, node := range nodes.Items {
-		if _, isControlPlane := node.Labels["node-role.kubernetes.io/control-plane"]; !isControlPlane {
+		if _, isServer := node.Labels["node-role.kubernetes.io/control-plane"]; !isServer {
 			scm.workerNodes = append(scm.workerNodes, node.Name)
 		}
 	}
@@ -512,7 +496,6 @@ func (scm *SharedClusterManager) Teardown() {
 // SetupRegistryTestImages pulls images and pushes them to a local container registry.
 // This is used for test images that need to be available inside the cluster.
 // The registry is expected to be accessible at localhost:<registryPort>.
-// For clusters without a local registry, this function will fail gracefully.
 func SetupRegistryTestImages(registryPort string, images []string) error {
 	if len(images) == 0 {
 		return nil

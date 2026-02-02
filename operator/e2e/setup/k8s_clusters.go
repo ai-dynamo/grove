@@ -37,7 +37,6 @@ import (
 // It tries the following methods in order:
 //  1. KUBECONFIG environment variable (if set)
 //  2. Default kubeconfig at ~/.kube/config
-//  3. In-cluster config (when running inside a pod)
 //
 // For local development with k3d, run './operator/hack/create-e2e-cluster.sh' first
 // to create a cluster and configure kubectl.
@@ -62,12 +61,6 @@ func GetRestConfig() (*rest.Config, error) {
 		}
 	}
 
-	// Fall back to in-cluster config
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get kubernetes config: no KUBECONFIG found, ~/.kube/config not accessible, and not running in-cluster. "+
-			"For local development, run './operator/hack/create-e2e-cluster.sh' first: %w", err)
-	}
-
-	return config, nil
+	return nil, fmt.Errorf("failed to get kubernetes config: no KUBECONFIG found and ~/.kube/config not accessible." +
+		"For local development, run './operator/hack/create-e2e-cluster.sh' first")
 }
