@@ -79,13 +79,13 @@ Refer to all Grove APIs here
 
 - Resource-Optimized Rolling Updates
 - Automatic MNNVL Discovery
+- kubectl-grove CLI
 - User Guides for All Supported Features
 
 ### Q2 2026
 
 - Terminal States for Training and Batch Workloads
 - Scheduler Plugin Architecture (with Support for Third-Party Scheduler Backends)
-- kubectl-grove CLI
 - Advanced Topology Scheduling
 
 ## Contributions
