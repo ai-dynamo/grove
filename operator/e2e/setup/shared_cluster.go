@@ -331,7 +331,14 @@ func (scm *SharedClusterManager) CleanupWorkloads(ctx context.Context) error {
 		scm.logger.Warnf("failed to delete PodCliqueSets: %v", err)
 	}
 
-	// Step 2: Poll for all resources and pods to be cleaned up
+	// Step 2: Force delete any pods stuck on NotReady nodes
+	// When a node goes NotReady, the kubelet doesn't process deletions, so pods get stuck.
+	// Force deletion bypasses the kubelet and removes the pod from the API server.
+	if err := scm.forceDeletePodsOnUnhealthyNodes(ctx, "default"); err != nil {
+		scm.logger.Warnf("failed to force delete stuck pods: %v", err)
+	}
+
+	// Step 3: Poll for all resources and pods to be cleaned up
 	scm.logger.Infof("⏳ Waiting up to %v for all resources and pods to be deleted...", cleanupTimeout)
 	if err := scm.waitForAllGroveManagedResourcesAndPodsDeleted(ctx, cleanupTimeout, cleanupPollInterval); err != nil {
 		// List remaining resources and pods for debugging
@@ -340,9 +347,67 @@ func (scm *SharedClusterManager) CleanupWorkloads(ctx context.Context) error {
 		return fmt.Errorf("failed to delete all resources and pods: %w", err)
 	}
 
-	// Step 3: Reset node cordoning state
+	// Step 4: Reset node cordoning state
 	if err := scm.resetNodeStates(ctx); err != nil {
 		scm.logger.Warnf("failed to reset node states: %v", err)
+	}
+
+	return nil
+}
+
+// forceDeletePodsOnUnhealthyNodes force-deletes pods that are stuck on NotReady nodes.
+// When a node becomes NotReady, the kubelet stops responding and cannot process pod deletions.
+// Force deletion (grace period 0) removes the pod from the API server regardless of kubelet state.
+func (scm *SharedClusterManager) forceDeletePodsOnUnhealthyNodes(ctx context.Context, namespace string) error {
+	// First, identify unhealthy nodes
+	nodes, err := scm.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	unhealthyNodes := make(map[string]bool)
+	for _, node := range nodes.Items {
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == v1.NodeReady && condition.Status != v1.ConditionTrue {
+				unhealthyNodes[node.Name] = true
+				scm.logger.Warnf("⚠️ Node %s is not ready (status: %s)", node.Name, condition.Status)
+			}
+		}
+	}
+
+	if len(unhealthyNodes) == 0 {
+		return nil
+	}
+
+	// Find and force-delete pods on unhealthy nodes
+	pods, err := scm.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to list pods: %w", err)
+	}
+
+	gracePeriod := int64(0)
+	deleteOptions := metav1.DeleteOptions{
+		GracePeriodSeconds: &gracePeriod,
+	}
+
+	forceDeletedCount := 0
+	for _, pod := range pods.Items {
+		if isSystemPod(&pod) {
+			continue
+		}
+
+		if unhealthyNodes[pod.Spec.NodeName] {
+			scm.logger.Warnf("🔨 Force deleting pod %s stuck on unhealthy node %s", pod.Name, pod.Spec.NodeName)
+			if err := scm.clientset.CoreV1().Pods(namespace).Delete(ctx, pod.Name, deleteOptions); err != nil {
+				scm.logger.Warnf("failed to force delete pod %s: %v", pod.Name, err)
+			} else {
+				forceDeletedCount++
+			}
+		}
+	}
+
+	if forceDeletedCount > 0 {
+		scm.logger.Infof("✅ Force deleted %d pods stuck on unhealthy nodes", forceDeletedCount)
 	}
 
 	return nil
