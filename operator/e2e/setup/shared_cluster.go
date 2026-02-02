@@ -35,7 +35,6 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 const (
@@ -47,18 +46,16 @@ const (
 	// cleanupPollInterval is the interval between checks during cleanup polling
 	cleanupPollInterval = 1 * time.Second
 
-	// Default values for cluster configuration
-	defaultClusterName  = "shared-e2e-test-cluster"
+	// Default registry port for local development clusters (e.g., k3d with local registry)
 	defaultRegistryPort = "5001"
 
 	// Environment variables for cluster configuration.
-	// The cluster must be created beforehand using the create-e2e-cluster.sh script.
+	// The cluster must be created beforehand with Grove operator and Kai scheduler deployed.
+	// For local development with k3d, use: ./operator/hack/create-e2e-cluster.sh
 
-	// EnvUseExistingCluster when set to "true" connects to an existing cluster (REQUIRED for E2E tests)
+	// EnvUseExistingCluster when set to "true" enables E2E test mode (REQUIRED)
 	EnvUseExistingCluster = "E2E_USE_EXISTING_CLUSTER"
-	// EnvClusterName specifies the name of the k3d cluster to connect to
-	EnvClusterName = "E2E_CLUSTER_NAME"
-	// EnvRegistryPort specifies the registry port of the cluster
+	// EnvRegistryPort specifies the container registry port for test images (optional)
 	EnvRegistryPort = "E2E_REGISTRY_PORT"
 )
 
@@ -88,7 +85,9 @@ var groveManagedResourceTypes = []resourceType{
 	{"autoscaling", "v2", "horizontalpodautoscalers", "HorizontalPodAutoscalers"},
 }
 
-// SharedClusterManager manages a shared (singleton) k3d cluster for E2E tests
+// SharedClusterManager manages a shared (singleton) Kubernetes cluster for E2E tests.
+// It connects to an existing cluster via kubeconfig and manages test lifecycle operations
+// like workload cleanup and node cordoning.
 type SharedClusterManager struct {
 	clientset     *kubernetes.Clientset
 	restConfig    *rest.Config
@@ -117,43 +116,48 @@ func SharedCluster(logger *utils.Logger) *SharedClusterManager {
 	return sharedCluster
 }
 
-// Setup initializes the shared cluster by connecting to an existing cluster.
+// Setup initializes the shared cluster by connecting to an existing Kubernetes cluster.
 //
-// The cluster must be created beforehand using the create-e2e-cluster.sh script:
+// The cluster must be created beforehand with:
+//   - Grove operator deployed and ready
+//   - Kai scheduler deployed and ready
+//   - Required node labels and topology configuration
+//
+// For local development with k3d:
 //
 //	./operator/hack/create-e2e-cluster.sh
 //
 // Required environment variables:
-//   - E2E_USE_EXISTING_CLUSTER=true (required)
-//   - E2E_CLUSTER_NAME (optional, default: shared-e2e-test-cluster)
-//   - E2E_REGISTRY_PORT (optional, default: 5001)
+//   - E2E_USE_EXISTING_CLUSTER=true (required to enable E2E mode)
+//   - E2E_REGISTRY_PORT (optional, default: 5001, for pushing test images)
+//
+// The cluster connection is established via standard kubeconfig resolution:
+//   - KUBECONFIG environment variable, or
+//   - ~/.kube/config, or
+//   - In-cluster config
 func (scm *SharedClusterManager) Setup(ctx context.Context, testImages []string) error {
 	if scm.isSetup {
 		return nil
 	}
 
-	// Require E2E_USE_EXISTING_CLUSTER=true - programmatic cluster creation is no longer supported
+	// Require E2E_USE_EXISTING_CLUSTER=true to prevent accidental runs without proper setup
 	if os.Getenv(EnvUseExistingCluster) != "true" {
-		return fmt.Errorf("E2E tests require a pre-created cluster. Please run:\n\n" +
+		return fmt.Errorf("E2E tests require a pre-created cluster with Grove and Kai scheduler deployed.\n\n" +
+			"For local development with k3d, run:\n" +
 			"  ./operator/hack/create-e2e-cluster.sh\n\n" +
 			"Then set environment variables:\n" +
 			"  export E2E_USE_EXISTING_CLUSTER=true\n" +
-			"  export E2E_CLUSTER_NAME=shared-e2e-test-cluster\n" +
-			"  export E2E_REGISTRY_PORT=5001")
+			"  export E2E_REGISTRY_PORT=5001\n\n" +
+			"For other cluster types, ensure Grove and Kai scheduler are deployed,\n" +
+			"then set E2E_USE_EXISTING_CLUSTER=true and configure KUBECONFIG.")
 	}
 
-	return scm.setupExistingCluster(ctx, testImages)
+	return scm.connectToCluster(ctx, testImages)
 }
 
-// setupExistingCluster connects to an existing k3d cluster.
+// connectToCluster connects to an existing Kubernetes cluster using standard kubeconfig resolution.
 // It expects the cluster to already have Grove operator, Kai scheduler, etc. installed.
-func (scm *SharedClusterManager) setupExistingCluster(ctx context.Context, testImages []string) error {
-	// Get cluster name from env or use default
-	clusterName := os.Getenv(EnvClusterName)
-	if clusterName == "" {
-		clusterName = defaultClusterName
-	}
-
+func (scm *SharedClusterManager) connectToCluster(ctx context.Context, testImages []string) error {
 	// Get registry port from env or use default
 	registryPort := os.Getenv(EnvRegistryPort)
 	if registryPort == "" {
@@ -161,23 +165,12 @@ func (scm *SharedClusterManager) setupExistingCluster(ctx context.Context, testI
 	}
 	scm.registryPort = registryPort
 
-	scm.logger.Infof("🔗 Connecting to existing k3d cluster '%s'...", clusterName)
+	scm.logger.Info("🔗 Connecting to existing Kubernetes cluster...")
 
-	// Get kubeconfig from existing cluster
-	kubeconfig, err := GetKubeconfig(ctx, clusterName)
+	// Get REST config using standard kubeconfig resolution
+	restConfig, err := GetRestConfig()
 	if err != nil {
-		return fmt.Errorf("failed to get kubeconfig from existing cluster '%s': %w", clusterName, err)
-	}
-
-	kubeconfigBytes, err := clientcmd.Write(*kubeconfig)
-	if err != nil {
-		return fmt.Errorf("failed to serialize kubeconfig: %w", err)
-	}
-
-	// Create REST config
-	restConfig, err := clientcmd.RESTConfigFromKubeConfig(kubeconfigBytes)
-	if err != nil {
-		return fmt.Errorf("failed to create rest config: %w", err)
+		return fmt.Errorf("failed to get cluster config: %w", err)
 	}
 	scm.restConfig = restConfig
 
@@ -195,9 +188,12 @@ func (scm *SharedClusterManager) setupExistingCluster(ctx context.Context, testI
 	}
 	scm.dynamicClient = dynamicClient
 
-	// Setup test images in registry
-	if err := SetupRegistryTestImages(scm.registryPort, testImages); err != nil {
-		return fmt.Errorf("failed to setup registry test images: %w", err)
+	// Setup test images in registry (if registry port is configured)
+	if scm.registryPort != "" && len(testImages) > 0 {
+		if err := SetupRegistryTestImages(scm.registryPort, testImages); err != nil {
+			scm.logger.Warnf("failed to setup registry test images (registry may not be available): %v", err)
+			// Don't fail - registry might not be needed for all cluster types
+		}
 	}
 
 	// Get list of worker nodes for cordoning management
@@ -208,17 +204,17 @@ func (scm *SharedClusterManager) setupExistingCluster(ctx context.Context, testI
 
 	scm.workerNodes = make([]string, 0)
 	for _, node := range nodes.Items {
-		if _, isServer := node.Labels["node-role.kubernetes.io/control-plane"]; !isServer {
+		if _, isControlPlane := node.Labels["node-role.kubernetes.io/control-plane"]; !isControlPlane {
 			scm.workerNodes = append(scm.workerNodes, node.Name)
 		}
 	}
 
-	// No cleanup function for existing cluster - we don't delete it when tests finish
+	// No cleanup function - we don't delete the cluster when tests finish
 	scm.cleanup = func() {
-		scm.logger.Info("ℹ️  Using existing cluster mode - skipping cluster deletion")
+		scm.logger.Info("ℹ️  Test run complete - cluster preserved for inspection or reuse")
 	}
 
-	scm.logger.Infof("✅ Connected to existing cluster '%s' with %d worker nodes", clusterName, len(scm.workerNodes))
+	scm.logger.Infof("✅ Connected to cluster with %d worker nodes", len(scm.workerNodes))
 	scm.isSetup = true
 	return nil
 }
@@ -513,7 +509,10 @@ func (scm *SharedClusterManager) Teardown() {
 	}
 }
 
-// SetupRegistryTestImages pulls images and pushes them to the local k3d registry.
+// SetupRegistryTestImages pulls images and pushes them to a local container registry.
+// This is used for test images that need to be available inside the cluster.
+// The registry is expected to be accessible at localhost:<registryPort>.
+// For clusters without a local registry, this function will fail gracefully.
 func SetupRegistryTestImages(registryPort string, images []string) error {
 	if len(images) == 0 {
 		return nil
