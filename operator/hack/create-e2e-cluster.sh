@@ -51,9 +51,8 @@
 #   E2E_SKAFFOLD_PROFILE  Skaffold profile for Grove (default: topology-test)
 #
 # OUTPUT:
-#   After successful creation, export these variables to run E2E tests:
+#   After successful creation, you can run E2E tests. If using a local registry:
 #
-#   export E2E_USE_EXISTING_CLUSTER=true
 #   export E2E_REGISTRY_PORT=5001
 #
 # EXAMPLES:
@@ -77,7 +76,6 @@
 #   4. Topology labels: kubernetes.io/zone, kubernetes.io/block, kubernetes.io/rack
 #
 #   Then run tests with:
-#   export E2E_USE_EXISTING_CLUSTER=true
 #   export E2E_REGISTRY_PORT=<your-registry-port>  # if using local registry
 #   make test-e2e
 #
@@ -455,23 +453,19 @@ if [ "$SKIP_TOPOLOGY" = false ]; then
 fi
 
 # ============================================================================
-# Output environment variables for test consumption
+# Output
 # ============================================================================
 
 log_step "Cluster setup complete!"
 
-log_info "To run E2E tests against this cluster, export these variables:"
+log_info "To run E2E tests against this cluster:"
 echo ""
-echo "export E2E_USE_EXISTING_CLUSTER=true"
-echo "export E2E_CLUSTER_NAME=$CLUSTER_NAME"
-echo "export E2E_REGISTRY_PORT=$REGISTRY_PORT"
+echo "  # If using local registry for test images:"
+echo "  export E2E_REGISTRY_PORT=$REGISTRY_PORT"
 echo ""
-
-# Also output in a format that can be used with GitHub Actions
-if [ -n "${GITHUB_OUTPUT:-}" ]; then
-  echo "E2E_USE_EXISTING_CLUSTER=true" >> "$GITHUB_OUTPUT"
-  echo "E2E_CLUSTER_NAME=$CLUSTER_NAME" >> "$GITHUB_OUTPUT"
-  echo "E2E_REGISTRY_PORT=$REGISTRY_PORT" >> "$GITHUB_OUTPUT"
-fi
+echo "  # Run tests:"
+echo "  make test-e2e"
+echo "  make test-e2e TEST_PATTERN=Test_GS  # specific tests"
+echo ""
 
 log_success "Cluster '$CLUSTER_NAME' is ready for E2E testing!"

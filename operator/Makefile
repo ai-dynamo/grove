@@ -128,8 +128,7 @@ e2e-cluster-down:
 .PHONY: test-e2e-full
 test-e2e-full: e2e-cluster-up
 	@echo "> Running e2e tests..."
-	@E2E_USE_EXISTING_CLUSTER=true E2E_REGISTRY_PORT=5001 \
-		$(MAKE) test-e2e TEST_PATTERN=$(TEST_PATTERN) || \
+	@E2E_REGISTRY_PORT=5001 $(MAKE) test-e2e TEST_PATTERN=$(TEST_PATTERN) || \
 		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down
