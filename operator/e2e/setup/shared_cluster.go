@@ -332,6 +332,7 @@ func (scm *SharedClusterManager) CleanupWorkloads(ctx context.Context) error {
 	}
 
 	// Step 2: Poll for all resources and pods to be cleaned up
+	scm.logger.Infof("⏳ Waiting up to %v for all resources and pods to be deleted...", cleanupTimeout)
 	if err := scm.waitForAllGroveManagedResourcesAndPodsDeleted(ctx, cleanupTimeout, cleanupPollInterval); err != nil {
 		// List remaining resources and pods for debugging
 		scm.listRemainingGroveManagedResources(ctx)
@@ -361,7 +362,10 @@ func (scm *SharedClusterManager) deleteAllResources(ctx context.Context, group, 
 		return fmt.Errorf("failed to list %s: %w", resource, err)
 	}
 
+	scm.logger.Infof("🗑️ Deleting %d %s resources...", len(resourceList.Items), resource)
+
 	// Delete each resource
+	deletedCount := 0
 	for _, item := range resourceList.Items {
 		namespace := item.GetNamespace()
 		name := item.GetName()
@@ -369,9 +373,27 @@ func (scm *SharedClusterManager) deleteAllResources(ctx context.Context, group, 
 		err := scm.dynamicClient.Resource(gvr).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 		if err != nil {
 			scm.logger.Warnf("failed to delete %s %s/%s: %v", resource, namespace, name, err)
+		} else {
+			deletedCount++
+			scm.logger.Debugf("  ✓ Deleted %s/%s", namespace, name)
 		}
 	}
 
+	// Verify deletion was initiated by checking for deletionTimestamp
+	verifyList, err := scm.dynamicClient.Resource(gvr).List(ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, item := range verifyList.Items {
+			deletionTS := item.GetDeletionTimestamp()
+			finalizers := item.GetFinalizers()
+			if deletionTS != nil {
+				scm.logger.Debugf("  ⏳ %s/%s has deletionTimestamp=%v, finalizers=%v", item.GetNamespace(), item.GetName(), deletionTS.Time, finalizers)
+			} else {
+				scm.logger.Warnf("  ⚠️ %s/%s still exists without deletionTimestamp (delete may have failed)", item.GetNamespace(), item.GetName())
+			}
+		}
+	}
+
+	scm.logger.Infof("✅ Deletion initiated for %d/%d %s resources", deletedCount, len(resourceList.Items), resource)
 	return nil
 }
 
@@ -519,11 +541,16 @@ func (scm *SharedClusterManager) listRemainingGroveManagedResources(ctx context.
 		}
 
 		if len(resourceList.Items) > 0 {
-			resourceNames := make([]string, 0, len(resourceList.Items))
+			scm.logger.Errorf("Remaining %s (%d):", rt.name, len(resourceList.Items))
 			for _, item := range resourceList.Items {
-				resourceNames = append(resourceNames, fmt.Sprintf("%s/%s", item.GetNamespace(), item.GetName()))
+				deletionTS := item.GetDeletionTimestamp()
+				finalizers := item.GetFinalizers()
+				deletionStatus := "no deletionTimestamp"
+				if deletionTS != nil {
+					deletionStatus = fmt.Sprintf("deletionTimestamp=%v", deletionTS.Time)
+				}
+				scm.logger.Errorf("  - %s/%s: %s, finalizers=%v", item.GetNamespace(), item.GetName(), deletionStatus, finalizers)
 			}
-			scm.logger.Errorf("Remaining %s: %v", rt.name, resourceNames)
 		}
 	}
 }
