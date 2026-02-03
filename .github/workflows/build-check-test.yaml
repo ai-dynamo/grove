@@ -143,7 +143,7 @@ jobs:
           skaffold version
 
       - name: Run e2e tests - ${{ matrix.test_name }}
-        run: |
+        make test-e2e TEST_PATTERN='${{ matrix.test_pattern }} DIAG_DIR=e2e-diagnostics
           mkdir -p e2e-diagnostics
           make test-e2e TEST_PATTERN='${{ matrix.test_pattern }}'
         working-directory: operator
