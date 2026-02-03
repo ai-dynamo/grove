@@ -255,7 +255,7 @@ ComputeDomain creation follows the same observability pattern as other Grove-man
 
 Deleting a ComputeDomain while pods are actively using its RCT causes significant workload disruption. To prevent accidental deletion, Grove adds a **finalizer** to each ComputeDomain it creates.
 
-**Finalizer:** `grove.io/computedomains.resource.nvidia.com`
+**Finalizer:** `grove.io/computedomain-finalizer`
 
 With this finalizer, a ComputeDomain cannot be deleted until Grove explicitly removes the finalizer. This provides stronger protection than a watch-and-recreate approach, which would leave a gap where the workload is in a broken state.
 
@@ -265,7 +265,7 @@ kind: ComputeDomain
 metadata:
   name: my-pcs-0
   finalizers:
-    - grove.io/computedomains.resource.nvidia.com
+    - grove.io/computedomain-finalizer
   labels:
     app.kubernetes.io/managed-by: grove
     app.kubernetes.io/part-of: my-pcs
@@ -285,7 +285,7 @@ spec:
 
 If a user attempts to delete a CD manually, it will remain in `Terminating` state until the PCS is deleted or scaled down.
 
-> **Note:** The finalizer name `grove.io/computedomains.resource.nvidia.com` follows the pattern `grove.io/{crd-name}` to clearly indicate which CRD is being protected.
+> **Note:** The finalizer name `grove.io/computedomain-finalizer` follows the pattern `grove.io/{resource}-finalizer` for clarity and consistency.
 
 ### Scale-Out and Scale-In
 
@@ -297,7 +297,7 @@ The controller lists existing `ComputeDomains` by label selector, computes expec
 
 ### PCS Deletion  
 
-When a PodCliqueSet is deleted, the PCS controller's finalizer logic removes the `grove.io/protect-computedomain` finalizer from all owned ComputeDomains. Once the finalizer is removed, Kubernetes garbage-collects the CDs through the owner reference mechanism.
+When a PodCliqueSet is deleted, the PCS controller's finalizer logic removes the `grove.io/computedomain-finalizer` finalizer from all owned ComputeDomains. Once the finalizer is removed, Kubernetes garbage-collects the CDs through the owner reference mechanism.
 
 ## PCLQ Creation and RCT Injection
 

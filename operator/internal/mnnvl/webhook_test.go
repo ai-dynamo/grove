@@ -86,7 +86,7 @@ func TestMutateAutoMNNVL(t *testing.T) {
 	}
 }
 
-func TestValidateAutoMNNVLOnCreate(t *testing.T) {
+func TestValidateMetadataOnCreate(t *testing.T) {
 	tests := []struct {
 		description      string
 		pcs              *grovecorev1alpha1.PodCliqueSet
@@ -184,7 +184,7 @@ func TestValidateAutoMNNVLOnCreate(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.description, func(t *testing.T) {
-			errs := ValidateAutoMNNVLOnCreate(test.pcs, test.autoMNNVLEnabled)
+			errs := ValidateMetadataOnCreate(test.pcs, test.autoMNNVLEnabled)
 
 			if test.expectError {
 				assert.NotEmpty(t, errs, "expected validation errors")
@@ -196,7 +196,7 @@ func TestValidateAutoMNNVLOnCreate(t *testing.T) {
 	}
 }
 
-func TestValidateAutoMNNVLOnUpdate(t *testing.T) {
+func TestValidateMetadataOnUpdate(t *testing.T) {
 	tests := []struct {
 		description string
 		oldPCS      *grovecorev1alpha1.PodCliqueSet
@@ -260,7 +260,7 @@ func TestValidateAutoMNNVLOnUpdate(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.description, func(t *testing.T) {
-			errs := ValidateAutoMNNVLOnUpdate(test.oldPCS, test.newPCS)
+			errs := ValidateMetadataOnUpdate(test.oldPCS, test.newPCS)
 
 			if test.expectError {
 				assert.NotEmpty(t, errs, "expected validation errors")

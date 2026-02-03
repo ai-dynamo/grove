@@ -71,7 +71,7 @@ func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admis
 	allErrs = append(allErrs, errs...)
 
 	// Validate MNNVL annotation: reject if annotation="true" but feature is disabled
-	allErrs = append(allErrs, mnnvl.ValidateAutoMNNVLOnCreate(pcs, h.networkConfig.AutoMNNVLEnabled)...)
+	allErrs = append(allErrs, mnnvl.ValidateMetadataOnCreate(pcs, h.networkConfig.AutoMNNVLEnabled)...)
 
 	return warnings, allErrs.ToAggregate()
 }
@@ -92,7 +92,7 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 	warnings, errs := v.validate()
 
 	// Validate MNNVL annotation immutability
-	errs = append(errs, mnnvl.ValidateAutoMNNVLOnUpdate(oldPCS, newPCS)...)
+	errs = append(errs, mnnvl.ValidateMetadataOnUpdate(oldPCS, newPCS)...)
 
 	if len(errs) > 0 {
 		return warnings, errs.ToAggregate()
