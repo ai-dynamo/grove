@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"testing"
 
+	nameutils "github.com/ai-dynamo/grove/operator/api/common"
 	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
@@ -31,7 +32,6 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"k8s.io/utils/ptr"
 )
 
 // DeployWorkloadAndGetPods deploys workload, waits for pods to be ready, and returns the pod list
@@ -557,47 +557,17 @@ func Test_TAS8_FullHierarchyWithCascadingConstraints(t *testing.T) {
 	// Verify SubGroups hierarchy (2 PCSG parents + 4 PCLQ children)
 	expectedSubGroups := []utils.ExpectedSubGroup{
 		// PCSG replica 0 (parent group)
-		{
-			Name:                  "tas-hierarchy-0-inference-group-0",
-			MinMember:             0,
-			Parent:                nil,
-			RequiredTopologyLevel: setup.TopologyLabelRack,
-		},
+		utils.CreateExpectedPCSGParentSubGroup(tc.Workload.Name, 0, "inference-group", 0, setup.TopologyLabelRack),
 		// PCSG replica 1 (parent group)
-		{
-			Name:                  "tas-hierarchy-0-inference-group-1",
-			MinMember:             0,
-			Parent:                nil,
-			RequiredTopologyLevel: setup.TopologyLabelRack,
-		},
+		utils.CreateExpectedPCSGParentSubGroup(tc.Workload.Name, 0, "inference-group", 1, setup.TopologyLabelRack),
 		// PCLQ prefill replica 0
-		{
-			Name:                  "tas-hierarchy-0-inference-group-0-prefill",
-			MinMember:             2,
-			Parent:                ptr.To("tas-hierarchy-0-inference-group-0"),
-			RequiredTopologyLevel: setup.TopologyLabelHostname,
-		},
+		utils.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, 0, "inference-group", 0, "prefill", 2, setup.TopologyLabelHostname),
 		// PCLQ decode replica 0
-		{
-			Name:                  "tas-hierarchy-0-inference-group-0-decode",
-			MinMember:             2,
-			Parent:                ptr.To("tas-hierarchy-0-inference-group-0"),
-			RequiredTopologyLevel: setup.TopologyLabelHostname,
-		},
+		utils.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, 0, "inference-group", 0, "decode", 2, setup.TopologyLabelHostname),
 		// PCLQ prefill replica 1
-		{
-			Name:                  "tas-hierarchy-0-inference-group-1-prefill",
-			MinMember:             2,
-			Parent:                ptr.To("tas-hierarchy-0-inference-group-1"),
-			RequiredTopologyLevel: setup.TopologyLabelHostname,
-		},
+		utils.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, 0, "inference-group", 1, "prefill", 2, setup.TopologyLabelHostname),
 		// PCLQ decode replica 1
-		{
-			Name:                  "tas-hierarchy-0-inference-group-1-decode",
-			MinMember:             2,
-			Parent:                ptr.To("tas-hierarchy-0-inference-group-1"),
-			RequiredTopologyLevel: setup.TopologyLabelHostname,
-		},
+		utils.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, 0, "inference-group", 1, "decode", 2, setup.TopologyLabelHostname),
 	}
 	if err := utils.VerifyKAIPodGroupSubGroups(podGroup, expectedSubGroups, logger); err != nil {
 		t.Fatalf("Failed to verify KAI PodGroup SubGroups: %v", err)
@@ -652,7 +622,7 @@ func Test_TAS9_PCSPlusPCLQConstraint(t *testing.T) {
 
 	// Verify SubGroups (1 standalone PCLQ with host constraint)
 	expectedSubGroups := []utils.ExpectedSubGroup{
-		{Name: "tas-pcs-pclq-0-worker", MinMember: 2, Parent: nil, RequiredTopologyLevel: setup.TopologyLabelHostname},
+		utils.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, 0, "worker", 2, setup.TopologyLabelHostname),
 	}
 	if err := utils.VerifyKAIPodGroupSubGroups(podGroup, expectedSubGroups, logger); err != nil {
 		t.Fatalf("Failed to verify KAI PodGroup SubGroups: %v", err)
@@ -735,18 +705,9 @@ func Test_TAS10_PCSGScalingWithTopologyConstraints(t *testing.T) {
 	// Replicas 1 and 2 are in separate scaled PodGangs
 	expectedSubGroups := []utils.ExpectedSubGroup{
 		// PCSG replica 0 (parent group)
-		{
-			Name:                  "tas-pcsg-scale-0-inference-group-0",
-			MinMember:             0,
-			Parent:                nil,
-			RequiredTopologyLevel: setup.TopologyLabelRack,
-		},
+		utils.CreateExpectedPCSGParentSubGroup(tc.Workload.Name, 0, "inference-group", 0, setup.TopologyLabelRack),
 		// PCLQ worker for PCSG replica 0 (2 pods)
-		{
-			Name:      "tas-pcsg-scale-0-inference-group-0-worker",
-			MinMember: 2,
-			Parent:    ptr.To("tas-pcsg-scale-0-inference-group-0"),
-		},
+		utils.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, 0, "inference-group", 0, "worker", 2, ""),
 	}
 	if err := utils.VerifyKAIPodGroupSubGroups(podGroup, expectedSubGroups, logger); err != nil {
 		t.Fatalf("Failed to verify KAI PodGroup SubGroups: %v", err)
@@ -779,8 +740,12 @@ func Test_TAS11_PCSGPlusPCLQNoParentConstraint(t *testing.T) {
 
 	logger.Info("3. Verify each PCSG replica's pods on same host")
 	// Get pods for each PCSG replica
+	workersPCSG := nameutils.GeneratePodCliqueScalingGroupName(
+		nameutils.ResourceNameReplica{Name: tc.Workload.Name, Replica: 0},
+		"workers",
+	)
 	replica0Pods := utils.FilterPodsByLabel(
-		utils.FilterPodsByLabel(allPods, LabelPodCliqueScalingGroup, "tas-pcsg-pclq-0-workers"),
+		utils.FilterPodsByLabel(allPods, LabelPodCliqueScalingGroup, workersPCSG),
 		"grove.io/podcliquescalinggroup-replica-index", "0")
 	if len(replica0Pods) != 2 {
 		t.Fatalf("Expected 2 pods for replica 0, got %d", len(replica0Pods))
@@ -790,7 +755,7 @@ func Test_TAS11_PCSGPlusPCLQNoParentConstraint(t *testing.T) {
 	}
 
 	replica1Pods := utils.FilterPodsByLabel(
-		utils.FilterPodsByLabel(allPods, LabelPodCliqueScalingGroup, "tas-pcsg-pclq-0-workers"),
+		utils.FilterPodsByLabel(allPods, LabelPodCliqueScalingGroup, workersPCSG),
 		"grove.io/podcliquescalinggroup-replica-index", "1")
 	if len(replica1Pods) != 2 {
 		t.Fatalf("Expected 2 pods for replica 1, got %d", len(replica1Pods))
@@ -813,11 +778,11 @@ func Test_TAS11_PCSGPlusPCLQNoParentConstraint(t *testing.T) {
 	// Verify SubGroups (2 PCSG parents with rack + 2 PCLQ children with host)
 	expectedSubGroups := []utils.ExpectedSubGroup{
 		// PCSG replicas (parent groups with rack constraint)
-		{Name: "tas-pcsg-pclq-0-workers-0", MinMember: 0, Parent: nil, RequiredTopologyLevel: setup.TopologyLabelRack},
-		{Name: "tas-pcsg-pclq-0-workers-1", MinMember: 0, Parent: nil, RequiredTopologyLevel: setup.TopologyLabelRack},
+		utils.CreateExpectedPCSGParentSubGroup(tc.Workload.Name, 0, "workers", 0, setup.TopologyLabelRack),
+		utils.CreateExpectedPCSGParentSubGroup(tc.Workload.Name, 0, "workers", 1, setup.TopologyLabelRack),
 		// Worker PCLQs (children with host constraint)
-		{Name: "tas-pcsg-pclq-0-workers-0-worker", MinMember: 2, Parent: ptr.To("tas-pcsg-pclq-0-workers-0"), RequiredTopologyLevel: setup.TopologyLabelHostname},
-		{Name: "tas-pcsg-pclq-0-workers-1-worker", MinMember: 2, Parent: ptr.To("tas-pcsg-pclq-0-workers-1"), RequiredTopologyLevel: setup.TopologyLabelHostname},
+		utils.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, 0, "workers", 0, "worker", 2, setup.TopologyLabelHostname),
+		utils.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, 0, "workers", 1, "worker", 2, setup.TopologyLabelHostname),
 	}
 	if err := utils.VerifyKAIPodGroupSubGroups(podGroup, expectedSubGroups, logger); err != nil {
 		t.Fatalf("Failed to verify KAI PodGroup SubGroups: %v", err)
@@ -840,7 +805,7 @@ func Test_TAS12_LargeScalingRatio(t *testing.T) {
 	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
-	expectedPods := 20 // Only minAvailable=3 PCSG replicas × 2 pods each (base PodGang)
+	expectedPods := 20 // Base PodGang: 3 PCSG replicas × 2 pods (6) + Scaled: 7 PCSG replicas × 2 pods (14)
 	tc := createTopologyTestContext(t, ctx, clientset, restConfig, dynamicClient,
 		"tas-large-scale", "../yaml/tas-large-scale.yaml", expectedPods)
 
@@ -851,8 +816,8 @@ func Test_TAS12_LargeScalingRatio(t *testing.T) {
 	}
 
 	logger.Info("3. Verify each PCSG replica's pods on same host")
-	// Get pods for each PCSG replica (only minAvailable=3 from base PodGang)
-	for i := 0; i < 3; i++ {
+	// Get pods for each PCSG replica (all 10 replicas)
+	for i := 0; i < 10; i++ {
 		replicaPods := utils.FilterPodsByLabel(
 			utils.FilterPodsByLabel(allPods, LabelPodCliqueScalingGroup, "tas-large-scale-0-workers"),
 			"grove.io/podcliquescalinggroup-replica-index", fmt.Sprintf("%d", i))
@@ -880,19 +845,54 @@ func Test_TAS12_LargeScalingRatio(t *testing.T) {
 		t.Fatalf("Failed to verify KAI PodGroup top-level constraint: %v", err)
 	}
 
-	// Verify SubGroups (3 PCSG parents with rack + 3 worker children with host)
+	// Verify SubGroups (3 worker PCLQs with host constraint, no PCSG parent since no rack constraint)
+	pcsgFQN := nameutils.GeneratePodCliqueScalingGroupName(
+		nameutils.ResourceNameReplica{Name: tc.Workload.Name, Replica: 0},
+		"workers",
+	)
 	expectedSubGroups := []utils.ExpectedSubGroup{
-		// PCSG replicas (parent groups with rack constraint)
-		{Name: "tas-large-scale-0-workers-0", MinMember: 0, Parent: nil, RequiredTopologyLevel: setup.TopologyLabelRack},
-		{Name: "tas-large-scale-0-workers-1", MinMember: 0, Parent: nil, RequiredTopologyLevel: setup.TopologyLabelRack},
-		{Name: "tas-large-scale-0-workers-2", MinMember: 0, Parent: nil, RequiredTopologyLevel: setup.TopologyLabelRack},
-		// Worker PCLQs (children with host constraint)
-		{Name: "tas-large-scale-0-workers-0-worker", MinMember: 2, Parent: ptr.To("tas-large-scale-0-workers-0"), RequiredTopologyLevel: setup.TopologyLabelHostname},
-		{Name: "tas-large-scale-0-workers-1-worker", MinMember: 2, Parent: ptr.To("tas-large-scale-0-workers-1"), RequiredTopologyLevel: setup.TopologyLabelHostname},
-		{Name: "tas-large-scale-0-workers-2-worker", MinMember: 2, Parent: ptr.To("tas-large-scale-0-workers-2"), RequiredTopologyLevel: setup.TopologyLabelHostname},
+		utils.CreateExpectedPCLQInPCSGSubGroupNoParent(tc.Workload.Name, 0, "workers", 0, "worker", 2, setup.TopologyLabelHostname),
+		utils.CreateExpectedPCLQInPCSGSubGroupNoParent(tc.Workload.Name, 0, "workers", 1, "worker", 2, setup.TopologyLabelHostname),
+		utils.CreateExpectedPCLQInPCSGSubGroupNoParent(tc.Workload.Name, 0, "workers", 2, "worker", 2, setup.TopologyLabelHostname),
 	}
 	if err := utils.VerifyKAIPodGroupSubGroups(podGroup, expectedSubGroups, logger); err != nil {
 		t.Fatalf("Failed to verify KAI PodGroup SubGroups: %v", err)
+	}
+
+	logger.Info("6. Verify scaled PodGangs' KAI PodGroups (replicas 3-9)")
+	podGroups, err := utils.GetKAIPodGroupsForPCS(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name)
+	if err != nil {
+		t.Fatalf("Failed to get KAI PodGroups: %v", err)
+	}
+
+	// PCSG config: replicas=10, minAvailable=3
+	// Base PodGang contains replicas 0-2, scaled PodGangs contain replicas 3-9 (reuse pcsgFQN from above)
+	pcsgMinAvailable := 3
+	pcsgTotalReplicas := 10
+	scaledPodGangCount := pcsgTotalReplicas - pcsgMinAvailable
+
+	for scaledIndex := 0; scaledIndex < scaledPodGangCount; scaledIndex++ {
+		pcsgReplicaIndex := pcsgMinAvailable + scaledIndex
+		scaledPodGangName := nameutils.CreatePodGangNameFromPCSGFQN(pcsgFQN, scaledIndex)
+
+		scaledPodGroup, err := utils.FilterPodGroupByOwner(podGroups, scaledPodGangName)
+		if err != nil {
+			t.Fatalf("Failed to find scaled PodGroup for %s: %v", scaledPodGangName, err)
+		}
+		err = utils.VerifyKAIPodGroupTopologyConstraint(scaledPodGroup, setup.TopologyLabelBlock, "", logger)
+		if err != nil {
+			t.Fatalf("Failed to verify KAI PodGroup for %s: %v", scaledPodGangName, err)
+		}
+
+		// Each scaled PodGang contains 1 PCSG replica with 1 PCLQ SubGroup (host constraint)
+		expectedSubGroups = []utils.ExpectedSubGroup{
+			utils.CreateExpectedPCLQInPCSGSubGroupNoParent(tc.Workload.Name, 0, "workers", pcsgReplicaIndex, "worker", 2, setup.TopologyLabelHostname),
+		}
+
+		if err := utils.VerifyKAIPodGroupSubGroups(scaledPodGroup, expectedSubGroups, logger); err != nil {
+			t.Fatalf("Failed to verify scaled PodGroup %s (PCSG replica %d) SubGroups: %v",
+				scaledPodGangName, pcsgReplicaIndex, err)
+		}
 	}
 
 	logger.Info("🎉 TAS12: Large Scaling Ratio test completed successfully!")
@@ -954,12 +954,7 @@ func Test_TAS13_InsufficientNodesForConstraint(t *testing.T) {
 
 	// Verify SubGroups (1 standalone PCLQ - no PCSG)
 	expectedSubGroups := []utils.ExpectedSubGroup{
-		{
-			Name:                  "tas-insuffic-0-worker",
-			MinMember:             10,
-			Parent:                nil,
-			RequiredTopologyLevel: "",
-		},
+		utils.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, 0, "worker", 10, ""),
 	}
 	if err := utils.VerifyKAIPodGroupSubGroups(podGroup, expectedSubGroups, logger); err != nil {
 		t.Fatalf("Failed to verify KAI PodGroup SubGroups: %v", err)
@@ -1018,11 +1013,7 @@ func Test_TAS14_MultiReplicaWithRackConstraint(t *testing.T) {
 		t.Fatalf("Failed to verify PodGroup-0 top-level constraint: %v", err)
 	}
 	expectedSubGroups0 := []utils.ExpectedSubGroup{
-		{
-			Name:      "tas-multirep-0-worker",
-			MinMember: 2,
-			Parent:    nil,
-		},
+		utils.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, 0, "worker", 2, ""),
 	}
 	if err := utils.VerifyKAIPodGroupSubGroups(podGroup0, expectedSubGroups0, logger); err != nil {
 		t.Fatalf("Failed to verify PodGroup-0 SubGroups: %v", err)
@@ -1037,11 +1028,7 @@ func Test_TAS14_MultiReplicaWithRackConstraint(t *testing.T) {
 		t.Fatalf("Failed to verify PodGroup-1 top-level constraint: %v", err)
 	}
 	expectedSubGroups1 := []utils.ExpectedSubGroup{
-		{
-			Name:      "tas-multirep-1-worker",
-			MinMember: 2,
-			Parent:    nil,
-		},
+		utils.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, 1, "worker", 2, ""),
 	}
 	if err := utils.VerifyKAIPodGroupSubGroups(podGroup1, expectedSubGroups1, logger); err != nil {
 		t.Fatalf("Failed to verify PodGroup-1 SubGroups: %v", err)
@@ -1079,9 +1066,15 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 		t.Fatalf("Failed to verify all pods in same block: %v", err)
 	}
 
+	// Generate PCSG and PCLQ names
+	pcsReplica := nameutils.ResourceNameReplica{Name: tc.Workload.Name, Replica: 0}
+	decoderPCSG := nameutils.GeneratePodCliqueScalingGroupName(pcsReplica, "decoder")
+	prefillPCSG := nameutils.GeneratePodCliqueScalingGroupName(pcsReplica, "prefill")
+	routerPCLQ := nameutils.GeneratePodCliqueName(pcsReplica, "router")
+
 	logger.Info("4. Verify decoder PCSG replica-0 (2 pods in same rack)")
 	decoderReplica0 := utils.FilterPodsByLabel(
-		utils.FilterPodsByLabel(allPods, LabelPodCliqueScalingGroup, "tas-disagg-inference-0-decoder"),
+		utils.FilterPodsByLabel(allPods, LabelPodCliqueScalingGroup, decoderPCSG),
 		"grove.io/podcliquescalinggroup-replica-index", "0")
 	if len(decoderReplica0) != 2 {
 		t.Fatalf("Expected 2 decoder replica-0 pods, got %d", len(decoderReplica0))
@@ -1092,7 +1085,7 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 
 	logger.Info("5. Verify decoder PCSG replica-1 (2 pods in same rack)")
 	decoderReplica1 := utils.FilterPodsByLabel(
-		utils.FilterPodsByLabel(allPods, LabelPodCliqueScalingGroup, "tas-disagg-inference-0-decoder"),
+		utils.FilterPodsByLabel(allPods, LabelPodCliqueScalingGroup, decoderPCSG),
 		"grove.io/podcliquescalinggroup-replica-index", "1")
 	if len(decoderReplica1) != 2 {
 		t.Fatalf("Expected 2 decoder replica-1 pods, got %d", len(decoderReplica1))
@@ -1103,7 +1096,7 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 
 	logger.Info("6. Verify prefill PCSG replica-0 (2 pods in same rack)")
 	prefillReplica0 := utils.FilterPodsByLabel(
-		utils.FilterPodsByLabel(allPods, LabelPodCliqueScalingGroup, "tas-disagg-inference-0-prefill"),
+		utils.FilterPodsByLabel(allPods, LabelPodCliqueScalingGroup, prefillPCSG),
 		"grove.io/podcliquescalinggroup-replica-index", "0")
 	if len(prefillReplica0) != 2 {
 		t.Fatalf("Expected 2 prefill replica-0 pods, got %d", len(prefillReplica0))
@@ -1114,7 +1107,7 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 
 	logger.Info("7. Verify prefill PCSG replica-1 (2 pods in same rack)")
 	prefillReplica1 := utils.FilterPodsByLabel(
-		utils.FilterPodsByLabel(allPods, LabelPodCliqueScalingGroup, "tas-disagg-inference-0-prefill"),
+		utils.FilterPodsByLabel(allPods, LabelPodCliqueScalingGroup, prefillPCSG),
 		"grove.io/podcliquescalinggroup-replica-index", "1")
 	if len(prefillReplica1) != 2 {
 		t.Fatalf("Expected 2 prefill replica-1 pods, got %d", len(prefillReplica1))
@@ -1124,7 +1117,7 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 	}
 
 	logger.Info("8. Verify router pods (2 standalone, no PCSG label)")
-	routerPods := utils.FilterPodsByLabel(allPods, LabelPodClique, "tas-disagg-inference-0-router")
+	routerPods := utils.FilterPodsByLabel(allPods, LabelPodClique, routerPCLQ)
 	if len(routerPods) != 2 {
 		t.Fatalf("Expected 2 router pods, got %d", len(routerPods))
 	}
@@ -1142,18 +1135,13 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 
 	// Verify SubGroups (Base PodGang contains only minAvailable=1 PCSG replicas)
 	expectedSubGroups := []utils.ExpectedSubGroup{
-		// Decoder PCSG replica 0 only (parent group)
-		{Name: "tas-disagg-inference-0-decoder-0", MinMember: 0, Parent: nil, RequiredTopologyLevel: setup.TopologyLabelRack},
-		// Prefill PCSG replica 0 only (parent group)
-		{Name: "tas-disagg-inference-0-prefill-0", MinMember: 0, Parent: nil, RequiredTopologyLevel: setup.TopologyLabelRack},
-		// Decoder PCLQs for replica 0 only
-		{Name: "tas-disagg-inference-0-decoder-0-dworker", MinMember: 1, Parent: ptr.To("tas-disagg-inference-0-decoder-0")},
-		{Name: "tas-disagg-inference-0-decoder-0-dleader", MinMember: 1, Parent: ptr.To("tas-disagg-inference-0-decoder-0")},
-		// Prefill PCLQs for replica 0 only
-		{Name: "tas-disagg-inference-0-prefill-0-pworker", MinMember: 1, Parent: ptr.To("tas-disagg-inference-0-prefill-0")},
-		{Name: "tas-disagg-inference-0-prefill-0-pleader", MinMember: 1, Parent: ptr.To("tas-disagg-inference-0-prefill-0")},
-		// Router (standalone)
-		{Name: "tas-disagg-inference-0-router", MinMember: 2, Parent: nil},
+		utils.CreateExpectedPCSGParentSubGroup(tc.Workload.Name, 0, "decoder", 0, setup.TopologyLabelRack),
+		utils.CreateExpectedPCSGParentSubGroup(tc.Workload.Name, 0, "prefill", 0, setup.TopologyLabelRack),
+		utils.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, 0, "decoder", 0, "dworker", 1, ""),
+		utils.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, 0, "decoder", 0, "dleader", 1, ""),
+		utils.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, 0, "prefill", 0, "pworker", 1, ""),
+		utils.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, 0, "prefill", 0, "pleader", 1, ""),
+		utils.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, 0, "router", 2, ""),
 	}
 	if err := utils.VerifyKAIPodGroupSubGroups(podGroup, expectedSubGroups, logger); err != nil {
 		t.Fatalf("Failed to verify KAI PodGroup SubGroups: %v", err)
@@ -1200,10 +1188,24 @@ func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 
 		logger.Infof("4.%d. Verify PCS replica %d pods topology constraints", pcsReplica+1, pcsReplica)
 
+		// Generate PCSG and PCLQ names for this PCS replica
+		decoderPCSG := nameutils.GeneratePodCliqueScalingGroupName(
+			nameutils.ResourceNameReplica{Name: tc.Workload.Name, Replica: pcsReplica},
+			"decoder",
+		)
+		prefillPCSG := nameutils.GeneratePodCliqueScalingGroupName(
+			nameutils.ResourceNameReplica{Name: tc.Workload.Name, Replica: pcsReplica},
+			"prefill",
+		)
+		routerPCLQ := nameutils.GeneratePodCliqueName(
+			nameutils.ResourceNameReplica{Name: tc.Workload.Name, Replica: pcsReplica},
+			"router",
+		)
+
 		// Verify decoder PCSG replica-0 (2 pods in same rack)
 		logger.Infof("4.%d.1. Verify decoder PCSG replica-0 (2 pods in same rack)", pcsReplica+1)
 		decoderReplica0 := utils.FilterPodsByLabel(
-			utils.FilterPodsByLabel(replicaPods, LabelPodCliqueScalingGroup, fmt.Sprintf("tas-disagg-inference-%d-decoder", pcsReplica)),
+			utils.FilterPodsByLabel(replicaPods, LabelPodCliqueScalingGroup, decoderPCSG),
 			"grove.io/podcliquescalinggroup-replica-index", "0")
 		if len(decoderReplica0) != 2 {
 			t.Fatalf("Expected 2 decoder replica-0 pods for PCS replica %d, got %d", pcsReplica, len(decoderReplica0))
@@ -1215,7 +1217,7 @@ func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 		// Verify decoder PCSG replica-1 (2 pods in same rack)
 		logger.Infof("4.%d.2. Verify decoder PCSG replica-1 (2 pods in same rack)", pcsReplica+1)
 		decoderReplica1 := utils.FilterPodsByLabel(
-			utils.FilterPodsByLabel(replicaPods, LabelPodCliqueScalingGroup, fmt.Sprintf("tas-disagg-inference-%d-decoder", pcsReplica)),
+			utils.FilterPodsByLabel(replicaPods, LabelPodCliqueScalingGroup, decoderPCSG),
 			"grove.io/podcliquescalinggroup-replica-index", "1")
 		if len(decoderReplica1) != 2 {
 			t.Fatalf("Expected 2 decoder replica-1 pods for PCS replica %d, got %d", pcsReplica, len(decoderReplica1))
@@ -1224,10 +1226,9 @@ func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 			t.Fatalf("Failed to verify decoder replica-1 pods in same rack for PCS replica %d: %v", pcsReplica, err)
 		}
 
-		// Verify prefill PCSG replica-0 (2 pods in same rack)
 		logger.Infof("4.%d.3. Verify prefill PCSG replica-0 (2 pods in same rack)", pcsReplica+1)
 		prefillReplica0 := utils.FilterPodsByLabel(
-			utils.FilterPodsByLabel(replicaPods, LabelPodCliqueScalingGroup, fmt.Sprintf("tas-disagg-inference-%d-prefill", pcsReplica)),
+			utils.FilterPodsByLabel(replicaPods, LabelPodCliqueScalingGroup, prefillPCSG),
 			"grove.io/podcliquescalinggroup-replica-index", "0")
 		if len(prefillReplica0) != 2 {
 			t.Fatalf("Expected 2 prefill replica-0 pods for PCS replica %d, got %d", pcsReplica, len(prefillReplica0))
@@ -1236,10 +1237,9 @@ func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 			t.Fatalf("Failed to verify prefill replica-0 pods in same rack for PCS replica %d: %v", pcsReplica, err)
 		}
 
-		// Verify prefill PCSG replica-1 (2 pods in same rack)
 		logger.Infof("4.%d.4. Verify prefill PCSG replica-1 (2 pods in same rack)", pcsReplica+1)
 		prefillReplica1 := utils.FilterPodsByLabel(
-			utils.FilterPodsByLabel(replicaPods, LabelPodCliqueScalingGroup, fmt.Sprintf("tas-disagg-inference-%d-prefill", pcsReplica)),
+			utils.FilterPodsByLabel(replicaPods, LabelPodCliqueScalingGroup, prefillPCSG),
 			"grove.io/podcliquescalinggroup-replica-index", "1")
 		if len(prefillReplica1) != 2 {
 			t.Fatalf("Expected 2 prefill replica-1 pods for PCS replica %d, got %d", pcsReplica, len(prefillReplica1))
@@ -1250,29 +1250,36 @@ func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 
 		// Verify router pods (2 standalone)
 		logger.Infof("4.%d.5. Verify router pods (2 standalone)", pcsReplica+1)
-		routerPods := utils.FilterPodsByLabel(replicaPods, LabelPodClique, fmt.Sprintf("tas-disagg-inference-%d-router", pcsReplica))
+		routerPods := utils.FilterPodsByLabel(replicaPods, LabelPodClique, routerPCLQ)
 		if len(routerPods) != 2 {
 			t.Fatalf("Expected 2 router pods for PCS replica %d, got %d", pcsReplica, len(routerPods))
 		}
 	}
 
 	logger.Info("5. Verify KAI PodGroups for both PCS replicas have correct topology constraints")
-	// Verify PCS replica 0
-	podGroup0, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
-	if err != nil {
-		t.Fatalf("Failed to get PodGroup for PCS replica 0: %v", err)
-	}
-	if err := utils.VerifyKAIPodGroupTopologyConstraint(podGroup0, setup.TopologyLabelBlock, "", logger); err != nil {
-		t.Fatalf("Failed to verify PodGroup-0 top-level constraint: %v", err)
-	}
+	// Verify both PCS replicas (0 and 1)
+	for pcsReplica := 0; pcsReplica < 2; pcsReplica++ {
+		podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, pcsReplica, tc.Timeout, tc.Interval, logger)
+		if err != nil {
+			t.Fatalf("Failed to get PodGroup for PCS replica %d: %v", pcsReplica, err)
+		}
+		if err := utils.VerifyKAIPodGroupTopologyConstraint(podGroup, setup.TopologyLabelBlock, "", logger); err != nil {
+			t.Fatalf("Failed to verify PodGroup-%d top-level constraint: %v", pcsReplica, err)
+		}
 
-	// Verify PCS replica 1
-	podGroup1, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 1, tc.Timeout, tc.Interval, logger)
-	if err != nil {
-		t.Fatalf("Failed to get PodGroup for PCS replica 1: %v", err)
-	}
-	if err := utils.VerifyKAIPodGroupTopologyConstraint(podGroup1, setup.TopologyLabelBlock, "", logger); err != nil {
-		t.Fatalf("Failed to verify PodGroup-1 top-level constraint: %v", err)
+		// Verify SubGroups for this PCS replica (hierarchy: PCS→PCSG→PCLQ)
+		expectedSubGroups := []utils.ExpectedSubGroup{
+			utils.CreateExpectedPCSGParentSubGroup(tc.Workload.Name, pcsReplica, "decoder", 0, setup.TopologyLabelRack),
+			utils.CreateExpectedPCSGParentSubGroup(tc.Workload.Name, pcsReplica, "prefill", 0, setup.TopologyLabelRack),
+			utils.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, pcsReplica, "decoder", 0, "dworker", 1, ""),
+			utils.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, pcsReplica, "decoder", 0, "dleader", 1, ""),
+			utils.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, pcsReplica, "prefill", 0, "pworker", 1, setup.TopologyLabelHostname),
+			utils.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, pcsReplica, "prefill", 0, "pleader", 1, ""),
+			utils.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, pcsReplica, "router", 2, ""),
+		}
+		if err := utils.VerifyKAIPodGroupSubGroups(podGroup, expectedSubGroups, logger); err != nil {
+			t.Fatalf("Failed to verify KAI PodGroup-%d SubGroups: %v", pcsReplica, err)
+		}
 	}
 
 	logger.Info("🎉 TAS16: Multi-replica PCS with 3-level topology hierarchy test completed successfully!")
