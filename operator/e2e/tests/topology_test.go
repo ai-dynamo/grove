@@ -27,6 +27,7 @@ import (
 	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
+	"github.com/samber/lo"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
@@ -481,58 +482,30 @@ func Test_TAS8_FullHierarchyWithCascadingConstraints(t *testing.T) {
 		t.Fatalf("Setup failed: %v", err)
 	}
 
-	logger.Info("3. Verify PCSG replica 0 prefill pods (2) are on same host (PCLQ constraint)")
-	prefill0Pods := utils.FilterPodsByLabel(allPods, LabelPodClique, "tas-hierarchy-0-inference-group-0-prefill")
-	if len(prefill0Pods) != 2 {
-		t.Fatalf("Expected 2 prefill-0 pods, got %d", len(prefill0Pods))
-	}
-	if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, prefill0Pods, setup.TopologyLabelHostname, logger); err != nil {
-		t.Fatalf("Failed to verify prefill-0 pods on same host: %v", err)
-	}
-
-	logger.Info("4. Verify PCSG replica 0 decode pods (2) are on same host (PCLQ constraint)")
-	decode0Pods := utils.FilterPodsByLabel(allPods, LabelPodClique, "tas-hierarchy-0-inference-group-0-decode")
-	if len(decode0Pods) != 2 {
-		t.Fatalf("Expected 2 decode-0 pods, got %d", len(decode0Pods))
-	}
-	if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, decode0Pods, setup.TopologyLabelHostname, logger); err != nil {
-		t.Fatalf("Failed to verify decode-0 pods on same host: %v", err)
+	logger.Info("3. Verify PCLQ constraints (2 replicas × 2 clique types) - all on same host")
+	cliqueTypes := []string{"prefill", "decode"}
+	for pcsgReplica := 0; pcsgReplica < 2; pcsgReplica++ {
+		for _, cliqueType := range cliqueTypes {
+			cliquePods := utils.FilterPodsByLabel(allPods, LabelPodClique,
+				fmt.Sprintf("tas-hierarchy-0-inference-group-%d-%s", pcsgReplica, cliqueType))
+			if len(cliquePods) != 2 {
+				t.Fatalf("Expected 2 %s pods for PCSG replica %d, got %d", cliqueType, pcsgReplica, len(cliquePods))
+			}
+			if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, cliquePods, setup.TopologyLabelHostname, logger); err != nil {
+				t.Fatalf("Failed to verify %s pods on same host for PCSG replica %d: %v", cliqueType, pcsgReplica, err)
+			}
+		}
 	}
 
-	logger.Info("5. Verify PCSG replica 1 prefill pods (2) are on same host (PCLQ constraint)")
-	prefill1Pods := utils.FilterPodsByLabel(allPods, LabelPodClique, "tas-hierarchy-0-inference-group-1-prefill")
-	if len(prefill1Pods) != 2 {
-		t.Fatalf("Expected 2 prefill-1 pods, got %d", len(prefill1Pods))
-	}
-	if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, prefill1Pods, setup.TopologyLabelHostname, logger); err != nil {
-		t.Fatalf("Failed to verify prefill-1 pods on same host: %v", err)
-	}
-
-	logger.Info("6. Verify PCSG replica 1 decode pods (2) are on same host (PCLQ constraint)")
-	decode1Pods := utils.FilterPodsByLabel(allPods, LabelPodClique, "tas-hierarchy-0-inference-group-1-decode")
-	if len(decode1Pods) != 2 {
-		t.Fatalf("Expected 2 decode-1 pods, got %d", len(decode1Pods))
-	}
-	if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, decode1Pods, setup.TopologyLabelHostname, logger); err != nil {
-		t.Fatalf("Failed to verify decode-1 pods on same host: %v", err)
-	}
-
-	logger.Info("7. Verify all PCSG replica 0 pods are in same rack (PCSG constraint)")
-	pcsg0Pods := utils.FilterPodsByLabel(allPods, "grove.io/podcliquescalinggroup-replica-index", "0")
-	if len(pcsg0Pods) != 4 {
-		t.Fatalf("Expected 4 PCSG replica 0 pods, got %d", len(pcsg0Pods))
-	}
-	if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, pcsg0Pods, setup.TopologyLabelRack, logger); err != nil {
-		t.Fatalf("Failed to verify PCSG replica 0 pods in same rack: %v", err)
-	}
-
-	logger.Info("8. Verify all PCSG replica 1 pods are in same rack (PCSG constraint)")
-	pcsg1Pods := utils.FilterPodsByLabel(allPods, "grove.io/podcliquescalinggroup-replica-index", "1")
-	if len(pcsg1Pods) != 4 {
-		t.Fatalf("Expected 4 PCSG replica 1 pods, got %d", len(pcsg1Pods))
-	}
-	if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, pcsg1Pods, setup.TopologyLabelRack, logger); err != nil {
-		t.Fatalf("Failed to verify PCSG replica 1 pods in same rack: %v", err)
+	logger.Info("4. Verify PCSG constraints (2 replicas) - all in same rack")
+	for pcsgReplica := 0; pcsgReplica < 2; pcsgReplica++ {
+		pcsgPods := utils.FilterPodsByLabel(allPods, "grove.io/podcliquescalinggroup-replica-index", fmt.Sprintf("%d", pcsgReplica))
+		if len(pcsgPods) != 4 {
+			t.Fatalf("Expected 4 PCSG replica %d pods, got %d", pcsgReplica, len(pcsgPods))
+		}
+		if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, pcsgPods, setup.TopologyLabelRack, logger); err != nil {
+			t.Fatalf("Failed to verify PCSG replica %d pods in same rack: %v", pcsgReplica, err)
+		}
 	}
 
 	logger.Info("9. Verify all pods are in same block (PCS constraint)")
@@ -654,31 +627,15 @@ func Test_TAS10_PCSGScalingWithTopologyConstraints(t *testing.T) {
 		t.Fatalf("Setup failed: %v", err)
 	}
 
-	logger.Info("3. Verify PCSG replica 0 worker pods (2) are in same rack")
-	pcsg0Pods := utils.FilterPodsByLabel(allPods, "grove.io/podcliquescalinggroup-replica-index", "0")
-	if len(pcsg0Pods) != 2 {
-		t.Fatalf("Expected 2 PCSG replica 0 pods, got %d", len(pcsg0Pods))
-	}
-	if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, pcsg0Pods, setup.TopologyLabelRack, logger); err != nil {
-		t.Fatalf("Failed to verify PCSG replica 0 pods in same rack: %v", err)
-	}
-
-	logger.Info("4. Verify PCSG replica 1 worker pods (2) are in same rack")
-	pcsg1Pods := utils.FilterPodsByLabel(allPods, "grove.io/podcliquescalinggroup-replica-index", "1")
-	if len(pcsg1Pods) != 2 {
-		t.Fatalf("Expected 2 PCSG replica 1 pods, got %d", len(pcsg1Pods))
-	}
-	if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, pcsg1Pods, setup.TopologyLabelRack, logger); err != nil {
-		t.Fatalf("Failed to verify PCSG replica 1 pods in same rack: %v", err)
-	}
-
-	logger.Info("5. Verify PCSG replica 2 worker pods (2) are in same rack")
-	pcsg2Pods := utils.FilterPodsByLabel(allPods, "grove.io/podcliquescalinggroup-replica-index", "2")
-	if len(pcsg2Pods) != 2 {
-		t.Fatalf("Expected 2 PCSG replica 2 pods, got %d", len(pcsg2Pods))
-	}
-	if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, pcsg2Pods, setup.TopologyLabelRack, logger); err != nil {
-		t.Fatalf("Failed to verify PCSG replica 2 pods in same rack: %v", err)
+	logger.Info("3. Verify each PCSG replica's worker pods (2) are in same rack")
+	for pcsgReplica := 0; pcsgReplica < 3; pcsgReplica++ {
+		pcsgPods := utils.FilterPodsByLabel(allPods, "grove.io/podcliquescalinggroup-replica-index", fmt.Sprintf("%d", pcsgReplica))
+		if len(pcsgPods) != 2 {
+			t.Fatalf("Expected 2 PCSG replica %d pods, got %d", pcsgReplica, len(pcsgPods))
+		}
+		if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, pcsgPods, setup.TopologyLabelRack, logger); err != nil {
+			t.Fatalf("Failed to verify PCSG replica %d pods in same rack: %v", pcsgReplica, err)
+		}
 	}
 
 	logger.Info("6. Verify all pods respect PCS-level rack constraint")
@@ -744,24 +701,16 @@ func Test_TAS11_PCSGPlusPCLQNoParentConstraint(t *testing.T) {
 		nameutils.ResourceNameReplica{Name: tc.Workload.Name, Replica: 0},
 		"workers",
 	)
-	replica0Pods := utils.FilterPodsByLabel(
-		utils.FilterPodsByLabel(allPods, LabelPodCliqueScalingGroup, workersPCSG),
-		"grove.io/podcliquescalinggroup-replica-index", "0")
-	if len(replica0Pods) != 2 {
-		t.Fatalf("Expected 2 pods for replica 0, got %d", len(replica0Pods))
-	}
-	if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, replica0Pods, setup.TopologyLabelHostname, logger); err != nil {
-		t.Fatalf("Failed to verify replica 0 pods on same host: %v", err)
-	}
-
-	replica1Pods := utils.FilterPodsByLabel(
-		utils.FilterPodsByLabel(allPods, LabelPodCliqueScalingGroup, workersPCSG),
-		"grove.io/podcliquescalinggroup-replica-index", "1")
-	if len(replica1Pods) != 2 {
-		t.Fatalf("Expected 2 pods for replica 1, got %d", len(replica1Pods))
-	}
-	if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, replica1Pods, setup.TopologyLabelHostname, logger); err != nil {
-		t.Fatalf("Failed to verify replica 1 pods on same host: %v", err)
+	for pcsgReplica := 0; pcsgReplica < 2; pcsgReplica++ {
+		replicaPods := utils.FilterPodsByLabel(
+			utils.FilterPodsByLabel(allPods, LabelPodCliqueScalingGroup, workersPCSG),
+			"grove.io/podcliquescalinggroup-replica-index", fmt.Sprintf("%d", pcsgReplica))
+		if len(replicaPods) != 2 {
+			t.Fatalf("Expected 2 pods for replica %d, got %d", pcsgReplica, len(replicaPods))
+		}
+		if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, replicaPods, setup.TopologyLabelHostname, logger); err != nil {
+			t.Fatalf("Failed to verify replica %d pods on same host: %v", pcsgReplica, err)
+		}
 	}
 
 	logger.Info("4. Verify KAI PodGroup has correct SubGroups (PCSG rack + PCLQ host)")
@@ -932,15 +881,11 @@ func Test_TAS13_InsufficientNodesForConstraint(t *testing.T) {
 		t.Fatalf("Failed to list pods: %v", err)
 	}
 
-	for _, pod := range pods.Items {
-		if pod.Status.Phase != v1.PodPending {
-			t.Fatalf("Expected all pods to be Pending, but pod %s is in phase %s", pod.Name, pod.Status.Phase)
-		}
+	lo.ForEach(pods.Items, func(pod v1.Pod, _ int) {
 		if pod.Spec.NodeName != "" {
 			t.Fatalf("Expected pod %s to have no node assignment, but assigned to %s", pod.Name, pod.Spec.NodeName)
 		}
-	}
-
+	})
 	logger.Info("5. Verify KAI PodGroup exists with correct topology constraints (even though pods are pending)")
 	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
 	if err != nil {
@@ -975,7 +920,7 @@ func Test_TAS14_MultiReplicaWithRackConstraint(t *testing.T) {
 	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
-	expectedPods := 4 // 2 PCS replicas × 2 pods each
+	expectedPods := 4
 	tc := createTopologyTestContext(t, ctx, clientset, restConfig, dynamicClient,
 		"tas-multirep", "../yaml/tas-multirep.yaml", expectedPods)
 
@@ -985,53 +930,32 @@ func Test_TAS14_MultiReplicaWithRackConstraint(t *testing.T) {
 		t.Fatalf("Setup failed: %v", err)
 	}
 
-	logger.Info("3. Verify PCS replica 0 pods (2) are in same rack")
-	replica0Pods := utils.FilterPodsByLabel(allPods, "grove.io/podcliqueset-replica-index", "0")
-	if len(replica0Pods) != 2 {
-		t.Fatalf("Expected 2 replica-0 pods, got %d", len(replica0Pods))
-	}
-	if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, replica0Pods, setup.TopologyLabelRack, logger); err != nil {
-		t.Fatalf("Failed to verify replica-0 pods in same rack: %v", err)
-	}
-
-	logger.Info("4. Verify PCS replica 1 pods (2) are in same rack")
-	replica1Pods := utils.FilterPodsByLabel(allPods, "grove.io/podcliqueset-replica-index", "1")
-	if len(replica1Pods) != 2 {
-		t.Fatalf("Expected 2 replica-1 pods, got %d", len(replica1Pods))
-	}
-	if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, replica1Pods, setup.TopologyLabelRack, logger); err != nil {
-		t.Fatalf("Failed to verify replica-1 pods in same rack: %v", err)
+	logger.Info("3. Verify each PCS replica's pods (2) are in same rack")
+	for pcsReplica := 0; pcsReplica < 2; pcsReplica++ {
+		replicaPods := utils.FilterPodsByLabel(allPods, "grove.io/podcliqueset-replica-index", fmt.Sprintf("%d", pcsReplica))
+		if len(replicaPods) != 2 {
+			t.Fatalf("Expected 2 replica-%d pods, got %d", pcsReplica, len(replicaPods))
+		}
+		if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, replicaPods, setup.TopologyLabelRack, logger); err != nil {
+			t.Fatalf("Failed to verify replica-%d pods in same rack: %v", pcsReplica, err)
+		}
 	}
 
-	logger.Info("5. Verify KAI PodGroups for both replicas have correct topology constraints")
-	// Verify PCS replica 0 PodGroup
-	podGroup0, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
-	if err != nil {
-		t.Fatalf("Failed to get PodGroup for replica 0: %v", err)
-	}
-	if err := utils.VerifyKAIPodGroupTopologyConstraint(podGroup0, setup.TopologyLabelRack, "", logger); err != nil {
-		t.Fatalf("Failed to verify PodGroup-0 top-level constraint: %v", err)
-	}
-	expectedSubGroups0 := []utils.ExpectedSubGroup{
-		utils.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, 0, "worker", 2, ""),
-	}
-	if err := utils.VerifyKAIPodGroupSubGroups(podGroup0, expectedSubGroups0, logger); err != nil {
-		t.Fatalf("Failed to verify PodGroup-0 SubGroups: %v", err)
-	}
-
-	// Verify PCS replica 1 PodGroup
-	podGroup1, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 1, tc.Timeout, tc.Interval, logger)
-	if err != nil {
-		t.Fatalf("Failed to get PodGroup for replica 1: %v", err)
-	}
-	if err := utils.VerifyKAIPodGroupTopologyConstraint(podGroup1, setup.TopologyLabelRack, "", logger); err != nil {
-		t.Fatalf("Failed to verify PodGroup-1 top-level constraint: %v", err)
-	}
-	expectedSubGroups1 := []utils.ExpectedSubGroup{
-		utils.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, 1, "worker", 2, ""),
-	}
-	if err := utils.VerifyKAIPodGroupSubGroups(podGroup1, expectedSubGroups1, logger); err != nil {
-		t.Fatalf("Failed to verify PodGroup-1 SubGroups: %v", err)
+	logger.Info("4. Verify KAI PodGroups for both replicas have correct topology constraints")
+	for pcsReplica := 0; pcsReplica < 2; pcsReplica++ {
+		podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, pcsReplica, tc.Timeout, tc.Interval, logger)
+		if err != nil {
+			t.Fatalf("Failed to get PodGroup for replica %d: %v", pcsReplica, err)
+		}
+		if err := utils.VerifyKAIPodGroupTopologyConstraint(podGroup, setup.TopologyLabelRack, "", logger); err != nil {
+			t.Fatalf("Failed to verify PodGroup-%d top-level constraint: %v", pcsReplica, err)
+		}
+		expectedSubGroups := []utils.ExpectedSubGroup{
+			utils.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, pcsReplica, "worker", 2, ""),
+		}
+		if err := utils.VerifyKAIPodGroupSubGroups(podGroup, expectedSubGroups, logger); err != nil {
+			t.Fatalf("Failed to verify PodGroup-%d SubGroups: %v", pcsReplica, err)
+		}
 	}
 
 	logger.Info("🎉 TAS14: Multi-Replica with Rack Constraint test completed successfully!")
@@ -1072,48 +996,24 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 	prefillPCSG := nameutils.GeneratePodCliqueScalingGroupName(pcsReplica, "prefill")
 	routerPCLQ := nameutils.GeneratePodCliqueName(pcsReplica, "router")
 
-	logger.Info("4. Verify decoder PCSG replica-0 (2 pods in same rack)")
-	decoderReplica0 := utils.FilterPodsByLabel(
-		utils.FilterPodsByLabel(allPods, LabelPodCliqueScalingGroup, decoderPCSG),
-		"grove.io/podcliquescalinggroup-replica-index", "0")
-	if len(decoderReplica0) != 2 {
-		t.Fatalf("Expected 2 decoder replica-0 pods, got %d", len(decoderReplica0))
-	}
-	if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, decoderReplica0, setup.TopologyLabelRack, logger); err != nil {
-		t.Fatalf("Failed to verify decoder replica-0 pods in same rack: %v", err)
+	logger.Info("4. Verify PCSG replicas (2 types × 2 replicas) are in same rack")
+	pcsgTypes := []struct{ name, fqn string }{
+		{"decoder", decoderPCSG},
+		{"prefill", prefillPCSG},
 	}
 
-	logger.Info("5. Verify decoder PCSG replica-1 (2 pods in same rack)")
-	decoderReplica1 := utils.FilterPodsByLabel(
-		utils.FilterPodsByLabel(allPods, LabelPodCliqueScalingGroup, decoderPCSG),
-		"grove.io/podcliquescalinggroup-replica-index", "1")
-	if len(decoderReplica1) != 2 {
-		t.Fatalf("Expected 2 decoder replica-1 pods, got %d", len(decoderReplica1))
-	}
-	if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, decoderReplica1, setup.TopologyLabelRack, logger); err != nil {
-		t.Fatalf("Failed to verify decoder replica-1 pods in same rack: %v", err)
-	}
-
-	logger.Info("6. Verify prefill PCSG replica-0 (2 pods in same rack)")
-	prefillReplica0 := utils.FilterPodsByLabel(
-		utils.FilterPodsByLabel(allPods, LabelPodCliqueScalingGroup, prefillPCSG),
-		"grove.io/podcliquescalinggroup-replica-index", "0")
-	if len(prefillReplica0) != 2 {
-		t.Fatalf("Expected 2 prefill replica-0 pods, got %d", len(prefillReplica0))
-	}
-	if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, prefillReplica0, setup.TopologyLabelRack, logger); err != nil {
-		t.Fatalf("Failed to verify prefill replica-0 pods in same rack: %v", err)
-	}
-
-	logger.Info("7. Verify prefill PCSG replica-1 (2 pods in same rack)")
-	prefillReplica1 := utils.FilterPodsByLabel(
-		utils.FilterPodsByLabel(allPods, LabelPodCliqueScalingGroup, prefillPCSG),
-		"grove.io/podcliquescalinggroup-replica-index", "1")
-	if len(prefillReplica1) != 2 {
-		t.Fatalf("Expected 2 prefill replica-1 pods, got %d", len(prefillReplica1))
-	}
-	if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, prefillReplica1, setup.TopologyLabelRack, logger); err != nil {
-		t.Fatalf("Failed to verify prefill replica-1 pods in same rack: %v", err)
+	for _, pcsgType := range pcsgTypes {
+		for pcsgReplica := 0; pcsgReplica < 2; pcsgReplica++ {
+			replicaPods := utils.FilterPodsByLabel(
+				utils.FilterPodsByLabel(allPods, LabelPodCliqueScalingGroup, pcsgType.fqn),
+				"grove.io/podcliquescalinggroup-replica-index", fmt.Sprintf("%d", pcsgReplica))
+			if len(replicaPods) != 2 {
+				t.Fatalf("Expected 2 %s replica-%d pods, got %d", pcsgType.name, pcsgReplica, len(replicaPods))
+			}
+			if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, replicaPods, setup.TopologyLabelRack, logger); err != nil {
+				t.Fatalf("Failed to verify %s replica-%d pods in same rack: %v", pcsgType.name, pcsgReplica, err)
+			}
+		}
 	}
 
 	logger.Info("8. Verify router pods (2 standalone, no PCSG label)")
@@ -1202,54 +1102,30 @@ func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 			"router",
 		)
 
-		// Verify decoder PCSG replica-0 (2 pods in same rack)
-		logger.Infof("4.%d.1. Verify decoder PCSG replica-0 (2 pods in same rack)", pcsReplica+1)
-		decoderReplica0 := utils.FilterPodsByLabel(
-			utils.FilterPodsByLabel(replicaPods, LabelPodCliqueScalingGroup, decoderPCSG),
-			"grove.io/podcliquescalinggroup-replica-index", "0")
-		if len(decoderReplica0) != 2 {
-			t.Fatalf("Expected 2 decoder replica-0 pods for PCS replica %d, got %d", pcsReplica, len(decoderReplica0))
-		}
-		if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, decoderReplica0, setup.TopologyLabelRack, logger); err != nil {
-			t.Fatalf("Failed to verify decoder replica-0 pods in same rack for PCS replica %d: %v", pcsReplica, err)
+		// Verify PCSG replicas (2 types × 2 replicas) are in same rack
+		pcsgTypes := []struct{ name, fqn string }{
+			{"decoder", decoderPCSG},
+			{"prefill", prefillPCSG},
 		}
 
-		// Verify decoder PCSG replica-1 (2 pods in same rack)
-		logger.Infof("4.%d.2. Verify decoder PCSG replica-1 (2 pods in same rack)", pcsReplica+1)
-		decoderReplica1 := utils.FilterPodsByLabel(
-			utils.FilterPodsByLabel(replicaPods, LabelPodCliqueScalingGroup, decoderPCSG),
-			"grove.io/podcliquescalinggroup-replica-index", "1")
-		if len(decoderReplica1) != 2 {
-			t.Fatalf("Expected 2 decoder replica-1 pods for PCS replica %d, got %d", pcsReplica, len(decoderReplica1))
-		}
-		if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, decoderReplica1, setup.TopologyLabelRack, logger); err != nil {
-			t.Fatalf("Failed to verify decoder replica-1 pods in same rack for PCS replica %d: %v", pcsReplica, err)
-		}
-
-		logger.Infof("4.%d.3. Verify prefill PCSG replica-0 (2 pods in same rack)", pcsReplica+1)
-		prefillReplica0 := utils.FilterPodsByLabel(
-			utils.FilterPodsByLabel(replicaPods, LabelPodCliqueScalingGroup, prefillPCSG),
-			"grove.io/podcliquescalinggroup-replica-index", "0")
-		if len(prefillReplica0) != 2 {
-			t.Fatalf("Expected 2 prefill replica-0 pods for PCS replica %d, got %d", pcsReplica, len(prefillReplica0))
-		}
-		if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, prefillReplica0, setup.TopologyLabelRack, logger); err != nil {
-			t.Fatalf("Failed to verify prefill replica-0 pods in same rack for PCS replica %d: %v", pcsReplica, err)
-		}
-
-		logger.Infof("4.%d.4. Verify prefill PCSG replica-1 (2 pods in same rack)", pcsReplica+1)
-		prefillReplica1 := utils.FilterPodsByLabel(
-			utils.FilterPodsByLabel(replicaPods, LabelPodCliqueScalingGroup, prefillPCSG),
-			"grove.io/podcliquescalinggroup-replica-index", "1")
-		if len(prefillReplica1) != 2 {
-			t.Fatalf("Expected 2 prefill replica-1 pods for PCS replica %d, got %d", pcsReplica, len(prefillReplica1))
-		}
-		if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, prefillReplica1, setup.TopologyLabelRack, logger); err != nil {
-			t.Fatalf("Failed to verify prefill replica-1 pods in same rack for PCS replica %d: %v", pcsReplica, err)
+		for _, pcsgType := range pcsgTypes {
+			for pcsgReplica := 0; pcsgReplica < 2; pcsgReplica++ {
+				pcsgReplicaPods := utils.FilterPodsByLabel(
+					utils.FilterPodsByLabel(replicaPods, LabelPodCliqueScalingGroup, pcsgType.fqn),
+					"grove.io/podcliquescalinggroup-replica-index", fmt.Sprintf("%d", pcsgReplica))
+				if len(pcsgReplicaPods) != 2 {
+					t.Fatalf("Expected 2 %s replica-%d pods for PCS replica %d, got %d",
+						pcsgType.name, pcsgReplica, pcsReplica, len(pcsgReplicaPods))
+				}
+				if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, pcsgReplicaPods, setup.TopologyLabelRack, logger); err != nil {
+					t.Fatalf("Failed to verify %s replica-%d pods in same rack for PCS replica %d: %v",
+						pcsgType.name, pcsgReplica, pcsReplica, err)
+				}
+			}
 		}
 
 		// Verify router pods (2 standalone)
-		logger.Infof("4.%d.5. Verify router pods (2 standalone)", pcsReplica+1)
+		logger.Infof("4.%d. Verify router pods (2 standalone)", pcsReplica+1)
 		routerPods := utils.FilterPodsByLabel(replicaPods, LabelPodClique, routerPCLQ)
 		if len(routerPods) != 2 {
 			t.Fatalf("Expected 2 router pods for PCS replica %d, got %d", pcsReplica, len(routerPods))
