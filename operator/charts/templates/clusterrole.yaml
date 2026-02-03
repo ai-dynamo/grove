@@ -141,4 +141,36 @@ rules:
   - patch
   - update
   - delete
+{{- if .Values.config.network.autoMNNVLEnabled }}
+# MNNVL (Multi-Node NVLink) support requires permissions for ComputeDomain and ResourceClaimTemplate resources.
+# Note: Kubernetes allows RBAC rules for resources that don't exist yet. If the ComputeDomain CRD is not installed,
+# the operator's preflight check will fail-fast with a clear error message before attempting to use these permissions.
+#
+# ComputeDomain resources (from NVIDIA DRA driver)
+- apiGroups:
+  - resource.nvidia.com
+  resources:
+  - computedomains
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+  - delete
+  - patch
+  - update
+# ResourceClaimTemplates for DRA integration
+- apiGroups:
+  - resource.k8s.io
+  resources:
+  - resourceclaimtemplates
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+  - delete
+  - patch
+  - update
+{{- end }}
 
