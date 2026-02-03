@@ -11,7 +11,7 @@
     - [Story 2: Multi-Cluster Deployment with Different Schedulers](#story-2-multi-cluster-deployment-with-different-schedulers)
     - [Story 3: Scheduler Migration Path](#story-3-scheduler-migration-path)
   - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
-    - [Single Backend Per Deployment](#single-backend-per-deployment)
+    - [Single Backend Per Deployment in Phase1](#single-backend-per-deployment-in-phase1)
     - [Backend Implementation Responsibility](#backend-implementation-responsibility)
     - [Backend API Stability](#backend-api-stability)
 - [Design Details](#design-details)
@@ -23,14 +23,11 @@
   - [Backend Interface Definition](#backend-interface-definition)
   - [Backend Manager](#backend-manager)
   - [OperatorConfiguration Extension](#operatorconfiguration-extension)
-  - [KAI Backend Implementation](#kai-backend-implementation)
-  - [Kube Backend Implementation (Default Scheduler)](#kube-backend-implementation-default-scheduler)
   - [PodGang Lifecycle Changes](#podgang-lifecycle-changes)
     - [Previous Flow (Before Framework):](#previous-flow-before-framework)
     - [New Flow (With Framework):](#new-flow-with-framework)
     - [New PodGang Status Condition](#new-podgang-status-condition)
   - [Backend Controller](#backend-controller)
-  - [Pod Template Mutation](#pod-template-mutation)
   - [Monitoring](#monitoring)
     - [Status Conditions](#status-conditions)
   - [Dependencies](#dependencies)
@@ -45,8 +42,7 @@
     - [GA](#ga)
 - [Implementation History](#implementation-history)
 - [Alternatives](#alternatives)
-  - [Alternative 1: Direct Scheduler Integration (Status Quo)](#alternative-1-direct-scheduler-integration-status-quo)
-  - [Glossary](#glossary)
+  - [Alternative 1: Direct Scheduler Integration](#alternative-1-direct-scheduler-integration)
 <!-- /toc -->
 
 <!--
@@ -250,56 +246,14 @@ The manager handles backend initialization and provides global access to the act
 // Initialize creates the global backend instance based on schedulerName.
 // This should be called once during operator startup before controllers start.
 // Supported scheduler names: "kai-scheduler", "default-scheduler"
-func Initialize(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, schedulerName string) error {
-	var initErr error
-	initOnce.Do(func() {
-		// Default to "default-scheduler" if not specified
-		if schedulerName == "" {
-			schedulerName = "default-scheduler"
-		}
-
-		// Create the appropriate backend based on scheduler name
-		switch schedulerName {
-		case "kai-scheduler":
-			globalBackend = kai.New(client, scheme, eventRecorder, schedulerName)
-
-		case "default-scheduler":
-			globalBackend = kube.New(client, scheme, eventRecorder, schedulerName)
-
-		// Future backends - uncomment and implement as needed:
-		// case "volcano":
-		//     globalBackend = volcano.New(client, scheme, eventRecorder, schedulerName)
-
-		default:
-			initErr = fmt.Errorf("unsupported scheduler %q (supported: kai-scheduler, default-scheduler)", schedulerName)
-			return
-		}
-
-		// Initialize the backend
-		if err := globalBackend.Init(); err != nil {
-			initErr = fmt.Errorf("failed to initialize backend: %w", err)
-			globalBackend = nil
-			return
-		}
-	})
-	return initErr
-}
+func Initialize(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, schedulerName string) error 
 
 // Get returns the global backend instance.
 // Returns nil if not initialized (caller should check).
-func Get() SchedulerBackend {
-	return globalBackend
-}
+func Get() SchedulerBackend 
 
 // PreparePod is a convenience function that calls PreparePod on the global backend.
-func PreparePod(pod *corev1.Pod) error {
-	backend := Get()
-	if backend == nil {
-		return fmt.Errorf("backend not initialized")
-	}
-	backend.PreparePod(pod)
-	return nil
-}
+func PreparePod(pod *corev1.Pod) error 
 ```
 
 **Design Rationale:**
@@ -352,86 +306,13 @@ config:
     enabled: false
 ```
 
-### KAI Backend Implementation
-
-The KAI scheduler backend serves as the reference implementation:
-
-```go
-// Name returns the backend name.
-func (b *Backend) Name() string {
-    return BackendName
-}
-
-// Init initializes the KAI backend.
-// For KAI backend, no special initialization is needed currently.
-func (b *Backend) Init() error {
-    return nil
-}
-
-// SyncPodGang converts PodGang to KAI PodGroup and synchronizes it.
-// TODO: Currently disabled - will be implemented in phase 2.
-// Phase 1: KAI scheduler still reads PodGang directly (existing behavior).
-// Phase 2: Will convert PodGang to PodGroup (scheduling.run.ai/v2alpha2) for cleaner separation.
-func (b *Backend) SyncPodGang(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
-    // Phase 1: Skip PodGroup creation/update
-    // Phase 2: Will convert PodGang to PodGroup and synchronize
-    return nil
-}
-
-// OnPodGangDelete removes the PodGroup owned by this PodGang.
-// TODO: Currently disabled - will be implemented in phase 2.
-func (b *Backend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
-    // Phase 1: Skip PodGroup deletion
-    // Phase 2: Will delete PodGroup when PodGang is deleted
-    return nil
-}
-
-// PreparePod adds KAI scheduler-specific configuration to the Pod.
-// This includes: labels and annotations for observability.
-func (b *Backend) PreparePod(_ *corev1.Pod) {}
-```
-
 **Phase 1 vs Phase 2:**
 
-- **Phase 1** (Current): KAI backend only implements `PreparePod`. KAI scheduler continues to read PodGang CRs directly.
-- **Phase 2** (Future): KAI backend will implement `SyncPodGang` to create PodGroup CRs (scheduling.run.ai/v2alpha2), providing cleaner separation and allowing KAI scheduler modifications to be minimized.
+- **Phase 1** (Current): Both KAI and Kube backends have minimal no-op implementations. All backend interface methods (`Init`, `SyncPodGang`, `OnPodGangDelete`, `PreparePod`) return immediately without creating any scheduler-specific resources. KAI scheduler continues to read PodGang CRs directly. This phase focuses on establishing the framework infrastructure and interfaces.
+- **Phase 2** (Future):
+  - **KAI Backend**: Will implement `SyncPodGang` to create PodGroup CRs (scheduling.run.ai/v2alpha2), providing cleaner separation and allowing KAI scheduler modifications to be minimized.
+  - **Kube Backend**: Will support advanced community features as they become available, including Workload API for gang scheduling and other emerging Kubernetes scheduling capabilities. The backend will translate PodGang specifications to the appropriate Kubernetes-native scheduling primitives.
 
-### Kube Backend Implementation (Default Scheduler)
-
-The Kube backend is a minimal implementation for the Kubernetes default scheduler:
-
-```go
-// Name returns the backend name.
-func (b *Backend) Name() string {
-	return BackendName
-}
-
-// Init initializes the Kube backend.
-// For Kube backend, no special initialization is needed.
-func (b *Backend) Init() error {
-	return nil
-}
-
-// SyncPodGang synchronizes PodGang resources.
-// For default kube scheduler, no additional resources are needed.
-// Future: May create Workload CRs when KEP-4817 support is added.
-func (b *Backend) SyncPodGang(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
-	// No-op: default kube scheduler doesn't need any custom resources yet
-	// Future: Will create Workload CRs for gang scheduling support
-	return nil
-}
-
-// OnPodGangDelete handles PodGang deletion.
-// For default kube scheduler, no cleanup is needed.
-func (b *Backend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
-	// No-op: default kube scheduler doesn't have any resources to clean up
-	return nil
-}
-
-// PreparePod adds Kubernetes default scheduler-specific configuration to the Pod.
-// This simply sets the scheduler name.
-func (b *Backend) PreparePod(_ *corev1.Pod) {}
-```
 
 ### PodGang Lifecycle Changes
 
@@ -466,92 +347,14 @@ We introduce Initialized as new PodGang Status Condition to signal that:
 
 ### Backend Controller
 
-A dedicated Backend Controller watches PodGang resources and invokes backend hooks:
+A dedicated Backend Controller watches PodGang resources and invokes backend hooks
 
 ```go
-// BackendReconciler reconciles PodGang objects and converts them to scheduler-specific CRs.
-type BackendReconciler struct {
-	client.Client
-	Scheme  *runtime.Scheme
-	Backend schedulerbackend.SchedulerBackend
-}
-
 // Reconcile processes PodGang changes and synchronizes to backend-specific CRs.
-func (r *BackendReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	// Fetch the PodGang
-	podGang := &groveschedulerv1alpha1.PodGang{}
-	if err := r.Get(ctx, req.NamespacedName, podGang); err != nil {
-		return ctrl.Result{}, client.IgnoreNotFound(err)
-	}
-
-	// Handle deletion
-	if !podGang.DeletionTimestamp.IsZero() {
-		if err := r.Backend.OnPodGangDelete(ctx, podGang); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{}, nil
-	}
-
-	// Sync PodGang to backend-specific CR
-	if err := r.Backend.SyncPodGang(ctx, podGang); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	return ctrl.Result{}, nil
-}
+func (r *BackendReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error)
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *BackendReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&groveschedulerv1alpha1.PodGang{}).
-		WithEventFilter(podGangSpecChangePredicate()).
-		Named(fmt.Sprintf("backend-%s", r.Backend.Name())).
-		Complete(r)
-}
-
-// podGangSpecChangePredicate filters PodGang events to only process spec changes.
-// Status-only updates (like Initialized condition) are ignored.
-func podGangSpecChangePredicate() predicate.Predicate {
-	return predicate.Funcs{
-		CreateFunc: func(_ event.CreateEvent) bool {
-			return true // Always process creation events
-		},
-		DeleteFunc: func(_ event.DeleteEvent) bool {
-			return true // Process deletion for cleanup
-		},
-		UpdateFunc: func(e event.UpdateEvent) bool {
-			// Only process if generation changed (spec was modified)
-			// Generation doesn't change for status-only updates
-			return e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration()
-		},
-		GenericFunc: func(_ event.GenericEvent) bool {
-			return false
-		},
-	}
-}
-```
-
-### Pod Template Mutation
-
-During pod creation, the backend mutates the pod specification in operator/internal/controller/podclique/components/pod/pod.go:
-
-```go
-// buildResource constructs a Pod resource from PodClique specifications, setting up metadata, labels, scheduling gates, and dependencies
-func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, podGangName string, pod *corev1.Pod, podIndex int) error {
-	...
-
-	pod.Spec.SchedulerName = schedulerbackend.Get().Name()
-
-	// Use backend to prepare Pod spec based on scheduler requirements
-	// This adds labels, annotations, etc.
-	if err = schedulerbackend.PreparePod(pod); err != nil {
-		return groveerr.WrapError(err,
-			errCodeBuildPodResource,
-			component.OperationSync,
-			"failed to prepare pod spec with scheduler backend",
-		)
-	}
-}
+func (r *BackendReconciler) SetupWithManager(mgr ctrl.Manager) error 
 ```
 
 ### Monitoring
@@ -575,7 +378,7 @@ Condition States:
 
 1. **Scheduler Implementation**: Each backend requires its corresponding scheduler to be deployed:
    - KAI Backend: [KAI Scheduler](https://github.com/NVIDIA/KAI-Scheduler) must be deployed
-   - Default Backend (future): Standard Kubernetes scheduler with gang scheduling support
+   - Default Backend: Standard Kubernetes scheduler
 
 #### Optional Dependencies
 1. **Backend-Specific CRDs**: Some backends may require additional CRDs to be installed:
@@ -589,11 +392,11 @@ Condition States:
 
 Unit tests will be implemented for all framework related components:
 
-**Backend Interface and Registry** (`operator/internal/controller/backend/`)
+**Backend Interface and Registry** (`operator/internal/schedulerBackend/`)
 - Test backend registration (success, duplicate registration)
 - Test backend retrieval (existing, non-existing)
 
-**KAI Backend Implementation** (`operator/internal/controller/backend/kai/`)
+**KAI Backend Implementation** (`operator/internal/schedulerBackend/kai/`)
 - Test pod spec mutation
 - Test configuration validation
 
@@ -625,20 +428,17 @@ The Scheduler Backend Framework will follow a staged rollout approach:
 #### Alpha
 - Core backend interface defined and implemented
 - Backend registry functional
-- KAI backend fully implemented as reference
 - Basic operator configuration support
 
 #### Beta 
 - Backend interface stabilized (no breaking changes expected)
 - Documentation for third-party backend development
-- At least one additional backend implemented (e.g., default scheduler support)
 
 #### GA
 - Backend interface is stable and versioned
 - Multiple production deployments using the framework
 - Comprehensive documentation and examples
 - All tests passing consistently
-- Performance optimizations complete
 - Support for at least 2-3 different scheduler backends
 
 ## Implementation History
@@ -646,31 +446,17 @@ The Scheduler Backend Framework will follow a staged rollout approach:
 
 ## Alternatives
 
-### Alternative 1: Direct Scheduler Integration (Status Quo)
+### Alternative 1: Direct Scheduler Integration
 
 **Description**: Continue the current approach where scheduler-specific logic is embedded directly in Grove's controllers without abstraction.
 
 **Pros**:
 - No additional abstraction layer overhead
 - Direct control over scheduler integration
-- Simpler codebase for single-scheduler scenarios
 
 **Cons**:
 - High maintenance burden as schedulers evolve
 - Adding new schedulers requires invasive changes to Grove core
 - Difficult for third-party schedulers to integrate
 - Code becomes increasingly complex with each scheduler addition
-- **Rejected**: Does not scale as Grove adoption grows across different scheduler ecosystems
-
-
-### Glossary
-
-- **Backend**: An implementation of the SchedulerBackend interface that integrates Grove with a specific scheduler
-- **Backend Manager**: A singleton manager that initializes and provides access to the active scheduler backend
-- **Backend Controller**: A dedicated controller that watches PodGang resources and invokes backend `SyncPodGang` and `OnPodGangDelete` methods
-- **Scheduler Backend Framework**: The overall architecture and interfaces enabling pluggable scheduler support in Grove
-- **Active Backend**: The currently configured and initialized scheduler backend in a Grove deployment
-- **PodGang Initialized Condition**: A status condition indicating that PodGang has been populated with pod references and pods can proceed with scheduling
-- **PreparePod**: The backend method called during pod creation to inject scheduler-specific configuration (schedulerName, annotations, etc.)
-- **SyncPodGang**: The backend method called to create/update scheduler-specific custom resources in response to PodGang changes
 
