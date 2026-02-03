@@ -17,7 +17,6 @@ spec:
         replicas: 10
         minAvailable: 3
         topologyConstraint:
-          packDomain: rack
         cliqueNames:
           - worker
     cliques:
