@@ -193,8 +193,14 @@ func (scm *SharedClusterManager) connectToCluster(ctx context.Context, testImage
 		}
 	}
 
-	// No cleanup function - we don't delete the cluster when tests finish
+	// Start node monitoring to handle unhealthy k3d nodes during test execution.
+	// This is critical for k3d clusters where nodes can become NotReady due to resource pressure.
+	// The monitoring automatically detects and replaces unhealthy nodes to prevent test flakiness.
+	nodeMonitoringCleanup := StartNodeMonitoring(ctx, clientset, scm.logger)
+
+	// Cleanup function stops node monitoring - we don't delete the cluster when tests finish
 	scm.cleanup = func() {
+		nodeMonitoringCleanup()
 		scm.logger.Info("ℹ️  Test run complete - cluster preserved for inspection or reuse")
 	}
 
