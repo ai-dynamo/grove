@@ -142,7 +142,8 @@ jobs:
           sudo install skaffold /usr/local/bin/
           skaffold version
 
-      run: |
+      - name: Run e2e tests - ${{ matrix.test_name }}
+        run: |
           mkdir -p e2e-diagnostics
           make test-e2e TEST_PATTERN='${{ matrix.test_pattern }}' DIAG_DIR=e2e-diagnostics
         working-directory: operator
