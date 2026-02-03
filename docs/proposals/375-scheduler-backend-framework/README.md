@@ -108,7 +108,7 @@ The Scheduler Backend Framework introduces a plugin-like architecture that decou
 
 1. **Backend Interface**: A Go interface defining the contract between Grove and scheduler backends
 2. **Registry**: Mechanism for scheduler backends to register themselves during initialization.
-3. **Backend Lifecycle Hooks**: Well-defined points in the PodGang lifecycle where backends can inject custom logic
+3. **Lifecycle Hooks**: Well-defined points in the PodGang lifecycle where backend schedulers can inject custom logic.
 
 The framework follows a provider pattern where:
 - Grove manages the high-level workflow and PodGang lifecycle
