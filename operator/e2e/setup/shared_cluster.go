@@ -246,7 +246,7 @@ func (scm *SharedClusterManager) CleanupWorkloads(ctx context.Context) error {
 		return nil
 	}
 
-	scm.logger.Debug("🧹 Cleaning up workloads from shared cluster...")
+	scm.logger.Info("🧹 Cleaning up workloads from shared cluster...")
 
 	// Step 1: Delete PodCliqueSets first (should cascade delete other resources)
 	if err := scm.deleteAllResources(ctx, "grove.io", "v1alpha1", "podcliquesets"); err != nil {
@@ -254,6 +254,7 @@ func (scm *SharedClusterManager) CleanupWorkloads(ctx context.Context) error {
 	}
 
 	// Step 2: Poll for all resources and pods to be cleaned up
+	scm.logger.Infof("⏳ Waiting up to %v for cascade deletion to complete...", cleanupTimeout)
 	if err := scm.waitForAllGroveManagedResourcesAndPodsDeleted(ctx, cleanupTimeout, cleanupPollInterval); err != nil {
 		// List remaining resources and pods for debugging
 		scm.listRemainingGroveManagedResources(ctx)
@@ -283,14 +284,24 @@ func (scm *SharedClusterManager) deleteAllResources(ctx context.Context, group, 
 		return fmt.Errorf("failed to list %s: %w", resource, err)
 	}
 
+	if len(resourceList.Items) == 0 {
+		scm.logger.Debugf("No %s found to delete", resource)
+		return nil
+	}
+
+	scm.logger.Infof("🗑️ Deleting %d %s...", len(resourceList.Items), resource)
+
 	// Delete each resource
 	for _, item := range resourceList.Items {
 		namespace := item.GetNamespace()
 		name := item.GetName()
 
+		scm.logger.Debugf("Deleting %s %s/%s", resource, namespace, name)
 		err := scm.dynamicClient.Resource(gvr).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 		if err != nil {
 			scm.logger.Warnf("failed to delete %s %s/%s: %v", resource, namespace, name, err)
+		} else {
+			scm.logger.Debugf("✓ Delete request sent for %s %s/%s", resource, namespace, name)
 		}
 	}
 
@@ -351,9 +362,14 @@ func (scm *SharedClusterManager) resetNodeStates(ctx context.Context) error {
 
 // waitForAllGroveManagedResourcesAndPodsDeleted waits for all Grove resources and pods to be deleted
 func (scm *SharedClusterManager) waitForAllGroveManagedResourcesAndPodsDeleted(ctx context.Context, timeout time.Duration, interval time.Duration) error {
+	startTime := time.Now()
+	lastLogTime := startTime
+	logInterval := 30 * time.Second // Log progress every 30 seconds
+
 	return utils.PollForCondition(ctx, timeout, interval, func() (bool, error) {
 		allResourcesDeleted := true
 		totalResources := 0
+		var resourceDetails []string
 
 		// Create label selector for Grove-managed resources
 		labelSelector := fmt.Sprintf("%s=%s", common.LabelManagedByKey, common.LabelManagedByValue)
@@ -384,6 +400,14 @@ func (scm *SharedClusterManager) waitForAllGroveManagedResourcesAndPodsDeleted(c
 			if len(resourceList.Items) > 0 {
 				allResourcesDeleted = false
 				totalResources += len(resourceList.Items)
+				for _, item := range resourceList.Items {
+					deletionTS := item.GetDeletionTimestamp()
+					if deletionTS != nil {
+						resourceDetails = append(resourceDetails, fmt.Sprintf("%s/%s (deleting since %v)", item.GetNamespace(), item.GetName(), time.Since(deletionTS.Time).Round(time.Second)))
+					} else {
+						resourceDetails = append(resourceDetails, fmt.Sprintf("%s/%s (NOT marked for deletion!)", item.GetNamespace(), item.GetName()))
+					}
+				}
 			}
 		}
 
@@ -401,11 +425,16 @@ func (scm *SharedClusterManager) waitForAllGroveManagedResourcesAndPodsDeleted(c
 		}
 
 		if allResourcesDeleted && allPodsDeleted {
+			scm.logger.Infof("✅ All resources deleted after %v", time.Since(startTime).Round(time.Second))
 			return true, nil
 		}
 
-		if totalResources > 0 || nonSystemPods > 0 {
-			scm.logger.Debugf("⏳ Waiting for %d Grove resources and %d pods to be deleted...", totalResources, nonSystemPods)
+		// Log progress at intervals for visibility
+		now := time.Now()
+		if now.Sub(lastLogTime) >= logInterval {
+			lastLogTime = now
+			elapsed := now.Sub(startTime).Round(time.Second)
+			scm.logger.Infof("⏳ [%v elapsed] Waiting for %d resources and %d pods. Details: %v", elapsed, totalResources, nonSystemPods, resourceDetails)
 		}
 
 		return false, nil
