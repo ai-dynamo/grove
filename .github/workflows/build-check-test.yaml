@@ -154,11 +154,13 @@ jobs:
         run: |
           k3d cluster delete shared-e2e-test-cluster || true
 
+      # Upload diagnostic logs collected by debug_utils.go on test failure.
+      # Uses 'warn' since this only runs on failure and missing files indicates a problem.
       - name: Upload test logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: e2e-test-logs-${{ matrix.test_name }}
-          path: /tmp/e2e-*.log
-          if-no-files-found: ignore
+          path: operator/e2e-diag-*.log
+          if-no-files-found: warn
           retention-days: 7
