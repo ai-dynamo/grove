@@ -107,7 +107,7 @@ In summary, refining Grove and introducing a Scheduler Backend Framework is both
 The Scheduler Backend Framework introduces a plugin-like architecture that decouples Grove's workload management from scheduler-specific implementations. The framework consists of three main components:
 
 1. **Backend Interface**: A Go interface defining the contract between Grove and scheduler backends
-2. **Backend Registry**: A registration mechanism allowing backends to register themselves during initialization
+2. **Registry**: Mechanism for scheduler backends to register themselves during initialization.
 3. **Backend Lifecycle Hooks**: Well-defined points in the PodGang lifecycle where backends can inject custom logic
 
 The framework follows a provider pattern where:
