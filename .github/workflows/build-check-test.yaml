@@ -18,7 +18,9 @@ name: Build, Check and Test
 
 on:
   push:
-    branches: ["main"]
+    branches:
+      - main
+      - "pull-request/[0-9]+"
   pull_request:
     types: [opened, synchronize, reopened, labeled, ready_for_review]
     branches: ["main"]
