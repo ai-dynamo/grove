@@ -98,7 +98,7 @@ In summary, refining Grove and introducing a Scheduler Backend Framework is both
 * **Change PodGang API Semantics**: PodGang remains Grove's primary scheduler API. This proposal does not alter the fundamental contract or semantics of the PodGang API, only how it interfaces with scheduler backends.
 * **Remove Existing KAI Scheduler Modifications**: The current modifications made to KAI scheduler to support PodGang will remain. This proposal does not aim to revert or remove those changes, but rather to provide a framework that could reduce such modifications for future schedulers.
 * **Extract PodGang Reconciler**: Moving the PodGang reconciliation logic from the PodCliqueSet reconciler into an independent reconciler is out of scope. The current reconciliation architecture will be maintained.
-* **Multi-Scheduler Support**: Running multiple different schedulers simultaneously within a single Grove installation is not supported in this iteration. Users can only configure one scheduler backend per Grove deployment.
+* **Support multiple active schedulers*: It is technically possible to run different schedulers in a Kubernetes cluster as long as care is taken to cleanly segregate Node resources that each scheduler targets to prevent race conditions leading to overbooking of Node resources. This version of the GREP does not provide means to run Grove operator with multiple active schedulers. 
 * **Scheduler Performance Optimization**: This proposal focuses on extensibility and maintainability, not on optimizing the performance characteristics of any particular scheduler implementation.
 
 
