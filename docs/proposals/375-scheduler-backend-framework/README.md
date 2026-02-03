@@ -13,7 +13,6 @@
   - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
     - [Single Backend Per Deployment](#single-backend-per-deployment)
     - [Backend Implementation Responsibility](#backend-implementation-responsibility)
-    - [Migration Complexity](#migration-complexity)
     - [Backend API Stability](#backend-api-stability)
 - [Design Details](#design-details)
   - [Architecture Overview](#architecture-overview)
@@ -89,17 +88,13 @@ In summary, refining Grove and introducing a Scheduler Backend Framework is both
 * **Refine PodGang Lifecycle Management**: Optimize the PodGang creation and update workflow to integrate with the Scheduler Backend Framework, allowing scheduler backends to customize pod specifications during reconciliation.
 * **Enable Custom Resource Management**: Provide interfaces that allow Scheduler Backends to create, update, and delete their own custom resources in response to PodGang lifecycle events (create, update, delete, status changes).
 * **Simplify User Experience**: Allow users to configure their preferred scheduler backend during Grove installation via OperatorConfiguration, eliminating the need to specify schedulerName in every pod specification.
-* **Maintain Backward Compatibility**: Ensure existing KAI scheduler deployments continue to work without any changes.
 * **Support Dynamic Backend Selection**: Enable Grove to determine which scheduler backend to use based on configuration, with clear mechanisms for backend registration and initialization.
+* **Support Multiple Scheduler Backends**: Provide built-in support for multiple scheduler backends including the Kubernetes default-scheduler and KAI scheduler, with a clear path for adding additional third-party schedulers. The framework should enable easy integration of new schedulers as the community support for advanced features (gang scheduling, topology-aware scheduling) evolves.
 
 ### Non-Goals
 
-* **Implement Additional Scheduler Backends**: Adding support for the default Kubernetes scheduler or other schedulers beyond KAI is explicitly out of scope for this initial framework implementation. The community support for gang scheduling and topology-aware scheduling in the default scheduler is still evolving. Support for additional schedulers will be added in subsequent PRs once the framework is established.
-* **Change PodGang API Semantics**: PodGang remains Grove's primary scheduler API. This proposal does not alter the fundamental contract or semantics of the PodGang API, only how it interfaces with scheduler backends.
-* **Remove Existing KAI Scheduler Modifications**: The current modifications made to KAI scheduler to support PodGang will remain. This proposal does not aim to revert or remove those changes, but rather to provide a framework that could reduce such modifications for future schedulers.
 * **Extract PodGang Reconciler**: Moving the PodGang reconciliation logic from the PodCliqueSet reconciler into an independent reconciler is out of scope. The current reconciliation architecture will be maintained.
 * **Support multiple active schedulers*: It is technically possible to run different schedulers in a Kubernetes cluster as long as care is taken to cleanly segregate Node resources that each scheduler targets to prevent race conditions leading to overbooking of Node resources. This version of the GREP does not provide means to run Grove operator with multiple active schedulers. 
-* **Scheduler Performance Optimization**: This proposal focuses on extensibility and maintainability, not on optimizing the performance characteristics of any particular scheduler implementation.
 
 
 ## Proposal
@@ -110,7 +105,7 @@ The Scheduler Backend Framework introduces a plugin-like architecture that decou
 2. **Registry**: Mechanism for scheduler backends to register themselves during initialization.
 3. **Lifecycle Hooks**: Well-defined points in the PodGang lifecycle where backend schedulers can inject custom logic.
 
-The framework follows a provider pattern where:
+The framework follows a plugin-based architecture where:
 - Grove manages the high-level workflow and PodGang lifecycle
 - Scheduler backends implement the interface to provide scheduler-specific behavior
 - The operator configuration determines which backend is active at runtime
@@ -146,15 +141,6 @@ As a cluster administrator, I want to migrate from one scheduler to another (e.g
 - Define clear contracts and invariants that backends must maintain
 - Implement validation in Grove to detect and reject invalid backend behaviors
 - Provide a testing framework for backend developers to validate their implementations
-
-#### Migration Complexity
-
-**Risk**: Migrating between scheduler backends may require workload redeployment and could cause temporary disruption.
-
-**Mitigation**: 
-- Document clear migration procedures and best practices
-- Provide validation tools to test backend configurations before applying them
-- Recommend blue-green deployment strategies for production migrations
 
 #### Backend API Stability
 
