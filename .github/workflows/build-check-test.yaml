@@ -147,16 +147,12 @@ jobs:
           curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
           helm version
 
-      - name: Install Python dependencies
-        run: |
-          pip3 install -r operator/hack/requirements.txt
-
       - name: Create E2E cluster
         id: create-cluster
         run: |
           # Use the centralized cluster creation script (single source of truth)
           # The script handles: cluster creation, Kai Scheduler, Grove, topology labels
-          ./operator/hack/create-e2e-cluster.py
+          ./operator/hack/create-e2e-cluster.sh
 
       - name: Run e2e tests - ${{ matrix.test_name }}
         env:

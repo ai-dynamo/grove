@@ -19,7 +19,7 @@
 // The cluster must be created beforehand with Grove operator, Kai scheduler, and required
 // test infrastructure already deployed. For local development with k3d, you can use:
 //
-//	./operator/hack/create-e2e-cluster.py
+//	./operator/hack/create-e2e-cluster.sh
 //
 // This package only handles connecting to existing clusters - it does not create clusters.
 package setup
@@ -56,7 +56,7 @@ const (
 //  1. KUBECONFIG environment variable (if set)
 //  2. Default kubeconfig at ~/.kube/config
 //
-// For local development with k3d, run './operator/hack/create-e2e-cluster.py' first
+// For local development with k3d, run './operator/hack/create-e2e-cluster.sh' first
 // to create a cluster and configure kubectl.
 func GetRestConfig() (*rest.Config, error) {
 	// Try KUBECONFIG environment variable first
@@ -80,7 +80,7 @@ func GetRestConfig() (*rest.Config, error) {
 	}
 
 	return nil, fmt.Errorf("failed to get kubernetes config: no KUBECONFIG found and ~/.kube/config not accessible." +
-		"For local development, run './operator/hack/create-e2e-cluster.py' first")
+		"For local development, run './operator/hack/create-e2e-cluster.sh' first")
 }
 
 // StartNodeMonitoring starts a goroutine that monitors k3d cluster nodes for not ready status
