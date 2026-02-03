@@ -30,7 +30,7 @@ import (
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -307,17 +307,8 @@ func isPodGangInitialized(obj client.Object) bool {
 		return false
 	}
 
-	// First check if Initialized condition is True
-	hasInitializedCondition := false
-	for _, cond := range podGang.Status.Conditions {
-		if cond.Type == string(groveschedulerv1alpha1.PodGangConditionTypeInitialized) &&
-			cond.Status == metav1.ConditionTrue {
-			hasInitializedCondition = true
-			break
-		}
-	}
-
-	return hasInitializedCondition
+	// Check if Initialized condition is True
+	return meta.IsStatusConditionTrue(podGang.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized))
 }
 
 // isManagedPod checks if a Pod is managed by Grove and owned by a PodClique
