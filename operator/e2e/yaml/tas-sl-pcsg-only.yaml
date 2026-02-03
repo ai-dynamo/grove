@@ -44,7 +44,7 @@ spec:
                 effect: NoSchedule
             containers:
               - name: worker
-                image: registry:5000/nginx:alpine-slim
+                image: registry:5001/nginx:alpine-slim
                 resources:
                   requests:
                     memory: 30Mi
@@ -73,7 +73,7 @@ spec:
                 effect: NoSchedule
             containers:
               - name: router
-                image: registry:5000/nginx:alpine-slim
+                image: registry:5001/nginx:alpine-slim
                 resources:
                   requests:
                     memory: 30Mi
