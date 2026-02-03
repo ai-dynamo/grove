@@ -661,9 +661,7 @@ func Test_TAS10_PCSGScalingWithTopologyConstraints(t *testing.T) {
 	// PCSG has replicas=3 and minAvailable=1, so base PodGang contains ONLY replica 0
 	// Replicas 1 and 2 are in separate scaled PodGangs
 	expectedSubGroups := []utils.ExpectedSubGroup{
-		// PCSG replica 0 (parent group)
 		utils.CreateExpectedPCSGParentSubGroup(tc.Workload.Name, 0, "inference-group", 0, setup.TopologyLabelRack),
-		// PCLQ worker for PCSG replica 0 (2 pods)
 		utils.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, 0, "inference-group", 0, "worker", 2, ""),
 	}
 	if err := utils.VerifyKAIPodGroupSubGroups(podGroup, expectedSubGroups, logger); err != nil {
