@@ -231,11 +231,19 @@ func (r _resource) buildResource(cd *unstructured.Unstructured, pcs *grovecorev1
 	}
 
 	// Set the spec with ResourceClaimTemplate reference.
-	// Note: We intentionally do NOT set the numNodes field to keep the ComputeDomain elastic,
-	// allowing it to dynamically scale with the PodCliqueSet workload.
-	if err := unstructured.SetNestedField(cd.Object, rctName, "spec", "channel", "resourceClaimTemplateName"); err != nil {
+	// The CRD expects spec.channel.resourceClaimTemplate.name (nested object, not a flat field).
+	if err := unstructured.SetNestedField(cd.Object, rctName, "spec", "channel", "resourceClaimTemplate", "name"); err != nil {
 		return groveerr.WrapError(err, errSyncComputeDomain, component.OperationSync,
-			fmt.Sprintf("Failed to set resourceClaimTemplateName for ComputeDomain: %s", cd.GetName()))
+			fmt.Sprintf("Failed to set resourceClaimTemplate.name for ComputeDomain: %s", cd.GetName()))
+	}
+
+	// numNodes is a required field in the ComputeDomain CRD, so we must explicitly set it.
+	// We set it to 0 to keep the ComputeDomain elastic - with numNodes=0 and
+	// featureGates.IMEXDaemonsWithDNSNames=true (the default), IMEX daemons start
+	// immediately without waiting for peers.
+	if err := unstructured.SetNestedField(cd.Object, int64(0), "spec", "numNodes"); err != nil {
+		return groveerr.WrapError(err, errSyncComputeDomain, component.OperationSync,
+			fmt.Sprintf("Failed to set numNodes for ComputeDomain: %s", cd.GetName()))
 	}
 
 	return nil

@@ -352,10 +352,16 @@ func TestSyncCreatesComputeDomains(t *testing.T) {
 				assert.Contains(t, cd.GetFinalizers(), mnnvl.FinalizerComputeDomain)
 
 				// Verify CD has RCT reference in spec
-				rctName, found, err := unstructured.NestedString(cd.Object, "spec", "channel", "resourceClaimTemplateName")
+				rctName, found, err := unstructured.NestedString(cd.Object, "spec", "channel", "resourceClaimTemplate", "name")
 				assert.NoError(t, err)
 				assert.True(t, found, "RCT reference should be set")
 				assert.Equal(t, cdName, rctName, "RCT name should match CD name")
+
+				// Verify numNodes is set to 0 (elastic mode)
+				numNodes, found, err := unstructured.NestedInt64(cd.Object, "spec", "numNodes")
+				assert.NoError(t, err)
+				assert.True(t, found, "numNodes should be set")
+				assert.Equal(t, int64(0), numNodes, "numNodes should be 0 for elastic mode")
 			}
 		})
 	}
@@ -608,8 +614,9 @@ func createTestCD(name, namespace, pcsName string, replicaIndex int) *unstructur
 		},
 	})
 
-	// Set spec with RCT reference
-	_ = unstructured.SetNestedField(cd.Object, name, "spec", "channel", "resourceClaimTemplateName")
+	// Set spec with RCT reference (using correct nested structure)
+	_ = unstructured.SetNestedField(cd.Object, name, "spec", "channel", "resourceClaimTemplate", "name")
+	_ = unstructured.SetNestedField(cd.Object, int64(0), "spec", "numNodes")
 
 	return cd
 }
