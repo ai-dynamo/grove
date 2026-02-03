@@ -143,8 +143,12 @@ jobs:
           skaffold version
 
       - name: Run e2e tests - ${{ matrix.test_name }}
-        run: make test-e2e TEST_PATTERN='${{ matrix.test_pattern }}'
+        run: |
+          mkdir -p e2e-diagnostics
+          make test-e2e TEST_PATTERN='${{ matrix.test_pattern }}'
         working-directory: operator
+        env:
+          GROVE_E2E_DIAG_DIR: e2e-diagnostics
 
       # The test code handles cleanup via Teardown(), but this step provides
       # extra safety in case of timeout or panic. Also good practice to ensure
@@ -161,6 +165,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: e2e-test-logs-${{ matrix.test_name }}
-          path: operator/e2e-diag-*.log
+          path: operator/e2e-diagnostics/
           if-no-files-found: warn
           retention-days: 7
