@@ -131,7 +131,7 @@ As a cluster administrator, I want to migrate from one scheduler to another (e.g
 
 ### Limitations/Risks & Mitigations
 
-#### Single Backend Per Deployment
+#### Single Backend Per Deployment in Phase1
 
 **Limitation**: Grove can only be configured with one scheduler backend per deployment. Users cannot mix schedulers for different workloads within the same Grove installation.
 
