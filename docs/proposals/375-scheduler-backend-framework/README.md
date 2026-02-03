@@ -61,7 +61,7 @@ tags, and then generate by invoking the make target `update-toc`.
 
 ## Summary
 
-Grove currently only supports the KAI scheduler. As more customers and schedulers begin to adopt Grove, it is essential to make Grove more extensible and easier to integrate with multiple scheduler backends. This proposal introduces a Scheduler Backend Framework that standardizes and simplifies the process of adding new scheduler support to Grove, minimizing invasive modifications required for future scheduler integrations. The framework provides a clear abstraction layer between Grove's control plane and various scheduler implementations, enabling seamless scheduler backend extensibility while maintaining backward compatibility with existing KAI scheduler deployments.
+Grove's scheduler API is currently integrated with the KAI scheduler as the only advanced AI scheduler that supports hierarchical gang-scheduling and topology-aware scheduling. While any custom scheduler can integrate with Grove's PodGang scheduling API, the onus remains on the external scheduler to do the heavy lifting of the integration effort. It also becomes difficult to add any scheduler specific logic from the operator. This proposal introduces a Scheduler Backend Framework that standardizes and simplifies the process of adding new scheduler support directly into Grove, making it easier to handle scheduler specific logic in its own backend.
 
 ## Motivation
 
