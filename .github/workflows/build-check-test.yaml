@@ -142,13 +142,10 @@ jobs:
           sudo install skaffold /usr/local/bin/
           skaffold version
 
-      - name: Run e2e tests - ${{ matrix.test_name }}
-        make test-e2e TEST_PATTERN='${{ matrix.test_pattern }} DIAG_DIR=e2e-diagnostics
+      run: |
           mkdir -p e2e-diagnostics
-          make test-e2e TEST_PATTERN='${{ matrix.test_pattern }}'
+          make test-e2e TEST_PATTERN='${{ matrix.test_pattern }}' DIAG_DIR=e2e-diagnostics
         working-directory: operator
-        env:
-          GROVE_E2E_DIAG_DIR: e2e-diagnostics
 
       # The test code handles cleanup via Teardown(), but this step provides
       # extra safety in case of timeout or panic. Also good practice to ensure
