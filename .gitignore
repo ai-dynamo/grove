@@ -41,6 +41,7 @@ scheduler/api/hack/tools/*
 
 # kubeconfig files
 operator/hack/kind/kubeconfig
+operator/hack/kubeconfig
 scheduler/hack/kind/kubeconfig
 
 # binary directory for locally produced dev scheduler binaries
