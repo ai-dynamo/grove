@@ -481,15 +481,26 @@ def main(
 
     # Export kubeconfig to ensure it's accessible
     console.print(Panel.fit("Configuring kubeconfig", style="bold blue"))
-    kubeconfig_dir = Path.home() / ".kube"
-    kubeconfig_dir.mkdir(parents=True, exist_ok=True)
-    kubeconfig_path = kubeconfig_dir / "config"
 
-    console.print(f"[yellow]Exporting kubeconfig to {kubeconfig_path}...[/yellow]")
-    kubeconfig_content = sh.k3d("kubeconfig", "get", config.cluster_name)
-    kubeconfig_path.write_text(str(kubeconfig_content))
-    kubeconfig_path.chmod(0o600)
-    console.print(f"[green]✅ Kubeconfig exported to {kubeconfig_path}[/green]")
+    # For CI environments, write kubeconfig to the repo directory for explicit access
+    # For local development, write to ~/.kube/config for kubectl convenience
+    ci_kubeconfig_path = operator_dir / "hack" / "kubeconfig"
+    default_kubeconfig_dir = Path.home() / ".kube"
+    default_kubeconfig_dir.mkdir(parents=True, exist_ok=True)
+    default_kubeconfig_path = default_kubeconfig_dir / "config"
+
+    # Write kubeconfig to both locations for maximum compatibility
+    console.print(f"[yellow]Exporting kubeconfig...[/yellow]")
+    # Use k3d kubeconfig merge to write directly to the file
+    # The --overwrite flag ensures we write a clean kubeconfig (important for CI)
+    sh.k3d("kubeconfig", "merge", config.cluster_name, "-o", str(default_kubeconfig_path), "--overwrite")
+    default_kubeconfig_path.chmod(0o600)
+    console.print(f"[green]  ✓ Written to {default_kubeconfig_path}[/green]")
+
+    # Also write to CI location for explicit KUBECONFIG env var
+    sh.k3d("kubeconfig", "merge", config.cluster_name, "-o", str(ci_kubeconfig_path), "--overwrite")
+    ci_kubeconfig_path.chmod(0o600)
+    console.print(f"[green]  ✓ Written to {ci_kubeconfig_path}[/green]")
 
     # Print success message
     console.print(Panel.fit("Cluster setup complete!", style="bold green"))

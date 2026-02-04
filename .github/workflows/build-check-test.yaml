@@ -167,6 +167,8 @@ jobs:
         env:
           # E2E_REGISTRY_PORT is the local registry port for test images (k3d default)
           E2E_REGISTRY_PORT: "5001"
+          # KUBECONFIG points to the kubeconfig file created by create-e2e-cluster.py
+          KUBECONFIG: "${{ github.workspace }}/operator/hack/kubeconfig"
         run: |
           mkdir -p e2e-diagnostics
           make test-e2e TEST_PATTERN='${{ matrix.test_pattern }}' DIAG_DIR=e2e-diagnostics
