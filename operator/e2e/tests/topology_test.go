@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"testing"
 
+	kaischedulingv2alpha2 "github.com/NVIDIA/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	nameutils "github.com/ai-dynamo/grove/operator/api/common"
 	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
@@ -81,6 +82,18 @@ func createTopologyTestContext(
 			ExpectedPods: expectedPods,
 		},
 	}
+}
+
+// GetPodGroupOrFail retrieves a PodGroup for the specified PCS replica or fails the test.
+func GetPodGroupOrFail(t *testing.T, tc TestContext, pcsReplica int) *kaischedulingv2alpha2.PodGroup {
+	podGroup, err := utils.GetPodGroupForBasePodGangReplica(
+		tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name,
+		pcsReplica, tc.Timeout, tc.Interval, logger,
+	)
+	if err != nil {
+		t.Fatalf("Failed to get PodGroup for replica %d: %v", pcsReplica, err)
+	}
+	return podGroup
 }
 
 // Test_TAS1_TopologyInfrastructure verifies that the operator creates ClusterTopology and KAI Topology CRs at startup
@@ -186,10 +199,7 @@ func Test_TAS2_MultipleCliquesWithDifferentConstraints(t *testing.T) {
 	}
 
 	logger.Info("5. Verify KAI PodGroup has correct SubGroups with topology constraints")
-	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
-	if err != nil {
-		t.Fatalf("Failed to get PodGroup: %v", err)
-	}
+	podGroup := GetPodGroupOrFail(t, tc, 0)
 
 	// Verify top-level TopologyConstraint is empty (no PCS constraint in this test)
 	// Verify SubGroups (2 standalone PCLQs - no PCSG)
@@ -236,10 +246,7 @@ func Test_TAS3_PCSOnlyConstraint(t *testing.T) {
 	}
 
 	logger.Info("4. Verify KAI PodGroup has correct SubGroups (PCS-only constraint)")
-	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
-	if err != nil {
-		t.Fatalf("Failed to get PodGroup: %v", err)
-	}
+	podGroup := GetPodGroupOrFail(t, tc, 0)
 
 	// Verify top-level TopologyConstraint (PCS level: rack)
 	// Verify SubGroups (2 PCLQ children + 1 router standalone = 3 total)
@@ -286,10 +293,7 @@ func Test_TAS4_PCSGOnlyConstraint(t *testing.T) {
 	}
 
 	logger.Info("4. Verify KAI PodGroup has correct SubGroups (PCSG-only constraint)")
-	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
-	if err != nil {
-		t.Fatalf("Failed to get PodGroup: %v", err)
-	}
+	podGroup := GetPodGroupOrFail(t, tc, 0)
 
 	// Verify top-level TopologyConstraint (no PCS constraint)
 	// Verify SubGroups (2 PCSG parents + 2 PCLQ children + 1 router standalone = 5 total)
@@ -345,10 +349,7 @@ func Test_TAS5_HostLevelConstraint(t *testing.T) {
 	}
 
 	logger.Info("4. Verify KAI PodGroup has correct SubGroups (PCLQ-only host constraint)")
-	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
-	if err != nil {
-		t.Fatalf("Failed to get PodGroup: %v", err)
-	}
+	podGroup := GetPodGroupOrFail(t, tc, 0)
 
 	// Verify top-level TopologyConstraint (no PCS constraint)
 	// Verify SubGroups (1 standalone PCLQ with host constraint)
@@ -395,10 +396,7 @@ func Test_TAS6_StandalonePCLQOnlyPCSZoneConstraint(t *testing.T) {
 	}
 
 	logger.Info("4. Verify KAI PodGroup has correct SubGroups (Standalone PCLQ with PCS zone constraint)")
-	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
-	if err != nil {
-		t.Fatalf("Failed to get PodGroup: %v", err)
-	}
+	podGroup := GetPodGroupOrFail(t, tc, 0)
 
 	// Verify top-level TopologyConstraint (PCS level: zone)
 	// Verify SubGroups (1 standalone PCLQ with NO constraint - zone is at PCS level)
@@ -438,10 +436,7 @@ func Test_TAS7_NoTopologyConstraint(t *testing.T) {
 		t.Fatalf("Expected 4 pods, got %d", len(allPods))
 	}
 	logger.Info("4. Verify KAI PodGroup has correct SubGroups (no constraints)")
-	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
-	if err != nil {
-		t.Fatalf("Failed to get PodGroup: %v", err)
-	}
+	podGroup := GetPodGroupOrFail(t, tc, 0)
 
 	// Verify top-level TopologyConstraint (no PCS constraint)
 	// Verify SubGroups (2 PCLQ children, NO constraints)
@@ -498,14 +493,9 @@ func Test_TAS8_FullHierarchyWithCascadingConstraints(t *testing.T) {
 	}
 
 	logger.Info("4. Verify PCSG constraints (2 replicas) - all in same rack")
-	for pcsgReplica := 0; pcsgReplica < 2; pcsgReplica++ {
-		pcsgPods := utils.FilterPodsByLabel(allPods, "grove.io/podcliquescalinggroup-replica-index", fmt.Sprintf("%d", pcsgReplica))
-		if len(pcsgPods) != 4 {
-			t.Fatalf("Expected 4 PCSG replica %d pods, got %d", pcsgReplica, len(pcsgPods))
-		}
-		if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, pcsgPods, setup.TopologyLabelRack, logger); err != nil {
-			t.Fatalf("Failed to verify PCSG replica %d pods in same rack: %v", pcsgReplica, err)
-		}
+	if err := utils.VerifyPCSGReplicasInTopologyDomain(tc.Ctx, tc.Clientset, allPods,
+		"tas-hierarchy-0-inference-group", 2, 4, setup.TopologyLabelRack, logger); err != nil {
+		t.Fatalf("Failed to verify PCSG replicas: %v", err)
 	}
 
 	logger.Info("5. Verify all pods are in same block (PCS constraint)")
@@ -517,10 +507,7 @@ func Test_TAS8_FullHierarchyWithCascadingConstraints(t *testing.T) {
 	}
 
 	logger.Info("6. Verify KAI PodGroup has correct hierarchy with topology constraints")
-	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
-	if err != nil {
-		t.Fatalf("Failed to get PodGroup: %v", err)
-	}
+	podGroup := GetPodGroupOrFail(t, tc, 0)
 
 	// Verify top-level TopologyConstraint (PCS level: block) + SubGroups hierarchy (2 PCSG parents + 4 PCLQ children)
 	expectedSubGroups := []utils.ExpectedSubGroup{
@@ -572,10 +559,7 @@ func Test_TAS9_PCSPlusPCLQConstraint(t *testing.T) {
 	}
 
 	logger.Info("5. Verify KAI PodGroup has correct SubGroups (PCS block + PCLQ host)")
-	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
-	if err != nil {
-		t.Fatalf("Failed to get PodGroup: %v", err)
-	}
+	podGroup := GetPodGroupOrFail(t, tc, 0)
 
 	// Verify top-level TopologyConstraint (PCS level: block) + SubGroups (1 standalone PCLQ with host constraint)
 	expectedSubGroups := []utils.ExpectedSubGroup{
@@ -612,14 +596,9 @@ func Test_TAS10_PCSGScalingWithTopologyConstraints(t *testing.T) {
 	}
 
 	logger.Info("3. Verify each PCSG replica's worker pods (2) are in same rack")
-	for pcsgReplica := 0; pcsgReplica < 3; pcsgReplica++ {
-		pcsgPods := utils.FilterPodsByLabel(allPods, "grove.io/podcliquescalinggroup-replica-index", fmt.Sprintf("%d", pcsgReplica))
-		if len(pcsgPods) != 2 {
-			t.Fatalf("Expected 2 PCSG replica %d pods, got %d", pcsgReplica, len(pcsgPods))
-		}
-		if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, pcsgPods, setup.TopologyLabelRack, logger); err != nil {
-			t.Fatalf("Failed to verify PCSG replica %d pods in same rack: %v", pcsgReplica, err)
-		}
+	if err := utils.VerifyPCSGReplicasInTopologyDomain(tc.Ctx, tc.Clientset, allPods,
+		"tas-pcsg-scale-0-inference-group", 3, 2, setup.TopologyLabelRack, logger); err != nil {
+		t.Fatalf("Failed to verify PCSG replicas: %v", err)
 	}
 
 	logger.Info("4. Verify all pods respect PCS-level rack constraint")
@@ -631,10 +610,7 @@ func Test_TAS10_PCSGScalingWithTopologyConstraints(t *testing.T) {
 	}
 
 	logger.Info("5. Verify KAI PodGroup has correct SubGroups with topology constraints")
-	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
-	if err != nil {
-		t.Fatalf("Failed to get PodGroup: %v", err)
-	}
+	podGroup := GetPodGroupOrFail(t, tc, 0)
 
 	// Verify top-level TopologyConstraint (PCS level: rack)
 	// Base PodGang contains only minAvailable=1 PCSG replica
@@ -674,28 +650,17 @@ func Test_TAS11_PCSGPlusPCLQNoParentConstraint(t *testing.T) {
 	}
 
 	logger.Info("3. Verify each PCSG replica's pods on same host")
-	// Get pods for each PCSG replica
 	workersPCSG := nameutils.GeneratePodCliqueScalingGroupName(
 		nameutils.ResourceNameReplica{Name: tc.Workload.Name, Replica: 0},
 		"workers",
 	)
-	for pcsgReplica := 0; pcsgReplica < 2; pcsgReplica++ {
-		replicaPods := utils.FilterPodsByLabel(
-			utils.FilterPodsByLabel(allPods, LabelPodCliqueScalingGroup, workersPCSG),
-			"grove.io/podcliquescalinggroup-replica-index", fmt.Sprintf("%d", pcsgReplica))
-		if len(replicaPods) != 2 {
-			t.Fatalf("Expected 2 pods for replica %d, got %d", pcsgReplica, len(replicaPods))
-		}
-		if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, replicaPods, setup.TopologyLabelHostname, logger); err != nil {
-			t.Fatalf("Failed to verify replica %d pods on same host: %v", pcsgReplica, err)
-		}
+	if err := utils.VerifyPCSGReplicasInTopologyDomain(tc.Ctx, tc.Clientset, allPods,
+		workersPCSG, 2, 2, setup.TopologyLabelHostname, logger); err != nil {
+		t.Fatalf("Failed to verify PCSG replicas: %v", err)
 	}
 
 	logger.Info("4. Verify KAI PodGroup has correct SubGroups (PCSG rack + PCLQ host)")
-	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
-	if err != nil {
-		t.Fatalf("Failed to get PodGroup: %v", err)
-	}
+	podGroup := GetPodGroupOrFail(t, tc, 0)
 
 	// Verify top-level TopologyConstraint (no PCS constraint)
 	// SubGroups (2 PCSG parents with rack + 2 PCLQ children with host)
@@ -737,17 +702,9 @@ func Test_TAS12_LargeScalingRatio(t *testing.T) {
 	}
 
 	logger.Info("3. Verify each PCSG replica's pods on same host")
-	// Get pods for each PCSG replica (all 10 replicas)
-	for i := 0; i < 10; i++ {
-		replicaPods := utils.FilterPodsByLabel(
-			utils.FilterPodsByLabel(allPods, LabelPodCliqueScalingGroup, "tas-large-scale-0-workers"),
-			"grove.io/podcliquescalinggroup-replica-index", fmt.Sprintf("%d", i))
-		if len(replicaPods) != 2 {
-			t.Fatalf("Expected 2 pods for replica %d, got %d", i, len(replicaPods))
-		}
-		if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, replicaPods, setup.TopologyLabelHostname, logger); err != nil {
-			t.Fatalf("Failed to verify replica %d pods on same host: %v", i, err)
-		}
+	if err := utils.VerifyPCSGReplicasInTopologyDomain(tc.Ctx, tc.Clientset, allPods,
+		"tas-large-scale-0-workers", 10, 2, setup.TopologyLabelHostname, logger); err != nil {
+		t.Fatalf("Failed to verify PCSG replicas: %v", err)
 	}
 
 	logger.Info("4. Verify all 20 pods in same block (PCS block constraint)")
@@ -756,10 +713,7 @@ func Test_TAS12_LargeScalingRatio(t *testing.T) {
 	}
 
 	logger.Info("5. Verify base PodGang's KAI PodGroup (replicas 0-2)")
-	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
-	if err != nil {
-		t.Fatalf("Failed to get PodGroup: %v", err)
-	}
+	podGroup := GetPodGroupOrFail(t, tc, 0)
 
 	// Verify top-level TopologyConstraint (PCS level: block)
 	// SubGroups (3 worker PCLQs with host constraint, no PCSG parent since no rack constraint)
@@ -851,10 +805,7 @@ func Test_TAS13_InsufficientNodesForConstraint(t *testing.T) {
 		}
 	})
 	logger.Info("5. Verify KAI PodGroup exists with correct topology constraints (even though pods are pending)")
-	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
-	if err != nil {
-		t.Fatalf("Failed to get PodGroup: %v", err)
-	}
+	podGroup := GetPodGroupOrFail(t, tc, 0)
 
 	// Verify top-level TopologyConstraint (PCS level: rack)
 	// SubGroups (1 standalone PCLQ - no PCSG)
@@ -903,10 +854,7 @@ func Test_TAS14_MultiReplicaWithRackConstraint(t *testing.T) {
 
 	logger.Info("4. Verify KAI PodGroups for both replicas have correct topology constraints")
 	for pcsReplica := 0; pcsReplica < 2; pcsReplica++ {
-		podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, pcsReplica, tc.Timeout, tc.Interval, logger)
-		if err != nil {
-			t.Fatalf("Failed to get PodGroup for replica %d: %v", pcsReplica, err)
-		}
+		podGroup := GetPodGroupOrFail(t, tc, pcsReplica)
 
 		expectedSubGroups := []utils.ExpectedSubGroup{
 			utils.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, pcsReplica, "worker", 2, ""),
@@ -955,23 +903,13 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 	routerPCLQ := nameutils.GeneratePodCliqueName(pcsReplica, "router")
 
 	logger.Info("4. Verify PCSG replicas (2 types × 2 replicas) are in same rack")
-	pcsgTypes := []struct{ name, fqn string }{
-		{"decoder", decoderPCSG},
-		{"prefill", prefillPCSG},
+	pcsgTypes := []utils.PCSGTypeConfig{
+		{Name: "decoder", FQN: decoderPCSG},
+		{Name: "prefill", FQN: prefillPCSG},
 	}
-
-	for _, pcsgType := range pcsgTypes {
-		for pcsgReplica := 0; pcsgReplica < 2; pcsgReplica++ {
-			replicaPods := utils.FilterPodsByLabel(
-				utils.FilterPodsByLabel(allPods, LabelPodCliqueScalingGroup, pcsgType.fqn),
-				"grove.io/podcliquescalinggroup-replica-index", fmt.Sprintf("%d", pcsgReplica))
-			if len(replicaPods) != 2 {
-				t.Fatalf("Expected 2 %s replica-%d pods, got %d", pcsgType.name, pcsgReplica, len(replicaPods))
-			}
-			if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, replicaPods, setup.TopologyLabelRack, logger); err != nil {
-				t.Fatalf("Failed to verify %s replica-%d pods in same rack: %v", pcsgType.name, pcsgReplica, err)
-			}
-		}
+	if err := utils.VerifyMultiTypePCSGReplicas(tc.Ctx, tc.Clientset, allPods, pcsgTypes, 2, 2,
+		setup.TopologyLabelRack, logger); err != nil {
+		t.Fatalf("Failed to verify PCSG replicas: %v", err)
 	}
 
 	logger.Info("5. Verify router pods (2 standalone, no PCSG label)")
@@ -981,10 +919,7 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 	}
 
 	logger.Info("6. Verify KAI PodGroup has correct SubGroups for disaggregated inference")
-	podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0, tc.Timeout, tc.Interval, logger)
-	if err != nil {
-		t.Fatalf("Failed to get PodGroup: %v", err)
-	}
+	podGroup := GetPodGroupOrFail(t, tc, 0)
 
 	// Verify top-level TopologyConstraint (PCS level: block)
 	// SubGroups (Base PodGang contains only minAvailable=1 PCSG replicas)
@@ -1057,25 +992,13 @@ func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 		)
 
 		// Verify PCSG replicas (2 types × 2 replicas) are in same rack
-		pcsgTypes := []struct{ name, fqn string }{
-			{"decoder", decoderPCSG},
-			{"prefill", prefillPCSG},
+		pcsgTypes := []utils.PCSGTypeConfig{
+			{Name: "decoder", FQN: decoderPCSG},
+			{Name: "prefill", FQN: prefillPCSG},
 		}
-
-		for _, pcsgType := range pcsgTypes {
-			for pcsgReplica := 0; pcsgReplica < 2; pcsgReplica++ {
-				pcsgReplicaPods := utils.FilterPodsByLabel(
-					utils.FilterPodsByLabel(replicaPods, LabelPodCliqueScalingGroup, pcsgType.fqn),
-					"grove.io/podcliquescalinggroup-replica-index", fmt.Sprintf("%d", pcsgReplica))
-				if len(pcsgReplicaPods) != 2 {
-					t.Fatalf("Expected 2 %s replica-%d pods for PCS replica %d, got %d",
-						pcsgType.name, pcsgReplica, pcsReplica, len(pcsgReplicaPods))
-				}
-				if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, pcsgReplicaPods, setup.TopologyLabelRack, logger); err != nil {
-					t.Fatalf("Failed to verify %s replica-%d pods in same rack for PCS replica %d: %v",
-						pcsgType.name, pcsgReplica, pcsReplica, err)
-				}
-			}
+		if err := utils.VerifyMultiTypePCSGReplicas(tc.Ctx, tc.Clientset, replicaPods, pcsgTypes, 2, 2,
+			setup.TopologyLabelRack, logger); err != nil {
+			t.Fatalf("Failed to verify PCSG replicas for PCS replica %d: %v", pcsReplica, err)
 		}
 
 		// Verify router pods (2 standalone)
@@ -1088,10 +1011,7 @@ func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 
 	logger.Info("5. Verify KAI PodGroups for both PCS replicas have correct topology constraints")
 	for pcsReplica := 0; pcsReplica < 2; pcsReplica++ {
-		podGroup, err := utils.GetPodGroupForBasePodGangReplica(tc.Ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name, pcsReplica, tc.Timeout, tc.Interval, logger)
-		if err != nil {
-			t.Fatalf("Failed to get PodGroup for PCS replica %d: %v", pcsReplica, err)
-		}
+		podGroup := GetPodGroupOrFail(t, tc, pcsReplica)
 
 		// Verify SubGroups for this PCS replica (hierarchy: PCS→PCSG→PCLQ)
 		expectedSubGroups := []utils.ExpectedSubGroup{
