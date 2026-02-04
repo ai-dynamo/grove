@@ -1,0 +1,54 @@
+# Example: Standalone PodClique Environment Variables
+# Documentation: docs/user-guide/03_environment-variables-for-pod-discovery/03_hands-on-examples.md
+#
+# Demonstrates the environment variables Grove injects into standalone PodCliques:
+# - GROVE_PCS_NAME, GROVE_PCS_INDEX, GROVE_PCLQ_NAME
+# - GROVE_HEADLESS_SERVICE, GROVE_PCLQ_POD_INDEX
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: env-demo-standalone
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    cliques:
+    - name: frontend
+      spec:
+        replicas: 2
+        podSpec:
+          containers:
+          - name: app
+            image: busybox:latest
+            command: ["/bin/sh"]
+            args: 
+            - "-c"
+            - |
+              echo "=== Grove Environment Variables ==="
+              echo "GROVE_PCS_NAME=$GROVE_PCS_NAME"
+              echo "GROVE_PCS_INDEX=$GROVE_PCS_INDEX"
+              echo "GROVE_PCLQ_NAME=$GROVE_PCLQ_NAME"
+              echo "GROVE_HEADLESS_SERVICE=$GROVE_HEADLESS_SERVICE"
+              echo "GROVE_PCLQ_POD_INDEX=$GROVE_PCLQ_POD_INDEX"
+              echo ""
+              echo "=== Pod Name vs Hostname ==="
+              echo "Pod Name (random suffix): $POD_NAME"
+              echo "Hostname (deterministic): $GROVE_PCLQ_NAME-$GROVE_PCLQ_POD_INDEX"
+              echo ""
+              echo "My FQDN: $GROVE_PCLQ_NAME-$GROVE_PCLQ_POD_INDEX.$GROVE_HEADLESS_SERVICE"
+              echo ""
+              echo "Sleeping..."
+              sleep infinity
+            env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            resources:
+              requests:
+                cpu: "10m"
+                memory: "32Mi"
+
+
+

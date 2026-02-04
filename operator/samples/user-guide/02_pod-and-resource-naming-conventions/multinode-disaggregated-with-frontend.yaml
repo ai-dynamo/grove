@@ -1,0 +1,128 @@
+# Example: Multi-Node Disaggregated Inference with Frontend
+# Documentation: docs/user-guide/02_pod-and-resource-naming-conventions/03_hands-on-example.md
+# 
+# Demonstrates Grove's hierarchical pod naming scheme with:
+# - A standalone frontend PodClique
+# - Prefill PodCliqueScalingGroup (pleader + pworker)
+# - Decode PodCliqueScalingGroup (dleader + dworker)
+#
+# NOTE: This example uses fake-node tolerations for the local KIND demo cluster
+# created with `make kind-up FAKE_NODES=40`. Remove the tolerations when deploying
+# to a real cluster.
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: mn-disagg
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    cliques:
+    # Standalone PodClique
+    - name: frontend
+      spec:
+        replicas: 2
+        podSpec:
+          tolerations:
+          - key: fake-node
+            operator: Equal
+            value: "true"
+            effect: NoSchedule
+          containers:
+          - name: frontend
+            image: nginx:latest
+            command: ["/bin/sh"]
+            args: ["-c", "echo 'Frontend' && hostname && sleep infinity"]
+            resources:
+              requests:
+                cpu: "10m"
+                memory: "32Mi"
+    # Prefill PodCliqueScalingGroup PodCliques
+    - name: pleader
+      spec:
+        roleName: pleader
+        replicas: 1
+        podSpec:
+          tolerations:
+          - key: fake-node
+            operator: Equal
+            value: "true"
+            effect: NoSchedule
+          containers:
+          - name: pleader
+            image: nginx:latest
+            command: ["/bin/sh"]
+            args: ["-c", "echo 'Prefill Leader' && hostname && sleep infinity"]
+            resources:
+              requests:
+                cpu: "10m"
+                memory: "32Mi"
+    - name: pworker
+      spec:
+        roleName: pworker
+        replicas: 3
+        podSpec:
+          tolerations:
+          - key: fake-node
+            operator: Equal
+            value: "true"
+            effect: NoSchedule
+          containers:
+          - name: pworker
+            image: nginx:latest
+            command: ["/bin/sh"]
+            args: ["-c", "echo 'Prefill Worker' && hostname && sleep infinity"]
+            resources:
+              requests:
+                cpu: "10m"
+                memory: "32Mi"
+    # Decode PodCliqueScalingGroup PodCliques
+    - name: dleader
+      spec:
+        roleName: dleader
+        replicas: 1
+        podSpec:
+          tolerations:
+          - key: fake-node
+            operator: Equal
+            value: "true"
+            effect: NoSchedule
+          containers:
+          - name: dleader
+            image: nginx:latest
+            command: ["/bin/sh"]
+            args: ["-c", "echo 'Decode Leader' && hostname && sleep infinity"]
+            resources:
+              requests:
+                cpu: "10m"
+                memory: "32Mi"
+    - name: dworker
+      spec:
+        roleName: dworker
+        replicas: 2
+        podSpec:
+          tolerations:
+          - key: fake-node
+            operator: Equal
+            value: "true"
+            effect: NoSchedule
+          containers:
+          - name: dworker
+            image: nginx:latest
+            command: ["/bin/sh"]
+            args: ["-c", "echo 'Decode Worker' && hostname && sleep infinity"]
+            resources:
+              requests:
+                cpu: "10m"
+                memory: "32Mi"
+    podCliqueScalingGroups:
+    - name: prefill
+      cliqueNames: [pleader, pworker]
+      replicas: 2
+    - name: decode
+      cliqueNames: [dleader, dworker]
+      replicas: 1
+
+
+

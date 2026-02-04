@@ -18,15 +18,19 @@ package podclique
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/constants"
+	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -744,4 +748,265 @@ func hasEnvVar(envVars []corev1.EnvVar, name string) bool {
 		}
 	}
 	return false
+}
+
+func TestBuildResource_MNNVLInjection(t *testing.T) {
+	tests := []struct {
+		description                         string
+		pcsgAnnotations                     map[string]string
+		containers                          []corev1.Container
+		initContainers                      []corev1.Container
+		expectedContainersWithClaims        []string
+		expectedContainersWithoutClaims     []string
+		expectedInitContainersWithClaims    []string
+		expectedInitContainersWithoutClaims []string
+		expectPodLevelClaim                 bool
+		expectedRCTName                     string
+	}{
+		{
+			description: "MNNVL enabled on PCSG with GPU container injects claims",
+			pcsgAnnotations: map[string]string{
+				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+			},
+			containers: []corev1.Container{
+				{
+					Name: "gpu-worker",
+					Resources: corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							constants.GPUResourceName: resource.MustParse("8"),
+						},
+					},
+				},
+			},
+			expectedContainersWithClaims:    []string{"gpu-worker"},
+			expectedContainersWithoutClaims: []string{},
+			expectPodLevelClaim:             true,
+			expectedRCTName:                 "test-pcs-0",
+		},
+		{
+			description:     "MNNVL not enabled on PCSG does not inject claims",
+			pcsgAnnotations: nil,
+			containers: []corev1.Container{
+				{
+					Name: "gpu-worker",
+					Resources: corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							constants.GPUResourceName: resource.MustParse("8"),
+						},
+					},
+				},
+			},
+			expectedContainersWithClaims:    []string{},
+			expectedContainersWithoutClaims: []string{"gpu-worker"},
+			expectPodLevelClaim:             false,
+		},
+		{
+			description: "MNNVL enabled on PCSG but no GPU containers does not inject claims",
+			pcsgAnnotations: map[string]string{
+				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+			},
+			containers: []corev1.Container{
+				{
+					Name: "cpu-only",
+					Resources: corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							corev1.ResourceCPU: resource.MustParse("1"),
+						},
+					},
+				},
+			},
+			expectedContainersWithClaims:    []string{},
+			expectedContainersWithoutClaims: []string{"cpu-only"},
+			expectPodLevelClaim:             false,
+		},
+		{
+			description: "MNNVL enabled on PCSG with mixed GPU and non-GPU containers",
+			pcsgAnnotations: map[string]string{
+				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+			},
+			containers: []corev1.Container{
+				{
+					Name: "gpu-worker",
+					Resources: corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							constants.GPUResourceName: resource.MustParse("8"),
+						},
+					},
+				},
+				{
+					Name: "sidecar",
+					Resources: corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							corev1.ResourceCPU: resource.MustParse("1"),
+						},
+					},
+				},
+			},
+			expectedContainersWithClaims:    []string{"gpu-worker"},
+			expectedContainersWithoutClaims: []string{"sidecar"},
+			expectPodLevelClaim:             true,
+		},
+		{
+			description: "MNNVL enabled on PCSG with GPU in init container",
+			pcsgAnnotations: map[string]string{
+				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+			},
+			initContainers: []corev1.Container{
+				{
+					Name: "init-gpu",
+					Resources: corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							constants.GPUResourceName: resource.MustParse("1"),
+						},
+					},
+				},
+			},
+			containers: []corev1.Container{
+				{Name: "main"},
+			},
+			expectedContainersWithClaims:        []string{},
+			expectedContainersWithoutClaims:     []string{"main"},
+			expectedInitContainersWithClaims:    []string{"init-gpu"},
+			expectedInitContainersWithoutClaims: []string{},
+			expectPodLevelClaim:                 true,
+		},
+		{
+			description: "MNNVL disabled explicitly on PCSG does not inject claims",
+			pcsgAnnotations: map[string]string{
+				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled,
+			},
+			containers: []corev1.Container{
+				{
+					Name: "gpu-worker",
+					Resources: corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							constants.GPUResourceName: resource.MustParse("8"),
+						},
+					},
+				},
+			},
+			expectedContainersWithClaims:    []string{},
+			expectedContainersWithoutClaims: []string{"gpu-worker"},
+			expectPodLevelClaim:             false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.description, func(t *testing.T) {
+			pcsName := "test-pcs"
+			pcsNamespace := "default"
+			pcsReplicaIndex := 0
+			pcsgReplicaIndex := 0
+			pclqTemplateName := "worker"
+
+			// Create PCS with the test case's containers
+			pcs := &grovecorev1alpha1.PodCliqueSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      pcsName,
+					Namespace: pcsNamespace,
+				},
+				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+						StartupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
+						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+							{
+								Name: pclqTemplateName,
+								Spec: grovecorev1alpha1.PodCliqueSpec{
+									Replicas:     1,
+									MinAvailable: ptr.To(int32(1)),
+									PodSpec: corev1.PodSpec{
+										Containers:     tc.containers,
+										InitContainers: tc.initContainers,
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+
+			// Create PCSG with MNNVL annotations and required label for pcsReplicaIndex
+			pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        fmt.Sprintf("%s-%d", pcsName, pcsReplicaIndex),
+					Namespace:   pcsNamespace,
+					Annotations: tc.pcsgAnnotations,
+					Labels: map[string]string{
+						apicommon.LabelPodCliqueSetReplicaIndex: fmt.Sprintf("%d", pcsReplicaIndex),
+					},
+				},
+				Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
+					MinAvailable: ptr.To(int32(1)),
+					CliqueNames:  []string{pclqTemplateName},
+				},
+			}
+
+			// Create empty PodClique with matching name suffix (must end with template name)
+			pclqName := fmt.Sprintf("%s-%d-%s-%d-%s", pcsName, pcsReplicaIndex, "pcsg", pcsgReplicaIndex, pclqTemplateName)
+			pclq := &grovecorev1alpha1.PodClique{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      pclqName,
+					Namespace: pcsNamespace,
+				},
+			}
+
+			// Create operator and call buildResource
+			scheme := runtime.NewScheme()
+			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+
+			operator := &_resource{
+				client:        nil, // not needed for buildResource
+				scheme:        scheme,
+				eventRecorder: &record.FakeRecorder{},
+			}
+
+			err := operator.buildResource(logr.Discard(), pcs, pcsg, pcsgReplicaIndex, pclq)
+			require.NoError(t, err)
+
+			// Verify pod-level claims
+			if tc.expectPodLevelClaim {
+				require.Len(t, pclq.Spec.PodSpec.ResourceClaims, 1, "expected pod-level MNNVL claim")
+				assert.Equal(t, mnnvl.MNNVLClaimName, pclq.Spec.PodSpec.ResourceClaims[0].Name)
+				if tc.expectedRCTName != "" {
+					require.NotNil(t, pclq.Spec.PodSpec.ResourceClaims[0].ResourceClaimTemplateName)
+					assert.Equal(t, tc.expectedRCTName, *pclq.Spec.PodSpec.ResourceClaims[0].ResourceClaimTemplateName)
+				}
+			} else {
+				assert.Empty(t, pclq.Spec.PodSpec.ResourceClaims, "expected no pod-level claims")
+			}
+
+			// Verify container claims
+			withClaims, withoutClaims := triageContainersByMNNVLClaim(pclq.Spec.PodSpec.Containers)
+			assert.ElementsMatch(t, tc.expectedContainersWithClaims, withClaims,
+				"containers with MNNVL claims should match expected")
+			assert.ElementsMatch(t, tc.expectedContainersWithoutClaims, withoutClaims,
+				"containers without MNNVL claims should match expected")
+
+			// Verify init container claims
+			initWithClaims, initWithoutClaims := triageContainersByMNNVLClaim(pclq.Spec.PodSpec.InitContainers)
+			assert.ElementsMatch(t, tc.expectedInitContainersWithClaims, initWithClaims,
+				"init containers with MNNVL claims should match expected")
+			assert.ElementsMatch(t, tc.expectedInitContainersWithoutClaims, initWithoutClaims,
+				"init containers without MNNVL claims should match expected")
+		})
+	}
+}
+
+// triageContainersByMNNVLClaim separates containers into those with MNNVL claim and those without.
+func triageContainersByMNNVLClaim(containers []corev1.Container) (withClaim, withoutClaim []string) {
+	for _, c := range containers {
+		hasClaim := false
+		for _, claim := range c.Resources.Claims {
+			if claim.Name == mnnvl.MNNVLClaimName {
+				hasClaim = true
+				break
+			}
+		}
+		if hasClaim {
+			withClaim = append(withClaim, c.Name)
+		} else {
+			withoutClaim = append(withoutClaim, c.Name)
+		}
+	}
+	return withClaim, withoutClaim
 }

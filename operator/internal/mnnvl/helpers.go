@@ -17,11 +17,28 @@
 package mnnvl
 
 import (
+	"fmt"
+
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 
 	corev1 "k8s.io/api/core/v1"
 )
+
+// IsAutoMNNVLEnabled checks if MNNVL is enabled via the grove.io/auto-mnnvl annotation.
+func IsAutoMNNVLEnabled(annotations map[string]string) bool {
+	if annotations == nil {
+		return false
+	}
+	return annotations[AnnotationAutoMNNVL] == AnnotationAutoMNNVLEnabled
+}
+
+// GenerateRCTName creates the ResourceClaimTemplate name for a PCS replica.
+// The RCT name matches the ComputeDomain name: {pcs-name}-{replica-index}
+func GenerateRCTName(pcsNameReplica apicommon.ResourceNameReplica) string {
+	return fmt.Sprintf("%s-%d", pcsNameReplica.Name, pcsNameReplica.Replica)
+}
 
 // hasGPURequirement checks if any container in any clique of the PCS requests nvidia.com/gpu.
 func hasGPURequirement(pcs *grovecorev1alpha1.PodCliqueSet) bool {
@@ -29,33 +46,49 @@ func hasGPURequirement(pcs *grovecorev1alpha1.PodCliqueSet) bool {
 		if clique == nil {
 			continue
 		}
-		if hasGPUInContainers(clique.Spec.PodSpec.Containers) {
-			return true
-		}
-		if hasGPUInContainers(clique.Spec.PodSpec.InitContainers) {
+		if hasGPUInPodSpec(&clique.Spec.PodSpec) {
 			return true
 		}
 	}
 	return false
 }
 
+// hasGPUInPodSpec checks if any container in the PodSpec requests GPU resources.
+func hasGPUInPodSpec(podSpec *corev1.PodSpec) bool {
+	if podSpec == nil {
+		return false
+	}
+	return hasGPUInContainers(podSpec.Containers) || hasGPUInContainers(podSpec.InitContainers)
+}
+
 // hasGPUInContainers checks if any container in the slice requests GPU resources.
+func hasGPUInContainers(containers []corev1.Container) bool {
+	for i := range containers {
+		if containerHasGPU(&containers[i]) {
+			return true
+		}
+	}
+	return false
+}
+
+// containerHasGPU checks if a single container requests GPU resources.
 // TODO: This check is incomplete - it only looks at Resources.Limits and Resources.Requests.
 // Pods can also require GPUs via resourceClaims (Dynamic Resource Allocation).
 // This should be extended in a future PR to handle all GPU requirement patterns.
-func hasGPUInContainers(containers []corev1.Container) bool {
-	for _, container := range containers {
-		// Check limits
-		if quantity, exists := container.Resources.Limits[constants.GPUResourceName]; exists {
-			if !quantity.IsZero() {
-				return true
-			}
+func containerHasGPU(container *corev1.Container) bool {
+	if container == nil {
+		return false
+	}
+	// Check limits
+	if quantity, exists := container.Resources.Limits[constants.GPUResourceName]; exists {
+		if !quantity.IsZero() {
+			return true
 		}
-		// Check requests
-		if quantity, exists := container.Resources.Requests[constants.GPUResourceName]; exists {
-			if !quantity.IsZero() {
-				return true
-			}
+	}
+	// Check requests
+	if quantity, exists := container.Resources.Requests[constants.GPUResourceName]; exists {
+		if !quantity.IsZero() {
+			return true
 		}
 	}
 	return false

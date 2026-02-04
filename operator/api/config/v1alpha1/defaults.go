@@ -79,6 +79,14 @@ func SetDefaults_ServerConfiguration(serverConfig *ServerConfiguration) {
 		serverConfig.Webhooks.ServerCertDir = defaultWebhookServerTLSServerCertDir
 	}
 
+	if serverConfig.Webhooks.SecretName == "" {
+		serverConfig.Webhooks.SecretName = DefaultWebhookSecretName
+	}
+
+	if serverConfig.Webhooks.CertProvisionMode == "" {
+		serverConfig.Webhooks.CertProvisionMode = CertProvisionModeAuto
+	}
+
 	if serverConfig.HealthProbes == nil {
 		serverConfig.HealthProbes = &Server{}
 	}

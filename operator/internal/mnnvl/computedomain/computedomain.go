@@ -89,7 +89,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 // Sync synchronizes ComputeDomain resources for the PodCliqueSet.
 func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
 	// Skip if PCS doesn't have MNNVL enabled
-	if !hasMNNVLEnabled(pcs) {
+	if !mnnvl.IsAutoMNNVLEnabled(pcs.Annotations) {
 		logger.V(1).Info("PCS does not have MNNVL enabled, skipping ComputeDomain sync")
 		return nil
 	}
@@ -208,7 +208,7 @@ func (r _resource) doCreate(ctx context.Context, logger logr.Logger, pcs *grovec
 
 // buildResource configures a ComputeDomain with the desired state.
 func (r _resource) buildResource(cd *unstructured.Unstructured, pcs *grovecorev1alpha1.PodCliqueSet, replicaIndex int) error {
-	rctName := generateRCTName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: replicaIndex})
+	rctName := mnnvl.GenerateRCTName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: replicaIndex})
 
 	// Set labels - aligned with PodClique labeling pattern
 	cdComponentLabels := map[string]string{
@@ -231,11 +231,19 @@ func (r _resource) buildResource(cd *unstructured.Unstructured, pcs *grovecorev1
 	}
 
 	// Set the spec with ResourceClaimTemplate reference.
-	// Note: We intentionally do NOT set the numNodes field to keep the ComputeDomain elastic,
-	// allowing it to dynamically scale with the PodCliqueSet workload.
-	if err := unstructured.SetNestedField(cd.Object, rctName, "spec", "channel", "resourceClaimTemplateName"); err != nil {
+	// The CRD expects spec.channel.resourceClaimTemplate.name (nested object, not a flat field).
+	if err := unstructured.SetNestedField(cd.Object, rctName, "spec", "channel", "resourceClaimTemplate", "name"); err != nil {
 		return groveerr.WrapError(err, errSyncComputeDomain, component.OperationSync,
-			fmt.Sprintf("Failed to set resourceClaimTemplateName for ComputeDomain: %s", cd.GetName()))
+			fmt.Sprintf("Failed to set resourceClaimTemplate.name for ComputeDomain: %s", cd.GetName()))
+	}
+
+	// numNodes is a required field in the ComputeDomain CRD, so we must explicitly set it.
+	// We set it to 0 to keep the ComputeDomain elastic - with numNodes=0 and
+	// featureGates.IMEXDaemonsWithDNSNames=true (the default), IMEX daemons start
+	// immediately without waiting for peers.
+	if err := unstructured.SetNestedField(cd.Object, int64(0), "spec", "numNodes"); err != nil {
+		return groveerr.WrapError(err, errSyncComputeDomain, component.OperationSync,
+			fmt.Sprintf("Failed to set numNodes for ComputeDomain: %s", cd.GetName()))
 	}
 
 	return nil
@@ -358,12 +366,6 @@ func generateComputeDomainName(pcsNameReplica apicommon.ResourceNameReplica) str
 	return fmt.Sprintf("%s-%d", pcsNameReplica.Name, pcsNameReplica.Replica)
 }
 
-// generateRCTName creates the RCT name for a replica.
-// The RCT name matches the CD name: {pcs-name}-{replica-index}
-func generateRCTName(pcsNameReplica apicommon.ResourceNameReplica) string {
-	return fmt.Sprintf("%s-%d", pcsNameReplica.Name, pcsNameReplica.Replica)
-}
-
 // getSelectorLabels returns labels for selecting ComputeDomains of a PCS.
 func getSelectorLabels(pcsName string) map[string]string {
 	return lo.Assign(
@@ -372,15 +374,6 @@ func getSelectorLabels(pcsName string) map[string]string {
 			apicommon.LabelComponentKey: labelComponentNameComputeDomain,
 		},
 	)
-}
-
-// hasMNNVLEnabled checks if PCS has MNNVL enabled via the grove.io/auto-mnnvl annotation.
-// Returns true only if the annotation exists and is set to "enabled".
-func hasMNNVLEnabled(pcs *grovecorev1alpha1.PodCliqueSet) bool {
-	if pcs.Annotations == nil {
-		return false
-	}
-	return pcs.Annotations[mnnvl.AnnotationAutoMNNVL] == mnnvl.AnnotationAutoMNNVLEnabled
 }
 
 // parseReplicaIndexFromName extracts the replica index from a ComputeDomain name.

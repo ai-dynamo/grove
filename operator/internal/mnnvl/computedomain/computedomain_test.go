@@ -112,34 +112,6 @@ func Test_generateComputeDomainName(t *testing.T) {
 	}
 }
 
-func Test_generateRCTName(t *testing.T) {
-	testCases := []struct {
-		description string
-		input       apicommon.ResourceNameReplica
-		expected    string
-	}{
-		{
-			description: "replica 0",
-			input:       apicommon.ResourceNameReplica{Name: "mypcs", Replica: 0},
-			expected:    "mypcs-0",
-		},
-		{
-			description: "replica 3",
-			input:       apicommon.ResourceNameReplica{Name: "mypcs", Replica: 3},
-			expected:    "mypcs-3",
-		},
-	}
-
-	t.Parallel()
-	for _, tc := range testCases {
-		t.Run(tc.description, func(t *testing.T) {
-			t.Parallel()
-			result := generateRCTName(tc.input)
-			assert.Equal(t, tc.expected, result)
-		})
-	}
-}
-
 func TestParseReplicaIndexFromName(t *testing.T) {
 	testCases := []struct {
 		description   string
@@ -201,63 +173,8 @@ func TestParseReplicaIndexFromName(t *testing.T) {
 	}
 }
 
-func TestHasMNNVLEnabled(t *testing.T) {
-	testCases := []struct {
-		description string
-		annotations map[string]string
-		expected    bool
-	}{
-		{
-			description: "nil annotations - not enabled",
-			annotations: nil,
-			expected:    false,
-		},
-		{
-			description: "empty annotations - not enabled",
-			annotations: map[string]string{},
-			expected:    false,
-		},
-		{
-			description: "annotation set to false - not enabled",
-			annotations: map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled},
-			expected:    false,
-		},
-		{
-			description: "annotation set to true - enabled",
-			annotations: map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled},
-			expected:    true,
-		},
-		{
-			description: "other annotations only - not enabled",
-			annotations: map[string]string{"other": "value"},
-			expected:    false,
-		},
-		{
-			description: "mixed annotations with enabled",
-			annotations: map[string]string{
-				"other":                   "value",
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
-			},
-			expected: true,
-		},
-	}
-
-	t.Parallel()
-	for _, tc := range testCases {
-		t.Run(tc.description, func(t *testing.T) {
-			t.Parallel()
-			pcs := &grovecorev1alpha1.PodCliqueSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:        testPCSName,
-					Namespace:   testPCSNamespace,
-					Annotations: tc.annotations,
-				},
-			}
-			result := hasMNNVLEnabled(pcs)
-			assert.Equal(t, tc.expected, result)
-		})
-	}
-}
+// TestHasMNNVLEnabled has been moved to operator/internal/mnnvl/helpers_test.go
+// since the function is now exported as mnnvl.IsAutoMNNVLEnabled
 
 func TestGetCDFQNsToDelete(t *testing.T) {
 	testCases := []struct {
@@ -435,10 +352,16 @@ func TestSyncCreatesComputeDomains(t *testing.T) {
 				assert.Contains(t, cd.GetFinalizers(), mnnvl.FinalizerComputeDomain)
 
 				// Verify CD has RCT reference in spec
-				rctName, found, err := unstructured.NestedString(cd.Object, "spec", "channel", "resourceClaimTemplateName")
+				rctName, found, err := unstructured.NestedString(cd.Object, "spec", "channel", "resourceClaimTemplate", "name")
 				assert.NoError(t, err)
 				assert.True(t, found, "RCT reference should be set")
 				assert.Equal(t, cdName, rctName, "RCT name should match CD name")
+
+				// Verify numNodes is set to 0 (elastic mode)
+				numNodes, found, err := unstructured.NestedInt64(cd.Object, "spec", "numNodes")
+				assert.NoError(t, err)
+				assert.True(t, found, "numNodes should be set")
+				assert.Equal(t, int64(0), numNodes, "numNodes should be 0 for elastic mode")
 			}
 		})
 	}
@@ -691,8 +614,9 @@ func createTestCD(name, namespace, pcsName string, replicaIndex int) *unstructur
 		},
 	})
 
-	// Set spec with RCT reference
-	_ = unstructured.SetNestedField(cd.Object, name, "spec", "channel", "resourceClaimTemplateName")
+	// Set spec with RCT reference (using correct nested structure)
+	_ = unstructured.SetNestedField(cd.Object, name, "spec", "channel", "resourceClaimTemplate", "name")
+	_ = unstructured.SetNestedField(cd.Object, int64(0), "spec", "numNodes")
 
 	return cd
 }

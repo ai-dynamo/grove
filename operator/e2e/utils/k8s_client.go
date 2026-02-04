@@ -43,6 +43,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/util/retry"
+
+	kubeutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 )
 
 // AppliedResource holds information about an applied Kubernetes resource
@@ -64,7 +66,11 @@ func ApplyYAMLFile(ctx context.Context, yamlFilePath string, namespace string, r
 		return nil, fmt.Errorf("failed to read YAML file %s: %w", yamlFilePath, err)
 	}
 
-	return applyYAMLData(ctx, yamlData, namespace, restConfig, logger)
+	dynamicClient, restMapper, err := CreateKubernetesClients(restConfig)
+	if err != nil {
+		return nil, err
+	}
+	return ApplyYAMLData(ctx, yamlData, namespace, dynamicClient, restMapper, logger)
 }
 
 // WaitForPods waits for pods to be ready in the specified namespaces
@@ -102,7 +108,7 @@ func WaitForPods(ctx context.Context, restConfig *rest.Config, namespaces []stri
 
 			for _, pod := range pods.Items {
 				totalPods++
-				if isPodReady(&pod) {
+				if kubeutils.IsPodReady(&pod) {
 					readyPods++
 				} else {
 					allReady = false
@@ -129,13 +135,8 @@ func WaitForPods(ctx context.Context, restConfig *rest.Config, namespaces []stri
 	})
 }
 
-// applyYAMLData is the common function that applies YAML data to Kubernetes
-func applyYAMLData(ctx context.Context, yamlData []byte, namespace string, restConfig *rest.Config, logger *Logger) ([]AppliedResource, error) {
-	dynamicClient, restMapper, err := createKubernetesClients(restConfig)
-	if err != nil {
-		return nil, err
-	}
-
+// ApplyYAMLData applies YAML data to Kubernetes.
+func ApplyYAMLData(ctx context.Context, yamlData []byte, namespace string, dynamicClient dynamic.Interface, restMapper meta.RESTMapper, logger *Logger) ([]AppliedResource, error) {
 	decoder := yamlutil.NewYAMLOrJSONDecoder(strings.NewReader(string(yamlData)), 4096)
 	var appliedResources []AppliedResource
 
@@ -164,8 +165,8 @@ func applyYAMLData(ctx context.Context, yamlData []byte, namespace string, restC
 	return appliedResources, nil
 }
 
-// createKubernetesClients creates the dynamic client and REST mapper
-func createKubernetesClients(restConfig *rest.Config) (dynamic.Interface, meta.RESTMapper, error) {
+// CreateKubernetesClients creates the dynamic client and REST mapper.
+func CreateKubernetesClients(restConfig *rest.Config) (dynamic.Interface, meta.RESTMapper, error) {
 	dynamicClient, err := dynamic.NewForConfig(restConfig)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create dynamic client: %w", err)
@@ -308,21 +309,6 @@ func getGVRFromGVK(restMapper meta.RESTMapper, gvk schema.GroupVersionKind) (sch
 	return mapping.Resource, nil
 }
 
-// isPodReady checks if a pod is ready
-func isPodReady(pod *v1.Pod) bool {
-	// First check that the pod is in Running phase
-	if pod.Status.Phase != v1.PodRunning {
-		return false
-	}
-	// Then check that the Ready condition is true
-	for _, condition := range pod.Status.Conditions {
-		if condition.Type == v1.PodReady && condition.Status == v1.ConditionTrue {
-			return true
-		}
-	}
-	return false
-}
-
 // SetNodeSchedulable sets a Kubernetes node to be unschedulable (cordoned) or schedulable (uncordoned).
 // This function uses retry logic to handle optimistic concurrency conflicts that can occur
 // when multiple controllers or processes are updating node objects concurrently.
@@ -420,7 +406,7 @@ func CountPodsByPhase(pods *v1.PodList) PodPhaseCount {
 func CountReadyPods(pods *v1.PodList) int {
 	readyCount := 0
 	for _, pod := range pods.Items {
-		if isPodReady(&pod) {
+		if kubeutils.IsPodReady(&pod) {
 			readyCount++
 		}
 	}

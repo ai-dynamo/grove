@@ -29,6 +29,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
+	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -319,6 +320,12 @@ func (r _resource) buildResource(logger logr.Logger, pclq *grovecorev1alpha1.Pod
 		return err
 	}
 	pclq.Spec.StartsAfter = dependentPclqNames
+
+	// Inject MNNVL resourceClaims if enabled on PCS
+	if mnnvl.IsAutoMNNVLEnabled(pcs.Annotations) {
+		mnnvl.InjectMNNVLIntoPodSpec(logger, &pclq.Spec.PodSpec, apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplica})
+	}
+
 	return nil
 }
 

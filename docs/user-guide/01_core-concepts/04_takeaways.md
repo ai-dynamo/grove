@@ -1,10 +1,10 @@
 # Takeaways
 
-Refer to [Overview](./overview.md) for instructions on how to run the examples in this guide.
+Refer to [Overview](./01_overview.md) for instructions on how to run the examples in this guide.
 
 ## Example 5: Complete Inference Pipeline
 
-The [previous examples](./pcsg_intro.md) have focused on mapping various inference workloads into Grove primitives, focusing on the model instances. However, the primitives are generic and the point of Grove is to allow the user to represent as many components as they'd like. To illustrate this point we now provide an example where we represent additional components such as a frontend and vision encoder. To add additional components you simply add additional PodCliques and PodCliqueScalingGroups into the PodCliqueSet
+The [previous examples](./03_pcsg_intro.md) have focused on mapping various inference workloads into Grove primitives, focusing on the model instances. However, the primitives are generic and the point of Grove is to allow the user to represent as many components as they'd like. To illustrate this point we now provide an example where we represent additional components such as a frontend and vision encoder. To add additional components you simply add additional PodCliques and PodCliqueScalingGroups into the PodCliqueSet
 
 ```yaml
 apiVersion: grove.io/v1alpha1
@@ -31,11 +31,11 @@ spec:
           - name: frontend
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Frontend Service on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Frontend Service on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "0.5"
-                memory: "1Gi"
+                cpu: "10m"
+                memory: "32Mi"
     - name: vision-encoder
       spec:
         roleName: vision-encoder
@@ -50,11 +50,11 @@ spec:
           - name: vision-encoder
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Vision Encoder on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Vision Encoder on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "3"
-                memory: "6Gi"
+                cpu: "10m"
+                memory: "32Mi"
     # Multi-node components
     - name: pleader
       spec:
@@ -70,11 +70,11 @@ spec:
           - name: prefill-leader
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Prefill Leader on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Prefill Leader on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "2"
-                memory: "4Gi"
+                cpu: "10m"
+                memory: "32Mi"
     - name: pworker
       spec:
         roleName: pworker
@@ -89,11 +89,11 @@ spec:
           - name: prefill-worker
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Prefill Worker on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Prefill Worker on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "4"
-                memory: "8Gi"
+                cpu: "10m"
+                memory: "32Mi"
     - name: dleader
       spec:
         roleName: dleader
@@ -108,11 +108,11 @@ spec:
           - name: decode-leader
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Decode Leader on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Decode Leader on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "1"
-                memory: "2Gi"
+                cpu: "10m"
+                memory: "32Mi"
     - name: dworker
       spec:
         roleName: dworker
@@ -127,11 +127,11 @@ spec:
           - name: decode-worker
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Decode Worker on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Decode Worker on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "2"
-                memory: "4Gi"
+                cpu: "10m"
+                memory: "32Mi"
     podCliqueScalingGroups:
     - name: prefill
       cliqueNames: [pleader, pworker]
@@ -149,11 +149,11 @@ spec:
 
 **Deploy and explore:**
 
-In this example, we will deploy the file: [complete-inference-pipeline.yaml](../../../operator/samples/user-guide/concept-overview/complete-inference-pipeline.yaml)
+In this example, we will deploy the file: [complete-inference-pipeline.yaml](../../../operator/samples/user-guide/01_core-concepts/complete-inference-pipeline.yaml)
 ```bash
 # NOTE: Run the following commands from the `/path/to/grove/operator` directory,
 # where `/path/to/grove` is the root of your cloned Grove repository.
-kubectl apply -f samples/user-guide/concept-overview/complete-inference-pipeline.yaml
+kubectl apply -f samples/user-guide/01_core-concepts/complete-inference-pipeline.yaml
 kubectl get pods -l app.kubernetes.io/part-of=comp-inf-ppln -o wide
 ```
 

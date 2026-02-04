@@ -22,6 +22,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
@@ -486,6 +487,89 @@ func TestBuildResource(t *testing.T) {
 
 			if tc.validate != nil {
 				tc.validate(t, pcsg)
+			}
+		})
+	}
+}
+
+// TestBuildResource_MNNVLAnnotationPropagation tests that the MNNVL annotation is properly propagated from PCS to PCSG.
+func TestBuildResource_MNNVLAnnotationPropagation(t *testing.T) {
+	tests := []struct {
+		description            string
+		pcsAnnotations         map[string]string
+		expectedPCSGAnnotation string // empty means no MNNVL annotation expected
+	}{
+		{
+			description: "MNNVL enabled on PCS propagates to PCSG",
+			pcsAnnotations: map[string]string{
+				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+			},
+			expectedPCSGAnnotation: mnnvl.AnnotationAutoMNNVLEnabled,
+		},
+		{
+			description: "MNNVL disabled on PCS does not propagate to PCSG",
+			pcsAnnotations: map[string]string{
+				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled,
+			},
+			expectedPCSGAnnotation: "",
+		},
+		{
+			description:            "No MNNVL annotation on PCS does not propagate to PCSG",
+			pcsAnnotations:         nil,
+			expectedPCSGAnnotation: "",
+		},
+		{
+			description:            "Other annotations on PCS without MNNVL do not propagate MNNVL to PCSG",
+			pcsAnnotations:         map[string]string{"some-other-annotation": "value"},
+			expectedPCSGAnnotation: "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.description, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+
+			pcs := &grovecorev1alpha1.PodCliqueSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "test-pcs",
+					Namespace:   "default",
+					UID:         "pcs-uid",
+					Annotations: tc.pcsAnnotations,
+				},
+			}
+
+			pcsgCfg := &grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				Name:         "pcsg1",
+				MinAvailable: ptr.To(int32(1)),
+				Replicas:     ptr.To(int32(2)),
+				CliqueNames:  []string{"clique1"},
+			}
+
+			r := &_resource{
+				scheme: scheme,
+			}
+
+			pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: 0}, pcsgCfg.Name),
+					Namespace: pcs.Namespace,
+				},
+			}
+
+			err := r.buildResource(pcsg, pcs, 0, *pcsgCfg, false)
+			require.NoError(t, err)
+
+			if tc.expectedPCSGAnnotation != "" {
+				require.NotNil(t, pcsg.Annotations, "PCSG should have annotations")
+				assert.Equal(t, tc.expectedPCSGAnnotation, pcsg.Annotations[mnnvl.AnnotationAutoMNNVL],
+					"MNNVL annotation should be propagated from PCS to PCSG")
+			} else {
+				// Either annotations is nil or the MNNVL annotation is not present
+				if pcsg.Annotations != nil {
+					_, exists := pcsg.Annotations[mnnvl.AnnotationAutoMNNVL]
+					assert.False(t, exists, "MNNVL annotation should not be present on PCSG")
+				}
 			}
 		})
 	}

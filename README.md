@@ -53,7 +53,7 @@ Grove introduces four simple concepts:
 | [PodGang](scheduler/api/core/v1alpha1/podgang.go)                   | The scheduler API that defines a unit of gang-scheduling. A PodGang is a collection of groups of similar pods, where each pod group defines a minimum number of replicas guaranteed for gang-scheduling. |
 
 Get started with a step-by-step hands-on Grove tutorial here
-**→ [Core Concepts Overview](docs/user-guide/core-concepts/overview.md)**
+**→ [Core Concepts Overview](docs/user-guide/01_core-concepts/01_overview.md)**
 
 Refer to all Grove APIs here
 **→ [API Reference](docs/api-reference/operator-api.md)**
@@ -73,7 +73,7 @@ Refer to all Grove APIs here
 - Multi-Level Horizontal Auto-Scaling ✅
 - Startup Ordering ✅
 - Rolling Updates ✅
-- Topology-Aware Scheduling
+- Topology-Aware Scheduling ✅
 
 ### 2026 Priorities
 

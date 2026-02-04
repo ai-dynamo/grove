@@ -1,3 +1,14 @@
+# Example: Multi-Node Aggregated Inference
+# Documentation: docs/user-guide/01_core-concepts/03_pcsg_intro.md
+#
+# Demonstrates PodCliqueScalingGroup for multi-node deployments with a
+# leader-worker topology. Scaling the PCSG replicates the entire unit
+# (1 leader + N workers) while preserving the ratio.
+#
+# NOTE: This example uses fake-node tolerations for the local KIND demo cluster
+# created with `make kind-up FAKE_NODES=40`. Remove the tolerations when deploying
+# to a real cluster.
+---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
@@ -21,11 +32,11 @@ spec:
           - name: model-leader
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Model Leader (Aggregated) on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Model Leader (Aggregated) on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "2"
-                memory: "4Gi"
+                cpu: "10m"
+                memory: "32Mi"
     - name: worker
       spec:
         roleName: worker
@@ -40,11 +51,11 @@ spec:
           - name: model-worker
             image: nginx:latest
             command: ["/bin/sh"]
-            args: ["-c", "echo 'Model Worker (Aggregated) on node:' && hostname && sleep 3600"]
+            args: ["-c", "echo 'Model Worker (Aggregated) on node:' && hostname && sleep infinity"]
             resources:
               requests:
-                cpu: "4"
-                memory: "8Gi"
+                cpu: "10m"
+                memory: "32Mi"
     podCliqueScalingGroups:
     - name: model-instance
       cliqueNames: [leader, worker]

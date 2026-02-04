@@ -140,7 +140,33 @@ type WebhookServer struct {
 	Server `json:",inline"`
 	// ServerCertDir is the directory containing the server certificate and key.
 	ServerCertDir string `json:"serverCertDir"`
+	// SecretName is the name of the Kubernetes Secret containing webhook certificates.
+	// The Secret must contain tls.crt, tls.key, and ca.crt.
+	// +optional
+	// +kubebuilder:default="grove-webhook-server-cert"
+	SecretName string `json:"secretName,omitempty"`
+	// CertProvisionMode controls how webhook certificates are provisioned.
+	// +optional
+	// +kubebuilder:default="auto"
+	CertProvisionMode CertProvisionMode `json:"certProvisionMode,omitempty"`
 }
+
+// CertProvisionMode defines how webhook certificates are provisioned.
+// +kubebuilder:validation:Enum=auto;manual
+type CertProvisionMode string
+
+const (
+	// CertProvisionModeAuto enables automatic certificate generation and management via cert-controller.
+	// cert-controller automatically generates self-signed certificates and stores them in the Secret.
+	CertProvisionModeAuto CertProvisionMode = "auto"
+	// CertProvisionModeManual expects certificates to be provided externally (e.g., by cert-manager, cluster admin).
+	CertProvisionModeManual CertProvisionMode = "manual"
+)
+
+const (
+	// DefaultWebhookSecretName is the default name of the Secret containing webhook TLS certificates.
+	DefaultWebhookSecretName = "grove-webhook-server-cert"
+)
 
 // Server contains information for HTTP(S) server configuration.
 type Server struct {
