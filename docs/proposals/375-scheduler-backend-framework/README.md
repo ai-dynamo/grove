@@ -113,7 +113,13 @@ As a cluster administrator, I want to migrate from one scheduler to another (e.g
 
 ### Limitations/Risks & Mitigations
 
-#### Single Backend Per Deployment in Phase1
+#### Single Active Scheduler Backend
+
+**Limitation**
+If workload operators wish to have a flexibility to configure different schedulers at `PodCliqueSet` level within the same cluster, then this version of GREP does not offer that capability.
+
+**Mitigation**
+Kubernetes clusters typically run with a single scheduler to prevent resource contention across schedulers, unless care is taken to create multiple node pools and each scheduler is exclusively associated with a subset of node pools. In this version of the GREP this limitation is acceptable. Users who require multiple schedulers can run separate Grove installations with different active scheduler backend in each cluster.
 
 **Limitation**: In the initial implementation, Grove can only be configured with one scheduler backend per deployment. Users cannot mix schedulers for different workloads within the same Grove installation.
 
