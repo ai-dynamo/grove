@@ -107,9 +107,9 @@ As a third-party scheduler developer, I want to integrate my custom gang schedul
 
 As a platform engineer managing multiple Kubernetes clusters, I want to deploy Grove across clusters that use different schedulers (e.g., KAI in production clusters, default scheduler in development clusters). The framework should allow me to configure the appropriate scheduler backend for each cluster through OperatorConfiguration without changing workload specifications or Grove's deployment manifests.
 
-#### Story 3: Workload Migration using Different Scheduler
+#### Story 3: Scheudler Migration Path
 
-As a cluster administrator, I want to migrate from one scheduler to another (e.g., from a custom scheduler to KAI or vice versa) without significant disruption. The Scheduler Backend Framework should provide a clear migration path where I can update the OperatorConfiguration, restart Grove, and have new workloads use the new scheduler while existing workloads continue running.
+As a cluster administrator, I want to migrate from one scheduler to another (e.g., from a custom scheduler to KAI or vice versa) without significant disruption. The Scheduler Backend Framework should provide a clear migration path where I can update the OperatorConfiguration, restart Grove.
 
 ### Limitations/Risks & Mitigations
 
