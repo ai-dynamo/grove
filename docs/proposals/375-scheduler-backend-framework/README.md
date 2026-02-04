@@ -125,16 +125,6 @@ Kubernetes clusters typically run with a single scheduler to prevent resource co
 
 **Mitigation**: This is acceptable for most use cases as clusters typically standardize on a single scheduler. Users requiring multiple schedulers can run separate Grove installations with different configurations in different clusters.
 
-#### Backend Implementation Responsibility
-
-**Risk**: Scheduler backend implementations may introduce bugs or incompatibilities that affect Grove's functionality.
-
-**Mitigation**: 
-- Provide comprehensive interface documentation and reference implementations
-- Define clear contracts and invariants that backends must maintain
-- Implement validation in Grove to detect and reject invalid backend behaviors
-- Provide a testing framework for backend developers to validate their implementations
-
 #### Backend API Stability
 
 **Risk**: Changes to the backend interface in future Grove versions could break existing backend implementations.
@@ -144,6 +134,14 @@ Kubernetes clusters typically run with a single scheduler to prevent resource co
 - Maintain backward compatibility within major versions
 - Provide deprecation notices and migration guides for interface changes
 - Consider versioned interfaces if breaking changes are necessary
+
+#### Scheduler Capability Mismatch
+
+**Risk**: Different schedulers have varying capabilities, which may not align with the uniform capability set exposed through the PodGang API.
+
+**Mitigation**:
+- **For Missing Capabilities**: The PodCliqueSet status should surface conditions indicating when requested features are not supported by the configured scheduler backend. This provides clear feedback to users about capability mismatches.
+- **For Additional Capabilities**: Document and track scheduler-specific capabilities during the integration process. If a scheduler provides valuable additional features that require configuration, evaluate adding new fields to the PodCliqueSet and PodGang APIs. These API extensions can be implemented incrementally in phases as new schedulers are integrated.
 
 ## Design Details
 
@@ -228,12 +226,6 @@ type SchedulerBackend interface {
 }
 ```
 
-**Key Design Decisions:**
-
-1. **Simple Interface**: Only 5 methods, focusing on essential operations
-2. **No Context in PreparePod**: Pod preparation is synchronous and doesn't need async operations
-3. **Single PodGang Hook**: `SyncPodGang` handles both create and update, simplifying the interface
-
 ### Backend Manager
 
 The manager handles backend initialization and provides global access to the active backend instance using a singleton pattern:
@@ -307,7 +299,7 @@ config:
 
 - **Phase 1** (Current): Both KAI and Kube backends have minimal no-op implementations. All backend interface methods (`Init`, `SyncPodGang`, `OnPodGangDelete`, `PreparePod`) return immediately without creating any scheduler-specific resources. KAI scheduler continues to read PodGang CRs directly. This phase focuses on establishing the framework infrastructure and interfaces.
 - **Phase 2** (Future):
-  - **KAI Backend**: Will implement `SyncPodGang` to create PodGroup CRs (scheduling.run.ai/v2alpha2), providing cleaner separation and allowing KAI scheduler modifications to be minimized.
+  - **KAI Backend**: Will implement `SyncPodGang` to create PodGroup CRs, providing cleaner separation and allowing KAI scheduler modifications to be minimized.
   - **Kube Backend**: Will support advanced community features as they become available, including Workload API for gang scheduling and other emerging Kubernetes scheduling capabilities. The backend will translate PodGang specifications to the appropriate Kubernetes-native scheduling primitives.
 
 
