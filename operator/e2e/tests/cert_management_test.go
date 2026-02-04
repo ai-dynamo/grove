@@ -34,7 +34,6 @@ import (
 	"time"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	"github.com/ai-dynamo/grove/operator/e2e"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -102,6 +101,13 @@ func updateGroveToAutoProvision(t *testing.T, ctx context.Context, restConfig *r
 }
 
 const (
+	// Cert-manager Helm chart configuration
+	certManagerReleaseName = "cert-manager"
+	certManagerChartRef    = "cert-manager"
+	certManagerVersion     = "v1.14.4"
+	certManagerNamespace   = "cert-manager"
+	certManagerRepoURL     = "https://charts.jetstack.io"
+
 	certManagerIssuerYAML = `
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
@@ -150,9 +156,8 @@ func Test_CM1_CertManagementRoundTrip(t *testing.T) {
 	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 10)
 
 	logger.Info("2. Install cert-manager and create Certificate")
-	deps, _ := e2e.GetDependencies()
-	installCertManager(t, ctx, restConfig, deps)
-	defer uninstallCertManager(t, restConfig, deps)
+	installCertManager(t, ctx, restConfig)
+	defer uninstallCertManager(t, restConfig)
 	defer cleanup()
 
 	// Create Issuer and Certificate
@@ -310,17 +315,17 @@ func deleteCertManagerResources(ctx context.Context, clientset *kubernetes.Clien
 	}
 }
 
-func installCertManager(t *testing.T, ctx context.Context, restConfig *rest.Config, deps *e2e.Dependencies) {
+func installCertManager(t *testing.T, ctx context.Context, restConfig *rest.Config) {
 	t.Helper()
 
 	cmConfig := &setup.HelmInstallConfig{
 		RestConfig:      restConfig,
-		ReleaseName:     deps.HelmCharts.CertManager.ReleaseName,
-		ChartRef:        deps.HelmCharts.CertManager.ChartRef,
-		ChartVersion:    deps.HelmCharts.CertManager.Version,
-		Namespace:       deps.HelmCharts.CertManager.Namespace,
+		ReleaseName:     certManagerReleaseName,
+		ChartRef:        certManagerChartRef,
+		ChartVersion:    certManagerVersion,
+		Namespace:       certManagerNamespace,
 		CreateNamespace: true,
-		RepoURL:         deps.HelmCharts.CertManager.RepoURL,
+		RepoURL:         certManagerRepoURL,
 		Values: map[string]interface{}{
 			"installCRDs": true,
 		},
@@ -404,13 +409,13 @@ func checkReadyStatus(obj *unstructured.Unstructured) bool {
 	return false
 }
 
-func uninstallCertManager(t *testing.T, restConfig *rest.Config, deps *e2e.Dependencies) {
+func uninstallCertManager(t *testing.T, restConfig *rest.Config) {
 	t.Helper()
 
 	cmConfig := &setup.HelmInstallConfig{
 		RestConfig:     restConfig,
-		ReleaseName:    deps.HelmCharts.CertManager.ReleaseName,
-		Namespace:      deps.HelmCharts.CertManager.Namespace,
+		ReleaseName:    certManagerReleaseName,
+		Namespace:      certManagerNamespace,
 		HelmLoggerFunc: logger.Debugf,
 		Logger:         logger,
 	}
