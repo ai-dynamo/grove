@@ -82,7 +82,7 @@ In summary, refining Grove and introducing a Scheduler Backend Framework is both
 ### Non-Goals
 
 * **Extract PodGang Reconciler**: Moving the PodGang reconciliation logic from the PodCliqueSet reconciler into an independent reconciler is out of scope. The current reconciliation architecture will be maintained.
-* **Support multiple active schedulers*: It is technically possible to run different schedulers in a Kubernetes cluster as long as care is taken to cleanly segregate Node resources that each scheduler targets to prevent race conditions leading to overbooking of Node resources. This version of the GREP does not provide means to run Grove operator with multiple active schedulers. 
+* **Support multiple active schedulers**: It is technically possible to run different schedulers in a Kubernetes cluster as long as care is taken to cleanly segregate Node resources that each scheduler targets to prevent race conditions leading to overbooking of Node resources. This version of the GREP does not provide means to run Grove operator with multiple active schedulers. 
 
 
 ## Proposal
