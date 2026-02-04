@@ -162,16 +162,30 @@ jobs:
           # Use the centralized k3d cluster creation script (Python)
           # The script handles: cluster creation, image pre-pulling, Kai Scheduler, Grove, topology labels
           ./operator/hack/create-e2e-cluster.py
-          # Set KUBECONFIG for subsequent steps
-          echo "KUBECONFIG=${{ github.workspace }}/operator/hack/kubeconfig" >> $GITHUB_ENV
+
+          # Verify kubeconfig was created and set it for subsequent steps
+          KUBECONFIG_PATH="${{ github.workspace }}/operator/hack/kubeconfig"
+          if [ ! -f "$KUBECONFIG_PATH" ]; then
+            echo "ERROR: Kubeconfig file not found at $KUBECONFIG_PATH"
+            exit 1
+          fi
+
+          echo "Kubeconfig file verified at: $KUBECONFIG_PATH"
+          ls -lh "$KUBECONFIG_PATH"
+
+          # Export KUBECONFIG for subsequent steps
+          echo "KUBECONFIG=$KUBECONFIG_PATH" >> $GITHUB_ENV
 
       - name: Run e2e tests - ${{ matrix.test_name }}
         env:
           # E2E_REGISTRY_PORT is the local registry port for test images (k3d default)
           E2E_REGISTRY_PORT: "5001"
+          # KUBECONFIG path (inherited from GITHUB_ENV, but explicitly set for clarity)
+          KUBECONFIG: "${{ github.workspace }}/operator/hack/kubeconfig"
         run: |
-          mkdir -p e2e-diagnostics
-          make test-e2e TEST_PATTERN='${{ matrix.test_pattern }}' DIAG_DIR=e2e-diagnostics
+          echo "KUBECONFIG is set to: $KUBECONFIG"
+          kubectl cluster-info
+          make test-e2e TEST_PATTERN='${{ matrix.test_pattern }}'
         working-directory: operator
 
       # The test code handles cleanup via Teardown(), but this step provides
