@@ -81,7 +81,6 @@ In summary, refining Grove and introducing a Scheduler Backend Framework is both
 
 ### Non-Goals
 
-* **Extract PodGang Reconciler**: Moving the PodGang reconciliation logic from the PodCliqueSet reconciler into an independent reconciler is out of scope. The current reconciliation architecture will be maintained.
 * **Support multiple active schedulers**: It is technically possible to run different schedulers in a Kubernetes cluster as long as care is taken to cleanly segregate Node resources that each scheduler targets to prevent race conditions leading to overbooking of Node resources. This version of the GREP does not provide means to run Grove operator with multiple active schedulers. 
 
 
@@ -93,7 +92,7 @@ The Scheduler Backend Framework introduces a plugin-like architecture that decou
 2. **Registry**: Mechanism for scheduler backends to register themselves during initialization.
 3. **Lifecycle Hooks**: Well-defined points in the PodGang lifecycle where backend schedulers can inject custom logic.
 
-The framework follows a plugin-based architecture where:
+The framework follows an architecture where:
 - Grove manages the high-level workflow and `PodGang` lifecycle.
 - Scheduler backend(s) implement the interface to provide scheduler-specific behavior.
 - The operator configuration determines which scheduler backend is active at runtime.
@@ -108,7 +107,7 @@ As a third-party scheduler developer, I want to integrate my custom gang schedul
 
 As a platform engineer managing multiple Kubernetes clusters, I want to deploy Grove across clusters that use different schedulers (e.g., KAI in production clusters, default scheduler in development clusters). The framework should allow me to configure the appropriate scheduler backend for each cluster through OperatorConfiguration without changing workload specifications or Grove's deployment manifests.
 
-#### Story 3: Scheduler Migration Path
+#### Story 3: Workload Migration using Different Scheduler
 
 As a cluster administrator, I want to migrate from one scheduler to another (e.g., from a custom scheduler to KAI or vice versa) without significant disruption. The Scheduler Backend Framework should provide a clear migration path where I can update the OperatorConfiguration, restart Grove, and have new workloads use the new scheduler while existing workloads continue running.
 
