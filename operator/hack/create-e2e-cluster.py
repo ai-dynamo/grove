@@ -209,8 +209,13 @@ def create_cluster(config: ClusterConfig) -> bool:
     for attempt in range(1, config.max_retries + 1):
         console.print(f"[yellow]ℹ️  Cluster creation attempt {attempt} of {config.max_retries}...[/yellow]")
 
-        # Clean up any partial cluster
-        run_cmd(sh.k3d, "cluster", "delete", config.cluster_name, _ok_code=[0, 1])
+        # Clean up any partial cluster (silent deletion to ensure clean slate)
+        console.print(f"[yellow]   Checking for existing cluster '{config.cluster_name}'...[/yellow]")
+        exit_code, _ = run_cmd(sh.k3d, "cluster", "delete", config.cluster_name, _ok_code=[0, 1])
+        if exit_code == 0:
+            console.print(f"[yellow]   Removed existing cluster[/yellow]")
+        else:
+            console.print(f"[yellow]   No existing cluster found (proceeding with creation)[/yellow]")
 
         # Create cluster
         exit_code, _ = run_cmd(
@@ -472,8 +477,24 @@ def main(
         console.print("[yellow]ℹ️  Waiting for Kai Scheduler pods to be ready...[/yellow]")
         sh.kubectl("wait", "--for=condition=Ready", "pods", "--all", "-n", "kai-scheduler", "--timeout=5m")
 
-        console.print("[yellow]ℹ️  Creating default Kai queues...[/yellow]")
-        sh.kubectl("apply", "-f", str(operator_dir / "e2e/yaml/queues.yaml"))
+        # Wait for webhook to be available before applying queues (pods ready != webhook ready)
+        console.print("[yellow]ℹ️  Creating default Kai queues (with retry for webhook readiness)...[/yellow]")
+        for i in range(1, 13):  # Retry up to 12 times (1 minute total)
+            exit_code, result = run_cmd(
+                sh.kubectl, "apply", "-f", str(operator_dir / "e2e/yaml/queues.yaml"),
+                _ok_code=[0, 1]
+            )
+            if exit_code == 0:
+                console.print("[green]✅ Kai queues created successfully[/green]")
+                break
+
+            if i == 12:
+                console.print("[red]❌ Failed to create Kai queues after retries[/red]")
+                console.print(f"Last error: {result.stderr if hasattr(result, 'stderr') else result}")
+                raise typer.Exit(1)
+
+            console.print(f"[yellow]Webhook not ready yet, retrying in 5s... ({i}/12)[/yellow]")
+            time.sleep(5)
 
     # Apply topology
     if not skip_topology:

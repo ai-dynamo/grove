@@ -154,19 +154,57 @@ jobs:
 
       - name: Install Python dependencies
         run: |
+          echo "Installing Python dependencies..."
           pip3 install --break-system-packages -r operator/hack/requirements.txt
+
+          echo "Verifying Python dependencies..."
+          python3 -c "import docker; import sh; import typer; import pydantic; import rich; print('All dependencies installed successfully')"
 
       - name: Create E2E cluster
         id: create-cluster
         run: |
           # Use the centralized k3d cluster creation script (Python)
           # The script handles: cluster creation, image pre-pulling, Kai Scheduler, Grove, topology labels
-          ./operator/hack/create-e2e-cluster.py
+          set -e  # Exit on any error
+          set -o pipefail  # Catch errors in pipes
+
+          # Make script executable
+          chmod +x operator/hack/create-e2e-cluster.py
+
+          echo "Starting cluster creation..."
+          echo "Python version: $(python3 --version)"
+          echo "Running script from: $(pwd)"
+          echo "Cluster name: ${E2E_CLUSTER_NAME:-shared-e2e-test-cluster}"
+
+          # Run the script with full output capture
+          if ! python3 -u operator/hack/create-e2e-cluster.py 2>&1; then
+            SCRIPT_EXIT_CODE=$?
+            echo ""
+            echo "============================================"
+            echo "ERROR: Cluster creation script failed!"
+            echo "Exit code: $SCRIPT_EXIT_CODE"
+            echo "============================================"
+            echo ""
+            echo "Attempting to show cluster status for debugging..."
+            k3d cluster list || true
+            echo ""
+            exit 1
+          fi
+
+          echo ""
+          echo "============================================"
+          echo "✅ Cluster creation script completed successfully"
+          echo "============================================"
+          echo ""
 
           # Verify kubeconfig was created and set it for subsequent steps
           KUBECONFIG_PATH="${{ github.workspace }}/operator/hack/kubeconfig"
+          echo "Checking for kubeconfig at: $KUBECONFIG_PATH"
+
           if [ ! -f "$KUBECONFIG_PATH" ]; then
             echo "ERROR: Kubeconfig file not found at $KUBECONFIG_PATH"
+            echo "Contents of operator/hack directory:"
+            ls -la "${{ github.workspace }}/operator/hack/" || echo "Directory not found"
             exit 1
           fi
 
@@ -175,6 +213,7 @@ jobs:
 
           # Export KUBECONFIG for subsequent steps
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> $GITHUB_ENV
+          echo "KUBECONFIG set successfully"
 
       - name: Run e2e tests - ${{ matrix.test_name }}
         env:
