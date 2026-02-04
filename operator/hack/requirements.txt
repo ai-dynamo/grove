@@ -1,0 +1,33 @@
+# Python dependencies for hack scripts
+#
+# Minimum Python version: 3.8+
+#
+# Install all dependencies:
+#   pip install -r requirements.txt
+#
+# Or using pip3:
+#   pip3 install -r requirements.txt
+
+# CLI framework - elegant command-line interfaces
+typer==0.12.3
+
+# Beautiful terminal output with colors, emojis, progress bars, and formatting
+rich==13.7.0
+
+# Pythonic command execution - cleaner than subprocess
+sh==2.0.6
+
+# Data validation and settings management using Python type annotations
+pydantic==2.5.3
+
+# Docker SDK for Python - native Docker API client for image operations
+# Used for parallel image pre-pulling to speed up cluster creation
+docker==7.0.0
+
+# Note: The script also requires the following external tools:
+#   - k3d (for cluster creation)
+#   - kubectl (for cluster management)
+#   - docker (for container operations)
+#   - helm (for Kai Scheduler installation, unless --skip-kai)
+#   - skaffold (for Grove deployment, unless --skip-grove)
+#   - jq (for JSON parsing, unless --skip-grove)
