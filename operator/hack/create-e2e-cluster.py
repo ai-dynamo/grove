@@ -479,6 +479,18 @@ def main(
     if not skip_topology:
         apply_topology_labels(config)
 
+    # Export kubeconfig to ensure it's accessible
+    console.print(Panel.fit("Configuring kubeconfig", style="bold blue"))
+    kubeconfig_dir = Path.home() / ".kube"
+    kubeconfig_dir.mkdir(parents=True, exist_ok=True)
+    kubeconfig_path = kubeconfig_dir / "config"
+
+    console.print(f"[yellow]Exporting kubeconfig to {kubeconfig_path}...[/yellow]")
+    kubeconfig_content = sh.k3d("kubeconfig", "get", config.cluster_name)
+    kubeconfig_path.write_text(str(kubeconfig_content))
+    kubeconfig_path.chmod(0o600)
+    console.print(f"[green]✅ Kubeconfig exported to {kubeconfig_path}[/green]")
+
     # Print success message
     console.print(Panel.fit("Cluster setup complete!", style="bold green"))
     console.print("[yellow]To run E2E tests against this cluster:[/yellow]")
