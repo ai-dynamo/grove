@@ -96,7 +96,7 @@ The Scheduler Backend Framework introduces a plugin-like architecture that decou
 The framework follows a plugin-based architecture where:
 - Grove manages the high-level workflow and `PodGang` lifecycle.
 - Scheduler backend(s) implement the interface to provide scheduler-specific behavior.
-- The operator configuration determines which backend is active at runtime
+- The operator configuration determines which scheduler backend is active at runtime.
 
 ### User Stories
 
