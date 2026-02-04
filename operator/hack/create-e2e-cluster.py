@@ -431,6 +431,11 @@ def main(
     script_dir = Path(__file__).resolve().parent
     operator_dir = script_dir.parent
 
+    # Debug: Print all parameters
+    console.print(f"[yellow]DEBUG: Parameters received:[/yellow]")
+    console.print(f"  delete={delete}, skip_kai={skip_kai}, skip_grove={skip_grove}")
+    console.print(f"  skip_topology={skip_topology}, skip_prepull={skip_prepull}")
+
     # Handle delete mode
     if delete:
         delete_cluster(config)
