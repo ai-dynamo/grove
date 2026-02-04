@@ -113,12 +113,12 @@ test-e2e:
 # This is optional - tests work with any Kubernetes cluster that has the required components
 .PHONY: e2e-cluster-up
 e2e-cluster-up:
-	@$(MODULE_HACK_DIR)/create-e2e-cluster.sh
+	@$(MODULE_HACK_DIR)/create-e2e-cluster.py
 
 # Delete the k3d e2e test cluster
 .PHONY: e2e-cluster-down
 e2e-cluster-down:
-	@$(MODULE_HACK_DIR)/create-e2e-cluster.sh --delete
+	@$(MODULE_HACK_DIR)/create-e2e-cluster.py --delete
 
 # Full e2e test run: create k3d cluster, run tests, then cleanup
 # Usage: make test-e2e-full [TEST_PATTERN=<pattern>]
