@@ -21,6 +21,25 @@ create-e2e-cluster.py - k3d cluster setup for local E2E testing
 Python Dependencies: See requirements.txt
 Minimum Python version: 3.8+
 
+Environment Variables:
+    All cluster configuration can be overridden via E2E_* environment variables:
+    - E2E_CLUSTER_NAME (default: shared-e2e-test-cluster)
+    - E2E_REGISTRY_PORT (default: 5001)
+    - E2E_API_PORT (default: 6560)
+    - E2E_WORKER_NODES (default: 30)
+    - E2E_KAI_VERSION (default: from dependencies.yaml)
+    - And more (see ClusterConfig class for full list)
+
+Examples:
+    # Use defaults
+    ./hack/create-e2e-cluster.py
+
+    # Override cluster name and worker count
+    E2E_CLUSTER_NAME=my-cluster E2E_WORKER_NODES=50 ./hack/create-e2e-cluster.py
+
+    # Delete cluster
+    ./hack/create-e2e-cluster.py --delete
+
 For detailed usage information, run: ./hack/create-e2e-cluster.py --help
 """
 
@@ -28,6 +47,7 @@ import json
 import os
 import sys
 import time
+import yaml
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,7 +56,8 @@ from typing import Any, List, Optional, Tuple
 import docker
 import sh
 import typer
-from pydantic import BaseModel, Field
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
@@ -50,6 +71,15 @@ console = Console(stderr=True)
 # Configuration
 # ============================================================================
 
+# Load dependencies from centralized YAML file
+def load_dependencies():
+    """Load dependency versions and images from dependencies.yaml"""
+    deps_file = Path(__file__).resolve().parent / "dependencies.yaml"
+    with open(deps_file, 'r') as f:
+        return yaml.safe_load(f)
+
+DEPENDENCIES = load_dependencies()
+
 # Webhook readiness check configuration
 WEBHOOK_READY_MAX_RETRIES = 60
 WEBHOOK_READY_POLL_INTERVAL_SECONDS = 5
@@ -58,31 +88,47 @@ WEBHOOK_READY_POLL_INTERVAL_SECONDS = 5
 KAI_QUEUE_MAX_RETRIES = 12
 KAI_QUEUE_POLL_INTERVAL_SECONDS = 5
 
-# Kai Scheduler images that need to be pre-pulled for faster cluster creation
-KAI_SCHEDULER_IMAGES = [
-    "ghcr.io/nvidia/kai-scheduler/admission",
-    "ghcr.io/nvidia/kai-scheduler/binder",
-    "ghcr.io/nvidia/kai-scheduler/operator",
-    "ghcr.io/nvidia/kai-scheduler/podgroupcontroller",
-    "ghcr.io/nvidia/kai-scheduler/podgrouper",
-    "ghcr.io/nvidia/kai-scheduler/queuecontroller",
-    "ghcr.io/nvidia/kai-scheduler/scheduler",
-]
 
+class ClusterConfig(BaseSettings):
+    """
+    Configuration auto-loaded from E2E_* environment variables.
 
-class ClusterConfig(BaseModel):
-    """Configuration loaded from environment variables with defaults."""
+    Environment variables are automatically mapped to fields using the E2E_ prefix:
+    - E2E_CLUSTER_NAME → cluster_name
+    - E2E_REGISTRY_PORT → registry_port (automatically converted to int)
+    - E2E_API_PORT → api_port (automatically converted to int)
+    - E2E_WORKER_NODES → worker_nodes (automatically converted to int)
+    - E2E_KAI_VERSION → kai_version
+    - etc.
 
-    cluster_name: str = Field(default_factory=lambda: os.getenv("E2E_CLUSTER_NAME", "shared-e2e-test-cluster"))
-    registry_port: str = Field(default_factory=lambda: os.getenv("E2E_REGISTRY_PORT", "5001"))
-    api_port: str = Field(default_factory=lambda: os.getenv("E2E_API_PORT", "6560"))
-    lb_port: str = Field(default_factory=lambda: os.getenv("E2E_LB_PORT", "8090:80"))
-    worker_nodes: int = Field(default_factory=lambda: int(os.getenv("E2E_WORKER_NODES", "30")))
-    worker_memory: str = Field(default_factory=lambda: os.getenv("E2E_WORKER_MEMORY", "150m"))
-    k3s_image: str = Field(default_factory=lambda: os.getenv("E2E_K3S_IMAGE", "rancher/k3s:v1.33.5-k3s1"))
-    kai_version: str = Field(default_factory=lambda: os.getenv("E2E_KAI_VERSION", "v0.13.0-rc1"))
-    skaffold_profile: str = Field(default_factory=lambda: os.getenv("E2E_SKAFFOLD_PROFILE", "topology-test"))
-    max_retries: int = Field(default_factory=lambda: int(os.getenv("E2E_MAX_RETRIES", "3")))
+    Example usage:
+        # Use defaults
+        config = ClusterConfig()
+
+        # Override via environment
+        E2E_WORKER_NODES=50 E2E_KAI_VERSION=v0.14.0 python create-e2e-cluster.py
+
+        # In shell
+        export E2E_CLUSTER_NAME=my-test-cluster
+        export E2E_REGISTRY_PORT=5002
+        ./create-e2e-cluster.py
+    """
+
+    model_config = SettingsConfigDict(env_prefix="E2E_", extra="ignore")
+
+    # Cluster configuration (can be overridden via E2E_* environment variables)
+    cluster_name: str = "shared-e2e-test-cluster"
+    registry_port: int = Field(default=5001, ge=1, le=65535)
+    api_port: int = Field(default=6560, ge=1, le=65535)
+    lb_port: str = "8090:80"
+    worker_nodes: int = Field(default=30, ge=1, le=100)
+    worker_memory: str = Field(default="150m", pattern=r"^\d+[mMgG]?$")
+    k3s_image: str = "rancher/k3s:v1.33.5-k3s1"
+    kai_version: str = Field(default=DEPENDENCIES['kai_scheduler']['version'], pattern=r"^v[\d.]+(-[\w.]+)?$")
+    skaffold_profile: str = "topology-test"
+    max_retries: int = Field(default=3, ge=1, le=10)
+
+    # Constants (not configurable via environment variables)
     cluster_timeout: str = "120s"
     nodes_per_zone: int = 28
     nodes_per_block: int = 14
@@ -488,9 +534,20 @@ def main(
 
     wait_for_nodes()
 
-    # Pre-pull images if not skipped (before installing Kai)
-    if not skip_kai and not skip_prepull:
-        prepull_images(KAI_SCHEDULER_IMAGES, config.registry_port, config.kai_version)
+    # Pre-pull images if not skipped (before installing Kai and cert-manager)
+    if not skip_prepull:
+        # Pre-pull Kai Scheduler images
+        prepull_images(
+            DEPENDENCIES['kai_scheduler']['images'],
+            config.registry_port,
+            DEPENDENCIES['kai_scheduler']['version']
+        )
+        # Pre-pull cert-manager images
+        prepull_images(
+            DEPENDENCIES['cert_manager']['images'],
+            config.registry_port,
+            DEPENDENCIES['cert_manager']['version']
+        )
 
     # Install components
     if not skip_kai:
