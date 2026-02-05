@@ -344,9 +344,9 @@ func VerifyScaledPCSGReplicaTopology(
 			CreateExpectedPCLQInPCSGSubGroupNoParent(pcsName, pcsReplica, pcsgConfig.PCSGName, pcsgConfig.PCSGReplica, cliqueConfig.Name, cliqueConfig.PodCount, cliqueConfig.Constraint))
 	}
 
-	scaledTopConstraint := ""
-	if pcsgConfig.Constraint == "" {
-		scaledTopConstraint = pcsConstraint
+	scaledTopConstraint := pcsConstraint
+	if pcsgConfig.Constraint != "" {
+		scaledTopConstraint = pcsgConfig.Constraint
 	}
 
 	if err := VerifyPodGroupTopology(scaledPodGroup, scaledTopConstraint, "", expectedSubGroups, logger); err != nil {
