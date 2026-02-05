@@ -20,6 +20,12 @@ sh==2.0.6
 # Data validation and settings management using Python type annotations
 pydantic==2.5.3
 
+# Settings management for pydantic - automatic environment variable loading
+pydantic-settings==2.1.0
+
+# YAML parsing - for reading centralized dependencies configuration
+PyYAML==6.0.1
+
 # Docker SDK for Python - native Docker API client for image operations
 # Used for parallel image pre-pulling to speed up cluster creation
 docker==7.0.0

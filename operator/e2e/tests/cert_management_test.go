@@ -102,9 +102,11 @@ func updateGroveToAutoProvision(t *testing.T, ctx context.Context, restConfig *r
 
 const (
 	// Cert-manager Helm chart configuration
+	// NOTE: This version must match the version in operator/hack/dependencies.yaml
+	// to ensure image pre-pulling works correctly in E2E tests
 	certManagerReleaseName = "cert-manager"
 	certManagerChartRef    = "cert-manager"
-	certManagerVersion     = "v1.14.4"
+	certManagerVersion     = "v1.14.4"  // Keep in sync with dependencies.yaml
 	certManagerNamespace   = "cert-manager"
 	certManagerRepoURL     = "https://charts.jetstack.io"
 

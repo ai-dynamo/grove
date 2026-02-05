@@ -1,0 +1,42 @@
+# E2E Test Dependencies
+# =======================
+# This file centralizes all external dependency versions used in E2E tests
+# to ensure consistency between test code, cluster setup scripts, and image pre-pulling.
+#
+# IMPORTANT: When updating versions here, also update:
+# - operator/e2e/tests/cert_management_test.go (certManagerVersion constant)
+# - Any test files that reference these versions
+#
+# The create-e2e-cluster.py script automatically reads this file and uses
+# these versions for:
+# - Helm chart installations
+# - Image pre-pulling (to speed up cluster creation)
+# - Version defaults (can be overridden via E2E_* environment variables)
+
+kai_scheduler:
+  version: "v0.13.0-rc1"
+  helm_chart: "oci://ghcr.io/nvidia/kai-scheduler/kai-scheduler"
+  images:
+    # All Kai Scheduler component images
+    - "ghcr.io/nvidia/kai-scheduler/admission"
+    - "ghcr.io/nvidia/kai-scheduler/binder"
+    - "ghcr.io/nvidia/kai-scheduler/operator"
+    - "ghcr.io/nvidia/kai-scheduler/podgroupcontroller"
+    - "ghcr.io/nvidia/kai-scheduler/podgrouper"
+    - "ghcr.io/nvidia/kai-scheduler/queuecontroller"
+    - "ghcr.io/nvidia/kai-scheduler/scheduler"
+
+cert_manager:
+  version: "v1.14.4"
+  helm_repo: "https://charts.jetstack.io"
+  helm_chart: "cert-manager"
+  namespace: "cert-manager"
+  images:
+    # Cert-manager component images
+    # Note: These must match the version specified above
+    - "quay.io/jetstack/cert-manager-controller"
+    - "quay.io/jetstack/cert-manager-webhook"
+    - "quay.io/jetstack/cert-manager-cainjector"
+    # Additional images cert-manager may pull
+    - "quay.io/jetstack/cert-manager-acmesolver"
+    - "quay.io/jetstack/cert-manager-ctl"
