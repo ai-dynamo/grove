@@ -489,25 +489,28 @@ def main(
     operator_dir = script_dir.parent
 
     # Fix: Typer may pass boolean flags as strings from environment variables
-    # Convert string 'False'/'false' to boolean False
-    if isinstance(delete, str):
-        delete = delete.lower() not in ('false', '0', '', 'no', 'n')
-    if isinstance(skip_kai, str):
-        skip_kai = skip_kai.lower() not in ('false', '0', '', 'no', 'n')
-    if isinstance(skip_grove, str):
-        skip_grove = skip_grove.lower() not in ('false', '0', '', 'no', 'n')
-    if isinstance(skip_topology, str):
-        skip_topology = skip_topology.lower() not in ('false', '0', '', 'no', 'n')
-    if isinstance(skip_prepull, str):
-        skip_prepull = skip_prepull.lower() not in ('false', '0', '', 'no', 'n')
+    # Convert string values to boolean, treating None as False
+    def to_bool(value) -> bool:
+        """Convert various value types to boolean."""
+        if value is None:
+            return False
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.lower() not in ('false', '0', '', 'no', 'n', 'none')
+        return bool(value)
+
+    delete = to_bool(delete)
+    skip_kai = to_bool(skip_kai)
+    skip_grove = to_bool(skip_grove)
+    skip_topology = to_bool(skip_topology)
+    skip_prepull = to_bool(skip_prepull)
 
     # Handle delete mode
     if delete:
-        console.print(f"[red]ENTERING DELETE MODE (this should not happen if delete=False!)[/red]")
+        console.print("[yellow]🗑️  Deleting cluster...[/yellow]")
         delete_cluster(config)
         return
-    else:
-        console.print(f"[green]NOT in delete mode, proceeding with cluster creation[/green]")
 
     # Check prerequisites
     console.print(Panel.fit("Checking prerequisites", style="bold blue"))
