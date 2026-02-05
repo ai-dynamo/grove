@@ -4,9 +4,9 @@
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
-  name: tas-disagg-inference
+  name: tas-pcs-multi-pcsg
   labels:
-    app: tas-disagg-inference
+    app: tas-pcs-multi-pcsg
 spec:
   replicas: 1
   template:

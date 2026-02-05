@@ -529,8 +529,7 @@ func Test_TAS8_FullHierarchyWithCascadingConstraints(t *testing.T) {
 // 1. Deploy workload with PCS: block constraint, PCLQ: host constraint
 // 2. 2 pods total
 // 3. Verify pods on same host (PCLQ constraint - strictest)
-// 4. Verify pods in same block (PCS constraint - inherited)
-// 5. Verify KAI PodGroup has block constraint at top level, host constraint at PCLQ level
+// 4. Verify KAI PodGroup has block constraint at top level, host constraint at PCLQ level
 func Test_TAS9_PCSPlusPCLQConstraint(t *testing.T) {
 	ctx := context.Background()
 
@@ -553,12 +552,7 @@ func Test_TAS9_PCSPlusPCLQConstraint(t *testing.T) {
 		t.Fatalf("Failed to verify pods on same host: %v", err)
 	}
 
-	logger.Info("4. Verify both pods in same block (PCS block constraint)")
-	if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, allPods, setup.TopologyLabelBlock, logger); err != nil {
-		t.Fatalf("Failed to verify pods in same block: %v", err)
-	}
-
-	logger.Info("5. Verify KAI PodGroup has correct SubGroups (PCS block + PCLQ host)")
+	logger.Info("4. Verify KAI PodGroup has correct SubGroups (PCS block + PCLQ host)")
 	podGroup := GetPodGroupOrFail(t, tc, 0)
 
 	// Verify top-level TopologyConstraint (PCS level: block) + SubGroups (1 standalone PCLQ with host constraint)
@@ -883,7 +877,7 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 
 	expectedPods := 10 // decoder (2×2) + prefill (2×2) + router (2)
 	tc := createTopologyTestContext(t, ctx, clientset, restConfig, dynamicClient,
-		"tas-disagg-inference", "../yaml/tas-disagg-inference.yaml", expectedPods)
+		"tas-pcs-multi-pcsg", "../yaml/tas-pcs-multi-pcsg.yaml", expectedPods)
 
 	logger.Info("2. Deploy workload (TAS15: disaggregated inference with multiple PCSGs)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
@@ -954,7 +948,7 @@ func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 
 	expectedPods := 20 // PCS replica 0: 10 pods + PCS replica 1: 10 pods
 	tc := createTopologyTestContext(t, ctx, clientset, restConfig, dynamicClient,
-		"tas-disagg-inference", "../yaml/tas-disagg-inference-multi-pcs.yaml", expectedPods)
+		"tas-pcs-multi-pcsg", "../yaml/tas-pcs-multi-pcsg-multi-replica.yaml", expectedPods)
 
 	logger.Info("2. Deploy workload (TAS16: 2 PCS replicas with 3-level topology hierarchy)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)

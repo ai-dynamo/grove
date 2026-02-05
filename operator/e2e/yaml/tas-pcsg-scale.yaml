@@ -11,7 +11,7 @@ spec:
   replicas: 1
   template:
     topologyConstraint:
-      packDomain: rack
+      packDomain: block
     podCliqueScalingGroups:
       - name: inference-group
         replicas: 3
