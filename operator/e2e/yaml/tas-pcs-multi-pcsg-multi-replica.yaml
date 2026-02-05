@@ -60,7 +60,6 @@ spec:
                 resources:
                   requests:
                     memory: 10Mi
-                    cpu: 10m
       - name: dleader
         labels:
           kai.scheduler/queue: test
@@ -91,7 +90,6 @@ spec:
                 resources:
                   requests:
                     memory: 10Mi
-                    cpu: 10m
       - name: pworker
         topologyConstraint:
           packDomain: host
@@ -124,7 +122,6 @@ spec:
                 resources:
                   requests:
                     memory: 10Mi
-                    cpu: 10m
       - name: pleader
         labels:
           kai.scheduler/queue: test
@@ -155,7 +152,6 @@ spec:
                 resources:
                   requests:
                     memory: 10Mi
-                    cpu: 10m
       - name: router
         labels:
           kai.scheduler/queue: test
@@ -186,4 +182,3 @@ spec:
                 resources:
                   requests:
                     memory: 10Mi
-                    cpu: 10m

@@ -44,7 +44,6 @@ spec:
                 resources:
                   requests:
                     memory: 20Mi
-                    cpu: 10m
       - name: worker-block
         labels:
           kai.scheduler/queue: test
@@ -77,4 +76,3 @@ spec:
                 resources:
                   requests:
                     memory: 20Mi
-                    cpu: 10m

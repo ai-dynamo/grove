@@ -54,7 +54,6 @@ spec:
                 resources:
                   requests:
                     memory: 10Mi
-                    cpu: 10m
       - name: decode
         labels:
           kai.scheduler/queue: test
@@ -87,4 +86,3 @@ spec:
                 resources:
                   requests:
                     memory: 10Mi
-                    cpu: 10m
