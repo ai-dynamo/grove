@@ -87,20 +87,25 @@ cover-html: test-cover
 	@echo "Coverage report generated at coverage.html"
 
 # Run e2e tests
-# Usage: make test-e2e [TEST_PATTERN=<pattern>]
+# Usage: make test-e2e [TEST_PATTERN=<pattern>] [DIAG_DIR=<path>]
 # Examples:
 #   make test-e2e                              # Run all tests
 #   make test-e2e TEST_PATTERN=Test_GS         # Run gang scheduling tests
 #   make test-e2e TEST_PATTERN=Test_GS1        # Run specific test
 #   make test-e2e TEST_PATTERN=Test_TAS        # Run topology tests
+#   make test-e2e DIAG_DIR=e2e-diagnostics     # Output diagnostics to specific directory
 #   GROVE_E2E_DIAG_MODE=both make test-e2e     # Output to stdout and file
 #   GROVE_E2E_DIAG_MODE=stdout make test-e2e   # Output to stdout only
 #
+# Variables:
+#   TEST_PATTERN        - Test name pattern to match (optional)
+#   DIAG_DIR            - Directory for diagnostic files (default: operator/)
+#
 # Environment variables:
 #   GROVE_E2E_DIAG_MODE - Diagnostic output mode: stdout, file, both (default: file)
-#   GROVE_E2E_DIAG_DIR  - Directory for diagnostic files (default: operator/)
+DIAG_DIR ?= $(MODULE_ROOT)
 .PHONY: test-e2e
-test-e2e: export GROVE_E2E_DIAG_DIR = $(MODULE_ROOT)
+test-e2e: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
 test-e2e:
 	@echo "> Preparing charts (copying CRDs)..."
 	@$(MODULE_HACK_DIR)/prepare-charts.sh
