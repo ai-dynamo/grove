@@ -49,10 +49,12 @@ spec:
                 effect: NoSchedule
             containers:
               - name: prefill
-                image: registry:5001/nginx:alpine-slim
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    memory: 30Mi
+                    memory: 10Mi
+                    cpu: 10m
       - name: decode
         labels:
           kai.scheduler/queue: test
@@ -80,7 +82,9 @@ spec:
                 effect: NoSchedule
             containers:
               - name: decode
-                image: registry:5001/nginx:alpine-slim
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    memory: 30Mi
+                    memory: 10Mi
+                    cpu: 10m

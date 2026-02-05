@@ -46,7 +46,9 @@ spec:
                 effect: NoSchedule
             containers:
               - name: worker
-                image: registry:5001/nginx:alpine-slim
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    memory: 80Mi
+                    memory: 20Mi
+                    cpu: 10m

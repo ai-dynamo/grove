@@ -38,7 +38,8 @@ spec:
                 effect: NoSchedule
             containers:
               - name: worker
-                image: registry:5001/nginx:alpine-slim
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    memory: 80Mi  # Small footprint to ensure resources not a constraint
+                    memory: 20Mi  # Small footprint to ensure resources not a constraint
