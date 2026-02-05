@@ -571,7 +571,8 @@ func Test_TAS9_PCSPlusPCLQConstraint(t *testing.T) {
 // 2. 6 pods total (2 per PCSG replica)
 // 3. Verify each PCSG replica's pods in same rack
 // 4. Verify all pods respect PCS-level rack constraint (all in same rack)
-// 5. Verify KAI PodGroup topology constraints for PCSG scaling
+// 5. Verify base PodGang KAI PodGroup topology constraints
+// 6. Verify scaled PodGangs' KAI PodGroups (replicas 1-2)
 func Test_TAS10_PCSGScalingWithTopologyConstraints(t *testing.T) {
 	ctx := context.Background()
 
@@ -614,9 +615,25 @@ func Test_TAS10_PCSGScalingWithTopologyConstraints(t *testing.T) {
 		utils.CreateExpectedPCSGParentSubGroup(tc.Workload.Name, 0, "inference-group", 0, setup.TopologyLabelRack),
 		utils.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, 0, "inference-group", 0, "worker", 2, ""),
 	}
-	if err := utils.VerifyPodGroupTopology(podGroup, setup.TopologyLabelRack, "", expectedSubGroups, logger); err != nil {
+	if err := utils.VerifyPodGroupTopology(podGroup, setup.TopologyLabelBlock, "", expectedSubGroups, logger); err != nil {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
+
+	logger.Info("6. Verify scaled PodGangs' KAI PodGroups (replicas 1-2)")
+
+	// Verify PCSG replicas 1-2 (minAvailable=1, totalReplicas=3)
+	lo.ForEach([]int{1, 2}, func(pcsgReplica int, _ int) {
+		utils.VerifyScaledPCSGReplicaTopology(tc.Ctx, t, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0,
+			utils.ScaledPCSGConfig{
+				Name:        "inference-group",
+				PCSGName:    "inference-group",
+				PCSGReplica: pcsgReplica,
+				CliqueConfigs: []utils.PCSGCliqueConfig{
+					{Name: "worker", PodCount: 2, Constraint: ""},
+				},
+				Constraint: setup.TopologyLabelRack,
+			}, setup.TopologyLabelBlock, logger)
+	})
 
 	logger.Info("🎉 TAS10: PCSG Scaling with Topology Constraints test completed successfully!")
 }
@@ -867,7 +884,8 @@ func Test_TAS14_MultiReplicaWithRackConstraint(t *testing.T) {
 // 3. PCS: block constraint
 // 4. 10 pods total: decoder (2×2) + prefill (2×2) + router (2)
 // 5. Verify all in same block, each PCSG replica in same rack
-// 6. Verify KAI PodGroup topology for complex multi-PCSG workload
+// 6. Verify base PodGang KAI PodGroup topology for complex multi-PCSG workload
+// 7. Verify scaled PodGangs' KAI PodGroups (decoder replica 1, prefill replica 1)
 func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 	ctx := context.Background()
 
@@ -929,6 +947,38 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 	if err := utils.VerifyPodGroupTopology(podGroup, setup.TopologyLabelBlock, "", expectedSubGroups, logger); err != nil {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
+
+	logger.Info("7. Verify scaled PodGangs' KAI PodGroups (decoder replica 1, prefill replica 1)")
+
+	// Define PCSG configurations (minAvailable=1, totalReplicas=2 for each)
+	pcsgConfigs := []utils.ScaledPCSGConfig{
+		{
+			Name:        "decoder",
+			PCSGName:    "decoder",
+			PCSGReplica: 1,
+			CliqueConfigs: []utils.PCSGCliqueConfig{
+				{Name: "dworker", PodCount: 1, Constraint: ""},
+				{Name: "dleader", PodCount: 1, Constraint: ""},
+			},
+			Constraint: setup.TopologyLabelRack,
+		},
+		{
+			Name:        "prefill",
+			PCSGName:    "prefill",
+			PCSGReplica: 1,
+			CliqueConfigs: []utils.PCSGCliqueConfig{
+				{Name: "pworker", PodCount: 1, Constraint: ""},
+				{Name: "pleader", PodCount: 1, Constraint: ""},
+			},
+			Constraint: setup.TopologyLabelRack,
+		},
+	}
+
+	// Verify each PCSG's scaled replica
+	lo.ForEach(pcsgConfigs, func(pcsgConfig utils.ScaledPCSGConfig, _ int) {
+		utils.VerifyScaledPCSGReplicaTopology(tc.Ctx, t, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0,
+			pcsgConfig, setup.TopologyLabelBlock, logger)
+	})
 
 	logger.Info("🎉 TAS15: Disaggregated Inference with Multiple PCSGs test completed successfully!")
 }

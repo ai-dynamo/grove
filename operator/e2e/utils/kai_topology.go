@@ -39,6 +39,22 @@ type ExpectedSubGroup struct {
 	PreferredTopologyLevel string
 }
 
+// PCSGCliqueConfig defines configuration for a single clique in a PCSG
+type PCSGCliqueConfig struct {
+	Name       string
+	PodCount   int32
+	Constraint string
+}
+
+// ScaledPCSGConfig defines configuration for verifying a scaled PCSG replica
+type ScaledPCSGConfig struct {
+	Name         string
+	PCSGName     string
+	PCSGReplica  int
+	CliqueConfigs []PCSGCliqueConfig
+	Constraint   string
+}
+
 // CreateExpectedStandalonePCLQSubGroup creates an ExpectedSubGroup for a standalone PodClique (not in PCSG)
 // Name format: <pcs-name>-<pcs-replica>-<clique-name>
 func CreateExpectedStandalonePCLQSubGroup(pcsName string, pcsReplica int, cliqueName string, minMember int32, topologyLevel string) ExpectedSubGroup {
@@ -288,4 +304,52 @@ func VerifyPodGroupTopology(
 	}
 
 	return nil
+}
+
+// VerifyScaledPCSGReplicaTopology verifies KAI PodGroup for ONE scaled PCSG replica.
+// Scaled PodGroup top-level constraint: uses pcsConstraint ONLY if PCSG has NO constraint.
+func VerifyScaledPCSGReplicaTopology(
+	ctx context.Context,
+	t *testing.T,
+	dynamicClient dynamic.Interface,
+	namespace string,
+	pcsName string,
+	pcsReplica int,
+	pcsgConfig ScaledPCSGConfig,
+	pcsConstraint string,
+	logger *Logger,
+) {
+	podGroups, err := GetKAIPodGroupsForPCS(ctx, dynamicClient, namespace, pcsName)
+	if err != nil {
+		t.Fatalf("Failed to get KAI PodGroups: %v", err)
+	}
+
+	pcsgFQN := nameutils.GeneratePodCliqueScalingGroupName(
+		nameutils.ResourceNameReplica{Name: pcsName, Replica: pcsReplica},
+		pcsgConfig.PCSGName,
+	)
+
+	scaledPodGangName := nameutils.CreatePodGangNameFromPCSGFQN(pcsgFQN, pcsgConfig.PCSGReplica-1)
+
+	scaledPodGroup, err := FilterPodGroupByOwner(podGroups, scaledPodGangName)
+	if err != nil {
+		t.Fatalf("Failed to find scaled PodGroup for %s: %v", scaledPodGangName, err)
+	}
+
+	var expectedSubGroups []ExpectedSubGroup
+
+	for _, cliqueConfig := range pcsgConfig.CliqueConfigs {
+		expectedSubGroups = append(expectedSubGroups,
+			CreateExpectedPCLQInPCSGSubGroupNoParent(pcsName, pcsReplica, pcsgConfig.PCSGName, pcsgConfig.PCSGReplica, cliqueConfig.Name, cliqueConfig.PodCount, cliqueConfig.Constraint))
+	}
+
+	scaledTopConstraint := ""
+	if pcsgConfig.Constraint == "" {
+		scaledTopConstraint = pcsConstraint
+	}
+
+	if err := VerifyPodGroupTopology(scaledPodGroup, scaledTopConstraint, "", expectedSubGroups, logger); err != nil {
+		t.Fatalf("Failed to verify scaled PodGroup %s (%s replica %d) topology: %v",
+			scaledPodGangName, pcsgConfig.Name, pcsgConfig.PCSGReplica, err)
+	}
 }
