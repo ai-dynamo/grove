@@ -431,17 +431,20 @@ def main(
     script_dir = Path(__file__).resolve().parent
     operator_dir = script_dir.parent
 
-    # Debug: Print all parameters
-    console.print(f"[yellow]DEBUG: Parameters received:[/yellow]")
-    console.print(f"  delete={delete}, skip_kai={skip_kai}, skip_grove={skip_grove}")
-    console.print(f"  skip_topology={skip_topology}, skip_prepull={skip_prepull}")
-    console.print(f"  delete type: {type(delete)}, delete value: {repr(delete)}")
-    console.print(f"  delete == True: {delete == True}")
-    console.print(f"  delete is True: {delete is True}")
-    console.print(f"  bool(delete): {bool(delete)}")
+    # Fix: Typer may pass boolean flags as strings from environment variables
+    # Convert string 'False'/'false' to boolean False
+    if isinstance(delete, str):
+        delete = delete.lower() not in ('false', '0', '', 'no', 'n')
+    if isinstance(skip_kai, str):
+        skip_kai = skip_kai.lower() not in ('false', '0', '', 'no', 'n')
+    if isinstance(skip_grove, str):
+        skip_grove = skip_grove.lower() not in ('false', '0', '', 'no', 'n')
+    if isinstance(skip_topology, str):
+        skip_topology = skip_topology.lower() not in ('false', '0', '', 'no', 'n')
+    if isinstance(skip_prepull, str):
+        skip_prepull = skip_prepull.lower() not in ('false', '0', '', 'no', 'n')
 
     # Handle delete mode
-    console.print(f"[yellow]Checking if delete mode...[/yellow]")
     if delete:
         console.print(f"[red]ENTERING DELETE MODE (this should not happen if delete=False!)[/red]")
         delete_cluster(config)
