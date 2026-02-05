@@ -29,9 +29,9 @@ import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import docker
 import sh
@@ -49,6 +49,14 @@ console = Console(stderr=True)
 # ============================================================================
 # Configuration
 # ============================================================================
+
+# Webhook readiness check configuration
+WEBHOOK_READY_MAX_RETRIES = 60
+WEBHOOK_READY_POLL_INTERVAL_SECONDS = 5
+
+# Kai queue webhook readiness configuration
+KAI_QUEUE_MAX_RETRIES = 12
+KAI_QUEUE_POLL_INTERVAL_SECONDS = 5
 
 # Kai Scheduler images that need to be pre-pulled for faster cluster creation
 KAI_SCHEDULER_IMAGES = [
@@ -94,7 +102,7 @@ def require_command(cmd: str):
         raise typer.Exit(1)
 
 
-def run_cmd(cmd, *args, **kwargs) -> Tuple[int, any]:
+def run_cmd(cmd, *args, **kwargs) -> Tuple[int, Any]:
     """Run a command, handling errors gracefully. Returns (exit_code, output)."""
     try:
         output = cmd(*args, **kwargs)
@@ -288,7 +296,7 @@ def deploy_grove_operator(config: ClusterConfig, operator_dir: Path):
     run_cmd(sh.helm, "uninstall", "grove-operator", "-n", "grove-system", _ok_code=[0, 1])
 
     # Set environment for skaffold build
-    build_date = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    build_date = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     os.environ.update({
         "VERSION": "E2E_TESTS",
         "LD_FLAGS": (
@@ -348,7 +356,7 @@ def deploy_grove_operator(config: ClusterConfig, operator_dir: Path):
 
     # Wait for webhook
     console.print("[yellow]ℹ️  Waiting for Grove webhook to be ready...[/yellow]")
-    for i in range(1, 61):
+    for i in range(1, WEBHOOK_READY_MAX_RETRIES + 1):
         exit_code, result = run_cmd(
             sh.kubectl, "create", "-f", str(operator_dir / "e2e/yaml/workload1.yaml"),
             "--dry-run=server", "-n", "default",
@@ -361,17 +369,20 @@ def deploy_grove_operator(config: ClusterConfig, operator_dir: Path):
         else:
             output = (str(result.stdout) + str(result.stderr)).lower()
 
-        if any(kw in output for kw in ["validated", "denied", "error", "invalid", "created", "podcliqueset"]):
+        # Check if webhook responded (any response means it's alive, even errors)
+        # We're checking that the webhook service is reachable and processing requests
+        webhook_keywords = ["validated", "denied", "error", "invalid", "created", "podcliqueset"]
+        if any(kw in output for kw in webhook_keywords):
             console.print("[green]✅ Grove webhook is ready[/green]")
             break
 
-        if i == 60:
+        if i == WEBHOOK_READY_MAX_RETRIES:
             console.print(f"[red]❌ Timed out waiting for Grove webhook[/red]")
             console.print(f"Last response: {output}")
             raise typer.Exit(1)
 
-        console.print(f"[yellow]Webhook not ready yet, retrying in 5s... ({i}/60)[/yellow]")
-        time.sleep(5)
+        console.print(f"[yellow]Webhook not ready yet, retrying in {WEBHOOK_READY_POLL_INTERVAL_SECONDS}s... ({i}/{WEBHOOK_READY_MAX_RETRIES})[/yellow]")
+        time.sleep(WEBHOOK_READY_POLL_INTERVAL_SECONDS)
 
 
 def apply_topology_labels(config: ClusterConfig):
@@ -495,7 +506,7 @@ def main(
 
         # Wait for webhook to be available before applying queues (pods ready != webhook ready)
         console.print("[yellow]ℹ️  Creating default Kai queues (with retry for webhook readiness)...[/yellow]")
-        for i in range(1, 13):  # Retry up to 12 times (1 minute total)
+        for i in range(1, KAI_QUEUE_MAX_RETRIES + 1):
             exit_code, result = run_cmd(
                 sh.kubectl, "apply", "-f", str(operator_dir / "e2e/yaml/queues.yaml"),
                 _ok_code=[0, 1]
@@ -504,13 +515,13 @@ def main(
                 console.print("[green]✅ Kai queues created successfully[/green]")
                 break
 
-            if i == 12:
+            if i == KAI_QUEUE_MAX_RETRIES:
                 console.print("[red]❌ Failed to create Kai queues after retries[/red]")
                 console.print(f"Last error: {result.stderr if hasattr(result, 'stderr') else result}")
                 raise typer.Exit(1)
 
-            console.print(f"[yellow]Webhook not ready yet, retrying in 5s... ({i}/12)[/yellow]")
-            time.sleep(5)
+            console.print(f"[yellow]Webhook not ready yet, retrying in {KAI_QUEUE_POLL_INTERVAL_SECONDS}s... ({i}/{KAI_QUEUE_MAX_RETRIES})[/yellow]")
+            time.sleep(KAI_QUEUE_POLL_INTERVAL_SECONDS)
 
     # Apply topology
     if not skip_topology:
@@ -528,16 +539,12 @@ def main(
 
     # Write kubeconfig to both locations for maximum compatibility
     console.print(f"[yellow]Exporting kubeconfig...[/yellow]")
-    # Use k3d kubeconfig merge to write directly to the file
-    # The --overwrite flag ensures we write a clean kubeconfig (important for CI)
-    sh.k3d("kubeconfig", "merge", config.cluster_name, "-o", str(default_kubeconfig_path), "--overwrite")
-    default_kubeconfig_path.chmod(0o600)
-    console.print(f"[green]  ✓ Written to {default_kubeconfig_path}[/green]")
 
-    # Also write to CI location for explicit KUBECONFIG env var
-    sh.k3d("kubeconfig", "merge", config.cluster_name, "-o", str(ci_kubeconfig_path), "--overwrite")
-    ci_kubeconfig_path.chmod(0o600)
-    console.print(f"[green]  ✓ Written to {ci_kubeconfig_path}[/green]")
+    # For ~/.kube/config: smart merge (updates this cluster context, preserves others)
+    # Without --overwrite, k3d will merge with existing contexts
+    sh.k3d("kubeconfig", "merge", config.cluster_name, "-o", str(default_kubeconfig_path))
+    default_kubeconfig_path.chmod(0o600)
+    console.print(f"[green]  ✓ Merged to {default_kubeconfig_path}[/green]")
 
     # Print success message
     console.print(Panel.fit("Cluster setup complete!", style="bold green"))
