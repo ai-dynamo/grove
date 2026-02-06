@@ -59,7 +59,7 @@ spec:
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    cpu: "1000m"
+                    cpu: "400m"
                     memory: 10Mi
       - name: dleader
         labels:
@@ -90,7 +90,7 @@ spec:
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    cpu: "1000m"
+                    cpu: "400m"
                     memory: 10Mi
       - name: pworker
         topologyConstraint:
@@ -123,7 +123,7 @@ spec:
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    cpu: "1000m"
+                    cpu: "400m"
                     memory: 10Mi
       - name: pleader
         labels:
@@ -154,7 +154,7 @@ spec:
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    cpu: "1000m"
+                    cpu: "400m"
                     memory: 10Mi
       - name: router
         labels:
@@ -185,5 +185,5 @@ spec:
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    cpu: "1000m"
+                    cpu: "400m"
                     memory: 10Mi

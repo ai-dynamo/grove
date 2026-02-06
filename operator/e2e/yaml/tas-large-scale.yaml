@@ -51,5 +51,5 @@ spec:
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    cpu: "1000m"
+                    cpu: "400m"
                     memory: 10Mi
