@@ -40,6 +40,15 @@ spec:
                           operator: In
                           values:
                             - agent
+              podAntiAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  - labelSelector:
+                      matchExpressions:
+                        - key: grove.io/podclique
+                          operator: In
+                          values:
+                            - tas-large-scale-0-workers-0-worker
+                    topologyKey: kubernetes.io/hostname
             tolerations:
               - key: node_role.e2e.grove.nvidia.com
                 operator: Equal

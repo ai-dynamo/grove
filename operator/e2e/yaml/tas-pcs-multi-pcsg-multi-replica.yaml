@@ -48,6 +48,15 @@ spec:
                           operator: In
                           values:
                             - agent
+              podAntiAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  - labelSelector:
+                      matchExpressions:
+                        - key: grove.io/podclique
+                          operator: In
+                          values:
+                            - tas-pcs-multi-pcsg-0-decoder-0-dworker
+                    topologyKey: kubernetes.io/hostname
             tolerations:
               - key: node_role.e2e.grove.nvidia.com
                 operator: Equal
@@ -78,6 +87,15 @@ spec:
                           operator: In
                           values:
                             - agent
+              podAntiAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  - labelSelector:
+                      matchExpressions:
+                        - key: grove.io/podclique
+                          operator: In
+                          values:
+                            - tas-pcs-multi-pcsg-0-decoder-0-dleader
+                    topologyKey: kubernetes.io/hostname
             tolerations:
               - key: node_role.e2e.grove.nvidia.com
                 operator: Equal
@@ -110,6 +128,15 @@ spec:
                           operator: In
                           values:
                             - agent
+              podAntiAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  - labelSelector:
+                      matchExpressions:
+                        - key: grove.io/podclique
+                          operator: In
+                          values:
+                            - tas-pcs-multi-pcsg-0-prefill-0-pworker
+                    topologyKey: kubernetes.io/hostname
             tolerations:
               - key: node_role.e2e.grove.nvidia.com
                 operator: Equal
@@ -140,6 +167,15 @@ spec:
                           operator: In
                           values:
                             - agent
+              podAntiAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  - labelSelector:
+                      matchExpressions:
+                        - key: grove.io/podclique
+                          operator: In
+                          values:
+                            - tas-pcs-multi-pcsg-0-prefill-0-pleader
+                    topologyKey: kubernetes.io/hostname
             tolerations:
               - key: node_role.e2e.grove.nvidia.com
                 operator: Equal
@@ -170,6 +206,15 @@ spec:
                           operator: In
                           values:
                             - agent
+              podAntiAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  - labelSelector:
+                      matchExpressions:
+                        - key: grove.io/podclique
+                          operator: In
+                          values:
+                            - tas-pcs-multi-pcsg-0-router
+                    topologyKey: kubernetes.io/hostname
             tolerations:
               - key: node_role.e2e.grove.nvidia.com
                 operator: Equal
