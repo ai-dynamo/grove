@@ -51,6 +51,21 @@ var (
 	AllLogFormats = []LogFormat{LogFormatJSON, LogFormatText}
 )
 
+// SchedulerName defines the name of the scheduler backend.
+type SchedulerName string
+
+const (
+	// SchedulerNameKai is the Kai scheduler backend.
+	SchedulerNameKai SchedulerName = "kai-scheduler"
+	// SchedulerNameKube is the Kubernetes default scheduler backend.
+	SchedulerNameKube SchedulerName = "default-scheduler"
+)
+
+var (
+	// SupportedSchedulerNames is a slice of all supported scheduler names.
+	SupportedSchedulerNames = []SchedulerName{SchedulerNameKai, SchedulerNameKube}
+)
+
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // OperatorConfiguration defines the configuration for the Grove operator.
@@ -67,6 +82,10 @@ type OperatorConfiguration struct {
 	TopologyAwareScheduling TopologyAwareSchedulingConfiguration `json:"topologyAwareScheduling"`
 	// +optional
 	Network NetworkAcceleration `json:"network,omitempty"` // Network is the configuration for network acceleration features like MNNVL.
+	// SchedulerName is the name of the scheduler backend with which this instance of Grove operator will run.
+	// +required
+	// +kubebuilder:validation:Enum=kai-scheduler;default-scheduler
+	SchedulerName SchedulerName `json:"schedulerName"`
 }
 
 // LeaderElectionConfiguration defines the configuration for the leader election.

@@ -865,6 +865,23 @@ _Appears in:_
 | `concurrentSyncs` _integer_ | ConcurrentSyncs is the number of workers used for the controller to concurrently work on events. |  |  |
 
 
+#### SchedulerName
+
+_Underlying type:_ _string_
+
+SchedulerName defines the name of the scheduler backend.
+
+
+
+_Appears in:_
+- [OperatorConfiguration](#operatorconfiguration)
+
+| Field | Description |
+| --- | --- |
+| `kai-scheduler` | SchedulerNameKai is the Kai scheduler backend.<br /> |
+| `default-scheduler` | SchedulerNameKube is the Kubernetes default scheduler backend.<br /> |
+
+
 #### Server
 
 
