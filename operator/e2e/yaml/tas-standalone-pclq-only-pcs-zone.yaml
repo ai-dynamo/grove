@@ -51,4 +51,4 @@ spec:
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    memory: 10Mi
+                memory: 10Mi
