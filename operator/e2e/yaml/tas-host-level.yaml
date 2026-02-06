@@ -42,4 +42,5 @@ spec:
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    memory: 51m
+                    memory: 40Mi
+
