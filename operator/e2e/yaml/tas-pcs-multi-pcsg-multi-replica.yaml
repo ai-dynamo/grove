@@ -59,8 +59,7 @@ spec:
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    cpu: "400m"
-                    memory: 10Mi
+                    memory: 51m
       - name: dleader
         labels:
           kai.scheduler/queue: test
@@ -90,8 +89,7 @@ spec:
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    cpu: "400m"
-                    memory: 10Mi
+                    memory: 51m
       - name: pworker
         topologyConstraint:
           packDomain: host
@@ -123,8 +121,7 @@ spec:
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    cpu: "400m"
-                    memory: 10Mi
+                    memory: 51m
       - name: pleader
         labels:
           kai.scheduler/queue: test
@@ -154,8 +151,7 @@ spec:
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    cpu: "400m"
-                    memory: 10Mi
+                    memory: 51m
       - name: router
         labels:
           kai.scheduler/queue: test
@@ -185,5 +181,4 @@ spec:
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    cpu: "400m"
-                    memory: 10Mi
+                    memory: 51m

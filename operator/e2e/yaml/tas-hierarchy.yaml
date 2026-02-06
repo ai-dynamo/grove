@@ -53,8 +53,7 @@ spec:
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    cpu: "400m"
-                    memory: 10Mi
+                    memory: 51m
       - name: decode
         labels:
           kai.scheduler/queue: test
@@ -86,5 +85,4 @@ spec:
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    cpu: "400m"
-                    memory: 10Mi
+                    memory: 51m
