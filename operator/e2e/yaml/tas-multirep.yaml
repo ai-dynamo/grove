@@ -1,24 +1,24 @@
-# Workload: Host-Level Packing - PCS with single clique at host level
-# Test scenario: PCS with single clique constrained to host level
+# Workload 11: MR-1 - Multi-Replica with Rack Constraint
+# Test scenario: PCS with 2 replicas, each replica packs in separate rack
 ---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
-  name: tas-host-level
+  name: tas-multirep
   labels:
-    app: tas-host-level
+    app: tas-multirep
 spec:
-  replicas: 1
+  replicas: 2  # Creates 2 separate PodGangs (one per replica)
   template:
+    topologyConstraint:
+      packDomain: rack  # Each replica gang packs within its own rack
     cliques:
       - name: worker
         labels:
           kai.scheduler/queue: test
-        topologyConstraint:
-          packDomain: host
         spec:
           roleName: worker
-          replicas: 2
+          replicas: 2  # 2 pods per replica (total: 4 pods)
           minAvailable: 2
           podSpec:
             schedulerName: kai-scheduler
@@ -31,6 +31,15 @@ spec:
                           operator: In
                           values:
                             - agent
+              podAntiAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  - labelSelector:
+                      matchExpressions:
+                        - key: grove.io/podclique
+                          operator: In
+                          values:
+                            - tas-multirep-0-worker
+                    topologyKey: kubernetes.io/hostname
             tolerations:
               - key: node_role.e2e.grove.nvidia.com
                 operator: Equal
@@ -42,5 +51,4 @@ spec:
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    memory: 40Mi
-
+                    memory: 20Mi  # Small footprint to ensure resources not a constraint

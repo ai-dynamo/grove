@@ -1,15 +1,17 @@
-# Workload: Host-Level Packing - PCS with single clique at host level
-# Test scenario: PCS with single clique constrained to host level
+# Workload: SP2 - PCS+PCLQ Topology
+# Test scenario: PCS with block constraint, standalone PCLQ with host constraint
 ---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
-  name: tas-host-level
+  name: tas-pcs-pclq
   labels:
-    app: tas-host-level
+    app: tas-pcs-pclq
 spec:
   replicas: 1
   template:
+    topologyConstraint:
+      packDomain: block
     cliques:
       - name: worker
         labels:
@@ -43,4 +45,3 @@ spec:
                 resources:
                   requests:
                     memory: 40Mi
-

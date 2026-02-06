@@ -1,26 +1,36 @@
-# Workload 7: BP-1 - PCS with Multiple PodCliques Having Different Constraints
-# Test scenario: PCS with no constraint, but individual cliques have different constraints (rack vs block)
+# Workload 8: SP-1 - Full 3-Level Hierarchy with Cascading Constraints
+# Test scenario: PCS (block) → PCSG (rack) → PCLQ (host) - demonstrating constraint inheritance
 ---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
-  name: tas-indep-clq
+  name: tas-hierarchy
   labels:
-    app: tas-indep-clq
+    app: tas-hierarchy
 spec:
   replicas: 1
   template:
-    # NO topology constraint at PCS level
+    topologyConstraint:
+      packDomain: block  # PCS level - broadest
+    podCliqueScalingGroups:
+      - name: inference-group
+        replicas: 2
+        minAvailable: 2
+        topologyConstraint:
+          packDomain: rack  # PCSG level - stricter than parent
+        cliqueNames:
+          - prefill
+          - decode
     cliques:
-      - name: worker-rack
+      - name: prefill
         labels:
           kai.scheduler/queue: test
         topologyConstraint:
-          packDomain: rack  # Rack-level packing
+          packDomain: host  # PCLQ level - strictest
         spec:
-          roleName: worker-rack
-          replicas: 3
-          minAvailable: 3
+          roleName: prefill
+          replicas: 2
+          minAvailable: 2
           podSpec:
             schedulerName: kai-scheduler
             affinity:
@@ -32,36 +42,27 @@ spec:
                           operator: In
                           values:
                             - agent
-              podAntiAffinity:
-                requiredDuringSchedulingIgnoredDuringExecution:
-                  - labelSelector:
-                      matchExpressions:
-                        - key: grove.io/podclique
-                          operator: In
-                          values:
-                            - tas-indep-clq-0-worker-rack
-                    topologyKey: kubernetes.io/hostname
             tolerations:
               - key: node_role.e2e.grove.nvidia.com
                 operator: Equal
                 value: agent
                 effect: NoSchedule
             containers:
-              - name: worker-rack
+              - name: prefill
                 image: registry:5001/busybox:latest
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    memory: 20Mi
-      - name: worker-block
+                    memory: 40Mi
+      - name: decode
         labels:
           kai.scheduler/queue: test
         topologyConstraint:
-          packDomain: block  # Block-level packing (stricter)
+          packDomain: host  # PCLQ level - strictest
         spec:
-          roleName: worker-block
-          replicas: 4
-          minAvailable: 4
+          roleName: decode
+          replicas: 2
+          minAvailable: 2
           podSpec:
             schedulerName: kai-scheduler
             affinity:
@@ -73,24 +74,15 @@ spec:
                           operator: In
                           values:
                             - agent
-              podAntiAffinity:
-                requiredDuringSchedulingIgnoredDuringExecution:
-                  - labelSelector:
-                      matchExpressions:
-                        - key: grove.io/podclique
-                          operator: In
-                          values:
-                            - tas-indep-clq-0-worker-block
-                    topologyKey: kubernetes.io/hostname
             tolerations:
               - key: node_role.e2e.grove.nvidia.com
                 operator: Equal
                 value: agent
                 effect: NoSchedule
             containers:
-              - name: worker-block
+              - name: decode
                 image: registry:5001/busybox:latest
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    memory: 20Mi
+                    memory: 40Mi

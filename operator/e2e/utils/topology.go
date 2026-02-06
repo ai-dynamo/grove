@@ -203,3 +203,69 @@ func VerifyLabeledPodsInTopologyDomain(
 
 	return VerifyPodsInSameTopologyDomain(ctx, clientset, filteredPods, topologyKey, logger)
 }
+
+// PCSGTypeConfig defines configuration for a PCSG type verification
+type PCSGTypeConfig struct {
+	Name string // Human-readable name (e.g., "decoder")
+	FQN  string // Fully-qualified PCSG name
+}
+
+// VerifyPCSGReplicasInTopologyDomain verifies that each PCSG replica's pods
+// are in the same topology domain (e.g., rack, host).
+func VerifyPCSGReplicasInTopologyDomain(
+	ctx context.Context,
+	clientset kubernetes.Interface,
+	allPods []v1.Pod,
+	pcsgLabel string,
+	replicaCount int,
+	podsPerReplica int,
+	topologyLabel string,
+	logger *Logger,
+) error {
+	for replica := 0; replica < replicaCount; replica++ {
+		replicaPods := FilterPodsByLabel(
+			FilterPodsByLabel(allPods, "grove.io/podcliquescalinggroup", pcsgLabel),
+			"grove.io/podcliquescalinggroup-replica-index",
+			fmt.Sprintf("%d", replica),
+		)
+		if len(replicaPods) != podsPerReplica {
+			return fmt.Errorf("expected %d PCSG replica %d pods, got %d", podsPerReplica, replica, len(replicaPods))
+		}
+		if err := VerifyPodsInSameTopologyDomain(ctx, clientset, replicaPods, topologyLabel, logger); err != nil {
+			return fmt.Errorf("failed to verify PCSG replica %d pods in same topology domain: %w", replica, err)
+		}
+	}
+	return nil
+}
+
+// VerifyMultiTypePCSGReplicas verifies multiple PCSG types across replicas.
+// Each PCSG type has multiple replicas, and each replica's pods should be in the same topology domain.
+func VerifyMultiTypePCSGReplicas(
+	ctx context.Context,
+	clientset kubernetes.Interface,
+	allPods []v1.Pod,
+	pcsgTypes []PCSGTypeConfig,
+	replicasPerType int,
+	podsPerReplica int,
+	topologyLabel string,
+	logger *Logger,
+) error {
+	for _, pcsgType := range pcsgTypes {
+		for replica := 0; replica < replicasPerType; replica++ {
+			replicaPods := FilterPodsByLabel(
+				FilterPodsByLabel(allPods, "grove.io/podcliquescalinggroup", pcsgType.FQN),
+				"grove.io/podcliquescalinggroup-replica-index",
+				fmt.Sprintf("%d", replica),
+			)
+			if len(replicaPods) != podsPerReplica {
+				return fmt.Errorf("expected %d %s replica-%d pods, got %d",
+					podsPerReplica, pcsgType.Name, replica, len(replicaPods))
+			}
+			if err := VerifyPodsInSameTopologyDomain(ctx, clientset, replicaPods, topologyLabel, logger); err != nil {
+				return fmt.Errorf("failed to verify %s replica-%d pods in same topology domain: %w",
+					pcsgType.Name, replica, err)
+			}
+		}
+	}
+	return nil
+}

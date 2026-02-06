@@ -1,25 +1,25 @@
-# Workload: Host-Level Packing - PCS with single clique at host level
-# Test scenario: PCS with single clique constrained to host level
+# Workload 10: EC-1 - Insufficient Nodes for Constraint
+# Test scenario: PCS with rack constraint requesting more pods than can fit in any single rack
 ---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
-  name: tas-host-level
+  name: tas-insuffic
   labels:
-    app: tas-host-level
+    app: tas-insuffic
 spec:
   replicas: 1
   template:
+    topologyConstraint:
+      packDomain: rack  # All pods must be in same rack
     cliques:
       - name: worker
         labels:
           kai.scheduler/queue: test
-        topologyConstraint:
-          packDomain: host
         spec:
           roleName: worker
-          replicas: 2
-          minAvailable: 2
+          replicas: 10  # Exceeds capacity of any single rack
+          minAvailable: 10  # All-or-nothing gang scheduling
           podSpec:
             schedulerName: kai-scheduler
             affinity:
@@ -38,9 +38,7 @@ spec:
                 effect: NoSchedule
             containers:
               - name: worker
-                image: registry:5001/busybox:latest
-                command: ["sleep", "infinity"]
+                image: registry:5001/nginx:alpine-slim
                 resources:
                   requests:
-                    memory: 40Mi
-
+                    memory: 500Mi  # Large enough to prevent 10 pods fitting in 1 rack (2 nodes)

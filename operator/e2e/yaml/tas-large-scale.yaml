@@ -1,15 +1,24 @@
-# Workload: Host-Level Packing - PCS with single clique at host level
-# Test scenario: PCS with single clique constrained to host level
+# Workload: SP8 - Large Scaling Ratio
+# Test scenario: PCS with block constraint, PCSG with rack constraint and replicas=10/minAvailable=3, PCLQ with host constraint
 ---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
-  name: tas-host-level
+  name: tas-large-scale
   labels:
-    app: tas-host-level
+    app: tas-large-scale
 spec:
   replicas: 1
   template:
+    topologyConstraint:
+      packDomain: block
+    podCliqueScalingGroups:
+      - name: workers
+        replicas: 10
+        minAvailable: 3
+        topologyConstraint:
+        cliqueNames:
+          - worker
     cliques:
       - name: worker
         labels:
@@ -43,4 +52,3 @@ spec:
                 resources:
                   requests:
                     memory: 40Mi
-

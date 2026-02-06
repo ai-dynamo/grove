@@ -1,15 +1,23 @@
-# Workload: Host-Level Packing - PCS with single clique at host level
-# Test scenario: PCS with single clique constrained to host level
+# Workload: SP5 - PCSG+PCLQ Topology (no PCS constraint)
+# Test scenario: No PCS constraint, PCSG with rack constraint, PCLQ with host constraint
 ---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
-  name: tas-host-level
+  name: tas-pcsg-pclq
   labels:
-    app: tas-host-level
+    app: tas-pcsg-pclq
 spec:
   replicas: 1
   template:
+    podCliqueScalingGroups:
+      - name: workers
+        replicas: 2
+        minAvailable: 2
+        topologyConstraint:
+          packDomain: rack
+        cliqueNames:
+          - worker
     cliques:
       - name: worker
         labels:
@@ -43,4 +51,3 @@ spec:
                 resources:
                   requests:
                     memory: 40Mi
-
