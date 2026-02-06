@@ -48,15 +48,6 @@ spec:
                           operator: In
                           values:
                             - agent
-              podAntiAffinity:
-                requiredDuringSchedulingIgnoredDuringExecution:
-                  - labelSelector:
-                      matchExpressions:
-                        - key: grove.io/podclique
-                          operator: In
-                          values:
-                            - tas-pcs-multi-pcsg-0-decoder-0-dworker
-                    topologyKey: kubernetes.io/hostname
             tolerations:
               - key: node_role.e2e.grove.nvidia.com
                 operator: Equal
@@ -68,6 +59,7 @@ spec:
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
+                    cpu: "500m"
                     memory: 10Mi
       - name: dleader
         labels:
@@ -87,15 +79,6 @@ spec:
                           operator: In
                           values:
                             - agent
-              podAntiAffinity:
-                requiredDuringSchedulingIgnoredDuringExecution:
-                  - labelSelector:
-                      matchExpressions:
-                        - key: grove.io/podclique
-                          operator: In
-                          values:
-                            - tas-pcs-multi-pcsg-0-decoder-0-dleader
-                    topologyKey: kubernetes.io/hostname
             tolerations:
               - key: node_role.e2e.grove.nvidia.com
                 operator: Equal
@@ -107,6 +90,7 @@ spec:
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
+                    cpu: "500m"
                     memory: 10Mi
       - name: pworker
         topologyConstraint:
@@ -128,15 +112,6 @@ spec:
                           operator: In
                           values:
                             - agent
-              podAntiAffinity:
-                requiredDuringSchedulingIgnoredDuringExecution:
-                  - labelSelector:
-                      matchExpressions:
-                        - key: grove.io/podclique
-                          operator: In
-                          values:
-                            - tas-pcs-multi-pcsg-0-prefill-0-pworker
-                    topologyKey: kubernetes.io/hostname
             tolerations:
               - key: node_role.e2e.grove.nvidia.com
                 operator: Equal
@@ -148,6 +123,7 @@ spec:
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
+                    cpu: "500m"
                     memory: 10Mi
       - name: pleader
         labels:
@@ -167,15 +143,6 @@ spec:
                           operator: In
                           values:
                             - agent
-              podAntiAffinity:
-                requiredDuringSchedulingIgnoredDuringExecution:
-                  - labelSelector:
-                      matchExpressions:
-                        - key: grove.io/podclique
-                          operator: In
-                          values:
-                            - tas-pcs-multi-pcsg-0-prefill-0-pleader
-                    topologyKey: kubernetes.io/hostname
             tolerations:
               - key: node_role.e2e.grove.nvidia.com
                 operator: Equal
@@ -187,6 +154,7 @@ spec:
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
+                    cpu: "500m"
                     memory: 10Mi
       - name: router
         labels:
@@ -206,15 +174,6 @@ spec:
                           operator: In
                           values:
                             - agent
-              podAntiAffinity:
-                requiredDuringSchedulingIgnoredDuringExecution:
-                  - labelSelector:
-                      matchExpressions:
-                        - key: grove.io/podclique
-                          operator: In
-                          values:
-                            - tas-pcs-multi-pcsg-0-router
-                    topologyKey: kubernetes.io/hostname
             tolerations:
               - key: node_role.e2e.grove.nvidia.com
                 operator: Equal
@@ -226,4 +185,5 @@ spec:
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
+                    cpu: "500m"
                     memory: 10Mi
