@@ -1,5 +1,5 @@
 # Workload: SP8 - Large Scaling Ratio
-# Test scenario: PCS with block constraint, PCSG with rack constraint and replicas=10/minAvailable=3, PCLQ with host constraint
+# Test scenario: PCS with block constraint, PCSG with replicas=10/minAvailable=3, PCLQ with host constraint
 ---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet

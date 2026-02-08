@@ -49,11 +49,12 @@ type PCSGCliqueConfig struct {
 
 // ScaledPCSGConfig defines configuration for verifying a scaled PCSG replica
 type ScaledPCSGConfig struct {
-	Name         string
-	PCSGName     string
-	PCSGReplica  int
+	Name          string
+	PCSGName      string
+	PCSGReplica   int
+	MinAvailable  int
 	CliqueConfigs []PCSGCliqueConfig
-	Constraint   string
+	Constraint    string
 }
 
 // CreateExpectedStandalonePCLQSubGroup creates an ExpectedSubGroup for a standalone PodClique (not in PCSG)
@@ -330,7 +331,7 @@ func VerifyScaledPCSGReplicaTopology(
 		pcsgConfig.PCSGName,
 	)
 
-	scaledPodGangName := nameutils.CreatePodGangNameFromPCSGFQN(pcsgFQN, pcsgConfig.PCSGReplica-1)
+	scaledPodGangName := nameutils.CreatePodGangNameFromPCSGFQN(pcsgFQN, pcsgConfig.PCSGReplica-pcsgConfig.MinAvailable)
 
 	scaledPodGroup, err := FilterPodGroupByOwner(podGroups, scaledPodGangName)
 	if err != nil {

@@ -596,18 +596,18 @@ func Test_TAS10_PCSGScalingWithTopologyConstraints(t *testing.T) {
 		t.Fatalf("Failed to verify PCSG replicas: %v", err)
 	}
 
-	logger.Info("4. Verify all pods respect PCS-level rack constraint")
+	logger.Info("4. Verify all pods respect PCS-level block constraint")
 	if len(allPods) != expectedPods {
 		t.Fatalf("Expected %d pods, got %d", expectedPods, len(allPods))
 	}
-	if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, allPods, setup.TopologyLabelRack, logger); err != nil {
-		t.Fatalf("Failed to verify all pods in same rack: %v", err)
+	if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, allPods, setup.TopologyLabelBlock, logger); err != nil {
+		t.Fatalf("Failed to verify all pods in same block: %v", err)
 	}
 
 	logger.Info("5. Verify KAI PodGroup has correct SubGroups with topology constraints")
 	podGroup := GetPodGroupOrFail(t, tc, 0)
 
-	// Verify top-level TopologyConstraint (PCS level: rack)
+	// Verify top-level TopologyConstraint (PCS level: block)
 	// Base PodGang contains only minAvailable=1 PCSG replica
 	// PCSG has replicas=3 and minAvailable=1, so base PodGang contains ONLY replica 0
 	// Replicas 1 and 2 are in separate scaled PodGangs
@@ -625,9 +625,10 @@ func Test_TAS10_PCSGScalingWithTopologyConstraints(t *testing.T) {
 	lo.ForEach([]int{1, 2}, func(pcsgReplica int, _ int) {
 		utils.VerifyScaledPCSGReplicaTopology(tc.Ctx, t, tc.DynamicClient, tc.Namespace, tc.Workload.Name, 0,
 			utils.ScaledPCSGConfig{
-				Name:        "inference-group",
-				PCSGName:    "inference-group",
-				PCSGReplica: pcsgReplica,
+				Name:         "inference-group",
+				PCSGName:     "inference-group",
+				PCSGReplica:  pcsgReplica,
+				MinAvailable: 1,
 				CliqueConfigs: []utils.PCSGCliqueConfig{
 					{Name: "worker", PodCount: 2, Constraint: ""},
 				},
@@ -953,9 +954,10 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 	// Define PCSG configurations (minAvailable=1, totalReplicas=2 for each)
 	pcsgConfigs := []utils.ScaledPCSGConfig{
 		{
-			Name:        "decoder",
-			PCSGName:    "decoder",
-			PCSGReplica: 1,
+			Name:         "decoder",
+			PCSGName:     "decoder",
+			PCSGReplica:  1,
+			MinAvailable: 1,
 			CliqueConfigs: []utils.PCSGCliqueConfig{
 				{Name: "dworker", PodCount: 1, Constraint: ""},
 				{Name: "dleader", PodCount: 1, Constraint: ""},
@@ -963,9 +965,10 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 			Constraint: setup.TopologyLabelRack,
 		},
 		{
-			Name:        "prefill",
-			PCSGName:    "prefill",
-			PCSGReplica: 1,
+			Name:         "prefill",
+			PCSGName:     "prefill",
+			PCSGReplica:  1,
+			MinAvailable: 1,
 			CliqueConfigs: []utils.PCSGCliqueConfig{
 				{Name: "pworker", PodCount: 1, Constraint: ""},
 				{Name: "pleader", PodCount: 1, Constraint: ""},
@@ -1006,17 +1009,17 @@ func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 		t.Fatalf("Setup failed: %v", err)
 	}
 
-	logger.Info("3. Verify block-level constraint (all 20 pods in same block)")
-	if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, allPods, setup.TopologyLabelBlock, logger); err != nil {
-		t.Fatalf("Failed to verify all pods in same block: %v", err)
-	}
-
 	// Verify for each PCS replica
 	for pcsReplica := 0; pcsReplica < 2; pcsReplica++ {
 		replicaLabel := fmt.Sprintf("%d", pcsReplica)
 		replicaPods := utils.FilterPodsByLabel(allPods, "grove.io/podcliqueset-replica-index", replicaLabel)
 		if len(replicaPods) != 10 {
 			t.Fatalf("Expected 10 pods for PCS replica %d, got %d", pcsReplica, len(replicaPods))
+		}
+
+		logger.Infof("3.%d. Verify PCS replica %d pods in same block (PCS block constraint)", pcsReplica+1, pcsReplica)
+		if err := utils.VerifyPodsInSameTopologyDomain(tc.Ctx, tc.Clientset, replicaPods, setup.TopologyLabelBlock, logger); err != nil {
+			t.Fatalf("Failed to verify PCS replica %d pods in same block: %v", pcsReplica, err)
 		}
 
 		logger.Infof("4.%d. Verify PCS replica %d pods topology constraints", pcsReplica+1, pcsReplica)
