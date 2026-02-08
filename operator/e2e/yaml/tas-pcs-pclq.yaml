@@ -1,25 +1,27 @@
-# Workload: ZL1 - Zone-Level Topology Constraint
-# Test scenario: PCS with zone constraint (widest domain), PCLQ without constraint
+# Workload: SP2 - PCS+PCLQ Topology
+# Test scenario: PCS with block constraint, standalone PCLQ with host constraint
 ---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
-  name: tas-standalone-pclq
+  name: tas-pcs-pclq
   labels:
-    app: tas-standalone-pclq
+    app: tas-pcs-pclq
 spec:
   replicas: 1
   template:
     topologyConstraint:
-      packDomain: zone
+      packDomain: block
     cliques:
       - name: worker
         labels:
           kai.scheduler/queue: test
+        topologyConstraint:
+          packDomain: host
         spec:
           roleName: worker
-          replicas: 4
-          minAvailable: 4
+          replicas: 2
+          minAvailable: 2
           podSpec:
             schedulerName: kai-scheduler
             affinity:
@@ -31,15 +33,6 @@ spec:
                           operator: In
                           values:
                             - agent
-              podAntiAffinity:
-                requiredDuringSchedulingIgnoredDuringExecution:
-                  - labelSelector:
-                      matchExpressions:
-                        - key: grove.io/podclique
-                          operator: In
-                          values:
-                            - tas-standalone-pclq-0-worker
-                    topologyKey: kubernetes.io/hostname
             tolerations:
               - key: node_role.e2e.grove.nvidia.com
                 operator: Equal

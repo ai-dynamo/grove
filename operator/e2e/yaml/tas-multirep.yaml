@@ -1,25 +1,25 @@
-# Workload: ZL1 - Zone-Level Topology Constraint
-# Test scenario: PCS with zone constraint (widest domain), PCLQ without constraint
+# Workload 11: MR-1 - Multi-Replica with Rack Constraint
+# Test scenario: PCS with 2 replicas, each replica packs in separate rack
 ---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
-  name: tas-standalone-pclq
+  name: tas-multirep
   labels:
-    app: tas-standalone-pclq
+    app: tas-multirep
 spec:
-  replicas: 1
+  replicas: 2  # Creates 2 separate PodGangs (one per replica)
   template:
     topologyConstraint:
-      packDomain: zone
+      packDomain: rack  # Each replica gang packs within its own rack
     cliques:
       - name: worker
         labels:
           kai.scheduler/queue: test
         spec:
           roleName: worker
-          replicas: 4
-          minAvailable: 4
+          replicas: 2  # 2 pods per replica (total: 4 pods)
+          minAvailable: 2
           podSpec:
             schedulerName: kai-scheduler
             affinity:
@@ -38,7 +38,7 @@ spec:
                         - key: grove.io/podclique
                           operator: In
                           values:
-                            - tas-standalone-pclq-0-worker
+                            - tas-multirep-0-worker
                     topologyKey: kubernetes.io/hostname
             tolerations:
               - key: node_role.e2e.grove.nvidia.com
@@ -51,4 +51,4 @@ spec:
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    memory: 40Mi
+                    memory: 20Mi  # Small footprint to ensure resources not a constraint

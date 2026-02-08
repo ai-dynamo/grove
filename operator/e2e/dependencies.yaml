@@ -31,7 +31,6 @@ images:
     version: v0.13.0-rc1
   - name: ghcr.io/nvidia/kai-scheduler/scheduler
     version: v0.13.0-rc1
-
   # Cert-manager
   - name: quay.io/jetstack/cert-manager-controller
     version: v1.14.4
@@ -41,6 +40,10 @@ images:
     version: v1.14.4
   - name: quay.io/jetstack/cert-manager-ctl
     version: v1.14.4
+
+  # Lightweight container for test pods
+  - name: busybox
+    version: latest
 
 # Helm charts used in E2E tests
 helmCharts:

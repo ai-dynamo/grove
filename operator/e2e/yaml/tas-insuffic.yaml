@@ -1,25 +1,25 @@
-# Workload: ZL1 - Zone-Level Topology Constraint
-# Test scenario: PCS with zone constraint (widest domain), PCLQ without constraint
+# Workload 10: EC-1 - Insufficient Nodes for Constraint
+# Test scenario: PCS with rack constraint requesting more pods than can fit in any single rack
 ---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
-  name: tas-standalone-pclq
+  name: tas-insuffic
   labels:
-    app: tas-standalone-pclq
+    app: tas-insuffic
 spec:
   replicas: 1
   template:
     topologyConstraint:
-      packDomain: zone
+      packDomain: rack  # All pods must be in same rack
     cliques:
       - name: worker
         labels:
           kai.scheduler/queue: test
         spec:
           roleName: worker
-          replicas: 4
-          minAvailable: 4
+          replicas: 10  # Exceeds capacity of any single rack
+          minAvailable: 10  # All-or-nothing gang scheduling
           podSpec:
             schedulerName: kai-scheduler
             affinity:
@@ -31,15 +31,6 @@ spec:
                           operator: In
                           values:
                             - agent
-              podAntiAffinity:
-                requiredDuringSchedulingIgnoredDuringExecution:
-                  - labelSelector:
-                      matchExpressions:
-                        - key: grove.io/podclique
-                          operator: In
-                          values:
-                            - tas-standalone-pclq-0-worker
-                    topologyKey: kubernetes.io/hostname
             tolerations:
               - key: node_role.e2e.grove.nvidia.com
                 operator: Equal
@@ -47,8 +38,7 @@ spec:
                 effect: NoSchedule
             containers:
               - name: worker
-                image: registry:5001/busybox:latest
-                command: ["sleep", "infinity"]
+                image: registry:5001/nginx:alpine-slim
                 resources:
                   requests:
-                    memory: 40Mi
+                    memory: 500Mi  # Large enough to prevent 10 pods fitting in 1 rack (2 nodes)
