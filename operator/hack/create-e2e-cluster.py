@@ -149,14 +149,12 @@ def require_command(cmd: str):
 
 
 def run_cmd(cmd, *args, **kwargs) -> Tuple[int, Any]:
-    """Run a command, handling errors gracefully. Returns (exit_code, output)."""
-    try:
-        output = cmd(*args, **kwargs)
-        return 0, output
-    except sh.ErrorReturnCode as e:
-        if not kwargs.get("_ok_code"):
-            raise
-        return e.exit_code, e
+    """Run a command, handling errors gracefully. Returns (exit_code, output).
+    Pass _ok_code=[0, 1, ...] to suppress exceptions for expected exit codes.
+    The sh library handles this natively - it won't raise for codes in _ok_code.
+    """
+    output = cmd(*args, **kwargs)
+    return output.exit_code, output
 
 
 # ============================================================================
