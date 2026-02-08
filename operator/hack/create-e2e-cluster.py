@@ -503,35 +503,9 @@ def main(
     if '--skip-prepull' in sys.argv:
         skip_prepull = True
 
-    # Debug: Print raw values before any processing
-    console.print(f"[red]═══ DEBUG START ═══[/red]")
-    console.print(f"[yellow]sys.argv: {sys.argv}[/yellow]")
-    console.print(f"[yellow]After argv check - delete: {delete!r} (type: {type(delete).__name__})[/yellow]")
-    console.print(f"[yellow]After argv check - skip_kai: {skip_kai!r}[/yellow]")
-    console.print(f"[yellow]After argv check - skip_grove: {skip_grove!r}[/yellow]")
-    console.print(f"[red]═══ DEBUG END ═══[/red]")
-
     config = ClusterConfig()
     script_dir = Path(__file__).resolve().parent
     operator_dir = script_dir.parent
-
-    # With is_flag=True, Typer passes boolean flags correctly
-    # No need for to_bool conversion, but keeping it for safety with environment variables
-    def to_bool(value) -> bool:
-        """Convert various value types to boolean."""
-        if value is None:
-            return False
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            return value.lower() not in ('false', '0', '', 'no', 'n', 'none')
-        return bool(value)
-
-    delete = to_bool(delete)
-    skip_kai = to_bool(skip_kai)
-    skip_grove = to_bool(skip_grove)
-    skip_topology = to_bool(skip_topology)
-    skip_prepull = to_bool(skip_prepull)
 
     # Handle delete mode
     if delete:
