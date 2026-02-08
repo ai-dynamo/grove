@@ -170,6 +170,7 @@ jobs:
       # clean state even though GitHub Actions runners are ephemeral.
       - name: Cleanup k3d cluster
         if: always()
+        working-directory: operator
         run: |
           make e2e-cluster-down || true
 
