@@ -471,11 +471,11 @@ def apply_topology_labels(config: ClusterConfig):
 
 @app.command()
 def main(
-    skip_kai: bool = typer.Option(False, "--skip-kai/--no-skip-kai", help="Skip Kai Scheduler installation"),
-    skip_grove: bool = typer.Option(False, "--skip-grove/--no-skip-grove", help="Skip Grove operator deployment"),
-    skip_topology: bool = typer.Option(False, "--skip-topology/--no-skip-topology", help="Skip topology label application"),
-    skip_prepull: bool = typer.Option(False, "--skip-prepull/--no-skip-prepull", help="Skip image pre-pulling (faster but cluster startup will be slower)"),
-    delete: bool = typer.Option(False, "--delete/--no-delete", help="Delete the cluster and exit"),
+    skip_kai: bool = typer.Option(False, "--skip-kai", help="Skip Kai Scheduler installation"),
+    skip_grove: bool = typer.Option(False, "--skip-grove", help="Skip Grove operator deployment"),
+    skip_topology: bool = typer.Option(False, "--skip-topology", help="Skip topology label application"),
+    skip_prepull: bool = typer.Option(False, "--skip-prepull", help="Skip image pre-pulling (faster but cluster startup will be slower)"),
+    delete: bool = typer.Option(False, "--delete", help="Delete the cluster and exit"),
 ):
     """
     Create and configure a k3d cluster for Grove E2E tests.
@@ -489,17 +489,26 @@ def main(
     Environment variables can override defaults (see E2E_* variables).
     """
 
-    # Debug: Print raw values before any processing
+    # Workaround: Typer has issues with boolean flags in some environments
+    # Manually check sys.argv for flags since Typer may pass None or strings
     import sys
+    if '--delete' in sys.argv:
+        delete = True
+    if '--skip-kai' in sys.argv:
+        skip_kai = True
+    if '--skip-grove' in sys.argv:
+        skip_grove = True
+    if '--skip-topology' in sys.argv:
+        skip_topology = True
+    if '--skip-prepull' in sys.argv:
+        skip_prepull = True
+
+    # Debug: Print raw values before any processing
     console.print(f"[red]═══ DEBUG START ═══[/red]")
     console.print(f"[yellow]sys.argv: {sys.argv}[/yellow]")
-    console.print(f"[yellow]Raw delete parameter: {delete!r} (type: {type(delete).__name__})[/yellow]")
-    console.print(f"[yellow]Raw skip_kai: {skip_kai!r}[/yellow]")
-    console.print(f"[yellow]Raw skip_grove: {skip_grove!r}[/yellow]")
-    console.print(f"[yellow]Environment variables:[/yellow]")
-    console.print(f"[yellow]  E2E_DELETE={os.environ.get('E2E_DELETE', 'NOT SET')}[/yellow]")
-    console.print(f"[yellow]  E2E_SKIP_KAI={os.environ.get('E2E_SKIP_KAI', 'NOT SET')}[/yellow]")
-    console.print(f"[yellow]  E2E_SKIP_GROVE={os.environ.get('E2E_SKIP_GROVE', 'NOT SET')}[/yellow]")
+    console.print(f"[yellow]After argv check - delete: {delete!r} (type: {type(delete).__name__})[/yellow]")
+    console.print(f"[yellow]After argv check - skip_kai: {skip_kai!r}[/yellow]")
+    console.print(f"[yellow]After argv check - skip_grove: {skip_grove!r}[/yellow]")
     console.print(f"[red]═══ DEBUG END ═══[/red]")
 
     config = ClusterConfig()
