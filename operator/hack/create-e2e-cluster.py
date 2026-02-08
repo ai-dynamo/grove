@@ -471,11 +471,11 @@ def apply_topology_labels(config: ClusterConfig):
 
 @app.command()
 def main(
-    skip_kai: bool = typer.Option(False, "--skip-kai", help="Skip Kai Scheduler installation"),
-    skip_grove: bool = typer.Option(False, "--skip-grove", help="Skip Grove operator deployment"),
-    skip_topology: bool = typer.Option(False, "--skip-topology", help="Skip topology label application"),
-    skip_prepull: bool = typer.Option(False, "--skip-prepull", help="Skip image pre-pulling (faster but cluster startup will be slower)"),
-    delete: bool = typer.Option(False, "--delete", help="Delete the cluster and exit"),
+    skip_kai: bool = typer.Option(False, "--skip-kai", is_flag=True, help="Skip Kai Scheduler installation"),
+    skip_grove: bool = typer.Option(False, "--skip-grove", is_flag=True, help="Skip Grove operator deployment"),
+    skip_topology: bool = typer.Option(False, "--skip-topology", is_flag=True, help="Skip topology label application"),
+    skip_prepull: bool = typer.Option(False, "--skip-prepull", is_flag=True, help="Skip image pre-pulling (faster but cluster startup will be slower)"),
+    delete: bool = typer.Option(False, "--delete", is_flag=True, help="Delete the cluster and exit"),
 ):
     """
     Create and configure a k3d cluster for Grove E2E tests.
