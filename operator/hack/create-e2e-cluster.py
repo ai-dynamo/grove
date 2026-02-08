@@ -489,12 +489,25 @@ def main(
     Environment variables can override defaults (see E2E_* variables).
     """
 
+    # Debug: Print raw values before any processing
+    import sys
+    console.print(f"[red]═══ DEBUG START ═══[/red]")
+    console.print(f"[yellow]sys.argv: {sys.argv}[/yellow]")
+    console.print(f"[yellow]Raw delete parameter: {delete!r} (type: {type(delete).__name__})[/yellow]")
+    console.print(f"[yellow]Raw skip_kai: {skip_kai!r}[/yellow]")
+    console.print(f"[yellow]Raw skip_grove: {skip_grove!r}[/yellow]")
+    console.print(f"[yellow]Environment variables:[/yellow]")
+    console.print(f"[yellow]  E2E_DELETE={os.environ.get('E2E_DELETE', 'NOT SET')}[/yellow]")
+    console.print(f"[yellow]  E2E_SKIP_KAI={os.environ.get('E2E_SKIP_KAI', 'NOT SET')}[/yellow]")
+    console.print(f"[yellow]  E2E_SKIP_GROVE={os.environ.get('E2E_SKIP_GROVE', 'NOT SET')}[/yellow]")
+    console.print(f"[red]═══ DEBUG END ═══[/red]")
+
     config = ClusterConfig()
     script_dir = Path(__file__).resolve().parent
     operator_dir = script_dir.parent
 
-    # Fix: Typer may pass boolean flags as strings from environment variables
-    # Convert string values to boolean, treating None as False
+    # With is_flag=True, Typer passes boolean flags correctly
+    # No need for to_bool conversion, but keeping it for safety with environment variables
     def to_bool(value) -> bool:
         """Convert various value types to boolean."""
         if value is None:
