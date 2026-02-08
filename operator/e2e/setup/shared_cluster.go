@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 	"time"
 
@@ -37,9 +38,6 @@ import (
 )
 
 const (
-	// relativeSkaffoldYAMLPath is the path to the skaffold.yaml file relative to the e2e/tests directory
-	relativeSkaffoldYAMLPath = "../../skaffold.yaml"
-
 	// cleanupTimeout is the maximum time to wait for all resources and pods to be deleted during cleanup.
 	// This needs to be long enough to allow for cascade deletion propagation through
 	// PodCliqueSet -> PodCliqueScalingGroup -> PodClique -> Pod
@@ -47,6 +45,16 @@ const (
 
 	// cleanupPollInterval is the interval between checks during cleanup polling
 	cleanupPollInterval = 1 * time.Second
+
+	// Default registry port for local development clusters (e.g., k3d with local registry)
+	defaultRegistryPort = "5001"
+
+	// Environment variables for cluster configuration.
+	// The cluster must be created beforehand with Grove operator and Kai scheduler deployed.
+	// For local development with k3d, use: ./operator/hack/create-e2e-cluster.py
+
+	// EnvRegistryPort specifies the container registry port for test images (optional)
+	EnvRegistryPort = "E2E_REGISTRY_PORT"
 )
 
 // resourceType represents a Kubernetes resource type for cleanup operations
@@ -75,7 +83,9 @@ var groveManagedResourceTypes = []resourceType{
 	{"autoscaling", "v2", "horizontalpodautoscalers", "HorizontalPodAutoscalers"},
 }
 
-// SharedClusterManager manages a shared (singleton) k3d cluster for E2E tests
+// SharedClusterManager manages a shared (singleton) Kubernetes cluster for E2E tests.
+// It connects to an existing cluster via kubeconfig and manages test lifecycle operations
+// like workload cleanup and node cordoning.
 type SharedClusterManager struct {
 	clientset     *kubernetes.Clientset
 	restConfig    *rest.Config
@@ -104,38 +114,50 @@ func SharedCluster(logger *utils.Logger) *SharedClusterManager {
 	return sharedCluster
 }
 
-// Setup initializes the shared cluster with maximum required resources
+// Setup initializes the shared cluster by connecting to an existing Kubernetes cluster.
+//
+// The cluster must be created beforehand with:
+//   - Grove operator deployed and ready
+//   - Kai scheduler deployed and ready
+//   - Required node labels and topology configuration
+//
+// For local development with k3d:
+//
+//	./operator/hack/create-e2e-cluster.py
+//
+// Optional environment variables:
+//   - E2E_REGISTRY_PORT (default: 5001, for pushing test images to local registry)
+//
+// The cluster connection is established via standard kubeconfig resolution:
+//   - KUBECONFIG environment variable, or
+//   - ~/.kube/config, or
+//   - In-cluster config
 func (scm *SharedClusterManager) Setup(ctx context.Context, testImages []string) error {
 	if scm.isSetup {
 		return nil
 	}
 
-	// Track whether setup completed successfully
-	var setupSuccessful bool
+	return scm.connectToCluster(ctx, testImages)
+}
 
-	// Use the centralized cluster config with overrides for shared test cluster
-	customCfg := DefaultClusterConfig()
-	customCfg.Name = "shared-e2e-test-cluster"
-	customCfg.HostPort = "6560"         // Use a different port to avoid conflicts
-	customCfg.LoadBalancerPort = "8090:80"
-
-	scm.registryPort = customCfg.RegistryPort
-
-	scm.logger.Info("🚀 Setting up shared k3d cluster for all e2e tests...")
-
-	restConfig, cleanup, err := SetupCompleteK3DCluster(ctx, customCfg, relativeSkaffoldYAMLPath, scm.logger)
-	// Defer cleanup on error - only call if setup was not successful and we have a cleanup function
-	defer func() {
-		if !setupSuccessful && cleanup != nil {
-			cleanup()
-		}
-	}()
-	if err != nil {
-		return fmt.Errorf("failed to setup shared k3d cluster: %w", err)
+// connectToCluster connects to an existing Kubernetes cluster using standard kubeconfig resolution.
+// It expects the cluster to already have Grove operator, Kai scheduler, etc. installed.
+func (scm *SharedClusterManager) connectToCluster(ctx context.Context, testImages []string) error {
+	// Get registry port from env or use default
+	registryPort := os.Getenv(EnvRegistryPort)
+	if registryPort == "" {
+		registryPort = defaultRegistryPort
 	}
+	scm.registryPort = registryPort
 
+	scm.logger.Info("🔗 Connecting to existing Kubernetes cluster...")
+
+	// Get REST config using standard kubeconfig resolution
+	restConfig, err := GetRestConfig()
+	if err != nil {
+		return fmt.Errorf("failed to get cluster config: %w", err)
+	}
 	scm.restConfig = restConfig
-	scm.cleanup = cleanup
 
 	// Create clientset from restConfig
 	clientset, err := kubernetes.NewForConfig(restConfig)
@@ -151,9 +173,11 @@ func (scm *SharedClusterManager) Setup(ctx context.Context, testImages []string)
 	}
 	scm.dynamicClient = dynamicClient
 
-	// Setup test images in registry
-	if err := SetupRegistryTestImages(scm.registryPort, testImages); err != nil {
-		return fmt.Errorf("failed to setup registry test images: %w", err)
+	// Setup test images in registry (if registry port is configured)
+	if scm.registryPort != "" && len(testImages) > 0 {
+		if err := SetupRegistryTestImages(scm.registryPort, testImages); err != nil {
+			return fmt.Errorf("failed to setup registry test images: %w", err)
+		}
 	}
 
 	// Get list of worker nodes for cordoning management
@@ -169,9 +193,19 @@ func (scm *SharedClusterManager) Setup(ctx context.Context, testImages []string)
 		}
 	}
 
-	scm.logger.Infof("✅ Shared cluster setup complete with %d worker nodes", len(scm.workerNodes))
+	// Start node monitoring to handle unhealthy k3d nodes during test execution.
+	// This is critical for k3d clusters where nodes can become NotReady due to resource pressure.
+	// The monitoring automatically detects and replaces unhealthy nodes to prevent test flakiness.
+	nodeMonitoringCleanup := StartNodeMonitoring(ctx, clientset, scm.logger)
+
+	// Cleanup function stops node monitoring - we don't delete the cluster when tests finish
+	scm.cleanup = func() {
+		nodeMonitoringCleanup()
+		scm.logger.Info("ℹ️  Test run complete - cluster preserved for inspection or reuse")
+	}
+
+	scm.logger.Infof("✅ Connected to cluster with %d worker nodes", len(scm.workerNodes))
 	scm.isSetup = true
-	setupSuccessful = true
 	return nil
 }
 
@@ -218,7 +252,7 @@ func (scm *SharedClusterManager) CleanupWorkloads(ctx context.Context) error {
 		return nil
 	}
 
-	scm.logger.Debug("🧹 Cleaning up workloads from shared cluster...")
+	scm.logger.Info("🧹 Cleaning up workloads from shared cluster...")
 
 	// Step 1: Delete PodCliqueSets first (should cascade delete other resources)
 	if err := scm.deleteAllResources(ctx, "grove.io", "v1alpha1", "podcliquesets"); err != nil {
@@ -226,6 +260,7 @@ func (scm *SharedClusterManager) CleanupWorkloads(ctx context.Context) error {
 	}
 
 	// Step 2: Poll for all resources and pods to be cleaned up
+	scm.logger.Infof("⏳ Waiting up to %v for cascade deletion to complete...", cleanupTimeout)
 	if err := scm.waitForAllGroveManagedResourcesAndPodsDeleted(ctx, cleanupTimeout, cleanupPollInterval); err != nil {
 		// List remaining resources and pods for debugging
 		scm.listRemainingGroveManagedResources(ctx)
@@ -255,14 +290,24 @@ func (scm *SharedClusterManager) deleteAllResources(ctx context.Context, group, 
 		return fmt.Errorf("failed to list %s: %w", resource, err)
 	}
 
+	if len(resourceList.Items) == 0 {
+		scm.logger.Debugf("No %s found to delete", resource)
+		return nil
+	}
+
+	scm.logger.Infof("🗑️ Deleting %d %s...", len(resourceList.Items), resource)
+
 	// Delete each resource
 	for _, item := range resourceList.Items {
 		namespace := item.GetNamespace()
 		name := item.GetName()
 
+		scm.logger.Debugf("Deleting %s %s/%s", resource, namespace, name)
 		err := scm.dynamicClient.Resource(gvr).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 		if err != nil {
 			scm.logger.Warnf("failed to delete %s %s/%s: %v", resource, namespace, name, err)
+		} else {
+			scm.logger.Debugf("✓ Delete request sent for %s %s/%s", resource, namespace, name)
 		}
 	}
 
@@ -323,9 +368,14 @@ func (scm *SharedClusterManager) resetNodeStates(ctx context.Context) error {
 
 // waitForAllGroveManagedResourcesAndPodsDeleted waits for all Grove resources and pods to be deleted
 func (scm *SharedClusterManager) waitForAllGroveManagedResourcesAndPodsDeleted(ctx context.Context, timeout time.Duration, interval time.Duration) error {
+	startTime := time.Now()
+	lastLogTime := startTime
+	logInterval := 30 * time.Second // Log progress every 30 seconds
+
 	return utils.PollForCondition(ctx, timeout, interval, func() (bool, error) {
 		allResourcesDeleted := true
 		totalResources := 0
+		var resourceDetails []string
 
 		// Create label selector for Grove-managed resources
 		labelSelector := fmt.Sprintf("%s=%s", common.LabelManagedByKey, common.LabelManagedByValue)
@@ -356,6 +406,14 @@ func (scm *SharedClusterManager) waitForAllGroveManagedResourcesAndPodsDeleted(c
 			if len(resourceList.Items) > 0 {
 				allResourcesDeleted = false
 				totalResources += len(resourceList.Items)
+				for _, item := range resourceList.Items {
+					deletionTS := item.GetDeletionTimestamp()
+					if deletionTS != nil {
+						resourceDetails = append(resourceDetails, fmt.Sprintf("%s/%s (deleting since %v)", item.GetNamespace(), item.GetName(), time.Since(deletionTS.Time).Round(time.Second)))
+					} else {
+						resourceDetails = append(resourceDetails, fmt.Sprintf("%s/%s (NOT marked for deletion!)", item.GetNamespace(), item.GetName()))
+					}
+				}
 			}
 		}
 
@@ -373,11 +431,16 @@ func (scm *SharedClusterManager) waitForAllGroveManagedResourcesAndPodsDeleted(c
 		}
 
 		if allResourcesDeleted && allPodsDeleted {
+			scm.logger.Infof("✅ All resources deleted after %v", time.Since(startTime).Round(time.Second))
 			return true, nil
 		}
 
-		if totalResources > 0 || nonSystemPods > 0 {
-			scm.logger.Debugf("⏳ Waiting for %d Grove resources and %d pods to be deleted...", totalResources, nonSystemPods)
+		// Log progress at intervals for visibility
+		now := time.Now()
+		if now.Sub(lastLogTime) >= logInterval {
+			lastLogTime = now
+			elapsed := now.Sub(startTime).Round(time.Second)
+			scm.logger.Infof("⏳ [%v elapsed] Waiting for %d resources and %d pods. Details: %v", elapsed, totalResources, nonSystemPods, resourceDetails)
 		}
 
 		return false, nil
@@ -465,7 +528,9 @@ func (scm *SharedClusterManager) Teardown() {
 	}
 }
 
-// SetupRegistryTestImages pulls images and pushes them to the local k3d registry.
+// SetupRegistryTestImages pulls images and pushes them to a local container registry.
+// This is used for test images that need to be available inside the cluster.
+// The registry is expected to be accessible at localhost:<registryPort>.
 func SetupRegistryTestImages(registryPort string, images []string) error {
 	if len(images) == 0 {
 		return nil

@@ -142,10 +142,27 @@ jobs:
           sudo install skaffold /usr/local/bin/
           skaffold version
 
+      - name: Install Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm version
+
+      - name: Install Python3 and pip
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-pip
+
+      - name: Install Python dependencies
+        run: |
+          echo "Installing Python dependencies..."
+          pip3 install --break-system-packages -r operator/hack/requirements.txt
+
+          echo "Verifying Python dependencies..."
+          python3 -c "import docker; import sh; import typer; import pydantic; import rich; print('All dependencies installed successfully')"
+
       - name: Run e2e tests - ${{ matrix.test_name }}
         run: |
-          mkdir -p e2e-diagnostics
-          make test-e2e TEST_PATTERN='${{ matrix.test_pattern }}' DIAG_DIR=e2e-diagnostics
+          make test-e2e-full TEST_PATTERN='${{ matrix.test_pattern }}'
         working-directory: operator
 
       # The test code handles cleanup via Teardown(), but this step provides
@@ -154,7 +171,7 @@ jobs:
       - name: Cleanup k3d cluster
         if: always()
         run: |
-          k3d cluster delete shared-e2e-test-cluster || true
+          make e2e-cluster-down || true
 
       # Upload diagnostic logs collected by debug_utils.go on test failure.
       # Uses 'warn' since this only runs on failure and missing files indicates a problem.
