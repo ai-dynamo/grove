@@ -570,6 +570,13 @@ def main(
             config.registry_port,
             DEPENDENCIES['cert_manager']['version']
         )
+        # Pre-pull test workload images (busybox for topology tests)
+        if 'test_images' in DEPENDENCIES and 'busybox' in DEPENDENCIES['test_images']:
+            prepull_images(
+                DEPENDENCIES['test_images']['busybox'],
+                config.registry_port,
+                'latest'
+            )
 
     # Install components
     if not skip_kai:

@@ -40,3 +40,9 @@ cert_manager:
     # Additional images cert-manager may pull
     - "quay.io/jetstack/cert-manager-acmesolver"
     - "quay.io/jetstack/cert-manager-ctl"
+
+# Test workload images
+test_images:
+  # Lightweight container used for topology and other E2E tests
+  busybox:
+    - "busybox"
