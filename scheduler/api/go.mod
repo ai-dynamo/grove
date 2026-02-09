@@ -1,8 +1,8 @@
 module github.com/ai-dynamo/grove/scheduler/api
 
-go 1.24.0
+go 1.25.0
 
-require k8s.io/apimachinery v0.34.2
+require k8s.io/apimachinery v0.34.3
 
 require (
 	github.com/emicklei/go-restful/v3 v3.11.0 // indirect

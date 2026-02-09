@@ -1,10 +1,10 @@
 module github.com/ai-dynamo/grove/scheduler/client
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/ai-dynamo/grove/scheduler/api v0.0.0
-	k8s.io/apimachinery v0.34.2
+	k8s.io/apimachinery v0.34.3
 	k8s.io/client-go v0.33.1
 )
 
