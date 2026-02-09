@@ -505,7 +505,7 @@ def main(
 
     config = ClusterConfig()
     script_dir = Path(__file__).resolve().parent
-    operator_dir = script_dir.parent
+    operator_dir = script_dir.parent.parent  # Go up from hack/e2e-cluster/ to operator/
 
     # With is_flag=True, Typer passes boolean flags correctly
     # No need for to_bool conversion, but keeping it for safety with environment variables
