@@ -679,9 +679,6 @@ func Test_RU17_RollingUpdateWithPCSGScaleInBeforeUpdate(t *testing.T) {
 }
 */
 
-/* This test is failing intermittently. Need to investigate. Seems to be
-   a race between the scale and the update.
-
 // Test_RU18_RollingUpdateWithPodCliqueScaleOutDuringUpdate tests rolling update with scale-out on standalone PCLQ being updated
 // Scenario RU-18:
 // 1. Initialize a 24-node Grove cluster
@@ -765,7 +762,6 @@ func Test_RU18_RollingUpdateWithPodCliqueScaleOutDuringUpdate(t *testing.T) {
 
 	logger.Info("🎉 Rolling Update with PodClique scale-out during update test (RU-18) completed successfully!")
 }
-*/
 
 // Test_RU19_RollingUpdateWithPodCliqueScaleOutBeforeUpdate tests rolling update with scale-out on standalone PCLQ before it is updated
 // Scenario RU-19:
