@@ -59,3 +59,33 @@ You must use your real name (sorry, no pseudonyms or anonymous contributions).
 
 If you set your `user.name` and `user.email` using git config, you can sign
 your commit automatically with `git commit -s`.
+
+## Pull Request Requirements
+
+Every pull request must reference at least one **open** GitHub issue in its description. This ensures that all changes are tracked and linked to project requirements or bug reports.
+
+### Valid Issue References
+
+Your PR description must include an issue reference in the format: `#123`
+
+You can use it with optional keywords like `fixes`, `closes`, or `resolves`, but the simple `#123` format is sufficient.
+
+**Examples of Valid PR Descriptions:**
+
+```markdown
+## Summary
+Implements Redis caching layer for API responses to improve performance.
+
+Issue: #789
+
+## Changes
+- Added Redis client configuration
+- Implemented cache middleware
+- Updated API response handlers
+```
+
+### Requirements
+
+1. **At least one open issue** - The PR description must reference at least one issue that is currently open (not closed or marked as Done)
+2. **Issue must exist** - The referenced issue number must exist in the repository
+3. **Automated validation** - A GitHub Actions workflow will automatically validate all PRs
