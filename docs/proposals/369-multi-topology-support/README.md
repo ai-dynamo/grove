@@ -1,4 +1,4 @@
-# GREP-NNNN: Short descriptive title
+# GREP-369: Support Multiple Topologies
 
 <!-- toc -->
 - [Summary](#summary)
@@ -6,9 +6,10 @@
   - [Goals](#goals)
   - [Non-Goals](#non-goals)
 - [Proposal](#proposal)
-  - [User Stories (<em>Optional</em>)](#user-stories-optional)
-    - [Story 1 (<em>Optional</em>)](#story-1-optional)
-    - [Story 2 (<em>Optional</em>)](#story-2-optional)
+  - [User Stories](#user-stories)
+    - [Story 1: Heterogeneous GPU Clusters](#story-1-heterogeneous-gpu-clusters)
+    - [Story 2: Multi-Cloud Clusters](#story-2-multi-cloud-clusters)
+    - [Story 3: Topology Retry Before Scheduling](#story-3-topology-retry-before-scheduling)
   - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
 - [Design Details](#design-details)
   - [Monitoring](#monitoring)
@@ -31,43 +32,61 @@ tags, and then generate by invoking the make target `update-toc`.
 
 ## Summary
 
-<!--
-This section should contain user-focused documentation such as release notes or a development roadmap. It should also have a summary of functional increment that is being introduced as part of this GREP. A good summary should address a wider audience and should ideally be a single paragraph.
--->
+Heterogeneous clusters may contain hardware with different topology characteristics, such as multiple GPU architectures or nodes spanning multiple cloud providers. This GREP proposes extending the Grove topology API to support multiple named topologies, allowing workloads to specify which topology applies to them.
 
 ## Motivation
 
-<!-- 
-This section explicitly lists the motivation which consists of goals and the non-goals of this GREP. Use this section to describe why the change introduced in this GREP is important and what benefits it brings to the users.
--->
+Grove's topology API currently supports a single cluster-wide topology defined in the OperatorConfiguration. This works well for homogeneous clusters but becomes limiting when infrastructure diversity increases.
+
+AI clusters often contain heterogeneous hardware with different interconnect characteristics, or span multiple cloud environments. Each hardware type or environment may require a distinct topology definition for optimal scheduling.
+
+Enabling multiple topologies allows:
+
+- **Accurate Infrastructure Modeling**: Administrators can define topologies matching their actual hardware rather than using a single approximation.
+- **Workload Portability**: Users can target specific topologies without embedding infrastructure details into workload specifications.
 
 ### Goals
 
-<!-- 
-Lists specific goals of this GREP. What is it trying to achieve.
--->
+- Define a mechanism for creating multiple named topology resources within a single cluster
+- Extend the PodCliqueSet API to reference a specific topology
+- Provide default topology selection when none is explicitly specified
+- Maintain backward compatibility with existing deployments
 
 ### Non-Goals
 
-<!-- 
-Lists what all is out of scope of this GREP. Listing non-goals helps to clearly define the scope within which the discussions should happen.
--->
+- Automatic topology discovery or inference from node labels
+- Dynamic topology switching for running workloads
+- Cross-topology scheduling within a single PodCliqueSet
 
 ## Proposal
 
-<!-- 
-Contains the specifics of the proposal. Sufficient details should be provided to help reviewers clearly understand the proposal. It should not include API design, low level design and implementation details which should be mentioned under 'Design Details' section instead.
--->
+This GREP extends the existing topology API to support multiple ClusterTopology resources within a single cluster, and adds a reference mechanism for PodCliqueSets to select which topology applies.
 
-### User Stories (*Optional*)
+The existing `TopologyConstraint` API, where users specify topology domains (e.g., "rack", "host"), remains unchanged. What changes is how the operator resolves which ClusterTopology to use when translating those domain names to infrastructure-specific node label keys.
 
-<!-- 
-This section provides detailed use cases descibing how changes introduced in this GREP are going to be used. The intent is to carve out real-world scenarios which serve as additional motivation providing clarity/context for the changes proposed.
--->
+The approach has four parts:
 
-#### Story 1 (*Optional*)
+1. **Multiple ClusterTopology resources**: Remove the restriction to a single operator-managed ClusterTopology. Allow administrators to create multiple named ClusterTopology resources, each describing a different topology hierarchy.
 
-#### Story 2 (*Optional*)
+2. **Topology reference on PodCliqueSet**: Add a field to PodCliqueSet that references a specific ClusterTopology by name. This determines which topology definition is used for scheduling.
+
+3. **Default topology**: When no topology is explicitly referenced, a designated default topology is used, preserving backward compatibility.
+
+4. **Mutable topology reference until scheduling**: The topology reference on a PodCliqueSet can be changed while the workload is not yet running, allowing users to retry scheduling against a different topology. Once the gang starts running, the topology reference becomes immutable and updates are rejected.
+
+### User Stories
+
+#### Story 1: Heterogeneous GPU Clusters
+
+As a cluster administrator managing a cluster with different GPU architectures, I want to define separate topologies for each architecture so that workloads are scheduled with topology awareness appropriate to the hardware they're running on.
+
+#### Story 2: Multi-Cloud Clusters
+
+As a platform engineer managing AI workloads on a cluster spanning multiple cloud environments, I want to define environment-specific topologies so that workloads get optimal placement regardless of where they run, without users needing to know the underlying infrastructure details.
+
+#### Story 3: Topology Retry Before Scheduling
+
+As a user submitting a PodCliqueSet to a cluster with multiple scheduling shards, I want to be able to change the target topology while my workload is pending, so I can retry on a different shard if the first one cannot accommodate my gang. Once the gang starts running, the topology should be locked.
 
 ### Limitations/Risks & Mitigations
 
