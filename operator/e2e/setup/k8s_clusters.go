@@ -19,7 +19,7 @@
 // The cluster must be created beforehand with Grove operator, Kai scheduler, and required
 // test infrastructure already deployed. For local development with k3d, you can use:
 //
-//	./operator/hack/create-e2e-cluster.py
+//	./operator/hack/e2e-cluster/create-e2e-cluster.py
 //
 // This package only handles connecting to existing clusters - it does not create clusters.
 package setup
@@ -51,14 +51,14 @@ const (
 	defaultPollInterval = 5 * time.Second
 )
 
-// GetRestConfig returns a REST config for connecting to a Kubernetes cluster.
+// getRestConfig returns a REST config for connecting to a Kubernetes cluster.
 // It tries the following methods in order:
 //  1. KUBECONFIG environment variable (if set)
 //  2. Default kubeconfig at ~/.kube/config
 //
-// For local development with k3d, run './operator/hack/create-e2e-cluster.py' first
+// For local development with k3d, run './operator/hack/e2e-cluster/create-e2e-cluster.py' first
 // to create a cluster and configure kubectl.
-func GetRestConfig() (*rest.Config, error) {
+func getRestConfig() (*rest.Config, error) {
 	// Try KUBECONFIG environment variable first
 	kubeconfigPath := os.Getenv("KUBECONFIG")
 	if kubeconfigPath == "" {
@@ -70,17 +70,16 @@ func GetRestConfig() (*rest.Config, error) {
 	}
 
 	// Try to load from kubeconfig file
-	if kubeconfigPath != "" {
-		if _, err := os.Stat(kubeconfigPath); err == nil {
-			config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
-			if err == nil {
-				return config, nil
-			}
-		}
+	if kubeconfigPath == "" {
+		return nil, fmt.Errorf("failed to get kubernetes config: no KUBECONFIG found and ~/.kube/config not accessible." +
+			"For local development, run './operator/hack/e2e-cluster/create-e2e-cluster.py' first")
 	}
 
-	return nil, fmt.Errorf("failed to get kubernetes config: no KUBECONFIG found and ~/.kube/config not accessible." +
-		"For local development, run './operator/hack/create-e2e-cluster.py' first")
+	if _, err := os.Stat(kubeconfigPath); err != nil {
+		return nil, fmt.Errorf("had an error reading the kubeconfig at %s:%v", kubeconfigPath, err)
+	}
+
+	return clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 }
 
 // StartNodeMonitoring starts a goroutine that monitors k3d cluster nodes for not ready status

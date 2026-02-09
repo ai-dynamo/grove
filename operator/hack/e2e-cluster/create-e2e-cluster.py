@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # /*
-# Copyright 2025 The Grove Authors.
+# Copyright 2026 The Grove Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -32,15 +32,15 @@ Environment Variables:
 
 Examples:
     # Use defaults
-    ./hack/create-e2e-cluster.py
+    ./hack/e2e-cluster/create-e2e-cluster.py
 
     # Override cluster name and worker count
-    E2E_CLUSTER_NAME=my-cluster E2E_WORKER_NODES=50 ./hack/create-e2e-cluster.py
+    E2E_CLUSTER_NAME=my-cluster E2E_WORKER_NODES=50 ./hack/e2e-cluster/create-e2e-cluster.py
 
     # Delete cluster
-    ./hack/create-e2e-cluster.py --delete
+    ./hack/e2e-cluster/create-e2e-cluster.py --delete
 
-For detailed usage information, run: ./hack/create-e2e-cluster.py --help
+For detailed usage information, run: ./hack/e2e-cluster/create-e2e-cluster.py --help
 """
 
 import json
@@ -111,7 +111,7 @@ class ClusterConfig(BaseSettings):
         # In shell
         export E2E_CLUSTER_NAME=my-test-cluster
         export E2E_REGISTRY_PORT=5002
-        ./create-e2e-cluster.py
+        ./e2e-cluster/create-e2e-cluster.py
     """
 
     model_config = SettingsConfigDict(env_prefix="E2E_", extra="ignore")
@@ -636,8 +636,8 @@ def main(
     console.print(Panel.fit("Cluster setup complete!", style="bold green"))
     console.print("[yellow]To run E2E tests against this cluster:[/yellow]")
     console.print(f"\n  export E2E_REGISTRY_PORT={config.registry_port}")
-    console.print("  make test-e2e")
-    console.print("  make test-e2e TEST_PATTERN=Test_GS  # specific tests\n")
+    console.print("  make run-e2e")
+    console.print("  make run-e2e TEST_PATTERN=Test_GS  # specific tests\n")
     console.print(f"[green]✅ Cluster '{config.cluster_name}' is ready for E2E testing![/green]")
 
 

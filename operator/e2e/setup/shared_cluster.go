@@ -51,7 +51,7 @@ const (
 
 	// Environment variables for cluster configuration.
 	// The cluster must be created beforehand with Grove operator and Kai scheduler deployed.
-	// For local development with k3d, use: ./operator/hack/create-e2e-cluster.py
+	// For local development with k3d, use: ./operator/hack/e2e-cluster/create-e2e-cluster.py
 
 	// EnvRegistryPort specifies the container registry port for test images (optional)
 	EnvRegistryPort = "E2E_REGISTRY_PORT"
@@ -83,7 +83,7 @@ var groveManagedResourceTypes = []resourceType{
 	{"autoscaling", "v2", "horizontalpodautoscalers", "HorizontalPodAutoscalers"},
 }
 
-// SharedClusterManager manages a shared (singleton) Kubernetes cluster for E2E tests.
+// SharedClusterManager manages a shared Kubernetes cluster for E2E tests.
 // It connects to an existing cluster via kubeconfig and manages test lifecycle operations
 // like workload cleanup and node cordoning.
 type SharedClusterManager struct {
@@ -123,7 +123,7 @@ func SharedCluster(logger *utils.Logger) *SharedClusterManager {
 //
 // For local development with k3d:
 //
-//	./operator/hack/create-e2e-cluster.py
+//	./operator/hack/e2e-cluster/create-e2e-cluster.py
 //
 // Optional environment variables:
 //   - E2E_REGISTRY_PORT (default: 5001, for pushing test images to local registry)
@@ -153,7 +153,7 @@ func (scm *SharedClusterManager) connectToCluster(ctx context.Context, testImage
 	scm.logger.Info("🔗 Connecting to existing Kubernetes cluster...")
 
 	// Get REST config using standard kubeconfig resolution
-	restConfig, err := GetRestConfig()
+	restConfig, err := getRestConfig()
 	if err != nil {
 		return fmt.Errorf("failed to get cluster config: %w", err)
 	}

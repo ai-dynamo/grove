@@ -88,22 +88,22 @@ cover-html: test-cover
 
 # Run e2e tests against an existing cluster
 # Requires: E2E_USE_EXISTING_CLUSTER=true and a pre-created cluster
-# Usage: make test-e2e [TEST_PATTERN=<pattern>] [DIAG_DIR=<path>] [DIAG_MODE=<mode>]
+# Usage: make run-e2e [TEST_PATTERN=<pattern>] [DIAG_DIR=<path>] [DIAG_MODE=<mode>]
 # Examples:
-#   make test-e2e                              # Run all tests
-#   make test-e2e TEST_PATTERN=Test_GS         # Run gang scheduling tests
-#   make test-e2e TEST_PATTERN=Test_GS1        # Run specific test
-#   make test-e2e TEST_PATTERN=Test_TAS        # Run topology tests
-#   GROVE_E2E_DIAG_MODE=both make test-e2e     # Output to stdout and file
-#   GROVE_E2E_DIAG_MODE=stdout make test-e2e   # Output to stdout only
+#   make run-e2e                              # Run all tests
+#   make run-e2e TEST_PATTERN=Test_GS         # Run gang scheduling tests
+#   make run-e2e TEST_PATTERN=Test_GS1        # Run specific test
+#   make run-e2e TEST_PATTERN=Test_TAS        # Run topology tests
+#   GROVE_E2E_DIAG_MODE=both make run-e2e     # Output to stdout and file
+#   GROVE_E2E_DIAG_MODE=stdout make run-e2e   # Output to stdout only
 #
 # Environment variables:
 #   GROVE_E2E_DIAG_MODE - Diagnostic output mode: stdout, file, both (default: file)
 #   GROVE_E2E_DIAG_DIR  - Directory for diagnostic files (default: operator/)
-.PHONY: test-e2e
-test-e2e: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
-test-e2e: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
-test-e2e:
+.PHONY: run-e2e
+run-e2e: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
+run-e2e: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
+run-e2e:
 	@echo "> Preparing charts (copying CRDs)..."
 	@$(MODULE_HACK_DIR)/prepare-charts.sh
 	@echo "> Running e2e tests..."
@@ -113,22 +113,22 @@ test-e2e:
 # This is optional - tests work with any Kubernetes cluster that has the required components
 .PHONY: e2e-cluster-up
 e2e-cluster-up:
-	@$(MODULE_HACK_DIR)/create-e2e-cluster.py
+	@$(MODULE_HACK_DIR)/e2e-cluster/create-e2e-cluster.py
 
 # Delete the k3d e2e test cluster
 .PHONY: e2e-cluster-down
 e2e-cluster-down:
-	@$(MODULE_HACK_DIR)/create-e2e-cluster.py --delete
+	@$(MODULE_HACK_DIR)/e2e-cluster/create-e2e-cluster.py --delete
 
 # Full e2e test run: create k3d cluster, run tests, then cleanup
-# Usage: make test-e2e-full [TEST_PATTERN=<pattern>]
+# Usage: make run-e2e-full [TEST_PATTERN=<pattern>]
 # Examples:
-#   make test-e2e-full                          # Run all tests
-#   make test-e2e-full TEST_PATTERN=Test_GS     # Run gang scheduling tests only
-.PHONY: test-e2e-full
-test-e2e-full: e2e-cluster-up
+#   make run-e2e-full                          # Run all tests
+#   make run-e2e-full TEST_PATTERN=Test_GS     # Run gang scheduling tests only
+.PHONY: run-e2e-full
+run-e2e-full: e2e-cluster-up
 	@echo "> Running e2e tests..."
-	@E2E_REGISTRY_PORT=5001 $(MAKE) test-e2e TEST_PATTERN=$(TEST_PATTERN) || \
+	@E2E_REGISTRY_PORT=5001 $(MAKE) run-e2e TEST_PATTERN=$(TEST_PATTERN) || \
 		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down

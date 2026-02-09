@@ -101,10 +101,10 @@ cover-html:
 	@make --directory=operator cover-html
 
 # Runs e2e tests for the operator
-.PHONY: test-e2e
-test-e2e:
+.PHONY: run-e2e
+run-e2e:
 	@echo "> Running e2e tests for operator"
-	@make --directory=operator test-e2e
+	@make --directory=operator run-e2e
 
 # Runs all tests
 .PHONY: test

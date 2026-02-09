@@ -31,20 +31,20 @@ pip install -r requirements.txt
 
 ```bash
 # Create a cluster with all components (includes image pre-pulling)
-./hack/create-e2e-cluster.py
+./hack/e2e-cluster/create-e2e-cluster.py
 
 # View all options
-./hack/create-e2e-cluster.py --help
+./hack/e2e-cluster/create-e2e-cluster.py --help
 
 # Delete the cluster
-./hack/create-e2e-cluster.py --delete
+./hack/e2e-cluster/create-e2e-cluster.py --delete
 
 # Skip specific components
-./hack/create-e2e-cluster.py --skip-grove
-./hack/create-e2e-cluster.py --skip-kai
+./hack/e2e-cluster/create-e2e-cluster.py --skip-grove
+./hack/e2e-cluster/create-e2e-cluster.py --skip-kai
 
 # Skip image pre-pulling (faster script start, but slower cluster startup)
-./hack/create-e2e-cluster.py --skip-prepull
+./hack/e2e-cluster/create-e2e-cluster.py --skip-prepull
 ```
 
 **Environment Variables:**
@@ -55,7 +55,7 @@ All configuration can be overridden via environment variables:
 export E2E_CLUSTER_NAME=my-cluster
 export E2E_WORKER_NODES=50
 export E2E_KAI_VERSION=v0.14.0
-./hack/create-e2e-cluster.py
+./hack/e2e-cluster/create-e2e-cluster.py
 ```
 
 Available variables:

@@ -29,13 +29,13 @@ brew install k3d
 
 From the repository root:
 ```bash
-make test-e2e
+make run-e2e
 ```
 
 Or directly from the operator directory:
 ```bash
 cd operator
-make test-e2e
+make run-e2e
 ```
 
 The test suite will:
@@ -100,7 +100,7 @@ images:
 
 ### "No matches for kind PodCliqueSet" Error
 
-This means CRDs weren't copied to the Helm charts. The `make test-e2e` target automatically runs `prepare-charts.sh`, but if you're running tests manually:
+This means CRDs weren't copied to the Helm charts. The `make run-e2e` target automatically runs `prepare-charts.sh`, but if you're running tests manually:
 ```bash
 ./hack/prepare-charts.sh
 cd e2e && go clean -testcache && go test -tags=e2e ./tests/... -v ---timeout 45m
