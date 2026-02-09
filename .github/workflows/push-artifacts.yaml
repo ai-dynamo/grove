@@ -24,7 +24,7 @@ on:
       - '*.*.*'
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 jobs:
@@ -88,3 +88,79 @@ jobs:
       - name: Push Helm Chart
         run: |
           helm push ./grove-charts-$PACKAGE_VERSION.tgz oci://$DOCKER_REGISTRY
+
+      - name: Validate Docker Images
+        run: |
+          echo "Validating Docker images were pushed successfully..."
+
+          # Verify grove-operator image
+          docker pull $DOCKER_REGISTRY/grove-operator:$PACKAGE_VERSION
+          echo "✓ grove-operator:$PACKAGE_VERSION pulled successfully"
+
+          # Verify grove-initc image
+          docker pull $DOCKER_REGISTRY/grove-initc:$PACKAGE_VERSION
+          echo "✓ grove-initc:$PACKAGE_VERSION pulled successfully"
+
+          # Verify image metadata
+          docker inspect $DOCKER_REGISTRY/grove-operator:$PACKAGE_VERSION > /dev/null
+          docker inspect $DOCKER_REGISTRY/grove-initc:$PACKAGE_VERSION > /dev/null
+
+          echo "✓ All Docker images validated successfully"
+
+      - name: Validate Helm Chart
+        run: |
+          echo "Validating Helm chart was pushed successfully..."
+
+          # Pull the chart to verify it's available
+          helm pull oci://$DOCKER_REGISTRY/grove-charts --version $PACKAGE_VERSION
+
+          echo "✓ Helm chart grove-charts:$PACKAGE_VERSION validated successfully"
+
+      - name: Generate artifact checksums
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          echo "Generating checksums for release artifacts..."
+          sha256sum grove-charts-$PACKAGE_VERSION.tgz > grove-charts-$PACKAGE_VERSION.tgz.sha256
+          echo "✓ Checksums generated"
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+          generate_release_notes: true
+          body: |
+            ## Installation
+
+            ### Using Helm (Recommended)
+
+            Install Grove using the published Helm chart:
+
+            ```bash
+            helm upgrade -i grove oci://${{ env.DOCKER_REGISTRY }}/grove-charts --version ${{ env.PACKAGE_VERSION }}
+            ```
+
+            ### Using Docker Images
+
+            The following container images are available for this release:
+
+            - **Operator**: `${{ env.DOCKER_REGISTRY }}/grove-operator:${{ env.PACKAGE_VERSION }}`
+            - **Init Container**: `${{ env.DOCKER_REGISTRY }}/grove-initc:${{ env.PACKAGE_VERSION }}`
+
+            ## Artifacts
+
+            - **Helm Chart**: [grove-charts:${{ env.PACKAGE_VERSION }}](https://github.com/${{ github.repository }}/pkgs/container/grove%2Fgrove-charts)
+            - **Docker Images**: [Packages](https://github.com/${{ github.repository }}/pkgs/container/grove-operator)
+
+            ## Documentation
+
+            - [Installation Guide](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/installation.md)
+            - [Quickstart Guide](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/quickstart.md)
+            - [User Guide](https://github.com/${{ github.repository }}/tree/${{ github.ref_name }}/docs/user-guide)
+          files: |
+            grove-charts-${{ env.PACKAGE_VERSION }}.tgz
+            grove-charts-${{ env.PACKAGE_VERSION }}.tgz.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
