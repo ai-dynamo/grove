@@ -1,4 +1,20 @@
 #!/usr/bin/env python3
+# /*
+# Copyright 2026 The Grove Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# */
+
 """run_autoMNNVL_e2e_all.py - Run autoMNNVL e2e tests with all 4 configurations.
 
 This script runs the autoMNNVL e2e tests with all possible configurations:
@@ -7,10 +23,12 @@ This script runs the autoMNNVL e2e tests with all possible configurations:
   3. Feature enabled  + CRD unsupported (no fake GPU)
   4. Feature disabled + CRD unsupported (no fake GPU)
 
+Images are built with skaffold/ko and pushed to the k3d registry as part of
+cluster setup -- no Docker build is required.
+
 Usage: ./hack/e2e-autoMNNVL/run_autoMNNVL_e2e_all.py [options]
 
 Options:
-  --skip-build    Skip initial image build, reuse existing local images
   --keep-cluster  Keep cluster after all configs (no shutdown)
   --help          Show this help message
 """
@@ -18,7 +36,6 @@ Options:
 from __future__ import annotations
 
 import argparse
-import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -74,22 +91,27 @@ class ConfigEntry:
 
 
 # The four configurations we test.
+#
+# Images are built with skaffold/ko as part of cluster setup (no upfront Docker
+# build). Configs that create a new cluster also build+push images; configs that
+# reuse the cluster skip the build since images are already in the registry.
+#
 # Config 3 uses --skip-operator-wait because the operator intentionally exits
 # (preflight failure) in this invalid configuration; the e2e test itself
 # validates the expected failure behaviour.
 CONFIGS: list[ConfigEntry] = [
     ConfigEntry(1, "Config1_SupportedAndEnabled",
                 "--with-fake-gpu", "--mnnvl-enabled",
-                ["--skip-build"]),
+                []),
     ConfigEntry(2, "Config2_SupportedButDisabled",
                 "--with-fake-gpu", "--mnnvl-disabled",
-                ["--skip-cluster-create"]),
+                ["--skip-cluster-create", "--skip-build"]),
     ConfigEntry(3, "Config3_UnsupportedButEnabled",
                 "--without-fake-gpu", "--mnnvl-enabled",
-                ["--skip-build", "--skip-operator-wait"]),
+                ["--skip-operator-wait"]),
     ConfigEntry(4, "Config4_UnsupportedAndDisabled",
                 "--without-fake-gpu", "--mnnvl-disabled",
-                ["--skip-cluster-create"]),
+                ["--skip-cluster-create", "--skip-build"]),
 ]
 
 # ---------------------------------------------------------------------------
@@ -100,28 +122,9 @@ def parse_args() -> argparse.Namespace:
         description="Run MNNVL e2e tests with all 4 configurations.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--skip-build", action="store_true", default=False,
-                        help="Skip initial image build, reuse existing local images")
     parser.add_argument("--keep-cluster", action="store_true", default=False,
                         help="Keep cluster after all configs (no shutdown)")
     return parser.parse_args()
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-def build_images_once() -> None:
-    """Build images once at the start so individual configs can use --skip-build."""
-    log_info("Building images once for all configurations...")
-    subprocess.run("./hack/prepare-charts.sh", shell=True, check=True, cwd=OPERATOR_DIR)
-    subprocess.run(
-        "./hack/docker-build.sh",
-        shell=True, check=True, cwd=OPERATOR_DIR,
-        env={**os.environ,
-             "GOARCH": "amd64",
-             "PLATFORM": "linux/amd64",
-             "DOCKER_BUILD_ADDITIONAL_ARGS": "--load"},
-    )
 
 
 def run_config(cfg: ConfigEntry) -> bool:
@@ -202,14 +205,6 @@ def main() -> None:
     log_info("  4. Feature disabled + CRD unsupported")
     log_info("==========================================")
     print(flush=True)
-
-    os.chdir(OPERATOR_DIR)
-
-    # Build images once if not skipping
-    if not args.skip_build:
-        build_images_once()
-    else:
-        log_warning("Skipping initial build (--skip-build)")
 
     # Run all configurations
     results: dict[str, str] = {cfg.name: "NOT_RUN" for cfg in CONFIGS}

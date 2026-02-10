@@ -1,4 +1,20 @@
 #!/usr/bin/env python3
+# /*
+# Copyright 2026 The Grove Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# */
+
 """setup_autoMNNVL_cluster.py - Set up a k3d cluster for autoMNNVL e2e testing.
 
 This script handles cluster creation, fake GPU operator installation,
@@ -13,8 +29,8 @@ Options:
   --without-fake-gpu       Skip fake GPU operator installation
   --mnnvl-enabled          Enable MNNVL feature in Grove (default)
   --mnnvl-disabled         Disable MNNVL feature in Grove
-  --build                  Build images with docker (default)
-  --skip-build             Skip image build, use existing local images
+  --build                  Build images with skaffold/ko (default)
+  --skip-build             Skip image build, reuse images already in registry
   --skip-operator-wait     Don't wait for operator pod readiness
   --image <tag>            Use existing image with specified tag
   --help                   Show this help message
@@ -27,6 +43,7 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -188,33 +205,44 @@ def uninstall_fake_gpu_operator() -> None:
 # ---------------------------------------------------------------------------
 # Build / push images
 # ---------------------------------------------------------------------------
-def build_images() -> None:
-    log_info("Building Grove operator images...")
+def build_and_push_images() -> None:
+    """Build Grove images with skaffold/ko and push to the local k3d registry.
+
+    Uses the same approach as the main e2e cluster setup (create-e2e-cluster.py):
+    skaffold build with the ko builder compiles Go binaries into OCI images and
+    pushes them directly to the registry -- no Docker build required.
+    """
+    log_info("Building and pushing Grove operator images with skaffold...")
     run("./hack/prepare-charts.sh", cwd=OPERATOR_DIR)
+
+    push_repo = f"localhost:{REGISTRY_PORT}"
+    build_date = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    env = {
+        "VERSION": IMAGE_TAG,
+        "LD_FLAGS": (
+            "-X github.com/ai-dynamo/grove/operator/internal/version.gitCommit=e2e-test-commit "
+            "-X github.com/ai-dynamo/grove/operator/internal/version.gitTreeState=clean "
+            f"-X github.com/ai-dynamo/grove/operator/internal/version.buildDate={build_date} "
+            "-X github.com/ai-dynamo/grove/operator/internal/version.gitVersion=mnnvl-e2e"
+        ),
+    }
+
+    log_info(f"Running skaffold build (push to {push_repo})...")
     run(
-        "./hack/docker-build.sh",
+        f"skaffold build --default-repo {push_repo}",
         cwd=OPERATOR_DIR,
-        env={
-            "GOARCH": "amd64",
-            "PLATFORM": "linux/amd64",
-            "DOCKER_BUILD_ADDITIONAL_ARGS": "--load",
-        },
+        env=env,
     )
 
+    log_success("Grove images built and pushed to registry")
 
-def push_images_to_registry() -> None:
-    log_info("Pushing images to local registry...")
-
-    run(f"docker tag grove-operator:latest localhost:{REGISTRY_PORT}/grove-operator:{IMAGE_TAG}")
-    run(f"docker tag grove-initc:latest localhost:{REGISTRY_PORT}/grove-initc:{IMAGE_TAG}")
-    run(f"docker push localhost:{REGISTRY_PORT}/grove-operator:{IMAGE_TAG}")
-    run(f"docker push localhost:{REGISTRY_PORT}/grove-initc:{IMAGE_TAG}")
-
-    # Also push alpine for test workloads
+    # Push alpine for test workloads (simple pull/tag/push, not a build)
+    log_info("Pushing alpine image for test workloads...")
+    run("docker pull alpine:latest", check=False)
     run(f"docker tag alpine:latest localhost:{REGISTRY_PORT}/alpine:latest")
     run(f"docker push localhost:{REGISTRY_PORT}/alpine:latest")
 
-    log_success("Images pushed to registry")
+    log_success("All images pushed to registry")
 
 
 # ---------------------------------------------------------------------------
@@ -320,9 +348,9 @@ def parse_args() -> argparse.Namespace:
 
     build_group = parser.add_mutually_exclusive_group()
     build_group.add_argument("--build", action="store_true", default=None,
-                             help="Build images with docker (default)")
+                             help="Build images with skaffold/ko (default)")
     build_group.add_argument("--skip-build", action="store_true", default=None,
-                             help="Skip image build, use existing local images")
+                             help="Skip image build, reuse images already in registry")
     build_group.add_argument("--image", metavar="TAG", default=None,
                              help="Use existing image with specified tag")
 
@@ -424,19 +452,12 @@ def main() -> None:
     else:
         uninstall_fake_gpu_operator()
 
-    # Step 3: Build images (if requested)
+    # Step 3: Build and push images with skaffold/ko
+    # Skaffold builds Go binaries with ko and pushes directly to the k3d registry.
     if cfg["build_images"]:
-        build_images()
+        build_and_push_images()
     else:
-        log_warning("Skipping image build (using existing images)")
-
-    # Step 3b: Push images to registry
-    # Always push when a new cluster was created (fresh registry has no images).
-    # When reusing an existing cluster, push only if we just built new images.
-    if not cfg["skip_cluster_create"] or cfg["build_images"]:
-        push_images_to_registry()
-    else:
-        log_info("Skipping image push (reusing existing cluster with existing images)")
+        log_warning("Skipping image build (images already in registry)")
 
     # Step 4: Install Grove operator
     install_grove_operator(

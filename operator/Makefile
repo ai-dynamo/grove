@@ -135,15 +135,12 @@ run-e2e-full: e2e-cluster-up
 
 # Run autoMNNVL e2e tests (all 4 configurations: supported/unsupported x enabled/disabled)
 # This creates a dedicated k3d cluster, runs all configurations sequentially, then cleans up.
+# Images are built with skaffold/ko as part of cluster setup (no Docker build required).
 # Usage: make run-e2e-mnnvl-full
-#   make run-e2e-mnnvl-full              # Full run with build
-#   SKIP_BUILD=1 make run-e2e-mnnvl-full # Skip image build (reuse existing)
 .PHONY: run-e2e-mnnvl-full
 run-e2e-mnnvl-full:
-	@echo "> Preparing charts (copying CRDs)..."
-	@$(MODULE_HACK_DIR)/prepare-charts.sh
 	@echo "> Running autoMNNVL e2e tests (all 4 configurations)..."
-	@python3 $(MODULE_HACK_DIR)/e2e-autoMNNVL/run_autoMNNVL_e2e_all.py $(if $(SKIP_BUILD),--skip-build)
+	@python3 $(MODULE_HACK_DIR)/e2e-autoMNNVL/run_autoMNNVL_e2e_all.py
 
 # Delete the autoMNNVL e2e test cluster
 .PHONY: e2e-mnnvl-cluster-down
