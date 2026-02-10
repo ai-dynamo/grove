@@ -14,7 +14,7 @@
 // limitations under the License.
 // */
 
-package controller
+package podgang
 
 import (
 	"context"
@@ -134,17 +134,17 @@ func TestReconcile(t *testing.T) {
 			recorder := record.NewFakeRecorder(10)
 
 			// Create appropriate backend
-			var backend schedulerbackend.SchedulerBackend
+			var b schedulerbackend.SchedulerBackend
 			if tt.schedulerName == "kai-scheduler" {
-				backend = kai.New(cl, cl.Scheme(), recorder)
+				b = kai.New(cl, cl.Scheme(), recorder)
 			} else {
-				backend = kube.New(cl, cl.Scheme(), recorder)
+				b = kube.New(cl, cl.Scheme(), recorder)
 			}
 
-			reconciler := &BackendReconciler{
+			reconciler := &Reconciler{
 				Client:  cl,
 				Scheme:  cl.Scheme(),
-				Backend: backend,
+				Backend: b,
 				Logger:  logr.Discard(),
 			}
 
@@ -180,12 +180,12 @@ func TestReconcilePodGangNotFound(t *testing.T) {
 	// Setup client without any podgang
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
-	backend := kai.New(cl, cl.Scheme(), recorder)
+	b := kai.New(cl, cl.Scheme(), recorder)
 
-	reconciler := &BackendReconciler{
+	reconciler := &Reconciler{
 		Client:  cl,
 		Scheme:  cl.Scheme(),
-		Backend: backend,
+		Backend: b,
 		Logger:  logr.Discard(),
 	}
 
@@ -226,12 +226,12 @@ func TestReconcilePodGangWithDeletionTimestamp(t *testing.T) {
 
 	cl := testutils.CreateDefaultFakeClient([]client.Object{podGang})
 	recorder := record.NewFakeRecorder(10)
-	backend := kai.New(cl, cl.Scheme(), recorder)
+	b := kai.New(cl, cl.Scheme(), recorder)
 
-	reconciler := &BackendReconciler{
+	reconciler := &Reconciler{
 		Client:  cl,
 		Scheme:  cl.Scheme(),
-		Backend: backend,
+		Backend: b,
 		Logger:  logr.Discard(),
 	}
 
@@ -250,29 +250,33 @@ func TestReconcilePodGangWithDeletionTimestamp(t *testing.T) {
 	assert.Equal(t, ctrl.Result{}, result)
 }
 
-// TestNewReconcilerWithBackend tests creating a reconciler with explicit backend.
-func TestNewReconcilerWithBackend(t *testing.T) {
+// TestReconcilerWithExplicitBackend tests creating a reconciler with explicit backend (struct literal).
+func TestReconcilerWithExplicitBackend(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
-	backend := kai.New(cl, cl.Scheme(), recorder)
+	b := kai.New(cl, cl.Scheme(), recorder)
 
-	reconciler := NewReconcilerWithBackend(cl, cl.Scheme(), backend)
+	reconciler := &Reconciler{
+		Client:  cl,
+		Scheme:  cl.Scheme(),
+		Backend: b,
+	}
 
 	require.NotNil(t, reconciler)
 	assert.Equal(t, cl, reconciler.Client)
 	assert.Equal(t, cl.Scheme(), reconciler.Scheme)
-	assert.Equal(t, backend, reconciler.Backend)
+	assert.Equal(t, b, reconciler.Backend)
 }
 
 // TestPodGangSpecChangePredicate tests the event filter for PodGang changes.
 func TestPodGangSpecChangePredicate(t *testing.T) {
-	predicate := podGangSpecChangePredicate()
+	pred := podGangSpecChangePredicate()
 
 	// Verify that predicate is not nil
-	require.NotNil(t, predicate)
+	require.NotNil(t, pred)
 
 	// The predicate is tested indirectly through controller integration
 	// Direct testing of event filters requires complex event setup
 	// This test ensures the predicate creation doesn't panic
-	assert.NotNil(t, predicate)
+	assert.NotNil(t, pred)
 }

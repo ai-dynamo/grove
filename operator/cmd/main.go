@@ -87,7 +87,7 @@ func main() {
 		operatorConfig.SchedulerName,
 	); err != nil {
 		logger.Error(err, "failed to initialize scheduler backend")
-		handleErrorAndExit(err, cli.ExitErrInitializeManager)
+		handleErrorAndExit(err, cli.ExitErrInitializeSchedulerBackend)
 	}
 
 	// Initialize or clean up ClusterTopology based on operator configuration.

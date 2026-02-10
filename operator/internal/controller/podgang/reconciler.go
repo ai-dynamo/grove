@@ -14,7 +14,7 @@
 // limitations under the License.
 // */
 
-package controller
+package podgang
 
 import (
 	"context"
@@ -27,21 +27,32 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
-// BackendReconciler reconciles PodGang objects and converts them to scheduler-specific CRs
-type BackendReconciler struct {
+// Reconciler reconciles PodGang objects and converts them to scheduler-specific CRs
+type Reconciler struct {
 	client.Client
 	Scheme  *runtime.Scheme
 	Backend schedulerbackend.SchedulerBackend
 	Logger  logr.Logger
 }
 
+// NewReconciler creates a new Reconciler
+func NewReconciler(mgr ctrl.Manager) (*Reconciler, error) {
+	b := schedulerbackend.Get()
+	if b == nil {
+		return nil, fmt.Errorf("backend not initialized")
+	}
+	return &Reconciler{
+		Client:  mgr.GetClient(),
+		Scheme:  mgr.GetScheme(),
+		Backend: b,
+	}, nil
+}
+
 // Reconcile processes PodGang changes and synchronizes to backend-specific CRs
-func (r *BackendReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("backend", r.Backend.Name(), "podgang", req.NamespacedName)
 
 	// 1. Fetch the PodGang
@@ -76,41 +87,4 @@ func (r *BackendReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	logger.Info("Successfully synced PodGang to backend")
 	return ctrl.Result{}, nil
-}
-
-// SetupWithManager sets up the controller with the Manager
-func (r *BackendReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&groveschedulerv1alpha1.PodGang{}).
-		WithEventFilter(podGangSpecChangePredicate()).
-		Named(fmt.Sprintf("backend-%s", r.Backend.Name())).
-		Complete(r)
-}
-
-// podGangSpecChangePredicate filters PodGang events to only process spec changes
-// Status-only updates (like Initialized condition) are ignored
-func podGangSpecChangePredicate() predicate.Predicate {
-	return predicate.Funcs{
-		CreateFunc: func(_ event.CreateEvent) bool {
-			// Always process creation events
-			return true
-		},
-		DeleteFunc: func(_ event.DeleteEvent) bool {
-			// Process deletion events to clean up backend resources
-			return true
-		},
-		UpdateFunc: func(e event.UpdateEvent) bool {
-			// Only process if generation changed (spec was modified)
-			// Generation doesn't change for status-only updates
-			return e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration()
-		},
-		GenericFunc: func(_ event.GenericEvent) bool {
-			return false
-		},
-	}
-}
-
-// RegisterWithManager registers the backend controller with the manager
-func (r *BackendReconciler) RegisterWithManager(mgr ctrl.Manager) error {
-	return r.SetupWithManager(mgr)
 }

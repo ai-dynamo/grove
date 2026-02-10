@@ -14,7 +14,7 @@
 // limitations under the License.
 // */
 
-package controller
+package podgang
 
 import (
 	"testing"
@@ -53,43 +53,54 @@ func TestNewReconcilerWithBackendKai(t *testing.T) {
 			cl := testutils.CreateDefaultFakeClient(nil)
 			recorder := record.NewFakeRecorder(10)
 
-			var backend schedulerbackend.SchedulerBackend
+			var b schedulerbackend.SchedulerBackend
 			if tt.backendType == "kai" {
-				backend = kai.New(cl, cl.Scheme(), recorder)
+				b = kai.New(cl, cl.Scheme(), recorder)
 			} else {
-				backend = kube.New(cl, cl.Scheme(), recorder)
+				b = kube.New(cl, cl.Scheme(), recorder)
 			}
 
-			reconciler := NewReconcilerWithBackend(cl, cl.Scheme(), backend)
+			reconciler := &Reconciler{
+				Client:  cl,
+				Scheme:  cl.Scheme(),
+				Backend: b,
+			}
 
 			require.NotNil(t, reconciler)
 			assert.Equal(t, cl, reconciler.Client)
 			assert.Equal(t, cl.Scheme(), reconciler.Scheme)
-			assert.Equal(t, backend, reconciler.Backend)
+			assert.Equal(t, b, reconciler.Backend)
 			assert.Equal(t, tt.expectedName, reconciler.Backend.Name())
 		})
 	}
 }
 
-// TestNewReconcilerWithBackendNilBackend tests NewReconcilerWithBackend with nil backend.
-func TestNewReconcilerWithBackendNilBackend(t *testing.T) {
+// TestReconcilerWithNilBackend tests Reconciler with nil backend (e.g. for tests that only need client/scheme).
+func TestReconcilerWithNilBackend(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 
-	// Should not panic even with nil backend
 	assert.NotPanics(t, func() {
-		reconciler := NewReconcilerWithBackend(cl, cl.Scheme(), nil)
+		reconciler := &Reconciler{
+			Client:  cl,
+			Scheme:  cl.Scheme(),
+			Backend: nil,
+		}
 		assert.NotNil(t, reconciler)
 		assert.Nil(t, reconciler.Backend)
 	})
 }
 
-// TestNewReconcilerWithBackendFields tests that all fields are correctly set.
-func TestNewReconcilerWithBackendFields(t *testing.T) {
+// TestReconcilerFields tests that Reconciler fields are set correctly when constructed directly.
+func TestReconcilerFields(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
-	backend := kai.New(cl, cl.Scheme(), recorder)
+	b := kai.New(cl, cl.Scheme(), recorder)
 
-	reconciler := NewReconcilerWithBackend(cl, cl.Scheme(), backend)
+	reconciler := &Reconciler{
+		Client:  cl,
+		Scheme:  cl.Scheme(),
+		Backend: b,
+	}
 
 	// Verify all fields are set correctly
 	require.NotNil(t, reconciler)
