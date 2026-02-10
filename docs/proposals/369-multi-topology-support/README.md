@@ -90,6 +90,13 @@ The approach has four parts:
 
 As a cluster administrator managing a cluster with different GPU architectures, I want to define separate topologies for each architecture so that workloads are scheduled with topology awareness appropriate to the hardware they're running on.
 
+**Example:** A cluster contains both DGX H100 nodes and GB200 NVL72 racks. These architectures have different topology depths and interconnect characteristics:
+
+- **DGX H100**: 8 GPUs per node connected via NVLink 4.0 at 900 GB/s per GPU. Cross-node communication falls back to InfiniBand, which is significantly slower. The topology has three levels: zone → rack → host, and packing workloads at the host level keeps them within the high-bandwidth NVLink domain.
+- **GB200 NVL72**: 72 GPUs connected via rack-level NVSwitch using NVLink 5.0 at 1.8 TB/s per GPU. All GPUs in the rack communicate at NVLink speed — there is no slower intra-rack tier. The topology has four levels: zone → block → rack → host, where block groups racks sharing a spine switch for cross-rack MNNVL traffic.
+
+A single ClusterTopology defines one hierarchy for all nodes. Using the 4-level GB200 hierarchy would require adding synthetic "block" labels to all H100 nodes. With separate ClusterTopology resources, each architecture uses its natural hierarchy, and workloads select the appropriate one via `clusterTopologyName`.
+
 #### Story 2: Multi-Cloud Clusters
 
 As a platform engineer managing AI workloads on a cluster spanning multiple cloud environments, I want to define environment-specific topologies so that workloads get optimal placement regardless of where they run, without users needing to know the underlying infrastructure details.
