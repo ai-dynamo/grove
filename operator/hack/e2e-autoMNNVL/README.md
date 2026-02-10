@@ -22,21 +22,11 @@ python3 ./hack/e2e-autoMNNVL/run_autoMNNVL_e2e_all.py
 
 ## Scripts
 
-### Python (recommended)
-
 | Script | Description |
 |--------|-------------|
 | `run_autoMNNVL_e2e_all.py` | Run all 4 configurations sequentially |
 | `run_autoMNNVL_e2e.py` | Run a single configuration (setup + tests) |
 | `setup_autoMNNVL_cluster.py` | Set up a k3d cluster with configurable options |
-
-### Shell (equivalent)
-
-| Script | Description |
-|--------|-------------|
-| `run-autoMNNVL-e2e-all.sh` | Run all 4 configurations sequentially |
-| `run-autoMNNVL-e2e.sh` | Run a single configuration (setup + tests) |
-| `setup-autoMNNVL-cluster.sh` | Set up a k3d cluster with configurable options |
 
 ## Usage Examples
 
