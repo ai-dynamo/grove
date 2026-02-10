@@ -89,6 +89,60 @@ jobs:
         run: |
           helm push ./grove-charts-$PACKAGE_VERSION.tgz oci://$DOCKER_REGISTRY
 
+      - name: Push Go Module Tags
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          echo "Creating and pushing Go module tags..."
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Validate git configuration
+          echo "Git user configuration:"
+          echo "  user.name: $(git config user.name)"
+          echo "  user.email: $(git config user.email)"
+          echo "  Authenticated as: ${{ github.actor }}"
+
+          # Create tags for Go modules
+          git tag operator/api/$PACKAGE_VERSION
+          git tag operator/$PACKAGE_VERSION
+          git tag scheduler/api/$PACKAGE_VERSION
+
+          # Push all module tags
+          git push origin operator/api/$PACKAGE_VERSION operator/$PACKAGE_VERSION scheduler/api/$PACKAGE_VERSION
+
+          echo "✓ Go module tags pushed successfully"
+
+      - name: Validate Go Module Tags
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          echo "Validating Go module tags were pushed successfully..."
+
+          # Verify operator/api tag
+          if git ls-remote --tags origin operator/api/$PACKAGE_VERSION | grep -q "refs/tags/operator/api/$PACKAGE_VERSION"; then
+            echo "✓ operator/api:$PACKAGE_VERSION validated successfully"
+          else
+            echo "✗ Failed to validate operator/api:$PACKAGE_VERSION"
+            exit 1
+          fi
+
+          # Verify operator tag
+          if git ls-remote --tags origin operator/$PACKAGE_VERSION | grep -q "refs/tags/operator/$PACKAGE_VERSION"; then
+            echo "✓ operator:$PACKAGE_VERSION validated successfully"
+          else
+            echo "✗ Failed to validate operator:$PACKAGE_VERSION"
+            exit 1
+          fi
+
+          # Verify scheduler/api tag
+          if git ls-remote --tags origin scheduler/api/$PACKAGE_VERSION | grep -q "refs/tags/scheduler/api/$PACKAGE_VERSION"; then
+            echo "✓ scheduler/api:$PACKAGE_VERSION validated successfully"
+          else
+            echo "✗ Failed to validate scheduler/api:$PACKAGE_VERSION"
+            exit 1
+          fi
+
+          echo "✓ All Go module tags validated successfully"
+
       - name: Validate Docker Images
         run: |
           echo "Validating Docker images were pushed successfully..."
@@ -115,52 +169,3 @@ jobs:
           helm pull oci://$DOCKER_REGISTRY/grove-charts --version $PACKAGE_VERSION
 
           echo "✓ Helm chart grove-charts:$PACKAGE_VERSION validated successfully"
-
-      - name: Generate artifact checksums
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          echo "Generating checksums for release artifacts..."
-          sha256sum grove-charts-$PACKAGE_VERSION.tgz > grove-charts-$PACKAGE_VERSION.tgz.sha256
-          echo "✓ Checksums generated"
-
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          name: Release ${{ github.ref_name }}
-          draft: false
-          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
-          generate_release_notes: true
-          body: |
-            ## Installation
-
-            ### Using Helm (Recommended)
-
-            Install Grove using the published Helm chart:
-
-            ```bash
-            helm upgrade -i grove oci://${{ env.DOCKER_REGISTRY }}/grove-charts --version ${{ env.PACKAGE_VERSION }}
-            ```
-
-            ### Using Docker Images
-
-            The following container images are available for this release:
-
-            - **Operator**: `${{ env.DOCKER_REGISTRY }}/grove-operator:${{ env.PACKAGE_VERSION }}`
-            - **Init Container**: `${{ env.DOCKER_REGISTRY }}/grove-initc:${{ env.PACKAGE_VERSION }}`
-
-            ## Artifacts
-
-            - **Helm Chart**: [grove-charts:${{ env.PACKAGE_VERSION }}](https://github.com/${{ github.repository }}/pkgs/container/grove%2Fgrove-charts)
-            - **Docker Images**: [Packages](https://github.com/${{ github.repository }}/pkgs/container/grove-operator)
-
-            ## Documentation
-
-            - [Installation Guide](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/installation.md)
-            - [Quickstart Guide](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/quickstart.md)
-            - [User Guide](https://github.com/${{ github.repository }}/tree/${{ github.ref_name }}/docs/user-guide)
-          files: |
-            grove-charts-${{ env.PACKAGE_VERSION }}.tgz
-            grove-charts-${{ env.PACKAGE_VERSION }}.tgz.sha256
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
