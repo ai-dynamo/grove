@@ -26,6 +26,7 @@ import (
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
+	admissionv1 "k8s.io/api/admission/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -59,8 +60,10 @@ func (h *Handler) Default(ctx context.Context, obj runtime.Object) error {
 	h.logger.Info("Applying defaults", "PodCliqueSet", k8sutils.CreateObjectKeyForCreateWebhooks(pcs, req))
 	defaultPodCliqueSet(pcs)
 
-	// Apply MNNVL auto-annotation if conditions are met
-	mnnvl.MutateAutoMNNVL(h.logger, pcs, h.networkConfig.AutoMNNVLEnabled)
+	// Apply MNNVL auto-annotation only on creation.
+	if req.Operation == admissionv1.Create {
+		mnnvl.MutateAutoMNNVL(h.logger, pcs, h.networkConfig.AutoMNNVLEnabled)
+	}
 
 	return nil
 }

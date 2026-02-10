@@ -24,12 +24,16 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
+	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/defaulting"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	admissionv1 "k8s.io/api/admission/v1"
+	authenticationv1 "k8s.io/api/authentication/v1"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 // TestValidateCreate_MNNVL tests the MNNVL annotation validation on create.
@@ -172,6 +176,89 @@ func TestValidateUpdate_MNNVL(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 				assert.Empty(t, warnings)
+			}
+		})
+	}
+}
+
+// TestMNNVL_WebhookPipeline_LegacyPCSUpdate simulates the full Kubernetes admission pipeline
+// (defaulting webhook -> validating webhook) for the migration scenario where a PCS was created
+// before the MNNVL feature existed. This test verifies that legacy resources can be updated
+// without the webhooks creating a deadlock.
+//
+// Before the fix, this scenario caused a deadlock:
+//  1. Defaulting webhook ran on UPDATE and injected the auto-mnnvl annotation
+//  2. Validating webhook saw the annotation was "added" (old=absent, new=present) and rejected it
+//  3. The resource could not be modified at all (e.g., finalizer removal was blocked)
+func TestMNNVL_WebhookPipeline_LegacyPCSUpdate(t *testing.T) {
+	tests := []struct {
+		description      string
+		autoMNNVLEnabled bool
+	}{
+		{
+			description:      "legacy PCS updated with MNNVL feature enabled -> no deadlock",
+			autoMNNVLEnabled: true,
+		},
+		{
+			description:      "legacy PCS updated with MNNVL feature disabled -> no deadlock",
+			autoMNNVLEnabled: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.description, func(t *testing.T) {
+			cl := testutils.NewTestClientBuilder().Build()
+			mgr := &testutils.FakeManager{
+				Client: cl,
+				Scheme: cl.Scheme(),
+				Logger: logr.Discard(),
+			}
+
+			networkConfig := configv1alpha1.NetworkAcceleration{
+				AutoMNNVLEnabled: tt.autoMNNVLEnabled,
+			}
+
+			// Simulate a legacy PCS (created before MNNVL feature) — no auto-mnnvl annotation.
+			// The oldPCS represents the stored object in etcd.
+			oldPCS := createValidPCSWithGPU(nil)
+
+			// The newPCS represents the user's update request (e.g., removing a finalizer).
+			// Start with a copy of oldPCS — no annotation, just like the stored object.
+			newPCS := createValidPCSWithGPU(nil)
+
+			// Step 1: Simulate the defaulting webhook running on the new object during an UPDATE.
+			// In the real admission pipeline, the mutating webhook runs first and modifies newPCS.
+			// We use the actual defaulting handler (not MutateAutoMNNVL directly) to test
+			// the real code path including the operation-type guard.
+			defaultingHandler := defaulting.NewHandler(mgr, networkConfig)
+			updateCtx := admission.NewContextWithRequest(context.Background(), admission.Request{
+				AdmissionRequest: admissionv1.AdmissionRequest{
+					Name:      "test-pcs",
+					Namespace: "default",
+					Operation: admissionv1.Update,
+					UserInfo: authenticationv1.UserInfo{
+						Username: "test-user",
+					},
+				},
+			})
+			err := defaultingHandler.Default(updateCtx, newPCS)
+			require.NoError(t, err, "defaulting webhook should not error on update")
+
+			// Step 2: Simulate the validating webhook running with oldPCS vs (possibly mutated) newPCS.
+			validationHandler := NewHandler(mgr, getDefaultTASConfig(), networkConfig)
+
+			ctx := context.Background()
+			warnings, err := validationHandler.ValidateUpdate(ctx, oldPCS, newPCS)
+
+			// The update MUST succeed — the defaulting webhook should not have injected the annotation
+			// during an update, so the validating webhook should see no annotation change.
+			assert.NoError(t, err, "legacy PCS update should not be rejected by validation webhook")
+			_ = warnings // warnings (e.g., restartPolicy) are informational and not relevant to this test
+
+			// Verify the annotation was NOT added to newPCS by the defaulting webhook.
+			if newPCS.Annotations != nil {
+				_, exists := newPCS.Annotations[mnnvl.AnnotationAutoMNNVL]
+				assert.False(t, exists, "defaulting webhook should not inject auto-mnnvl annotation during update")
 			}
 		})
 	}
