@@ -50,7 +50,7 @@ type PodCliqueSetList struct {
 
 // PodCliqueSetSpec defines the specification of a PodCliqueSet.
 type PodCliqueSetSpec struct {
-	// Replicas is the number of desired replicas of the PodGang.
+	// Replicas is the number of desired replicas of the PodCliqueSet.
 	// +kubebuilder:default=0
 	Replicas int32 `json:"replicas,omitempty"`
 	// Template describes the template spec for PodGangs that will be created in the PodCliqueSet.
