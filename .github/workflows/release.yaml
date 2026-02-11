@@ -64,6 +64,6 @@ jobs:
           git tag scheduler/api/$PACKAGE_VERSION
 
           # Push all module tags
-          git push origin operator/api/$PACKAGE_VERSION operator/$PACKAGE_VERSION scheduler/api/$PACKAGE_VERSION
+          git push origin --tags
 
           echo "✓ Go module tags pushed successfully"
