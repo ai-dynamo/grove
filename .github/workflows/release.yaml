@@ -1,0 +1,69 @@
+# /*
+# Copyright 2025 The Grove Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# */
+
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  push-artifacts:
+    name: Push Artifacts
+    uses: ./.github/workflows/push-artifacts.yaml
+    with:
+      version: ${{ github.event.release.tag_name }}
+    secrets: inherit
+
+  git-tags:
+    name: Push Go Module Tags
+    runs-on: ubuntu-latest
+    needs: push-artifacts
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Extract package version from tag
+        run: |
+          PACKAGE_VERSION=${{ github.event.release.tag_name }}
+          echo "PACKAGE_VERSION=$PACKAGE_VERSION" >> $GITHUB_ENV
+          echo $PACKAGE_VERSION
+
+      - name: Push Go Module Tags
+        run: |
+          echo "Creating and pushing Go module tags..."
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Validate git configuration
+          echo "Git user configuration:"
+          echo "  user.name: $(git config user.name)"
+          echo "  user.email: $(git config user.email)"
+          echo "  Authenticated as: ${{ github.actor }}"
+
+          # Create tags for Go modules
+          git tag operator/api/$PACKAGE_VERSION
+          git tag operator/$PACKAGE_VERSION
+          git tag scheduler/api/$PACKAGE_VERSION
+
+          # Push all module tags
+          git push origin operator/api/$PACKAGE_VERSION operator/$PACKAGE_VERSION scheduler/api/$PACKAGE_VERSION
+
+          echo "✓ Go module tags pushed successfully"

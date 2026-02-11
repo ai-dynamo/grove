@@ -20,11 +20,15 @@ on:
   push:
     branches:
       - "main"
-    tags:
-      - '*.*.*'
+  workflow_call:
+    inputs:
+      version:
+        description: 'Package version to use (e.g., v1.0.0)'
+        required: false
+        type: string
 
 permissions:
-  contents: write
+  contents: read
   packages: write
 
 jobs:
@@ -35,19 +39,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
 
-      - name: Extract package version from tag
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Set package version
         run: |
-          PACKAGE_VERSION=${GITHUB_REF_NAME}
-          echo "PACKAGE_VERSION=$PACKAGE_VERSION" >> $GITHUB_ENV
-          echo $PACKAGE_VERSION
-
-      - name: Extract package version from branch commit
-        if: startsWith(github.ref, 'refs/heads/')
-        run: |
-          # We add a 'g' prefix to the hash.
-          # This prevents "all-number" hashes starting with 0 from breaking Helm (invalid semver)
-          PACKAGE_VERSION=v0.0.0-g$(git rev-parse --short HEAD)
+          if [ -n "${{ inputs.version }}" ]; then
+            # Use version provided by workflow_call
+            PACKAGE_VERSION="${{ inputs.version }}"
+          else
+            # Extract from commit hash for main branch pushes
+            # We add a 'g' prefix to the hash.
+            # This prevents "all-number" hashes starting with 0 from breaking Helm (invalid semver)
+            PACKAGE_VERSION=v0.0.0-g$(git rev-parse --short HEAD)
+          fi
           echo "PACKAGE_VERSION=$PACKAGE_VERSION" >> $GITHUB_ENV
           echo $PACKAGE_VERSION
       - name: Set up Go
@@ -88,84 +90,3 @@ jobs:
       - name: Push Helm Chart
         run: |
           helm push ./grove-charts-$PACKAGE_VERSION.tgz oci://$DOCKER_REGISTRY
-
-      - name: Push Go Module Tags
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          echo "Creating and pushing Go module tags..."
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # Validate git configuration
-          echo "Git user configuration:"
-          echo "  user.name: $(git config user.name)"
-          echo "  user.email: $(git config user.email)"
-          echo "  Authenticated as: ${{ github.actor }}"
-
-          # Create tags for Go modules
-          git tag operator/api/$PACKAGE_VERSION
-          git tag operator/$PACKAGE_VERSION
-          git tag scheduler/api/$PACKAGE_VERSION
-
-          # Push all module tags
-          git push origin operator/api/$PACKAGE_VERSION operator/$PACKAGE_VERSION scheduler/api/$PACKAGE_VERSION
-
-          echo "✓ Go module tags pushed successfully"
-
-      - name: Validate Go Module Tags
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          echo "Validating Go module tags were pushed successfully..."
-
-          # Verify operator/api tag
-          if git ls-remote --tags origin operator/api/$PACKAGE_VERSION | grep -q "refs/tags/operator/api/$PACKAGE_VERSION"; then
-            echo "✓ operator/api:$PACKAGE_VERSION validated successfully"
-          else
-            echo "✗ Failed to validate operator/api:$PACKAGE_VERSION"
-            exit 1
-          fi
-
-          # Verify operator tag
-          if git ls-remote --tags origin operator/$PACKAGE_VERSION | grep -q "refs/tags/operator/$PACKAGE_VERSION"; then
-            echo "✓ operator:$PACKAGE_VERSION validated successfully"
-          else
-            echo "✗ Failed to validate operator:$PACKAGE_VERSION"
-            exit 1
-          fi
-
-          # Verify scheduler/api tag
-          if git ls-remote --tags origin scheduler/api/$PACKAGE_VERSION | grep -q "refs/tags/scheduler/api/$PACKAGE_VERSION"; then
-            echo "✓ scheduler/api:$PACKAGE_VERSION validated successfully"
-          else
-            echo "✗ Failed to validate scheduler/api:$PACKAGE_VERSION"
-            exit 1
-          fi
-
-          echo "✓ All Go module tags validated successfully"
-
-      - name: Validate Docker Images
-        run: |
-          echo "Validating Docker images were pushed successfully..."
-
-          # Verify grove-operator image
-          docker pull $DOCKER_REGISTRY/grove-operator:$PACKAGE_VERSION
-          echo "✓ grove-operator:$PACKAGE_VERSION pulled successfully"
-
-          # Verify grove-initc image
-          docker pull $DOCKER_REGISTRY/grove-initc:$PACKAGE_VERSION
-          echo "✓ grove-initc:$PACKAGE_VERSION pulled successfully"
-
-          # Verify image metadata
-          docker inspect $DOCKER_REGISTRY/grove-operator:$PACKAGE_VERSION > /dev/null
-          docker inspect $DOCKER_REGISTRY/grove-initc:$PACKAGE_VERSION > /dev/null
-
-          echo "✓ All Docker images validated successfully"
-
-      - name: Validate Helm Chart
-        run: |
-          echo "Validating Helm chart was pushed successfully..."
-
-          # Pull the chart to verify it's available
-          helm pull oci://$DOCKER_REGISTRY/grove-charts --version $PACKAGE_VERSION
-
-          echo "✓ Helm chart grove-charts:$PACKAGE_VERSION validated successfully"
