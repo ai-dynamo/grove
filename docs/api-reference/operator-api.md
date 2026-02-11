@@ -406,7 +406,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `replicas` _integer_ | Replicas is the number of desired replicas of the PodGang. | 0 |  |
+| `replicas` _integer_ | Replicas is the number of desired replicas of the PodCliqueSet. | 0 |  |
 | `template` _[PodCliqueSetTemplateSpec](#podcliquesettemplatespec)_ | Template describes the template spec for PodGangs that will be created in the PodCliqueSet. |  |  |
 
 
