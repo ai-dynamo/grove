@@ -8,8 +8,7 @@
 - [Proposal](#proposal)
   - [User Stories](#user-stories)
     - [Story 1: Heterogeneous GPU Clusters](#story-1-heterogeneous-gpu-clusters)
-    - [Story 2: Multi-Cloud Clusters](#story-2-multi-cloud-clusters)
-    - [Story 3: Topology Retry Before Scheduling](#story-3-topology-retry-before-scheduling)
+    - [Story 2: Topology Retry Before Scheduling](#story-2-topology-retry-before-scheduling)
   - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
     - [ClusterTopology Deletion Protection](#clustertopology-deletion-protection)
     - [ClusterTopology Updates Blocked When In Use](#clustertopology-updates-blocked-when-in-use)
@@ -97,11 +96,7 @@ As a cluster administrator managing a cluster with different GPU architectures, 
 
 A single ClusterTopology defines one hierarchy for all nodes. Using the 4-level GB200 hierarchy would require adding synthetic "block" labels to all H100 nodes. With separate ClusterTopology resources, each architecture uses its natural hierarchy, and workloads select the appropriate one via `clusterTopologyName`.
 
-#### Story 2: Multi-Cloud Clusters
-
-As a platform engineer managing AI workloads on a cluster spanning multiple cloud environments, I want to define environment-specific topologies so that workloads get optimal placement regardless of where they run, without users needing to know the underlying infrastructure details.
-
-#### Story 3: Topology Retry Before Scheduling
+#### Story 2: Topology Retry Before Scheduling
 
 As a user submitting a PodCliqueSet to a cluster with multiple scheduling shards, I want to be able to change the target topology while my workload is pending, so I can retry on a different shard if the first one cannot accommodate my gang. Once the gang starts running, the topology should be locked.
 
