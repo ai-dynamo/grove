@@ -44,7 +44,7 @@ spec:
             properties:
               replicas:
                 default: 0
-                description: Replicas is the number of desired replicas of the PodGang.
+                description: Replicas is the number of desired replicas of the PodCliqueSet.
                 format: int32
                 type: integer
               template:
