@@ -182,6 +182,54 @@ ClusterTopology resources follow a hybrid management model:
 
 **Deletion protection**: A controller watches ClusterTopology resources and adds finalizers. The finalizer prevents deletion while any PCS references the topology via `clusterTopologyName`. When TAS is disabled, the operator handles removing finalizers on the default topology.
 
+```mermaid
+sequenceDiagram
+    participant Op as Operator
+    participant Admin
+    participant API as API Server
+    participant CTW as CT Webhook
+    participant CTC as CT Controller
+
+    Note over Op, CTC: Create ClusterTopology
+
+    rect rgb(230, 245, 230)
+        Note left of Op: Startup
+        Op->>API: Create grove-topology<br/>with managed-by label
+        API-->>Op: Created
+    end
+
+    rect rgb(230, 235, 245)
+        Note left of Admin: kubectl / GitOps
+        Admin->>API: Create ClusterTopology
+        API-->>Admin: Created
+    end
+
+    CTC->>API: Add finalizer
+
+    Note over Op, CTC: Update ClusterTopology Levels
+
+    Admin->>API: Update CT levels
+    API->>CTW: Validate update
+    CTW->>API: List PCSs referencing this CT
+    alt Any PCS has ScheduledReplicas > 0
+        CTW-->>Admin: Reject (topology in use by scheduled workloads)
+    else No PCS has scheduled pods
+        CTW-->>Admin: Allow
+    end
+
+    Note over Op, CTC: Delete ClusterTopology
+
+    Admin->>API: Delete CT
+    Note right of API: Finalizer prevents immediate deletion
+    CTC->>API: Check if any PCS references this CT
+    alt PCSs still reference CT
+        Note right of CTC: Finalizer remains, deletion pending
+    else No PCS references CT
+        CTC->>API: Remove finalizer
+        Note right of API: CT deleted
+    end
+```
+
 ### Admission Control
 
 **PCS validating webhook changes:**
