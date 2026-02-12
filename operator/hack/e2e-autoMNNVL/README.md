@@ -47,8 +47,8 @@ make run-e2e-mnnvl-full
 
 # Or, manage cluster manually and run tests separately:
 
-# 1. Create the MNNVL cluster (lightweight: 2 workers, no Kai/topology)
-E2E_WORKER_NODES=2 make e2e-cluster-up E2E_CREATE_FLAGS="--skip-kai --skip-topology --skip-prepull"
+# 1. Create the MNNVL cluster (lightweight: 2 workers, skip image prepull only)
+E2E_WORKER_NODES=2 E2E_K3S_IMAGE=rancher/k3s:v1.34.2-k3s1 make e2e-cluster-up E2E_CREATE_FLAGS="--skip-prepull"
 
 # 2. Push alpine image for test workloads
 docker pull alpine:latest && docker tag alpine:latest localhost:5001/alpine:latest && docker push localhost:5001/alpine:latest
@@ -80,5 +80,5 @@ make e2e-cluster-down
 - **Cluster name:** `shared-e2e-test-cluster` (same as standard e2e)
 - **Nodes:** 1 server + 2 agents (lightweight — standard e2e uses 30)
 - **Registry:** local registry on port 5001
-- **Skaffold profile:** `topology-test` (same as standard e2e)
+- **Skaffold profile:** `topology-test` (same as standard e2e; Kai and topology are installed, only worker count and prepull are reduced)
 - **Fake GPU:** [fake-gpu-operator](https://github.com/run-ai/fake-gpu-operator) v0.0.72 (provides ComputeDomain CRD)

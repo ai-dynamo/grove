@@ -103,13 +103,13 @@ class ConfigEntry:
 # (preflight failure) in this invalid configuration; the e2e test itself
 # validates the expected failure behaviour.
 CONFIGS: list[ConfigEntry] = [
-    ConfigEntry("Config4_UnsupportedAndDisabled",
+    ConfigEntry("Config1_UnsupportedAndDisabled",
                 ["--fake-gpu=no", "--auto-mnnvl=disabled"]),
-    ConfigEntry("Config3_UnsupportedButEnabled",
+    ConfigEntry("Config2_UnsupportedButEnabled",
                 ["--fake-gpu=no", "--auto-mnnvl=enabled", "--skip-operator-wait"]),
-    ConfigEntry("Config1_SupportedAndEnabled",
+    ConfigEntry("Config3_SupportedAndEnabled",
                 ["--fake-gpu=yes", "--auto-mnnvl=enabled"]),
-    ConfigEntry("Config2_SupportedButDisabled",
+    ConfigEntry("Config4_SupportedButDisabled",
                 ["--fake-gpu=yes", "--auto-mnnvl=disabled"]),
 ]
 

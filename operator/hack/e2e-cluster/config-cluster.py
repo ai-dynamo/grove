@@ -216,6 +216,21 @@ def ensure_auto_mnnvl(enabled: bool, *, skip_wait: bool = False) -> None:
             f" -n {GROVE_NAMESPACE} --timeout=120s",
             check=False,
         )
+        # Cert-rotation may exit the process to trigger a restart; wait for that cycle.
+        log_info("Allowing time for operator cert refresh restart cycle...")
+        time.sleep(20)
+        log_info("Waiting for Grove operator pod to be ready after restart...")
+        run(
+            f"kubectl rollout status deployment/{GROVE_RELEASE}"
+            f" -n {GROVE_NAMESPACE} --timeout=120s",
+            check=False,
+        )
+        run(
+            f"kubectl wait --for=condition=Ready pods"
+            f" -l app.kubernetes.io/name=grove-operator"
+            f" -n {GROVE_NAMESPACE} --timeout=120s",
+            check=False,
+        )
     else:
         log_warning("Skipping operator readiness check (--skip-operator-wait)")
         time.sleep(5)

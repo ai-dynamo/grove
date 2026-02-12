@@ -115,6 +115,7 @@ jobs:
           - test_name: cert_management
             test_pattern: "^Test_CM"
           - test_name: auto_mnnvl
+            test_pattern: "^Test_AutoMNNVL"
             make_target: "run-e2e-mnnvl-full"
     name: E2E - ${{ matrix.test_name }}
     steps:

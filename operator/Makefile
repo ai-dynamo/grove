@@ -141,7 +141,8 @@ run-e2e-full: e2e-cluster-up
 # Usage: make run-e2e-mnnvl-full
 .PHONY: run-e2e-mnnvl-full
 run-e2e-mnnvl-full: export E2E_WORKER_NODES = 2
-run-e2e-mnnvl-full: E2E_CREATE_FLAGS = --skip-kai --skip-topology --skip-prepull
+run-e2e-mnnvl-full: export E2E_K3S_IMAGE = rancher/k3s:v1.34.2-k3s1
+run-e2e-mnnvl-full: E2E_CREATE_FLAGS = --skip-prepull
 run-e2e-mnnvl-full: e2e-cluster-up
 	@echo "> Pushing alpine image to local registry..."
 	@docker pull alpine:latest || true
