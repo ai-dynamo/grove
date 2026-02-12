@@ -121,6 +121,19 @@ func HasAnyStartedButNotReadyContainer(pod *corev1.Pod) bool {
 	return false
 }
 
+// HasAnyContainerNotStarted checks if any container has not yet passed its startup probe.
+// In Kubernetes, Started remains false (or nil) until the startup probe succeeds.
+// This distinguishes pods in the startup probe phase from those that have started but are not ready.
+// Returns false if there are no container statuses (the pod would be uncategorized by the caller).
+func HasAnyContainerNotStarted(pod *corev1.Pod) bool {
+	for _, containerStatus := range pod.Status.ContainerStatuses {
+		if containerStatus.Started == nil || !*containerStatus.Started {
+			return true
+		}
+	}
+	return false
+}
+
 // ComputeHash computes a hash given one or more corev1.PodTemplateSpec.
 func ComputeHash(podTemplateSpecs ...*corev1.PodTemplateSpec) string {
 	podTemplateSpecHasher := fnv.New64a()
