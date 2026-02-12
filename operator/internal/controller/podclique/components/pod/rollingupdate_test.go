@@ -36,11 +36,11 @@ const (
 	testNS      = "test-ns"
 )
 
-// newTestPod creates a pod with the given name, template hash label, and options applied.
-func newTestPod(name, templateHash string, opts ...func(*corev1.Pod)) *corev1.Pod {
+// newTestPod creates a pod with the given template hash label and options applied.
+func newTestPod(templateHash string, opts ...func(*corev1.Pod)) *corev1.Pod {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
+			Name:      "p",
 			Namespace: testNS,
 			Labels: map[string]string{
 				common.LabelPodTemplateHash: templateHash,
@@ -111,16 +111,16 @@ func TestComputeUpdateWork(t *testing.T) {
 		pod      *corev1.Pod
 		expected bucket
 	}{
-		{"old pending", newTestPod("p", testOldHash, withPhase(corev1.PodPending)), bucketOldPending},
-		{"old unhealthy (started, not ready)", newTestPod("p", testOldHash, withPhase(corev1.PodRunning), withContainerStatus(ptr.To(true), false)), bucketOldUnhealthy},
-		{"old unhealthy (erroneous exit)", newTestPod("p", testOldHash, withPhase(corev1.PodRunning), withErroneousExit()), bucketOldUnhealthy},
-		{"old ready", newTestPod("p", testOldHash, withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)), bucketOldReady},
-		{"old starting (Started=false)", newTestPod("p", testOldHash, withPhase(corev1.PodRunning), withContainerStatus(ptr.To(false), false)), bucketOldStarting},
-		{"old starting (Started=nil)", newTestPod("p", testOldHash, withPhase(corev1.PodRunning), withContainerStatus(nil, false)), bucketOldStarting},
-		{"old uncategorized (no containers)", newTestPod("p", testOldHash, withPhase(corev1.PodRunning)), bucketOldUncategorized},
-		{"old terminating is skipped", newTestPod("p", testOldHash, withDeletionTimestamp()), bucketSkipped},
-		{"new ready", newTestPod("p", testNewHash, withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)), bucketNewReady},
-		{"new not-ready is not tracked", newTestPod("p", testNewHash, withPhase(corev1.PodRunning), withContainerStatus(ptr.To(false), false)), bucketSkipped},
+		{"old pending", newTestPod(testOldHash, withPhase(corev1.PodPending)), bucketOldPending},
+		{"old unhealthy (started, not ready)", newTestPod(testOldHash, withPhase(corev1.PodRunning), withContainerStatus(ptr.To(true), false)), bucketOldUnhealthy},
+		{"old unhealthy (erroneous exit)", newTestPod(testOldHash, withPhase(corev1.PodRunning), withErroneousExit()), bucketOldUnhealthy},
+		{"old ready", newTestPod(testOldHash, withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)), bucketOldReady},
+		{"old starting (Started=false)", newTestPod(testOldHash, withPhase(corev1.PodRunning), withContainerStatus(ptr.To(false), false)), bucketOldStarting},
+		{"old starting (Started=nil)", newTestPod(testOldHash, withPhase(corev1.PodRunning), withContainerStatus(nil, false)), bucketOldStarting},
+		{"old uncategorized (no containers)", newTestPod(testOldHash, withPhase(corev1.PodRunning)), bucketOldUncategorized},
+		{"old terminating is skipped", newTestPod(testOldHash, withDeletionTimestamp()), bucketSkipped},
+		{"new ready", newTestPod(testNewHash, withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)), bucketNewReady},
+		{"new not-ready is not tracked", newTestPod(testNewHash, withPhase(corev1.PodRunning), withContainerStatus(ptr.To(false), false)), bucketSkipped},
 	}
 
 	r := _resource{expectationsStore: expect.NewExpectationsStore()}
