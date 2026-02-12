@@ -115,7 +115,6 @@ Users may not understand why their spec changes are not being applied automatica
 
 *Mitigation*:
 - The API will clearly document the behavior of each update strategy.
-- Status conditions will indicate when there are replicas running with an outdated specification.
 
 ## Design Details
 
@@ -359,18 +358,6 @@ The existing status fields provide visibility into update progress:
 - `PodCliqueStatus.CurrentPodTemplateHash`: Hash identifying the template version for each PodClique.
 
 When `UpdatedReplicas < Replicas` with `OnDelete` strategy, it indicates that some replicas are running with an outdated specification.
-
-**Proposed Condition:**
-
-A new condition `UpdatePending` can be added to `PodCliqueSetStatus.Conditions`:
-
-| Status | Reason | Description |
-|--------|--------|-------------|
-| `True` | `ReplicasOutdated` | Some replicas are running with an outdated specification |
-| `False` | `AllReplicasUpdated` | All replicas are running with the current specification |
-
-This condition will also be set when the update strategy is `RollingRecreate`, along with the typical `RollingUpdateStatus` fields.
-Since `RollingUpdateStatus` is not relevant during `OnDelete`, users can consume the `UpdatePending` condition on the `PodClique` to understand if all their replicas match with the new template.
 
 ### Implementation Phases
 
