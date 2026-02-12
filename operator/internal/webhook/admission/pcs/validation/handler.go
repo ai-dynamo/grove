@@ -42,17 +42,19 @@ const (
 
 // Handler is a handler for validating PodCliqueSet resources.
 type Handler struct {
-	logger        logr.Logger
-	tasConfig     configv1alpha1.TopologyAwareSchedulingConfiguration
-	networkConfig configv1alpha1.NetworkAcceleration
+	logger          logr.Logger
+	tasConfig       configv1alpha1.TopologyAwareSchedulingConfiguration
+	networkConfig   configv1alpha1.NetworkAcceleration
+	schedulerConfig configv1alpha1.SchedulerConfiguration
 }
 
 // NewHandler creates a new handler for PodCliqueSet Webhook.
-func NewHandler(mgr manager.Manager, tasConfig configv1alpha1.TopologyAwareSchedulingConfiguration, networkConfig configv1alpha1.NetworkAcceleration) *Handler {
+func NewHandler(mgr manager.Manager, tasConfig configv1alpha1.TopologyAwareSchedulingConfiguration, networkConfig configv1alpha1.NetworkAcceleration, schedulerConfig configv1alpha1.SchedulerConfiguration) *Handler {
 	return &Handler{
-		logger:        mgr.GetLogger().WithName("webhook").WithName(Name),
-		tasConfig:     tasConfig,
-		networkConfig: networkConfig,
+		logger:          mgr.GetLogger().WithName("webhook").WithName(Name),
+		tasConfig:       tasConfig,
+		networkConfig:   networkConfig,
+		schedulerConfig: schedulerConfig,
 	}
 }
 
@@ -64,7 +66,7 @@ func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admis
 		return nil, errors.WrapError(err, ErrValidateCreatePodCliqueSet, string(admissionv1.Create), "failed to cast object to PodCliqueSet")
 	}
 
-	v := newPCSValidator(pcs, admissionv1.Create, h.tasConfig)
+	v := newPCSValidator(pcs, admissionv1.Create, h.tasConfig, h.schedulerConfig)
 	var allErrs field.ErrorList
 	allErrs = append(allErrs, v.validateTopologyConstraintsOnCreate()...)
 	warnings, errs := v.validate()
@@ -88,7 +90,7 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 		return nil, errors.WrapError(err, ErrValidateUpdatePodCliqueSet, string(admissionv1.Update), "failed to cast old object to PodCliqueSet")
 	}
 
-	v := newPCSValidator(newPCS, admissionv1.Update, h.tasConfig)
+	v := newPCSValidator(newPCS, admissionv1.Update, h.tasConfig, h.schedulerConfig)
 	warnings, errs := v.validate()
 
 	// Validate MNNVL annotation immutability

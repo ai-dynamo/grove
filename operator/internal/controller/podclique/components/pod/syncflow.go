@@ -238,7 +238,7 @@ func selectExcessPodsToDelete(sc *syncContext, logger logr.Logger) []*corev1.Pod
 	return candidatePodsToDelete
 }
 
-// checkAndRemovePodSchedulingGates removes scheduling gates from pods when their dependencies are satisfied
+// checkAndRemovePodSchedulingGates removes scheduling gates from pods when PodGang is initialized
 func (r _resource) checkAndRemovePodSchedulingGates(sc *syncContext, logger logr.Logger) ([]string, error) {
 	tasks := make([]utils.Task, 0, len(sc.existingPCLQPods))
 	skippedScheduleGatedPods := make([]string, 0, len(sc.existingPCLQPods))

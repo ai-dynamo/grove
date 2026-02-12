@@ -41,6 +41,8 @@ const (
 	// ExitErrInitializeManager indicates that the application exited due to an error initializing the manager.
 	// This includes registration of controllers and webhooks and setting up probes.
 	ExitErrInitializeManager
+	// ExitErrInitializeSchedulerBackend indicates that the application exited due to an error initializing the scheduler backend.
+	ExitErrInitializeSchedulerBackend
 	// ExitErrStart indicates that the application exited due to an error when starting the application.
 	ExitErrStart
 	// ExitErrMNNVLPrerequisites indicates that the application exited because MNNVL prerequisites are not met.

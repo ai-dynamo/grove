@@ -742,6 +742,32 @@ _Appears in:_
 | `enableProfiling` _boolean_ | EnableProfiling enables profiling via host:port/debug/pprof/ endpoints. |  |  |
 
 
+#### DefaultSchedulerConfiguration
+
+
+
+DefaultSchedulerConfiguration defines the configuration for the default-scheduler (kube) backend.
+
+
+
+_Appears in:_
+- [SchedulerConfiguration](#schedulerconfiguration)
+
+
+
+#### KaiSchedulerConfiguration
+
+
+
+KaiSchedulerConfiguration defines the configuration for the kai-scheduler backend.
+
+
+
+_Appears in:_
+- [SchedulerConfiguration](#schedulerconfiguration)
+
+
+
 #### LeaderElectionConfiguration
 
 
@@ -863,6 +889,43 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `concurrentSyncs` _integer_ | ConcurrentSyncs is the number of workers used for the controller to concurrently work on events. |  |  |
+
+
+#### SchedulerConfiguration
+
+
+
+SchedulerConfiguration defines the scheduler backend and its configuration.
+Each scheduler backend may have its own configuration; only the config for the
+selected Name is used at runtime.
+
+
+
+_Appears in:_
+- [OperatorConfiguration](#operatorconfiguration)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _[SchedulerName](#schedulername)_ | Name is the name of the scheduler backend with which this instance of Grove operator will run. |  | Enum: [kai-scheduler default-scheduler] <br /> |
+| `kai` _[KaiSchedulerConfiguration](#kaischedulerconfiguration)_ | Kai is the configuration for the kai-scheduler backend. Only used when Name is kai-scheduler. |  |  |
+| `defaultScheduler` _[DefaultSchedulerConfiguration](#defaultschedulerconfiguration)_ | DefaultScheduler is the configuration for the default-scheduler (kube) backend. Only used when Name is default-scheduler. |  |  |
+
+
+#### SchedulerName
+
+_Underlying type:_ _string_
+
+SchedulerName defines the name of the scheduler backend.
+
+
+
+_Appears in:_
+- [SchedulerConfiguration](#schedulerconfiguration)
+
+| Field | Description |
+| --- | --- |
+| `kai-scheduler` | SchedulerNameKai is the Kai scheduler backend.<br /> |
+| `default-scheduler` | SchedulerNameKube is the Kubernetes default scheduler backend.<br /> |
 
 
 #### Server

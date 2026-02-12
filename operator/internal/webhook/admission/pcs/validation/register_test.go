@@ -42,7 +42,7 @@ func TestRegisterWithManager(t *testing.T) {
 	})
 	mgr.WebhookServer = server
 
-	handler := NewHandler(mgr, configv1alpha1.TopologyAwareSchedulingConfiguration{}, configv1alpha1.NetworkAcceleration{})
+	handler := NewHandler(mgr, configv1alpha1.TopologyAwareSchedulingConfiguration{}, configv1alpha1.NetworkAcceleration{}, configv1alpha1.SchedulerConfiguration{Name: configv1alpha1.SchedulerNameKube})
 	err := handler.RegisterWithManager(mgr)
 	require.NoError(t, err)
 }

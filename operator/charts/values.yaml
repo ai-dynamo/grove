@@ -81,6 +81,12 @@ config:
       concurrentSyncs: 3
     podClique:
       concurrentSyncs: 3
+  # Scheduler is the configuration for the scheduler backend. Different schedulers may have different options.
+  # Valid values for name: "kai-scheduler", "default-scheduler"
+  scheduler:
+    name: "default-scheduler"
+    # kai: {}           # optional kai-scheduler-specific config (used when name is kai-scheduler)
+    # defaultScheduler: {}  # optional default-scheduler-specific config (used when name is default-scheduler)
   logLevel: info
   logFormat: json
   topologyAwareScheduling:

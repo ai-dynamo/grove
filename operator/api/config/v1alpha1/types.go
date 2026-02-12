@@ -51,6 +51,47 @@ var (
 	AllLogFormats = []LogFormat{LogFormatJSON, LogFormatText}
 )
 
+// SchedulerName defines the name of the scheduler backend.
+type SchedulerName string
+
+const (
+	// SchedulerNameKai is the Kai scheduler backend.
+	SchedulerNameKai SchedulerName = "kai-scheduler"
+	// SchedulerNameKube is the Kubernetes default scheduler backend.
+	SchedulerNameKube SchedulerName = "default-scheduler"
+)
+
+var (
+	// SupportedSchedulerNames is a slice of all supported scheduler names.
+	SupportedSchedulerNames = []SchedulerName{SchedulerNameKai, SchedulerNameKube}
+)
+
+// SchedulerConfiguration defines the scheduler backend and its configuration.
+// Each scheduler backend may have its own configuration; only the config for the
+// selected Name is used at runtime.
+type SchedulerConfiguration struct {
+	// Name is the name of the scheduler backend with which this instance of Grove operator will run.
+	// +required
+	// +kubebuilder:validation:Enum=kai-scheduler;default-scheduler
+	Name SchedulerName `json:"name"`
+	// Kai is the configuration for the kai-scheduler backend. Only used when Name is kai-scheduler.
+	// +optional
+	Kai *KaiSchedulerConfiguration `json:"kai,omitempty"`
+	// DefaultScheduler is the configuration for the default-scheduler (kube) backend. Only used when Name is default-scheduler.
+	// +optional
+	DefaultScheduler *DefaultSchedulerConfiguration `json:"defaultScheduler,omitempty"`
+}
+
+// KaiSchedulerConfiguration defines the configuration for the kai-scheduler backend.
+type KaiSchedulerConfiguration struct {
+	// Reserved for future kai-scheduler-specific options.
+}
+
+// DefaultSchedulerConfiguration defines the configuration for the default-scheduler (kube) backend.
+type DefaultSchedulerConfiguration struct {
+	// Reserved for future default-scheduler-specific options.
+}
+
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // OperatorConfiguration defines the configuration for the Grove operator.
@@ -67,6 +108,9 @@ type OperatorConfiguration struct {
 	TopologyAwareScheduling TopologyAwareSchedulingConfiguration `json:"topologyAwareScheduling"`
 	// +optional
 	Network NetworkAcceleration `json:"network,omitempty"` // Network is the configuration for network acceleration features like MNNVL.
+	// Scheduler is the configuration for the scheduler backend. Different schedulers may have different options.
+	// Scheduler.Name is validated via +kubebuilder:validation:Enum on SchedulerConfiguration.Name.
+	Scheduler SchedulerConfiguration `json:"scheduler"`
 }
 
 // LeaderElectionConfiguration defines the configuration for the leader election.

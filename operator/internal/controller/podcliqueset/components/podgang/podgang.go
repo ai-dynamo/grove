@@ -50,6 +50,7 @@ const (
 	errCodeSetControllerReference     grovecorev1alpha1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
 	errCodeCreateOrPatchPodGang       grovecorev1alpha1.ErrorCode = "ERR_CREATE_OR_PATCH_PODGANG"
 	errCodeGetClusterTopologyLevels   grovecorev1alpha1.ErrorCode = "ERR_GET_CLUSTER_TOPOLOGY_LEVELS"
+	errCodeUpdatePodGang              grovecorev1alpha1.ErrorCode = "ERR_UPDATE_PODGANG_WITH_POD_REFS"
 )
 
 type _resource struct {
@@ -89,6 +90,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 }
 
 // Sync creates, updates, or deletes PodGang resources to match the desired state.
+// NEW FLOW: PodGangs are created with empty podReferences before Pods are created.
 func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
 	logger.Info("Syncing PodGang resources")
 	sc, err := r.prepareSyncFlow(ctx, logger, pcs)
@@ -98,12 +100,6 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 	result := r.runSyncFlow(sc)
 	if result.hasErrors() {
 		return result.getAggregatedError()
-	}
-	if result.hasPodGangsPendingCreation() {
-		return groveerr.New(groveerr.ErrCodeRequeueAfter,
-			component.OperationSync,
-			fmt.Sprintf("PodGangs pending creation: %v", result.podsGangsPendingCreation),
-		)
 	}
 	return nil
 }
@@ -134,6 +130,7 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGa
 		}
 		pg.Annotations[apicommonconstants.AnnotationTopologyName] = grovecorev1alpha1.DefaultClusterTopologyName
 	}
+
 	if err := controllerutil.SetControllerReference(pcs, pg, r.scheme); err != nil {
 		return groveerr.WrapError(
 			err,
@@ -142,11 +139,57 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGa
 			fmt.Sprintf("failed to set the controller reference on PodGang %s to PodCliqueSet %v", pgi.fqn, client.ObjectKeyFromObject(pcs)),
 		)
 	}
-	pg.Spec.PodGroups = createPodGroupsForPodGang(pg.Namespace, pgi)
 	pg.Spec.PriorityClassName = pcs.Spec.Template.PriorityClassName
 	pg.Spec.TopologyConstraint = pgi.topologyConstraint
 	pg.Spec.TopologyConstraintGroupConfigs = pgi.pcsgTopologyConstraints
+
+	// Only set PodGroups if they don't exist yet (initial creation)
+	// Once populated, we preserve existing podReferences to avoid clearing them on subsequent reconciles
+	if len(pg.Spec.PodGroups) == 0 {
+		// Create PodGroups with EMPTY podReferences initially
+		pg.Spec.PodGroups = createEmptyPodGroupsForPodGang(*pgi)
+	} else {
+		// PodGroups already exist - preserve them but update MinReplicas and TopologyConstraint if needed
+		expectedPodGroups := make(map[string]struct {
+			minAvailable       int32
+			topologyConstraint *groveschedulerv1alpha1.TopologyConstraint
+		})
+		for _, pclq := range pgi.pclqs {
+			expectedPodGroups[pclq.fqn] = struct {
+				minAvailable       int32
+				topologyConstraint *groveschedulerv1alpha1.TopologyConstraint
+			}{
+				minAvailable:       pclq.minAvailable,
+				topologyConstraint: pclq.topologyConstraint,
+			}
+		}
+
+		// Update MinReplicas and TopologyConstraint for existing PodGroups
+		for i := range pg.Spec.PodGroups {
+			podGroup := &pg.Spec.PodGroups[i]
+			if expectedPG, ok := expectedPodGroups[podGroup.Name]; ok {
+				podGroup.MinReplicas = expectedPG.minAvailable
+				podGroup.TopologyConstraint = expectedPG.topologyConstraint
+			}
+		}
+	}
+
+	// Note: Initialized condition will be set to False via status patch after create
 	return nil
+}
+
+// createEmptyPodGroupsForPodGang creates PodGroups with empty podReferences.
+// These will be populated later when pods are created.
+func createEmptyPodGroupsForPodGang(pgInfo podGangInfo) []groveschedulerv1alpha1.PodGroup {
+	podGroups := lo.Map(pgInfo.pclqs, func(pclq pclqInfo, _ int) groveschedulerv1alpha1.PodGroup {
+		return groveschedulerv1alpha1.PodGroup{
+			Name:               pclq.fqn,
+			PodReferences:      []groveschedulerv1alpha1.NamespacedName{}, // Empty initially!
+			MinReplicas:        pclq.minAvailable,
+			TopologyConstraint: pclq.topologyConstraint, // Set PodClique-level topology constraint
+		}
+	})
+	return podGroups
 }
 
 // getPodGangSelectorLabels returns labels for selecting all PodGangs of a PodCliqueSet.
