@@ -27,9 +27,9 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
-	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -39,6 +39,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 )
 
 const (
@@ -129,7 +131,8 @@ func hasPodStatusChanged(updateEvent event.UpdateEvent) bool {
 	return hasReadyConditionChanged(oldPod.Status.Conditions, newPod.Status.Conditions) ||
 		hasLastTerminationStateChanged(oldPod.Status.InitContainerStatuses, newPod.Status.InitContainerStatuses) ||
 		hasLastTerminationStateChanged(oldPod.Status.ContainerStatuses, newPod.Status.ContainerStatuses) ||
-		hasStartedAndReadyChangedForAnyContainer(oldPod.Status.ContainerStatuses, newPod.Status.ContainerStatuses)
+		hasStartedAndReadyChangedForAnyContainer(oldPod.Status.ContainerStatuses, newPod.Status.ContainerStatuses) ||
+		hasTerminationChanged(oldPod.DeletionTimestamp, newPod.DeletionTimestamp)
 }
 
 // hasReadyConditionChanged checks if the Pod's Ready condition status has transitioned
@@ -284,4 +287,8 @@ func isManagedPod(obj client.Object) bool {
 		return false
 	}
 	return grovectrlutils.HasExpectedOwner(constants.KindPodClique, pod.OwnerReferences) && grovectrlutils.IsManagedByGrove(pod.GetLabels())
+}
+
+func hasTerminationChanged(oldDeletionTime, newDeletionTime *metav1.Time) bool {
+	return oldDeletionTime == nil && newDeletionTime != nil
 }

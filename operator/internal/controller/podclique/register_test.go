@@ -20,10 +20,44 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 )
 
 // TestControllerConstants tests the controller constants
 func TestControllerConstants(t *testing.T) {
 	// Verifies that controller name is set correctly
 	assert.Equal(t, "podclique-controller", controllerName)
+}
+
+func Test_hasPodStatusChanged(t *testing.T) {
+	tests := []struct {
+		name        string
+		updateEvent event.UpdateEvent
+		want        bool
+	}{
+		{
+			name: "pod deletionTimestamp changed",
+			updateEvent: event.UpdateEvent{
+				ObjectOld: &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						DeletionTimestamp: nil,
+					},
+				},
+				ObjectNew: &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						DeletionTimestamp: ptr.To(metav1.Now()),
+					},
+				},
+			},
+			want: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equalf(t, tt.want, hasPodStatusChanged(tt.updateEvent), "hasPodStatusChanged(%v)", tt.updateEvent)
+		})
+	}
 }
