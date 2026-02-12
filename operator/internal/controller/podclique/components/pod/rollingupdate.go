@@ -40,15 +40,17 @@ import (
 
 // updateWork encapsulates the information needed to perform a rolling update of pods in a PodClique.
 type updateWork struct {
-	oldTemplateHashPendingPods   []*corev1.Pod
-	oldTemplateHashUnhealthyPods []*corev1.Pod
-	oldTemplateHashReadyPods     []*corev1.Pod
-	newTemplateHashReadyPods     []*corev1.Pod
+	oldTemplateHashPendingPods       []*corev1.Pod
+	oldTemplateHashUnhealthyPods     []*corev1.Pod
+	oldTemplateHashStartingPods      []*corev1.Pod
+	oldTemplateHashUncategorizedPods []*corev1.Pod
+	oldTemplateHashReadyPods         []*corev1.Pod
+	newTemplateHashReadyPods         []*corev1.Pod
 }
 
 // getPodNamesPendingUpdate returns names of pods with old template hash that are not already being deleted
 func (w *updateWork) getPodNamesPendingUpdate(deletionExpectedPodUIDs []types.UID) []string {
-	allOldPods := lo.Union(w.oldTemplateHashPendingPods, w.oldTemplateHashUnhealthyPods, w.oldTemplateHashReadyPods)
+	allOldPods := lo.Union(w.oldTemplateHashPendingPods, w.oldTemplateHashUnhealthyPods, w.oldTemplateHashStartingPods, w.oldTemplateHashUncategorizedPods, w.oldTemplateHashReadyPods)
 	return lo.FilterMap(allOldPods, func(pod *corev1.Pod, _ int) (string, bool) {
 		if slices.Contains(deletionExpectedPodUIDs, pod.UID) {
 			return "", false
@@ -73,8 +75,8 @@ func (w *updateWork) getNextPodToUpdate() *corev1.Pod {
 func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) error {
 	work := r.computeUpdateWork(logger, sc)
 	pclq := sc.pclq
-	// always delete pods that have old pod template hash and are either Pending or Unhealthy.
-	if err := r.deleteOldPendingAndUnhealthyPods(logger, sc, work); err != nil {
+	// Always delete old-hash pods that are not Ready (pending, unhealthy, starting, or uncategorized).
+	if err := r.deleteOldNonReadyPods(logger, sc, work); err != nil {
 		return err
 	}
 
@@ -132,24 +134,34 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 	return r.markRollingUpdateEnd(sc.ctx, logger, pclq)
 }
 
-// computeUpdateWork analyzes existing pods and categorizes them by template hash and health status for update planning
+// computeUpdateWork categorizes pods by template hash and state.
+// Old-hash pods: Pending, Unhealthy, Starting, Uncategorized, or Ready.
+// New-hash pods: Ready only.
 func (r _resource) computeUpdateWork(logger logr.Logger, sc *syncContext) *updateWork {
 	work := &updateWork{}
 	for _, pod := range sc.existingPCLQPods {
 		if pod.Labels[common.LabelPodTemplateHash] != sc.expectedPodTemplateHash {
-			// check if the pod has already been marked for deletion
+			// Old-hash pod — skip if deletion already in flight.
 			if r.hasPodDeletionBeenTriggered(sc, pod) {
 				logger.Info("skipping old Pod since its deletion has already been triggered", "pod", client.ObjectKeyFromObject(pod))
 				continue
 			}
+			// Pending, unhealthy, starting, and uncategorized pods are deleted immediately;
+			// ready pods are queued for ordered one-at-a-time replacement.
 			if k8sutils.IsPodPending(pod) {
 				work.oldTemplateHashPendingPods = append(work.oldTemplateHashPendingPods, pod)
 			} else if k8sutils.HasAnyStartedButNotReadyContainer(pod) || k8sutils.HasAnyContainerExitedErroneously(logger, pod) {
 				work.oldTemplateHashUnhealthyPods = append(work.oldTemplateHashUnhealthyPods, pod)
 			} else if k8sutils.IsPodReady(pod) {
 				work.oldTemplateHashReadyPods = append(work.oldTemplateHashReadyPods, pod)
+			} else if k8sutils.HasAnyContainerNotStarted(pod) {
+				work.oldTemplateHashStartingPods = append(work.oldTemplateHashStartingPods, pod)
+			} else {
+				work.oldTemplateHashUncategorizedPods = append(work.oldTemplateHashUncategorizedPods, pod)
 			}
 		} else {
+			// New-hash pod — only count as ready; non-ready pods are not tracked so
+			// isCurrentPodUpdateComplete won't prematurely declare success.
 			if k8sutils.IsPodReady(pod) {
 				work.newTemplateHashReadyPods = append(work.newTemplateHashReadyPods, pod)
 			}
@@ -163,8 +175,10 @@ func (r _resource) hasPodDeletionBeenTriggered(sc *syncContext, pod *corev1.Pod)
 	return k8sutils.IsResourceTerminating(pod.ObjectMeta) || r.expectationsStore.HasDeleteExpectation(sc.pclqExpectationsStoreKey, pod.GetUID())
 }
 
-// deleteOldPendingAndUnhealthyPods removes pods with old template hash that are pending or unhealthy
-func (r _resource) deleteOldPendingAndUnhealthyPods(logger logr.Logger, sc *syncContext, work *updateWork) error {
+// deleteOldNonReadyPods removes old-hash pods that are not Ready: pending, unhealthy, starting (startup probe),
+// or uncategorized (unknown state). All of these are safe to delete immediately since they are not serving traffic
+// and will be replaced with pods having the correct template hash.
+func (r _resource) deleteOldNonReadyPods(logger logr.Logger, sc *syncContext, work *updateWork) error {
 	var deletionTasks []utils.Task
 	if len(work.oldTemplateHashPendingPods) > 0 {
 		deletionTasks = append(deletionTasks, r.createPodDeletionTasks(logger, sc.pclq, work.oldTemplateHashPendingPods, sc.pclqExpectationsStoreKey)...)
@@ -172,15 +186,26 @@ func (r _resource) deleteOldPendingAndUnhealthyPods(logger logr.Logger, sc *sync
 	if len(work.oldTemplateHashUnhealthyPods) > 0 {
 		deletionTasks = append(deletionTasks, r.createPodDeletionTasks(logger, sc.pclq, work.oldTemplateHashUnhealthyPods, sc.pclqExpectationsStoreKey)...)
 	}
+	if len(work.oldTemplateHashStartingPods) > 0 {
+		deletionTasks = append(deletionTasks, r.createPodDeletionTasks(logger, sc.pclq, work.oldTemplateHashStartingPods, sc.pclqExpectationsStoreKey)...)
+	}
+	if len(work.oldTemplateHashUncategorizedPods) > 0 {
+		logger.Info("found old-hash pods in an unrecognized state, deleting them",
+			"unexpected", true,
+			"pods", componentutils.PodsToObjectNames(work.oldTemplateHashUncategorizedPods))
+		deletionTasks = append(deletionTasks, r.createPodDeletionTasks(logger, sc.pclq, work.oldTemplateHashUncategorizedPods, sc.pclqExpectationsStoreKey)...)
+	}
 
 	if len(deletionTasks) == 0 {
-		logger.Info("no pending or unhealthy pods having old PodTemplateHash found")
+		logger.Info("no non-ready pods having old PodTemplateHash found")
 		return nil
 	}
 
-	logger.Info("triggering deletion of pending and unhealthy pods with old pod template hash in order to update",
+	logger.Info("triggering deletion of non-ready pods with old pod template hash in order to update",
 		"oldPendingPods", componentutils.PodsToObjectNames(work.oldTemplateHashPendingPods),
-		"oldUnhealthyPods", componentutils.PodsToObjectNames(work.oldTemplateHashUnhealthyPods))
+		"oldUnhealthyPods", componentutils.PodsToObjectNames(work.oldTemplateHashUnhealthyPods),
+		"oldStartingPods", componentutils.PodsToObjectNames(work.oldTemplateHashStartingPods),
+		"oldUncategorizedPods", componentutils.PodsToObjectNames(work.oldTemplateHashUncategorizedPods))
 	if runResult := utils.RunConcurrently(sc.ctx, logger, deletionTasks); runResult.HasErrors() {
 		err := runResult.GetAggregatedError()
 		pclqObjectKey := client.ObjectKeyFromObject(sc.pclq)
@@ -191,7 +216,7 @@ func (r _resource) deleteOldPendingAndUnhealthyPods(logger logr.Logger, sc *sync
 			fmt.Sprintf("failed to delete Pods for PodClique %v", pclqObjectKey),
 		)
 	}
-	logger.Info("successfully deleted pods having old PodTemplateHash and in either Pending or Unhealthy state")
+	logger.Info("successfully deleted non-ready pods having old PodTemplateHash")
 	return nil
 }
 

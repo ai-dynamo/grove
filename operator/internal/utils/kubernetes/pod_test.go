@@ -339,6 +339,122 @@ func TestHasAnyStartedButNotReadyContainer(t *testing.T) {
 	}
 }
 
+// TestHasAnyContainerNotStarted tests checking for containers that have not yet passed their startup probe.
+func TestHasAnyContainerNotStarted(t *testing.T) {
+	testCases := []struct {
+		// name identifies the test case
+		name string
+		// containerStatuses is the list of container statuses to set on the pod
+		containerStatuses []corev1.ContainerStatus
+		// expectedResult is whether the pod should have a not-yet-started container
+		expectedResult bool
+	}{
+		{
+			// Container with Started==false (startup probe not yet passed)
+			name: "started-false",
+			containerStatuses: []corev1.ContainerStatus{
+				{
+					Name:    "container-1",
+					Started: ptr.To(false),
+					Ready:   false,
+				},
+			},
+			expectedResult: true,
+		},
+		{
+			// Container with Started==nil (startup probe not yet evaluated)
+			name: "started-nil",
+			containerStatuses: []corev1.ContainerStatus{
+				{
+					Name:    "container-1",
+					Started: nil,
+					Ready:   false,
+				},
+			},
+			expectedResult: true,
+		},
+		{
+			// Container that has started (startup probe passed)
+			name: "started-true",
+			containerStatuses: []corev1.ContainerStatus{
+				{
+					Name:    "container-1",
+					Started: ptr.To(true),
+					Ready:   false,
+				},
+			},
+			expectedResult: false,
+		},
+		{
+			// Container that has started and is ready
+			name: "started-and-ready",
+			containerStatuses: []corev1.ContainerStatus{
+				{
+					Name:    "container-1",
+					Started: ptr.To(true),
+					Ready:   true,
+				},
+			},
+			expectedResult: false,
+		},
+		{
+			// No container statuses
+			name:              "no-containers",
+			containerStatuses: []corev1.ContainerStatus{},
+			expectedResult:    false,
+		},
+		{
+			// Multiple containers — one started, one not started
+			name: "multiple-containers-one-not-started",
+			containerStatuses: []corev1.ContainerStatus{
+				{
+					Name:    "container-1",
+					Started: ptr.To(true),
+					Ready:   true,
+				},
+				{
+					Name:    "container-2",
+					Started: ptr.To(false),
+					Ready:   false,
+				},
+			},
+			expectedResult: true,
+		},
+		{
+			// Multiple containers — all started
+			name: "multiple-containers-all-started",
+			containerStatuses: []corev1.ContainerStatus{
+				{
+					Name:    "container-1",
+					Started: ptr.To(true),
+					Ready:   true,
+				},
+				{
+					Name:    "container-2",
+					Started: ptr.To(true),
+					Ready:   false,
+				},
+			},
+			expectedResult: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      testPodName,
+					Namespace: testPodNamespace,
+				},
+				Status: corev1.PodStatus{
+					ContainerStatuses: tc.containerStatuses,
+				},
+			}
+			assert.Equal(t, tc.expectedResult, HasAnyContainerNotStarted(pod))
+		})
+	}
+}
+
 // TestGetContainerStatusIfTerminatedErroneously tests finding containers that terminated with non-zero exit code.
 func TestGetContainerStatusIfTerminatedErroneously(t *testing.T) {
 	testCases := []struct {
