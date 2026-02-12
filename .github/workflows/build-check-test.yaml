@@ -83,6 +83,11 @@ jobs:
 
   # E2E tests - only run after build, check, and test jobs succeed
   # Only triggered by changes to operator or .github folders
+  #
+  # Matrix entries can set:
+  #   test_name     (required) - name shown in the GitHub Actions UI
+  #   test_pattern  (optional) - Go test -run pattern (standard e2e tests)
+  #   make_target   (optional) - Makefile target, defaults to run-e2e-full
   e2e:
     needs: [test, build, check, changes]
     # Run on non-draft PRs (or draft PRs with 'run-e2e' label)
@@ -109,9 +114,11 @@ jobs:
             test_pattern: "^Test_TAS"
           - test_name: cert_management
             test_pattern: "^Test_CM"
+          - test_name: auto_mnnvl
+            make_target: "run-e2e-mnnvl-full"
     name: E2E - ${{ matrix.test_name }}
     steps:
-      # print runner specs so we have a record incase of failures
+      # print runner specs so we have a record in case of failures
       - name: Print runner specs
         run: |
           echo "CPUs: $(nproc)"
@@ -120,49 +127,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # NVIDIA self-hosted runners don't have make installed by default
-      - name: Install build-essential for make
-        run: |
-          sudo apt-get update
-          sudo apt install build-essential -y
-
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: "1.25.7"
-
-      - name: Install k3d
-        run: |
-          curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
-          k3d version
-
-      - name: Install skaffold
-        run: |
-          curl -Lo skaffold https://storage.googleapis.com/skaffold/releases/latest/skaffold-linux-amd64
-          sudo install skaffold /usr/local/bin/
-          skaffold version
-
-      - name: Install Helm
-        run: |
-          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-          helm version
-
-      - name: Install Python3 and pip
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3 python3-pip
-
-      - name: Install Python dependencies
-        run: |
-          echo "Installing Python dependencies..."
-          pip3 install --break-system-packages -r operator/hack/e2e-cluster/requirements.txt
-
-          echo "Verifying Python dependencies..."
-          python3 -c "import docker; import sh; import typer; import pydantic; import rich; print('All dependencies installed successfully')"
+      - name: E2E Setup
+        uses: ./.github/actions/e2e-setup
 
       - name: Run e2e tests - ${{ matrix.test_name }}
         run: |
-          make run-e2e-full TEST_PATTERN='${{ matrix.test_pattern }}'
+          make ${{ matrix.make_target || 'run-e2e-full' }} TEST_PATTERN='${{ matrix.test_pattern }}'
         working-directory: operator
 
       # The test code handles cleanup via Teardown(), but this step provides
@@ -182,72 +152,5 @@ jobs:
         with:
           name: e2e-test-logs-${{ matrix.test_name }}
           path: operator/e2e-diagnostics/
-          if-no-files-found: warn
-          retention-days: 7
-
-  # E2E tests for autoMNNVL feature
-  # Runs all 4 configurations (supported/unsupported x enabled/disabled) sequentially
-  # Uses a separate cluster setup from the main e2e tests
-  e2e-mnnvl:
-    needs: [test, build, check, changes]
-    if: |
-      github.event_name == 'pull_request' &&
-      needs.changes.outputs.e2e-relevant == 'true' &&
-      (github.event.pull_request.draft == false || contains(github.event.pull_request.labels.*.name, 'run-e2e'))
-    runs-on: cpu-amd-m5-2xlarge
-    timeout-minutes: 60
-    name: E2E - auto_mnnvl
-    steps:
-      - name: Print runner specs
-        run: |
-          echo "CPUs: $(nproc)"
-          echo "RAM: $(free -h | awk '/^Mem:/ {print $2}')"
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install build-essential for make
-        run: |
-          sudo apt-get update
-          sudo apt install build-essential -y
-
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: "1.25.7"
-
-      - name: Install k3d
-        run: |
-          curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
-          k3d version
-
-      - name: Install skaffold
-        run: |
-          curl -Lo skaffold https://storage.googleapis.com/skaffold/releases/latest/skaffold-linux-amd64
-          sudo install skaffold /usr/local/bin/
-          skaffold version
-
-      - name: Install Helm
-        run: |
-          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-          helm version
-
-      - name: Run autoMNNVL e2e tests (all 4 configurations)
-        run: |
-          make run-e2e-mnnvl-full
-        working-directory: operator
-
-      - name: Cleanup k3d cluster
-        if: always()
-        working-directory: operator
-        run: |
-          make e2e-mnnvl-cluster-down || true
-
-      - name: Upload test logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-test-logs-auto_mnnvl
-          path: /tmp/mnnvl-e2e-results.log
           if-no-files-found: warn
           retention-days: 7

@@ -1,0 +1,73 @@
+# /*
+# Copyright 2025 The Grove Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# */
+
+name: "E2E Setup"
+description: "Install all tools and dependencies needed to run E2E tests (Go, k3d, skaffold, helm, Python + deps)"
+
+inputs:
+  go-version:
+    description: "Go version to install"
+    required: false
+    default: "1.25.7"
+
+runs:
+  using: "composite"
+  steps:
+    # NVIDIA self-hosted runners don't have make installed by default
+    - name: Install build-essential for make
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt install build-essential -y
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ inputs.go-version }}
+
+    - name: Install k3d
+      shell: bash
+      run: |
+        curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+        k3d version
+
+    - name: Install skaffold
+      shell: bash
+      run: |
+        curl -Lo skaffold https://storage.googleapis.com/skaffold/releases/latest/skaffold-linux-amd64
+        sudo install skaffold /usr/local/bin/
+        skaffold version
+
+    - name: Install Helm
+      shell: bash
+      run: |
+        curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+        helm version
+
+    - name: Install Python3 and pip
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y python3 python3-pip
+
+    - name: Install Python dependencies
+      shell: bash
+      run: |
+        echo "Installing Python dependencies..."
+        pip3 install --break-system-packages -r operator/hack/e2e-cluster/requirements.txt
+
+        echo "Verifying Python dependencies..."
+        python3 -c "import docker; import sh; import typer; import pydantic; import rich; print('All dependencies installed successfully')"

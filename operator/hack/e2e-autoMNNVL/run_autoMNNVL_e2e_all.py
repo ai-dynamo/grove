@@ -17,28 +17,30 @@
 
 """run_autoMNNVL_e2e_all.py - Run autoMNNVL e2e tests with all 4 configurations.
 
-This script runs the autoMNNVL e2e tests with all possible configurations:
+Expects an **existing** cluster (created by ``make run-e2e-mnnvl-full`` or
+manually via ``create-e2e-cluster.py``).  The script reconfigures the cluster
+between test suites using config-cluster.py (declarative / idempotent).
+
+Configurations:
   1. Feature enabled  + CRD supported   (fake GPU installed)
   2. Feature disabled + CRD supported   (fake GPU installed)
-  3. Feature enabled  + CRD unsupported (no fake GPU)
+  3. Feature enabled  + CRD unsupported (no fake GPU) -- operator expected to crash
   4. Feature disabled + CRD unsupported (no fake GPU)
 
-Images are built with skaffold/ko and pushed to the k3d registry as part of
-cluster setup -- no Docker build is required.
+Usage:
+    # Via Makefile (recommended — handles cluster creation + cleanup):
+    make run-e2e-mnnvl-full
 
-Usage: ./hack/e2e-autoMNNVL/run_autoMNNVL_e2e_all.py [options]
-
-Options:
-  --keep-cluster  Keep cluster after all configs (no shutdown)
-  --help          Show this help message
+    # Directly (cluster must already exist):
+    ./hack/e2e-autoMNNVL/run_autoMNNVL_e2e_all.py
 """
 
 from __future__ import annotations
 
-import argparse
+import os
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -46,6 +48,8 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).resolve().parent
 OPERATOR_DIR = SCRIPT_DIR.parent.parent
+E2E_CLUSTER_DIR = OPERATOR_DIR / "hack" / "e2e-cluster"
+CONFIG_CLUSTER_SCRIPT = E2E_CLUSTER_DIR / "config-cluster.py"
 
 # ---------------------------------------------------------------------------
 # Coloured logging helpers
@@ -83,67 +87,81 @@ def log_header(msg: str) -> None:
 # ---------------------------------------------------------------------------
 @dataclass
 class ConfigEntry:
-    num: int
     name: str
-    fake_gpu_flag: str
-    mnnvl_flag: str
-    extra_flags: list[str]
+    config_flags: list[str] = field(default_factory=list)
 
 
 # The four configurations we test.
 #
-# Images are built with skaffold/ko as part of cluster setup (no upfront Docker
-# build). Configs that create a new cluster also build+push images; configs that
-# reuse the cluster skip the build since images are already in the registry.
+# Order is optimised to minimise reconfiguration between runs:
+#   Config4 → matches the initial cluster state (no fake GPU, MNNVL disabled)
+#   Config3 → only toggle: enable MNNVL
+#   Config1 → only toggle: install fake GPU
+#   Config2 → only toggle: disable MNNVL
 #
 # Config 3 uses --skip-operator-wait because the operator intentionally exits
 # (preflight failure) in this invalid configuration; the e2e test itself
 # validates the expected failure behaviour.
 CONFIGS: list[ConfigEntry] = [
-    ConfigEntry(1, "Config1_SupportedAndEnabled",
-                "--with-fake-gpu", "--mnnvl-enabled",
-                []),
-    ConfigEntry(2, "Config2_SupportedButDisabled",
-                "--with-fake-gpu", "--mnnvl-disabled",
-                ["--skip-cluster-create", "--skip-build"]),
-    ConfigEntry(3, "Config3_UnsupportedButEnabled",
-                "--without-fake-gpu", "--mnnvl-enabled",
-                ["--skip-operator-wait"]),
-    ConfigEntry(4, "Config4_UnsupportedAndDisabled",
-                "--without-fake-gpu", "--mnnvl-disabled",
-                ["--skip-cluster-create", "--skip-build"]),
+    ConfigEntry("Config4_UnsupportedAndDisabled",
+                ["--fake-gpu=no", "--auto-mnnvl=disabled"]),
+    ConfigEntry("Config3_UnsupportedButEnabled",
+                ["--fake-gpu=no", "--auto-mnnvl=enabled", "--skip-operator-wait"]),
+    ConfigEntry("Config1_SupportedAndEnabled",
+                ["--fake-gpu=yes", "--auto-mnnvl=enabled"]),
+    ConfigEntry("Config2_SupportedButDisabled",
+                ["--fake-gpu=yes", "--auto-mnnvl=disabled"]),
 ]
 
+
 # ---------------------------------------------------------------------------
-# Argument parsing
+# Helpers
 # ---------------------------------------------------------------------------
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Run MNNVL e2e tests with all 4 configurations.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+def _run_script(script: Path, args: list[str]) -> int:
+    """Run a Python script as a subprocess. Returns the exit code."""
+    cmd = [sys.executable, str(script)] + args
+    log_info(f"Running: {' '.join(cmd)}")
+    result = subprocess.run(cmd)
+    return result.returncode
+
+
+def run_e2e_tests() -> int:
+    """Run the MNNVL e2e Go tests. Returns exit code."""
+    log_info("Running MNNVL e2e tests...")
+    cmd = (
+        "USE_EXISTING_CLUSTER=true go test -tags=e2e -v -timeout=30m -count=1"
+        " ./e2e/tests/auto-mnnvl/..."
     )
-    parser.add_argument("--keep-cluster", action="store_true", default=False,
-                        help="Keep cluster after all configs (no shutdown)")
-    return parser.parse_args()
+    proc = subprocess.Popen(
+        cmd, shell=True, cwd=OPERATOR_DIR,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+    )
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        sys.stdout.write(line)
+    proc.wait()
+    return proc.returncode
 
 
+# ---------------------------------------------------------------------------
+# Per-config runner
+# ---------------------------------------------------------------------------
 def run_config(cfg: ConfigEntry) -> bool:
-    """Run a single configuration. Returns True on success."""
+    """Configure the cluster for *cfg*, run tests, and return True on success."""
     log_header("==========================================")
     log_header(f"Running: {cfg.name}")
-    log_header(f"  Fake GPU: {cfg.fake_gpu_flag}")
-    log_header(f"  MNNVL:    {cfg.mnnvl_flag}")
+    log_header(f"  Flags: {' '.join(cfg.config_flags)}")
     log_header("==========================================")
 
-    cmd = [
-        sys.executable,
-        str(SCRIPT_DIR / "run_autoMNNVL_e2e.py"),
-        cfg.fake_gpu_flag,
-        cfg.mnnvl_flag,
-        *cfg.extra_flags,
-    ]
-    result = subprocess.run(cmd)
-    passed = result.returncode == 0
+    # Reconfigure cluster
+    rc = _run_script(CONFIG_CLUSTER_SCRIPT, cfg.config_flags)
+    if rc != 0:
+        log_error(f"config-cluster.py failed for {cfg.name}")
+        return False
+
+    # Run tests
+    rc = run_e2e_tests()
+    passed = rc == 0
 
     if passed:
         log_success(f"{cfg.name}: PASSED")
@@ -154,13 +172,9 @@ def run_config(cfg: ConfigEntry) -> bool:
     return passed
 
 
-def shutdown_cluster() -> None:
-    log_info("Shutting down cluster...")
-    subprocess.run(
-        [sys.executable, str(SCRIPT_DIR / "setup_autoMNNVL_cluster.py"), "--shutdown"],
-    )
-
-
+# ---------------------------------------------------------------------------
+# Summary
+# ---------------------------------------------------------------------------
 def print_summary(results: dict[str, str]) -> bool:
     """Print the final summary table. Returns True if all passed."""
     print(flush=True)
@@ -171,12 +185,12 @@ def print_summary(results: dict[str, str]) -> bool:
     all_passed = True
     for name, status in results.items():
         if status == "PASS":
-            log_success(f"{name}: {status}")
+            log_success(f"  {name}: {status}")
         elif status == "FAIL":
-            log_error(f"{name}: {status}")
+            log_error(f"  {name}: {status}")
             all_passed = False
         else:
-            log_warning(f"{name}: {status}")
+            log_warning(f"  {name}: {status}")
             all_passed = False
 
     log_info("==========================================")
@@ -193,31 +207,23 @@ def print_summary(results: dict[str, str]) -> bool:
 # Main
 # ---------------------------------------------------------------------------
 def main() -> None:
-    args = parse_args()
-
     log_info("==========================================")
     log_info("MNNVL E2E Full Test Matrix")
     log_info("==========================================")
     log_info("This will run all 4 configurations:")
-    log_info("  1. Feature enabled  + CRD supported")
-    log_info("  2. Feature disabled + CRD supported")
-    log_info("  3. Feature enabled  + CRD unsupported")
-    log_info("  4. Feature disabled + CRD unsupported")
+    for cfg in CONFIGS:
+        log_info(f"  - {cfg.name}  ({' '.join(cfg.config_flags)})")
     log_info("==========================================")
     print(flush=True)
 
-    # Run all configurations
+    os.chdir(OPERATOR_DIR)
+
+    # Run each configuration (cluster already exists, created by Makefile)
     results: dict[str, str] = {cfg.name: "NOT_RUN" for cfg in CONFIGS}
 
     for cfg in CONFIGS:
         passed = run_config(cfg)
         results[cfg.name] = "PASS" if passed else "FAIL"
-
-    # Shutdown cluster unless requested to keep it
-    if not args.keep_cluster:
-        shutdown_cluster()
-    else:
-        log_warning("Keeping cluster (--keep-cluster)")
 
     # Print summary and exit
     all_passed = print_summary(results)

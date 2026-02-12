@@ -26,6 +26,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -43,10 +44,16 @@ func testNoMNNVLArtifactsWhenDisabled(t *testing.T, tc testContext) {
 	// Wait a bit to ensure reconciliation has time to run
 	time.Sleep(10 * time.Second)
 
-	// Verify no ComputeDomain exists
-	cdName := fmt.Sprintf("%s-0", pcsName)
-	_, err = tc.dynamicClient.Resource(computeDomainGVR).Namespace(tc.namespace).Get(tc.ctx, cdName, metav1.GetOptions{})
-	assert.Error(t, err, "No ComputeDomain should be created when feature is disabled")
+	// Verify no ComputeDomain exists.
+	// If the CRD itself is not installed (unsupported scenario), the List call returns
+	// a NotFound error -- that also means zero ComputeDomains, which is what we want.
+	cdList, err := tc.dynamicClient.Resource(computeDomainGVR).Namespace(tc.namespace).List(tc.ctx, metav1.ListOptions{})
+	if k8serrors.IsNotFound(err) {
+		// CRD not installed → no ComputeDomains can exist, which is the expected state.
+	} else {
+		require.NoError(t, err, "Failed to list ComputeDomains")
+		assert.Empty(t, cdList.Items, "Expected 0 ComputeDomains when feature is disabled, got %d", len(cdList.Items))
+	}
 
 	// Verify PCSGs do not get auto-mnnvl annotation
 	pcsgNames := []string{

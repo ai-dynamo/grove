@@ -111,9 +111,10 @@ run-e2e:
 
 # Create a k3d cluster for e2e testing (with Grove and Kai scheduler deployed)
 # This is optional - tests work with any Kubernetes cluster that has the required components
+# Pass E2E_CREATE_FLAGS to add CLI flags (e.g. --skip-kai --skip-topology --skip-prepull)
 .PHONY: e2e-cluster-up
 e2e-cluster-up:
-	@$(MODULE_HACK_DIR)/e2e-cluster/create-e2e-cluster.py
+	@$(MODULE_HACK_DIR)/e2e-cluster/create-e2e-cluster.py $(E2E_CREATE_FLAGS)
 
 # Delete the k3d e2e test cluster
 .PHONY: e2e-cluster-down
@@ -134,18 +135,24 @@ run-e2e-full: e2e-cluster-up
 	@$(MAKE) e2e-cluster-down
 
 # Run autoMNNVL e2e tests (all 4 configurations: supported/unsupported x enabled/disabled)
-# This creates a dedicated k3d cluster, runs all configurations sequentially, then cleans up.
-# Images are built with skaffold/ko as part of cluster setup (no Docker build required).
+# Creates a lightweight k3d cluster (2 workers, no Kai/topology), runs all configurations
+# sequentially via config-cluster.py, then cleans up. Uses the same e2e-cluster-up target
+# with MNNVL-specific env overrides and flags.
 # Usage: make run-e2e-mnnvl-full
 .PHONY: run-e2e-mnnvl-full
-run-e2e-mnnvl-full:
+run-e2e-mnnvl-full: export E2E_WORKER_NODES = 2
+run-e2e-mnnvl-full: E2E_CREATE_FLAGS = --skip-kai --skip-topology --skip-prepull
+run-e2e-mnnvl-full: e2e-cluster-up
+	@echo "> Pushing alpine image to local registry..."
+	@docker pull alpine:latest || true
+	@docker tag alpine:latest localhost:5001/alpine:latest
+	@docker push localhost:5001/alpine:latest
 	@echo "> Running autoMNNVL e2e tests (all 4 configurations)..."
-	@python3 $(MODULE_HACK_DIR)/e2e-autoMNNVL/run_autoMNNVL_e2e_all.py
+	@python3 $(MODULE_HACK_DIR)/e2e-autoMNNVL/run_autoMNNVL_e2e_all.py || \
+		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
+	@echo "> Tests passed, cleaning up cluster..."
+	@$(MAKE) e2e-cluster-down
 
-# Delete the autoMNNVL e2e test cluster
-.PHONY: e2e-mnnvl-cluster-down
-e2e-mnnvl-cluster-down:
-	@python3 $(MODULE_HACK_DIR)/e2e-autoMNNVL/setup_autoMNNVL_cluster.py --shutdown
 
 # Make targets for local development and testing
 # -------------------------------------------------------------

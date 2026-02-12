@@ -17,27 +17,29 @@
 
 """run_autoMNNVL_e2e.py - Run autoMNNVL e2e tests with a single configuration.
 
-This script sets up the cluster (via setup_autoMNNVL_cluster.py) and runs the e2e tests.
-All setup options are passed through to setup_autoMNNVL_cluster.py.
+Expects an **existing** cluster (created by ``make run-e2e-mnnvl-full`` or
+manually via ``create-e2e-cluster.py``).  This script:
+  1. Configures the cluster via config-cluster.py  (fake GPU + MNNVL toggle)
+  2. Runs go test ./e2e/tests/auto-mnnvl/...
 
-Usage: ./hack/e2e-autoMNNVL/run_autoMNNVL_e2e.py [options]
+Usage:
+    # Via Makefile (recommended — handles cluster creation + cleanup):
+    make run-e2e-mnnvl-full
+
+    # Directly (cluster must already exist):
+    ./hack/e2e-autoMNNVL/run_autoMNNVL_e2e.py --fake-gpu=yes --auto-mnnvl=enabled
 
 Options:
-  --skip-setup             Only run tests, skip cluster setup
-  --skip-cluster-create    Reuse existing cluster (passed to setup script)
-  --with-fake-gpu          Install fake GPU operator (default, passed to setup script)
-  --without-fake-gpu       Skip fake GPU operator (passed to setup script)
-  --mnnvl-enabled          Enable MNNVL feature (default, passed to setup script)
-  --mnnvl-disabled         Disable MNNVL feature (passed to setup script)
-  --build                  Build images (default, passed to setup script)
-  --skip-build             Skip image build (passed to setup script)
-  --skip-operator-wait     Don't wait for operator readiness (passed to setup script)
-  --image <tag>            Use existing image (passed to setup script)
+  --fake-gpu=yes|no        Passed to config-cluster.py (default: no)
+  --auto-mnnvl=enabled|disabled
+                           Passed to config-cluster.py (default: disabled)
+  --skip-operator-wait     Passed to config-cluster.py
   --help                   Show this help message
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import subprocess
 import sys
@@ -48,6 +50,8 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).resolve().parent
 OPERATOR_DIR = SCRIPT_DIR.parent.parent
+E2E_CLUSTER_DIR = OPERATOR_DIR / "hack" / "e2e-cluster"
+CONFIG_CLUSTER_SCRIPT = E2E_CLUSTER_DIR / "config-cluster.py"
 
 # ---------------------------------------------------------------------------
 # Coloured logging helpers
@@ -78,50 +82,43 @@ def log_error(msg: str) -> None:
 # ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
-def parse_args(argv: list[str]) -> tuple[bool, list[str]]:
-    """Parse arguments and split into our flags vs. setup-script passthrough flags.
-
-    Returns (skip_setup, setup_args).
-    """
-    skip_setup = False
-    setup_args: list[str] = []
-
-    i = 0
-    while i < len(argv):
-        arg = argv[i]
-        if arg == "--skip-setup":
-            skip_setup = True
-        elif arg == "--help":
-            print(__doc__)
-            sys.exit(0)
-        elif arg == "--image":
-            # --image takes an argument, pass both
-            setup_args.append(arg)
-            i += 1
-            if i < len(argv):
-                setup_args.append(argv[i])
-            else:
-                log_error("--image requires a tag argument")
-                sys.exit(1)
-        else:
-            setup_args.append(arg)
-        i += 1
-
-    return skip_setup, setup_args
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run autoMNNVL e2e tests with a single configuration.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--fake-gpu",
+        choices=["yes", "no"],
+        default="no",
+        help="Install (yes) or uninstall (no) the fake GPU operator. Default: no.",
+    )
+    parser.add_argument(
+        "--auto-mnnvl",
+        choices=["enabled", "disabled"],
+        default="disabled",
+        help="Enable or disable autoMNNVL on the Grove operator. Default: disabled.",
+    )
+    parser.add_argument(
+        "--skip-operator-wait",
+        action="store_true",
+        default=False,
+        help="Don't wait for the operator pod to become Ready.",
+    )
+    return parser.parse_args()
 
 
 # ---------------------------------------------------------------------------
-# Cluster setup
+# Helpers
 # ---------------------------------------------------------------------------
-def run_cluster_setup(setup_args: list[str]) -> None:
-    args_str = " ".join(setup_args) if setup_args else "<none>"
-    log_info(f"Running cluster setup with args: {args_str}")
-
-    cmd = [sys.executable, str(SCRIPT_DIR / "setup_autoMNNVL_cluster.py")] + setup_args
+def _run_script(script: Path, args: list[str]) -> None:
+    """Run a Python script as a subprocess; abort on failure."""
+    cmd = [sys.executable, str(script)] + args
+    log_info(f"Running: {' '.join(cmd)}")
     result = subprocess.run(cmd)
     if result.returncode != 0:
-        log_error("Cluster setup failed!")
-        sys.exit(1)
+        log_error(f"Script failed with exit code {result.returncode}: {script.name}")
+        sys.exit(result.returncode)
 
 
 # ---------------------------------------------------------------------------
@@ -161,25 +158,33 @@ def run_e2e_tests() -> int:
 # Main
 # ---------------------------------------------------------------------------
 def main() -> None:
-    skip_setup, setup_args = parse_args(sys.argv[1:])
+    args = parse_args()
 
     log_info("==========================================")
     log_info("MNNVL E2E Test Runner")
     log_info("==========================================")
+    log_info(f"  Fake GPU:             {args.fake_gpu}")
+    log_info(f"  Auto-MNNVL:           {args.auto_mnnvl}")
+    log_info(f"  Skip operator wait:   {args.skip_operator_wait}")
+    log_info("==========================================")
 
     os.chdir(OPERATOR_DIR)
 
-    # Step 1: Setup cluster (unless skipped)
-    if not skip_setup:
-        run_cluster_setup(setup_args)
-    else:
-        log_warning("Skipping cluster setup (--skip-setup)")
+    # Step 1: Configure cluster (fake GPU + MNNVL)
+    config_args = [
+        f"--fake-gpu={args.fake_gpu}",
+        f"--auto-mnnvl={args.auto_mnnvl}",
+    ]
+    if args.skip_operator_wait:
+        config_args.append("--skip-operator-wait")
 
+    _run_script(CONFIG_CLUSTER_SCRIPT, config_args)
+
+    # Step 2: Run tests
     log_info("==========================================")
     log_info("Environment ready. Running e2e tests...")
     log_info("==========================================")
 
-    # Step 2: Run tests
     exit_code = run_e2e_tests()
     sys.exit(exit_code)
 
