@@ -25,6 +25,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	"github.com/ai-dynamo/grove/operator/internal/controller/podclique/components/pod"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
@@ -57,7 +58,7 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	podCategories := k8sutils.CategorizePodsByConditionType(logger, existingPods)
 
 	// mutate PodClique.Status.CurrentPodTemplateHash and PodClique.Status.CurrentPodCliqueSetGenerationHash
-	if err = mutateCurrentHashes(logger, pcs, pclq); err != nil {
+	if err = r.mutateCurrentHashes(logger, pcs, pclq); err != nil {
 		logger.Error(err, "failed to compute PodClique current hashes")
 		return ctrlcommon.ReconcileWithErrors("failed to compute PodClique current hashes", err)
 	}
@@ -92,13 +93,13 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 }
 
 // mutateCurrentHashes updates the PodClique's current template and generation hashes when updates are complete
-func mutateCurrentHashes(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) error {
-	if componentutils.IsPCLQAutoUpdateInProgress(pclq) || pclq.Status.UpdatedReplicas != pclq.Status.Replicas {
+func (r *Reconciler) mutateCurrentHashes(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) error {
+	if componentutils.IsPCLQUpdateInProgress(pclq) || pclq.Status.UpdatedReplicas != pclq.Status.Replicas {
 		logger.Info("PodClique is currently updating, cannot set PodCliqueSet CurrentGenerationHash yet")
 		return nil
 	}
-	if pclq.Status.UpdateProgress == nil {
-		expectedPodTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
+	if pclq.Status.RollingUpdateProgress == nil {
+		expectedPodTemplateHash, err := pod.GetExpectedPCLQPodTemplateHash(r.podTemplateSpecHashCache, pcs, pclq.ObjectMeta)
 		if err != nil {
 			return err
 		}
