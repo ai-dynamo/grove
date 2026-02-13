@@ -17,7 +17,10 @@
 package controller
 
 import (
+	"context"
+
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/hash"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset"
@@ -26,16 +29,17 @@ import (
 )
 
 // RegisterControllers registers all controllers with the manager.
-func RegisterControllers(mgr ctrl.Manager, controllerConfig configv1alpha1.ControllerConfiguration, topologyAwareSchedulingConfig configv1alpha1.TopologyAwareSchedulingConfiguration, networkConfig configv1alpha1.NetworkAcceleration) error {
-	pcsReconciler := podcliqueset.NewReconciler(mgr, controllerConfig.PodCliqueSet, topologyAwareSchedulingConfig, networkConfig)
+func RegisterControllers(appCtx context.Context, mgr ctrl.Manager, controllerConfig configv1alpha1.ControllerConfiguration, topologyAwareSchedulingConfig configv1alpha1.TopologyAwareSchedulingConfiguration, networkConfig configv1alpha1.NetworkAcceleration) error {
+	podTemplateSpecHashCache := hash.GetPodTemplateSpecHashCache(appCtx)
+	pcsReconciler := podcliqueset.NewReconciler(appCtx, mgr, controllerConfig.PodCliqueSet, topologyAwareSchedulingConfig, networkConfig, podTemplateSpecHashCache)
 	if err := pcsReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
-	pcReconciler := podclique.NewReconciler(mgr, controllerConfig.PodClique)
+	pcReconciler := podclique.NewReconciler(mgr, controllerConfig.PodClique, podTemplateSpecHashCache)
 	if err := pcReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
-	pcsgReconciler := podcliquescalinggroup.NewReconciler(mgr, controllerConfig.PodCliqueScalingGroup)
+	pcsgReconciler := podcliquescalinggroup.NewReconciler(mgr, controllerConfig.PodCliqueScalingGroup, podTemplateSpecHashCache)
 	if err := pcsgReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
