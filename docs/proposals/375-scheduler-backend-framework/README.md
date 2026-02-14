@@ -230,8 +230,8 @@ The manager initializes the set of enabled scheduler backends from OperatorConfi
 
 ```go
 
-// Initialize creates and registers backend instances for each entry in config.EnabledBackends.
-// config.Default is the backend to use when a workload does not specify one (empty or "default-scheduler" → default-scheduler).
+// Initialize creates and registers backend instances for each entry in config.Enabled.
+// config.Default is the backend to use when a workload does not specify one (empty or "default-scheduler" → kube-scheduler backend).
 // Called once during operator startup before controllers start.
 func Initialize(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, config SchedulerConfiguration) error
 
@@ -248,13 +248,13 @@ func PreparePod(pod *corev1.Pod) error
 **Design Rationale:**
 
 - **Registry by name**: When multiple backends are enabled, controllers resolve the backend by name (e.g. from workload spec or default from config).
-- **Single default**: `Default` in config selects which backend is used when no backend is specified (empty or `"default-scheduler"` → default-scheduler).
+- **Single default**: `Default` in config selects which backend is used when no backend is specified (empty or `"kube-scheduler"` → kube-scheduler backend).
 - **Initialization Safety**: All enabled backends are created once at startup; lookup is read-only thereafter.
-- **Explicit Backend Imports**: All backend implementations are built into the operator binary (compiled in); they are not loaded as plugins at runtime. The `enabledBackends` list only controls which of these built-in backends are initialized.
+- **Explicit Backend Imports**: All backend implementations are built into the operator binary (compiled in); they are not loaded as plugins at runtime. The `enabled` list only controls which of these built-in backends are initialized.
 
 ### OperatorConfiguration Extension
 
-The OperatorConfiguration is extended with a `scheduler` block: `enabledBackends` lists each enabled backend with its optional `config`; `default` selects which backend is used when a workload does not specify one. If `default` is empty or `"default-scheduler"`, the default-scheduler (kube-scheduler) backend is used.
+The OperatorConfiguration is extended with a `scheduler` block: `enabled` lists each enabled backend with its optional `schedulerConfig`; `default` selects which backend is used when a workload does not specify one. If `default` is empty or `"kube-scheduler"`, the kube-scheduler backend is used.
 
 **API shape:**
 
@@ -274,40 +274,40 @@ type OperatorConfiguration struct {
 
 // SchedulerConfiguration configures which scheduler backends are active and which is the default.
 type SchedulerConfiguration struct {
-	// EnabledBackends is the list of scheduler backends enabled in this Grove instance. Each entry has a backend name and optional config.
-	// Valid backend names: "default-scheduler", "kai-scheduler". Order is insignificant.
-	// If empty or unset, defaults to a single entry: [{ name: "default-scheduler" }].
+	// Enabled is the list of scheduler backends enabled in this Grove instance. Each entry has a backend name and optional schedulerConfig.
+	// Valid backend names: "kube-scheduler", "kai-scheduler". Order is insignificant.
+	// If empty or unset, defaults to a single entry: [{ name: "kube-scheduler" }].
 	// +optional
-	EnabledBackends []BackendEntry `json:"enabledBackends,omitempty"`
+	Enabled []BackendEntry `json:"enabled,omitempty"`
 
-	// Default is the scheduler backend used when a workload does not specify one. Must be one of the names in EnabledBackends.
-	// If empty or "default-scheduler", the default-scheduler (kube-scheduler) backend is used.
-	// +kubebuilder:validation:Enum=kai-scheduler;default-scheduler
+	// Default is the scheduler backend used when a workload does not specify one. Must be one of the names in Enabled.
+	// If empty or "kube-scheduler", the kube-scheduler backend is used.
+	// +kubebuilder:validation:Enum=kai-scheduler;kube-scheduler
 	// +optional
 	Default string `json:"default,omitempty"`
 }
 
 // BackendEntry pairs an enabled backend name with its optional backend-specific config.
-// Config is deserialized at runtime into the type that backs the given Name (see backend config types below).
+// SchedulerConfig is deserialized at runtime into the type that backs the given Name (see backend config types below).
 // This is interface-like: adding a new scheduler backend does not require changing this struct.
 type BackendEntry struct {
-	// Name is the scheduler backend name. Valid values: "default-scheduler", "kai-scheduler".
-	// +kubebuilder:validation:Enum=kai-scheduler;default-scheduler
+	// Name is the scheduler backend name. Valid values: "kube-scheduler", "kai-scheduler".
+	// +kubebuilder:validation:Enum=kai-scheduler;kube-scheduler
 	Name string `json:"name"`
 
-	// Config holds backend-specific options as opaque JSON. The operator unmarshals it into the config type for this backend (see BackendConfigTypes).
+	// SchedulerConfig holds backend-specific options. The operator unmarshals it into the config type for this backend (see backend config types below).
 	// +optional
-	Config *runtime.RawExtension `json:"config,omitempty"`
+	SchedulerConfig *runtime.RawExtension `json:"schedulerConfig,omitempty"`
 }
 ```
 
-The operator unmarshals `BackendEntry.Config` into the config type for that backend name (see below). New backends register their config type without changing `BackendEntry` (interface-style).
+The operator unmarshals `BackendEntry.SchedulerConfig` into the config type for that backend name (see below). New backends register their config type without changing `BackendEntry` (interface-style).
 
 **Backend config types (per-backend)**
 
 ```go
-// DefaultSchedulerConfig is the config type for the "default-scheduler" backend.
-type DefaultSchedulerConfig struct {
+// KubeSchedulerConfig is the config type for the "kube-scheduler" backend.
+type KubeSchedulerConfig struct {
 	// GangScheduling enables or disables gang-scheduling behavior (e.g. Workload API). If false, the backend does not create Workload objects.
 	// +optional
 	GangScheduling *bool `json:"gangScheduling,omitempty"`
@@ -317,75 +317,75 @@ type DefaultSchedulerConfig struct {
 type KAISchedulerConfig struct{}
 ```
 
-**How `enabledBackends` and `config` relate**
+**How `enabled` and `schedulerConfig` relate**
 
-Each item in `scheduler.enabledBackends` has a `name` (which backend is enabled) and an optional `config` (that backend’s options). The operator deserializes `config` into the type for that backend: for `"default-scheduler"` → `DefaultSchedulerConfig`, for `"kai-scheduler"` → `KAISchedulerConfig`. The config shape is thus per-backend (interface-style); no central struct lists all backends.
+Each item in `scheduler.enabled` has a `name` (which backend is enabled) and an optional `schedulerConfig` (that backend's options). The operator deserializes `schedulerConfig` into the type for that backend: for `"kube-scheduler"` → `KubeSchedulerConfig`, for `"kai-scheduler"` → `KAISchedulerConfig`. The config shape is thus per-backend (interface-style); no central struct lists all backends.
 
 **Configuration options and ways to configure**
 
 | Goal | How to configure |
 |------|-------------------|
-| Single backend: use kube-scheduler only (no extra options) | Omit `scheduler` or set `scheduler.enabledBackends: [{ name: "default-scheduler" }]`. `default` empty or `"default-scheduler"` uses default-scheduler. |
-| Single backend: use kube-scheduler and tune its behavior | One entry in `enabledBackends`: `name: "default-scheduler"`, `config: { gangScheduling: false }` (DefaultSchedulerConfig fields). |
-| Single backend: use KAI only | `scheduler.enabledBackends: [{ name: "kai-scheduler", config: {} }]`, `scheduler.default: "kai-scheduler"`. |
-| **Multiple active backends** | Add one `enabledBackends` entry per backend; each entry has `name` and optional `config` (backend’s own config type). Set `scheduler.default` to the backend to use when a workload does not specify one (empty or `"default-scheduler"` → default-scheduler). |
+| Single backend: use kube-scheduler only (no extra options) | Omit `scheduler` or set `scheduler.enabled: [{ name: "kube-scheduler" }]`. `default` empty or `"default-scheduler"` uses kube-scheduler backend. |
+| Single backend: use kube-scheduler and tune its behavior | One entry in `enabled`: `name: "kube-scheduler"`, `schedulerConfig: { gangScheduling: false }` (KubeSchedulerConfig fields). |
+| Single backend: use KAI only | `scheduler.enabled: [{ name: "kai-scheduler", schedulerConfig: {} }]`, `scheduler.default: "kai-scheduler"`. |
+| **Multiple active backends** | Add one `enabled` entry per backend; each entry has `name` and optional `schedulerConfig` (backend-specific). Set `scheduler.default` to the backend to use when a workload does not specify one (empty or `"kube-scheduler"` → kube-scheduler backend). |
 
 **Example YAML (OperatorConfiguration / Helm `config`):**
 
 ```yaml
 # --- Style 1: Omit scheduler (all defaults) ---
-# Same as enabledBackends: [{ name: "default-scheduler" }]; default empty → default-scheduler
+# Same as enabled: [{ name: "kube-scheduler" }]; default empty or "kube-scheduler" → kube-scheduler backend
 # (scheduler block can be omitted entirely)
 ```
 
 ```yaml
 # --- Style 2: Single backend, no backend-specific options ---
 scheduler:
-  enabledBackends:
-    - name: "default-scheduler"
-  default: "default-scheduler"   # if empty or "default-scheduler", use default-scheduler backend
+  enabled:
+    - name: "kube-scheduler"
+  default: "kube-scheduler"   # if empty or "default-scheduler", we use kube-scheduler backend
 ```
 
 ```yaml
-# --- Style 3: Single backend with backend-specific options (config = DefaultSchedulerConfig) ---
+# --- Style 3: Single backend with backend-specific options (schedulerConfig = KubeSchedulerConfig) ---
 scheduler:
-  enabledBackends:
-    - name: "default-scheduler"
-      config:
+  enabled:
+    - name: "kube-scheduler"
+      schedulerConfig:
         gangScheduling: false
-  default: "default-scheduler"
+  default: "kube-scheduler"
 ```
 
 ```yaml
-# --- Style 4: Multiple backends; default is default-scheduler ---
+# --- Style 4: Multiple backends; default is kube-scheduler ---
 scheduler:
-  enabledBackends:
-    - name: "default-scheduler"
-      config:
+  enabled:
+    - name: "kube-scheduler"
+      schedulerConfig:
         gangScheduling: false
     - name: "kai-scheduler"
-      config: {}
-  default: "default-scheduler"
+      schedulerConfig: {}
+  default: "kube-scheduler"   # if empty or "default-scheduler", we use kube-scheduler backend
 ```
 
 ```yaml
 # --- Style 5: Multiple backends; default is kai-scheduler ---
 scheduler:
-  enabledBackends:
-    - name: "default-scheduler"
-      config:
+  enabled:
+    - name: "kube-scheduler"
+      schedulerConfig:
         gangScheduling: false
     - name: "kai-scheduler"
-      config: {}
+      schedulerConfig: {}
   default: "kai-scheduler"
 ```
 
 ```yaml
 # --- Style 6: Only KAI enabled ---
 scheduler:
-  enabledBackends:
+  enabled:
     - name: "kai-scheduler"
-      config: {}
+      schedulerConfig: {}
   default: "kai-scheduler"
 ```
 
@@ -400,15 +400,15 @@ config:
       concurrentSyncs: 3
     podClique:
       concurrentSyncs: 3
-  # Scheduler: enabledBackends (each name + optional config, config shape per backend); default = backend when workload does not specify.
+  # Scheduler: enabled (each name + optional schedulerConfig); default = backend when workload does not specify (empty or "default-scheduler" → kube-scheduler).
   scheduler:
-    enabledBackends:
-      - name: "default-scheduler"
-        config:
+    enabled:
+      - name: "kube-scheduler"
+        schedulerConfig:
           gangScheduling: false
       # - name: "kai-scheduler"
-      #   config: {}
-    default: "default-scheduler"
+      #   schedulerConfig: {}
+    default: "kube-scheduler"   # if empty or "default-scheduler", we use kube-scheduler backend
   logLevel: info
   logFormat: json
   topologyAwareScheduling:
