@@ -300,13 +300,29 @@ func (r _resource) checkAndRemovePodSchedulingGates(sc *syncContext, logger logr
 	return skippedScheduleGatedPods, nil
 }
 
-// isBasePodGangScheduled checks if the base PodGang (identified by name) is scheduled, returning errors for API failures.
+// isBasePodGangScheduled checks if the base PodGang (identified by name) is scheduled, returning errors only for actual API failures.
 // A base PodGang is considered "scheduled" when ALL of its constituent PodCliques have achieved
 // their minimum required number of scheduled pods (PodClique.Status.ScheduledReplicas >= PodGroup.MinReplicas).
+//
+// If the base PodGang does not exist (NotFound), this returns (false, nil) rather than an error.
+// This is intentional because NotFound is a legitimate transient state that occurs during:
+//   - Initial PodCliqueSet creation (PodGang created after pods are assigned)
+//   - Gang termination and recreation (old PodGang deleted, new one not yet created)
+//
+// Returning nil allows the caller to handle this gracefully with a normal requeue interval,
+// rather than triggering exponential backoff which would slow down recreation after gang termination.
 func (r _resource) isBasePodGangScheduled(ctx context.Context, logger logr.Logger, namespace, basePodGangName string) (bool, error) {
-	// Get the base PodGang - treat all errors (including NotFound) as requeue-able
 	basePodGang, err := componentutils.GetPodGang(ctx, r.client, basePodGangName, namespace)
 	if err != nil {
+		if apierrors.IsNotFound(err) {
+			// Base PodGang doesn't exist yet - treat same as "not scheduled".
+			// This happens during initial creation or recreation after gang termination.
+			// The PodCliqueSet controller will create it once all pods are assigned.
+			logger.Info("Base PodGang not found, treating as not scheduled",
+				"basePodGangName", basePodGangName)
+			return false, nil
+		}
+		// Real API errors (network, RBAC, etc.) should still trigger error handling
 		return false, groveerr.WrapError(err,
 			errCodeGetPodGang,
 			component.OperationSync,

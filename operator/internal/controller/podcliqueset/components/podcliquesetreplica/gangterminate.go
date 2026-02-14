@@ -65,19 +65,26 @@ func (d deletionWork) hasPendingPCSReplicaDeletion() bool {
 }
 
 // getPCSReplicaDeletionWork identifies PCS replicas that need termination due to MinAvailable breaches.
+// If terminationDelay is nil (gang termination disabled), returns empty work.
 func (r _resource) getPCSReplicaDeletionWork(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) (*deletionWork, error) {
+	work := &deletionWork{
+		minAvailableBreachedConstituents: make(map[int][]string),
+	}
+
+	// If PCS-level terminationDelay is nil, gang termination is disabled - return empty work
+	if pcs.Spec.Template.TerminationDelay == nil {
+		return work, nil
+	}
+
 	var (
 		now              = time.Now()
 		pcsObjectKey     = client.ObjectKeyFromObject(pcs)
 		terminationDelay = pcs.Spec.Template.TerminationDelay.Duration
 		deletionTasks    = make([]utils.Task, 0, pcs.Spec.Replicas)
-		work             = &deletionWork{
-			minAvailableBreachedConstituents: make(map[int][]string),
-		}
 	)
 
 	for pcsReplicaIndex := range int(pcs.Spec.Replicas) {
-		breachedPCSGNames, minPCSGWaitFor, err := r.getMinAvailableBreachedPCSGs(ctx, pcsObjectKey, pcsReplicaIndex, terminationDelay, now)
+		breachedPCSGNames, minPCSGWaitFor, err := r.getMinAvailableBreachedPCSGs(ctx, pcs, pcsReplicaIndex, now)
 		if err != nil {
 			return nil, err
 		}
@@ -105,7 +112,9 @@ func (r _resource) getPCSReplicaDeletionWork(ctx context.Context, logger logr.Lo
 }
 
 // getMinAvailableBreachedPCSGs retrieves PCSGs that have breached MinAvailable for a PCS replica.
-func (r _resource) getMinAvailableBreachedPCSGs(ctx context.Context, pcsObjKey client.ObjectKey, pcsReplicaIndex int, terminationDelay time.Duration, since time.Time) ([]string, time.Duration, error) {
+// It uses the effective terminationDelay for each PCSG (PCSG override if set, otherwise PCS default).
+func (r _resource) getMinAvailableBreachedPCSGs(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, since time.Time) ([]string, time.Duration, error) {
+	pcsObjKey := client.ObjectKeyFromObject(pcs)
 	pcsgList := &grovecorev1alpha1.PodCliqueScalingGroupList{}
 	if err := r.client.List(ctx,
 		pcsgList,
@@ -119,11 +128,12 @@ func (r _resource) getMinAvailableBreachedPCSGs(ctx context.Context, pcsObjKey c
 	); err != nil {
 		return nil, 0, err
 	}
-	breachedPCSGNames, minWaitFor := getMinAvailableBreachedPCSGInfo(pcsgList.Items, terminationDelay, since)
+	breachedPCSGNames, minWaitFor := getMinAvailableBreachedPCSGInfoWithEffectiveDelay(pcsgList.Items, pcs, since)
 	return breachedPCSGNames, minWaitFor, nil
 }
 
 // getMinAvailableBreachedPCLQsNotInPCSG retrieves standalone PCLQs that have breached MinAvailable.
+// Standalone PCLQs use the PCS-level terminationDelay (no PCSG override available).
 func (r _resource) getMinAvailableBreachedPCLQsNotInPCSG(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, since time.Time) (breachedPCLQNames []string, minWaitFor time.Duration, skipPCSReplica bool, err error) {
 	pclqFQNsNotInPCSG := make([]string, 0, len(pcs.Spec.Template.Cliques))
 	for _, pclqTemplateSpec := range pcs.Spec.Template.Cliques {
@@ -143,7 +153,9 @@ func (r _resource) getMinAvailableBreachedPCLQsNotInPCSG(ctx context.Context, pc
 		skipPCSReplica = true
 		return
 	}
-	breachedPCLQNames, minWaitFor = componentutils.GetMinAvailableBreachedPCLQInfo(pclqs, pcs.Spec.Template.TerminationDelay.Duration, since)
+	// Use PCS-level terminationDelay for standalone PCLQs (already validated non-nil at this point)
+	terminationDelay := &pcs.Spec.Template.TerminationDelay.Duration
+	breachedPCLQNames, minWaitFor = componentutils.GetMinAvailableBreachedPCLQInfo(pclqs, terminationDelay, since)
 	return
 }
 
@@ -163,9 +175,11 @@ func (r _resource) getExistingPCLQsByNames(ctx context.Context, namespace string
 	return pclqs, notFoundPCLQFQNs, nil
 }
 
-// getMinAvailableBreachedPCSGInfo filters PodCliqueScalingGroups that have grovecorev1alpha1.ConditionTypeMinAvailableBreached set to true.
+// getMinAvailableBreachedPCSGInfoWithEffectiveDelay filters PodCliqueScalingGroups that have
+// grovecorev1alpha1.ConditionTypeMinAvailableBreached set to true, using the effective terminationDelay
+// for each PCSG (PCSG override if set, otherwise PCS default).
 // It returns the names of all such PodCliqueScalingGroups and minimum of all the waitDurations.
-func getMinAvailableBreachedPCSGInfo(pcsgs []grovecorev1alpha1.PodCliqueScalingGroup, terminationDelay time.Duration, since time.Time) ([]string, time.Duration) {
+func getMinAvailableBreachedPCSGInfoWithEffectiveDelay(pcsgs []grovecorev1alpha1.PodCliqueScalingGroup, pcs *grovecorev1alpha1.PodCliqueSet, since time.Time) ([]string, time.Duration) {
 	pcsgCandidateNames := make([]string, 0, len(pcsgs))
 	waitForDurations := make([]time.Duration, 0, len(pcsgs))
 	for _, pcsg := range pcsgs {
@@ -174,8 +188,24 @@ func getMinAvailableBreachedPCSGInfo(pcsgs []grovecorev1alpha1.PodCliqueScalingG
 			continue
 		}
 		if cond.Status == metav1.ConditionTrue {
+			// Get the PCSG short name from the label to find the matching config
+			pcsgShortName, ok := pcsg.Labels[apicommon.LabelPodCliqueScalingGroup]
+			if !ok {
+				// If no label, skip this PCSG (shouldn't happen for properly created PCSGs)
+				continue
+			}
+
+			// Get the PCSG config to check for override
+			pcsgConfig := componentutils.FindScalingGroupConfigByName(pcs.Spec.Template.PodCliqueScalingGroupConfigs, pcsgShortName)
+			effectiveDelay := componentutils.GetEffectiveTerminationDelay(pcs.Spec.Template.TerminationDelay, pcsgConfig)
+
+			// If effective delay is nil (shouldn't happen at this point since we checked at PCS level), skip this PCSG
+			if effectiveDelay == nil {
+				continue
+			}
+
 			pcsgCandidateNames = append(pcsgCandidateNames, pcsg.Name)
-			waitFor := terminationDelay - since.Sub(cond.LastTransitionTime.Time)
+			waitFor := *effectiveDelay - since.Sub(cond.LastTransitionTime.Time)
 			waitForDurations = append(waitForDurations, waitFor)
 		}
 	}
