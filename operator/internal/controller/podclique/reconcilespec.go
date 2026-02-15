@@ -147,7 +147,7 @@ func shouldResetOrTriggerRollingUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pclq
 
 // initOrResetRollingUpdate initializes or resets the rolling update progress status for the PodClique
 func (r *Reconciler) initOrResetRollingUpdate(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) error {
-	podTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
+	podTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(r.podTemplateSpecHashCache, pcs, pclq.ObjectMeta)
 	if err != nil {
 		return fmt.Errorf("could not update PodClique %s status with rolling update progress: %w", client.ObjectKeyFromObject(pclq), err)
 	}

@@ -82,7 +82,10 @@ func (r _resource) prepareSyncContext(ctx context.Context, logger logr.Logger, p
 	syncCtx.pcsgIndicesToTerminate, syncCtx.pcsgIndicesToRequeue = getMinAvailableBreachedPCSGIndices(logger, syncCtx.existingPCLQs, syncCtx.pcs.Spec.Template.TerminationDelay.Duration)
 
 	// pre-compute expected PodTemplateHash for each PCLQ
-	syncCtx.expectedPCLQPodTemplateHashMap = getExpectedPCLQPodTemplateHashMap(syncCtx.pcs, pcsg)
+	syncCtx.expectedPCLQPodTemplateHashMap, err = componentutils.GetPCLQTemplateHashesForPCSG(r.podTemplateSpecHashCache, logger, syncCtx.pcs, pcsg)
+	if err != nil {
+		return nil, err
+	}
 
 	return syncCtx, nil
 }
@@ -248,8 +251,8 @@ func getMinAvailableBreachedPCSGIndices(logger logr.Logger, existingPCLQs []grov
 }
 
 // getExpectedPodCliqueFQNsByPCSGReplica computes expected PCLQ names per expected PCSG replica.
-// It returns a map with the key being the PCSG replica index and the value is the expected PCLQ FQNs for that replica. In addition
-// it also returns the total number of expected PCLQs.
+// It returns a map with the key being the PCSG replica index and the value is the expected PCLQ FQNs for that replica.
+// In addition, it also returns the total number of expected PCLQs.
 func getExpectedPodCliqueFQNsByPCSGReplica(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[int][]string {
 	var (
 		expectedPCLQFQNs = make(map[int][]string)
@@ -277,27 +280,6 @@ func (r _resource) getExistingPCLQs(ctx context.Context, pcsg *grovecorev1alpha1
 		)
 	}
 	return existingPCLQs, nil
-}
-
-// getExpectedPCLQPodTemplateHashMap computes the expected pod template hash for each PodClique in the PCSG
-func getExpectedPCLQPodTemplateHashMap(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[string]string {
-	pclqFQNToHash := make(map[string]string)
-	pcsgPCLQNames := pcsg.Spec.CliqueNames
-	for _, pcsgCliqueName := range pcsgPCLQNames {
-		pclqTemplateSpec := componentutils.FindPodCliqueTemplateSpecByName(pcs, pcsgCliqueName)
-		if pclqTemplateSpec == nil {
-			continue
-		}
-		podTemplateHash := componentutils.ComputePCLQPodTemplateHash(pclqTemplateSpec, pcs.Spec.Template.PriorityClassName)
-		for pcsgReplicaIndex := range int(pcsg.Spec.Replicas) {
-			cliqueFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{
-				Name:    pcsg.Name,
-				Replica: pcsgReplicaIndex,
-			}, pcsgCliqueName)
-			pclqFQNToHash[cliqueFQN] = podTemplateHash
-		}
-	}
-	return pclqFQNToHash
 }
 
 // refreshExistingPCLQs removes all the excess PCLQs that belong to any PCSG replica > expectedPCSGReplicas.

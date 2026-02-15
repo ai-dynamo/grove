@@ -288,7 +288,7 @@ func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1alpha1.PodC
 	}
 
 	podGangName := apicommon.GeneratePodGangNameForPodCliqueOwnedByPCSG(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex)
-	podTemplateSpecHash, err := r.podTemplateSpecHashCache.GetOrCompute(pcs.Name, pclqTemplateSpec, pcs.Spec.Template.PriorityClassName)
+	podTemplateSpecHash, err := r.podTemplateSpecHashCache.GetOrCompute(pcs.Name, pcs.Generation, pclqTemplateSpec, pcs.Spec.Template.PriorityClassName)
 	if err != nil {
 		return groveerr.WrapError(err,
 			errComputePodSpecTemplateHash,

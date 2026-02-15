@@ -18,12 +18,16 @@ package utils
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/hash"
+	"github.com/ai-dynamo/grove/operator/internal/utils"
+	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 	"github.com/samber/lo"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -146,21 +150,6 @@ func IsLastPCLQUpdateCompleted(pclq *grovecorev1alpha1.PodClique) bool {
 	return pclq.Status.RollingUpdateProgress != nil && pclq.Status.RollingUpdateProgress.UpdateEndedAt != nil
 }
 
-//// GetExpectedPCLQPodTemplateHash finds the matching PodCliqueTemplateSpec from the PodCliqueSet and computes the pod template hash for the PCLQ pod spec.
-//func GetExpectedPCLQPodTemplateHash(pcs *grovecorev1alpha1.PodCliqueSet, pclqObjectMeta metav1.ObjectMeta, cache *hash.PodTemplateSpecHashCache) (string, error) {
-//	cliqueName, err := utils.GetPodCliqueNameFromPodCliqueFQN(pclqObjectMeta)
-//	if err != nil {
-//		return "", err
-//	}
-//	matchingPCLQTemplateSpec := FindPodCliqueTemplateSpecByName(pcs, cliqueName)
-//	if matchingPCLQTemplateSpec == nil {
-//		return "", fmt.Errorf("pod clique template not found for cliqueName: %s", cliqueName)
-//	}
-//	pclqFQN := pclqObjectMeta.Name // or use cliqueName if that's the FQN
-//	priorityClassName := pcs.Spec.Template.PriorityClassName
-//	return cache.GetOrCompute(pclqFQN, matchingPCLQTemplateSpec, priorityClassName)
-//}
-
 // FindPodCliqueTemplateSpecByName retrieves the PodCliqueTemplateSpec from the PodCliqueSet by its name.
 // If there is no matching PodCliqueTemplateSpec, it returns nil.
 func FindPodCliqueTemplateSpecByName(pcs *grovecorev1alpha1.PodCliqueSet, pclqName string) *grovecorev1alpha1.PodCliqueTemplateSpec {
@@ -171,4 +160,18 @@ func FindPodCliqueTemplateSpecByName(pcs *grovecorev1alpha1.PodCliqueSet, pclqNa
 		return nil
 	}
 	return matchingPCLQTemplateSpec
+}
+
+// GetExpectedPCLQPodTemplateHash gets or computes the PodTemplateSpec hash for PodClique in a PodCliqueSet.
+func GetExpectedPCLQPodTemplateHash(podTemplateSpecHashCache *hash.PodTemplateSpecHashCache, pcs *grovecorev1alpha1.PodCliqueSet, pclqObjectMeta metav1.ObjectMeta) (string, error) {
+	cliqueName, err := utils.GetPodCliqueNameFromPodCliqueFQN(pclqObjectMeta)
+	if err != nil {
+		return "", fmt.Errorf("failed to find PodClique name from FQN in PCS: %v: %w", client.ObjectKeyFromObject(pcs), err)
+	}
+	pclqTemplateSpec := FindPodCliqueTemplateSpecByName(pcs, cliqueName)
+	pclqPodHash, err := podTemplateSpecHashCache.GetOrCompute(pcs.Name, pcs.Generation, pclqTemplateSpec, pcs.Spec.Template.PriorityClassName)
+	if err != nil {
+		return "", fmt.Errorf("failed to compute pod template spec hash for PodClique %v: %w", k8sutils.GetObjectKeyFromObjectMeta(pclqObjectMeta), err)
+	}
+	return pclqPodHash, nil
 }

@@ -27,7 +27,6 @@ import (
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
-
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -69,7 +68,9 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 		return ctrlcommon.ReconcileWithErrors("failed to update selector for PodCliqueScalingGroup", err)
 	}
 
-	mutateCurrentPodCliqueSetGenerationHash(logger, pcs, pcsg, lo.Flatten(lo.Values(pclqsPerPCSGReplica)))
+	if err = r.mutateCurrentPodCliqueSetGenerationHash(logger, pcs, pcsg, lo.Flatten(lo.Values(pclqsPerPCSGReplica))); err != nil {
+		return ctrlcommon.ReconcileWithErrors("failed to update CurrentPodCliqueSetGenerationHash for PodCliqueScalingGroup", err)
+	}
 
 	if err = r.client.Status().Patch(ctx, pcsg, patchObj); err != nil {
 		logger.Error(err, "failed to update PodCliqueScalingGroup status")
@@ -260,25 +261,34 @@ func mutateSelector(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1
 }
 
 // mutateCurrentPodCliqueSetGenerationHash updates the current generation hash when all PodCliques are updated and no rolling update is in progress
-func mutateCurrentPodCliqueSetGenerationHash(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, existingPCLQs []grovecorev1alpha1.PodClique) {
-	pclqFQNsPendingUpdate := getPCLQsInPCSGPendingUpdate(pcs, pcsg, existingPCLQs)
+func (r *Reconciler) mutateCurrentPodCliqueSetGenerationHash(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, existingPCLQs []grovecorev1alpha1.PodClique) error {
+	pclqFQNsPendingUpdate, err := r.getPCLQsInPCSGPendingUpdate(logger, pcs, pcsg, existingPCLQs)
+	if err != nil {
+		return fmt.Errorf("failed to mutate CurrentPodCliqueSetGenerationHash for PodCliqueScalingGroup %q: %w", client.ObjectKeyFromObject(pcsg), err)
+	}
+
 	if len(pclqFQNsPendingUpdate) > 0 {
 		logger.Info("Found PodCliques associated to PodCliqueScalingGroup pending update", "pclqFQNsPendingUpdate", pclqFQNsPendingUpdate)
-		return
+		return nil
 	}
 	if componentutils.IsPCSGUpdateInProgress(pcsg) {
 		logger.Info("PodCliqueScalingGroup is currently updating, cannot set PodCliqueSet CurrentGenerationHash yet")
-		return
+		return nil
 	}
+
 	pcsg.Status.CurrentPodCliqueSetGenerationHash = pcs.Status.CurrentGenerationHash
+	return nil
 }
 
 // getPCLQsInPCSGPendingUpdate collects the PodClique FQNs that are pending updates.
 // It identifies PCLQ pending update by comparing the current PodTemplateHash label on an existing PCLQ with that of
 // a computed PodTemplateHash from the latest PodCliqueSet resource.
-func getPCLQsInPCSGPendingUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, existingPCLQs []grovecorev1alpha1.PodClique) []string {
+func (r *Reconciler) getPCLQsInPCSGPendingUpdate(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, existingPCLQs []grovecorev1alpha1.PodClique) ([]string, error) {
 	pclqFQNsPendingUpdate := make([]string, 0, len(existingPCLQs))
-	expectedPCLQPodTemplateHashes := GetPCLQTemplateHashes(pcs, pcsg)
+	expectedPCLQPodTemplateHashes, err := componentutils.GetPCLQTemplateHashesForPCSG(r.podTemplateSpecHashCache, logger, pcs, pcsg)
+	if err != nil {
+		return nil, err
+	}
 	for _, existingPCLQ := range existingPCLQs {
 		existingPodTemplateHash := existingPCLQ.Labels[apicommon.LabelPodTemplateHash]
 		expectedPodTemplateHash := expectedPCLQPodTemplateHashes[existingPCLQ.Name]
@@ -286,25 +296,5 @@ func getPCLQsInPCSGPendingUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grov
 			pclqFQNsPendingUpdate = append(pclqFQNsPendingUpdate, expectedPodTemplateHash)
 		}
 	}
-	return pclqFQNsPendingUpdate
-}
-
-// GetPCLQTemplateHashes generates the Pod template hash for all PCLQs in a PCSG. Returns a map of [PCLQ Name : PodTemplateHas]
-func GetPCLQTemplateHashes(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[string]string {
-	pclqTemplateSpecs := make([]*grovecorev1alpha1.PodCliqueTemplateSpec, 0, len(pcsg.Spec.CliqueNames))
-	for _, cliqueName := range pcsg.Spec.CliqueNames {
-		pclqTemplateSpec := FindPodCliqueTemplateSpecByName(pcs, cliqueName)
-		if pclqTemplateSpec == nil {
-			continue
-		}
-		pclqTemplateSpecs = append(pclqTemplateSpecs, pclqTemplateSpec)
-	}
-	cliqueTemplateSpecHashes := make(map[string]string, len(pclqTemplateSpecs))
-	for pcsgReplicaIndex := range int(pcsg.Spec.Replicas) {
-		for _, pclqTemplateSpec := range pclqTemplateSpecs {
-			pclqFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsg.Name, Replica: pcsgReplicaIndex}, pclqTemplateSpec.Name)
-			cliqueTemplateSpecHashes[pclqFQN] = ComputePCLQPodTemplateHash(pclqTemplateSpec, pcs.Spec.Template.PriorityClassName)
-		}
-	}
-	return cliqueTemplateSpecHashes
+	return pclqFQNsPendingUpdate, nil
 }

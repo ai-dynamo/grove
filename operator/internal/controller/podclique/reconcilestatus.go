@@ -25,7 +25,6 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
-	"github.com/ai-dynamo/grove/operator/internal/controller/podclique/components/pod"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
@@ -96,7 +95,7 @@ func (r *Reconciler) mutateCurrentHashes(logger logr.Logger, pcs *grovecorev1alp
 		return nil
 	}
 	if pclq.Status.RollingUpdateProgress == nil {
-		expectedPodTemplateHash, err := pod.GetExpectedPCLQPodTemplateHash(r.podTemplateSpecHashCache, pcs, pclq.ObjectMeta)
+		expectedPodTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(r.podTemplateSpecHashCache, pcs, pclq.ObjectMeta)
 		if err != nil {
 			return err
 		}
