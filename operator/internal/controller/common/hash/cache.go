@@ -76,6 +76,7 @@ func NewPodTemplateSpecHashCache(ctx context.Context, maxSize int, entryTTL, cle
 		maxSize:         maxSize,
 		entryTTL:        entryTTL,
 		cleanupInterval: cleanupInterval,
+		mu:              sync.RWMutex{},
 	}
 	if cleanupInterval > 0 {
 		go cache.cleanupExpiredCacheEntries(ctx)

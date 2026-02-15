@@ -60,7 +60,7 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pclq
 		)
 	}
 
-	sc.expectedPodTemplateHash, err = GetExpectedPCLQPodTemplateHash(r.podTemplateSpecHashCache, sc.pcs, pclq.ObjectMeta)
+	sc.expectedPodTemplateHash, err = componentutils.GetExpectedPCLQPodTemplateHash(r.podTemplateSpecHashCache, sc.pcs, pclq.ObjectMeta)
 	if err != nil {
 		return nil, groveerr.WrapError(err,
 			errComputePodSpecTemplateHash,

@@ -44,6 +44,7 @@ type Reconciler struct {
 	reconcileStatusRecorder       ctrlcommon.ReconcileErrorRecorder
 	operatorRegistry              component.OperatorRegistry[grovecorev1alpha1.PodCliqueSet]
 	pcsGenerationHashExpectations sync.Map
+	podTemplateSpecHashCache      *hash.PodTemplateSpecHashCache
 }
 
 // NewReconciler creates a new reconciler for PodCliqueSet.
@@ -57,6 +58,7 @@ func NewReconciler(appCtx context.Context, mgr ctrl.Manager, controllerCfg confi
 		reconcileStatusRecorder:       ctrlcommon.NewReconcileErrorRecorder(client),
 		operatorRegistry:              pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, podTemplateSpecHashCache),
 		pcsGenerationHashExpectations: sync.Map{},
+		podTemplateSpecHashCache:      podTemplateSpecHashCache,
 	}
 }
 
