@@ -24,8 +24,8 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/hash"
-	"github.com/go-logr/logr"
 
+	"github.com/go-logr/logr"
 	"github.com/samber/lo"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -160,19 +160,16 @@ func GetPCLQTemplateHashesForPCSG(podTemplateSpecHashCache *hash.PodTemplateSpec
 		}
 		pclqTemplateSpecs = append(pclqTemplateSpecs, pclqTemplateSpec)
 	}
-	logger.Info("[DEBUG] GetPCLQTemplateHashesForPCSG", "len(pclqTemplateSpecs)", len(pclqTemplateSpecs), "pcsg.Spec.Replicas", pcsg.Spec.Replicas)
 	cliqueTemplateSpecHashes := make(map[string]string, len(pclqTemplateSpecs))
 	for pcsgReplicaIndex := range int(pcsg.Spec.Replicas) {
 		for _, pclqTemplateSpec := range pclqTemplateSpecs {
 			pclqFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsg.Name, Replica: pcsgReplicaIndex}, pclqTemplateSpec.Name)
 			pclqTemplateHash, err := podTemplateSpecHashCache.GetOrCompute(pcs.Name, pcs.Generation, pclqTemplateSpec, pcs.Spec.Template.PriorityClassName)
-			logger.Info("[DEBUG]: Computed PodCliqueTemplateSpec hash for PodCliqueTemplateSpec", "pcsgReplicaIndex", pcsgReplicaIndex, "pclqFQN", pclqFQN, "hash", pclqTemplateHash)
 			if err != nil {
 				return nil, fmt.Errorf("failed to compute PodTemplateSpec hash for PodCliqueTemplateSpec %q of PodCliqueScalingGroup %q: %w", pclqFQN, client.ObjectKeyFromObject(pcsg), err)
 			}
 			cliqueTemplateSpecHashes[pclqFQN] = pclqTemplateHash
 		}
 	}
-	logger.Info("[DEBUG]: Computed PodCliqueTemplateSpec hashes for PodCliqueScalingGroup", "pcsg", client.ObjectKeyFromObject(pcsg), "cliqueTemplateSpecHashes", cliqueTemplateSpecHashes)
 	return cliqueTemplateSpecHashes, nil
 }

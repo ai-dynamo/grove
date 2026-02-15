@@ -38,12 +38,12 @@ import (
 
 // Reconciler reconciles PodClique objects.
 type Reconciler struct {
-	config                  configv1alpha1.PodCliqueControllerConfiguration
-	client                  ctrlclient.Client
-	eventRecorder           record.EventRecorder
-	reconcileStatusRecorder ctrlcommon.ReconcileErrorRecorder
-	expectationsStore       *expect.ExpectationsStore
-	operatorRegistry        component.OperatorRegistry[grovecorev1alpha1.PodClique]
+	config                   configv1alpha1.PodCliqueControllerConfiguration
+	client                   ctrlclient.Client
+	eventRecorder            record.EventRecorder
+	reconcileStatusRecorder  ctrlcommon.ReconcileErrorRecorder
+	expectationsStore        *expect.ExpectationsStore
+	operatorRegistry         component.OperatorRegistry[grovecorev1alpha1.PodClique]
 	podTemplateSpecHashCache *hash.PodTemplateSpecHashCache
 }
 
@@ -52,12 +52,12 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueContr
 	eventRecorder := mgr.GetEventRecorderFor(controllerName)
 	expectationsStore := expect.NewExpectationsStore()
 	return &Reconciler{
-		config:                  controllerCfg,
-		client:                  mgr.GetClient(),
-		eventRecorder:           eventRecorder,
-		reconcileStatusRecorder: ctrlcommon.NewReconcileErrorRecorder(mgr.GetClient()),
-		expectationsStore:       expectationsStore,
-		operatorRegistry:        pclqcomponent.CreateOperatorRegistry(mgr, eventRecorder, expectationsStore, podTemplateSpecHashCache),
+		config:                   controllerCfg,
+		client:                   mgr.GetClient(),
+		eventRecorder:            eventRecorder,
+		reconcileStatusRecorder:  ctrlcommon.NewReconcileErrorRecorder(mgr.GetClient()),
+		expectationsStore:        expectationsStore,
+		operatorRegistry:         pclqcomponent.CreateOperatorRegistry(mgr, eventRecorder, expectationsStore, podTemplateSpecHashCache),
 		podTemplateSpecHashCache: podTemplateSpecHashCache,
 	}
 }
