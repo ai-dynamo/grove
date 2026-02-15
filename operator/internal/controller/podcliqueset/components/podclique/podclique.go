@@ -55,8 +55,8 @@ const (
 )
 
 type _resource struct {
-	client               client.Client
-	scheme               *runtime.Scheme
+	client                   client.Client
+	scheme                   *runtime.Scheme
 	eventRecorder            record.EventRecorder
 	podTemplateSpecHashCache *hash.PodTemplateSpecHashCache
 }

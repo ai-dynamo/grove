@@ -28,6 +28,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/hash"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
+
 	"github.com/samber/lo"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -169,6 +170,9 @@ func GetExpectedPCLQPodTemplateHash(podTemplateSpecHashCache *hash.PodTemplateSp
 		return "", fmt.Errorf("failed to find PodClique name from FQN in PCS: %v: %w", client.ObjectKeyFromObject(pcs), err)
 	}
 	pclqTemplateSpec := FindPodCliqueTemplateSpecByName(pcs, cliqueName)
+	if pclqTemplateSpec == nil {
+		return "", fmt.Errorf("failed to find matching PodCliqueTemplateSpec for PodClique %v in PodCliqueSet %v", k8sutils.GetObjectKeyFromObjectMeta(pclqObjectMeta), client.ObjectKeyFromObject(pcs))
+	}
 	pclqPodHash, err := podTemplateSpecHashCache.GetOrCompute(pcs.Name, pcs.Generation, pclqTemplateSpec, pcs.Spec.Template.PriorityClassName)
 	if err != nil {
 		return "", fmt.Errorf("failed to compute pod template spec hash for PodClique %v: %w", k8sutils.GetObjectKeyFromObjectMeta(pclqObjectMeta), err)

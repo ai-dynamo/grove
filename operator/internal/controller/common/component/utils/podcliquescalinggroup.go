@@ -24,8 +24,8 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/hash"
-	"github.com/go-logr/logr"
 
+	"github.com/go-logr/logr"
 	"github.com/samber/lo"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )

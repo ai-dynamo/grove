@@ -71,20 +71,20 @@ const (
 )
 
 type _resource struct {
-	client            client.Client
-	scheme            *runtime.Scheme
-	eventRecorder     record.EventRecorder
-	expectationsStore *expect.ExpectationsStore
+	client                   client.Client
+	scheme                   *runtime.Scheme
+	eventRecorder            record.EventRecorder
+	expectationsStore        *expect.ExpectationsStore
 	podTemplateSpecHashCache *hash.PodTemplateSpecHashCache
 }
 
 // New creates a new Pod operator for managing Pod resources within PodCliques
 func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, expectationsStore *expect.ExpectationsStore, podTemplateSpecHashCache *hash.PodTemplateSpecHashCache) component.Operator[grovecorev1alpha1.PodClique] {
 	return &_resource{
-		client:            client,
-		scheme:            scheme,
-		eventRecorder:     eventRecorder,
-		expectationsStore: expectationsStore,
+		client:                   client,
+		scheme:                   scheme,
+		eventRecorder:            eventRecorder,
+		expectationsStore:        expectationsStore,
 		podTemplateSpecHashCache: podTemplateSpecHashCache,
 	}
 }
