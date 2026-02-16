@@ -41,7 +41,7 @@ func TestMutateUpdatedReplica(t *testing.T) {
 			name: "rolling update in progress - count pods with new hash",
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
-					RollingUpdateProgress: &grovecorev1alpha1.PodCliqueRollingUpdateProgress{
+					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
 						PodTemplateHash: "new-hash-v2",
 						UpdateStartedAt: metav1.Time{Time: time.Now()},
 						UpdateEndedAt:   nil, // Still in progress
@@ -69,7 +69,7 @@ func TestMutateUpdatedReplica(t *testing.T) {
 			name: "update just completed - use RollingUpdateProgress hash (edge case)",
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
-					RollingUpdateProgress: &grovecorev1alpha1.PodCliqueRollingUpdateProgress{
+					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
 						PodTemplateHash: "new-hash-v2",
 						UpdateStartedAt: metav1.Time{Time: time.Now().Add(-5 * time.Minute)},
 						UpdateEndedAt:   &metav1.Time{Time: time.Now()}, // Just completed
@@ -97,7 +97,7 @@ func TestMutateUpdatedReplica(t *testing.T) {
 			name: "steady state - no rolling update",
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
-					RollingUpdateProgress:  nil, // No rolling update
+					UpdateProgress:         nil, // No rolling update
 					CurrentPodTemplateHash: ptr.To("stable-hash"),
 				},
 			},
@@ -114,7 +114,7 @@ func TestMutateUpdatedReplica(t *testing.T) {
 			name: "never reconciled - empty hash",
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
-					RollingUpdateProgress:  nil,
+					UpdateProgress:         nil,
 					CurrentPodTemplateHash: nil, // Never set
 				},
 			},
@@ -128,7 +128,7 @@ func TestMutateUpdatedReplica(t *testing.T) {
 			name: "mixed state - some pods match, some don't",
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
-					RollingUpdateProgress:  nil,
+					UpdateProgress:         nil,
 					CurrentPodTemplateHash: ptr.To("current-hash"),
 				},
 			},
@@ -155,7 +155,7 @@ func TestMutateUpdatedReplica(t *testing.T) {
 			name: "rolling update progress exists but pods have different hash",
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
-					RollingUpdateProgress: &grovecorev1alpha1.PodCliqueRollingUpdateProgress{
+					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
 						PodTemplateHash: "target-hash",
 						UpdateStartedAt: metav1.Time{Time: time.Now()},
 					},

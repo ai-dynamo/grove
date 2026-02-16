@@ -98,7 +98,7 @@ func (r *Reconciler) processRollingUpdate(ctx context.Context, logger logr.Logge
 
 // pcsHasNoActiveRollingUpdate checks if the PodCliqueSet has no active rolling update in progress
 func pcsHasNoActiveRollingUpdate(pcs *grovecorev1alpha1.PodCliqueSet) bool {
-	return pcs.Status.CurrentGenerationHash == nil || pcs.Status.RollingUpdateProgress == nil || pcs.Status.RollingUpdateProgress.CurrentlyUpdating == nil
+	return pcs.Status.CurrentGenerationHash == nil || pcs.Status.UpdateProgress == nil || pcs.Status.UpdateProgress.CurrentlyUpdating == nil
 }
 
 // shouldCheckPendingUpdatesForPCLQ determines if this PodClique should be evaluated for rolling updates based on its owner, and the currently updating PodCliqueSet replica index
@@ -111,7 +111,7 @@ func shouldCheckPendingUpdatesForPCLQ(logger logr.Logger, pcs *grovecorev1alpha1
 	}
 
 	// check if this PCLQ belongs to PCS index that is currently getting updated.
-	pcsReplicaInUpdating := pcs.Status.RollingUpdateProgress.CurrentlyUpdating.ReplicaIndex
+	pcsReplicaInUpdating := pcs.Status.UpdateProgress.CurrentlyUpdating.ReplicaIndex
 	pcsReplicaIndexStr, ok := pclq.Labels[apicommon.LabelPodCliqueSetReplicaIndex]
 	if !ok {
 		return false, fmt.Errorf("could not determine PodCliqueSet index for this PodClique %v. Required label %s is missing", client.ObjectKeyFromObject(pclq), apicommon.LabelPodCliqueSetReplicaIndex)
@@ -127,7 +127,7 @@ func shouldCheckPendingUpdatesForPCLQ(logger logr.Logger, pcs *grovecorev1alpha1
 // shouldResetOrTriggerRollingUpdate determines if a rolling update should be started or reset based on generation hash comparison
 func shouldResetOrTriggerRollingUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) bool {
 	// PCLQ has never been updated yet and PCS has a new generation hash.
-	firstEverUpdateRequired := pclq.Status.RollingUpdateProgress == nil && pclq.Status.CurrentPodCliqueSetGenerationHash != nil && *pcs.Status.CurrentGenerationHash != *pclq.Status.CurrentPodCliqueSetGenerationHash
+	firstEverUpdateRequired := pclq.Status.UpdateProgress == nil && pclq.Status.CurrentPodCliqueSetGenerationHash != nil && *pcs.Status.CurrentGenerationHash != *pclq.Status.CurrentPodCliqueSetGenerationHash
 	if firstEverUpdateRequired {
 		return true
 	}
@@ -135,9 +135,9 @@ func shouldResetOrTriggerRollingUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pclq
 	// PCLQ is undergoing a rolling update for a different PCS generation hash
 	// Irrespective of whether the pod template hash has changed or not, the in-progress update is stale and needs to be
 	// reset in order to set the correct rollingUpdateProgress.PodCliqueSetGenerationHash
-	inProgressPCLQUpdateNotStale := componentutils.IsPCLQUpdateInProgress(pclq) && pclq.Status.RollingUpdateProgress.PodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash
+	inProgressPCLQUpdateNotStale := componentutils.IsPCLQUpdateInProgress(pclq) && pclq.Status.UpdateProgress.PodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash
 	// PCLQ had an update in the past but that was for an older PCS generation hash.
-	lastCompletedUpdateIsNotStale := componentutils.IsLastPCLQUpdateCompleted(pclq) && pclq.Status.RollingUpdateProgress.PodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash
+	lastCompletedUpdateIsNotStale := componentutils.IsLastPCLQUpdateCompleted(pclq) && pclq.Status.UpdateProgress.PodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash
 	if inProgressPCLQUpdateNotStale || lastCompletedUpdateIsNotStale {
 		return false
 	}
@@ -153,7 +153,7 @@ func (r *Reconciler) initOrResetRollingUpdate(ctx context.Context, pcs *grovecor
 	}
 	// reset and start the rolling update
 	patch := client.MergeFrom(pclq.DeepCopy())
-	pclq.Status.RollingUpdateProgress = &grovecorev1alpha1.PodCliqueRollingUpdateProgress{
+	pclq.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueUpdateProgress{
 		UpdateStartedAt:            metav1.Now(),
 		PodCliqueSetGenerationHash: *pcs.Status.CurrentGenerationHash,
 		PodTemplateHash:            podTemplateHash,

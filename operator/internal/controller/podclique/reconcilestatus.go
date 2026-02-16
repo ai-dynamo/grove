@@ -94,7 +94,7 @@ func mutateCurrentHashes(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet
 		logger.Info("PodClique is currently updating, cannot set PodCliqueSet CurrentGenerationHash yet")
 		return nil
 	}
-	if pclq.Status.RollingUpdateProgress == nil {
+	if pclq.Status.UpdateProgress == nil {
 		expectedPodTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
 		if err != nil {
 			return err
@@ -105,8 +105,8 @@ func mutateCurrentHashes(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet
 		}
 	} else if componentutils.IsLastPCLQUpdateCompleted(pclq) {
 		logger.Info("PodClique update has completed, setting CurrentPodCliqueSetGenerationHash")
-		pclq.Status.CurrentPodTemplateHash = ptr.To(pclq.Status.RollingUpdateProgress.PodTemplateHash)
-		pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(pclq.Status.RollingUpdateProgress.PodCliqueSetGenerationHash)
+		pclq.Status.CurrentPodTemplateHash = ptr.To(pclq.Status.UpdateProgress.PodTemplateHash)
+		pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(pclq.Status.UpdateProgress.PodCliqueSetGenerationHash)
 	}
 	return nil
 }
@@ -124,10 +124,10 @@ func mutateReplicas(pclq *grovecorev1alpha1.PodClique, podCategories map[corev1.
 // mutateUpdatedReplica calculates and sets the number of pods with the expected template hash
 func mutateUpdatedReplica(pclq *grovecorev1alpha1.PodClique, existingPods []*corev1.Pod) {
 	var expectedPodTemplateHash string
-	// If RollingUpdateProgress exists (update in progress or recently completed), use the target hash from it.
+	// If UpdateProgress exists (update in progress or recently completed), use the target hash from it.
 	// This covers both the active update phase and the window after completion before CurrentPodTemplateHash is synced.
-	if pclq.Status.RollingUpdateProgress != nil {
-		expectedPodTemplateHash = pclq.Status.RollingUpdateProgress.PodTemplateHash
+	if pclq.Status.UpdateProgress != nil {
+		expectedPodTemplateHash = pclq.Status.UpdateProgress.PodTemplateHash
 	} else if pclq.Status.CurrentPodTemplateHash != nil {
 		// Steady state: no rolling update tracking exists.
 		// Use the stable current hash for pods that have been reconciled.

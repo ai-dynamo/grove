@@ -158,5 +158,5 @@ func hasMinAvailableBreachedConditionChanged(oldConditions, newConditions []meta
 
 // hasRollingUpdateStatusChanged checks if PCSG rolling update progress has changed.
 func hasRollingUpdateStatusChanged(oldPCSGStatus, newPCSGStatus *grovecorev1alpha1.PodCliqueScalingGroupStatus) bool {
-	return !reflect.DeepEqual(oldPCSGStatus.RollingUpdateProgress, newPCSGStatus.RollingUpdateProgress)
+	return !reflect.DeepEqual(oldPCSGStatus.UpdateProgress, newPCSGStatus.UpdateProgress)
 }

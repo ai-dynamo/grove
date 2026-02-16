@@ -183,9 +183,21 @@ spec:
                 description: Replicas is the observed number of replicas for the PodCliqueScalingGroup.
                 format: int32
                 type: integer
-              rollingUpdateProgress:
-                description: RollingUpdateProgress provides details about the ongoing
-                  rolling update of the PodCliqueScalingGroup.
+              scheduledReplicas:
+                default: 0
+                description: |-
+                  ScheduledReplicas is the number of replicas that are scheduled for the PodCliqueScalingGroup.
+                  A replica of PodCliqueScalingGroup is considered "scheduled" when at least MinAvailable number
+                  of pods in each constituent PodClique has been scheduled.
+                format: int32
+                type: integer
+              selector:
+                description: Selector is the selector used to identify the pods that
+                  belong to this scaling group.
+                type: string
+              updateProgress:
+                description: UpdateProgress provides details about the ongoing update
+                  of the PodCliqueScalingGroup.
                 properties:
                   podCliqueSetGenerationHash:
                     description: |-
@@ -195,7 +207,7 @@ spec:
                     type: string
                   readyReplicaIndicesSelectedToUpdate:
                     description: |-
-                      ReadyReplicaIndicesSelectedToUpdate provides the rolling update progress of ready replicas of PodCliqueScalingGroup that have been selected for update.
+                      ReadyReplicaIndicesSelectedToUpdate provides the update progress of ready replicas of PodCliqueScalingGroup that have been selected for update.
                       PodCliqueScalingGroup replicas that are either pending or unhealthy will be force updated and the update will not wait for these replicas to become ready.
                       For all ready replicas, one replica is chosen at a time to update, once it is updated and becomes ready, the next ready replica is chosen for update.
                     properties:
@@ -216,13 +228,11 @@ spec:
                     - current
                     type: object
                   updateEndedAt:
-                    description: UpdateEndedAt is the time at which the rolling update
-                      ended.
+                    description: UpdateEndedAt is the time at which the update ended.
                     format: date-time
                     type: string
                   updateStartedAt:
-                    description: UpdateStartedAt is the time at which the rolling
-                      update started.
+                    description: UpdateStartedAt is the time at which the update started.
                     format: date-time
                     type: string
                   updatedPodCliques:
@@ -235,18 +245,6 @@ spec:
                 - podCliqueSetGenerationHash
                 - updateStartedAt
                 type: object
-              scheduledReplicas:
-                default: 0
-                description: |-
-                  ScheduledReplicas is the number of replicas that are scheduled for the PodCliqueScalingGroup.
-                  A replica of PodCliqueScalingGroup is considered "scheduled" when at least MinAvailable number
-                  of pods in each constituent PodClique has been scheduled.
-                format: int32
-                type: integer
-              selector:
-                description: Selector is the selector used to identify the pods that
-                  belong to this scaling group.
-                type: string
               updatedReplicas:
                 default: 0
                 description: UpdatedReplicas is the number of PodCliqueScalingGroup

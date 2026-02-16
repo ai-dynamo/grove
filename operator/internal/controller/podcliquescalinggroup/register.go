@@ -95,8 +95,8 @@ func mapPCSToPCSG() handler.MapFunc {
 		}
 		requests := make([]reconcile.Request, 0, int(pcs.Spec.Replicas)*len(pcsgConfigs))
 		// We are only interested in PCS events during rolling update.
-		if pcs.Status.RollingUpdateProgress != nil && pcs.Status.RollingUpdateProgress.CurrentlyUpdating != nil {
-			pcsReplicaIndex := pcs.Status.RollingUpdateProgress.CurrentlyUpdating.ReplicaIndex
+		if pcs.Status.UpdateProgress != nil && pcs.Status.UpdateProgress.CurrentlyUpdating != nil {
+			pcsReplicaIndex := pcs.Status.UpdateProgress.CurrentlyUpdating.ReplicaIndex
 			for _, pcsgConfig := range pcsgConfigs {
 				pcsgName := apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: int(pcsReplicaIndex)}, pcsgConfig.Name)
 				requests = append(requests, reconcile.Request{
@@ -131,11 +131,11 @@ func shouldEnqueueOnPCSUpdate(event event.UpdateEvent) bool {
 		return false
 	}
 
-	if oldPCS.Status.RollingUpdateProgress != nil && newPCS.Status.RollingUpdateProgress != nil {
-		if utils.OnlyOneIsNil(oldPCS.Status.RollingUpdateProgress.CurrentlyUpdating, newPCS.Status.RollingUpdateProgress.CurrentlyUpdating) ||
-			oldPCS.Status.RollingUpdateProgress.CurrentlyUpdating != nil &&
-				newPCS.Status.RollingUpdateProgress.CurrentlyUpdating != nil &&
-				oldPCS.Status.RollingUpdateProgress.CurrentlyUpdating.ReplicaIndex != newPCS.Status.RollingUpdateProgress.CurrentlyUpdating.ReplicaIndex {
+	if oldPCS.Status.UpdateProgress != nil && newPCS.Status.UpdateProgress != nil {
+		if utils.OnlyOneIsNil(oldPCS.Status.UpdateProgress.CurrentlyUpdating, newPCS.Status.UpdateProgress.CurrentlyUpdating) ||
+			oldPCS.Status.UpdateProgress.CurrentlyUpdating != nil &&
+				newPCS.Status.UpdateProgress.CurrentlyUpdating != nil &&
+				oldPCS.Status.UpdateProgress.CurrentlyUpdating.ReplicaIndex != newPCS.Status.UpdateProgress.CurrentlyUpdating.ReplicaIndex {
 			return true
 		}
 	}

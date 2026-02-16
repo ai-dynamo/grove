@@ -318,7 +318,7 @@ func TestIsPCLQUpdateInProgress(t *testing.T) {
 			name: "no_rolling_update_progress",
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
-					RollingUpdateProgress: nil,
+					UpdateProgress: nil,
 				},
 			},
 			expected: false,
@@ -328,7 +328,7 @@ func TestIsPCLQUpdateInProgress(t *testing.T) {
 			name: "update_in_progress",
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
-					RollingUpdateProgress: &grovecorev1alpha1.PodCliqueRollingUpdateProgress{
+					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
 						UpdateStartedAt: metav1.Now(),
 					},
 				},
@@ -340,7 +340,7 @@ func TestIsPCLQUpdateInProgress(t *testing.T) {
 			name: "update_completed",
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
-					RollingUpdateProgress: &grovecorev1alpha1.PodCliqueRollingUpdateProgress{
+					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
 						UpdateStartedAt: metav1.Now(),
 						UpdateEndedAt:   &metav1.Time{Time: metav1.Now().Time},
 					},
@@ -373,7 +373,7 @@ func TestIsLastPCLQUpdateCompleted(t *testing.T) {
 			name: "no_rolling_update_progress",
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
-					RollingUpdateProgress: nil,
+					UpdateProgress: nil,
 				},
 			},
 			expected: false,
@@ -383,7 +383,7 @@ func TestIsLastPCLQUpdateCompleted(t *testing.T) {
 			name: "update_in_progress",
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
-					RollingUpdateProgress: &grovecorev1alpha1.PodCliqueRollingUpdateProgress{
+					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
 						UpdateStartedAt: metav1.Now(),
 					},
 				},
@@ -395,7 +395,7 @@ func TestIsLastPCLQUpdateCompleted(t *testing.T) {
 			name: "update_completed",
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
-					RollingUpdateProgress: &grovecorev1alpha1.PodCliqueRollingUpdateProgress{
+					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
 						UpdateStartedAt: metav1.Now(),
 						UpdateEndedAt:   &metav1.Time{Time: metav1.Now().Time},
 					},

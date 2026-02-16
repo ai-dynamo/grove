@@ -98,15 +98,15 @@ type PodCliqueScalingGroupStatus struct {
 	// CurrentPodCliqueSetGenerationHash establishes a correlation to PodCliqueSet generation hash indicating
 	// that the spec of the PodCliqueSet at this generation is fully realized in the PodCliqueScalingGroup.
 	CurrentPodCliqueSetGenerationHash *string `json:"currentPodCliqueSetGenerationHash,omitempty"`
-	// RollingUpdateProgress provides details about the ongoing rolling update of the PodCliqueScalingGroup.
-	RollingUpdateProgress *PodCliqueScalingGroupRollingUpdateProgress `json:"rollingUpdateProgress,omitempty"`
+	// UpdateProgress provides details about the ongoing update of the PodCliqueScalingGroup.
+	UpdateProgress *PodCliqueScalingGroupUpdateProgress `json:"updateProgress,omitempty"`
 }
 
-// PodCliqueScalingGroupRollingUpdateProgress provides details about the ongoing rolling update of the PodCliqueScalingGroup.
-type PodCliqueScalingGroupRollingUpdateProgress struct {
-	//UpdateStartedAt is the time at which the rolling update started.
+// PodCliqueScalingGroupUpdateProgress provides details about the ongoing update of the PodCliqueScalingGroup.
+type PodCliqueScalingGroupUpdateProgress struct {
+	//UpdateStartedAt is the time at which the update started.
 	UpdateStartedAt metav1.Time `json:"updateStartedAt"`
-	// UpdateEndedAt is the time at which the rolling update ended.
+	// UpdateEndedAt is the time at which the update ended.
 	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
 	// PodCliqueSetGenerationHash is the PodCliqueSet generation hash corresponding to the PodCliqueSet spec that is being rolled out.
 	// While the update is in progress PodCliqueScalingGroupStatus.CurrentPodCliqueSetGenerationHash will not match this hash. Once the update is complete the
@@ -114,14 +114,14 @@ type PodCliqueScalingGroupRollingUpdateProgress struct {
 	PodCliqueSetGenerationHash string `json:"podCliqueSetGenerationHash"`
 	// UpdatedPodCliques is the list of PodClique names that have been updated to the latest PodCliqueSet spec.
 	UpdatedPodCliques []string `json:"updatedPodCliques,omitempty"`
-	// ReadyReplicaIndicesSelectedToUpdate provides the rolling update progress of ready replicas of PodCliqueScalingGroup that have been selected for update.
+	// ReadyReplicaIndicesSelectedToUpdate provides the update progress of ready replicas of PodCliqueScalingGroup that have been selected for update.
 	// PodCliqueScalingGroup replicas that are either pending or unhealthy will be force updated and the update will not wait for these replicas to become ready.
 	// For all ready replicas, one replica is chosen at a time to update, once it is updated and becomes ready, the next ready replica is chosen for update.
-	ReadyReplicaIndicesSelectedToUpdate *PodCliqueScalingGroupReplicaRollingUpdateProgress `json:"readyReplicaIndicesSelectedToUpdate,omitempty"`
+	ReadyReplicaIndicesSelectedToUpdate *PodCliqueScalingGroupReplicaUpdateProgress `json:"readyReplicaIndicesSelectedToUpdate,omitempty"`
 }
 
-// PodCliqueScalingGroupReplicaRollingUpdateProgress provides details about the rolling update progress of ready replicas of PodCliqueScalingGroup that have been selected for update.
-type PodCliqueScalingGroupReplicaRollingUpdateProgress struct {
+// PodCliqueScalingGroupReplicaUpdateProgress provides details about the update progress of ready replicas of PodCliqueScalingGroup that have been selected for update in a rolling recreate. It is not set in an OnDelete update.
+type PodCliqueScalingGroupReplicaUpdateProgress struct {
 	// Current is the index of the PodCliqueScalingGroup replica that is currently being updated.
 	Current int32 `json:"current"`
 	// Completed is the list of indices of PodCliqueScalingGroup replicas that have been updated to the latest PodCliqueSet spec.

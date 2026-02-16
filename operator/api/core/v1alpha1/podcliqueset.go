@@ -90,12 +90,12 @@ type PodCliqueSetStatus struct {
 	// CurrentGenerationHash is a hash value generated out of a collection of fields in a PodCliqueSet.
 	// Since only a subset of fields is taken into account when generating the hash, not every change in the PodCliqueSetSpec will
 	// be accounted for when generating this hash value. A field in PodCliqueSetSpec is included if a change to it triggers
-	// a rolling update of PodCliques and/or PodCliqueScalingGroups.
+	// a rolling recreate of PodCliques and/or PodCliqueScalingGroups.
 	// Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value
-	// then a rolling update needs to be triggerred.
+	// then an update needs to be triggerred.
 	CurrentGenerationHash *string `json:"currentGenerationHash,omitempty"`
-	// RollingUpdateProgress represents the progress of a rolling update.
-	RollingUpdateProgress *PodCliqueSetRollingUpdateProgress `json:"rollingUpdateProgress,omitempty"`
+	// UpdateProgress represents the progress of an update.
+	UpdateProgress *PodCliqueSetUpdateProgress `json:"updateProgress,omitempty"`
 }
 
 // PodCliqueSetUpdateStrategy defines the update strategy for a PodCliqueSet.
@@ -108,11 +108,11 @@ type PodCliqueSetUpdateStrategy struct {
 	Type UpdateStrategyType `json:"type,omitempty"`
 }
 
-// PodCliqueSetRollingUpdateProgress captures the progress of a rolling update of the PodCliqueSet.
-type PodCliqueSetRollingUpdateProgress struct {
-	// UpdateStartedAt is the time at which the rolling update started for the PodCliqueSet.
+// PodCliqueSetUpdateProgress captures the progress of an update of the PodCliqueSet.
+type PodCliqueSetUpdateProgress struct {
+	// UpdateStartedAt is the time at which the update started for the PodCliqueSet.
 	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
-	// UpdateEndedAt is the time at which the rolling update ended for the PodCliqueSet.
+	// UpdateEndedAt is the time at which the update ended for the PodCliqueSet.
 	// +optional
 	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
 	// UpdatedPodCliqueScalingGroups is a list of PodCliqueScalingGroup names that have been updated to the desired PodCliqueSet generation hash.
@@ -121,14 +121,14 @@ type PodCliqueSetRollingUpdateProgress struct {
 	UpdatedPodCliques []string `json:"updatedPodCliques,omitempty"`
 	// CurrentlyUpdating captures the progress of the PodCliqueSet replica that is currently being updated.
 	// +optional
-	CurrentlyUpdating *PodCliqueSetReplicaRollingUpdateProgress `json:"currentlyUpdating,omitempty"`
+	CurrentlyUpdating *PodCliqueSetReplicaUpdateProgress `json:"currentlyUpdating,omitempty"`
 }
 
-// PodCliqueSetReplicaRollingUpdateProgress captures the progress of a rolling update for a specific PodCliqueSet replica.
-type PodCliqueSetReplicaRollingUpdateProgress struct {
+// PodCliqueSetReplicaUpdateProgress captures the progress of an update for a specific PodCliqueSet replica.
+type PodCliqueSetReplicaUpdateProgress struct {
 	// ReplicaIndex is the replica index of the PodCliqueSet that is being updated.
 	ReplicaIndex int32 `json:"replicaIndex"`
-	// UpdateStartedAt is the time at which the rolling update started for this PodCliqueSet replica index.
+	// UpdateStartedAt is the time at which the update started for this PodCliqueSet replica index.
 	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
 }
 

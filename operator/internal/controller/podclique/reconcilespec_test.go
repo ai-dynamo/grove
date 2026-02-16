@@ -58,7 +58,7 @@ func TestPcsHasNoActiveRollingUpdate(t *testing.T) {
 			pcs: &grovecorev1alpha1.PodCliqueSet{
 				Status: grovecorev1alpha1.PodCliqueSetStatus{
 					CurrentGenerationHash: ptr.To("hash123"),
-					RollingUpdateProgress: nil,
+					UpdateProgress:        nil,
 				},
 			},
 			expected: true,
@@ -69,7 +69,7 @@ func TestPcsHasNoActiveRollingUpdate(t *testing.T) {
 			pcs: &grovecorev1alpha1.PodCliqueSet{
 				Status: grovecorev1alpha1.PodCliqueSetStatus{
 					CurrentGenerationHash: ptr.To("hash123"),
-					RollingUpdateProgress: &grovecorev1alpha1.PodCliqueSetRollingUpdateProgress{
+					UpdateProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
 						CurrentlyUpdating: nil,
 					},
 				},
@@ -82,8 +82,8 @@ func TestPcsHasNoActiveRollingUpdate(t *testing.T) {
 			pcs: &grovecorev1alpha1.PodCliqueSet{
 				Status: grovecorev1alpha1.PodCliqueSetStatus{
 					CurrentGenerationHash: ptr.To("hash123"),
-					RollingUpdateProgress: &grovecorev1alpha1.PodCliqueSetRollingUpdateProgress{
-						CurrentlyUpdating: &grovecorev1alpha1.PodCliqueSetReplicaRollingUpdateProgress{
+					UpdateProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+						CurrentlyUpdating: &grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{
 							ReplicaIndex: 0,
 						},
 					},

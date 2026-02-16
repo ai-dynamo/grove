@@ -133,7 +133,7 @@ func (r *Reconciler) setGenerationHash(ctx context.Context, pcs *grovecorev1alph
 
 // initRollingUpdateProgress initializes a new rolling update by resetting progress tracking.
 func (r *Reconciler) initRollingUpdateProgress(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsObjectName, newGenerationHash string) error {
-	pcs.Status.RollingUpdateProgress = &grovecorev1alpha1.PodCliqueSetRollingUpdateProgress{
+	pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
 		UpdateStartedAt: metav1.Now(),
 	}
 	pcs.Status.UpdatedReplicas = 0

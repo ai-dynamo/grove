@@ -182,7 +182,7 @@ func TestIsRollingUpdateInProgress(t *testing.T) {
 			name: "no_rolling_update",
 			pcs: &grovecorev1alpha1.PodCliqueSet{
 				Status: grovecorev1alpha1.PodCliqueSetStatus{
-					RollingUpdateProgress: nil,
+					UpdateProgress: nil,
 				},
 			},
 			expected: false,
@@ -192,7 +192,7 @@ func TestIsRollingUpdateInProgress(t *testing.T) {
 			name: "rolling_update_in_progress",
 			pcs: &grovecorev1alpha1.PodCliqueSet{
 				Status: grovecorev1alpha1.PodCliqueSetStatus{
-					RollingUpdateProgress: &grovecorev1alpha1.PodCliqueSetRollingUpdateProgress{
+					UpdateProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
 						UpdateEndedAt: nil,
 					},
 				},
@@ -204,7 +204,7 @@ func TestIsRollingUpdateInProgress(t *testing.T) {
 			name: "rolling_update_ended",
 			pcs: &grovecorev1alpha1.PodCliqueSet{
 				Status: grovecorev1alpha1.PodCliqueSetStatus{
-					RollingUpdateProgress: &grovecorev1alpha1.PodCliqueSetRollingUpdateProgress{
+					UpdateProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
 						UpdateEndedAt: &metav1.Time{},
 					},
 				},

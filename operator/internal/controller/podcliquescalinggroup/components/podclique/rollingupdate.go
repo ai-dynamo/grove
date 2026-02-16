@@ -70,7 +70,7 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 		return groveerr.New(
 			groveerr.ErrCodeContinueReconcileAndRequeue,
 			component.OperationSync,
-			fmt.Sprintf("rolling update of currently selected PCSG replica index: %d is not complete, requeuing", sc.pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current),
+			fmt.Sprintf("rolling update of currently selected PCSG replica index: %d is not complete, requeuing", sc.pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current),
 		)
 	}
 
@@ -105,7 +105,7 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 		return groveerr.New(
 			groveerr.ErrCodeContinueReconcileAndRequeue,
 			component.OperationSync,
-			fmt.Sprintf("rolling update of currently selected PCSG replica index: %d is not complete, requeuing", sc.pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current),
+			fmt.Sprintf("rolling update of currently selected PCSG replica index: %d is not complete, requeuing", sc.pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current),
 		)
 	}
 
@@ -116,12 +116,12 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 func (r _resource) updatePCSGStatusWithNextReplicaToUpdate(ctx context.Context, logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, nextReplicaIndexToUpdate int) error {
 	patch := client.MergeFrom(pcsg.DeepCopy())
 
-	if pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate == nil {
-		pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate = &grovecorev1alpha1.PodCliqueScalingGroupReplicaRollingUpdateProgress{}
+	if pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate == nil {
+		pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate = &grovecorev1alpha1.PodCliqueScalingGroupReplicaUpdateProgress{}
 	} else {
-		pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Completed = append(pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Completed, pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current)
+		pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Completed = append(pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Completed, pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current)
 	}
-	pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current = int32(nextReplicaIndexToUpdate)
+	pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current = int32(nextReplicaIndexToUpdate)
 
 	if err := r.client.Status().Patch(ctx, pcsg, patch); err != nil {
 		return groveerr.WrapError(
@@ -139,8 +139,8 @@ func (r _resource) updatePCSGStatusWithNextReplicaToUpdate(ctx context.Context, 
 func (r _resource) markRollingUpdateEnd(ctx context.Context, logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) error {
 	patch := client.MergeFrom(pcsg.DeepCopy())
 
-	pcsg.Status.RollingUpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
-	pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate = nil
+	pcsg.Status.UpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
+	pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate = nil
 
 	if err := r.client.Status().Patch(ctx, pcsg, patch); err != nil {
 		return groveerr.WrapError(
@@ -165,8 +165,8 @@ func computePendingUpdateWork(sc *syncContext) (*updateWork, error) {
 			continue
 		}
 		// pcsgReplicaIndex is the currently updating replica
-		if sc.pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate != nil &&
-			sc.pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current == int32(pcsgReplicaIndex) {
+		if sc.pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate != nil &&
+			sc.pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current == int32(pcsgReplicaIndex) {
 			continue
 		}
 		isUpdated, err := isReplicaUpdated(sc.expectedPCLQPodTemplateHashMap, existingPCSGReplicaPCLQs)
@@ -201,12 +201,12 @@ func (r _resource) deleteOldPendingAndUnavailableReplicas(logger logr.Logger, sc
 
 // isAnyReadyReplicaSelectedForUpdate checks if there is currently a ready replica selected for rolling update
 func isAnyReadyReplicaSelectedForUpdate(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) bool {
-	return pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate != nil
+	return pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate != nil
 }
 
 // isCurrentReplicaUpdateComplete verifies if the currently updating replica has completed its rolling update
 func isCurrentReplicaUpdateComplete(sc *syncContext) bool {
-	currentlyUpdatingReplicaIndex := int(sc.pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current)
+	currentlyUpdatingReplicaIndex := int(sc.pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current)
 	existingPCLQsByReplicaIndex := componentutils.GroupPCLQsByPCSGReplicaIndex(sc.existingPCLQs)
 	// Get the expected PCLQ PodTemplateHash and compare it against all existing PCLQs for the currently updating replica index.
 	expectedPCLQFQNs := sc.expectedPCLQFQNsPerPCSGReplica[currentlyUpdatingReplicaIndex]
@@ -237,7 +237,7 @@ func isReplicaUpdated(expectedPCLQPodTemplateHashes map[string]string, pcsgRepli
 
 // isReplicaDeletedOrMarkedForDeletion determines if a PCSG replica is deleted or all its PodCliques are terminating
 func isReplicaDeletedOrMarkedForDeletion(pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsgReplicaPCLQs []grovecorev1alpha1.PodClique, _ int) bool {
-	if pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate == nil {
+	if pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate == nil {
 		return false
 	}
 	if len(pcsgReplicaPCLQs) == 0 {
