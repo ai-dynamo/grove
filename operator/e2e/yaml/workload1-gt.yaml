@@ -1,0 +1,111 @@
+# Workload 1 for Gang Termination Tests: Strict Startup (AnyOrder)
+# This variant enables gang termination with a 10s delay
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: workload1
+  labels:
+    app: workload1
+spec:
+  replicas: 1
+  template:
+    terminationDelay: 10s
+    cliques:
+      - name: pc-a
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: role-a
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            schedulerName: kai-scheduler
+            terminationGracePeriodSeconds: 1
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: pc-a
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 80Mi
+      - name: pc-b
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: role-b
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            schedulerName: kai-scheduler
+            terminationGracePeriodSeconds: 1
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: pc-b
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 80Mi
+      - name: pc-c
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: role-c
+          replicas: 3
+          minAvailable: 3
+          podSpec:
+            schedulerName: kai-scheduler
+            terminationGracePeriodSeconds: 1
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: pc-c
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 80Mi
+    podCliqueScalingGroups:
+      - name: sg-x
+        replicas: 2
+        minAvailable: 2
+        cliqueNames:
+          - pc-b
+          - pc-c

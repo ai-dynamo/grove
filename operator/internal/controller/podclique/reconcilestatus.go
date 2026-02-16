@@ -36,6 +36,23 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// minAvailableBreachedContext contains the state needed for computing the MinAvailableBreached
+// condition. This ensures the breach condition is only set to True when transitioning from
+// available to unavailable, preventing false breach detection during initial startup when
+// pods haven't reached MinAvailable yet.
+type minAvailableBreachedContext struct {
+	// oldReadyReplicas is the ReadyReplicas count before the current reconciliation mutation
+	oldReadyReplicas int32
+	// newReadyReplicas is the ReadyReplicas count after the current reconciliation mutation
+	newReadyReplicas int32
+	// minAvailable is the minimum number of ready pods required for availability
+	minAvailable int32
+	// existingCondition is the persisted MinAvailableBreached condition (nil if not set)
+	existingCondition *metav1.Condition
+	// isUpdateInProgress indicates whether a rolling update is currently in progress
+	isUpdateInProgress bool
+}
+
 // reconcileStatus updates the PodClique status
 func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
 	pcsName := componentutils.GetPodCliqueSetName(pclq.ObjectMeta)
@@ -56,6 +73,10 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 
 	podCategories := k8sutils.CategorizePodsByConditionType(logger, existingPods)
 
+	// Capture old state BEFORE mutation for MinAvailableBreached detection
+	oldReadyReplicas := pclq.Status.ReadyReplicas
+	existingBreachCondition := meta.FindStatusCondition(pclq.Status.Conditions, constants.ConditionTypeMinAvailableBreached)
+
 	// mutate PodClique.Status.CurrentPodTemplateHash and PodClique.Status.CurrentPodCliqueSetGenerationHash
 	if err = mutateCurrentHashes(logger, pcs, pclq); err != nil {
 		logger.Error(err, "failed to compute PodClique current hashes")
@@ -69,9 +90,16 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	// This prevents prematurely setting incorrect conditions.
 	if pclq.Status.ObservedGeneration != nil {
 		mutatePodCliqueScheduledCondition(pclq)
-		mutateMinAvailableBreachedCondition(pclq,
-			len(podCategories[k8sutils.PodHasAtleastOneContainerWithNonZeroExitCode]),
-			len(podCategories[k8sutils.PodStartedButNotReady]))
+
+		// Build context for MinAvailableBreached condition computation
+		breachCtx := minAvailableBreachedContext{
+			oldReadyReplicas:   oldReadyReplicas,
+			newReadyReplicas:   pclq.Status.ReadyReplicas,
+			minAvailable:       *pclq.Spec.MinAvailable,
+			existingCondition:  existingBreachCondition,
+			isUpdateInProgress: componentutils.IsPCLQUpdateInProgress(pclq),
+		}
+		mutateMinAvailableBreachedCondition(pclq, breachCtx)
 	}
 
 	// mutate the selector that will be used by an autoscaler.
@@ -167,16 +195,35 @@ func mutateSelector(pcsName string, pclq *grovecorev1alpha1.PodClique) error {
 }
 
 // mutateMinAvailableBreachedCondition updates the MinAvailableBreached condition based on pod availability
-func mutateMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, numNotReadyPodsWithContainersInError, numPodsStartedButNotReady int) {
-	newCondition := computeMinAvailableBreachedCondition(pclq, numNotReadyPodsWithContainersInError, numPodsStartedButNotReady)
+// using transition detection to distinguish between "never available" and "was available then degraded" scenarios.
+func mutateMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, ctx minAvailableBreachedContext) {
+	newCondition := computeMinAvailableBreachedCondition(ctx)
 	if k8sutils.HasConditionChanged(pclq.Status.Conditions, newCondition) {
 		meta.SetStatusCondition(&pclq.Status.Conditions, newCondition)
 	}
 }
 
-// computeMinAvailableBreachedCondition calculates the MinAvailableBreached condition status based on pod availability
-func computeMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, numPodsHavingAtleastOneContainerWithNonZeroExitCode, numPodsStartedButNotReady int) metav1.Condition {
-	if componentutils.IsPCLQUpdateInProgress(pclq) {
+// computeMinAvailableBreachedCondition calculates the MinAvailableBreached condition status using transition detection.
+//
+// MinAvailableBreached Detection Logic:
+// The condition is only set to True when transitioning from available to unavailable.
+// This prevents false breach detection during initial startup when pods haven't reached MinAvailable yet.
+//
+// The logic handles three categories:
+//  1. Rolling update in progress → Unknown (no breach detection during updates)
+//  2. Currently available (readyReplicas >= minAvailable) → False (clear any previous breach)
+//  3. Currently unavailable (readyReplicas < minAvailable):
+//     a. Already breached (persisted condition is True) → True (respect persisted state)
+//     b. Breach detected (old >= min, new < min) → True (breach just occurred)
+//     c. No transition, never available → False with NeverAvailable reason
+//
+// This approach ensures:
+// - Workloads that were healthy then degraded will be terminated (gang termination)
+// - Workloads that never achieved availability will NOT be terminated
+// - Operator restarts preserve breach state (respects persisted MinAvailableBreached=True)
+func computeMinAvailableBreachedCondition(ctx minAvailableBreachedContext) metav1.Condition {
+	// 1. Rolling update → Unknown (no breach detection during updates)
+	if ctx.isUpdateInProgress {
 		return metav1.Condition{
 			Type:    constants.ConditionTypeMinAvailableBreached,
 			Status:  metav1.ConditionUnknown,
@@ -184,44 +231,48 @@ func computeMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, num
 			Message: "Update is in progress",
 		}
 	}
-	// dereferencing is considered safe as MinAvailable will always be set by the defaulting webhook. If this changes in the future,
-	// make sure that you check for nil explicitly.
-	minAvailable := int(*pclq.Spec.MinAvailable)
-	scheduledReplicas := int(pclq.Status.ScheduledReplicas)
-	now := metav1.Now()
 
-	// If the number of scheduled pods is less than the minimum available, then minAvailable is not considered as breached.
-	// Consider a case where none of the PodCliques have been scheduled yet, then it should not cause the PodGang to be recreated all the time.
-	if scheduledReplicas < minAvailable {
+	// 2. Currently available → False (clear any previous breach)
+	if ctx.newReadyReplicas >= ctx.minAvailable {
 		return metav1.Condition{
-			Type:               constants.ConditionTypeMinAvailableBreached,
-			Status:             metav1.ConditionFalse,
-			Reason:             constants.ConditionReasonInsufficientScheduledPods,
-			Message:            fmt.Sprintf("Insufficient scheduled pods. expected at least: %d, found: %d", minAvailable, scheduledReplicas),
-			LastTransitionTime: now,
+			Type:    constants.ConditionTypeMinAvailableBreached,
+			Status:  metav1.ConditionFalse,
+			Reason:  constants.ConditionReasonSufficientReadyPods,
+			Message: fmt.Sprintf("Sufficient ready pods: %d >= %d", ctx.newReadyReplicas, ctx.minAvailable),
 		}
 	}
 
-	readyOrStartingPods := scheduledReplicas - numPodsHavingAtleastOneContainerWithNonZeroExitCode - numPodsStartedButNotReady
-	// pclq.Status.ReadyReplicas do not account for Pods which are not yet ready and are in the process of starting/initializing.
-	// This allows sufficient time specially for pods that have long-running init containers or slow-to-start main containers.
-	// Therefore, we take Pods that are NotReady and at least one of their containers have exited with a non-zero exit code. Kubelet
-	// has attempted to start the containers within the Pod at least once and failed. These pods count towards unavailability.
-	if readyOrStartingPods < minAvailable {
+	// 3. Currently unavailable (newReadyReplicas < minAvailable)
+
+	// 3a. Already breached (persisted condition is True) → respect persisted state (keep True)
+	// This handles operator restarts: if we previously detected a breach, we continue respecting it.
+	if ctx.existingCondition != nil && ctx.existingCondition.Status == metav1.ConditionTrue {
 		return metav1.Condition{
-			Type:               constants.ConditionTypeMinAvailableBreached,
-			Status:             metav1.ConditionTrue,
-			Reason:             constants.ConditionReasonInsufficientReadyPods,
-			Message:            fmt.Sprintf("Insufficient ready or starting pods. expected at least: %d, found: %d", minAvailable, readyOrStartingPods),
-			LastTransitionTime: now,
+			Type:    constants.ConditionTypeMinAvailableBreached,
+			Status:  metav1.ConditionTrue,
+			Reason:  constants.ConditionReasonInsufficientReadyPods,
+			Message: fmt.Sprintf("Insufficient ready pods: %d < %d", ctx.newReadyReplicas, ctx.minAvailable),
 		}
 	}
+
+	// 3b. Breach detected → set True (breach just occurred)
+	// A transition is when we go from available to unavailable in this reconciliation cycle.
+	if ctx.oldReadyReplicas >= ctx.minAvailable {
+		return metav1.Condition{
+			Type:    constants.ConditionTypeMinAvailableBreached,
+			Status:  metav1.ConditionTrue,
+			Reason:  constants.ConditionReasonInsufficientReadyPods,
+			Message: fmt.Sprintf("Ready pods dropped below minimum: %d -> %d (min: %d)", ctx.oldReadyReplicas, ctx.newReadyReplicas, ctx.minAvailable),
+		}
+	}
+
+	// 3c. No breach detected, never reached availability → False with NeverAvailable reason
+	// This prevents false breach detection during startup when pods haven't reached MinAvailable yet.
 	return metav1.Condition{
-		Type:               constants.ConditionTypeMinAvailableBreached,
-		Status:             metav1.ConditionFalse,
-		Reason:             constants.ConditionReasonSufficientReadyPods,
-		Message:            fmt.Sprintf("Either sufficient ready or starting pods found. expected at least: %d, found: %d", minAvailable, readyOrStartingPods),
-		LastTransitionTime: now,
+		Type:    constants.ConditionTypeMinAvailableBreached,
+		Status:  metav1.ConditionFalse,
+		Reason:  constants.ConditionReasonNeverAvailable,
+		Message: fmt.Sprintf("PodClique has not yet reached MinAvailable threshold of %d (current: %d)", ctx.minAvailable, ctx.newReadyReplicas),
 	}
 }
 

@@ -230,6 +230,16 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigs(fldPath *field.Path)
 				allErrs = append(allErrs, field.Invalid(fldPath.Index(i).Child("scaleConfig", "minReplicas"), *scalingGroupConfig.ScaleConfig.MinReplicas, "scaleConfig.minReplicas must be greater than or equal to minAvailable"))
 			}
 		}
+
+		// validate TerminationDelay field
+		if scalingGroupConfig.TerminationDelay != nil {
+			// PCSG terminationDelay can only be set if PCS-level terminationDelay is set (gang termination is enabled)
+			if v.pcs.Spec.Template.TerminationDelay == nil {
+				allErrs = append(allErrs, field.Forbidden(fldPath.Index(i).Child("terminationDelay"), "terminationDelay can only be set on PodCliqueScalingGroupConfig when PodCliqueSetTemplateSpec.terminationDelay is set (gang termination is enabled)"))
+			} else if scalingGroupConfig.TerminationDelay.Duration <= 0 {
+				allErrs = append(allErrs, field.Invalid(fldPath.Index(i).Child("terminationDelay"), scalingGroupConfig.TerminationDelay, "terminationDelay must be greater than 0"))
+			}
+		}
 	}
 
 	// validate that the scaling group names are unique
@@ -248,13 +258,14 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigs(fldPath *field.Path)
 	return allErrs
 }
 
-// validateTerminationDelay validates that terminationDelay is set and greater than zero.
+// validateTerminationDelay validates that terminationDelay, if set, is greater than zero.
+// When terminationDelay is nil, gang termination is disabled for the entire PodCliqueSet.
 func (v *pcsValidator) validateTerminationDelay(fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
-	// This should ideally not happen, the defaulting webhook will always set the default value for terminationDelay.
+	// terminationDelay is optional - when nil, gang termination is disabled
 	if v.pcs.Spec.Template.TerminationDelay == nil {
-		return append(allErrs, field.Required(fldPath, "terminationDelay is required"))
+		return allErrs
 	}
 	if v.pcs.Spec.Template.TerminationDelay.Duration <= 0 {
 		allErrs = append(allErrs, field.Invalid(fldPath, v.pcs.Spec.Template.TerminationDelay, "terminationDelay must be greater than 0"))
