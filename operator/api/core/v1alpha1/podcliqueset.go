@@ -53,6 +53,11 @@ type PodCliqueSetSpec struct {
 	// Replicas is the number of desired replicas of the PodCliqueSet.
 	// +kubebuilder:default=0
 	Replicas int32 `json:"replicas,omitempty"`
+	// UpdateStrategy defines the strategy for updating replicas when
+	// templates change. This applies to both standalone PodCliques and
+	// PodCliqueScalingGroups.
+	// +optional
+	UpdateStrategy *PodCliqueSetUpdateStrategy `json:"updateStrategy,omitempty"`
 	// Template describes the template spec for PodGangs that will be created in the PodCliqueSet.
 	Template PodCliqueSetTemplateSpec `json:"template"`
 }
@@ -91,6 +96,16 @@ type PodCliqueSetStatus struct {
 	CurrentGenerationHash *string `json:"currentGenerationHash,omitempty"`
 	// RollingUpdateProgress represents the progress of a rolling update.
 	RollingUpdateProgress *PodCliqueSetRollingUpdateProgress `json:"rollingUpdateProgress,omitempty"`
+}
+
+// PodCliqueSetUpdateStrategy defines the update strategy for a PodCliqueSet.
+type PodCliqueSetUpdateStrategy struct {
+	// Type indicates the type of update strategy.
+	// This strategy applies uniformly to both standalone PodCliques and
+	// PodCliqueScalingGroups within the PodCliqueSet.
+	// Default is RollingRecreate.
+	// +kubebuilder:default=RollingRecreate
+	Type UpdateStrategyType `json:"type,omitempty"`
 }
 
 // PodCliqueSetRollingUpdateProgress captures the progress of a rolling update of the PodCliqueSet.
@@ -241,6 +256,22 @@ type HeadlessServiceConfig struct {
 	// +kubebuilder:default=true
 	PublishNotReadyAddresses bool `json:"publishNotReadyAddresses"`
 }
+
+// UpdateStrategyType defines the type of update strategy for PodCliqueSet.
+// +kubebuilder:validation:Enum={RollingRecreate,OnDelete}
+type UpdateStrategyType string
+
+const (
+	// RollingRecreateStrategyType indicates that replicas will be progressively
+	// deleted and recreated one at a time, when templates change. This applies to
+	// both pods (for standalone PodCliques) and replicas of PodCliqueScalingGroups.
+	// This is the default update strategy.
+	RollingRecreateStrategyType UpdateStrategyType = "RollingRecreate"
+	// OnDeleteStrategyType indicates that replicas will only be updated when
+	// they are manually deleted. Changes to templates do not automatically
+	// trigger replica deletions.
+	OnDeleteStrategyType UpdateStrategyType = "OnDelete"
+)
 
 // CliqueStartupType defines the order in which each PodClique is started.
 // +kubebuilder:validation:Enum={CliqueStartupTypeAnyOrder,CliqueStartupTypeInOrder,CliqueStartupTypeExplicit}
