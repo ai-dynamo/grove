@@ -4,7 +4,6 @@
 - [Summary](#summary)
 - [Motivation](#motivation)
   - [Goals](#goals)
-  - [Non-Goals](#non-goals)
 - [Proposal](#proposal)
   - [User Stories](#user-stories)
     - [Story 1: Third-Party Scheduler Integration](#story-1-third-party-scheduler-integration)
@@ -75,10 +74,6 @@ In summary, refining Grove and introducing a Scheduler Backend Framework is both
 * **Simplify User Experience**: Allow users to configure their preferred scheduler backend during Grove installation via OperatorConfiguration, eliminating the need to specify schedulerName in every pod specification.
 * **Support Dynamic Backend Selection**: Enable Grove to determine which scheduler backend to use based on configuration, with clear mechanisms for backend registration and initialization.
 * **Support Multiple Scheduler Backends**: Provide built-in support for multiple scheduler backends including the Kubernetes default-scheduler and KAI scheduler, with a clear path for adding additional third-party schedulers. The framework should enable easy integration of new schedulers as the community support for advanced features (gang scheduling, topology-aware scheduling) evolves.
-
-### Non-Goals
-
-* **Support multiple active schedulers**: It is technically possible to run different schedulers in a Kubernetes cluster as long as care is taken to cleanly segregate Node resources that each scheduler targets to prevent race conditions leading to overbooking of Node resources. This version of the GREP does not provide means to run Grove operator with multiple active schedulers. 
 
 ## Proposal
 
