@@ -27,7 +27,7 @@ import (
 
 const (
 	// DefaultMaxCacheSize is the default maximum number of entries in the cache.
-	DefaultMaxCacheSize = 10000
+	DefaultMaxCacheSize = 50000
 	// DefaultCleanupInterval is how often we check for old entries to evict.
 	DefaultCleanupInterval = 5 * time.Minute
 	// DefaultEntryTTL is how long an entry can exist without being accessed.
