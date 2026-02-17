@@ -33,6 +33,7 @@ import (
 
 	"github.com/go-logr/logr"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -42,7 +43,7 @@ func (r *Reconciler) reconcileSpec(ctx context.Context, logger logr.Logger, pclq
 	log := logger.WithValues("operation", "specReconcile")
 	reconcileStepFns := []ctrlcommon.ReconcileStepFn[grovecorev1alpha1.PodClique]{
 		r.ensureFinalizer,
-		r.processRollingUpdate,
+		r.processUpdate,
 		r.syncPCLQResources,
 		r.updateObservedGeneration,
 	}
@@ -67,12 +68,22 @@ func (r *Reconciler) ensureFinalizer(ctx context.Context, logger logr.Logger, pc
 	return ctrlcommon.ContinueReconcile()
 }
 
-// processRollingUpdate handles rolling update logic for PodClique when the owner PodCliqueSet has changes
-func (r *Reconciler) processRollingUpdate(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
+// processUpdate handles rolling update logic for PodClique when the owner PodCliqueSet has changes
+func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
 	pclqObjectKey := client.ObjectKeyFromObject(pclq)
 	pcs, err := componentutils.GetPodCliqueSet(ctx, r.client, pclq.ObjectMeta)
 	if err != nil {
 		return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("could not get owner PodCliqueSet for PodClique: %v", pclqObjectKey), err)
+	}
+
+	// Handle OnDelete strategy first
+	if pcs.Spec.UpdateStrategy != nil && pcs.Spec.UpdateStrategy.Type == grovecorev1alpha1.OnDeleteStrategyType {
+		if shouldResetOrTriggerUpdate(pcs, pclq) {
+			if err = r.initOrResetUpdate(ctx, pcs, pclq); err != nil {
+				return ctrlcommon.ReconcileWithErrors("could not initialize update for OnDelete", err)
+			}
+		}
+		return ctrlcommon.ContinueReconcile()
 	}
 
 	if pcsHasNoActiveRollingUpdate(pcs) {
@@ -86,9 +97,9 @@ func (r *Reconciler) processRollingUpdate(ctx context.Context, logger logr.Logge
 		return ctrlcommon.ContinueReconcile()
 	}
 
-	if shouldResetOrTriggerRollingUpdate(pcs, pclq) {
+	if shouldResetOrTriggerUpdate(pcs, pclq) {
 		logger.Info("PodCliqueSet has a new generation hash. Initializing or resetting rolling update for PodClique", "PodCliqueSetGenerationHash", *pcs.Status.CurrentGenerationHash, "CurrentPodCliqueSetGenerationHash", pclq.Status.CurrentPodCliqueSetGenerationHash, "isPCLQUpdateInProgress", componentutils.IsPCLQUpdateInProgress(pclq), "isLastPCLQUpdateCompleted", componentutils.IsLastPCLQUpdateCompleted(pclq))
-		if err = r.initOrResetRollingUpdate(ctx, pcs, pclq); err != nil {
+		if err = r.initOrResetUpdate(ctx, pcs, pclq); err != nil {
 			return ctrlcommon.ReconcileWithErrors("could not initialize rolling update", err)
 		}
 	}
@@ -124,8 +135,8 @@ func shouldCheckPendingUpdatesForPCLQ(logger logr.Logger, pcs *grovecorev1alpha1
 	return true, nil
 }
 
-// shouldResetOrTriggerRollingUpdate determines if a rolling update should be started or reset based on generation hash comparison
-func shouldResetOrTriggerRollingUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) bool {
+// shouldResetOrTriggerUpdate determines if an update should be started or reset based on generation hash comparison
+func shouldResetOrTriggerUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) bool {
 	// PCLQ has never been updated yet and PCS has a new generation hash.
 	firstEverUpdateRequired := pclq.Status.UpdateProgress == nil && pclq.Status.CurrentPodCliqueSetGenerationHash != nil && *pcs.Status.CurrentGenerationHash != *pclq.Status.CurrentPodCliqueSetGenerationHash
 	if firstEverUpdateRequired {
@@ -145,8 +156,8 @@ func shouldResetOrTriggerRollingUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pclq
 	return true
 }
 
-// initOrResetRollingUpdate initializes or resets the rolling update progress status for the PodClique
-func (r *Reconciler) initOrResetRollingUpdate(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) error {
+// initOrResetUpdate initializes or resets the rolling update progress status for the PodClique
+func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) error {
 	podTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
 	if err != nil {
 		return fmt.Errorf("could not update PodClique %s status with rolling update progress: %w", client.ObjectKeyFromObject(pclq), err)
@@ -157,6 +168,10 @@ func (r *Reconciler) initOrResetRollingUpdate(ctx context.Context, pcs *grovecor
 		UpdateStartedAt:            metav1.Now(),
 		PodCliqueSetGenerationHash: *pcs.Status.CurrentGenerationHash,
 		PodTemplateHash:            podTemplateHash,
+	}
+	// OnDelete strategy sets UpdateEndedAt too, since we do not know when all the pods will manually be deleted, and gang termination is diabled when an update is in progress
+	if pcs.Spec.UpdateStrategy != nil && pcs.Spec.UpdateStrategy.Type == grovecorev1alpha1.OnDeleteStrategyType {
+		pclq.Status.UpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
 	}
 	// reset the updated replicas count to 0 so that the rolling update can start afresh.
 	pclq.Status.UpdatedReplicas = 0

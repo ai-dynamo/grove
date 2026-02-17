@@ -294,7 +294,7 @@ func isPCLQUpdateComplete(pclq *grovecorev1alpha1.PodClique, currentPCSGeneratio
 	return false
 }
 
-// isRollingUpdateInProgress checks if a rolling update is currently in progress.
-func isRollingUpdateInProgress(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+// isUpdateInProgress checks if an update is currently in progress.
+func isUpdateInProgress(pcs *grovecorev1alpha1.PodCliqueSet) bool {
 	return pcs.Status.UpdateProgress != nil && pcs.Status.UpdateProgress.UpdateEndedAt == nil
 }

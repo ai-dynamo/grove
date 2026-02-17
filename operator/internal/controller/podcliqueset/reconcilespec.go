@@ -33,6 +33,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -82,7 +83,7 @@ func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger log
 	newGenerationHash := computeGenerationHash(pcs)
 	if pcs.Status.CurrentGenerationHash == nil {
 		// update the generation hash and continue reconciliation. No rolling update is required.
-		if err := r.setGenerationHash(ctx, pcs, pcsObjectName, newGenerationHash); err != nil {
+		if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, pcsObjectName, newGenerationHash); err != nil {
 			logger.Error(err, "failed to set generation hash on PCS", "newGenerationHash", newGenerationHash)
 			return ctrlcommon.ReconcileWithErrors("error updating generation hash", err)
 		}
@@ -90,8 +91,8 @@ func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger log
 	}
 
 	if newGenerationHash != *pcs.Status.CurrentGenerationHash {
-		// trigger rolling update by setting or overriding pcs.Status.RollingUpdateProgress.
-		if err := r.initRollingUpdateProgress(ctx, pcs, pcsObjectName, newGenerationHash); err != nil {
+		// trigger rolling update by setting or overriding pcs.Status.UpdateProgress.
+		if err := r.initUpdateProgress(ctx, pcs, pcsObjectName, newGenerationHash); err != nil {
 			return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("could not triggering rolling update for PCS: %v", pcsObjectKey), err)
 		}
 	}
@@ -121,8 +122,8 @@ func computeGenerationHash(pcs *grovecorev1alpha1.PodCliqueSet) string {
 	return k8sutils.ComputeHash(podTemplateSpecs...)
 }
 
-// setGenerationHash updates the PodCliqueSet status with the new generation hash and stores the expectation.
-func (r *Reconciler) setGenerationHash(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsObjectName, generationHash string) error {
+// setGenerationHashAndUpdateStatus updates the PodCliqueSet status with the new generation hash, stores the expectation, and updates the status subresource.
+func (r *Reconciler) setGenerationHashAndUpdateStatus(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsObjectName, generationHash string) error {
 	pcs.Status.CurrentGenerationHash = &generationHash
 	if err := r.client.Status().Update(ctx, pcs); err != nil {
 		return fmt.Errorf("could not update CurrentGenerationHash for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
@@ -131,17 +132,20 @@ func (r *Reconciler) setGenerationHash(ctx context.Context, pcs *grovecorev1alph
 	return nil
 }
 
-// initRollingUpdateProgress initializes a new rolling update by resetting progress tracking.
-func (r *Reconciler) initRollingUpdateProgress(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsObjectName, newGenerationHash string) error {
+// initUpdateProgress initializes a new rolling update by resetting progress tracking.
+func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsObjectName, newGenerationHash string) error {
 	pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
 		UpdateStartedAt: metav1.Now(),
 	}
+	// OnDelete strategy sets UpdateEndedAt too, since we do not know when all the pods will manually be deleted, and gang termination is diabled when an update is in progress
+	if pcs.Spec.UpdateStrategy != nil && pcs.Spec.UpdateStrategy.Type == grovecorev1alpha1.OnDeleteStrategyType {
+		pcs.Status.UpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
+	}
 	pcs.Status.UpdatedReplicas = 0
 	pcs.Status.CurrentGenerationHash = &newGenerationHash
-	if err := r.client.Status().Update(ctx, pcs); err != nil {
-		return fmt.Errorf("could not set RollingUpdateProgress for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
+	if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, pcsObjectName, newGenerationHash); err != nil {
+		return fmt.Errorf("could not set UpdateProgress for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
 	}
-	r.pcsGenerationHashExpectations.Store(pcsObjectName, newGenerationHash)
 	return nil
 }
 

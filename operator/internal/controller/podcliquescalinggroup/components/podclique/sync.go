@@ -110,8 +110,10 @@ func (r _resource) runSyncFlow(logger logr.Logger, sc *syncContext) error {
 			return err
 		}
 	} else {
-		if err := r.processPendingUpdates(logger, sc); err != nil {
-			return err
+		if sc.pcs.Spec.UpdateStrategy == nil || sc.pcs.Spec.UpdateStrategy.Type == grovecorev1alpha1.RollingRecreateStrategyType {
+			if err := r.processPendingUpdates(logger, sc); err != nil {
+				return err
+			}
 		}
 	}
 
