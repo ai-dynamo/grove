@@ -148,15 +148,16 @@ func (r _resource) computeUpdateWork(logger logr.Logger, sc *syncContext) *updat
 			}
 			// Pending, unhealthy, starting, and uncategorized pods are deleted immediately;
 			// ready pods are queued for ordered one-at-a-time replacement.
-			if k8sutils.IsPodPending(pod) {
+			switch {
+			case k8sutils.IsPodPending(pod):
 				work.oldTemplateHashPendingPods = append(work.oldTemplateHashPendingPods, pod)
-			} else if k8sutils.HasAnyStartedButNotReadyContainer(pod) || k8sutils.HasAnyContainerExitedErroneously(logger, pod) {
+			case k8sutils.HasAnyStartedButNotReadyContainer(pod) || k8sutils.HasAnyContainerExitedErroneously(logger, pod):
 				work.oldTemplateHashUnhealthyPods = append(work.oldTemplateHashUnhealthyPods, pod)
-			} else if k8sutils.IsPodReady(pod) {
+			case k8sutils.IsPodReady(pod):
 				work.oldTemplateHashReadyPods = append(work.oldTemplateHashReadyPods, pod)
-			} else if k8sutils.HasAnyContainerNotStarted(pod) {
+			case k8sutils.HasAnyContainerNotStarted(pod):
 				work.oldTemplateHashStartingPods = append(work.oldTemplateHashStartingPods, pod)
-			} else {
+			default:
 				work.oldTemplateHashUncategorizedPods = append(work.oldTemplateHashUncategorizedPods, pod)
 			}
 		} else {
@@ -179,22 +180,14 @@ func (r _resource) hasPodDeletionBeenTriggered(sc *syncContext, pod *corev1.Pod)
 // or uncategorized (unknown state). All of these are safe to delete immediately since they are not serving traffic
 // and will be replaced with pods having the correct template hash.
 func (r _resource) deleteOldNonReadyPods(logger logr.Logger, sc *syncContext, work *updateWork) error {
-	var deletionTasks []utils.Task
-	if len(work.oldTemplateHashPendingPods) > 0 {
-		deletionTasks = append(deletionTasks, r.createPodDeletionTasks(logger, sc.pclq, work.oldTemplateHashPendingPods, sc.pclqExpectationsStoreKey)...)
-	}
-	if len(work.oldTemplateHashUnhealthyPods) > 0 {
-		deletionTasks = append(deletionTasks, r.createPodDeletionTasks(logger, sc.pclq, work.oldTemplateHashUnhealthyPods, sc.pclqExpectationsStoreKey)...)
-	}
-	if len(work.oldTemplateHashStartingPods) > 0 {
-		deletionTasks = append(deletionTasks, r.createPodDeletionTasks(logger, sc.pclq, work.oldTemplateHashStartingPods, sc.pclqExpectationsStoreKey)...)
-	}
 	if len(work.oldTemplateHashUncategorizedPods) > 0 {
 		logger.Info("found old-hash pods in an unrecognized state, deleting them",
 			"unexpected", true,
 			"pods", componentutils.PodsToObjectNames(work.oldTemplateHashUncategorizedPods))
-		deletionTasks = append(deletionTasks, r.createPodDeletionTasks(logger, sc.pclq, work.oldTemplateHashUncategorizedPods, sc.pclqExpectationsStoreKey)...)
 	}
+
+	podsToDelete := lo.Union(work.oldTemplateHashPendingPods, work.oldTemplateHashUnhealthyPods, work.oldTemplateHashStartingPods, work.oldTemplateHashUncategorizedPods)
+	deletionTasks := r.createPodDeletionTasks(logger, sc.pclq, podsToDelete, sc.pclqExpectationsStoreKey)
 
 	if len(deletionTasks) == 0 {
 		logger.Info("no non-ready pods having old PodTemplateHash found")
