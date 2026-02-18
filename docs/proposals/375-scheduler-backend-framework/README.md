@@ -326,8 +326,9 @@ Each item in `scheduler.profiles` has a `name` (which backend), an optional `con
 |------|-------------------|
 | Use kube-scheduler only (no extra options) | Omit `scheduler` or set `scheduler.profiles: []`. kube-scheduler is always active and is the default. |
 | Use kube-scheduler and tune its behavior | One profile: `name: "kube-scheduler"`, `config: { GangScheduling: true }`, `default: true`. |
-| Use KAI as default | `scheduler.profiles: [{ name: "kai-scheduler", config: {}, default: true }]`. kube-scheduler remains active; default is kai-scheduler. |
-| **Multiple backends, kube-scheduler default** | Add profiles for each; e.g. kube-scheduler (with optional config) and kai-scheduler; set `default: true` on kube-scheduler profile. |
+| Use kai-scheduler as default | `scheduler.profiles: [{ name: "kai-scheduler", config: {}, default: true }]`. kube-scheduler remains active; default is kai-scheduler. |
+| Multiple backends, kube-scheduler default | Add profiles for each; e.g. kube-scheduler (with optional config) and kai-scheduler; set `default: true` on kube-scheduler profile. |
+| Multiple backends, kai-scheduler default | Add profiles for each; e.g. kube-scheduler (with optional config) and kai-scheduler; set `default: true` on kai-scheduler profile. |
 
 **Example YAML (OperatorConfiguration / Helm `config`):**
 
