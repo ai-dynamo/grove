@@ -8,7 +8,7 @@
   - [User Stories](#user-stories)
     - [Story 1: Third-Party Scheduler Integration](#story-1-third-party-scheduler-integration)
     - [Story 2: Multi-Cluster Deployment with Different Schedulers](#story-2-multi-cluster-deployment-with-different-schedulers)
-    - [Story 3: Scheudler Migration Path](#story-3-scheudler-migration-path)
+    - [Story 3: Scheduler Migration Path](#story-3-scheduler-migration-path)
   - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
     - [Backend API Stability](#backend-api-stability)
     - [Scheduler Capability Mismatch](#scheduler-capability-mismatch)
