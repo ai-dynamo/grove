@@ -92,8 +92,11 @@ type PodCliqueSetStatus struct {
 	// be accounted for when generating this hash value. A field in PodCliqueSetSpec is included if a change to it triggers
 	// a rolling recreate of PodCliques and/or PodCliqueScalingGroups.
 	// Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value
-	// then an update needs to be triggerred.
+	// then an update needs to be triggered.
 	CurrentGenerationHash *string `json:"currentGenerationHash,omitempty"`
+	// RollingUpdateProgress represents the progress of a rolling update.
+	// Deprecated: Use UpdateProgress instead. This field is maintained for backward compatibility and will be removed in a future release.
+	RollingUpdateProgress *PodCliqueSetRollingUpdateProgress `json:"rollingUpdateProgress,omitempty"`
 	// UpdateProgress represents the progress of an update.
 	UpdateProgress *PodCliqueSetUpdateProgress `json:"updateProgress,omitempty"`
 }
@@ -106,6 +109,32 @@ type PodCliqueSetUpdateStrategy struct {
 	// Default is RollingRecreate.
 	// +kubebuilder:default=RollingRecreate
 	Type UpdateStrategyType `json:"type,omitempty"`
+}
+
+// PodCliqueSetRollingUpdateProgress captures the progress of a rolling update of the PodCliqueSet.
+// Deprecated: Use PodCliqueSetUpdateProgress instead. This struct is maintained for backward compatibility.
+type PodCliqueSetRollingUpdateProgress struct {
+	// UpdateStartedAt is the time at which the rolling update started for the PodCliqueSet.
+	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
+	// UpdateEndedAt is the time at which the rolling update ended for the PodCliqueSet.
+	// +optional
+	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
+	// UpdatedPodCliqueScalingGroups is a list of PodCliqueScalingGroup names that have been updated to the desired PodCliqueSet generation hash.
+	UpdatedPodCliqueScalingGroups []string `json:"updatedPodCliqueScalingGroups,omitempty"`
+	// UpdatedPodCliques is a list of PodClique names that have been updated to the desired PodCliqueSet generation hash.
+	UpdatedPodCliques []string `json:"updatedPodCliques,omitempty"`
+	// CurrentlyUpdating captures the progress of the PodCliqueSet replica that is currently being updated.
+	// +optional
+	CurrentlyUpdating *PodCliqueSetReplicaRollingUpdateProgress `json:"currentlyUpdating,omitempty"`
+}
+
+// PodCliqueSetReplicaRollingUpdateProgress captures the progress of a rolling update for a specific PodCliqueSet replica.
+// Deprecated: Use PodCliqueSetReplicaUpdateProgress instead. This struct is maintained for backward compatibility.
+type PodCliqueSetReplicaRollingUpdateProgress struct {
+	// ReplicaIndex is the replica index of the PodCliqueSet that is being updated.
+	ReplicaIndex int32 `json:"replicaIndex"`
+	// UpdateStartedAt is the time at which the rolling update started for this PodCliqueSet replica index.
+	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
 }
 
 // PodCliqueSetUpdateProgress captures the progress of an update of the PodCliqueSet.
