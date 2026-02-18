@@ -26,18 +26,33 @@
 <!--
 This section should contain user-focused documentation such as release notes or a development roadmap. It should also have a summary of functional increment that is being introduced as part of this GREP. A good summary should address a wider audience and should ideally be a single paragraph.
 -->
+Grove API supports primitives that allow the application to be deployed and scaled through multiple levels of grouping of pods.
+The purpose of this GREP is to enable pod groups defined through Grove primitives--PodCliques, PodCliqueScalingGroup and PodCliqueSet--share cluster resources within replicas of each level of grouping while dynamically forming sharing groups at level when scaling.
+In Kubernetes, the ResourceClaim and ResourceClaimTemplate APIs, created as part of the DRA feature, enable resource sharing.
+This proposal aims to leverage these APIs in the context of Grove to enable multi-level resource sharing.
 
 ## Motivation
 
 <!-- 
 This section explicitly lists the motivation which consists of goals and the non-goals of this GREP. Use this section to describe why the change introduced in this GREP is important and what benefits it brings to the users.
 -->
+Dynamo wants to create shadow pods on every active pod that share the same GPUs to enable quick recovery from faults.
+If a ResourceClaim is requested by the pod template of a PodClique, it means, every pod created out of that template will reference that same claim.
+This does not work as a PodClique that is part of PodCliqueScalingGroup gets instantiated for every replica of the PCSG, or even the PodCliqueSet.
+On the other hand, using a ResourceClaimTemplate on the pod template means that every pod gets to use a different resource claim.
+Hence, Grove needs to enable sharing of resources within a PodClique or replica of a PodCliqueScalingGroup, but ensure isolation across every instantiation of the PodClique.
 
 ### Goals
 
 <!-- 
 Lists specific goals of this GREP. What is it trying to achieve.
 -->
+- Enable users to define resource sharing primitives at multiple levels of Grove hierarchy, i.e. PodClique, PodCliqueScalingGroup and PodCliqueSet
+- Users should be able to limit and scope resource sharing within subset of a group or within a specific level,
+e.g. share resource between pods of a PodClique instance vs between pods of a PCSG instance, or between a subset of PCLQs within a PCSG instance.
+- Enable users to reference externally created ResourceClaimTemplates to be used for a sharing group
+- Enable users to define their own ResourceClaimSpec into PodCliqueSet API so that Grove can create and manage the lifecycle of resource claims and resource claim templates.
+
 
 ### Non-Goals
 
