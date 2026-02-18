@@ -9049,6 +9049,56 @@ spec:
                   by this PodClique.
                 format: int32
                 type: integer
+              rollingUpdateProgress:
+                description: |-
+                  RollingUpdateProgress provides details about the ongoing rolling update of the PodClique.
+                  Deprecated: Use UpdateProgress instead. This field is maintained for backward compatibility and will be removed in a future release.
+                properties:
+                  podCliqueSetGenerationHash:
+                    description: |-
+                      PodCliqueSetGenerationHash is the PodCliqueSet generation hash corresponding to the PodCliqueSet spec that is being rolled out.
+                      While the update is in progress PodCliqueStatus.CurrentPodCliqueSetGenerationHash will not match this hash. Once the update is complete the
+                      value of this field will be copied to PodCliqueStatus.CurrentPodCliqueSetGenerationHash.
+                    type: string
+                  podTemplateHash:
+                    description: |-
+                      PodTemplateHash is the PodClique template hash corresponding to the PodClique spec that is being rolled out.
+                      While the update is in progress PodCliqueStatus.CurrentPodTemplateHash will not match this hash. Once the update is complete the
+                      value of this field will be copied to PodCliqueStatus.CurrentPodTemplateHash.
+                    type: string
+                  readyPodsSelectedToUpdate:
+                    description: ReadyPodsSelectedToUpdate captures the pod names
+                      of ready Pods that are either currently being updated or have
+                      been previously updated.
+                    properties:
+                      completed:
+                        description: Completed captures the pod names that have already
+                          been updated.
+                        items:
+                          type: string
+                        type: array
+                      current:
+                        description: Current captures the current pod name that is
+                          a target for update.
+                        type: string
+                    required:
+                    - current
+                    type: object
+                  updateEndedAt:
+                    description: |-
+                      UpdateEndedAt is the time at which the rolling update ended.
+                      It will be set to nil if the rolling update is still in progress.
+                    format: date-time
+                    type: string
+                  updateStartedAt:
+                    description: UpdateStartedAt is the time at which the rolling
+                      update started.
+                    format: date-time
+                    type: string
+                required:
+                - podCliqueSetGenerationHash
+                - podTemplateHash
+                type: object
               scheduleGatedReplicas:
                 default: 0
                 description: |-

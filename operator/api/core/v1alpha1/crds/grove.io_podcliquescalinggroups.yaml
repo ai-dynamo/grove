@@ -183,6 +183,59 @@ spec:
                 description: Replicas is the observed number of replicas for the PodCliqueScalingGroup.
                 format: int32
                 type: integer
+              rollingUpdateProgress:
+                description: |-
+                  RollingUpdateProgress provides details about the ongoing update of the PodCliqueScalingGroup.
+                  Deprecated: Use UpdateProgress instead. This field is maintained for backward compatibility and will be removed in a future release.
+                properties:
+                  podCliqueSetGenerationHash:
+                    description: |-
+                      PodCliqueSetGenerationHash is the PodCliqueSet generation hash corresponding to the PodCliqueSet spec that is being rolled out.
+                      While the update is in progress PodCliqueScalingGroupStatus.CurrentPodCliqueSetGenerationHash will not match this hash. Once the update is complete the
+                      value of this field will be copied to PodCliqueScalingGroupStatus.CurrentPodCliqueSetGenerationHash.
+                    type: string
+                  readyReplicaIndicesSelectedToUpdate:
+                    description: |-
+                      ReadyReplicaIndicesSelectedToUpdate provides the rolling update progress of ready replicas of PodCliqueScalingGroup that have been selected for update.
+                      PodCliqueScalingGroup replicas that are either pending or unhealthy will be force updated and the update will not wait for these replicas to become ready.
+                      For all ready replicas, one replica is chosen at a time to update, once it is updated and becomes ready, the next ready replica is chosen for update.
+                    properties:
+                      completed:
+                        description: Completed is the list of indices of PodCliqueScalingGroup
+                          replicas that have been updated to the latest PodCliqueSet
+                          spec.
+                        items:
+                          format: int32
+                          type: integer
+                        type: array
+                      current:
+                        description: Current is the index of the PodCliqueScalingGroup
+                          replica that is currently being updated.
+                        format: int32
+                        type: integer
+                    required:
+                    - current
+                    type: object
+                  updateEndedAt:
+                    description: UpdateEndedAt is the time at which the rolling update
+                      ended.
+                    format: date-time
+                    type: string
+                  updateStartedAt:
+                    description: UpdateStartedAt is the time at which the rolling
+                      update started.
+                    format: date-time
+                    type: string
+                  updatedPodCliques:
+                    description: UpdatedPodCliques is the list of PodClique names
+                      that have been updated to the latest PodCliqueSet spec.
+                    items:
+                      type: string
+                    type: array
+                required:
+                - podCliqueSetGenerationHash
+                - updateStartedAt
+                type: object
               scheduledReplicas:
                 default: 0
                 description: |-
