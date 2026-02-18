@@ -173,7 +173,7 @@ type PodCliqueSetSpec struct {
 
 #### PodCliqueSetStatus Changes
 
-The `PodCliqueSetStatus` field `PodCliqueSetRollingUpdateProgress` will be renamed to `PodCliqueSetUpdateProgress` (`status.updateProgress`). This field will be used to generically track information about updates to the PodCliqueSet, with all supported strategies:
+A new field `PodCliqueSetUpdateProgress` (`status.updateProgress`) will be introduced, which is identical to the existing `PodCliqueSetRollingUpdateProgress` (`status.rollingUpdateProgress`). This new field will be used to generically track information about updates to the PodCliqueSet with all supported strategies. The existing `RollingUpdateProgress` field will be marked as deprecated and will be removed in a future release. Both fields will contain identical data during the deprecation period, but all future enhancements will only be made to `UpdateProgress`:
 
 ```go
 // PodCliqueSetSpec defines the specification of a PodCliqueSet.
@@ -183,18 +183,22 @@ type PodCliqueSetStatus struct {
     // CurrentGenerationHash is a hash value generated out of a collection of fields in a PodCliqueSet.
     // Since only a subset of fields is taken into account when generating the hash, not every change in the PodCliqueSetSpec will
     // be accounted for when generating this hash value. A field in PodCliqueSetSpec is included if a change to it triggers
-    // a rolling update of PodCliques and/or PodCliqueScalingGroups.
+    // an  update of PodCliques and/or PodCliqueScalingGroups.
     // Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value
-    // then a rolling update needs to be triggerred.
+    // then an update needs to be triggerred.
     CurrentGenerationHash *string `json:"currentGenerationHash,omitempty"`
-    // UpdateProgress represents the progress of a rolling update.
+    // UpdateProgress represents the progress of an update.
+    // This field supersedes RollingUpdateProgress and supports all update strategies.
     UpdateProgress *PodCliqueSetUpdateProgress `json:"updateProgress,omitempty"`
+    // RollingUpdateProgress represents the progress of a rolling update.
+    // Deprecated: Use UpdateProgress instead. This field will be removed in a future release.
+    RollingUpdateProgress *PodCliqueSetRollingUpdateProgress `json:"rollingUpdateProgress,omitempty"`
 }
 ```
 
 #### PodCliqueStatus Changes
 
-The `PodCliqueStatus` field `PodCliqueRollingUpdateProgress` will be renamed to `PodCliqueUpdateProgress` (`status.updateProgress`). This field will be used to generically track information about updates to the PodClique, with all supported strategies:
+A new field `PodCliqueUpdateProgress` (`status.updateProgress`) will be introduced, which is identical to the existing `PodCliqueRollingUpdateProgress` (`status.rollingUpdateProgress`). This new field will be used to generically track information about updates to the PodClique with all supported strategies. The existing `RollingUpdateProgress` field will be marked as deprecated and will be removed in a future release. Both fields will contain identical data during the deprecation period, but all future enhancements will only be made to `UpdateProgress`:
 
 ```go
 // PodCliqueStatus defines the status of a PodClique.
@@ -206,14 +210,18 @@ type PodCliqueStatus struct {
   	// CurrentPodTemplateHash establishes a correlation to PodClique template hash indicating
   	// that the spec of the PodClique at this template hash is fully realized in the PodClique.
   	CurrentPodTemplateHash *string `json:"currentPodTemplateHash,omitempty"`
-  	// UpdateProgress provides details about the ongoing rolling update of the PodClique.
+  	// UpdateProgress provides details about the ongoing update of the PodClique.
+  	// This field supersedes RollingUpdateProgress and supports all update strategies.
   	UpdateProgress *PodCliqueUpdateProgress `json:"updateProgress,omitempty"`
+  	// RollingUpdateProgress provides details about the ongoing rolling update of the PodClique.
+  	// Deprecated: Use UpdateProgress instead. This field will be removed in a future release.
+  	RollingUpdateProgress *PodCliqueRollingUpdateProgress `json:"rollingUpdateProgress,omitempty"`
 }
 ```
 
 #### PodCliqueScalingGroupStatus Changes
 
-The `PodCliqueScalingGroupStatus` field `PodCliqueScalingGroupRollingUpdateProgress` will be renamed to `PodCliqueScalingGroupUpdateProgress` (`status.updateProgress`). This field will be used to generically track information about updates to the PodClique, with all supported strategies:
+A new field `PodCliqueScalingGroupUpdateProgress` (`status.updateProgress`) will be introduced, which is identical to the existing `PodCliqueScalingGroupRollingUpdateProgress` (`status.rollingUpdateProgress`). This new field will be used to generically track information about updates to the PodCliqueScalingGroup with all supported strategies. The existing `RollingUpdateProgress` field will be marked as deprecated and will be removed in a future release. Both fields will contain identical data during the deprecation period, but all future enhancements will only be made to `UpdateProgress`:
 
 ```go
 // PodCliqueScalingGroupStatus defines the status of a PodCliqueScalingGroup.
@@ -224,8 +232,12 @@ type PodCliqueScalingGroupStatus struct {
   	// CurrentPodCliqueSetGenerationHash establishes a correlation to PodCliqueSet generation hash indicating
   	// that the spec of the PodCliqueSet at this generation is fully realized in the PodCliqueScalingGroup.
   	CurrentPodCliqueSetGenerationHash *string `json:"currentPodCliqueSetGenerationHash,omitempty"`
-  	// UpdateProgress provides details about the ongoing rolling update of the PodCliqueScalingGroup.
+  	// UpdateProgress provides details about the ongoing update of the PodCliqueScalingGroup.
+  	// This field supersedes RollingUpdateProgress and supports all update strategies.
   	UpdateProgress *PodCliqueScalingGroupUpdateProgress `json:"updateProgress,omitempty"`
+  	// RollingUpdateProgress provides details about the ongoing rolling update of the PodCliqueScalingGroup.
+  	// Deprecated: Use UpdateProgress instead. This field will be removed in a future release.
+  	RollingUpdateProgress *PodCliqueScalingGroupRollingUpdateProgress `json:"rollingUpdateProgress,omitempty"`
 ...
 }
 ```
