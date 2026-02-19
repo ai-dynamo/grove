@@ -213,3 +213,4 @@ If you encounter issues not covered here:
 Currently the following schedulers support gang scheduling of `PodGang`s created by the Grove operator:
 
 - [NVIDIA/KAI-scheduler](https://github.com/NVIDIA/KAI-Scheduler)
+  - Topology Aware Scheduling (TAS) requires [v0.13.0-rc1](https://github.com/NVIDIA/KAI-Scheduler/releases/tag/v0.13.0-rc1)+
