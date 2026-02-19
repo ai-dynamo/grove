@@ -48,7 +48,7 @@ type Reconciler struct {
 }
 
 // NewReconciler creates a new reconciler for PodCliqueSet.
-func NewReconciler(appCtx context.Context, mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueSetControllerConfiguration, topologyAwareSchedulingConfig configv1alpha1.TopologyAwareSchedulingConfiguration, networkConfig configv1alpha1.NetworkAcceleration, podTemplateSpecHashCache *hash.PodTemplateSpecHashCache) *Reconciler {
+func NewReconciler(mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueSetControllerConfiguration, topologyAwareSchedulingConfig configv1alpha1.TopologyAwareSchedulingConfiguration, networkConfig configv1alpha1.NetworkAcceleration, podTemplateSpecHashCache *hash.PodTemplateSpecHashCache) *Reconciler {
 	eventRecorder := mgr.GetEventRecorderFor(controllerName)
 	client := mgr.GetClient()
 	return &Reconciler{

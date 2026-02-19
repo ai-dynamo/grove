@@ -166,7 +166,7 @@ func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, 
 				Namespace: pcs.Namespace,
 			}
 			newPodTemplateSpecHash := newPCLQTemplateSpecHashes[expectedPCLQName]
-			existingPCLQObjMeta, _ := existingPCLQObjMetas[pclqObjectKey.Name]
+			existingPCLQObjMeta := existingPCLQObjMetas[pclqObjectKey.Name]
 			createOrUpdatePCLQTask := utils.Task{
 				Name: fmt.Sprintf("CreateOrUpdatePodClique-%s", pclqObjectKey.Name),
 				Fn: func(ctx context.Context) error {
@@ -185,7 +185,6 @@ func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, 
 		)
 	}
 	return nil
-
 }
 
 // computePCLQTemplateSpecHashes gets or computes the pod template spec hashes for all PodCliqueTemplateSpecs in the PodCliqueSet.
@@ -451,7 +450,6 @@ func getLabels(pcs *grovecorev1alpha1.PodCliqueSet,
 	pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec,
 	podGangName string,
 	podTemplateHash string) map[string]string {
-
 	pclqComponentLabels := map[string]string{
 		apicommon.LabelAppNameKey:               pclqObjectKey.Name,
 		apicommon.LabelComponentKey:             apicommon.LabelComponentNamePodCliqueSetPodClique,
