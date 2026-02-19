@@ -36,11 +36,68 @@ const (
 	testNS      = "test-ns"
 )
 
-// newTestPod creates a pod with the given template hash label and options applied.
-func newTestPod(templateHash string, opts ...func(*corev1.Pod)) *corev1.Pod {
+func TestComputeUpdateWork(t *testing.T) {
+	tests := []struct {
+		name     string
+		pod      *corev1.Pod
+		expected bucket
+	}{
+		{"old pending", newTestPod("old-pending", testOldHash, withPhase(corev1.PodPending)), bucketOldPending},
+		{"old unhealthy (started, not ready)", newTestPod("old-unhealthy-started", testOldHash, withPhase(corev1.PodRunning), withContainerStatus(ptr.To(true), false)), bucketOldUnhealthy},
+		{"old unhealthy (erroneous exit)", newTestPod("old-unhealthy-exit", testOldHash, withPhase(corev1.PodRunning), withErroneousExit()), bucketOldUnhealthy},
+		{"old ready", newTestPod("old-ready", testOldHash, withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)), bucketOldReady},
+		{"old starting (Started=false)", newTestPod("old-starting-false", testOldHash, withPhase(corev1.PodRunning), withContainerStatus(ptr.To(false), false)), bucketOldStarting},
+		{"old starting (Started=nil)", newTestPod("old-starting-nil", testOldHash, withPhase(corev1.PodRunning), withContainerStatus(nil, false)), bucketOldStarting},
+		{"old uncategorized (no containers)", newTestPod("old-uncategorized", testOldHash, withPhase(corev1.PodRunning)), bucketOldUncategorized},
+		{"old terminating is skipped", newTestPod("old-terminating", testOldHash, withDeletionTimestamp()), bucketSkipped},
+		{"new ready", newTestPod("new-ready", testNewHash, withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)), bucketNewReady},
+		{"new not-ready is not tracked", newTestPod("new-not-ready", testNewHash, withPhase(corev1.PodRunning), withContainerStatus(ptr.To(false), false)), bucketSkipped},
+	}
+
+	r := _resource{expectationsStore: expect.NewExpectationsStore()}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sc := &syncContext{
+				existingPCLQPods:         []*corev1.Pod{tt.pod},
+				expectedPodTemplateHash:  testNewHash,
+				pclqExpectationsStoreKey: "test-key",
+			}
+			work := r.computeUpdateWork(logr.Discard(), sc)
+
+			bucketPods := map[bucket][]*corev1.Pod{
+				bucketOldPending:       work.oldTemplateHashPendingPods,
+				bucketOldUnhealthy:     work.oldTemplateHashUnhealthyPods,
+				bucketOldStarting:      work.oldTemplateHashStartingPods,
+				bucketOldUncategorized: work.oldTemplateHashUncategorizedPods,
+				bucketOldReady:         work.oldTemplateHashReadyPods,
+				bucketNewReady:         work.newTemplateHashReadyPods,
+			}
+
+			bucketNames := map[bucket]string{
+				bucketOldPending:       "oldPending",
+				bucketOldUnhealthy:     "oldUnhealthy",
+				bucketOldStarting:      "oldStarting",
+				bucketOldUncategorized: "oldUncategorized",
+				bucketOldReady:         "oldReady",
+				bucketNewReady:         "newReady",
+			}
+			for b, pods := range bucketPods {
+				name := bucketNames[b]
+				if b == tt.expected {
+					assert.Len(t, pods, 1, fmt.Sprintf("expected pod in bucket %s", name))
+				} else {
+					assert.Empty(t, pods, fmt.Sprintf("expected no pods in bucket %s", name))
+				}
+			}
+		})
+	}
+}
+
+// newTestPod creates a pod with the given name, template hash label, and options applied.
+func newTestPod(name, templateHash string, opts ...func(*corev1.Pod)) *corev1.Pod {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "p",
+			Name:      name,
 			Namespace: testNS,
 			Labels: map[string]string{
 				common.LabelPodTemplateHash: templateHash,
@@ -104,60 +161,3 @@ const (
 	bucketNewReady
 	bucketSkipped // terminating pods — not in any bucket
 )
-
-func TestComputeUpdateWork(t *testing.T) {
-	tests := []struct {
-		name     string
-		pod      *corev1.Pod
-		expected bucket
-	}{
-		{"old pending", newTestPod(testOldHash, withPhase(corev1.PodPending)), bucketOldPending},
-		{"old unhealthy (started, not ready)", newTestPod(testOldHash, withPhase(corev1.PodRunning), withContainerStatus(ptr.To(true), false)), bucketOldUnhealthy},
-		{"old unhealthy (erroneous exit)", newTestPod(testOldHash, withPhase(corev1.PodRunning), withErroneousExit()), bucketOldUnhealthy},
-		{"old ready", newTestPod(testOldHash, withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)), bucketOldReady},
-		{"old starting (Started=false)", newTestPod(testOldHash, withPhase(corev1.PodRunning), withContainerStatus(ptr.To(false), false)), bucketOldStarting},
-		{"old starting (Started=nil)", newTestPod(testOldHash, withPhase(corev1.PodRunning), withContainerStatus(nil, false)), bucketOldStarting},
-		{"old uncategorized (no containers)", newTestPod(testOldHash, withPhase(corev1.PodRunning)), bucketOldUncategorized},
-		{"old terminating is skipped", newTestPod(testOldHash, withDeletionTimestamp()), bucketSkipped},
-		{"new ready", newTestPod(testNewHash, withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)), bucketNewReady},
-		{"new not-ready is not tracked", newTestPod(testNewHash, withPhase(corev1.PodRunning), withContainerStatus(ptr.To(false), false)), bucketSkipped},
-	}
-
-	r := _resource{expectationsStore: expect.NewExpectationsStore()}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			sc := &syncContext{
-				existingPCLQPods:         []*corev1.Pod{tt.pod},
-				expectedPodTemplateHash:  testNewHash,
-				pclqExpectationsStoreKey: "test-key",
-			}
-			work := r.computeUpdateWork(logr.Discard(), sc)
-
-			bucketPods := map[bucket][]*corev1.Pod{
-				bucketOldPending:       work.oldTemplateHashPendingPods,
-				bucketOldUnhealthy:     work.oldTemplateHashUnhealthyPods,
-				bucketOldStarting:      work.oldTemplateHashStartingPods,
-				bucketOldUncategorized: work.oldTemplateHashUncategorizedPods,
-				bucketOldReady:         work.oldTemplateHashReadyPods,
-				bucketNewReady:         work.newTemplateHashReadyPods,
-			}
-
-			bucketNames := map[bucket]string{
-				bucketOldPending:       "oldPending",
-				bucketOldUnhealthy:     "oldUnhealthy",
-				bucketOldStarting:      "oldStarting",
-				bucketOldUncategorized: "oldUncategorized",
-				bucketOldReady:         "oldReady",
-				bucketNewReady:         "newReady",
-			}
-			for b, pods := range bucketPods {
-				name := bucketNames[b]
-				if b == tt.expected {
-					assert.Len(t, pods, 1, fmt.Sprintf("expected pod in bucket %s", name))
-				} else {
-					assert.Empty(t, pods, fmt.Sprintf("expected no pods in bucket %s", name))
-				}
-			}
-		})
-	}
-}
