@@ -405,15 +405,12 @@ func buildComprehensivePCS(name string, replicas int) *grovecorev1alpha1.PodCliq
 
 // deletePCS deletes a PCS by name
 func deletePCS(tc testContext, name string) {
-	_ = tc.groveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Delete(tc.ctx, name, metav1.DeleteOptions{})
+	_ = utils.DeletePodCliqueSet(tc.ctx, tc.dynamicClient, tc.namespace, name)
 }
 
 // scalePCS scales a PCS to the specified number of replicas
 func scalePCS(tc testContext, name string, replicas int) error {
-	patch := fmt.Sprintf(`{"spec":{"replicas":%d}}`, replicas)
-	_, err := tc.groveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Patch(
-		tc.ctx, name, "application/merge-patch+json", []byte(patch), metav1.PatchOptions{})
-	return err
+	return utils.ScalePodCliqueSetWithClient(tc.ctx, tc.dynamicClient, tc.namespace, name, replicas)
 }
 
 // waitForComputeDomainCount waits for the specified number of ComputeDomains for a PCS
@@ -431,22 +428,10 @@ func waitForComputeDomainCount(tc testContext, pcsName string, expectedCount int
 
 // waitForPCSG waits for a PCSG to exist and returns it
 func waitForPCSG(tc testContext, pcsgName string) (*grovecorev1alpha1.PodCliqueScalingGroup, error) {
-	var pcsg *grovecorev1alpha1.PodCliqueScalingGroup
-	err := utils.PollForCondition(tc.ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
-		var getErr error
-		pcsg, getErr = tc.groveClient.GroveV1alpha1().PodCliqueScalingGroups(tc.namespace).Get(tc.ctx, pcsgName, metav1.GetOptions{})
-		return getErr == nil, nil
-	})
-	return pcsg, err
+	return utils.WaitForPodCliqueScalingGroup(tc.ctx, tc.groveClient, tc.namespace, pcsgName, defaultPollTimeout, defaultPollInterval)
 }
 
 // waitForPCLQ waits for a PCLQ to exist and returns it
 func waitForPCLQ(tc testContext, pclqName string) (*grovecorev1alpha1.PodClique, error) {
-	var pclq *grovecorev1alpha1.PodClique
-	err := utils.PollForCondition(tc.ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
-		var getErr error
-		pclq, getErr = tc.groveClient.GroveV1alpha1().PodCliques(tc.namespace).Get(tc.ctx, pclqName, metav1.GetOptions{})
-		return getErr == nil, nil
-	})
-	return pclq, err
+	return utils.WaitForPodClique(tc.ctx, tc.groveClient, tc.namespace, pclqName, defaultPollTimeout, defaultPollInterval)
 }

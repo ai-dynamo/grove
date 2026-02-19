@@ -232,26 +232,9 @@ func Test_CM1_CertManagementRoundTrip(t *testing.T) {
 func deleteWorkload(t *testing.T, ctx context.Context, dynamicClient dynamic.Interface, name, namespace string) {
 	t.Helper()
 
-	pcsGVR := schema.GroupVersionResource{
-		Group:    "grove.io",
-		Version:  "v1alpha1",
-		Resource: "podcliquesets",
-	}
-
-	// Delete the PodCliqueSet
 	logger.Debugf("Deleting PodCliqueSet %s/%s", namespace, name)
-	err := dynamicClient.Resource(pcsGVR).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
-	if err != nil && !errors.IsNotFound(err) {
+	if err := utils.DeletePodCliqueSetAndWait(ctx, dynamicClient, namespace, name, defaultPollTimeout, defaultPollInterval); err != nil {
 		t.Fatalf("Failed to delete PodCliqueSet %s: %v", name, err)
-	}
-
-	// Wait for deletion to complete
-	err = utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
-		_, err := dynamicClient.Resource(pcsGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-		return errors.IsNotFound(err), nil
-	})
-	if err != nil {
-		t.Fatalf("Timeout waiting for PodCliqueSet %s to be deleted: %v", name, err)
 	}
 	logger.Debugf("PodCliqueSet %s/%s deleted", namespace, name)
 }
