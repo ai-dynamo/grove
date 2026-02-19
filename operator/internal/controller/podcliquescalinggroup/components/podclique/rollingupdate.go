@@ -66,7 +66,7 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 	}
 
 	// Check if there is currently a replica that is selected for update and its update has not yet completed.
-	if isAnyReadyReplicaSelectedForUpdate(sc.pcsg) && !isCurrentReplicaUpdateComplete(logger, sc) {
+	if isAnyReadyReplicaSelectedForUpdate(sc.pcsg) && !isCurrentReplicaUpdateComplete(sc) {
 		return groveerr.New(
 			groveerr.ErrCodeContinueReconcileAndRequeue,
 			component.OperationSync,
@@ -205,7 +205,7 @@ func isAnyReadyReplicaSelectedForUpdate(pcsg *grovecorev1alpha1.PodCliqueScaling
 }
 
 // isCurrentReplicaUpdateComplete verifies if the currently updating replica has completed its rolling update
-func isCurrentReplicaUpdateComplete(logger logr.Logger, sc *syncContext) bool {
+func isCurrentReplicaUpdateComplete(sc *syncContext) bool {
 	currentlyUpdatingReplicaIndex := int(sc.pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current)
 	existingPCLQsByReplicaIndex := componentutils.GroupPCLQsByPCSGReplicaIndex(sc.existingPCLQs)
 	// Get the expected PCLQ PodTemplateHash and compare it against all existing PCLQs for the currently updating replica index.

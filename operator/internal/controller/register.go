@@ -31,7 +31,7 @@ import (
 // RegisterControllers registers all controllers with the manager.
 func RegisterControllers(appCtx context.Context, mgr ctrl.Manager, controllerConfig configv1alpha1.ControllerConfiguration, topologyAwareSchedulingConfig configv1alpha1.TopologyAwareSchedulingConfiguration, networkConfig configv1alpha1.NetworkAcceleration) error {
 	podTemplateSpecHashCache := hash.GetPodTemplateSpecHashCache(appCtx)
-	pcsReconciler := podcliqueset.NewReconciler(appCtx, mgr, controllerConfig.PodCliqueSet, topologyAwareSchedulingConfig, networkConfig, podTemplateSpecHashCache)
+	pcsReconciler := podcliqueset.NewReconciler(mgr, controllerConfig.PodCliqueSet, topologyAwareSchedulingConfig, networkConfig, podTemplateSpecHashCache)
 	if err := pcsReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
