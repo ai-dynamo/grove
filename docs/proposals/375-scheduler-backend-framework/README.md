@@ -85,7 +85,7 @@ The Scheduler Backend Framework introduces a plugin-like architecture that decou
 4. **Operator Configuration**: OperatorConfiguration allows enabling multiple scheduler backends simultaneously. 
 
 The framework follows an architecture where:
-- The operator configuration determines which schedulers backend are active at runtime and which backend is default backend. We support multiple active schedulers at first. 
+- The operator configuration determines which schedulers are active at runtime and which scheduler is marked as default. Grove support multiple active schedulers.
 - Grove manages the high-level workflow and `PodGang` lifecycle
 - Scheduler backend(s) implement the interface to provide scheduler-specific behavior
 
