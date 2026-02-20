@@ -31,7 +31,9 @@ dev
 .vscode
 .idea
 .zed
+.local
 .DS_Store
+
 
 # hack tools binaries
 hack/tools/*
@@ -50,3 +52,6 @@ scheduler/bin/*
 
 # generated/copied chart resources
 operator/charts/crds/*
+
+# Python bytecode cache
+__pycache__/
