@@ -133,10 +133,14 @@ type PodCliqueStatus struct {
 	// that the spec of the PodClique at this template hash is fully realized in the PodClique.
 	CurrentPodTemplateHash *string `json:"currentPodTemplateHash,omitempty"`
 	// RollingUpdateProgress provides details about the ongoing rolling update of the PodClique.
+	// Deprecated: Use UpdateProgress instead. This field is maintained for backward compatibility and will be removed in a future release.
 	RollingUpdateProgress *PodCliqueRollingUpdateProgress `json:"rollingUpdateProgress,omitempty"`
+	// UpdateProgress provides details about the ongoing update of the PodClique.
+	UpdateProgress *PodCliqueUpdateProgress `json:"updateProgress,omitempty"`
 }
 
 // PodCliqueRollingUpdateProgress provides details about the ongoing rolling update of the PodClique.
+// Deprecated: Use PodCliqueUpdateProgress instead. This struct is maintained for backward compatibility.
 type PodCliqueRollingUpdateProgress struct {
 	// UpdateStartedAt is the time at which the rolling update started.
 	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
@@ -155,7 +159,26 @@ type PodCliqueRollingUpdateProgress struct {
 	ReadyPodsSelectedToUpdate *PodsSelectedToUpdate `json:"readyPodsSelectedToUpdate,omitempty"`
 }
 
-// PodsSelectedToUpdate captures the current and previous set of pod names that have been selected for update in a rolling update.
+// PodCliqueUpdateProgress provides details about the ongoing update of the PodClique.
+type PodCliqueUpdateProgress struct {
+	// UpdateStartedAt is the time at which the update started.
+	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
+	// UpdateEndedAt is the time at which the update ended.
+	// It will be set to nil if the update is still in progress.
+	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
+	// PodCliqueSetGenerationHash is the PodCliqueSet generation hash corresponding to the PodCliqueSet spec that is being rolled out.
+	// While the update is in progress PodCliqueStatus.CurrentPodCliqueSetGenerationHash will not match this hash. Once the update is complete the
+	// value of this field will be copied to PodCliqueStatus.CurrentPodCliqueSetGenerationHash.
+	PodCliqueSetGenerationHash string `json:"podCliqueSetGenerationHash"`
+	// PodTemplateHash is the PodClique template hash corresponding to the PodClique spec that is being rolled out.
+	// While the update is in progress PodCliqueStatus.CurrentPodTemplateHash will not match this hash. Once the update is complete the
+	// value of this field will be copied to PodCliqueStatus.CurrentPodTemplateHash.
+	PodTemplateHash string `json:"podTemplateHash"`
+	// ReadyPodsSelectedToUpdate captures the pod names of ready Pods that are either currently being updated or have been previously updated.
+	ReadyPodsSelectedToUpdate *PodsSelectedToUpdate `json:"readyPodsSelectedToUpdate,omitempty"`
+}
+
+// PodsSelectedToUpdate captures the current and previous set of pod names that have been selected for update in a rolling recreate. It is not set in an OnDelete update.
 type PodsSelectedToUpdate struct {
 	// Current captures the current pod name that is a target for update.
 	Current string `json:"current"`

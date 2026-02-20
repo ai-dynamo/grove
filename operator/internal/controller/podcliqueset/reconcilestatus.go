@@ -50,6 +50,9 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 		return ctrlcommon.ReconcileWithErrors("failed to mutate TopologyLevelsUnavailable condition", err)
 	}
 
+	// mirror UpdateProgress to the deprecated RollingUpdateProgress field for backward compatibility.
+	mirrorUpdateProgressToRollingUpdateProgress(pcs)
+
 	// Update the PodCliqueSet status
 	if err = r.client.Status().Update(ctx, pcs); err != nil {
 		return ctrlcommon.ReconcileWithErrors("failed to update PodCliqueSet status", err)
@@ -266,4 +269,27 @@ func getUniqueTopologyDomainsInPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet)
 		}
 	}
 	return topologyDomains.UnsortedList()
+}
+
+// mirrorUpdateProgressToRollingUpdateProgress mirrors the UpdateProgress field to the deprecated RollingUpdateProgress field
+// for backward compatibility with consumers that still use the old field name.
+func mirrorUpdateProgressToRollingUpdateProgress(pcs *grovecorev1alpha1.PodCliqueSet) {
+	if pcs.Status.UpdateProgress == nil {
+		pcs.Status.RollingUpdateProgress = nil
+		return
+	}
+
+	pcs.Status.RollingUpdateProgress = &grovecorev1alpha1.PodCliqueSetRollingUpdateProgress{
+		UpdateStartedAt:               pcs.Status.UpdateProgress.UpdateStartedAt,
+		UpdateEndedAt:                 pcs.Status.UpdateProgress.UpdateEndedAt,
+		UpdatedPodCliqueScalingGroups: pcs.Status.UpdateProgress.UpdatedPodCliqueScalingGroups,
+		UpdatedPodCliques:             pcs.Status.UpdateProgress.UpdatedPodCliques,
+	}
+
+	if pcs.Status.UpdateProgress.CurrentlyUpdating != nil {
+		pcs.Status.RollingUpdateProgress.CurrentlyUpdating = &grovecorev1alpha1.PodCliqueSetReplicaRollingUpdateProgress{
+			ReplicaIndex:    pcs.Status.UpdateProgress.CurrentlyUpdating.ReplicaIndex,
+			UpdateStartedAt: pcs.Status.UpdateProgress.CurrentlyUpdating.UpdateStartedAt,
+		}
+	}
 }
