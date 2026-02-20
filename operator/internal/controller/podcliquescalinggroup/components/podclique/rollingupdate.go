@@ -70,7 +70,7 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 		return groveerr.New(
 			groveerr.ErrCodeContinueReconcileAndRequeue,
 			component.OperationSync,
-			fmt.Sprintf("rolling update of currently selected PCSG replica index: %d is not complete, requeuing", sc.pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current),
+			fmt.Sprintf("rolling update of currently selected PCSG replica index: %d is not complete, re-queuing", sc.pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current),
 		)
 	}
 
@@ -82,7 +82,7 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 			return groveerr.New(
 				groveerr.ErrCodeContinueReconcileAndRequeue,
 				component.OperationSync,
-				fmt.Sprintf("available replicas %d lesser than minAvailable %d, requeuing", sc.pcsg.Status.AvailableReplicas, *sc.pcsg.Spec.MinAvailable),
+				fmt.Sprintf("available replicas %d lesser than minAvailable %d, re-queuing", sc.pcsg.Status.AvailableReplicas, *sc.pcsg.Spec.MinAvailable),
 			)
 		}
 		nextReplicaIndexToUpdate = ptr.To(work.oldReadyReplicaIndices[0])
@@ -91,13 +91,13 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 	// Trigger the update if there is an index still pending an update.
 	if nextReplicaIndexToUpdate != nil {
 		logger.Info("Selected the next replica to update", "nextReplicaIndexToUpdate", *nextReplicaIndexToUpdate)
-		if err := r.updatePCSGStatusWithNextReplicaToUpdate(sc.ctx, logger, sc.pcsg, *nextReplicaIndexToUpdate); err != nil {
+		if err = r.updatePCSGStatusWithNextReplicaToUpdate(sc.ctx, logger, sc.pcsg, *nextReplicaIndexToUpdate); err != nil {
 			return err
 		}
 
 		// Trigger deletion of the next replica index.
 		deleteTask := r.createDeleteTasks(logger, sc.pcs, sc.pcsg.Name, []string{strconv.Itoa(*nextReplicaIndexToUpdate)}, "deleting replica for rolling update")
-		if err := r.triggerDeletionOfPodCliques(sc.ctx, logger, client.ObjectKeyFromObject(sc.pcsg), deleteTask); err != nil {
+		if err = r.triggerDeletionOfPodCliques(sc.ctx, logger, client.ObjectKeyFromObject(sc.pcsg), deleteTask); err != nil {
 			return err
 		}
 
@@ -105,7 +105,7 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 		return groveerr.New(
 			groveerr.ErrCodeContinueReconcileAndRequeue,
 			component.OperationSync,
-			fmt.Sprintf("rolling update of currently selected PCSG replica index: %d is not complete, requeuing", sc.pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current),
+			fmt.Sprintf("re-queuing to complete rolling recreate of PCSG replica index: %d", sc.pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current),
 		)
 	}
 

@@ -508,51 +508,6 @@ func TestHasAnyContainerExitedErroneously(t *testing.T) {
 	}
 }
 
-// TestComputeHash tests computing hash from pod template specs.
-func TestComputeHash(t *testing.T) {
-	podSpec1 := &corev1.PodTemplateSpec{
-		ObjectMeta: metav1.ObjectMeta{
-			Labels: map[string]string{"app": "test"},
-		},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
-				{
-					Name:  "container-1",
-					Image: "image:v1",
-				},
-			},
-		},
-	}
-
-	podSpec2 := &corev1.PodTemplateSpec{
-		ObjectMeta: metav1.ObjectMeta{
-			Labels: map[string]string{"app": "test"},
-		},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
-				{
-					Name:  "container-1",
-					Image: "image:v2",
-				},
-			},
-		},
-	}
-
-	// Same spec should produce same hash
-	hash1 := ComputeHash(podSpec1)
-	hash2 := ComputeHash(podSpec1)
-	assert.Equal(t, hash1, hash2)
-
-	// Different specs should produce different hashes
-	hash3 := ComputeHash(podSpec2)
-	assert.NotEqual(t, hash1, hash3)
-
-	// Multiple specs should produce a consistent hash
-	hash4 := ComputeHash(podSpec1, podSpec2)
-	hash5 := ComputeHash(podSpec1, podSpec2)
-	assert.Equal(t, hash4, hash5)
-}
-
 // TestCategorizePodsByConditionType tests categorizing pods by their conditions.
 func TestCategorizePodsByConditionType(t *testing.T) {
 	// Ready pod

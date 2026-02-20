@@ -552,7 +552,7 @@ func TestRegisterControllersAndWebhooks(t *testing.T) {
 				tc.waitFn(logger, ch)
 			}
 		}
-		registerControllersWithMgr = func(_ ctrl.Manager, _ configv1alpha1.ControllerConfiguration, _ configv1alpha1.TopologyAwareSchedulingConfiguration, _ configv1alpha1.NetworkAcceleration) error {
+		registerControllersWithMgr = func(_ context.Context, _ ctrl.Manager, _ configv1alpha1.ControllerConfiguration, _ configv1alpha1.TopologyAwareSchedulingConfiguration, _ configv1alpha1.NetworkAcceleration) error {
 			controllersCalled = true
 			return tc.controllerErr
 		}
@@ -561,7 +561,7 @@ func TestRegisterControllersAndWebhooks(t *testing.T) {
 			return tc.webhookErr
 		}
 
-		err := RegisterControllersAndWebhooks(&mockManager{}, logr.Discard(), &configv1alpha1.OperatorConfiguration{}, readyCh)
+		err := RegisterControllersAndWebhooks(context.Background(), &mockManager{}, logr.Discard(), &configv1alpha1.OperatorConfiguration{}, readyCh)
 		if tc.expectError {
 			require.Error(t, err, tc.name)
 			if tc.expectedErrFrag != "" {

@@ -25,8 +25,8 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/hash"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
-	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
@@ -79,10 +79,14 @@ func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger log
 	}
 	r.pcsGenerationHashExpectations.Delete(pcsObjectName)
 
-	newGenerationHash := computeGenerationHash(pcs)
+	newGenerationHash, err := computeGenerationHash(pcs)
+	if err != nil {
+		logger.Error(err, "failed to compute generation hash for PodCliqueSet", "PodCliqueSet", pcsObjectKey)
+		return ctrlcommon.ReconcileWithErrors("error computing generation hash", err)
+	}
 	if pcs.Status.CurrentGenerationHash == nil {
 		// update the generation hash and continue reconciliation. No rolling update is required.
-		if err := r.setGenerationHash(ctx, pcs, pcsObjectName, newGenerationHash); err != nil {
+		if err = r.setGenerationHash(ctx, pcs, pcsObjectName, newGenerationHash); err != nil {
 			logger.Error(err, "failed to set generation hash on PCS", "newGenerationHash", newGenerationHash)
 			return ctrlcommon.ReconcileWithErrors("error updating generation hash", err)
 		}
@@ -90,8 +94,9 @@ func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger log
 	}
 
 	if newGenerationHash != *pcs.Status.CurrentGenerationHash {
+		logger.Info("Generation hash has changed, triggering rolling update", "PodCliqueSet", pcsObjectKey, "oldGenerationHash", *pcs.Status.CurrentGenerationHash, "newGenerationHash", newGenerationHash)
 		// trigger rolling update by setting or overriding pcs.Status.RollingUpdateProgress.
-		if err := r.initRollingUpdateProgress(ctx, pcs, pcsObjectName, newGenerationHash); err != nil {
+		if err = r.initRollingUpdateProgress(ctx, pcs, pcsObjectName, newGenerationHash); err != nil {
 			return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("could not triggering rolling update for PCS: %v", pcsObjectKey), err)
 		}
 	}
@@ -106,7 +111,7 @@ func (r *Reconciler) isGenerationHashExpectationSatisfied(pcsObjectName string, 
 }
 
 // computeGenerationHash calculates a hash of the PodCliqueSet pod template specifications.
-func computeGenerationHash(pcs *grovecorev1alpha1.PodCliqueSet) string {
+func computeGenerationHash(pcs *grovecorev1alpha1.PodCliqueSet) (string, error) {
 	podTemplateSpecs := lo.Map(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec, _ int) *corev1.PodTemplateSpec {
 		podTemplateSpec := &corev1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{
@@ -118,7 +123,11 @@ func computeGenerationHash(pcs *grovecorev1alpha1.PodCliqueSet) string {
 		podTemplateSpec.Spec.PriorityClassName = pcs.Spec.Template.PriorityClassName
 		return podTemplateSpec
 	})
-	return k8sutils.ComputeHash(podTemplateSpecs...)
+	pcsHash, err := hash.Compute(podTemplateSpecs...)
+	if err != nil {
+		return "", fmt.Errorf("error computing generation hash for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
+	}
+	return pcsHash, nil
 }
 
 // setGenerationHash updates the PodCliqueSet status with the new generation hash and stores the expectation.
@@ -131,7 +140,8 @@ func (r *Reconciler) setGenerationHash(ctx context.Context, pcs *grovecorev1alph
 	return nil
 }
 
-// initRollingUpdateProgress initializes a new rolling update by resetting progress tracking.
+// initRollingUpdateProgress initializes a new rolling update.
+// Sets the UpdateStartedAt to now, reset UpdatedReplicas to 0, and update the CurrentGenerationHash to the new hash to trigger the rolling update process.
 func (r *Reconciler) initRollingUpdateProgress(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsObjectName, newGenerationHash string) error {
 	pcs.Status.RollingUpdateProgress = &grovecorev1alpha1.PodCliqueSetRollingUpdateProgress{
 		UpdateStartedAt: metav1.Now(),

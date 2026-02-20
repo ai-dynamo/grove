@@ -114,7 +114,7 @@ func main() {
 	// Certificates need to be generated before the webhooks are started, which can only happen once the manager is started.
 	// Block while generating the certificates, and then start the webhooks.
 	go func() {
-		if err = grovectrl.RegisterControllersAndWebhooks(mgr, logger, operatorConfig, webhookCertsReadyCh); err != nil {
+		if err = grovectrl.RegisterControllersAndWebhooks(ctx, mgr, logger, operatorConfig, webhookCertsReadyCh); err != nil {
 			logger.Error(err, "failed to initialize grove controller manager")
 			handleErrorAndExit(err, cli.ExitErrInitializeManager)
 		}

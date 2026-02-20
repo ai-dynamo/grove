@@ -26,6 +26,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/hash"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
@@ -62,6 +63,7 @@ const (
 	errCodeMissingPodCliqueTemplate            grovecorev1alpha1.ErrorCode = "ERR_MISSING_PODCLIQUE_TEMPLATE"
 	errCodeGetPodCliqueTemplate                grovecorev1alpha1.ErrorCode = "ERR_GET_PODCLIQUE_TEMPLATE"
 	errCodeUpdatePodCliqueStatus               grovecorev1alpha1.ErrorCode = "ERR_UPDATE_PODCLIQUE_STATUS"
+	errComputePodSpecTemplateHash              grovecorev1alpha1.ErrorCode = "ERR_COMPUTE_POD_TEMPLATE_HASH"
 )
 
 const (
@@ -69,19 +71,21 @@ const (
 )
 
 type _resource struct {
-	client            client.Client
-	scheme            *runtime.Scheme
-	eventRecorder     record.EventRecorder
-	expectationsStore *expect.ExpectationsStore
+	client                   client.Client
+	scheme                   *runtime.Scheme
+	eventRecorder            record.EventRecorder
+	expectationsStore        *expect.ExpectationsStore
+	podTemplateSpecHashCache *hash.PodTemplateSpecHashCache
 }
 
 // New creates a new Pod operator for managing Pod resources within PodCliques
-func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, expectationsStore *expect.ExpectationsStore) component.Operator[grovecorev1alpha1.PodClique] {
+func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, expectationsStore *expect.ExpectationsStore, podTemplateSpecHashCache *hash.PodTemplateSpecHashCache) component.Operator[grovecorev1alpha1.PodClique] {
 	return &_resource{
-		client:            client,
-		scheme:            scheme,
-		eventRecorder:     eventRecorder,
-		expectationsStore: expectationsStore,
+		client:                   client,
+		scheme:                   scheme,
+		eventRecorder:            eventRecorder,
+		expectationsStore:        expectationsStore,
+		podTemplateSpecHashCache: podTemplateSpecHashCache,
 	}
 }
 

@@ -19,6 +19,7 @@ package components
 import (
 	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/hash"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup/components/podclique"
 
 	"k8s.io/client-go/tools/record"
@@ -26,8 +27,8 @@ import (
 )
 
 // CreateOperatorRegistry initializes the operator registry for the PodCliqueScalingGroup reconciler.
-func CreateOperatorRegistry(mgr manager.Manager, eventRecorder record.EventRecorder) component.OperatorRegistry[v1alpha1.PodCliqueScalingGroup] {
+func CreateOperatorRegistry(mgr manager.Manager, eventRecorder record.EventRecorder, podTemplateSpecHashCache *hash.PodTemplateSpecHashCache) component.OperatorRegistry[v1alpha1.PodCliqueScalingGroup] {
 	reg := component.NewOperatorRegistry[v1alpha1.PodCliqueScalingGroup]()
-	reg.Register(component.KindPodClique, podclique.New(mgr.GetClient(), mgr.GetScheme(), eventRecorder))
+	reg.Register(component.KindPodClique, podclique.New(mgr.GetClient(), mgr.GetScheme(), eventRecorder, podTemplateSpecHashCache))
 	return reg
 }

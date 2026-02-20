@@ -30,6 +30,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/hash"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
@@ -61,6 +62,7 @@ const (
 	errCodeParsePodCliqueScalingGroupReplicaIndex        grovecorev1alpha1.ErrorCode = "ERR_PARSE_PODCLIQUESCALINGGROUP_REPLICA_INDEX"
 	errCodeUpdateStatus                                  grovecorev1alpha1.ErrorCode = "ERR_UPDATE_STATUS"
 	errCodeComputePendingPodCliqueScalingGroupUpdateWork grovecorev1alpha1.ErrorCode = "ERR_COMPUTE_PENDINGUPDATE_WORK"
+	errComputePodSpecTemplateHash                        grovecorev1alpha1.ErrorCode = "ERR_COMPUTE_POD_TEMPLATE_HASH"
 )
 
 var (
@@ -68,17 +70,19 @@ var (
 )
 
 type _resource struct {
-	client        client.Client
-	scheme        *runtime.Scheme
-	eventRecorder record.EventRecorder
+	client                   client.Client
+	scheme                   *runtime.Scheme
+	eventRecorder            record.EventRecorder
+	podTemplateSpecHashCache *hash.PodTemplateSpecHashCache
 }
 
 // New creates a new PodClique operator for managing PodClique resources within PodCliqueScalingGroups
-func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder) component.Operator[grovecorev1alpha1.PodCliqueScalingGroup] {
+func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, podTemplateSpecHashCache *hash.PodTemplateSpecHashCache) component.Operator[grovecorev1alpha1.PodCliqueScalingGroup] {
 	return &_resource{
-		client:        client,
-		scheme:        scheme,
-		eventRecorder: eventRecorder,
+		client:                   client,
+		scheme:                   scheme,
+		eventRecorder:            eventRecorder,
+		podTemplateSpecHashCache: podTemplateSpecHashCache,
 	}
 }
 
@@ -284,8 +288,15 @@ func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1alpha1.PodC
 	}
 
 	podGangName := apicommon.GeneratePodGangNameForPodCliqueOwnedByPCSG(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex)
-
-	pclq.Labels = getLabels(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex, pclqObjectKey, pclqTemplateSpec, podGangName)
+	podTemplateSpecHash, err := r.podTemplateSpecHashCache.GetOrCompute(pcs.Name, pcs.Generation, pclqTemplateSpec, pcs.Spec.Template.PriorityClassName)
+	if err != nil {
+		return groveerr.WrapError(err,
+			errComputePodSpecTemplateHash,
+			component.OperationSync,
+			fmt.Sprintf("Error computing PodTemplateSpec hash for PodClique: %v", pclqObjectKey),
+		)
+	}
+	pclq.Labels = getLabels(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex, pclqObjectKey, pclqTemplateSpec, podGangName, podTemplateSpecHash)
 	pclq.Annotations = pclqTemplateSpec.Annotations
 	// set PodCliqueSpec
 	// ------------------------------------
@@ -427,7 +438,7 @@ func getPodCliqueSelectorLabels(pcsgObjectMeta metav1.ObjectMeta) map[string]str
 }
 
 // getLabels constructs the complete set of labels for a PodClique including Grove-specific, component, and template labels
-func getLabels(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsgReplicaIndex int, pclqObjectKey client.ObjectKey, pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec, podGangName string) map[string]string {
+func getLabels(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsgReplicaIndex int, pclqObjectKey client.ObjectKey, pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec, podGangName string, podTemplateSpecHash string) map[string]string {
 	pclqComponentLabels := map[string]string{
 		apicommon.LabelAppNameKey:                        pclqObjectKey.Name,
 		apicommon.LabelComponentKey:                      apicommon.LabelComponentNamePodCliqueScalingGroupPodClique,
@@ -435,7 +446,7 @@ func getLabels(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, pcsg *g
 		apicommon.LabelPodGang:                           podGangName,
 		apicommon.LabelPodCliqueSetReplicaIndex:          strconv.Itoa(pcsReplicaIndex),
 		apicommon.LabelPodCliqueScalingGroupReplicaIndex: strconv.Itoa(pcsgReplicaIndex),
-		apicommon.LabelPodTemplateHash:                   componentutils.ComputePCLQPodTemplateHash(pclqTemplateSpec, pcs.Spec.Template.PriorityClassName),
+		apicommon.LabelPodTemplateHash:                   podTemplateSpecHash,
 	}
 
 	// Add base-podgang label for scaled PodGang pods (beyond minAvailable)

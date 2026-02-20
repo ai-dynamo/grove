@@ -24,6 +24,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/hash"
 	pcsgcomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup/components"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 
@@ -35,21 +36,23 @@ import (
 
 // Reconciler reconciles PodCliqueScalingGroup objects.
 type Reconciler struct {
-	config                  groveconfigv1alpha1.PodCliqueScalingGroupControllerConfiguration
-	client                  client.Client
-	reconcileStatusRecorder ctrlcommon.ReconcileErrorRecorder
-	operatorRegistry        component.OperatorRegistry[grovecorev1alpha1.PodCliqueScalingGroup]
+	config                   groveconfigv1alpha1.PodCliqueScalingGroupControllerConfiguration
+	client                   client.Client
+	reconcileStatusRecorder  ctrlcommon.ReconcileErrorRecorder
+	podTemplateSpecHashCache *hash.PodTemplateSpecHashCache
+	operatorRegistry         component.OperatorRegistry[grovecorev1alpha1.PodCliqueScalingGroup]
 }
 
 // NewReconciler creates a new instance of the PodClique Reconciler.
-func NewReconciler(mgr ctrl.Manager, controllerCfg groveconfigv1alpha1.PodCliqueScalingGroupControllerConfiguration) *Reconciler {
+func NewReconciler(mgr ctrl.Manager, controllerCfg groveconfigv1alpha1.PodCliqueScalingGroupControllerConfiguration, podTemplateSpecHashCache *hash.PodTemplateSpecHashCache) *Reconciler {
 	eventRecorder := mgr.GetEventRecorderFor(controllerName)
 	client := mgr.GetClient()
 	return &Reconciler{
-		config:                  controllerCfg,
-		client:                  client,
-		reconcileStatusRecorder: ctrlcommon.NewReconcileErrorRecorder(client),
-		operatorRegistry:        pcsgcomponent.CreateOperatorRegistry(mgr, eventRecorder),
+		config:                   controllerCfg,
+		client:                   client,
+		reconcileStatusRecorder:  ctrlcommon.NewReconcileErrorRecorder(client),
+		podTemplateSpecHashCache: podTemplateSpecHashCache,
+		operatorRegistry:         pcsgcomponent.CreateOperatorRegistry(mgr, eventRecorder, podTemplateSpecHashCache),
 	}
 }
 

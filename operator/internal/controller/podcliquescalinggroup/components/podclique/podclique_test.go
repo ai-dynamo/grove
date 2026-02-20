@@ -24,6 +24,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/hash"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 
 	"github.com/go-logr/logr"
@@ -48,7 +49,7 @@ func TestNew(t *testing.T) {
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 	eventRecorder := &record.FakeRecorder{}
 
-	operator := New(client, scheme, eventRecorder)
+	operator := New(client, scheme, eventRecorder, nil)
 
 	assert.NotNil(t, operator)
 	resource, ok := operator.(*_resource)
@@ -955,9 +956,10 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
 
 			operator := &_resource{
-				client:        nil, // not needed for buildResource
-				scheme:        scheme,
-				eventRecorder: &record.FakeRecorder{},
+				client:                   nil, // not needed for buildResource
+				scheme:                   scheme,
+				eventRecorder:            &record.FakeRecorder{},
+				podTemplateSpecHashCache: hash.NewDefaultPodTemplateSpecHashCache(t.Context()),
 			}
 
 			err := operator.buildResource(logr.Discard(), pcs, pcsg, pcsgReplicaIndex, pclq)
