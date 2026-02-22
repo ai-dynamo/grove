@@ -23,6 +23,7 @@ import (
 
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -34,9 +35,18 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
+
+func init() {
+	// Initialize scheduler backend so validation webhook tests can resolve Get("default-scheduler") / GetDefault().
+	cl := testutils.CreateDefaultFakeClient(nil)
+	_ = schedulerbackend.Initialize(cl, cl.Scheme(), record.NewFakeRecorder(10), groveconfigv1alpha1.SchedulerConfiguration{
+		Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube, Default: true}},
+	})
+}
 
 // TestNewHandler tests the creation of a new validation handler.
 func TestNewHandler(t *testing.T) {
@@ -47,7 +57,7 @@ func TestNewHandler(t *testing.T) {
 		Logger: logr.Discard(),
 	}
 
-	handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig())
+	handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube, Default: true}}})
 	require.NotNil(t, handler)
 	assert.NotNil(t, handler.logger)
 }
@@ -113,7 +123,7 @@ func TestValidateCreate(t *testing.T) {
 				Logger: logr.Discard(),
 			}
 
-			handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig())
+			handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube, Default: true}}})
 
 			ctx := context.Background()
 			warnings, err := handler.ValidateCreate(ctx, tt.obj)
@@ -244,7 +254,7 @@ func TestValidateUpdate(t *testing.T) {
 				Logger: logr.Discard(),
 			}
 
-			handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig())
+			handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube, Default: true}}})
 
 			ctx := context.Background()
 			warnings, err := handler.ValidateUpdate(ctx, tt.newObj, tt.oldObj)
@@ -271,7 +281,7 @@ func TestValidateDelete(t *testing.T) {
 		Logger: logr.Discard(),
 	}
 
-	handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig())
+	handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube, Default: true}}})
 
 	// Deletion validation always succeeds
 	ctx := context.Background()
@@ -382,7 +392,7 @@ func TestLogValidatorFunctionInvocation(t *testing.T) {
 				Logger: logr.Discard(),
 			}
 
-			handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig())
+			handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube, Default: true}}})
 
 			// This function doesn't return an error, but we can verify it doesn't panic
 			assert.NotPanics(t, func() {

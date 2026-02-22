@@ -742,6 +742,10 @@ _Appears in:_
 | `enableProfiling` _boolean_ | EnableProfiling enables profiling via host:port/debug/pprof/ endpoints. |  |  |
 
 
+
+
+
+
 #### LeaderElectionConfiguration
 
 
@@ -863,6 +867,57 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `concurrentSyncs` _integer_ | ConcurrentSyncs is the number of workers used for the controller to concurrently work on events. |  |  |
+
+
+#### SchedulerConfiguration
+
+
+
+SchedulerConfiguration configures scheduler profiles and which is the default.
+
+
+
+_Appears in:_
+- [OperatorConfiguration](#operatorconfiguration)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `profiles` _[SchedulerProfile](#schedulerprofile) array_ | Profiles is the list of scheduler profiles. Each profile has a backend name, optional config, and whether it is the default.<br />The kube-scheduler backend is always enabled; use profile name "kube-scheduler" to configure or set it as default.<br />Valid profile names: "kube-scheduler", "kai-scheduler". Exactly one profile should have default: true; if none, kube-scheduler is the default. |  |  |
+
+
+#### SchedulerName
+
+_Underlying type:_ _string_
+
+SchedulerName defines the name of the scheduler backend (used in OperatorConfiguration scheduler.profiles[].name).
+
+
+
+_Appears in:_
+- [SchedulerProfile](#schedulerprofile)
+
+| Field | Description |
+| --- | --- |
+| `kai-scheduler` | SchedulerNameKai is the KAI scheduler backend.<br /> |
+| `kube-scheduler` | SchedulerNameKube is the profile name for the Kubernetes default scheduler in OperatorConfiguration.<br /> |
+
+
+#### SchedulerProfile
+
+
+
+SchedulerProfile defines a scheduler backend profile with optional backend-specific config and default flag.
+
+
+
+_Appears in:_
+- [SchedulerConfiguration](#schedulerconfiguration)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _[SchedulerName](#schedulername)_ | Name is the scheduler profile name. Valid values: "kube-scheduler", "kai-scheduler".<br />For the Kubernetes default scheduler use "kube-scheduler"; Pod.Spec.SchedulerName will be set to "default-scheduler". |  | Enum: [kai-scheduler kube-scheduler] <br /> |
+| `config` _[RawExtension](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#rawextension-runtime-pkg)_ | Config holds backend-specific options. The operator unmarshals it into the config type for this backend (see backend config types). |  |  |
+| `default` _boolean_ | Default indicates this profile is the default backend when a workload does not specify one. Exactly one profile should have default: true. |  |  |
 
 
 #### Server

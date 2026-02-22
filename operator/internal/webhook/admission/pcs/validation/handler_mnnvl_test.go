@@ -84,7 +84,7 @@ func TestValidateCreate_MNNVL(t *testing.T) {
 			networkConfig := configv1alpha1.NetworkAcceleration{
 				AutoMNNVLEnabled: tt.autoMNNVLEnabled,
 			}
-			handler := NewHandler(mgr, getDefaultTASConfig(), networkConfig)
+			handler := NewHandler(mgr, getDefaultTASConfig(), networkConfig, configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube, Default: true}}})
 
 			ctx := context.Background()
 			warnings, err := handler.ValidateCreate(ctx, tt.pcs)
@@ -163,7 +163,7 @@ func TestValidateUpdate_MNNVL(t *testing.T) {
 			}
 
 			// MNNVL validation on update doesn't depend on feature flag
-			handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig())
+			handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig(), configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube, Default: true}}})
 
 			ctx := context.Background()
 			warnings, err := handler.ValidateUpdate(ctx, tt.oldPCS, tt.newPCS)
@@ -245,7 +245,7 @@ func TestMNNVL_WebhookPipeline_LegacyPCSUpdate(t *testing.T) {
 			require.NoError(t, err, "defaulting webhook should not error on update")
 
 			// Step 2: Simulate the validating webhook running with oldPCS vs (possibly mutated) newPCS.
-			validationHandler := NewHandler(mgr, getDefaultTASConfig(), networkConfig)
+			validationHandler := NewHandler(mgr, getDefaultTASConfig(), networkConfig, configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube, Default: true}}})
 
 			ctx := context.Background()
 			warnings, err := validationHandler.ValidateUpdate(ctx, oldPCS, newPCS)

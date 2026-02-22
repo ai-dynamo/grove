@@ -59,10 +59,10 @@ func RegisterControllersAndWebhooks(mgr ctrl.Manager, logger logr.Logger, operat
 	// Controllers will not work unless the webhooks are fully configured and operational.
 	// For webhooks to work cert-controller should finish its work of generating and injecting certificates.
 	waitTillWebhookCertsReady(logger, certsReady)
-	if err := registerControllersWithMgr(mgr, operatorCfg.Controllers, operatorCfg.TopologyAwareScheduling, operatorCfg.Network); err != nil {
+	if err := registerControllersWithMgr(mgr, *operatorCfg); err != nil {
 		return err
 	}
-	if err := registerWebhooksWithMgr(mgr, operatorCfg.Authorizer, operatorCfg.TopologyAwareScheduling, operatorCfg.Network); err != nil {
+	if err := registerWebhooksWithMgr(mgr, *operatorCfg); err != nil {
 		return err
 	}
 	return nil

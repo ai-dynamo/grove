@@ -34,6 +34,7 @@ import (
 func ValidateOperatorConfiguration(config *configv1alpha1.OperatorConfiguration) field.ErrorList {
 	allErrs := field.ErrorList{}
 	allErrs = append(allErrs, validateLogConfiguration(config)...)
+	allErrs = append(allErrs, validateSchedulerConfiguration(&config.Scheduler, field.NewPath("scheduler"))...)
 	allErrs = append(allErrs, validateLeaderElectionConfiguration(config.LeaderElection, field.NewPath("leaderElection"))...)
 	allErrs = append(allErrs, validateClientConnectionConfiguration(config.ClientConnection, field.NewPath("clientConnection"))...)
 	allErrs = append(allErrs, validateControllerConfiguration(config.Controllers, field.NewPath("controllers"))...)
@@ -48,6 +49,33 @@ func validateLogConfiguration(config *configv1alpha1.OperatorConfiguration) fiel
 	}
 	if len(strings.TrimSpace(string(config.LogFormat))) > 0 && !sets.New(configv1alpha1.AllLogFormats...).Has(config.LogFormat) {
 		allErrs = append(allErrs, field.NotSupported(field.NewPath("logFormat"), config.LogFormat, configv1alpha1.AllLogFormats))
+	}
+	return allErrs
+}
+
+func validateSchedulerConfiguration(scheduler *configv1alpha1.SchedulerConfiguration, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	profilesPath := fldPath.Child("profiles")
+	defaultCount := 0
+	seenNames := make(map[configv1alpha1.SchedulerName]struct{})
+	for i, p := range scheduler.Profiles {
+		idxPath := profilesPath.Index(i)
+		if len(strings.TrimSpace(string(p.Name))) == 0 {
+			allErrs = append(allErrs, field.Required(idxPath.Child("name"), "scheduler profile name is required"))
+		} else if !slices.Contains(configv1alpha1.SupportedSchedulerNames, p.Name) {
+			allErrs = append(allErrs, field.NotSupported(idxPath.Child("name"), p.Name, configv1alpha1.SupportedSchedulerNames))
+		} else {
+			if _, exists := seenNames[p.Name]; exists {
+				allErrs = append(allErrs, field.Duplicate(idxPath.Child("name"), p.Name))
+			}
+			seenNames[p.Name] = struct{}{}
+		}
+		if p.Default {
+			defaultCount++
+		}
+	}
+	if defaultCount > 1 {
+		allErrs = append(allErrs, field.Invalid(profilesPath, defaultCount, "at most one scheduler profile may have default: true"))
 	}
 	return allErrs
 }

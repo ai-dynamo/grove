@@ -9,6 +9,7 @@ rules:
   - scheduler.grove.io
   resources:
   - podgangs
+  - podgangs/status
   verbs:
   - create
   - get

@@ -41,6 +41,8 @@ const (
 	// ExitErrInitializeManager indicates that the application exited due to an error initializing the manager.
 	// This includes registration of controllers and webhooks and setting up probes.
 	ExitErrInitializeManager
+	// ExitErrInitializeSchedulerBackend indicates that the application exited due to an error initializing the scheduler backend.
+	ExitErrInitializeSchedulerBackend
 	// ExitErrStart indicates that the application exited due to an error when starting the application.
 	ExitErrStart
 	// ExitErrMNNVLPrerequisites indicates that the application exited because MNNVL prerequisites are not met.
@@ -107,6 +109,7 @@ func (o *LaunchOptions) loadOperatorConfig() (*configv1alpha1.OperatorConfigurat
 	if err = runtime.DecodeInto(configDecoder, operatorConfigBytes, operatorConfig); err != nil {
 		return nil, fmt.Errorf("%w: error decoding operator config: %w", errLoadOperatorConfig, err)
 	}
+	configv1alpha1.SetDefaults_OperatorConfiguration(operatorConfig)
 	return operatorConfig, nil
 }
 

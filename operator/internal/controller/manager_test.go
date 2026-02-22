@@ -552,11 +552,12 @@ func TestRegisterControllersAndWebhooks(t *testing.T) {
 				tc.waitFn(logger, ch)
 			}
 		}
-		registerControllersWithMgr = func(_ ctrl.Manager, _ configv1alpha1.ControllerConfiguration, _ configv1alpha1.TopologyAwareSchedulingConfiguration, _ configv1alpha1.NetworkAcceleration) error {
+
+		registerControllersWithMgr = func(_ ctrl.Manager, _ configv1alpha1.OperatorConfiguration) error {
 			controllersCalled = true
 			return tc.controllerErr
 		}
-		registerWebhooksWithMgr = func(_ ctrl.Manager, _ configv1alpha1.AuthorizerConfig, _ configv1alpha1.TopologyAwareSchedulingConfiguration, _ configv1alpha1.NetworkAcceleration) error {
+		registerWebhooksWithMgr = func(_ ctrl.Manager, _ configv1alpha1.OperatorConfiguration) error {
 			webhooksCalled = true
 			return tc.webhookErr
 		}

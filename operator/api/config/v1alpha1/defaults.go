@@ -67,6 +67,17 @@ func SetDefaults_OperatorConfiguration(operatorConfig *OperatorConfiguration) {
 	if operatorConfig.LogFormat == "" {
 		operatorConfig.LogFormat = "json"
 	}
+	SetDefaults_SchedulerConfiguration(&operatorConfig.Scheduler)
+}
+
+// SetDefaults_SchedulerConfiguration sets defaults for scheduler configuration.
+// When Profiles is empty, defaults to a single profile for kube-scheduler as default.
+func SetDefaults_SchedulerConfiguration(cfg *SchedulerConfiguration) {
+	if len(cfg.Profiles) == 0 {
+		cfg.Profiles = []SchedulerProfile{
+			{Name: SchedulerNameKube, Default: true},
+		}
+	}
 }
 
 // SetDefaults_ServerConfiguration sets defaults for the server configuration.

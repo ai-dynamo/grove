@@ -20,6 +20,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/samber/lo"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -52,4 +53,13 @@ func IsManagedPodClique(obj client.Object, expectedOwnerKinds ...string) bool {
 		return acc || HasExpectedOwner(expectedOwnerKind, podClique.GetOwnerReferences())
 	}, false)
 	return IsManagedByGrove(podClique.GetLabels()) && hasExpectedOwner
+}
+
+// IsManagedPodGang checks if the PodGang is managed by Grove.
+func IsManagedPodGang(obj client.Object) bool {
+	podGang, ok := obj.(*groveschedulerv1alpha1.PodGang)
+	if !ok {
+		return false
+	}
+	return IsManagedByGrove(podGang.Labels)
 }
