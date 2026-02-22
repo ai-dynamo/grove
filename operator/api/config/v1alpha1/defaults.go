@@ -71,11 +71,40 @@ func SetDefaults_OperatorConfiguration(operatorConfig *OperatorConfiguration) {
 }
 
 // SetDefaults_SchedulerConfiguration sets defaults for scheduler configuration.
-// When Profiles is empty, defaults to a single profile for kube-scheduler as default.
+// Kube-scheduler is always included in Profiles (added if missing) so that the kube backend is always started.
+// When Profiles is empty, or when no profile has Default set to true, kube-scheduler is used as the default.
 func SetDefaults_SchedulerConfiguration(cfg *SchedulerConfiguration) {
 	if len(cfg.Profiles) == 0 {
 		cfg.Profiles = []SchedulerProfile{
 			{Name: SchedulerNameKube, Default: true},
+		}
+		return
+	}
+	// Ensure kube-scheduler is always in Profiles so the kube backend is always started.
+	hasKube := false
+	for i := range cfg.Profiles {
+		if cfg.Profiles[i].Name == SchedulerNameKube {
+			hasKube = true
+			break
+		}
+	}
+	if !hasKube {
+		cfg.Profiles = append(cfg.Profiles, SchedulerProfile{Name: SchedulerNameKube, Default: false})
+	}
+	// When no profile has Default set to true, set kube-scheduler as default.
+	hasDefault := false
+	for i := range cfg.Profiles {
+		if cfg.Profiles[i].Default {
+			hasDefault = true
+			break
+		}
+	}
+	if !hasDefault {
+		for i := range cfg.Profiles {
+			if cfg.Profiles[i].Name == SchedulerNameKube {
+				cfg.Profiles[i].Default = true
+				return
+			}
 		}
 	}
 }

@@ -29,64 +29,57 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// backendFactory creates and initializes a scheduler backend from a profile.
+type backendFactory func(client.Client, *runtime.Scheme, record.EventRecorder, configv1alpha1.SchedulerProfile) (SchedulerBackend, error)
+
+// backendFactories maps each supported SchedulerName to its constructor. Add new backends here.
+var backendFactories = map[configv1alpha1.SchedulerName]backendFactory{
+	configv1alpha1.SchedulerNameKube: func(cl client.Client, scheme *runtime.Scheme, rec record.EventRecorder, p configv1alpha1.SchedulerProfile) (SchedulerBackend, error) {
+		b := kube.New(cl, scheme, rec, p)
+		if err := b.Init(); err != nil {
+			return nil, err
+		}
+		return b, nil
+	},
+	configv1alpha1.SchedulerNameKai: func(cl client.Client, scheme *runtime.Scheme, rec record.EventRecorder, p configv1alpha1.SchedulerProfile) (SchedulerBackend, error) {
+		b := kai.New(cl, scheme, rec, p)
+		if err := b.Init(); err != nil {
+			return nil, err
+		}
+		return b, nil
+	},
+}
+
 var (
 	backends       map[string]SchedulerBackend
 	defaultBackend SchedulerBackend
 	initOnce       sync.Once
 )
 
-// Initialize creates and registers backend instances: kube-scheduler (default-scheduler) is always
-// registered; backends named in config.Profiles are also registered. Called once during operator
-// startup before controllers start.
+// Initialize creates and registers backend instances for each profile in config.Profiles.
+// Defaults are applied to config so that kube-scheduler is always present; only backends
+// named in config.Profiles are started. Called once during operator startup before controllers start.
 func Initialize(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, cfg configv1alpha1.SchedulerConfiguration) error {
 	var initErr error
 	initOnce.Do(func() {
 		backends = make(map[string]SchedulerBackend)
 
-		// Build profile config per backend name (last profile wins if duplicate)
-		profileByName := make(map[configv1alpha1.SchedulerName]configv1alpha1.SchedulerProfile)
+		// New and init each backend from cfg.Profiles (order follows config; duplicate name overwrites).
 		for _, p := range cfg.Profiles {
-			profileByName[p.Name] = p
-		}
-
-		// Kube backend is always available; create from profile if present (profile name "kube-scheduler"), else implicit default
-		kubeProfile, hasKube := profileByName[configv1alpha1.SchedulerNameKube]
-		if !hasKube {
-			kubeProfile = configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKube, Default: true}
-		}
-		kubeBackend := kube.New(client, scheme, eventRecorder, kubeProfile)
-		if err := kubeBackend.Init(); err != nil {
-			initErr = fmt.Errorf("failed to initialize kube backend: %w", err)
-			return
-		}
-		// Register under profile name and under pod schedulerName so Get("kube-scheduler") and Get("default-scheduler") both work
-		backends[string(configv1alpha1.SchedulerNameKube)] = kubeBackend
-		backends["default-scheduler"] = kubeBackend
-
-		// Register kai backend only if it has a profile
-		if kaiProfile, ok := profileByName[configv1alpha1.SchedulerNameKai]; ok {
-			kaiBackend := kai.New(client, scheme, eventRecorder, kaiProfile)
-			if err := kaiBackend.Init(); err != nil {
-				initErr = fmt.Errorf("failed to initialize kai backend: %w", err)
+			factory, ok := backendFactories[p.Name]
+			if !ok {
+				initErr = fmt.Errorf("scheduler profile %q is not supported", p.Name)
 				return
 			}
-			backends[string(configv1alpha1.SchedulerNameKai)] = kaiBackend
-		}
-
-		// Default: profile with Default=true, else kube
-		for _, p := range cfg.Profiles {
+			backend, err := factory(client, scheme, eventRecorder, p)
+			if err != nil {
+				initErr = fmt.Errorf("failed to initialize %s backend: %w", p.Name, err)
+				return
+			}
+			backends[string(p.Name)] = backend
 			if p.Default {
-				if b, ok := backends[string(p.Name)]; ok {
-					defaultBackend = b
-					break
-				}
-				// Default profile names a scheduler that is not registered (e.g. unsupported name)
-				initErr = fmt.Errorf("default scheduler profile %q is not supported or not enabled", p.Name)
-				return
+				defaultBackend = backend
 			}
-		}
-		if defaultBackend == nil {
-			defaultBackend = backends[string(configv1alpha1.SchedulerNameKube)]
 		}
 	})
 	return initErr
