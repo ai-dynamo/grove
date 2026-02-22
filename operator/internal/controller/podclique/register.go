@@ -30,6 +30,7 @@ import (
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -267,14 +268,47 @@ func extractPCLQNameFromPodName(podName string) string {
 	return podName[:endIndex]
 }
 
-// podGangPredicate allows all PodGang create and update events to trigger PodClique reconciliation
+// podGangPredicate filters PodGang events to trigger on initialization and spec updates
 func podGangPredicate() predicate.Predicate {
 	return predicate.Funcs{
-		CreateFunc:  func(_ event.CreateEvent) bool { return true },
-		DeleteFunc:  func(_ event.DeleteEvent) bool { return false },
-		UpdateFunc:  func(_ event.UpdateEvent) bool { return true },
+		CreateFunc: func(_ event.CreateEvent) bool { return false },
+		DeleteFunc: func(_ event.DeleteEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldPG, okOld := e.ObjectOld.(*groveschedulerv1alpha1.PodGang)
+			newPG, okNew := e.ObjectNew.(*groveschedulerv1alpha1.PodGang)
+			if !okOld || !okNew {
+				return false
+			}
+
+			// Trigger when PodGang transitions to Initialized=True
+			oldInitialized := isPodGangInitialized(e.ObjectOld)
+			newInitialized := isPodGangInitialized(e.ObjectNew)
+			if !oldInitialized && newInitialized {
+				return true
+			}
+
+			// Also trigger when PodGang spec changes (e.g., scale out/in adds/removes pod references)
+			// This ensures scheduling gates are removed from newly added pods
+			// Check if metadata.generation changed (Kubernetes increments this on spec changes)
+			if newInitialized && oldPG.GetGeneration() != newPG.GetGeneration() {
+				return true
+			}
+
+			return false
+		},
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 	}
+}
+
+// isPodGangInitialized checks if a PodGang has Initialized condition set to True.
+func isPodGangInitialized(obj client.Object) bool {
+	podGang, ok := obj.(*groveschedulerv1alpha1.PodGang)
+	if !ok {
+		return false
+	}
+
+	// Check if Initialized condition is True
+	return meta.IsStatusConditionTrue(podGang.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized))
 }
 
 // isManagedPod checks if a Pod is managed by Grove and owned by a PodClique
