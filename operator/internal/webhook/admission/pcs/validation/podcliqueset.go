@@ -155,19 +155,19 @@ func (v *pcsValidator) validatePodCliqueTemplates(fldPath *field.Path) ([]string
 	}
 
 	// Validate that the scheduler name is enabled (present in OperatorConfiguration profiles or default)
-	schedulerName := ""
+	pcsSchedulerName := ""
 	if len(uniqueSchedulerNames) > 0 && uniqueSchedulerNames[0] != "" {
-		schedulerName = uniqueSchedulerNames[0]
+		pcsSchedulerName = uniqueSchedulerNames[0]
 	}
-	if schedulerName == "" {
+	if pcsSchedulerName == "" {
 		if def := schedulerbackend.GetDefault(); def != nil {
-			schedulerName = def.Name()
+			pcsSchedulerName = def.Name()
 		}
 	}
-	if schedulerName != "" && schedulerbackend.Get(schedulerName) == nil {
+	if pcsSchedulerName != "" && schedulerbackend.Get(pcsSchedulerName) == nil {
 		allErrs = append(allErrs, field.Invalid(
 			fldPath.Child("spec").Child("podSpec").Child("schedulerName"),
-			schedulerName,
+			pcsSchedulerName,
 			"schedulerName must be an enabled scheduler backend; this scheduler is not enabled in OperatorConfiguration",
 		))
 	}
