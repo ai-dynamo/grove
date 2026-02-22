@@ -20,6 +20,7 @@ import (
 	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // LogFormat defines the format of the log.
@@ -51,35 +52,44 @@ var (
 	AllLogFormats = []LogFormat{LogFormatJSON, LogFormatText}
 )
 
-// SchedulerName defines the name of the scheduler backend.
+// SchedulerName defines the name of the scheduler backend (used in OperatorConfiguration scheduler.profiles[].name).
 type SchedulerName string
 
 const (
-	// SchedulerNameKai is the Kai scheduler backend.
+	// SchedulerNameKai is the KAI scheduler backend.
 	SchedulerNameKai SchedulerName = "kai-scheduler"
-	// SchedulerNameKube is the Kubernetes default scheduler backend.
-	SchedulerNameKube SchedulerName = "default-scheduler"
+	// SchedulerNameKube is the profile name for the Kubernetes default scheduler in OperatorConfiguration.
+	SchedulerNameKube SchedulerName = "kube-scheduler"
 )
 
 var (
-	// SupportedSchedulerNames is a slice of all supported scheduler names.
+	// SupportedSchedulerNames is the list of profile names allowed in scheduler.profiles[].name.
 	SupportedSchedulerNames = []SchedulerName{SchedulerNameKai, SchedulerNameKube}
 )
 
-// SchedulerConfiguration defines the scheduler backend and its configuration.
-// Each scheduler backend may have its own configuration; only the config for the
-// selected Name is used at runtime.
+// SchedulerConfiguration configures scheduler profiles and which is the default.
 type SchedulerConfiguration struct {
-	// Name is the name of the scheduler backend with which this instance of Grove operator will run.
-	// +required
-	// +kubebuilder:validation:Enum=kai-scheduler;default-scheduler
+	// Profiles is the list of scheduler profiles. Each profile has a backend name, optional config, and whether it is the default.
+	// The kube-scheduler backend is always enabled; use profile name "kube-scheduler" to configure or set it as default.
+	// Valid profile names: "kube-scheduler", "kai-scheduler". Exactly one profile should have default: true; if none, kube-scheduler is the default.
+	// +optional
+	Profiles []SchedulerProfile `json:"profiles,omitempty"`
+}
+
+// SchedulerProfile defines a scheduler backend profile with optional backend-specific config and default flag.
+type SchedulerProfile struct {
+	// Name is the scheduler profile name. Valid values: "kube-scheduler", "kai-scheduler".
+	// For the Kubernetes default scheduler use "kube-scheduler"; Pod.Spec.SchedulerName will be set to "default-scheduler".
+	// +kubebuilder:validation:Enum=kai-scheduler;kube-scheduler
 	Name SchedulerName `json:"name"`
-	// Kai is the configuration for the kai-scheduler backend. Only used when Name is kai-scheduler.
+
+	// Config holds backend-specific options. The operator unmarshals it into the config type for this backend (see backend config types).
 	// +optional
-	Kai *KaiSchedulerConfiguration `json:"kai,omitempty"`
-	// DefaultScheduler is the configuration for the default-scheduler (kube) backend. Only used when Name is default-scheduler.
+	Config *runtime.RawExtension `json:"config,omitempty"`
+
+	// Default indicates this profile is the default backend when a workload does not specify one. Exactly one profile should have default: true.
 	// +optional
-	DefaultScheduler *DefaultSchedulerConfiguration `json:"defaultScheduler,omitempty"`
+	Default bool `json:"default,omitempty"`
 }
 
 // KaiSchedulerConfiguration defines the configuration for the kai-scheduler backend.
@@ -87,9 +97,12 @@ type KaiSchedulerConfiguration struct {
 	// Reserved for future kai-scheduler-specific options.
 }
 
-// DefaultSchedulerConfiguration defines the configuration for the default-scheduler (kube) backend.
-type DefaultSchedulerConfiguration struct {
-	// Reserved for future default-scheduler-specific options.
+// KubeSchedulerConfig holds the configuration for the default scheduler.
+// Used when unmarshalling SchedulerProfile.Config for default-scheduler.
+type KubeSchedulerConfig struct {
+	// GangScheduling indicates if Gang scheduling capability is enabled.
+	// +optional
+	GangScheduling bool `json:"gangScheduling,omitempty"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -108,8 +121,7 @@ type OperatorConfiguration struct {
 	TopologyAwareScheduling TopologyAwareSchedulingConfiguration `json:"topologyAwareScheduling"`
 	// +optional
 	Network NetworkAcceleration `json:"network,omitempty"` // Network is the configuration for network acceleration features like MNNVL.
-	// Scheduler is the configuration for the scheduler backend. Different schedulers may have different options.
-	// Scheduler.Name is validated via +kubebuilder:validation:Enum on SchedulerConfiguration.Name.
+	// Scheduler configures which scheduler backends are active and their per-backend options.
 	Scheduler SchedulerConfiguration `json:"scheduler"`
 }
 

@@ -23,6 +23,7 @@ import (
 
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 
 	"github.com/samber/lo"
@@ -153,18 +154,22 @@ func (v *pcsValidator) validatePodCliqueTemplates(fldPath *field.Path) ([]string
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("spec").Child("podSpec").Child("schedulerName"), uniqueSchedulerNames[0], "the schedulerName for all pods have to be the same"))
 	}
 
-	// Validate that the scheduler name matches the one Grove was configured with
-	configuredName := string(v.schedulerConfig.Name)
-	if len(uniqueSchedulerNames) > 0 && configuredName != "" {
-		pcsSchedulerName := uniqueSchedulerNames[0]
-
-		if pcsSchedulerName != configuredName {
-			allErrs = append(allErrs, field.Invalid(
-				fldPath.Child("spec").Child("podSpec").Child("schedulerName"),
-				pcsSchedulerName,
-				fmt.Sprintf("schedulerName must match the configured scheduler %q", configuredName),
-			))
+	// Validate that the scheduler name is enabled (present in OperatorConfiguration profiles or default)
+	schedulerName := ""
+	if len(uniqueSchedulerNames) > 0 && uniqueSchedulerNames[0] != "" {
+		schedulerName = uniqueSchedulerNames[0]
+	}
+	if schedulerName == "" {
+		if def := schedulerbackend.GetDefault(); def != nil {
+			schedulerName = def.Name()
 		}
+	}
+	if schedulerName != "" && schedulerbackend.Get(schedulerName) == nil {
+		allErrs = append(allErrs, field.Invalid(
+			fldPath.Child("spec").Child("podSpec").Child("schedulerName"),
+			schedulerName,
+			"schedulerName must be an enabled scheduler backend; this scheduler is not enabled in OperatorConfiguration",
+		))
 	}
 	if v.isStartupTypeExplicit() {
 		allErrs = append(allErrs, validateCliqueDependencies(cliqueTemplateSpecs, fldPath)...)

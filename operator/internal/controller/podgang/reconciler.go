@@ -18,8 +18,8 @@ package podgang
 
 import (
 	"context"
-	"fmt"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -33,58 +33,57 @@ import (
 // Reconciler reconciles PodGang objects and converts them to scheduler-specific CRs
 type Reconciler struct {
 	client.Client
-	Scheme  *runtime.Scheme
-	Backend schedulerbackend.SchedulerBackend
-	Logger  logr.Logger
+	Scheme *runtime.Scheme
+	Logger logr.Logger
 }
 
-// NewReconciler creates a new Reconciler
+// NewReconciler creates a new Reconciler. Backend is resolved per PodGang from the grove.io/scheduler-name label or default.
 func NewReconciler(mgr ctrl.Manager) (*Reconciler, error) {
-	b := schedulerbackend.Get()
-	if b == nil {
-		return nil, fmt.Errorf("backend not initialized")
-	}
 	return &Reconciler{
-		Client:  mgr.GetClient(),
-		Scheme:  mgr.GetScheme(),
-		Backend: b,
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
 	}, nil
+}
+
+func resolveBackend(podGang *groveschedulerv1alpha1.PodGang) schedulerbackend.SchedulerBackend {
+	if name := podGang.Labels[apicommon.LabelSchedulerName]; name != "" {
+		if b := schedulerbackend.Get(name); b != nil {
+			return b
+		}
+	}
+	return schedulerbackend.GetDefault()
 }
 
 // Reconcile processes PodGang changes and synchronizes to backend-specific CRs
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx).WithValues("backend", r.Backend.Name(), "podgang", req.NamespacedName)
-
-	// 1. Fetch the PodGang
 	podGang := &groveschedulerv1alpha1.PodGang{}
 	if err := r.Get(ctx, req.NamespacedName, podGang); err != nil {
 		if client.IgnoreNotFound(err) != nil {
-			logger.Error(err, "Failed to get PodGang")
 			return ctrl.Result{}, err
 		}
-		// PodGang was deleted, nothing to do (ownerReference handles cleanup)
-		logger.Info("PodGang not found, likely deleted")
 		return ctrl.Result{}, nil
 	}
 
-	logger.Info("Processing PodGang with backend")
+	backend := resolveBackend(podGang)
+	if backend == nil {
+		log.FromContext(ctx).Error(nil, "No scheduler backend available for PodGang", "podgang", req.NamespacedName)
+		return ctrl.Result{}, nil
+	}
+	logger := log.FromContext(ctx).WithValues("backend", backend.Name(), "podgang", req.NamespacedName)
 
-	// 2. Handle deletion
 	if !podGang.DeletionTimestamp.IsZero() {
 		logger.Info("PodGang is being deleted")
-		if err := r.Backend.OnPodGangDelete(ctx, podGang); err != nil {
+		if err := backend.OnPodGangDelete(ctx, podGang); err != nil {
 			logger.Error(err, "Failed to delete backend resources")
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
 	}
 
-	// 3. Sync PodGang to backend-specific CR
-	if err := r.Backend.SyncPodGang(ctx, podGang); err != nil {
+	if err := backend.SyncPodGang(ctx, podGang); err != nil {
 		logger.Error(err, "Failed to sync PodGang to backend")
 		return ctrl.Result{}, err
 	}
-
 	logger.Info("Successfully synced PodGang to backend")
 	return ctrl.Result{}, nil
 }

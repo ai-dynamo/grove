@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -72,44 +73,43 @@ func TestPreparePod(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Reset global state
-			globalBackend = nil
+			backends = nil
+			defaultBackend = nil
 			initOnce = sync.Once{}
 
-			// Initialize backend
+			// Initialize backend with a single profile
 			cl := testutils.CreateDefaultFakeClient(nil)
 			recorder := record.NewFakeRecorder(10)
-			err := Initialize(cl, cl.Scheme(), recorder, configv1alpha1.SchedulerConfiguration{Name: tt.schedulerName})
+			cfg := configv1alpha1.SchedulerConfiguration{
+				Profiles: []configv1alpha1.SchedulerProfile{
+					{Name: tt.schedulerName, Default: true},
+				},
+			}
+			err := Initialize(cl, cl.Scheme(), recorder, cfg)
 			require.NoError(t, err)
 
-			// Test PreparePod
-			err = PreparePod(tt.inputPod)
-
+			// Get backend (empty name = default) and prepare pod
+			backend := Get("")
 			if tt.expectError {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
+				require.Nil(t, backend)
+				return
 			}
+			require.NotNil(t, backend)
+			backend.PreparePod(tt.inputPod)
+			assert.Equal(t, tt.expectName, tt.inputPod.Spec.SchedulerName)
 		})
 	}
 }
 
-// TestPreparePodWhenNotInitialized tests PreparePod when backend is not initialized.
+// TestPreparePodWhenNotInitialized tests that Get returns nil when backend is not initialized.
 func TestPreparePodWhenNotInitialized(t *testing.T) {
 	// Reset global state to ensure backend is not initialized
-	globalBackend = nil
+	backends = nil
+	defaultBackend = nil
 	initOnce = sync.Once{}
 
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-pod",
-			Namespace: "default",
-		},
-		Spec: corev1.PodSpec{},
-	}
-
-	err := PreparePod(pod)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "backend not initialized")
+	backend := Get("")
+	assert.Nil(t, backend)
 }
 
 // mockBackend is a mock implementation of SchedulerBackend for testing.
@@ -119,6 +119,7 @@ type mockBackend struct {
 	syncCalled        bool
 	deleteCalled      bool
 	prepareCalled     bool
+	validateCalled    bool
 	returnError       error
 	lastPreparedPod   *corev1.Pod
 	lastSyncedPodGang *groveschedulerv1alpha1.PodGang
@@ -148,6 +149,11 @@ func (m *mockBackend) PreparePod(pod *corev1.Pod) {
 	m.prepareCalled = true
 	m.lastPreparedPod = pod
 	pod.Spec.SchedulerName = m.name
+}
+
+func (m *mockBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet) error {
+	m.validateCalled = true
+	return m.returnError
 }
 
 // TestSchedulerBackendInterface tests that backends implement the interface correctly.

@@ -20,6 +20,7 @@ import (
 	"context"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -34,23 +35,23 @@ type Backend struct {
 	client        client.Client
 	scheme        *runtime.Scheme
 	eventRecorder record.EventRecorder
-	config        configv1alpha1.SchedulerConfiguration
+	profile       configv1alpha1.SchedulerProfile
 }
 
-// New creates a new Kube backend instance. cfg is the full scheduler configuration;
-// Backend uses cfg.Name and may use cfg.DefaultScheduler for default-scheduler-specific options.
-func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, cfg configv1alpha1.SchedulerConfiguration) *Backend {
+// New creates a new Kube backend instance. profile is the scheduler profile for default-scheduler;
+// Backend uses profile.Name and may unmarshal profile.Config into KubeSchedulerConfig.
+func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1alpha1.SchedulerProfile) *Backend {
 	return &Backend{
 		client:        cl,
 		scheme:        scheme,
 		eventRecorder: eventRecorder,
-		config:        cfg,
+		profile:       profile,
 	}
 }
 
-// Name returns the backend name
+// Name returns the backend profile name (kube-scheduler), for lookup and logging.
 func (b *Backend) Name() string {
-	return string(b.config.Name)
+	return string(b.profile.Name)
 }
 
 // Init initializes the Kube backend
@@ -73,7 +74,16 @@ func (b *Backend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.P
 	return nil
 }
 
-// PreparePod adds Kubernetes default scheduler-specific configuration to the Pod
-// This includes: labels, annotations, etc.
-func (b *Backend) PreparePod(_ *corev1.Pod) {
+// PodSchedulerName is the value set on Pod.Spec.SchedulerName for the Kubernetes default scheduler.
+const PodSchedulerName = "default-scheduler"
+
+// PreparePod adds Kubernetes default scheduler-specific configuration to the Pod.
+// Pod.Spec.SchedulerName is set to "default-scheduler" (the value expected by kube-apiserver / kube-scheduler).
+func (b *Backend) PreparePod(pod *corev1.Pod) {
+	pod.Spec.SchedulerName = PodSchedulerName
+}
+
+// ValidatePodCliqueSet runs default-scheduler-specific validations on the PodCliqueSet.
+func (b *Backend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet) error {
+	return nil
 }

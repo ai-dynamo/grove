@@ -20,6 +20,7 @@ import (
 	"context"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -34,23 +35,23 @@ type Backend struct {
 	client        client.Client
 	scheme        *runtime.Scheme
 	eventRecorder record.EventRecorder
-	config        configv1alpha1.SchedulerConfiguration
+	profile       configv1alpha1.SchedulerProfile
 }
 
-// New creates a new KAI backend instance. cfg is the full scheduler configuration;
-// Backend uses cfg.Name and may use cfg.Kai for kai-scheduler-specific options.
-func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, cfg configv1alpha1.SchedulerConfiguration) *Backend {
+// New creates a new KAI backend instance. profile is the scheduler profile for kai-scheduler;
+// Backend uses profile.Name and may unmarshal profile.Config for kai-specific options.
+func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1alpha1.SchedulerProfile) *Backend {
 	return &Backend{
 		client:        cl,
 		scheme:        scheme,
 		eventRecorder: eventRecorder,
-		config:        cfg,
+		profile:       profile,
 	}
 }
 
 // Name returns the backend name
 func (b *Backend) Name() string {
-	return string(b.config.Name)
+	return string(b.profile.Name)
 }
 
 // Init initializes the KAI backend
@@ -75,7 +76,13 @@ func (b *Backend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.P
 	return nil
 }
 
-// PreparePod adds KAI scheduler-specific configuration to the Pod
-// This includes: labels, annotations, etc.
-func (b *Backend) PreparePod(_ *corev1.Pod) {
+// PreparePod adds KAI scheduler-specific configuration to the Pod.
+// Sets Pod.Spec.SchedulerName so the pod is scheduled by KAI.
+func (b *Backend) PreparePod(pod *corev1.Pod) {
+	pod.Spec.SchedulerName = b.Name()
+}
+
+// ValidatePodCliqueSet runs KAI-specific validations on the PodCliqueSet.
+func (b *Backend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet) error {
+	return nil
 }

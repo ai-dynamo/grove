@@ -17,8 +17,6 @@
 package podgang
 
 import (
-	"fmt"
-
 	grovectrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -32,7 +30,7 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&groveschedulerv1alpha1.PodGang{}).
 		WithEventFilter(podGangSpecChangePredicate()).
-		Named(fmt.Sprintf("backend-%s", r.Backend.Name())).
+		Named("podgang").
 		Complete(r)
 }
 

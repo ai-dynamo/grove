@@ -24,6 +24,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
+	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend"
 
 	"github.com/go-logr/logr"
 	admissionv1 "k8s.io/api/admission/v1"
@@ -75,6 +76,11 @@ func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admis
 	// Validate MNNVL annotation: reject if annotation="true" but feature is disabled
 	allErrs = append(allErrs, mnnvl.ValidateMetadataOnCreate(pcs, h.networkConfig.AutoMNNVLEnabled)...)
 
+	// Scheduler-backend-specific validation
+	if err := validatePodCliqueSetWithBackend(ctx, pcs); err != nil {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec"), pcs.Spec, err.Error()))
+	}
+
 	return warnings, allErrs.ToAggregate()
 }
 
@@ -96,6 +102,11 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 	// Validate MNNVL annotation immutability
 	errs = append(errs, mnnvl.ValidateMetadataOnUpdate(oldPCS, newPCS)...)
 
+	// Scheduler-backend-specific validation
+	if err := validatePodCliqueSetWithBackend(ctx, newPCS); err != nil {
+		errs = append(errs, field.Invalid(field.NewPath("spec"), newPCS.Spec, err.Error()))
+	}
+
 	if len(errs) > 0 {
 		return warnings, errs.ToAggregate()
 	}
@@ -105,6 +116,30 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 // ValidateDelete validates a PodCliqueSet delete request.
 func (h *Handler) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
 	return nil, nil
+}
+
+// validatePodCliqueSetWithBackend resolves the scheduler backend for the PCS and runs backend-specific validation.
+func validatePodCliqueSetWithBackend(ctx context.Context, pcs *v1alpha1.PodCliqueSet) error {
+	schedulerName := ""
+	for _, c := range pcs.Spec.Template.Cliques {
+		if c != nil && c.Spec.PodSpec.SchedulerName != "" {
+			schedulerName = c.Spec.PodSpec.SchedulerName
+			break
+		}
+	}
+	if schedulerName == "" {
+		if def := schedulerbackend.GetDefault(); def != nil {
+			schedulerName = def.Name()
+		}
+	}
+	if schedulerName == "" {
+		return nil
+	}
+	backend := schedulerbackend.Get(schedulerName)
+	if backend == nil {
+		return nil
+	}
+	return backend.ValidatePodCliqueSet(ctx, pcs)
 }
 
 // castToPodCliqueSet attempts to cast a runtime.Object to a PodCliqueSet.

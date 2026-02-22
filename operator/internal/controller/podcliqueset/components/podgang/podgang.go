@@ -27,6 +27,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
+	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -124,6 +125,13 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjectMeta
 // buildResource configures a PodGang with pod groups and priority.
 func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGangInfo, pg *groveschedulerv1alpha1.PodGang) error {
 	pg.Labels = getLabels(pcs.Name)
+	// Set scheduler name so the Backend controller can resolve the correct backend
+	if schedName := getSchedulerNameForPCS(pcs); schedName != "" {
+		if pg.Labels == nil {
+			pg.Labels = make(map[string]string)
+		}
+		pg.Labels[apicommon.LabelSchedulerName] = schedName
+	}
 	if r.tasConfig.Enabled {
 		if pg.Annotations == nil {
 			pg.Annotations = make(map[string]string)
@@ -218,4 +226,18 @@ func getLabels(pcsName string) map[string]string {
 		map[string]string{
 			apicommon.LabelComponentKey: apicommon.LabelComponentNamePodGang,
 		})
+}
+
+// getSchedulerNameForPCS returns the scheduler backend name for the PodCliqueSet:
+// the template's schedulerName if set (same across all cliques per validation), else the default backend.
+func getSchedulerNameForPCS(pcs *grovecorev1alpha1.PodCliqueSet) string {
+	for _, c := range pcs.Spec.Template.Cliques {
+		if c != nil && c.Spec.PodSpec.SchedulerName != "" {
+			return c.Spec.PodSpec.SchedulerName
+		}
+	}
+	if def := schedulerbackend.GetDefault(); def != nil {
+		return def.Name()
+	}
+	return ""
 }

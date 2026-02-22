@@ -18,7 +18,8 @@ package schedulerbackend
 
 import (
 	"context"
-	"fmt"
+
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -26,8 +27,8 @@ import (
 
 // SchedulerBackend defines the interface that different scheduler backends must implement.
 //
-// Architecture: Backend converts PodGang to scheduler-specific CR (PodGroup/Workload/etc)
-// and prepares Pods with scheduler-specific configurations.
+// Architecture: Backend validates PodCliqueSet at admission, converts PodGang to scheduler-specific
+// CR (PodGroup/Workload/etc), and prepares Pods with scheduler-specific configurations.
 type SchedulerBackend interface {
 	// Name is a unique name of the scheduler backend.
 	Name() string
@@ -36,30 +37,17 @@ type SchedulerBackend interface {
 	// called at the startup of grove operator.
 	Init() error
 
-	// SyncPodGang synchronizes (creates/updates) scheduler specific resources for a PodGang
+	// SyncPodGang synchronizes (creates/updates) scheduler-specific resources for a PodGang
 	// reacting to a creation or update of a PodGang resource.
 	SyncPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error
 
-	// OnPodGangDelete cleans up scheduler specific resources for the given PodGang.
+	// OnPodGangDelete cleans up scheduler-specific resources for the given PodGang.
 	OnPodGangDelete(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error
 
-	// PreparePod adds scheduler backend specific configuration to the given Pod object
-	// prior to its creation. This includes setting schedulerName, scheduling gates,
-	// annotations, etc.
+	// PreparePod adds scheduler-backend-specific configuration to the given Pod object
+	// prior to its creation (schedulerName, annotations, etc.).
 	PreparePod(pod *corev1.Pod)
-}
 
-// PreparePod adds scheduler backend specific configuration to the given Pod object
-// prior to its creation. This includes setting schedulerName, scheduling gates,
-// annotations, etc.
-func PreparePod(pod *corev1.Pod) error {
-	// Get backend instance
-	backend := Get()
-	if backend == nil {
-		return fmt.Errorf("backend not initialized")
-	}
-
-	// Let the backend prepare the pod
-	backend.PreparePod(pod)
-	return nil
+	// ValidatePodCliqueSet runs scheduler-specific validations on the PodCliqueSet (e.g. TAS required but not supported).
+	ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) error
 }

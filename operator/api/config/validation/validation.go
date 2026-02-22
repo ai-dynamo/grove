@@ -55,11 +55,27 @@ func validateLogConfiguration(config *configv1alpha1.OperatorConfiguration) fiel
 
 func validateSchedulerConfiguration(scheduler *configv1alpha1.SchedulerConfiguration, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-	namePath := fldPath.Child("name")
-	if len(strings.TrimSpace(string(scheduler.Name))) == 0 {
-		allErrs = append(allErrs, field.Required(namePath, "scheduler.name is required"))
-	} else if !slices.Contains(configv1alpha1.SupportedSchedulerNames, scheduler.Name) {
-		allErrs = append(allErrs, field.NotSupported(namePath, scheduler.Name, configv1alpha1.SupportedSchedulerNames))
+	profilesPath := fldPath.Child("profiles")
+	defaultCount := 0
+	seenNames := make(map[configv1alpha1.SchedulerName]struct{})
+	for i, p := range scheduler.Profiles {
+		idxPath := profilesPath.Index(i)
+		if len(strings.TrimSpace(string(p.Name))) == 0 {
+			allErrs = append(allErrs, field.Required(idxPath.Child("name"), "scheduler profile name is required"))
+		} else if !slices.Contains(configv1alpha1.SupportedSchedulerNames, p.Name) {
+			allErrs = append(allErrs, field.NotSupported(idxPath.Child("name"), p.Name, configv1alpha1.SupportedSchedulerNames))
+		} else {
+			if _, exists := seenNames[p.Name]; exists {
+				allErrs = append(allErrs, field.Duplicate(idxPath.Child("name"), p.Name))
+			}
+			seenNames[p.Name] = struct{}{}
+		}
+		if p.Default {
+			defaultCount++
+		}
+	}
+	if defaultCount > 1 {
+		allErrs = append(allErrs, field.Invalid(profilesPath, defaultCount, "at most one scheduler profile may have default: true"))
 	}
 	return allErrs
 }
