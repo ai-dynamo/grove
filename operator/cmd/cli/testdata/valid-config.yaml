@@ -29,6 +29,10 @@ controllers:
     concurrentSyncs: 3
   podCliqueScalingGroup:
     concurrentSyncs: 2
+scheduler:
+  profiles:
+    - name: kai-scheduler
+      default: true
 logLevel: info
 logFormat: json
 authorizer:

@@ -65,6 +65,10 @@ profiles:
         value:
           replicaCount: 1
           config:
+            scheduler:
+              profiles:
+                - name: kai-scheduler
+                  default: true
             leaderElection:
               enabled: false
             topologyAwareScheduling:
