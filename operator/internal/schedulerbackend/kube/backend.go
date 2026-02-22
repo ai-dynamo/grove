@@ -29,6 +29,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// PodSchedulerName is the value set on Pod.Spec.SchedulerName for the Kubernetes default scheduler.
+const PodSchedulerName = "default-scheduler"
+
 // Backend implements the SchedulerBackend interface for Kubernetes default scheduler
 // This backend does minimal work - just sets the scheduler name on pods
 type Backend struct {
@@ -73,9 +76,6 @@ func (b *Backend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.P
 	// No-op: default kube scheduler doesn't have any resources to clean up
 	return nil
 }
-
-// PodSchedulerName is the value set on Pod.Spec.SchedulerName for the Kubernetes default scheduler.
-const PodSchedulerName = "default-scheduler"
 
 // PreparePod adds Kubernetes default scheduler-specific configuration to the Pod.
 // Pod.Spec.SchedulerName is set to "default-scheduler" (the value expected by kube-apiserver / kube-scheduler).

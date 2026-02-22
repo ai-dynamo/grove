@@ -88,7 +88,7 @@ func main() {
 		handleErrorAndExit(err, cli.ExitErrInitializeManager)
 	}
 
-	// Initialize scheduler backend with the configured scheduler.
+	// Initialize scheduler backends with the configured schedulers.
 	if err := schedulerbackend.Initialize(
 		mgr.GetClient(),
 		mgr.GetScheme(),
