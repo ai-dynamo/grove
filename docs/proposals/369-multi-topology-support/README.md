@@ -41,18 +41,19 @@ tags, and then generate by invoking the make target `update-toc`.
 
 ## Summary
 
-Heterogeneous clusters may contain hardware with different topology characteristics, such as multiple GPU architectures or nodes spanning multiple cloud providers. This GREP proposes extending the Grove topology API to support multiple named topologies, allowing workloads to specify which topology applies to them.
+In clusters with heterogeneous hardware, a single topology definition cannot accurately represent different interconnect hierarchies. This GREP proposes extending the Grove topology API to support multiple named ClusterTopology resources, enabling administrators to partition the cluster into segments with distinct topology hierarchies. Each ClusterTopology defines its own set of node label keys, so nodes matching one topology's labels are naturally separated from nodes matching another. Workloads select the appropriate partition via a `clusterTopologyName` field on PodCliqueSet.
 
 ## Motivation
 
 Grove's topology API currently supports a single cluster-wide topology defined in the OperatorConfiguration. This works well for homogeneous clusters but becomes limiting when infrastructure diversity increases.
 
-AI clusters often contain heterogeneous hardware with different interconnect characteristics, or span multiple cloud environments. Each hardware type or environment may require a distinct topology definition for optimal scheduling.
+AI clusters often contain heterogeneous hardware with different interconnect characteristics. Each hardware type may require a distinct topology definition for optimal scheduling. For example, a cluster with both DGX H100 nodes (3-level: zone > rack > host) and GB200 NVL72 racks (4-level: zone > block > rack > host) cannot be accurately represented by a single topology definition. The same domain name "rack" maps to different node label keys depending on the hardware.
 
-Enabling multiple topologies allows:
+Supporting multiple ClusterTopology resources allows administrators to effectively split the cluster along hardware boundaries, where each topology definition captures the interconnect hierarchy of a specific hardware segment. This enables:
 
-- **Accurate Infrastructure Modeling**: Administrators can define topologies matching their actual hardware rather than using a single approximation.
-- **Workload Portability**: Users can target specific topologies without embedding infrastructure details into workload specifications.
+- **Cluster Partitioning by Hardware**: Each ClusterTopology defines its own node label keys, naturally partitioning the cluster into segments. Workloads targeting a specific topology are scheduled only on nodes that match that topology's labels.
+- **Accurate Infrastructure Modeling**: Administrators can define topologies matching their actual hardware rather than forcing a single approximation across different interconnect hierarchies.
+- **Workload Portability**: Users specify topology domains (e.g., "rack", "block") without embedding infrastructure-specific label keys into their workload definitions.
 
 ### Goals
 
@@ -87,14 +88,14 @@ The approach has four parts:
 
 #### Story 1: Heterogeneous GPU Clusters
 
-As a cluster administrator managing a cluster with different GPU architectures, I want to define separate topologies for each architecture so that workloads are scheduled with topology awareness appropriate to the hardware they're running on.
+As a cluster administrator managing a cluster with different GPU architectures, I want to define separate topologies for each architecture to partition the cluster into hardware-specific segments. Each topology captures the interconnect hierarchy of its hardware, and workloads targeting a specific topology are scheduled only on nodes whose labels match that topology's definitions.
 
 **Example:** A cluster contains both DGX H100 nodes and GB200 NVL72 racks. These architectures have different topology depths and interconnect characteristics:
 
 - **DGX H100**: 8 GPUs per node connected via NVLink 4.0 at 900 GB/s per GPU. Cross-node communication falls back to InfiniBand, which is significantly slower. The topology has three levels: zone → rack → host, and packing workloads at the host level keeps them within the high-bandwidth NVLink domain.
 - **GB200 NVL72**: 72 GPUs connected via rack-level NVSwitch using NVLink 5.0 at 1.8 TB/s per GPU. All GPUs in the rack communicate at NVLink speed — there is no slower intra-rack tier. The topology has four levels: zone → block → rack → host, where block groups racks sharing a spine switch for cross-rack MNNVL traffic.
 
-A single ClusterTopology defines one hierarchy for all nodes. Using the 4-level GB200 hierarchy would require adding synthetic "block" labels to all H100 nodes. With separate ClusterTopology resources, each architecture uses its natural hierarchy, and workloads select the appropriate one via `clusterTopologyName`.
+A single ClusterTopology defines one hierarchy for all nodes. Using the 4-level GB200 hierarchy would require adding synthetic "block" labels to all H100 nodes. With separate ClusterTopology resources, administrators effectively split the cluster along hardware boundaries — each topology uses its natural hierarchy with its own node label keys, and workloads select the appropriate partition via `clusterTopologyName`.
 
 #### Story 2: Topology Retry Before Scheduling
 
