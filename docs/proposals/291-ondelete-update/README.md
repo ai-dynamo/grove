@@ -6,9 +6,10 @@
   - [Goals](#goals)
   - [Non-Goals](#non-goals)
 - [Proposal](#proposal)
+  - [<code>RollingRecreate</code>](#rollingrecreate)
+  - [<code>OnDelete</code>](#ondelete)
   - [User Stories](#user-stories)
-    - [Story 1: Training Workload Node Failure Recovery](#story-1-training-workload-node-failure-recovery)
-    - [Story 2: Non-Disruptive Affinity Updates](#story-2-non-disruptive-affinity-updates)
+    - [Story 1: Sophisticated application updates](#story-1-sophisticated-application-updates)
   - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
 - [Design Details](#design-details)
   - [API Changes](#api-changes)
@@ -26,74 +27,91 @@
     - [Phase 1: Standalone PodCliques, and PodCliqueScalingGroups implementation](#phase-1-standalone-podcliques-and-podcliquescalinggroups-implementation)
     - [Phase 2: Comprehensive tests](#phase-2-comprehensive-tests)
   - [Test Plan](#test-plan)
-  - [Graduation Criteria](#graduation-criteria)
 - [Alternatives](#alternatives)
 <!-- /toc -->
 
 ## Summary
 
-This GREP proposes adding an `updateStrategy` field to the `PodCliqueSet` spec, similar to the Kubernetes `StatefulSet` update strategy. The primary goal is to introduce an `OnDelete` update strategy that allows users to update PodClique and PodCliqueScalingGroup specifications (such as `nodeAffinity` rules) without automatically triggering replica deletions/restarts. This enables non-disruptive updates where only manually deleted replicas are recreated with the new specification.
+This GREP introduces a new `OnDelete` update strategy for `PodCliqueSet` that allows users to update `PodClique` specifications (`podSpec` fields such as `image`) without automatically triggering pod deletions/restarts. With `OnDelete` strategy, only pods that are manually deleted are recreated with the new specification, enabling non-disruptive updates.
 
-The update strategy is defined at the PodCliqueSet level and applies uniformly to both standalone PodCliques and PodCliqueScalingGroups. In the future, update strategy could be defined at each hierarchy level to specify different behavior for different PodCliques/PodCliqueScalingGroups, following the convention used for [topology configuration](/docs/proposals/244-topology-aware-scheduling/README.md) in PodCliqueSet.
-
-Implementation will be split into phases, with Phase 1 covering standalone PodCliques and Phase 2 extending support to PodCliqueScalingGroups.
+Currently, Grove implements a `RollingRecreate` strategy that automatically deletes and recreates replicas one at a time (PodCliqueScalingGroup replica for PodCliqueScalingGroups, and Pod for PodCliques) when templates are updated. To support the new `OnDelete` strategy alongside the existing `RollingRecreate` behavior, this GREP introduces a new `updateStrategy` field to the `PodCliqueSet` spec, enabling users to explicitly choose their preferred update strategy by specifying `.spec.updateStrategy.type`.
 
 ## Motivation
 
-Training workloads and long-running inference workloads may encounter machine failures during execution. The typical mitigation strategy involves:
+Grove currently only supports updates through its default `RollingRecreate` strategy, and the orchestration of updates is fully handled by grove. However, there could be certain sophisticated use cases where users might want to orchestrate the updates themselves, instead of relying on grove.
 
-1. **Automated/Manual Action**: Adjust workload affinity to prevent scheduling new pods on failed nodes.
-2. **Pod Recovery**: Recreate only the affected pods with strict `nodeAffinity` rules against faulty nodes.
-3. **Preservation**: Unaffected pods continue running to minimize disruption.
+Currently, when a user updates a standalone PodClique's `podTemplate`, grove triggers a rolling recreate that deletes and recreates **all** pods of that standalone PodClique one at a time, *including unaffected ones*. This behavior is disruptive and wasteful for workloads that only need to recreate and reschedule a subset of pods. Similar behavior is observed in PodCliqueScalingGroups where a rolling recreate deletes and recreates **all** replicas of that PodCliqueScalingGroup one at a time.
 
-Currently, when a user updates a standalone PodClique's `podTemplate` (e.g., changing `nodeAffinity` rules), Grove triggers a rolling recreate that deletes and recreates **all** pods one at a time, including unaffected ones. This behavior is disruptive and wasteful for workloads that only need to recreate and reschedule a subset of pods. Similar behavior is displayed in PodCliqueScalingGroups where a rolling recreate deletes and recreates **all** replicas one at a time.
-
-By introducing an `OnDelete` update strategy (inspired by Kubernetes StatefulSet), users gain fine-grained control over when replicas are updated. The new specification is applied only when a replica is manually deleted, allowing unaffected replicas to continue running undisturbed.
+To solve the current limitation stated above, we propose to introduce a new update strategy `OnDelete` (inspired by Kubernetes StatefulSet), users gain fine-grained control over when pods are updated. The new specification is applied only when a pod is manually deleted, allowing unaffected pods to continue running undisturbed.
 
 ### Goals
 
-- Introduce a new `spec.updateStrategy.type` field to `PodCliqueSet` that allows users to choose between `RollingRecreate` (default) and `OnDelete` update strategies.
+- Introduce a new `spec.updateStrategy` field to `PodCliqueSet` that allows users to choose between `RollingRecreate` (default) and `OnDelete` update strategy types.
 - The update strategy applies uniformly to both standalone PodCliques and PodCliqueScalingGroups within a PodCliqueSet.
 - When `OnDelete` strategy is configured:
-  - Changes to the template do not automatically trigger replica deletions.
-  - New replicas (created due to scale-out or manual deletion) use the updated template.
-  - Replica deletions prefer replicas with the older template.
-  - Existing replicas continue running with their original specification until manually deleted.
+  - Changes to the template do not automatically trigger pod deletions.
+  - Existing pods continue running with their original specification until manually deleted.
+  - New pods (created due to scale-out or manual deletion) use the updated template.
+  - Pod deletions prefer pods with the older template.
 - Maintain backward compatibility by defaulting to the current `RollingRecreate` behavior.
 
 ### Non-Goals
 
-- Implementing partition-based rolling updates (as in StatefulSet's `RollingUpdate` with `partition` field).
-- Providing a `maxUnavailable` or `maxSurge` configuration for rolling updates (can be addressed in a future GREP).
-- Automatic detection of failed nodes and selective pod recreation. This should be the responsibility of the scheduler.
-- Defining update strategy at each hierarchy level (PodCliqueSet, PodCliqueScalingGroup, PodClique) individually (following the design used for topology configuration in a PodCliqueSet). This can be addressed in a future GREP to allow different strategies for different components.
+- Defining update strategy at each hierarchy level (PodCliqueSet, PodCliqueScalingGroup, PodClique) individually (following the design used for [topology configuration](/docs/proposals/244-topology-aware-scheduling/README.md) in a PodCliqueSet). This can be addressed in a future GREP to allow different strategies for different components.
 
 ## Proposal
 
-Introduce a new `spec.updateStrategy` field in the `PodCliqueSet` specification. The `UpdateStrategy` field describes how replicas should be updated when templates change.
+Introduce a new update strategy in grove called `OnDelete` that enables users to orchestrate updates themselves, configurable through the `.spec.updateStrategy` field of the PodCliqueSet.
 
 Two update strategy types will be supported:
 
-1. **RollingRecreate** (default): A strategy where a replica is deleted first, and then recreated with the new template. This applies to both pods (for standalone PodCliques) and replicas of PodCliqueScalingGroups.
-2. **OnDelete**: Replicas are not automatically deleted when the template changes. The new specification is applied only when a replica is manually deleted and recreated by the controller.
+### `RollingRecreate`
 
-As mentioned previously, support to override the update strategy at PodClique and PodCliqueScalingGroup hierarchies can be brought about in the future if needed.
+Pods are automatically updated when the template changes. In this strategy, pods of a PodClique are deleted first, and then created with the new template. The operator achieves this by:
+- Either deleting the Pods of a standalone PodClique (created with the new template by the PodClique controller)
+- Or deleting the PodCliques that belong to a specific replica of the PodCliqueScalingGroup (created with the new template by the PodCliqueSet or PodCliqueScalingGroup controller)
+
+This strategy is already supported and is the default strategy, and can be explicitly set by specifying `.spec.updateStrategy.type: RollingRecreate` on a PodCliqueSet.
+
+### `OnDelete`
+
+Pods are not automatically updated when the template changes. The new specification is applied only when pods are manually deleted by the user, and subsequently created by the controller.
+
+The `OnDelete` update strategy provides manual control over when parts of a PodCliqueSet adopt the latest template changes. With this strategy:  
+
+**Template Changes Do Not Trigger Automatic Updates:**  
+- When the pod template is modified in `spec.cliques[*].spec`, the controller **will not** automatically recreate any existing pods.
+- The updates to Pod templates in a PodCliqueSet are stored and become the "desired" specification, but existing pods continue running with their current (potentially outdated) specification.
+
+**Manual Deletion Triggers Updates:**  
+- Pods are only updated when they are *manually deleted* by a user or external process (e.g., through `kubectl delete pod`, node eviction, or manual replica deletion).  
+- When a pod (or a PodClique) is deleted (for any reason), the controller creates a replacement using the **current (updated) template** from the PodCliqueSet specification.
+
+**Scale-Out uses updated template:**
+- Any new pods created due to scale-out operations will always use the current (updated) template specification.
+- This ensures that scaling operations benefit from the latest configuration even if existing replicas have not been updated.
+
+**Preferential Deletion During Scale-In:**
+- *For Standalone PodCliques*: When scaling down (`spec.cliques[*].spec.replicas` is reduced), the controller preferentially selects pods running with outdated templates for deletion. This helps accelerate convergence to the desired specification during normal scaling operations.
+- *For PodCliqueScalingGroups*: Scale-in continues to delete replicas with the highest indices to prevent gaps in the replica set, regardless of template version.
+
+**Visibility and Tracking:**
+
+To track the status of the update, users can check the `.status.updatedReplicas` fields of the PodCliqueSet, PodCliqueScalingGroup, and PodClique resources to check the number of replicas (in the case of PodCliqueSet and PodCliqueScalingGroup) or Pods (in the case of PodCliques) that match the template specified in the PodCliqueSet.
+
+This strategy can be set by specifying `.spec.updateStrategy.type: OnDelete` on a PodCliqueSet.
+> **Note:** The user must ensure that the `OnDelete` update strategy is compatible with their applications (which might have multiple PodCliques running in HA), and that such updates do not cause the application to behave unexpectedly due to incompatibility between different versions of components running simultaneously.
 
 ### User Stories
 
-#### Story 1: Training Workload Node Failure Recovery
+#### Story 1: Sophisticated application updates
 
-As an AI engineer running a distributed training job across multiple nodes, when one node fails, and I need to update the `nodeAffinity` to exclude the failed node, I want only the affected pods (those on the failed node) to be rescheduled, while all other pods continue their training computation without interruption.
+Consumers of grove with fairly complicated setups and requirements might want to orchestrate the updates themselves. The `RollingRecreate` behavior might not fit into how their application needs to be updated. In such cases:
 
 With `OnDelete` strategy:
-1. I update the PodCliqueSet with new `nodeAffinity` rules excluding the failed node.
-2. The pods on healthy nodes continue running.
-3. I manually delete the pods that were on the failed node (or they are automatically evicted by kubelet, or another actor in the system).
-4. New pods are created with the updated `nodeAffinity` and scheduled on healthy nodes.
-
-#### Story 2: Non-Disruptive Affinity Updates
-
-As an operator, I want to update scheduling preferences (affinity, tolerations) for a running inference workload without causing service disruption. This could be for node maintenance, OS upgrade, Kubernetes version upgrade, etc. The `OnDelete` strategy allows me to update the specification and gradually roll out changes by selectively deleting pods during maintenance windows.
+1. The consumer updates the PodCliqueSet with the new specifications for their PodCliques in the PodCliqueSet.
+2. They manually delete the pods that need to be recreated with the new specifications according to their requirements on when/which/how many pods are to be updated.
+3. New pods are created with the updated specifications, as and when the user wants updated pods to be created.
 
 ### Limitations/Risks & Mitigations
 
@@ -106,7 +124,19 @@ With `OnDelete` strategy, replicas within the same PodCliqueSet may run with dif
 - The PodCliqueScalingGroup's `status.updatedReplicas` field will accurately reflect how many replicas are running with the current (desired) specification.
 - Clear documentation will explain the behavior and best practices for using `OnDelete` strategy.
 
-**Risk 2: User Confusion**
+**Risk 2: Lost control over updates**
+
+Pod deletions due to preemption, eviction due to Node failure or any other reason can cause loss of control over orchestrating updates.
+
+There is no mitigation for such events, the user has to be aware of the state of progress of updates in their cluster.
+
+**Risk 3: Version incompatibility**
+
+Components which are typically run in HA might not be compatible with older versions which make up the remaining pods of the PodClique, and also might not be compatible with older versions of other components in the system.
+
+There is no clear mitigation for this as this incompatibility stems from the application layer. Users have to thoroughly evaluate the `OnDelete` strategy before using it, and ensure that their application can handle such updates.
+
+**Risk 4: User Confusion**
 
 Users may not understand why their spec changes are not being applied automatically.
 
@@ -125,15 +155,17 @@ Users may not understand why their spec changes are not being applied automatica
 type UpdateStrategyType string
 
 const (
-    // RollingRecreateStrategyType indicates that replicas will be progressively
-    // deleted and recreated one at a time, when templates change. This applies to
-    // both pods (for standalone PodCliques) and replicas of PodCliqueScalingGroups.
+    // RollingRecreateStrategyType indicates that pods and/or PodCliques will be progressively
+    // deleted and created one at a time, when the template changes.
+    // For standalone PodCliques, pods are deleted and created one at a time. 
+    // For PodCliques belonging to PodCliqueScalingGroups, replicas of the
+    // PodCliqueScalingGroup (i.e. a set of PodCliques) are deleted and created one at a time.
     // This is the default update strategy.
     RollingRecreateStrategyType UpdateStrategyType = "RollingRecreate"
     
-    // OnDeleteStrategyType indicates that replicas will only be updated when
+    // OnDeleteStrategyType indicates that pods will only be updated when
     // they are manually deleted. Changes to templates do not automatically
-    // trigger replica deletions.
+    // trigger pod deletions.
     OnDeleteStrategyType UpdateStrategyType = "OnDelete"
 )
 ```
@@ -160,8 +192,8 @@ type PodCliqueSetSpec struct {
     Replicas int32 `json:"replicas,omitempty"`
     
     // UpdateStrategy defines the strategy for updating replicas when 
-    // templates change. This applies to both standalone PodCliques and
-    // PodCliqueScalingGroups.
+    // templates change. This applies to both standalone PodCliques (pods are recreated) and
+    // PodCliqueScalingGroups (PodCliqueScalingGroup replicas are recreated).
     // +optional
     UpdateStrategy *PodCliqueSetUpdateStrategy `json:"updateStrategy,omitempty"`
     
@@ -178,8 +210,9 @@ A new field `PodCliqueSetUpdateProgress` (`status.updateProgress`) will be intro
 ```go
 // PodCliqueSetSpec defines the specification of a PodCliqueSet.
 type PodCliqueSetStatus struct {
+...
     // PodGangStatuses captures the status for all the PodGang's that are part of the PodCliqueSet.
-    PodGangStatutes []PodGangStatus `json:"podGangStatuses,omitempty"`
+    PodGangStatuses []PodGangStatus `json:"podGangStatuses,omitempty"`
     // CurrentGenerationHash is a hash value generated out of a collection of fields in a PodCliqueSet.
     // Since only a subset of fields is taken into account when generating the hash, not every change in the PodCliqueSetSpec will
     // be accounted for when generating this hash value. A field in PodCliqueSetSpec is included if a change to it triggers
@@ -187,12 +220,35 @@ type PodCliqueSetStatus struct {
     // Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value
     // then an update needs to be triggerred.
     CurrentGenerationHash *string `json:"currentGenerationHash,omitempty"`
-    // UpdateProgress represents the progress of an update.
-    // This field supersedes RollingUpdateProgress and supports all update strategies.
-    UpdateProgress *PodCliqueSetUpdateProgress `json:"updateProgress,omitempty"`
-    // RollingUpdateProgress represents the progress of a rolling update.
-    // Deprecated: Use UpdateProgress instead. This field will be removed in a future release.
-    RollingUpdateProgress *PodCliqueSetRollingUpdateProgress `json:"rollingUpdateProgress,omitempty"`
+  	// RollingUpdateProgress represents the progress of a rolling update.
+  	// Deprecated: Use UpdateProgress instead. This field is maintained for backward compatibility and will be removed in a future release.
+  	RollingUpdateProgress *PodCliqueSetRollingUpdateProgress `json:"rollingUpdateProgress,omitempty"`
+  	// UpdateProgress represents the progress of an update.
+  	UpdateProgress *PodCliqueSetUpdateProgress `json:"updateProgress,omitempty"`
+}
+
+// PodCliqueSetUpdateProgress captures the progress of an update of the PodCliqueSet.
+type PodCliqueSetUpdateProgress struct {
+    // UpdateStartedAt is the time at which the update started for the PodCliqueSet.
+	  UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
+	  // UpdateEndedAt is the time at which the update ended for the PodCliqueSet.
+	  // +optional
+	  UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
+	  // UpdatedPodCliqueScalingGroups is a list of PodCliqueScalingGroup names that have been updated to the desired PodCliqueSet generation hash.
+	  UpdatedPodCliqueScalingGroups []string `json:"updatedPodCliqueScalingGroups,omitempty"`
+	  // UpdatedPodCliques is a list of PodClique names that have been updated to the desired PodCliqueSet generation hash.
+	  UpdatedPodCliques []string `json:"updatedPodCliques,omitempty"`
+	  // CurrentlyUpdating captures the progress of the PodCliqueSet replica that is currently being updated.
+	  // +optional
+	  CurrentlyUpdating *PodCliqueSetReplicaUpdateProgress `json:"currentlyUpdating,omitempty"`
+}
+
+// PodCliqueSetReplicaUpdateProgress captures the progress of an update for a specific PodCliqueSet replica.
+type PodCliqueSetReplicaUpdateProgress struct {
+	  // ReplicaIndex is the replica index of the PodCliqueSet that is being updated.
+	  ReplicaIndex int32 `json:"replicaIndex"`
+	  // UpdateStartedAt is the time at which the update started for this PodCliqueSet replica index.
+	  UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
 }
 ```
 
@@ -204,18 +260,36 @@ A new field `PodCliqueUpdateProgress` (`status.updateProgress`) will be introduc
 // PodCliqueStatus defines the status of a PodClique.
 type PodCliqueStatus struct {
 ...
-		// CurrentPodCliqueSetGenerationHash establishes a correlation to PodCliqueSet generation hash indicating
+  	// CurrentPodCliqueSetGenerationHash establishes a correlation to PodCliqueSet generation hash indicating
   	// that the spec of the PodCliqueSet at this generation is fully realized in the PodClique.
   	CurrentPodCliqueSetGenerationHash *string `json:"currentPodCliqueSetGenerationHash,omitempty"`
   	// CurrentPodTemplateHash establishes a correlation to PodClique template hash indicating
   	// that the spec of the PodClique at this template hash is fully realized in the PodClique.
   	CurrentPodTemplateHash *string `json:"currentPodTemplateHash,omitempty"`
-  	// UpdateProgress provides details about the ongoing update of the PodClique.
-  	// This field supersedes RollingUpdateProgress and supports all update strategies.
-  	UpdateProgress *PodCliqueUpdateProgress `json:"updateProgress,omitempty"`
   	// RollingUpdateProgress provides details about the ongoing rolling update of the PodClique.
-  	// Deprecated: Use UpdateProgress instead. This field will be removed in a future release.
+  	// Deprecated: Use UpdateProgress instead. This field is maintained for backward compatibility and will be removed in a future release.
   	RollingUpdateProgress *PodCliqueRollingUpdateProgress `json:"rollingUpdateProgress,omitempty"`
+  	// UpdateProgress provides details about the ongoing update of the PodClique.
+  	UpdateProgress *PodCliqueUpdateProgress `json:"updateProgress,omitempty"`
+}
+
+// PodCliqueUpdateProgress provides details about the ongoing update of the PodClique.
+type PodCliqueUpdateProgress struct {
+  	// UpdateStartedAt is the time at which the update started.
+  	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
+  	// UpdateEndedAt is the time at which the update ended.
+  	// It will be set to nil if the update is still in progress.
+  	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
+  	// PodCliqueSetGenerationHash is the PodCliqueSet generation hash corresponding to the PodCliqueSet spec that is being rolled out.
+  	// While the update is in progress PodCliqueStatus.CurrentPodCliqueSetGenerationHash will not match this hash. Once the update is complete the
+  	// value of this field will be copied to PodCliqueStatus.CurrentPodCliqueSetGenerationHash.
+  	PodCliqueSetGenerationHash string `json:"podCliqueSetGenerationHash"`
+  	// PodTemplateHash is the PodClique template hash corresponding to the PodClique spec that is being rolled out.
+  	// While the update is in progress PodCliqueStatus.CurrentPodTemplateHash will not match this hash. Once the update is complete the
+  	// value of this field will be copied to PodCliqueStatus.CurrentPodTemplateHash.
+  	PodTemplateHash string `json:"podTemplateHash"`
+  	// ReadyPodsSelectedToUpdate captures the pod names of ready Pods that are either currently being updated or have been previously updated.
+  	ReadyPodsSelectedToUpdate *PodsSelectedToUpdate `json:"readyPodsSelectedToUpdate,omitempty"`
 }
 ```
 
@@ -227,22 +301,36 @@ A new field `PodCliqueScalingGroupUpdateProgress` (`status.updateProgress`) will
 // PodCliqueScalingGroupStatus defines the status of a PodCliqueScalingGroup.
 type PodCliqueScalingGroupStatus struct {
 ...
-  	// Conditions represents the latest available observations of the PodCliqueScalingGroup by its controller.
-  	Conditions []metav1.Condition `json:"conditions,omitempty"`
-  	// CurrentPodCliqueSetGenerationHash establishes a correlation to PodCliqueSet generation hash indicating
-  	// that the spec of the PodCliqueSet at this generation is fully realized in the PodCliqueScalingGroup.
-  	CurrentPodCliqueSetGenerationHash *string `json:"currentPodCliqueSetGenerationHash,omitempty"`
-  	// UpdateProgress provides details about the ongoing update of the PodCliqueScalingGroup.
-  	// This field supersedes RollingUpdateProgress and supports all update strategies.
-  	UpdateProgress *PodCliqueScalingGroupUpdateProgress `json:"updateProgress,omitempty"`
-  	// RollingUpdateProgress provides details about the ongoing rolling update of the PodCliqueScalingGroup.
-  	// Deprecated: Use UpdateProgress instead. This field will be removed in a future release.
-  	RollingUpdateProgress *PodCliqueScalingGroupRollingUpdateProgress `json:"rollingUpdateProgress,omitempty"`
-...
+	// Conditions represents the latest available observations of the PodCliqueScalingGroup by its controller.
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	// CurrentPodCliqueSetGenerationHash establishes a correlation to PodCliqueSet generation hash indicating
+	// that the spec of the PodCliqueSet at this generation is fully realized in the PodCliqueScalingGroup.
+	CurrentPodCliqueSetGenerationHash *string `json:"currentPodCliqueSetGenerationHash,omitempty"`
+	// RollingUpdateProgress provides details about the ongoing update of the PodCliqueScalingGroup.
+	// Deprecated: Use UpdateProgress instead. This field is maintained for backward compatibility and will be removed in a future release.
+	RollingUpdateProgress *PodCliqueScalingGroupRollingUpdateProgress `json:"rollingUpdateProgress,omitempty"`
+	// UpdateProgress provides details about the ongoing update of the PodCliqueScalingGroup.
+	UpdateProgress *PodCliqueScalingGroupUpdateProgress `json:"updateProgress,omitempty"`
+}
+
+// PodCliqueScalingGroupUpdateProgress provides details about the ongoing update of the PodCliqueScalingGroup.
+type PodCliqueScalingGroupUpdateProgress struct {
+	// UpdateStartedAt is the time at which the update started.
+	UpdateStartedAt metav1.Time `json:"updateStartedAt"`
+	// UpdateEndedAt is the time at which the update ended.
+	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
+	// PodCliqueSetGenerationHash is the PodCliqueSet generation hash corresponding to the PodCliqueSet spec that is being rolled out.
+	// While the update is in progress PodCliqueScalingGroupStatus.CurrentPodCliqueSetGenerationHash will not match this hash. Once the update is complete the
+	// value of this field will be copied to PodCliqueScalingGroupStatus.CurrentPodCliqueSetGenerationHash.
+	PodCliqueSetGenerationHash string `json:"podCliqueSetGenerationHash"`
+	// UpdatedPodCliques is the list of PodClique names that have been updated to the latest PodCliqueSet spec.
+	UpdatedPodCliques []string `json:"updatedPodCliques,omitempty"`
+	// ReadyReplicaIndicesSelectedToUpdate provides the update progress of ready replicas of PodCliqueScalingGroup that have been selected for update.
+	// PodCliqueScalingGroup replicas that are either pending or unhealthy will be force updated and the update will not wait for these replicas to become ready.
+	// For all ready replicas, one replica is chosen at a time to update, once it is updated and becomes ready, the next ready replica is chosen for update.
+	ReadyReplicaIndicesSelectedToUpdate *PodCliqueScalingGroupReplicaUpdateProgress `json:"readyReplicaIndicesSelectedToUpdate,omitempty"`
 }
 ```
-
-> **Note:** In the future, update strategy could be defined at each hierarchy level to specify different behavior for different PodCliques/PodCliqueScalingGroups, following the convention used for topology configuration in PodCliqueSet. This would involve adding optional `UpdateStrategy` fields to `PodCliqueTemplateSpec` and `PodCliqueScalingGroupConfig` that override the PodCliqueSet-level strategy.
 
 ### Behavior Details
 
@@ -267,36 +355,29 @@ When `updateStrategy.type` is set to `RollingRecreate` (or when `updateStrategy`
 
 When `updateStrategy.type` is set to `OnDelete`:
 
-**For Standalone PodCliques:**
-1. Changes to a PodCliqueSet's `spec.cliques[*]` are recorded but do not trigger automatic pod deletions.
-2. The PodCliqueSet's `status.currentGenerationHash` is updated to reflect the new desired state.
-3. The PodClique's `spec` is patched with the changes brought in the template at `spec.cliques[*].spec` of the PodCliqueSet.
-4. Existing pods continue running with their original specification.
-5. When a pod needs to be deleted (e.g., during scale-in), pods with the older template are preferred for deletion.
-6. When a pod is deleted (manually, during scale-in, or due to node failure/eviction):
+**For all PodCliques:**
+1. Changes to a PodCliqueSet's `spec.cliques[*]` are stored in its template but do not trigger automatic pod deletions.
+2. The PodClique's `spec` (both standalone and PodCliqueScalingGroup PodClique) is patched with the changes brought in the template at `spec.cliques[*].spec` of the PodCliqueSet.
+3. Existing pods continue running with their original specification.
+4. When a pod needs to be deleted (e.g., during scale-in of a standalone PodClique), pods with the older template are preferred for deletion.
+5. When a pod is deleted (manually, or due to node failure/eviction):
    - The controller creates a replacement pod using the current (updated) template.
    - The new pod reflects any specification changes made since the original pod was created.
-7. The PodClique's `status.updateProgress.podTemplateHash` can be compared with individual pod labels to identify which pods are running outdated specifications.
-8. PodClique's `status.updatedReplicas` reflects the count of pods running with the current template.
+6. The PodClique's `status.updateProgress.podTemplateHash` can be compared with individual pod labels to identify which pods are running outdated specifications.
+7. PodClique's `status.updatedReplicas` reflects the count of pods running with the current template.
+8. `readyPodsSelectedToUpdate` is not set since the operator does not choose which replica is to be updated.
+9. `readyReplicaIndicesSelectedToUpdate` of PodCliqueScalingGroups is not set since all replicas of the PodCliqueScalingGroup are updated at once.
 
-**For PodCliqueScalingGroups:**
-1. Changes to a PodCliqueSet's `spec.cliques[*]` that belong to a PodCliqueScalingGroup are recorded but do not trigger automatic replica deletions.
-2. The PodCliqueSet's `status.currentGenerationHash` is updated to reflect the new desired state.
-3. Existing replicas continue running with their original specification.
-4. When a replica is deleted (manually or during scale-in):
-   - The controller creates a replacement replica using the current (updated) template.
-5. PodCliqueScalingGroup's `status.updatedReplicas` reflects the count of replicas running with the current template.
-
-**For both resources**:
-1. The PodClique's `status.updateProgress.updateStartedAt` and `status.updateProgress.updateEndedAt` are both set simultaneously when the `OnDelete` update is initiated. The following are the reasons:
-  - From an `OnDelete` update perspective, the update ends as soon as the specification of the resource is synced with the template specified in the PodCliqueSet.Thus, the timestamp is set as the same for both.
-  - Gang termination is paused when a PodCliqueSet is being updated through the `RollingRecreate`. Since the user controls the time at which replicas are deleted, it is unknown when the update will end, and therefore is incorrect to pause gang termination until all resources are updated. Thus, both timestamps are set simultaneously, ensuring gang termination continues to be in effect.
-2. The `readyPodsSelectedToUpdate` or the `readyReplicaIndicesSelectedToUpdate` are not set since the operator does not choose which replica is to be updated.
+> **Note:** The key distinction between how PodCliques of a PodCliqueScalingGroup are updated between both the strategies is the following:
+> - `RollingRecreate`: PodCliques of each replica of the PodCliqueScalingGroup are all deleted together at once and then created to reflect the update.
+> - `OnDelete`: All PodCliques of the PodCliqueScalingGroup are updated in-place, with their updates being identical functionally to that of standalone PodCliques.
 
 **Key Implementation Points:**
 
 - Logic that initiates updates through hash comparison will be enhanced to support `RollingRecreate` and `OnDelete`, by skipping the traditional `RollingRecreate` codeflow when `OnDelete` is specified.
 - `status.updateProgress.updateStartedAt` and `status.updateProgress.updateEndedAt` are both set simultaneously when the `OnDelete` update is initiated on the standalone PodClique resources and the PodCliqueScalingGroup resources.
+  - From an `OnDelete` update perspective, the update ends as soon as the specification of the resource is synced with the template specified in the PodCliqueSet. Thus, the timestamp is set as the same for both.
+  - Gang termination is paused when a PodCliqueSet is being updated through the `RollingRecreate`. Since the user controls the time at which replicas are deleted, it is unknown when the update will end, and therefore is incorrect to pause gang termination until all resources are updated. Thus, both timestamps are set simultaneously, ensuring gang termination continues to be in effect.
 - Replica creation logic will always use the latest template specification, regardless of update strategy, as it already exists.
 - The `updatedReplicas` status field will be maintained to show how many replicas match the current specification in the PodCliqueSet.
 - During scale-in operations for standalone PodCliques, replicas running with outdated templates will be preferentially selected for deletion.
@@ -363,9 +444,9 @@ The existing status fields provide visibility into update progress:
 - PodClique's `status.currentPodTemplateHash`: Hash identifying the current template version for each PodClique.
 - PodClique's `status.updateProgress`: Progress information on the update.
   - `status.updateProgress.podTemplateHash`: Hash identifying the template version for the PodClique for the ongoing update.
-  - `status.podCliqueSetGenerationHash`: Hash of the current desired specification of the PodCliqueSet.
+  - `status.updateProgress.podCliqueSetGenerationHash`: Hash of the current desired specification of the PodCliqueSet.
 - PodCliqueScalingGroup's `status.updateProgress`: Progress information on the update.
-  - `status.podCliqueSetGenerationHash`: Hash of the current desired specification of the PodCliqueSet.
+  - `status.updateProgress.podCliqueSetGenerationHash`: Hash of the current desired specification of the PodCliqueSet.
 
 When `UpdatedReplicas < Replicas` with `OnDelete` strategy, it indicates that some replicas are running with an outdated specification.
 
@@ -409,7 +490,7 @@ Implementation will be split into two phases:
 
 **E2E Tests:**
 
-- Testcase 1: 
+- Testcase 1:
   - Create a PodCliqueSet with `OnDelete` strategy, update the template, and verify no pods are deleted.
   - Delete a pod manually and verify the replacement uses the new template.
   - Scale-in a PodClique and verify pods with outdated templates are deleted first.
@@ -425,26 +506,11 @@ Implementation will be split into two phases:
   - End-to-end test with mixed standalone PodCliques and PodCliqueScalingGroups.
   - Verify uniform strategy application across both types.
 
-### Graduation Criteria
-
-**Alpha:**
-- `OnDelete` strategy for standalone PodCliques and PodCliqueScalingGroups is implemented behind a feature flag (if applicable).
-- API is implemented as described.
-
-**Beta:**
-- All E2E tests are implemented and passing.
-- Documentation is complete for both phases.
-- Feature has been used in real-world scenarios and feedback incorporated.
-
-**GA:**
-- Feature has been stable for at least two releases.
-- No significant bugs or usability issues reported.
-
 ## Alternatives
 
 **Alternative 1: Field-Level Update Control**
 
-Instead of a global update strategy, allow users to specify which template fields trigger rolling recreates and which do not. For example, `nodeAffinity` could be a specified field which does not trigger a traditional rolling recreate.
+Instead of a global update strategy, allow users to specify which template fields trigger rolling recreates and which do not. For example, `image` could be a specified field which does not trigger a traditional rolling recreate.
 
 *Rejected because*: This adds significant complexity to the API and implementation. The `OnDelete` strategy provides a simpler, well-understood pattern from StatefulSet. Also, specifying fields with their path in the `PodCliqueSetSpec` that are to be ignored is fragile, since the PodCliqueSet API might change any time which forces users to reconfigure all their workloads. A dedicated `updateStrategy` section will make it far easier for users to adapt to breaking changes, if any are made in the future.
 
