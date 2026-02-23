@@ -164,7 +164,8 @@ func (v *pcsValidator) validatePodCliqueTemplates(fldPath *field.Path) ([]string
 			pcsSchedulerName = def.Name()
 		}
 	}
-	if pcsSchedulerName != "" && schedulerbackend.Get(pcsSchedulerName) == nil {
+	// default-scheduler is the pod-facing name for kube-scheduler and is always accepted when kube backend is enabled
+	if pcsSchedulerName != "" && pcsSchedulerName != "default-scheduler" && schedulerbackend.Get(pcsSchedulerName) == nil {
 		allErrs = append(allErrs, field.Invalid(
 			fldPath.Child("spec").Child("podSpec").Child("schedulerName"),
 			pcsSchedulerName,
@@ -566,6 +567,7 @@ func (v *pcsValidator) validatePodCliqueUpdate(oldCliques []*grovecorev1alpha1.P
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.RoleName, oldIndexCliqueTuple.B.Spec.RoleName, cliqueFldPath.Child("roleName"))...)
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.MinAvailable, oldIndexCliqueTuple.B.Spec.MinAvailable, cliqueFldPath.Child("minAvailable"))...)
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.StartsAfter, oldIndexCliqueTuple.B.Spec.StartsAfter, cliqueFldPath.Child("startsAfter"))...)
+		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.PodSpec.SchedulerName, oldIndexCliqueTuple.B.Spec.PodSpec.SchedulerName, cliqueFldPath.Child("podSpec", "schedulerName"))...)
 	}
 
 	return allErrs

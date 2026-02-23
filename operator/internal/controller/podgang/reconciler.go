@@ -23,7 +23,6 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
-	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -34,15 +33,14 @@ import (
 type Reconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
-	Logger logr.Logger
 }
 
 // NewReconciler creates a new Reconciler. Backend is resolved per PodGang from the grove.io/scheduler-name label or default.
-func NewReconciler(mgr ctrl.Manager) (*Reconciler, error) {
+func NewReconciler(mgr ctrl.Manager) *Reconciler {
 	return &Reconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
-	}, nil
+	}
 }
 
 func resolveBackend(podGang *groveschedulerv1alpha1.PodGang) schedulerbackend.SchedulerBackend {

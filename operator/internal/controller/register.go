@@ -17,8 +17,6 @@
 package controller
 
 import (
-	"fmt"
-
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup"
@@ -43,12 +41,8 @@ func RegisterControllers(mgr ctrl.Manager, config configv1alpha1.OperatorConfigu
 		return err
 	}
 
-	// PodGang controller: PodGang -> scheduler-specific CR conversion
-	podgangReconciler, err := podgang.NewReconciler(mgr)
-	if err != nil {
-		return fmt.Errorf("failed to create podgang reconciler: %w", err)
-	}
-	if err = podgangReconciler.RegisterWithManager(mgr); err != nil {
+	podgangReconciler := podgang.NewReconciler(mgr)
+	if err := podgangReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
 

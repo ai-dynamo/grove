@@ -59,8 +59,7 @@ func TestNewReconcilerWithBackendKai(t *testing.T) {
 				Profiles: []configv1alpha1.SchedulerProfile{profile},
 			})
 			mgr := &testutils.FakeManager{Client: cl, Scheme: cl.Scheme()}
-			reconciler, err := NewReconciler(mgr)
-			require.NoError(t, err)
+			reconciler := NewReconciler(mgr)
 			require.NotNil(t, reconciler)
 			assert.Equal(t, cl, reconciler.Client)
 			assert.Equal(t, cl.Scheme(), reconciler.Scheme)
@@ -69,19 +68,4 @@ func TestNewReconcilerWithBackendKai(t *testing.T) {
 			assert.Contains(t, []string{"kai-scheduler", "kube-scheduler"}, def.Name())
 		})
 	}
-}
-
-// TestReconcilerFields tests that Reconciler fields are set correctly when constructed via NewReconciler.
-func TestReconcilerFields(t *testing.T) {
-	cl := testutils.CreateDefaultFakeClient(nil)
-	recorder := record.NewFakeRecorder(10)
-	_ = schedulerbackend.Initialize(cl, cl.Scheme(), recorder, configv1alpha1.SchedulerConfiguration{
-		Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKai, Default: true}},
-	})
-	mgr := &testutils.FakeManager{Client: cl, Scheme: cl.Scheme()}
-	reconciler, err := NewReconciler(mgr)
-	require.NoError(t, err)
-	require.NotNil(t, reconciler)
-	assert.NotNil(t, reconciler.Client, "Client should not be nil")
-	assert.NotNil(t, reconciler.Scheme, "Scheme should not be nil")
 }

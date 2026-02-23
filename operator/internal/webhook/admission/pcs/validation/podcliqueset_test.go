@@ -497,6 +497,21 @@ func TestImmutableFieldsValidation(t *testing.T) {
 			expectError:    true,
 			expectedErrMsg: "field is immutable",
 		},
+		{
+			name: "Invalid: schedulerName is immutable",
+			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createTestPodCliqueSet("test")
+				pcs.Spec.Template.Cliques[0].Spec.PodSpec.SchedulerName = ""
+				return pcs
+			},
+			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createTestPodCliqueSet("test")
+				pcs.Spec.Template.Cliques[0].Spec.PodSpec.SchedulerName = "default-scheduler"
+				return pcs
+			},
+			expectError:    true,
+			expectedErrMsg: "field is immutable",
+		},
 	}
 
 	for _, tc := range testCases {
@@ -674,7 +689,7 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 			newPCS.Spec.Template.PodCliqueScalingGroupConfigs = tc.newConfigs
 
 			// Create validator and validate update
-			validator := newPCSValidator(newPCS, admissionv1.Update, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: "default-scheduler", Default: true}}})
+			validator := newPCSValidator(newPCS, admissionv1.Update, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube, Default: true}}})
 			fldPath := field.NewPath("spec", "template", "podCliqueScalingGroupConfigs")
 			validationErrors := validator.validatePodCliqueScalingGroupConfigsUpdate(tc.oldConfigs, fldPath)
 
