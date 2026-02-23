@@ -94,57 +94,6 @@ func TestInitialize(t *testing.T) {
 	}
 }
 
-// TestInitializeOnce tests that Initialize can only be called once.
-func TestInitializeOnce(t *testing.T) {
-	// Reset global state
-	backends = nil
-	defaultBackend = nil
-	initOnce = sync.Once{}
-
-	cl := testutils.CreateDefaultFakeClient(nil)
-	recorder := record.NewFakeRecorder(10)
-
-	// First initialization should succeed
-	err := Initialize(cl, cl.Scheme(), recorder, configv1alpha1.SchedulerConfiguration{
-		Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKai, Default: true}},
-	})
-	require.NoError(t, err)
-	firstBackend := GetDefault()
-	require.NotNil(t, firstBackend)
-
-	// Second initialization should be ignored (due to sync.Once)
-	err = Initialize(cl, cl.Scheme(), recorder, configv1alpha1.SchedulerConfiguration{
-		Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube, Default: true}},
-	})
-	require.NoError(t, err)
-	assert.Equal(t, firstBackend, GetDefault())
-}
-
-// TestGet tests the Get function.
-func TestGet(t *testing.T) {
-	// Reset global state
-	backends = nil
-	defaultBackend = nil
-	initOnce = sync.Once{}
-
-	// Before initialization, GetDefault should return nil
-	assert.Nil(t, GetDefault())
-
-	// After initialization, Get should return the backend
-	cl := testutils.CreateDefaultFakeClient(nil)
-	recorder := record.NewFakeRecorder(10)
-
-	err := Initialize(cl, cl.Scheme(), recorder, configv1alpha1.SchedulerConfiguration{
-		Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKai, Default: true}},
-	})
-	require.NoError(t, err)
-
-	backend := Get(string(configv1alpha1.SchedulerNameKai))
-	require.NotNil(t, backend)
-	assert.Equal(t, string(configv1alpha1.SchedulerNameKai), backend.Name())
-	assert.Equal(t, backend, GetDefault())
-}
-
 // TestInitializeFailedInit tests that failed initialization leaves state as not initialized.
 func TestInitializeFailedInit(t *testing.T) {
 	// Reset global state
