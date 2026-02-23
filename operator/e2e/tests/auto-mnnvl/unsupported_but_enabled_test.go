@@ -101,6 +101,9 @@ func testOperatorExitsWithoutCDCRD(t *testing.T, tc testContext) {
 	assert.NoError(t, err, "Operator logs should show preflight failure due to missing CRD")
 }
 
+// waitForOperatorPod polls until it finds an operator pod that has terminated
+// or restarted. During a rolling deployment there may be both an old healthy
+// pod and a new crashing pod; we need the crashing one to inspect its logs.
 func waitForOperatorPod(tc testContext) (*corev1.Pod, error) {
 	var operatorPod *corev1.Pod
 	err := utils.PollForCondition(tc.ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
@@ -110,8 +113,17 @@ func waitForOperatorPod(tc testContext) (*corev1.Pod, error) {
 		if listErr != nil || len(pods.Items) == 0 {
 			return false, nil
 		}
-		operatorPod = &pods.Items[0]
-		return true, nil
+		for i := range pods.Items {
+			for _, status := range pods.Items[i].Status.ContainerStatuses {
+				if status.State.Terminated != nil ||
+					status.LastTerminationState.Terminated != nil ||
+					status.RestartCount > 0 {
+					operatorPod = &pods.Items[i]
+					return true, nil
+				}
+			}
+		}
+		return false, nil
 	})
 	return operatorPod, err
 }
