@@ -21,7 +21,6 @@ package automnnvl
 import (
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/stretchr/testify/assert"
@@ -30,8 +29,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// testNoMNNVLArtifactsWhenDisabled verifies that no ComputeDomain is created and no
-// resourceClaims are injected, even for GPU PCS when the feature is disabled.
+// testNoMNNVLArtifactsWhenDisabled verifies that no ComputeDomains, auto-mnnvl
+// annotations, or resourceClaims are produced for a GPU-capable PCS. It is shared
+// across test suites because the expected behavior is identical regardless of why
+// the feature is inactive.
 func testNoMNNVLArtifactsWhenDisabled(t *testing.T, tc testContext) {
 	pcsName := "test-no-cd-created"
 
@@ -41,8 +42,19 @@ func testNoMNNVLArtifactsWhenDisabled(t *testing.T, tc testContext) {
 	require.NoError(t, err, "Failed to create PCS")
 	defer deletePCS(tc, pcsName)
 
-	// Wait a bit to ensure reconciliation has time to run
-	time.Sleep(10 * time.Second)
+	// Wait for PCSGs to appear — this proves the reconciler has processed the
+	// PCS, so any ComputeDomains would have been created by now if the feature
+	// were enabled. This replaces a fixed sleep with a concrete readiness signal.
+	pcsgNames := []string{
+		fmt.Sprintf("%s-0-sg1", pcsName),
+		fmt.Sprintf("%s-0-sg2", pcsName),
+	}
+	for _, pcsgName := range pcsgNames {
+		pcsg, waitErr := waitForPCSG(tc, pcsgName)
+		require.NoError(t, waitErr, "Failed to wait for PCSG %s", pcsgName)
+		_, hasAnnotation := pcsg.GetAnnotations()[mnnvl.AnnotationAutoMNNVL]
+		assert.False(t, hasAnnotation, "PCSG %s should not have auto-mnnvl annotation", pcsgName)
+	}
 
 	// Verify no ComputeDomain exists.
 	// If the CRD itself is not installed (unsupported scenario), the List call returns
@@ -53,18 +65,6 @@ func testNoMNNVLArtifactsWhenDisabled(t *testing.T, tc testContext) {
 	} else {
 		require.NoError(t, err, "Failed to list ComputeDomains")
 		assert.Empty(t, cdList.Items, "Expected 0 ComputeDomains when feature is disabled, got %d", len(cdList.Items))
-	}
-
-	// Verify PCSGs do not get auto-mnnvl annotation
-	pcsgNames := []string{
-		fmt.Sprintf("%s-0-sg1", pcsName),
-		fmt.Sprintf("%s-0-sg2", pcsName),
-	}
-	for _, pcsgName := range pcsgNames {
-		pcsg, waitErr := waitForPCSG(tc, pcsgName)
-		require.NoError(t, waitErr, "Failed to wait for PCSG %s", pcsgName)
-		_, hasAnnotation := pcsg.GetAnnotations()[mnnvl.AnnotationAutoMNNVL]
-		assert.False(t, hasAnnotation, "PCSG %s should not have auto-mnnvl annotation", pcsgName)
 	}
 
 	// Verify no resourceClaims are injected into any clique's PodSpec

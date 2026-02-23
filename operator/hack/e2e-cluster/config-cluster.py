@@ -102,6 +102,14 @@ def run(
     )
 
 
+def run_or_warn(cmd: str, warning_msg: str) -> subprocess.CompletedProcess[str]:
+    """Run a command and log a warning if it fails (instead of raising)."""
+    result = run(cmd, check=False)
+    if result.returncode != 0:
+        log_warning(f"{warning_msg} (exit code {result.returncode})")
+    return result
+
+
 def run_quiet(cmd: str, *, check: bool = False) -> subprocess.CompletedProcess[str]:
     """Run a command suppressing stdout and stderr. Returns the result."""
     return subprocess.run(
@@ -154,11 +162,11 @@ def ensure_fake_gpu(desired: bool) -> None:
         )
 
         log_info("Waiting for fake GPU operator pods to be ready...")
-        run(
+        run_or_warn(
             f"kubectl wait --for=condition=Ready pods"
             f" -l app.kubernetes.io/name=fake-gpu-operator"
             f" -n {FAKE_GPU_NAMESPACE} --timeout=120s",
-            check=False,
+            "Fake GPU operator pods did not become ready",
         )
 
         # Verify CRD exists
@@ -184,6 +192,70 @@ def ensure_fake_gpu(desired: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Operator restart-cycle helpers
+# ---------------------------------------------------------------------------
+def _get_operator_restart_count() -> int:
+    """Return the restart count of the first operator container, or 0 on failure."""
+    result = run(
+        f"kubectl get pods -n {GROVE_NAMESPACE}"
+        f" -l app.kubernetes.io/name=grove-operator"
+        f" -o jsonpath='{{.items[0].status.containerStatuses[0].restartCount}}'",
+        check=False,
+        capture=True,
+    )
+    raw = result.stdout.strip().strip("'") if result.returncode == 0 else ""
+    return int(raw) if raw.isdigit() else 0
+
+
+def _wait_for_cert_refresh_restart(
+    timeout: int = 60,
+    poll_interval: int = 3,
+) -> None:
+    """Poll for the operator cert-refresh restart instead of using a fixed sleep.
+
+    After a helm upgrade the operator may exit once to pick up rotated certs.
+    This function detects the container restart (via restartCount) and then
+    waits for the pod to become Ready again.  If no restart is observed within
+    *timeout* seconds the function returns normally (the restart may not be
+    needed every time).
+    """
+    initial = _get_operator_restart_count()
+    log_info(
+        f"Watching for operator cert refresh restart (current restartCount: {initial})..."
+    )
+
+    elapsed = 0
+    restarted = False
+    while elapsed < timeout:
+        time.sleep(poll_interval)
+        elapsed += poll_interval
+        current = _get_operator_restart_count()
+        if current > initial:
+            log_info(
+                f"Operator restarted (restartCount {initial} -> {current})"
+            )
+            restarted = True
+            break
+
+    if not restarted:
+        log_info(f"No cert refresh restart detected within {timeout}s — continuing")
+        return
+
+    log_info("Waiting for operator pod to be ready after cert refresh restart...")
+    run_or_warn(
+        f"kubectl rollout status deployment/{GROVE_RELEASE}"
+        f" -n {GROVE_NAMESPACE} --timeout=120s",
+        "Grove operator rollout did not complete after cert refresh restart",
+    )
+    run_or_warn(
+        f"kubectl wait --for=condition=Ready pods"
+        f" -l app.kubernetes.io/name=grove-operator"
+        f" -n {GROVE_NAMESPACE} --timeout=120s",
+        "Grove operator pod did not become ready after cert refresh restart",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Auto-MNNVL toggle  (declarative / idempotent)
 # ---------------------------------------------------------------------------
 def ensure_auto_mnnvl(enabled: bool, *, skip_wait: bool = False) -> None:
@@ -205,32 +277,20 @@ def ensure_auto_mnnvl(enabled: bool, *, skip_wait: bool = False) -> None:
     if not skip_wait:
         log_info("Waiting for Grove operator pod to be ready...")
         # The upgrade may trigger a rolling restart; wait for the new pod.
-        run(
+        run_or_warn(
             f"kubectl rollout status deployment/{GROVE_RELEASE}"
             f" -n {GROVE_NAMESPACE} --timeout=120s",
-            check=False,
+            "Grove operator rollout did not complete",
         )
-        run(
+        run_or_warn(
             f"kubectl wait --for=condition=Ready pods"
             f" -l app.kubernetes.io/name=grove-operator"
             f" -n {GROVE_NAMESPACE} --timeout=120s",
-            check=False,
+            "Grove operator pod did not become ready",
         )
-        # Cert-rotation may exit the process to trigger a restart; wait for that cycle.
-        log_info("Allowing time for operator cert refresh restart cycle...")
-        time.sleep(20)
-        log_info("Waiting for Grove operator pod to be ready after restart...")
-        run(
-            f"kubectl rollout status deployment/{GROVE_RELEASE}"
-            f" -n {GROVE_NAMESPACE} --timeout=120s",
-            check=False,
-        )
-        run(
-            f"kubectl wait --for=condition=Ready pods"
-            f" -l app.kubernetes.io/name=grove-operator"
-            f" -n {GROVE_NAMESPACE} --timeout=120s",
-            check=False,
-        )
+        # Cert-rotation may exit the process to trigger a restart; poll for it
+        # rather than using a fixed sleep.
+        _wait_for_cert_refresh_restart()
     else:
         log_warning("Skipping operator readiness check (--skip-operator-wait)")
         time.sleep(5)

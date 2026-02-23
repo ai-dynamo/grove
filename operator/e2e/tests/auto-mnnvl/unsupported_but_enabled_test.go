@@ -78,15 +78,25 @@ func testOperatorExitsWithoutCDCRD(t *testing.T, tc testContext) {
 	}
 	assert.True(t, hasTerminated, "Operator pod should terminate on preflight failure")
 
-	// Verify logs show preflight failure due to missing CRD
+	// Verify logs show preflight failure due to missing CRD.
+	// Check both current and previous container logs because the operator
+	// crashes on preflight failure and the error message may only appear
+	// in the previous (terminated) container's logs.
 	err = utils.PollForCondition(tc.ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
-		logs, logErr := tc.clientset.CoreV1().Pods(groveOperatorNamespace).GetLogs(pod.Name, &corev1.PodLogOptions{}).DoRaw(tc.ctx)
-		if logErr != nil {
-			return false, nil
+		for _, previous := range []bool{false, true} {
+			logs, logErr := tc.clientset.CoreV1().Pods(groveOperatorNamespace).GetLogs(pod.Name, &corev1.PodLogOptions{
+				Previous: previous,
+			}).DoRaw(tc.ctx)
+			if logErr != nil {
+				continue
+			}
+			logText := string(logs)
+			if strings.Contains(logText, "MNNVL preflight check failed") &&
+				strings.Contains(logText, "ComputeDomain CRD") {
+				return true, nil
+			}
 		}
-		logText := string(logs)
-		return strings.Contains(logText, "MNNVL preflight check failed") &&
-			strings.Contains(logText, "ComputeDomain CRD"), nil
+		return false, nil
 	})
 	assert.NoError(t, err, "Operator logs should show preflight failure due to missing CRD")
 }

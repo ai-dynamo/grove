@@ -22,7 +22,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
@@ -341,8 +340,7 @@ func testPCSDeletionCascadesToCD(t *testing.T, tc testContext) {
 	require.NoError(t, err, "Failed to wait for ComputeDomains")
 
 	// Delete the PCS
-	err = tc.groveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Delete(tc.ctx, pcsName, metav1.DeleteOptions{})
-	require.NoError(t, err, "Failed to delete PCS")
+	deletePCS(tc, pcsName)
 
 	// Wait for ComputeDomains to be deleted
 	err = waitForComputeDomainCount(tc, pcsName, 0)
@@ -366,17 +364,19 @@ func testExplicitDisabledAnnotationHonored(t *testing.T, tc testContext) {
 	require.NoError(t, err, "Failed to create PCS")
 	defer deletePCS(tc, pcsName)
 
-	// Wait a bit and verify no ComputeDomain is created
-	time.Sleep(5 * time.Second)
+	// Wait for PCLQ to exist — this proves the reconciler has processed the PCS,
+	// so any ComputeDomains would have been created by now if the annotation
+	// were honoured incorrectly.
+	pclqName := fmt.Sprintf("%s-0-gpu-worker", pcsName)
+	pclq, err := waitForPCLQ(tc, pclqName)
+	require.NoError(t, err, "Failed to wait for PCLQ")
 
+	// Verify no ComputeDomain was created
 	cdName := fmt.Sprintf("%s-0", pcsName)
 	_, err = tc.dynamicClient.Resource(computeDomainGVR).Namespace(tc.namespace).Get(tc.ctx, cdName, metav1.GetOptions{})
 	assert.Error(t, err, "No ComputeDomain should be created when annotation is 'disabled'")
 
 	// Verify no MNNVL claims are injected into the clique or containers.
-	pclqName := fmt.Sprintf("%s-0-gpu-worker", pcsName)
-	pclq, err := waitForPCLQ(tc, pclqName)
-	require.NoError(t, err, "Failed to wait for PCLQ")
 	for _, claim := range pclq.Spec.PodSpec.ResourceClaims {
 		assert.NotEqual(t, mnnvl.MNNVLClaimName, claim.Name, "PCLQ should not have MNNVL resourceClaim")
 	}

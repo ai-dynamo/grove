@@ -11,6 +11,19 @@ These tests validate the operator's MNNVL feature across 4 configurations:
 | 3rd | Supported (fake GPU) | Enabled | Main feature path |
 | 4th | Supported (fake GPU) | Disabled | Feature off, CRD present |
 
+## What These Tests Cover (and Don't)
+
+These tests exercise the **operator's control plane behavior** around MNNVL —
+they do **not** test actual DRA scheduling or GPU fabric connectivity.
+
+- The [fake-gpu-operator](https://github.com/run-ai/fake-gpu-operator) provides
+  only the `ComputeDomain` CRD schema; no real DRA driver is running.
+- The operator's reconciliation logic (creating ComputeDomain CRs, injecting
+  `resourceClaim` references into PodSpecs) only requires the CRD to be
+  registered in the API server, not a functioning driver.
+- Test pods are expected to stay **Pending** — there is no GPU hardware or DRA
+  driver to fulfill the claims.
+
 ## Architecture
 
 Cluster lifecycle is handled by the **Makefile** (`make run-e2e-mnnvl-full`),

@@ -128,14 +128,14 @@ func detectClusterConfig(ctx context.Context, clientset kubernetes.Interface, re
 	config := &clusterMNNVLConfig{}
 
 	// Detect if MNNVL feature is enabled in operator config
-	featureEnabled, err := detectFeatureEnabled(ctx, clientset)
+	featureEnabled, err := detectAutoMNNVLEnabled(ctx, clientset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to detect feature enabled: %w", err)
 	}
 	config.featureEnabled = featureEnabled
 
 	// Detect if ComputeDomain CRD exists
-	crdSupported, err := detectCRDSupported(ctx, restConfig)
+	crdSupported, err := detectComputeDomainCRDExists(ctx, restConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to detect CRD supported: %w", err)
 	}
@@ -144,8 +144,8 @@ func detectClusterConfig(ctx context.Context, clientset kubernetes.Interface, re
 	return config, nil
 }
 
-// detectFeatureEnabled checks if autoMNNVLEnabled is true in the operator ConfigMap
-func detectFeatureEnabled(ctx context.Context, clientset kubernetes.Interface) (bool, error) {
+// detectAutoMNNVLEnabled checks if autoMNNVLEnabled is true in the operator ConfigMap
+func detectAutoMNNVLEnabled(ctx context.Context, clientset kubernetes.Interface) (bool, error) {
 	// List ConfigMaps in grove-system namespace to find the operator config
 	configMaps, err := clientset.CoreV1().ConfigMaps(groveOperatorNamespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -201,8 +201,8 @@ func parseAutoMNNVLEnabled(configData string) (bool, error) {
 	return config.Network.AutoMNNVLEnabled, nil
 }
 
-// detectCRDSupported checks if the ComputeDomain CRD exists in the cluster
-func detectCRDSupported(ctx context.Context, restConfig *rest.Config) (bool, error) {
+// detectComputeDomainCRDExists checks if the ComputeDomain CRD exists in the cluster
+func detectComputeDomainCRDExists(ctx context.Context, restConfig *rest.Config) (bool, error) {
 	apiExtClient, err := apiextensionsclientset.NewForConfig(restConfig)
 	if err != nil {
 		return false, fmt.Errorf("failed to create API extensions client: %w", err)

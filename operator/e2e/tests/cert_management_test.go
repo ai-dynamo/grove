@@ -214,7 +214,7 @@ func Test_CM1_CertManagementRoundTrip(t *testing.T) {
 
 	logger.Info("9. Delete and redeploy workload to test webhooks with auto-provisioned certs")
 	// Delete the existing workload to test that webhooks work with new certs
-	deleteWorkload(t, ctx, dynamicClient, tc.Workload.Name, tc.Namespace)
+	deletePodCliqueSetAndWait(t, ctx, dynamicClient, tc.Workload.Name, tc.Namespace)
 
 	// Redeploy workload - this will exercise the validating and mutating webhooks
 	if _, err := deployAndVerifyWorkload(tc); err != nil {
@@ -229,7 +229,7 @@ func Test_CM1_CertManagementRoundTrip(t *testing.T) {
 	logger.Info("🎉 Certificate management round-trip test completed successfully")
 }
 
-func deleteWorkload(t *testing.T, ctx context.Context, dynamicClient dynamic.Interface, name, namespace string) {
+func deletePodCliqueSetAndWait(t *testing.T, ctx context.Context, dynamicClient dynamic.Interface, name, namespace string) {
 	t.Helper()
 
 	logger.Debugf("Deleting PodCliqueSet %s/%s", namespace, name)
