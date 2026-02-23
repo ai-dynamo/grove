@@ -28,14 +28,6 @@ Before enabling auto MNNVL, ensure your cluster meets the following requirements
 3. **Homogeneous GPU cluster** -- all nodes must have identical GPU types and NVLink topology. Grove does not validate or enforce cluster homogeneity; it is the cluster administrator's responsibility to ensure this requirement is met. Enabling MNNVL on heterogeneous clusters may result in undefined scheduling behavior.
 4. **Grove operator** deployed via Helm
 
-**Constraints:**
-
-- **One IMEX channel per node:** Each node can participate in only one IMEX channel at a time. A node's GPUs can only belong to a single ComputeDomain simultaneously, so multiple MNNVL-enabled workloads cannot share nodes.
-- **PCS-level granularity:** MNNVL is applied at the PodCliqueSet level -- it cannot be targeted to individual PodCliques or PodCliqueScalingGroups within a PCS. Either all GPU-requesting pods in a replica participate in the ComputeDomain, or none do.
-- **No ComputeDomain customization:** ComputeDomain and ResourceClaimTemplate configurations are automatically generated and cannot be customized. Opt out if you need custom settings.
-- **Immutable annotation:** The `grove.io/auto-mnnvl` annotation cannot be changed after PCS creation. Delete and recreate the PCS to change MNNVL behavior.
-- **No ComputeDomain status propagation:** Grove does not surface ComputeDomain status in PCS status fields. Inspect the ComputeDomain resource directly using `kubectl get computedomain`.
-
 ## Enabling the Feature
 
 Auto MNNVL is disabled by default. To enable it, set the `config.network.autoMNNVLEnabled` Helm value to `true`:
@@ -169,6 +161,14 @@ Existing PodCliqueSet resources created before the MNNVL feature was enabled wil
 |--------------------------|------|---------|-------------|
 | `config.network.autoMNNVLEnabled` | bool | `false` | Enables automatic MNNVL management. When `true`, the operator validates the ComputeDomain CRD at startup and automatically creates ComputeDomains for GPU workloads. |
 | `grove.io/auto-mnnvl` (annotation) | string | Not set | Per-PCS annotation controlling MNNVL. Values: `"enabled"` (auto-set by webhook for GPU workloads) or `"disabled"` (explicit opt-out). Immutable after creation. |
+
+**Limitations:**
+
+- **One IMEX channel per node:** Currently, only one IMEX domain can be supported per node. Since, ComputeDomains do not support sharing IMEX domain between workloads, each node can only support pods from at most one MNNVL-enabled workload at a time. MNNVL-enabled pods from different workloads cannot share the same node at the same time.
+- **PCS-level granularity:** Auto-MNNVL feature is uniformly applied to the entire PodCliqueSet. All GPU pods in a PCS will automatically get the IMEX channel setup if the underlying GPUs support it. This feature cannot be special-cased for a subset of PodCliques in a PodCliqueSet.
+- **No ComputeDomain customization:** ComputeDomain and ResourceClaimTemplate configurations are automatically generated and cannot be customized. Opt out if you need custom settings.
+- **Immutable annotation:** The `grove.io/auto-mnnvl` annotation cannot be changed after PCS creation. Delete and recreate the PCS to change MNNVL behavior.
+- **No ComputeDomain status propagation:** Grove does not surface ComputeDomain status in PCS status fields. Inspect the ComputeDomain resource directly using `kubectl get computedomain`.
 
 ## Examples
 
