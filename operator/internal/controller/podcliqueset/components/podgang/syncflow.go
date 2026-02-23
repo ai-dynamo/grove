@@ -522,11 +522,13 @@ func (r _resource) updatePodGangWithPodReferences(sc *syncContext, podGangName s
 	}
 
 	// Update status to set Initialized=True (idempotent - no need to check current state)
-	return r.patchPodGangInitializedStatus(sc, podGangName)
+	r.patchPodGangInitializedStatus(sc, podGangName, metav1.ConditionTrue, "Ready", "PodGang is fully initialized")
+	return nil
 }
 
-// patchPodGangInitializedStatus sets Initialized condition to True
-func (r _resource) patchPodGangInitializedStatus(sc *syncContext, podGangName string) error {
+// patchPodGangInitializedStatus patches the Initialized condition with the given status.
+// Status update errors are logged but not propagated since they are not critical.
+func (r _resource) patchPodGangInitializedStatus(sc *syncContext, podGangName string, status metav1.ConditionStatus, reason, message string) {
 	// Create a PodGang object with only the status we want to patch
 	statusPatch := &groveschedulerv1alpha1.PodGang{
 		ObjectMeta: metav1.ObjectMeta{
@@ -535,21 +537,18 @@ func (r _resource) patchPodGangInitializedStatus(sc *syncContext, podGangName st
 		},
 	}
 
-	// Set Initialized condition to True and Phase to Pending
-	setInitializedCondition(statusPatch, metav1.ConditionTrue, "AllPodsCreated", "All pods have been created and references populated")
+	setInitializedCondition(statusPatch, status, reason, message)
 	statusPatch.Status.Phase = groveschedulerv1alpha1.PodGangPhasePending
 
-	// Patch status (idempotent - if already True, no change will be made)
+	// Patch status (idempotent - if already same status, no change will be made)
 	if err := r.client.Status().Patch(sc.ctx, statusPatch, client.Merge); err != nil {
-		// Log but don't fail - status update is not critical
 		sc.logger.Error(err, "Failed to patch PodGang status with Initialized condition",
 			"podGang", podGangName)
-		return nil // Don't fail the entire operation for status updates
+		return
 	}
 
-	sc.logger.Info("Successfully updated PodGang with pod references and set Initialized=True",
-		"podGang", podGangName)
-	return nil
+	sc.logger.Info("Successfully patched PodGang Initialized condition",
+		"podGang", podGangName, "status", status)
 }
 
 // patchPodGangWithPodReferences uses strategic merge patch to update pod references
@@ -754,13 +753,7 @@ func (r _resource) createOrUpdatePodGang(sc *syncContext, pgInfo *podGangInfo) e
 	// Update status with Initialized=False condition and Phase if not already set
 	// This needs to be done separately since CreateOrPatch doesn't handle status subresource
 	if !hasInitializedCondition(pg) {
-		original := pg.DeepCopy()
-		setInitializedCondition(pg, metav1.ConditionFalse, "PodsNotCreated", "Waiting for all pods to be created")
-		pg.Status.Phase = groveschedulerv1alpha1.PodGangPhasePending // Set initial phase
-		if err := r.client.Status().Patch(sc.ctx, pg, client.MergeFrom(original)); err != nil {
-			sc.logger.Error(err, "Failed to set Initialized condition on PodGang", "podGang", pg.Name)
-			// Don't fail the entire operation for status update errors
-		}
+		r.patchPodGangInitializedStatus(sc, pg.Name, metav1.ConditionFalse, "PodsPending", "Not all constituent pods have been created yet")
 	}
 
 	r.eventRecorder.Eventf(sc.pcs, corev1.EventTypeNormal, constants.ReasonPodGangCreateOrUpdateSuccessful, "Created/Updated PodGang %v", pgObjectKey)

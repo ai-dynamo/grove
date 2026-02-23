@@ -61,18 +61,12 @@ func (b *Backend) Init() error {
 }
 
 // SyncPodGang converts PodGang to KAI PodGroup and synchronizes it
-// TODO: Currently disabled - will be implemented in phase 2
 func (b *Backend) SyncPodGang(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
-	// Phase 1: Skip PodGroup creation/update
-	// Phase 2: Will convert PodGang to PodGroup and synchronize
 	return nil
 }
 
 // OnPodGangDelete removes the PodGroup owned by this PodGang
-// TODO: Currently disabled - will be implemented in phase 2
 func (b *Backend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
-	// Phase 1: Skip PodGroup deletion
-	// Phase 2: Will delete PodGroup when PodGang is deleted
 	return nil
 }
 
