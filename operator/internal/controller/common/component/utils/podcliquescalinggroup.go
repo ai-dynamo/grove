@@ -19,11 +19,13 @@ package utils
 import (
 	"context"
 	"slices"
+	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	"github.com/samber/lo"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -39,6 +41,38 @@ func FindScalingGroupConfigForClique(scalingGroupConfigs []grovecorev1alpha1.Pod
 		return nil
 	}
 	return &pcsgConfig
+}
+
+// FindScalingGroupConfigByName searches through the scaling group configurations to find
+// the one with the specified name.
+//
+// Returns the matching PodCliqueScalingGroupConfig if found, or nil if not found.
+func FindScalingGroupConfigByName(scalingGroupConfigs []grovecorev1alpha1.PodCliqueScalingGroupConfig, name string) *grovecorev1alpha1.PodCliqueScalingGroupConfig {
+	pcsgConfig, ok := lo.Find(scalingGroupConfigs, func(pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig) bool {
+		return pcsgConfig.Name == name
+	})
+	if !ok {
+		return nil
+	}
+	return &pcsgConfig
+}
+
+// GetEffectiveTerminationDelay returns the effective termination delay for a PCSG.
+// It uses the PCSG-level override if set, otherwise falls back to the PCS-level default.
+// Returns nil if gang termination is disabled (both PCS and PCSG terminationDelay are nil).
+func GetEffectiveTerminationDelay(pcsTerminationDelay *metav1.Duration, pcsgConfig *grovecorev1alpha1.PodCliqueScalingGroupConfig) *time.Duration {
+	// If PCS-level terminationDelay is nil, gang termination is disabled
+	if pcsTerminationDelay == nil {
+		return nil
+	}
+
+	// If PCSG config has an override, use it
+	if pcsgConfig != nil && pcsgConfig.TerminationDelay != nil {
+		return &pcsgConfig.TerminationDelay.Duration
+	}
+
+	// Otherwise use PCS-level default
+	return &pcsTerminationDelay.Duration
 }
 
 // GetPCSGsForPCS fetches all PodCliqueScalingGroups for a PodCliqueSet.

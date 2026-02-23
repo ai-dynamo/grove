@@ -1,0 +1,50 @@
+# Workload 3 for Gang Termination Tests: Never Healthy (Init fails)
+# This workload has an init container that always fails, so pods never become Ready.
+# Used to verify that MinAvailableBreached=False (NeverAvailable reason) and no gang termination.
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: workload3
+  labels:
+    app: workload3
+spec:
+  replicas: 1
+  template:
+    terminationDelay: 10s
+    cliques:
+      - name: pc-a
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: role-a
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            schedulerName: kai-scheduler
+            terminationGracePeriodSeconds: 1
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            # Init container that always fails - pods will never become Ready
+            initContainers:
+              - name: init-fail
+                image: registry:5001/nginx:alpine-slim
+                command: ["sh", "-c", "echo 'Init failure simulation'; sleep 2; exit 1"]
+            containers:
+              - name: pc-a
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 80Mi

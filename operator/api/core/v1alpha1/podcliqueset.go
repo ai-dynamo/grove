@@ -151,7 +151,8 @@ type PodCliqueSetTemplateSpec struct {
 	// If a PodGang remains a candidate past TerminationDelay then it will be terminated. This allows additional time
 	// to the kube-scheduler to re-schedule sufficient pods in the PodGang that will result in having the total number of
 	// running pods go above the threshold.
-	// Defaults to 4 hours.
+	// When not set (nil), gang termination is disabled for the entire PodCliqueSet.
+	// When set, gang termination is enabled and PodCliqueScalingGroups may optionally override this value.
 	// +optional
 	TerminationDelay *metav1.Duration `json:"terminationDelay,omitempty"`
 	// PodCliqueScalingGroupConfigs is a list of scaling groups for the PodCliqueSet.
@@ -225,6 +226,12 @@ type PodCliqueScalingGroupConfig struct {
 	// +optional
 	// +kubebuilder:default=1
 	MinAvailable *int32 `json:"minAvailable,omitempty"`
+	// TerminationDelay overrides the PodCliqueSet-level terminationDelay for this scaling group.
+	// Can only be set if PodCliqueSetTemplateSpec.TerminationDelay is set (gang termination is enabled).
+	// When set, this value is used instead of the PodCliqueSet-level terminationDelay for gang termination
+	// decisions affecting this scaling group's replicas.
+	// +optional
+	TerminationDelay *metav1.Duration `json:"terminationDelay,omitempty"`
 	// ScaleConfig is the horizontal pod autoscaler configuration for the pod clique scaling group.
 	// +optional
 	ScaleConfig *AutoScalingConfig `json:"scaleConfig,omitempty"`

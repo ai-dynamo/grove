@@ -319,6 +319,11 @@ func (in *PodCliqueScalingGroupConfig) DeepCopyInto(out *PodCliqueScalingGroupCo
 		*out = new(int32)
 		**out = **in
 	}
+	if in.TerminationDelay != nil {
+		in, out := &in.TerminationDelay, &out.TerminationDelay
+		*out = new(v1.Duration)
+		**out = **in
+	}
 	if in.ScaleConfig != nil {
 		in, out := &in.ScaleConfig, &out.ScaleConfig
 		*out = new(AutoScalingConfig)
