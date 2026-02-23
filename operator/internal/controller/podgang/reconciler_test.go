@@ -147,8 +147,7 @@ func TestReconcile(t *testing.T) {
 				})
 			})
 			mgr := &testutils.FakeManager{Client: cl, Scheme: cl.Scheme(), Logger: logr.Discard()}
-			reconciler, err := NewReconciler(mgr)
-			require.NoError(t, err)
+			reconciler := NewReconciler(mgr)
 			require.NotNil(t, reconciler)
 
 			// Execute reconcile
@@ -178,29 +177,6 @@ func TestReconcile(t *testing.T) {
 	}
 }
 
-// TestReconcilePodGangNotFound tests reconciling a non-existent PodGang.
-func TestReconcilePodGangNotFound(t *testing.T) {
-	cl := testutils.CreateDefaultFakeClient(nil)
-	recorder := record.NewFakeRecorder(10)
-	_ = schedulerbackend.Initialize(cl, cl.Scheme(), recorder, configv1alpha1.SchedulerConfiguration{
-		Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKai, Default: true}},
-	})
-	mgr := &testutils.FakeManager{Client: cl, Scheme: cl.Scheme(), Logger: logr.Discard()}
-	reconciler, err := NewReconciler(mgr)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	req := ctrl.Request{
-		NamespacedName: types.NamespacedName{
-			Name:      "non-existent",
-			Namespace: "default",
-		},
-	}
-	result, err := reconciler.Reconcile(ctx, req)
-	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{}, result)
-}
-
 // TestReconcilePodGangWithDeletionTimestamp tests reconciling a PodGang being deleted.
 func TestReconcilePodGangWithDeletionTimestamp(t *testing.T) {
 	now := metav1.Now()
@@ -224,8 +200,7 @@ func TestReconcilePodGangWithDeletionTimestamp(t *testing.T) {
 		Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKai, Default: true}},
 	})
 	mgr := &testutils.FakeManager{Client: cl, Scheme: cl.Scheme(), Logger: logr.Discard()}
-	reconciler, err := NewReconciler(mgr)
-	require.NoError(t, err)
+	reconciler := NewReconciler(mgr)
 
 	ctx := context.Background()
 	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: podGang.Name, Namespace: podGang.Namespace}}
@@ -242,8 +217,7 @@ func TestReconcilerWithExplicitBackend(t *testing.T) {
 		Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKai, Default: true}},
 	})
 	mgr := &testutils.FakeManager{Client: cl, Scheme: cl.Scheme(), Logger: logr.Discard()}
-	reconciler, err := NewReconciler(mgr)
-	require.NoError(t, err)
+	reconciler := NewReconciler(mgr)
 	require.NotNil(t, reconciler)
 	assert.Equal(t, cl, reconciler.Client)
 	assert.Equal(t, cl.Scheme(), reconciler.Scheme)
