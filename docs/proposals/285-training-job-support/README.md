@@ -37,9 +37,7 @@ Interest in grove and its adoption is growing in the community. Grove's unique c
 ### Non-Goals
 
 - Per-clique failure or success policies (e.g., tolerate worker failures but not launcher failures).
-- Elastic training, checkpointing, or fault-tolerant restarts.
 - Suspend/resume support.
-- Multi-stage training pipelines.
 
 ## Proposal
 
