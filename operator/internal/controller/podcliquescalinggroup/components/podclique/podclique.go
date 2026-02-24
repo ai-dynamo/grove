@@ -61,6 +61,8 @@ const (
 	errCodeParsePodCliqueScalingGroupReplicaIndex        grovecorev1alpha1.ErrorCode = "ERR_PARSE_PODCLIQUESCALINGGROUP_REPLICA_INDEX"
 	errCodeUpdateStatus                                  grovecorev1alpha1.ErrorCode = "ERR_UPDATE_STATUS"
 	errCodeComputePendingPodCliqueScalingGroupUpdateWork grovecorev1alpha1.ErrorCode = "ERR_COMPUTE_PENDINGUPDATE_WORK"
+	errCodeCreateOrUpdatePodClique                       grovecorev1alpha1.ErrorCode = "ERR_CREATE_OR_UPDATE_PODCLIQUE"
+	errCodeCreateOrUpdatePodCliques                      grovecorev1alpha1.ErrorCode = "ERR_CREATE_OR_UPDATE_PODCLIQUES"
 )
 
 var (
@@ -234,7 +236,7 @@ func (r _resource) doCreate(ctx context.Context, logger logr.Logger, pcs *grovec
 	logger.Info("Running CreateOrUpdate PodClique", "pclqObjectKey", pclqObjectKey)
 	pclq := emptyPodClique(pclqObjectKey)
 	pcsgObjKey := client.ObjectKeyFromObject(pclq)
-	if err := r.buildResource(logger, pcs, pcsg, pcsgReplicaIndex, pclq); err != nil {
+	if err := r.buildResource(logger, pcs, pcsg, pcsgReplicaIndex, pclq, false); err != nil {
 		return err
 	}
 	if err := r.client.Create(ctx, pclq); err != nil {
@@ -254,8 +256,33 @@ func (r _resource) doCreate(ctx context.Context, logger logr.Logger, pcs *grovec
 	return nil
 }
 
-// buildResource constructs a PodClique resource from templates, setting up metadata, labels, dependencies and environment variables
-func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsgReplicaIndex int, pclq *grovecorev1alpha1.PodClique) error {
+// doCreateOrUpdate creates or updates a PodClique resource using CreateOrPatch.
+// This preserves the existing replicas value to avoid overwriting HPA-managed scaling.
+func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsgReplicaIndex int, pclqObjectKey client.ObjectKey, pclqExists bool) error {
+	logger.Info("Running CreateOrUpdate PodClique", "pclqObjectKey", pclqObjectKey)
+	pclq := emptyPodClique(pclqObjectKey)
+	pcsgObjKey := client.ObjectKeyFromObject(pcsg)
+
+	opResult, err := controllerutil.CreateOrPatch(ctx, r.client, pclq, func() error {
+		return r.buildResource(logger, pcs, pcsg, pcsgReplicaIndex, pclq, pclqExists)
+	})
+	if err != nil {
+		r.eventRecorder.Eventf(pcsg, corev1.EventTypeWarning, constants.ReasonPodCliqueCreateOrUpdateFailed, "PodClique %v creation or update failed: %v", pclqObjectKey, err)
+		return groveerr.WrapError(err,
+			errCodeCreateOrUpdatePodClique,
+			component.OperationSync,
+			fmt.Sprintf("Error creating or updating PodClique: %v for PodCliqueScalingGroup: %v", pclqObjectKey, pcsgObjKey),
+		)
+	}
+
+	r.eventRecorder.Eventf(pcsg, corev1.EventTypeNormal, constants.ReasonPodCliqueCreateOrUpdateSuccessful, "PodClique %v created or updated successfully", pclqObjectKey)
+	logger.Info("Triggered create or update of PodClique for PodCliqueScalingGroup", "pcsgObjKey", pcsgObjKey, "pclqObjectKey", pclqObjectKey, "result", opResult)
+	return nil
+}
+
+// buildResource constructs a PodClique resource from templates, setting up metadata, labels, dependencies and environment variables.
+// When pclqExists is true, the current replicas value is preserved to avoid overwriting HPA-managed scaling.
+func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsgReplicaIndex int, pclq *grovecorev1alpha1.PodClique, pclqExists bool) error {
 	var err error
 	pclqObjectKey, pcsObjectKey := client.ObjectKeyFromObject(pclq), client.ObjectKeyFromObject(pcs)
 	pclqTemplateSpec, foundAtIndex, ok := lo.FindIndexOf(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec) bool {
@@ -289,7 +316,14 @@ func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1alpha1.PodC
 	pclq.Annotations = pclqTemplateSpec.Annotations
 	// set PodCliqueSpec
 	// ------------------------------------
-	pclq.Spec = *pclqTemplateSpec.Spec.DeepCopy()
+	if pclqExists {
+		// If an HPA is mutating the number of replicas, then it should not be overwritten by the template spec replicas.
+		currentPCLQReplicas := pclq.Spec.Replicas
+		pclq.Spec = *pclqTemplateSpec.Spec.DeepCopy()
+		pclq.Spec.Replicas = currentPCLQReplicas
+	} else {
+		pclq.Spec = *pclqTemplateSpec.Spec.DeepCopy()
+	}
 	pcsgTemplateNumPods := r.getPCSGTemplateNumPods(pcs, pcsg)
 	r.addEnvironmentVariablesToPodContainerSpecs(pclq, pcsgTemplateNumPods)
 	dependentPCLQNames, err := identifyFullyQualifiedStartupDependencyNames(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex, pclq, foundAtIndex)
