@@ -9,7 +9,7 @@
   - [<code>RollingRecreate</code>](#rollingrecreate)
   - [<code>OnDelete</code>](#ondelete)
   - [User Stories](#user-stories)
-    - [Story 1: Sophisticated application updates](#story-1-sophisticated-application-updates)
+    - [Story 1: Custom application updates](#story-1-custom-application-updates)
   - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
 - [Design Details](#design-details)
   - [API Changes](#api-changes)
@@ -38,11 +38,11 @@ Currently, Grove implements a `RollingRecreate` strategy that automatically dele
 
 ## Motivation
 
-Grove currently only supports updates through its default `RollingRecreate` strategy, and the orchestration of updates is fully handled by grove. However, there could be certain sophisticated use cases where users might want to orchestrate the updates themselves, instead of relying on grove.
+Grove currently supports updates only through its default `RollingRecreate` strategy, with the entire update orchestration managed by Grove itself. However, there may be certain advanced or specific use cases where users prefer to control and orchestrate the updates manually rather than relying on Grove's built-in process.
 
-Currently, when a user updates a standalone PodClique's `podTemplate`, grove triggers a rolling recreate that deletes and recreates **all** pods of that standalone PodClique one at a time, *including unaffected ones*. This behavior is disruptive and wasteful for workloads that only need to recreate and reschedule a subset of pods. Similar behavior is observed in PodCliqueScalingGroups where a rolling recreate deletes and recreates **all** replicas of that PodCliqueScalingGroup one at a time.
+Currently, when a user updates a standalone PodClique's `podTemplate`, Grove triggers a rolling recreate that deletes and recreates **all** pods of that standalone PodClique one at a time. This behavior is disruptive and wasteful for workloads that only need to recreate and reschedule a subset of pods. Similar behavior is observed in PodCliqueScalingGroups where a rolling recreate deletes and recreates **all** replicas of that PodCliqueScalingGroup one at a time.
 
-To solve the current limitation stated above, we propose to introduce a new update strategy `OnDelete` (inspired by Kubernetes StatefulSet), users gain fine-grained control over when pods are updated. The new specification is applied only when a pod is manually deleted, allowing unaffected pods to continue running undisturbed.
+To solve the current limitation stated above, we propose to introduce a new update strategy `OnDelete` (inspired by Kubernetes StatefulSet). Users gain fine-grained control over when pods are updated. The new specification is applied only when a pod is manually deleted, allowing unaffected pods to continue running undisturbed.
 
 ### Goals
 
@@ -52,7 +52,7 @@ To solve the current limitation stated above, we propose to introduce a new upda
   - Changes to the template do not automatically trigger pod deletions.
   - Existing pods continue running with their original specification until manually deleted.
   - New pods (created due to scale-out or manual deletion) use the updated template.
-  - Pod deletions prefer pods with the older template.
+  - During scale-in of standalone PodCliques, pods with the older template are preferred for deletion.
 - Maintain backward compatibility by defaulting to the current `RollingRecreate` behavior.
 
 ### Non-Goals
@@ -68,8 +68,8 @@ Two update strategy types will be supported:
 ### `RollingRecreate`
 
 Pods are automatically updated when the template changes. In this strategy, pods of a PodClique are deleted first, and then created with the new template. The operator achieves this by:
-- Either deleting the Pods of a standalone PodClique (created with the new template by the PodClique controller)
-- Or deleting the PodCliques that belong to a specific replica of the PodCliqueScalingGroup (created with the new template by the PodCliqueSet or PodCliqueScalingGroup controller)
+- Either deleting the Pods of a standalone PodClique (created with the new template by the PodClique controller) one at a time.
+- Or deleting PodCliqueScalingGroup replicas (one at a time) to ensure that all PodCliques in a single PodCliqueScalingGroup replica are updated at the same time and gang scheduled.
 
 This strategy is already supported and is the default strategy, and can be explicitly set by specifying `.spec.updateStrategy.type: RollingRecreate` on a PodCliqueSet.
 
@@ -93,25 +93,27 @@ The `OnDelete` update strategy provides manual control over when parts of a PodC
 
 **Preferential Deletion During Scale-In:**
 - *For Standalone PodCliques*: When scaling down (`spec.cliques[*].spec.replicas` is reduced), the controller preferentially selects pods running with outdated templates for deletion. This helps accelerate convergence to the desired specification during normal scaling operations.
-- *For PodCliqueScalingGroups*: Scale-in continues to delete replicas with the highest indices to prevent gaps in the replica set, regardless of template version.
+- *For PodCliqueScalingGroups*: Scale-in continues to delete replicas with the highest indices to prevent gaps in the replicas. The controller does not selectively delete replicas of the PodCliqueScalingGroup with PodCliques which have outdate templates.
 
 **Visibility and Tracking:**
 
 To track the status of the update, users can check the `.status.updatedReplicas` fields of the PodCliqueSet, PodCliqueScalingGroup, and PodClique resources to check the number of replicas (in the case of PodCliqueSet and PodCliqueScalingGroup) or Pods (in the case of PodCliques) that match the template specified in the PodCliqueSet.
 
 This strategy can be set by specifying `.spec.updateStrategy.type: OnDelete` on a PodCliqueSet.
-> **Note:** The user must ensure that the `OnDelete` update strategy is compatible with their applications (which might have multiple PodCliques running in HA), and that such updates do not cause the application to behave unexpectedly due to incompatibility between different versions of components running simultaneously.
+> **Note:** The `OnDelete` update strategy results in old and new versions of application components running concurrently during the update process. If there is any known or potential incompatibility between the newer and older versions, the `OnDelete` strategy should be avoided, because it can lead to runtime errors, unpredictable or incorrect application behavior and may jeopardize the stability and correct functioning of the system.
 
 ### User Stories
 
-#### Story 1: Sophisticated application updates
+#### Story 1: Custom application updates
 
-Consumers of grove with fairly complicated setups and requirements might want to orchestrate the updates themselves. The `RollingRecreate` behavior might not fit into how their application needs to be updated. In such cases:
+Consumers of Grove with complex setups and requirements might want to orchestrate the updates themselves. The `RollingRecreate` behavior might not fit into how their application needs to be updated. In such cases:
 
 With `OnDelete` strategy:
 1. The consumer updates the PodCliqueSet with the new specifications for their PodCliques in the PodCliqueSet.
-2. They manually delete the pods that need to be recreated with the new specifications according to their requirements on when/which/how many pods are to be updated.
-3. New pods are created with the updated specifications, as and when the user wants updated pods to be created.
+2. They manually delete the pods that need to be recreated with the new specifications, controlling when, which, and how many pods are updated at a time.
+3. New pods are created with the updated specifications by the controller, replacing the pods deleted by the user.
+
+With this update strategy, the user has complete control over updating their application.
 
 ### Limitations/Risks & Mitigations
 
