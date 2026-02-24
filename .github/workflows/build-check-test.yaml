@@ -98,7 +98,7 @@ jobs:
       (github.event.pull_request.draft == false || contains(github.event.pull_request.labels.*.name, 'run-e2e'))
     # use NVIDIA self-hosted runner with 8 vCPUs and 30GB of ram (on AWS)
     # the tests are unstable using the default runner with 4 vCPUs and 16GB of ram
-    runs-on: cpu-amd-m5-2xlarge
+    runs-on: prod-grove-e2e-v1
     timeout-minutes: 60
     strategy:
       fail-fast: false
