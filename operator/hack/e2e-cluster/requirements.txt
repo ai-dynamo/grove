@@ -23,6 +23,9 @@ pydantic-settings==2.5.2
 # YAML parsing - for reading centralized dependencies configuration
 PyYAML==6.0.1
 
+# Retry library with decorator support for resilient operations
+tenacity>=8.2.0
+
 # Docker SDK for Python - native Docker API client for image operations
 # Used for parallel image pre-pulling to speed up cluster creation
 # Version 7.1.0+ required for compatibility with requests 2.32.0+
