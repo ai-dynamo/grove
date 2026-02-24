@@ -12,7 +12,14 @@
   - [Phase](#phase)
   - [trainingSpec Fields](#trainingspec-fields)
   - [terminationDelay](#terminationdelay)
-  - [Disabled Features for Training Workloads](#disabled-features-for-training-workloads)
+  - [Controller Changes](#controller-changes)
+    - [Defaulting Webhook](#defaulting-webhook)
+    - [Validating Webhook](#validating-webhook)
+    - [PodClique Controller](#podclique-controller)
+    - [PodCliqueSet Controller](#podcliqueset-controller)
+    - [PodCliqueScalingGroup Controller](#podcliquescalinggroup-controller)
+    - [New Status Fields](#new-status-fields)
+  - [State Persistence](#state-persistence)
   - [Monitoring](#monitoring)
   - [Test Plan](#test-plan)
   - [Graduation Criteria](#graduation-criteria)
@@ -135,12 +142,58 @@ A "restart" means deleting and recreating all pods across all PodCliques in the 
 
 When `workloadType: Training`, `terminationDelay` defaults to `0`. The operator immediately tears down the replica and begins a restart (or marks it `Failed` if `maxRestarts` is exhausted). Users can override this with an explicit value if their framework tolerates brief pod gaps.
 
-### Disabled Features for Training Workloads
+### Controller Changes
 
-The validation webhook rejects the following when `workloadType: Training`:
+#### Defaulting Webhook
 
-- **Rolling updates** — Spec changes that would trigger a rolling update are rejected.
-- **Replica count changes** — `spec.replicas` is immutable at all levels (PodCliqueSet, PodCliqueScalingGroup, PodClique). The webhook reads `workloadType` from the parent PodCliqueSet via owner reference at validation time, consistent with how grove resolves other inherited attributes.
+- Default `terminationDelay` to `0` when `workloadType: Training` (instead of 4 hours).
+- Default pod `restartPolicy` to `Never` when `workloadType: Training` (instead of `Always`). For training, the operator controls restarts at the job level; kubelet-level pod restarts would interfere with the operator's failure detection and restart counting.
+
+#### Validating Webhook
+
+- Reject pod template spec changes that would produce a new generation hash (i.e., would trigger a rolling update) for Training workloads.
+- `spec.replicas` is immutable at all levels (PodCliqueSet, PodCliqueScalingGroup, PodClique) for Training workloads. The webhook reads `workloadType` from the parent PodCliqueSet via owner reference at validation time.
+- Reject any `ScaleConfig` on PodClique or PodCliqueScalingGroup specs when `workloadType: Training`. HPA creation is driven entirely by the presence of `ScaleConfig` in `computeExpectedHPAs` — rejecting it at admission means no HPA will ever be created for training workloads, with no special-casing needed in the controller.
+
+#### PodClique Controller
+
+- Before recreating a pod, check its exit code. If `exitCode == 0`, do not recreate it.
+- When all pods in the PodClique have exited with code 0, set a `Succeeded` condition on `PodClique.Status.Conditions`. This must be written **before** any pod cleanup, so the state is durable across operator restarts.
+
+#### PodCliqueSet Controller
+
+The PCS controller is responsible for lifecycle orchestration in training mode:
+
+- **Phase computation** — on every reconcile, aggregate PodClique statuses to derive the phase: all pods pending → `Pending`; any replica running → `Running`; all PodCliques have `Succeeded` condition → `Succeeded`; restart budget exhausted or `maxRuntime` exceeded → `Failed`.
+- **maxRuntime enforcement** — record `startTime` in PCS status when phase first transitions to `Running`. `startTime` is never reset on restarts — `maxRuntime` is a wall-clock deadline from first start, inclusive of any time spent failing and restarting. This matches the behavior of Kubernetes Job's `activeDeadlineSeconds` and Kubeflow's `runPolicy.activeDeadlineSeconds`, and bounds total GPU consumption regardless of retry count. On each reconcile, check elapsed time; if elapsed > `maxRuntime`, terminate all pods and set phase `Failed`. Use `requeueAfter(remainingDuration)` to avoid busy-polling.
+- **Restart orchestration** — when a PodClique has `MinAvailableBreached: True`, check `status.restartCount` vs `maxRestarts`. If budget remains, delete all pods across all PodCliques in the replica, increment `restartCount`, and emit a `ReplicaRestarting` event. If exhausted, terminate all remaining pods, set phase `Failed`, and emit `MaxRestartsExceeded`.
+- **No HPA** — HPA creation requires `ScaleConfig` to be present on a PodClique or PodCliqueScalingGroup. Since the validating webhook rejects `ScaleConfig` for Training workloads, `computeExpectedHPAs` will always return an empty list — no controller-level special-casing needed.
+- **Disable rolling updates** — skip generation hash / rolling update progression logic when `workloadType: Training`.
+
+#### PodCliqueScalingGroup Controller
+
+- Skip rolling update processing when `workloadType: Training`.
+
+#### New Status Fields
+
+```go
+type PodCliqueSetStatus struct {
+    // existing fields...
+    Phase        PodCliqueSetPhase  // Pending / Running / Succeeded / Failed
+    RestartCount int32              // total restarts consumed across all replicas
+    StartTime    *metav1.Time       // when phase first became Running; used for maxRuntime tracking
+}
+```
+
+### State Persistence
+
+Grove can be restarted at any time; no in-memory state can be relied upon. The following persistence chain ensures the workload lifecycle is always recoverable from the Kubernetes API:
+
+- **Pod level** — `pod.Status.Phase` and `pod.Status.ContainerStatuses[].State.Terminated.ExitCode` are stored in etcd by Kubernetes. On any reconcile, the controller can re-derive which pods have succeeded by listing owned pods.
+- **PodClique level** — the PodClique controller writes a `Succeeded` condition to `PodClique.Status.Conditions` (etcd-backed) when all its pods exit with code 0. This must happen before any pod deletion so the state is not lost if pods are cleaned up.
+- **PodCliqueSet level** — the PCS controller aggregates PodClique conditions into `PodCliqueSet.Status.Phase` (etcd-backed). `RestartCount` and `StartTime` are also stored in PCS status, making the full restart budget and runtime calculation recoverable after a restart.
+
+The full chain is: **pod status (etcd) → PodClique `Succeeded` condition (etcd) → PodCliqueSet phase + restartCount + startTime (etcd)**.
 
 ### Monitoring
 
