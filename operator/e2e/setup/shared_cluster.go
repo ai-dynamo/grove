@@ -94,6 +94,7 @@ type SharedClusterManager struct {
 	logger        *utils.Logger
 	isSetup       bool
 	workerNodes   []string
+	kwokNodes     []string
 	registryPort  string
 	cleanupFailed bool   // Set to true if CleanupWorkloads fails, causing subsequent tests to fail
 	cleanupError  string // The error message from the failed cleanup
@@ -187,10 +188,16 @@ func (scm *SharedClusterManager) connectToCluster(ctx context.Context, testImage
 	}
 
 	scm.workerNodes = make([]string, 0)
+	scm.kwokNodes = make([]string, 0)
 	for _, node := range nodes.Items {
-		if _, isServer := node.Labels["node-role.kubernetes.io/control-plane"]; !isServer {
-			scm.workerNodes = append(scm.workerNodes, node.Name)
+		if _, isServer := node.Labels["node-role.kubernetes.io/control-plane"]; isServer {
+			continue
 		}
+		if node.Annotations["kwok.x-k8s.io/node"] == "fake" {
+			scm.kwokNodes = append(scm.kwokNodes, node.Name)
+			continue
+		}
+		scm.workerNodes = append(scm.workerNodes, node.Name)
 	}
 
 	// Start node monitoring to handle unhealthy k3d nodes during test execution.
@@ -204,7 +211,8 @@ func (scm *SharedClusterManager) connectToCluster(ctx context.Context, testImage
 		scm.logger.Info("ℹ️  Test run complete - cluster preserved for inspection or reuse")
 	}
 
-	scm.logger.Infof("✅ Connected to cluster with %d worker nodes", len(scm.workerNodes))
+	scm.logger.Infof("✅ Connected to cluster with %d worker nodes (%d KWOK simulated)",
+		len(scm.workerNodes), len(scm.kwokNodes))
 	scm.isSetup = true
 	return nil
 }

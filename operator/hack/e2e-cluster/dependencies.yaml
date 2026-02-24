@@ -41,6 +41,14 @@ cert_manager:
     - "quay.io/jetstack/cert-manager-acmesolver"
     - "quay.io/jetstack/cert-manager-ctl"
 
+kwok_controller:
+  version: "v0.7.0"
+
+pyroscope:
+  version: "1.10.0"
+  helm_repo: "https://grafana.github.io/helm-charts"
+  helm_chart: "grafana/pyroscope"
+
 # Test workload images
 test_images:
   # Lightweight container used for topology and other E2E tests

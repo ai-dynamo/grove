@@ -4,7 +4,7 @@ metadata:
   name: {{ required ".Values.service.name is required" .Values.service.name }}
   namespace: {{ .Release.Namespace }}
   labels:
-{{- include "operator.serviceaccount.labels" . | nindent 4 }}
+{{- include "operator.service.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.service.type }}
   selector:
@@ -18,3 +18,9 @@ spec:
       protocol: TCP
       port: {{ required ".Values.config.server.webhooks.port" .Values.config.server.webhooks.port }}
       targetPort: {{ required ".Values.config.server.webhooks.port" .Values.config.server.webhooks.port }}
+    {{- if and .Values.config.debugging .Values.config.debugging.enableProfiling }}
+    - name: pprof
+      protocol: TCP
+      port: 2753
+      targetPort: 2753
+    {{- end }}

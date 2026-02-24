@@ -133,7 +133,7 @@ func TestCreateManagerOptions(t *testing.T) {
 		assert.Equal(t, 5*time.Second, *opts.RetryPeriod)
 	})
 
-	// Test with profiling enabled
+	// Test with profiling enabled (default port)
 	t.Run("profiling enabled", func(t *testing.T) {
 		cfg := &configv1alpha1.OperatorConfiguration{
 			Server: configv1alpha1.ServerConfiguration{
@@ -165,7 +165,7 @@ func TestCreateManagerOptions(t *testing.T) {
 
 		opts := createManagerOptions(cfg)
 
-		assert.Equal(t, pprofBindAddress, opts.PprofBindAddress)
+		assert.Equal(t, "0.0.0.0:2753", opts.PprofBindAddress)
 	})
 
 	// Test with profiling explicitly disabled

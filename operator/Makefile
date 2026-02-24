@@ -23,7 +23,6 @@ KUBECONFIG_PATH := $(if $(KUBECONFIG),$(KUBECONFIG),$(MODULE_HACK_DIR)/kind/kube
 LD_PACKAGE_PATH := "github.com/ai-dynamo/grove/operator/internal"
 OPERATOR_NAME   := "grove-operator"
 INITC_NAME      := "grove-initc"
-K3S_IMAGE       ?= rancher/k3s:v1.34.2-k3s1
 
 # Include tools targets
 include $(REPO_HACK_DIR)/tools.mk
@@ -110,17 +109,18 @@ run-e2e:
 	@echo "> Running e2e tests..."
 	@cd e2e && go test -count=1 -tags=e2e ./tests/... -v -timeout 45m $(if $(TEST_PATTERN),-run $(TEST_PATTERN))
 
+SETUP_SCRIPT := python3 $(MODULE_HACK_DIR)/e2e-cluster/create-e2e-cluster.py
+
 # Create a k3d cluster for e2e testing (with Grove and Kai scheduler deployed)
 # This is optional - tests work with any Kubernetes cluster that has the required components
-# Pass E2E_CREATE_FLAGS to add CLI flags (e.g. --skip-kai --skip-topology --skip-prepull)
 .PHONY: e2e-cluster-up
 e2e-cluster-up:
-	@$(MODULE_HACK_DIR)/e2e-cluster/create-e2e-cluster.py $(E2E_CREATE_FLAGS)
+	@$(SETUP_SCRIPT) --k3d --kai --grove --topology --prepull
 
 # Delete the k3d e2e test cluster
 .PHONY: e2e-cluster-down
 e2e-cluster-down:
-	@$(MODULE_HACK_DIR)/e2e-cluster/create-e2e-cluster.py --delete
+	@$(SETUP_SCRIPT) --k3d --delete
 
 # Full e2e test run: create k3d cluster, run tests, then cleanup
 # Usage: make run-e2e-full [TEST_PATTERN=<pattern>]
@@ -134,27 +134,6 @@ run-e2e-full: e2e-cluster-up
 		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down
-
-# Run autoMNNVL e2e tests (all 4 configurations: supported/unsupported x enabled/disabled)
-# Creates a lightweight k3d cluster (2 workers, no Kai/topology), runs all configurations
-# sequentially via config-cluster.py, then cleans up. Uses the same e2e-cluster-up target
-# with MNNVL-specific env overrides and flags.
-# Usage: make run-e2e-mnnvl-full
-.PHONY: run-e2e-mnnvl-full
-run-e2e-mnnvl-full: export E2E_WORKER_NODES = 2
-run-e2e-mnnvl-full: export E2E_K3S_IMAGE = $(K3S_IMAGE)
-run-e2e-mnnvl-full: E2E_CREATE_FLAGS = --skip-prepull
-run-e2e-mnnvl-full: e2e-cluster-up
-	@echo "> Pushing alpine image to local registry..."
-	@docker pull alpine:latest || true
-	@docker tag alpine:latest localhost:5001/alpine:latest
-	@docker push localhost:5001/alpine:latest
-	@echo "> Running autoMNNVL e2e tests (all 4 configurations)..."
-	@python3 $(MODULE_HACK_DIR)/e2e-autoMNNVL/run_autoMNNVL_e2e_all.py || \
-		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
-	@echo "> Tests passed, cleaning up cluster..."
-	@$(MAKE) e2e-cluster-down
-
 
 # Make targets for local development and testing
 # -------------------------------------------------------------
@@ -211,11 +190,46 @@ deploy-debug: $(SKAFFOLD)
 undeploy: $(SKAFFOLD)
 	@$(SKAFFOLD) delete -m grove-operator -n $(NAMESPACE)
 
-# Deploys all the add-ons to a k8s cluster.
+# Deploys metrics-server add-on to a k8s cluster.
 .PHONY: deploy-addons
 deploy-addons:
-	@$(MODULE_HACK_DIR)/deploy-addons.sh --all
+	@$(MODULE_HACK_DIR)/deploy-addons.sh --metrics-server
 
 .PHONY: clean-chart-resources
 clean-chart-resources:
 	@rm -f $(MODULE_ROOT)/charts/crds/*.yaml
+
+# Scale test infrastructure targets
+# ------------------------------------------------------------------
+# Prerequisites: existing cluster (e.g. make kind-up or make e2e-cluster-up)
+#
+# Quick start (full setup — KWOK + Pyroscope + nodes):
+#   make setup-scale-test NODES=400
+#
+# Individual steps:
+#   make deploy-pyroscope            # Install Pyroscope
+#   make setup-kwok-nodes NODES=400  # Install KWOK controller + create 400 simulated nodes
+#   make delete-kwok-nodes           # Delete all KWOK simulated nodes
+
+# Install Pyroscope for continuous profiling.
+.PHONY: deploy-pyroscope
+deploy-pyroscope:
+	@$(SETUP_SCRIPT) --pyroscope
+
+# Create KWOK simulated nodes (installs KWOK controller automatically).
+# Usage: make setup-kwok-nodes [NODES=400]
+.PHONY: setup-kwok-nodes
+setup-kwok-nodes:
+	@$(SETUP_SCRIPT) --kwok-nodes $(or $(NODES),400)
+
+# Delete all KWOK simulated nodes without touching the cluster.
+.PHONY: delete-kwok-nodes
+delete-kwok-nodes:
+	@$(SETUP_SCRIPT) --kwok-delete
+
+# Complete scale test environment setup.
+# Installs KWOK controller, Pyroscope, and creates simulated nodes.
+# Usage: make setup-scale-test [NODES=400]
+.PHONY: setup-scale-test
+setup-scale-test:
+	@$(SETUP_SCRIPT) --kwok-nodes $(or $(NODES),400) --pyroscope

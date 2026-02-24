@@ -40,7 +40,7 @@ import (
 )
 
 const (
-	pprofBindAddress = "127.0.0.1:2753"
+	pprofBindAddress = "0.0.0.0:2753"
 )
 
 var (

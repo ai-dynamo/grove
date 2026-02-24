@@ -14,6 +14,15 @@ spec:
     metadata:
       labels:
 {{- include "operator.deployment.labels" . | nindent 8 }}
+      {{- if and .Values.config.debugging .Values.config.debugging.enableProfiling }}
+      annotations:
+        profiles.grafana.com/cpu.scrape: "true"
+        profiles.grafana.com/cpu.port: "2753"
+        profiles.grafana.com/memory.scrape: "true"
+        profiles.grafana.com/memory.port: "2753"
+        profiles.grafana.com/goroutine.scrape: "true"
+        profiles.grafana.com/goroutine.port: "2753"
+      {{- end }}
     spec:
       restartPolicy: Always
       {{- if .Values.priorityClass.enabled }}
@@ -34,6 +43,18 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - --config=/etc/grove-operator/config/config.yaml
+          ports:
+            - name: metrics
+              containerPort: {{ required ".Values.config.server.metrics.port" .Values.config.server.metrics.port }}
+              protocol: TCP
+            - name: webhooks
+              containerPort: {{ required ".Values.config.server.webhooks.port" .Values.config.server.webhooks.port }}
+              protocol: TCP
+            {{- if and .Values.config.debugging .Values.config.debugging.enableProfiling }}
+            - name: pprof
+              containerPort: 2753
+              protocol: TCP
+            {{- end }}
           {{- if .Values.config.server.healthProbes.enable }}
           livenessProbe:
             httpGet:
