@@ -1,0 +1,144 @@
+# /*
+# Copyright 2026 The Grove Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# */
+
+"""Utility functions for CLI flag resolution, kubectl, and helm overrides."""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+from typing import Any
+
+import sh
+
+from e2e_manager.config import ActionFlags
+from e2e_manager.constants import (
+    HELM_KEY_PCLQ_SYNCS,
+    HELM_KEY_PCS_SYNCS,
+    HELM_KEY_PCSG_SYNCS,
+    HELM_KEY_PROFILING,
+    KWOK_GITHUB_REPO,
+)
+
+
+def resolve_bool_flag(name: str, value: Any) -> bool:
+    """Resolve a Typer boolean flag value with sys.argv fallback.
+
+    Workaround: Typer has issues with boolean flags in some environments,
+    passing None or strings instead of True/False.
+
+    Args:
+        name: Python parameter name (underscores), e.g. ``skip_kai``.
+        value: Raw value from Typer.
+
+    Returns:
+        Resolved boolean.
+    """
+    flag = f"--{name.replace('_', '-')}"
+    if flag in sys.argv:
+        return True
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return value.lower() not in ("false", "0", "", "no", "n", "none")
+    return bool(value)
+
+
+def kwok_release_url(version: str) -> str:
+    """Build the GitHub release base URL for a KWOK version.
+
+    Args:
+        version: KWOK release version tag (e.g. ``v0.7.0``).
+
+    Returns:
+        Full GitHub release download URL.
+    """
+    return f"https://github.com/{KWOK_GITHUB_REPO}/releases/download/{version}"
+
+
+def resolve_registry_repos(registry: str | None, port: int) -> tuple[str, str]:
+    """Resolve push/pull registry repos.
+
+    k3d uses separate names for push (localhost:<port>) and pull (registry:<port>)
+    because the push happens from the host while the pull happens inside the cluster.
+
+    Args:
+        registry: Explicit registry URL override, or None for k3d local.
+        port: k3d local registry port number.
+
+    Returns:
+        Tuple of (push_repo, pull_repo) registry URLs.
+    """
+    if registry:
+        return registry, registry
+    return f"localhost:{port}", f"registry:{port}"
+
+
+def collect_grove_helm_overrides(flags: ActionFlags) -> list[str]:
+    """Build helm override strings from grove tuning flags.
+
+    Args:
+        flags: Resolved action flags containing grove tuning values.
+
+    Returns:
+        List of ``key=value`` strings for ``helm --set`` arguments.
+    """
+    overrides: list[tuple[bool, str, str]] = [
+        (flags.grove_profiling, HELM_KEY_PROFILING, "true"),
+        (flags.grove_pcs_syncs is not None, HELM_KEY_PCS_SYNCS, str(flags.grove_pcs_syncs)),
+        (flags.grove_pclq_syncs is not None, HELM_KEY_PCLQ_SYNCS, str(flags.grove_pclq_syncs)),
+        (flags.grove_pcsg_syncs is not None, HELM_KEY_PCSG_SYNCS, str(flags.grove_pcsg_syncs)),
+    ]
+    return [f"{key}={value}" for enabled, key, value in overrides if enabled]
+
+
+def require_command(cmd: str) -> None:
+    """Check if a command exists on the system PATH.
+
+    Args:
+        cmd: Name of the CLI command to check.
+
+    Raises:
+        RuntimeError: If the command is not found.
+    """
+    try:
+        sh.which(cmd)
+    except sh.ErrorReturnCode:
+        raise RuntimeError(f"Required command '{cmd}' not found. Please install it first.")
+
+
+def run_kubectl(args: list[str], timeout: int = 30) -> tuple[bool, str, str]:
+    """Run a kubectl command via subprocess and return (success, stdout, stderr).
+
+    Uses subprocess instead of sh because kubectl output parsing requires
+    precise control over stdout/stderr separation that sh's combined output
+    makes unreliable (e.g., checking webhook readiness keywords).
+
+    Args:
+        args: kubectl arguments (e.g. ``["get", "pods", "-n", "default"]``).
+        timeout: Maximum seconds to wait for the command to complete.
+
+    Returns:
+        Tuple of (success, stdout, stderr).
+    """
+    try:
+        result = subprocess.run(
+            ["kubectl", *args],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        return result.returncode == 0, result.stdout, result.stderr
+    except (subprocess.SubprocessError, OSError) as exc:
+        return False, "", str(exc)
