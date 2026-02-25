@@ -23,6 +23,7 @@ KUBECONFIG_PATH := $(if $(KUBECONFIG),$(KUBECONFIG),$(MODULE_HACK_DIR)/kind/kube
 LD_PACKAGE_PATH := "github.com/ai-dynamo/grove/operator/internal"
 OPERATOR_NAME   := "grove-operator"
 INITC_NAME      := "grove-initc"
+K3S_IMAGE       ?= rancher/k3s:v1.34.2-k3s1
 
 # Include tools targets
 include $(REPO_HACK_DIR)/tools.mk
@@ -86,31 +87,74 @@ cover-html: test-cover
 	@go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated at coverage.html"
 
-# Run e2e tests
-# Usage: make test-e2e [TEST_PATTERN=<pattern>] [DIAG_DIR=<path>] [DIAG_MODE=<mode>]
+# Run e2e tests against an existing cluster
+# Requires: E2E_USE_EXISTING_CLUSTER=true and a pre-created cluster
+# Usage: make run-e2e [TEST_PATTERN=<pattern>] [DIAG_DIR=<path>] [DIAG_MODE=<mode>]
 # Examples:
-#   make test-e2e                              # Run all tests
-#   make test-e2e TEST_PATTERN=Test_GS         # Run gang scheduling tests
-#   make test-e2e TEST_PATTERN=Test_GS1        # Run specific test
-#   make test-e2e TEST_PATTERN=Test_TAS        # Run topology tests
-#   make test-e2e DIAG_DIR=e2e-diagnostics     # Output diagnostics to specific directory
-#   make test-e2e DIAG_MODE=both               # Output to stdout and file
-#   make test-e2e DIAG_MODE=stdout             # Output to stdout only
+#   make run-e2e                              # Run all tests
+#   make run-e2e TEST_PATTERN=Test_GS         # Run gang scheduling tests
+#   make run-e2e TEST_PATTERN=Test_GS1        # Run specific test
+#   make run-e2e TEST_PATTERN=Test_TAS        # Run topology tests
+#   GROVE_E2E_DIAG_MODE=both make run-e2e     # Output to stdout and file
+#   GROVE_E2E_DIAG_MODE=stdout make run-e2e   # Output to stdout only
 #
-# Variables:
-#   TEST_PATTERN - Test name pattern to match (optional)
-#   DIAG_DIR     - Directory for diagnostic files (default: operator/)
-#   DIAG_MODE    - Diagnostic output mode: stdout, file, both (default: file)
-DIAG_DIR ?= $(MODULE_ROOT)
-DIAG_MODE ?= file
-.PHONY: test-e2e
-test-e2e: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
-test-e2e: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
-test-e2e:
+# Environment variables:
+#   GROVE_E2E_DIAG_MODE - Diagnostic output mode: stdout, file, both (default: file)
+#   GROVE_E2E_DIAG_DIR  - Directory for diagnostic files (default: operator/)
+.PHONY: run-e2e
+run-e2e: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
+run-e2e: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
+run-e2e:
 	@echo "> Preparing charts (copying CRDs)..."
 	@$(MODULE_HACK_DIR)/prepare-charts.sh
 	@echo "> Running e2e tests..."
 	@cd e2e && go test -count=1 -tags=e2e ./tests/... -v -timeout 45m $(if $(TEST_PATTERN),-run $(TEST_PATTERN))
+
+# Create a k3d cluster for e2e testing (with Grove and Kai scheduler deployed)
+# This is optional - tests work with any Kubernetes cluster that has the required components
+# Pass E2E_CREATE_FLAGS to add CLI flags (e.g. --skip-kai --skip-topology --skip-prepull)
+.PHONY: e2e-cluster-up
+e2e-cluster-up:
+	@$(MODULE_HACK_DIR)/e2e-cluster/create-e2e-cluster.py $(E2E_CREATE_FLAGS)
+
+# Delete the k3d e2e test cluster
+.PHONY: e2e-cluster-down
+e2e-cluster-down:
+	@$(MODULE_HACK_DIR)/e2e-cluster/create-e2e-cluster.py --delete
+
+# Full e2e test run: create k3d cluster, run tests, then cleanup
+# Usage: make run-e2e-full [TEST_PATTERN=<pattern>]
+# Examples:
+#   make run-e2e-full                          # Run all tests
+#   make run-e2e-full TEST_PATTERN=Test_GS     # Run gang scheduling tests only
+.PHONY: run-e2e-full
+run-e2e-full: e2e-cluster-up
+	@echo "> Running e2e tests..."
+	@E2E_REGISTRY_PORT=5001 $(MAKE) run-e2e TEST_PATTERN=$(TEST_PATTERN) || \
+		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
+	@echo "> Tests passed, cleaning up cluster..."
+	@$(MAKE) e2e-cluster-down
+
+# Run autoMNNVL e2e tests (all 4 configurations: supported/unsupported x enabled/disabled)
+# Creates a lightweight k3d cluster (2 workers, no Kai/topology), runs all configurations
+# sequentially via config-cluster.py, then cleans up. Uses the same e2e-cluster-up target
+# with MNNVL-specific env overrides and flags.
+# Usage: make run-e2e-mnnvl-full
+.PHONY: run-e2e-mnnvl-full
+run-e2e-mnnvl-full: export E2E_WORKER_NODES = 2
+run-e2e-mnnvl-full: export E2E_K3S_IMAGE = $(K3S_IMAGE)
+run-e2e-mnnvl-full: E2E_CREATE_FLAGS = --skip-prepull
+run-e2e-mnnvl-full: e2e-cluster-up
+	@echo "> Pushing alpine image to local registry..."
+	@docker pull alpine:latest || true
+	@docker tag alpine:latest localhost:5001/alpine:latest
+	@docker push localhost:5001/alpine:latest
+	@echo "> Running autoMNNVL e2e tests (all 4 configurations)..."
+	@python3 $(MODULE_HACK_DIR)/e2e-autoMNNVL/run_autoMNNVL_e2e_all.py || \
+		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
+	@echo "> Tests passed, cleaning up cluster..."
+	@$(MAKE) e2e-cluster-down
+
 
 # Make targets for local development and testing
 # -------------------------------------------------------------
