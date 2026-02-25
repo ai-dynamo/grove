@@ -115,12 +115,12 @@ SETUP_SCRIPT := python3 $(MODULE_HACK_DIR)/e2e-cluster/create-e2e-cluster.py
 # This is optional - tests work with any Kubernetes cluster that has the required components
 .PHONY: e2e-cluster-up
 e2e-cluster-up:
-	@$(SETUP_SCRIPT) --k3d --kai --grove --topology --prepull
+	@$(SETUP_SCRIPT)
 
 # Delete the k3d e2e test cluster
 .PHONY: e2e-cluster-down
 e2e-cluster-down:
-	@$(SETUP_SCRIPT) --k3d --delete
+	@$(SETUP_SCRIPT) --delete
 
 # Full e2e test run: create k3d cluster, run tests, then cleanup
 # Usage: make run-e2e-full [TEST_PATTERN=<pattern>]
@@ -214,22 +214,22 @@ clean-chart-resources:
 # Install Pyroscope for continuous profiling.
 .PHONY: deploy-pyroscope
 deploy-pyroscope:
-	@$(SETUP_SCRIPT) --pyroscope
+	@$(SETUP_SCRIPT) --skip-cluster-creation --skip-kai --skip-grove --skip-topology --skip-prepull --pyroscope
 
 # Create KWOK simulated nodes (installs KWOK controller automatically).
 # Usage: make setup-kwok-nodes [NODES=400]
 .PHONY: setup-kwok-nodes
 setup-kwok-nodes:
-	@$(SETUP_SCRIPT) --kwok-nodes $(or $(NODES),400)
+	@$(SETUP_SCRIPT) --skip-cluster-creation --skip-kai --skip-grove --skip-topology --skip-prepull --kwok-nodes $(or $(NODES),400)
 
 # Delete all KWOK simulated nodes without touching the cluster.
 .PHONY: delete-kwok-nodes
 delete-kwok-nodes:
-	@$(SETUP_SCRIPT) --kwok-delete
+	@$(SETUP_SCRIPT) --skip-cluster-creation --skip-kai --skip-grove --skip-topology --skip-prepull --kwok-delete
 
 # Complete scale test environment setup.
 # Installs KWOK controller, Pyroscope, and creates simulated nodes.
 # Usage: make setup-scale-test [NODES=400]
 .PHONY: setup-scale-test
 setup-scale-test:
-	@$(SETUP_SCRIPT) --kwok-nodes $(or $(NODES),400) --pyroscope
+	@$(SETUP_SCRIPT) --skip-cluster-creation --skip-kai --skip-grove --skip-topology --skip-prepull --kwok-nodes $(or $(NODES),400) --pyroscope

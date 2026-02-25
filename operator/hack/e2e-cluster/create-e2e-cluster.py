@@ -18,8 +18,9 @@
 """
 create-e2e-cluster.py - Unified cluster setup for Grove E2E testing.
 
-All actions are opt-in via flags. Supports fresh k3d cluster creation and
-deploying scale infrastructure on any existing cluster.
+Default behavior creates a full e2e cluster (k3d + kai + grove + topology + prepull).
+Use --skip-* flags to opt out of individual steps.
+Use --delete, --kwok-nodes, --kwok-delete, --pyroscope for explicit actions.
 
 Environment Variables:
     All cluster configuration can be overridden via E2E_* environment variables:
@@ -28,28 +29,32 @@ Environment Variables:
     - E2E_API_PORT (default: 6560)
     - E2E_WORKER_NODES (default: 30)
     - E2E_KAI_VERSION (default: from dependencies.yaml)
-    - And more (see ClusterConfig class for full list)
+    - And more (see config classes for full list)
 
 Examples:
-    # Fresh k3d e2e cluster
-    ./hack/e2e-cluster/create-e2e-cluster.py --k3d --kai --grove --topology --prepull
+    # Full e2e setup (default — no flags needed!)
+    ./create-e2e-cluster.py
 
-    # Delete k3d cluster
-    ./hack/e2e-cluster/create-e2e-cluster.py --k3d --delete
+    # Full e2e but skip image pre-pulling
+    ./create-e2e-cluster.py --skip-prepull
 
-    # Scale infra on existing cluster (KWOK controller auto-installed)
-    ./hack/e2e-cluster/create-e2e-cluster.py --kwok-nodes 1000 --pyroscope
+    # Deploy only grove on existing cluster
+    ./create-e2e-cluster.py --skip-cluster-creation --skip-kai --skip-topology --skip-prepull
+
+    # Delete cluster
+    ./create-e2e-cluster.py --delete
+
+    # Scale test on existing cluster
+    ./create-e2e-cluster.py --skip-cluster-creation --skip-kai --skip-grove --skip-topology --skip-prepull --kwok-nodes 1000 --pyroscope
 
     # Delete all KWOK nodes
-    ./hack/e2e-cluster/create-e2e-cluster.py --kwok-delete
+    ./create-e2e-cluster.py --skip-cluster-creation --skip-kai --skip-grove --skip-topology --skip-prepull --kwok-delete
 
-    # Deploy Grove on existing cluster with custom registry
-    ./hack/e2e-cluster/create-e2e-cluster.py --grove --registry myregistry.io/grove
-
-For detailed usage information, run: ./hack/e2e-cluster/create-e2e-cluster.py --help
+For detailed usage information, run: ./create-e2e-cluster.py --help
 """
 
-import argparse
+from __future__ import annotations
+
 import json
 import logging
 import os
@@ -58,14 +63,16 @@ import subprocess
 import sys
 import tempfile
 import time
-import yaml
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import docker
 import sh
+import typer
+import yaml
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from rich.console import Console
@@ -76,9 +83,11 @@ from tenacity import retry, stop_after_attempt, wait_fixed, wait_exponential, re
 console = Console(stderr=True)
 logger = logging.getLogger(__name__)
 
+app = typer.Typer(help="Unified cluster setup for Grove E2E testing.")
+
 
 # ============================================================================
-# Configuration
+# Constants
 # ============================================================================
 
 def load_dependencies() -> dict:
@@ -90,15 +99,17 @@ def load_dependencies() -> dict:
 
 DEPENDENCIES = load_dependencies()
 
-# Webhook readiness check configuration
+CLUSTER_TIMEOUT = "120s"
+NODES_PER_ZONE = 28
+NODES_PER_BLOCK = 14
+NODES_PER_RACK = 7
+
 WEBHOOK_READY_MAX_RETRIES = 60
 WEBHOOK_READY_POLL_INTERVAL_SECONDS = 5
 
-# Kai queue webhook readiness configuration
 KAI_QUEUE_MAX_RETRIES = 12
 KAI_QUEUE_POLL_INTERVAL_SECONDS = 5
 
-# KWOK node constants
 NODE_CONDITIONS = [
     {"type": "Ready", "status": "True", "reason": "KubeletReady",
      "message": "kubelet is posting ready status"},
@@ -112,53 +123,25 @@ NODE_CONDITIONS = [
      "message": "RouteController created a route"},
 ]
 
-# E2E node role label/taint (used in k3d cluster creation)
 _E2E_NODE_ROLE_KEY = "node_role.e2e.grove.nvidia.com"
-
-# Kai Scheduler Helm OCI path
 _KAI_SCHEDULER_OCI = "oci://ghcr.io/nvidia/kai-scheduler/kai-scheduler"
-
-# Grove image names (must match skaffold output)
 _GROVE_OPERATOR_IMAGE = "grove-operator"
 _GROVE_INITC_IMAGE = "grove-initc"
-
-# Grove module path for LD_FLAGS
 _GROVE_MODULE_PATH = "github.com/ai-dynamo/grove/operator/internal/version"
-
-# KWOK node annotation/taint keys
 _KWOK_ANNOTATION_KEY = "kwok.x-k8s.io/node"
 _KWOK_FAKE_NODE_TAINT_KEY = "fake-node"
-
-# Keywords that indicate Grove webhook is responsive
 _WEBHOOK_READY_KEYWORDS = ["validated", "denied", "error", "invalid", "created", "podcliqueset"]
 
-# Fields displayed during cluster creation (inclusion set avoids fragile exclusion lists)
-_DISPLAY_FIELDS = frozenset({
-    "cluster_name", "registry_port", "api_port", "lb_port",
-    "worker_nodes", "worker_memory", "k3s_image", "kai_version",
-    "skaffold_profile",
-})
 
+# ============================================================================
+# Configuration classes
+# ============================================================================
 
-class ClusterConfig(BaseSettings):
-    """
-    Configuration auto-loaded from E2E_* environment variables.
-
-    Environment variables are automatically mapped to fields using the E2E_ prefix:
-    - E2E_CLUSTER_NAME → cluster_name
-    - E2E_REGISTRY_PORT → registry_port (automatically converted to int)
-    - E2E_API_PORT → api_port (automatically converted to int)
-    - E2E_WORKER_NODES → worker_nodes (automatically converted to int)
-    - E2E_KAI_VERSION → kai_version
-    - E2E_REGISTRY → registry
-    - E2E_KWOK_NODES → kwok_nodes
-    - E2E_KWOK_BATCH_SIZE → kwok_batch_size
-    - E2E_PYROSCOPE_NS → pyroscope_ns
-    """
+class K3dConfig(BaseSettings):
+    """k3d cluster configuration, auto-loaded from E2E_* env vars."""
 
     model_config = SettingsConfigDict(env_prefix="E2E_", extra="ignore")
 
-    # Cluster configuration
     cluster_name: str = "shared-e2e-test-cluster"
     registry_port: int = Field(default=5001, ge=1, le=65535)
     api_port: int = Field(default=6560, ge=1, le=65535)
@@ -166,27 +149,193 @@ class ClusterConfig(BaseSettings):
     worker_nodes: int = Field(default=30, ge=1, le=100)
     worker_memory: str = Field(default="150m", pattern=r"^\d+[mMgG]?$")
     k3s_image: str = "rancher/k3s:v1.33.5-k3s1"
+    max_retries: int = Field(default=3, ge=1, le=10)
+
+
+class ComponentConfig(BaseSettings):
+    """Component versions and registry, auto-loaded from E2E_* env vars."""
+
+    model_config = SettingsConfigDict(env_prefix="E2E_", extra="ignore")
+
     kai_version: str = Field(default=DEPENDENCIES['kai_scheduler']['version'],
                              pattern=r"^v[\d.]+(-[\w.]+)?$")
     skaffold_profile: str = "topology-test"
-    max_retries: int = Field(default=3, ge=1, le=10)
-
-    # New fields (overridable via E2E_* env vars)
     registry: str | None = None
+
+
+class KwokConfig(BaseSettings):
+    """KWOK and Pyroscope configuration, auto-loaded from E2E_* env vars."""
+
+    model_config = SettingsConfigDict(env_prefix="E2E_", extra="ignore")
+
     kwok_nodes: int | None = None
     kwok_batch_size: int = Field(default=150, ge=1)
-    pyroscope_ns: str = "pyroscope"
-
-    # KWOK node resources
     kwok_node_cpu: str = "64"
     kwok_node_memory: str = "512Gi"
     kwok_max_pods: int = 110
+    pyroscope_ns: str = "pyroscope"
 
-    # Constants (not configurable via environment variables)
-    cluster_timeout: str = "120s"
-    nodes_per_zone: int = 28
-    nodes_per_block: int = 14
-    nodes_per_rack: int = 7
+
+# ============================================================================
+# Action flags
+# ============================================================================
+
+@dataclass(frozen=True)
+class ActionFlags:
+    """Single source of truth for what actions to perform."""
+
+    create_k3d: bool
+    delete_k3d: bool
+    install_kai: bool
+    install_grove: bool
+    apply_topology: bool
+    prepull_images: bool
+    create_kwok_nodes: bool
+    kwok_node_count: int
+    delete_kwok_nodes: bool
+    install_pyroscope: bool
+    grove_profiling: bool
+    grove_pcs_syncs: int | None
+    grove_pclq_syncs: int | None
+    grove_pcsg_syncs: int | None
+    registry: str | None
+
+
+# ============================================================================
+# Config resolution
+# ============================================================================
+
+def validate_flags(
+    skip_cluster_creation: bool,
+    skip_kai: bool,
+    skip_grove: bool,
+    skip_prepull: bool,
+    delete: bool,
+    registry: str | None,
+    grove_profiling: bool,
+    grove_pcs_syncs: int | None,
+    grove_pclq_syncs: int | None,
+    grove_pcsg_syncs: int | None,
+) -> None:
+    """Validate flag combinations. Raises typer.BadParameter on hard failures."""
+    if not skip_prepull and skip_cluster_creation and not delete:
+        raise typer.BadParameter(
+            "--skip-prepull must be set when --skip-cluster-creation is used (prepull requires k3d)"
+        )
+
+    install_grove = not skip_grove and not delete
+    if delete and (not skip_kai or not skip_grove):
+        logger.warning("--delete is set; install flags will be ignored")
+
+    if install_grove and not registry and skip_cluster_creation:
+        raise typer.BadParameter(
+            "--registry is required when installing Grove without k3d cluster creation"
+        )
+
+    grove_tuning = grove_profiling or grove_pcs_syncs or grove_pclq_syncs or grove_pcsg_syncs
+    if grove_tuning and not install_grove:
+        logger.warning("Grove tuning flags ignored because Grove is not being installed")
+
+
+def resolve_config(
+    skip_cluster_creation: bool,
+    skip_kai: bool,
+    skip_grove: bool,
+    skip_topology: bool,
+    skip_prepull: bool,
+    delete: bool,
+    workers: int | None,
+    registry: str | None,
+    kwok_nodes: int | None,
+    kwok_batch_size: int | None,
+    kwok_delete: bool,
+    pyroscope: bool,
+    pyroscope_namespace: str | None,
+    grove_profiling: bool,
+    grove_pcs_syncs: int | None,
+    grove_pclq_syncs: int | None,
+    grove_pcsg_syncs: int | None,
+) -> tuple[K3dConfig, ComponentConfig, KwokConfig, ActionFlags]:
+    """Merge CLI > env > defaults and return resolved config objects + action flags."""
+    k3d_cfg = K3dConfig()
+    comp_cfg = ComponentConfig()
+    kwok_cfg = KwokConfig()
+
+    # CLI overrides (CLI > env > default)
+    if workers is not None:
+        k3d_cfg = k3d_cfg.model_copy(update={"worker_nodes": workers})
+    if registry is not None:
+        comp_cfg = comp_cfg.model_copy(update={"registry": registry})
+    if kwok_nodes is not None:
+        kwok_cfg = kwok_cfg.model_copy(update={"kwok_nodes": kwok_nodes})
+    if kwok_batch_size is not None:
+        kwok_cfg = kwok_cfg.model_copy(update={"kwok_batch_size": kwok_batch_size})
+    if pyroscope_namespace is not None:
+        kwok_cfg = kwok_cfg.model_copy(update={"pyroscope_ns": pyroscope_namespace})
+
+    resolved_kwok_count = kwok_cfg.kwok_nodes or 0
+
+    flags = ActionFlags(
+        create_k3d=not skip_cluster_creation and not delete,
+        delete_k3d=delete,
+        install_kai=not skip_kai and not delete,
+        install_grove=not skip_grove and not delete,
+        apply_topology=not skip_topology and not delete,
+        prepull_images=not skip_prepull and not skip_cluster_creation and not delete,
+        create_kwok_nodes=kwok_nodes is not None,
+        kwok_node_count=resolved_kwok_count,
+        delete_kwok_nodes=kwok_delete,
+        install_pyroscope=pyroscope,
+        grove_profiling=grove_profiling,
+        grove_pcs_syncs=grove_pcs_syncs,
+        grove_pclq_syncs=grove_pclq_syncs,
+        grove_pcsg_syncs=grove_pcsg_syncs,
+        registry=comp_cfg.registry,
+    )
+
+    return k3d_cfg, comp_cfg, kwok_cfg, flags
+
+
+# ============================================================================
+# Display
+# ============================================================================
+
+def display_config(
+    flags: ActionFlags,
+    k3d_cfg: K3dConfig,
+    comp_cfg: ComponentConfig,
+    kwok_cfg: KwokConfig,
+) -> None:
+    """Print only config relevant to requested actions."""
+    console.print(Panel.fit("Configuration", style="bold blue"))
+
+    if flags.create_k3d or flags.delete_k3d:
+        console.print("[yellow]k3d cluster:[/yellow]")
+        console.print(f"  cluster_name    : {k3d_cfg.cluster_name}")
+        console.print(f"  registry_port   : {k3d_cfg.registry_port}")
+        console.print(f"  api_port        : {k3d_cfg.api_port}")
+        console.print(f"  lb_port         : {k3d_cfg.lb_port}")
+        console.print(f"  worker_nodes    : {k3d_cfg.worker_nodes}")
+        console.print(f"  worker_memory   : {k3d_cfg.worker_memory}")
+        console.print(f"  k3s_image       : {k3d_cfg.k3s_image}")
+
+    if flags.install_kai:
+        console.print("[yellow]Kai Scheduler:[/yellow]")
+        console.print(f"  kai_version     : {comp_cfg.kai_version}")
+
+    if flags.install_grove:
+        console.print("[yellow]Grove:[/yellow]")
+        console.print(f"  skaffold_profile: {comp_cfg.skaffold_profile}")
+        console.print(f"  registry        : {comp_cfg.registry or '(auto from k3d)'}")
+
+    if flags.create_kwok_nodes or flags.delete_kwok_nodes:
+        console.print("[yellow]KWOK:[/yellow]")
+        console.print(f"  kwok_nodes      : {flags.kwok_node_count}")
+        console.print(f"  kwok_batch_size : {kwok_cfg.kwok_batch_size}")
+
+    if flags.install_pyroscope:
+        console.print("[yellow]Pyroscope:[/yellow]")
+        console.print(f"  namespace       : {kwok_cfg.pyroscope_ns}")
 
 
 # ============================================================================
@@ -225,24 +374,6 @@ def run_kubectl(args: list[str], timeout: int = 30) -> tuple[bool, str, str]:
         return result.returncode == 0, result.stdout, result.stderr
     except (subprocess.SubprocessError, OSError) as exc:
         return False, "", str(exc)
-
-
-# ============================================================================
-# Flag validation
-# ============================================================================
-
-def validate_flags(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
-    """Validate flag combinations. Uses parser.error() for hard failures (exits 2)."""
-    if args.prepull and not args.k3d:
-        parser.error("--prepull requires --k3d")
-
-    if args.grove and not args.registry and not args.k3d:
-        parser.error("--registry is required when --grove is used without --k3d")
-
-    for flag in ("grove_profiling", "grove_pcs_syncs", "grove_pclq_syncs", "grove_pcsg_syncs"):
-        if getattr(args, flag) and not args.grove:
-            logger.warning("Grove tuning flag --%s ignored because --grove is not set",
-                           flag.replace("_", "-"))
 
 
 # ============================================================================
@@ -311,45 +442,42 @@ def prepull_images(images: list[str], registry_port: int, version: str) -> None:
 # Cluster operations
 # ============================================================================
 
-def delete_cluster(config: ClusterConfig) -> None:
+def delete_cluster(k3d_cfg: K3dConfig) -> None:
     """Delete the k3d cluster."""
-    console.print(f"[yellow]ℹ️  Deleting k3d cluster '{config.cluster_name}'...[/yellow]")
-    exit_code, _ = run_cmd(sh.k3d, "cluster", "delete", config.cluster_name, _ok_code=[0, 1])
+    console.print(f"[yellow]ℹ️  Deleting k3d cluster '{k3d_cfg.cluster_name}'...[/yellow]")
+    exit_code, _ = run_cmd(sh.k3d, "cluster", "delete", k3d_cfg.cluster_name, _ok_code=[0, 1])
     if exit_code == 0:
-        console.print(f"[green]✅ Cluster '{config.cluster_name}' deleted[/green]")
+        console.print(f"[green]✅ Cluster '{k3d_cfg.cluster_name}' deleted[/green]")
     else:
-        console.print(f"[yellow]⚠️  Cluster '{config.cluster_name}' not found or already deleted[/yellow]")
+        console.print(f"[yellow]⚠️  Cluster '{k3d_cfg.cluster_name}' not found or already deleted[/yellow]")
 
 
-def create_cluster(config: ClusterConfig) -> bool:
+def create_cluster(k3d_cfg: K3dConfig) -> bool:
     """Create a k3d cluster with retry logic."""
     console.print(Panel.fit("Creating k3d cluster", style="bold blue"))
-    console.print("[yellow]Configuration:[/yellow]")
-    for key, value in config.model_dump(include=_DISPLAY_FIELDS).items():
-        console.print(f"  {key:20s}: {value}")
 
-    for attempt in range(1, config.max_retries + 1):
-        console.print(f"[yellow]ℹ️  Cluster creation attempt {attempt} of {config.max_retries}...[/yellow]")
-        exit_code, _ = run_cmd(sh.k3d, "cluster", "delete", config.cluster_name, _ok_code=[0, 1])
+    for attempt in range(1, k3d_cfg.max_retries + 1):
+        console.print(f"[yellow]ℹ️  Cluster creation attempt {attempt} of {k3d_cfg.max_retries}...[/yellow]")
+        exit_code, _ = run_cmd(sh.k3d, "cluster", "delete", k3d_cfg.cluster_name, _ok_code=[0, 1])
         if exit_code == 0:
             console.print("[yellow]   Removed existing cluster[/yellow]")
         else:
             console.print("[yellow]   No existing cluster found (proceeding with creation)[/yellow]")
 
         exit_code, _ = run_cmd(
-            sh.k3d, "cluster", "create", config.cluster_name,
+            sh.k3d, "cluster", "create", k3d_cfg.cluster_name,
             "--servers", "1",
-            "--agents", str(config.worker_nodes),
-            "--image", config.k3s_image,
-            "--api-port", config.api_port,
-            "--port", f"{config.lb_port}@loadbalancer",
-            "--registry-create", f"registry:0.0.0.0:{config.registry_port}",
+            "--agents", str(k3d_cfg.worker_nodes),
+            "--image", k3d_cfg.k3s_image,
+            "--api-port", k3d_cfg.api_port,
+            "--port", f"{k3d_cfg.lb_port}@loadbalancer",
+            "--registry-create", f"registry:0.0.0.0:{k3d_cfg.registry_port}",
             "--k3s-arg", f"--node-taint={_E2E_NODE_ROLE_KEY}=agent:NoSchedule@agent:*",
             "--k3s-node-label", f"{_E2E_NODE_ROLE_KEY}=agent@agent:*",
             "--k3s-node-label", "nvidia.com/gpu.deploy.operands=false@server:*",
             "--k3s-node-label", "nvidia.com/gpu.deploy.operands=false@agent:*",
-            "--agents-memory", config.worker_memory,
-            "--timeout", config.cluster_timeout,
+            "--agents-memory", k3d_cfg.worker_memory,
+            "--timeout", CLUSTER_TIMEOUT,
             "--wait",
             _ok_code=[0, 1]
         )
@@ -358,11 +486,11 @@ def create_cluster(config: ClusterConfig) -> bool:
             console.print(f"[green]✅ Cluster created successfully on attempt {attempt}[/green]")
             return True
 
-        if attempt < config.max_retries:
+        if attempt < k3d_cfg.max_retries:
             console.print("[yellow]⚠️  Cluster creation failed, retrying in 10 seconds...[/yellow]")
             time.sleep(10)
 
-    console.print(f"[red]❌ Cluster creation failed after {config.max_retries} attempts[/red]")
+    console.print(f"[red]❌ Cluster creation failed after {k3d_cfg.max_retries} attempts[/red]")
     return False
 
 
@@ -373,15 +501,15 @@ def wait_for_nodes() -> None:
     console.print("[green]✅ All nodes are ready[/green]")
 
 
-def install_kai_scheduler(config: ClusterConfig) -> None:
+def install_kai_scheduler(comp_cfg: ComponentConfig) -> None:
     """Install Kai Scheduler using Helm."""
     console.print(Panel.fit("Installing Kai Scheduler", style="bold blue"))
-    console.print(f"[yellow]Version: {config.kai_version}[/yellow]")
+    console.print(f"[yellow]Version: {comp_cfg.kai_version}[/yellow]")
     run_cmd(sh.helm, "uninstall", "kai-scheduler", "-n", "kai-scheduler", _ok_code=[0, 1])
     sh.helm(
         "install", "kai-scheduler",
         _KAI_SCHEDULER_OCI,
-        "--version", config.kai_version,
+        "--version", comp_cfg.kai_version,
         "--namespace", "kai-scheduler",
         "--create-namespace",
         "--set", "global.tolerations[0].key=node-role.kubernetes.io/control-plane",
@@ -411,14 +539,14 @@ def _check_grove_webhook_ready(operator_dir: Path) -> None:
         raise RuntimeError("Grove webhook not ready")
 
 
-def _build_grove_images(config: ClusterConfig, operator_dir: Path, push_repo: str) -> dict[str, str]:
+def _build_grove_images(comp_cfg: ComponentConfig, operator_dir: Path, push_repo: str) -> dict[str, str]:
     """Run skaffold build, return {imageName: tag} map."""
     console.print(f"[yellow]ℹ️  Building images (push to {push_repo})...[/yellow]")
     build_output = json.loads(
         sh.skaffold(
             "build",
             "--default-repo", push_repo,
-            "--profile", config.skaffold_profile,
+            "--profile", comp_cfg.skaffold_profile,
             "--quiet",
             "--output={{json .}}",
             _cwd=str(operator_dir)
@@ -428,7 +556,7 @@ def _build_grove_images(config: ClusterConfig, operator_dir: Path, push_repo: st
 
 
 def _deploy_grove_charts(
-    config: ClusterConfig,
+    comp_cfg: ComponentConfig,
     operator_dir: Path,
     images: dict[str, str],
     pull_repo: str,
@@ -441,7 +569,7 @@ def _deploy_grove_charts(
     os.environ["CONTAINER_REGISTRY"] = pull_repo
     sh.skaffold(
         "deploy",
-        "--profile", config.skaffold_profile,
+        "--profile", comp_cfg.skaffold_profile,
         "--namespace", "grove-system",
         "--status-check=false",
         "--default-repo=",
@@ -479,13 +607,10 @@ def _wait_grove_webhook(operator_dir: Path) -> None:
 
 
 def deploy_grove_operator(
-    config: ClusterConfig,
+    k3d_cfg: K3dConfig,
+    comp_cfg: ComponentConfig,
     operator_dir: Path,
-    registry: str | None = None,
-    grove_profiling: bool = False,
-    grove_pcs_syncs: int | None = None,
-    grove_pclq_syncs: int | None = None,
-    grove_pcsg_syncs: int | None = None,
+    flags: ActionFlags,
 ) -> None:
     """Deploy Grove operator using Skaffold."""
     console.print(Panel.fit("Deploying Grove operator", style="bold blue"))
@@ -502,27 +627,27 @@ def deploy_grove_operator(
         )
     })
 
-    if registry:
-        push_repo = registry
-        pull_repo = registry
+    if flags.registry:
+        push_repo = flags.registry
+        pull_repo = flags.registry
     else:
-        push_repo = f"localhost:{config.registry_port}"
-        pull_repo = f"registry:{config.registry_port}"
+        push_repo = f"localhost:{k3d_cfg.registry_port}"
+        pull_repo = f"registry:{k3d_cfg.registry_port}"
 
-    raw_images = _build_grove_images(config, operator_dir, push_repo)
+    raw_images = _build_grove_images(comp_cfg, operator_dir, push_repo)
     images = {name: tag.replace(push_repo, pull_repo) for name, tag in raw_images.items()}
 
-    _deploy_grove_charts(config, operator_dir, images, pull_repo)
+    _deploy_grove_charts(comp_cfg, operator_dir, images, pull_repo)
 
     helm_overrides = []
-    if grove_profiling:
+    if flags.grove_profiling:
         helm_overrides.append("config.debugging.enableProfiling=true")
-    if grove_pcs_syncs is not None:
-        helm_overrides.append(f"config.controllers.podCliqueSet.concurrentSyncs={grove_pcs_syncs}")
-    if grove_pclq_syncs is not None:
-        helm_overrides.append(f"config.controllers.podClique.concurrentSyncs={grove_pclq_syncs}")
-    if grove_pcsg_syncs is not None:
-        helm_overrides.append(f"config.controllers.podCliqueScalingGroup.concurrentSyncs={grove_pcsg_syncs}")
+    if flags.grove_pcs_syncs is not None:
+        helm_overrides.append(f"config.controllers.podCliqueSet.concurrentSyncs={flags.grove_pcs_syncs}")
+    if flags.grove_pclq_syncs is not None:
+        helm_overrides.append(f"config.controllers.podClique.concurrentSyncs={flags.grove_pclq_syncs}")
+    if flags.grove_pcsg_syncs is not None:
+        helm_overrides.append(f"config.controllers.podCliqueScalingGroup.concurrentSyncs={flags.grove_pcsg_syncs}")
 
     _apply_grove_helm_overrides(operator_dir, helm_overrides)
 
@@ -537,8 +662,8 @@ def _node_sort_key(name: str) -> tuple[str, int]:
     return re.sub(r"-\d+$", "", name), (int(m.group(1)) if m else 0)
 
 
-def apply_topology_labels(config: ClusterConfig) -> None:
-    """Apply topology labels to worker nodes."""
+def apply_topology_labels() -> None:
+    """Apply topology labels to worker nodes using module-level constants."""
     console.print(Panel.fit("Applying topology labels to worker nodes", style="bold blue"))
 
     nodes_output = sh.kubectl(
@@ -549,9 +674,9 @@ def apply_topology_labels(config: ClusterConfig) -> None:
 
     worker_nodes = sorted(nodes_output.split(), key=_node_sort_key)
     for idx, node in enumerate(worker_nodes):
-        zone = idx // config.nodes_per_zone
-        block = idx // config.nodes_per_block
-        rack = idx // config.nodes_per_rack
+        zone = idx // NODES_PER_ZONE
+        block = idx // NODES_PER_BLOCK
+        rack = idx // NODES_PER_RACK
         sh.kubectl(
             "label", "node", node,
             f"kubernetes.io/zone=zone-{zone}",
@@ -566,31 +691,31 @@ def apply_topology_labels(config: ClusterConfig) -> None:
 # KWOK functions
 # ============================================================================
 
-def topology_labels(node_id: int, config: ClusterConfig) -> dict[str, str]:
+def topology_labels(node_id: int) -> dict[str, str]:
     """Compute topology labels for a KWOK node using multi-zone index arithmetic."""
     return {
-        "kubernetes.io/zone": f"zone-{node_id // config.nodes_per_zone}",
-        "kubernetes.io/block": f"block-{node_id // config.nodes_per_block}",
-        "kubernetes.io/rack": f"rack-{node_id // config.nodes_per_rack}",
+        "kubernetes.io/zone": f"zone-{node_id // NODES_PER_ZONE}",
+        "kubernetes.io/block": f"block-{node_id // NODES_PER_BLOCK}",
+        "kubernetes.io/rack": f"rack-{node_id // NODES_PER_RACK}",
         "kubernetes.io/hostname": f"kwok-node-{node_id}",
         "type": "kwok",
     }
 
 
-def node_manifest(node_id: int, config: ClusterConfig) -> dict:
+def node_manifest(node_id: int, kwok_cfg: KwokConfig) -> dict:
     """Build the Kubernetes Node manifest for a KWOK node."""
     name = f"kwok-node-{node_id}"
     resources = {
-        "cpu": config.kwok_node_cpu,
-        "memory": config.kwok_node_memory,
-        "pods": str(config.kwok_max_pods),
+        "cpu": kwok_cfg.kwok_node_cpu,
+        "memory": kwok_cfg.kwok_node_memory,
+        "pods": str(kwok_cfg.kwok_max_pods),
     }
     return {
         "apiVersion": "v1",
         "kind": "Node",
         "metadata": {
             "name": name,
-            "labels": topology_labels(node_id, config),
+            "labels": topology_labels(node_id),
             "annotations": {
                 _KWOK_ANNOTATION_KEY: "fake",
                 "node.alpha.kubernetes.io/ttl": "0",
@@ -644,11 +769,11 @@ def _kubectl_apply(tmp_name: str) -> bool:
 
 
 def create_node_batch(
-    node_ids: list[int], config: ClusterConfig
+    node_ids: list[int], kwok_cfg: KwokConfig
 ) -> tuple[list[int], list[tuple[int, str]]]:
     """Create a batch of KWOK nodes with a single kubectl apply."""
     combined_yaml = "---\n".join(
-        yaml.dump(node_manifest(nid, config), default_flow_style=False)
+        yaml.dump(node_manifest(nid, kwok_cfg), default_flow_style=False)
         for nid in node_ids
     )
 
@@ -670,16 +795,16 @@ def create_node_batch(
         Path(tmp.name).unlink(missing_ok=True)
 
 
-def create_nodes(total: int, config: ClusterConfig) -> None:
+def create_nodes(total: int, kwok_cfg: KwokConfig) -> None:
     """Create KWOK nodes in batches."""
-    logger.info("Creating %d KWOK nodes (batch size=%d)...", total, config.kwok_batch_size)
+    logger.info("Creating %d KWOK nodes (batch size=%d)...", total, kwok_cfg.kwok_batch_size)
     successes: list[int] = []
     failures: list[tuple[int, str]] = []
 
-    for batch_start in range(0, total, config.kwok_batch_size):
-        batch_end = min(batch_start + config.kwok_batch_size, total)
+    for batch_start in range(0, total, kwok_cfg.kwok_batch_size):
+        batch_end = min(batch_start + kwok_cfg.kwok_batch_size, total)
         node_ids = list(range(batch_start, batch_end))
-        batch_ok, batch_fail = create_node_batch(node_ids, config)
+        batch_ok, batch_fail = create_node_batch(node_ids, kwok_cfg)
         successes.extend(batch_ok)
         failures.extend(batch_fail)
         logger.info("Batch %d-%d: success=%d, failed=%d",
@@ -732,7 +857,7 @@ def install_pyroscope(namespace: str, values_file: Path | None = None, version: 
 
 
 # ============================================================================
-# CLI
+# Kai queue helper
 # ============================================================================
 
 @retry(
@@ -746,134 +871,65 @@ def _apply_kai_queues(queues_file: Path) -> None:
         raise RuntimeError("Kai queue webhook not ready")
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """Build the argument parser with grouped flags."""
-    parser = argparse.ArgumentParser(
-        description="Unified cluster setup for Grove E2E testing. All actions are opt-in.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=(
-            "Examples:\n"
-            "  create-e2e-cluster.py --k3d --kai --grove --topology --prepull\n"
-            "  create-e2e-cluster.py --k3d --delete\n"
-            "  create-e2e-cluster.py --kwok-nodes 1000 --pyroscope\n"
-            "  create-e2e-cluster.py --kwok-delete\n"
-            "  create-e2e-cluster.py --grove --registry myregistry.io/grove\n"
-        ),
-    )
-
-    k3d_group = parser.add_argument_group("k3d cluster")
-    k3d_group.add_argument("--k3d", action="store_true",
-                           help="Create a new k3d cluster before installing anything")
-    k3d_group.add_argument("--workers", type=int, default=None,
-                           help="k3d worker nodes (default: 30; overrides E2E_WORKER_NODES)")
-    k3d_group.add_argument("--delete", action="store_true",
-                           help="Delete the k3d cluster and exit")
-
-    comp_group = parser.add_argument_group("components (all opt-in)")
-    comp_group.add_argument("--kai", action="store_true", help="Install Kai Scheduler")
-    comp_group.add_argument("--grove", action="store_true", help="Install Grove operator")
-    comp_group.add_argument("--topology", action="store_true",
-                            help="Apply topology labels to worker nodes")
-    comp_group.add_argument("--prepull", action="store_true",
-                            help="Pre-pull images into local k3d registry (only with --k3d)")
-    comp_group.add_argument("--registry", type=str, default=None,
-                            help="Container registry URL (default: auto-detected from k3d when --k3d is set)")
-
-    kwok_group = parser.add_argument_group("KWOK")
-    kwok_group.add_argument("--kwok-nodes", type=int, default=None,
-                            help="Create N KWOK simulated nodes (installs controller automatically)")
-    kwok_group.add_argument("--kwok-batch-size", type=int, default=None,
-                            help="Node creation batch size (default: 150)")
-    kwok_group.add_argument("--kwok-delete", action="store_true",
-                            help="Delete all KWOK simulated nodes")
-
-    pyro_group = parser.add_argument_group("Pyroscope")
-    pyro_group.add_argument("--pyroscope", action="store_true",
-                            help="Install Pyroscope via Helm")
-    pyro_group.add_argument("--pyroscope-namespace", type=str, default=None,
-                            help="Pyroscope namespace (default: pyroscope)")
-
-    tuning_group = parser.add_argument_group(
-        "Grove tuning (applies when --grove is set, as helm overrides)"
-    )
-    tuning_group.add_argument("--grove-profiling", action="store_true",
-                              help="Enable pprof (sets config.debugging.enableProfiling=true)")
-    tuning_group.add_argument("--grove-pcs-syncs", type=int, default=None,
-                              help="PodCliqueSet concurrentSyncs")
-    tuning_group.add_argument("--grove-pclq-syncs", type=int, default=None,
-                              help="PodClique concurrentSyncs")
-    tuning_group.add_argument("--grove-pcsg-syncs", type=int, default=None,
-                              help="PodCliqueScalingGroup concurrentSyncs")
-
-    return parser
-
+# ============================================================================
+# Orchestration
+# ============================================================================
 
 def _run(
-    args: argparse.Namespace,
-    config: ClusterConfig,
+    flags: ActionFlags,
+    k3d_cfg: K3dConfig,
+    comp_cfg: ComponentConfig,
+    kwok_cfg: KwokConfig,
     operator_dir: Path,
     script_dir: Path,
 ) -> None:
     """Orchestrate all requested actions. Raises RuntimeError on failure."""
-    # --kwok-delete: delete KWOK nodes and exit
-    if args.kwok_delete:
+    if flags.delete_kwok_nodes:
         delete_kwok_nodes()
         return
 
-    # --k3d --delete: delete k3d cluster and exit
-    if args.k3d and args.delete:
-        delete_cluster(config)
+    if flags.delete_k3d:
+        delete_cluster(k3d_cfg)
         return
 
-    # --k3d: create cluster
-    if args.k3d:
+    if flags.create_k3d:
         prereqs = ["k3d", "kubectl", "docker"]
-        if args.kai:
+        if flags.install_kai:
             prereqs.append("helm")
-        if args.grove:
+        if flags.install_grove:
             prereqs.extend(["skaffold", "jq"])
         console.print(Panel.fit("Checking prerequisites", style="bold blue"))
         for cmd in prereqs:
             require_command(cmd)
         console.print("[green]✅ All required tools are available[/green]")
 
-        if args.grove:
+        if flags.install_grove:
             console.print(Panel.fit("Preparing Helm charts", style="bold blue"))
             prepare_charts = operator_dir / "hack/prepare-charts.sh"
             if prepare_charts.exists():
                 sh.bash(str(prepare_charts))
                 console.print("[green]✅ Charts prepared[/green]")
 
-        if not create_cluster(config):
-            raise RuntimeError(f"Cluster creation failed after {config.max_retries} attempts")
+        if not create_cluster(k3d_cfg):
+            raise RuntimeError(f"Cluster creation failed after {k3d_cfg.max_retries} attempts")
         wait_for_nodes()
 
-        if args.prepull:
+        if flags.prepull_images:
             prepull_images(DEPENDENCIES['kai_scheduler']['images'],
-                           config.registry_port, DEPENDENCIES['kai_scheduler']['version'])
+                           k3d_cfg.registry_port, DEPENDENCIES['kai_scheduler']['version'])
             prepull_images(DEPENDENCIES['cert_manager']['images'],
-                           config.registry_port, DEPENDENCIES['cert_manager']['version'])
+                           k3d_cfg.registry_port, DEPENDENCIES['cert_manager']['version'])
             busybox_images = DEPENDENCIES.get('test_images', {}).get('busybox')
             if busybox_images:
-                prepull_images(busybox_images, config.registry_port, 'latest')
+                prepull_images(busybox_images, k3d_cfg.registry_port, 'latest')
 
-    # --kai: install Kai Scheduler
-    if args.kai:
-        install_kai_scheduler(config)
+    if flags.install_kai:
+        install_kai_scheduler(comp_cfg)
 
-    # --grove: deploy Grove operator
-    if args.grove:
-        deploy_grove_operator(
-            config, operator_dir,
-            registry=config.registry,
-            grove_profiling=args.grove_profiling,
-            grove_pcs_syncs=args.grove_pcs_syncs,
-            grove_pclq_syncs=args.grove_pclq_syncs,
-            grove_pcsg_syncs=args.grove_pcsg_syncs,
-        )
+    if flags.install_grove:
+        deploy_grove_operator(k3d_cfg, comp_cfg, operator_dir, flags)
 
-    # Wait for Kai and apply queues
-    if args.kai:
+    if flags.install_kai:
         console.print("[yellow]ℹ️  Waiting for Kai Scheduler pods to be ready...[/yellow]")
         sh.kubectl("wait", "--for=condition=Ready", "pods", "--all",
                    "-n", "kai-scheduler", "--timeout=5m")
@@ -884,74 +940,139 @@ def _run(
         except (RuntimeError, RetryError):
             raise RuntimeError("Failed to create Kai queues after retries")
 
-    # --topology: apply topology labels to real worker nodes
-    if args.topology:
-        apply_topology_labels(config)
+    if flags.apply_topology:
+        apply_topology_labels()
 
-    # --k3d: export kubeconfig
-    if args.k3d:
+    if flags.create_k3d:
         console.print(Panel.fit("Configuring kubeconfig", style="bold blue"))
         default_kubeconfig_dir = Path.home() / ".kube"
         default_kubeconfig_dir.mkdir(parents=True, exist_ok=True)
         default_kubeconfig_path = default_kubeconfig_dir / "config"
-        sh.k3d("kubeconfig", "merge", config.cluster_name, "-o", str(default_kubeconfig_path))
+        sh.k3d("kubeconfig", "merge", k3d_cfg.cluster_name, "-o", str(default_kubeconfig_path))
         default_kubeconfig_path.chmod(0o600)
         console.print(f"[green]  ✓ Merged to {default_kubeconfig_path}[/green]")
 
-    # --kwok-nodes N: install KWOK controller and create nodes
-    if args.kwok_nodes is not None:
+    if flags.create_kwok_nodes:
         kwok_version = DEPENDENCIES.get("kwok_controller", {}).get("version", "v0.7.0")
         install_kwok_controller(kwok_version)
-        node_count = config.kwok_nodes or 0
-        if node_count > 0:
-            create_nodes(node_count, config)
+        if flags.kwok_node_count > 0:
+            create_nodes(flags.kwok_node_count, kwok_cfg)
 
-    # --pyroscope: install Pyroscope
-    if args.pyroscope:
+    if flags.install_pyroscope:
         values_file = script_dir / "pyroscope-values.yaml"
         pyroscope_version = DEPENDENCIES.get("pyroscope", {}).get("version", "")
-        install_pyroscope(config.pyroscope_ns, values_file, version=pyroscope_version)
+        install_pyroscope(kwok_cfg.pyroscope_ns, values_file, version=pyroscope_version)
 
-    if args.k3d and not args.delete:
+    if flags.create_k3d:
         console.print(Panel.fit("Cluster setup complete!", style="bold green"))
         console.print("[yellow]To run E2E tests against this cluster:[/yellow]")
-        console.print(f"\n  export E2E_REGISTRY_PORT={config.registry_port}")
+        console.print(f"\n  export E2E_REGISTRY_PORT={k3d_cfg.registry_port}")
         console.print("  make run-e2e")
         console.print("  make run-e2e TEST_PATTERN=Test_GS  # specific tests\n")
-        console.print(f"[green]✅ Cluster '{config.cluster_name}' is ready for E2E testing![/green]")
+        console.print(f"[green]✅ Cluster '{k3d_cfg.cluster_name}' is ready for E2E testing![/green]")
 
 
-def main() -> None:
+# ============================================================================
+# CLI entry point
+# ============================================================================
+
+@app.command()
+def main(
+    # Opt-out flags (on by default)
+    skip_cluster_creation: bool = typer.Option(
+        False, "--skip-cluster-creation", help="Skip k3d cluster creation"),
+    skip_kai: bool = typer.Option(
+        False, "--skip-kai", help="Skip Kai Scheduler installation"),
+    skip_grove: bool = typer.Option(
+        False, "--skip-grove", help="Skip Grove operator deployment"),
+    skip_topology: bool = typer.Option(
+        False, "--skip-topology", help="Skip topology label application"),
+    skip_prepull: bool = typer.Option(
+        False, "--skip-prepull", help="Skip image pre-pulling"),
+    # Opt-in flags
+    delete: bool = typer.Option(
+        False, "--delete", help="Delete the k3d cluster and exit"),
+    workers: Optional[int] = typer.Option(
+        None, "--workers", help="k3d worker nodes (overrides E2E_WORKER_NODES)"),
+    registry: Optional[str] = typer.Option(
+        None, "--registry", help="Container registry URL"),
+    # KWOK
+    kwok_nodes: Optional[int] = typer.Option(
+        None, "--kwok-nodes", help="Create N KWOK simulated nodes"),
+    kwok_batch_size: Optional[int] = typer.Option(
+        None, "--kwok-batch-size", help="Node creation batch size"),
+    kwok_delete: bool = typer.Option(
+        False, "--kwok-delete", help="Delete all KWOK simulated nodes"),
+    # Pyroscope
+    pyroscope: bool = typer.Option(
+        False, "--pyroscope", help="Install Pyroscope via Helm"),
+    pyroscope_namespace: Optional[str] = typer.Option(
+        None, "--pyroscope-namespace", help="Pyroscope namespace (default: pyroscope)"),
+    # Grove tuning
+    grove_profiling: bool = typer.Option(
+        False, "--grove-profiling", help="Enable pprof"),
+    grove_pcs_syncs: Optional[int] = typer.Option(
+        None, "--grove-pcs-syncs", help="PodCliqueSet concurrentSyncs"),
+    grove_pclq_syncs: Optional[int] = typer.Option(
+        None, "--grove-pclq-syncs", help="PodClique concurrentSyncs"),
+    grove_pcsg_syncs: Optional[int] = typer.Option(
+        None, "--grove-pcsg-syncs", help="PodCliqueScalingGroup concurrentSyncs"),
+) -> None:
+    """Unified cluster setup for Grove E2E testing.
+
+    Default: creates k3d cluster + installs Kai + deploys Grove + applies topology + pre-pulls images.
+    Use --skip-* flags to opt out of individual steps.
+    """
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%H:%M:%S",
     )
 
-    parser = build_parser()
-    args = parser.parse_args()
-    validate_flags(parser, args)
+    validate_flags(
+        skip_cluster_creation=skip_cluster_creation,
+        skip_kai=skip_kai,
+        skip_grove=skip_grove,
+        skip_prepull=skip_prepull,
+        delete=delete,
+        registry=registry,
+        grove_profiling=grove_profiling,
+        grove_pcs_syncs=grove_pcs_syncs,
+        grove_pclq_syncs=grove_pclq_syncs,
+        grove_pcsg_syncs=grove_pcsg_syncs,
+    )
 
-    # Build ClusterConfig, applying CLI overrides on top of env-var defaults
-    base_config = ClusterConfig()
-    overrides = {k: v for k, v in {
-        "worker_nodes": args.workers,
-        "registry": args.registry,
-        "kwok_nodes": args.kwok_nodes,
-        "kwok_batch_size": args.kwok_batch_size,
-        "pyroscope_ns": args.pyroscope_namespace,
-    }.items() if v is not None}
-    config = base_config.model_copy(update=overrides)
+    k3d_cfg, comp_cfg, kwok_cfg, flags = resolve_config(
+        skip_cluster_creation=skip_cluster_creation,
+        skip_kai=skip_kai,
+        skip_grove=skip_grove,
+        skip_topology=skip_topology,
+        skip_prepull=skip_prepull,
+        delete=delete,
+        workers=workers,
+        registry=registry,
+        kwok_nodes=kwok_nodes,
+        kwok_batch_size=kwok_batch_size,
+        kwok_delete=kwok_delete,
+        pyroscope=pyroscope,
+        pyroscope_namespace=pyroscope_namespace,
+        grove_profiling=grove_profiling,
+        grove_pcs_syncs=grove_pcs_syncs,
+        grove_pclq_syncs=grove_pclq_syncs,
+        grove_pcsg_syncs=grove_pcsg_syncs,
+    )
+
+    display_config(flags, k3d_cfg, comp_cfg, kwok_cfg)
 
     script_dir = Path(__file__).resolve().parent
-    operator_dir = script_dir.parent.parent  # hack/e2e-cluster/ → operator/
+    operator_dir = script_dir.parent.parent
 
     try:
-        _run(args, config, operator_dir, script_dir)
-    except RuntimeError as e:
+        _run(flags, k3d_cfg, comp_cfg, kwok_cfg, operator_dir, script_dir)
+    except Exception as e:
         console.print(f"[red]❌ {e}[/red]")
         sys.exit(1)
 
 
 if __name__ == "__main__":
-    main()
+    app()
