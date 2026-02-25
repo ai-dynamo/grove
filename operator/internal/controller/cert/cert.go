@@ -17,6 +17,7 @@
 package cert
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -29,8 +30,12 @@ import (
 
 	"github.com/go-logr/logr"
 	cert "github.com/open-policy-agent/cert-controller/pkg/rotator"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -67,6 +72,14 @@ func setupAutoCertProvisioning(mgr ctrl.Manager, certDir string, secretName stri
 	namespace, err := getOperatorNamespace()
 	if err != nil {
 		return err
+	}
+
+	// Ensure the TLS secret exists before handing off to cert-controller.
+	// The upstream cert-controller can only Update existing secrets, not Create them.
+	// This allows the operator to self-create the secret when the Helm chart is configured
+	// with webhookServerSecret.enabled=false (e.g., for GitOps/helm-template workflows).
+	if err := ensureSecretExists(mgr, namespace, secretName); err != nil {
+		return fmt.Errorf("ensuring webhook TLS secret exists: %w", err)
 	}
 
 	logger.Info("Auto-provisioning certificates using cert-controller",
@@ -121,6 +134,62 @@ func getWebhooks(authorizerEnabled bool) []cert.WebhookInfo {
 		})
 	}
 	return webhooks
+}
+
+// ensureSecretExists creates the webhook TLS secret if it does not already exist.
+// This is needed because the upstream cert-controller (OPA cert-controller) can only
+// Update existing secrets — it cannot Create them. If the secret already exists
+// (e.g., created by Helm or by CD tools like Argo CD / Flux that apply rendered
+// manifests via `helm template | kubectl apply`), it is left untouched to preserve
+// any existing certificate data.
+func ensureSecretExists(mgr ctrl.Manager, namespace, secretName string) error {
+	// Use a direct (non-cached) client because this runs during setup,
+	// before the manager's informer cache has been started.
+	cl, err := client.New(mgr.GetConfig(), client.Options{Scheme: mgr.GetScheme()})
+	if err != nil {
+		return fmt.Errorf("creating client: %w", err)
+	}
+	return ensureSecretExistsWithClient(cl, namespace, secretName)
+}
+
+// ensureSecretExistsWithClient is the testable core of ensureSecretExists.
+func ensureSecretExistsWithClient(cl client.Client, namespace, secretName string) error {
+	secret := &corev1.Secret{}
+	err := cl.Get(context.Background(), types.NamespacedName{Namespace: namespace, Name: secretName}, secret)
+	if !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	// Secret does not exist — create an empty TLS secret for cert-controller to populate.
+	secret = &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace,
+			Name:      secretName,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "grove-operator",
+				"app.kubernetes.io/component":  "webhook",
+				"app.kubernetes.io/part-of":    "grove",
+			},
+		},
+		Type: corev1.SecretTypeTLS,
+		Data: map[string][]byte{
+			"tls.crt": {},
+			"tls.key": {},
+			"ca.crt":  {},
+		},
+	}
+	if err := cl.Create(context.Background(), secret); err != nil {
+		// In HA deployments (replicaCount > 1), two replicas can race between
+		// Get (not found) and Create. Treat AlreadyExists as success.
+		if apierrors.IsAlreadyExists(err) {
+			return nil
+		}
+		return fmt.Errorf("creating webhook TLS secret: %w", err)
+	}
+
+	ctrl.Log.WithName("cert-management").Info("Created webhook TLS secret",
+		"namespace", namespace, "name", secretName)
+	return nil
 }
 
 // getOperatorNamespace reads the operator's namespace from namespace file

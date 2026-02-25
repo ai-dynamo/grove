@@ -27,6 +27,11 @@ import (
 	cert "github.com/open-policy-agent/cert-controller/pkg/rotator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 // TestGetWebhooks tests the creation of webhook info structures based on authorizer configuration.
@@ -264,5 +269,73 @@ func TestManageWebhookCerts(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported cert provision mode")
+	})
+}
+
+// TestEnsureSecretExistsWithClient tests the secret creation logic.
+func TestEnsureSecretExistsWithClient(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	t.Run("creates secret when it does not exist", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+		err := ensureSecretExistsWithClient(cl, "test-ns", "test-secret")
+		require.NoError(t, err)
+
+		// Verify the secret was created with the correct attributes
+		secret := &corev1.Secret{}
+		err = cl.Get(t.Context(), types.NamespacedName{Namespace: "test-ns", Name: "test-secret"}, secret)
+		require.NoError(t, err)
+		assert.Equal(t, corev1.SecretTypeTLS, secret.Type)
+		assert.Equal(t, "test-ns", secret.Namespace)
+		assert.Equal(t, "test-secret", secret.Name)
+		assert.Contains(t, secret.Data, "tls.crt")
+		assert.Contains(t, secret.Data, "tls.key")
+		assert.Contains(t, secret.Data, "ca.crt")
+		assert.Empty(t, secret.Data["tls.crt"])
+		assert.Empty(t, secret.Data["tls.key"])
+		assert.Empty(t, secret.Data["ca.crt"])
+	})
+
+	t.Run("created secret has expected labels", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+		err := ensureSecretExistsWithClient(cl, "test-ns", "test-secret")
+		require.NoError(t, err)
+
+		secret := &corev1.Secret{}
+		err = cl.Get(t.Context(), types.NamespacedName{Namespace: "test-ns", Name: "test-secret"}, secret)
+		require.NoError(t, err)
+		assert.Equal(t, "grove-operator", secret.Labels["app.kubernetes.io/managed-by"])
+		assert.Equal(t, "webhook", secret.Labels["app.kubernetes.io/component"])
+		assert.Equal(t, "grove", secret.Labels["app.kubernetes.io/part-of"])
+	})
+
+	t.Run("does not overwrite existing secret", func(t *testing.T) {
+		existingSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "test-ns",
+				Name:      "test-secret",
+			},
+			Type: corev1.SecretTypeTLS,
+			Data: map[string][]byte{
+				"tls.crt": []byte("existing-cert"),
+				"tls.key": []byte("existing-key"),
+				"ca.crt":  []byte("existing-ca"),
+			},
+		}
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existingSecret).Build()
+
+		err := ensureSecretExistsWithClient(cl, "test-ns", "test-secret")
+		require.NoError(t, err)
+
+		// Verify the existing data was preserved
+		secret := &corev1.Secret{}
+		err = cl.Get(t.Context(), types.NamespacedName{Namespace: "test-ns", Name: "test-secret"}, secret)
+		require.NoError(t, err)
+		assert.Equal(t, []byte("existing-cert"), secret.Data["tls.crt"])
+		assert.Equal(t, []byte("existing-key"), secret.Data["tls.key"])
+		assert.Equal(t, []byte("existing-ca"), secret.Data["ca.crt"])
 	})
 }
