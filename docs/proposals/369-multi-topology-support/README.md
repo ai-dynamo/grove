@@ -128,7 +128,7 @@ This proposal requires the following changes:
 1. **PodCliqueSet API**: Add optional `clusterTopologyName` field to `PodCliqueSetTemplateSpec`
 2. **ClusterTopology validating webhook** (new): Block topology level updates when any PCS with scheduled pods references the topology
 3. **ClusterTopology controller** (new): Watch ClusterTopology resources and manage finalizers based on PCS references
-4. **PCS validating webhook**: Add `clusterTopologyName` existence check, allow topology reference changes when no pods are scheduled, reject when TAS is disabled or no `TopologyConstraint` is set
+4. **PCS validating webhook**: Add `clusterTopologyName` existence check, allow topology reference changes when no pods are scheduled, reject when TAS is disabled or no `TopologyConstraint` is set, reject when any `TopologyConstraint` is set but TAS is disabled
 5. **PCS reconciler**: Resolve `clusterTopologyName` (or the default) to the correct ClusterTopology when building the PodGang, including fetching the correct topology levels and setting the topology name annotation on the PodGang
 6. **Startup synchronization**: Label the default topology with `app.kubernetes.io/managed-by: grove-operator` and handle finalizer removal when TAS is disabled
 
@@ -178,7 +178,7 @@ spec:
 
 ClusterTopology resources follow a hybrid management model:
 
-- **Operator-managed default**: The operator creates and owns the default ClusterTopology (`grove-topology`) from the `OperatorConfiguration.TopologyAwareScheduling` settings. It is labeled with `app.kubernetes.io/managed-by: grove-operator` and reconciled to match the operator configuration on each startup. Manual changes to the default topology are overwritten.
+- **Operator-managed default**: The operator creates and owns the default ClusterTopology (`grove-topology`) from the `OperatorConfiguration.TopologyAwareScheduling` settings. It is labeled with `app.kubernetes.io/managed-by: grove-operator` and reconciled to match the operator configuration on each startup. Manual changes to the default topology are overwritten. Note that updates via operator restart bypass the ClusterTopology webhook, which can cause drift for referencing PCSs (see [Topology Configuration Drift](../244-topology-aware-scheduling/README.md#topology-configuration-drift)).
 - **User-managed topologies**: Administrators can create additional ClusterTopology resources directly via kubectl or GitOps. These are not reconciled by the operator.
 
 **Deletion protection**: A controller watches ClusterTopology resources and adds finalizers. The finalizer prevents deletion while any PCS references the topology via `clusterTopologyName`. When TAS is disabled, the operator handles removing finalizers on the default topology.
@@ -240,6 +240,7 @@ The existing PCS validating webhook is extended with the following rules for `cl
 - On update: if `clusterTopologyName` is changed, the new ClusterTopology must exist and no pod in the PCS may be scheduled (`ScheduledReplicas == 0` across all PodCliques)
 - Reject if `clusterTopologyName` is set but no `TopologyConstraint` is specified on the PCS, any PCSG, or any PodClique
 - Reject if `clusterTopologyName` is set but TAS is disabled cluster-wide
+- Reject if any `TopologyConstraint` is set (at PCS, PCSG, or PodClique level) but TAS is disabled cluster-wide
 - Existing `TopologyConstraint` immutability rules remain unchanged
 
 **New ClusterTopology validating webhook:**
@@ -292,7 +293,7 @@ grove-topology (default) default/simple-inference
 
 This feature has the same dependencies as the existing [Topology Aware Scheduling](../244-topology-aware-scheduling/README.md#dependencies) implementation: a scheduler backend with TAS support and nodes labeled with topology-specific labels.
 
-Additionally, the scheduling backend must support multiple Topology resources within a single cluster. KAI Scheduler supports this.
+Additionally, the scheduling backend must support multiple Topology resources within a single cluster. When the KAI scheduler profile is enabled, Grove creates and manages a KAI `Topology` CR for each ClusterTopology, controlled by `KaiSchedulerConfig.CreateTopologyResources` (defaults to `true`). See [GREP-244 Dependencies](../244-topology-aware-scheduling/README.md#dependencies) and [GREP-375: OperatorConfiguration Extension](../375-scheduler-backend-framework/README.md#operatorconfiguration-extension) for details.
 
 ### Test Plan
 
@@ -306,21 +307,6 @@ Additionally, the scheduling backend must support multiple Topology resources wi
 - Extend existing TAS e2e tests to include a multi-topology case: relabel a subset of worker nodes with different topology label keys, create a second ClusterTopology resource referencing those keys, deploy a PCS with `clusterTopologyName` pointing to the new topology, and verify that pods are placed correctly and the KAI PodGroup references the expected topology
 
 ### Graduation Criteria
-
-<!-- 
-In this section graduation milestones should be defined. The progression of the overall feature can be evaluated w.r.t API maturity, staged sub-feature implementation or some other criteria.
-
-In general we try to use the same stages (alpha, beta, GA), regardless of how the
-functionality is accessed. Refer to these for more details:"
-
-* [Feature Gates](https://git.k8s.io/community/contributors/devel/sig-architecture/feature-gates.md)
-* [Maturity levels](https://git.k8s.io/community/contributors/devel/sig-architecture/api_changes.md#alpha-beta-and-stable-versions)
-* [Deprecation Policy](https://kubernetes.io/docs/reference/using-api/deprecation-policy/ ) 
-
-**Note:** Generally we also wait at least two releases between beta and
-GA/stable, because there's no opportunity for user feedback, or even bug reports,
-in back-to-back releases.
--->
 
 **Alpha** — minimal usability with no safeguards:
 - PodCliqueSet API: add optional `clusterTopologyName` field to `PodCliqueSetTemplateSpec`
