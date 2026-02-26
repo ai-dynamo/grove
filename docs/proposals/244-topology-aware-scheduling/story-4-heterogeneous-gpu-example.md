@@ -1,5 +1,13 @@
 # Story 4: Heterogeneous GPU Cluster Example
 
+<!-- toc -->
+- [Cluster Setup](#cluster-setup)
+- [Topology Definitions](#topology-definitions)
+- [H100 Path](#h100-path)
+- [GB200 Path](#gb200-path)
+- [Without Multiple Topologies](#without-multiple-topologies)
+<!-- /toc -->
+
 This document provides a concrete example for [Story 4: Heterogeneous GPU Clusters](README.md#story-4-heterogeneous-gpu-clusters) in GREP-244. It demonstrates how separate ClusterTopology resources partition a cluster along hardware boundaries, with each topology's node label keys naturally directing workloads to the correct hardware segment.
 
 ## Cluster Setup
