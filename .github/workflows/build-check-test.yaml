@@ -98,7 +98,7 @@ jobs:
     #   (github.event.pull_request.draft == false || contains(github.event.pull_request.labels.*.name, 'run-e2e'))
     # # use NVIDIA self-hosted runner with 8 vCPUs and 30GB of ram (on AWS)
     # # the tests are unstable using the default runner with 4 vCPUs and 16GB of ram
-    runs-on: prod-grove-e2e-v1
+    runs-on: cpu-amd-m5-2xlarge #prod-grove-e2e-v1
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -106,17 +106,17 @@ jobs:
         include:
           - test_name: gang_scheduling
             test_pattern: "^Test_GS"
-          # - test_name: rolling_updates
-          #   test_pattern: "^Test_RU"
-          # - test_name: startup_ordering
-          #   test_pattern: "^Test_SO"
-          # - test_name: Topology_Aware_Scheduling
-          #   test_pattern: "^Test_TAS"
-          # - test_name: cert_management
-          #   test_pattern: "^Test_CM"
-          # - test_name: auto_mnnvl
-          #   test_pattern: "^Test_AutoMNNVL"
-          #   make_target: "run-e2e-mnnvl-full"
+          - test_name: rolling_updates
+            test_pattern: "^Test_RU"
+          - test_name: startup_ordering
+            test_pattern: "^Test_SO"
+          - test_name: Topology_Aware_Scheduling
+            test_pattern: "^Test_TAS"
+          - test_name: cert_management
+            test_pattern: "^Test_CM"
+          - test_name: auto_mnnvl
+            test_pattern: "^Test_AutoMNNVL"
+            make_target: "run-e2e-mnnvl-full"
     name: E2E - ${{ matrix.test_name }}
     steps:
       # print runner specs so we have a record in case of failures
