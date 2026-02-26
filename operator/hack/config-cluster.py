@@ -18,7 +18,7 @@
 """config-cluster.py - Declarative configuration for an existing E2E cluster.
 
 This script applies or removes configuration on top of a cluster that was
-already created by create-e2e-cluster.py.  It is **idempotent**: running it
+already created by infra-manager.py (or the legacy create-cluster.py).  It is **idempotent**: running it
 twice with the same flags is a no-op.
 
 Supported configuration axes:
@@ -367,7 +367,7 @@ def main() -> None:
 
     # Change to the operator directory (helm chart path is relative)
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    operator_dir = os.path.join(script_dir, "..", "..")
+    operator_dir = os.path.join(script_dir, "..")
     os.chdir(operator_dir)
 
     # 1. Fake GPU operator

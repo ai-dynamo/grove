@@ -24,8 +24,8 @@ from typing import Any
 
 import sh
 
-from e2e_manager.config import ActionFlags
-from e2e_manager.constants import (
+from infra_manager.config import ActionFlags
+from infra_manager.constants import (
     HELM_KEY_PCLQ_SYNCS,
     HELM_KEY_PCS_SYNCS,
     HELM_KEY_PCSG_SYNCS,

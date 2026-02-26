@@ -16,7 +16,7 @@
 # */
 
 """
-create-e2e-cluster.py - k3d cluster setup for local E2E testing
+create-cluster.py - k3d cluster setup for local E2E testing (legacy monolith)
 
 Python Dependencies: See requirements.txt
 Minimum Python version: 3.8+
@@ -32,15 +32,15 @@ Environment Variables:
 
 Examples:
     # Use defaults
-    ./hack/e2e-cluster/create-e2e-cluster.py
+    ./hack/create-cluster.py
 
     # Override cluster name and worker count
-    E2E_CLUSTER_NAME=my-cluster E2E_WORKER_NODES=50 ./hack/e2e-cluster/create-e2e-cluster.py
+    E2E_CLUSTER_NAME=my-cluster E2E_WORKER_NODES=50 ./hack/create-cluster.py
 
     # Delete cluster
-    ./hack/e2e-cluster/create-e2e-cluster.py --delete
+    ./hack/create-cluster.py --delete
 
-For detailed usage information, run: ./hack/e2e-cluster/create-e2e-cluster.py --help
+For detailed usage information, run: ./hack/create-cluster.py --help
 """
 
 import json
@@ -74,7 +74,7 @@ console = Console(stderr=True)
 # Load dependencies from centralized YAML file
 def load_dependencies():
     """Load dependency versions and images from dependencies.yaml"""
-    deps_file = Path(__file__).resolve().parent / "dependencies.yaml"
+    deps_file = Path(__file__).resolve().parent / "infra_manager" / "dependencies.yaml"
     with open(deps_file, 'r') as f:
         return yaml.safe_load(f)
 
@@ -106,12 +106,12 @@ class ClusterConfig(BaseSettings):
         config = ClusterConfig()
 
         # Override via environment
-        E2E_WORKER_NODES=50 E2E_KAI_VERSION=v0.14.0 python create-e2e-cluster.py
+        E2E_WORKER_NODES=50 E2E_KAI_VERSION=v0.14.0 python create-cluster.py
 
         # In shell
         export E2E_CLUSTER_NAME=my-test-cluster
         export E2E_REGISTRY_PORT=5002
-        ./e2e-cluster/create-e2e-cluster.py
+        ./hack/create-cluster.py
     """
 
     model_config = SettingsConfigDict(env_prefix="E2E_", extra="ignore")
@@ -505,7 +505,7 @@ def main(
 
     config = ClusterConfig()
     script_dir = Path(__file__).resolve().parent
-    operator_dir = script_dir.parent.parent  # Go up from hack/e2e-cluster/ to operator/
+    operator_dir = script_dir.parent  # Go up from hack/ to operator/
 
     # With is_flag=True, Typer passes boolean flags correctly
     # No need for to_bool conversion, but keeping it for safety with environment variables

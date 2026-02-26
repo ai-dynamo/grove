@@ -25,9 +25,9 @@ import yaml
 from rich.panel import Panel
 from tenacity import RetryError, retry, retry_if_result, stop_after_attempt, wait_exponential
 
-from e2e_manager import console, logger
-from e2e_manager.config import KwokConfig
-from e2e_manager.constants import (
+from infra_manager import console, logger
+from infra_manager.config import KwokConfig
+from infra_manager.constants import (
     DEFAULT_KWOK_VERSION,
     KWOK_ANNOTATION_KEY,
     KWOK_CONTROLLER_DEPLOYMENT,
@@ -48,7 +48,7 @@ from e2e_manager.constants import (
     NS_KUBE_SYSTEM,
     dep_value,
 )
-from e2e_manager.utils import kwok_release_url, run_kubectl
+from infra_manager.utils import kwok_release_url, run_kubectl
 
 
 def topology_labels(node_id: int) -> dict[str, str]:

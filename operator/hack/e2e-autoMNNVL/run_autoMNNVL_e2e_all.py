@@ -18,7 +18,7 @@
 """run_autoMNNVL_e2e_all.py - Run autoMNNVL e2e tests with all 4 configurations.
 
 Expects an **existing** cluster (created by ``make run-e2e-mnnvl-full`` or
-manually via ``create-e2e-cluster.py``).  The script reconfigures the cluster
+manually via ``create-cluster.py``).  The script reconfigures the cluster
 between test suites using config-cluster.py (declarative / idempotent).
 
 Configurations:
@@ -48,8 +48,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).resolve().parent
 OPERATOR_DIR = SCRIPT_DIR.parent.parent
-E2E_CLUSTER_DIR = OPERATOR_DIR / "hack" / "e2e-cluster"
-CONFIG_CLUSTER_SCRIPT = E2E_CLUSTER_DIR / "config-cluster.py"
+CONFIG_CLUSTER_SCRIPT = OPERATOR_DIR / "hack" / "config-cluster.py"
 
 # ---------------------------------------------------------------------------
 # Coloured logging helpers

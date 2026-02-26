@@ -16,7 +16,7 @@
 # */
 
 """
-create-e2e-cluster.py - Unified cluster setup for Grove E2E testing.
+infra-manager.py - Unified cluster setup for Grove E2E testing.
 
 Default behavior creates a full e2e cluster (k3d + kai + grove + topology + prepull).
 Use --skip-* flags to opt out of individual steps.
@@ -33,24 +33,24 @@ Environment Variables:
 
 Examples:
     # Full e2e setup (default — no flags needed!)
-    ./create-e2e-cluster.py
+    ./infra-manager.py
 
     # Full e2e but skip image pre-pulling
-    ./create-e2e-cluster.py --skip-prepull
+    ./infra-manager.py --skip-prepull
 
     # Deploy only grove on existing cluster
-    ./create-e2e-cluster.py --skip-cluster-creation --skip-kai --skip-topology --skip-prepull
+    ./infra-manager.py --skip-cluster-creation --skip-kai --skip-topology --skip-prepull
 
     # Delete cluster
-    ./create-e2e-cluster.py --delete
+    ./infra-manager.py --delete
 
     # Scale test on existing cluster
-    ./create-e2e-cluster.py --skip-cluster-creation --skip-kai --skip-grove --skip-topology --skip-prepull --kwok-nodes 1000 --pyroscope
+    ./infra-manager.py --skip-cluster-creation --skip-kai --skip-grove --skip-topology --skip-prepull --kwok-nodes 1000 --pyroscope
 
     # Delete all KWOK nodes
-    ./create-e2e-cluster.py --skip-cluster-creation --skip-kai --skip-grove --skip-topology --skip-prepull --kwok-delete
+    ./infra-manager.py --skip-cluster-creation --skip-kai --skip-grove --skip-topology --skip-prepull --kwok-delete
 
-For detailed usage information, run: ./create-e2e-cluster.py --help
+For detailed usage information, run: ./infra-manager.py --help
 """
 
 from __future__ import annotations
@@ -61,10 +61,10 @@ from pathlib import Path
 
 import typer
 
-from e2e_manager import console
-from e2e_manager.config import display_config, resolve_config, validate_flags
-from e2e_manager.orchestrator import run
-from e2e_manager.utils import resolve_bool_flag
+from infra_manager import console
+from infra_manager.config import display_config, resolve_config, validate_flags
+from infra_manager.orchestrator import run
+from infra_manager.utils import resolve_bool_flag
 
 app = typer.Typer(help="Unified cluster setup for Grove E2E testing.")
 
@@ -169,7 +169,7 @@ def main(
     display_config(flags, k3d_cfg, comp_cfg, kwok_cfg)
 
     script_dir = Path(__file__).resolve().parent
-    operator_dir = script_dir.parent.parent
+    operator_dir = script_dir.parent
 
     try:
         run(flags, k3d_cfg, comp_cfg, kwok_cfg, operator_dir, script_dir)

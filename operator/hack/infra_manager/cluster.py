@@ -27,9 +27,9 @@ from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from e2e_manager import console
-from e2e_manager.config import K3dConfig
-from e2e_manager.constants import (
+from infra_manager import console
+from infra_manager.config import K3dConfig
+from infra_manager.constants import (
     CLUSTER_CREATE_RETRY_WAIT_SECONDS,
     CLUSTER_TIMEOUT,
     DEFAULT_IMAGE_PULL_MAX_WORKERS,

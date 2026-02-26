@@ -24,29 +24,29 @@ import sh
 from rich.panel import Panel
 from tenacity import RetryError
 
-from e2e_manager import console
-from e2e_manager.cluster import (
+from infra_manager import console
+from infra_manager.cluster import (
     apply_topology_labels,
     create_cluster,
     delete_cluster,
     prepull_images,
     wait_for_nodes,
 )
-from e2e_manager.components import (
+from infra_manager.components import (
     _apply_kai_queues,
     deploy_grove_operator,
     install_kai_scheduler,
     install_pyroscope,
 )
-from e2e_manager.config import ActionFlags, ComponentConfig, K3dConfig, KwokConfig
-from e2e_manager.constants import (
+from infra_manager.config import ActionFlags, ComponentConfig, K3dConfig, KwokConfig
+from infra_manager.constants import (
     DEPENDENCIES,
     REL_PREPARE_CHARTS,
     REL_QUEUES_YAML,
     dep_value,
 )
-from e2e_manager.kwok import create_nodes, delete_kwok_nodes, install_kwok_controller
-from e2e_manager.utils import require_command
+from infra_manager.kwok import create_nodes, delete_kwok_nodes, install_kwok_controller
+from infra_manager.utils import require_command
 
 
 def _run_prerequisites(flags: ActionFlags, operator_dir: Path) -> None:
@@ -115,7 +115,7 @@ def _run_kai_post_install(operator_dir: Path) -> None:
     Raises:
         RuntimeError: If Kai queue creation fails after retries.
     """
-    from e2e_manager.constants import NS_KAI_SCHEDULER
+    from infra_manager.constants import NS_KAI_SCHEDULER
 
     console.print("[yellow]\u2139\ufe0f  Waiting for Kai Scheduler pods to be ready...[/yellow]")
     sh.kubectl("wait", "--for=condition=Ready", "pods", "--all",
@@ -150,7 +150,7 @@ def _run_kwok(flags: ActionFlags, kwok_cfg: KwokConfig) -> None:
         flags: Resolved action flags with KWOK node count.
         kwok_cfg: KWOK configuration with batch size and node resource limits.
     """
-    from e2e_manager.constants import DEFAULT_KWOK_VERSION
+    from infra_manager.constants import DEFAULT_KWOK_VERSION
 
     if flags.kwok_node_count > 0:
         kwok_version = dep_value("kwok_controller", "version", default=DEFAULT_KWOK_VERSION)
@@ -165,7 +165,7 @@ def _run_pyroscope(kwok_cfg: KwokConfig, script_dir: Path) -> None:
         kwok_cfg: KWOK configuration with the Pyroscope namespace.
         script_dir: Directory containing the Pyroscope values file.
     """
-    values_file = script_dir / "pyroscope-values.yaml"
+    values_file = script_dir / "infra_manager" / "pyroscope-values.yaml"
     pyroscope_version = dep_value("pyroscope", "version", default="")
     install_pyroscope(kwok_cfg.pyroscope_ns, values_file, version=pyroscope_version)
 

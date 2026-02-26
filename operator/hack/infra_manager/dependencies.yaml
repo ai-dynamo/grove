@@ -7,7 +7,7 @@
 # - operator/e2e/tests/cert_management_test.go (certManagerVersion constant)
 # - Any test files that reference these versions
 #
-# The create-e2e-cluster.py script automatically reads this file and uses
+# The create-cluster.py script automatically reads this file and uses
 # these versions for:
 # - Helm chart installations
 # - Image pre-pulling (to speed up cluster creation)

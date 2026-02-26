@@ -18,7 +18,7 @@
 """run_autoMNNVL_e2e.py - Run autoMNNVL e2e tests with a single configuration.
 
 Expects an **existing** cluster (created by ``make run-e2e-mnnvl-full`` or
-manually via ``create-e2e-cluster.py``).  This script:
+manually via ``create-cluster.py``).  This script:
   1. Configures the cluster via config-cluster.py  (fake GPU + MNNVL toggle)
   2. Runs go test ./e2e/tests/auto-mnnvl/...
 
@@ -50,8 +50,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).resolve().parent
 OPERATOR_DIR = SCRIPT_DIR.parent.parent
-E2E_CLUSTER_DIR = OPERATOR_DIR / "hack" / "e2e-cluster"
-CONFIG_CLUSTER_SCRIPT = E2E_CLUSTER_DIR / "config-cluster.py"
+CONFIG_CLUSTER_SCRIPT = OPERATOR_DIR / "hack" / "config-cluster.py"
 
 # ---------------------------------------------------------------------------
 # Coloured logging helpers

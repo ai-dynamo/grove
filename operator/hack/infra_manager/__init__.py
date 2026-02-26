@@ -14,7 +14,7 @@
 # limitations under the License.
 # */
 
-"""e2e_manager - Grove E2E cluster management package."""
+"""infra_manager - Grove cluster infrastructure management package."""
 
 from __future__ import annotations
 
@@ -23,4 +23,4 @@ import logging
 from rich.console import Console
 
 console = Console(stderr=True)
-logger = logging.getLogger("e2e_manager")
+logger = logging.getLogger("infra_manager")

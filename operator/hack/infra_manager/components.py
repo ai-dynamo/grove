@@ -27,9 +27,9 @@ import sh
 from rich.panel import Panel
 from tenacity import RetryError, retry, stop_after_attempt, wait_fixed
 
-from e2e_manager import console
-from e2e_manager.config import ActionFlags, ComponentConfig, K3dConfig
-from e2e_manager.constants import (
+from infra_manager import console
+from infra_manager.config import ActionFlags, ComponentConfig, K3dConfig
+from infra_manager.constants import (
     E2E_NODE_ROLE_KEY,
     E2E_TEST_COMMIT,
     E2E_TEST_TREE_STATE,
@@ -55,7 +55,7 @@ from e2e_manager.constants import (
     WEBHOOK_READY_MAX_RETRIES,
     WEBHOOK_READY_POLL_INTERVAL_SECONDS,
 )
-from e2e_manager.utils import (
+from infra_manager.utils import (
     collect_grove_helm_overrides,
     require_command,
     resolve_registry_repos,

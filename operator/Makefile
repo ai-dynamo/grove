@@ -115,12 +115,12 @@ run-e2e:
 # Pass E2E_CREATE_FLAGS to add CLI flags (e.g. --skip-kai --skip-topology --skip-prepull)
 .PHONY: e2e-cluster-up
 e2e-cluster-up:
-	@$(MODULE_HACK_DIR)/e2e-cluster/create-e2e-cluster.py $(E2E_CREATE_FLAGS)
+	@$(MODULE_HACK_DIR)/infra-manager.py $(E2E_CREATE_FLAGS)
 
 # Delete the k3d e2e test cluster
 .PHONY: e2e-cluster-down
 e2e-cluster-down:
-	@$(MODULE_HACK_DIR)/e2e-cluster/create-e2e-cluster.py --delete
+	@$(MODULE_HACK_DIR)/infra-manager.py --delete
 
 # Full e2e test run: create k3d cluster, run tests, then cleanup
 # Usage: make run-e2e-full [TEST_PATTERN=<pattern>]

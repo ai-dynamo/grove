@@ -51,7 +51,7 @@ const (
 
 	// Environment variables for cluster configuration.
 	// The cluster must be created beforehand with Grove operator and Kai scheduler deployed.
-	// For local development with k3d, use: ./operator/hack/e2e-cluster/create-e2e-cluster.py
+	// For local development with k3d, use: ./operator/hack/infra-manager.py
 
 	// EnvRegistryPort specifies the container registry port for test images (optional)
 	EnvRegistryPort = "E2E_REGISTRY_PORT"
@@ -124,7 +124,7 @@ func SharedCluster(logger *utils.Logger) *SharedClusterManager {
 //
 // For local development with k3d:
 //
-//	./operator/hack/e2e-cluster/create-e2e-cluster.py
+//	./operator/hack/infra-manager.py
 //
 // Optional environment variables:
 //   - E2E_REGISTRY_PORT (default: 5001, for pushing test images to local registry)

@@ -25,8 +25,8 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from rich.panel import Panel
 
-from e2e_manager import console, logger
-from e2e_manager.constants import (
+from infra_manager import console, logger
+from infra_manager.constants import (
     DEFAULT_API_PORT,
     DEFAULT_CLUSTER_CREATE_MAX_RETRIES,
     DEFAULT_CLUSTER_NAME,

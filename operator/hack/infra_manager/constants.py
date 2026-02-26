@@ -30,7 +30,7 @@ def load_dependencies() -> dict:
     Returns:
         Parsed YAML content as a nested dictionary.
     """
-    deps_file = Path(__file__).resolve().parent.parent / "dependencies.yaml"
+    deps_file = Path(__file__).resolve().parent / "dependencies.yaml"
     with open(deps_file) as f:
         return yaml.safe_load(f)
 
