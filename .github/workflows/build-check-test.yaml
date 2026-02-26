@@ -133,6 +133,7 @@ jobs:
 
       - name: Run e2e tests - ${{ matrix.test_name }}
         run: |
+          sleep 3600        
           make ${{ matrix.make_target || 'run-e2e-full' }} TEST_PATTERN='${{ matrix.test_pattern }}'
         working-directory: operator
 
