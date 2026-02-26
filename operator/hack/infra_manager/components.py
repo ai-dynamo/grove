@@ -28,7 +28,7 @@ from rich.panel import Panel
 from tenacity import RetryError, retry, stop_after_attempt, wait_fixed
 
 from infra_manager import console
-from infra_manager.config import ActionFlags, ComponentConfig, K3dConfig
+from infra_manager.config import ComponentConfig, GroveInstallOptions, K3dConfig
 from infra_manager.constants import (
     E2E_NODE_ROLE_KEY,
     E2E_TEST_COMMIT,
@@ -247,7 +247,7 @@ def deploy_grove_operator(
     k3d_cfg: K3dConfig,
     comp_cfg: ComponentConfig,
     operator_dir: Path,
-    flags: ActionFlags,
+    options: GroveInstallOptions,
 ) -> None:
     """Deploy Grove operator using Skaffold.
 
@@ -258,7 +258,7 @@ def deploy_grove_operator(
         k3d_cfg: k3d cluster configuration for registry port resolution.
         comp_cfg: Component configuration with skaffold profile and namespace.
         operator_dir: Root directory of the Grove operator source tree.
-        flags: Resolved action flags containing registry and tuning overrides.
+        options: Grove install options containing registry and tuning overrides.
     """
     console.print(Panel.fit("Deploying Grove operator", style="bold blue"))
     try:
@@ -278,14 +278,14 @@ def deploy_grove_operator(
         )
     })
 
-    push_repo, pull_repo = resolve_registry_repos(flags.registry, k3d_cfg.registry_port)
+    push_repo, pull_repo = resolve_registry_repos(options.registry, k3d_cfg.registry_port)
 
     raw_images = _build_grove_images(comp_cfg, operator_dir, push_repo)
     images = {name: tag.replace(push_repo, pull_repo) for name, tag in raw_images.items()}
 
     _deploy_grove_charts(comp_cfg, operator_dir, images, pull_repo)
 
-    helm_overrides = collect_grove_helm_overrides(flags)
+    helm_overrides = collect_grove_helm_overrides(options)
     _apply_grove_helm_overrides(operator_dir, helm_overrides, comp_cfg.grove_namespace)
 
     console.print("[yellow]\u2139\ufe0f  Waiting for Grove deployment rollout...[/yellow]")
@@ -326,3 +326,34 @@ def install_pyroscope(namespace: str, values_file: Path | None = None, version: 
         helm_args += ["-f", str(values_file)]
     sh.helm(*helm_args)
     console.print("[green]\u2705 Pyroscope installed[/green]")
+
+
+# ============================================================================
+# Uninstall helpers
+# ============================================================================
+
+def uninstall_kai_scheduler() -> None:
+    """Uninstall Kai Scheduler via Helm."""
+    console.print(Panel.fit("Uninstalling Kai Scheduler", style="bold blue"))
+    try:
+        sh.helm("uninstall", HELM_RELEASE_KAI, "-n", NS_KAI_SCHEDULER)
+        console.print("[green]\u2705 Kai Scheduler uninstalled[/green]")
+    except sh.ErrorReturnCode_1:
+        console.print("[yellow]No existing Kai Scheduler release found[/yellow]")
+
+
+def uninstall_grove_operator(grove_namespace: str | None = None) -> None:
+    """Uninstall Grove operator via Helm.
+
+    Args:
+        grove_namespace: Kubernetes namespace where Grove is installed, or None for default.
+    """
+    from infra_manager.constants import DEFAULT_GROVE_NAMESPACE
+
+    namespace = grove_namespace or DEFAULT_GROVE_NAMESPACE
+    console.print(Panel.fit("Uninstalling Grove operator", style="bold blue"))
+    try:
+        sh.helm("uninstall", HELM_RELEASE_GROVE, "-n", namespace)
+        console.print("[green]\u2705 Grove operator uninstalled[/green]")
+    except sh.ErrorReturnCode_1:
+        console.print("[yellow]No existing Grove operator release found[/yellow]")

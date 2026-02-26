@@ -118,7 +118,30 @@ class KwokConfig(BaseSettings):
 
 
 # ============================================================================
-# Action flags
+# Grove install options
+# ============================================================================
+
+@dataclass(frozen=True)
+class GroveInstallOptions:
+    """Options for deploying the Grove operator.
+
+    Attributes:
+        registry: Container registry URL override, or None for k3d local.
+        grove_profiling: Whether to enable pprof on Grove.
+        grove_pcs_syncs: PodCliqueSet concurrent syncs override, or None.
+        grove_pclq_syncs: PodClique concurrent syncs override, or None.
+        grove_pcsg_syncs: PodCliqueScalingGroup concurrent syncs override, or None.
+    """
+
+    registry: str | None = None
+    grove_profiling: bool = False
+    grove_pcs_syncs: int | None = None
+    grove_pclq_syncs: int | None = None
+    grove_pcsg_syncs: int | None = None
+
+
+# ============================================================================
+# Action flags (deprecated — used only by infra-manager.py shim)
 # ============================================================================
 
 @dataclass(frozen=True)

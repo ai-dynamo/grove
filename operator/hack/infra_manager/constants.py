@@ -23,6 +23,10 @@ from typing import Any
 
 import yaml
 
+# -- Resolved paths --
+SCRIPT_DIR = Path(__file__).resolve().parent.parent
+OPERATOR_DIR = SCRIPT_DIR.parent
+
 
 def load_dependencies() -> dict:
     """Load dependency versions and images from dependencies.yaml.

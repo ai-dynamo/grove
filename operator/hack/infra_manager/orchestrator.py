@@ -38,35 +38,48 @@ from infra_manager.components import (
     install_kai_scheduler,
     install_pyroscope,
 )
-from infra_manager.config import ActionFlags, ComponentConfig, K3dConfig, KwokConfig
+from infra_manager.config import (
+    ActionFlags,
+    ComponentConfig,
+    GroveInstallOptions,
+    K3dConfig,
+    KwokConfig,
+)
 from infra_manager.constants import (
     DEPENDENCIES,
+    OPERATOR_DIR,
     REL_PREPARE_CHARTS,
     REL_QUEUES_YAML,
+    SCRIPT_DIR,
     dep_value,
 )
 from infra_manager.kwok import create_nodes, delete_kwok_nodes, install_kwok_controller
 from infra_manager.utils import require_command
 
 
-def _run_prerequisites(flags: ActionFlags, operator_dir: Path) -> None:
+# ============================================================================
+# Internal helpers
+# ============================================================================
+
+def _check_prerequisites(install_kai: bool, install_grove: bool, operator_dir: Path) -> None:
     """Check CLI tools and prepare Helm charts.
 
     Args:
-        flags: Resolved action flags to determine which tools are needed.
+        install_kai: Whether Kai Scheduler will be installed.
+        install_grove: Whether Grove operator will be deployed.
         operator_dir: Root directory of the Grove operator source tree.
     """
     prereqs = ["k3d", "kubectl", "docker"]
-    if flags.install_kai:
+    if install_kai:
         prereqs.append("helm")
-    if flags.install_grove:
+    if install_grove:
         prereqs.extend(["skaffold", "jq"])
     console.print(Panel.fit("Checking prerequisites", style="bold blue"))
     for cmd in prereqs:
         require_command(cmd)
     console.print("[green]\u2705 All required tools are available[/green]")
 
-    if flags.install_grove:
+    if install_grove:
         console.print(Panel.fit("Preparing Helm charts", style="bold blue"))
         prepare_charts = operator_dir / REL_PREPARE_CHARTS
         if prepare_charts.exists():
@@ -143,8 +156,125 @@ def _run_kubeconfig_merge(k3d_cfg: K3dConfig) -> None:
     console.print(f"[green]  \u2713 Merged to {default_kubeconfig_path}[/green]")
 
 
-def _run_kwok(flags: ActionFlags, kwok_cfg: KwokConfig) -> None:
-    """Install KWOK controller and create nodes.
+# ============================================================================
+# New public API
+# ============================================================================
+
+def run_e2e_setup(
+    *,
+    skip_cluster_creation: bool = False,
+    skip_kai: bool = False,
+    skip_grove: bool = False,
+    skip_topology: bool = False,
+    skip_prepull: bool = False,
+    workers: int | None = None,
+    grove_options: GroveInstallOptions | None = None,
+) -> None:
+    """Run the E2E setup workflow: k3d + kai + grove + topology + prepull.
+
+    Args:
+        skip_cluster_creation: Whether to skip k3d cluster creation.
+        skip_kai: Whether to skip Kai Scheduler installation.
+        skip_grove: Whether to skip Grove operator deployment.
+        skip_topology: Whether to skip topology label application.
+        skip_prepull: Whether to skip image pre-pulling.
+        workers: CLI override for worker node count, or None.
+        grove_options: Grove install options, or None for defaults.
+
+    Raises:
+        RuntimeError: If any step fails.
+    """
+    if grove_options is None:
+        grove_options = GroveInstallOptions()
+
+    create_k3d = not skip_cluster_creation
+    install_kai = not skip_kai
+    install_grove = not skip_grove
+    apply_topo = not skip_topology
+    do_prepull = not skip_prepull and create_k3d
+
+    operator_dir = OPERATOR_DIR
+    k3d_cfg = K3dConfig()
+    comp_cfg = ComponentConfig()
+
+    if workers is not None:
+        k3d_cfg = k3d_cfg.model_copy(update={"worker_nodes": workers})
+    if grove_options.registry is not None:
+        comp_cfg = comp_cfg.model_copy(update={"registry": grove_options.registry})
+
+    if create_k3d:
+        _check_prerequisites(install_kai, install_grove, operator_dir)
+        _run_cluster_creation(k3d_cfg)
+        if do_prepull:
+            _run_prepull(k3d_cfg)
+    elif install_grove:
+        _check_prerequisites(install_kai, install_grove, operator_dir)
+
+    if install_kai:
+        install_kai_scheduler(comp_cfg)
+
+    if install_grove:
+        deploy_grove_operator(k3d_cfg, comp_cfg, operator_dir, grove_options)
+
+    if install_kai:
+        _run_kai_post_install(operator_dir)
+
+    if apply_topo:
+        apply_topology_labels()
+
+    if create_k3d:
+        _run_kubeconfig_merge(k3d_cfg)
+
+
+def run_scale_setup(
+    *,
+    workers: int | None = None,
+    grove_options: GroveInstallOptions | None = None,
+    kwok_nodes: int = 100,
+    kwok_batch_size: int | None = None,
+    pyroscope_namespace: str | None = None,
+) -> None:
+    """Run full E2E setup + KWOK nodes + Pyroscope for scale testing.
+
+    Args:
+        workers: CLI override for worker node count, or None.
+        grove_options: Grove install options (pprof enabled by default).
+        kwok_nodes: Number of KWOK simulated nodes to create.
+        kwok_batch_size: KWOK node creation batch size override, or None.
+        pyroscope_namespace: Pyroscope namespace override, or None.
+
+    Raises:
+        RuntimeError: If any step fails.
+    """
+    from infra_manager.constants import DEFAULT_KWOK_VERSION
+
+    if grove_options is None:
+        grove_options = GroveInstallOptions(grove_profiling=True)
+
+    run_e2e_setup(workers=workers, grove_options=grove_options)
+
+    kwok_cfg = KwokConfig()
+    if kwok_batch_size is not None:
+        kwok_cfg = kwok_cfg.model_copy(update={"kwok_batch_size": kwok_batch_size})
+    if pyroscope_namespace is not None:
+        kwok_cfg = kwok_cfg.model_copy(update={"pyroscope_ns": pyroscope_namespace})
+
+    if kwok_nodes > 0:
+        kwok_version = dep_value("kwok_controller", "version", default=DEFAULT_KWOK_VERSION)
+        install_kwok_controller(kwok_version)
+        create_nodes(kwok_nodes, kwok_cfg)
+
+    values_file = SCRIPT_DIR / "infra_manager" / "pyroscope-values.yaml"
+    pyroscope_version = dep_value("pyroscope", "version", default="")
+    install_pyroscope(kwok_cfg.pyroscope_ns, values_file, version=pyroscope_version)
+
+
+# ============================================================================
+# Legacy API (used by infra-manager.py shim)
+# ============================================================================
+
+def _run_kwok_legacy(flags: ActionFlags, kwok_cfg: KwokConfig) -> None:
+    """Install KWOK controller and create nodes (legacy helper).
 
     Args:
         flags: Resolved action flags with KWOK node count.
@@ -158,8 +288,8 @@ def _run_kwok(flags: ActionFlags, kwok_cfg: KwokConfig) -> None:
         create_nodes(flags.kwok_node_count, kwok_cfg)
 
 
-def _run_pyroscope(kwok_cfg: KwokConfig, script_dir: Path) -> None:
-    """Install Pyroscope.
+def _run_pyroscope_legacy(kwok_cfg: KwokConfig, script_dir: Path) -> None:
+    """Install Pyroscope (legacy helper).
 
     Args:
         kwok_cfg: KWOK configuration with the Pyroscope namespace.
@@ -178,7 +308,7 @@ def run(
     operator_dir: Path,
     script_dir: Path,
 ) -> None:
-    """Orchestrate all requested actions.
+    """Orchestrate all requested actions (legacy entry point).
 
     Args:
         flags: Resolved action flags controlling which steps to run.
@@ -200,7 +330,7 @@ def run(
         return
 
     if flags.create_k3d:
-        _run_prerequisites(flags, operator_dir)
+        _check_prerequisites(flags.install_kai, flags.install_grove, operator_dir)
         _run_cluster_creation(k3d_cfg)
         if flags.prepull_images:
             _run_prepull(k3d_cfg)
@@ -209,7 +339,14 @@ def run(
         install_kai_scheduler(comp_cfg)
 
     if flags.install_grove:
-        deploy_grove_operator(k3d_cfg, comp_cfg, operator_dir, flags)
+        grove_options = GroveInstallOptions(
+            registry=flags.registry,
+            grove_profiling=flags.grove_profiling,
+            grove_pcs_syncs=flags.grove_pcs_syncs,
+            grove_pclq_syncs=flags.grove_pclq_syncs,
+            grove_pcsg_syncs=flags.grove_pcsg_syncs,
+        )
+        deploy_grove_operator(k3d_cfg, comp_cfg, operator_dir, grove_options)
 
     if flags.install_kai:
         _run_kai_post_install(operator_dir)
@@ -221,7 +358,7 @@ def run(
         _run_kubeconfig_merge(k3d_cfg)
 
     if flags.create_kwok_nodes:
-        _run_kwok(flags, kwok_cfg)
+        _run_kwok_legacy(flags, kwok_cfg)
 
     if flags.install_pyroscope:
-        _run_pyroscope(kwok_cfg, script_dir)
+        _run_pyroscope_legacy(kwok_cfg, script_dir)

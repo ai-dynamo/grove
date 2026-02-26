@@ -24,7 +24,7 @@ from typing import Any
 
 import sh
 
-from infra_manager.config import ActionFlags
+from infra_manager.config import ActionFlags, GroveInstallOptions
 from infra_manager.constants import (
     HELM_KEY_PCLQ_SYNCS,
     HELM_KEY_PCS_SYNCS,
@@ -87,20 +87,20 @@ def resolve_registry_repos(registry: str | None, port: int) -> tuple[str, str]:
     return f"localhost:{port}", f"registry:{port}"
 
 
-def collect_grove_helm_overrides(flags: ActionFlags) -> list[str]:
-    """Build helm override strings from grove tuning flags.
+def collect_grove_helm_overrides(options: GroveInstallOptions | ActionFlags) -> list[str]:
+    """Build helm override strings from grove tuning options.
 
     Args:
-        flags: Resolved action flags containing grove tuning values.
+        options: Grove install options or legacy ActionFlags containing tuning values.
 
     Returns:
         List of ``key=value`` strings for ``helm --set`` arguments.
     """
     overrides: list[tuple[bool, str, str]] = [
-        (flags.grove_profiling, HELM_KEY_PROFILING, "true"),
-        (flags.grove_pcs_syncs is not None, HELM_KEY_PCS_SYNCS, str(flags.grove_pcs_syncs)),
-        (flags.grove_pclq_syncs is not None, HELM_KEY_PCLQ_SYNCS, str(flags.grove_pclq_syncs)),
-        (flags.grove_pcsg_syncs is not None, HELM_KEY_PCSG_SYNCS, str(flags.grove_pcsg_syncs)),
+        (options.grove_profiling, HELM_KEY_PROFILING, "true"),
+        (options.grove_pcs_syncs is not None, HELM_KEY_PCS_SYNCS, str(options.grove_pcs_syncs)),
+        (options.grove_pclq_syncs is not None, HELM_KEY_PCLQ_SYNCS, str(options.grove_pclq_syncs)),
+        (options.grove_pcsg_syncs is not None, HELM_KEY_PCSG_SYNCS, str(options.grove_pcsg_syncs)),
     ]
     return [f"{key}={value}" for enabled, key, value in overrides if enabled]
 

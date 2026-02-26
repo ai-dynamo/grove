@@ -115,12 +115,12 @@ run-e2e:
 # Pass E2E_CREATE_FLAGS to add CLI flags (e.g. --skip-kai --skip-topology --skip-prepull)
 .PHONY: e2e-cluster-up
 e2e-cluster-up:
-	@$(MODULE_HACK_DIR)/infra-manager.py $(E2E_CREATE_FLAGS)
+	@$(MODULE_HACK_DIR)/cli.py setup e2e $(E2E_CREATE_FLAGS)
 
 # Delete the k3d e2e test cluster
 .PHONY: e2e-cluster-down
 e2e-cluster-down:
-	@$(MODULE_HACK_DIR)/infra-manager.py --delete
+	@$(MODULE_HACK_DIR)/cli.py delete k3d-cluster
 
 # Full e2e test run: create k3d cluster, run tests, then cleanup
 # Usage: make run-e2e-full [TEST_PATTERN=<pattern>]
@@ -215,6 +215,10 @@ undeploy: $(SKAFFOLD)
 .PHONY: deploy-addons
 deploy-addons:
 	@$(MODULE_HACK_DIR)/deploy-addons.sh --all
+
+.PHONY: test-cli-integration
+test-cli-integration:
+	@bash $(MODULE_HACK_DIR)/tests/test_cli_integration.sh
 
 .PHONY: clean-chart-resources
 clean-chart-resources:

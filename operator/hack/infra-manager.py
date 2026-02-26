@@ -16,41 +16,16 @@
 # */
 
 """
-infra-manager.py - Unified cluster setup for Grove E2E testing.
+infra-manager.py - Backward-compatible shim delegating to cli.py.
 
-Default behavior creates a full e2e cluster (k3d + kai + grove + topology + prepull).
-Use --skip-* flags to opt out of individual steps.
-Use --delete, --kwok-nodes, --kwok-delete, --pyroscope for explicit actions.
-
-Environment Variables:
-    All cluster configuration can be overridden via E2E_* environment variables:
-    - E2E_CLUSTER_NAME (default: shared-e2e-test-cluster)
-    - E2E_REGISTRY_PORT (default: 5001)
-    - E2E_API_PORT (default: 6560)
-    - E2E_WORKER_NODES (default: 30)
-    - E2E_KAI_VERSION (default: from dependencies.yaml)
-    - And more (see config classes for full list)
+This script preserves the old CLI interface for existing scripts and CI.
+New usage should prefer cli.py directly.
 
 Examples:
-    # Full e2e setup (default — no flags needed!)
-    ./infra-manager.py
-
-    # Full e2e but skip image pre-pulling
-    ./infra-manager.py --skip-prepull
-
-    # Deploy only grove on existing cluster
-    ./infra-manager.py --skip-cluster-creation --skip-kai --skip-topology --skip-prepull
-
-    # Delete cluster
-    ./infra-manager.py --delete
-
-    # Scale test on existing cluster
-    ./infra-manager.py --skip-cluster-creation --skip-kai --skip-grove --skip-topology --skip-prepull --kwok-nodes 1000 --pyroscope
-
-    # Delete all KWOK nodes
-    ./infra-manager.py --skip-cluster-creation --skip-kai --skip-grove --skip-topology --skip-prepull --kwok-delete
-
-For detailed usage information, run: ./infra-manager.py --help
+    # These still work:
+    ./infra-manager.py                  # → cli.py setup e2e
+    ./infra-manager.py --delete         # → cli.py k3d delete
+    ./infra-manager.py --skip-kai       # → cli.py setup e2e --skip-kai
 """
 
 from __future__ import annotations
@@ -66,12 +41,11 @@ from infra_manager.config import display_config, resolve_config, validate_flags
 from infra_manager.orchestrator import run
 from infra_manager.utils import resolve_bool_flag
 
-app = typer.Typer(help="Unified cluster setup for Grove E2E testing.")
+app = typer.Typer(help="[DEPRECATED] Use cli.py instead. Backward-compatible shim.")
 
 
 @app.command()
 def main(
-    # Opt-out flags (on by default)
     skip_cluster_creation: bool = typer.Option(
         False, "--skip-cluster-creation", help="Skip k3d cluster creation"),
     skip_kai: bool = typer.Option(
@@ -82,26 +56,22 @@ def main(
         False, "--skip-topology", help="Skip topology label application"),
     skip_prepull: bool = typer.Option(
         False, "--skip-prepull", help="Skip image pre-pulling"),
-    # Opt-in flags
     delete: bool = typer.Option(
         False, "--delete", help="Delete the k3d cluster and exit"),
     workers: int | None = typer.Option(
         None, "--workers", help="k3d worker nodes (overrides E2E_WORKER_NODES)"),
     registry: str | None = typer.Option(
         None, "--registry", help="Container registry URL"),
-    # KWOK
     kwok_nodes: int | None = typer.Option(
         None, "--kwok-nodes", help="Create N KWOK simulated nodes"),
     kwok_batch_size: int | None = typer.Option(
         None, "--kwok-batch-size", help="Node creation batch size"),
     kwok_delete: bool = typer.Option(
         False, "--kwok-delete", help="Delete all KWOK simulated nodes"),
-    # Pyroscope
     pyroscope: bool = typer.Option(
         False, "--pyroscope", help="Install Pyroscope via Helm"),
     pyroscope_namespace: str | None = typer.Option(
         None, "--pyroscope-namespace", help="Pyroscope namespace (default: pyroscope)"),
-    # Grove tuning
     grove_profiling: bool = typer.Option(
         False, "--grove-profiling", help="Enable pprof"),
     grove_pcs_syncs: int | None = typer.Option(
@@ -111,12 +81,7 @@ def main(
     grove_pcsg_syncs: int | None = typer.Option(
         None, "--grove-pcsg-syncs", help="PodCliqueScalingGroup concurrentSyncs"),
 ) -> None:
-    """Unified cluster setup for Grove E2E testing.
-
-    Default: creates k3d cluster + installs Kai + deploys Grove + applies
-    topology + pre-pulls images. Use --skip-* flags to opt out of individual
-    steps. All parameters are documented via --help on each CLI option.
-    """
+    """[DEPRECATED] Use cli.py instead. Backward-compatible shim."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
