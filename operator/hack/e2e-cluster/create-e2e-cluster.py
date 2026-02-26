@@ -122,7 +122,7 @@ class ClusterConfig(BaseSettings):
     api_port: int = Field(default=6560, ge=1, le=65535)
     lb_port: str = "8090:80"
     worker_nodes: int = Field(default=30, ge=1, le=100)
-    worker_memory: str = Field(default="150m", pattern=r"^\d+[mMgG]?$")
+    worker_memory: Optional[str] = Field(default="150m", pattern=r"^\d+[mMgG]?$")
     k3s_image: str = "rancher/k3s:v1.33.5-k3s1"
     kai_version: str = Field(default=DEPENDENCIES['kai_scheduler']['version'], pattern=r"^v[\d.]+(-[\w.]+)?$")
     skaffold_profile: str = "topology-test"
@@ -289,7 +289,7 @@ def create_cluster(config: ClusterConfig) -> bool:
             "--k3s-node-label", "node_role.e2e.grove.nvidia.com=agent@agent:*",
             "--k3s-node-label", "nvidia.com/gpu.deploy.operands=false@server:*",
             "--k3s-node-label", "nvidia.com/gpu.deploy.operands=false@agent:*",
-            "--agents-memory", config.worker_memory,
+            *(["--agents-memory", config.worker_memory] if config.worker_memory else []),
             "--timeout", config.cluster_timeout,
             "--wait",
             _ok_code=[0, 1]
@@ -475,6 +475,7 @@ def main(
     skip_grove: bool = typer.Option(False, "--skip-grove", help="Skip Grove operator deployment"),
     skip_topology: bool = typer.Option(False, "--skip-topology", help="Skip topology label application"),
     skip_prepull: bool = typer.Option(False, "--skip-prepull", help="Skip image pre-pulling (faster but cluster startup will be slower)"),
+    skip_memory_limit: bool = typer.Option(False, "--skip-memory-limit", help="Skip --agents-memory (required for DinD where /proc/meminfo bind-mount fails)"),
     delete: bool = typer.Option(False, "--delete", help="Delete the cluster and exit"),
 ):
     """
@@ -502,8 +503,12 @@ def main(
         skip_topology = True
     if '--skip-prepull' in sys.argv:
         skip_prepull = True
+    if '--skip-memory-limit' in sys.argv:
+        skip_memory_limit = True
 
     config = ClusterConfig()
+    if skip_memory_limit:
+        config.worker_memory = None
     script_dir = Path(__file__).resolve().parent
     operator_dir = script_dir.parent.parent  # Go up from hack/e2e-cluster/ to operator/
 
