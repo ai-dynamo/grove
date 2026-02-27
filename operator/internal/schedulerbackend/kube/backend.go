@@ -21,6 +21,7 @@ import (
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend/common"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -32,7 +33,7 @@ import (
 // PodSchedulerName is the value set on Pod.Spec.SchedulerName for the Kubernetes default scheduler.
 const PodSchedulerName = "default-scheduler"
 
-// Backend implements the schedulerbackend.SchedBackend interface for Kubernetes default scheduler
+// Backend implements the common.SchedBackend interface for Kubernetes default scheduler
 // This backend does minimal work - just sets the scheduler name on pods
 type Backend struct {
 	client        client.Client
@@ -43,7 +44,7 @@ type Backend struct {
 
 // New creates a new Kube backend instance. profile is the scheduler profile for default-scheduler;
 // Backend uses profile.Name and may unmarshal profile.Config into KubeSchedulerConfig.
-func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1alpha1.SchedulerProfile) *Backend {
+func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1alpha1.SchedulerProfile) common.SchedBackend {
 	return &Backend{
 		client:        cl,
 		scheme:        scheme,
