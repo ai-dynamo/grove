@@ -1,0 +1,50 @@
+adminPassword: admin
+
+persistence:
+  enabled: true
+  size: 5Gi
+
+service:
+  type: ClusterIP
+  port: 80
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+    - name: Prometheus
+      type: prometheus
+      url: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+      access: proxy
+      isDefault: true
+    - name: Pyroscope
+      type: grafana-pyroscope-datasource
+      url: http://pyroscope.pyroscope.svc.cluster.local:4040
+      access: proxy
+
+plugins:
+  - grafana-pyroscope-datasource
+
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+    - name: 'grove'
+      orgId: 1
+      folder: 'Grove'
+      type: file
+      disableDeletion: false
+      editable: true
+      options:
+        path: /var/lib/grafana/dashboards/grove
+
+dashboardsConfigMaps:
+  grove: "grove-dashboards"
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi

@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import yaml
@@ -193,8 +194,26 @@ def create_node_batch(
         Path(tmp.name).unlink(missing_ok=True)
 
 
+def _wait_kwok_nodes_ready(timeout: int = 120) -> None:
+    """Wait for all KWOK nodes to reach Ready condition.
+
+    Args:
+        timeout: Maximum seconds to wait for nodes to be ready.
+    """
+    console.print("[yellow]\u2139\ufe0f  Waiting for KWOK nodes to be ready...[/yellow]")
+    ok, _, stderr = run_kubectl([
+        "wait", "--for=condition=Ready", "nodes",
+        "-l", f"{LABEL_TYPE}={LABEL_TYPE_KWOK}",
+        f"--timeout={timeout}s",
+    ], timeout=timeout + 10)
+    if not ok:
+        console.print(f"[yellow]\u26a0\ufe0f  Some KWOK nodes may not be ready: {stderr[:200]}[/yellow]")
+    else:
+        console.print("[green]\u2705 All KWOK nodes are ready[/green]")
+
+
 def create_nodes(total: int, kwok_cfg: KwokConfig) -> None:
-    """Create KWOK nodes in batches.
+    """Create KWOK nodes in parallel batches.
 
     Args:
         total: Total number of KWOK nodes to create.
@@ -204,20 +223,31 @@ def create_nodes(total: int, kwok_cfg: KwokConfig) -> None:
     successes: list[int] = []
     failures: list[tuple[int, str]] = []
 
+    batches = []
     for batch_start in range(0, total, kwok_cfg.kwok_batch_size):
         batch_end = min(batch_start + kwok_cfg.kwok_batch_size, total)
-        node_ids = list(range(batch_start, batch_end))
-        batch_ok, batch_fail = create_node_batch(node_ids, kwok_cfg)
-        successes.extend(batch_ok)
-        failures.extend(batch_fail)
-        logger.info("Batch %d-%d: success=%d, failed=%d",
-                    batch_start, batch_end - 1, len(batch_ok), len(batch_fail))
+        batches.append(list(range(batch_start, batch_end)))
+
+    max_workers = min(len(batches), 5)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(create_node_batch, node_ids, kwok_cfg): node_ids
+            for node_ids in batches
+        }
+        for future in as_completed(futures):
+            node_ids = futures[future]
+            batch_ok, batch_fail = future.result()
+            successes.extend(batch_ok)
+            failures.extend(batch_fail)
+            logger.info("Batch %d-%d: success=%d, failed=%d",
+                        node_ids[0], node_ids[-1], len(batch_ok), len(batch_fail))
 
     if failures:
         console.print(f"[yellow]\u26a0\ufe0f  {len(failures)} nodes failed to create[/yellow]")
         for nid, err in failures[:10]:
             logger.error("  kwok-node-%d: %s", nid, err)
     console.print(f"[green]\u2705 Created {len(successes)} KWOK nodes[/green]")
+    _wait_kwok_nodes_ready()
 
 
 def delete_kwok_nodes() -> None:

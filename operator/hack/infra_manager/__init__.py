@@ -18,9 +18,35 @@
 
 from __future__ import annotations
 
+import io
 import logging
+import threading
+from contextlib import contextmanager
 
 from rich.console import Console
 
-console = Console(stderr=True)
+
+class ThreadAwareConsole:
+    """Console proxy that routes to thread-local buffers when set."""
+
+    def __init__(self, real_console: Console) -> None:
+        object.__setattr__(self, "_real", real_console)
+        object.__setattr__(self, "_local", threading.local())
+
+    def __getattr__(self, name: str):
+        target = getattr(self._local, "console", self._real)
+        return getattr(target, name)
+
+    @contextmanager
+    def buffered(self):
+        """Buffer all console output for the current thread."""
+        buf = io.StringIO()
+        self._local.console = Console(file=buf, stderr=False)
+        try:
+            yield buf
+        finally:
+            del self._local.console
+
+
+console = ThreadAwareConsole(Console(stderr=True))
 logger = logging.getLogger("infra_manager")

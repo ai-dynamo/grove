@@ -1,0 +1,285 @@
+{
+  "title": "Kubernetes API Server Monitoring",
+  "tags": ["kubernetes", "apiserver", "performance"],
+  "timezone": "browser",
+  "schemaVersion": 16,
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "API Server Request Rate",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(rate(apiserver_request_total[5m])) by (verb, code)",
+          "legendFormat": "{{verb}} - {{code}}",
+          "refId": "A"
+        }
+      ],
+      "yaxes": [
+        {"format": "ops", "label": "Requests/sec"},
+        {"format": "short"}
+      ]
+    },
+    {
+      "id": 2,
+      "title": "API Server Request Latency (P95)",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(apiserver_request_duration_seconds_bucket[5m])) by (verb, le))",
+          "legendFormat": "{{verb}} p95",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(apiserver_request_duration_seconds_bucket[5m])) by (verb, le))",
+          "legendFormat": "{{verb}} p50",
+          "refId": "B"
+        }
+      ],
+      "yaxes": [
+        {"format": "s", "label": "Duration"},
+        {"format": "short"}
+      ]
+    },
+    {
+      "id": 3,
+      "title": "API Server Error Rate (5xx)",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "targets": [
+        {
+          "expr": "sum(rate(apiserver_request_total{code=~\"5..\"}[5m])) by (verb, code)",
+          "legendFormat": "{{verb}} - {{code}}",
+          "refId": "A"
+        }
+      ],
+      "yaxes": [
+        {"format": "ops", "label": "Errors/sec"},
+        {"format": "short"}
+      ],
+      "alert": {
+        "conditions": [
+          {
+            "evaluator": {"params": [0.1], "type": "gt"},
+            "operator": {"type": "and"},
+            "query": {"params": ["A", "5m", "now"]},
+            "reducer": {"params": [], "type": "avg"},
+            "type": "query"
+          }
+        ],
+        "executionErrorState": "alerting",
+        "frequency": "60s",
+        "handler": 1,
+        "name": "API Server 5xx Errors",
+        "noDataState": "no_data",
+        "notifications": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "API Server Inflight Requests",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "targets": [
+        {
+          "expr": "sum(apiserver_current_inflight_requests) by (request_kind)",
+          "legendFormat": "{{request_kind}}",
+          "refId": "A"
+        }
+      ],
+      "yaxes": [
+        {"format": "short", "label": "Requests"},
+        {"format": "short"}
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Etcd Request Rate",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "targets": [
+        {
+          "expr": "sum(rate(etcd_request_duration_seconds_count[5m])) by (operation, type)",
+          "legendFormat": "{{operation}} - {{type}}",
+          "refId": "A"
+        }
+      ],
+      "yaxes": [
+        {"format": "ops", "label": "Requests/sec"},
+        {"format": "short"}
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Etcd Request Latency (P95)",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(etcd_request_duration_seconds_bucket[5m])) by (operation, type, le))",
+          "legendFormat": "{{operation}}/{{type}} p95",
+          "refId": "A"
+        }
+      ],
+      "yaxes": [
+        {"format": "s", "label": "Duration"},
+        {"format": "short"}
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Watch Events Rate",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+      "targets": [
+        {
+          "expr": "sum(rate(apiserver_watch_events_total[5m])) by (kind)",
+          "legendFormat": "{{kind}}",
+          "refId": "A"
+        }
+      ],
+      "yaxes": [
+        {"format": "ops", "label": "Events/sec"},
+        {"format": "short"}
+      ]
+    },
+    {
+      "id": 8,
+      "title": "API Server Admission Controller Latency",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(apiserver_admission_controller_admission_duration_seconds_bucket[5m])) by (name, operation, le))",
+          "legendFormat": "{{name}}/{{operation}} p95",
+          "refId": "A"
+        }
+      ],
+      "yaxes": [
+        {"format": "s", "label": "Duration"},
+        {"format": "short"}
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Webhook Call Duration (P95)",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(apiserver_admission_webhook_admission_duration_seconds_bucket[5m])) by (name, operation, le))",
+          "legendFormat": "{{name}}/{{operation}} p95",
+          "refId": "A"
+        }
+      ],
+      "yaxes": [
+        {"format": "s", "label": "Duration"},
+        {"format": "short"}
+      ]
+    },
+    {
+      "id": 10,
+      "title": "API Server Memory Usage",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32},
+      "targets": [
+        {
+          "expr": "process_resident_memory_bytes{job=\"apiserver\"}",
+          "legendFormat": "RSS",
+          "refId": "A"
+        },
+        {
+          "expr": "go_memstats_heap_alloc_bytes{job=\"apiserver\"}",
+          "legendFormat": "Heap Alloc",
+          "refId": "B"
+        }
+      ],
+      "yaxes": [
+        {"format": "bytes", "label": "Memory"},
+        {"format": "short"}
+      ]
+    },
+    {
+      "id": 11,
+      "title": "API Server Goroutines",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 40},
+      "targets": [
+        {
+          "expr": "go_goroutines{job=\"apiserver\"}",
+          "legendFormat": "Goroutines",
+          "refId": "A"
+        }
+      ],
+      "yaxes": [
+        {"format": "short", "label": "Count"},
+        {"format": "short"}
+      ]
+    },
+    {
+      "id": 12,
+      "title": "API Server Total Requests (24h)",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 40},
+      "targets": [
+        {
+          "expr": "sum(increase(apiserver_request_total[24h]))",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 13,
+      "title": "Request Success Rate",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 40},
+      "targets": [
+        {
+          "expr": "sum(rate(apiserver_request_total{code=~\"2..\"}[5m])) / sum(rate(apiserver_request_total[5m])) * 100",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "unit": "percent",
+        "thresholds": {
+          "mode": "absolute",
+          "steps": [
+            {"value": null, "color": "red"},
+            {"value": 95, "color": "yellow"},
+            {"value": 99, "color": "green"}
+          ]
+        }
+      }
+    }
+  ],
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h"]
+  }
+}

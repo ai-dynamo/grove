@@ -150,6 +150,10 @@ DEFAULT_WORKER_MEMORY = "150m"
 DEFAULT_K3S_IMAGE = "rancher/k3s:v1.33.5-k3s1"
 DEFAULT_CLUSTER_CREATE_MAX_RETRIES = 3
 
+# -- Scale test cluster defaults --
+DEFAULT_SCALE_WORKER_NODES = 5
+DEFAULT_SCALE_WORKER_MEMORY = "300m"
+
 # -- Component defaults --
 DEFAULT_SKAFFOLD_PROFILE = "topology-test"
 DEFAULT_GROVE_NAMESPACE = "grove-system"

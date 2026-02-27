@@ -127,6 +127,83 @@ def prepull_images(images: list[str], registry_port: int, version: str) -> None:
         console.print(f"[green]\u2705 Successfully pre-pulled all {len(images)} images[/green]")
 
 
+def _run_parallel_pulls_versioned(
+    docker_client: docker.DockerClient,
+    items: list[tuple[str, str]],
+    registry_port: int,
+) -> list[str]:
+    """Pull images in parallel where each item carries its own version.
+
+    Args:
+        docker_client: Docker client instance.
+        items: List of (image_name, version) tuples.
+        registry_port: Local k3d registry port.
+
+    Returns:
+        List of failed image names.
+    """
+    failed_images: list[str] = []
+    with Progress(
+        SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
+        BarColumn(), TaskProgressColumn(), console=console,
+    ) as progress:
+        task = progress.add_task("[cyan]Pulling images...", total=len(items))
+        with ThreadPoolExecutor(max_workers=DEFAULT_IMAGE_PULL_MAX_WORKERS) as executor:
+            futures = {
+                executor.submit(_pull_tag_push, docker_client, img, registry_port, ver): img
+                for img, ver in items
+            }
+            for future in as_completed(futures):
+                image_name, success, error = future.result()
+                progress.advance(task)
+                if success:
+                    console.print(f"[green]\u2713 {image_name}[/green]")
+                else:
+                    console.print(f"[red]\u2717 {image_name} - {error}[/red]")
+                    failed_images.append(image_name)
+    return failed_images
+
+
+def prepull_image_groups(
+    groups: list[tuple[list[str], str]],
+    registry_port: int,
+) -> None:
+    """Pre-pull multiple image groups in a single batch.
+
+    Args:
+        groups: List of (images, version) tuples to pull.
+        registry_port: Local k3d registry port.
+    """
+    items: list[tuple[str, str]] = []
+    for images, version in groups:
+        for img in images:
+            items.append((img, version))
+
+    if not items:
+        return
+
+    console.print(Panel.fit("Pre-pulling images to local registry", style="bold blue"))
+    console.print(f"[yellow]Pre-pulling {len(items)} images in parallel (this speeds up cluster startup)...[/yellow]")
+
+    try:
+        docker_client = docker.from_env()
+    except Exception as e:
+        console.print(f"[yellow]\u26a0\ufe0f  Failed to connect to Docker: {e}[/yellow]")
+        console.print("[yellow]\u26a0\ufe0f  Skipping image pre-pull (cluster will pull images on-demand)[/yellow]")
+        return
+
+    try:
+        failed_images = _run_parallel_pulls_versioned(docker_client, items, registry_port)
+    finally:
+        docker_client.close()
+
+    if failed_images:
+        console.print(f"[yellow]\u26a0\ufe0f  Failed to pre-pull {len(failed_images)} images[/yellow]")
+        console.print("[yellow]   Cluster will pull these images on-demand (may be slower)[/yellow]")
+    else:
+        console.print(f"[green]\u2705 Successfully pre-pulled all {len(items)} images[/green]")
+
+
 # ============================================================================
 # Cluster operations
 # ============================================================================
@@ -213,6 +290,25 @@ def _node_sort_key(name: str) -> tuple[str, int]:
     return re.sub(r"-\d+$", "", name), (int(m.group(1)) if m else 0)
 
 
+def _label_single_node(node: str, idx: int) -> None:
+    """Apply topology labels to a single worker node.
+
+    Args:
+        node: Kubernetes node name.
+        idx: Zero-based node index for topology calculation.
+    """
+    zone = idx // NODES_PER_ZONE
+    block = idx // NODES_PER_BLOCK
+    rack = idx // NODES_PER_RACK
+    sh.kubectl(
+        "label", "node", node,
+        f"{LABEL_ZONE}=zone-{zone}",
+        f"{LABEL_BLOCK}=block-{block}",
+        f"{LABEL_RACK}=rack-{rack}",
+        "--overwrite"
+    )
+
+
 def apply_topology_labels() -> None:
     """Apply zone, block, and rack topology labels to all worker nodes."""
     console.print(Panel.fit("Applying topology labels to worker nodes", style="bold blue"))
@@ -224,15 +320,12 @@ def apply_topology_labels() -> None:
     ).strip()
 
     worker_nodes = sorted(nodes_output.split(), key=_node_sort_key)
-    for idx, node in enumerate(worker_nodes):
-        zone = idx // NODES_PER_ZONE
-        block = idx // NODES_PER_BLOCK
-        rack = idx // NODES_PER_RACK
-        sh.kubectl(
-            "label", "node", node,
-            f"{LABEL_ZONE}=zone-{zone}",
-            f"{LABEL_BLOCK}=block-{block}",
-            f"{LABEL_RACK}=rack-{rack}",
-            "--overwrite"
-        )
+    max_workers = min(len(worker_nodes), 10)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_label_single_node, node, idx): node
+            for idx, node in enumerate(worker_nodes)
+        }
+        for future in as_completed(futures):
+            future.result()
     console.print(f"[green]\u2705 Applied topology labels to {len(worker_nodes)} worker nodes[/green]")

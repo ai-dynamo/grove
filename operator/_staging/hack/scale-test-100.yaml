@@ -1,0 +1,136 @@
+# Scale Test: ~100 pods (12 prefill + 12 decode ScalingGroups + 3 frontend)
+# Quick test for validating scale test setup on KWOK cluster
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: scale-test-100
+  labels:
+    app: scale-test-100
+spec:
+  replicas: 1
+  template:
+    podCliqueScalingGroups:
+      - name: prefill
+        replicas: 12
+        minAvailable: 12
+        cliqueNames:
+          - pleader
+          - pworker
+      - name: decode
+        replicas: 12
+        minAvailable: 12
+        cliqueNames:
+          - dleader
+          - dworker
+    cliques:
+      - name: frontend
+        labels:
+          kai.scheduler/queue: default
+        spec:
+          roleName: frontend
+          replicas: 3
+          minAvailable: 1
+          podSpec:
+            nodeSelector:
+              type: kwok
+            tolerations:
+              - key: fake-node
+                operator: Equal
+                value: "true"
+                effect: NoSchedule
+            containers:
+              - name: frontend
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 30Mi
+                    cpu: 100m
+      - name: pleader
+        labels:
+          kai.scheduler/queue: default
+        spec:
+          roleName: pleader
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            nodeSelector:
+              type: kwok
+            tolerations:
+              - key: fake-node
+                operator: Equal
+                value: "true"
+                effect: NoSchedule
+            containers:
+              - name: pleader
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 30Mi
+                    cpu: 100m
+      - name: pworker
+        labels:
+          kai.scheduler/queue: default
+        spec:
+          roleName: pworker
+          replicas: 3
+          minAvailable: 3
+          podSpec:
+            nodeSelector:
+              type: kwok
+            tolerations:
+              - key: fake-node
+                operator: Equal
+                value: "true"
+                effect: NoSchedule
+            containers:
+              - name: pworker
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 30Mi
+                    cpu: 100m
+      - name: dleader
+        labels:
+          kai.scheduler/queue: default
+        spec:
+          roleName: dleader
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            nodeSelector:
+              type: kwok
+            tolerations:
+              - key: fake-node
+                operator: Equal
+                value: "true"
+                effect: NoSchedule
+            containers:
+              - name: dleader
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 30Mi
+                    cpu: 100m
+      - name: dworker
+        labels:
+          kai.scheduler/queue: default
+        spec:
+          roleName: dworker
+          replicas: 3
+          minAvailable: 3
+          podSpec:
+            nodeSelector:
+              type: kwok
+            tolerations:
+              - key: fake-node
+                operator: Equal
+                value: "true"
+                effect: NoSchedule
+            containers:
+              - name: dworker
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 30Mi
+                    cpu: 100m

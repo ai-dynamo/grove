@@ -1,0 +1,520 @@
+{
+  "title": "Grove Controller - Unified Metrics & Profiling",
+  "tags": [
+    "grove",
+    "controller",
+    "profiling",
+    "kubernetes"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 16,
+  "refresh": "30s",
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "definition": "label_values(controller_runtime_active_workers, namespace)",
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "Namespace",
+        "options": [],
+        "query": {
+          "query": "label_values(controller_runtime_active_workers, namespace)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 0,
+        "type": "query",
+        "datasource": "Prometheus"
+      },
+      {
+        "current": {},
+        "definition": "label_values(controller_runtime_active_workers{namespace=\"$Namespace\"}, service)",
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "Service",
+        "options": [],
+        "query": {
+          "query": "label_values(controller_runtime_active_workers{namespace=\"$Namespace\"}, service)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 0,
+        "type": "query",
+        "datasource": "Prometheus"
+      },
+      {
+        "current": {},
+        "definition": "label_values(controller_runtime_active_workers{namespace=\"$Namespace\", service=\"$Service\"}, controller)",
+        "hide": 0,
+        "includeAll": true,
+        "multi": true,
+        "name": "Controller",
+        "options": [],
+        "query": {
+          "query": "label_values(controller_runtime_active_workers{namespace=\"$Namespace\", service=\"$Service\"}, controller)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 0,
+        "type": "query",
+        "datasource": "Prometheus"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Controller Selection",
+      "type": "text",
+      "gridPos": {
+        "h": 3,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "content": "# Grove Controller Monitoring\n\nSelect namespace, service, and controller(s) from the dropdowns above to filter metrics and profiling data.",
+        "mode": "markdown"
+      }
+    },
+    {
+      "id": 2,
+      "title": "Reconciliation Rate by Controller",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 3
+      },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "rate(controller_runtime_reconcile_total{namespace=\"$Namespace\",service=\"$Service\",controller=~\"$Controller\"}[5m])",
+          "legendFormat": "{{controller}} - {{result}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "axisLabel": "Reconciles/sec"
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Reconciliation Errors by Controller",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 3
+      },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "rate(controller_runtime_reconcile_errors_total{namespace=\"$Namespace\",service=\"$Service\",controller=~\"$Controller\"}[5m])",
+          "legendFormat": "{{controller}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "axisLabel": "Errors/sec"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 0.1,
+                "color": "yellow"
+              },
+              {
+                "value": 1,
+                "color": "red"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Reconciliation Duration (p50, p95, p99)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 11
+      },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.99, sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"$Namespace\",service=\"$Service\",controller=~\"$Controller\"}[5m])) by (controller, le))",
+          "legendFormat": "{{controller}} p99",
+          "refId": "A"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.95, sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"$Namespace\",service=\"$Service\",controller=~\"$Controller\"}[5m])) by (controller, le))",
+          "legendFormat": "{{controller}} p95",
+          "refId": "B"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.50, sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"$Namespace\",service=\"$Service\",controller=~\"$Controller\"}[5m])) by (controller, le))",
+          "legendFormat": "{{controller}} p50",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "axisLabel": "Duration"
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Work Queue Depth by Controller",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 19
+      },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "workqueue_depth{namespace=\"$Namespace\"}",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "axisLabel": "Queue Depth"
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Active Workers by Controller",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 19
+      },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "controller_runtime_active_workers{namespace=\"$Namespace\",service=\"$Service\",controller=~\"$Controller\"}",
+          "legendFormat": "{{controller}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "axisLabel": "Active Workers"
+          }
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "🔥 CPU Profile - Flame Graph",
+      "type": "flamegraph",
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 27
+      },
+      "targets": [
+        {
+          "datasource": "Pyroscope",
+          "profileTypeId": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+          "labelSelector": "{service_name=\"grove-operator\"}",
+          "queryType": "both",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "displayMode": "flamegraph"
+      },
+      "description": "CPU profiling for selected time range. Click on functions to drill down."
+    },
+    {
+      "id": 8,
+      "title": "Memory Allocations - Flame Graph",
+      "type": "flamegraph",
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 39
+      },
+      "targets": [
+        {
+          "datasource": "Pyroscope",
+          "profileTypeId": "memory:alloc_space:bytes:space:bytes",
+          "labelSelector": "{service_name=\"grove-operator\"}",
+          "queryType": "both",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "displayMode": "flamegraph"
+      },
+      "description": "Memory allocation patterns. Identify memory-hungry functions."
+    },
+    {
+      "id": 9,
+      "title": "CPU Usage Trend",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 51
+      },
+      "targets": [
+        {
+          "datasource": "Pyroscope",
+          "profileTypeId": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+          "labelSelector": "{service_name=\"grove-operator\"}",
+          "queryType": "metrics",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ns",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth"
+          }
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Memory Allocation Trend",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 51
+      },
+      "targets": [
+        {
+          "datasource": "Pyroscope",
+          "profileTypeId": "memory:alloc_space:bytes:space:bytes",
+          "labelSelector": "{service_name=\"grove-operator\"}",
+          "queryType": "metrics",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth"
+          }
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "Memory Usage (RSS vs Heap)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 59
+      },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "process_resident_memory_bytes{namespace=\"$Namespace\",service=\"$Service\"}",
+          "legendFormat": "RSS",
+          "refId": "A"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "go_memstats_heap_alloc_bytes{namespace=\"$Namespace\",service=\"$Service\"}",
+          "legendFormat": "Heap Alloc",
+          "refId": "B"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "go_memstats_heap_inuse_bytes{namespace=\"$Namespace\",service=\"$Service\"}",
+          "legendFormat": "Heap In-Use",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "axisLabel": "Memory"
+          }
+        }
+      }
+    },
+    {
+      "id": 12,
+      "title": "Goroutines",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 59
+      },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "go_goroutines{namespace=\"$Namespace\",service=\"$Service\"}",
+          "legendFormat": "Goroutines",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "axisLabel": "Count"
+          }
+        }
+      }
+    },
+    {
+      "id": 13,
+      "title": "In-Use Memory - Flame Graph",
+      "type": "flamegraph",
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 67
+      },
+      "targets": [
+        {
+          "datasource": "Pyroscope",
+          "profileTypeId": "memory:inuse_space:bytes:space:bytes",
+          "labelSelector": "{service_name=\"grove-operator\"}",
+          "queryType": "both",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "displayMode": "flamegraph"
+      },
+      "description": "Currently in-use memory. Useful for identifying memory leaks."
+    },
+    {
+      "id": 14,
+      "title": "API Request Rate",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 79
+      },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "rate(rest_client_requests_total{namespace=\"$Namespace\"}[5m])",
+          "legendFormat": "{{verb}} {{host}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "axisLabel": "Requests/sec"
+          }
+        }
+      }
+    },
+    {
+      "id": 15,
+      "title": "Workqueue Latency (p95)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 79
+      },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.95, sum(rate(workqueue_queue_duration_seconds_bucket{namespace=\"$Namespace\"}[5m])) by (name, le))",
+          "legendFormat": "{{name}} p95",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "axisLabel": "Latency"
+          }
+        }
+      }
+    }
+  ],
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "30m",
+      "1h"
+    ]
+  }
+}
