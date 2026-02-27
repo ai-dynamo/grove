@@ -32,7 +32,7 @@ import (
 // PodSchedulerName is the value set on Pod.Spec.SchedulerName for the Kubernetes default scheduler.
 const PodSchedulerName = "default-scheduler"
 
-// Backend implements the schedulerbackend.Backend interface for Kubernetes default scheduler
+// Backend implements the schedulerbackend.SchedBackend interface for Kubernetes default scheduler
 // This backend does minimal work - just sets the scheduler name on pods
 type Backend struct {
 	client        client.Client

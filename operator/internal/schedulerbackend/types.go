@@ -25,11 +25,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-// Backend defines the interface that different scheduler backends must implement.
+// SchedBackend defines the interface that different scheduler backends must implement.
 //
-// Architecture: Backend validates PodCliqueSet at admission, converts PodGang to scheduler-specific
+// Architecture: SchedBackend validates PodCliqueSet at admission, converts PodGang to scheduler-specific
 // CR (PodGroup/Workload/etc), and prepares Pods with scheduler-specific configurations.
-type Backend interface {
+type SchedBackend interface {
 	// Name is a unique name of the scheduler backend.
 	Name() string
 
