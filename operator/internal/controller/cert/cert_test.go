@@ -17,6 +17,7 @@
 package cert
 
 import (
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -176,8 +177,8 @@ func TestManageWebhookCerts(t *testing.T) {
 		certsReady := make(chan struct{})
 
 		// Call ManageWebhookCerts with manual mode
-		// Note: mgr is nil because manual mode doesn't use it
-		err := ManageWebhookCerts(nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionModeManual, certsReady)
+		// Note: mgr and cl are nil because manual mode doesn't use them
+		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionModeManual, certsReady)
 
 		// Should return no error
 		require.NoError(t, err)
@@ -195,7 +196,7 @@ func TestManageWebhookCerts(t *testing.T) {
 	t.Run("manual mode with authorizer enabled", func(t *testing.T) {
 		certsReady := make(chan struct{})
 
-		err := ManageWebhookCerts(nil, "/tmp/certs", "test-secret", true, configv1alpha1.CertProvisionModeManual, certsReady)
+		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", true, configv1alpha1.CertProvisionModeManual, certsReady)
 
 		require.NoError(t, err)
 
@@ -214,7 +215,7 @@ func TestManageWebhookCerts(t *testing.T) {
 
 		// Call ManageWebhookCerts with auto mode
 		// This should fail because the namespace file doesn't exist in the test environment
-		err := ManageWebhookCerts(nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionModeAuto, certsReady)
+		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionModeAuto, certsReady)
 
 		// Should return an error because namespace file doesn't exist
 		require.Error(t, err)
@@ -234,7 +235,7 @@ func TestManageWebhookCerts(t *testing.T) {
 		certsReady := make(chan struct{})
 
 		// Even though namespace file doesn't exist, manual mode should succeed
-		err := ManageWebhookCerts(nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionModeManual, certsReady)
+		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionModeManual, certsReady)
 
 		// Should succeed without needing namespace
 		require.NoError(t, err)
@@ -245,7 +246,7 @@ func TestManageWebhookCerts(t *testing.T) {
 	t.Run("unknown mode returns explicit error", func(t *testing.T) {
 		certsReady := make(chan struct{})
 
-		err := ManageWebhookCerts(nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionMode("unknown"), certsReady)
+		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionMode("unknown"), certsReady)
 
 		// Should return an explicit error about unsupported mode
 		require.Error(t, err)
@@ -265,22 +266,22 @@ func TestManageWebhookCerts(t *testing.T) {
 	t.Run("empty mode returns explicit error", func(t *testing.T) {
 		certsReady := make(chan struct{})
 
-		err := ManageWebhookCerts(nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionMode(""), certsReady)
+		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionMode(""), certsReady)
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported cert provision mode")
 	})
 }
 
-// TestEnsureSecretExistsWithClient tests the secret creation logic.
-func TestEnsureSecretExistsWithClient(t *testing.T) {
+// TestCreatePlaceholderSecretIfNotExists tests the secret creation logic.
+func TestCreatePlaceholderSecretIfNotExists(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))
 
 	t.Run("creates secret when it does not exist", func(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-		err := ensureSecretExistsWithClient(cl, "test-ns", "test-secret")
+		err := createPlaceholderSecretIfNotExists(context.Background(), cl, "test-ns", "test-secret")
 		require.NoError(t, err)
 
 		// Verify the secret was created with the correct attributes
@@ -301,7 +302,7 @@ func TestEnsureSecretExistsWithClient(t *testing.T) {
 	t.Run("created secret has expected labels", func(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-		err := ensureSecretExistsWithClient(cl, "test-ns", "test-secret")
+		err := createPlaceholderSecretIfNotExists(context.Background(), cl, "test-ns", "test-secret")
 		require.NoError(t, err)
 
 		secret := &corev1.Secret{}
@@ -327,7 +328,7 @@ func TestEnsureSecretExistsWithClient(t *testing.T) {
 		}
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existingSecret).Build()
 
-		err := ensureSecretExistsWithClient(cl, "test-ns", "test-secret")
+		err := createPlaceholderSecretIfNotExists(context.Background(), cl, "test-ns", "test-secret")
 		require.NoError(t, err)
 
 		// Verify the existing data was preserved

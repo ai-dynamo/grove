@@ -48,7 +48,7 @@ const (
 // When mode=auto: uses cert-controller for automatic certificate generation and management.
 // When mode=manual: waits for externally provided certificates (e.g., from cert-manager, cluster admin).
 // Returns an error for unrecognized modes to ensure new modes are explicitly handled.
-func ManageWebhookCerts(mgr ctrl.Manager, certDir string, secretName string, authorizerEnabled bool, certProvisionMode configv1alpha1.CertProvisionMode, certsReadyCh chan struct{}) error {
+func ManageWebhookCerts(ctx context.Context, mgr ctrl.Manager, cl client.Client, certDir string, secretName string, authorizerEnabled bool, certProvisionMode configv1alpha1.CertProvisionMode, certsReadyCh chan struct{}) error {
 	logger := ctrl.Log.WithName("cert-management")
 
 	switch certProvisionMode {
@@ -60,7 +60,7 @@ func ManageWebhookCerts(mgr ctrl.Manager, certDir string, secretName string, aut
 		return nil
 
 	case configv1alpha1.CertProvisionModeAuto:
-		return setupAutoCertProvisioning(mgr, certDir, secretName, authorizerEnabled, certsReadyCh, logger)
+		return setupAutoCertProvisioning(ctx, mgr, cl, certDir, secretName, authorizerEnabled, certsReadyCh, logger)
 
 	default:
 		return fmt.Errorf("unsupported cert provision mode: %q", certProvisionMode)
@@ -68,7 +68,7 @@ func ManageWebhookCerts(mgr ctrl.Manager, certDir string, secretName string, aut
 }
 
 // setupAutoCertProvisioning configures cert-controller for automatic certificate management.
-func setupAutoCertProvisioning(mgr ctrl.Manager, certDir string, secretName string, authorizerEnabled bool, certsReadyCh chan struct{}, logger logr.Logger) error {
+func setupAutoCertProvisioning(ctx context.Context, mgr ctrl.Manager, cl client.Client, certDir string, secretName string, authorizerEnabled bool, certsReadyCh chan struct{}, logger logr.Logger) error {
 	namespace, err := getOperatorNamespace()
 	if err != nil {
 		return err
@@ -78,7 +78,7 @@ func setupAutoCertProvisioning(mgr ctrl.Manager, certDir string, secretName stri
 	// The upstream cert-controller can only Update existing secrets, not Create them.
 	// This allows the operator to self-create the secret when the Helm chart is configured
 	// with webhookServerSecret.enabled=false (e.g., for GitOps/helm-template workflows).
-	if err := ensureSecretExists(mgr, namespace, secretName); err != nil {
+	if err := createPlaceholderSecretIfNotExists(ctx, cl, namespace, secretName); err != nil {
 		return fmt.Errorf("ensuring webhook TLS secret exists: %w", err)
 	}
 
@@ -136,26 +136,15 @@ func getWebhooks(authorizerEnabled bool) []cert.WebhookInfo {
 	return webhooks
 }
 
-// ensureSecretExists creates the webhook TLS secret if it does not already exist.
+// createPlaceholderSecretIfNotExists creates the webhook TLS secret if it does not already exist.
 // This is needed because the upstream cert-controller (OPA cert-controller) can only
 // Update existing secrets — it cannot Create them. If the secret already exists
 // (e.g., created by Helm or by CD tools like Argo CD / Flux that apply rendered
 // manifests via `helm template | kubectl apply`), it is left untouched to preserve
 // any existing certificate data.
-func ensureSecretExists(mgr ctrl.Manager, namespace, secretName string) error {
-	// Use a direct (non-cached) client because this runs during setup,
-	// before the manager's informer cache has been started.
-	cl, err := client.New(mgr.GetConfig(), client.Options{Scheme: mgr.GetScheme()})
-	if err != nil {
-		return fmt.Errorf("creating client: %w", err)
-	}
-	return ensureSecretExistsWithClient(cl, namespace, secretName)
-}
-
-// ensureSecretExistsWithClient is the testable core of ensureSecretExists.
-func ensureSecretExistsWithClient(cl client.Client, namespace, secretName string) error {
+func createPlaceholderSecretIfNotExists(ctx context.Context, cl client.Client, namespace, secretName string) error {
 	secret := &corev1.Secret{}
-	err := cl.Get(context.Background(), types.NamespacedName{Namespace: namespace, Name: secretName}, secret)
+	err := cl.Get(ctx, types.NamespacedName{Namespace: namespace, Name: secretName}, secret)
 	if !apierrors.IsNotFound(err) {
 		return err
 	}
@@ -178,7 +167,7 @@ func ensureSecretExistsWithClient(cl client.Client, namespace, secretName string
 			"ca.crt":  {},
 		},
 	}
-	if err := cl.Create(context.Background(), secret); err != nil {
+	if err := cl.Create(ctx, secret); err != nil {
 		// In HA deployments (replicaCount > 1), two replicas can race between
 		// Get (not found) and Create. Treat AlreadyExists as success.
 		if apierrors.IsAlreadyExists(err) {
