@@ -33,9 +33,17 @@ class ThreadAwareConsole:
         object.__setattr__(self, "_real", real_console)
         object.__setattr__(self, "_local", threading.local())
 
+    def _target(self) -> Console:
+        return getattr(self._local, "console", self._real)
+
     def __getattr__(self, name: str):
-        target = getattr(self._local, "console", self._real)
-        return getattr(target, name)
+        return getattr(self._target(), name)
+
+    def __enter__(self):
+        return self._target().__enter__()
+
+    def __exit__(self, *args):
+        return self._target().__exit__(*args)
 
     @contextmanager
     def buffered(self):

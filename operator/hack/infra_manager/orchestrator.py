@@ -33,7 +33,6 @@ from infra_manager.cluster import (
     create_cluster,
     delete_cluster,
     prepull_image_groups,
-    prepull_images,
     wait_for_nodes,
 )
 from infra_manager.components import (
@@ -253,7 +252,7 @@ def run_e2e_setup(
     if do_prepull:
         parallel_tasks["prepull"] = lambda: _run_prepull(k3d_cfg)
     if apply_topo:
-        parallel_tasks["topology"] = lambda: apply_topology_labels()
+        parallel_tasks["topology"] = apply_topology_labels
     if install_kai:
         parallel_tasks["kai"] = lambda: install_kai_scheduler(comp_cfg)
     if install_grove:
@@ -327,7 +326,7 @@ def run_scale_setup(
 
     parallel_tasks: dict[str, Callable[[], None]] = {
         "prepull": lambda: _run_prepull(k3d_cfg),
-        "topology": lambda: apply_topology_labels(),
+        "topology": apply_topology_labels,
         "kai": lambda: install_kai_scheduler(comp_cfg),
         "grove": lambda: deploy_grove_operator(
             k3d_cfg, comp_cfg, operator_dir, grove_options),
@@ -420,7 +419,7 @@ def run(
     if flags.prepull_images:
         parallel_tasks["prepull"] = lambda: _run_prepull(k3d_cfg)
     if flags.apply_topology:
-        parallel_tasks["topology"] = lambda: apply_topology_labels()
+        parallel_tasks["topology"] = apply_topology_labels
     if flags.install_kai:
         parallel_tasks["kai"] = lambda: install_kai_scheduler(comp_cfg)
     if flags.install_grove:

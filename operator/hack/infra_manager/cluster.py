@@ -78,26 +78,8 @@ def _run_parallel_pulls(
     version: str,
 ) -> list[str]:
     """Pull images in parallel with progress bar. Returns failed image names."""
-    failed_images: list[str] = []
-    with Progress(
-        SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
-        BarColumn(), TaskProgressColumn(), console=console,
-    ) as progress:
-        task = progress.add_task("[cyan]Pulling images...", total=len(images))
-        with ThreadPoolExecutor(max_workers=DEFAULT_IMAGE_PULL_MAX_WORKERS) as executor:
-            futures = {
-                executor.submit(_pull_tag_push, docker_client, img, registry_port, version): img
-                for img in images
-            }
-            for future in as_completed(futures):
-                image_name, success, error = future.result()
-                progress.advance(task)
-                if success:
-                    console.print(f"[green]\u2713 {image_name}[/green]")
-                else:
-                    console.print(f"[red]\u2717 {image_name} - {error}[/red]")
-                    failed_images.append(image_name)
-    return failed_images
+    items = [(img, version) for img in images]
+    return _run_parallel_pulls_versioned(docker_client, items, registry_port)
 
 
 def prepull_images(images: list[str], registry_port: int, version: str) -> None:
@@ -174,10 +156,9 @@ def prepull_image_groups(
         groups: List of (images, version) tuples to pull.
         registry_port: Local k3d registry port.
     """
-    items: list[tuple[str, str]] = []
-    for images, version in groups:
-        for img in images:
-            items.append((img, version))
+    items: list[tuple[str, str]] = [
+        (img, version) for images, version in groups for img in images
+    ]
 
     if not items:
         return
