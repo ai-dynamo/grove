@@ -199,12 +199,12 @@ func TestFindOwnerRefByKind(t *testing.T) {
 	podCliqueRef := metav1.OwnerReference{Kind: constants.KindPodClique, Name: "pclq-1"}
 	podCliqueSetRef := metav1.OwnerReference{Kind: constants.KindPodCliqueSet, Name: "pcs-1"}
 	testCases := []struct {
-		description   string
-		ownerRefs     []metav1.OwnerReference
-		kind          string
-		expectFound   bool
-		expectedKind  string
-		expectedName  string
+		description  string
+		ownerRefs    []metav1.OwnerReference
+		kind         string
+		expectFound  bool
+		expectedKind string
+		expectedName string
 	}{
 		{
 			description:  "finds matching kind",
