@@ -125,7 +125,7 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjectMeta
 // buildResource configures a PodGang with pod groups and priority.
 func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGangInfo, pg *groveschedulerv1alpha1.PodGang) error {
 	pg.Labels = getLabels(pcs.Name)
-	// Set scheduler name so the Backend controller can resolve the correct backend
+	// Set scheduler name so the podgang controller can resolve the correct backend
 	if schedName := getSchedulerNameForPCS(pcs); schedName != "" {
 		if pg.Labels == nil {
 			pg.Labels = make(map[string]string)
@@ -138,7 +138,6 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGa
 		}
 		pg.Annotations[apicommonconstants.AnnotationTopologyName] = grovecorev1alpha1.DefaultClusterTopologyName
 	}
-
 	if err := controllerutil.SetControllerReference(pcs, pg, r.scheme); err != nil {
 		return groveerr.WrapError(
 			err,
@@ -151,7 +150,7 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGa
 	pg.Spec.TopologyConstraint = pgi.topologyConstraint
 	pg.Spec.TopologyConstraintGroupConfigs = pgi.pcsgTopologyConstraints
 
-	// Only set PodGroups if they don't exist yet (initial creation)
+	// Only create PodGroups if they don't exist yet (initial creation)
 	// Once populated, we preserve existing podReferences to avoid clearing them on subsequent reconciles
 	if len(pg.Spec.PodGroups) == 0 {
 		// Create PodGroups with EMPTY podReferences initially
@@ -182,7 +181,6 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGa
 		}
 	}
 
-	// Note: Initialized condition will be set to False via status patch after create
 	return nil
 }
 
@@ -192,9 +190,9 @@ func createEmptyPodGroupsForPodGang(pgInfo podGangInfo) []groveschedulerv1alpha1
 	podGroups := lo.Map(pgInfo.pclqs, func(pclq pclqInfo, _ int) groveschedulerv1alpha1.PodGroup {
 		return groveschedulerv1alpha1.PodGroup{
 			Name:               pclq.fqn,
-			PodReferences:      []groveschedulerv1alpha1.NamespacedName{}, // Empty initially!
+			PodReferences:      []groveschedulerv1alpha1.NamespacedName{},
 			MinReplicas:        pclq.minAvailable,
-			TopologyConstraint: pclq.topologyConstraint, // Set PodClique-level topology constraint
+			TopologyConstraint: pclq.topologyConstraint,
 		}
 	})
 	return podGroups
