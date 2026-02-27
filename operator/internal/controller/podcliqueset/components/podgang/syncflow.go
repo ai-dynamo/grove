@@ -433,7 +433,6 @@ func (r _resource) runSyncFlow(sc *syncContext) syncFlowResult {
 		result.errs = append(result.errs, err)
 		return result
 	}
-	// Create/update PodGangs and populate PodReferences if all pods are ready
 	return r.createOrUpdatePodGangs(sc)
 }
 
@@ -465,13 +464,13 @@ func (r _resource) deleteExcessPodGangs(sc *syncContext) error {
 
 // createOrUpdatePodGangs creates or updates all expected PodGangs.
 // PodGangs are created with empty podReferences, Initialized=False.
+// Once all pods are created, PodReferences are populated and the PodGang is marked as Initialized=True.
 func (r _resource) createOrUpdatePodGangs(sc *syncContext) syncFlowResult {
 	result := syncFlowResult{}
 
 	// Step 1: Create or update all expected PodGangs with basic structure
 	for _, podGang := range sc.expectedPodGangs {
 		sc.logger.Info("[createOrUpdatePodGangs] processing PodGang", "fqn", podGang.fqn)
-
 		if err := r.createOrUpdatePodGang(sc, podGang); err != nil {
 			sc.logger.Error(err, "failed to create PodGang", "PodGangName", podGang.fqn)
 			result.recordError(err)
@@ -540,7 +539,6 @@ func (r _resource) patchPodGangInitializedStatus(sc *syncContext, podGangName st
 	setInitializedCondition(statusPatch, status, reason, message)
 	statusPatch.Status.Phase = groveschedulerv1alpha1.PodGangPhasePending
 
-	// Patch status (idempotent - if already same status, no change will be made)
 	if err := r.client.Status().Patch(sc.ctx, statusPatch, client.Merge); err != nil {
 		sc.logger.Error(err, "Failed to patch PodGang status with Initialized condition",
 			"podGang", podGangName)
@@ -737,7 +735,6 @@ func (r _resource) createOrUpdatePodGang(sc *syncContext, pgInfo *podGangInfo) e
 	}
 	pg := emptyPodGang(pgObjectKey)
 	sc.logger.Info("CreateOrPatch PodGang", "objectKey", pgObjectKey)
-
 	_, err := controllerutil.CreateOrPatch(sc.ctx, r.client, pg, func() error {
 		return r.buildResource(sc.pcs, pgInfo, pg)
 	})

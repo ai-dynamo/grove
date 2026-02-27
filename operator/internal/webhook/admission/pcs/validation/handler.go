@@ -132,9 +132,6 @@ func validatePodCliqueSetWithBackend(ctx context.Context, pcs *v1alpha1.PodCliqu
 			schedulerName = def.Name()
 		}
 	}
-	if schedulerName == "" {
-		return nil
-	}
 	backend := schedulerbackend.Get(schedulerName)
 	if backend == nil {
 		return nil
