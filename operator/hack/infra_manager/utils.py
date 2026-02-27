@@ -14,17 +14,15 @@
 # limitations under the License.
 # */
 
-"""Utility functions for CLI flag resolution, kubectl, and helm overrides."""
+"""Utility functions for kubectl, helm overrides, and command checks."""
 
 from __future__ import annotations
 
 import subprocess
-import sys
-from typing import Any
 
 import sh
 
-from infra_manager.config import ActionFlags, GroveInstallOptions
+from infra_manager.config import GroveInstallOptions
 from infra_manager.constants import (
     HELM_KEY_PCLQ_SYNCS,
     HELM_KEY_PCS_SYNCS,
@@ -32,29 +30,6 @@ from infra_manager.constants import (
     HELM_KEY_PROFILING,
     KWOK_GITHUB_REPO,
 )
-
-
-def resolve_bool_flag(name: str, value: Any) -> bool:
-    """Resolve a Typer boolean flag value with sys.argv fallback.
-
-    Workaround: Typer has issues with boolean flags in some environments,
-    passing None or strings instead of True/False.
-
-    Args:
-        name: Python parameter name (underscores), e.g. ``skip_kai``.
-        value: Raw value from Typer.
-
-    Returns:
-        Resolved boolean.
-    """
-    flag = f"--{name.replace('_', '-')}"
-    if flag in sys.argv:
-        return True
-    if value is None:
-        return False
-    if isinstance(value, str):
-        return value.lower() not in ("false", "0", "", "no", "n", "none")
-    return bool(value)
 
 
 def kwok_release_url(version: str) -> str:
@@ -87,11 +62,11 @@ def resolve_registry_repos(registry: str | None, port: int) -> tuple[str, str]:
     return f"localhost:{port}", f"registry:{port}"
 
 
-def collect_grove_helm_overrides(options: GroveInstallOptions | ActionFlags) -> list[str]:
+def collect_grove_helm_overrides(options: GroveInstallOptions) -> list[str]:
     """Build helm override strings from grove tuning options.
 
     Args:
-        options: Grove install options or legacy ActionFlags containing tuning values.
+        options: Grove install options containing tuning values.
 
     Returns:
         List of ``key=value`` strings for ``helm --set`` arguments.

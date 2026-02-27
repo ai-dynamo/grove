@@ -18,7 +18,7 @@
 """run_autoMNNVL_e2e.py - Run autoMNNVL e2e tests with a single configuration.
 
 Expects an **existing** cluster (created by ``make run-e2e-mnnvl-full`` or
-manually via ``create-cluster.py``).  This script:
+manually via ``infra-manager.py setup e2e``).  This script:
   1. Configures the cluster via config-cluster.py  (fake GPU + MNNVL toggle)
   2. Runs go test ./e2e/tests/auto-mnnvl/...
 

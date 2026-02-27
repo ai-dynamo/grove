@@ -31,7 +31,6 @@ from infra_manager import console
 from infra_manager.cluster import (
     apply_topology_labels,
     create_cluster,
-    delete_cluster,
     prepull_image_groups,
     wait_for_nodes,
 )
@@ -42,7 +41,6 @@ from infra_manager.components import (
     install_pyroscope,
 )
 from infra_manager.config import (
-    ActionFlags,
     ComponentConfig,
     GroveInstallOptions,
     K3dConfig,
@@ -56,7 +54,7 @@ from infra_manager.constants import (
     SCRIPT_DIR,
     dep_value,
 )
-from infra_manager.kwok import create_nodes, delete_kwok_nodes, install_kwok_controller
+from infra_manager.kwok import create_nodes, install_kwok_controller
 from infra_manager.utils import require_command
 
 
@@ -341,100 +339,3 @@ def run_scale_setup(
     if kwok_nodes > 0:
         create_nodes(kwok_nodes, kwok_cfg)
     _run_kubeconfig_merge(k3d_cfg)
-
-
-# ============================================================================
-# Legacy API (used by infra-manager.py shim)
-# ============================================================================
-
-def _run_kwok_legacy(flags: ActionFlags, kwok_cfg: KwokConfig) -> None:
-    """Install KWOK controller and create nodes (legacy helper).
-
-    Args:
-        flags: Resolved action flags with KWOK node count.
-        kwok_cfg: KWOK configuration with batch size and node resource limits.
-    """
-    from infra_manager.constants import DEFAULT_KWOK_VERSION
-
-    if flags.kwok_node_count > 0:
-        kwok_version = dep_value("kwok_controller", "version", default=DEFAULT_KWOK_VERSION)
-        install_kwok_controller(kwok_version)
-        create_nodes(flags.kwok_node_count, kwok_cfg)
-
-
-def _run_pyroscope_legacy(kwok_cfg: KwokConfig, script_dir: Path) -> None:
-    """Install Pyroscope (legacy helper).
-
-    Args:
-        kwok_cfg: KWOK configuration with the Pyroscope namespace.
-        script_dir: Directory containing the Pyroscope values file.
-    """
-    values_file = script_dir / "infra_manager" / "pyroscope-values.yaml"
-    pyroscope_version = dep_value("pyroscope", "version", default="")
-    install_pyroscope(kwok_cfg.pyroscope_ns, values_file, version=pyroscope_version)
-
-
-def run(
-    flags: ActionFlags,
-    k3d_cfg: K3dConfig,
-    comp_cfg: ComponentConfig,
-    kwok_cfg: KwokConfig,
-    operator_dir: Path,
-    script_dir: Path,
-) -> None:
-    """Orchestrate all requested actions (legacy entry point).
-
-    Args:
-        flags: Resolved action flags controlling which steps to run.
-        k3d_cfg: k3d cluster configuration.
-        comp_cfg: Component versions and registry configuration.
-        kwok_cfg: KWOK and Pyroscope configuration.
-        operator_dir: Root directory of the Grove operator source tree.
-        script_dir: Directory containing the e2e cluster script and helpers.
-
-    Raises:
-        RuntimeError: If any step fails.
-    """
-    if flags.delete_kwok_nodes:
-        delete_kwok_nodes()
-        return
-
-    if flags.delete_k3d:
-        delete_cluster(k3d_cfg)
-        return
-
-    if flags.create_k3d:
-        _check_prerequisites(flags.install_kai, flags.install_grove, operator_dir)
-        _run_cluster_creation(k3d_cfg)
-
-    # Phase 2: Parallel — prepull, topology, kai, grove, kwok, pyroscope
-    grove_options = GroveInstallOptions(
-        registry=flags.registry,
-        grove_profiling=flags.grove_profiling,
-        grove_pcs_syncs=flags.grove_pcs_syncs,
-        grove_pclq_syncs=flags.grove_pclq_syncs,
-        grove_pcsg_syncs=flags.grove_pcsg_syncs,
-    )
-    parallel_tasks: dict[str, Callable[[], None]] = {}
-    if flags.prepull_images:
-        parallel_tasks["prepull"] = lambda: _run_prepull(k3d_cfg)
-    if flags.apply_topology:
-        parallel_tasks["topology"] = apply_topology_labels
-    if flags.install_kai:
-        parallel_tasks["kai"] = lambda: install_kai_scheduler(comp_cfg)
-    if flags.install_grove:
-        parallel_tasks["grove"] = lambda: deploy_grove_operator(
-            k3d_cfg, comp_cfg, operator_dir, grove_options)
-    if flags.install_pyroscope:
-        parallel_tasks["pyroscope"] = lambda: _run_pyroscope_legacy(kwok_cfg, script_dir)
-    _run_parallel(parallel_tasks)
-
-    # Phase 3: Sequential post-install
-    if flags.install_kai:
-        _run_kai_post_install(operator_dir)
-
-    if flags.create_k3d:
-        _run_kubeconfig_merge(k3d_cfg)
-
-    if flags.create_kwok_nodes:
-        _run_kwok_legacy(flags, kwok_cfg)

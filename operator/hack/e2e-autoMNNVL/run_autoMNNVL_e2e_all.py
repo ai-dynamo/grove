@@ -18,7 +18,7 @@
 """run_autoMNNVL_e2e_all.py - Run autoMNNVL e2e tests with all 4 configurations.
 
 Expects an **existing** cluster (created by ``make run-e2e-mnnvl-full`` or
-manually via ``create-cluster.py``).  The script reconfigures the cluster
+manually via ``infra-manager.py setup e2e``).  The script reconfigures the cluster
 between test suites using config-cluster.py (declarative / idempotent).
 
 Configurations:

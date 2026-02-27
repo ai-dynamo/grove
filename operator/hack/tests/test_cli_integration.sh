@@ -36,7 +36,7 @@ PYROSCOPE_TEST_NS="pyroscope-test"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-CLI="${SCRIPT_DIR}/cli.py"
+CLI="${SCRIPT_DIR}/infra-manager.py"
 PASS=0
 FAIL=0
 TOTAL=0

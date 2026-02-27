@@ -18,7 +18,7 @@
 """config-cluster.py - Declarative configuration for an existing E2E cluster.
 
 This script applies or removes configuration on top of a cluster that was
-already created by infra-manager.py (or the legacy create-cluster.py).  It is **idempotent**: running it
+already created by infra-manager.py.  It is **idempotent**: running it
 twice with the same flags is a no-op.
 
 Supported configuration axes:

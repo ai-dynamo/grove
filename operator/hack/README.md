@@ -6,8 +6,7 @@ This directory contains utility scripts for Grove operator development and testi
 
 ```
 hack/
-├── infra-manager.py          # Primary entry point for cluster infrastructure management
-├── create-cluster.py         # Legacy monolith (kept for reference)
+├── infra-manager.py          # Primary CLI for cluster infrastructure management
 ├── config-cluster.py         # Declarative cluster configuration (fake GPU, MNNVL)
 ├── requirements.txt          # Python dependencies
 ├── infra_manager/            # Python package with modular cluster management
@@ -37,7 +36,7 @@ hack/
 
 ### infra-manager.py (Primary)
 
-Modular cluster setup for Grove E2E testing. Delegates to the `infra_manager` package.
+Unified CLI for Grove infrastructure management. Delegates to the `infra_manager` package.
 
 **Installation:**
 
@@ -48,24 +47,25 @@ pip3 install -r hack/requirements.txt
 **Usage:**
 
 ```bash
-# Full e2e setup (default — no flags needed)
-./hack/infra-manager.py
+# Full e2e setup
+./hack/infra-manager.py setup e2e
 
 # View all options
 ./hack/infra-manager.py --help
 
 # Delete the cluster
-./hack/infra-manager.py --delete
+./hack/infra-manager.py delete k3d-cluster
 
 # Skip specific components
-./hack/infra-manager.py --skip-grove
-./hack/infra-manager.py --skip-kai --skip-prepull
+./hack/infra-manager.py setup e2e --skip-grove
+./hack/infra-manager.py setup e2e --skip-kai --skip-prepull
 
-# KWOK simulated nodes
-./hack/infra-manager.py --kwok-nodes 1000
+# Scale test setup with KWOK simulated nodes
+./hack/infra-manager.py setup scale --kwok-nodes 1000
 
-# Pyroscope profiling
-./hack/infra-manager.py --pyroscope
+# Install individual components
+./hack/infra-manager.py install grove --profiling
+./hack/infra-manager.py install pyroscope
 ```
 
 ### config-cluster.py

@@ -49,7 +49,7 @@ make run-e2e-mnnvl-full
 |--------|-------------|
 | `run_autoMNNVL_e2e_all.py` | Run all 4 configurations sequentially (expects existing cluster) |
 | `run_autoMNNVL_e2e.py` | Run a single configuration (configure + test, expects existing cluster) |
-| `../infra-manager.py` | Create the k3d cluster and deploy Grove operator |
+| `../infra-manager.py` | Unified CLI for cluster infrastructure management |
 | `../config-cluster.py` | Declaratively configure fake GPU + MNNVL on an existing cluster |
 
 ## Usage Examples

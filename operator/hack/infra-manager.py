@@ -16,132 +16,76 @@
 # */
 
 """
-infra-manager.py - Backward-compatible shim delegating to cli.py.
+infra-manager.py - Unified CLI for Grove infrastructure management.
 
-This script preserves the old CLI interface for existing scripts and CI.
-New usage should prefer cli.py directly.
+Subcommands:
+    create     Create infrastructure resources (k3d-cluster, kwok-nodes)
+    delete     Delete infrastructure resources (k3d-cluster, kwok-nodes)
+    install    Install components (kai, grove, pyroscope)
+    uninstall  Uninstall components (kai, grove)
+    setup      Composite workflows (e2e, scale, apply-topology, prepull-images)
 
 Examples:
-    # These still work:
-    ./infra-manager.py                  # → cli.py setup e2e
-    ./infra-manager.py --delete         # → cli.py k3d delete
-    ./infra-manager.py --skip-kai       # → cli.py setup e2e --skip-kai
+    # Create a k3d cluster with 2 workers
+    ./infra-manager.py create k3d-cluster --workers 2
+
+    # Full e2e setup (default — no flags needed!)
+    ./infra-manager.py setup e2e
+
+    # Deploy only grove on existing cluster
+    ./infra-manager.py install grove
+
+    # Scale test setup
+    ./infra-manager.py setup scale --kwok-nodes 1000
+
+    # Delete cluster
+    ./infra-manager.py delete k3d-cluster
+
+For detailed usage information, run: ./infra-manager.py --help
 """
 
 from __future__ import annotations
 
 import logging
 import sys
-from pathlib import Path
 
 import typer
 
 from infra_manager import console
-from infra_manager.config import display_config, resolve_config, validate_flags
-from infra_manager.orchestrator import run
-from infra_manager.utils import resolve_bool_flag
+from infra_manager.commands import (
+    create_cmd,
+    delete_cmd,
+    install_cmd,
+    setup_cmd,
+    uninstall_cmd,
+)
 
-app = typer.Typer(help="[DEPRECATED] Use cli.py instead. Backward-compatible shim.")
+app = typer.Typer(
+    help="Unified CLI for Grove infrastructure management.",
+    no_args_is_help=True,
+)
 
 
-@app.command()
-def main(
-    skip_cluster_creation: bool = typer.Option(
-        False, "--skip-cluster-creation", help="Skip k3d cluster creation"),
-    skip_kai: bool = typer.Option(
-        False, "--skip-kai", help="Skip Kai Scheduler installation"),
-    skip_grove: bool = typer.Option(
-        False, "--skip-grove", help="Skip Grove operator deployment"),
-    skip_topology: bool = typer.Option(
-        False, "--skip-topology", help="Skip topology label application"),
-    skip_prepull: bool = typer.Option(
-        False, "--skip-prepull", help="Skip image pre-pulling"),
-    delete: bool = typer.Option(
-        False, "--delete", help="Delete the k3d cluster and exit"),
-    workers: int | None = typer.Option(
-        None, "--workers", help="k3d worker nodes (overrides E2E_WORKER_NODES)"),
-    registry: str | None = typer.Option(
-        None, "--registry", help="Container registry URL"),
-    kwok_nodes: int | None = typer.Option(
-        None, "--kwok-nodes", help="Create N KWOK simulated nodes"),
-    kwok_batch_size: int | None = typer.Option(
-        None, "--kwok-batch-size", help="Node creation batch size"),
-    kwok_delete: bool = typer.Option(
-        False, "--kwok-delete", help="Delete all KWOK simulated nodes"),
-    pyroscope: bool = typer.Option(
-        False, "--pyroscope", help="Install Pyroscope via Helm"),
-    pyroscope_namespace: str | None = typer.Option(
-        None, "--pyroscope-namespace", help="Pyroscope namespace (default: pyroscope)"),
-    grove_profiling: bool = typer.Option(
-        False, "--grove-profiling", help="Enable pprof"),
-    grove_pcs_syncs: int | None = typer.Option(
-        None, "--grove-pcs-syncs", help="PodCliqueSet concurrentSyncs"),
-    grove_pclq_syncs: int | None = typer.Option(
-        None, "--grove-pclq-syncs", help="PodClique concurrentSyncs"),
-    grove_pcsg_syncs: int | None = typer.Option(
-        None, "--grove-pcsg-syncs", help="PodCliqueScalingGroup concurrentSyncs"),
-) -> None:
-    """[DEPRECATED] Use cli.py instead. Backward-compatible shim."""
+@app.callback()
+def _main_callback() -> None:
+    """Initialize logging for all subcommands."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%H:%M:%S",
     )
 
-    skip_cluster_creation = resolve_bool_flag("skip_cluster_creation", skip_cluster_creation)
-    skip_kai = resolve_bool_flag("skip_kai", skip_kai)
-    skip_grove = resolve_bool_flag("skip_grove", skip_grove)
-    skip_topology = resolve_bool_flag("skip_topology", skip_topology)
-    skip_prepull = resolve_bool_flag("skip_prepull", skip_prepull)
-    delete = resolve_bool_flag("delete", delete)
-    kwok_delete = resolve_bool_flag("kwok_delete", kwok_delete)
-    pyroscope = resolve_bool_flag("pyroscope", pyroscope)
-    grove_profiling = resolve_bool_flag("grove_profiling", grove_profiling)
 
-    validate_flags(
-        skip_cluster_creation=skip_cluster_creation,
-        skip_kai=skip_kai,
-        skip_grove=skip_grove,
-        skip_prepull=skip_prepull,
-        delete=delete,
-        registry=registry,
-        grove_profiling=grove_profiling,
-        grove_pcs_syncs=grove_pcs_syncs,
-        grove_pclq_syncs=grove_pclq_syncs,
-        grove_pcsg_syncs=grove_pcsg_syncs,
-    )
-
-    k3d_cfg, comp_cfg, kwok_cfg, flags = resolve_config(
-        skip_cluster_creation=skip_cluster_creation,
-        skip_kai=skip_kai,
-        skip_grove=skip_grove,
-        skip_topology=skip_topology,
-        skip_prepull=skip_prepull,
-        delete=delete,
-        workers=workers,
-        registry=registry,
-        kwok_nodes=kwok_nodes,
-        kwok_batch_size=kwok_batch_size,
-        kwok_delete=kwok_delete,
-        pyroscope=pyroscope,
-        pyroscope_namespace=pyroscope_namespace,
-        grove_profiling=grove_profiling,
-        grove_pcs_syncs=grove_pcs_syncs,
-        grove_pclq_syncs=grove_pclq_syncs,
-        grove_pcsg_syncs=grove_pcsg_syncs,
-    )
-
-    display_config(flags, k3d_cfg, comp_cfg, kwok_cfg)
-
-    script_dir = Path(__file__).resolve().parent
-    operator_dir = script_dir.parent
-
-    try:
-        run(flags, k3d_cfg, comp_cfg, kwok_cfg, operator_dir, script_dir)
-    except Exception as e:
-        console.print(f"[red]\u274c {e}[/red]")
-        sys.exit(1)
+app.add_typer(create_cmd.app, name="create")
+app.add_typer(delete_cmd.app, name="delete")
+app.add_typer(install_cmd.app, name="install")
+app.add_typer(uninstall_cmd.app, name="uninstall")
+app.add_typer(setup_cmd.app, name="setup")
 
 
 if __name__ == "__main__":
-    app()
+    try:
+        app()
+    except Exception as e:
+        console.print(f"[red]\u274c {e}[/red]")
+        sys.exit(1)
