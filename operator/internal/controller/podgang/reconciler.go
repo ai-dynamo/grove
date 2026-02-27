@@ -32,18 +32,18 @@ import (
 // Reconciler reconciles PodGang objects and converts them to scheduler-specific CRs
 type Reconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	scheme *runtime.Scheme
 }
 
 // NewReconciler creates a new Reconciler. Backend is resolved per PodGang from the grove.io/scheduler-name label or default.
 func NewReconciler(mgr ctrl.Manager) *Reconciler {
 	return &Reconciler{
 		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		scheme: mgr.GetScheme(),
 	}
 }
 
-func resolveBackend(podGang *groveschedulerv1alpha1.PodGang) schedulerbackend.Backend {
+func resolveBackend(podGang *groveschedulerv1alpha1.PodGang) schedulerbackend.SchedBackend {
 	if name := podGang.Labels[apicommon.LabelSchedulerName]; name != "" {
 		if b := schedulerbackend.Get(name); b != nil {
 			return b
@@ -67,8 +67,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		log.FromContext(ctx).Error(nil, "No scheduler backend available for PodGang", "podgang", req.NamespacedName)
 		return ctrl.Result{}, nil
 	}
-	logger := log.FromContext(ctx).WithValues("backend", backend.Name(), "podgang", req.NamespacedName)
 
+	logger := log.FromContext(ctx).WithValues("scheduler", backend.Name(), "podGang", req.NamespacedName)
 	if !podGang.DeletionTimestamp.IsZero() {
 		logger.Info("PodGang is being deleted")
 		if err := backend.OnPodGangDelete(ctx, podGang); err != nil {
@@ -79,9 +79,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 
 	if err := backend.SyncPodGang(ctx, podGang); err != nil {
-		logger.Error(err, "Failed to sync PodGang to backend")
+		logger.Error(err, "Failed to SyncPodGang on spec change")
 		return ctrl.Result{}, err
 	}
-	logger.Info("Successfully synced PodGang to backend")
+	logger.Info("Successfully synced PodGang")
 	return ctrl.Result{}, nil
 }

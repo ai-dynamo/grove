@@ -29,25 +29,25 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// Compile-time checks that backend implementations satisfy Backend.
+// Compile-time checks that backend implementations satisfy SchedBackend.
 var (
-	_ Backend = (*kaischeduler.Backend)(nil)
-	_ Backend = (*kube.Backend)(nil)
+	_ SchedBackend = (*kaischeduler.Backend)(nil)
+	_ SchedBackend = (*kube.Backend)(nil)
 )
 
 // backendFactory creates and initializes a scheduler backend from a profile.
-type backendFactory func(client.Client, *runtime.Scheme, record.EventRecorder, configv1alpha1.SchedulerProfile) (Backend, error)
+type backendFactory func(client.Client, *runtime.Scheme, record.EventRecorder, configv1alpha1.SchedulerProfile) (SchedBackend, error)
 
 // backendFactories maps each supported SchedulerName to its constructor. Add new backends here.
 var backendFactories = map[configv1alpha1.SchedulerName]backendFactory{
-	configv1alpha1.SchedulerNameKube: func(cl client.Client, scheme *runtime.Scheme, rec record.EventRecorder, p configv1alpha1.SchedulerProfile) (Backend, error) {
+	configv1alpha1.SchedulerNameKube: func(cl client.Client, scheme *runtime.Scheme, rec record.EventRecorder, p configv1alpha1.SchedulerProfile) (SchedBackend, error) {
 		b := kube.New(cl, scheme, rec, p)
 		if err := b.Init(); err != nil {
 			return nil, err
 		}
 		return b, nil
 	},
-	configv1alpha1.SchedulerNameKai: func(cl client.Client, scheme *runtime.Scheme, rec record.EventRecorder, p configv1alpha1.SchedulerProfile) (Backend, error) {
+	configv1alpha1.SchedulerNameKai: func(cl client.Client, scheme *runtime.Scheme, rec record.EventRecorder, p configv1alpha1.SchedulerProfile) (SchedBackend, error) {
 		b := kaischeduler.New(cl, scheme, rec, p)
 		if err := b.Init(); err != nil {
 			return nil, err
@@ -57,8 +57,8 @@ var backendFactories = map[configv1alpha1.SchedulerName]backendFactory{
 }
 
 var (
-	backends       map[string]Backend
-	defaultBackend Backend
+	backends       map[string]SchedBackend
+	defaultBackend SchedBackend
 	initOnce       sync.Once
 )
 
@@ -68,7 +68,7 @@ var (
 func Initialize(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, cfg configv1alpha1.SchedulerConfiguration) error {
 	var initErr error
 	initOnce.Do(func() {
-		backends = make(map[string]Backend)
+		backends = make(map[string]SchedBackend)
 
 		// New and init each backend from cfg.Profiles (order follows config; duplicate name overwrites).
 		for _, p := range cfg.Profiles {
@@ -92,7 +92,7 @@ func Initialize(client client.Client, scheme *runtime.Scheme, eventRecorder reco
 }
 
 // Get returns the backend for the given name. default-scheduler is always available; other backends return nil if not enabled via a profile.
-func Get(name string) Backend {
+func Get(name string) SchedBackend {
 	if name == "" {
 		return defaultBackend
 	}
@@ -100,6 +100,6 @@ func Get(name string) Backend {
 }
 
 // GetDefault returns the backend designated as default in OperatorConfiguration (the profile with default: true; if none, default-scheduler).
-func GetDefault() Backend {
+func GetDefault() SchedBackend {
 	return defaultBackend
 }
