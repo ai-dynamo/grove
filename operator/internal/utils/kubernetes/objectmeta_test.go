@@ -23,6 +23,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/uuid"
@@ -190,6 +191,60 @@ func TestGetFirstOwnerName(t *testing.T) {
 		t.Run(tc.description, func(t *testing.T) {
 			result := GetFirstOwnerName(tc.resourceMeta)
 			assert.Equal(t, tc.expectedName, result)
+		})
+	}
+}
+
+func TestFindOwnerRefByKind(t *testing.T) {
+	podCliqueRef := metav1.OwnerReference{Kind: constants.KindPodClique, Name: "pclq-1"}
+	podCliqueSetRef := metav1.OwnerReference{Kind: constants.KindPodCliqueSet, Name: "pcs-1"}
+	testCases := []struct {
+		description   string
+		ownerRefs     []metav1.OwnerReference
+		kind          string
+		expectFound   bool
+		expectedKind  string
+		expectedName  string
+	}{
+		{
+			description:  "finds matching kind",
+			ownerRefs:    []metav1.OwnerReference{podCliqueSetRef, podCliqueRef},
+			kind:         constants.KindPodClique,
+			expectFound:  true,
+			expectedKind: constants.KindPodClique,
+			expectedName: "pclq-1",
+		},
+		{
+			description:  "returns first match when multiple of same kind",
+			ownerRefs:    []metav1.OwnerReference{podCliqueRef, {Kind: constants.KindPodClique, Name: "pclq-2"}},
+			kind:         constants.KindPodClique,
+			expectFound:  true,
+			expectedKind: constants.KindPodClique,
+			expectedName: "pclq-1",
+		},
+		{
+			description: "returns nil when no match",
+			ownerRefs:   []metav1.OwnerReference{podCliqueRef},
+			kind:        constants.KindPodCliqueSet,
+			expectFound: false,
+		},
+		{
+			description: "returns nil when ownerRefs empty",
+			ownerRefs:   nil,
+			kind:        constants.KindPodClique,
+			expectFound: false,
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			result := FindOwnerRefByKind(tc.ownerRefs, tc.kind)
+			if tc.expectFound {
+				require.NotNil(t, result)
+				assert.Equal(t, tc.expectedKind, result.Kind)
+				assert.Equal(t, tc.expectedName, result.Name)
+			} else {
+				assert.Nil(t, result)
+			}
 		})
 	}
 }

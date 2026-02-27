@@ -233,6 +233,13 @@ func TestSyncExpectations(t *testing.T) {
 	}
 }
 
+func TestObserveCreationCancellation(t *testing.T) {
+	expStore := NewExpectationsStore()
+	_ = expStore.ExpectCreations(logr.Discard(), controlleeKey, types.UID("uid-1"), types.UID("uid-2"))
+	expStore.ObserveCreationCancellation(logr.Discard(), controlleeKey, types.UID("uid-1"))
+	assert.ElementsMatch(t, []types.UID{"uid-2"}, expStore.GetCreateExpectations(controlleeKey))
+}
+
 func initializeControlleeExpectations(expStore *ExpectationsStore, controlleeKey string, uidsToAdd, uidsToDelete []types.UID) error {
 	return expStore.Add(&ControlleeExpectations{
 		key:          controlleeKey,

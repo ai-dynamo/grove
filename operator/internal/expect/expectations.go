@@ -85,6 +85,13 @@ func (s *ExpectationsStore) ObserveDeletions(logger logr.Logger, controlleeKey s
 	s.lowerExpectations(logger, controlleeKey, nil, uids)
 }
 
+// ObserveCreationCancellation lowers the create expectations for the given UIDs.
+// Call this when a Delete event is received for a pod: the pod was deleted (e.g. kubectl delete),
+// so the creation expectation is cancelled. This fixes the UID leak.
+func (s *ExpectationsStore) ObserveCreationCancellation(logger logr.Logger, controlleeKey string, uids ...types.UID) {
+	s.lowerExpectations(logger, controlleeKey, uids, nil)
+}
+
 // DeleteExpectations removes all expectations stored against a controlleeKey from the store.
 func (s *ExpectationsStore) DeleteExpectations(logger logr.Logger, controlleeKey string) error {
 	exp, exists, err := s.GetByKey(controlleeKey)
