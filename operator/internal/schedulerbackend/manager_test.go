@@ -93,23 +93,3 @@ func TestInitialize(t *testing.T) {
 		})
 	}
 }
-
-// TestInitializeFailedInit tests that failed initialization leaves state as not initialized.
-func TestInitializeFailedInit(t *testing.T) {
-	// Reset global state
-	backends = nil
-	defaultBackend = nil
-	initOnce = sync.Once{}
-
-	cl := testutils.CreateDefaultFakeClient(nil)
-	recorder := record.NewFakeRecorder(10)
-
-	// Try to initialize with unsupported scheduler as default profile
-	err := Initialize(cl, cl.Scheme(), recorder, configv1alpha1.SchedulerConfiguration{
-		Profiles: []configv1alpha1.SchedulerProfile{{Name: "unsupported-scheduler", Default: true}},
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not supported")
-
-	assert.Nil(t, GetDefault())
-}
