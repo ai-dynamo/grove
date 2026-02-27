@@ -72,7 +72,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if !podGang.DeletionTimestamp.IsZero() {
 		logger.Info("PodGang is being deleted")
 		if err := backend.OnPodGangDelete(ctx, podGang); err != nil {
-			logger.Error(err, "Failed to delete backend resources")
+			logger.Error(err, "Failed to delete scheduler backend resources on-delete of PodGang")
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
