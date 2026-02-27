@@ -247,7 +247,6 @@ def create_nodes(total: int, kwok_cfg: KwokConfig) -> None:
         for nid, err in failures[:10]:
             logger.error("  kwok-node-%d: %s", nid, err)
     console.print(f"[green]\u2705 Created {len(successes)} KWOK nodes[/green]")
-    _wait_kwok_nodes_ready()
 
 
 def delete_kwok_nodes() -> None:
