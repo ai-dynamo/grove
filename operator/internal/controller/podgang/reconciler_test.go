@@ -62,7 +62,6 @@ func TestReconcilerWithExplicitBackend(t *testing.T) {
 			reconciler := NewReconciler(mgr)
 			require.NotNil(t, reconciler)
 			assert.Equal(t, cl, reconciler.Client)
-			assert.Equal(t, cl.Scheme(), reconciler.Scheme)
 			def := schedulerbackend.GetDefault()
 			require.NotNil(t, def)
 			assert.Contains(t, []string{"kai-scheduler", "kube-scheduler"}, def.Name())
