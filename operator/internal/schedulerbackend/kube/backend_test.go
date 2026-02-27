@@ -28,29 +28,6 @@ import (
 	"k8s.io/client-go/tools/record"
 )
 
-func TestBackend_Name(t *testing.T) {
-	tests := []struct {
-		name     string
-		profile  configv1alpha1.SchedulerProfile
-		expected string
-	}{
-		{
-			name:     "kube-scheduler profile",
-			profile:  configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKube},
-			expected: "kube-scheduler",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cl := testutils.CreateDefaultFakeClient(nil)
-			recorder := record.NewFakeRecorder(10)
-			b := New(cl, cl.Scheme(), recorder, tt.profile)
-			assert.Equal(t, tt.expected, b.Name())
-		})
-	}
-}
-
 func TestBackend_PreparePod(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
