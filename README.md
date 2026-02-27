@@ -75,12 +75,18 @@ Refer to all Grove APIs here
 - Rolling Updates ✅
 - Topology-Aware Scheduling ✅
 
-### 2026 Priorities
+### Q1 2026
 
 - Resource-Optimized Rolling Updates
-- Topology Spread Constraints
-- Automatic Topology Detection
-- And More!
+- Automatic MNNVL Discovery
+- kubectl-grove CLI
+- User Guides for All Supported Features
+
+### Q2 2026
+
+- Terminal States for Training and Batch Workloads
+- Scheduler Plugin Architecture (with Support for Third-Party Scheduler Backends)
+- Advanced Topology Scheduling
 
 ## Contributions
 
