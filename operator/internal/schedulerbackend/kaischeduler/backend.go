@@ -21,6 +21,7 @@ import (
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend/common"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -29,7 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// Backend implements the schedulerbackend.SchedBackend interface for KAI scheduler
+// Backend implements the common.SchedBackend interface for KAI scheduler
 // Converts PodGang → PodGroup (scheduling.run.ai/v2alpha2 format, similar to posgroups.yaml)
 type Backend struct {
 	client        client.Client
@@ -40,7 +41,7 @@ type Backend struct {
 
 // New creates a new KAI backend instance. profile is the scheduler profile for kai-scheduler;
 // Backend uses profile.Name and may unmarshal profile.Config for kai-specific options.
-func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1alpha1.SchedulerProfile) *Backend {
+func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1alpha1.SchedulerProfile) common.SchedBackend {
 	return &Backend{
 		client:        cl,
 		scheme:        scheme,
