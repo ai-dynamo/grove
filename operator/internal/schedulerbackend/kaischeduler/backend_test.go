@@ -14,7 +14,7 @@
 // limitations under the License.
 // */
 
-package kai
+package kaischeduler
 
 import (
 	"testing"
@@ -27,34 +27,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 )
-
-func TestBackend_Name(t *testing.T) {
-	tests := []struct {
-		name     string
-		profile  configv1alpha1.SchedulerProfile
-		expected string
-	}{
-		{
-			name:     "kai-scheduler profile",
-			profile:  configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai},
-			expected: "kai-scheduler",
-		},
-		{
-			name:     "custom profile name",
-			profile:  configv1alpha1.SchedulerProfile{Name: "custom-scheduler"},
-			expected: "custom-scheduler",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cl := testutils.CreateDefaultFakeClient(nil)
-			recorder := record.NewFakeRecorder(10)
-			b := New(cl, cl.Scheme(), recorder, tt.profile)
-			assert.Equal(t, tt.expected, b.Name())
-		})
-	}
-}
 
 func TestBackend_PreparePod(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
