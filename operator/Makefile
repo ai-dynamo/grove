@@ -227,10 +227,6 @@ undeploy: $(SKAFFOLD)
 deploy-addons:
 	@$(MODULE_HACK_DIR)/deploy-addons.sh --all
 
-.PHONY: test-cli-integration
-test-cli-integration:
-	@bash $(MODULE_HACK_DIR)/tests/test_cli_integration.sh
-
 .PHONY: clean-chart-resources
 clean-chart-resources:
 	@rm -f $(MODULE_ROOT)/charts/crds/*.yaml
