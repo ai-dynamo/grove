@@ -43,7 +43,7 @@ func NewReconciler(mgr ctrl.Manager) *Reconciler {
 	}
 }
 
-func resolveBackend(podGang *groveschedulerv1alpha1.PodGang) schedulerbackend.SchedulerBackend {
+func resolveBackend(podGang *groveschedulerv1alpha1.PodGang) schedulerbackend.Backend {
 	if name := podGang.Labels[apicommon.LabelSchedulerName]; name != "" {
 		if b := schedulerbackend.Get(name); b != nil {
 			return b

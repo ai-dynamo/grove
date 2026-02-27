@@ -14,7 +14,7 @@
 // limitations under the License.
 // */
 
-package kai
+package kaischeduler
 
 import (
 	"context"
@@ -29,7 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// Backend implements the SchedulerBackend interface for KAI scheduler
+// Backend implements the schedulerbackend.Backend interface for KAI scheduler
 // Converts PodGang → PodGroup (scheduling.run.ai/v2alpha2 format, similar to posgroups.yaml)
 type Backend struct {
 	client        client.Client
@@ -55,7 +55,6 @@ func (b *Backend) Name() string {
 }
 
 // Init initializes the KAI backend
-// For KAI backend, no special initialization is needed currently
 func (b *Backend) Init() error {
 	return nil
 }
