@@ -20,6 +20,7 @@ kai_scheduler:
     # All Kai Scheduler component images
     - "ghcr.io/nvidia/kai-scheduler/admission"
     - "ghcr.io/nvidia/kai-scheduler/binder"
+    - "ghcr.io/nvidia/kai-scheduler/crd-upgrader"
     - "ghcr.io/nvidia/kai-scheduler/operator"
     - "ghcr.io/nvidia/kai-scheduler/podgroupcontroller"
     - "ghcr.io/nvidia/kai-scheduler/podgrouper"
