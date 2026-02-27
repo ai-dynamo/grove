@@ -68,7 +68,7 @@ func (r *Reconciler) ensureFinalizer(ctx context.Context, logger logr.Logger, pc
 	return ctrlcommon.ContinueReconcile()
 }
 
-// processUpdate handles rolling update logic for PodClique when the owner PodCliqueSet has changes
+// processUpdate handles update logic for PodClique when the owner PodCliqueSet has changes
 func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
 	pclqObjectKey := client.ObjectKeyFromObject(pclq)
 	pcs, err := componentutils.GetPodCliqueSet(ctx, r.client, pclq.ObjectMeta)
@@ -98,9 +98,9 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pclq
 	}
 
 	if shouldResetOrTriggerUpdate(pcs, pclq) {
-		logger.Info("PodCliqueSet has a new generation hash. Initializing or resetting rolling update for PodClique", "PodCliqueSetGenerationHash", *pcs.Status.CurrentGenerationHash, "CurrentPodCliqueSetGenerationHash", pclq.Status.CurrentPodCliqueSetGenerationHash, "isPCLQUpdateInProgress", componentutils.IsPCLQUpdateInProgress(pclq), "isLastPCLQUpdateCompleted", componentutils.IsLastPCLQUpdateCompleted(pclq))
+		logger.Info("PodCliqueSet has a new generation hash. Initializing or resetting update for PodClique", "PodCliqueSetGenerationHash", *pcs.Status.CurrentGenerationHash, "CurrentPodCliqueSetGenerationHash", pclq.Status.CurrentPodCliqueSetGenerationHash, "isPCLQUpdateInProgress", componentutils.IsPCLQUpdateInProgress(pclq), "isLastPCLQUpdateCompleted", componentutils.IsLastPCLQUpdateCompleted(pclq))
 		if err = r.initOrResetUpdate(ctx, pcs, pclq); err != nil {
-			return ctrlcommon.ReconcileWithErrors("could not initialize rolling update", err)
+			return ctrlcommon.ReconcileWithErrors("could not initialize RollingRecreate update", err)
 		}
 	}
 
@@ -112,7 +112,7 @@ func pcsHasNoActiveRollingUpdate(pcs *grovecorev1alpha1.PodCliqueSet) bool {
 	return pcs.Status.CurrentGenerationHash == nil || pcs.Status.UpdateProgress == nil || pcs.Status.UpdateProgress.CurrentlyUpdating == nil
 }
 
-// shouldCheckPendingUpdatesForPCLQ determines if this PodClique should be evaluated for rolling updates based on its owner, and the currently updating PodCliqueSet replica index
+// shouldCheckPendingUpdatesForPCLQ determines if this PodClique should be evaluated for updates based on its owner, and the currently updating PodCliqueSet replica index
 func shouldCheckPendingUpdatesForPCLQ(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) (bool, error) {
 	// Only if PCLQ does not belong to any PCSG should an update be triggered for the PCLQ. For PCLQs that belong to
 	// a PCSG, the PCSG controller will handle the updates by deleting the PCLQ resources instead of updating PCLQ pods
@@ -128,7 +128,7 @@ func shouldCheckPendingUpdatesForPCLQ(logger logr.Logger, pcs *grovecorev1alpha1
 		return false, fmt.Errorf("could not determine PodCliqueSet index for this PodClique %v. Required label %s is missing", client.ObjectKeyFromObject(pclq), apicommon.LabelPodCliqueSetReplicaIndex)
 	}
 	if pcsReplicaIndexStr != strconv.Itoa(int(pcsReplicaInUpdating)) {
-		logger.Info("PodCliqueSet is currently under rolling update. Skipping processing update for this PodClique as it does not belong to the PodCliqueSet Index currently being updated", "currentlyUpdatingPCSIndex", pcsReplicaInUpdating, "pcsIndexForPCLQ", pcsReplicaIndexStr)
+		logger.Info("PodCliqueSet is currently under update. Skipping processing update for this PodClique as it does not belong to the PodCliqueSet Index currently being updated", "currentlyUpdatingPCSIndex", pcsReplicaInUpdating, "pcsIndexForPCLQ", pcsReplicaIndexStr)
 		return false, nil
 	}
 
@@ -143,9 +143,9 @@ func shouldResetOrTriggerUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grove
 		return true
 	}
 
-	// PCLQ is undergoing a rolling update for a different PCS generation hash
+	// PCLQ is undergoing a update for a different PCS generation hash
 	// Irrespective of whether the pod template hash has changed or not, the in-progress update is stale and needs to be
-	// reset in order to set the correct rollingUpdateProgress.PodCliqueSetGenerationHash
+	// reset in order to set the correct updateProgress.PodCliqueSetGenerationHash
 	inProgressPCLQUpdateNotStale := componentutils.IsPCLQUpdateInProgress(pclq) && pclq.Status.UpdateProgress.PodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash
 	// PCLQ had an update in the past but that was for an older PCS generation hash.
 	lastCompletedUpdateIsNotStale := componentutils.IsLastPCLQUpdateCompleted(pclq) && pclq.Status.UpdateProgress.PodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash
@@ -156,13 +156,13 @@ func shouldResetOrTriggerUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grove
 	return true
 }
 
-// initOrResetUpdate initializes or resets the rolling update progress status for the PodClique
+// initOrResetUpdate initializes or resets the update progress status for the PodClique
 func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) error {
 	podTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
 	if err != nil {
-		return fmt.Errorf("could not update PodClique %s status with rolling update progress: %w", client.ObjectKeyFromObject(pclq), err)
+		return fmt.Errorf("could not update PodClique %s status with update progress: %w", client.ObjectKeyFromObject(pclq), err)
 	}
-	// reset and start the rolling update
+	// reset and start the update
 	patch := client.MergeFrom(pclq.DeepCopy())
 	pclq.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueUpdateProgress{
 		UpdateStartedAt:            metav1.Now(),
@@ -173,10 +173,10 @@ func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1alph
 	if pcs.Spec.UpdateStrategy != nil && pcs.Spec.UpdateStrategy.Type == grovecorev1alpha1.OnDeleteStrategyType {
 		pclq.Status.UpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
 	}
-	// reset the updated replicas count to 0 so that the rolling update can start afresh.
+	// reset the updated replicas count to 0 so that the update can start afresh.
 	pclq.Status.UpdatedReplicas = 0
 	if err = r.client.Status().Patch(ctx, pclq, patch); err != nil {
-		return fmt.Errorf("failed to update PodClique %s status with rolling update progress: %w", client.ObjectKeyFromObject(pclq), err)
+		return fmt.Errorf("failed to update PodClique %s status with update progress: %w", client.ObjectKeyFromObject(pclq), err)
 	}
 	return nil
 }

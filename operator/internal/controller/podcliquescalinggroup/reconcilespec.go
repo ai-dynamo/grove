@@ -77,15 +77,8 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pcsg
 
 	if pcs.Spec.UpdateStrategy != nil && pcs.Spec.UpdateStrategy.Type == grovecorev1alpha1.OnDeleteStrategyType {
 		if shouldResetOrTriggerUpdate(pcs, pcsg) {
-			pcsg.Status.UpdatedReplicas = 0
-			pcsg.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
-				UpdateStartedAt:            metav1.Now(),
-				UpdateEndedAt:              ptr.To(metav1.Now()),
-				PodCliqueSetGenerationHash: *pcs.Status.CurrentGenerationHash,
-			}
-			if err = r.client.Status().Update(ctx, pcsg); err != nil {
-				logger.Error(err, "could not update PodCliqueScalingGroup.Status.UpdateProgress")
-				return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("could not update PodCliqueScalingGroup.Status.UpdateProgress:  %v", pcsgObjectKey), err)
+			if err = r.initOrResetUpdate(ctx, pcs, pcsg); err != nil {
+				return ctrlcommon.ReconcileWithErrors("could not initialize update for OnDelete", err)
 			}
 		}
 		return ctrlcommon.ContinueReconcile()
@@ -111,14 +104,8 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pcsg
 	// If the rolling update is in-progress for a different PCS CurrentGenerationHash, or it has not even been started, then
 	// reset the rolling update progress so that it can be restarted.
 	if shouldResetOrTriggerUpdate(pcs, pcsg) {
-		pcsg.Status.UpdatedReplicas = 0
-		pcsg.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
-			UpdateStartedAt:            metav1.Now(),
-			PodCliqueSetGenerationHash: *pcs.Status.CurrentGenerationHash,
-		}
-		if err = r.client.Status().Update(ctx, pcsg); err != nil {
-			logger.Error(err, "could not update PodCliqueScalingGroup.Status.UpdateProgress")
-			return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("could not update PodCliqueScalingGroup.Status.UpdateProgress:  %v", pcsgObjectKey), err)
+		if err = r.initOrResetUpdate(ctx, pcs, pcsg); err != nil {
+			return ctrlcommon.ReconcileWithErrors("could not initialize RollingRecreate update", err)
 		}
 	}
 	return ctrlcommon.ContinueReconcile()
@@ -132,6 +119,25 @@ func shouldResetOrTriggerUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grove
 		return false
 	}
 	return true
+}
+
+func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) error {
+	// reset and start the update
+	patch := client.MergeFrom(pcsg.DeepCopy())
+	pcsg.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+		UpdateStartedAt:            metav1.Now(),
+		PodCliqueSetGenerationHash: *pcs.Status.CurrentGenerationHash,
+	}
+	// OnDelete strategy sets UpdateEndedAt too, since we do not know when all the pods will manually be deleted, and gang termination is diabled when an update is in progress
+	if pcs.Spec.UpdateStrategy != nil && pcs.Spec.UpdateStrategy.Type == grovecorev1alpha1.OnDeleteStrategyType {
+		pcsg.Status.UpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
+	}
+	// reset the updated replicas count to 0 so that the update can start afresh.
+	pcsg.Status.UpdatedReplicas = 0
+	if err := r.client.Status().Patch(ctx, pcsg, patch); err != nil {
+		return fmt.Errorf("failed to update PodCliqueScalingGroup %s status with error:  %w", client.ObjectKeyFromObject(pcsg), err)
+	}
+	return nil
 }
 
 // syncPodCliqueScalingGroupResources synchronizes all managed resources using registered operators with retry logic
