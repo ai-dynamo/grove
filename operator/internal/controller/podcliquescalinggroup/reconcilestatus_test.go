@@ -435,3 +435,109 @@ func assertCondition(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup
 	isBreached := condition.Status == metav1.ConditionTrue
 	assert.Equal(t, expectBreached, isBreached, "condition breach status mismatch")
 }
+
+// TestMirrorUpdateProgressToRollingUpdateProgressPCSG tests the mirrorUpdateProgressToRollingUpdateProgress function for PodCliqueScalingGroup
+func TestMirrorUpdateProgressToRollingUpdateProgressPCSG(t *testing.T) {
+	updateStartedAt := metav1.Now()
+	updateEndedAt := metav1.NewTime(updateStartedAt.Add(1))
+	tests := []struct {
+		name                          string
+		pcsg                          *grovecorev1alpha1.PodCliqueScalingGroup
+		expectedRollingUpdateProgress *grovecorev1alpha1.PodCliqueScalingGroupRollingUpdateProgress
+	}{
+		{
+			name: "nil UpdateProgress results in nil RollingUpdateProgress",
+			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
+				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+					UpdateProgress: nil,
+				},
+			},
+			expectedRollingUpdateProgress: nil,
+		},
+		{
+			name: "UpdateProgress with ReadyReplicaIndicesSelectedToUpdate",
+			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
+				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+					UpdateProgress: &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+						UpdateStartedAt:            updateStartedAt,
+						UpdateEndedAt:              ptr.To(updateEndedAt),
+						PodCliqueSetGenerationHash: "gen-hash-789",
+						UpdatedPodCliques:          []string{"pclq-1"},
+						ReadyReplicaIndicesSelectedToUpdate: &grovecorev1alpha1.PodCliqueScalingGroupReplicaUpdateProgress{
+							Current:   2,
+							Completed: []int32{0, 1},
+						},
+					},
+				},
+			},
+			expectedRollingUpdateProgress: &grovecorev1alpha1.PodCliqueScalingGroupRollingUpdateProgress{
+				UpdateStartedAt:            updateStartedAt,
+				UpdateEndedAt:              ptr.To(updateEndedAt),
+				PodCliqueSetGenerationHash: "gen-hash-789",
+				UpdatedPodCliques:          []string{"pclq-1"},
+				ReadyReplicaIndicesSelectedToUpdate: &grovecorev1alpha1.PodCliqueScalingGroupReplicaRollingUpdateProgress{
+					Current:   2,
+					Completed: []int32{0, 1},
+				},
+			},
+		},
+		{
+			name: "clears existing RollingUpdateProgress when UpdateProgress is nil",
+			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
+				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+					UpdateProgress: nil,
+					RollingUpdateProgress: &grovecorev1alpha1.PodCliqueScalingGroupRollingUpdateProgress{
+						UpdateStartedAt:            updateStartedAt,
+						UpdateEndedAt:              ptr.To(updateEndedAt),
+						PodCliqueSetGenerationHash: "old-gen-hash",
+						UpdatedPodCliques:          []string{"old-pclq"},
+					},
+				},
+			},
+			expectedRollingUpdateProgress: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Call the function
+			mirrorUpdateProgressToRollingUpdateProgress(tt.pcsg)
+
+			// Assert the result
+			if tt.expectedRollingUpdateProgress == nil {
+				assert.Nil(t, tt.pcsg.Status.RollingUpdateProgress,
+					"RollingUpdateProgress should be nil")
+			} else {
+				assert.NotNil(t, tt.pcsg.Status.RollingUpdateProgress,
+					"RollingUpdateProgress should not be nil")
+				assert.Equal(t, tt.expectedRollingUpdateProgress.UpdateStartedAt,
+					tt.pcsg.Status.RollingUpdateProgress.UpdateStartedAt,
+					"UpdateStartedAt should match")
+				assert.Equal(t, tt.expectedRollingUpdateProgress.UpdateEndedAt,
+					tt.pcsg.Status.RollingUpdateProgress.UpdateEndedAt,
+					"UpdateEndedAt should match")
+				assert.Equal(t, tt.expectedRollingUpdateProgress.PodCliqueSetGenerationHash,
+					tt.pcsg.Status.RollingUpdateProgress.PodCliqueSetGenerationHash,
+					"PodCliqueSetGenerationHash should match")
+				assert.Equal(t, tt.expectedRollingUpdateProgress.UpdatedPodCliques,
+					tt.pcsg.Status.RollingUpdateProgress.UpdatedPodCliques,
+					"UpdatedPodCliques should match")
+
+				// Check ReadyReplicaIndicesSelectedToUpdate
+				if tt.expectedRollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate == nil {
+					assert.Nil(t, tt.pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate,
+						"ReadyReplicaIndicesSelectedToUpdate should be nil")
+				} else {
+					assert.NotNil(t, tt.pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate,
+						"ReadyReplicaIndicesSelectedToUpdate should not be nil")
+					assert.Equal(t, tt.expectedRollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current,
+						tt.pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current,
+						"Current replica index should match")
+					assert.Equal(t, tt.expectedRollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Completed,
+						tt.pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Completed,
+						"Completed replica indices should match")
+				}
+			}
+		})
+	}
+}

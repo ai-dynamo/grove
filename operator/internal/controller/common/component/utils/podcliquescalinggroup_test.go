@@ -22,6 +22,8 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	"github.com/stretchr/testify/assert"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 )
 
 func TestFindScalingGroupConfigForClique(t *testing.T) {
@@ -102,6 +104,104 @@ func TestFindScalingGroupConfigForClique(t *testing.T) {
 				// When not found, config should be nil
 				assert.Nil(t, config)
 			}
+		})
+	}
+}
+
+// TestIsPCSGUpdateInProgress tests the IsPCSGUpdateInProgress function
+func TestIsPCSGUpdateInProgress(t *testing.T) {
+	tests := []struct {
+		name     string
+		pcsg     *grovecorev1alpha1.PodCliqueScalingGroup
+		expected bool
+	}{
+		{
+			name: "returns_false_when_update_progress_is_nil",
+			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
+				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+					UpdateProgress: nil,
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "returns_true_when_update_in_progress",
+			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
+				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+					UpdateProgress: &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+						UpdateStartedAt: metav1.Now(),
+						UpdateEndedAt:   nil, // nil means in progress
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "returns_false_when_update_completed",
+			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
+				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+					UpdateProgress: &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+						UpdateStartedAt: metav1.Now(),
+						UpdateEndedAt:   ptr.To(metav1.Now()), // set means completed
+					},
+				},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := IsPCSGUpdateInProgress(tc.pcsg)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+// TestIsPCSGUpdateComplete tests the IsPCSGUpdateComplete function
+func TestIsPCSGUpdateComplete(t *testing.T) {
+	tests := []struct {
+		name              string
+		pcsg              *grovecorev1alpha1.PodCliqueScalingGroup
+		pcsGenerationHash string
+		expected          bool
+	}{
+		{
+			name: "returns_false_when_current_pcs_generation_hash_is_nil",
+			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
+				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+					CurrentPodCliqueSetGenerationHash: nil,
+				},
+			},
+			pcsGenerationHash: "hash1",
+			expected:          false,
+		},
+		{
+			name: "returns_true_when_hash_matches",
+			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
+				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+					CurrentPodCliqueSetGenerationHash: ptr.To("hash1"),
+				},
+			},
+			pcsGenerationHash: "hash1",
+			expected:          true,
+		},
+		{
+			name: "returns_false_when_hash_differs",
+			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
+				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+					CurrentPodCliqueSetGenerationHash: ptr.To("old-hash"),
+				},
+			},
+			pcsGenerationHash: "new-hash",
+			expected:          false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := IsPCSGUpdateComplete(tc.pcsg, tc.pcsGenerationHash)
+			assert.Equal(t, tc.expected, result)
 		})
 	}
 }

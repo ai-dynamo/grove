@@ -28,6 +28,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -63,7 +64,7 @@ func TestGetPCLQPods(t *testing.T) {
 						Kind:       "PodClique",
 						Name:       "test-pclq",
 						UID:        "pclq-uid-123",
-						Controller: ptr(true),
+						Controller: ptr.To(true),
 					},
 				},
 			},
@@ -141,7 +142,7 @@ func TestGetPCLQPods(t *testing.T) {
 							Kind:       "PodClique",
 							Name:       "test-pclq",
 							UID:        "pclq-uid-123",
-							Controller: ptr(true),
+							Controller: ptr.To(true),
 						},
 					},
 				},
@@ -279,9 +280,4 @@ func TestPodsToObjectNames(t *testing.T) {
 		assert.Len(t, names, 1)
 		assert.Equal(t, "my-namespace/my-pod", names[0])
 	})
-}
-
-// ptr is a helper function to get a pointer to a bool
-func ptr(b bool) *bool {
-	return &b
 }

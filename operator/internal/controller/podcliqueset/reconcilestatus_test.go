@@ -25,7 +25,9 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -268,6 +270,111 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 			available, _, err := reconciler.computeAvailableAndUpdatedReplicas(context.Background(), logr.Discard(), pcs)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expectedAvailable, available, "Available replicas mismatch")
+		})
+	}
+}
+
+// TestMirrorUpdateProgressToRollingUpdateProgressPCS tests the mirrorUpdateProgressToRollingUpdateProgress function for PodCliqueSet
+func TestMirrorUpdateProgressToRollingUpdateProgressPCS(t *testing.T) {
+	updateStartedAt := metav1.Now()
+	updateEndedAt := metav1.NewTime(updateStartedAt.Add(1))
+	replicaUpdateStartedAt := metav1.NewTime(updateStartedAt.Add(2))
+	tests := []struct {
+		name                          string
+		pcs                           *grovecorev1alpha1.PodCliqueSet
+		expectedRollingUpdateProgress *grovecorev1alpha1.PodCliqueSetRollingUpdateProgress
+	}{
+		{
+			name: "nil UpdateProgress results in nil RollingUpdateProgress",
+			pcs: &grovecorev1alpha1.PodCliqueSet{
+				Status: grovecorev1alpha1.PodCliqueSetStatus{
+					UpdateProgress: nil,
+				},
+			},
+			expectedRollingUpdateProgress: nil,
+		},
+		{
+			name: "UpdateProgress with CurrentlyUpdating",
+			pcs: &grovecorev1alpha1.PodCliqueSet{
+				Status: grovecorev1alpha1.PodCliqueSetStatus{
+					UpdateProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+						UpdateStartedAt:               updateStartedAt,
+						UpdatedPodCliqueScalingGroups: []string{"pcsg-1"},
+						UpdatedPodCliques:             []string{"pclq-1", "pclq-2"},
+						CurrentlyUpdating: &grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{
+							ReplicaIndex:    2,
+							UpdateStartedAt: replicaUpdateStartedAt,
+						},
+					},
+				},
+			},
+			expectedRollingUpdateProgress: &grovecorev1alpha1.PodCliqueSetRollingUpdateProgress{
+				UpdateStartedAt:               updateStartedAt,
+				UpdatedPodCliqueScalingGroups: []string{"pcsg-1"},
+				UpdatedPodCliques:             []string{"pclq-1", "pclq-2"},
+				CurrentlyUpdating: &grovecorev1alpha1.PodCliqueSetReplicaRollingUpdateProgress{
+					ReplicaIndex:    2,
+					UpdateStartedAt: replicaUpdateStartedAt,
+				},
+			},
+		},
+		{
+			name: "clears existing RollingUpdateProgress when UpdateProgress is nil",
+			pcs: &grovecorev1alpha1.PodCliqueSet{
+				Status: grovecorev1alpha1.PodCliqueSetStatus{
+					UpdateProgress: nil,
+					RollingUpdateProgress: &grovecorev1alpha1.PodCliqueSetRollingUpdateProgress{
+						UpdateStartedAt:               updateStartedAt,
+						UpdateEndedAt:                 ptr.To(updateEndedAt),
+						UpdatedPodCliqueScalingGroups: []string{"old-pcsg"},
+						UpdatedPodCliques:             []string{"old-pclq"},
+					},
+				},
+			},
+			expectedRollingUpdateProgress: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Call the function
+			mirrorUpdateProgressToRollingUpdateProgress(tt.pcs)
+
+			// Assert the result
+			if tt.expectedRollingUpdateProgress == nil {
+				assert.Nil(t, tt.pcs.Status.RollingUpdateProgress,
+					"RollingUpdateProgress should be nil")
+			} else {
+				assert.NotNil(t, tt.pcs.Status.RollingUpdateProgress,
+					"RollingUpdateProgress should not be nil")
+				assert.Equal(t, tt.expectedRollingUpdateProgress.UpdateStartedAt,
+					tt.pcs.Status.RollingUpdateProgress.UpdateStartedAt,
+					"UpdateStartedAt should match")
+				assert.Equal(t, tt.expectedRollingUpdateProgress.UpdateEndedAt,
+					tt.pcs.Status.RollingUpdateProgress.UpdateEndedAt,
+					"UpdateEndedAt should match")
+				assert.Equal(t, tt.expectedRollingUpdateProgress.UpdatedPodCliqueScalingGroups,
+					tt.pcs.Status.RollingUpdateProgress.UpdatedPodCliqueScalingGroups,
+					"UpdatedPodCliqueScalingGroups should match")
+				assert.Equal(t, tt.expectedRollingUpdateProgress.UpdatedPodCliques,
+					tt.pcs.Status.RollingUpdateProgress.UpdatedPodCliques,
+					"UpdatedPodCliques should match")
+
+				// Check CurrentlyUpdating
+				if tt.expectedRollingUpdateProgress.CurrentlyUpdating == nil {
+					assert.Nil(t, tt.pcs.Status.RollingUpdateProgress.CurrentlyUpdating,
+						"CurrentlyUpdating should be nil")
+				} else {
+					assert.NotNil(t, tt.pcs.Status.RollingUpdateProgress.CurrentlyUpdating,
+						"CurrentlyUpdating should not be nil")
+					assert.Equal(t, tt.expectedRollingUpdateProgress.CurrentlyUpdating.ReplicaIndex,
+						tt.pcs.Status.RollingUpdateProgress.CurrentlyUpdating.ReplicaIndex,
+						"ReplicaIndex should match")
+					assert.Equal(t, tt.expectedRollingUpdateProgress.CurrentlyUpdating.UpdateStartedAt,
+						tt.pcs.Status.RollingUpdateProgress.CurrentlyUpdating.UpdateStartedAt,
+						"CurrentlyUpdating.UpdateStartedAt should match")
+				}
+			}
 		})
 	}
 }
