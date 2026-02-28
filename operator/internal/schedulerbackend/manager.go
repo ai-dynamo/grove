@@ -18,7 +18,6 @@ package schedulerbackend
 
 import (
 	"fmt"
-	"sync"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend/common"
@@ -60,36 +59,30 @@ var backendFactories = map[configv1alpha1.SchedulerName]backendFactory{
 var (
 	backends       map[string]common.SchedBackend
 	defaultBackend common.SchedBackend
-	initOnce       sync.Once
 )
 
 // Initialize creates and registers backend instances for each profile in config.Profiles.
 // Defaults are applied to config so that kube-scheduler is always present; only backends
 // named in config.Profiles are started. Called once during operator startup before controllers start.
 func Initialize(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, cfg configv1alpha1.SchedulerConfiguration) error {
-	var initErr error
-	initOnce.Do(func() {
-		backends = make(map[string]common.SchedBackend)
+	backends = make(map[string]common.SchedBackend)
 
-		// New and init each backend from cfg.Profiles (order follows config; duplicate name overwrites).
-		for _, p := range cfg.Profiles {
-			factory, ok := backendFactories[p.Name]
-			if !ok {
-				initErr = fmt.Errorf("scheduler profile %q is not supported", p.Name)
-				return
-			}
-			backend, err := factory(client, scheme, eventRecorder, p)
-			if err != nil {
-				initErr = fmt.Errorf("failed to initialize %s backend: %w", p.Name, err)
-				return
-			}
-			backends[backend.Name()] = backend
-			if p.Default {
-				defaultBackend = backend
-			}
+	// New and init each backend from cfg.Profiles (order follows config; duplicate name overwrites).
+	for _, p := range cfg.Profiles {
+		factory, ok := backendFactories[p.Name]
+		if !ok {
+			return fmt.Errorf("scheduler profile %q is not supported", p.Name)
 		}
-	})
-	return initErr
+		backend, err := factory(client, scheme, eventRecorder, p)
+		if err != nil {
+			return fmt.Errorf("failed to initialize %s backend: %w", p.Name, err)
+		}
+		backends[backend.Name()] = backend
+		if p.Default {
+			defaultBackend = backend
+		}
+	}
+	return nil
 }
 
 // Get returns the backend for the given name. default-scheduler is always available; other backends return nil if not enabled via a profile.
