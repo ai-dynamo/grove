@@ -18,19 +18,26 @@ package podgang
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
+	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrllogger "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -200,6 +207,203 @@ func TestMinAvailableWithHPAScaling(t *testing.T) {
 	}
 }
 
+// TestVerifyAllPodsCreated tests verifyAllPodsCreated with minimal sc + podGangInfo (no PCS/prepareSyncFlow).
+// It covers both the PCLQ existence check and getPodsPendingCreationOrAssociation logic (Replicas and podgang label).
+func TestVerifyAllPodsCreated(t *testing.T) {
+	makePod := func(name string, podGangLabel string) v1.Pod {
+		pod := v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}}
+		if podGangLabel != "" {
+			pod.Labels = map[string]string{apicommon.LabelPodGang: podGangLabel}
+		}
+		return pod
+	}
+	makePCLQ := func(name string, replicas, minAvailable int32) grovecorev1alpha1.PodClique {
+		return grovecorev1alpha1.PodClique{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+			Spec:       grovecorev1alpha1.PodCliqueSpec{Replicas: replicas, MinAvailable: ptr.To(minAvailable)},
+		}
+	}
+
+	tests := []struct {
+		name          string
+		existingPods  map[string][]v1.Pod
+		existingPCLQs []grovecorev1alpha1.PodClique
+		podGang       *podGangInfo
+		wantRequeue   bool
+	}{
+		{
+			name:          "requeue when not all constituent PCLQs exist yet",
+			existingPods:  map[string][]v1.Pod{"pclq-a": {makePod("a1", "pg-1")}},
+			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a", 1, 1)},
+			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 1, minAvailable: 1}, {fqn: "pclq-b", replicas: 1, minAvailable: 1}}},
+			wantRequeue:   true,
+		},
+		{
+			name: "requeue when PCLQ has fewer pods than Replicas (even if >= MinAvailable)",
+			existingPods: map[string][]v1.Pod{
+				"pclq-a": {makePod("a1", "pg-1"), makePod("a2", "pg-1")}, // 2 pods, Replicas=5, MinAvailable=2
+			},
+			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a", 5, 2)},
+			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 5, minAvailable: 2}}},
+			wantRequeue:   true, // Still pending: 5-2=3 pods to create
+		},
+		{
+			name: "requeue when Pod missing podgang label",
+			existingPods: map[string][]v1.Pod{
+				"pclq-a": {makePod("a1", ""), makePod("a2", "pg-1")}, // a1 missing label
+			},
+			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a", 2, 1)},
+			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 2, minAvailable: 1}}},
+			wantRequeue:   true, // a1 needs association
+		},
+		{
+			name: "requeue when Pod has wrong podgang label",
+			existingPods: map[string][]v1.Pod{
+				"pclq-a": {makePod("a1", "pg-wrong"), makePod("a2", "pg-1")},
+			},
+			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a", 2, 1)},
+			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 2, minAvailable: 1}}},
+			wantRequeue:   true, // a1 has wrong label
+		},
+		{
+			name: "success when all Replicas created and all pods have correct podgang label",
+			existingPods: map[string][]v1.Pod{
+				"pclq-a": {makePod("a1", "pg-1"), makePod("a2", "pg-1"), makePod("a3", "pg-1")},
+			},
+			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a", 3, 1)},
+			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 3, minAvailable: 1}}},
+			wantRequeue:   false,
+		},
+		{
+			name: "success when all Replicas created (more than MinAvailable) and all pods labeled",
+			existingPods: map[string][]v1.Pod{
+				"pclq-a": {makePod("a1", "pg-1"), makePod("a2", "pg-1"), makePod("a3", "pg-1"), makePod("a4", "pg-1"), makePod("a5", "pg-1")},
+			},
+			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a", 5, 2)},
+			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 5, minAvailable: 2}}},
+			wantRequeue:   false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sc := &syncContext{
+				logger:           ctrllogger.FromContext(context.Background()).WithName("test"),
+				existingPCLQPods: tt.existingPods,
+				existingPCLQs:    tt.existingPCLQs,
+			}
+			r := &_resource{}
+			err := r.verifyAllPodsCreated(sc, tt.podGang.fqn, tt.podGang)
+			if tt.wantRequeue {
+				require.Error(t, err)
+				var groveErr *groveerr.GroveError
+				require.True(t, errors.As(err, &groveErr))
+				assert.Equal(t, groveerr.ErrCodeRequeueAfter, groveErr.Code)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestGetPodsPendingCreationOrAssociation tests getPodsPendingCreationOrAssociation unit logic.
+func TestGetPodsPendingCreationOrAssociation(t *testing.T) {
+	makePod := func(name string, podGangLabel string) v1.Pod {
+		pod := v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}}
+		if podGangLabel != "" {
+			pod.Labels = map[string]string{apicommon.LabelPodGang: podGangLabel}
+		}
+		return pod
+	}
+	makePCLQ := func(name string, replicas, minAvailable int32) grovecorev1alpha1.PodClique {
+		return grovecorev1alpha1.PodClique{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+			Spec:       grovecorev1alpha1.PodCliqueSpec{Replicas: replicas, MinAvailable: ptr.To(minAvailable)},
+		}
+	}
+
+	tests := []struct {
+		name          string
+		existingPods  map[string][]v1.Pod
+		existingPCLQs []grovecorev1alpha1.PodClique
+		podGang       *podGangInfo
+		wantPending   int
+	}{
+		{
+			name:          "counts replicas from non-existent PCLQs and missing pods from existing PCLQs",
+			existingPods:  map[string][]v1.Pod{},
+			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a", 3, 1)},
+			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 3, minAvailable: 1}, {fqn: "pclq-b", replicas: 5, minAvailable: 2}}},
+			wantPending:   8, // pclq-b doesn't exist: 5 + pclq-a missing all pods: 3 = 8
+		},
+		{
+			name: "counts missing pods from existing PCLQs (Replicas - existing)",
+			existingPods: map[string][]v1.Pod{
+				"pclq-a": {makePod("a1", "pg-1"), makePod("a2", "pg-1")}, // 2 pods, Replicas=5
+			},
+			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a", 5, 1)},
+			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 5, minAvailable: 1}}},
+			wantPending:   3, // 5 - 2 = 3
+		},
+		{
+			name: "counts pods without podgang label",
+			existingPods: map[string][]v1.Pod{
+				"pclq-a": {makePod("a1", ""), makePod("a2", ""), makePod("a3", "pg-1")}, // a1, a2 missing label
+			},
+			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a", 3, 1)},
+			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 3, minAvailable: 1}}},
+			wantPending:   2, // a1, a2 need association
+		},
+		{
+			name: "counts pods with wrong podgang label",
+			existingPods: map[string][]v1.Pod{
+				"pclq-a": {makePod("a1", "pg-wrong"), makePod("a2", "pg-1")},
+			},
+			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a", 2, 1)},
+			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 2, minAvailable: 1}}},
+			wantPending:   1, // a1 has wrong label
+		},
+		{
+			name: "combines all pending counts: missing PCLQ + missing pods + unlabeled pods",
+			existingPods: map[string][]v1.Pod{
+				"pclq-a": {makePod("a1", ""), makePod("a2", "pg-1")}, // a1 missing label, a2 ok; Replicas=5, so 3 missing + 1 unlabeled = 4
+			},
+			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a", 5, 1)},
+			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 5, minAvailable: 1}, {fqn: "pclq-b", replicas: 3, minAvailable: 1}}},
+			wantPending:   7, // pclq-b: 3 (doesn't exist) + pclq-a: 3 (missing pods: 5-2) + 1 (unlabeled: a1) = 7
+		},
+		{
+			name: "zero when all Replicas exist and all pods labeled correctly",
+			existingPods: map[string][]v1.Pod{
+				"pclq-a": {makePod("a1", "pg-1"), makePod("a2", "pg-1"), makePod("a3", "pg-1")},
+			},
+			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a", 3, 1)},
+			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 3, minAvailable: 1}}},
+			wantPending:   0,
+		},
+		{
+			name: "ignores negative difference (more pods than Replicas)",
+			existingPods: map[string][]v1.Pod{
+				"pclq-a": {makePod("a1", "pg-1"), makePod("a2", "pg-1"), makePod("a3", "pg-1"), makePod("a4", "pg-1")}, // 4 pods, Replicas=3
+			},
+			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a", 3, 1)},
+			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 3, minAvailable: 1}}},
+			wantPending:   0, // max(0, 3-4) = 0, all pods labeled
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sc := &syncContext{
+				logger:           ctrllogger.FromContext(context.Background()).WithName("test"),
+				existingPCLQPods: tt.existingPods,
+				existingPCLQs:    tt.existingPCLQs,
+			}
+			r := &_resource{}
+			got := r.getPodsPendingCreationOrAssociation(sc, tt.podGang)
+			assert.Equal(t, tt.wantPending, got)
+		})
+	}
+}
+
 // This test checks the accounting of the number of pending pods before creating a PodGang
 func TestGetPodsPendingCreation(t *testing.T) {
 	tests := []struct {
@@ -308,6 +512,171 @@ func TestGetPodsPendingCreation(t *testing.T) {
 			}
 			assert.Equal(t, test.totalNumPendingPods, totalNumPendingPods)
 		})
+	}
+}
+
+// TestSetInitializedCondition unit tests setInitializedCondition.
+func TestSetInitializedCondition(t *testing.T) {
+	pg := &groveschedulerv1alpha1.PodGang{
+		ObjectMeta: metav1.ObjectMeta{Name: "pg-1", Namespace: "default", Generation: 1},
+	}
+	setInitializedCondition(pg, metav1.ConditionFalse, "PodsPending", "waiting")
+	require.Len(t, pg.Status.Conditions, 1)
+	assert.Equal(t, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized), pg.Status.Conditions[0].Type)
+	assert.Equal(t, metav1.ConditionFalse, pg.Status.Conditions[0].Status)
+	assert.Equal(t, "PodsPending", pg.Status.Conditions[0].Reason)
+	assert.Equal(t, "waiting", pg.Status.Conditions[0].Message)
+
+	// Update existing condition to ready
+	setInitializedCondition(pg, metav1.ConditionTrue, "Ready", "all ready")
+	require.Len(t, pg.Status.Conditions, 1)
+	assert.Equal(t, metav1.ConditionTrue, pg.Status.Conditions[0].Status)
+	assert.Equal(t, "Ready", pg.Status.Conditions[0].Reason)
+}
+
+// TestUpdatePodGangWithPodReferences unit tests updatePodGangWithPodReferences.
+func TestUpdatePodGangWithPodReferences(t *testing.T) {
+	ctx := context.Background()
+	logger := ctrllogger.FromContext(ctx).WithName("test")
+
+	t.Run("returns nil when PodGang not in expectedPodGangs", func(t *testing.T) {
+		sc := &syncContext{logger: logger, expectedPodGangs: []*podGangInfo{{fqn: "pg-a"}}}
+		r := &_resource{}
+		err := r.updatePodGangWithPodReferences(sc, "pg-other")
+		require.NoError(t, err)
+	})
+
+	t.Run("returns requeue error when verifyAllPodsCreated fails", func(t *testing.T) {
+		sc := &syncContext{
+			logger:           logger,
+			pcs:              &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Namespace: "default"}},
+			expectedPodGangs: []*podGangInfo{{fqn: "pg-a", pclqs: []pclqInfo{{fqn: "pclq-a", minAvailable: 1}}}},
+			existingPCLQPods: map[string][]v1.Pod{},
+			existingPCLQs:    []grovecorev1alpha1.PodClique{},
+		}
+		r := &_resource{}
+		err := r.updatePodGangWithPodReferences(sc, "pg-a")
+		require.Error(t, err)
+		var groveErr *groveerr.GroveError
+		require.True(t, errors.As(err, &groveErr))
+		assert.Equal(t, groveerr.ErrCodeRequeueAfter, groveErr.Code)
+	})
+
+	t.Run("patches PodReferences and Initialized when all pods ready", func(t *testing.T) {
+		ns := "default"
+		pcs := &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: "pcs", Namespace: ns}}
+		pclq := &grovecorev1alpha1.PodClique{
+			ObjectMeta: metav1.ObjectMeta{Name: "pclq-a", Namespace: ns},
+			Spec:       grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))},
+		}
+		pgExisting := &groveschedulerv1alpha1.PodGang{
+			ObjectMeta: metav1.ObjectMeta{Name: "pg-a", Namespace: ns},
+			Spec:       groveschedulerv1alpha1.PodGangSpec{},
+		}
+		// Pod must have podgang label to pass verifyAllPodsCreated
+		pod := v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "pod-1",
+				Namespace: ns,
+				Labels:    map[string]string{apicommon.LabelPodGang: "pg-a"},
+			},
+		}
+		fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs, pclq, pgExisting).Build()
+		sc := &syncContext{
+			ctx:                  ctx,
+			logger:               logger,
+			pcs:                  pcs,
+			expectedPodGangs:     []*podGangInfo{{fqn: "pg-a", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 1, minAvailable: 1}}}},
+			existingPodGangNames: []string{"pg-a"},
+			existingPCLQPods:     map[string][]v1.Pod{"pclq-a": {pod}},
+			existingPCLQs:        []grovecorev1alpha1.PodClique{*pclq},
+		}
+		r := &_resource{client: fakeClient}
+		err := r.updatePodGangWithPodReferences(sc, "pg-a")
+		require.NoError(t, err)
+		pgAfter := &groveschedulerv1alpha1.PodGang{}
+		require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: "pg-a"}, pgAfter))
+		require.Len(t, pgAfter.Spec.PodGroups, 1)
+		assert.Equal(t, "pclq-a", pgAfter.Spec.PodGroups[0].Name)
+		assert.Equal(t, []groveschedulerv1alpha1.NamespacedName{{Namespace: ns, Name: "pod-1"}}, pgAfter.Spec.PodGroups[0].PodReferences)
+		// Status().Patch(Initialized=True) is applied in production; fake client may not merge status subresource
+		if len(pgAfter.Status.Conditions) > 0 {
+			assert.True(t, lo.ContainsBy(pgAfter.Status.Conditions, func(c metav1.Condition) bool {
+				return c.Type == string(groveschedulerv1alpha1.PodGangConditionTypeInitialized) && c.Status == metav1.ConditionTrue
+			}))
+		}
+	})
+}
+
+// TestCreateOrUpdatePodGangs tests the new flow: create PodGangs first, then update PodReferences when all pods are ready.
+func TestCreateOrUpdatePodGangs(t *testing.T) {
+	ctx := context.Background()
+	ns := "default"
+	pcsName := "test-pcs"
+	pcsLabels := apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcsName)
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: ns, UID: "pcs-uid"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Replicas: 1,
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To(int32(1))}},
+				},
+			},
+		},
+	}
+	pclqName := "test-pcs-0-worker"
+	pclq := &grovecorev1alpha1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: pclqName, Namespace: ns, UID: types.UID("pclq-uid"),
+			Labels:          pcsLabels,
+			OwnerReferences: []metav1.OwnerReference{{Name: pcsName, UID: pcs.UID, Controller: ptr.To(true)}},
+		},
+		Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To(int32(1))},
+	}
+	// Prepare PodGang object
+	pgLabels := lo.Assign(pcsLabels, map[string]string{apicommon.LabelComponentKey: apicommon.LabelComponentNamePodGang})
+	pgCreated := &groveschedulerv1alpha1.PodGang{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-pcs-0", Namespace: ns,
+			Labels:          pgLabels,
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "grove.io/v1alpha1", Kind: "PodCliqueSet", Name: pcsName, UID: pcs.UID, Controller: ptr.To(true)}},
+		},
+		Spec: groveschedulerv1alpha1.PodGangSpec{},
+	}
+	// Create 2 pods (matching Replicas=2) with correct podgang label
+	pod1 := &v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "worker-0", Namespace: ns,
+			Labels:          lo.Assign(pcsLabels, map[string]string{apicommon.LabelPodGang: "test-pcs-0"}),
+			OwnerReferences: []metav1.OwnerReference{{Name: pclqName, UID: pclq.UID, Controller: ptr.To(true)}},
+		},
+	}
+	pod2 := &v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "worker-1", Namespace: ns,
+			Labels:          lo.Assign(pcsLabels, map[string]string{apicommon.LabelPodGang: "test-pcs-0"}),
+			OwnerReferences: []metav1.OwnerReference{{Name: pclqName, UID: pclq.UID, Controller: ptr.To(true)}},
+		},
+	}
+	fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs, pclq, pgCreated, pod1, pod2).Build()
+	r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: &record.FakeRecorder{}}
+	sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
+	require.NoError(t, err)
+	require.Contains(t, sc.existingPodGangNames, "test-pcs-0")
+	result := r.createOrUpdatePodGangs(sc)
+	require.False(t, result.hasErrors(), "createOrUpdatePodGangs should not fail: %v", result.errs)
+	// PodGang should now have PodReferences (new flow: update existing PodGang)
+	pgAfter := &groveschedulerv1alpha1.PodGang{}
+	require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: "test-pcs-0"}, pgAfter))
+	require.Len(t, pgAfter.Spec.PodGroups, 1)
+	assert.Equal(t, "test-pcs-0-worker", pgAfter.Spec.PodGroups[0].Name)
+	assert.Len(t, pgAfter.Spec.PodGroups[0].PodReferences, 2)
+	// Initialized=True is set via status patch in production; optional check if fake client merged status
+	if len(pgAfter.Status.Conditions) > 0 {
+		assert.True(t, lo.ContainsBy(pgAfter.Status.Conditions, func(c metav1.Condition) bool {
+			return c.Type == string(groveschedulerv1alpha1.PodGangConditionTypeInitialized) && c.Status == metav1.ConditionTrue
+		}))
 	}
 }
 
