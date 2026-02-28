@@ -67,7 +67,6 @@ func SetDefaults_OperatorConfiguration(operatorConfig *OperatorConfiguration) {
 	if operatorConfig.LogFormat == "" {
 		operatorConfig.LogFormat = "json"
 	}
-	SetDefaults_SchedulerConfiguration(&operatorConfig.Scheduler)
 }
 
 // SetDefaults_SchedulerConfiguration sets defaults for scheduler configuration.

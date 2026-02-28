@@ -598,6 +598,7 @@ func (r _resource) buildPodGroupsFromContext(sc *syncContext, podGangInfo *podGa
 		}
 
 		// Sort for consistency
+		// TODO: Consider not trying to sort the podReferences here
 		sort.Slice(podReferences, func(i, j int) bool {
 			return podReferences[i].Name < podReferences[j].Name
 		})

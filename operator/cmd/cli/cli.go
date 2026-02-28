@@ -109,7 +109,6 @@ func (o *LaunchOptions) loadOperatorConfig() (*configv1alpha1.OperatorConfigurat
 	if err = runtime.DecodeInto(configDecoder, operatorConfigBytes, operatorConfig); err != nil {
 		return nil, fmt.Errorf("%w: error decoding operator config: %w", errLoadOperatorConfig, err)
 	}
-	configv1alpha1.SetDefaults_OperatorConfiguration(operatorConfig)
 	return operatorConfig, nil
 }
 
