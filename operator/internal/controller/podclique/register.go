@@ -117,7 +117,7 @@ func (h *podDeleteExpectationsHandler) Delete(ctx context.Context, e event.Typed
 			pclqObjMeta := metav1.ObjectMeta{Namespace: pod.Namespace, Name: ownerRef.Name}
 			if controlleeKey, err := expect.ControlleeKeyFunc(&grovecorev1alpha1.PodClique{ObjectMeta: pclqObjMeta}); err == nil {
 				logger := ctrllogger.FromContext(ctx).WithName(controllerName).WithName("pod-delete-handler")
-				h.expectationsStore.ObserveCreationCancellation(logger, controlleeKey, pod.UID)
+				h.expectationsStore.ObserveDeletions(logger, controlleeKey, pod.UID)
 			}
 		}
 	}
