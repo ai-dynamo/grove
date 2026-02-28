@@ -23,7 +23,6 @@ import (
 
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -35,18 +34,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/uuid"
-	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
-
-func init() {
-	// Initialize scheduler backend so validation webhook tests can resolve Get("default-scheduler") / GetDefault().
-	cl := testutils.CreateDefaultFakeClient(nil)
-	_ = schedulerbackend.Initialize(cl, cl.Scheme(), record.NewFakeRecorder(10), groveconfigv1alpha1.SchedulerConfiguration{
-		Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube, Default: true}},
-	})
-}
 
 // TestNewHandler tests the creation of a new validation handler.
 func TestNewHandler(t *testing.T) {

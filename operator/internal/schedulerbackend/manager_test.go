@@ -17,7 +17,6 @@
 package schedulerbackend
 
 import (
-	"sync"
 	"testing"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
@@ -47,7 +46,7 @@ func TestInitialize(t *testing.T) {
 			name:          "default scheduler initialization",
 			schedulerName: configv1alpha1.SchedulerNameKube,
 			wantErr:       false,
-			expectedName:  "kube-scheduler",
+			expectedName:  "default-scheduler", // kube backend's Name() is the pod-facing name
 		},
 		{
 			name:          "unsupported scheduler",
@@ -68,7 +67,6 @@ func TestInitialize(t *testing.T) {
 			// Reset global state before each test
 			backends = nil
 			defaultBackend = nil
-			initOnce = sync.Once{}
 
 			cl := testutils.CreateDefaultFakeClient(nil)
 			recorder := record.NewFakeRecorder(10)
@@ -87,8 +85,9 @@ func TestInitialize(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 				require.NotNil(t, GetDefault())
-				assert.Equal(t, tt.expectedName, GetDefault().Name())
-				assert.Equal(t, tt.expectedName, Get(string(tt.schedulerName)).Name())
+				name := GetDefault().Name()
+				assert.Equal(t, tt.expectedName, name)
+				assert.Equal(t, GetDefault(), Get(name)) // backend is stored under its Name()
 			}
 		})
 	}
