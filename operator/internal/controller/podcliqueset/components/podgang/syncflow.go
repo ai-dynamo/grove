@@ -628,19 +628,23 @@ func (r _resource) findPodGangInfo(sc *syncContext, podGangName string) (*podGan
 
 // verifyAllPodsCreated checks if all required pods exist before updating PodGang
 func (r _resource) verifyAllPodsCreated(sc *syncContext, podGangName string, podGangInfo *podGangInfo) error {
-	for _, pclqInfo := range podGangInfo.pclqs {
-		pods, ok := sc.existingPCLQPods[pclqInfo.fqn]
-		if !ok || len(pods) < int(pclqInfo.minAvailable) {
-			sc.logger.Info("Not all pods created yet for PodClique",
-				"podGang", podGangName,
-				"podClique", pclqInfo.fqn,
-				"expected", pclqInfo.minAvailable,
-				"actual", len(pods))
-			return groveerr.New(groveerr.ErrCodeRequeueAfter,
-				component.OperationSync,
-				fmt.Sprintf("Waiting for all pods to be created for PodGang %s", podGangName),
-			)
-		}
+	pclqs := sc.getPodCliques(podGangInfo)
+	if len(pclqs) != len(podGangInfo.pclqs) {
+		// Not all constituent PCLQs exist yet
+		sc.logger.Info("Not all constituent PCLQs exist yet", "podGang", podGangName, "expected", len(podGangInfo.pclqs), "actual", len(pclqs))
+		return groveerr.New(groveerr.ErrCodeRequeueAfter,
+			component.OperationSync,
+			fmt.Sprintf("Waiting for all pods to be created for PodGang %s", podGangName),
+		)
+	}
+	// check the health of each podclique
+	numPendingPods := r.getPodsPendingCreationOrAssociation(sc, podGangInfo)
+	if numPendingPods > 0 {
+		sc.logger.Info("skipping creation of PodGang as all desired replicas have not yet been created or assigned", "podGang", podGangName, "numPendingPodsToCreateOrAssociate", numPendingPods)
+		return groveerr.New(groveerr.ErrCodeRequeueAfter,
+			component.OperationSync,
+			fmt.Sprintf("Waiting for all pods to be created or assigned for PodGang %s", podGangName),
+		)
 	}
 	return nil
 }
