@@ -83,7 +83,7 @@ func Initialize(client client.Client, scheme *runtime.Scheme, eventRecorder reco
 				initErr = fmt.Errorf("failed to initialize %s backend: %w", p.Name, err)
 				return
 			}
-			backends[string(p.Name)] = backend
+			backends[backend.Name()] = backend
 			if p.Default {
 				defaultBackend = backend
 			}

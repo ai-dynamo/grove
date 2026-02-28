@@ -35,6 +35,7 @@ import (
 type Backend struct {
 	client        client.Client
 	scheme        *runtime.Scheme
+	name          string
 	eventRecorder record.EventRecorder
 	profile       configv1alpha1.SchedulerProfile
 }
@@ -45,6 +46,7 @@ func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRec
 	return &Backend{
 		client:        cl,
 		scheme:        scheme,
+		name:          "kai-scheduler",
 		eventRecorder: eventRecorder,
 		profile:       profile,
 	}
@@ -52,7 +54,7 @@ func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRec
 
 // Name returns the backend name
 func (b *Backend) Name() string {
-	return string(b.profile.Name)
+	return b.name
 }
 
 // Init initializes the KAI backend
