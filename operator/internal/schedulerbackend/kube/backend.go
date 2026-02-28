@@ -38,6 +38,7 @@ const PodSchedulerName = "default-scheduler"
 type Backend struct {
 	client        client.Client
 	scheme        *runtime.Scheme
+	name          string
 	eventRecorder record.EventRecorder
 	profile       configv1alpha1.SchedulerProfile
 }
@@ -48,6 +49,7 @@ func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRec
 	return &Backend{
 		client:        cl,
 		scheme:        scheme,
+		name:          "default-scheduler",
 		eventRecorder: eventRecorder,
 		profile:       profile,
 	}
@@ -55,7 +57,7 @@ func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRec
 
 // Name returns the backend profile name (kube-scheduler), for lookup and logging.
 func (b *Backend) Name() string {
-	return string(b.profile.Name)
+	return b.name
 }
 
 // Init initializes the Kube backend
@@ -81,7 +83,7 @@ func (b *Backend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.P
 // PreparePod adds Kubernetes default scheduler-specific configuration to the Pod.
 // Pod.Spec.SchedulerName is set to "default-scheduler" (the value expected by kube-apiserver / kube-scheduler).
 func (b *Backend) PreparePod(pod *corev1.Pod) {
-	pod.Spec.SchedulerName = PodSchedulerName
+	pod.Spec.SchedulerName = b.name
 }
 
 // ValidatePodCliqueSet runs default-scheduler-specific validations on the PodCliqueSet.
