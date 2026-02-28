@@ -80,6 +80,7 @@ type SchedulerConfiguration struct {
 type SchedulerProfile struct {
 	// Name is the scheduler profile name. Valid values: "kube-scheduler", "kai-scheduler".
 	// For the Kubernetes default scheduler use "kube-scheduler"; Pod.Spec.SchedulerName will be set to "default-scheduler".
+	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Enum=kai-scheduler;kube-scheduler
 	Name SchedulerName `json:"name"`
 

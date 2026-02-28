@@ -915,7 +915,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `name` _[SchedulerName](#schedulername)_ | Name is the scheduler profile name. Valid values: "kube-scheduler", "kai-scheduler".<br />For the Kubernetes default scheduler use "kube-scheduler"; Pod.Spec.SchedulerName will be set to "default-scheduler". |  | Enum: [kai-scheduler kube-scheduler] <br /> |
+| `name` _[SchedulerName](#schedulername)_ | Name is the scheduler profile name. Valid values: "kube-scheduler", "kai-scheduler".<br />For the Kubernetes default scheduler use "kube-scheduler"; Pod.Spec.SchedulerName will be set to "default-scheduler". |  | Enum: [kai-scheduler kube-scheduler] <br />Required: \{\} <br /> |
 | `config` _[RawExtension](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#rawextension-runtime-pkg)_ | Config holds backend-specific options. The operator unmarshals it into the config type for this backend (see backend config types). |  |  |
 | `default` _boolean_ | Default indicates this profile is the default backend when a workload does not specify one. Exactly one profile should have default: true. |  |  |
 
