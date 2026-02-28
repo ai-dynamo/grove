@@ -661,31 +661,6 @@ func (r _resource) groupPodsByPodClique(sc *syncContext, podGangInfo *podGangInf
 	return podsByGroup
 }
 
-// setInitializedCondition sets the PodGangInitialized condition.
-func setInitializedCondition(pg *groveschedulerv1alpha1.PodGang, status metav1.ConditionStatus, reason, message string) {
-	condition := metav1.Condition{
-		Type:               string(groveschedulerv1alpha1.PodGangConditionTypeInitialized),
-		Status:             status,
-		ObservedGeneration: pg.Generation,
-		LastTransitionTime: metav1.Now(),
-		Reason:             reason,
-		Message:            message,
-	}
-
-	// Update or append condition
-	found := false
-	for i, cond := range pg.Status.Conditions {
-		if cond.Type == string(groveschedulerv1alpha1.PodGangConditionTypeInitialized) {
-			pg.Status.Conditions[i] = condition
-			found = true
-			break
-		}
-	}
-	if !found {
-		pg.Status.Conditions = append(pg.Status.Conditions, condition)
-	}
-}
-
 // getPodsForPodCliquesPendingCreation counts expected pods from non-existent PodCliques.
 func (r _resource) getPodsForPodCliquesPendingCreation(sc *syncContext, podGang *podGangInfo) int {
 	existingPCLQNames := lo.Map(sc.existingPCLQs, func(pclq grovecorev1alpha1.PodClique, _ int) string {
@@ -761,16 +736,6 @@ func (r _resource) createOrUpdatePodGang(sc *syncContext, pgInfo *podGangInfo) e
 	r.eventRecorder.Eventf(sc.pcs, corev1.EventTypeNormal, constants.ReasonPodGangCreateOrUpdateSuccessful, "Created/Updated PodGang %v", pgObjectKey)
 	sc.logger.Info("Triggered CreateOrPatch of PodGang", "objectKey", pgObjectKey)
 	return nil
-}
-
-// hasInitializedCondition checks if PodGang has Initialized condition.
-func hasInitializedCondition(pg *groveschedulerv1alpha1.PodGang) bool {
-	for _, cond := range pg.Status.Conditions {
-		if cond.Type == string(groveschedulerv1alpha1.PodGangConditionTypeInitialized) {
-			return true
-		}
-	}
-	return false
 }
 
 // Convenience types and methods on these types that are used during sync flow run.
