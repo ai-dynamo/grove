@@ -50,12 +50,14 @@ type Handler struct {
 }
 
 // NewHandler creates a new handler for PodCliqueSet Webhook.
-func NewHandler(mgr manager.Manager, tasConfig configv1alpha1.TopologyAwareSchedulingConfiguration, networkConfig configv1alpha1.NetworkAcceleration, schedulerConfig configv1alpha1.SchedulerConfiguration) *Handler {
+// It reads TopologyAwareScheduling, Network, and Scheduler from the operator configuration.
+// operatorCfg must not be nil.
+func NewHandler(mgr manager.Manager, operatorCfg *configv1alpha1.OperatorConfiguration) *Handler {
 	return &Handler{
 		logger:          mgr.GetLogger().WithName("webhook").WithName(Name),
-		tasConfig:       tasConfig,
-		networkConfig:   networkConfig,
-		schedulerConfig: schedulerConfig,
+		tasConfig:       operatorCfg.TopologyAwareScheduling,
+		networkConfig:   operatorCfg.Network,
+		schedulerConfig: operatorCfg.Scheduler,
 	}
 }
 
