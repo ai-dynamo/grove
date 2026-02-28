@@ -553,11 +553,11 @@ func TestRegisterControllersAndWebhooks(t *testing.T) {
 			}
 		}
 
-		registerControllersWithMgr = func(_ ctrl.Manager, _ configv1alpha1.OperatorConfiguration) error {
+		registerControllersWithMgr = func(_ ctrl.Manager, _ *configv1alpha1.OperatorConfiguration) error {
 			controllersCalled = true
 			return tc.controllerErr
 		}
-		registerWebhooksWithMgr = func(_ ctrl.Manager, _ configv1alpha1.OperatorConfiguration) error {
+		registerWebhooksWithMgr = func(_ ctrl.Manager, _ *configv1alpha1.OperatorConfiguration) error {
 			webhooksCalled = true
 			return tc.webhookErr
 		}

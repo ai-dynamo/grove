@@ -57,7 +57,12 @@ func TestNewHandler(t *testing.T) {
 		Logger: logr.Discard(),
 	}
 
-	handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube, Default: true}}})
+	cfg := groveconfigv1alpha1.OperatorConfiguration{
+		TopologyAwareScheduling: getDefaultTASConfig(),
+		Network:                 getDefaultNetworkConfig(),
+		Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube, Default: true}}},
+	}
+	handler := NewHandler(mgr, &cfg)
 	require.NotNil(t, handler)
 	assert.NotNil(t, handler.logger)
 }
@@ -123,7 +128,12 @@ func TestValidateCreate(t *testing.T) {
 				Logger: logr.Discard(),
 			}
 
-			handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube, Default: true}}})
+			cfg := groveconfigv1alpha1.OperatorConfiguration{
+				TopologyAwareScheduling: getDefaultTASConfig(),
+				Network:                 getDefaultNetworkConfig(),
+				Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube, Default: true}}},
+			}
+			handler := NewHandler(mgr, &cfg)
 
 			ctx := context.Background()
 			warnings, err := handler.ValidateCreate(ctx, tt.obj)
@@ -254,7 +264,12 @@ func TestValidateUpdate(t *testing.T) {
 				Logger: logr.Discard(),
 			}
 
-			handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube, Default: true}}})
+			cfg := groveconfigv1alpha1.OperatorConfiguration{
+				TopologyAwareScheduling: getDefaultTASConfig(),
+				Network:                 getDefaultNetworkConfig(),
+				Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube, Default: true}}},
+			}
+			handler := NewHandler(mgr, &cfg)
 
 			ctx := context.Background()
 			warnings, err := handler.ValidateUpdate(ctx, tt.newObj, tt.oldObj)
@@ -281,7 +296,12 @@ func TestValidateDelete(t *testing.T) {
 		Logger: logr.Discard(),
 	}
 
-	handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube, Default: true}}})
+	cfg := groveconfigv1alpha1.OperatorConfiguration{
+		TopologyAwareScheduling: getDefaultTASConfig(),
+		Network:                 getDefaultNetworkConfig(),
+		Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube, Default: true}}},
+	}
+	handler := NewHandler(mgr, &cfg)
 
 	// Deletion validation always succeeds
 	ctx := context.Background()
@@ -392,7 +412,12 @@ func TestLogValidatorFunctionInvocation(t *testing.T) {
 				Logger: logr.Discard(),
 			}
 
-			handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube, Default: true}}})
+			cfg := groveconfigv1alpha1.OperatorConfiguration{
+				TopologyAwareScheduling: getDefaultTASConfig(),
+				Network:                 getDefaultNetworkConfig(),
+				Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube, Default: true}}},
+			}
+			handler := NewHandler(mgr, &cfg)
 
 			// This function doesn't return an error, but we can verify it doesn't panic
 			assert.NotPanics(t, func() {

@@ -17,6 +17,8 @@
 package controller
 
 import (
+	"fmt"
+
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup"
@@ -27,7 +29,10 @@ import (
 )
 
 // RegisterControllers registers all controllers with the manager.
-func RegisterControllers(mgr ctrl.Manager, config configv1alpha1.OperatorConfiguration) error {
+func RegisterControllers(mgr ctrl.Manager, config *configv1alpha1.OperatorConfiguration) error {
+	if config == nil {
+		return fmt.Errorf("operator configuration must not be nil")
+	}
 	pcsReconciler := podcliqueset.NewReconciler(mgr, config.Controllers.PodCliqueSet, config.TopologyAwareScheduling, config.Network)
 	if err := pcsReconciler.RegisterWithManager(mgr); err != nil {
 		return err
