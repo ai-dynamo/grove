@@ -239,3 +239,37 @@ func getSchedulerNameForPCS(pcs *grovecorev1alpha1.PodCliqueSet) string {
 	}
 	return ""
 }
+
+// setInitializedCondition sets or updates the PodGangInitialized condition on the PodGang status.
+func setInitializedCondition(pg *groveschedulerv1alpha1.PodGang, status metav1.ConditionStatus, reason, message string) {
+	condition := metav1.Condition{
+		Type:               string(groveschedulerv1alpha1.PodGangConditionTypeInitialized),
+		Status:             status,
+		ObservedGeneration: pg.Generation,
+		LastTransitionTime: metav1.Now(),
+		Reason:             reason,
+		Message:            message,
+	}
+
+	found := false
+	for i, cond := range pg.Status.Conditions {
+		if cond.Type == string(groveschedulerv1alpha1.PodGangConditionTypeInitialized) {
+			pg.Status.Conditions[i] = condition
+			found = true
+			break
+		}
+	}
+	if !found {
+		pg.Status.Conditions = append(pg.Status.Conditions, condition)
+	}
+}
+
+// hasInitializedCondition returns true if the PodGang has an Initialized condition.
+func hasInitializedCondition(pg *groveschedulerv1alpha1.PodGang) bool {
+	for _, cond := range pg.Status.Conditions {
+		if cond.Type == string(groveschedulerv1alpha1.PodGangConditionTypeInitialized) {
+			return true
+		}
+	}
+	return false
+}
