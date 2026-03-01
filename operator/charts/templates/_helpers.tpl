@@ -31,6 +31,9 @@ config.yaml: |
   {{- if .Values.config.debugging }}
   debugging:
     enableProfiling: {{ .Values.config.debugging.enableProfiling }}
+    {{- if .Values.config.debugging.pprofBindAddress }}
+    pprofBindAddress: {{ .Values.config.debugging.pprofBindAddress | quote }}
+    {{- end }}
   {{- end }}
   logLevel: {{ .Values.config.logLevel | default "info" }}
   logFormat: {{ .Values.config.logFormat | default "json" }}

@@ -15,13 +15,14 @@ spec:
       labels:
 {{- include "operator.deployment.labels" . | nindent 8 }}
       {{- if and .Values.config.debugging .Values.config.debugging.enableProfiling }}
+      {{- $pprofPort := (split ":" .Values.config.debugging.pprofBindAddress)._1 | default "2753" }}
       annotations:
         profiles.grafana.com/cpu.scrape: "true"
-        profiles.grafana.com/cpu.port: "2753"
+        profiles.grafana.com/cpu.port: {{ $pprofPort | quote }}
         profiles.grafana.com/memory.scrape: "true"
-        profiles.grafana.com/memory.port: "2753"
+        profiles.grafana.com/memory.port: {{ $pprofPort | quote }}
         profiles.grafana.com/goroutine.scrape: "true"
-        profiles.grafana.com/goroutine.port: "2753"
+        profiles.grafana.com/goroutine.port: {{ $pprofPort | quote }}
       {{- end }}
     spec:
       restartPolicy: Always
@@ -51,8 +52,9 @@ spec:
               containerPort: {{ required ".Values.config.server.webhooks.port" .Values.config.server.webhooks.port }}
               protocol: TCP
             {{- if and .Values.config.debugging .Values.config.debugging.enableProfiling }}
+            {{- $pprofPort := (split ":" .Values.config.debugging.pprofBindAddress)._1 | default "2753" }}
             - name: pprof
-              containerPort: 2753
+              containerPort: {{ $pprofPort }}
               protocol: TCP
             {{- end }}
           {{- if .Values.config.server.healthProbes.enable }}

@@ -19,8 +19,9 @@ spec:
       port: {{ required ".Values.config.server.webhooks.port" .Values.config.server.webhooks.port }}
       targetPort: {{ required ".Values.config.server.webhooks.port" .Values.config.server.webhooks.port }}
     {{- if and .Values.config.debugging .Values.config.debugging.enableProfiling }}
+    {{- $pprofPort := (split ":" .Values.config.debugging.pprofBindAddress)._1 | default "2753" }}
     - name: pprof
       protocol: TCP
-      port: 2753
-      targetPort: 2753
+      port: {{ $pprofPort }}
+      targetPort: {{ $pprofPort }}
     {{- end }}
