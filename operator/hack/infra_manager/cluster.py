@@ -37,6 +37,8 @@ from infra_manager.constants import (
     LABEL_BLOCK,
     LABEL_CONTROL_PLANE,
     LABEL_RACK,
+    LABEL_TYPE,
+    LABEL_TYPE_KWOK,
     LABEL_ZONE,
     NODES_PER_BLOCK,
     NODES_PER_RACK,
@@ -71,42 +73,11 @@ def _pull_tag_push(
         return (image_name, False, str(e))
 
 
-def _run_parallel_pulls(
-    docker_client: docker.DockerClient,
-    images: list[str],
-    registry_port: int,
-    version: str,
-) -> list[str]:
-    """Pull images in parallel with progress bar. Returns failed image names."""
-    items = [(img, version) for img in images]
-    return _run_parallel_pulls_versioned(docker_client, items, registry_port)
-
-
 def prepull_images(images: list[str], registry_port: int, version: str) -> None:
     """Pre-pull images in parallel and push them to the local k3d registry."""
     if not images:
         return
-
-    console.print(Panel.fit("Pre-pulling images to local registry", style="bold blue"))
-    console.print(f"[yellow]Pre-pulling {len(images)} images in parallel (this speeds up cluster startup)...[/yellow]")
-
-    try:
-        docker_client = docker.from_env()
-    except Exception as e:
-        console.print(f"[yellow]\u26a0\ufe0f  Failed to connect to Docker: {e}[/yellow]")
-        console.print("[yellow]\u26a0\ufe0f  Skipping image pre-pull (cluster will pull images on-demand)[/yellow]")
-        return
-
-    try:
-        failed_images = _run_parallel_pulls(docker_client, images, registry_port, version)
-    finally:
-        docker_client.close()
-
-    if failed_images:
-        console.print(f"[yellow]\u26a0\ufe0f  Failed to pre-pull {len(failed_images)} images[/yellow]")
-        console.print("[yellow]   Cluster will pull these images on-demand (may be slower)[/yellow]")
-    else:
-        console.print(f"[green]\u2705 Successfully pre-pulled all {len(images)} images[/green]")
+    prepull_image_groups([(images, version)], registry_port)
 
 
 def _run_parallel_pulls_versioned(
@@ -296,11 +267,14 @@ def apply_topology_labels() -> None:
 
     nodes_output = sh.kubectl(
         "get", "nodes",
-        "-l", f"!{LABEL_CONTROL_PLANE}",
+        "-l", f"!{LABEL_CONTROL_PLANE},{LABEL_TYPE}!={LABEL_TYPE_KWOK}",
         "-o", "jsonpath={.items[*].metadata.name}"
     ).strip()
 
-    worker_nodes = sorted(nodes_output.split(), key=_node_sort_key)
+    worker_nodes = sorted(nodes_output.split(), key=_node_sort_key) if nodes_output else []
+    if not worker_nodes:
+        console.print("[yellow]No worker nodes found, skipping topology labels[/yellow]")
+        return
     max_workers = min(len(worker_nodes), 10)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {

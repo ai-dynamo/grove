@@ -35,7 +35,7 @@ from infra_manager.cluster import (
     wait_for_nodes,
 )
 from infra_manager.components import (
-    _apply_kai_queues,
+    apply_kai_queues,
     deploy_grove_operator,
     install_kai_scheduler,
     install_pyroscope,
@@ -71,7 +71,7 @@ def _check_prerequisites(install_kai: bool, install_grove: bool, operator_dir: P
         operator_dir: Root directory of the Grove operator source tree.
     """
     prereqs = ["k3d", "kubectl", "docker"]
-    if install_kai:
+    if install_kai or install_grove:
         prereqs.append("helm")
     if install_grove:
         prereqs.extend(["skaffold", "jq"])
@@ -167,7 +167,7 @@ def _run_kai_post_install(operator_dir: Path) -> None:
                "-n", NS_KAI_SCHEDULER, "--timeout=5m")
     console.print("[yellow]\u2139\ufe0f  Creating default Kai queues (with retry for webhook readiness)...[/yellow]")
     try:
-        _apply_kai_queues(operator_dir / REL_QUEUES_YAML)
+        apply_kai_queues(operator_dir / REL_QUEUES_YAML)
         console.print("[green]\u2705 Kai queues created successfully[/green]")
     except (RuntimeError, RetryError):
         raise RuntimeError("Failed to create Kai queues after retries")

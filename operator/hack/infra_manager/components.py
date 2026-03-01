@@ -102,7 +102,7 @@ def install_kai_scheduler(comp_cfg: ComponentConfig) -> None:
     wait=wait_fixed(KAI_QUEUE_POLL_INTERVAL_SECONDS),
     reraise=True,
 )
-def _apply_kai_queues(queues_file: Path) -> None:
+def apply_kai_queues(queues_file: Path) -> None:
     """Apply Kai queue CRs with retry for webhook readiness.
 
     Args:

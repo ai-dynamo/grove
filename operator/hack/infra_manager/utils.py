@@ -27,6 +27,7 @@ from infra_manager.constants import (
     HELM_KEY_PCLQ_SYNCS,
     HELM_KEY_PCS_SYNCS,
     HELM_KEY_PCSG_SYNCS,
+    HELM_KEY_PPROF_BIND_ADDRESS,
     HELM_KEY_PROFILING,
     KWOK_GITHUB_REPO,
 )
@@ -73,6 +74,7 @@ def collect_grove_helm_overrides(options: GroveInstallOptions) -> list[str]:
     """
     overrides: list[tuple[bool, str, str]] = [
         (options.grove_profiling, HELM_KEY_PROFILING, "true"),
+        (options.grove_profiling, HELM_KEY_PPROF_BIND_ADDRESS, "0.0.0.0:2753"),
         (options.grove_pcs_syncs is not None, HELM_KEY_PCS_SYNCS, str(options.grove_pcs_syncs)),
         (options.grove_pclq_syncs is not None, HELM_KEY_PCLQ_SYNCS, str(options.grove_pclq_syncs)),
         (options.grove_pcsg_syncs is not None, HELM_KEY_PCSG_SYNCS, str(options.grove_pcsg_syncs)),

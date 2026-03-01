@@ -136,6 +136,7 @@ KWOK_IP_OCTET_SIZE = 256
 
 # -- Helm override keys --
 HELM_KEY_PROFILING = "config.debugging.enableProfiling"
+HELM_KEY_PPROF_BIND_ADDRESS = "config.debugging.pprofBindAddress"
 HELM_KEY_PCS_SYNCS = "config.controllers.podCliqueSet.concurrentSyncs"
 HELM_KEY_PCLQ_SYNCS = "config.controllers.podClique.concurrentSyncs"
 HELM_KEY_PCSG_SYNCS = "config.controllers.podCliqueScalingGroup.concurrentSyncs"
