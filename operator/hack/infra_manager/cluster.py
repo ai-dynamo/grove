@@ -18,7 +18,6 @@
 
 from __future__ import annotations
 
-import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import docker
@@ -245,19 +244,6 @@ def wait_for_nodes() -> None:
 # ============================================================================
 
 
-def _node_sort_key(name: str) -> tuple[str, int]:
-    """Sort key that strips trailing digits and returns (prefix, number).
-
-    Args:
-        name: Kubernetes node name (e.g. ``k3d-cluster-agent-12``).
-
-    Returns:
-        Tuple of (name_prefix, trailing_number) for natural sort ordering.
-    """
-    m = re.search(r"-(\d+)$", name)
-    return re.sub(r"-\d+$", "", name), (int(m.group(1)) if m else 0)
-
-
 def _label_single_node(node: str, idx: int) -> None:
     """Apply topology labels to a single worker node.
 
@@ -292,7 +278,7 @@ def apply_topology_labels() -> None:
         "jsonpath={.items[*].metadata.name}",
     ).strip()
 
-    worker_nodes = sorted(nodes_output.split(), key=_node_sort_key) if nodes_output else []
+    worker_nodes = sorted(nodes_output.split()) if nodes_output else []
     if not worker_nodes:
         console.print("[yellow]No worker nodes found, skipping topology labels[/yellow]")
         return

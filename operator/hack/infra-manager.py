@@ -20,6 +20,7 @@ infra-manager.py - Unified CLI for Grove infrastructure management.
 
 Subcommands:
     setup      Composite workflows (e2e, scale, apply-topology, prepull-images)
+    delete     Delete infrastructure resources (k3d-cluster, kwok-nodes)
 
 Examples:
     # Full e2e setup (default — no flags needed!)
@@ -38,7 +39,7 @@ import sys
 
 import typer
 from infra_manager import console
-from infra_manager.commands import setup_cmd
+from infra_manager.commands import delete_cmd, setup_cmd
 
 app = typer.Typer(
     help="Unified CLI for Grove infrastructure management.",
@@ -56,6 +57,7 @@ def _main_callback() -> None:
     )
 
 
+app.add_typer(delete_cmd.app, name="delete")
 app.add_typer(setup_cmd.app, name="setup")
 
 

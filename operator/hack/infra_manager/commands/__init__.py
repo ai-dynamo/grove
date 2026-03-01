@@ -16,4 +16,4 @@
 
 """CLI command modules for infra_manager."""
 
-__all__ = ["setup_cmd"]
+__all__ = ["delete_cmd", "setup_cmd"]
