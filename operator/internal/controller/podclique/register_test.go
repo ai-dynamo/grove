@@ -109,7 +109,7 @@ func TestPodDeleteExpectationsHandler_Delete(t *testing.T) {
 		require.Contains(t, createExpectations, podUID, "setup: create expectation should contain pod UID")
 
 		inner := &mockInnerHandler{}
-		h := &podDeleteExpectationsHandler{expectationsStore: store, inner: inner}
+		h := &podWatchHandler{expectationsStore: store, inner: inner}
 		pod := managedPodWithPodCliqueOwner(ns, podName, pclqName, podUID)
 		q := workqueue.NewTypedRateLimitingQueue[reconcile.Request](workqueue.DefaultTypedControllerRateLimiter[reconcile.Request]())
 		ctx := context.Background()

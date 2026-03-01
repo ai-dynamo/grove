@@ -66,7 +66,7 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 		).
 		Watches(
 			&corev1.Pod{},
-			newPodDeleteExpectationsHandler(r.expectationsStore, mgr),
+			newPodWatchHandler(r.expectationsStore, mgr),
 			builder.WithPredicates(podPredicate()),
 		).
 		Watches(
@@ -87,31 +87,29 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// podDeleteExpectationsHandler removes UIDs from create expectations on Pod Delete events.
-// When a pod is deleted (e.g. kubectl delete), the informer receives a Delete event. We remove
-// the pod's UID from uidsToAdd so the controller can recreate it. This distinguishes "pod deleted"
-// from "informer slow" without TTL or API bypass.
-type podDeleteExpectationsHandler struct {
+// podWatchHandler runs actions in response to Pod watch events (e.g. updating expectations on Delete) and delegates to an inner handler.
+// On Delete for a managed pod it calls ObserveDeletions so the controller can recreate the pod (issue #457).
+type podWatchHandler struct {
 	expectationsStore *expect.ExpectationsStore
 	inner             handler.EventHandler
 }
 
-func newPodDeleteExpectationsHandler(expectationsStore *expect.ExpectationsStore, mgr ctrl.Manager) handler.EventHandler {
-	return &podDeleteExpectationsHandler{
+func newPodWatchHandler(expectationsStore *expect.ExpectationsStore, mgr ctrl.Manager) handler.EventHandler {
+	return &podWatchHandler{
 		expectationsStore: expectationsStore,
 		inner:             handler.EnqueueRequestForOwner(mgr.GetScheme(), mgr.GetRESTMapper(), &grovecorev1alpha1.PodClique{}, handler.OnlyControllerOwner()),
 	}
 }
 
-func (h *podDeleteExpectationsHandler) Create(ctx context.Context, e event.TypedCreateEvent[client.Object], q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+func (h *podWatchHandler) Create(ctx context.Context, e event.TypedCreateEvent[client.Object], q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 	h.inner.Create(ctx, e, q)
 }
 
-func (h *podDeleteExpectationsHandler) Update(ctx context.Context, e event.TypedUpdateEvent[client.Object], q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+func (h *podWatchHandler) Update(ctx context.Context, e event.TypedUpdateEvent[client.Object], q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 	h.inner.Update(ctx, e, q)
 }
 
-func (h *podDeleteExpectationsHandler) Delete(ctx context.Context, e event.TypedDeleteEvent[client.Object], q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+func (h *podWatchHandler) Delete(ctx context.Context, e event.TypedDeleteEvent[client.Object], q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 	if pod, ok := e.Object.(*corev1.Pod); ok && isManagedPod(pod) {
 		if ownerRef := k8sutils.FindOwnerRefByKind(pod.OwnerReferences, constants.KindPodClique); ownerRef != nil {
 			pclqObjMeta := metav1.ObjectMeta{Namespace: pod.Namespace, Name: ownerRef.Name}
@@ -124,7 +122,7 @@ func (h *podDeleteExpectationsHandler) Delete(ctx context.Context, e event.Typed
 	h.inner.Delete(ctx, e, q)
 }
 
-func (h *podDeleteExpectationsHandler) Generic(ctx context.Context, e event.TypedGenericEvent[client.Object], q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+func (h *podWatchHandler) Generic(ctx context.Context, e event.TypedGenericEvent[client.Object], q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 	h.inner.Generic(ctx, e, q)
 }
 
