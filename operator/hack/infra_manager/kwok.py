@@ -219,6 +219,10 @@ def create_nodes(total: int, kwok_cfg: KwokConfig) -> None:
         total: Total number of KWOK nodes to create.
         kwok_cfg: KWOK configuration with batch size and node resource limits.
     """
+    if total <= 0:
+        console.print("[yellow]No KWOK nodes requested, skipping.[/yellow]")
+        return
+
     logger.info("Creating %d KWOK nodes (batch size=%d)...", total, kwok_cfg.kwok_batch_size)
     successes: list[int] = []
     failures: list[tuple[int, str]] = []
@@ -247,6 +251,8 @@ def create_nodes(total: int, kwok_cfg: KwokConfig) -> None:
         for nid, err in failures[:10]:
             logger.error("  kwok-node-%d: %s", nid, err)
     console.print(f"[green]\u2705 Created {len(successes)} KWOK nodes[/green]")
+
+    _wait_kwok_nodes_ready()
 
 
 def delete_kwok_nodes() -> None:
