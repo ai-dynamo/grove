@@ -1,6 +1,6 @@
 # Python dependencies for hack scripts
 #
-# Minimum Python version: 3.8+
+# Minimum Python version: 3.10+
 #
 # Install all dependencies:
 #   pip install -r requirements.txt

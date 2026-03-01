@@ -15,3 +15,5 @@
 # */
 
 """CLI command modules for infra_manager."""
+
+__all__ = ["create_cmd", "delete_cmd", "install_cmd", "setup_cmd", "uninstall_cmd"]
