@@ -14,7 +14,7 @@
 // limitations under the License.
 // */
 
-package common
+package schedulerbackend
 
 import (
 	"context"
@@ -26,6 +26,9 @@ import (
 )
 
 // SchedBackend defines the interface that different scheduler backends must implement.
+// It is defined in this package (consumer side) so that kube and kaischeduler subpackages
+// need not import schedulerbackend, avoiding circular dependencies (see "accept interfaces,
+// return structs" and consumer-defined interfaces in Go / Kubernetes).
 //
 // Architecture: SchedBackend validates PodCliqueSet at admission, converts PodGang to scheduler-specific
 // CR (PodGroup/Workload/etc), and prepares Pods with scheduler-specific configurations.

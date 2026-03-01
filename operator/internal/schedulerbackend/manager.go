@@ -20,7 +20,6 @@ import (
 	"fmt"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend/common"
 	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend/kaischeduler"
 	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend/kube"
 
@@ -29,51 +28,47 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// Compile-time checks that backend implementations satisfy the common interface.
+// Compile-time checks that backend implementations satisfy SchedBackend.
 var (
-	_ common.SchedBackend = (*kaischeduler.Backend)(nil)
-	_ common.SchedBackend = (*kube.Backend)(nil)
+	_ SchedBackend = (*kaischeduler.Backend)(nil)
+	_ SchedBackend = (*kube.Backend)(nil)
 )
 
-// backendFactory creates and initializes a scheduler backend from a profile.
-type backendFactory func(client.Client, *runtime.Scheme, record.EventRecorder, configv1alpha1.SchedulerProfile) (common.SchedBackend, error)
-
-// backendFactories maps each supported SchedulerName to its constructor. Add new backends here.
-var backendFactories = map[configv1alpha1.SchedulerName]backendFactory{
-	configv1alpha1.SchedulerNameKube: func(cl client.Client, scheme *runtime.Scheme, rec record.EventRecorder, p configv1alpha1.SchedulerProfile) (common.SchedBackend, error) {
+// newBackendForProfile creates and initializes a SchedBackend for the given profile.
+// Add new scheduler backends by extending this switch (no global registry).
+func newBackendForProfile(cl client.Client, scheme *runtime.Scheme, rec record.EventRecorder, p configv1alpha1.SchedulerProfile) (SchedBackend, error) {
+	switch p.Name {
+	case configv1alpha1.SchedulerNameKube:
 		b := kube.New(cl, scheme, rec, p)
 		if err := b.Init(); err != nil {
 			return nil, err
 		}
 		return b, nil
-	},
-	configv1alpha1.SchedulerNameKai: func(cl client.Client, scheme *runtime.Scheme, rec record.EventRecorder, p configv1alpha1.SchedulerProfile) (common.SchedBackend, error) {
+	case configv1alpha1.SchedulerNameKai:
 		b := kaischeduler.New(cl, scheme, rec, p)
 		if err := b.Init(); err != nil {
 			return nil, err
 		}
 		return b, nil
-	},
+	default:
+		return nil, fmt.Errorf("scheduler profile %q is not supported", p.Name)
+	}
 }
 
 var (
-	backends       map[string]common.SchedBackend
-	defaultBackend common.SchedBackend
+	backends       map[string]SchedBackend
+	defaultBackend SchedBackend
 )
 
 // Initialize creates and registers backend instances for each profile in config.Profiles.
 // Defaults are applied to config so that kube-scheduler is always present; only backends
 // named in config.Profiles are started. Called once during operator startup before controllers start.
 func Initialize(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, cfg configv1alpha1.SchedulerConfiguration) error {
-	backends = make(map[string]common.SchedBackend)
+	backends = make(map[string]SchedBackend)
 
 	// New and init each backend from cfg.Profiles (order follows config; duplicate name overwrites).
 	for _, p := range cfg.Profiles {
-		factory, ok := backendFactories[p.Name]
-		if !ok {
-			return fmt.Errorf("scheduler profile %q is not supported", p.Name)
-		}
-		backend, err := factory(client, scheme, eventRecorder, p)
+		backend, err := newBackendForProfile(client, scheme, eventRecorder, p)
 		if err != nil {
 			return fmt.Errorf("failed to initialize %s backend: %w", p.Name, err)
 		}
@@ -86,7 +81,7 @@ func Initialize(client client.Client, scheme *runtime.Scheme, eventRecorder reco
 }
 
 // Get returns the backend for the given name. default-scheduler is always available; other backends return nil if not enabled via a profile.
-func Get(name string) common.SchedBackend {
+func Get(name string) SchedBackend {
 	if name == "" {
 		return defaultBackend
 	}
@@ -94,6 +89,6 @@ func Get(name string) common.SchedBackend {
 }
 
 // GetDefault returns the backend designated as default in OperatorConfiguration (the profile with default: true; if none, default-scheduler).
-func GetDefault() common.SchedBackend {
+func GetDefault() SchedBackend {
 	return defaultBackend
 }
