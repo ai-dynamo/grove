@@ -62,10 +62,10 @@ from infra_manager.utils import (
     run_kubectl,
 )
 
-
 # ============================================================================
 # Kai Scheduler
 # ============================================================================
+
 
 def install_kai_scheduler(comp_cfg: ComponentConfig) -> None:
     """Install Kai Scheduler using Helm.
@@ -81,18 +81,28 @@ def install_kai_scheduler(comp_cfg: ComponentConfig) -> None:
     except sh.ErrorReturnCode_1:
         console.print("[yellow]   No existing Kai Scheduler release found[/yellow]")
     sh.helm(
-        "install", HELM_RELEASE_KAI,
+        "install",
+        HELM_RELEASE_KAI,
         KAI_SCHEDULER_OCI,
-        "--version", comp_cfg.kai_version,
-        "--namespace", NS_KAI_SCHEDULER,
+        "--version",
+        comp_cfg.kai_version,
+        "--namespace",
+        NS_KAI_SCHEDULER,
         "--create-namespace",
-        "--set", f"global.tolerations[0].key={LABEL_CONTROL_PLANE}",
-        "--set", "global.tolerations[0].operator=Exists",
-        "--set", "global.tolerations[0].effect=NoSchedule",
-        "--set", f"global.tolerations[1].key={E2E_NODE_ROLE_KEY}",
-        "--set", "global.tolerations[1].operator=Equal",
-        "--set", "global.tolerations[1].value=agent",
-        "--set", "global.tolerations[1].effect=NoSchedule",
+        "--set",
+        f"global.tolerations[0].key={LABEL_CONTROL_PLANE}",
+        "--set",
+        "global.tolerations[0].operator=Exists",
+        "--set",
+        "global.tolerations[0].effect=NoSchedule",
+        "--set",
+        f"global.tolerations[1].key={E2E_NODE_ROLE_KEY}",
+        "--set",
+        "global.tolerations[1].operator=Equal",
+        "--set",
+        "global.tolerations[1].value=agent",
+        "--set",
+        "global.tolerations[1].effect=NoSchedule",
     )
     console.print("[green]\u2705 Kai Scheduler installed[/green]")
 
@@ -113,13 +123,14 @@ def apply_kai_queues(queues_file: Path) -> None:
     """
     try:
         sh.kubectl("apply", "-f", str(queues_file))
-    except sh.ErrorReturnCode:
-        raise RuntimeError("Kai queue webhook not ready")
+    except sh.ErrorReturnCode as err:
+        raise RuntimeError("Kai queue webhook not ready") from err
 
 
 # ============================================================================
 # Grove operator
 # ============================================================================
+
 
 @retry(
     stop=stop_after_attempt(WEBHOOK_READY_MAX_RETRIES),
@@ -137,8 +148,12 @@ def _check_grove_webhook_ready(operator_dir: Path) -> None:
     """
     try:
         result = sh.kubectl(
-            "create", "-f", str(operator_dir / REL_WORKLOAD_YAML),
-            "--dry-run=server", "-n", NS_DEFAULT,
+            "create",
+            "-f",
+            str(operator_dir / REL_WORKLOAD_YAML),
+            "--dry-run=server",
+            "-n",
+            NS_DEFAULT,
         )
         output = str(result).lower()
     except sh.ErrorReturnCode as e:
@@ -162,11 +177,13 @@ def _build_grove_images(comp_cfg: ComponentConfig, operator_dir: Path, push_repo
     build_output = json.loads(
         sh.skaffold(
             "build",
-            "--default-repo", push_repo,
-            "--profile", comp_cfg.skaffold_profile,
+            "--default-repo",
+            push_repo,
+            "--profile",
+            comp_cfg.skaffold_profile,
             "--quiet",
             "--output={{json .}}",
-            _cwd=str(operator_dir)
+            _cwd=str(operator_dir),
         )
     )
     return {build["imageName"]: build["tag"] for build in build_output.get("builds", [])}
@@ -193,13 +210,17 @@ def _deploy_grove_charts(
     os.environ["CONTAINER_REGISTRY"] = pull_repo
     sh.skaffold(
         "deploy",
-        "--profile", comp_cfg.skaffold_profile,
-        "--namespace", comp_cfg.grove_namespace,
+        "--profile",
+        comp_cfg.skaffold_profile,
+        "--namespace",
+        comp_cfg.grove_namespace,
         "--status-check=false",
         "--default-repo=",
-        "--images", f"{GROVE_OPERATOR_IMAGE}={images[GROVE_OPERATOR_IMAGE]}",
-        "--images", f"{GROVE_INITC_IMAGE}={images[GROVE_INITC_IMAGE]}",
-        _cwd=str(operator_dir)
+        "--images",
+        f"{GROVE_OPERATOR_IMAGE}={images[GROVE_OPERATOR_IMAGE]}",
+        "--images",
+        f"{GROVE_INITC_IMAGE}={images[GROVE_INITC_IMAGE]}",
+        _cwd=str(operator_dir),
     )
     console.print("[green]\u2705 Grove operator deployed[/green]")
 
@@ -218,8 +239,11 @@ def _apply_grove_helm_overrides(operator_dir: Path, helm_set_values: list[str], 
     set_args = [item for val in helm_set_values for item in ("--set", val)]
     chart_path = str(operator_dir / REL_CHARTS_DIR)
     sh.helm(
-        "upgrade", HELM_RELEASE_GROVE, chart_path,
-        "-n", grove_namespace,
+        "upgrade",
+        HELM_RELEASE_GROVE,
+        chart_path,
+        "-n",
+        grove_namespace,
         "--reuse-values",
         *set_args,
     )
@@ -239,8 +263,8 @@ def _wait_grove_webhook(operator_dir: Path) -> None:
     try:
         _check_grove_webhook_ready(operator_dir)
         console.print("[green]\u2705 Grove webhook is ready[/green]")
-    except (RuntimeError, RetryError):
-        raise RuntimeError("Timed out waiting for Grove webhook")
+    except (RuntimeError, RetryError) as err:
+        raise RuntimeError("Timed out waiting for Grove webhook") from err
 
 
 def deploy_grove_operator(
@@ -268,15 +292,17 @@ def deploy_grove_operator(
         console.print("[yellow]   No existing Grove operator release found[/yellow]")
 
     build_date = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    os.environ.update({
-        "VERSION": E2E_TEST_VERSION,
-        "LD_FLAGS": (
-            f"-X {GROVE_MODULE_PATH}.gitCommit={E2E_TEST_COMMIT} "
-            f"-X {GROVE_MODULE_PATH}.gitTreeState={E2E_TEST_TREE_STATE} "
-            f"-X {GROVE_MODULE_PATH}.buildDate={build_date} "
-            f"-X {GROVE_MODULE_PATH}.gitVersion={E2E_TEST_VERSION}"
-        )
-    })
+    os.environ.update(
+        {
+            "VERSION": E2E_TEST_VERSION,
+            "LD_FLAGS": (
+                f"-X {GROVE_MODULE_PATH}.gitCommit={E2E_TEST_COMMIT} "
+                f"-X {GROVE_MODULE_PATH}.gitTreeState={E2E_TEST_TREE_STATE} "
+                f"-X {GROVE_MODULE_PATH}.buildDate={build_date} "
+                f"-X {GROVE_MODULE_PATH}.gitVersion={E2E_TEST_VERSION}"
+            ),
+        }
+    )
 
     push_repo, pull_repo = resolve_registry_repos(options.registry, k3d_cfg.registry_port)
 
@@ -297,6 +323,7 @@ def deploy_grove_operator(
 # ============================================================================
 # Pyroscope
 # ============================================================================
+
 
 def install_pyroscope(namespace: str, values_file: Path | None = None, version: str = "") -> None:
     """Install Pyroscope via Helm.
@@ -331,6 +358,7 @@ def install_pyroscope(namespace: str, values_file: Path | None = None, version: 
 # ============================================================================
 # Uninstall helpers
 # ============================================================================
+
 
 def uninstall_kai_scheduler() -> None:
     """Uninstall Kai Scheduler via Helm."""

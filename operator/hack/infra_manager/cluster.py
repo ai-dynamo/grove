@@ -45,10 +45,10 @@ from infra_manager.constants import (
     NODES_PER_ZONE,
 )
 
-
 # ============================================================================
 # Image pre-pulling functions
 # ============================================================================
+
 
 def _pull_tag_push(
     docker_client: docker.DockerClient,
@@ -97,14 +97,16 @@ def _run_parallel_pulls_versioned(
     """
     failed_images: list[str] = []
     with Progress(
-        SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
-        BarColumn(), TaskProgressColumn(), console=console,
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console,
     ) as progress:
         task = progress.add_task("[cyan]Pulling images...", total=len(items))
         with ThreadPoolExecutor(max_workers=DEFAULT_IMAGE_PULL_MAX_WORKERS) as executor:
             futures = {
-                executor.submit(_pull_tag_push, docker_client, img, registry_port, ver): img
-                for img, ver in items
+                executor.submit(_pull_tag_push, docker_client, img, registry_port, ver): img for img, ver in items
             }
             for future in as_completed(futures):
                 image_name, success, error = future.result()
@@ -127,9 +129,7 @@ def prepull_image_groups(
         groups: List of (images, version) tuples to pull.
         registry_port: Local k3d registry port.
     """
-    items: list[tuple[str, str]] = [
-        (img, version) for images, version in groups for img in images
-    ]
+    items: list[tuple[str, str]] = [(img, version) for images, version in groups for img in images]
 
     if not items:
         return
@@ -159,6 +159,7 @@ def prepull_image_groups(
 # ============================================================================
 # Cluster operations
 # ============================================================================
+
 
 def delete_cluster(k3d_cfg: K3dConfig) -> None:
     """Delete the k3d cluster.
@@ -198,19 +199,33 @@ def create_cluster(k3d_cfg: K3dConfig) -> None:
             console.print("[yellow]   No existing cluster found[/yellow]")
 
         sh.k3d(
-            "cluster", "create", k3d_cfg.cluster_name,
-            "--servers", "1",
-            "--agents", str(k3d_cfg.worker_nodes),
-            "--image", k3d_cfg.k3s_image,
-            "--api-port", k3d_cfg.api_port,
-            "--port", f"{k3d_cfg.lb_port}@loadbalancer",
-            "--registry-create", f"registry:0.0.0.0:{k3d_cfg.registry_port}",
-            "--k3s-arg", f"--node-taint={E2E_NODE_ROLE_KEY}=agent:NoSchedule@agent:*",
-            "--k3s-node-label", f"{E2E_NODE_ROLE_KEY}=agent@agent:*",
-            "--k3s-node-label", "nvidia.com/gpu.deploy.operands=false@server:*",
-            "--k3s-node-label", "nvidia.com/gpu.deploy.operands=false@agent:*",
-            "--agents-memory", k3d_cfg.worker_memory,
-            "--timeout", CLUSTER_TIMEOUT,
+            "cluster",
+            "create",
+            k3d_cfg.cluster_name,
+            "--servers",
+            "1",
+            "--agents",
+            str(k3d_cfg.worker_nodes),
+            "--image",
+            k3d_cfg.k3s_image,
+            "--api-port",
+            k3d_cfg.api_port,
+            "--port",
+            f"{k3d_cfg.lb_port}@loadbalancer",
+            "--registry-create",
+            f"registry:0.0.0.0:{k3d_cfg.registry_port}",
+            "--k3s-arg",
+            f"--node-taint={E2E_NODE_ROLE_KEY}=agent:NoSchedule@agent:*",
+            "--k3s-node-label",
+            f"{E2E_NODE_ROLE_KEY}=agent@agent:*",
+            "--k3s-node-label",
+            "nvidia.com/gpu.deploy.operands=false@server:*",
+            "--k3s-node-label",
+            "nvidia.com/gpu.deploy.operands=false@agent:*",
+            "--agents-memory",
+            k3d_cfg.worker_memory,
+            "--timeout",
+            CLUSTER_TIMEOUT,
             "--wait",
         )
 
@@ -228,6 +243,7 @@ def wait_for_nodes() -> None:
 # ============================================================================
 # Topology labels
 # ============================================================================
+
 
 def _node_sort_key(name: str) -> tuple[str, int]:
     """Sort key that strips trailing digits and returns (prefix, number).
@@ -253,11 +269,13 @@ def _label_single_node(node: str, idx: int) -> None:
     block = idx // NODES_PER_BLOCK
     rack = idx // NODES_PER_RACK
     sh.kubectl(
-        "label", "node", node,
+        "label",
+        "node",
+        node,
         f"{LABEL_ZONE}=zone-{zone}",
         f"{LABEL_BLOCK}=block-{block}",
         f"{LABEL_RACK}=rack-{rack}",
-        "--overwrite"
+        "--overwrite",
     )
 
 
@@ -266,9 +284,12 @@ def apply_topology_labels() -> None:
     console.print(Panel.fit("Applying topology labels to worker nodes", style="bold blue"))
 
     nodes_output = sh.kubectl(
-        "get", "nodes",
-        "-l", f"!{LABEL_CONTROL_PLANE},{LABEL_TYPE}!={LABEL_TYPE_KWOK}",
-        "-o", "jsonpath={.items[*].metadata.name}"
+        "get",
+        "nodes",
+        "-l",
+        f"!{LABEL_CONTROL_PLANE},{LABEL_TYPE}!={LABEL_TYPE_KWOK}",
+        "-o",
+        "jsonpath={.items[*].metadata.name}",
     ).strip()
 
     worker_nodes = sorted(nodes_output.split(), key=_node_sort_key) if nodes_output else []
@@ -277,10 +298,7 @@ def apply_topology_labels() -> None:
         return
     max_workers = min(len(worker_nodes), 10)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(_label_single_node, node, idx): node
-            for idx, node in enumerate(worker_nodes)
-        }
+        futures = {executor.submit(_label_single_node, node, idx): node for idx, node in enumerate(worker_nodes)}
         for future in as_completed(futures):
             future.result()
     console.print(f"[green]\u2705 Applied topology labels to {len(worker_nodes)} worker nodes[/green]")

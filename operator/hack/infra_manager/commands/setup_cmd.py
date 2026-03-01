@@ -23,9 +23,9 @@ import typer
 from infra_manager.cluster import apply_topology_labels, prepull_images
 from infra_manager.config import GroveInstallOptions, K3dConfig
 from infra_manager.constants import (
-    DEPENDENCIES,
     DEFAULT_SCALE_WORKER_MEMORY,
     DEFAULT_SCALE_WORKER_NODES,
+    DEPENDENCIES,
     dep_value,
 )
 from infra_manager.orchestrator import run_e2e_setup, run_scale_setup
@@ -35,30 +35,20 @@ app = typer.Typer(help="Composite setup workflows.")
 
 @app.command()
 def e2e(
-    skip_cluster_creation: bool = typer.Option(
-        False, "--skip-cluster-creation", help="Skip k3d cluster creation"),
-    skip_kai: bool = typer.Option(
-        False, "--skip-kai", help="Skip Kai Scheduler installation"),
-    skip_grove: bool = typer.Option(
-        False, "--skip-grove", help="Skip Grove operator deployment"),
-    skip_topology: bool = typer.Option(
-        False, "--skip-topology", help="Skip topology label application"),
-    skip_prepull: bool = typer.Option(
-        False, "--skip-prepull", help="Skip image pre-pulling"),
-    workers: int | None = typer.Option(
-        None, "--workers", help="k3d worker nodes (overrides E2E_WORKER_NODES)"),
-    worker_memory: str | None = typer.Option(
-        None, "--worker-memory", help="Memory per worker node"),
-    registry: str | None = typer.Option(
-        None, "--registry", help="Container registry URL"),
-    grove_profiling: bool = typer.Option(
-        False, "--grove-profiling", help="Enable pprof"),
-    grove_pcs_syncs: int | None = typer.Option(
-        None, "--grove-pcs-syncs", help="PodCliqueSet concurrentSyncs"),
-    grove_pclq_syncs: int | None = typer.Option(
-        None, "--grove-pclq-syncs", help="PodClique concurrentSyncs"),
+    skip_cluster_creation: bool = typer.Option(False, "--skip-cluster-creation", help="Skip k3d cluster creation"),
+    skip_kai: bool = typer.Option(False, "--skip-kai", help="Skip Kai Scheduler installation"),
+    skip_grove: bool = typer.Option(False, "--skip-grove", help="Skip Grove operator deployment"),
+    skip_topology: bool = typer.Option(False, "--skip-topology", help="Skip topology label application"),
+    skip_prepull: bool = typer.Option(False, "--skip-prepull", help="Skip image pre-pulling"),
+    workers: int | None = typer.Option(None, "--workers", help="k3d worker nodes (overrides E2E_WORKER_NODES)"),
+    worker_memory: str | None = typer.Option(None, "--worker-memory", help="Memory per worker node"),
+    registry: str | None = typer.Option(None, "--registry", help="Container registry URL"),
+    grove_profiling: bool = typer.Option(False, "--grove-profiling", help="Enable pprof"),
+    grove_pcs_syncs: int | None = typer.Option(None, "--grove-pcs-syncs", help="PodCliqueSet concurrentSyncs"),
+    grove_pclq_syncs: int | None = typer.Option(None, "--grove-pclq-syncs", help="PodClique concurrentSyncs"),
     grove_pcsg_syncs: int | None = typer.Option(
-        None, "--grove-pcsg-syncs", help="PodCliqueScalingGroup concurrentSyncs"),
+        None, "--grove-pcsg-syncs", help="PodCliqueScalingGroup concurrentSyncs"
+    ),
 ) -> None:
     """Full E2E setup: k3d + kai + grove + topology + prepull.
 
@@ -85,24 +75,15 @@ def e2e(
 
 @app.command()
 def scale(
-    workers: int = typer.Option(
-        DEFAULT_SCALE_WORKER_NODES, "--workers", help="k3d worker nodes for scale testing"),
-    worker_memory: str = typer.Option(
-        DEFAULT_SCALE_WORKER_MEMORY, "--worker-memory", help="Memory per worker node"),
-    registry: str | None = typer.Option(
-        None, "--registry", help="Container registry URL"),
-    kwok_nodes: int = typer.Option(
-        100, "--kwok-nodes", help="Number of KWOK simulated nodes"),
-    kwok_batch_size: int | None = typer.Option(
-        None, "--kwok-batch-size", help="KWOK node creation batch size"),
-    pcs_syncs: int | None = typer.Option(
-        None, "--pcs-syncs", help="PodCliqueSet concurrentSyncs"),
-    pclq_syncs: int | None = typer.Option(
-        None, "--pclq-syncs", help="PodClique concurrentSyncs"),
-    pcsg_syncs: int | None = typer.Option(
-        None, "--pcsg-syncs", help="PodCliqueScalingGroup concurrentSyncs"),
-    pyroscope_namespace: str | None = typer.Option(
-        None, "--pyroscope-namespace", help="Pyroscope namespace"),
+    workers: int = typer.Option(DEFAULT_SCALE_WORKER_NODES, "--workers", help="k3d worker nodes for scale testing"),
+    worker_memory: str = typer.Option(DEFAULT_SCALE_WORKER_MEMORY, "--worker-memory", help="Memory per worker node"),
+    registry: str | None = typer.Option(None, "--registry", help="Container registry URL"),
+    kwok_nodes: int = typer.Option(100, "--kwok-nodes", help="Number of KWOK simulated nodes"),
+    kwok_batch_size: int | None = typer.Option(None, "--kwok-batch-size", help="KWOK node creation batch size"),
+    pcs_syncs: int | None = typer.Option(None, "--pcs-syncs", help="PodCliqueSet concurrentSyncs"),
+    pclq_syncs: int | None = typer.Option(None, "--pclq-syncs", help="PodClique concurrentSyncs"),
+    pcsg_syncs: int | None = typer.Option(None, "--pcsg-syncs", help="PodCliqueScalingGroup concurrentSyncs"),
+    pyroscope_namespace: str | None = typer.Option(None, "--pyroscope-namespace", help="Pyroscope namespace"),
 ) -> None:
     """Full E2E + KWOK nodes + Pyroscope + pprof for scale testing."""
     grove_options = GroveInstallOptions(
@@ -138,13 +119,15 @@ def prepull_images_cmd(
         k3d_cfg = k3d_cfg.model_copy(update={"registry_port": registry_port})
 
     prepull_images(
-        DEPENDENCIES['kai_scheduler']['images'],
-        k3d_cfg.registry_port, DEPENDENCIES['kai_scheduler']['version'],
+        DEPENDENCIES["kai_scheduler"]["images"],
+        k3d_cfg.registry_port,
+        DEPENDENCIES["kai_scheduler"]["version"],
     )
     prepull_images(
-        DEPENDENCIES['cert_manager']['images'],
-        k3d_cfg.registry_port, DEPENDENCIES['cert_manager']['version'],
+        DEPENDENCIES["cert_manager"]["images"],
+        k3d_cfg.registry_port,
+        DEPENDENCIES["cert_manager"]["version"],
     )
-    busybox_images = dep_value('test_images', 'busybox')
+    busybox_images = dep_value("test_images", "busybox")
     if busybox_images:
-        prepull_images(busybox_images, k3d_cfg.registry_port, 'latest')
+        prepull_images(busybox_images, k3d_cfg.registry_port, "latest")

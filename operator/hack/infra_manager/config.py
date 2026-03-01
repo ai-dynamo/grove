@@ -22,6 +22,7 @@ from dataclasses import dataclass
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 from infra_manager.constants import (
     DEFAULT_API_PORT,
     DEFAULT_CLUSTER_CREATE_MAX_RETRIES,
@@ -41,10 +42,10 @@ from infra_manager.constants import (
     DEPENDENCIES,
 )
 
-
 # ============================================================================
 # Configuration classes
 # ============================================================================
+
 
 class K3dConfig(BaseSettings):
     """k3d cluster configuration, auto-loaded from E2E_* env vars.
@@ -84,8 +85,7 @@ class ComponentConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="E2E_", extra="ignore")
 
-    kai_version: str = Field(default=DEPENDENCIES['kai_scheduler']['version'],
-                             pattern=r"^v[\d.]+(-[\w.]+)?$")
+    kai_version: str = Field(default=DEPENDENCIES["kai_scheduler"]["version"], pattern=r"^v[\d.]+(-[\w.]+)?$")
     skaffold_profile: str = DEFAULT_SKAFFOLD_PROFILE
     grove_namespace: str = DEFAULT_GROVE_NAMESPACE
     registry: str | None = None
@@ -116,6 +116,7 @@ class KwokConfig(BaseSettings):
 # ============================================================================
 # Grove install options
 # ============================================================================
+
 
 @dataclass(frozen=True)
 class GroveInstallOptions:

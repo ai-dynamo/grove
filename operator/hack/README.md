@@ -53,19 +53,12 @@ pip3 install -r hack/requirements.txt
 # View all options
 ./hack/infra-manager.py --help
 
-# Delete the cluster
-./hack/infra-manager.py delete k3d-cluster
-
 # Skip specific components
 ./hack/infra-manager.py setup e2e --skip-grove
 ./hack/infra-manager.py setup e2e --skip-kai --skip-prepull
 
 # Scale test setup with KWOK simulated nodes
 ./hack/infra-manager.py setup scale --kwok-nodes 1000
-
-# Install individual components
-./hack/infra-manager.py install grove --profiling
-./hack/infra-manager.py install pyroscope
 ```
 
 ### config-cluster.py

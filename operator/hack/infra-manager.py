@@ -19,27 +19,14 @@
 infra-manager.py - Unified CLI for Grove infrastructure management.
 
 Subcommands:
-    create     Create infrastructure resources (k3d-cluster, kwok-nodes)
-    delete     Delete infrastructure resources (k3d-cluster, kwok-nodes)
-    install    Install components (kai, grove, pyroscope)
-    uninstall  Uninstall components (kai, grove)
     setup      Composite workflows (e2e, scale, apply-topology, prepull-images)
 
 Examples:
-    # Create a k3d cluster with 2 workers
-    ./infra-manager.py create k3d-cluster --workers 2
-
     # Full e2e setup (default — no flags needed!)
     ./infra-manager.py setup e2e
 
-    # Deploy only grove on existing cluster
-    ./infra-manager.py install grove
-
     # Scale test setup
     ./infra-manager.py setup scale --kwok-nodes 1000
-
-    # Delete cluster
-    ./infra-manager.py delete k3d-cluster
 
 For detailed usage information, run: ./infra-manager.py --help
 """
@@ -50,15 +37,8 @@ import logging
 import sys
 
 import typer
-
 from infra_manager import console
-from infra_manager.commands import (
-    create_cmd,
-    delete_cmd,
-    install_cmd,
-    setup_cmd,
-    uninstall_cmd,
-)
+from infra_manager.commands import setup_cmd
 
 app = typer.Typer(
     help="Unified CLI for Grove infrastructure management.",
@@ -76,10 +56,6 @@ def _main_callback() -> None:
     )
 
 
-app.add_typer(create_cmd.app, name="create")
-app.add_typer(delete_cmd.app, name="delete")
-app.add_typer(install_cmd.app, name="install")
-app.add_typer(uninstall_cmd.app, name="uninstall")
 app.add_typer(setup_cmd.app, name="setup")
 
 

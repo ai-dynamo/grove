@@ -97,16 +97,16 @@ def node_manifest(node_id: int, kwok_cfg: KwokConfig) -> dict:
                 "node.alpha.kubernetes.io/ttl": "0",
             },
         },
-        "spec": {
-            "taints": [{"effect": "NoSchedule", "key": KWOK_FAKE_NODE_TAINT_KEY, "value": "true"}]
-        },
+        "spec": {"taints": [{"effect": "NoSchedule", "key": KWOK_FAKE_NODE_TAINT_KEY, "value": "true"}]},
         "status": {
             "capacity": resources,
             "allocatable": resources,
             "conditions": NODE_CONDITIONS,
             "addresses": [
-                {"type": "InternalIP",
-                 "address": f"{KWOK_IP_PREFIX}.{node_id // KWOK_IP_OCTET_SIZE}.{node_id % KWOK_IP_OCTET_SIZE}"}
+                {
+                    "type": "InternalIP",
+                    "address": f"{KWOK_IP_PREFIX}.{node_id // KWOK_IP_OCTET_SIZE}.{node_id % KWOK_IP_OCTET_SIZE}",
+                }
             ],
         },
     }
@@ -131,11 +131,17 @@ def install_kwok_controller(version: str, timeout: int = 120) -> None:
             console.print("[yellow]   (This is usually safe if KWOK is already installed)[/yellow]")
 
     console.print("[yellow]\u2139\ufe0f  Waiting for KWOK controller to be available...[/yellow]")
-    ok, _, stderr = run_kubectl([
-        "wait", "--for=condition=Available",
-        f"deployment/{KWOK_CONTROLLER_DEPLOYMENT}", "-n", NS_KUBE_SYSTEM,
-        f"--timeout={timeout}s"
-    ], timeout=timeout + 10)
+    ok, _, stderr = run_kubectl(
+        [
+            "wait",
+            "--for=condition=Available",
+            f"deployment/{KWOK_CONTROLLER_DEPLOYMENT}",
+            "-n",
+            NS_KUBE_SYSTEM,
+            f"--timeout={timeout}s",
+        ],
+        timeout=timeout + 10,
+    )
     if not ok:
         raise RuntimeError(f"KWOK controller not ready after {timeout}s: {stderr[:200]}")
     console.print("[green]\u2705 KWOK controller installed and ready[/green]")
@@ -159,9 +165,7 @@ def _kubectl_apply(tmp_name: str) -> bool:
     return ok or "AlreadyExists" in stderr
 
 
-def create_node_batch(
-    node_ids: list[int], kwok_cfg: KwokConfig
-) -> tuple[list[int], list[tuple[int, str]]]:
+def create_node_batch(node_ids: list[int], kwok_cfg: KwokConfig) -> tuple[list[int], list[tuple[int, str]]]:
     """Create a batch of KWOK nodes with a single kubectl apply.
 
     Args:
@@ -171,17 +175,13 @@ def create_node_batch(
     Returns:
         Tuple of (successful_node_ids, failed_node_id_error_pairs).
     """
-    combined_yaml = "---\n".join(
-        yaml.dump(node_manifest(nid, kwok_cfg), default_flow_style=False)
-        for nid in node_ids
-    )
+    combined_yaml = "---\n".join(yaml.dump(node_manifest(nid, kwok_cfg), default_flow_style=False) for nid in node_ids)
 
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".yaml")
-    try:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".yaml") as tmp:
         tmp.write(combined_yaml.encode())
         tmp.flush()
-        tmp.close()
 
+    try:
         try:
             success = _kubectl_apply(tmp.name)
         except RetryError:
@@ -201,11 +201,17 @@ def _wait_kwok_nodes_ready(timeout: int = 120) -> None:
         timeout: Maximum seconds to wait for nodes to be ready.
     """
     console.print("[yellow]\u2139\ufe0f  Waiting for KWOK nodes to be ready...[/yellow]")
-    ok, _, stderr = run_kubectl([
-        "wait", "--for=condition=Ready", "nodes",
-        "-l", f"{LABEL_TYPE}={LABEL_TYPE_KWOK}",
-        f"--timeout={timeout}s",
-    ], timeout=timeout + 10)
+    ok, _, stderr = run_kubectl(
+        [
+            "wait",
+            "--for=condition=Ready",
+            "nodes",
+            "-l",
+            f"{LABEL_TYPE}={LABEL_TYPE_KWOK}",
+            f"--timeout={timeout}s",
+        ],
+        timeout=timeout + 10,
+    )
     if not ok:
         console.print(f"[yellow]\u26a0\ufe0f  Some KWOK nodes may not be ready: {stderr[:200]}[/yellow]")
     else:
@@ -234,17 +240,13 @@ def create_nodes(total: int, kwok_cfg: KwokConfig) -> None:
 
     max_workers = min(len(batches), 5)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(create_node_batch, node_ids, kwok_cfg): node_ids
-            for node_ids in batches
-        }
+        futures = {executor.submit(create_node_batch, node_ids, kwok_cfg): node_ids for node_ids in batches}
         for future in as_completed(futures):
             node_ids = futures[future]
             batch_ok, batch_fail = future.result()
             successes.extend(batch_ok)
             failures.extend(batch_fail)
-            logger.info("Batch %d-%d: success=%d, failed=%d",
-                        node_ids[0], node_ids[-1], len(batch_ok), len(batch_fail))
+            logger.info("Batch %d-%d: success=%d, failed=%d", node_ids[0], node_ids[-1], len(batch_ok), len(batch_fail))
 
     if failures:
         console.print(f"[yellow]\u26a0\ufe0f  {len(failures)} nodes failed to create[/yellow]")

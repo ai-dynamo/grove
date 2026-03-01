@@ -57,10 +57,10 @@ from infra_manager.constants import (
 from infra_manager.kwok import create_nodes, install_kwok_controller
 from infra_manager.utils import require_command
 
-
 # ============================================================================
 # Internal helpers
 # ============================================================================
+
 
 def _check_prerequisites(install_kai: bool, install_grove: bool, operator_dir: Path) -> None:
     """Check CLI tools and prepare Helm charts.
@@ -123,10 +123,7 @@ def _run_parallel(tasks: dict[str, Callable[[], None]]) -> None:
             outputs[name] = buf.getvalue()
 
     with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
-        futures = {
-            executor.submit(_run_task, name, fn): name
-            for name, fn in tasks.items()
-        }
+        futures = {executor.submit(_run_task, name, fn): name for name, fn in tasks.items()}
         for future in as_completed(futures):
             future.result()
 
@@ -142,12 +139,12 @@ def _run_prepull(k3d_cfg: K3dConfig) -> None:
         k3d_cfg: k3d cluster configuration with the registry port.
     """
     groups: list[tuple[list[str], str]] = [
-        (DEPENDENCIES['kai_scheduler']['images'], DEPENDENCIES['kai_scheduler']['version']),
-        (DEPENDENCIES['cert_manager']['images'], DEPENDENCIES['cert_manager']['version']),
+        (DEPENDENCIES["kai_scheduler"]["images"], DEPENDENCIES["kai_scheduler"]["version"]),
+        (DEPENDENCIES["cert_manager"]["images"], DEPENDENCIES["cert_manager"]["version"]),
     ]
-    busybox_images = dep_value('test_images', 'busybox')
+    busybox_images = dep_value("test_images", "busybox")
     if busybox_images:
-        groups.append((busybox_images, 'latest'))
+        groups.append((busybox_images, "latest"))
     prepull_image_groups(groups, k3d_cfg.registry_port)
 
 
@@ -163,14 +160,13 @@ def _run_kai_post_install(operator_dir: Path) -> None:
     from infra_manager.constants import NS_KAI_SCHEDULER
 
     console.print("[yellow]\u2139\ufe0f  Waiting for Kai Scheduler pods to be ready...[/yellow]")
-    sh.kubectl("wait", "--for=condition=Ready", "pods", "--all",
-               "-n", NS_KAI_SCHEDULER, "--timeout=5m")
+    sh.kubectl("wait", "--for=condition=Ready", "pods", "--all", "-n", NS_KAI_SCHEDULER, "--timeout=5m")
     console.print("[yellow]\u2139\ufe0f  Creating default Kai queues (with retry for webhook readiness)...[/yellow]")
     try:
         apply_kai_queues(operator_dir / REL_QUEUES_YAML)
         console.print("[green]\u2705 Kai queues created successfully[/green]")
-    except (RuntimeError, RetryError):
-        raise RuntimeError("Failed to create Kai queues after retries")
+    except (RuntimeError, RetryError) as err:
+        raise RuntimeError("Failed to create Kai queues after retries") from err
 
 
 def _run_kubeconfig_merge(k3d_cfg: K3dConfig) -> None:
@@ -191,6 +187,7 @@ def _run_kubeconfig_merge(k3d_cfg: K3dConfig) -> None:
 # ============================================================================
 # New public API
 # ============================================================================
+
 
 def run_e2e_setup(
     *,
@@ -254,8 +251,7 @@ def run_e2e_setup(
     if install_kai:
         parallel_tasks["kai"] = lambda: install_kai_scheduler(comp_cfg)
     if install_grove:
-        parallel_tasks["grove"] = lambda: deploy_grove_operator(
-            k3d_cfg, comp_cfg, operator_dir, grove_options)
+        parallel_tasks["grove"] = lambda: deploy_grove_operator(k3d_cfg, comp_cfg, operator_dir, grove_options)
     _run_parallel(parallel_tasks)
 
     # Phase 3: Sequential post-install (depends on kai)
@@ -326,11 +322,9 @@ def run_scale_setup(
         "prepull": lambda: _run_prepull(k3d_cfg),
         "topology": apply_topology_labels,
         "kai": lambda: install_kai_scheduler(comp_cfg),
-        "grove": lambda: deploy_grove_operator(
-            k3d_cfg, comp_cfg, operator_dir, grove_options),
+        "grove": lambda: deploy_grove_operator(k3d_cfg, comp_cfg, operator_dir, grove_options),
         "kwok": lambda: install_kwok_controller(kwok_version),
-        "pyroscope": lambda: install_pyroscope(
-            kwok_cfg.pyroscope_ns, values_file, version=pyroscope_version),
+        "pyroscope": lambda: install_pyroscope(kwok_cfg.pyroscope_ns, values_file, version=pyroscope_version),
     }
     _run_parallel(parallel_tasks)
 

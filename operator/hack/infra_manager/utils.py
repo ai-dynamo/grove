@@ -93,8 +93,8 @@ def require_command(cmd: str) -> None:
     """
     try:
         sh.which(cmd)
-    except sh.ErrorReturnCode:
-        raise RuntimeError(f"Required command '{cmd}' not found. Please install it first.")
+    except sh.ErrorReturnCode as err:
+        raise RuntimeError(f"Required command '{cmd}' not found. Please install it first.") from err
 
 
 def run_kubectl(args: list[str], timeout: int = 30) -> tuple[bool, str, str]:
@@ -114,7 +114,9 @@ def run_kubectl(args: list[str], timeout: int = 30) -> tuple[bool, str, str]:
     try:
         result = subprocess.run(
             ["kubectl", *args],
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
         )
         return result.returncode == 0, result.stdout, result.stderr
     except (subprocess.SubprocessError, OSError) as exc:

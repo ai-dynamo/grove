@@ -76,16 +76,31 @@ KAI_QUEUE_POLL_INTERVAL_SECONDS = 5
 CLUSTER_CREATE_RETRY_WAIT_SECONDS = 10
 
 NODE_CONDITIONS = [
-    {"type": "Ready", "status": "True", "reason": "KubeletReady",
-     "message": "kubelet is posting ready status"},
-    {"type": "MemoryPressure", "status": "False", "reason": "KubeletHasSufficientMemory",
-     "message": "kubelet has sufficient memory available"},
-    {"type": "DiskPressure", "status": "False", "reason": "KubeletHasNoDiskPressure",
-     "message": "kubelet has no disk pressure"},
-    {"type": "PIDPressure", "status": "False", "reason": "KubeletHasSufficientPID",
-     "message": "kubelet has sufficient PID available"},
-    {"type": "NetworkUnavailable", "status": "False", "reason": "RouteCreated",
-     "message": "RouteController created a route"},
+    {"type": "Ready", "status": "True", "reason": "KubeletReady", "message": "kubelet is posting ready status"},
+    {
+        "type": "MemoryPressure",
+        "status": "False",
+        "reason": "KubeletHasSufficientMemory",
+        "message": "kubelet has sufficient memory available",
+    },
+    {
+        "type": "DiskPressure",
+        "status": "False",
+        "reason": "KubeletHasNoDiskPressure",
+        "message": "kubelet has no disk pressure",
+    },
+    {
+        "type": "PIDPressure",
+        "status": "False",
+        "reason": "KubeletHasSufficientPID",
+        "message": "kubelet has sufficient PID available",
+    },
+    {
+        "type": "NetworkUnavailable",
+        "status": "False",
+        "reason": "RouteCreated",
+        "message": "RouteController created a route",
+    },
 ]
 
 E2E_NODE_ROLE_KEY = "node_role.e2e.grove.nvidia.com"
