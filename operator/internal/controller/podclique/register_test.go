@@ -91,11 +91,11 @@ func managedPodWithPodCliqueOwner(namespace, podName, pclqName string, podUID ty
 	}
 }
 
-// TestPodDeleteExpectationsHandler_Delete tests the pod delete watch added for the scenario in issue #457:
+// TestPodWatchHandler_Delete tests the pod watch handler's Delete path for the scenario in issue #457:
 // when a managed pod (e.g. pending) is manually deleted, the informer sees a Delete event before the next reconcile.
 // The handler must call ObserveDeletions so the pod's UID is removed from create expectations (uidsToAdd),
 // allowing the controller to recreate the pod on the next reconcile instead of treating it as "informer slow".
-func TestPodDeleteExpectationsHandler_Delete(t *testing.T) {
+func TestPodWatchHandler_Delete(t *testing.T) {
 	const ns, pclqName, podName = "default", "pclq-1", "pclq-1-0"
 	pclqKey, err := expect.ControlleeKeyFunc(&grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: pclqName}})
 	require.NoError(t, err)
