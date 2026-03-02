@@ -463,7 +463,10 @@ func TestUpdatePodGangWithPodReferences(t *testing.T) {
 				Labels:    map[string]string{apicommon.LabelPodGang: "pg-a"},
 			},
 		}
-		fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs, pclq, pgExisting).Build()
+		fakeClient := testutils.NewTestClientBuilder().
+			WithObjects(pcs, pclq, pgExisting).
+			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
+			Build()
 		sc := &syncContext{
 			ctx:                  ctx,
 			logger:               logger,
@@ -541,7 +544,10 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 			OwnerReferences: []metav1.OwnerReference{{Name: pclqName, UID: pclq.UID, Controller: ptr.To(true)}},
 		},
 	}
-	fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs, pclq, pgCreated, pod1, pod2).Build()
+	fakeClient := testutils.NewTestClientBuilder().
+		WithObjects(pcs, pclq, pgCreated, pod1, pod2).
+		WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
+		Build()
 	r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: &record.FakeRecorder{}}
 	sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
 	require.NoError(t, err)
