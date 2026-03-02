@@ -23,6 +23,7 @@ import (
 
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 
 	"github.com/samber/lo"
@@ -46,10 +47,13 @@ type pcsValidator struct {
 	pcs                    *grovecorev1alpha1.PodCliqueSet
 	tasEnabled             bool
 	clusterTopologyDomains []string
+	schedulerConfig        groveconfigv1alpha1.SchedulerConfiguration
 }
 
 // newPCSValidator creates a new PodCliqueSet validator for the given operation.
-func newPCSValidator(pcs *grovecorev1alpha1.PodCliqueSet, operation admissionv1.Operation, tasConfig groveconfigv1alpha1.TopologyAwareSchedulingConfiguration) *pcsValidator {
+// schedulerConfig is the full scheduler configuration; the validator uses it for
+// scheduler-name matching and may use per-scheduler config for future validations.
+func newPCSValidator(pcs *grovecorev1alpha1.PodCliqueSet, operation admissionv1.Operation, tasConfig groveconfigv1alpha1.TopologyAwareSchedulingConfiguration, schedulerConfig groveconfigv1alpha1.SchedulerConfiguration) *pcsValidator {
 	topologyDomains := lo.Map(tasConfig.Levels, func(level grovecorev1alpha1.TopologyLevel, _ int) string {
 		return string(level.Domain)
 	})
@@ -58,6 +62,7 @@ func newPCSValidator(pcs *grovecorev1alpha1.PodCliqueSet, operation admissionv1.
 		pcs:                    pcs,
 		tasEnabled:             tasConfig.Enabled,
 		clusterTopologyDomains: topologyDomains,
+		schedulerConfig:        schedulerConfig,
 	}
 }
 
@@ -138,9 +143,14 @@ func (v *pcsValidator) validatePodCliqueTemplates(fldPath *field.Path) ([]string
 	allErrs = append(allErrs, sliceMustHaveUniqueElements(cliqueNames, fldPath.Child("name"), "cliqueTemplateSpec names must be unique")...)
 	allErrs = append(allErrs, sliceMustHaveUniqueElements(cliqueRoles, fldPath.Child("roleName"), "cliqueTemplateSpec.Spec roleNames must be unique")...)
 
+	// Validate scheduler names: all must be the same
+	// When schedulerName is empty, use the default backend's name from schedulerbackend.
 	uniqueSchedulerNames := lo.Uniq(lo.Map(schedulerNames, func(item string, _ int) string {
 		if item == "" {
-			return "default-scheduler"
+			if def := schedulerbackend.GetDefault(); def != nil {
+				return def.Name()
+			}
+			return "default-scheduler" // fallback when backend not initialized (e.g. in tests)
 		}
 		return item
 	}))
@@ -148,6 +158,24 @@ func (v *pcsValidator) validatePodCliqueTemplates(fldPath *field.Path) ([]string
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("spec").Child("podSpec").Child("schedulerName"), uniqueSchedulerNames[0], "the schedulerName for all pods have to be the same"))
 	}
 
+	// Validate that the scheduler name is enabled (present in OperatorConfiguration profiles or default)
+	pcsSchedulerName := ""
+	if len(uniqueSchedulerNames) > 0 && uniqueSchedulerNames[0] != "" {
+		pcsSchedulerName = uniqueSchedulerNames[0]
+	}
+	if pcsSchedulerName == "" {
+		if def := schedulerbackend.GetDefault(); def != nil {
+			pcsSchedulerName = def.Name()
+		}
+	}
+	// default-scheduler is the pod-facing name for kube-scheduler and is always accepted when kube backend is enabled
+	if pcsSchedulerName != "" && pcsSchedulerName != "default-scheduler" && schedulerbackend.Get(pcsSchedulerName) == nil {
+		allErrs = append(allErrs, field.Invalid(
+			fldPath.Child("spec").Child("podSpec").Child("schedulerName"),
+			pcsSchedulerName,
+			"schedulerName must be an enabled scheduler backend; this scheduler is not enabled in OperatorConfiguration",
+		))
+	}
 	if v.isStartupTypeExplicit() {
 		allErrs = append(allErrs, validateCliqueDependencies(cliqueTemplateSpecs, fldPath)...)
 	}
@@ -543,6 +571,7 @@ func (v *pcsValidator) validatePodCliqueUpdate(oldCliques []*grovecorev1alpha1.P
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.RoleName, oldIndexCliqueTuple.B.Spec.RoleName, cliqueFldPath.Child("roleName"))...)
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.MinAvailable, oldIndexCliqueTuple.B.Spec.MinAvailable, cliqueFldPath.Child("minAvailable"))...)
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.StartsAfter, oldIndexCliqueTuple.B.Spec.StartsAfter, cliqueFldPath.Child("startsAfter"))...)
+		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.PodSpec.SchedulerName, oldIndexCliqueTuple.B.Spec.PodSpec.SchedulerName, cliqueFldPath.Child("podSpec", "schedulerName"))...)
 	}
 
 	return allErrs

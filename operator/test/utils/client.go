@@ -138,6 +138,14 @@ func (b *TestClientBuilder) WithObjects(objects ...client.Object) *TestClientBui
 	return b
 }
 
+// WithStatusSubresource registers types that have status subresources so that Status().Patch() works with the fake client.
+func (b *TestClientBuilder) WithStatusSubresource(objs ...client.Object) *TestClientBuilder {
+	if len(objs) > 0 {
+		b.delegatingClientBuilder.WithStatusSubresource(objs...)
+	}
+	return b
+}
+
 // RecordErrorForObjects records an error for a specific client.Client method and object keys.
 func (b *TestClientBuilder) RecordErrorForObjects(method ClientMethod, err *apierrors.StatusError, objectKeys ...client.ObjectKey) *TestClientBuilder {
 	// this method records error, so if nil error is passed then there is no need to create any error record.

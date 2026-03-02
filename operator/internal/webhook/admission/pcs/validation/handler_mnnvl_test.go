@@ -84,7 +84,12 @@ func TestValidateCreate_MNNVL(t *testing.T) {
 			networkConfig := configv1alpha1.NetworkAcceleration{
 				AutoMNNVLEnabled: tt.autoMNNVLEnabled,
 			}
-			handler := NewHandler(mgr, getDefaultTASConfig(), networkConfig)
+			cfg := configv1alpha1.OperatorConfiguration{
+				TopologyAwareScheduling: getDefaultTASConfig(),
+				Network:                 networkConfig,
+				Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube, Default: true}}},
+			}
+			handler := NewHandler(mgr, &cfg)
 
 			ctx := context.Background()
 			warnings, err := handler.ValidateCreate(ctx, tt.pcs)
@@ -163,7 +168,12 @@ func TestValidateUpdate_MNNVL(t *testing.T) {
 			}
 
 			// MNNVL validation on update doesn't depend on feature flag
-			handler := NewHandler(mgr, getDefaultTASConfig(), getDefaultNetworkConfig())
+			cfg := configv1alpha1.OperatorConfiguration{
+				TopologyAwareScheduling: getDefaultTASConfig(),
+				Network:                 getDefaultNetworkConfig(),
+				Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube, Default: true}}},
+			}
+			handler := NewHandler(mgr, &cfg)
 
 			ctx := context.Background()
 			warnings, err := handler.ValidateUpdate(ctx, tt.oldPCS, tt.newPCS)
@@ -245,7 +255,12 @@ func TestMNNVL_WebhookPipeline_LegacyPCSUpdate(t *testing.T) {
 			require.NoError(t, err, "defaulting webhook should not error on update")
 
 			// Step 2: Simulate the validating webhook running with oldPCS vs (possibly mutated) newPCS.
-			validationHandler := NewHandler(mgr, getDefaultTASConfig(), networkConfig)
+			validationCfg := configv1alpha1.OperatorConfiguration{
+				TopologyAwareScheduling: getDefaultTASConfig(),
+				Network:                 networkConfig,
+				Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube, Default: true}}},
+			}
+			validationHandler := NewHandler(mgr, &validationCfg)
 
 			ctx := context.Background()
 			warnings, err := validationHandler.ValidateUpdate(ctx, oldPCS, newPCS)

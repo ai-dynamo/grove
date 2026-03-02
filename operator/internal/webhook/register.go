@@ -31,18 +31,21 @@ import (
 )
 
 // Register registers the webhooks with the controller manager.
-func Register(mgr manager.Manager, authorizerConfig configv1alpha1.AuthorizerConfig, tasConfig configv1alpha1.TopologyAwareSchedulingConfiguration, networkConfig configv1alpha1.NetworkAcceleration) error {
-	defaultingWebhook := defaulting.NewHandler(mgr, networkConfig)
+func Register(mgr manager.Manager, operatorCfg *configv1alpha1.OperatorConfiguration) error {
+	if operatorCfg == nil {
+		return fmt.Errorf("operator configuration must not be nil")
+	}
+	defaultingWebhook := defaulting.NewHandler(mgr, operatorCfg.Network)
 	slog.Info("Registering webhook with manager", "handler", defaulting.Name)
 	if err := defaultingWebhook.RegisterWithManager(mgr); err != nil {
 		return fmt.Errorf("failed adding %s webhook handler: %v", defaulting.Name, err)
 	}
-	pcsValidatingWebhook := pcsvalidation.NewHandler(mgr, tasConfig, networkConfig)
+	pcsValidatingWebhook := pcsvalidation.NewHandler(mgr, operatorCfg)
 	slog.Info("Registering webhook with manager", "handler", pcsvalidation.Name)
 	if err := pcsValidatingWebhook.RegisterWithManager(mgr); err != nil {
 		return fmt.Errorf("failed adding %s webhook handler: %v", pcsvalidation.Name, err)
 	}
-	if authorizerConfig.Enabled {
+	if operatorCfg.Authorizer.Enabled {
 		serviceAccountName, ok := os.LookupEnv(constants.EnvVarServiceAccountName)
 		if !ok {
 			return fmt.Errorf("can not register authorizer webhook with no \"%s\" environment vairable", constants.EnvVarServiceAccountName)
@@ -52,7 +55,7 @@ func Register(mgr manager.Manager, authorizerConfig configv1alpha1.AuthorizerCon
 			return fmt.Errorf("error reading namespace file with error: %w", err)
 		}
 		reconcilerServiceAccountUserName := generateReconcilerServiceAccountUsername(string(namespace), serviceAccountName)
-		authorizerWebhook := authorization.NewHandler(mgr, authorizerConfig, reconcilerServiceAccountUserName)
+		authorizerWebhook := authorization.NewHandler(mgr, operatorCfg.Authorizer, reconcilerServiceAccountUserName)
 		slog.Info("Registering webhook with manager", "handler", authorization.Name)
 		if err := authorizerWebhook.RegisterWithManager(mgr); err != nil {
 			return fmt.Errorf("failed adding %s webhook handler: %v", authorization.Name, err)

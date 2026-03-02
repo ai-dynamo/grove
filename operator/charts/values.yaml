@@ -81,6 +81,14 @@ config:
       concurrentSyncs: 3
     podClique:
       concurrentSyncs: 3
+  # Scheduler configures which scheduler backends are active. default-scheduler is always available.
+  # List profiles to enable backends; set default: true on exactly one profile.
+  scheduler:
+    profiles:
+      - name: kube-scheduler
+        default: true
+        # config: { gangScheduling: false }  # optional
+      - name: kai-scheduler
   logLevel: info
   logFormat: json
   topologyAwareScheduling:

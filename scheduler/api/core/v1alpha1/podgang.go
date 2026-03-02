@@ -157,6 +157,9 @@ const (
 	PodGangConditionTypeScheduled PodGangConditionType = "Scheduled"
 	// PodGangConditionTypeReady indicates that all the constituent PodGroups are Ready.
 	PodGangConditionTypeReady PodGangConditionType = "Ready"
+	// PodGangConditionTypeInitialized indicates that all Pods have been created and PodGang has been populated with pod references.
+	// This condition is set to True after all pods are created, signaling that scheduling gates can be removed.
+	PodGangConditionTypeInitialized PodGangConditionType = "Initialized"
 	// PodGangConditionTypeUnhealthy indicates that the PodGang is unhealthy. It is now a candidate for gang termination.
 	// If this condition is true for at least PodGangSpec.TerminationDelay duration, then the PodGang will be terminated.
 	PodGangConditionTypeUnhealthy PodGangConditionType = "Unhealthy"
