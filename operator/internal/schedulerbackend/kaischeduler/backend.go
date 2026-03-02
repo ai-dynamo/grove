@@ -51,7 +51,7 @@ func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRec
 	}
 }
 
-// Name returns the backend name
+// Name returns the pod-facing scheduler name (kai-scheduler), for lookup and logging.
 func (b *Backend) Name() string {
 	return b.name
 }

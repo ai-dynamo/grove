@@ -54,7 +54,7 @@ func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRec
 	}
 }
 
-// Name returns the backend profile name (kube-scheduler), for lookup and logging.
+// Name returns the pod-facing scheduler name (default-scheduler), for lookup and logging.
 func (b *Backend) Name() string {
 	return b.name
 }
