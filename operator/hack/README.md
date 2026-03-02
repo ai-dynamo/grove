@@ -66,7 +66,7 @@ Available variables:
 - `E2E_WORKER_NODES` - Number of worker nodes (default: 30)
 - `E2E_WORKER_MEMORY` - Worker node memory (default: 150m)
 - `E2E_K3S_IMAGE` - K3s image (default: rancher/k3s:v1.33.5-k3s1)
-- `E2E_KAI_VERSION` - Kai Scheduler version (default: v0.13.0-rc1)
+- `E2E_KAI_VERSION` - Kai Scheduler version (default: v0.13.0)
 - `E2E_MAX_RETRIES` - Max cluster creation retries (default: 3)
 - `E2E_SKAFFOLD_PROFILE` - Skaffold profile for Grove (default: topology-test)
 
