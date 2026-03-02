@@ -17,7 +17,6 @@
 package podclique
 
 import (
-	"context"
 	"testing"
 
 	"github.com/ai-dynamo/grove/operator/api/common"
@@ -31,11 +30,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/util/workqueue"
 	"k8s.io/utils/ptr"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
 // TestControllerConstants tests the controller constants
@@ -44,29 +41,9 @@ func TestControllerConstants(t *testing.T) {
 	assert.Equal(t, "podclique-controller", controllerName)
 }
 
-// mockInnerHandler records whether Delete was called and forwards to no-op implementations.
-type mockInnerHandler struct {
-	deleteCalled bool
-	deleteObject client.Object
-}
-
-func (m *mockInnerHandler) Create(_ context.Context, _ event.TypedCreateEvent[client.Object], _ workqueue.TypedRateLimitingInterface[reconcile.Request]) {
-}
-
-func (m *mockInnerHandler) Update(_ context.Context, _ event.TypedUpdateEvent[client.Object], _ workqueue.TypedRateLimitingInterface[reconcile.Request]) {
-}
-
-func (m *mockInnerHandler) Delete(_ context.Context, e event.TypedDeleteEvent[client.Object], _ workqueue.TypedRateLimitingInterface[reconcile.Request]) {
-	m.deleteCalled = true
-	m.deleteObject = e.Object
-}
-
-func (m *mockInnerHandler) Generic(_ context.Context, _ event.TypedGenericEvent[client.Object], _ workqueue.TypedRateLimitingInterface[reconcile.Request]) {
-}
-
 // managedPodWithPodCliqueOwner returns a Pod that isManagedPod() and has a PodClique owner (so the
-// pod delete handler will call ObserveDeletions for it). Used to simulate the issue #457 scenario:
-// a pending pod is manually deleted; the handler must lower create expectations so the next reconcile recreates it.
+// pod predicate will call ObserveDeletions for it). Used to simulate the managed pod deletion scenario:
+// a pending pod is manually deleted; the predicate must lower create expectations so the next reconcile recreates it.
 func managedPodWithPodCliqueOwner(namespace, podName, pclqName string, podUID types.UID) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -91,11 +68,11 @@ func managedPodWithPodCliqueOwner(namespace, podName, pclqName string, podUID ty
 	}
 }
 
-// TestPodWatchHandler_Delete tests the pod watch handler's Delete path for the scenario in issue #457:
+// TestPodPredicate_Delete tests the pod predicate's Delete path for the scenario:
 // when a managed pod (e.g. pending) is manually deleted, the informer sees a Delete event before the next reconcile.
-// The handler must call ObserveDeletions so the pod's UID is removed from create expectations (uidsToAdd),
+// The predicate must call ObserveDeletions so the pod's UID is removed from create expectations (uidsToAdd),
 // allowing the controller to recreate the pod on the next reconcile instead of treating it as "informer slow".
-func TestPodWatchHandler_Delete(t *testing.T) {
+func TestPodPredicate_Delete(t *testing.T) {
 	const ns, pclqName, podName = "default", "pclq-1", "pclq-1-0"
 	pclqKey, err := expect.ControlleeKeyFunc(&grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: pclqName}})
 	require.NoError(t, err)
@@ -108,18 +85,17 @@ func TestPodWatchHandler_Delete(t *testing.T) {
 		createExpectations := store.GetCreateExpectations(pclqKey)
 		require.Contains(t, createExpectations, podUID, "setup: create expectation should contain pod UID")
 
-		inner := &mockInnerHandler{}
-		h := &podWatchHandler{expectationsStore: store, inner: inner}
+		r := &Reconciler{expectationsStore: store}
+		pred := r.podPredicate()
 		pod := managedPodWithPodCliqueOwner(ns, podName, pclqName, podUID)
-		q := workqueue.NewTypedRateLimitingQueue[reconcile.Request](workqueue.DefaultTypedControllerRateLimiter[reconcile.Request]())
-		ctx := context.Background()
 
-		h.Delete(ctx, event.TypedDeleteEvent[client.Object]{Object: pod}, q)
+		funcs, ok := pred.(predicate.Funcs)
+		require.True(t, ok, "predicate must be predicate.Funcs")
+		result := funcs.DeleteFunc(event.DeleteEvent{Object: pod})
 
 		createExpectationsAfter := store.GetCreateExpectations(pclqKey)
 		assert.NotContains(t, createExpectationsAfter, podUID,
-			"ObserveDeletions should remove the deleted pod UID from uidsToAdd so next reconcile sees diff < 0 and recreates the pod (issue #457)")
-		assert.True(t, inner.deleteCalled, "inner handler Delete should still be called to enqueue reconcile")
-		assert.Equal(t, pod, inner.deleteObject)
+			"ObserveDeletions should remove the deleted pod UID from uidsToAdd so next reconcile can recreate the pod")
+		assert.True(t, result, "predicate should allow the event so the handler enqueues reconcile")
 	})
 }
