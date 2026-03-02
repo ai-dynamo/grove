@@ -9909,6 +9909,24 @@ spec:
                 required:
                 - cliques
                 type: object
+              updateStrategy:
+                description: |-
+                  UpdateStrategy defines the strategy for updating replicas when
+                  templates change. This applies to both standalone PodCliques and
+                  PodCliqueScalingGroups.
+                properties:
+                  type:
+                    default: RollingRecreate
+                    description: |-
+                      Type indicates the type of update strategy.
+                      This strategy applies uniformly to both standalone PodCliques and
+                      PodCliqueScalingGroups within the PodCliqueSet.
+                      Default is RollingRecreate.
+                    enum:
+                    - RollingRecreate
+                    - OnDelete
+                    type: string
+                type: object
             required:
             - template
             type: object
@@ -9987,9 +10005,9 @@ spec:
                   CurrentGenerationHash is a hash value generated out of a collection of fields in a PodCliqueSet.
                   Since only a subset of fields is taken into account when generating the hash, not every change in the PodCliqueSetSpec will
                   be accounted for when generating this hash value. A field in PodCliqueSetSpec is included if a change to it triggers
-                  a rolling update of PodCliques and/or PodCliqueScalingGroups.
+                  a rolling recreate of PodCliques and/or PodCliqueScalingGroups.
                   Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value
-                  then a rolling update needs to be triggerred.
+                  then an update needs to be triggered.
                 type: string
               hpaPodSelector:
                 description: |-
@@ -10114,8 +10132,9 @@ spec:
                 format: int32
                 type: integer
               rollingUpdateProgress:
-                description: RollingUpdateProgress represents the progress of a rolling
-                  update.
+                description: |-
+                  RollingUpdateProgress represents the progress of a rolling update.
+                  Deprecated: Use UpdateProgress instead. This field is maintained for backward compatibility and will be removed in a future release.
                 properties:
                   currentlyUpdating:
                     description: CurrentlyUpdating captures the progress of the PodCliqueSet
@@ -10142,6 +10161,50 @@ spec:
                   updateStartedAt:
                     description: UpdateStartedAt is the time at which the rolling
                       update started for the PodCliqueSet.
+                    format: date-time
+                    type: string
+                  updatedPodCliqueScalingGroups:
+                    description: UpdatedPodCliqueScalingGroups is a list of PodCliqueScalingGroup
+                      names that have been updated to the desired PodCliqueSet generation
+                      hash.
+                    items:
+                      type: string
+                    type: array
+                  updatedPodCliques:
+                    description: UpdatedPodCliques is a list of PodClique names that
+                      have been updated to the desired PodCliqueSet generation hash.
+                    items:
+                      type: string
+                    type: array
+                type: object
+              updateProgress:
+                description: UpdateProgress represents the progress of an update.
+                properties:
+                  currentlyUpdating:
+                    description: CurrentlyUpdating captures the progress of the PodCliqueSet
+                      replica that is currently being updated.
+                    properties:
+                      replicaIndex:
+                        description: ReplicaIndex is the replica index of the PodCliqueSet
+                          that is being updated.
+                        format: int32
+                        type: integer
+                      updateStartedAt:
+                        description: UpdateStartedAt is the time at which the update
+                          started for this PodCliqueSet replica index.
+                        format: date-time
+                        type: string
+                    required:
+                    - replicaIndex
+                    type: object
+                  updateEndedAt:
+                    description: UpdateEndedAt is the time at which the update ended
+                      for the PodCliqueSet.
+                    format: date-time
+                    type: string
+                  updateStartedAt:
+                    description: UpdateStartedAt is the time at which the update started
+                      for the PodCliqueSet.
                     format: date-time
                     type: string
                   updatedPodCliqueScalingGroups:

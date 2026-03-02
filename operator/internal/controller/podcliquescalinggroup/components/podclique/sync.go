@@ -95,8 +95,16 @@ func (r _resource) runSyncFlow(logger logr.Logger, sc *syncContext) error {
 		return err
 	}
 	// Create or update the expected PodCliques as per the PodCliqueScalingGroup configurations defined in the PodCliqueSet.
-	if err := r.createExpectedPCLQs(logger, sc); err != nil {
-		return err
+	// For OnDelete update strategy, use createOrUpdatePCLQs which performs in-place updates.
+	// For RollingRecreate (default) update strategy, use createExpectedPCLQs which only creates missing PodCliques.
+	if sc.pcs.Spec.UpdateStrategy != nil && sc.pcs.Spec.UpdateStrategy.Type == grovecorev1alpha1.OnDeleteStrategyType {
+		if err := r.createOrUpdatePCLQs(logger, sc); err != nil {
+			return err
+		}
+	} else {
+		if err := r.createExpectedPCLQs(logger, sc); err != nil {
+			return err
+		}
 	}
 
 	// Only if the rolling update is not in progress, check for a possibility of gang termination and execute it only if
@@ -110,8 +118,10 @@ func (r _resource) runSyncFlow(logger logr.Logger, sc *syncContext) error {
 			return err
 		}
 	} else {
-		if err := r.processPendingUpdates(logger, sc); err != nil {
-			return err
+		if sc.pcs.Spec.UpdateStrategy == nil || sc.pcs.Spec.UpdateStrategy.Type == grovecorev1alpha1.RollingRecreateStrategyType {
+			if err := r.processPendingUpdates(logger, sc); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -197,6 +207,37 @@ func (r _resource) createExpectedPCLQs(logger logr.Logger, sc *syncContext) erro
 			errCodeCreatePodCliques,
 			component.OperationSync,
 			fmt.Sprintf("Error Create of PodCliques for PodCliqueScalingGroup: %v, run summary: %s", client.ObjectKeyFromObject(sc.pcsg), runResult.GetSummary()),
+		)
+	}
+	return nil
+}
+
+// createOrUpdatePCLQs creates or updates all expected PodCliques for the PodCliqueScalingGroup.
+// This is used for the OnDelete update strategy where changes are applied in place rather than through recreation.
+func (r _resource) createOrUpdatePCLQs(logger logr.Logger, sc *syncContext) error {
+	var tasks []utils.Task
+	existingPCLQFQNs := lo.Map(sc.existingPCLQs, func(pclq grovecorev1alpha1.PodClique, _ int) string { return pclq.Name })
+	for pcsgReplicaIndex, expectedPCLQNames := range sc.expectedPCLQFQNsPerPCSGReplica {
+		for _, pclqFQN := range expectedPCLQNames {
+			pclqObjectKey := client.ObjectKey{
+				Name:      pclqFQN,
+				Namespace: sc.pcsg.Namespace,
+			}
+			pclqExists := slices.Contains(existingPCLQFQNs, pclqFQN)
+			createOrUpdateTask := utils.Task{
+				Name: fmt.Sprintf("CreateOrUpdatePodClique-%s", pclqObjectKey),
+				Fn: func(ctx context.Context) error {
+					return r.doCreateOrUpdate(ctx, logger, sc.pcs, sc.pcsg, pcsgReplicaIndex, pclqObjectKey, pclqExists)
+				},
+			}
+			tasks = append(tasks, createOrUpdateTask)
+		}
+	}
+	if runResult := utils.RunConcurrently(sc.ctx, logger, tasks); runResult.HasErrors() {
+		return groveerr.WrapError(runResult.GetAggregatedError(),
+			errCodeCreateOrUpdatePodCliques,
+			component.OperationSync,
+			fmt.Sprintf("Error CreateOrUpdate of PodCliques for PodCliqueScalingGroup: %v, run summary: %s", client.ObjectKeyFromObject(sc.pcsg), runResult.GetSummary()),
 		)
 	}
 	return nil

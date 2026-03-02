@@ -114,7 +114,7 @@ func podCliqueScalingGroupPredicate() predicate.Predicate {
 			if !okOld || !okNew {
 				return false
 			}
-			return hasMinAvailableBreachedConditionChanged(oldPCSG.Status.Conditions, newPCSG.Status.Conditions) || hasRollingUpdateStatusChanged(&oldPCSG.Status, &newPCSG.Status)
+			return hasMinAvailableBreachedConditionChanged(oldPCSG.Status.Conditions, newPCSG.Status.Conditions) || hasUpdateStatusChanged(&oldPCSG.Status, &newPCSG.Status)
 		},
 		GenericFunc: func(_ event.TypedGenericEvent[client.Object]) bool { return false },
 	}
@@ -156,7 +156,7 @@ func hasMinAvailableBreachedConditionChanged(oldConditions, newConditions []meta
 	return false
 }
 
-// hasRollingUpdateStatusChanged checks if PCSG rolling update progress has changed.
-func hasRollingUpdateStatusChanged(oldPCSGStatus, newPCSGStatus *grovecorev1alpha1.PodCliqueScalingGroupStatus) bool {
-	return !reflect.DeepEqual(oldPCSGStatus.RollingUpdateProgress, newPCSGStatus.RollingUpdateProgress)
+// hasUpdateStatusChanged checks if PCSG update progress has changed.
+func hasUpdateStatusChanged(oldPCSGStatus, newPCSGStatus *grovecorev1alpha1.PodCliqueScalingGroupStatus) bool {
+	return !reflect.DeepEqual(oldPCSGStatus.UpdateProgress, newPCSGStatus.UpdateProgress)
 }

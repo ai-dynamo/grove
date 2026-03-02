@@ -85,7 +85,7 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 		return groveerr.New(
 			groveerr.ErrCodeContinueReconcileAndRequeue,
 			component.OperationSync,
-			fmt.Sprintf("rolling update of currently selected Pod: %s is not complete, requeuing", pclq.Status.RollingUpdateProgress.ReadyPodsSelectedToUpdate.Current),
+			fmt.Sprintf("rolling update of currently selected Pod: %s is not complete, requeuing", pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate.Current),
 		)
 	}
 
@@ -215,7 +215,7 @@ func (r _resource) deleteOldNonReadyPods(logger logr.Logger, sc *syncContext, wo
 
 // isAnyReadyPodSelectedForUpdate checks if there is currently a ready pod selected for rolling update
 func isAnyReadyPodSelectedForUpdate(pclq *grovecorev1alpha1.PodClique) bool {
-	return pclq.Status.RollingUpdateProgress.ReadyPodsSelectedToUpdate != nil && pclq.Status.RollingUpdateProgress.ReadyPodsSelectedToUpdate.Current != ""
+	return pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate != nil && pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate.Current != ""
 }
 
 // isCurrentPodUpdateComplete checks if the currently updating pod has completed its update.
@@ -225,7 +225,7 @@ func isAnyReadyPodSelectedForUpdate(pclq *grovecorev1alpha1.PodClique) bool {
 func isCurrentPodUpdateComplete(sc *syncContext, work *updateWork) bool {
 	// Get the pod corresponding to the currently updating pod. If the pod exists and still does not have a deletion timestamp
 	// then the current update is not complete
-	currentlyUpdatingPodName := sc.pclq.Status.RollingUpdateProgress.ReadyPodsSelectedToUpdate.Current
+	currentlyUpdatingPodName := sc.pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate.Current
 	pod, ok := lo.Find(sc.existingPCLQPods, func(pod *corev1.Pod) bool {
 		return currentlyUpdatingPodName == pod.Name
 	})
@@ -234,7 +234,7 @@ func isCurrentPodUpdateComplete(sc *syncContext, work *updateWork) bool {
 	}
 
 	// Also verify count as a sanity check
-	podsSelectedToUpdate := len(sc.pclq.Status.RollingUpdateProgress.ReadyPodsSelectedToUpdate.Completed) + 1
+	podsSelectedToUpdate := len(sc.pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate.Completed) + 1
 	return len(work.newTemplateHashReadyPods) >= podsSelectedToUpdate
 }
 
@@ -242,12 +242,12 @@ func isCurrentPodUpdateComplete(sc *syncContext, work *updateWork) bool {
 func (r _resource) updatePCLQStatusWithNextPodToUpdate(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique, nextPodToUpdate string) error {
 	patch := client.MergeFrom(pclq.DeepCopy())
 
-	if pclq.Status.RollingUpdateProgress.ReadyPodsSelectedToUpdate == nil {
-		pclq.Status.RollingUpdateProgress.ReadyPodsSelectedToUpdate = &grovecorev1alpha1.PodsSelectedToUpdate{}
+	if pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate == nil {
+		pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate = &grovecorev1alpha1.PodsSelectedToUpdate{}
 	} else {
-		pclq.Status.RollingUpdateProgress.ReadyPodsSelectedToUpdate.Completed = append(pclq.Status.RollingUpdateProgress.ReadyPodsSelectedToUpdate.Completed, pclq.Status.RollingUpdateProgress.ReadyPodsSelectedToUpdate.Current)
+		pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate.Completed = append(pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate.Completed, pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate.Current)
 	}
-	pclq.Status.RollingUpdateProgress.ReadyPodsSelectedToUpdate.Current = nextPodToUpdate
+	pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate.Current = nextPodToUpdate
 
 	if err := client.IgnoreNotFound(r.client.Status().Patch(ctx, pclq, patch)); err != nil {
 		return groveerr.WrapError(err,
@@ -264,8 +264,8 @@ func (r _resource) updatePCLQStatusWithNextPodToUpdate(ctx context.Context, logg
 func (r _resource) markRollingUpdateEnd(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) error {
 	patch := client.MergeFrom(pclq.DeepCopy())
 
-	pclq.Status.RollingUpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
-	pclq.Status.RollingUpdateProgress.ReadyPodsSelectedToUpdate = nil
+	pclq.Status.UpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
+	pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate = nil
 
 	if err := client.IgnoreNotFound(r.client.Status().Patch(ctx, pclq, patch)); err != nil {
 		return groveerr.WrapError(err,
