@@ -740,6 +740,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `enableProfiling` _boolean_ | EnableProfiling enables profiling via host:port/debug/pprof/ endpoints. |  |  |
+| `pprofBindAddress` _string_ | PprofBindAddress is the TCP address (host:port) that the pprof HTTP server binds to.<br />Defaults to 127.0.0.1:2753 (loopback-only). Set to 0.0.0.0:2753 to allow external<br />scraping (e.g. Pyroscope). |  |  |
 
 
 #### LeaderElectionConfiguration
