@@ -193,6 +193,7 @@ func (s *ExpectationsStore) lowerExpectations(logger logr.Logger, controlleeKey 
 	defer s.mu.Unlock()
 	if exp, exists, _ := s.GetExpectations(controlleeKey); exists {
 		exp.uidsToAdd.Delete(addUIDs...)
+		exp.uidsToAdd.Delete(deleteUIDs...)
 		exp.uidsToDelete.Delete(deleteUIDs...)
 		logger.Info("lowered expectations for controlled resource", "controlleeKey", controlleeKey, "addUIDs", addUIDs, "deleteUIDs", deleteUIDs)
 	}
