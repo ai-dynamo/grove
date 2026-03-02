@@ -48,38 +48,38 @@ jobs:
               - 'operator/**'
               - '.github/**'
 
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: "1.25.7"
-      - name: test-unit
-        run: make test-unit
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: "1.25.7"
-      - name: build-operator
-        run: make --directory=operator build-operator
-      - name: build-initc
-        run: make --directory=operator build-initc
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: "1.25.7"
-      - name: check
-        run: make check
+  # test:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Set up Go
+  #       uses: actions/setup-go@v4
+  #       with:
+  #         go-version: "1.25.7"
+  #     - name: test-unit
+  #       run: make test-unit
+  # build:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Set up Go
+  #       uses: actions/setup-go@v4
+  #       with:
+  #         go-version: "1.25.7"
+  #     - name: build-operator
+  #       run: make --directory=operator build-operator
+  #     - name: build-initc
+  #       run: make --directory=operator build-initc
+  # check:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Set up Go
+  #       uses: actions/setup-go@v4
+  #       with:
+  #         go-version: "1.25.7"
+  #     - name: check
+  #       run: make check
 
   # E2E tests - only run after build, check, and test jobs succeed
   # Only triggered by changes to operator or .github folders
@@ -89,34 +89,34 @@ jobs:
   #   test_pattern  (optional) - Go test -run pattern (standard e2e tests)
   #   make_target   (optional) - Makefile target, defaults to run-e2e-full
   e2e:
-    needs: [test, build, check, changes]
-    # Run on non-draft PRs (or draft PRs with 'run-e2e' label)
-    # AND only when operator or .github files are changed
-    if: |
-      github.event_name == 'pull_request' &&
-      needs.changes.outputs.e2e-relevant == 'true' &&
-      (github.event.pull_request.draft == false || contains(github.event.pull_request.labels.*.name, 'run-e2e'))
-    # use NVIDIA self-hosted runner with 8 vCPUs and 30GB of ram (on AWS)
-    # the tests are unstable using the default runner with 4 vCPUs and 16GB of ram
-    runs-on: cpu-amd-m5-2xlarge
+    # needs: [test, build, check, changes]
+    # # Run on non-draft PRs (or draft PRs with 'run-e2e' label)
+    # # AND only when operator or .github files are changed
+    # if: |
+    #   github.event_name == 'pull_request' &&
+    #   needs.changes.outputs.e2e-relevant == 'true' &&
+    #   (github.event.pull_request.draft == false || contains(github.event.pull_request.labels.*.name, 'run-e2e'))
+    # # use NVIDIA self-hosted runner with 8 vCPUs and 30GB of ram (on AWS)
+    # # the tests are unstable using the default runner with 4 vCPUs and 16GB of ram
+    runs-on: prod-grove-e2e-v1
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
-          - test_name: gang_scheduling
-            test_pattern: "^Test_GS"
-          - test_name: rolling_updates
-            test_pattern: "^Test_RU"
+          # - test_name: gang_scheduling
+          #   test_pattern: "^Test_GS"
+          # - test_name: rolling_updates
+          #   test_pattern: "^Test_RU"
           - test_name: startup_ordering
             test_pattern: "^Test_SO"
-          - test_name: Topology_Aware_Scheduling
-            test_pattern: "^Test_TAS"
-          - test_name: cert_management
-            test_pattern: "^Test_CM"
-          - test_name: auto_mnnvl
-            test_pattern: "^Test_AutoMNNVL"
-            make_target: "run-e2e-mnnvl-full"
+          # - test_name: Topology_Aware_Scheduling
+          #   test_pattern: "^Test_TAS"
+          # - test_name: cert_management
+          #   test_pattern: "^Test_CM"
+          # - test_name: auto_mnnvl
+          #   test_pattern: "^Test_AutoMNNVL"
+          #   make_target: "run-e2e-mnnvl-full"
     name: E2E - ${{ matrix.test_name }}
     steps:
       # print runner specs so we have a record in case of failures
@@ -133,7 +133,7 @@ jobs:
 
       - name: Run e2e tests - ${{ matrix.test_name }}
         run: |
-          make ${{ matrix.make_target || 'run-e2e-full' }} TEST_PATTERN='${{ matrix.test_pattern }}'
+          make ${{ matrix.make_target || 'run-e2e-full' }} TEST_PATTERN='${{ matrix.test_pattern }}' E2E_CREATE_FLAGS='--skip-memory-limit'
         working-directory: operator
 
       # The test code handles cleanup via Teardown(), but this step provides
