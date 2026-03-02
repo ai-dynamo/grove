@@ -24,6 +24,8 @@ import sh
 
 from infra_manager.config import GroveInstallOptions
 from infra_manager.constants import (
+    DEFAULT_PPROF_BIND_ADDRESS,
+    HELM_KEY_ANNOTATION_PREFIX,
     HELM_KEY_PCLQ_SYNCS,
     HELM_KEY_PCS_SYNCS,
     HELM_KEY_PCSG_SYNCS,
@@ -74,12 +76,36 @@ def collect_grove_helm_overrides(options: GroveInstallOptions) -> list[str]:
     """
     overrides: list[tuple[bool, str, str]] = [
         (options.grove_profiling, HELM_KEY_PROFILING, "true"),
-        (options.grove_profiling, HELM_KEY_PPROF_BIND_ADDRESS, "0.0.0.0:2753"),
+        (options.grove_profiling, HELM_KEY_PPROF_BIND_ADDRESS, DEFAULT_PPROF_BIND_ADDRESS),
         (options.grove_pcs_syncs is not None, HELM_KEY_PCS_SYNCS, str(options.grove_pcs_syncs)),
         (options.grove_pclq_syncs is not None, HELM_KEY_PCLQ_SYNCS, str(options.grove_pclq_syncs)),
         (options.grove_pcsg_syncs is not None, HELM_KEY_PCSG_SYNCS, str(options.grove_pcsg_syncs)),
     ]
-    return [f"{key}={value}" for enabled, key, value in overrides if enabled]
+    result = [f"{key}={value}" for enabled, key, value in overrides if enabled]
+    if options.grove_profiling:
+        result.extend(_pyroscope_annotation_overrides())
+    return result
+
+
+def _pyroscope_annotation_overrides() -> list[str]:
+    """Build Grafana/Pyroscope scrape annotation overrides for helm --set.
+
+    Returns:
+        List of ``annotations.<escaped-key>=value`` strings.
+    """
+    port = DEFAULT_PPROF_BIND_ADDRESS.split(":")[-1]
+    annotations = {
+        "profiles.grafana.com/cpu.scrape": "true",
+        "profiles.grafana.com/cpu.port": port,
+        "profiles.grafana.com/memory.scrape": "true",
+        "profiles.grafana.com/memory.port": port,
+        "profiles.grafana.com/goroutine.scrape": "true",
+        "profiles.grafana.com/goroutine.port": port,
+    }
+    return [
+        f"{HELM_KEY_ANNOTATION_PREFIX}.{key.replace('.', '\\.')}={value}"
+        for key, value in annotations.items()
+    ]
 
 
 def require_command(cmd: str) -> None:
