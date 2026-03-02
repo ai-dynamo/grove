@@ -27,8 +27,10 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
@@ -73,4 +75,34 @@ func TestPodPredicate_Delete(t *testing.T) {
 			"ObserveDeletions should remove the deleted pod UID from uidsToAdd so next reconcile can recreate the pod")
 		assert.True(t, result, "predicate should allow the event so the handler enqueues reconcile")
 	})
+}
+
+func Test_isMarkedForDeletion(t *testing.T) {
+	tests := []struct {
+		name        string
+		updateEvent event.UpdateEvent
+		want        bool
+	}{
+		{
+			name: "pod deletionTimestamp changed",
+			updateEvent: event.UpdateEvent{
+				ObjectOld: &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						DeletionTimestamp: nil,
+					},
+				},
+				ObjectNew: &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						DeletionTimestamp: ptr.To(metav1.Now()),
+					},
+				},
+			},
+			want: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equalf(t, tt.want, isMarkedForDeletion(tt.updateEvent), "isMarkedForDeletionChanged(%v)", tt.updateEvent)
+		})
+	}
 }
