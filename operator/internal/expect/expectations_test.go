@@ -55,18 +55,9 @@ func TestExpectCreations(t *testing.T) {
 			if tc.existingUIDs != nil {
 				assert.NoError(t, initializeControlleeExpectations(expStore, controlleeKey, tc.existingUIDs, nil))
 			}
-			// test the method
-			wg := sync.WaitGroup{}
-			wg.Add(len(tc.newUIDs))
-			for _, uid := range tc.newUIDs {
-				go func() {
-					defer wg.Done()
-					err := expStore.ExpectCreations(logr.Discard(), controlleeKey, uid)
-					assert.NoError(t, err)
-				}()
+			for i, uid := range tc.newUIDs {
+				assert.NoError(t, expStore.ExpectCreations(logr.Discard(), controlleeKey, uid, i))
 			}
-			wg.Wait()
-			// compare the expected with actual
 			assert.ElementsMatch(t, tc.expectedCreateExpectationUIDs, expStore.GetCreateExpectations(controlleeKey))
 		})
 	}
@@ -231,6 +222,21 @@ func TestSyncExpectations(t *testing.T) {
 			assert.ElementsMatch(t, tc.deleteExpectationUIDsPostSync, expStore.GetDeleteExpectations(tc.controlleeKey))
 		})
 	}
+}
+
+func TestExpectCreations_with_GetCreateExpectationIndices(t *testing.T) {
+	expStore := NewExpectationsStore()
+	assert.NoError(t, expStore.ExpectCreations(logr.Discard(), controlleeKey, types.UID("uid-1"), 2))
+	assert.NoError(t, expStore.ExpectCreations(logr.Discard(), controlleeKey, types.UID("uid-2"), 3))
+
+	assert.ElementsMatch(t, []types.UID{"uid-1", "uid-2"}, expStore.GetCreateExpectations(controlleeKey))
+	indices := expStore.GetCreateExpectationIndices(controlleeKey)
+	assert.Len(t, indices, 2)
+	assert.ElementsMatch(t, []int{2, 3}, indices)
+
+	// After sync (observe uid-1), only uid-2's index remains reserved
+	expStore.SyncExpectations(controlleeKey, []types.UID{"uid-1"}, nil)
+	assert.ElementsMatch(t, []int{3}, expStore.GetCreateExpectationIndices(controlleeKey))
 }
 
 func initializeControlleeExpectations(expStore *ExpectationsStore, controlleeKey string, uidsToAdd, uidsToDelete []types.UID) error {

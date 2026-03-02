@@ -31,7 +31,7 @@ import (
 // ==================== GetAvailableIndices Tests ====================
 
 func TestGetNextAvailableIndices_EmptyPods(t *testing.T) {
-	indices, err := GetAvailableIndices(logr.Logger{}, []*corev1.Pod{}, 3)
+	indices, err := GetAvailableIndices(logr.Logger{}, []*corev1.Pod{}, nil, 3)
 
 	assert.NoError(t, err)
 	assert.Equal(t, []int{0, 1, 2}, indices)
@@ -45,7 +45,7 @@ func TestGetNextAvailableIndices_WithExistingPods(t *testing.T) {
 		createTestPod("pod-c", "test-clique-4"),
 	}
 
-	indices, err := GetAvailableIndices(logr.Logger{}, pods, 3)
+	indices, err := GetAvailableIndices(logr.Logger{}, pods, nil, 3)
 
 	assert.NoError(t, err)
 	// Should fill holes: 1, 3, 5
@@ -59,7 +59,7 @@ func TestGetNextAvailableIndices_Sequential(t *testing.T) {
 		createTestPod("pod-c", "test-clique-2"),
 	}
 
-	indices, err := GetAvailableIndices(logr.Logger{}, pods, 2)
+	indices, err := GetAvailableIndices(logr.Logger{}, pods, nil, 2)
 
 	assert.NoError(t, err)
 	// Should continue sequence: 3, 4
@@ -74,11 +74,25 @@ func TestGetNextAvailableIndices_InvalidHostnames(t *testing.T) {
 		createTestPod("pod-valid2", "test-clique-2"),
 	}
 
-	indices, err := GetAvailableIndices(logr.Logger{}, pods, 3)
+	indices, err := GetAvailableIndices(logr.Logger{}, pods, nil, 3)
 
 	// Should return error for invalid hostname
 	assert.Error(t, err)
 	assert.Nil(t, indices)
+}
+
+func TestGetAvailableIndices_WithReservedIndices(t *testing.T) {
+	// Existing pods have indices 0, 1. Reserved (in-flight) has 2, 3. So available for 2 new pods should be 4, 5.
+	pods := []*corev1.Pod{
+		createTestPod("pod-a", "test-clique-0"),
+		createTestPod("pod-b", "test-clique-1"),
+	}
+	reserved := sets.New[int](2, 3)
+
+	indices, err := GetAvailableIndices(logr.Logger{}, pods, reserved, 2)
+
+	assert.NoError(t, err)
+	assert.Equal(t, []int{4, 5}, indices)
 }
 
 // ==================== extractUsedIndices Tests ====================

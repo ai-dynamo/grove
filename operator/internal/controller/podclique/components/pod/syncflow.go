@@ -40,6 +40,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -396,7 +397,10 @@ func hasPodGangSchedulingGate(pod *corev1.Pod) bool {
 // createPods creates the specified number of new pods for the PodClique with proper indexing and concurrency control
 func (r _resource) createPods(ctx context.Context, logger logr.Logger, sc *syncContext, numPods int) (int, error) {
 	// Pre-calculate all needed indices to avoid race conditions
-	availableIndices, err := index.GetAvailableIndices(logger, sc.existingPCLQPods, numPods)
+	// Indices assigned to in-flight creations (not yet observed in cache) must be reserved so we do not assign them again.
+	reservedIndices := sets.New(r.expectationsStore.GetCreateExpectationIndices(sc.pclqExpectationsStoreKey)...)
+
+	availableIndices, err := index.GetAvailableIndices(logger, sc.existingPCLQPods, reservedIndices, numPods)
 	if err != nil {
 		return 0, groveerr.WrapError(err,
 			errCodeGetAvailablePodHostNameIndices,
