@@ -18,7 +18,7 @@
 """config-cluster.py - Declarative configuration for an existing E2E cluster.
 
 This script applies or removes configuration on top of a cluster that was
-already created by create-e2e-cluster.py.  It is **idempotent**: running it
+already created by infra-manager.py.  It is **idempotent**: running it
 twice with the same flags is a no-op.
 
 Supported configuration axes:
@@ -113,8 +113,12 @@ def run_or_warn(cmd: str, warning_msg: str) -> subprocess.CompletedProcess[str]:
 def run_quiet(cmd: str, *, check: bool = False) -> subprocess.CompletedProcess[str]:
     """Run a command suppressing stdout and stderr. Returns the result."""
     return subprocess.run(
-        cmd, shell=True, check=check,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True,
+        cmd,
+        shell=True,
+        check=check,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
     )
 
 
@@ -220,9 +224,7 @@ def _wait_for_cert_refresh_restart(
     needed every time).
     """
     initial = _get_operator_restart_count()
-    log_info(
-        f"Watching for operator cert refresh restart (current restartCount: {initial})..."
-    )
+    log_info(f"Watching for operator cert refresh restart (current restartCount: {initial})...")
 
     elapsed = 0
     restarted = False
@@ -231,9 +233,7 @@ def _wait_for_cert_refresh_restart(
         elapsed += poll_interval
         current = _get_operator_restart_count()
         if current > initial:
-            log_info(
-                f"Operator restarted (restartCount {initial} -> {current})"
-            )
+            log_info(f"Operator restarted (restartCount {initial} -> {current})")
             restarted = True
             break
 
@@ -243,8 +243,7 @@ def _wait_for_cert_refresh_restart(
 
     log_info("Waiting for operator pod to be ready after cert refresh restart...")
     run_or_warn(
-        f"kubectl rollout status deployment/{GROVE_RELEASE}"
-        f" -n {GROVE_NAMESPACE} --timeout=120s",
+        f"kubectl rollout status deployment/{GROVE_RELEASE} -n {GROVE_NAMESPACE} --timeout=120s",
         "Grove operator rollout did not complete after cert refresh restart",
     )
     run_or_warn(
@@ -278,8 +277,7 @@ def ensure_auto_mnnvl(enabled: bool, *, skip_wait: bool = False) -> None:
         log_info("Waiting for Grove operator pod to be ready...")
         # The upgrade may trigger a rolling restart; wait for the new pod.
         run_or_warn(
-            f"kubectl rollout status deployment/{GROVE_RELEASE}"
-            f" -n {GROVE_NAMESPACE} --timeout=120s",
+            f"kubectl rollout status deployment/{GROVE_RELEASE} -n {GROVE_NAMESPACE} --timeout=120s",
             "Grove operator rollout did not complete",
         )
         run_or_warn(
@@ -367,7 +365,7 @@ def main() -> None:
 
     # Change to the operator directory (helm chart path is relative)
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    operator_dir = os.path.join(script_dir, "..", "..")
+    operator_dir = os.path.join(script_dir, "..")
     os.chdir(operator_dir)
 
     # 1. Fake GPU operator

@@ -7,7 +7,7 @@
 # - operator/e2e/tests/cert_management_test.go (certManagerVersion constant)
 # - Any test files that reference these versions
 #
-# The create-e2e-cluster.py script automatically reads this file and uses
+# The infra-manager.py CLI automatically reads this file and uses
 # these versions for:
 # - Helm chart installations
 # - Image pre-pulling (to speed up cluster creation)
@@ -20,6 +20,7 @@ kai_scheduler:
     # All Kai Scheduler component images
     - "ghcr.io/nvidia/kai-scheduler/admission"
     - "ghcr.io/nvidia/kai-scheduler/binder"
+    - "ghcr.io/nvidia/kai-scheduler/crd-upgrader"
     - "ghcr.io/nvidia/kai-scheduler/operator"
     - "ghcr.io/nvidia/kai-scheduler/podgroupcontroller"
     - "ghcr.io/nvidia/kai-scheduler/podgrouper"
@@ -40,6 +41,14 @@ cert_manager:
     # Additional images cert-manager may pull
     - "quay.io/jetstack/cert-manager-acmesolver"
     - "quay.io/jetstack/cert-manager-ctl"
+
+kwok_controller:
+  version: "v0.7.0"
+
+pyroscope:
+  version: "1.10.0"
+  helm_repo: "https://grafana.github.io/helm-charts"
+  helm_chart: "grafana/pyroscope"
 
 # Test workload images
 test_images:

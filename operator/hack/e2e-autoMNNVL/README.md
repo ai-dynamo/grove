@@ -49,8 +49,8 @@ make run-e2e-mnnvl-full
 |--------|-------------|
 | `run_autoMNNVL_e2e_all.py` | Run all 4 configurations sequentially (expects existing cluster) |
 | `run_autoMNNVL_e2e.py` | Run a single configuration (configure + test, expects existing cluster) |
-| `../e2e-cluster/create-e2e-cluster.py` | Create the k3d cluster and deploy Grove operator |
-| `../e2e-cluster/config-cluster.py` | Declaratively configure fake GPU + MNNVL on an existing cluster |
+| `../infra-manager.py` | Unified CLI for cluster infrastructure management |
+| `../config-cluster.py` | Declaratively configure fake GPU + MNNVL on an existing cluster |
 
 ## Usage Examples
 
@@ -73,7 +73,7 @@ python3 ./hack/e2e-autoMNNVL/run_autoMNNVL_e2e_all.py
 python3 ./hack/e2e-autoMNNVL/run_autoMNNVL_e2e.py --fake-gpu=yes --auto-mnnvl=enabled
 
 # 5. Configure an existing cluster directly (without running tests)
-python3 ./hack/e2e-cluster/config-cluster.py --fake-gpu=yes --auto-mnnvl=enabled
+python3 ./hack/config-cluster.py --fake-gpu=yes --auto-mnnvl=enabled
 
 # 6. Delete the cluster
 make e2e-cluster-down

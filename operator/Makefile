@@ -115,12 +115,12 @@ run-e2e:
 # Pass E2E_CREATE_FLAGS to add CLI flags (e.g. --skip-kai --skip-topology --skip-prepull)
 .PHONY: e2e-cluster-up
 e2e-cluster-up:
-	@$(MODULE_HACK_DIR)/e2e-cluster/create-e2e-cluster.py $(E2E_CREATE_FLAGS)
+	@$(MODULE_HACK_DIR)/infra-manager.py setup e2e $(E2E_CREATE_FLAGS)
 
 # Delete the k3d e2e test cluster
 .PHONY: e2e-cluster-down
 e2e-cluster-down:
-	@$(MODULE_HACK_DIR)/e2e-cluster/create-e2e-cluster.py --delete
+	@$(MODULE_HACK_DIR)/infra-manager.py delete k3d-cluster
 
 # Full e2e test run: create k3d cluster, run tests, then cleanup
 # Usage: make run-e2e-full [TEST_PATTERN=<pattern>]
@@ -134,6 +134,17 @@ run-e2e-full: e2e-cluster-up
 		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down
+
+# Create a k3d cluster for scale testing (with Grove, Kai, KWOK, Pyroscope)
+# Pass SCALE_CREATE_FLAGS to add CLI flags (e.g. --kwok-nodes 500 --pcs-syncs 10)
+.PHONY: scale-cluster-up
+scale-cluster-up:
+	@$(MODULE_HACK_DIR)/infra-manager.py setup scale $(SCALE_CREATE_FLAGS)
+
+# Delete the k3d scale test cluster
+.PHONY: scale-cluster-down
+scale-cluster-down:
+	@$(MODULE_HACK_DIR)/infra-manager.py delete k3d-cluster
 
 # Run autoMNNVL e2e tests (all 4 configurations: supported/unsupported x enabled/disabled)
 # Creates a lightweight k3d cluster (2 workers, no Kai/topology), runs all configurations

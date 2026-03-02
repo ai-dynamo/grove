@@ -27,6 +27,7 @@ const (
 	defaultLeaderElectionResourceLock    = "leases"
 	defaultLeaderElectionResourceName    = "grove-operator-leader-election"
 	defaultWebhookServerTLSServerCertDir = "/etc/grove-operator/webhook-certs"
+	defaultPprofBindAddress              = "127.0.0.1:2753"
 )
 
 // SetDefaults_ClientConnectionConfiguration sets defaults for the k8s client connection.
@@ -120,5 +121,12 @@ func SetDefaults_PodCliqueControllerConfiguration(obj *PodCliqueControllerConfig
 func SetDefaults_PodCliqueScalingGroupControllerConfiguration(obj *PodCliqueScalingGroupControllerConfiguration) {
 	if obj.ConcurrentSyncs == nil {
 		obj.ConcurrentSyncs = ptr.To(1)
+	}
+}
+
+// SetDefaults_DebuggingConfiguration sets defaults for the debugging configuration.
+func SetDefaults_DebuggingConfiguration(obj *DebuggingConfiguration) {
+	if obj.PprofBindAddress == nil {
+		obj.PprofBindAddress = ptr.To(defaultPprofBindAddress)
 	}
 }
