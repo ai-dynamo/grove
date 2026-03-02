@@ -521,13 +521,14 @@ func (r _resource) updatePodGangWithPodReferences(sc *syncContext, podGangName s
 	}
 
 	// Update status to set Initialized=True (idempotent - no need to check current state)
-	r.patchPodGangInitializedStatus(sc, podGangName, metav1.ConditionTrue, "Ready", "PodGang is fully initialized")
+	if err := r.patchPodGangInitializedStatus(sc, podGangName, metav1.ConditionTrue, "Ready", "PodGang is fully initialized"); err != nil {
+		return err
+	}
 	return nil
 }
 
 // patchPodGangInitializedStatus patches the Initialized condition with the given status.
-// Status update errors are logged but not propagated since they are not critical.
-func (r _resource) patchPodGangInitializedStatus(sc *syncContext, podGangName string, status metav1.ConditionStatus, reason, message string) {
+func (r _resource) patchPodGangInitializedStatus(sc *syncContext, podGangName string, status metav1.ConditionStatus, reason, message string) error {
 	// Create a PodGang object with only the status we want to patch
 	statusPatch := &groveschedulerv1alpha1.PodGang{
 		ObjectMeta: metav1.ObjectMeta{
@@ -540,13 +541,12 @@ func (r _resource) patchPodGangInitializedStatus(sc *syncContext, podGangName st
 	statusPatch.Status.Phase = groveschedulerv1alpha1.PodGangPhasePending
 
 	if err := r.client.Status().Patch(sc.ctx, statusPatch, client.Merge); err != nil {
-		sc.logger.Error(err, "Failed to patch PodGang status with Initialized condition",
-			"podGang", podGangName)
-		return
+		return err
 	}
 
 	sc.logger.Info("Successfully patched PodGang Initialized condition",
 		"podGang", podGangName, "status", status)
+	return nil
 }
 
 // patchPodGangWithPodReferences uses strategic merge patch to update pod references
@@ -730,7 +730,9 @@ func (r _resource) createOrUpdatePodGang(sc *syncContext, pgInfo *podGangInfo) e
 	// Update status with Initialized=False condition and Phase if not already set
 	// This needs to be done separately since CreateOrPatch doesn't handle status subresource
 	if !hasInitializedCondition(pg) {
-		r.patchPodGangInitializedStatus(sc, pg.Name, metav1.ConditionFalse, "PodsPending", "Not all constituent pods have been created yet")
+		if err := r.patchPodGangInitializedStatus(sc, pg.Name, metav1.ConditionFalse, "PodsPending", "Not all constituent pods have been created yet"); err != nil {
+			return err
+		}
 	}
 
 	r.eventRecorder.Eventf(sc.pcs, corev1.EventTypeNormal, constants.ReasonPodGangCreateOrUpdateSuccessful, "Created/Updated PodGang %v", pgObjectKey)
