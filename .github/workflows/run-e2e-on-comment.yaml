@@ -1,0 +1,112 @@
+# /*
+# Copyright 2025 The Grove Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# */
+
+# Run E2E tests when a trusted user comments exactly "/run-e2e" on a PR.
+# Permissions (Kubernetes-style): comment must be exactly "/run-e2e"; only OWNER, MEMBER, or COLLABORATOR can trigger.
+name: Run E2E on comment
+
+on:
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: run-e2e-comment-${{ github.event.issue.number }}-${{ github.event.comment.id }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    # Only consider PR comments that mention /run-e2e (strict checks run in steps)
+    if: github.event.issue.pull_request != '' && contains(github.event.comment.body, '/run-e2e')
+    outputs:
+      pr_ref: ${{ steps.set-ref.outputs.pr_ref }}
+    steps:
+      - name: Require exact /run-e2e and trusted author
+        run: |
+          body=$(echo '${{ github.event.comment.body }}' | tr -d '\n\r' | xargs)
+          if [ "$body" != "/run-e2e" ]; then
+            echo "::error::Comment body must be exactly '/run-e2e' (no extra text). Got: $body"
+            exit 1
+          fi
+          case '${{ github.event.comment.author_association }}' in
+            OWNER|MEMBER|COLLABORATOR) ;;
+            *)
+              echo "::error::Only repository OWNER, MEMBER, or COLLABORATOR can trigger E2E (author_association: ${{ github.event.comment.author_association }})"
+              exit 1
+              ;;
+          esac
+          echo "Author ${{ github.event.comment.user.login }} is allowed to trigger E2E."
+
+      - id: set-ref
+        if: success()
+        run: echo "pr_ref=refs/pull/${{ github.event.issue.number }}/merge" >> $GITHUB_OUTPUT
+
+  e2e:
+    needs: validate
+    # Same runner and matrix as build-check-test.yaml e2e job
+    runs-on: cpu-amd-m5-2xlarge
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - test_name: gang_scheduling
+            test_pattern: "^Test_GS"
+          - test_name: rolling_updates
+            test_pattern: "^Test_RU"
+          - test_name: startup_ordering
+            test_pattern: "^Test_SO"
+          - test_name: Topology_Aware_Scheduling
+            test_pattern: "^Test_TAS"
+          - test_name: cert_management
+            test_pattern: "^Test_CM"
+          - test_name: auto_mnnvl
+            test_pattern: "^Test_AutoMNNVL"
+            make_target: "run-e2e-mnnvl-full"
+    name: E2E - ${{ matrix.test_name }}
+    steps:
+      - name: Print runner specs
+        run: |
+          echo "CPUs: $(nproc)"
+          echo "RAM: $(free -h | awk '/^Mem:/ {print $2}')"
+
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.pr_ref }}
+
+      - name: E2E Setup
+        uses: ./.github/actions/e2e-setup
+
+      - name: Run e2e tests - ${{ matrix.test_name }}
+        run: |
+          make ${{ matrix.make_target || 'run-e2e-full' }} TEST_PATTERN='${{ matrix.test_pattern }}'
+        working-directory: operator
+
+      - name: Cleanup k3d cluster
+        if: always()
+        working-directory: operator
+        run: |
+          make e2e-cluster-down || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-logs-${{ matrix.test_name }}
+          path: operator/e2e-diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
