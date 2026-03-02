@@ -484,7 +484,6 @@ func TestUpdatePodGangWithPodReferences(t *testing.T) {
 		require.Len(t, pgAfter.Spec.PodGroups, 1)
 		assert.Equal(t, "pclq-a", pgAfter.Spec.PodGroups[0].Name)
 		assert.Equal(t, []groveschedulerv1alpha1.NamespacedName{{Namespace: ns, Name: "pod-1"}}, pgAfter.Spec.PodGroups[0].PodReferences)
-		// Status().Patch(Initialized=True) is applied in production; fake client may not merge status subresource
 		if len(pgAfter.Status.Conditions) > 0 {
 			assert.True(t, lo.ContainsBy(pgAfter.Status.Conditions, func(c metav1.Condition) bool {
 				return c.Type == string(groveschedulerv1alpha1.PodGangConditionTypeInitialized) && c.Status == metav1.ConditionTrue
@@ -560,7 +559,6 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 	require.Len(t, pgAfter.Spec.PodGroups, 1)
 	assert.Equal(t, "test-pcs-0-worker", pgAfter.Spec.PodGroups[0].Name)
 	assert.Len(t, pgAfter.Spec.PodGroups[0].PodReferences, 2)
-	// Initialized=True is set via status patch in production; optional check if fake client merged status
 	if len(pgAfter.Status.Conditions) > 0 {
 		assert.True(t, lo.ContainsBy(pgAfter.Status.Conditions, func(c metav1.Condition) bool {
 			return c.Type == string(groveschedulerv1alpha1.PodGangConditionTypeInitialized) && c.Status == metav1.ConditionTrue
