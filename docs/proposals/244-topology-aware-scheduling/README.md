@@ -93,30 +93,43 @@ Grove implements topology-aware scheduling through a two-layer approach:
 **Admin Layer:**
 Grove defines a ClusterTopology CRD and manages the lifecycle of a default ClusterTopology CR of a reserved name. Administrators configure the default topology hierarchy through `OperatorConfiguration`, and Grove creates a single operator-managed `ClusterTopology` resource named "grove-topology". This ensures a predictable, centrally-managed topology configuration for the common case. For clusters with heterogeneous hardware, administrators can create additional ClusterTopology resources directly via kubectl or GitOps to describe different topology hierarchies. These user-managed topologies are not reconciled by the operator.
 
-The scheduling backend determines what additional resources it requires for topology-aware scheduling. Grove creates these resources based on backend-specific configuration in the `OperatorConfiguration`. Each scheduler backend defines its own configuration struct within its `SchedulerProfile.Config` (see [GREP-375: OperatorConfiguration Extension](../375-scheduler-backend-framework/README.md#operatorconfiguration-extension)). For example, the KAI scheduler requires a `Topology` custom resource for each ClusterTopology. When the KAI scheduler profile is enabled, Grove creates and manages a KAI `Topology` CR for every ClusterTopology in the cluster, both the operator-managed default and any administrator-created topologies. This behavior is controlled by `KaiSchedulerConfig.CreateTopologyResources`, which defaults to `true` when the KAI profile is active.
+The scheduling backend determines what additional resources it requires for topology-aware scheduling. For example, the KAI scheduler requires a `Topology` custom resource for each ClusterTopology. By default, the ClusterTopology controller automatically creates and manages the scheduler backend topology CR for each ClusterTopology, using an `OwnerReference` to ensure cascade deletion.
+
+Administrators who manage their own scheduler backend topology resources (e.g., created by an external tool or a separate team) can set the optional `schedulerTopologyRef` field on the ClusterTopology to reference the existing resource by name. When this reference is set, the controller does not create or modify the scheduler backend topology. Instead, it verifies that the referenced topology's levels match the ClusterTopology's levels and reports drift via a `SchedulerTopologyInSync` status condition on the ClusterTopology.
 
 ```yaml
-# OperatorConfiguration snippet — enables KAI topology resource creation
-scheduler:
-  profiles:
-    - name: "kai-scheduler"
-      config:
-        createTopologyResources: true
-      default: true
+# ClusterTopology with auto-managed scheduler topology (default — no ref needed)
+apiVersion: grove.io/v1alpha1
+kind: ClusterTopology
+metadata:
+  name: grove-topology
+spec:
+  levels:
+    - domain: zone
+      key: topology.kubernetes.io/zone
+    - domain: rack
+      key: kubernetes.io/rack
+    - domain: host
+      key: kubernetes.io/hostname
+---
+# ClusterTopology referencing an externally-managed scheduler topology
+apiVersion: grove.io/v1alpha1
+kind: ClusterTopology
+metadata:
+  name: gb200-topology
+spec:
+  levels:
+    - domain: zone
+      key: topology.kubernetes.io/zone
+    - domain: block
+      key: example.com/nvl-block
+    - domain: rack
+      key: example.com/nvlink-domain
+    - domain: host
+      key: kubernetes.io/hostname
+  schedulerTopologyRef:
+    name: gb200-kai-topology    # references an existing KAI Topology CR
 ```
-
-```go
-// KaiSchedulerConfig holds the configuration for the KAI scheduler backend.
-type KaiSchedulerConfig struct {
-    // CreateTopologyResources controls whether Grove creates and manages
-    // KAI Topology CRs for each ClusterTopology resource in the cluster.
-    // Defaults to true when the KAI scheduler profile is enabled.
-    // +optional
-    CreateTopologyResources *bool `json:"createTopologyResources,omitempty"`
-}
-```
-
-When the KAI scheduler profile is enabled and `createTopologyResources` is omitted, it defaults to `true`. This means enabling the KAI profile is sufficient to get topology resource management — administrators only need to set this field explicitly to opt out (`createTopologyResources: false`).
 
 **User Layer:**
 Workload developers can specify topology constraints at three hierarchical levels (`PodCliqueSet`, `PodCliqueScalingGroup`, and `PodClique`) using domain names. They can also select which ClusterTopology to use via the `clusterTopologyName` field on PodCliqueSet. When no topology is explicitly referenced, the default `grove-topology` is used.
@@ -393,7 +406,7 @@ When `Grove` operator starts, it checks if TAS is enabled.
 
 * Create or Update the default `ClusterTopology` custom resource (`grove-topology`). The default topology is labeled with `app.kubernetes.io/managed-by: grove-operator` and is reconciled to match the operator configuration on each startup.
 
-* If the active scheduler backend's profile has topology resource creation enabled (`KaiSchedulerConfig.CreateTopologyResources`, which defaults to `true`), create or update the corresponding scheduler backend topology CR for the default `ClusterTopology`. For the KAI scheduler, this means creating a `Topology` CR if it does not exist, or re-creating it (delete + create) if it needs an update, since KAI's `Topology` CR is currently immutable. The scheduler backend topology CR is created with the `ClusterTopology` CR as its owner via `OwnerReference`.
+* If the default `ClusterTopology` does not have a `schedulerTopologyRef`, create or update the corresponding scheduler backend topology CR. For the KAI scheduler, this means creating a `Topology` CR if it does not exist, or re-creating it (delete + create) if it needs an update, since KAI's `Topology` CR is currently immutable. The scheduler backend topology CR is created with the `ClusterTopology` CR as its owner via `OwnerReference`. If `schedulerTopologyRef` is set, the controller handles drift detection (see [Scheduler Backend Topology](#scheduler-backend-topology)).
 
 If any of the create/update/delete of `ClusterTopology` CR or scheduler backend topology CR fails, the operator exits with a non-zero exit code and a clear message indicating the issue.
 
@@ -403,7 +416,7 @@ If any of the create/update/delete of `ClusterTopology` CR or scheduler backend 
 
 Deletion failures are non-fatal. These will be logged and the operator will continue.
 
-**User-created ClusterTopology resources** are not created, updated, or deleted by operator startup. Their lifecycle is managed entirely by administrators via kubectl or GitOps, subject to the protections described in [ClusterTopology Lifecycle](#clustertopology-lifecycle). When the active scheduler backend's profile has topology resource creation enabled (`KaiSchedulerConfig.CreateTopologyResources`, which defaults to `true`), the ClusterTopology controller creates and manages the corresponding scheduler backend topology CR for each user-created ClusterTopology as well, using the same `OwnerReference` pattern.
+**User-created ClusterTopology resources** are not created, updated, or deleted by operator startup. Their lifecycle is managed entirely by administrators via kubectl or GitOps, subject to the protections described in [ClusterTopology Lifecycle](#clustertopology-lifecycle). For each user-created ClusterTopology, the ClusterTopology controller handles the scheduler backend topology lifecycle: auto-creating when `schedulerTopologyRef` is not set, or verifying drift when it is set (see [Scheduler Backend Topology](#scheduler-backend-topology)).
 
 #### Topology Configuration Updates
 
@@ -423,6 +436,19 @@ ClusterTopology Go API:
 // Well-known conventions include: region, zone, datacenter, block, rack, host, numa.
 type TopologyDomain string
 
+// +kubebuilder:object:root=true
+// +kubebuilder:resource:scope=Cluster,shortName=ct
+// +kubebuilder:subresource:status
+
+// ClusterTopology defines the topology hierarchy for the cluster.
+// Updates to spec.levels are validated by a webhook to prevent unsafe modifications.
+type ClusterTopology struct {
+    metav1.TypeMeta   `json:",inline"`
+    metav1.ObjectMeta `json:"metadata,omitempty"`
+    Spec   ClusterTopologySpec   `json:"spec"`
+    Status ClusterTopologyStatus `json:"status,omitempty"`
+}
+
 // ClusterTopologySpec defines the topology hierarchy specification.
 type ClusterTopologySpec struct {
     // Levels is an ordered list of topology levels from broadest to narrowest scope.
@@ -434,6 +460,12 @@ type ClusterTopologySpec struct {
     // +kubebuilder:validation:XValidation:rule="self.all(x, self.filter(y, y.key == x.key).size() == 1)",message="key must be unique across all levels"
     // +kubebuilder:validation:XValidation:rule="!self.exists(a, self.exists(b, a.domain == b.key))",message="domain names must not collide with key values"
     Levels []TopologyLevel `json:"levels"`
+
+    // SchedulerTopologyRef optionally references an existing scheduler backend topology resource by name.
+    // When set, the controller verifies this topology matches the ClusterTopology levels instead of creating one.
+    // When not set, the controller creates and manages the scheduler backend topology automatically.
+    // +optional
+    SchedulerTopologyRef *SchedulerTopologyReference `json:"schedulerTopologyRef,omitempty"`
 }
 
 type TopologyLevel struct {
@@ -455,7 +487,32 @@ type TopologyLevel struct {
     // +kubebuilder:validation:Pattern=`^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]/)?([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$`
     Key string `json:"key"`
 }
+
+// SchedulerTopologyReference references an existing scheduler backend topology resource.
+type SchedulerTopologyReference struct {
+    // Name is the name of the scheduler backend topology resource.
+    // +kubebuilder:validation:Required
+    // +kubebuilder:validation:MinLength=1
+    Name string `json:"name"`
+}
+
+// ClusterTopologyStatus defines the observed state of a ClusterTopology.
+type ClusterTopologyStatus struct {
+    // Conditions represent the latest available observations of the ClusterTopology's state.
+    // +optional
+    Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
 ```
+
+The `SchedulerTopologyInSync` condition on `ClusterTopologyStatus` reports the state of the scheduler backend topology:
+
+| Status    | Reason                    | Description                                                                         |
+| --------- | ------------------------- | ------------------------------------------------------------------------------------ |
+| `True`    | `InSync`                  | The scheduler backend topology levels match the ClusterTopology levels               |
+| `False`   | `Drift`                   | The scheduler backend topology levels do not match the ClusterTopology levels        |
+| `Unknown` | `TopologyNotFound`        | The referenced scheduler backend topology resource was not found                     |
+
+When `schedulerTopologyRef` is not set, the controller auto-manages the scheduler backend topology and does not set this condition.
 
 #### ClusterTopology Lifecycle
 
@@ -521,6 +578,18 @@ sequenceDiagram
         Note right of API: CT deleted
     end
 ```
+
+**Scheduler Backend Topology**
+
+The ClusterTopology controller manages the relationship between each ClusterTopology and its corresponding scheduler backend topology resource (e.g., KAI `Topology` CR). The behavior depends on whether `schedulerTopologyRef` is set:
+
+*Auto-managed (no `schedulerTopologyRef`):* The controller creates and manages the scheduler backend topology CR with an `OwnerReference` to the ClusterTopology. For the KAI scheduler, this means creating a `Topology` CR. If the ClusterTopology's levels change, the controller recreates the KAI Topology (delete + create, since KAI's `Topology` CR has immutable levels). When the ClusterTopology is deleted, the scheduler backend topology is cascade-deleted via the `OwnerReference`.
+
+*Externally-managed (`schedulerTopologyRef` set):* The referenced scheduler backend topology is managed outside of Grove (e.g., by an external tool or a separate team). The controller does not create, update, or delete the referenced topology. Instead, it compares the referenced topology's levels against the ClusterTopology's levels and sets a `SchedulerTopologyInSync` status condition:
+
+* `True` (InSync) — the scheduler backend topology levels match the ClusterTopology levels
+* `False` (Drift) — the levels do not match; the condition message describes the mismatch
+* `Unknown` (TopologyNotFound) — the referenced scheduler backend topology resource was not found
 
 ### Topology Constraints in PodCliqueSet
 
@@ -904,9 +973,9 @@ grove-topology (default) ml-team/inference-llama-70b
 **Scheduler backend with Topology Aware Scheduling Support**
 
 Currently the only scheduler backend that supports hierarchical TAS is [KAI Scheduler](https://github.com/NVIDIA/KAI-Scheduler). See [here](https://github.com/NVIDIA/KAI-Scheduler/tree/main/docs/topology) for more information.
-Follow [instructions](https://github.com/NVIDIA/KAI-Scheduler?tab=readme-ov-file#installation) to install KAI scheduler. When the KAI scheduler profile is enabled (see [OperatorConfiguration Extension](../375-scheduler-backend-framework/README.md#operatorconfiguration-extension)), Grove automatically creates and manages a KAI `Topology` CR for each ClusterTopology in the cluster (both the default and user-created topologies). This is controlled by `KaiSchedulerConfig.CreateTopologyResources`, which defaults to `true`. KAI Scheduler supports multiple `Topology` resources within a single cluster.
+Follow [instructions](https://github.com/NVIDIA/KAI-Scheduler?tab=readme-ov-file#installation) to install KAI scheduler. By default, the ClusterTopology controller automatically creates and manages a KAI `Topology` CR for each ClusterTopology in the cluster (both the default and user-created topologies). Administrators who manage their own KAI `Topology` resources externally can set `schedulerTopologyRef` on the ClusterTopology to reference them — the controller will then verify drift instead of creating the resource (see [Scheduler Backend Topology](#scheduler-backend-topology)). KAI Scheduler supports multiple `Topology` resources within a single cluster.
 
-> NOTE: The scheduling backend determines what resources it requires. Grove Operator is not limited to one scheduler backend, and any other scheduler providing TAS functionality can be plugged in. Each backend defines its own configuration struct within `SchedulerProfile.Config`, and topology resource creation is controlled by backend-specific configuration fields (e.g. `KaiSchedulerConfig.CreateTopologyResources` for KAI).
+> NOTE: The scheduling backend determines what resources it requires. Grove Operator is not limited to one scheduler backend, and any other scheduler providing TAS functionality can be plugged in. The `schedulerTopologyRef` mechanism is backend-agnostic — it references the scheduler backend topology by name, and the controller resolves it based on the active scheduler backend.
 
 **Nodes labeled with Topology specific labels**
 
