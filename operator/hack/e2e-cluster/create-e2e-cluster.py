@@ -507,8 +507,6 @@ def main(
         skip_memory_limit = True
 
     config = ClusterConfig()
-    if skip_memory_limit:
-        config.worker_memory = None
     script_dir = Path(__file__).resolve().parent
     operator_dir = script_dir.parent.parent  # Go up from hack/e2e-cluster/ to operator/
 
@@ -529,6 +527,10 @@ def main(
     skip_grove = to_bool(skip_grove)
     skip_topology = to_bool(skip_topology)
     skip_prepull = to_bool(skip_prepull)
+    skip_memory_limit = to_bool(skip_memory_limit)
+
+    if skip_memory_limit:
+        config.worker_memory = None
 
     # Handle delete mode
     if delete:
