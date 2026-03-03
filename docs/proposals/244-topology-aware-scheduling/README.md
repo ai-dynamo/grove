@@ -86,7 +86,7 @@ AI clusters often contain heterogeneous hardware with different interconnect cha
 
 ## Proposal
 
-<img src="assets/tas-highlevel-architecture.excalidraw.excalidraw.png" alt="tas-overview" style="zoom:30%;" />
+<img src="assets/tas-highlevel-architecture.png" alt="tas-overview" style="zoom:30%;" />
 
 Grove implements topology-aware scheduling through a two-layer approach:
 
