@@ -24,7 +24,7 @@
     - [Two Management Paths for Topologies](#two-management-paths-for-topologies)
 - [Design Details](#design-details)
   - [Cluster Admin API](#cluster-admin-api)
-    - [Supported Topology domains:](#supported-topology-domains)
+    - [Topology Domains](#topology-domains)
     - [Validation](#validation)
     - [Operator Startup behavior](#operator-startup-behavior)
     - [Topology Configuration Updates](#topology-configuration-updates)
@@ -124,14 +124,14 @@ Workload developers can specify topology constraints at three hierarchical level
 The operator validates these constraints against the referenced ClusterTopology using three key validation rules:
 
 1. *Domain existence*: All topology domains referenced in workload's topology constraints must exist in the ClusterTopology CR. This ensures workloads only reference valid, configured topology levels.
-2. *Topology Constraint Hierarchy*:  Topology levels are ordered by their total network distance in each level, from maximum (`region`) down to minimum (`numa`). When topology constraints are hierarchically applied to a workload from  PodCliqueSet → PodCliqueScalingGroup → PodClique, each level's  constraints must be set to equal or lower than the parent level workload primitive. A child resource cannot specify a higher topology domain  than its parent. For example, if PodCliqueSet specifies `rack`, then PodCliqueScalingGroup can specify `rack` (equal), `host` (lower), or `numa` (lowest), but not `zone` or `region` (higher).
+2. *Topology Constraint Hierarchy*: Topology levels are ordered by their position in the ClusterTopology's levels array (index 0 = broadest scope). When topology constraints are hierarchically applied to a workload from PodCliqueSet → PodCliqueScalingGroup → PodClique, each level's constraints must reference a domain that is equal to or narrower (higher index) than the parent level's domain. A child resource cannot specify a broader topology domain than its parent. For example, if the referenced ClusterTopology defines levels `[zone, rack, host]` and the PodCliqueSet specifies `rack`, then PodCliqueScalingGroup can specify `rack` (equal) or `host` (narrower), but not `zone` (broader).
 3. *ClusterTopology reference*: If `clusterTopologyName` is set on a PodCliqueSet, the referenced ClusterTopology must exist. The reference can only be changed while no pods in the PCS are scheduled.
 
 After validation, the operator translates the topology domain names (e.g., "rack", "host") into cluster-specific topology keys (e.g., "topology.kubernetes.io/zone", "kubernetes.io/hostname") using the referenced ClusterTopology and configures these hierarchical topology keys in the `PodGang` API . The `PodGang` serves as an intermediate representation that will eventually be mapped to the specific types that the configured scheduler backend understands. This abstraction allows workload portability across clusters with different topology configurations and scheduler implementations.
 
 **Workload portability across clusters**
 
-Grove, via `ClusterTopology`, defines a uniform set of topology domain names (e.g. `rack`, `zone`, `host`) that abstract away infrastructure-specific node labels. Workloads specify topology constraints using these domain names, and the operator resolves them to the correct label keys for the target cluster. This indirection enables workload portability across clusters with different infrastructure providers and topology configurations.
+Grove, via `ClusterTopology`, allows administrators to define topology domain names (e.g. `rack`, `zone`, `host`) that abstract away infrastructure-specific node labels. Domain names are free-form strings — administrators choose names that describe their infrastructure hierarchy. Workloads specify topology constraints using these domain names, and the operator resolves them to the correct label keys for the target cluster. When different clusters use the same domain naming conventions, workloads can be migrated without changing their topology constraints.
 
 ### User Stories
 
@@ -224,7 +224,7 @@ Providing a way to define cluster topology entails that the cluster administrato
 * Define appropriate topology levels in `OperatorConfiguration` when configuring the `Grove` operator.
 * When using multiple topologies, create and maintain additional `ClusterTopology` resources for each hardware type that differs from the default topology.
 
-While validations will be provided to ensure that an admin does not configure an unsupported topology domain, however there is no way for `Grove` operator to ensure that the node labels that are mapped to each topology domain are in line with the ones that will be put onto nodes in a kubernetes cluster.
+CEL validation on the CRD ensures that domain names and node label keys are unique within a ClusterTopology, and that no domain name collides with a key value. However, there is no way for `Grove` operator to ensure that the node labels mapped to each topology domain are in line with the ones actually present on nodes in the kubernetes cluster.
 
 **Mitigation**
 
@@ -352,9 +352,11 @@ topologyAwareScheduling:
 
 > NOTE: The above values for `key` is just an example and will/can be different for different infrastructure providers.
 
-#### Supported Topology domains:
+#### Topology Domains
 
-Topology domains are sorted by their total network distance in descending order from maximum to minimum.
+Topology domain names are free-form strings that administrators choose to describe their infrastructure hierarchy. The order of levels in the ClusterTopology's `levels` array defines the hierarchy: index 0 is the broadest scope, and each subsequent level is narrower. A ClusterTopology can have up to 16 levels.
+
+Grove provides the following well-known domain conventions as a recommendation for common deployments, but any domain name matching the pattern `^[a-z][a-z0-9-]*$` is valid:
 
 | Domain       | Description                                         |
 | ------------ | --------------------------------------------------- |
@@ -366,17 +368,18 @@ Topology domains are sorted by their total network distance in descending order 
 | `host`       | Individual host (virtual/server)                    |
 | `numa`       | NUMA (Non-Uniform Memory Access) node within a host |
 
-A topology domain provides an infrastructure agnostic identifier for a topology level and thus allows the same workload to be deployed across clusters hosted by any cloud provider or private data centers. Across `GCP`, `AWS` and `Azure` it has been observed that the network topology node labels differ. It was thus a natural choice to define a uniform topology convention which can be used by workload designers when creating `PodCliqueSet` resources. Using `ClusterTopology` CR, Grove operator then maps these uniform topology domains to infrastructure provider specific topology node labels.
+Using a consistent set of domain names across clusters enables workload portability — the same `PodCliqueSet` can be deployed on different clusters without changing its topology constraints, as long as each cluster's ClusterTopology maps those domain names to the correct infrastructure-specific node labels. Across `GCP`, `AWS` and `Azure` the network topology node labels differ, so the `ClusterTopology` CR maps these uniform domain names to infrastructure provider specific node labels.
 
 #### Validation
 
 `OperatorConfiguration` is validated upon starting of `Grove` operator. If `TopologyAwareScheduling.Enabled` is true, then following is checked:
 
 * At least one `TopologyLevel` should be set.
-* For each `TopologyLevel`, its `TopologyDomain` should be one of the supported topology domains as mentioned above.
 * Each `TopologyLevel` should be unique, neither the domain nor the key should be duplicated.
 
-> NOTE: There is no validation done for `TopologyLevel.Key` (which is a node label) as that can be different across cloud providers and on-prem data centers. The only exception is the node label for `host` since that is set by the `kubelet`.
+Additional CEL validation on the ClusterTopology CRD ensures that no domain name collides with any key value (prevents ambiguity for scheduler backends).
+
+> NOTE: There is no validation done for `TopologyLevel.Key` (which is a node label) as that can be different across cloud providers and on-prem data centers.
 
 If any of the validation fails then the operator will exit with a non-zero error code and an appropriate error message which will be visible in the logs of the operator `Pod`.
 
@@ -415,44 +418,40 @@ User-created ClusterTopology resources can be updated directly via kubectl or Gi
 ClusterTopology Go API:
 
 ```go
-// TopologyDomain represents a predefined topology level in the hierarchy.
+// TopologyDomain represents a topology level identifier.
+// Domain names are free-form strings that administrators define to match their infrastructure.
+// Well-known conventions include: region, zone, datacenter, block, rack, host, numa.
 type TopologyDomain string
-
-const (
-    TopologyDomainRegion     TopologyDomain = "region"
-    TopologyDomainZone       TopologyDomain = "zone"
-    TopologyDomainDataCenter TopologyDomain = "datacenter"
-    TopologyDomainBlock      TopologyDomain = "block"
-    TopologyDomainRack       TopologyDomain = "rack"
-    TopologyDomainHost       TopologyDomain = "host"
-    TopologyDomainNuma       TopologyDomain = "numa"
-)
 
 // ClusterTopologySpec defines the topology hierarchy specification.
 type ClusterTopologySpec struct {
-    // Levels is an ordered list of topology levels.
-    // The order in this list defines the hierarchy (index 0 = highest level with maximum total network distance).
-    // This field is immutable after creation.
+    // Levels is an ordered list of topology levels from broadest to narrowest scope.
+    // The order in this list defines the hierarchy (index 0 = broadest level).
+    // Updates to this field are validated by webhook when the topology is in use.
     // +kubebuilder:validation:MinItems=1
-    // +kubebuilder:validation:MaxItems=7
+    // +kubebuilder:validation:MaxItems=16
     // +kubebuilder:validation:XValidation:rule="self.all(x, self.filter(y, y.domain == x.domain).size() == 1)",message="domain must be unique across all levels"
     // +kubebuilder:validation:XValidation:rule="self.all(x, self.filter(y, y.key == x.key).size() == 1)",message="key must be unique across all levels"
+    // +kubebuilder:validation:XValidation:rule="!self.exists(a, self.exists(b, a.domain == b.key))",message="domain names must not collide with key values"
     Levels []TopologyLevel `json:"levels"`
 }
 
 type TopologyLevel struct {
-    // Domain is the predefined level identifier used in TopologyConstraint references.
-    // Must be one of: region, zone, datacenter, block, rack, host, numa
-    // +kubebuilder:validation:Required
-    // +kubebuilder:validation:Enum=region;zone;datacenter;block;rack;host;numa
-    Domain TopologyDomain `json:"domain"`
-
-    // Key is the node label key that identifies this topology domain.
-    // Must be a valid Kubernetes label key (qualified name).
-    // Examples: "topology.kubernetes.io/zone", "kubernetes.io/hostname"
+    // Domain is a topology level identifier used in TopologyConstraint references.
+    // Administrators can use any name that describes their infrastructure hierarchy.
+    // Well-known conventions: region, zone, datacenter, block, rack, host, numa
     // +kubebuilder:validation:Required
     // +kubebuilder:validation:MinLength=1
     // +kubebuilder:validation:MaxLength=63
+    // +kubebuilder:validation:Pattern=`^[a-z][a-z0-9-]*$`
+    Domain TopologyDomain `json:"domain"`
+
+    // Key is the node label key that identifies this topology domain.
+    // Must be a valid Kubernetes qualified label key.
+    // Examples: "topology.kubernetes.io/zone", "kubernetes.io/hostname"
+    // +kubebuilder:validation:Required
+    // +kubebuilder:validation:MinLength=1
+    // +kubebuilder:validation:MaxLength=316
     // +kubebuilder:validation:Pattern=`^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]/)?([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$`
     Key string `json:"key"`
 }
@@ -531,12 +530,11 @@ sequenceDiagram
 // TopologyConstraint defines topology placement requirements.
 type TopologyConstraint struct {
 	// PackDomain specifies the topology domain for grouping replicas.
+	// Must reference a domain defined in the ClusterTopology's levels.
 	// Controls placement constraint for EACH individual replica instance.
-	// Must be one of: region, zone, datacenter, block, rack, host, numa
 	// Example: "rack" means each replica independently placed within one rack.
 	// Note: Does NOT constrain all replicas to the same rack together.
 	// Different replicas can be in different topology domains.
-	// +kubebuilder:validation:Enum=region;zone;datacenter;block;rack;host;numa
 	PackDomain TopologyDomain `json:"packDomain"`
 }
 ```
@@ -721,17 +719,19 @@ Existing validating webhook which validates `PodCliqueSet`, has been enhanced to
 
 *Rule-2: Check for Hierarchical strictness*
 
-As you traverse down the resource hierarchy (PodCliqueSet → PodCliqueScalingGroup → PodClique), topology constraint levels must become equal or lower. A child resource cannot specify a broader topology domain than its parent. If this rule is violated, then the creation of the `PodCliqueSet` will be rejected by the validating webhook.
+As you traverse down the resource hierarchy (PodCliqueSet → PodCliqueScalingGroup → PodClique), topology constraint levels must become equal or narrower (higher index in the ClusterTopology's levels array). A child resource cannot specify a broader topology domain than its parent. If this rule is violated, then the creation of the `PodCliqueSet` will be rejected by the validating webhook.
+
+> NOTE: The hierarchy is determined by the position of domains in the referenced ClusterTopology's levels array, not by a fixed global order. The examples below assume a ClusterTopology with levels ordered as `[zone, block, rack, host, numa]`.
 
 Example:
 
 | Parent | Child   | Valid? | Reason                                                       |
 | ------ | ------- | ------ | ------------------------------------------------------------ |
-| `rack` | `host`  | ✅ Yes  | `host` is lower than `rack`                    |
+| `rack` | `host`  | ✅ Yes  | `host` is narrower (higher index) than `rack`                |
 | `rack` | `rack`  | ✅ Yes  | Equal is allowed                                             |
-| `rack` | `numa`  | ✅ Yes  | `numa` is lowest                                          |
-| `host` | `rack`  | ❌ No   | `rack` is higher than `host`                                |
-| `zone` | `block` | ✅ Yes   | `zone` is higher than `block` |
+| `rack` | `numa`  | ✅ Yes  | `numa` is the narrowest (highest index)                      |
+| `host` | `rack`  | ❌ No   | `rack` is broader (lower index) than `host`                  |
+| `zone` | `block` | ✅ Yes  | `block` is narrower than `zone`                              |
 
 *Rule-3: ClusterTopology reference validation*
 
