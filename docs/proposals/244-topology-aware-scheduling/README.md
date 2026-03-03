@@ -19,7 +19,7 @@
     - [Topology Aware Cluster Autoscaling](#topology-aware-cluster-autoscaling)
     - [Workload Portability](#workload-portability)
     - [ClusterTopology Deletion Protection](#clustertopology-deletion-protection)
-    - [ClusterTopology Updates Blocked When In Use](#clustertopology-updates-blocked-when-in-use)
+    - [Immutable Topology Levels](#immutable-topology-levels)
     - [Topology Reference Immutability After Scheduling](#topology-reference-immutability-after-scheduling)
     - [Two Management Paths for Topologies](#two-management-paths-for-topologies)
 - [Design Details](#design-details)
@@ -246,9 +246,9 @@ CEL validation on the CRD ensures that domain names and node label keys are uniq
 
 #### Topology Configuration Drift
 
-If a ClusterTopology's levels change (e.g. adding or removing levels), existing PodCliqueSets that reference it may have topology constraints that no longer match the available levels.
+ClusterTopology levels are immutable after creation (enforced by CEL validation). For user-created ClusterTopology resources, this eliminates configuration drift entirely — the levels cannot change.
 
-The risk varies by topology type. For user-created ClusterTopology resources, the validating webhook blocks level updates when any PCS with scheduled pods references the topology (see [ClusterTopology Lifecycle](#clustertopology-lifecycle)), so drift can only occur for PCSs that have no scheduled pods at the time of the update. For the default `grove-topology`, levels are updated via `OperatorConfiguration` changes followed by an operator restart, which bypasses the webhook and can cause drift for any referencing PCS.
+The default `grove-topology` is a special case. When an administrator changes the topology levels in `OperatorConfiguration` and restarts the operator, the operator deletes the existing default ClusterTopology and creates a new one with the updated levels (see [Operator Startup behavior](#operator-startup-behavior)). During the brief window between deletion and recreation, existing PodCliqueSets that referenced the default topology may have topology constraints that no longer match the new levels.
 
 **Mitigation:**
 
@@ -292,13 +292,13 @@ A ClusterTopology resource cannot be deleted while any PodCliqueSet references i
 
 * The finalizer-based approach ensures that topology resources are never removed while workloads depend on them. Administrators can identify which PodCliqueSets reference a given topology using the kubectl query described in [Monitoring](#monitoring), then migrate or delete those workloads before retrying the deletion.
 
-#### ClusterTopology Updates Blocked When In Use
+#### Immutable Topology Levels
 
-Updates to a ClusterTopology's topology levels are blocked by a validating webhook if any PodCliqueSet with scheduled pods references it. This prevents topology definition changes from invalidating in-flight scheduling decisions. Level updates are allowed when all referencing PodCliqueSets have no scheduled pods. Metadata changes (labels, annotations) are not blocked.
+A ClusterTopology's `spec.levels` field is immutable after creation, enforced by a CEL validation rule (`self == oldSelf`) on the CRD. This matches the immutability contract of the downstream KAI `Topology` CR and eliminates the risk of topology changes invalidating in-flight scheduling decisions. Metadata changes (labels, annotations) are not affected.
 
 **Mitigation**
 
-* Administrators who need to update a topology's levels can first drain the referencing workloads (scale to zero or delete), apply the topology update, and then redeploy. The webhook provides a clear rejection message identifying which PodCliqueSets are blocking the update.
+* Administrators who need to change a topology's levels must delete the existing ClusterTopology and create a new one with the desired levels. The finalizer prevents deletion while any PodCliqueSet references the topology, so administrators must first drain or delete referencing workloads. This delete+recreate workflow is consistent with the KAI scheduler's topology update model.
 
 #### Topology Reference Immutability After Scheduling
 
@@ -335,7 +335,8 @@ type TopologyAwareSchedulingConfiguration struct {
 	// Enabled indicates whether topology-aware scheduling is enabled.
 	Enabled bool `json:"enabled"`
 	// Levels is a list of topology levels.
-	// Used to create/update the ClusterTopology CR at operator startup.
+	// Used to create the ClusterTopology CR at operator startup.
+	// If levels differ from an existing default ClusterTopology, the operator deletes and recreates it.
 	// +optional
 	Levels []corev1alpha1.TopologyLevel `json:"levels,omitempty"`
 }
@@ -404,11 +405,11 @@ When `Grove` operator starts, it checks if TAS is enabled.
 
 * Validate TAS configuration.
 
-* Create or Update the default `ClusterTopology` custom resource (`grove-topology`). The default topology is labeled with `app.kubernetes.io/managed-by: grove-operator` and is reconciled to match the operator configuration on each startup.
+* Ensure the default `ClusterTopology` custom resource (`grove-topology`) exists and matches the operator configuration. Since `spec.levels` is immutable, the operator cannot update an existing ClusterTopology's levels directly. If the existing default topology's levels differ from the configuration, the operator deletes the existing ClusterTopology (removing its finalizer first) and creates a new one. The default topology is labeled with `app.kubernetes.io/managed-by: grove-operator`. If the levels match, the operator updates only metadata (e.g., labels) if needed.
 
-* If the default `ClusterTopology` does not have a `schedulerTopologyRef`, create or update the corresponding scheduler backend topology CR. For the KAI scheduler, this means creating a `Topology` CR if it does not exist, or re-creating it (delete + create) if it needs an update, since KAI's `Topology` CR is currently immutable. The scheduler backend topology CR is created with the `ClusterTopology` CR as its owner via `OwnerReference`. If `schedulerTopologyRef` is set, the controller handles drift detection (see [Scheduler Backend Topology](#scheduler-backend-topology)).
+* If the default `ClusterTopology` does not have a `schedulerTopologyRef`, create the corresponding scheduler backend topology CR if it does not exist. For the KAI scheduler, this means creating a `Topology` CR with an `OwnerReference` to the ClusterTopology. When the operator deletes and recreates the default ClusterTopology due to level changes, the scheduler backend topology is cascade-deleted via the `OwnerReference` and then recreated alongside the new ClusterTopology. If `schedulerTopologyRef` is set, the controller handles drift detection (see [Scheduler Backend Topology](#scheduler-backend-topology)).
 
-If any of the create/update/delete of `ClusterTopology` CR or scheduler backend topology CR fails, the operator exits with a non-zero exit code and a clear message indicating the issue.
+If any of the create/delete of `ClusterTopology` CR or scheduler backend topology CR fails, the operator exits with a non-zero exit code and a clear message indicating the issue.
 
 **TAS is disabled**
 
@@ -420,9 +421,9 @@ Deletion failures are non-fatal. These will be logged and the operator will cont
 
 #### Topology Configuration Updates
 
-`OperatorConfiguration` is mounted as an immutable `ConfigMap` to the operator. To make any changes to the default topology's TAS configuration via `OperatorConfiguration`, the `Grove` operator needs to be restarted with the changed `OperatorConfiguration`.
+`OperatorConfiguration` is mounted as an immutable `ConfigMap` to the operator. To make any changes to the default topology's TAS configuration via `OperatorConfiguration`, the `Grove` operator needs to be restarted with the changed `OperatorConfiguration`. If the levels have changed, the operator deletes the existing default ClusterTopology and creates a new one (see [Operator Startup behavior](#operator-startup-behavior)).
 
-User-created ClusterTopology resources can be updated directly via kubectl or GitOps, subject to the protections described in [ClusterTopology Lifecycle](#clustertopology-lifecycle).
+User-created ClusterTopology resources have immutable levels. To change the levels of a user-created topology, delete the existing resource and create a new one. The finalizer prevents deletion while any PodCliqueSet references the topology (see [ClusterTopology Lifecycle](#clustertopology-lifecycle)).
 
 ### ClusterTopology custom resource
 
@@ -441,7 +442,6 @@ type TopologyDomain string
 // +kubebuilder:subresource:status
 
 // ClusterTopology defines the topology hierarchy for the cluster.
-// Updates to spec.levels are validated by a webhook to prevent unsafe modifications.
 type ClusterTopology struct {
     metav1.TypeMeta   `json:",inline"`
     metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -453,9 +453,9 @@ type ClusterTopology struct {
 type ClusterTopologySpec struct {
     // Levels is an ordered list of topology levels from broadest to narrowest scope.
     // The order in this list defines the hierarchy (index 0 = broadest level).
-    // Updates to this field are validated by webhook when the topology is in use.
     // +kubebuilder:validation:MinItems=1
     // +kubebuilder:validation:MaxItems=16
+    // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="field is immutable"
     // +kubebuilder:validation:XValidation:rule="self.all(x, self.filter(y, y.domain == x.domain).size() == 1)",message="domain must be unique across all levels"
     // +kubebuilder:validation:XValidation:rule="self.all(x, self.filter(y, y.key == x.key).size() == 1)",message="key must be unique across all levels"
     // +kubebuilder:validation:XValidation:rule="!self.exists(a, self.exists(b, a.domain == b.key))",message="domain names must not collide with key values"
@@ -525,7 +525,7 @@ ClusterTopology resources are cluster-scoped and define the mapping between topo
 
 **Updates**
 
-Updates to a ClusterTopology's topology levels are validated by a webhook. The webhook blocks level updates if any PodCliqueSet with scheduled pods references the topology, preventing changes that would invalidate in-flight scheduling decisions. Metadata changes (labels, annotations) are not blocked. The default topology's levels are updated via `OperatorConfiguration` changes followed by an operator restart, which bypasses the webhook (see [Topology Configuration Drift](#topology-configuration-drift)).
+A ClusterTopology's `spec.levels` field is immutable after creation, enforced by a CEL validation rule (`self == oldSelf`). This matches the immutability contract of the downstream KAI `Topology` CR and eliminates the need for a validating webhook to guard against unsafe level modifications. Metadata changes (labels, annotations) are not affected. To change a topology's levels, delete the existing resource and create a new one. The default topology's levels are updated via `OperatorConfiguration` changes followed by an operator restart, where the operator handles the delete+recreate automatically (see [Topology Configuration Drift](#topology-configuration-drift)).
 
 **Deletion**
 
@@ -536,7 +536,6 @@ sequenceDiagram
     participant Op as Operator
     participant Admin
     participant API as API Server
-    participant CTW as CT Webhook
     participant CTC as CT Controller
 
     Note over Op, CTC: Create ClusterTopology
@@ -555,16 +554,11 @@ sequenceDiagram
 
     CTC->>API: Add finalizer
 
-    Note over Op, CTC: Update ClusterTopology Levels
+    Note over Op, CTC: Update ClusterTopology Levels (immutable)
 
     Admin->>API: Update CT levels
-    API->>CTW: Validate update
-    CTW->>API: List PCSs referencing this CT
-    alt Any PCS has ScheduledReplicas > 0
-        CTW-->>Admin: Reject (topology in use by scheduled workloads)
-    else No PCS has scheduled pods
-        CTW-->>Admin: Allow
-    end
+    API-->>Admin: Reject (field is immutable)
+    Note right of Admin: To change levels: delete CT, create new one
 
     Note over Op, CTC: Delete ClusterTopology
 
@@ -583,7 +577,7 @@ sequenceDiagram
 
 The ClusterTopology controller manages the relationship between each ClusterTopology and its corresponding scheduler backend topology resource (e.g., KAI `Topology` CR). The behavior depends on whether `schedulerTopologyRef` is set:
 
-*Auto-managed (no `schedulerTopologyRef`):* The controller creates and manages the scheduler backend topology CR with an `OwnerReference` to the ClusterTopology. For the KAI scheduler, this means creating a `Topology` CR. If the ClusterTopology's levels change, the controller recreates the KAI Topology (delete + create, since KAI's `Topology` CR has immutable levels). When the ClusterTopology is deleted, the scheduler backend topology is cascade-deleted via the `OwnerReference`.
+*Auto-managed (no `schedulerTopologyRef`):* The controller creates and manages the scheduler backend topology CR with an `OwnerReference` to the ClusterTopology. For the KAI scheduler, this means creating a `Topology` CR. Since both the ClusterTopology and KAI Topology have immutable levels, the controller only needs to handle creation and deletion — no update path is needed. When the ClusterTopology is deleted, the scheduler backend topology is cascade-deleted via the `OwnerReference`.
 
 *Externally-managed (`schedulerTopologyRef` set):* The referenced scheduler backend topology is managed outside of Grove (e.g., by an external tool or a separate team). The controller does not create, update, or delete the referenced topology. Instead, it compares the referenced topology's levels against the ClusterTopology's levels and sets a `SchedulerTopologyInSync` status condition:
 
@@ -919,7 +913,7 @@ The addition of multiple ClusterTopology resources and the `clusterTopologyName`
 
 **PodCliqueSet Status Conditions**
 
-It is possible that one or more topology constraints defined on a deployed `PodCliqueSet` are no longer available because the cluster admin decided to make changes to the `ClusterTopology`. It is therefore important to create visibility that one or more topology levels are no longer available. A new `metav1.Condition` has been introduced for `PodCliqueSet`.
+It is possible that one or more topology constraints defined on a deployed `PodCliqueSet` are no longer available because the cluster admin deleted and recreated the `ClusterTopology` with different levels, or because the default topology was recreated by an operator restart with changed configuration. It is therefore important to create visibility that one or more topology levels are no longer available. A new `metav1.Condition` has been introduced for `PodCliqueSet`.
 
 ```go
 // PodCliqueSetStatus defines the status of a PodCliqueSet.
@@ -944,7 +938,7 @@ Condition States:
 
 **Topology usage overview**
 
-Understanding which topologies are in use is important before attempting updates or deletions. Administrators can list which PodCliqueSets reference each ClusterTopology using kubectl:
+Understanding which topologies are in use is important before attempting deletions. Administrators can list which PodCliqueSets reference each ClusterTopology using kubectl:
 
 ```bash
 # List all PCSs grouped by their ClusterTopology reference
@@ -993,7 +987,6 @@ To enable the scheduler to select/filter nodes that satisfy the topology constra
 **Unit tests** for multi-topology:
 
 * PCS validating webhook: `clusterTopologyName` existence check on create and update, immutability after scheduling, rejection when TAS is disabled or no `TopologyConstraint` is set
-* ClusterTopology validating webhook: block updates when referenced by PCSs with scheduled pods
 * ClusterTopology controller: finalizer addition and removal logic
 * PCS reconciler: topology resolution logic that resolves `clusterTopologyName` (or the default) to the correct ClusterTopology when building the PodGang
 
@@ -1015,6 +1008,6 @@ An alternative is to define all topologies in the OperatorConfiguration ConfigMa
 
 This approach offers a single source of truth and a simpler ownership model — the operator fully manages all topologies with no hybrid management paths.
 
-However, because the ConfigMap is managed by the Helm chart, it operates outside of the webhook and finalizer safeguards. A `helm upgrade` that removes a topology from the config would cause the operator to delete the corresponding ClusterTopology on next startup, even if PodCliqueSets still reference it. The finalizer would prevent the deletion, creating a stuck state where the config and the cluster are not aligned. Similarly, a Helm-driven update to a topology's levels would conflict with the protection against modifying topologies referenced by scheduled workloads. Additionally, topology management is coupled to the operator lifecycle — adding a topology for a new hardware segment requires redeploying the operator.
+However, because the ConfigMap is managed by the Helm chart, it operates outside of the finalizer safeguards. A `helm upgrade` that removes a topology from the config would cause the operator to delete the corresponding ClusterTopology on next startup, even if PodCliqueSets still reference it. The finalizer would prevent the deletion, creating a stuck state where the config and the cluster are not aligned. Additionally, topology management is coupled to the operator lifecycle — adding a topology for a new hardware segment requires redeploying the operator.
 
-With the hybrid model chosen in this proposal, only the default topology has this Helm-managed lifecycle, which is acceptable since it matches today's behavior. Additional topologies are standard Kubernetes resources subject to the full admission control and finalizer protections, and can be managed independently by different teams.
+With the hybrid model chosen in this proposal, only the default topology has this Helm-managed lifecycle, which is acceptable since it matches today's behavior. Additional topologies are standard Kubernetes resources with immutable levels and finalizer-based deletion protection, and can be managed independently by different teams.
