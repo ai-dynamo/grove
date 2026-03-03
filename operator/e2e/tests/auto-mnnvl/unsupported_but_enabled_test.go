@@ -66,7 +66,7 @@ func Test_AutoMNNVL_UnsupportedButEnabled(t *testing.T) {
 // testOperatorExitsWithoutCDCRD verifies that the operator fails preflight
 // when MNNVL is enabled but the ComputeDomain CRD is missing.
 func testOperatorExitsWithoutCDCRD(t *testing.T, tc testContext) {
-	pod, err := waitForOperatorPod(tc)
+	pod, err := waitForFailedOperatorPod(tc)
 	require.NoError(t, err, "Failed to find grove-operator pod")
 
 	hasTerminated := false
@@ -101,10 +101,13 @@ func testOperatorExitsWithoutCDCRD(t *testing.T, tc testContext) {
 	assert.NoError(t, err, "Operator logs should show preflight failure due to missing CRD")
 }
 
-// waitForOperatorPod polls until it finds an operator pod that has terminated
-// or restarted. During a rolling deployment there may be both an old healthy
-// pod and a new crashing pod; we need the crashing one to inspect its logs.
-func waitForOperatorPod(tc testContext) (*corev1.Pod, error) {
+// waitForFailedOperatorPod polls until it finds an operator pod that is NOT
+// Ready and has terminated or restarted. During a rolling deployment
+// (maxUnavailable=0) both the old healthy pod and the new crashing pod coexist.
+// The old pod may have RestartCount > 0 from cert-refresh restarts, so we
+// filter by !Ready to ensure we return the actually-crashing pod whose logs
+// contain the preflight failure.
+func waitForFailedOperatorPod(tc testContext) (*corev1.Pod, error) {
 	var operatorPod *corev1.Pod
 	err := utils.PollForCondition(tc.ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, listErr := tc.clientset.CoreV1().Pods(groveOperatorNamespace).List(tc.ctx, metav1.ListOptions{
@@ -114,11 +117,15 @@ func waitForOperatorPod(tc testContext) (*corev1.Pod, error) {
 			return false, nil
 		}
 		for i := range pods.Items {
-			for _, status := range pods.Items[i].Status.ContainerStatuses {
+			pod := &pods.Items[i]
+			if isPodReady(pod) {
+				continue
+			}
+			for _, status := range pod.Status.ContainerStatuses {
 				if status.State.Terminated != nil ||
 					status.LastTerminationState.Terminated != nil ||
 					status.RestartCount > 0 {
-					operatorPod = &pods.Items[i]
+					operatorPod = pod
 					return true, nil
 				}
 			}
@@ -126,4 +133,13 @@ func waitForOperatorPod(tc testContext) (*corev1.Pod, error) {
 		return false, nil
 	})
 	return operatorPod, err
+}
+
+func isPodReady(pod *corev1.Pod) bool {
+	for _, cond := range pod.Status.Conditions {
+		if cond.Type == corev1.PodReady {
+			return cond.Status == corev1.ConditionTrue
+		}
+	}
+	return false
 }

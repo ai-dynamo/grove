@@ -81,6 +81,8 @@ var groveManagedResourceTypes = []resourceType{
 	{"rbac.authorization.k8s.io", "v1", "rolebindings", "RoleBindings"},
 	// Autoscaling resources
 	{"autoscaling", "v2", "horizontalpodautoscalers", "HorizontalPodAutoscalers"},
+	// NVIDIA ComputeDomain (created by MNNVL feature, has finalizers that must be processed)
+	{"resource.nvidia.com", "v1beta1", "computedomains", "ComputeDomains"},
 }
 
 // SharedClusterManager manages a shared Kubernetes cluster for E2E tests.
