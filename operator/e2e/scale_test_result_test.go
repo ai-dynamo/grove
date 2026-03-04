@@ -14,23 +14,23 @@
 // limitations under the License.
 // */
 
-package exporter
+package utils
 
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/ai-dynamo/grove/operator/e2e/measurement"
 )
 
-func TestSummaryExporter_Export(t *testing.T) {
+func TestScaleTestResult_WriteSummary(t *testing.T) {
 	t.Parallel()
 
 	start := time.Date(2026, 3, 4, 12, 0, 0, 0, time.UTC)
-	result := &measurement.ScaleTestResult{
+	result := &ScaleTestResult{
 		TestName:            "ScaleTest_1000",
 		RunID:               "scale-1",
 		Namespace:           "default",
@@ -38,12 +38,12 @@ func TestSummaryExporter_Export(t *testing.T) {
 		PCSCount:            50,
 		NodeCount:           10,
 		TestDurationSeconds: 72.5,
-		Phases: []measurement.Phase{
+		Phases: []Phase{
 			{
 				Name:                  "deploy",
 				StartTime:             start,
 				DurationFromTestStart: 0.0,
-				Milestones: []measurement.Milestone{
+				Milestones: []Milestone{
 					{Name: "all-pods-created", Timestamp: start.Add(10 * time.Second), DurationFromPhaseStart: 10.0},
 					{Name: "all-pods-ready", Timestamp: start.Add(15 * time.Second), DurationFromPhaseStart: 15.0},
 				},
@@ -52,8 +52,8 @@ func TestSummaryExporter_Export(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := NewSummaryExporter(&buf).Export(result); err != nil {
-		t.Fatalf("SummaryExporter.Export() error = %v", err)
+	if err := result.WriteSummary(&buf); err != nil {
+		t.Fatalf("WriteSummary() error = %v", err)
 	}
 
 	out := buf.String()
@@ -64,10 +64,10 @@ func TestSummaryExporter_Export(t *testing.T) {
 	assertContains(t, out, "all-pods-ready")
 }
 
-func TestJSONExporter_Export(t *testing.T) {
+func TestScaleTestResult_WriteJSON(t *testing.T) {
 	t.Parallel()
 
-	result := &measurement.ScaleTestResult{
+	result := &ScaleTestResult{
 		TestName:            "ScaleTest_100",
 		RunID:               "run-123",
 		Namespace:           "default",
@@ -79,11 +79,11 @@ func TestJSONExporter_Export(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := NewJSONExporter(&buf).Export(result); err != nil {
-		t.Fatalf("JSONExporter.Export() error = %v", err)
+	if err := result.WriteJSON(&buf); err != nil {
+		t.Fatalf("WriteJSON() error = %v", err)
 	}
 
-	var got measurement.ScaleTestResult
+	var got ScaleTestResult
 	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
@@ -96,44 +96,32 @@ func TestJSONExporter_Export(t *testing.T) {
 	}
 }
 
-func TestMultiExporter_Export(t *testing.T) {
+func TestScaleTestResult_SaveToDir(t *testing.T) {
 	t.Parallel()
 
-	result := &measurement.ScaleTestResult{
+	dir := t.TempDir()
+	result := &ScaleTestResult{
 		TestName:          "ScaleTest_100",
-		RunID:             "multi-test",
+		RunID:             "save-test",
 		Namespace:         "default",
 		TotalExpectedPods: 100,
 		PCSCount:          10,
 		NodeCount:         2,
 	}
 
-	var jsonBuf, summaryBuf bytes.Buffer
-	multi := NewMultiExporter(
-		NewJSONExporter(&jsonBuf),
-		NewSummaryExporter(&summaryBuf),
-	)
-
-	if err := multi.Export(result); err != nil {
-		t.Fatalf("MultiExporter.Export() error = %v", err)
+	if err := result.SaveToDir(dir); err != nil {
+		t.Fatalf("SaveToDir() error = %v", err)
 	}
 
-	if jsonBuf.Len() == 0 {
-		t.Fatal("JSONExporter produced no output")
-	}
-	if summaryBuf.Len() == 0 {
-		t.Fatal("SummaryExporter produced no output")
-	}
+	summaryPath := filepath.Join(dir, "summary-save-test.txt")
+	jsonPath := filepath.Join(dir, "results-save-test.json")
 
-	var got measurement.ScaleTestResult
-	if err := json.Unmarshal(jsonBuf.Bytes(), &got); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
+	if _, err := os.Stat(summaryPath); err != nil {
+		t.Fatalf("summary file missing: %v", err)
 	}
-	if got.RunID != "multi-test" {
-		t.Fatalf("got RunID %q, want %q", got.RunID, "multi-test")
+	if _, err := os.Stat(jsonPath); err != nil {
+		t.Fatalf("json file missing: %v", err)
 	}
-
-	assertContains(t, summaryBuf.String(), "ScaleTest_100")
 }
 
 func assertContains(t *testing.T, s string, want string) {

@@ -14,10 +14,11 @@
 // limitations under the License.
 // */
 
-package condition
+package utils
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -25,6 +26,111 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
+
+func TestTimelineTracker_RunPhase(t *testing.T) {
+	t.Parallel()
+
+	tracker := NewTimelineTracker(nil).WithPollInterval(5 * time.Millisecond)
+	actionCalled := false
+	cond1 := &stepCondition{requiredCalls: 2}
+	cond2 := &stepCondition{requiredCalls: 3}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	err := tracker.RunPhase(
+		ctx,
+		"deploy",
+		func(context.Context) error {
+			actionCalled = true
+			return nil
+		},
+		MilestoneDefinition{Name: "pods-created", Condition: cond1},
+		MilestoneDefinition{Name: "pods-ready", Condition: cond2},
+	)
+	if err != nil {
+		t.Fatalf("RunPhase() error = %v", err)
+	}
+	if !actionCalled {
+		t.Fatalf("action function was not called")
+	}
+
+	phases := tracker.Phases()
+	if len(phases) != 1 {
+		t.Fatalf("len(Phases()) = %d, want 1", len(phases))
+	}
+	if phases[0].Name != "deploy" {
+		t.Fatalf("phase name = %q, want deploy", phases[0].Name)
+	}
+	if len(phases[0].Milestones) != 2 {
+		t.Fatalf("len(milestones) = %d, want 2", len(phases[0].Milestones))
+	}
+	if phases[0].Milestones[0].DurationFromPhaseStart > phases[0].Milestones[1].DurationFromPhaseStart {
+		t.Fatalf("milestones are not ordered by completion time")
+	}
+}
+
+func TestTimelineTracker_RunPhase_ActionError(t *testing.T) {
+	t.Parallel()
+
+	tracker := NewTimelineTracker(nil).WithPollInterval(5 * time.Millisecond)
+	wantErr := errors.New("action failed")
+
+	err := tracker.RunPhase(
+		context.Background(),
+		"deploy",
+		func(context.Context) error { return wantErr },
+		MilestoneDefinition{Name: "pods-created", Condition: &stepCondition{requiredCalls: 1}},
+	)
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+}
+
+func TestTimelineTracker_RunPhase_ContextTimeout(t *testing.T) {
+	t.Parallel()
+
+	tracker := NewTimelineTracker(nil).WithPollInterval(5 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	err := tracker.RunPhase(
+		ctx,
+		"deploy",
+		func(context.Context) error { return nil },
+		MilestoneDefinition{Name: "never-met", Condition: &stepCondition{requiredCalls: 0}},
+	)
+	if err == nil {
+		t.Fatalf("expected timeout error, got nil")
+	}
+}
+
+func TestTimelineTracker_PhasesReturnsCopy(t *testing.T) {
+	t.Parallel()
+
+	tracker := NewTimelineTracker(nil).WithPollInterval(5 * time.Millisecond)
+	err := tracker.RunPhase(
+		context.Background(),
+		"deploy",
+		func(context.Context) error { return nil },
+		MilestoneDefinition{Name: "done", Condition: &stepCondition{requiredCalls: 1}},
+	)
+	if err != nil {
+		t.Fatalf("RunPhase() error = %v", err)
+	}
+
+	phases := tracker.Phases()
+	phases[0].Name = "mutated"
+	phases[0].Milestones[0].Name = "mutated-ms"
+
+	phasesAgain := tracker.Phases()
+	if phasesAgain[0].Name == "mutated" {
+		t.Fatalf("phase copy is not isolated")
+	}
+	if phasesAgain[0].Milestones[0].Name == "mutated-ms" {
+		t.Fatalf("milestone copy is not isolated")
+	}
+}
 
 func TestPodConditions(t *testing.T) {
 	t.Parallel()
@@ -141,4 +247,17 @@ func TestPodConditions(t *testing.T) {
 	if !goneMet {
 		t.Fatalf("PodsGoneCondition expected true, got false")
 	}
+}
+
+type stepCondition struct {
+	requiredCalls int
+	calls         int
+}
+
+func (c *stepCondition) Met(context.Context) (bool, error) {
+	c.calls++
+	if c.requiredCalls == 0 {
+		return false, nil
+	}
+	return c.calls >= c.requiredCalls, nil
 }

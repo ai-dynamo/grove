@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/go-logr/logr"
+	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 const defaultTimelinePollInterval = 500 * time.Millisecond
@@ -46,62 +46,33 @@ type MilestoneCondition interface {
 	Met(ctx context.Context) (bool, error)
 }
 
-// ProgressReporter may be implemented by a MilestoneCondition to report progress.
-type ProgressReporter interface {
-	Progress(ctx context.Context) string
-}
-
 // MilestoneDefinition pairs a milestone name with its condition.
 type MilestoneDefinition struct {
 	Name      string
 	Condition MilestoneCondition
 }
 
-// K8sClientConfig holds the K8s REST client rate-limit settings used by the operator.
-type K8sClientConfig struct {
-	QPS   float32 `json:"qps"`
-	Burst int     `json:"burst"`
-}
+// ScaleTestResult accumulates all timeline/raw measurement data for a single run.
+// It is intended for sequential writes in tests and is not thread-safe.
+type ScaleTestResult struct {
+	// Test identity.
+	TestName  string `json:"testName"`
+	RunID     string `json:"runID"`
+	Namespace string `json:"namespace"`
 
-// ControllerMaxReconcile holds the MaxConcurrentReconciles setting per controller,
-// read from the live operator config. Included in benchmark artifacts to correlate
-// throughput results with operator concurrency settings.
-// JSON keys use full CRD names for clarity in archived benchmark artifacts.
-type ControllerMaxReconcile struct {
-	PodCliqueSet          int `json:"podCliqueSet"`
-	PodCliqueScalingGroup int `json:"podCliqueScalingGroup"`
-	PodClique             int `json:"podClique"`
-}
+	// Scale metadata.
+	TotalExpectedPods int    `json:"totalExpectedPods"`
+	PCSCount          int    `json:"pcsCount"`
+	NodeCount         int    `json:"nodeCount"`
+	ClusterProfile    string `json:"clusterProfile,omitempty"`
 
-// OperatorMetadata holds grove operator deployment metadata to be embedded in results.
-type OperatorMetadata struct {
-	GroveImage             string
-	K8sClient              *K8sClientConfig
-	ControllerMaxReconcile *ControllerMaxReconcile
-}
-
-// TrackerResult accumulates all timeline/measurement data for a single run.
-type TrackerResult struct {
-	TestName               string                  `json:"testName"`
-	RunID                  string                  `json:"runID"`
-	Namespace              string                  `json:"namespace"`
-	PCSCount               int                     `json:"pcsCount"`
-	Phases                 []Phase                 `json:"phases"`
-	TestDurationSeconds    float64                 `json:"testDurationSeconds"`
-	GroveImage             string                  `json:"groveImage,omitempty"`
-	K8sClient              *K8sClientConfig        `json:"k8sClient,omitempty"`
-	ControllerMaxReconcile *ControllerMaxReconcile `json:"controllerMaxReconcile,omitempty"`
+	// Timeline data from TimelineTracker.
+	Phases              []Phase `json:"phases"`
+	TestDurationSeconds float64 `json:"testDurationSeconds"`
 }
 
 // TimelineOption configures a TimelineTracker.
 type TimelineOption func(*TimelineTracker)
-
-// WithLogger sets the logger for the tracker.
-func WithLogger(l logr.Logger) TimelineOption {
-	return func(t *TimelineTracker) {
-		t.logger = l
-	}
-}
 
 // WithPollInterval sets the milestone polling interval.
 func WithPollInterval(d time.Duration) TimelineOption {
@@ -117,33 +88,21 @@ type PhaseDefinition struct {
 	Name       string
 	ActionFn   func(ctx context.Context) error
 	Milestones []MilestoneDefinition
-	// Timeout is the per-phase deadline. Zero means no per-phase timeout; the parent context governs.
-	Timeout time.Duration
 }
 
-// TimelineTracker records ordered phases/milestones for a test.
+// TimelineTracker records ordered phases/milestones for a scale test.
 type TimelineTracker struct {
-	testName    string
-	runID       string
-	namespace   string
-	pcsCount    int
-	testStart   time.Time
-	phases      []Phase
-	definitions []PhaseDefinition
+	testStart    time.Time
+	phases       []Phase
+	definitions  []PhaseDefinition
 	pollInterval time.Duration
-	logger      logr.Logger
 }
 
-// NewTimelineTracker constructs a new timeline tracker with required metadata.
-func NewTimelineTracker(testName, runID, namespace string, pcsCount int, opts ...TimelineOption) *TimelineTracker {
+// NewTimelineTracker constructs a new timeline tracker.
+func NewTimelineTracker(opts ...TimelineOption) *TimelineTracker {
 	t := &TimelineTracker{
-		testName:     testName,
-		runID:        runID,
-		namespace:    namespace,
-		pcsCount:     pcsCount,
 		testStart:    time.Now(),
 		pollInterval: defaultTimelinePollInterval,
-		logger:       logr.Discard(),
 	}
 	for _, opt := range opts {
 		opt(t)
@@ -156,70 +115,22 @@ func (t *TimelineTracker) AddPhase(def PhaseDefinition) {
 	t.definitions = append(t.definitions, def)
 }
 
-// Run executes all defined phases in order and returns the complete result.
-// metadata is embedded in the result for correlation with operator settings.
-func (t *TimelineTracker) Run(ctx context.Context, metadata *OperatorMetadata) (*TrackerResult, error) {
-	t.logger.Info("timeline tracker started",
-		"test", t.testName, "runID", t.runID, "namespace", t.namespace,
-		"pcsCount", t.pcsCount, "phases", len(t.definitions))
-
-	for i, def := range t.definitions {
-		t.logger.Info("executing phase",
-			"phaseIndex", fmt.Sprintf("%d/%d", i+1, len(t.definitions)),
-			"phase", def.Name, "milestones", len(def.Milestones))
+// Run executes all defined phases in order.
+func (t *TimelineTracker) Run(ctx context.Context) error {
+	for _, def := range t.definitions {
 		if err := t.runPhase(ctx, def); err != nil {
-			return nil, err
+			return err
 		}
 	}
-
-	result := t.buildResult(metadata)
-	t.logger.Info("timeline tracker finished",
-		"test", t.testName, "totalDuration", fmt.Sprintf("%.1fs", result.TestDurationSeconds))
-	return result, nil
-}
-
-// buildResult assembles a TrackerResult from the tracker's metadata and recorded phases.
-func (t *TimelineTracker) buildResult(metadata *OperatorMetadata) *TrackerResult {
-	r := &TrackerResult{
-		TestName:            t.testName,
-		RunID:               t.runID,
-		Namespace:           t.namespace,
-		PCSCount:            t.pcsCount,
-		Phases:              t.copyPhases(),
-		TestDurationSeconds: time.Since(t.testStart).Seconds(),
-	}
-	if metadata != nil {
-		r.GroveImage = metadata.GroveImage
-		r.K8sClient = metadata.K8sClient
-		r.ControllerMaxReconcile = metadata.ControllerMaxReconcile
-	}
-	return r
-}
-
-// copyPhases returns a deep copy of recorded phases.
-func (t *TimelineTracker) copyPhases() []Phase {
-	out := make([]Phase, len(t.phases))
-	for i := range t.phases {
-		out[i] = t.phases[i]
-		if len(t.phases[i].Milestones) > 0 {
-			out[i].Milestones = append([]Milestone(nil), t.phases[i].Milestones...)
-		}
-	}
-	return out
+	return nil
 }
 
 // runPhase executes a single phase definition and records its milestones.
 func (t *TimelineTracker) runPhase(ctx context.Context, def PhaseDefinition) error {
-	log := t.logger.WithValues("phase", def.Name)
+	log := ctrl.LoggerFrom(ctx).WithValues("phase", def.Name)
 
 	if def.ActionFn == nil {
 		return fmt.Errorf("phase %q: action cannot be nil", def.Name)
-	}
-
-	if def.Timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, def.Timeout)
-		defer cancel()
 	}
 
 	phaseStart := time.Now()
@@ -230,16 +141,10 @@ func (t *TimelineTracker) runPhase(ctx context.Context, def PhaseDefinition) err
 		Milestones:            make([]Milestone, 0, len(def.Milestones)),
 	}
 
-	log.Info("phase started", "milestoneCount", len(def.Milestones))
+	log.V(1).Info("phase started")
 
-	log.Info("executing action")
 	if err := def.ActionFn(ctx); err != nil {
 		return fmt.Errorf("phase %q: action failed: %w", def.Name, err)
-	}
-	log.Info("action completed", "elapsed", fmt.Sprintf("%.1fs", time.Since(phaseStart).Seconds()))
-
-	if len(def.Milestones) > 0 {
-		log.Info("waiting for milestones", "milestones", milestoneNames(def.Milestones))
 	}
 
 	reached, err := t.pollMilestones(ctx, def.Name, phaseStart, def.Milestones)
@@ -249,20 +154,9 @@ func (t *TimelineTracker) runPhase(ctx context.Context, def PhaseDefinition) err
 	phase.Milestones = reached
 
 	t.phases = append(t.phases, phase)
-	log.Info("phase completed",
-		"milestoneCount", len(phase.Milestones),
-		"phaseDuration", fmt.Sprintf("%.1fs", time.Since(phaseStart).Seconds()))
+	log.V(1).Info("phase completed", "milestoneCount", len(phase.Milestones))
 
 	return nil
-}
-
-// milestoneNames extracts the Name field from a slice of MilestoneDefinitions.
-func milestoneNames(defs []MilestoneDefinition) []string {
-	names := make([]string, len(defs))
-	for i, d := range defs {
-		names[i] = d.Name
-	}
-	return names
 }
 
 // pollMilestones polls milestone conditions until all are met or the context is cancelled.
@@ -272,23 +166,17 @@ func (t *TimelineTracker) pollMilestones(
 	phaseStart time.Time,
 	milestones []MilestoneDefinition,
 ) ([]Milestone, error) {
-	log := t.logger.WithValues("phase", phaseName)
+	log := ctrl.LoggerFrom(ctx).WithValues("phase", phaseName)
 	remaining := append([]MilestoneDefinition{}, milestones...)
 	reached := make([]Milestone, 0, len(milestones))
-	pollCount := 0
 
 	for len(remaining) > 0 {
 		select {
 		case <-ctx.Done():
-			log.Info("context cancelled while waiting for milestones",
-				"pending", milestoneNames(remaining),
-				"elapsed", fmt.Sprintf("%.1fs", time.Since(phaseStart).Seconds()))
 			return nil, ctx.Err()
 		case <-time.After(t.pollInterval):
 		}
 
-		pollCount++
-		elapsed := fmt.Sprintf("%.1fs", time.Since(phaseStart).Seconds())
 		var stillPending []MilestoneDefinition
 		for _, def := range remaining {
 			ok, err := def.Condition.Met(ctx)
@@ -302,15 +190,9 @@ func (t *TimelineTracker) pollMilestones(
 					Timestamp:              ts,
 					DurationFromPhaseStart: ts.Sub(phaseStart).Seconds(),
 				})
-				log.Info("milestone reached", "milestone", def.Name,
-					"elapsed", elapsed,
-					"remaining", len(remaining)-1)
+				log.V(1).Info("milestone reached", "milestone", def.Name,
+					"durationFromPhaseStartSeconds", ts.Sub(phaseStart).Seconds())
 			} else {
-				if reporter, ok := def.Condition.(ProgressReporter); ok && pollCount%5 == 0 {
-					log.Info("milestone pending", "milestone", def.Name,
-						"progress", reporter.Progress(ctx),
-						"elapsed", elapsed)
-				}
 				stillPending = append(stillPending, def)
 			}
 		}
@@ -318,4 +200,16 @@ func (t *TimelineTracker) pollMilestones(
 	}
 
 	return reached, nil
+}
+
+// Phases returns a copy of recorded phases and milestones.
+func (t *TimelineTracker) Phases() []Phase {
+	out := make([]Phase, len(t.phases))
+	for i := range t.phases {
+		out[i] = t.phases[i]
+		if len(t.phases[i].Milestones) > 0 {
+			out[i].Milestones = append([]Milestone(nil), t.phases[i].Milestones...)
+		}
+	}
+	return out
 }
