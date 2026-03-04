@@ -57,7 +57,7 @@ func validateSchedulerConfiguration(scheduler *configv1alpha1.SchedulerConfigura
 	allErrs := field.ErrorList{}
 	profilesPath := fldPath.Child("profiles")
 	defaultCount := 0
-	seenNames := make(map[configv1alpha1.SchedulerName]struct{})
+	seenNames := sets.New[configv1alpha1.SchedulerName]()
 	for i, p := range scheduler.Profiles {
 		idxPath := profilesPath.Index(i)
 		if len(strings.TrimSpace(string(p.Name))) == 0 {
@@ -65,17 +65,20 @@ func validateSchedulerConfiguration(scheduler *configv1alpha1.SchedulerConfigura
 		} else if !slices.Contains(configv1alpha1.SupportedSchedulerNames, p.Name) {
 			allErrs = append(allErrs, field.NotSupported(idxPath.Child("name"), p.Name, configv1alpha1.SupportedSchedulerNames))
 		} else {
-			if _, exists := seenNames[p.Name]; exists {
+			if seenNames.Has(p.Name) {
 				allErrs = append(allErrs, field.Duplicate(idxPath.Child("name"), p.Name))
 			}
-			seenNames[p.Name] = struct{}{}
+			seenNames.Insert(p.Name)
 		}
 		if p.Default {
 			defaultCount++
 		}
 	}
-	if defaultCount > 1 {
-		allErrs = append(allErrs, field.Invalid(profilesPath, defaultCount, "at most one scheduler profile may have default: true"))
+	if defaultCount == 0 {
+		// if admin set all profiles(include kube-scheduler) explicitly to default: false, then we need to mention that one of the other profiles must be set as default.
+		allErrs = append(allErrs, field.Required(profilesPath, "one of the scheduler profiles must be set as default"))
+	} else if defaultCount > 1 {
+		allErrs = append(allErrs, field.Invalid(profilesPath, defaultCount, "at most one scheduler profile may be set as default"))
 	}
 	return allErrs
 }

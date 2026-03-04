@@ -30,7 +30,7 @@ config.yaml: |
       concurrentSyncs: {{ .Values.config.controllers.podClique.concurrentSyncs }}
     podCliqueScalingGroup:
       concurrentSyncs: {{ .Values.config.controllers.podCliqueScalingGroup.concurrentSyncs }}
-  {{- if .Values.config.scheduler.profiles }}
+  {{- if and .Values.config.scheduler .Values.config.scheduler.profiles }}
   scheduler:
     profiles:
     {{- range .Values.config.scheduler.profiles }}
