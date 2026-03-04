@@ -25,9 +25,9 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/measurement"
 )
 
-// ResultExporter writes a ScaleTestResult to a destination.
+// ResultExporter writes a TrackerResult to a destination.
 type ResultExporter interface {
-	Export(r *measurement.ScaleTestResult) error
+	Export(r *measurement.TrackerResult) error
 }
 
 // MultiExporter wraps multiple ResultExporters and calls each in order.
@@ -42,7 +42,7 @@ func NewMultiExporter(exporters ...ResultExporter) *MultiExporter {
 }
 
 // Export calls Export on each wrapped exporter in order, collecting all errors.
-func (m *MultiExporter) Export(r *measurement.ScaleTestResult) error {
+func (m *MultiExporter) Export(r *measurement.TrackerResult) error {
 	var errs []error
 	for _, exp := range m.exporters {
 		if err := exp.Export(r); err != nil {
@@ -63,7 +63,7 @@ func NewJSONExporter(w io.Writer) *JSONExporter {
 }
 
 // Export writes the result as indented JSON.
-func (e *JSONExporter) Export(r *measurement.ScaleTestResult) error {
+func (e *JSONExporter) Export(r *measurement.TrackerResult) error {
 	enc := json.NewEncoder(e.w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(r)
@@ -80,13 +80,11 @@ func NewSummaryExporter(w io.Writer) *SummaryExporter {
 }
 
 // Export writes a human-readable summary of the result.
-func (e *SummaryExporter) Export(r *measurement.ScaleTestResult) error {
+func (e *SummaryExporter) Export(r *measurement.TrackerResult) error {
 	ew := &errWriter{w: e.w}
-	ew.write("=== Scale Test: %s (run: %s) ===\n", r.TestName, r.RunID)
+	ew.write("=== Test: %s (run: %s) ===\n", r.TestName, r.RunID)
 	ew.write("Namespace:        %s\n", r.Namespace)
-	ew.write("Node count:       %d\n", r.NodeCount)
 	ew.write("PCS count:        %d\n", r.PCSCount)
-	ew.write("Expected pods:    %d\n", r.TotalExpectedPods)
 	ew.write("Total test time:  %.3fs\n", r.TestDurationSeconds)
 	ew.write("Timeline:\n")
 

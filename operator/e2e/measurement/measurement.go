@@ -52,21 +52,12 @@ type MilestoneDefinition struct {
 	Condition MilestoneCondition
 }
 
-// ScaleTestResult accumulates all timeline/raw measurement data for a single run.
-// It is intended for sequential writes in tests and is not thread-safe.
-type ScaleTestResult struct {
-	// Test identity.
-	TestName  string `json:"testName"`
-	RunID     string `json:"runID"`
-	Namespace string `json:"namespace"`
-
-	// Scale metadata.
-	TotalExpectedPods int    `json:"totalExpectedPods"`
-	PCSCount          int    `json:"pcsCount"`
-	NodeCount         int    `json:"nodeCount"`
-	ClusterProfile    string `json:"clusterProfile,omitempty"`
-
-	// Timeline data from TimelineTracker.
+// TrackerResult accumulates all timeline/measurement data for a single run.
+type TrackerResult struct {
+	TestName            string  `json:"testName"`
+	RunID               string  `json:"runID"`
+	Namespace           string  `json:"namespace"`
+	PCSCount            int     `json:"pcsCount"`
 	Phases              []Phase `json:"phases"`
 	TestDurationSeconds float64 `json:"testDurationSeconds"`
 }
@@ -90,17 +81,25 @@ type PhaseDefinition struct {
 	Milestones []MilestoneDefinition
 }
 
-// TimelineTracker records ordered phases/milestones for a scale test.
+// TimelineTracker records ordered phases/milestones for a test.
 type TimelineTracker struct {
+	testName     string
+	runID        string
+	namespace    string
+	pcsCount     int
 	testStart    time.Time
 	phases       []Phase
 	definitions  []PhaseDefinition
 	pollInterval time.Duration
 }
 
-// NewTimelineTracker constructs a new timeline tracker.
-func NewTimelineTracker(opts ...TimelineOption) *TimelineTracker {
+// NewTimelineTracker constructs a new timeline tracker with required metadata.
+func NewTimelineTracker(testName, runID, namespace string, pcsCount int, opts ...TimelineOption) *TimelineTracker {
 	t := &TimelineTracker{
+		testName:     testName,
+		runID:        runID,
+		namespace:    namespace,
+		pcsCount:     pcsCount,
 		testStart:    time.Now(),
 		pollInterval: defaultTimelinePollInterval,
 	}
@@ -115,14 +114,38 @@ func (t *TimelineTracker) AddPhase(def PhaseDefinition) {
 	t.definitions = append(t.definitions, def)
 }
 
-// Run executes all defined phases in order.
-func (t *TimelineTracker) Run(ctx context.Context) error {
+// Run executes all defined phases in order and returns the complete result.
+func (t *TimelineTracker) Run(ctx context.Context) (*TrackerResult, error) {
 	for _, def := range t.definitions {
 		if err := t.runPhase(ctx, def); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return t.buildResult(), nil
+}
+
+// buildResult assembles a TrackerResult from the tracker's metadata and recorded phases.
+func (t *TimelineTracker) buildResult() *TrackerResult {
+	return &TrackerResult{
+		TestName:            t.testName,
+		RunID:               t.runID,
+		Namespace:           t.namespace,
+		PCSCount:            t.pcsCount,
+		Phases:              t.copyPhases(),
+		TestDurationSeconds: time.Since(t.testStart).Seconds(),
+	}
+}
+
+// copyPhases returns a deep copy of recorded phases.
+func (t *TimelineTracker) copyPhases() []Phase {
+	out := make([]Phase, len(t.phases))
+	for i := range t.phases {
+		out[i] = t.phases[i]
+		if len(t.phases[i].Milestones) > 0 {
+			out[i].Milestones = append([]Milestone(nil), t.phases[i].Milestones...)
+		}
+	}
+	return out
 }
 
 // runPhase executes a single phase definition and records its milestones.
@@ -200,16 +223,4 @@ func (t *TimelineTracker) pollMilestones(
 	}
 
 	return reached, nil
-}
-
-// Phases returns a copy of recorded phases and milestones.
-func (t *TimelineTracker) Phases() []Phase {
-	out := make([]Phase, len(t.phases))
-	for i := range t.phases {
-		out[i] = t.phases[i]
-		if len(t.phases[i].Milestones) > 0 {
-			out[i].Milestones = append([]Milestone(nil), t.phases[i].Milestones...)
-		}
-	}
-	return out
 }

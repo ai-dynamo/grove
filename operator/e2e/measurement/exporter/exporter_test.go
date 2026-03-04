@@ -30,13 +30,11 @@ func TestSummaryExporter_Export(t *testing.T) {
 	t.Parallel()
 
 	start := time.Date(2026, 3, 4, 12, 0, 0, 0, time.UTC)
-	result := &measurement.ScaleTestResult{
+	result := &measurement.TrackerResult{
 		TestName:            "ScaleTest_1000",
 		RunID:               "scale-1",
 		Namespace:           "default",
-		TotalExpectedPods:   1000,
 		PCSCount:            50,
-		NodeCount:           10,
 		TestDurationSeconds: 72.5,
 		Phases: []measurement.Phase{
 			{
@@ -59,7 +57,7 @@ func TestSummaryExporter_Export(t *testing.T) {
 	out := buf.String()
 	assertContains(t, out, "ScaleTest_1000")
 	assertContains(t, out, "run: scale-1")
-	assertContains(t, out, "Expected pods:    1000")
+	assertContains(t, out, "PCS count:        50")
 	assertContains(t, out, "Phase: deploy")
 	assertContains(t, out, "all-pods-ready")
 }
@@ -67,14 +65,11 @@ func TestSummaryExporter_Export(t *testing.T) {
 func TestJSONExporter_Export(t *testing.T) {
 	t.Parallel()
 
-	result := &measurement.ScaleTestResult{
+	result := &measurement.TrackerResult{
 		TestName:            "ScaleTest_100",
 		RunID:               "run-123",
 		Namespace:           "default",
-		TotalExpectedPods:   100,
 		PCSCount:            5,
-		NodeCount:           3,
-		ClusterProfile:      "dev",
 		TestDurationSeconds: 12.25,
 	}
 
@@ -83,7 +78,7 @@ func TestJSONExporter_Export(t *testing.T) {
 		t.Fatalf("JSONExporter.Export() error = %v", err)
 	}
 
-	var got measurement.ScaleTestResult
+	var got measurement.TrackerResult
 	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
@@ -91,21 +86,19 @@ func TestJSONExporter_Export(t *testing.T) {
 	if got.RunID != result.RunID {
 		t.Fatalf("got RunID %q, want %q", got.RunID, result.RunID)
 	}
-	if got.TotalExpectedPods != result.TotalExpectedPods {
-		t.Fatalf("got TotalExpectedPods %d, want %d", got.TotalExpectedPods, result.TotalExpectedPods)
+	if got.PCSCount != result.PCSCount {
+		t.Fatalf("got PCSCount %d, want %d", got.PCSCount, result.PCSCount)
 	}
 }
 
 func TestMultiExporter_Export(t *testing.T) {
 	t.Parallel()
 
-	result := &measurement.ScaleTestResult{
-		TestName:          "ScaleTest_100",
-		RunID:             "multi-test",
-		Namespace:         "default",
-		TotalExpectedPods: 100,
-		PCSCount:          10,
-		NodeCount:         2,
+	result := &measurement.TrackerResult{
+		TestName:  "ScaleTest_100",
+		RunID:     "multi-test",
+		Namespace: "default",
+		PCSCount:  10,
 	}
 
 	var jsonBuf, summaryBuf bytes.Buffer
@@ -125,7 +118,7 @@ func TestMultiExporter_Export(t *testing.T) {
 		t.Fatal("SummaryExporter produced no output")
 	}
 
-	var got measurement.ScaleTestResult
+	var got measurement.TrackerResult
 	if err := json.Unmarshal(jsonBuf.Bytes(), &got); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
