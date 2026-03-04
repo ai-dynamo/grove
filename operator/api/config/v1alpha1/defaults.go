@@ -72,8 +72,11 @@ func SetDefaults_OperatorConfiguration(operatorConfig *OperatorConfiguration) {
 }
 
 // SetDefaults_SchedulerConfiguration sets defaults for scheduler configuration.
-// Kube-scheduler is always included in Profiles (added if missing) so that the kube backend is always started.
-// When Profiles is empty, or when no profile has Default set to true, kube-scheduler is used as the default.
+// Principle: respect all user-explicit values first.
+//
+//  1. If user did not include kube in profiles, add kube. Whether kube is default: only if no other profile is default, set kube as default.
+//  2. If user did not set any default (no profile has default: true), set kube as default (only when we added kube above — do not override user's explicit kube default: false).
+//     Otherwise (one non-kube default, or two+ defaults) we do not change; validation will reject invalid cases.
 func SetDefaults_SchedulerConfiguration(cfg *SchedulerConfiguration) {
 	if len(cfg.Profiles) == 0 {
 		cfg.Profiles = []SchedulerProfile{
@@ -81,7 +84,7 @@ func SetDefaults_SchedulerConfiguration(cfg *SchedulerConfiguration) {
 		}
 		return
 	}
-	// Ensure kube-scheduler is always in Profiles so the kube backend is always started.
+	// 1. If user didn't add kube, add it (default: false for now).
 	hasKube := false
 	for i := range cfg.Profiles {
 		if cfg.Profiles[i].Name == SchedulerNameKube {
@@ -92,21 +95,26 @@ func SetDefaults_SchedulerConfiguration(cfg *SchedulerConfiguration) {
 	if !hasKube {
 		cfg.Profiles = append(cfg.Profiles, SchedulerProfile{Name: SchedulerNameKube, Default: false})
 	}
-	// When no profile has Default set to true, set kube-scheduler as default.
-	hasDefault := false
+
+	var (
+		defaultCount int
+		kubeIdx      = -1
+	)
 	for i := range cfg.Profiles {
+		if cfg.Profiles[i].Name == SchedulerNameKube {
+			kubeIdx = i
+		}
 		if cfg.Profiles[i].Default {
-			hasDefault = true
-			break
+			defaultCount++
 		}
 	}
-	if !hasDefault {
-		for i := range cfg.Profiles {
-			if cfg.Profiles[i].Name == SchedulerNameKube {
-				cfg.Profiles[i].Default = true
-				return
-			}
-		}
+	if kubeIdx < 0 {
+		return
+	}
+	// 2. No default → set kube as default.
+	// Only set kube as default if user did not explicitly set kube as default.
+	if defaultCount == 0 && !hasKube {
+		cfg.Profiles[kubeIdx].Default = true
 	}
 }
 
