@@ -55,8 +55,9 @@ func toOperatorMetadata(m *config.GroveMetadata) *measurement.OperatorMetadata {
 }
 
 const (
-	scaleTestExpectedPods     = 1000
-	scaleTestExpectedReplicas = 500
+	scaleTestExpectedPods = 5000
+	scaleTestPollInterval = 2 * time.Second
+	scaleTestTimeout      = 15 * time.Minute
 )
 
 func Test_ScaleTest_1000(t *testing.T) {
@@ -88,9 +89,9 @@ func Test_ScaleTest_1000(t *testing.T) {
 	Logger.Infof("test config: runID=%s, namespace=%s, pcsName=%s", runID, tc.Namespace, tc.Workload.Name)
 
 	tracker := measurement.NewTimelineTracker(
-		"ScaleTest_1000",
+		"ScaleTest_5000_MoE",
 		runID,
-		tc.Namespace,
+		namespace,
 		1,
 		measurement.WithPollInterval(scaleTestPollInterval),
 		measurement.WithLogger(Logger.GetLogr()),
@@ -161,16 +162,20 @@ func Test_ScaleTest_1000(t *testing.T) {
 	Logger.Infof("scale test completed successfully in %.1fs", result.TestDurationSeconds)
 }
 
-func exportResult(t *testing.T, result *measurement.TrackerResult, diagDir string) {
+func exportResult(t *testing.T, result *measurement.TrackerResult, runID string) {
 	t.Helper()
 
-	filename := fmt.Sprintf("%s-%s.json", result.TestName, result.RunID)
-	path := resolveOutputPath(filename, diagDir)
+	jsonFile, err := os.Create(fmt.Sprintf("scale-test-5000-moe-%s.json", runID))
+	if err != nil {
+		t.Fatalf("Failed to create JSON output file: %v", err)
+	}
+	defer jsonFile.Close()
 
 	multi := exporter.NewMultiExporter(
 		exporter.NewSummaryExporter(os.Stdout),
-		exporter.NewJSONFileExporter(path),
+		exporter.NewJSONExporter(jsonFile),
 	)
+
 	if err := multi.Export(result); err != nil {
 		t.Fatalf("Failed to export results: %v", err)
 	}
