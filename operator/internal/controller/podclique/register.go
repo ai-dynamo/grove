@@ -24,12 +24,14 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	grovectrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
+	"github.com/ai-dynamo/grove/operator/internal/expect"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -37,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	ctrllogger "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
@@ -60,7 +63,7 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 				),
 			),
 		).
-		Owns(&corev1.Pod{}, builder.WithPredicates(podPredicate())).
+		Owns(&corev1.Pod{}, builder.WithPredicates(r.podPredicate())).
 		Watches(
 			&grovecorev1alpha1.PodCliqueSet{},
 			handler.EnqueueRequestsFromMapFunc(mapPodCliqueSetToPCLQs()),
@@ -97,21 +100,39 @@ func managedPodCliquePredicate() predicate.Predicate {
 }
 
 // podPredicate returns a predicate that filters out pods that are not managed by Grove.
-func podPredicate() predicate.Predicate {
+// On Delete for a managed pod it calls ObserveDeletions so the controller can recreate the pod (issue #457).
+func (r *Reconciler) podPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(_ event.CreateEvent) bool { return false },
 		DeleteFunc: func(deleteEvent event.DeleteEvent) bool {
 			deletedPod, ok := deleteEvent.Object.(*corev1.Pod)
-			if !ok {
+			if !ok || !isManagedPod(deletedPod) {
 				return false
 			}
-			return isManagedPod(deletedPod)
+			r.recordPodDeletionInExpectations(deletedPod)
+			return true
 		},
 		UpdateFunc: func(updateEvent event.UpdateEvent) bool {
 			return isManagedPod(updateEvent.ObjectOld) && !hasPodSpecChanged(updateEvent) && hasPodStatusChanged(updateEvent)
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 	}
+}
+
+// recordPodDeletionInExpectations records the pod's deletion in the expectations store for its owning PodClique so the controller can recreate the pod (issue #457).
+func (r *Reconciler) recordPodDeletionInExpectations(pod *corev1.Pod) {
+	pclqOwnerRef := k8sutils.FindOwnerRefByKind(pod.OwnerReferences, constants.KindPodClique)
+	if pclqOwnerRef == nil {
+		return // nothing to do
+	}
+	pclqObjMeta := metav1.ObjectMeta{Namespace: pod.Namespace, Name: pclqOwnerRef.Name}
+	controlleeKey, err := expect.ControlleeKeyFunc(&grovecorev1alpha1.PodClique{ObjectMeta: pclqObjMeta})
+	logger := ctrllogger.Log.WithName(controllerName)
+	if err != nil {
+		logger.Error(err, "cannot observe deletion, unable to get controllee key from the expectations store", "pclqNamespace", pclqObjMeta.Namespace, "pclqName", pclqObjMeta.Name)
+		return
+	}
+	r.expectationsStore.ObserveDeletions(logger, controlleeKey, pod.UID)
 }
 
 // hasPodSpecChanged checks if the Pod's spec has changed by comparing generation values
