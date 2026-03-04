@@ -45,7 +45,7 @@ func Test_RU7_RollingUpdatePCSPodClique(t *testing.T) {
 	defer cleanup()
 
 	logger.Info("3. Change the specification of pc-a")
-	if err := triggerPodCliqueRollingUpdate(tc, "pc-a"); err != nil {
+	if err := triggerPodCliqueUpdate(tc, "pc-a"); err != nil {
 		t.Fatalf("Failed to update PodClique spec: %v", err)
 	}
 
@@ -84,7 +84,7 @@ func Test_RU8_RollingUpdatePCSGPodClique(t *testing.T) {
 	defer cleanup()
 
 	logger.Info("3. Change the specification of pc-b")
-	if err := triggerPodCliqueRollingUpdate(tc, "pc-b"); err != nil {
+	if err := triggerPodCliqueUpdate(tc, "pc-b"); err != nil {
 		t.Fatalf("Failed to update PodClique spec: %v", err)
 	}
 
@@ -123,7 +123,7 @@ func Test_RU9_RollingUpdateAllPodCliques(t *testing.T) {
 
 	logger.Info("3. Change the specification of pc-a, pc-b and pc-c")
 	for _, cliqueName := range []string{"pc-a", "pc-b", "pc-c"} {
-		if err := triggerPodCliqueRollingUpdate(tc, cliqueName); err != nil {
+		if err := triggerPodCliqueUpdate(tc, cliqueName); err != nil {
 			t.Fatalf("Failed to update PodClique %s spec: %v", cliqueName, err)
 		}
 	}
@@ -218,7 +218,7 @@ func Test_RU10_RollingUpdateInsufficientResources(t *testing.T) {
 	defer tracker.Stop()
 
 	logger.Info("4. Change the specification of pc-a")
-	if err := triggerPodCliqueRollingUpdate(tc, "pc-a"); err != nil {
+	if err := triggerPodCliqueUpdate(tc, "pc-a"); err != nil {
 		t.Fatalf("Failed to update PodClique spec: %v", err)
 	}
 
@@ -355,7 +355,7 @@ func Test_RU12_RollingUpdateWithPCSScaleInDuringUpdate(t *testing.T) {
 	logger.Info("3. Change the specification of pc-a, pc-b and pc-c")
 	// Use raw trigger since we need to wait for ordinal before starting the wait
 	for _, cliqueName := range []string{"pc-a", "pc-b", "pc-c"} {
-		if err := triggerPodCliqueRollingUpdate(tc, cliqueName); err != nil {
+		if err := triggerPodCliqueUpdate(tc, cliqueName); err != nil {
 			t.Fatalf("Failed to trigger rolling update on %s: %v", cliqueName, err)
 		}
 	}

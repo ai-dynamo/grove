@@ -47,7 +47,7 @@ func triggerRollingUpdate(tc TestContext, expectedReplicas int32, cliqueNames ..
 
 		// Trigger synchronously first
 		for _, cliqueName := range cliqueNames {
-			if err := triggerPodCliqueRollingUpdate(tc, cliqueName); err != nil {
+			if err := triggerPodCliqueUpdate(tc, cliqueName); err != nil {
 				errCh <- fmt.Errorf("failed to update PodClique %s spec: %w", cliqueName, err)
 				return
 			}
@@ -67,9 +67,9 @@ func triggerRollingUpdate(tc TestContext, expectedReplicas int32, cliqueNames ..
 	return errCh
 }
 
-// triggerPodCliqueRollingUpdate triggers a rolling update by adding/updating an environment variable in a PodClique.
+// triggerPodCliqueUpdate triggers an update by adding/updating an environment variable in a PodClique.
 // Uses tc.Workload.Name as the PCS name.
-func triggerPodCliqueRollingUpdate(tc TestContext, cliqueName string) error {
+func triggerPodCliqueUpdate(tc TestContext, cliqueName string) error {
 	pcsGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquesets"}
 	pcsName := tc.Workload.Name
 
@@ -99,10 +99,10 @@ func triggerPodCliqueRollingUpdate(tc TestContext, cliqueName string) error {
 				if len(clique.Spec.PodSpec.Containers) > 0 {
 					container := &pcs.Spec.Template.Cliques[i].Spec.PodSpec.Containers[0]
 
-					// Check if ROLLING_UPDATE_TRIGGER env var exists
+					// Check if UPDATE_TRIGGER env var exists
 					envVarFound := false
 					for j := range container.Env {
-						if container.Env[j].Name == "ROLLING_UPDATE_TRIGGER" {
+						if container.Env[j].Name == "UPDATE_TRIGGER" {
 							container.Env[j].Value = updateValue
 							envVarFound = true
 							break
@@ -112,7 +112,7 @@ func triggerPodCliqueRollingUpdate(tc TestContext, cliqueName string) error {
 					// If not found, add new env var
 					if !envVarFound {
 						container.Env = append(container.Env, corev1.EnvVar{
-							Name:  "ROLLING_UPDATE_TRIGGER",
+							Name:  "UPDATE_TRIGGER",
 							Value: updateValue,
 						})
 					}
