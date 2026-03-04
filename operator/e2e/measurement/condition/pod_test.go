@@ -19,126 +19,185 @@ package condition
 import (
 	"context"
 	"testing"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-func TestPodConditions(t *testing.T) {
+func newPodScheme() *runtime.Scheme {
+	s := runtime.NewScheme()
+	_ = corev1.AddToScheme(s)
+	return s
+}
+
+func TestPodsCreatedCondition(t *testing.T) {
 	t.Parallel()
 
-	now := time.Now()
-	readyTransition := metav1.NewTime(now.Add(-10 * time.Second))
-	creation1 := metav1.NewTime(now.Add(-20 * time.Second))
-	creation2 := metav1.NewTime(now.Add(-15 * time.Second))
-	deleting := metav1.NewTime(now.Add(-5 * time.Second))
-
-	podReady1 := &corev1.Pod{
+	readyPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:              "p1",
-			Namespace:         "default",
-			Labels:            map[string]string{"grove.io/scale-test-run": "run1"},
-			CreationTimestamp: creation1,
-		},
-		Status: corev1.PodStatus{
-			Conditions: []corev1.PodCondition{
-				{Type: corev1.PodReady, Status: corev1.ConditionTrue, LastTransitionTime: readyTransition},
-			},
-		},
-	}
-	podReady2 := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:              "p2",
-			Namespace:         "default",
-			Labels:            map[string]string{"grove.io/scale-test-run": "run1"},
-			CreationTimestamp: creation2,
-			DeletionTimestamp: &deleting,
-		},
-		Status: corev1.PodStatus{
-			Conditions: []corev1.PodCondition{
-				{Type: corev1.PodReady, Status: corev1.ConditionTrue, LastTransitionTime: readyTransition},
-			},
-		},
-	}
-	podNotReady := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "p3",
+			Name:      "p1",
 			Namespace: "default",
-			Labels:    map[string]string{"grove.io/scale-test-run": "run1"},
+			Labels:    map[string]string{"app": "test"},
+		},
+		Status: corev1.PodStatus{
+			Conditions: []corev1.PodCondition{
+				{Type: corev1.PodReady, Status: corev1.ConditionTrue},
+			},
+		},
+	}
+	pendingPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "p2",
+			Namespace: "default",
+			Labels:    map[string]string{"app": "test"},
 		},
 	}
 
-	clientset := fake.NewSimpleClientset(podReady1, podReady2, podNotReady)
-	ctx := context.Background()
-	selector := "grove.io/scale-test-run=run1"
-
-	created := &PodsCreatedCondition{
-		Clientset:     clientset,
-		Namespace:     "default",
-		LabelSelector: selector,
-		ExpectedCount: 2,
-	}
-	createdMet, err := created.Met(ctx)
-	if err != nil {
-		t.Fatalf("PodsCreatedCondition.Met() error = %v", err)
-	}
-	if !createdMet {
-		t.Fatalf("PodsCreatedCondition expected true, got false")
-	}
-
-	firstReady := &FirstPodReadyCondition{
-		Clientset:     clientset,
-		Namespace:     "default",
-		LabelSelector: selector,
-	}
-	firstReadyMet, err := firstReady.Met(ctx)
-	if err != nil {
-		t.Fatalf("FirstPodReadyCondition.Met() error = %v", err)
-	}
-	if !firstReadyMet {
-		t.Fatalf("FirstPodReadyCondition expected true, got false")
-	}
-
-	ready := &PodsReadyCondition{
-		Clientset:     clientset,
-		Namespace:     "default",
-		LabelSelector: selector,
-		ExpectedCount: 2,
-	}
-	readyMet, err := ready.Met(ctx)
-	if err != nil {
-		t.Fatalf("PodsReadyCondition.Met() error = %v", err)
-	}
-	if !readyMet {
-		t.Fatalf("PodsReadyCondition expected true, got false")
+	tests := []struct {
+		name     string
+		pods     []runtime.Object
+		expected int
+		want     bool
+		wantErr  bool
+	}{
+		{
+			name:     "met when enough pods exist",
+			pods:     []runtime.Object{readyPod, pendingPod},
+			expected: 2,
+			want:     true,
+		},
+		{
+			name:     "not met when too few pods",
+			pods:     []runtime.Object{readyPod},
+			expected: 3,
+			want:     false,
+		},
+		{
+			name:     "met when zero expected",
+			pods:     nil,
+			expected: 0,
+			want:     true,
+		},
+		{
+			name:     "error on negative expected",
+			pods:     nil,
+			expected: -1,
+			wantErr:  true,
+		},
 	}
 
-	terminating := &PodsTerminatingCondition{
-		Clientset:     clientset,
-		Namespace:     "default",
-		LabelSelector: selector,
-		ExpectedCount: 1,
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cl := fake.NewClientBuilder().WithScheme(newPodScheme()).WithRuntimeObjects(tc.pods...).Build()
+			cond := &PodsCreatedCondition{
+				Client:        cl,
+				Namespace:     "default",
+				LabelSelector: "app=test",
+				ExpectedCount: tc.expected,
+			}
+
+			got, err := cond.Met(context.Background())
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("Met() = %v, want %v", got, tc.want)
+			}
+		})
 	}
-	termMet, err := terminating.Met(ctx)
-	if err != nil {
-		t.Fatalf("PodsTerminatingCondition.Met() error = %v", err)
+}
+
+func TestPodsReadyCondition(t *testing.T) {
+	t.Parallel()
+
+	readyPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "p1",
+			Namespace: "default",
+			Labels:    map[string]string{"app": "test"},
+		},
+		Status: corev1.PodStatus{
+			Conditions: []corev1.PodCondition{
+				{Type: corev1.PodReady, Status: corev1.ConditionTrue},
+			},
+		},
 	}
-	if !termMet {
-		t.Fatalf("PodsTerminatingCondition expected true, got false")
+	pendingPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "p2",
+			Namespace: "default",
+			Labels:    map[string]string{"app": "test"},
+		},
 	}
 
-	gone := &PodsGoneCondition{
-		Clientset:     fake.NewSimpleClientset(),
-		Namespace:     "default",
-		LabelSelector: selector,
+	tests := []struct {
+		name     string
+		pods     []runtime.Object
+		expected int
+		want     bool
+		wantErr  bool
+	}{
+		{
+			name:     "met when enough ready pods",
+			pods:     []runtime.Object{readyPod},
+			expected: 1,
+			want:     true,
+		},
+		{
+			name:     "not met when not enough ready",
+			pods:     []runtime.Object{readyPod, pendingPod},
+			expected: 2,
+			want:     false,
+		},
+		{
+			name:     "met when zero expected",
+			pods:     nil,
+			expected: 0,
+			want:     true,
+		},
+		{
+			name:     "error on negative expected",
+			pods:     nil,
+			expected: -1,
+			wantErr:  true,
+		},
 	}
-	goneMet, err := gone.Met(ctx)
-	if err != nil {
-		t.Fatalf("PodsGoneCondition.Met() error = %v", err)
-	}
-	if !goneMet {
-		t.Fatalf("PodsGoneCondition expected true, got false")
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cl := fake.NewClientBuilder().WithScheme(newPodScheme()).WithRuntimeObjects(tc.pods...).Build()
+			cond := &PodsReadyCondition{
+				Client:        cl,
+				Namespace:     "default",
+				LabelSelector: "app=test",
+				ExpectedCount: tc.expected,
+			}
+
+			got, err := cond.Met(context.Background())
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("Met() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

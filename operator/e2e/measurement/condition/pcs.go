@@ -48,18 +48,12 @@ func (c *PCSDeletedCondition) Met(ctx context.Context) (bool, error) {
 	return false, nil
 }
 
-// Progress returns a human-readable progress string.
-func (c *PCSDeletedCondition) Progress(_ context.Context) string {
-	return "Not deleted"
-}
-
 // PCSAvailableCondition checks if a PodCliqueSet has at least ExpectedCount available replicas.
 type PCSAvailableCondition struct {
 	Client        client.Client
 	Name          string
 	Namespace     string
 	ExpectedCount int32
-	lastAvailable int32
 }
 
 // Met returns true once the PodCliqueSet has enough available replicas.
@@ -73,11 +67,5 @@ func (c *PCSAvailableCondition) Met(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("get PodCliqueSet: %w", err)
 	}
 
-	c.lastAvailable = pcs.Status.AvailableReplicas
-	return c.lastAvailable >= c.ExpectedCount, nil
-}
-
-// Progress returns a human-readable progress string.
-func (c *PCSAvailableCondition) Progress(_ context.Context) string {
-	return fmt.Sprintf("%d/%d replicas available", c.lastAvailable, c.ExpectedCount)
+	return pcs.Status.AvailableReplicas >= c.ExpectedCount, nil
 }
