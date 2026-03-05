@@ -307,11 +307,60 @@ def create_cluster(config: ClusterConfig) -> bool:
     return False
 
 
-def wait_for_nodes():
-    """Wait for all nodes to be ready."""
-    console.print("[yellow]ℹ️  Waiting for all nodes to be ready...[/yellow]")
-    sh.kubectl("wait", "--for=condition=Ready", "nodes", "--all", "--timeout=10m")
-    console.print("[green]✅ All nodes are ready[/green]")
+def wait_for_nodes(config: ClusterConfig, max_restart_rounds: int = 2):
+    """Wait for all nodes to be ready, restarting failed containers if needed.
+
+    With 30+ k3d nodes, occasionally a k3s-agent process dies silently inside its
+    container during startup due to resource contention. This function detects
+    NotReady nodes after the initial wait, restarts their Docker containers, and
+    retries — up to max_restart_rounds times.
+    """
+    for attempt in range(1, max_restart_rounds + 2):
+        console.print(f"[yellow]ℹ️  Waiting for all nodes to be ready (attempt {attempt})...[/yellow]")
+        exit_code, _ = run_cmd(
+            sh.kubectl, "wait", "--for=condition=Ready", "nodes", "--all", "--timeout=10m",
+            _ok_code=[0, 1],
+        )
+        if exit_code == 0:
+            console.print("[green]✅ All nodes are ready[/green]")
+            return
+
+        not_ready_output = sh.kubectl(
+            "get", "nodes",
+            "--no-headers",
+            "-o", "custom-columns=NAME:.metadata.name,STATUS:.status.conditions[-1].status",
+        ).strip()
+
+        not_ready_nodes = [
+            line.split()[0]
+            for line in not_ready_output.splitlines()
+            if len(line.split()) >= 2 and line.split()[1] != "True"
+        ]
+
+        if not not_ready_nodes:
+            console.print("[green]✅ All nodes are ready[/green]")
+            return
+
+        if attempt > max_restart_rounds:
+            console.print(f"[red]❌ {len(not_ready_nodes)} node(s) still NotReady after {max_restart_rounds} restart rounds: {not_ready_nodes}[/red]")
+            raise typer.Exit(1)
+
+        console.print(f"[yellow]⚠️  {len(not_ready_nodes)} node(s) NotReady: {not_ready_nodes}[/yellow]")
+
+        docker_client = docker.from_env()
+        for node_name in not_ready_nodes:
+            try:
+                container = docker_client.containers.get(node_name)
+                console.print(f"[yellow]   Restarting container {node_name}...[/yellow]")
+                container.restart(timeout=30)
+                console.print(f"[green]   ✓ Restarted {node_name}[/green]")
+            except docker.errors.NotFound:
+                console.print(f"[red]   ✗ Container {node_name} not found[/red]")
+            except Exception as e:
+                console.print(f"[red]   ✗ Failed to restart {node_name}: {e}[/red]")
+
+        console.print("[yellow]   Waiting 15s for restarted nodes to rejoin...[/yellow]")
+        time.sleep(15)
 
 
 def install_kai_scheduler(config: ClusterConfig):
@@ -561,7 +610,7 @@ def main(
     if not create_cluster(config):
         raise typer.Exit(1)
 
-    wait_for_nodes()
+    wait_for_nodes(config)
 
     # Pre-pull images if not skipped (before installing Kai and cert-manager)
     if not skip_prepull:
