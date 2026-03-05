@@ -113,7 +113,7 @@ func (r *Reconciler) podPredicate() predicate.Predicate {
 			return true
 		},
 		UpdateFunc: func(updateEvent event.UpdateEvent) bool {
-			return isManagedPod(updateEvent.ObjectOld) && !hasPodSpecChanged(updateEvent) && hasPodStatusChanged(updateEvent)
+			return isManagedPod(updateEvent.ObjectOld) && !hasPodSpecChanged(updateEvent) && (hasPodStatusChanged(updateEvent) || isMarkedForDeletion(updateEvent))
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 	}
@@ -305,4 +305,14 @@ func isManagedPod(obj client.Object) bool {
 		return false
 	}
 	return grovectrlutils.HasExpectedOwner(constants.KindPodClique, pod.OwnerReferences) && grovectrlutils.IsManagedByGrove(pod.GetLabels())
+}
+
+func isMarkedForDeletion(updateEvent event.UpdateEvent) bool {
+	oldPod, oldOk := updateEvent.ObjectOld.(*corev1.Pod)
+	newPod, newOk := updateEvent.ObjectNew.(*corev1.Pod)
+	if !oldOk || !newOk {
+		return false
+	}
+
+	return oldPod.DeletionTimestamp == nil && newPod.DeletionTimestamp != nil
 }

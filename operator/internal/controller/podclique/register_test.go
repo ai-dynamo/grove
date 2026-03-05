@@ -27,8 +27,10 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
@@ -73,4 +75,76 @@ func TestPodPredicate_Delete(t *testing.T) {
 			"ObserveDeletions should remove the deleted pod UID from uidsToAdd so next reconcile can recreate the pod")
 		assert.True(t, result, "predicate should allow the event so the handler enqueues reconcile")
 	})
+}
+
+// Test_isMarkedForDeletion tests if a deletion timestamp is set on the pod
+func Test_isMarkedForDeletion(t *testing.T) {
+	now := ptr.To(metav1.Now())
+	tests := []struct {
+		name        string
+		updateEvent event.UpdateEvent
+		want        bool
+	}{
+		{
+			name: "deletion timestamp set on the pod in the update",
+			updateEvent: event.UpdateEvent{
+				ObjectOld: &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						DeletionTimestamp: nil,
+					},
+				},
+				ObjectNew: &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						DeletionTimestamp: now,
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "deletion timestamp not set on the pod in the update",
+			updateEvent: event.UpdateEvent{
+				ObjectOld: &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						DeletionTimestamp: nil,
+					},
+				},
+				ObjectNew: &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						DeletionTimestamp: nil,
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "deletion timestamp was already set on the pod before the update",
+			updateEvent: event.UpdateEvent{
+				ObjectOld: &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						DeletionTimestamp: now,
+					},
+				},
+				ObjectNew: &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						DeletionTimestamp: now,
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "objects are not pods (type cast fails)",
+			updateEvent: event.UpdateEvent{
+				ObjectOld: &corev1.ConfigMap{},
+				ObjectNew: &corev1.ConfigMap{},
+			},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equalf(t, tt.want, isMarkedForDeletion(tt.updateEvent), "isMarkedForDeletionChanged(%v)", tt.updateEvent)
+		})
+	}
 }
