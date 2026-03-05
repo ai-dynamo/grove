@@ -41,7 +41,7 @@ func Test_ScaleTest_5000_MoE(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), scaleTestTimeout)
 	defer cancel()
 
-	_, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 0)
+	_, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 1000)
 	defer cleanup()
 
 	crClient, err := utils.NewCRClient(restConfig)

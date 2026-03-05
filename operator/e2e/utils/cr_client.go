@@ -21,6 +21,7 @@ import (
 
 	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -29,6 +30,9 @@ import (
 // This is needed for conditions that use typed CR access (e.g. PCSDeletedCondition).
 func NewCRClient(restConfig *rest.Config) (client.Client, error) {
 	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("add client-go scheme: %w", err)
+	}
 	if err := corev1alpha1.AddToScheme(scheme); err != nil {
 		return nil, fmt.Errorf("add Grove scheme: %w", err)
 	}
