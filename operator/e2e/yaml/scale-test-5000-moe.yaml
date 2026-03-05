@@ -12,27 +12,25 @@ spec:
   template:
     cliques:
       - name: expert-worker
-        labels:
-          kai.scheduler/queue: test
         spec:
           roleName: expert
-          replicas: 1
-          minAvailable: 1
+          replicas: 2
+          minAvailable: 2
           podSpec:
-            schedulerName: kai-scheduler
+            schedulerName: default-scheduler
             affinity:
               nodeAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   nodeSelectorTerms:
                     - matchExpressions:
-                        - key: node_role.e2e.grove.nvidia.com
+                        - key: type
                           operator: In
                           values:
-                            - agent
+                            - kwok
             tolerations:
-              - key: node_role.e2e.grove.nvidia.com
+              - key: fake-node
                 operator: Equal
-                value: agent
+                value: "true"
                 effect: NoSchedule
             containers:
               - name: expert-worker
@@ -40,39 +38,3 @@ spec:
                 resources:
                   requests:
                     memory: 10Mi
-      - name: router
-        labels:
-          kai.scheduler/queue: test
-        spec:
-          roleName: router
-          replicas: 1
-          minAvailable: 1
-          podSpec:
-            schedulerName: kai-scheduler
-            affinity:
-              nodeAffinity:
-                requiredDuringSchedulingIgnoredDuringExecution:
-                  nodeSelectorTerms:
-                    - matchExpressions:
-                        - key: node_role.e2e.grove.nvidia.com
-                          operator: In
-                          values:
-                            - agent
-            tolerations:
-              - key: node_role.e2e.grove.nvidia.com
-                operator: Equal
-                value: agent
-                effect: NoSchedule
-            containers:
-              - name: router
-                image: registry:5001/nginx:alpine-slim
-                resources:
-                  requests:
-                    memory: 10Mi
-    podCliqueScalingGroups:
-      - name: moe-group
-        replicas: 1
-        minAvailable: 1
-        cliqueNames:
-          - expert-worker
-          - router

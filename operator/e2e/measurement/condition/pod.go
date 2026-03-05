@@ -47,6 +47,7 @@ type PodsCreatedCondition struct {
 	Namespace     string
 	LabelSelector string
 	ExpectedCount int
+	lastCount     int
 }
 
 // Met returns true once the expected pod count exists.
@@ -60,7 +61,13 @@ func (c *PodsCreatedCondition) Met(ctx context.Context) (bool, error) {
 		return false, err
 	}
 
-	return len(pods) >= c.ExpectedCount, nil
+	c.lastCount = len(pods)
+	return c.lastCount >= c.ExpectedCount, nil
+}
+
+// Progress returns a human-readable progress string.
+func (c *PodsCreatedCondition) Progress(_ context.Context) string {
+	return fmt.Sprintf("%d/%d pods created", c.lastCount, c.ExpectedCount)
 }
 
 // PodsReadyCondition checks if at least ExpectedCount matching pods are Ready.
@@ -69,6 +76,8 @@ type PodsReadyCondition struct {
 	Namespace     string
 	LabelSelector string
 	ExpectedCount int
+	lastReady     int
+	lastTotal     int
 }
 
 // Met returns true once the expected number of pods are Ready.
@@ -82,12 +91,18 @@ func (c *PodsReadyCondition) Met(ctx context.Context) (bool, error) {
 		return false, err
 	}
 
-	readyCount := 0
+	c.lastTotal = len(pods)
+	c.lastReady = 0
 	for i := range pods {
 		if kubeutils.IsPodReady(&pods[i]) {
-			readyCount++
+			c.lastReady++
 		}
 	}
 
-	return readyCount >= c.ExpectedCount, nil
+	return c.lastReady >= c.ExpectedCount, nil
+}
+
+// Progress returns a human-readable progress string.
+func (c *PodsReadyCondition) Progress(_ context.Context) string {
+	return fmt.Sprintf("%d/%d pods ready (%d total)", c.lastReady, c.ExpectedCount, c.lastTotal)
 }
