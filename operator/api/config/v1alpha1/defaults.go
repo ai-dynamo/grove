@@ -27,7 +27,7 @@ const (
 	defaultLeaderElectionResourceLock    = "leases"
 	defaultLeaderElectionResourceName    = "grove-operator-leader-election"
 	defaultWebhookServerTLSServerCertDir = "/etc/grove-operator/webhook-certs"
-	defaultPprofBindHost = "127.0.0.1"
+	defaultPprofBindHost                 = "127.0.0.1"
 	// DefaultPprofBindPort is the default port for the pprof HTTP server.
 	DefaultPprofBindPort = 2753
 )
