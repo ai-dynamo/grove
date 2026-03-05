@@ -90,9 +90,14 @@ func (in *DebuggingConfiguration) DeepCopyInto(out *DebuggingConfiguration) {
 		*out = new(bool)
 		**out = **in
 	}
-	if in.PprofBindAddress != nil {
-		in, out := &in.PprofBindAddress, &out.PprofBindAddress
+	if in.PprofBindHost != nil {
+		in, out := &in.PprofBindHost, &out.PprofBindHost
 		*out = new(string)
+		**out = **in
+	}
+	if in.PprofBindPort != nil {
+		in, out := &in.PprofBindPort, &out.PprofBindPort
+		*out = new(int)
 		**out = **in
 	}
 	return

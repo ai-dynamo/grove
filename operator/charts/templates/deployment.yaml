@@ -46,9 +46,8 @@ spec:
               containerPort: {{ required ".Values.config.server.webhooks.port" .Values.config.server.webhooks.port }}
               protocol: TCP
             {{- if and .Values.config.debugging .Values.config.debugging.enableProfiling }}
-            {{- $pprofPort := (split ":" .Values.config.debugging.pprofBindAddress)._1 | default "2753" }}
             - name: pprof
-              containerPort: {{ $pprofPort }}
+              containerPort: {{ .Values.config.debugging.pprofBindPort | default 2753 }}
               protocol: TCP
             {{- end }}
           {{- if .Values.config.server.healthProbes.enable }}

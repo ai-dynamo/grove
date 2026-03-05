@@ -31,8 +31,11 @@ config.yaml: |
   {{- if .Values.config.debugging }}
   debugging:
     enableProfiling: {{ .Values.config.debugging.enableProfiling }}
-    {{- if .Values.config.debugging.pprofBindAddress }}
-    pprofBindAddress: {{ .Values.config.debugging.pprofBindAddress | quote }}
+    {{- if .Values.config.debugging.pprofBindHost }}
+    pprofBindHost: {{ .Values.config.debugging.pprofBindHost | quote }}
+    {{- end }}
+    {{- if .Values.config.debugging.pprofBindPort }}
+    pprofBindPort: {{ .Values.config.debugging.pprofBindPort }}
     {{- end }}
   {{- end }}
   logLevel: {{ .Values.config.logLevel | default "info" }}

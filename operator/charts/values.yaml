@@ -79,7 +79,8 @@ config:
       port: 9445
   debugging:
     enableProfiling: false
-    pprofBindAddress: "127.0.0.1:2753"
+    pprofBindHost: "127.0.0.1"
+    pprofBindPort: 2753
   controllers:
     podCliqueSet:
       concurrentSyncs: 3
