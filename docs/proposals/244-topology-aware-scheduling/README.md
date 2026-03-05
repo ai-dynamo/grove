@@ -509,12 +509,6 @@ type ClusterTopologySpec struct {
     // +kubebuilder:validation:XValidation:rule="self.all(x, self.filter(y, y.key == x.key).size() == 1)",message="key must be unique across all levels"
     // +kubebuilder:validation:XValidation:rule="!self.exists(a, self.exists(b, a.domain == b.key))",message="domain names must not collide with key values"
     Levels []TopologyLevel `json:"levels"`
-
-    // SchedulerTopologyRef optionally references an existing scheduler backend topology resource by name.
-    // When set, the controller verifies this topology matches the ClusterTopology levels instead of creating one.
-    // When not set, the controller creates and manages the scheduler backend topology automatically.
-    // +optional
-    SchedulerTopologyRef *SchedulerTopologyReference `json:"schedulerTopologyRef,omitempty"`
 }
 
 type TopologyLevel struct {
@@ -537,14 +531,6 @@ type TopologyLevel struct {
     Key string `json:"key"`
 }
 
-// SchedulerTopologyReference references an existing scheduler backend topology resource.
-type SchedulerTopologyReference struct {
-    // Name is the name of the scheduler backend topology resource.
-    // +kubebuilder:validation:Required
-    // +kubebuilder:validation:MinLength=1
-    Name string `json:"name"`
-}
-
 // ClusterTopologyStatus defines the observed state of a ClusterTopology.
 type ClusterTopologyStatus struct {
     // Conditions represent the latest available observations of the ClusterTopology's state.
@@ -553,7 +539,7 @@ type ClusterTopologyStatus struct {
 }
 ```
 
-The `SchedulerTopologyInSync` condition on `ClusterTopologyStatus` reports the state of the scheduler backend topology:
+The `SchedulerTopologyInSync` condition on `ClusterTopologyStatus` reports the state of the scheduler backend topology for profiles that are referenced in a scheduler backend's `topologyReferences` config:
 
 | Status    | Reason                    | Description                                                                         |
 | --------- | ------------------------- | ------------------------------------------------------------------------------------ |
@@ -561,7 +547,7 @@ The `SchedulerTopologyInSync` condition on `ClusterTopologyStatus` reports the s
 | `False`   | `Drift`                   | The scheduler backend topology levels do not match the ClusterTopology levels        |
 | `Unknown` | `TopologyNotFound`        | The referenced scheduler backend topology resource was not found                     |
 
-When `schedulerTopologyRef` is not set, the controller auto-manages the scheduler backend topology and does not set this condition.
+When the topology profile is not referenced in any scheduler backend's `topologyReferences`, the operator auto-manages the scheduler backend topology and does not set this condition.
 
 #### ClusterTopology Lifecycle
 
