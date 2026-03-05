@@ -77,14 +77,16 @@ func TestPodPredicate_Delete(t *testing.T) {
 	})
 }
 
+// Test_isMarkedForDeletion tests if a deletion timestamp is set on the pod
 func Test_isMarkedForDeletion(t *testing.T) {
+	now := ptr.To(metav1.Now())
 	tests := []struct {
 		name        string
 		updateEvent event.UpdateEvent
 		want        bool
 	}{
 		{
-			name: "pod deletionTimestamp changed",
+			name: "deletion timestamp set on the pod in the update",
 			updateEvent: event.UpdateEvent{
 				ObjectOld: &corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
@@ -93,11 +95,51 @@ func Test_isMarkedForDeletion(t *testing.T) {
 				},
 				ObjectNew: &corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
-						DeletionTimestamp: ptr.To(metav1.Now()),
+						DeletionTimestamp: now,
 					},
 				},
 			},
 			want: true,
+		},
+		{
+			name: "deletion timestamp not set on the pod in the update",
+			updateEvent: event.UpdateEvent{
+				ObjectOld: &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						DeletionTimestamp: nil,
+					},
+				},
+				ObjectNew: &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						DeletionTimestamp: nil,
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "deletion timestamp was already set on the pod before the update",
+			updateEvent: event.UpdateEvent{
+				ObjectOld: &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						DeletionTimestamp: now,
+					},
+				},
+				ObjectNew: &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						DeletionTimestamp: now,
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "objects are not pods (type cast fails)",
+			updateEvent: event.UpdateEvent{
+				ObjectOld: &corev1.ConfigMap{},
+				ObjectNew: &corev1.ConfigMap{},
+			},
+			want: false,
 		},
 	}
 	for _, tt := range tests {
