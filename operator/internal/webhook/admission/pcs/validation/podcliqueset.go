@@ -151,12 +151,12 @@ func (v *pcsValidator) validatePodCliqueTemplates(fldPath *field.Path) ([]string
 			if def := schedulerbackend.GetDefault(); def != nil {
 				return def.Name()
 			}
-			return "default-scheduler" // fallback when backend not initialized (e.g. in tests)
+			return "default-scheduler"
 		}
 		return item
 	}))
 	if len(uniqueSchedulerNames) > 1 {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("spec").Child("podSpec").Child("schedulerName"), uniqueSchedulerNames[0], "the schedulerName for all pods have to be the same"))
+		allErrs = append(allErrs, field.Invalid(fldPath.Child("spec").Child("podSpec").Child("schedulerName"), strings.Join(uniqueSchedulerNames, ", "), "the schedulerName for all pods have to be the same"))
 	}
 
 	// Validate that the scheduler name is enabled (present in OperatorConfiguration profiles or default)
@@ -164,13 +164,9 @@ func (v *pcsValidator) validatePodCliqueTemplates(fldPath *field.Path) ([]string
 	if len(uniqueSchedulerNames) > 0 && uniqueSchedulerNames[0] != "" {
 		pcsSchedulerName = uniqueSchedulerNames[0]
 	}
-	if pcsSchedulerName == "" {
-		if def := schedulerbackend.GetDefault(); def != nil {
-			pcsSchedulerName = def.Name()
-		}
-	}
+
 	// default-scheduler is the pod-facing name for kube-scheduler and is always accepted when kube backend is enabled
-	if pcsSchedulerName != "" && pcsSchedulerName != "default-scheduler" && schedulerbackend.Get(pcsSchedulerName) == nil {
+	if pcsSchedulerName != "default-scheduler" && schedulerbackend.Get(pcsSchedulerName) == nil {
 		allErrs = append(allErrs, field.Invalid(
 			fldPath.Child("spec").Child("podSpec").Child("schedulerName"),
 			pcsSchedulerName,

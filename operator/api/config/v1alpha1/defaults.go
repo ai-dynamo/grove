@@ -75,8 +75,7 @@ func SetDefaults_OperatorConfiguration(operatorConfig *OperatorConfiguration) {
 // Principle: respect all user-explicit values first.
 //
 //  1. If user did not include kube in profiles, add kube. Whether kube is default: only if no other profile is default, set kube as default.
-//  2. If user did not set any default (no profile has default: true), set kube as default (only when we added kube above — do not override user's explicit kube default: false).
-//     Otherwise (one non-kube default, or two+ defaults) we do not change; validation will reject invalid cases.
+//  2. If user did not set any default (no profile has default: true), set kube as default. Validation will reject invalid cases.
 func SetDefaults_SchedulerConfiguration(cfg *SchedulerConfiguration) {
 	if len(cfg.Profiles) == 0 {
 		cfg.Profiles = []SchedulerProfile{
@@ -112,8 +111,7 @@ func SetDefaults_SchedulerConfiguration(cfg *SchedulerConfiguration) {
 		return
 	}
 	// 2. No default → set kube as default.
-	// Only set kube as default if user did not explicitly set kube as default.
-	if defaultCount == 0 && !hasKube {
+	if defaultCount == 0 {
 		cfg.Profiles[kubeIdx].Default = true
 	}
 }
