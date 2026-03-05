@@ -81,6 +81,8 @@ config:
       concurrentSyncs: 3
     podClique:
       concurrentSyncs: 3
+    podCliqueScalingGroup:
+      concurrentSyncs: 3
   logLevel: info
   logFormat: json
   topologyAwareScheduling:
