@@ -310,7 +310,7 @@ def create_cluster(config: ClusterConfig) -> bool:
 def wait_for_nodes():
     """Wait for all nodes to be ready."""
     console.print("[yellow]ℹ️  Waiting for all nodes to be ready...[/yellow]")
-    sh.kubectl("wait", "--for=condition=Ready", "nodes", "--all", "--timeout=5m")
+    sh.kubectl("wait", "--for=condition=Ready", "nodes", "--all", "--timeout=10m")
     console.print("[green]✅ All nodes are ready[/green]")
 
 
