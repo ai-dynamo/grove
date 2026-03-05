@@ -21,7 +21,6 @@
     - [ClusterTopology Deletion Protection](#clustertopology-deletion-protection)
     - [Immutable Topology Levels](#immutable-topology-levels)
     - [Topology Reference Immutability After Scheduling](#topology-reference-immutability-after-scheduling)
-    - [Two Management Paths for Topologies](#two-management-paths-for-topologies)
 - [Design Details](#design-details)
   - [Cluster Admin API](#cluster-admin-api)
     - [Topology Domains](#topology-domains)
@@ -234,21 +233,18 @@ Providing a way to define cluster topology entails that the cluster administrato
 
 * Understand the cluster network topology.
 * Ensure that the nodes are correctly labeled with the topology information.
-* Define appropriate topology levels in `OperatorConfiguration` when configuring the `Grove` operator.
-* When using multiple topologies, create and maintain additional `ClusterTopology` resources for each hardware type that differs from the default topology.
+* Define appropriate topology profiles in `OperatorConfiguration` when configuring the `Grove` operator.
 
 CEL validation on the CRD ensures that domain names and node label keys are unique within a ClusterTopology, and that no domain name collides with a key value. However, there is no way for `Grove` operator to ensure that the node labels mapped to each topology domain are in line with the ones actually present on nodes in the kubernetes cluster.
 
 **Mitigation**
 
-* Adequate documentation will be provided to the cluster administrators to help them properly configure topology levels in `OperatorConfiguration`.
+* Adequate documentation will be provided to the cluster administrators to help them properly configure topology profiles in `OperatorConfiguration`.
 * Tools like [Topograph](https://github.com/NVIDIA/topograph) can be leveraged to automate discovery of cluster network topology and ensuring that topology levels are added as labels on Kubernetes Node(s).
 
 #### Topology Configuration Drift
 
-ClusterTopology levels are immutable after creation (enforced by CEL validation). For user-created ClusterTopology resources, this eliminates configuration drift entirely — the levels cannot change.
-
-The default `grove-topology` is a special case. When an administrator changes the topology levels in `OperatorConfiguration` and restarts the operator, the operator deletes the existing default ClusterTopology and creates a new one with the updated levels (see [Operator Startup behavior](#operator-startup-behavior)). During the brief window between deletion and recreation, existing PodCliqueSets that referenced the default topology may have topology constraints that no longer match the new levels.
+ClusterTopology levels are immutable after creation (enforced by CEL validation), so the levels of a running ClusterTopology cannot drift. However, when an administrator changes a topology profile's levels in `OperatorConfiguration` and restarts the operator, the operator deletes the existing ClusterTopology and creates a new one with the updated levels (see [Operator Startup behavior](#operator-startup-behavior)). During the brief window between deletion and recreation, existing PodCliqueSets that referenced the topology may have topology constraints that no longer match the new levels.
 
 **Mitigation:**
 
@@ -286,11 +282,14 @@ Validating webhook for `PodCliqueSet` will reject resources that are created wit
 
 #### ClusterTopology Deletion Protection
 
-A ClusterTopology resource cannot be deleted while any PodCliqueSet references it via `clusterTopologyName`. A controller watches ClusterTopology resources and adds a finalizer to each one. The finalizer is only removed once no PodCliqueSet references the topology, at which point the deletion proceeds.
+A ClusterTopology resource cannot be deleted while any PodCliqueSet references it. A controller watches ClusterTopology resources and adds a finalizer to each one. The finalizer is only removed once no PodCliqueSet references the topology, at which point the deletion proceeds.
+
+When an administrator removes a topology profile from `OperatorConfiguration` and restarts the operator, the operator attempts to delete the corresponding ClusterTopology. If PodCliqueSets still reference it, the finalizer blocks deletion — the operator logs the condition and continues startup, but the configuration and cluster state are misaligned until the administrator resolves the situation.
 
 **Mitigation**
 
-* The finalizer-based approach ensures that topology resources are never removed while workloads depend on them. Administrators can identify which PodCliqueSets reference a given topology using the kubectl query described in [Monitoring](#monitoring), then migrate or delete those workloads before retrying the deletion.
+* Administrators must migrate or delete PodCliqueSets that reference a topology before removing its profile from `OperatorConfiguration`. The kubectl query described in [Monitoring](#monitoring) identifies which PodCliqueSets reference a given topology.
+* The operator handles blocked deletions gracefully — it logs the condition and continues startup. The stale ClusterTopology remains functional until workloads are drained.
 
 #### Immutable Topology Levels
 
@@ -298,7 +297,7 @@ A ClusterTopology's `spec.levels` field is immutable after creation, enforced by
 
 **Mitigation**
 
-* Administrators who need to change a topology's levels must delete the existing ClusterTopology and create a new one with the desired levels. The finalizer prevents deletion while any PodCliqueSet references the topology, so administrators must first drain or delete referencing workloads. This delete+recreate workflow is consistent with the KAI scheduler's topology update model.
+* To change a topology's levels, administrators update the profile in `OperatorConfiguration` and restart the operator. The operator handles the delete+recreate workflow automatically. The finalizer prevents deletion while any PodCliqueSet references the topology, so administrators must first drain or delete referencing workloads. This delete+recreate workflow is consistent with the KAI scheduler's topology update model.
 
 #### Topology Reference Immutability After Scheduling
 
@@ -308,63 +307,99 @@ The `clusterTopologyName` field on a PodCliqueSet becomes immutable once any pod
 
 * This restriction only applies after pods are scheduled. Users who need to change the topology reference for a running workload can delete the PodCliqueSet and recreate it with the desired topology. The pending-state flexibility supports the common case of retrying on a different topology when the first choice cannot accommodate the gang.
 
-#### Two Management Paths for Topologies
-
-The default ClusterTopology is managed through the operator's Helm configuration, while additional topologies are created directly by administrators via kubectl or GitOps. The operator-managed default is labeled with `app.kubernetes.io/managed-by: grove-operator` and is reconciled to match the operator configuration on each startup. User-created topologies are not reconciled by the operator and should not use the reserved default topology name.
-
-**Mitigation**
-
-* The two-path model is intentional: the default topology follows the existing Helm-managed lifecycle (matching today's behavior), while additional topologies are standard Kubernetes resources subject to the full admission control and finalizer protections. Documentation will clearly distinguish between operator-managed and user-managed topologies to avoid confusion.
-
 ## Design Details
 
 > NOTE: For brevity we will refer to topology aware scheduling as `TAS`.
 
 ### Cluster Admin API
 
-Topology levels will be defined by a cluster admin as part of `OperatorConfiguration`
+Topology profiles and scheduler backend topology mappings are defined by a cluster admin as part of `OperatorConfiguration`. Each named topology profile results in a `ClusterTopology` CR managed by the operator at startup. Scheduler backend topology mappings are defined inside each scheduler profile's backend-specific config (see [GREP-375: Scheduler Backend Framework](../375-scheduler-backend-framework/README.md)).
 
 ```go
-// OperatorConfiguration defines the configuration for the Grove operator.
-type OperatorConfiguration struct {
-  TopologyAwareScheduling TopologyAwareSchedulingConfiguration `json:"topologyAwareScheduling"`
-}
-
 // TopologyAwareSchedulingConfiguration defines the configuration for topology-aware scheduling.
 type TopologyAwareSchedulingConfiguration struct {
 	// Enabled indicates whether topology-aware scheduling is enabled.
 	Enabled bool `json:"enabled"`
-	// Levels is a list of topology levels.
-	// Used to create the ClusterTopology CR at operator startup.
-	// If levels differ from an existing default ClusterTopology, the operator deletes and recreates it.
+	// TopologyProfiles is a list of named topology profiles.
+	// Each profile defines a set of topology levels and results in a ClusterTopology CR managed by the operator.
 	// +optional
-	Levels []corev1alpha1.TopologyLevel `json:"levels,omitempty"`
+	TopologyProfiles []TopologyProfile `json:"topologyProfiles,omitempty"`
 }
 
+// TopologyProfile defines a named topology profile with an ordered set of topology levels.
+type TopologyProfile struct {
+	// Name is the unique identifier for this profile.
+	// It becomes the name of the corresponding ClusterTopology CR.
+	// +required
+	Name string `json:"name"`
+	// Levels is an ordered list of topology levels from broadest to narrowest scope.
+	// +required
+	Levels []corev1alpha1.TopologyLevel `json:"levels"`
+}
 ```
 
-Example `OperatorConfiguration` (only shows TAS configuration for brevity):
+Scheduler backend topology references are configured inside each `SchedulerProfile.Config` (GREP-375). For the KAI scheduler, this extends the backend-specific config:
+
+```go
+// KaiSchedulerConfig holds the configuration for the KAI scheduler backend.
+// This is deserialized from SchedulerProfile.Config (runtime.RawExtension) when Name == "kai-scheduler".
+type KaiSchedulerConfig struct {
+	// TopologyReferences maps topology profile names to KAI Topology CR names.
+	// Each entry tells the operator which KAI Topology CR corresponds to a given topology profile.
+	// +optional
+	TopologyReferences []TopologyReference `json:"topologyReferences,omitempty"`
+}
+
+// TopologyReference maps a topology profile to a scheduler backend's topology resource.
+type TopologyReference struct {
+	// ProfileName is the name of the topology profile (must match a TopologyProfile.Name).
+	// +required
+	ProfileName string `json:"profileName"`
+	// ResourceName is the name of the scheduler backend's topology resource (e.g., KAI Topology CR name).
+	// +required
+	ResourceName string `json:"resourceName"`
+}
+```
+
+Example `OperatorConfiguration` (shows TAS and scheduler configuration):
 ```yaml
 apiVersion: operator.config.grove.io/v1alpha1
 kind: OperatorConfiguration
 ...
 topologyAwareScheduling:
   enabled: true
-  levels:
-    - domain: region
-      key: "topology.kubernetes.io/region"
-    - domain: zone
-      key: "topology.kubernetes.io/zone"
-    - domain: datacenter
-      key: "topology.kubernetes.io/datacenter"
-    - domain: rack
-      key: "topology.kubernetes.io/rack"
-    - domain: host
-      key: "kubernetes.io/hostname"
-    ...
+  topologyProfiles:
+    - name: h100-topology
+      levels:
+        - domain: zone
+          key: "topology.kubernetes.io/zone"
+        - domain: rack
+          key: "topology.kubernetes.io/rack"
+        - domain: host
+          key: "kubernetes.io/hostname"
+    - name: gb200-topology
+      levels:
+        - domain: zone
+          key: "topology.kubernetes.io/zone"
+        - domain: block
+          key: "example.com/nvl-block"
+        - domain: rack
+          key: "example.com/nvlink-domain"
+        - domain: host
+          key: "kubernetes.io/hostname"
+scheduler:
+  profiles:
+    - name: "kai-scheduler"
+      default: true
+      config:
+        topologyReferences:
+          - profileName: h100-topology
+            resourceName: h100-kai-topology
+          - profileName: gb200-topology
+            resourceName: gb200-kai-topology
 ```
 
-> NOTE: The above values for `key` is just an example and will/can be different for different infrastructure providers.
+> NOTE: The above values for `key` are examples and will differ across infrastructure providers. The `topologyReferences` in each scheduler profile's config map topology profiles to the scheduler backend's topology resource names.
 
 #### Topology Domains
 
@@ -388,8 +423,11 @@ Using a consistent set of domain names across clusters enables workload portabil
 
 `OperatorConfiguration` is validated upon starting of `Grove` operator. If `TopologyAwareScheduling.Enabled` is true, then following is checked:
 
-* At least one `TopologyLevel` should be set.
-* Each `TopologyLevel` should be unique, neither the domain nor the key should be duplicated.
+* At least one `TopologyProfile` must be defined.
+* Each `TopologyProfile` must have a unique name.
+* Within each profile, at least one `TopologyLevel` must be set.
+* Within each profile, each `TopologyLevel` must be unique — neither the domain nor the key should be duplicated.
+* Each `TopologyReference.ProfileName` in any scheduler profile's config must match a defined `TopologyProfile.Name`.
 
 Additional CEL validation on the ClusterTopology CRD ensures that no domain name collides with any key value (prevents ambiguity for scheduler backends).
 
@@ -405,25 +443,33 @@ When `Grove` operator starts, it checks if TAS is enabled.
 
 * Validate TAS configuration.
 
-* Ensure the default `ClusterTopology` custom resource (`grove-topology`) exists and matches the operator configuration. Since `spec.levels` is immutable, the operator cannot update an existing ClusterTopology's levels directly. If the existing default topology's levels differ from the configuration, the operator deletes the existing ClusterTopology (removing its finalizer first) and creates a new one. The default topology is labeled with `app.kubernetes.io/managed-by: grove-operator`. If the levels match, the operator updates only metadata (e.g., labels) if needed.
+* For each topology profile in `TopologyAwareScheduling.TopologyProfiles`:
+  * Ensure a `ClusterTopology` custom resource exists with the profile's name and levels. Since `spec.levels` is immutable, the operator cannot update an existing ClusterTopology's levels directly. If an existing ClusterTopology's levels differ from the profile, the operator deletes it (removing its finalizer first) and creates a new one. All operator-managed ClusterTopologies are labeled with `app.kubernetes.io/managed-by: grove-operator`. If the levels match, the operator updates only metadata (e.g., labels) if needed.
 
-* If the default `ClusterTopology` does not have a `schedulerTopologyRef`, create the corresponding scheduler backend topology CR if it does not exist. For the KAI scheduler, this means creating a `Topology` CR with an `OwnerReference` to the ClusterTopology. When the operator deletes and recreates the default ClusterTopology due to level changes, the scheduler backend topology is cascade-deleted via the `OwnerReference` and then recreated alongside the new ClusterTopology. If `schedulerTopologyRef` is set, the controller handles drift detection (see [Scheduler Backend Topology](#scheduler-backend-topology)).
+* For each scheduler profile with topology references in its config (e.g., KAI scheduler's `topologyReferences`):
+  * For each topology reference, create the corresponding scheduler backend topology CR if it does not exist. For the KAI scheduler, this means creating a `Topology` CR with an `OwnerReference` to the corresponding ClusterTopology. When the operator deletes and recreates a ClusterTopology due to level changes, the scheduler backend topology is cascade-deleted via the `OwnerReference` and then recreated alongside the new ClusterTopology.
+
+* Delete any ClusterTopology resources that are labeled `app.kubernetes.io/managed-by: grove-operator` but do not correspond to any configured profile. Remove finalizers before deletion.
 
 If any of the create/delete of `ClusterTopology` CR or scheduler backend topology CR fails, the operator exits with a non-zero exit code and a clear message indicating the issue.
 
 **TAS is disabled**
 
-* Delete any existing default `ClusterTopology` CR and handle removing finalizers on the default topology. Because the scheduler backend topology CR is owned by the `ClusterTopology` CR (via `OwnerReference`), it will be cascade-deleted.
+* Delete all `ClusterTopology` CRs that are labeled `app.kubernetes.io/managed-by: grove-operator` and handle removing finalizers. Because the scheduler backend topology CRs are owned by their respective `ClusterTopology` CRs (via `OwnerReference`), they will be cascade-deleted.
 
 Deletion failures are non-fatal. These will be logged and the operator will continue.
 
-**User-created ClusterTopology resources** are not created, updated, or deleted by operator startup. Their lifecycle is managed entirely by administrators via kubectl or GitOps, subject to the protections described in [ClusterTopology Lifecycle](#clustertopology-lifecycle). For each user-created ClusterTopology, the ClusterTopology controller handles the scheduler backend topology lifecycle: auto-creating when `schedulerTopologyRef` is not set, or verifying drift when it is set (see [Scheduler Backend Topology](#scheduler-backend-topology)).
+**Only operator-managed ClusterTopologies are recognized.** Grove controllers (PCS reconciler, ClusterTopology controller, PCS validating webhook) only operate on ClusterTopology resources that carry the `app.kubernetes.io/managed-by: grove-operator` label. Manually created ClusterTopology resources without this label are ignored — PodCliqueSets cannot reference them, and the operator will not create scheduler backend topology resources for them.
 
 #### Topology Configuration Updates
 
-`OperatorConfiguration` is mounted as an immutable `ConfigMap` to the operator. To make any changes to the default topology's TAS configuration via `OperatorConfiguration`, the `Grove` operator needs to be restarted with the changed `OperatorConfiguration`. If the levels have changed, the operator deletes the existing default ClusterTopology and creates a new one (see [Operator Startup behavior](#operator-startup-behavior)).
+`OperatorConfiguration` is mounted as an immutable `ConfigMap` to the operator. To make any changes to the TAS configuration via `OperatorConfiguration`, the `Grove` operator needs to be restarted with the changed `OperatorConfiguration`.
 
-User-created ClusterTopology resources have immutable levels. To change the levels of a user-created topology, delete the existing resource and create a new one. The finalizer prevents deletion while any PodCliqueSet references the topology (see [ClusterTopology Lifecycle](#clustertopology-lifecycle)).
+On restart, the operator reconciles all ClusterTopology resources to match the configured profiles:
+
+* New profiles result in new ClusterTopology CRs.
+* Profiles with changed levels cause a delete+recreate of the corresponding ClusterTopology (see [Operator Startup behavior](#operator-startup-behavior)).
+* Removed profiles cause deletion of the corresponding ClusterTopology CRs. The finalizer prevents deletion while any PodCliqueSet references the topology (see [ClusterTopology Lifecycle](#clustertopology-lifecycle)).
 
 ### ClusterTopology custom resource
 
