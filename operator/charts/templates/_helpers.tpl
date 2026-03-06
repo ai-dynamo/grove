@@ -28,6 +28,8 @@ config.yaml: |
       concurrentSyncs: {{ .Values.config.controllers.podCliqueSet.concurrentSyncs }}
     podClique:
       concurrentSyncs: {{ .Values.config.controllers.podClique.concurrentSyncs }}
+    podCliqueScalingGroup:
+      concurrentSyncs: {{ .Values.config.controllers.podCliqueScalingGroup.concurrentSyncs }}
   {{- if .Values.config.debugging }}
   debugging:
     enableProfiling: {{ .Values.config.debugging.enableProfiling }}
