@@ -1026,7 +1026,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `profiles` _[SchedulerProfile](#schedulerprofile) array_ | Profiles is the list of scheduler profiles. Each profile has a backend name, optional config, and whether it is the default.<br />The kube-scheduler backend is always enabled; use profile name "kube-scheduler" to configure or set it as default.<br />Valid profile names: "kube-scheduler", "kai-scheduler". Exactly one profile should have default: true; if none, kube-scheduler is the default. |  |  |
+| `profiles` _[SchedulerProfile](#schedulerprofile) array_ | Profiles is the list of scheduler profiles. Each profile has a backend name and optional config.<br />The kube-scheduler backend is always enabled; use profile name "kube-scheduler" to configure or set it as default.<br />Valid profile names: "kube-scheduler", "kai-scheduler". Use defaultProfileName to designate the default backend. If not set, defaulting sets it to "kube-scheduler". |  |  |
+| `defaultProfileName` _string_ | DefaultProfileName is the name of the default scheduler profile. If unset, defaulting sets it to "kube-scheduler". |  |  |
 
 
 #### SchedulerName
@@ -1050,7 +1051,7 @@ _Appears in:_
 
 
 
-SchedulerProfile defines a scheduler backend profile with optional backend-specific config and default flag.
+SchedulerProfile defines a scheduler backend profile with optional backend-specific config.
 
 
 
@@ -1061,7 +1062,6 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `name` _[SchedulerName](#schedulername)_ | Name is the scheduler profile name. Valid values: "kube-scheduler", "kai-scheduler".<br />For the Kubernetes default scheduler use "kube-scheduler"; Pod.Spec.SchedulerName will be set to "default-scheduler". |  | Enum: [kai-scheduler kube-scheduler] <br />Required: \{\} <br /> |
 | `config` _[RawExtension](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#rawextension-runtime-pkg)_ | Config holds backend-specific options. The operator unmarshals it into the config type for this backend (see backend config types). |  |  |
-| `default` _boolean_ | Default indicates this profile is the default backend when a workload does not specify one. Exactly one profile should have default: true. |  |  |
 
 
 #### Server

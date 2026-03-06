@@ -54,12 +54,6 @@ func TestInitialize(t *testing.T) {
 			wantErr:       true,
 			errContains:   "not supported",
 		},
-		{
-			name:          "invalid scheduler name",
-			schedulerName: "invalid-scheduler",
-			wantErr:       true,
-			errContains:   "not supported",
-		},
 	}
 
 	for _, tt := range tests {
@@ -73,8 +67,9 @@ func TestInitialize(t *testing.T) {
 
 			cfg := configv1alpha1.SchedulerConfiguration{
 				Profiles: []configv1alpha1.SchedulerProfile{
-					{Name: tt.schedulerName, Default: true},
+					{Name: tt.schedulerName},
 				},
+				DefaultProfileName: string(tt.schedulerName),
 			}
 			err := Initialize(cl, cl.Scheme(), recorder, cfg)
 

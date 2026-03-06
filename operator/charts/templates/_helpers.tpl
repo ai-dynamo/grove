@@ -32,12 +32,12 @@ config.yaml: |
       concurrentSyncs: {{ .Values.config.controllers.podCliqueScalingGroup.concurrentSyncs }}
   {{- if and .Values.config.scheduler .Values.config.scheduler.profiles }}
   scheduler:
+    {{- if .Values.config.scheduler.defaultProfileName }}
+    defaultProfileName: {{ .Values.config.scheduler.defaultProfileName }}
+    {{- end }}
     profiles:
     {{- range .Values.config.scheduler.profiles }}
     - name: {{ .name }}
-      {{- if hasKey . "default" }}
-      default: {{ .default }}
-      {{- end }}
       {{- if hasKey . "config" }}
       config: {{ toYaml .config | nindent 4 }}
       {{- end }}

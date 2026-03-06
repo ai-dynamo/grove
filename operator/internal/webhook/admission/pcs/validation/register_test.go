@@ -45,7 +45,7 @@ func TestRegisterWithManager(t *testing.T) {
 	cfg := configv1alpha1.OperatorConfiguration{
 		TopologyAwareScheduling: configv1alpha1.TopologyAwareSchedulingConfiguration{},
 		Network:                 configv1alpha1.NetworkAcceleration{},
-		Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube, Default: true}}},
+		Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
 	}
 	handler := NewHandler(mgr, &cfg)
 	err := handler.RegisterWithManager(mgr)

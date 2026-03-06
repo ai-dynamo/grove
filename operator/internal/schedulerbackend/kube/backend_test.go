@@ -23,8 +23,6 @@ import (
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 )
 
@@ -34,12 +32,7 @@ func TestBackend_PreparePod(t *testing.T) {
 	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKube}
 	b := New(cl, cl.Scheme(), recorder, profile)
 
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-pod",
-			Namespace: "default",
-		},
-	}
+	pod := testutils.NewPodBuilder("test-pod", "default").Build()
 
 	b.PreparePod(pod)
 

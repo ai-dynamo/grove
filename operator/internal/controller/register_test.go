@@ -50,7 +50,7 @@ func TestRegisterControllers(t *testing.T) {
 		require.NoError(t, err)
 
 		operatorConfig := configv1alpha1.OperatorConfiguration{
-			Scheduler: configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKai, Default: true}}},
+			Scheduler: configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKai}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKai)},
 			Controllers: configv1alpha1.ControllerConfiguration{
 				PodCliqueSet: configv1alpha1.PodCliqueSetControllerConfiguration{
 					ConcurrentSyncs: ptr.To(1),

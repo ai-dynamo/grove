@@ -73,14 +73,15 @@ func Initialize(client client.Client, scheme *runtime.Scheme, eventRecorder reco
 			return fmt.Errorf("failed to initialize %s backend: %w", p.Name, err)
 		}
 		backends[backend.Name()] = backend
-		if p.Default {
+		if cfg.DefaultProfileName != "" && string(p.Name) == cfg.DefaultProfileName {
 			defaultBackend = backend
 		}
 	}
 	return nil
 }
 
-// Get returns the backend for the given name. default-scheduler is always available; other backends return nil if not enabled via a profile.
+// Get returns the backend for the given name. Empty string is valid and returns the default backend (e.g. when Pod.Spec.SchedulerName is unset).
+// default-scheduler is always available; other backends return nil if not enabled via a profile.
 func Get(name string) SchedBackend {
 	if name == "" {
 		return defaultBackend
@@ -88,7 +89,7 @@ func Get(name string) SchedBackend {
 	return backends[name]
 }
 
-// GetDefault returns the backend designated as default in OperatorConfiguration (the profile with default: true; if none, default-scheduler).
+// GetDefault returns the backend designated as default in OperatorConfiguration (scheduler.defaultProfileName).
 func GetDefault() SchedBackend {
 	return defaultBackend
 }

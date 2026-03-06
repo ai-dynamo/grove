@@ -19,11 +19,9 @@ package podgang
 import (
 	"testing"
 
-	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
-	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/stretchr/testify/assert"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 )
 
@@ -114,8 +112,16 @@ func TestPodGangSpecChangePredicate(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			oldPG := createPodGang("test-pg", 1, tc.managedOld)
-			newPG := createPodGang("test-pg", 1, tc.managedNew)
+			oldPG := testutils.NewPodGangBuilder("test-pg", "default").
+				WithGeneration(1).
+				WithManaged(tc.managedOld).
+				WithPodGroup("pg0", 1).
+				Build()
+			newPG := testutils.NewPodGangBuilder("test-pg", "default").
+				WithGeneration(1).
+				WithManaged(tc.managedNew).
+				WithPodGroup("pg0", 1).
+				Build()
 			if tc.generationChanged {
 				newPG.SetGeneration(oldPG.GetGeneration() + 1)
 			}
@@ -125,25 +131,5 @@ func TestPodGangSpecChangePredicate(t *testing.T) {
 			assert.Equal(t, tc.shouldAllowGenericEvent, pred.Generic(event.GenericEvent{Object: newPG}), "Generic")
 			assert.Equal(t, tc.shouldAllowUpdateEvent, pred.Update(event.UpdateEvent{ObjectOld: oldPG, ObjectNew: newPG}), "Update")
 		})
-	}
-}
-
-func createPodGang(name string, generation int64, managed bool) *groveschedulerv1alpha1.PodGang {
-	labels := make(map[string]string)
-	if managed {
-		labels[apicommon.LabelManagedByKey] = apicommon.LabelManagedByValue
-	}
-	return &groveschedulerv1alpha1.PodGang{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:       name,
-			Namespace:  "default",
-			Labels:     labels,
-			Generation: generation,
-		},
-		Spec: groveschedulerv1alpha1.PodGangSpec{
-			PodGroups: []groveschedulerv1alpha1.PodGroup{
-				{Name: "pg0", MinReplicas: 1},
-			},
-		},
 	}
 }

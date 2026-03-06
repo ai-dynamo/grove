@@ -121,18 +121,11 @@ func (h *Handler) ValidateDelete(_ context.Context, _ runtime.Object) (admission
 }
 
 // validatePodCliqueSetWithBackend resolves the scheduler backend for the PCS and runs backend-specific validation.
+// All cliques share the same (resolved) schedulerName after validateSchedulerNames, so we use the first clique; empty is resolved by Get("").
 func validatePodCliqueSetWithBackend(ctx context.Context, pcs *v1alpha1.PodCliqueSet) error {
 	schedulerName := ""
-	for _, c := range pcs.Spec.Template.Cliques {
-		if c != nil && c.Spec.PodSpec.SchedulerName != "" {
-			schedulerName = c.Spec.PodSpec.SchedulerName
-			break
-		}
-	}
-	if schedulerName == "" {
-		if def := schedulerbackend.GetDefault(); def != nil {
-			schedulerName = def.Name()
-		}
+	if len(pcs.Spec.Template.Cliques) > 0 && pcs.Spec.Template.Cliques[0] != nil {
+		schedulerName = pcs.Spec.Template.Cliques[0].Spec.PodSpec.SchedulerName
 	}
 	backend := schedulerbackend.Get(schedulerName)
 	if backend == nil {
