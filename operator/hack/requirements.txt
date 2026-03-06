@@ -1,15 +1,12 @@
 # Python dependencies for hack scripts
 #
-# Minimum Python version: 3.8+
+# Minimum Python version: 3.10+
 #
 # Install all dependencies:
 #   pip install -r requirements.txt
 #
 # Or using pip3:
 #   pip3 install -r requirements.txt
-
-# CLI framework - elegant command-line interfaces
-typer==0.12.3
 
 # Beautiful terminal output with colors, emojis, progress bars, and formatting
 rich==13.7.0
@@ -18,13 +15,19 @@ rich==13.7.0
 sh==2.0.6
 
 # Data validation and settings management using Python type annotations
-pydantic==2.5.3
+pydantic==2.9.2
 
 # Settings management for pydantic - automatic environment variable loading
-pydantic-settings==2.1.0
+pydantic-settings==2.5.2
 
 # YAML parsing - for reading centralized dependencies configuration
 PyYAML==6.0.1
+
+# Retry library with decorator support for resilient operations
+tenacity>=8.2.0
+
+# Modern CLI framework with auto-completion and help generation
+typer>=0.9.0
 
 # Docker SDK for Python - native Docker API client for image operations
 # Used for parallel image pre-pulling to speed up cluster creation

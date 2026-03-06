@@ -122,6 +122,11 @@ type DebuggingConfiguration struct {
 	// EnableProfiling enables profiling via host:port/debug/pprof/ endpoints.
 	// +optional
 	EnableProfiling *bool `json:"enableProfiling,omitempty"`
+	// PprofBindAddress is the TCP address (host:port) that the pprof HTTP server binds to.
+	// Defaults to 127.0.0.1:2753 (loopback-only). Set to 0.0.0.0:2753 to allow external
+	// scraping (e.g. Pyroscope).
+	// +optional
+	PprofBindAddress *string `json:"pprofBindAddress,omitempty"`
 }
 
 // ServerConfiguration defines the configuration for the HTTP(S) servers.
