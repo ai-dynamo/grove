@@ -122,7 +122,7 @@ class ClusterConfig(BaseSettings):
     api_port: int = Field(default=6560, ge=1, le=65535)
     lb_port: str = "8090:80"
     worker_nodes: int = Field(default=30, ge=1, le=100)
-    worker_memory: str = Field(default="150m", pattern=r"^\d+[mMgG]?$")
+    worker_memory: Optional[str] = Field(default="150m", pattern=r"^\d+[mMgG]?$")
     k3s_image: str = "rancher/k3s:v1.33.5-k3s1"
     kai_version: str = Field(default=DEPENDENCIES['kai_scheduler']['version'], pattern=r"^v[\d.]+(-[\w.]+)?$")
     skaffold_profile: str = "topology-test"
@@ -289,7 +289,7 @@ def create_cluster(config: ClusterConfig) -> bool:
             "--k3s-node-label", "node_role.e2e.grove.nvidia.com=agent@agent:*",
             "--k3s-node-label", "nvidia.com/gpu.deploy.operands=false@server:*",
             "--k3s-node-label", "nvidia.com/gpu.deploy.operands=false@agent:*",
-            "--agents-memory", config.worker_memory,
+            *(["--agents-memory", config.worker_memory] if config.worker_memory else []),
             "--timeout", config.cluster_timeout,
             "--wait",
             _ok_code=[0, 1]
@@ -307,11 +307,60 @@ def create_cluster(config: ClusterConfig) -> bool:
     return False
 
 
-def wait_for_nodes():
-    """Wait for all nodes to be ready."""
-    console.print("[yellow]ℹ️  Waiting for all nodes to be ready...[/yellow]")
-    sh.kubectl("wait", "--for=condition=Ready", "nodes", "--all", "--timeout=5m")
-    console.print("[green]✅ All nodes are ready[/green]")
+def wait_for_nodes(config: ClusterConfig, max_restart_rounds: int = 2):
+    """Wait for all nodes to be ready, restarting failed containers if needed.
+
+    With 30+ k3d nodes, occasionally a k3s-agent process dies silently inside its
+    container during startup due to resource contention. This function detects
+    NotReady nodes after the initial wait, restarts their Docker containers, and
+    retries — up to max_restart_rounds times.
+    """
+    for attempt in range(1, max_restart_rounds + 2):
+        console.print(f"[yellow]ℹ️  Waiting for all nodes to be ready (attempt {attempt})...[/yellow]")
+        exit_code, _ = run_cmd(
+            sh.kubectl, "wait", "--for=condition=Ready", "nodes", "--all", "--timeout=10m",
+            _ok_code=[0, 1],
+        )
+        if exit_code == 0:
+            console.print("[green]✅ All nodes are ready[/green]")
+            return
+
+        not_ready_output = sh.kubectl(
+            "get", "nodes",
+            "--no-headers",
+            "-o", "custom-columns=NAME:.metadata.name,STATUS:.status.conditions[-1].status",
+        ).strip()
+
+        not_ready_nodes = [
+            line.split()[0]
+            for line in not_ready_output.splitlines()
+            if len(line.split()) >= 2 and line.split()[1] != "True"
+        ]
+
+        if not not_ready_nodes:
+            console.print("[green]✅ All nodes are ready[/green]")
+            return
+
+        if attempt > max_restart_rounds:
+            console.print(f"[red]❌ {len(not_ready_nodes)} node(s) still NotReady after {max_restart_rounds} restart rounds: {not_ready_nodes}[/red]")
+            raise typer.Exit(1)
+
+        console.print(f"[yellow]⚠️  {len(not_ready_nodes)} node(s) NotReady: {not_ready_nodes}[/yellow]")
+
+        docker_client = docker.from_env()
+        for node_name in not_ready_nodes:
+            try:
+                container = docker_client.containers.get(node_name)
+                console.print(f"[yellow]   Restarting container {node_name}...[/yellow]")
+                container.restart(timeout=30)
+                console.print(f"[green]   ✓ Restarted {node_name}[/green]")
+            except docker.errors.NotFound:
+                console.print(f"[red]   ✗ Container {node_name} not found[/red]")
+            except Exception as e:
+                console.print(f"[red]   ✗ Failed to restart {node_name}: {e}[/red]")
+
+        console.print("[yellow]   Waiting 15s for restarted nodes to rejoin...[/yellow]")
+        time.sleep(15)
 
 
 def install_kai_scheduler(config: ClusterConfig):
@@ -475,6 +524,7 @@ def main(
     skip_grove: bool = typer.Option(False, "--skip-grove", help="Skip Grove operator deployment"),
     skip_topology: bool = typer.Option(False, "--skip-topology", help="Skip topology label application"),
     skip_prepull: bool = typer.Option(False, "--skip-prepull", help="Skip image pre-pulling (faster but cluster startup will be slower)"),
+    skip_memory_limit: bool = typer.Option(False, "--skip-memory-limit", help="Skip --agents-memory (required for DinD where /proc/meminfo bind-mount fails)"),
     delete: bool = typer.Option(False, "--delete", help="Delete the cluster and exit"),
 ):
     """
@@ -502,6 +552,8 @@ def main(
         skip_topology = True
     if '--skip-prepull' in sys.argv:
         skip_prepull = True
+    if '--skip-memory-limit' in sys.argv:
+        skip_memory_limit = True
 
     config = ClusterConfig()
     script_dir = Path(__file__).resolve().parent
@@ -524,6 +576,10 @@ def main(
     skip_grove = to_bool(skip_grove)
     skip_topology = to_bool(skip_topology)
     skip_prepull = to_bool(skip_prepull)
+    skip_memory_limit = to_bool(skip_memory_limit)
+
+    if skip_memory_limit:
+        config.worker_memory = None
 
     # Handle delete mode
     if delete:
@@ -554,7 +610,7 @@ def main(
     if not create_cluster(config):
         raise typer.Exit(1)
 
-    wait_for_nodes()
+    wait_for_nodes(config)
 
     # Pre-pull images if not skipped (before installing Kai and cert-manager)
     if not skip_prepull:
