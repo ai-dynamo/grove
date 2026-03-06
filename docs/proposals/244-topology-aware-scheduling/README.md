@@ -35,6 +35,7 @@
   - [PodGang: Scheduler API Enhancements](#podgang-scheduler-api-enhancements)
   - [Backward Compatibility](#backward-compatibility)
   - [Monitoring](#monitoring)
+    - [PodCliqueSet Status Conditions](#podcliqueset-status-conditions)
   - [Dependencies](#dependencies)
   - [Test Plan](#test-plan)
 - [Alternatives](#alternatives)
@@ -961,7 +962,7 @@ h100-topology    ml-team/inference-llama-70b
 <none>           default/simple-inference
 ```
 
-**PodCliqueSet Status Conditions**
+#### PodCliqueSet Status Conditions
 
 It is possible that one or more topology constraints defined on a deployed `PodCliqueSet` are no longer available because the cluster admin decided to make changes to the `ClusterTopology`. It is therefore important to create visibility that one or more topology levels are no longer available. A new `metav1.Condition` has been introduced for `PodCliqueSet`.
 
