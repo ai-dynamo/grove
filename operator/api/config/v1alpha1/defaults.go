@@ -74,16 +74,17 @@ func SetDefaults_OperatorConfiguration(operatorConfig *OperatorConfiguration) {
 // SetDefaults_SchedulerConfiguration sets defaults for scheduler configuration.
 // Principle: respect all user-explicit values first.
 //
-//  1. If user did not include kube in profiles, add kube. Whether kube is default: only if no other profile is default, set kube as default.
-//  2. If user did not set any default (no profile has default: true), set kube as default. Validation will reject invalid cases.
+//  1. If user did not include kube in profiles, add kube.
+//  2. If defaultProfileName is unset, set it to "kube-scheduler". Validation will reject invalid cases.
 func SetDefaults_SchedulerConfiguration(cfg *SchedulerConfiguration) {
 	if len(cfg.Profiles) == 0 {
 		cfg.Profiles = []SchedulerProfile{
-			{Name: SchedulerNameKube, Default: true},
+			{Name: SchedulerNameKube},
 		}
+		cfg.DefaultProfileName = string(SchedulerNameKube)
 		return
 	}
-	// 1. If user didn't add kube, add it (default: false for now).
+	// 1. If user didn't add kube, add it.
 	hasKube := false
 	for i := range cfg.Profiles {
 		if cfg.Profiles[i].Name == SchedulerNameKube {
@@ -92,27 +93,12 @@ func SetDefaults_SchedulerConfiguration(cfg *SchedulerConfiguration) {
 		}
 	}
 	if !hasKube {
-		cfg.Profiles = append(cfg.Profiles, SchedulerProfile{Name: SchedulerNameKube, Default: false})
+		cfg.Profiles = append(cfg.Profiles, SchedulerProfile{Name: SchedulerNameKube})
 	}
 
-	var (
-		defaultCount int
-		kubeIdx      = -1
-	)
-	for i := range cfg.Profiles {
-		if cfg.Profiles[i].Name == SchedulerNameKube {
-			kubeIdx = i
-		}
-		if cfg.Profiles[i].Default {
-			defaultCount++
-		}
-	}
-	if kubeIdx < 0 {
-		return
-	}
-	// 2. No default → set kube as default.
-	if defaultCount == 0 {
-		cfg.Profiles[kubeIdx].Default = true
+	// 2. No default profile name → set kube as default.
+	if cfg.DefaultProfileName == "" {
+		cfg.DefaultProfileName = string(SchedulerNameKube)
 	}
 }
 

@@ -69,14 +69,17 @@ var (
 
 // SchedulerConfiguration configures scheduler profiles and which is the default.
 type SchedulerConfiguration struct {
-	// Profiles is the list of scheduler profiles. Each profile has a backend name, optional config, and whether it is the default.
+	// Profiles is the list of scheduler profiles. Each profile has a backend name and optional config.
 	// The kube-scheduler backend is always enabled; use profile name "kube-scheduler" to configure or set it as default.
-	// Valid profile names: "kube-scheduler", "kai-scheduler". Exactly one profile should have default: true; if none, kube-scheduler is the default.
+	// Valid profile names: "kube-scheduler", "kai-scheduler". Use defaultProfileName to designate the default backend. If not set, defaulting sets it to "kube-scheduler".
 	// +optional
 	Profiles []SchedulerProfile `json:"profiles,omitempty"`
+	// DefaultProfileName is the name of the default scheduler profile. If unset, defaulting sets it to "kube-scheduler".
+	// +optional
+	DefaultProfileName string `json:"defaultProfileName,omitempty"`
 }
 
-// SchedulerProfile defines a scheduler backend profile with optional backend-specific config and default flag.
+// SchedulerProfile defines a scheduler backend profile with optional backend-specific config.
 type SchedulerProfile struct {
 	// Name is the scheduler profile name. Valid values: "kube-scheduler", "kai-scheduler".
 	// For the Kubernetes default scheduler use "kube-scheduler"; Pod.Spec.SchedulerName will be set to "default-scheduler".
@@ -87,10 +90,6 @@ type SchedulerProfile struct {
 	// Config holds backend-specific options. The operator unmarshals it into the config type for this backend (see backend config types).
 	// +optional
 	Config *runtime.RawExtension `json:"config,omitempty"`
-
-	// Default indicates this profile is the default backend when a workload does not specify one. Exactly one profile should have default: true.
-	// +optional
-	Default bool `json:"default,omitempty"`
 }
 
 // KaiSchedulerConfiguration defines the configuration for the kai-scheduler backend.

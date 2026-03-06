@@ -87,7 +87,7 @@ func TestValidateCreate_MNNVL(t *testing.T) {
 			cfg := configv1alpha1.OperatorConfiguration{
 				TopologyAwareScheduling: getDefaultTASConfig(),
 				Network:                 networkConfig,
-				Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube, Default: true}}},
+				Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
 			}
 			handler := NewHandler(mgr, &cfg)
 
@@ -171,7 +171,7 @@ func TestValidateUpdate_MNNVL(t *testing.T) {
 			cfg := configv1alpha1.OperatorConfiguration{
 				TopologyAwareScheduling: getDefaultTASConfig(),
 				Network:                 getDefaultNetworkConfig(),
-				Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube, Default: true}}},
+				Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
 			}
 			handler := NewHandler(mgr, &cfg)
 
@@ -258,7 +258,7 @@ func TestMNNVL_WebhookPipeline_LegacyPCSUpdate(t *testing.T) {
 			validationCfg := configv1alpha1.OperatorConfiguration{
 				TopologyAwareScheduling: getDefaultTASConfig(),
 				Network:                 networkConfig,
-				Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube, Default: true}}},
+				Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
 			}
 			validationHandler := NewHandler(mgr, &validationCfg)
 

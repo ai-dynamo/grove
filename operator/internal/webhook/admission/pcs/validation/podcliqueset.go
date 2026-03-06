@@ -144,40 +144,50 @@ func (v *pcsValidator) validatePodCliqueTemplates(fldPath *field.Path) ([]string
 	allErrs = append(allErrs, sliceMustHaveUniqueElements(cliqueNames, fldPath.Child("name"))...)
 	allErrs = append(allErrs, sliceMustHaveUniqueElements(cliqueRoles, fldPath.Child("roleName"))...)
 
-	// Validate scheduler names: all must be the same
-	// When schedulerName is empty, use the default backend's name from schedulerbackend.
-	uniqueSchedulerNames := lo.Uniq(lo.Map(schedulerNames, func(item string, _ int) string {
-		if item == "" {
-			if def := schedulerbackend.GetDefault(); def != nil {
-				return def.Name()
-			}
-			return "default-scheduler"
-		}
-		return item
-	}))
-	if len(uniqueSchedulerNames) > 1 {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("spec").Child("podSpec").Child("schedulerName"), strings.Join(uniqueSchedulerNames, ", "), "the schedulerName for all pods have to be the same"))
-	}
+	allErrs = append(allErrs, v.validateSchedulerNames(schedulerNames, fldPath)...)
 
-	// Validate that the scheduler name is enabled (present in OperatorConfiguration profiles or default)
-	pcsSchedulerName := ""
-	if len(uniqueSchedulerNames) > 0 && uniqueSchedulerNames[0] != "" {
-		pcsSchedulerName = uniqueSchedulerNames[0]
-	}
-
-	// default-scheduler is the pod-facing name for kube-scheduler and is always accepted when kube backend is enabled
-	if pcsSchedulerName != "default-scheduler" && schedulerbackend.Get(pcsSchedulerName) == nil {
-		allErrs = append(allErrs, field.Invalid(
-			fldPath.Child("spec").Child("podSpec").Child("schedulerName"),
-			pcsSchedulerName,
-			"schedulerName must be an enabled scheduler backend; this scheduler is not enabled in OperatorConfiguration",
-		))
-	}
 	if v.isStartupTypeExplicit() {
 		allErrs = append(allErrs, validateCliqueDependencies(cliqueTemplateSpecs, fldPath)...)
 	}
 
 	return warnings, allErrs
+}
+
+// validateSchedulerNames ensures all pod scheduler names resolve to the same scheduler and that scheduler is enabled.
+// Empty schedulerName is resolved to the default backend name from schedulerbackend.GetDefault().
+func (v *pcsValidator) validateSchedulerNames(schedulerNames []string, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	specPath := fldPath.Child("spec").Child("podSpec").Child("schedulerName")
+
+	defaultSchedulerName := "default-scheduler"
+	if def := schedulerbackend.GetDefault(); def != nil {
+		defaultSchedulerName = def.Name()
+	}
+
+	// Resolve empty to default backend name; then require all resolved names to be the same.
+	uniqueSchedulerNames := lo.Uniq(lo.Map(schedulerNames, func(item string, _ int) string {
+		if item == "" {
+			return defaultSchedulerName
+		}
+		return item
+	}))
+	if len(uniqueSchedulerNames) > 1 {
+		allErrs = append(allErrs, field.Invalid(specPath, strings.Join(uniqueSchedulerNames, ", "), "the schedulerName for all pods have to be the same"))
+	}
+
+	// Validate that the resolved scheduler is enabled.
+	pcsSchedulerName := ""
+	if len(uniqueSchedulerNames) > 0 && uniqueSchedulerNames[0] != "" {
+		pcsSchedulerName = uniqueSchedulerNames[0]
+	}
+	if pcsSchedulerName != "default-scheduler" && schedulerbackend.Get(pcsSchedulerName) == nil {
+		allErrs = append(allErrs, field.Invalid(
+			specPath,
+			pcsSchedulerName,
+			"schedulerName must be an enabled scheduler backend; this scheduler is not enabled in OperatorConfiguration",
+		))
+	}
+	return allErrs
 }
 
 // validatePodCliqueNameConstraints validates that PodClique names meet DNS subdomain requirements and pod naming constraints.

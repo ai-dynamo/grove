@@ -50,7 +50,7 @@ func TestNewHandler(t *testing.T) {
 	cfg := groveconfigv1alpha1.OperatorConfiguration{
 		TopologyAwareScheduling: getDefaultTASConfig(),
 		Network:                 getDefaultNetworkConfig(),
-		Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube, Default: true}}},
+		Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)},
 	}
 	handler := NewHandler(mgr, &cfg)
 	require.NotNil(t, handler)
@@ -121,7 +121,7 @@ func TestValidateCreate(t *testing.T) {
 			cfg := groveconfigv1alpha1.OperatorConfiguration{
 				TopologyAwareScheduling: getDefaultTASConfig(),
 				Network:                 getDefaultNetworkConfig(),
-				Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube, Default: true}}},
+				Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)},
 			}
 			handler := NewHandler(mgr, &cfg)
 
@@ -257,7 +257,7 @@ func TestValidateUpdate(t *testing.T) {
 			cfg := groveconfigv1alpha1.OperatorConfiguration{
 				TopologyAwareScheduling: getDefaultTASConfig(),
 				Network:                 getDefaultNetworkConfig(),
-				Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube, Default: true}}},
+				Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)},
 			}
 			handler := NewHandler(mgr, &cfg)
 
@@ -289,7 +289,7 @@ func TestValidateDelete(t *testing.T) {
 	cfg := groveconfigv1alpha1.OperatorConfiguration{
 		TopologyAwareScheduling: getDefaultTASConfig(),
 		Network:                 getDefaultNetworkConfig(),
-		Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube, Default: true}}},
+		Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)},
 	}
 	handler := NewHandler(mgr, &cfg)
 
@@ -405,7 +405,7 @@ func TestLogValidatorFunctionInvocation(t *testing.T) {
 			cfg := groveconfigv1alpha1.OperatorConfiguration{
 				TopologyAwareScheduling: getDefaultTASConfig(),
 				Network:                 getDefaultNetworkConfig(),
-				Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube, Default: true}}},
+				Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)},
 			}
 			handler := NewHandler(mgr, &cfg)
 
