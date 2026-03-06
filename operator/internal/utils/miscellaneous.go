@@ -27,3 +27,8 @@ func IsEmptyStringType[T ~string](val T) bool {
 func OnlyOneIsNil[T any](objA, objB *T) bool {
 	return (objA == nil) != (objB == nil)
 }
+
+// OnlyOneIsEmpty returns true if only one of the Objects is empty else it will return false.
+func OnlyOneIsEmpty[T any](objA, objB []T) bool {
+	return (len(objA) == 0) != (len(objB) == 0)
+}

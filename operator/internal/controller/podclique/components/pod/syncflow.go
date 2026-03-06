@@ -23,7 +23,7 @@ import (
 	"slices"
 	"sort"
 
-	"github.com/ai-dynamo/grove/operator/api/common"
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
@@ -106,11 +106,11 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pclq
 
 // getAssociatedPodGangName gets the associated PodGang name from PodClique labels. Returns an error if the label is not found.
 func (r _resource) getAssociatedPodGangName(pclqObjectMeta metav1.ObjectMeta) (string, error) {
-	podGangName, ok := pclqObjectMeta.GetLabels()[common.LabelPodGang]
+	podGangName, ok := pclqObjectMeta.GetLabels()[apicommon.LabelPodGang]
 	if !ok {
 		return "", groveerr.New(errCodeMissingPodGangLabelOnPCLQ,
 			component.OperationSync,
-			fmt.Sprintf("PodClique: %v is missing required label: %s", k8sutils.GetObjectKeyFromObjectMeta(pclqObjectMeta), common.LabelPodGang),
+			fmt.Sprintf("PodClique: %v is missing required label: %s", k8sutils.GetObjectKeyFromObjectMeta(pclqObjectMeta), apicommon.LabelPodGang),
 		)
 	}
 	return podGangName, nil
@@ -151,7 +151,7 @@ func (r _resource) runSyncFlow(logger logr.Logger, sc *syncContext) syncFlowResu
 		}
 	}
 
-	if componentutils.IsPCLQUpdateInProgress(sc.pclq) {
+	if (sc.pcs.Spec.UpdateStrategy == nil || sc.pcs.Spec.UpdateStrategy.Type == grovecorev1alpha1.RollingRecreateStrategy) && componentutils.IsPCLQUpdateInProgress(sc.pclq) {
 		if err := r.processPendingUpdates(logger, sc); err != nil {
 			result.recordError(err)
 		}
@@ -232,8 +232,17 @@ func selectExcessPodsToDelete(sc *syncContext, logger logr.Logger) []*corev1.Pod
 	var candidatePodsToDelete []*corev1.Pod
 	if diff := len(sc.existingPCLQPods) - int(sc.pclq.Spec.Replicas); diff > 0 {
 		logger.Info("found excess pods for PodClique", "numExcessPods", diff)
-		sort.Sort(DeletionSorter(sc.existingPCLQPods))
-		candidatePodsToDelete = append(candidatePodsToDelete, sc.existingPCLQPods[:diff]...)
+		sorter := DeletionSorter{
+			Pods: sc.existingPCLQPods,
+		}
+		if sc.pclq.Status.UpdateProgress != nil && sc.pcs.Status.CurrentGenerationHash != nil &&
+			sc.pclq.Status.UpdateProgress.PodCliqueSetGenerationHash == *sc.pcs.Status.CurrentGenerationHash {
+			sorter.ExpectedPodTemplateHash = sc.pclq.Status.UpdateProgress.PodTemplateHash
+		} else {
+			sorter.ExpectedPodTemplateHash = sc.pclq.Labels[apicommon.LabelPodTemplateHash]
+		}
+		sort.Sort(sorter)
+		candidatePodsToDelete = append(candidatePodsToDelete, sorter.Pods[:diff]...)
 	}
 	return candidatePodsToDelete
 }
@@ -348,7 +357,7 @@ func (r _resource) isBasePodGangScheduled(ctx context.Context, logger logr.Logge
 // this function checks if it is scheduled.
 func (r _resource) checkBasePodGangScheduledForPodClique(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) (bool, string, error) {
 	// Check if this PodClique has a base PodGang dependency
-	basePodGangName, hasBasePodGangLabel := pclq.GetLabels()[common.LabelBasePodGang]
+	basePodGangName, hasBasePodGangLabel := pclq.GetLabels()[apicommon.LabelBasePodGang]
 	if !hasBasePodGangLabel {
 		// This PodClique is a base PodGang itself - no dependency
 		return true, "", nil
