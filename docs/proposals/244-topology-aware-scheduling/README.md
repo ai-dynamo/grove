@@ -72,7 +72,6 @@ AI clusters often contain heterogeneous hardware with different interconnect cha
 * Automatically generate and synchronize relevant custom resources for the downstream schedulers that implement topology-aware-scheduling.
 * Define a mechanism for creating multiple named ClusterTopology resources from configured topology profiles.
 * Extend the PodCliqueSet API to reference a specific topology profile.
-* Maintain backward compatibility with existing deployments.
 
 ### Non-Goals
 
@@ -132,13 +131,13 @@ spec:
 ```
 
 **User Layer:**
-Workload developers can specify topology constraints at three hierarchical levels (`PodCliqueSet`, `PodCliqueScalingGroup`, and `PodClique`) using domain names. They select which topology to use via the `topologyProfile` field on PodCliqueSet, which is required when any `TopologyConstraint` is specified.
+Workload developers can specify topology constraints at three hierarchical levels (`PodCliqueSet`, `PodCliqueScalingGroup`, and `PodClique`) using domain names. They select which topology to use via the `topologyProfileName` field on PodCliqueSet, which is required when any `TopologyConstraint` is specified.
 
 The operator validates these constraints against the referenced ClusterTopology using three key validation rules:
 
 1. *Domain existence*: All topology domains referenced in workload's topology constraints must exist in the ClusterTopology CR. This ensures workloads only reference valid, configured topology levels.
 2. *Topology Constraint Hierarchy*: Topology levels are ordered by their position in the ClusterTopology's levels array (index 0 = broadest scope). When topology constraints are hierarchically applied to a workload from PodCliqueSet → PodCliqueScalingGroup → PodClique, each level's constraints must reference a domain that is equal to or narrower (higher index) than the parent level's domain. A child resource cannot specify a broader topology domain than its parent. For example, if the referenced ClusterTopology defines levels `[zone, rack, host]` and the PodCliqueSet specifies `rack`, then PodCliqueScalingGroup can specify `rack` (equal) or `host` (narrower), but not `zone` (broader).
-3. *Topology profile reference*: The `topologyProfile` must reference an existing ClusterTopology. The reference can only be changed while no pods in the PCS are scheduled.
+3. *Topology profile reference*: The `topologyProfileName` must reference an existing ClusterTopology. The reference can only be changed while no pods in the PCS are scheduled.
 
 After validation, the operator translates the topology domain names (e.g., "rack", "host") into cluster-specific topology keys (e.g., "topology.kubernetes.io/zone", "kubernetes.io/hostname") using the referenced ClusterTopology and configures these hierarchical topology keys in the `PodGang` API. The `PodGang` serves as an intermediate representation that will eventually be mapped to the specific types that the configured scheduler backend understands. This abstraction allows workload portability across clusters with different topology configurations and scheduler implementations.
 
@@ -194,6 +193,7 @@ metadata:
 spec:
   replicas: 2
   template:
+    topologyProfileName: h100-topology
     topologyConstraint:
       packDomain: zone  # Each replica within a zone
     cliques:
@@ -245,7 +245,7 @@ CEL validation on the CRD ensures that domain names and node label keys are uniq
 
 #### Topology Configuration Drift
 
-ClusterTopology levels are immutable after creation (enforced by CEL validation), so the levels of a running ClusterTopology cannot drift. However, when an administrator changes a topology profile's levels in `OperatorConfiguration` and restarts the operator, the operator deletes the existing ClusterTopology and creates a new one with the updated levels (see [Operator Startup behavior](#operator-startup-behavior)). During the brief window between deletion and recreation, existing PodCliqueSets that referenced the topology may have topology constraints that no longer match the new levels.
+ClusterTopology levels are immutable after creation (enforced by CEL validation), so the levels of a running ClusterTopology cannot drift. However, when an administrator changes a topology profile's levels in `OperatorConfiguration` and restarts the operator, the operator attempts to delete the existing ClusterTopology and create a new one with the updated levels (see [Operator Startup behavior](#operator-startup-behavior)). If any PodCliqueSet still references the topology, the finalizer blocks deletion and the operator fails to start.
 
 **Mitigation:**
 
@@ -284,12 +284,11 @@ Validating webhook for `PodCliqueSet` will reject resources that are created wit
 
 A ClusterTopology resource cannot be deleted while any PodCliqueSet references it. A controller watches ClusterTopology resources and adds a finalizer to each one. The finalizer is only removed once no PodCliqueSet references the topology, at which point the deletion proceeds.
 
-When an administrator removes a topology profile from `OperatorConfiguration` and restarts the operator, the operator attempts to delete the corresponding ClusterTopology. If PodCliqueSets still reference it, the finalizer blocks deletion — the operator logs the condition and continues startup, but the configuration and cluster state are misaligned until the administrator resolves the situation.
+When an administrator removes a topology profile from `OperatorConfiguration` and restarts the operator, the operator attempts to delete the corresponding ClusterTopology. If PodCliqueSets still reference it, the finalizer blocks deletion and the operator fails to start.
 
 **Mitigation**
 
 * Administrators must migrate or delete PodCliqueSets that reference a topology before removing its profile from `OperatorConfiguration`. The kubectl query described in [Monitoring](#monitoring) identifies which PodCliqueSets reference a given topology.
-* The operator handles blocked deletions gracefully — it logs the condition and continues startup. The stale ClusterTopology remains functional until workloads are drained.
 
 #### Immutable Topology Levels
 
@@ -301,7 +300,7 @@ A ClusterTopology's `spec.levels` field is immutable after creation, enforced by
 
 #### Topology Profile Immutability After Scheduling
 
-The `topologyProfile` field on a PodCliqueSet becomes immutable once any pod in the PCS has been scheduled (bound to a node). The scheduler has already made placement decisions based on the referenced topology, and changing the topology reference after scheduling would invalidate those decisions. Users can change `topologyProfile` freely while all pods are still pending, supporting the topology retry use case (Story 5).
+The `topologyProfileName` field on a PodCliqueSet becomes immutable once any pod in the PCS has been scheduled (bound to a node). The scheduler has already made placement decisions based on the referenced topology, and changing the topology reference after scheduling would invalidate those decisions. Users can change `topologyProfileName` freely while all pods are still pending, supporting the topology retry use case (Story 5).
 
 **Mitigation**
 
@@ -451,15 +450,13 @@ When `Grove` operator starts, it checks if TAS is enabled.
 * For each topology profile that **is** referenced in a scheduler backend's `topologyReferences` config:
   * The named scheduler backend topology resource is assumed to be externally managed. The operator does not create it. Drift detection is handled by the ClusterTopology controller (see [Scheduler Backend Topology](#scheduler-backend-topology)).
 
-* Delete any ClusterTopology resources that are labeled `app.kubernetes.io/managed-by: grove-operator` but do not correspond to any configured profile. Remove finalizers before deletion.
+* Delete any ClusterTopology resources that are labeled `app.kubernetes.io/managed-by: grove-operator` but do not correspond to any configured profile. If any PodCliqueSet still references the topology, the finalizer blocks deletion and the operator fails to start.
 
 If any of the create/delete of `ClusterTopology` CR or scheduler backend topology CR fails, the operator exits with a non-zero exit code and a clear message indicating the issue.
 
 **TAS is disabled**
 
-* Delete all `ClusterTopology` CRs that are labeled `app.kubernetes.io/managed-by: grove-operator` and handle removing finalizers. Because the scheduler backend topology CRs are owned by their respective `ClusterTopology` CRs (via `OwnerReference`), they will be cascade-deleted.
-
-Deletion failures are non-fatal. These will be logged and the operator will continue.
+* Delete all `ClusterTopology` CRs that are labeled `app.kubernetes.io/managed-by: grove-operator`. If any PodCliqueSet still references a topology, the finalizer blocks deletion and the operator fails to start. Because the scheduler backend topology CRs are owned by their respective `ClusterTopology` CRs (via `OwnerReference`), they will be cascade-deleted when the ClusterTopology is deleted.
 
 **Only operator-managed ClusterTopologies are recognized.** Grove controllers (PCS reconciler, ClusterTopology controller, PCS validating webhook) only operate on ClusterTopology resources that carry the `app.kubernetes.io/managed-by: grove-operator` label. Manually created ClusterTopology resources without this label are ignored — PodCliqueSets cannot reference them, and the operator will not create scheduler backend topology resources for them.
 
@@ -562,7 +559,7 @@ A ClusterTopology's `spec.levels` field is immutable after creation, enforced by
 
 **Deletion**
 
-A controller watches ClusterTopology resources and adds a finalizer to each one. The finalizer prevents deletion while any PodCliqueSet references the topology. The finalizer is removed once no PodCliqueSet references the topology, at which point deletion proceeds. When the operator removes a profile or TAS is disabled, the operator handles removing finalizers so the ClusterTopology can be cleaned up.
+A controller watches ClusterTopology resources and adds a finalizer to each one. The finalizer prevents deletion while any PodCliqueSet references the topology. The finalizer is removed once no PodCliqueSet references the topology, at which point deletion proceeds. If the operator attempts to delete a ClusterTopology during startup (profile removal or TAS disabled) while PodCliqueSets still reference it, the operator fails to start.
 
 ```mermaid
 sequenceDiagram
@@ -705,6 +702,7 @@ metadata:
 spec:
   replicas: 1
   template:
+    topologyProfileName: h100-topology
     topologyConstraint:
       packDomain: "zone"
     cliques:
@@ -1019,4 +1017,4 @@ However, the hybrid model introduces two management paths with different lifecyc
 * Admin-created topologies are standard Kubernetes resources but are not reconciled by the operator — they can drift from the intended state or be accidentally deleted.
 * Documentation must carefully distinguish between operator-managed and admin-managed topologies to avoid confusion.
 
-With the fully operator-managed model chosen in this proposal, all topologies are defined as named profiles in `OperatorConfiguration`, providing a single source of truth and a consistent ownership model. The trade-off is that topology management is coupled to the operator lifecycle — adding or changing a topology requires redeploying the operator. When a profile is removed while PodCliqueSets still reference it, the finalizer prevents deletion and the operator handles the stuck state gracefully (see [ClusterTopology Deletion Protection](#clustertopology-deletion-protection)).
+With the fully operator-managed model chosen in this proposal, all topologies are defined as named profiles in `OperatorConfiguration`, providing a single source of truth and a consistent ownership model. The trade-off is that topology management is coupled to the operator lifecycle — adding or changing a topology requires redeploying the operator. When a profile is removed while PodCliqueSets still reference it, the finalizer prevents deletion and the operator fails to start (see [ClusterTopology Deletion Protection](#clustertopology-deletion-protection)).
