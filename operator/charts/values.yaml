@@ -24,7 +24,7 @@ resources:
 tolerations: [ ]
 
 # Annotations to apply to the operator pod template.
-annotations: {}
+podAnnotations: {}
 
 # This section builds out the service account more information can be found here: https://kubernetes.io/docs/concepts/security/service-accounts/
 serviceAccount:

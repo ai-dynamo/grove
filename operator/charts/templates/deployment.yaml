@@ -14,7 +14,7 @@ spec:
     metadata:
       labels:
 {{- include "operator.deployment.labels" . | nindent 8 }}
-      {{- with .Values.annotations }}
+      {{- with .Values.podAnnotations }}
       annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
