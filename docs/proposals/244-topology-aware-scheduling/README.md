@@ -20,7 +20,7 @@
     - [Workload Portability](#workload-portability)
     - [ClusterTopology Deletion Protection](#clustertopology-deletion-protection)
     - [Immutable Topology Levels](#immutable-topology-levels)
-    - [Topology Reference Immutability After Scheduling](#topology-reference-immutability-after-scheduling)
+    - [Topology Profile Immutability After Scheduling](#topology-profile-immutability-after-scheduling)
 - [Design Details](#design-details)
   - [Cluster Admin API](#cluster-admin-api)
     - [Topology Domains](#topology-domains)
@@ -30,7 +30,7 @@
   - [ClusterTopology custom resource](#clustertopology-custom-resource)
     - [ClusterTopology Lifecycle](#clustertopology-lifecycle)
   - [Topology Constraints in PodCliqueSet](#topology-constraints-in-podcliqueset)
-    - [ClusterTopology Reference](#clustertopology-reference)
+    - [Topology Profile Reference](#topology-profile-reference)
     - [Validation](#validation-1)
   - [PodGang: Scheduler API Enhancements](#podgang-scheduler-api-enhancements)
   - [Backward Compatibility](#backward-compatibility)
@@ -132,15 +132,15 @@ spec:
 ```
 
 **User Layer:**
-Workload developers can specify topology constraints at three hierarchical levels (`PodCliqueSet`, `PodCliqueScalingGroup`, and `PodClique`) using domain names. They can also select which ClusterTopology to use via the `clusterTopologyName` field on PodCliqueSet. When no topology is explicitly referenced, the default `grove-topology` is used.
+Workload developers can specify topology constraints at three hierarchical levels (`PodCliqueSet`, `PodCliqueScalingGroup`, and `PodClique`) using domain names. They select which topology to use via the `topologyProfile` field on PodCliqueSet, which is required when any `TopologyConstraint` is specified.
 
 The operator validates these constraints against the referenced ClusterTopology using three key validation rules:
 
 1. *Domain existence*: All topology domains referenced in workload's topology constraints must exist in the ClusterTopology CR. This ensures workloads only reference valid, configured topology levels.
 2. *Topology Constraint Hierarchy*: Topology levels are ordered by their position in the ClusterTopology's levels array (index 0 = broadest scope). When topology constraints are hierarchically applied to a workload from PodCliqueSet → PodCliqueScalingGroup → PodClique, each level's constraints must reference a domain that is equal to or narrower (higher index) than the parent level's domain. A child resource cannot specify a broader topology domain than its parent. For example, if the referenced ClusterTopology defines levels `[zone, rack, host]` and the PodCliqueSet specifies `rack`, then PodCliqueScalingGroup can specify `rack` (equal) or `host` (narrower), but not `zone` (broader).
-3. *ClusterTopology reference*: If `clusterTopologyName` is set on a PodCliqueSet, the referenced ClusterTopology must exist. The reference can only be changed while no pods in the PCS are scheduled.
+3. *Topology profile reference*: The `topologyProfile` must reference an existing ClusterTopology. The reference can only be changed while no pods in the PCS are scheduled.
 
-After validation, the operator translates the topology domain names (e.g., "rack", "host") into cluster-specific topology keys (e.g., "topology.kubernetes.io/zone", "kubernetes.io/hostname") using the referenced ClusterTopology and configures these hierarchical topology keys in the `PodGang` API . The `PodGang` serves as an intermediate representation that will eventually be mapped to the specific types that the configured scheduler backend understands. This abstraction allows workload portability across clusters with different topology configurations and scheduler implementations.
+After validation, the operator translates the topology domain names (e.g., "rack", "host") into cluster-specific topology keys (e.g., "topology.kubernetes.io/zone", "kubernetes.io/hostname") using the referenced ClusterTopology and configures these hierarchical topology keys in the `PodGang` API. The `PodGang` serves as an intermediate representation that will eventually be mapped to the specific types that the configured scheduler backend understands. This abstraction allows workload portability across clusters with different topology configurations and scheduler implementations.
 
 **Workload portability across clusters**
 
@@ -252,7 +252,6 @@ ClusterTopology levels are immutable after creation (enforced by CEL validation)
 Grove operator will:
 
 * Remove invalid topology constraints from the `PodGang` resource(s) that are created for a `PodCliqueSet`.
-* Clearly reflect that one or more topology levels are no longer available by setting appropriate status conditions on respective `PodCliqueSet` resources (see [Monitoring](#monitoring)).
 * Ensure that the validating webhook rejects new `PodCliqueSet` resources that reference topology domains not present in the referenced ClusterTopology.
 
 #### Topology Aware Cluster Autoscaling
@@ -300,9 +299,9 @@ A ClusterTopology's `spec.levels` field is immutable after creation, enforced by
 
 * To change a topology's levels, administrators update the profile in `OperatorConfiguration` and restart the operator. The operator handles the delete+recreate workflow automatically. The finalizer prevents deletion while any PodCliqueSet references the topology, so administrators must first drain or delete referencing workloads. This delete+recreate workflow is consistent with the KAI scheduler's topology update model.
 
-#### Topology Reference Immutability After Scheduling
+#### Topology Profile Immutability After Scheduling
 
-The `clusterTopologyName` field on a PodCliqueSet becomes immutable once any pod in the PCS has been scheduled (bound to a node). The scheduler has already made placement decisions based on the referenced topology, and changing the topology reference after scheduling would invalidate those decisions. Users can change `clusterTopologyName` freely while all pods are still pending, supporting the topology retry use case (Story 5).
+The `topologyProfile` field on a PodCliqueSet becomes immutable once any pod in the PCS has been scheduled (bound to a node). The scheduler has already made placement decisions based on the referenced topology, and changing the topology reference after scheduling would invalidate those decisions. Users can change `topologyProfile` freely while all pods are still pending, supporting the topology retry use case (Story 5).
 
 **Mitigation**
 
@@ -770,18 +769,18 @@ spec:
 
 The above example is only a representation of how users can set topology constraints at different levels to control how the pods are going to be packed during the initial deployment.
 
-#### ClusterTopology Reference
+#### Topology Profile Reference
 
-A new optional field `clusterTopologyName` is added to `PodCliqueSetTemplateSpec`, alongside the existing `topologyConstraint` field:
+A new field `topologyProfileName` is added to `PodCliqueSetTemplateSpec`, alongside the existing `topologyConstraint` field. It is required whenever any `TopologyConstraint` is specified in the PCS:
 
 ```go
 type PodCliqueSetTemplateSpec struct {
     // ... existing fields ...
 
-    // ClusterTopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.
-    // If not specified and TAS is enabled, the default cluster topology is used.
+    // TopologyProfileName is the name of the topology profile (and corresponding ClusterTopology resource)
+    // to use for topology-aware scheduling. Required when any TopologyConstraint is specified.
     // +optional
-    ClusterTopologyName string `json:"clusterTopologyName,omitempty"`
+    TopologyProfileName string `json:"topologyProfileName,omitempty"`
 
     // TopologyConstraint defines topology placement requirements for PodCliqueSet.
     // +optional
@@ -800,7 +799,7 @@ metadata:
   name: my-inference
 spec:
   template:
-    clusterTopologyName: gb200-topology    # references a ClusterTopology; if omitted, uses grove-topology
+    topologyProfileName: gb200-topology    # must match a configured topology profile name
     topologyConstraint:
       packDomain: rack
     cliques:
@@ -814,7 +813,7 @@ Existing validating webhook which validates `PodCliqueSet`, has been enhanced to
 
 *Rule-1: Check for supported TopologyDomains*
 
-* All topology domains that are referenced in the `PodCliqueSet` must be amongst the defined topology levels in the referenced ClusterTopology CR (or the default `grove-topology` if `clusterTopologyName` is not set). If a non-supported topology domain is found then creation of the `PodCliqueSet` will be rejected.
+* All topology domains that are referenced in the `PodCliqueSet` must be amongst the defined topology levels in the ClusterTopology referenced by `topologyProfileName`. If a non-supported topology domain is found then creation of the `PodCliqueSet` will be rejected.
 * Topology domains for an already deployed `PodCliqueSet` cannot be changed. Validating webhook will reject such updates on the `PodCliqueSet`.
 
 *Rule-2: Check for Hierarchical strictness*
@@ -833,22 +832,21 @@ Example:
 | `host` | `rack`  | ❌ No   | `rack` is broader (lower index) than `host`                  |
 | `zone` | `block` | ✅ Yes  | `block` is narrower than `zone`                              |
 
-*Rule-3: ClusterTopology reference validation*
+*Rule-3: Topology profile reference validation*
 
-* On create: if `clusterTopologyName` is set, the referenced ClusterTopology must exist
-* On update: if `clusterTopologyName` is changed, the new ClusterTopology must exist and no pod in the PCS may be scheduled (`ScheduledReplicas == 0` across all PodCliques)
-* Reject if `clusterTopologyName` is set but no `TopologyConstraint` is specified on the PCS, any PCSG, or any PodClique
-* Reject if `clusterTopologyName` is set but TAS is disabled cluster-wide
+* On create: `topologyProfileName` must be set and the referenced ClusterTopology must exist
+* Reject if any `TopologyConstraint` is set (at PCS, PCSG, or PodClique level) without `topologyProfileName`
+* On update: if `topologyProfileName` is changed, the new ClusterTopology must exist and no pod in the PCS may be scheduled (`ScheduledReplicas == 0` across all PodCliques)
+* Reject if `topologyProfileName` is set but TAS is disabled cluster-wide
 * Reject if any `TopologyConstraint` is set (at PCS, PCSG, or PodClique level) but TAS is disabled cluster-wide
 
-Rules 1 and 2 apply to `TopologyConstraint` fields. Rule-3 validates the `clusterTopologyName` reference. Together, these three rules ensure that workloads can only reference valid topology levels, maintain logical topology nesting throughout the resource hierarchy, and target an existing ClusterTopology.
+Rules 1 and 2 apply to `TopologyConstraint` fields. Rule-3 validates the `topologyProfileName` reference. Together, these three rules ensure that workloads can only reference valid topology levels, maintain logical topology nesting throughout the resource hierarchy, and target an existing operator-managed ClusterTopology.
 
 ### PodGang: Scheduler API Enhancements
 
 Grove operator translates the hierarchical topology constraints to infrastructure specific node labels in the `PodGang` scheduler API. The operator resolves the topology as follows:
-* PCS has `TopologyConstraint` set but no `clusterTopologyName` → use `grove-topology` (default)
+* PCS has `TopologyConstraint` set → `topologyProfileName` is required; resolve the ClusterTopology by that name
 * PCS has no `TopologyConstraint` at any level → topology does not apply
-* PCS has an explicit `clusterTopologyName` → use that topology
 
 The following additional types have been defined to capture the topology constraints. Provision has been made to capture:
 
@@ -939,52 +937,24 @@ type PodGroup struct {
 
 ### Backward Compatibility
 
-The addition of multiple ClusterTopology resources and the `clusterTopologyName` field introduces new capabilities without changing existing behavior. Migration is zero-effort for existing users:
+TAS is a new feature with no existing production users, so strict backward compatibility is not required at this stage. The API can evolve to the right design without being constrained by prior deployments.
 
-* The operator continues to create `grove-topology` from OperatorConfiguration.
-* Existing PodCliqueSets without `clusterTopologyName` use `grove-topology` by default.
-* No changes are required to existing workload specifications.
-* Multi-topology support is purely additive.
+The addition of multiple ClusterTopology resources and the `topologyProfileName` field changes the topology reference model from the single-topology design. Existing PodCliqueSets that use topology constraints will require a `topologyProfileName` field to be added. Existing PodCliqueSets without topology constraints are unaffected.
 
 ### Monitoring
-
-**PodCliqueSet Status Conditions**
-
-It is possible that one or more topology constraints defined on a deployed `PodCliqueSet` are no longer available because the cluster admin deleted and recreated the `ClusterTopology` with different levels, or because the default topology was recreated by an operator restart with changed configuration. It is therefore important to create visibility that one or more topology levels are no longer available. A new `metav1.Condition` has been introduced for `PodCliqueSet`.
-
-```go
-// PodCliqueSetStatus defines the status of a PodCliqueSet.
-type PodCliqueSetStatus struct {
-  ...
-	// Conditions represents the latest available observations of the PodCliqueSet by its controller.
-	// +optional
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
-	...
-}
-
-```
-
-Condition: `TopologyLevelsUnavailable`
-Condition States:
-
-| Status    | Reason                              | Description                                                  |
-| --------- | ----------------------------------- | ------------------------------------------------------------ |
-| `Unknown` | `ClusterTopologyNotFound`           | When `ClusterTopology` CR is no longer existing             |
-| `True`    | `ClusterTopologyLevelsUnavailable`  | When one or more topology levels used by a deployed `PodCliqueSet` are no longer present in `ClusterTopology` |
-| `False`   | `AllClusterTopologyLevelsAvailable` | All topology levels used by a deployed `PodCliqueSet` are amongst the supported topology levels as defined in `ClusterTopology` |
 
 **Topology usage overview**
 
 Understanding which topologies are in use is important before attempting deletions. Administrators can list which PodCliqueSets reference each ClusterTopology using kubectl:
 
 ```bash
-# List all PCSs grouped by their ClusterTopology reference
+# List all PCSs grouped by their topology profile reference
 kubectl get podcliquesets -A -o json | jq -r '
   .items[]
   | {
       name: .metadata.name,
       namespace: .metadata.namespace,
-      topology: (.spec.template.clusterTopologyName // "grove-topology (default)")
+      topology: (.spec.template.topologyProfileName // "<none>")
     }
   | [.topology, .namespace + "/" + .name]
   | @tsv
@@ -993,10 +963,10 @@ kubectl get podcliquesets -A -o json | jq -r '
 
 Example output:
 ```
-gb200-topology           ml-team/inference-llama-405b
-gb200-topology           ml-team/inference-mixtral
-grove-topology (default) default/simple-inference
-grove-topology (default) ml-team/inference-llama-70b
+gb200-topology   ml-team/inference-llama-405b
+gb200-topology   ml-team/inference-mixtral
+h100-topology    ml-team/inference-llama-70b
+<none>           default/simple-inference
 ```
 
 ### Dependencies
@@ -1023,15 +993,15 @@ To enable the scheduler to select/filter nodes that satisfy the topology constra
 
 **Unit tests** for multi-topology:
 
-* PCS validating webhook: `clusterTopologyName` existence check on create and update, immutability after scheduling, rejection when TAS is disabled or no `TopologyConstraint` is set
+* PCS validating webhook: `topologyProfileName` existence check on create and update, required when `TopologyConstraint` is set, immutability after scheduling, rejection when TAS is disabled
 * ClusterTopology controller: finalizer addition and removal logic
-* PCS reconciler: topology resolution logic that resolves `clusterTopologyName` (or the default) to the correct ClusterTopology when building the PodGang
+* PCS reconciler: topology resolution logic that resolves `topologyProfileName` to the correct ClusterTopology when building the PodGang
 
 **E2E tests** are defined in [Issue#305](https://github.com/ai-dynamo/grove/issues/305).
 
 **E2E tests** for multi-topology:
 
-* Extend existing TAS e2e tests to include a multi-topology case: relabel a subset of worker nodes with different topology label keys, create a second ClusterTopology resource referencing those keys, deploy a PCS with `clusterTopologyName` pointing to the new topology, and verify that pods are placed correctly and the KAI PodGroup references the expected topology
+* Extend existing TAS e2e tests to include a multi-topology case: configure two topology profiles with different label keys, relabel a subset of worker nodes accordingly, deploy a PCS with `topologyProfileName` pointing to each topology, and verify that pods are placed correctly and the KAI PodGroup references the expected topology
 
 ## Alternatives
 
