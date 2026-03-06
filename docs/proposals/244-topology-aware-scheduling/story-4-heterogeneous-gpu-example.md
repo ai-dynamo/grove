@@ -44,13 +44,13 @@ The domain `rack` means the same thing conceptually (pack within a rack) but map
 
 ## Topology Definitions
 
-The administrator creates two ClusterTopology resources, one per hardware architecture:
+The administrator configures two topology profiles in `OperatorConfiguration`, one per hardware architecture. The operator creates the corresponding ClusterTopology resources at startup:
 
 ```yaml
 apiVersion: grove.io/v1alpha1
 kind: ClusterTopology
 metadata:
-  name: h100-topology     # admin-created, matches DGX H100 nodes
+  name: h100-topology     # operator-managed, matches DGX H100 nodes
 spec:
   levels:
     - domain: zone
@@ -63,7 +63,7 @@ spec:
 apiVersion: grove.io/v1alpha1
 kind: ClusterTopology
 metadata:
-  name: gb200-topology    # admin-created, matches GB200 NVL72 nodes
+  name: gb200-topology    # operator-managed, matches GB200 NVL72 nodes
 spec:
   levels:
     - domain: zone
@@ -88,7 +88,7 @@ metadata:
 spec:
   replicas: 1
   template:
-    clusterTopologyName: h100-topology
+    topologyProfileName: h100-topology
     topologyConstraint:
       packDomain: zone
     cliques:
@@ -132,7 +132,7 @@ metadata:
 spec:
   replicas: 1
   template:
-    clusterTopologyName: gb200-topology
+    topologyProfileName: gb200-topology
     topologyConstraint:
       packDomain: zone
     cliques:
@@ -162,13 +162,13 @@ spec:
                     nvidia.com/gpu: "72"
 ```
 
-Grove looks up `gb200-topology` and resolves `block` to `example.com/nvl-block`, `rack` to `example.com/nvlink-domain` on the PodGang. The `block` domain exists in this topology even though it is absent from the default.
+Grove looks up `gb200-topology` and resolves `block` to `example.com/nvl-block`, `rack` to `example.com/nvlink-domain` on the PodGang. The `block` domain exists in this topology even though it is absent from `h100-topology`.
 
 ## Without Multiple Topologies
 
-Without multiple topologies, the cluster cannot be partitioned by hardware. All workloads resolve topology domains against the single default ClusterTopology, regardless of which hardware they target. The GB200 engineer faces two problems:
+Without multiple topologies, the cluster cannot be partitioned by hardware. All workloads resolve topology domains against a single ClusterTopology, regardless of which hardware they target. The GB200 engineer faces two problems:
 
-1. **Unknown domain `block`**: The default topology has no `block` level. The validating webhook rejects the PCS with a Rule-1 violation (domain existence), and the engineer receives an error indicating that `block` is not a valid domain in the referenced ClusterTopology. The engineer must either remove the `block` constraint or wait for a topology that includes it.
-2. **Wrong label for `rack`**: Even if the engineer removes `block` to pass validation, Grove resolves `rack` to `kubernetes.io/rack` from the default topology, but GB200 nodes use `example.com/nvlink-domain`. The scheduler won't find matching nodes.
+1. **Unknown domain `block`**: The single topology (designed for H100) has no `block` level. The validating webhook rejects the PCS with a Rule-1 violation (domain existence), and the engineer receives an error indicating that `block` is not a valid domain in the referenced ClusterTopology. The engineer must either remove the `block` constraint or wait for a topology that includes it.
+2. **Wrong label for `rack`**: Even if the engineer removes `block` to pass validation, Grove resolves `rack` to `kubernetes.io/rack` from the H100 topology, but GB200 nodes use `example.com/nvlink-domain`. The scheduler won't find matching nodes.
 
 Both problems stem from forcing a single topology definition across hardware with fundamentally different interconnect hierarchies. Separate ClusterTopology resources solve this by letting each hardware segment define its own label-to-domain mapping.
