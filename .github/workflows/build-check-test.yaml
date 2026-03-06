@@ -133,7 +133,6 @@ jobs:
 
       - name: Run e2e tests - ${{ matrix.test_name }}
         run: |
-          sleep 10000
           make ${{ matrix.make_target || 'run-e2e-full' }} TEST_PATTERN='${{ matrix.test_pattern }}' E2E_CREATE_FLAGS='--skip-memory-limit'
         working-directory: operator
 
