@@ -28,8 +28,7 @@ const (
 	defaultLeaderElectionResourceName    = "grove-operator-leader-election"
 	defaultWebhookServerTLSServerCertDir = "/etc/grove-operator/webhook-certs"
 	defaultPprofBindHost                 = "127.0.0.1"
-	// DefaultPprofBindPort is the default port for the pprof HTTP server.
-	DefaultPprofBindPort = 2753
+	defaultPprofBindPort                 = 2753
 )
 
 // SetDefaults_ClientConnectionConfiguration sets defaults for the k8s client connection.
@@ -132,6 +131,6 @@ func SetDefaults_DebuggingConfiguration(obj *DebuggingConfiguration) {
 		obj.PprofBindHost = ptr.To(defaultPprofBindHost)
 	}
 	if obj.PprofBindPort == nil {
-		obj.PprofBindPort = ptr.To(DefaultPprofBindPort)
+		obj.PprofBindPort = ptr.To(defaultPprofBindPort)
 	}
 }

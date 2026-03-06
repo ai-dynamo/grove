@@ -242,7 +242,7 @@ func TestCreateManagerOptions(t *testing.T) {
 		assert.Equal(t, "[::1]:2753", opts.PprofBindAddress)
 	})
 
-	t.Run("profiling enabled without bind address", func(t *testing.T) {
+	t.Run("profiling enabled with defaults", func(t *testing.T) {
 		cfg := &configv1alpha1.OperatorConfiguration{
 			Server: configv1alpha1.ServerConfiguration{
 				Metrics: &configv1alpha1.Server{
@@ -268,12 +268,14 @@ func TestCreateManagerOptions(t *testing.T) {
 			},
 			Debugging: &configv1alpha1.DebuggingConfiguration{
 				EnableProfiling: ptr.To(true),
+				PprofBindHost:   ptr.To("127.0.0.1"),
+				PprofBindPort:   ptr.To(2753),
 			},
 		}
 
 		opts := createManagerOptions(cfg)
 
-		assert.Empty(t, opts.PprofBindAddress)
+		assert.Equal(t, "127.0.0.1:2753", opts.PprofBindAddress)
 	})
 
 	// Test with profiling explicitly disabled

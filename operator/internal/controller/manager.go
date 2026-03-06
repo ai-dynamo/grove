@@ -108,10 +108,10 @@ func createManagerOptions(operatorCfg *configv1alpha1.OperatorConfiguration) ctr
 		}),
 	}
 	if operatorCfg.Debugging != nil {
-		if ptr.Deref(operatorCfg.Debugging.EnableProfiling, false) && operatorCfg.Debugging.PprofBindHost != nil {
+		if ptr.Deref(operatorCfg.Debugging.EnableProfiling, false) {
 			opts.PprofBindAddress = net.JoinHostPort(
 				*operatorCfg.Debugging.PprofBindHost,
-				strconv.Itoa(ptr.Deref(operatorCfg.Debugging.PprofBindPort, configv1alpha1.DefaultPprofBindPort)),
+				strconv.Itoa(*operatorCfg.Debugging.PprofBindPort),
 			)
 		}
 	}
