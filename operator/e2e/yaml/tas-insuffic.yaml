@@ -38,7 +38,8 @@ spec:
                 effect: NoSchedule
             containers:
               - name: worker
-                image: registry:5001/nginx:alpine-slim
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
                 resources:
                   requests:
                     memory: 500Mi  # Large enough to prevent 10 pods fitting in 1 rack (2 nodes)

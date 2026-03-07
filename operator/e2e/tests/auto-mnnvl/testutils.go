@@ -304,7 +304,7 @@ func buildGPUPCS(name string, replicas int) *grovecorev1alpha1.PodCliqueSet {
 		WithRoleName("gpu-worker").
 		WithReplicas(1).
 		WithMinAvailable(1).
-		WithContainer(testutils.NewGPUContainer("gpu-container", "nginx:alpine-slim", 1)).
+		WithContainer(testutils.NewGPUContainer("gpu-container", "busybox:latest", 1, "sleep", "infinity")).
 		Build()
 
 	return testutils.NewPodCliqueSetBuilder(name, "default", types.UID("")).
@@ -320,7 +320,7 @@ func buildCPUOnlyPCS(name string, replicas int) *grovecorev1alpha1.PodCliqueSet 
 		WithRoleName("cpu-worker").
 		WithReplicas(1).
 		WithMinAvailable(1).
-		WithContainer(testutils.NewContainer("cpu-container", "nginx:alpine-slim")).
+		WithContainer(testutils.NewContainer("cpu-container", "busybox:latest", "sleep", "infinity")).
 		Build()
 
 	return testutils.NewPodCliqueSetBuilder(name, "default", types.UID("")).
@@ -347,15 +347,15 @@ func buildComprehensivePCS(name string, replicas int) *grovecorev1alpha1.PodCliq
 		WithRoleName("gpu1").
 		WithReplicas(1).
 		WithMinAvailable(1).
-		WithContainer(testutils.NewGPUContainer("gpu", "nginx:alpine-slim", 1)).
-		WithContainer(testutils.NewContainer("cpu", "nginx:alpine-slim")).
+		WithContainer(testutils.NewGPUContainer("gpu", "busybox:latest", 1, "sleep", "infinity")).
+		WithContainer(testutils.NewContainer("cpu", "busybox:latest", "sleep", "infinity")).
 		Build()
 
 	standaloneCPUOnly := testutils.NewPodCliqueTemplateSpecBuilder("cpu1").
 		WithRoleName("cpu1").
 		WithReplicas(1).
 		WithMinAvailable(1).
-		WithContainer(testutils.NewContainer("cpu", "nginx:alpine-slim")).
+		WithContainer(testutils.NewContainer("cpu", "busybox:latest", "sleep", "infinity")).
 		Build()
 
 	// PCSG sg1 cliques
@@ -363,15 +363,15 @@ func buildComprehensivePCS(name string, replicas int) *grovecorev1alpha1.PodCliq
 		WithRoleName("gpu2").
 		WithReplicas(1).
 		WithMinAvailable(1).
-		WithContainer(testutils.NewGPUContainer("gpu", "nginx:alpine-slim", 1)).
-		WithContainer(testutils.NewContainer("cpu", "nginx:alpine-slim")).
+		WithContainer(testutils.NewGPUContainer("gpu", "busybox:latest", 1, "sleep", "infinity")).
+		WithContainer(testutils.NewContainer("cpu", "busybox:latest", "sleep", "infinity")).
 		Build()
 
 	pcsg1CPUOnly := testutils.NewPodCliqueTemplateSpecBuilder("cpu2").
 		WithRoleName("cpu2").
 		WithReplicas(1).
 		WithMinAvailable(1).
-		WithContainer(testutils.NewContainer("cpu", "nginx:alpine-slim")).
+		WithContainer(testutils.NewContainer("cpu", "busybox:latest", "sleep", "infinity")).
 		Build()
 
 	// PCSG sg2 clique
@@ -379,7 +379,7 @@ func buildComprehensivePCS(name string, replicas int) *grovecorev1alpha1.PodCliq
 		WithRoleName("cpu3").
 		WithReplicas(1).
 		WithMinAvailable(1).
-		WithContainer(testutils.NewContainer("cpu", "nginx:alpine-slim")).
+		WithContainer(testutils.NewContainer("cpu", "busybox:latest", "sleep", "infinity")).
 		Build()
 
 	return testutils.NewPodCliqueSetBuilder(name, "default", types.UID("")).
