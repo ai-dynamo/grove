@@ -17,27 +17,39 @@
 package controller
 
 import (
+	"fmt"
+
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset"
+	"github.com/ai-dynamo/grove/operator/internal/controller/podgang"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 // RegisterControllers registers all controllers with the manager.
-func RegisterControllers(mgr ctrl.Manager, controllerConfig configv1alpha1.ControllerConfiguration, topologyAwareSchedulingConfig configv1alpha1.TopologyAwareSchedulingConfiguration, networkConfig configv1alpha1.NetworkAcceleration) error {
-	pcsReconciler := podcliqueset.NewReconciler(mgr, controllerConfig.PodCliqueSet, topologyAwareSchedulingConfig, networkConfig)
+func RegisterControllers(mgr ctrl.Manager, config *configv1alpha1.OperatorConfiguration) error {
+	if config == nil {
+		return fmt.Errorf("operator configuration must not be nil")
+	}
+	pcsReconciler := podcliqueset.NewReconciler(mgr, config.Controllers.PodCliqueSet, config.TopologyAwareScheduling, config.Network)
 	if err := pcsReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
-	pcReconciler := podclique.NewReconciler(mgr, controllerConfig.PodClique)
+	pcReconciler := podclique.NewReconciler(mgr, config.Controllers.PodClique)
 	if err := pcReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
-	pcsgReconciler := podcliquescalinggroup.NewReconciler(mgr, controllerConfig.PodCliqueScalingGroup)
+	pcsgReconciler := podcliquescalinggroup.NewReconciler(mgr, config.Controllers.PodCliqueScalingGroup)
 	if err := pcsgReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
+
+	podgangReconciler := podgang.NewReconciler(mgr)
+	if err := podgangReconciler.RegisterWithManager(mgr); err != nil {
+		return err
+	}
+
 	return nil
 }

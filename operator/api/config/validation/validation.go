@@ -34,6 +34,7 @@ import (
 func ValidateOperatorConfiguration(config *configv1alpha1.OperatorConfiguration) field.ErrorList {
 	allErrs := field.ErrorList{}
 	allErrs = append(allErrs, validateLogConfiguration(config)...)
+	allErrs = append(allErrs, validateSchedulerConfiguration(&config.Scheduler, field.NewPath("scheduler"))...)
 	allErrs = append(allErrs, validateLeaderElectionConfiguration(config.LeaderElection, field.NewPath("leaderElection"))...)
 	allErrs = append(allErrs, validateClientConnectionConfiguration(config.ClientConnection, field.NewPath("clientConnection"))...)
 	allErrs = append(allErrs, validateControllerConfiguration(config.Controllers, field.NewPath("controllers"))...)
@@ -48,6 +49,32 @@ func validateLogConfiguration(config *configv1alpha1.OperatorConfiguration) fiel
 	}
 	if len(strings.TrimSpace(string(config.LogFormat))) > 0 && !sets.New(configv1alpha1.AllLogFormats...).Has(config.LogFormat) {
 		allErrs = append(allErrs, field.NotSupported(field.NewPath("logFormat"), config.LogFormat, configv1alpha1.AllLogFormats))
+	}
+	return allErrs
+}
+
+func validateSchedulerConfiguration(scheduler *configv1alpha1.SchedulerConfiguration, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	profilesPath := fldPath.Child("profiles")
+	defaultProfileNamePath := fldPath.Child("defaultProfileName")
+	seenNames := sets.New[configv1alpha1.SchedulerName]()
+	for i, p := range scheduler.Profiles {
+		idxPath := profilesPath.Index(i)
+		if len(strings.TrimSpace(string(p.Name))) == 0 {
+			allErrs = append(allErrs, field.Required(idxPath.Child("name"), "scheduler profile name is required"))
+		} else if !slices.Contains(configv1alpha1.SupportedSchedulerNames, p.Name) {
+			allErrs = append(allErrs, field.NotSupported(idxPath.Child("name"), p.Name, configv1alpha1.SupportedSchedulerNames))
+		} else {
+			if seenNames.Has(p.Name) {
+				allErrs = append(allErrs, field.Duplicate(idxPath.Child("name"), p.Name))
+			}
+			seenNames.Insert(p.Name)
+		}
+	}
+	if strings.TrimSpace(scheduler.DefaultProfileName) == "" {
+		allErrs = append(allErrs, field.Required(defaultProfileNamePath, "default scheduler profile name is required"))
+	} else if !seenNames.Has(configv1alpha1.SchedulerName(scheduler.DefaultProfileName)) {
+		allErrs = append(allErrs, field.Invalid(defaultProfileNamePath, scheduler.DefaultProfileName, "default profile must be one of the configured profiles"))
 	}
 	return allErrs
 }

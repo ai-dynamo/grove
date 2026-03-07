@@ -215,7 +215,7 @@ func Initialize(client client.Client, scheme *runtime.Scheme, eventRecorder reco
 // Get returns the backend for the given name. kube-scheduler is always available; other backends return nil if not enabled via a profile.
 func Get(name string) SchedulerBackend
 
-// GetDefault returns the backend designated as default in OperatorConfiguration (the profile with default: true; if none, kube-scheduler). The manager does not define the default; it exposes the one from config.
+// GetDefault returns the backend designated as default in OperatorConfiguration (scheduler.defaultProfileName).
 func GetDefault() SchedulerBackend
 
 ```
@@ -241,12 +241,15 @@ type OperatorConfiguration struct {
 
 // SchedulerConfiguration configures scheduler profiles and which is the default.
 type SchedulerConfiguration struct {
-	// Profiles is the list of scheduler profiles. Each profile has a backend name, optional config, and whether it is the default.
+	// Profiles is the list of scheduler profiles. Each profile has a backend name and optional config.
 	// The kube-scheduler backend is always enabled and active even if not listed here. Listing "kube-scheduler" in profiles
-	// only adds a profile (e.g. with config like GangScheduling: false) and allows marking it as default.
-	// Valid backend names: "kube-scheduler", "kai-scheduler". Exactly one profile should have default: true; if none, kube-scheduler is the default.
+	// only adds a profile (e.g. with config like GangScheduling: false). Use defaultProfileName to designate the default backend.
+	// Valid backend names: "kube-scheduler", "kai-scheduler". If defaultProfileName is unset, defaulting sets it to "kube-scheduler".
 	// +optional
 	Profiles []SchedulerProfile `json:"profiles,omitempty"`
+	// DefaultProfileName is the name of the default scheduler profile.
+	// +optional
+	DefaultProfileName string `json:"defaultProfileName,omitempty"`
 }
 
 // SchedulerName is the name for a supported scheduler backend.
@@ -270,7 +273,7 @@ var SupportedSchedulerNames = []SchedulerName {
   // <add any other supported backend scheduler constant here>
  }
 
-// SchedulerProfile defines a scheduler backend profile with optional backend-specific config and default flag.
+// SchedulerProfile defines a scheduler backend profile with optional backend-specific config.
 type SchedulerProfile struct {
 	// Name is the scheduler backend name. Valid values: "kube-scheduler", "kai-scheduler".
 	// +kubebuilder:validation:Enum=kai-scheduler;kube-scheduler
@@ -279,10 +282,6 @@ type SchedulerProfile struct {
 	// Config holds backend-specific options. The operator unmarshals it into the config type for this backend (see backend config types below).
 	// +optional
 	Config *runtime.RawExtension `json:"config,omitempty"`
-
-	// Default indicates this profile is the default backend when a workload does not specify one. Exactly one profile should have default: true.
-	// +optional
-	Default bool `json:"default,omitempty"`
 }
 ```
 
@@ -290,7 +289,8 @@ The `OperatorConfiguration` provides a way to enable and configure one or more s
 
 - **Name:** This is the name of the scheduler backend. This must be one of the supported schedulers.
 - **Config:** Optional scheduler-specific configuration as `runtime.RawExtension`. It is the responsibility of the scheduler backend implementation to interpret and possibly deserialize it to type.
-- **Default:** Indicates if this scheduler should be the default. In case no scheduler name is set in any `PodSpec` across all `PodCliqueTemplateSpec` then the default scheduler as indicated via this field will be set.
+
+`SchedulerConfiguration.defaultProfileName` designates which profile is the default. When no scheduler name is set in any `PodSpec` across all `PodCliqueTemplateSpec`, the default scheduler indicated by `defaultProfileName` will be used.
 
 **Backend Enabling Behavior:**
 
@@ -300,22 +300,20 @@ The kube-scheduler backend has special behavior compared to other scheduler back
 
 2. **Explicit Configuration Optional**: You only need to add kube-scheduler to `profiles` if you want to:
    - Configure it with specific options (e.g., `gangScheduling: true`)
-   - Explicitly mark it as the default (though it's already the default if no other profile sets `default: true`)
+   - Set it as the default via `defaultProfileName` (defaulting sets kube-scheduler as default when `defaultProfileName` is unset)
 
 3. **Other Schedulers Require Explicit Enablement**: All non-kube-scheduler backends (kai-scheduler, third-party schedulers) must be explicitly listed in `profiles` to be enabled. If a workload references a scheduler that is not in the profiles list, the validating webhook will reject the PodCliqueSet.
 
 4. **Default Selection Logic**:
-   - If `profiles` is empty → kube-scheduler is the default
-   - If exactly one profile has `default: true` → that backend is the default
-   - If multiple profiles have `default: true` → operator startup fails with validation error
-   - If no profile has `default: true` → kube-scheduler is the default (even if not in the list)
+   - If `profiles` is empty → defaulting adds kube-scheduler and sets `defaultProfileName: "kube-scheduler"`
+   - `defaultProfileName` must be one of the configured profile names; validation rejects invalid or missing default profile name
 
 If no `SchedulerProfile` has been set, then Grove operator behaves as if you specified:
 ```yaml
 scheduler:
+  defaultProfileName: kube-scheduler
   profiles:
-    - name: "kube-scheduler"
-      default: true
+    - name: kube-scheduler
 ```
 
 > NOTE: If you as a workload operator wish to use a specific scheduler, please ensure that it has been enabled and properly configured as part of `OperatorConfiguration`. If PodCliqueSet uses a scheduler which has not been enabled, then the validating webhook will reject any creation request for this PodCliqueSet.
@@ -336,46 +334,46 @@ type KubeSchedulerConfig struct {
 
 ```yaml
 # --- Omit scheduler profiles completely ---
-# Same as profiles: [{ name: "kube-scheduler", default: true }]
+# Same as defaultProfileName: kube-scheduler, profiles: [{ name: "kube-scheduler" }]
 ```
 
 ```yaml
 # --- Single scheduler profile, no specific configuration ---
 scheduler:
+  defaultProfileName: kube-scheduler
   profiles:
-    - name: "kube-scheduler"
-      default: true
+    - name: kube-scheduler
       # In this configuration Gang Scheduling will not be enabled
 ```
 
 ```yaml
 # --- Single scheduler profile with configuration ---
 scheduler:
+  defaultProfileName: kube-scheduler
   profiles:
-    - name: "kube-scheduler"
+    - name: kube-scheduler
       config:
         gangScheduling: true
-      default: true
 ```
 
 ```yaml
 # --- Multiple scheduler profiles; default is kube-scheduler ---
 scheduler:
+  defaultProfileName: kube-scheduler
   profiles:
-    - name: "kube-scheduler"
+    - name: kube-scheduler
       config:
         gangScheduling: true
-      default: true
-    - name: "kai-scheduler" # no scheduler-specific configuration is defined
+    - name: kai-scheduler # no scheduler-specific configuration is defined
 ```
 
 ```yaml
 # --- Only kai-scheduler profile; kube-scheduler is still implicitly available but kai-scheduler is the default --- 
 scheduler:
+  defaultProfileName: kai-scheduler
   profiles:
-    - name: "kai-scheduler"
+    - name: kai-scheduler
       config: {}
-      default: true
 ```
 
 
