@@ -94,9 +94,9 @@ func TestCheckAndRemovePodSchedulingGates_MinAvailableAware(t *testing.T) {
 			podHasGate:          true,
 			podInPodGang:        true,
 			expectedGateRemoved: false,
-			expectedSkippedPods: 0, // No skips when error occurs
-			expectError:         true,
-			description:         "Scaled PodGang pods should cause requeue when base PodGang missing",
+			expectedSkippedPods: 1, // Pod is skipped (not error) - base PodGang NotFound is treated as "not scheduled"
+			expectError:         false,
+			description:         "Scaled PodGang pods should skip gate removal when base PodGang missing (transient state during creation/recreation)",
 		},
 		{
 			name:                "Pod not in PodGang yet",
@@ -356,8 +356,8 @@ func TestIsBasePodGangScheduled(t *testing.T) {
 			basePodGangExists: false,
 			podCliques:        []testPodClique{},
 			expectedScheduled: false,
-			expectError:       true,
-			description:       "Missing base PodGang should return error for requeue",
+			expectError:       false,
+			description:       "Missing base PodGang should return not-scheduled (transient state during creation/recreation)",
 		},
 		{
 			name:              "Base PodGang ready - single PodClique",

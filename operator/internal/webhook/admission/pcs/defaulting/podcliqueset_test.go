@@ -18,7 +18,6 @@ package defaulting
 
 import (
 	"testing"
-	"time"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
@@ -55,7 +54,7 @@ func TestDefaultPodCliqueSet(t *testing.T) {
 				HeadlessServiceConfig: &grovecorev1alpha1.HeadlessServiceConfig{
 					PublishNotReadyAddresses: true,
 				},
-				TerminationDelay: &metav1.Duration{Duration: 4 * time.Hour},
+				// TerminationDelay is nil by default, meaning gang termination is disabled
 			},
 		},
 	}
