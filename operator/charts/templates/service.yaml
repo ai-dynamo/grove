@@ -21,6 +21,6 @@ spec:
     {{- if and .Values.config.debugging .Values.config.debugging.enableProfiling }}
     - name: pprof
       protocol: TCP
-      port: {{ .Values.config.debugging.pprofBindPort | default 2753 }}
-      targetPort: {{ .Values.config.debugging.pprofBindPort | default 2753 }}
+      port: {{ .Values.config.debugging.pprofBindPort }}
+      targetPort: {{ .Values.config.debugging.pprofBindPort }}
     {{- end }}

@@ -38,18 +38,6 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - --config=/etc/grove-operator/config/config.yaml
-          ports:
-            - name: metrics
-              containerPort: {{ required ".Values.config.server.metrics.port" .Values.config.server.metrics.port }}
-              protocol: TCP
-            - name: webhooks
-              containerPort: {{ required ".Values.config.server.webhooks.port" .Values.config.server.webhooks.port }}
-              protocol: TCP
-            {{- if and .Values.config.debugging .Values.config.debugging.enableProfiling }}
-            - name: pprof
-              containerPort: {{ .Values.config.debugging.pprofBindPort | default 2753 }}
-              protocol: TCP
-            {{- end }}
           {{- if .Values.config.server.healthProbes.enable }}
           livenessProbe:
             httpGet:
