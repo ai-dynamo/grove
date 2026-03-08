@@ -14,7 +14,7 @@
 # limitations under the License.
 # */
 
-"""Kai Scheduler, Grove operator, and Pyroscope installation."""
+"""Grove operator deployment and management."""
 
 from __future__ import annotations
 
@@ -31,96 +31,21 @@ from infra_manager import console
 from infra_manager.config import ComponentConfig, K3dConfig
 from infra_manager.constants import (
     DEFAULT_GROVE_NAMESPACE,
-    E2E_NODE_ROLE_KEY,
     E2E_TEST_COMMIT,
     E2E_TEST_TREE_STATE,
     E2E_TEST_VERSION,
     GROVE_INITC_IMAGE,
     GROVE_MODULE_PATH,
     GROVE_OPERATOR_IMAGE,
-    HELM_CHART_PYROSCOPE,
     HELM_RELEASE_GROVE,
-    HELM_RELEASE_KAI,
-    HELM_RELEASE_PYROSCOPE,
-    HELM_REPO_GRAFANA,
-    HELM_REPO_GRAFANA_URL,
-    KAI_QUEUE_MAX_RETRIES,
-    KAI_QUEUE_POLL_INTERVAL_SECONDS,
-    KAI_SCHEDULER_OCI,
-    LABEL_CONTROL_PLANE,
     NS_DEFAULT,
-    NS_KAI_SCHEDULER,
     REL_CHARTS_DIR,
     REL_WORKLOAD_YAML,
     WEBHOOK_READY_KEYWORDS,
     WEBHOOK_READY_MAX_RETRIES,
     WEBHOOK_READY_POLL_INTERVAL_SECONDS,
 )
-from infra_manager.utils import (
-    collect_grove_helm_overrides,
-    require_command,
-    resolve_registry_repos,
-    run_kubectl,
-)
-
-def install_kai_scheduler(comp_cfg: ComponentConfig) -> None:
-    """Install Kai Scheduler using Helm.
-
-    Args:
-        comp_cfg: Component configuration with the Kai version.
-    """
-    console.print(Panel.fit("Installing Kai Scheduler", style="bold blue"))
-    console.print(f"[yellow]Version: {comp_cfg.kai_version}[/yellow]")
-    try:
-        sh.helm("uninstall", HELM_RELEASE_KAI, "-n", NS_KAI_SCHEDULER)
-        console.print("[yellow]   Removed existing Kai Scheduler release[/yellow]")
-    except sh.ErrorReturnCode_1:
-        console.print("[yellow]   No existing Kai Scheduler release found[/yellow]")
-    sh.helm(
-        "install",
-        HELM_RELEASE_KAI,
-        KAI_SCHEDULER_OCI,
-        "--version",
-        comp_cfg.kai_version,
-        "--namespace",
-        NS_KAI_SCHEDULER,
-        "--create-namespace",
-        "--set",
-        f"global.tolerations[0].key={LABEL_CONTROL_PLANE}",
-        "--set",
-        "global.tolerations[0].operator=Exists",
-        "--set",
-        "global.tolerations[0].effect=NoSchedule",
-        "--set",
-        f"global.tolerations[1].key={E2E_NODE_ROLE_KEY}",
-        "--set",
-        "global.tolerations[1].operator=Equal",
-        "--set",
-        "global.tolerations[1].value=agent",
-        "--set",
-        "global.tolerations[1].effect=NoSchedule",
-    )
-    console.print("[green]\u2705 Kai Scheduler installed[/green]")
-
-
-@retry(
-    stop=stop_after_attempt(KAI_QUEUE_MAX_RETRIES),
-    wait=wait_fixed(KAI_QUEUE_POLL_INTERVAL_SECONDS),
-    reraise=True,
-)
-def apply_kai_queues(queues_file: Path) -> None:
-    """Apply Kai queue CRs with retry for webhook readiness.
-
-    Args:
-        queues_file: Path to the Kai queues YAML manifest.
-
-    Raises:
-        RuntimeError: If the Kai queue webhook is not ready.
-    """
-    try:
-        sh.kubectl("apply", "-f", str(queues_file))
-    except sh.ErrorReturnCode as err:
-        raise RuntimeError("Kai queue webhook not ready") from err
+from infra_manager.utils import collect_grove_helm_overrides, resolve_registry_repos
 
 
 @retry(
@@ -325,46 +250,6 @@ def deploy_grove_operator(
     sh.kubectl("rollout", "status", "deployment", "-n", comp_cfg.grove_namespace, "--timeout=5m")
 
     _wait_grove_webhook(operator_dir)
-
-
-def install_pyroscope(namespace: str, values_file: Path | None = None, version: str = "") -> None:
-    """Install Pyroscope via Helm.
-
-    Args:
-        namespace: Kubernetes namespace for Pyroscope installation.
-        values_file: Optional path to a Helm values override file.
-        version: Helm chart version to install, or empty string for latest.
-
-    Raises:
-        RuntimeError: If namespace creation fails.
-    """
-    console.print(Panel.fit(f"Installing Pyroscope (namespace: {namespace})", style="bold blue"))
-    require_command("helm")
-
-    sh.helm("repo", "add", HELM_REPO_GRAFANA, HELM_REPO_GRAFANA_URL, "--force-update")
-    sh.helm("repo", "update", HELM_REPO_GRAFANA)
-
-    ok, _, stderr = run_kubectl(["create", "namespace", namespace])
-    if not ok and "AlreadyExists" not in stderr:
-        raise RuntimeError(f"Failed to create namespace {namespace}: {stderr}")
-
-    helm_args = ["upgrade", "--install", HELM_RELEASE_PYROSCOPE, HELM_CHART_PYROSCOPE, "-n", namespace]
-    if version:
-        helm_args += ["--version", version]
-    if values_file and values_file.exists():
-        helm_args += ["-f", str(values_file)]
-    sh.helm(*helm_args)
-    console.print("[green]\u2705 Pyroscope installed[/green]")
-
-
-def uninstall_kai_scheduler() -> None:
-    """Uninstall Kai Scheduler via Helm."""
-    console.print(Panel.fit("Uninstalling Kai Scheduler", style="bold blue"))
-    try:
-        sh.helm("uninstall", HELM_RELEASE_KAI, "-n", NS_KAI_SCHEDULER)
-        console.print("[green]\u2705 Kai Scheduler uninstalled[/green]")
-    except sh.ErrorReturnCode_1:
-        console.print("[yellow]No existing Kai Scheduler release found[/yellow]")
 
 
 def uninstall_grove_operator(grove_namespace: str | None = None) -> None:

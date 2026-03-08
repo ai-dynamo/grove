@@ -34,12 +34,9 @@ from infra_manager.cluster import (
     prepull_image_groups,
     wait_for_nodes,
 )
-from infra_manager.components import (
-    apply_kai_queues,
-    deploy_grove_operator,
-    install_kai_scheduler,
-    install_pyroscope,
-)
+from infra_manager.grove import deploy_grove_operator
+from infra_manager.kai import apply_kai_queues, install_kai_scheduler
+from infra_manager.pyroscope import install_pyroscope
 from infra_manager.config import (
     ComponentConfig,
     K3dConfig,

@@ -245,7 +245,7 @@ class SetupConfig(BaseSettings):
     the underlying K3dConfig/ComponentConfig/KwokConfig.
 
     Attributes:
-        cluster: k3d cluster creation, registry/prepull, and sizing config.
+    cluster: k3d cluster creation, registry/prepull, and sizing config.
         kai: Kai Scheduler component options.
         grove: Grove operator component options.
         kwok: KWOK simulated nodes config.
