@@ -296,12 +296,11 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
-def load_setup_config(path: Path, override_path: Path | None = None) -> SetupConfig:
+def load_setup_config(path: Path) -> SetupConfig:
     """Load a SetupConfig from a YAML file with optional override YAML.
 
     Precedence (low → high):
       1. Base YAML (path)
-      2. Override YAML (override_path) — only specify fields to change
       3. E2E_*__* env vars (applied automatically via SetupConfig.settings_customise_sources)
       4. CLI flags (caller's responsibility via model_copy)
 
@@ -309,19 +308,14 @@ def load_setup_config(path: Path, override_path: Path | None = None) -> SetupCon
 
     Args:
         path: Path to the base YAML config file (e.g. presets/e2e.yaml).
-        override_path: Optional partial override YAML to deep-merge on top.
 
     Returns:
         Validated SetupConfig with overrides and env var values applied.
 
     Raises:
-        FileNotFoundError: If either config file does not exist.
+        FileNotFoundError: If config file does not exist.
         ValidationError: If the merged YAML contains invalid or unknown fields.
     """
     with open(path, encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
-    if override_path is not None:
-        with open(override_path, encoding="utf-8") as f:
-            override_data = yaml.safe_load(f) or {}
-        data = _deep_merge(data, override_data)
     return SetupConfig(**data)

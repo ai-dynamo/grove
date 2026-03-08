@@ -71,8 +71,7 @@ def _apply_updates(
 
 
 def setup(
-    config: Path = typer.Option(None, "--config", help="Path to setup config YAML (default: presets/e2e.yaml)"),
-    override: Path = typer.Option(None, "--override", help="Optional YAML with values to merge on top of --config"),
+    config: Path = typer.Option(None, "--config", help="Path to setup config YAML"),
     # cluster group
     create_cluster: bool | None = typer.Option(
         None, "--create-cluster/--no-create-cluster", help="Override cluster creation"
@@ -118,7 +117,7 @@ def setup(
     E2E_* env vars override YAML values; CLI flags override everything.
     """
     config_path = config if config is not None else _PRESETS_DIR / "e2e.yaml"
-    cfg = load_setup_config(config_path, override_path=override)
+    cfg = load_setup_config(config_path)
 
     cfg = _apply_updates(cfg, "cluster",
         _non_none(create=create_cluster, prepull_images=prepull_images, registry=registry),
