@@ -28,8 +28,9 @@ from rich.panel import Panel
 from tenacity import RetryError, retry, stop_after_attempt, wait_fixed
 
 from infra_manager import console
-from infra_manager.config import ComponentConfig, GroveInstallOptions, K3dConfig
+from infra_manager.config import ComponentConfig, K3dConfig
 from infra_manager.constants import (
+    DEFAULT_GROVE_NAMESPACE,
     E2E_NODE_ROLE_KEY,
     E2E_TEST_COMMIT,
     E2E_TEST_TREE_STATE,
@@ -61,11 +62,6 @@ from infra_manager.utils import (
     resolve_registry_repos,
     run_kubectl,
 )
-
-# ============================================================================
-# Kai Scheduler
-# ============================================================================
-
 
 def install_kai_scheduler(comp_cfg: ComponentConfig) -> None:
     """Install Kai Scheduler using Helm.
@@ -127,11 +123,6 @@ def apply_kai_queues(queues_file: Path) -> None:
         raise RuntimeError("Kai queue webhook not ready") from err
 
 
-# ============================================================================
-# Grove operator
-# ============================================================================
-
-
 @retry(
     stop=stop_after_attempt(WEBHOOK_READY_MAX_RETRIES),
     wait=wait_fixed(WEBHOOK_READY_POLL_INTERVAL_SECONDS),
@@ -157,7 +148,9 @@ def _check_grove_webhook_ready(operator_dir: Path) -> None:
         )
         output = str(result).lower()
     except sh.ErrorReturnCode as e:
-        output = (str(e.stdout) + str(e.stderr)).lower()
+        stdout = e.stdout.decode("utf-8", errors="replace") if isinstance(e.stdout, bytes) else str(e.stdout or "")
+        stderr = e.stderr.decode("utf-8", errors="replace") if isinstance(e.stderr, bytes) else str(e.stderr or "")
+        output = (stdout + stderr).lower()
     if not any(kw in output for kw in WEBHOOK_READY_KEYWORDS):
         raise RuntimeError("Grove webhook not ready")
 
@@ -271,7 +264,12 @@ def deploy_grove_operator(
     k3d_cfg: K3dConfig,
     comp_cfg: ComponentConfig,
     operator_dir: Path,
-    options: GroveInstallOptions,
+    *,
+    registry: str | None = None,
+    profiling: bool = False,
+    pcs_syncs: int | None = None,
+    pclq_syncs: int | None = None,
+    pcsg_syncs: int | None = None,
 ) -> None:
     """Deploy Grove operator using Skaffold.
 
@@ -282,7 +280,11 @@ def deploy_grove_operator(
         k3d_cfg: k3d cluster configuration for registry port resolution.
         comp_cfg: Component configuration with skaffold profile and namespace.
         operator_dir: Root directory of the Grove operator source tree.
-        options: Grove install options containing registry and tuning overrides.
+        registry: Container registry URL override, or None for k3d local.
+        profiling: Whether to enable pprof on Grove.
+        pcs_syncs: PodCliqueSet concurrent syncs override, or None.
+        pclq_syncs: PodClique concurrent syncs override, or None.
+        pcsg_syncs: PodCliqueScalingGroup concurrent syncs override, or None.
     """
     console.print(Panel.fit("Deploying Grove operator", style="bold blue"))
     try:
@@ -304,25 +306,25 @@ def deploy_grove_operator(
         }
     )
 
-    push_repo, pull_repo = resolve_registry_repos(options.registry, k3d_cfg.registry_port)
+    push_repo, pull_repo = resolve_registry_repos(registry, k3d_cfg.registry_port)
 
     raw_images = _build_grove_images(comp_cfg, operator_dir, push_repo)
     images = {name: tag.replace(push_repo, pull_repo) for name, tag in raw_images.items()}
 
     _deploy_grove_charts(comp_cfg, operator_dir, images, pull_repo)
 
-    helm_overrides = collect_grove_helm_overrides(options)
+    helm_overrides = collect_grove_helm_overrides(
+        profiling=profiling,
+        pcs_syncs=pcs_syncs,
+        pclq_syncs=pclq_syncs,
+        pcsg_syncs=pcsg_syncs,
+    )
     _apply_grove_helm_overrides(operator_dir, helm_overrides, comp_cfg.grove_namespace)
 
     console.print("[yellow]\u2139\ufe0f  Waiting for Grove deployment rollout...[/yellow]")
     sh.kubectl("rollout", "status", "deployment", "-n", comp_cfg.grove_namespace, "--timeout=5m")
 
     _wait_grove_webhook(operator_dir)
-
-
-# ============================================================================
-# Pyroscope
-# ============================================================================
 
 
 def install_pyroscope(namespace: str, values_file: Path | None = None, version: str = "") -> None:
@@ -355,11 +357,6 @@ def install_pyroscope(namespace: str, values_file: Path | None = None, version: 
     console.print("[green]\u2705 Pyroscope installed[/green]")
 
 
-# ============================================================================
-# Uninstall helpers
-# ============================================================================
-
-
 def uninstall_kai_scheduler() -> None:
     """Uninstall Kai Scheduler via Helm."""
     console.print(Panel.fit("Uninstalling Kai Scheduler", style="bold blue"))
@@ -376,8 +373,6 @@ def uninstall_grove_operator(grove_namespace: str | None = None) -> None:
     Args:
         grove_namespace: Kubernetes namespace where Grove is installed, or None for default.
     """
-    from infra_manager.constants import DEFAULT_GROVE_NAMESPACE
-
     namespace = grove_namespace or DEFAULT_GROVE_NAMESPACE
     console.print(Panel.fit("Uninstalling Grove operator", style="bold blue"))
     try:

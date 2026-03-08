@@ -22,7 +22,6 @@ import subprocess
 
 import sh
 
-from infra_manager.config import GroveInstallOptions
 from infra_manager.constants import (
     DEFAULT_PPROF_BIND_ADDRESS,
     HELM_KEY_ANNOTATION_PREFIX,
@@ -65,24 +64,32 @@ def resolve_registry_repos(registry: str | None, port: int) -> tuple[str, str]:
     return f"localhost:{port}", f"registry:{port}"
 
 
-def collect_grove_helm_overrides(options: GroveInstallOptions) -> list[str]:
+def collect_grove_helm_overrides(
+    profiling: bool = False,
+    pcs_syncs: int | None = None,
+    pclq_syncs: int | None = None,
+    pcsg_syncs: int | None = None,
+) -> list[str]:
     """Build helm override strings from grove tuning options.
 
     Args:
-        options: Grove install options containing tuning values.
+        profiling: Whether to enable pprof on Grove.
+        pcs_syncs: PodCliqueSet concurrent syncs override, or None.
+        pclq_syncs: PodClique concurrent syncs override, or None.
+        pcsg_syncs: PodCliqueScalingGroup concurrent syncs override, or None.
 
     Returns:
         List of ``key=value`` strings for ``helm --set`` arguments.
     """
     overrides: list[tuple[bool, str, str]] = [
-        (options.grove_profiling, HELM_KEY_PROFILING, "true"),
-        (options.grove_profiling, HELM_KEY_PPROF_BIND_ADDRESS, DEFAULT_PPROF_BIND_ADDRESS),
-        (options.grove_pcs_syncs is not None, HELM_KEY_PCS_SYNCS, str(options.grove_pcs_syncs)),
-        (options.grove_pclq_syncs is not None, HELM_KEY_PCLQ_SYNCS, str(options.grove_pclq_syncs)),
-        (options.grove_pcsg_syncs is not None, HELM_KEY_PCSG_SYNCS, str(options.grove_pcsg_syncs)),
+        (profiling, HELM_KEY_PROFILING, "true"),
+        (profiling, HELM_KEY_PPROF_BIND_ADDRESS, DEFAULT_PPROF_BIND_ADDRESS),
+        (pcs_syncs is not None, HELM_KEY_PCS_SYNCS, str(pcs_syncs)),
+        (pclq_syncs is not None, HELM_KEY_PCLQ_SYNCS, str(pclq_syncs)),
+        (pcsg_syncs is not None, HELM_KEY_PCSG_SYNCS, str(pcsg_syncs)),
     ]
     result = [f"{key}={value}" for enabled, key, value in overrides if enabled]
-    if options.grove_profiling:
+    if profiling:
         result.extend(_pyroscope_annotation_overrides())
     return result
 

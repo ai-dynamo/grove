@@ -47,18 +47,18 @@ pip3 install -r hack/requirements.txt
 **Usage:**
 
 ```bash
-# Full e2e setup
-./hack/infra-manager.py setup e2e
+# Full e2e setup (default preset)
+./hack/infra-manager.py setup
 
 # View all options
-./hack/infra-manager.py --help
+./hack/infra-manager.py setup --help
 
 # Skip specific components
-./hack/infra-manager.py setup e2e --skip-grove
-./hack/infra-manager.py setup e2e --skip-kai --skip-prepull
+./hack/infra-manager.py setup --no-install-grove
+./hack/infra-manager.py setup --no-install-kai --no-prepull-images
 
 # Scale test setup with KWOK simulated nodes
-./hack/infra-manager.py setup scale --kwok-nodes 1000
+./hack/infra-manager.py setup --config presets/scale.yaml --kwok-nodes 1000
 ```
 
 ### config-cluster.py

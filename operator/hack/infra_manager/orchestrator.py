@@ -42,12 +42,14 @@ from infra_manager.components import (
 )
 from infra_manager.config import (
     ComponentConfig,
-    GroveInstallOptions,
     K3dConfig,
     KwokConfig,
+    SetupConfig,
 )
 from infra_manager.constants import (
+    DEFAULT_KWOK_VERSION,
     DEPENDENCIES,
+    NS_KAI_SCHEDULER,
     OPERATOR_DIR,
     REL_PREPARE_CHARTS,
     REL_QUEUES_YAML,
@@ -56,10 +58,6 @@ from infra_manager.constants import (
 )
 from infra_manager.kwok import create_nodes, install_kwok_controller
 from infra_manager.utils import require_command
-
-# ============================================================================
-# Internal helpers
-# ============================================================================
 
 
 def _check_prerequisites(install_kai: bool, install_grove: bool, operator_dir: Path) -> None:
@@ -157,8 +155,6 @@ def _run_kai_post_install(operator_dir: Path) -> None:
     Raises:
         RuntimeError: If Kai queue creation fails after retries.
     """
-    from infra_manager.constants import NS_KAI_SCHEDULER
-
     console.print("[yellow]\u2139\ufe0f  Waiting for Kai Scheduler pods to be ready...[/yellow]")
     sh.kubectl("wait", "--for=condition=Ready", "pods", "--all", "-n", NS_KAI_SCHEDULER, "--timeout=5m")
     console.print("[yellow]\u2139\ufe0f  Creating default Kai queues (with retry for webhook readiness)...[/yellow]")
@@ -184,152 +180,86 @@ def _run_kubeconfig_merge(k3d_cfg: K3dConfig) -> None:
     console.print(f"[green]  \u2713 Merged to {default_kubeconfig_path}[/green]")
 
 
-# ============================================================================
-# New public API
-# ============================================================================
+def run_setup(cfg: SetupConfig) -> None:
+    """Run the unified setup workflow driven by a SetupConfig.
 
+    Topology labels are applied only when cfg.cluster.create is True.
+    KWOK activates when cfg.kwok.nodes > 0. Pyroscope activates when
+    cfg.pyroscope.enabled is True. Fine-grained cluster/component settings
+    (k3s_image, cluster_name, ports, kai_version, etc.) are resolved from
+    E2E_* env vars via K3dConfig/ComponentConfig/KwokConfig.
 
-def run_e2e_setup(
-    *,
-    skip_cluster_creation: bool = False,
-    skip_kai: bool = False,
-    skip_grove: bool = False,
-    skip_topology: bool = False,
-    skip_prepull: bool = False,
-    workers: int | None = None,
-    worker_memory: str | None = None,
-    grove_options: GroveInstallOptions | None = None,
-) -> None:
-    """Run the E2E setup workflow: k3d + kai + grove + topology + prepull.
+    Note: prepull_images is skipped when create_cluster=False -- the registry is
+    assumed to already contain images for a pre-existing cluster. A warning is
+    logged when this override occurs.
 
     Args:
-        skip_cluster_creation: Whether to skip k3d cluster creation.
-        skip_kai: Whether to skip Kai Scheduler installation.
-        skip_grove: Whether to skip Grove operator deployment.
-        skip_topology: Whether to skip topology label application.
-        skip_prepull: Whether to skip image pre-pulling.
-        workers: CLI override for worker node count, or None.
-        worker_memory: CLI override for worker memory, or None.
-        grove_options: Grove install options, or None for defaults.
+        cfg: Fully resolved setup configuration (YAML + env vars + CLI overrides).
 
     Raises:
-        RuntimeError: If any step fails.
+        RuntimeError: If any required step fails.
     """
-    if grove_options is None:
-        grove_options = GroveInstallOptions()
-
-    create_k3d = not skip_cluster_creation
-    install_kai = not skip_kai
-    install_grove = not skip_grove
-    apply_topo = not skip_topology
-    do_prepull = not skip_prepull and create_k3d
+    use_kwok = cfg.kwok.nodes > 0
+    do_prepull = cfg.cluster.prepull_images and cfg.cluster.create
+    if cfg.cluster.prepull_images and not do_prepull:
+        console.print("[yellow]⚠  prepull_images=true but cluster creation is disabled; skipping prepull[/yellow]")
 
     operator_dir = OPERATOR_DIR
-    k3d_cfg = K3dConfig()
+    grove_cfg = cfg.grove
+    kai_cfg = cfg.kai
+
+    k3d_cfg = K3dConfig(
+        worker_nodes=cfg.cluster.config.worker_nodes,
+        worker_memory=cfg.cluster.config.worker_memory,
+    )
+
     comp_cfg = ComponentConfig()
-
-    overrides: dict = {}
-    if workers is not None:
-        overrides["worker_nodes"] = workers
-    if worker_memory is not None:
-        overrides["worker_memory"] = worker_memory
-    if overrides:
-        k3d_cfg = k3d_cfg.model_copy(update=overrides)
-    if grove_options.registry is not None:
-        comp_cfg = comp_cfg.model_copy(update={"registry": grove_options.registry})
-
-    _check_prerequisites(install_kai, install_grove, operator_dir)
-    if create_k3d:
-        _run_cluster_creation(k3d_cfg)
-
-    # Phase 2: Parallel — prepull, topology, kai, grove all at once
-    parallel_tasks: dict[str, Callable[[], None]] = {}
-    if do_prepull:
-        parallel_tasks["prepull"] = lambda: _run_prepull(k3d_cfg)
-    if apply_topo:
-        parallel_tasks["topology"] = apply_topology_labels
-    if install_kai:
-        parallel_tasks["kai"] = lambda: install_kai_scheduler(comp_cfg)
-    if install_grove:
-        parallel_tasks["grove"] = lambda: deploy_grove_operator(k3d_cfg, comp_cfg, operator_dir, grove_options)
-    _run_parallel(parallel_tasks)
-
-    # Phase 3: Sequential post-install (depends on kai)
-    if install_kai:
-        _run_kai_post_install(operator_dir)
-
-    if create_k3d:
-        _run_kubeconfig_merge(k3d_cfg)
-
-
-def run_scale_setup(
-    *,
-    workers: int | None = None,
-    worker_memory: str | None = None,
-    grove_options: GroveInstallOptions | None = None,
-    kwok_nodes: int = 100,
-    kwok_batch_size: int | None = None,
-    pyroscope_namespace: str | None = None,
-) -> None:
-    """Run full E2E setup + KWOK nodes + Pyroscope for scale testing.
-
-    Args:
-        workers: CLI override for worker node count, or None.
-        worker_memory: CLI override for worker memory, or None.
-        grove_options: Grove install options (pprof enabled by default).
-        kwok_nodes: Number of KWOK simulated nodes to create.
-        kwok_batch_size: KWOK node creation batch size override, or None.
-        pyroscope_namespace: Pyroscope namespace override, or None.
-
-    Raises:
-        RuntimeError: If any step fails.
-    """
-    from infra_manager.constants import DEFAULT_KWOK_VERSION
-
-    if grove_options is None:
-        grove_options = GroveInstallOptions(grove_profiling=True)
-
-    operator_dir = OPERATOR_DIR
-    k3d_cfg = K3dConfig()
-    comp_cfg = ComponentConfig()
-
-    overrides: dict = {}
-    if workers is not None:
-        overrides["worker_nodes"] = workers
-    if worker_memory is not None:
-        overrides["worker_memory"] = worker_memory
-    if overrides:
-        k3d_cfg = k3d_cfg.model_copy(update=overrides)
-    if grove_options.registry is not None:
-        comp_cfg = comp_cfg.model_copy(update={"registry": grove_options.registry})
-
-    kwok_cfg = KwokConfig()
-    if kwok_batch_size is not None:
-        kwok_cfg = kwok_cfg.model_copy(update={"kwok_batch_size": kwok_batch_size})
-    if pyroscope_namespace is not None:
-        kwok_cfg = kwok_cfg.model_copy(update={"pyroscope_ns": pyroscope_namespace})
+    if cfg.cluster.registry is not None:
+        comp_cfg = comp_cfg.model_copy(update={"registry": cfg.cluster.registry})
 
     # Phase 1: Prerequisites + cluster creation
-    _check_prerequisites(True, True, operator_dir)
-    _run_cluster_creation(k3d_cfg)
+    _check_prerequisites(kai_cfg.enabled, grove_cfg.enabled, operator_dir)
+    if cfg.cluster.create:
+        _run_cluster_creation(k3d_cfg)
 
-    # Phase 2: ALL components + prepull + topology in parallel
-    kwok_version = dep_value("kwok_controller", "version", default=DEFAULT_KWOK_VERSION)
-    values_file = SCRIPT_DIR / "infra_manager" / "pyroscope-values.yaml"
-    pyroscope_version = dep_value("pyroscope", "version", default="")
-
-    parallel_tasks: dict[str, Callable[[], None]] = {
-        "prepull": lambda: _run_prepull(k3d_cfg),
-        "topology": apply_topology_labels,
-        "kai": lambda: install_kai_scheduler(comp_cfg),
-        "grove": lambda: deploy_grove_operator(k3d_cfg, comp_cfg, operator_dir, grove_options),
-        "kwok": lambda: install_kwok_controller(kwok_version),
-        "pyroscope": lambda: install_pyroscope(kwok_cfg.pyroscope_ns, values_file, version=pyroscope_version),
-    }
+    # Phase 2: All opted-in components in parallel
+    parallel_tasks: dict[str, Callable[[], None]] = {}
+    if cfg.cluster.create:
+        parallel_tasks["topology"] = apply_topology_labels
+    if do_prepull:
+        parallel_tasks["prepull"] = lambda: _run_prepull(k3d_cfg)
+    if kai_cfg.enabled:
+        parallel_tasks["kai"] = lambda: install_kai_scheduler(comp_cfg)
+    if grove_cfg.enabled:
+        parallel_tasks["grove"] = lambda: deploy_grove_operator(
+            k3d_cfg,
+            comp_cfg,
+            operator_dir,
+            registry=cfg.cluster.registry,
+            profiling=grove_cfg.profiling,
+            pcs_syncs=grove_cfg.config.pcs_syncs,
+            pclq_syncs=grove_cfg.config.pclq_syncs,
+            pcsg_syncs=grove_cfg.config.pcsg_syncs,
+        )
+    if cfg.pyroscope.enabled:
+        values_file = SCRIPT_DIR / "infra_manager" / "pyroscope-values.yaml"
+        pyroscope_version = dep_value("pyroscope", "version", default="")
+        if not pyroscope_version:
+            raise RuntimeError("pyroscope version not found in dependencies.yaml")
+        pyroscope_ns = cfg.pyroscope.config.namespace
+        parallel_tasks["pyroscope"] = lambda: install_pyroscope(
+            pyroscope_ns, values_file, version=pyroscope_version
+        )
+    if use_kwok:
+        kwok_cfg = KwokConfig()
+        kwok_version = dep_value("kwok_controller", "version", default=DEFAULT_KWOK_VERSION)
+        parallel_tasks["kwok"] = lambda: install_kwok_controller(kwok_version)
     _run_parallel(parallel_tasks)
 
-    # Phase 3: Post-install steps
-    _run_kai_post_install(operator_dir)
-    if kwok_nodes > 0:
-        create_nodes(kwok_nodes, kwok_cfg)
-    _run_kubeconfig_merge(k3d_cfg)
+    # Phase 3: Post-install
+    if kai_cfg.enabled:
+        _run_kai_post_install(operator_dir)
+    if use_kwok:
+        create_nodes(cfg.kwok.nodes, kwok_cfg)
+    if cfg.cluster.create:
+        _run_kubeconfig_merge(k3d_cfg)

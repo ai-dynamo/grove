@@ -23,23 +23,22 @@ from typing import Any
 
 import yaml
 
-# -- Resolved paths --
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 OPERATOR_DIR = SCRIPT_DIR.parent
+_PACKAGE_DIR = Path(__file__).resolve().parent
 
 
-def load_dependencies() -> dict:
+def _load_dependencies() -> dict:
     """Load dependency versions and images from dependencies.yaml.
 
     Returns:
         Parsed YAML content as a nested dictionary.
     """
-    deps_file = Path(__file__).resolve().parent / "dependencies.yaml"
-    with open(deps_file) as f:
+    with open(_PACKAGE_DIR / "dependencies.yaml") as f:
         return yaml.safe_load(f)
 
 
-DEPENDENCIES = load_dependencies()
+DEPENDENCIES = _load_dependencies()
 
 
 def dep_value(*keys: str, default: Any = None) -> Any:
@@ -52,7 +51,7 @@ def dep_value(*keys: str, default: Any = None) -> Any:
     Returns:
         The value at the nested key path, or *default* if not found.
     """
-    node = DEPENDENCIES
+    node: Any = DEPENDENCIES
     for key in keys:
         if not isinstance(node, dict):
             return default
@@ -169,10 +168,6 @@ DEFAULT_WORKER_NODES = 30
 DEFAULT_WORKER_MEMORY = "150m"
 DEFAULT_K3S_IMAGE = "rancher/k3s:v1.33.5-k3s1"
 DEFAULT_CLUSTER_CREATE_MAX_RETRIES = 3
-
-# -- Scale test cluster defaults --
-DEFAULT_SCALE_WORKER_NODES = 5
-DEFAULT_SCALE_WORKER_MEMORY = "300m"
 
 # -- Component defaults --
 DEFAULT_SKAFFOLD_PROFILE = "topology-test"
