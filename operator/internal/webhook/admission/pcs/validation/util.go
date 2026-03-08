@@ -18,7 +18,6 @@ package validation
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 
@@ -58,11 +57,11 @@ func validateNonEmptyStringField(value string, fldPath *field.Path) field.ErrorL
 }
 
 // sliceMustHaveUniqueElements validates that all elements in a string slice are unique.
-func sliceMustHaveUniqueElements(s []string, fldPath *field.Path, msg string) field.ErrorList {
+func sliceMustHaveUniqueElements(s []string, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	duplicates := lo.FindDuplicates(s)
 	if len(duplicates) > 0 {
-		allErrs = append(allErrs, field.Invalid(fldPath, strings.Join(duplicates, ","), msg))
+		allErrs = append(allErrs, field.Duplicate(fldPath, duplicates))
 	}
 	return allErrs
 }
