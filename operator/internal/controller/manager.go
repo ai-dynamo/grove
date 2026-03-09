@@ -39,10 +39,6 @@ import (
 	ctrlwebhook "sigs.k8s.io/controller-runtime/pkg/webhook"
 )
 
-const (
-	pprofBindAddress = "127.0.0.1:2753"
-)
-
 var (
 	waitTillWebhookCertsReady  = cert.WaitTillWebhookCertsReady
 	registerControllersWithMgr = RegisterControllers
@@ -112,9 +108,11 @@ func createManagerOptions(operatorCfg *configv1alpha1.OperatorConfiguration) ctr
 		}),
 	}
 	if operatorCfg.Debugging != nil {
-		if operatorCfg.Debugging.EnableProfiling != nil &&
-			*operatorCfg.Debugging.EnableProfiling {
-			opts.PprofBindAddress = pprofBindAddress
+		if ptr.Deref(operatorCfg.Debugging.EnableProfiling, false) {
+			opts.PprofBindAddress = net.JoinHostPort(
+				*operatorCfg.Debugging.PprofBindHost,
+				strconv.Itoa(*operatorCfg.Debugging.PprofBindPort),
+			)
 		}
 	}
 	return opts

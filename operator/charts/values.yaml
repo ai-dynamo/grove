@@ -23,6 +23,9 @@ resources:
 # Set of tolerations to apply to the operator deployment.
 tolerations: [ ]
 
+# Annotations to apply to the operator pod template.
+podAnnotations: {}
+
 # This section builds out the service account more information can be found here: https://kubernetes.io/docs/concepts/security/service-accounts/
 serviceAccount:
   # Automatically mount a ServiceAccount's API credentials?
@@ -76,6 +79,8 @@ config:
       port: 9445
   debugging:
     enableProfiling: false
+    pprofBindHost: "127.0.0.1"
+    pprofBindPort: 2753
   controllers:
     podCliqueSet:
       concurrentSyncs: 3

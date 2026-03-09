@@ -31,6 +31,7 @@ import (
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1validation "k8s.io/apimachinery/pkg/apis/meta/v1/validation"
 	"k8s.io/apimachinery/pkg/util/sets"
+	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
@@ -135,8 +136,8 @@ func (v *pcsValidator) validatePodCliqueTemplates(fldPath *field.Path) ([]string
 		schedulerNames = append(schedulerNames, cliqueTemplateSpec.Spec.PodSpec.SchedulerName)
 	}
 
-	allErrs = append(allErrs, sliceMustHaveUniqueElements(cliqueNames, fldPath.Child("name"), "cliqueTemplateSpec names must be unique")...)
-	allErrs = append(allErrs, sliceMustHaveUniqueElements(cliqueRoles, fldPath.Child("roleName"), "cliqueTemplateSpec.Spec roleNames must be unique")...)
+	allErrs = append(allErrs, sliceMustHaveUniqueElements(cliqueNames, fldPath.Child("name"))...)
+	allErrs = append(allErrs, sliceMustHaveUniqueElements(cliqueRoles, fldPath.Child("roleName"))...)
 
 	uniqueSchedulerNames := lo.Uniq(lo.Map(schedulerNames, func(item string, _ int) string {
 		if item == "" {
@@ -233,9 +234,9 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigs(fldPath *field.Path)
 	}
 
 	// validate that the scaling group names are unique
-	allErrs = append(allErrs, sliceMustHaveUniqueElements(pclqScalingGroupNames, fldPath.Child("name"), "PodCliqueScalingGroupConfig names must be unique")...)
+	allErrs = append(allErrs, sliceMustHaveUniqueElements(pclqScalingGroupNames, fldPath.Child("name"))...)
 	// validate that there should not be any overlapping clique names across scaling groups.
-	allErrs = append(allErrs, sliceMustHaveUniqueElements(cliqueNamesAcrossAllScalingGroups, fldPath.Child("cliqueNames"), "clique names must not overlap across scaling groups, every scaling group should have unique clique names")...)
+	allErrs = append(allErrs, sliceMustHaveUniqueElements(cliqueNamesAcrossAllScalingGroups, fldPath.Child("cliqueNames"))...)
 
 	// validate that for all pod cliques that are part of defined scaling groups, separate AutoScalingConfig is not defined for them.
 	scalingGroupCliqueNames := lo.Uniq(cliqueNamesAcrossAllScalingGroups)
@@ -372,7 +373,7 @@ func (v *pcsValidator) validatePodCliqueSpec(name string, cliqueSpec grovecorev1
 				allErrs = append(allErrs, field.Invalid(fldPath.Child("startsAfter"), dep, "clique dependency cannot refer to itself"))
 			}
 		}
-		allErrs = append(allErrs, sliceMustHaveUniqueElements(cliqueSpec.StartsAfter, fldPath.Child("startsAfter"), "clique dependencies must be unique")...)
+		allErrs = append(allErrs, sliceMustHaveUniqueElements(cliqueSpec.StartsAfter, fldPath.Child("startsAfter"))...)
 	}
 
 	if cliqueSpec.ScaleConfig != nil {
@@ -431,7 +432,35 @@ func (v *pcsValidator) validatePodSpec(spec corev1.PodSpec, fldPath *field.Path)
 		}
 	}
 
+	for i, container := range spec.Containers {
+		allErrs = append(allErrs, validateContainer(container, specFldPath.Child("containers").Index(i))...)
+	}
+	for i, container := range spec.InitContainers {
+		allErrs = append(allErrs, validateContainer(container, specFldPath.Child("initContainers").Index(i))...)
+	}
+
 	return warnings, allErrs
+}
+
+// validateContainer validates a single container's fields.
+func validateContainer(container corev1.Container, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	allErrs = append(allErrs, validateContainerEnvVars(container.Env, fldPath.Child("env"))...)
+	return allErrs
+}
+
+// validateContainerEnvVars validates environment variable names, checking for invalid names and duplicates.
+func validateContainerEnvVars(envVars []corev1.EnvVar, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	envNames := make([]string, 0, len(envVars))
+	for j, envVar := range envVars {
+		if errs := k8svalidation.IsEnvVarName(envVar.Name); len(errs) > 0 {
+			allErrs = append(allErrs, field.Invalid(fldPath.Index(j).Child("name"), envVar.Name, strings.Join(errs, "; ")))
+		}
+		envNames = append(envNames, envVar.Name)
+	}
+	allErrs = append(allErrs, sliceMustHaveUniqueElements(envNames, fldPath)...)
+	return allErrs
 }
 
 // ---------------------------- validate update of PodCliqueSet -----------------------------------------------
