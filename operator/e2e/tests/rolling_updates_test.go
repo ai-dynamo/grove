@@ -296,7 +296,6 @@ func Test_RU11_RollingUpdateWithPCSScaleOut(t *testing.T) {
 	tc, cleanup, tracker := setupRollingUpdateTest(t, RollingUpdateTestConfig{
 		WorkerNodes:        30,
 		ExpectedPods:       10,
-		PatchSIGTERM:       true,
 		InitialPCSReplicas: 2,
 		PostScalePods:      20,
 	})
@@ -346,7 +345,6 @@ func Test_RU12_RollingUpdateWithPCSScaleInDuringUpdate(t *testing.T) {
 	tc, cleanup, tracker := setupRollingUpdateTest(t, RollingUpdateTestConfig{
 		WorkerNodes:        30,
 		ExpectedPods:       10,
-		PatchSIGTERM:       true,
 		InitialPCSReplicas: 2,
 		PostScalePods:      20,
 	})
