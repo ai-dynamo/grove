@@ -14,6 +14,10 @@ spec:
     metadata:
       labels:
 {{- include "operator.deployment.labels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       restartPolicy: Always
       {{- if .Values.priorityClass.enabled }}
