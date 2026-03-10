@@ -18,7 +18,9 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -43,137 +45,24 @@ from infra_manager.constants import (
     DEPENDENCIES,
 )
 
-
-class K3dConfig(BaseSettings):
-    """k3d cluster configuration, auto-loaded from E2E_* env vars.
-
-    Attributes:
-        cluster_name: Name of the k3d cluster.
-        registry_port: Port for the local container registry.
-        api_port: Kubernetes API server port.
-        lb_port: Load balancer port mapping (host:container).
-        worker_nodes: Number of worker nodes to create.
-        worker_memory: Memory limit per worker node.
-        k3s_image: K3s Docker image to use.
-        max_retries: Maximum cluster creation retry attempts.
-    """
-
-    model_config = SettingsConfigDict(env_prefix="E2E_", extra="ignore")
-
-    cluster_name: str = DEFAULT_CLUSTER_NAME
-    registry_port: int = Field(default=DEFAULT_REGISTRY_PORT, ge=1, le=65535)
-    api_port: int = Field(default=DEFAULT_API_PORT, ge=1, le=65535)
-    lb_port: str = DEFAULT_LB_PORT
-    worker_nodes: int = Field(default=DEFAULT_WORKER_NODES, ge=1, le=100)  # Real k3d agent nodes only (KWOK nodes are separate)
-    worker_memory: str = Field(default=DEFAULT_WORKER_MEMORY, pattern=r"^\d+[mMgG]?$")
-    k3s_image: str = DEFAULT_K3S_IMAGE
-    max_retries: int = Field(default=DEFAULT_CLUSTER_CREATE_MAX_RETRIES, ge=1, le=10)
+logger = logging.getLogger(__name__)
 
 
-class ComponentConfig(BaseSettings):
-    """Component versions and registry, auto-loaded from E2E_* env vars.
-
-    Attributes:
-        kai_version: Kai Scheduler Helm chart version.
-        skaffold_profile: Skaffold profile for Grove deployment.
-        grove_namespace: Kubernetes namespace for Grove operator.
-        registry: Container registry URL override, or None for k3d local.
-    """
-
-    model_config = SettingsConfigDict(env_prefix="E2E_", extra="ignore")
-
-    kai_version: str = Field(default=DEPENDENCIES["kai_scheduler"]["version"], pattern=r"^v[\d.]+(-[\w.]+)?$")
-    skaffold_profile: str = DEFAULT_SKAFFOLD_PROFILE
-    grove_namespace: str = DEFAULT_GROVE_NAMESPACE
-    registry: str | None = None
-
-
-class KwokConfig(BaseSettings):
-    """KWOK configuration, auto-loaded from E2E_* env vars.
-
-    Attributes:
-        kwok_nodes: Number of KWOK nodes to create, or None to skip.
-        kwok_batch_size: Number of nodes to create per kubectl apply batch.
-        kwok_node_cpu: CPU capacity to advertise per KWOK node.
-        kwok_node_memory: Memory capacity to advertise per KWOK node.
-        kwok_max_pods: Maximum pods per KWOK node.
-    """
-
-    model_config = SettingsConfigDict(env_prefix="E2E_", extra="ignore")
-
-    kwok_nodes: int | None = None
-    kwok_batch_size: int = Field(default=DEFAULT_KWOK_BATCH_SIZE, ge=1)
-    kwok_node_cpu: str = DEFAULT_KWOK_NODE_CPU
-    kwok_node_memory: str = DEFAULT_KWOK_NODE_MEMORY
-    kwok_max_pods: int = DEFAULT_KWOK_MAX_PODS
-
-
-class ClusterParams(BaseModel):
-    """Cluster sizing parameters for ClusterSetup.config.
-
-    Attributes:
-        worker_nodes: Number of k3d worker nodes.
-        worker_memory: Memory limit per worker node.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    worker_nodes: int = Field(default=DEFAULT_WORKER_NODES, ge=1, le=100)
-    worker_memory: str = Field(default=DEFAULT_WORKER_MEMORY, pattern=r"^\d+[mMgG]?$")
-
-
-class GroveParams(BaseModel):
-    """Grove operator concurrent sync overrides for GroveSetup.config.
-
-    Attributes:
-        pcs_syncs: PodCliqueSet concurrent syncs override, or None.
-        pclq_syncs: PodClique concurrent syncs override, or None.
-        pcsg_syncs: PodCliqueScalingGroup concurrent syncs override, or None.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    pcs_syncs: int | None = None
-    pclq_syncs: int | None = None
-    pcsg_syncs: int | None = None
-
-
-class KaiSetup(BaseModel):
-    """Kai Scheduler component options.
-
-    Attributes:
-        enabled: Install Kai Scheduler.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = True
-
-
-class GroveSetup(BaseModel):
-    """Grove operator component options.
-
-    Attributes:
-        enabled: Deploy Grove operator.
-        profiling: Enable pprof on the Grove operator.
-        config: Concurrent sync overrides.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = True
-    profiling: bool = False
-    config: GroveParams = GroveParams()
-
-
-class ClusterSetup(BaseModel):
-    """k3d cluster group: creation flag, registry/prepull options, and sizing config.
+class ClusterConfig(BaseModel):
+    """k3d cluster lifecycle: creation, registry, sizing, and retry config.
 
     Attributes:
         create: Whether to create the k3d cluster.
         prepull_images: Pre-pull images to the local k3d registry. Mutex with registry.
-        registry: External container registry URL override. Mutex with prepull_images.
-        config: Cluster sizing parameters.
+        registry: External container registry URL. Mutex with prepull_images.
+        name: Name of the k3d cluster.
+        registry_port: Port for the local container registry.
+        api_port: Kubernetes API server port.
+        lb_port: Load balancer port mapping (host:container).
+        k3s_image: K3s Docker image to use.
+        max_retries: Maximum cluster creation retry attempts.
+        worker_nodes: Number of worker nodes to create.
+        worker_memory: Memory limit per worker node.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -181,84 +70,165 @@ class ClusterSetup(BaseModel):
     create: bool = True
     prepull_images: bool = True
     registry: str | None = None
-    config: ClusterParams = ClusterParams()
+    name: str = DEFAULT_CLUSTER_NAME
+    registry_port: int = Field(default=DEFAULT_REGISTRY_PORT, ge=1, le=65535)
+    api_port: int = Field(default=DEFAULT_API_PORT, ge=1, le=65535)
+    lb_port: str = DEFAULT_LB_PORT
+    k3s_image: str = DEFAULT_K3S_IMAGE
+    max_retries: int = Field(default=DEFAULT_CLUSTER_CREATE_MAX_RETRIES, ge=1, le=10)
+    worker_nodes: int = Field(default=DEFAULT_WORKER_NODES, ge=1, le=100)
+    worker_memory: str = Field(default=DEFAULT_WORKER_MEMORY, pattern=r"^\d+[mMgG]?$")
 
     @model_validator(mode="after")
-    def _registry_prepull_mutex(self) -> "ClusterSetup":
+    def _registry_prepull_mutex(self) -> "ClusterConfig":
         """Raise if both registry and prepull_images are set."""
         if self.registry is not None and self.prepull_images:
             raise ValueError("registry and prepull_images are mutually exclusive")
         return self
 
 
-class KwokSetup(BaseModel):
-    """KWOK simulated nodes group.
+class LocalBuildConfig(BaseModel):
+    """Local skaffold build settings.
 
     Attributes:
-        nodes: KWOK simulated node count; 0 disables KWOK.
+        skaffold_profile: Skaffold profile for Grove deployment.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    skaffold_profile: str = DEFAULT_SKAFFOLD_PROFILE
+
+
+class ImageDeployConfig(BaseModel):
+    """Existing image deployment settings (placeholder for future image-specific settings)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class KaiConfig(BaseModel):
+    """Kai Scheduler settings.
+
+    Attributes:
+        enabled: Install Kai Scheduler.
+        version: Kai Scheduler Helm chart version.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    version: str = Field(default=DEPENDENCIES["kai_scheduler"]["version"], pattern=r"^v[\d.]+(-[\w.]+)?$")
+
+
+class SchedulerConfig(BaseModel):
+    """Extensible scheduler backend group.
+
+    Attributes:
+        kai: Kai Scheduler settings.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kai: KaiConfig = KaiConfig()
+
+
+class GroveConfig(BaseModel):
+    """Grove operator settings: behavior, deployment mode, and namespace.
+
+    Attributes:
+        enabled: Deploy Grove operator.
+        profiling: Enable pprof on the Grove operator.
+        pcs_syncs: PodCliqueSet concurrent syncs override, or None.
+        pclq_syncs: PodClique concurrent syncs override, or None.
+        pcsg_syncs: PodCliqueScalingGroup concurrent syncs override, or None.
+        namespace: Kubernetes namespace for Grove operator.
+        mode: Deployment mode — "local" (skaffold build) or "image" (existing image).
+        local: Local skaffold build settings.
+        image: Existing image deployment settings.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    profiling: bool = False
+    pcs_syncs: int | None = None
+    pclq_syncs: int | None = None
+    pcsg_syncs: int | None = None
+    namespace: str = DEFAULT_GROVE_NAMESPACE
+    mode: Literal["local", "image"] = "local"
+    local: LocalBuildConfig = LocalBuildConfig()
+    image: ImageDeployConfig = ImageDeployConfig()
+
+
+class KwokConfig(BaseModel):
+    """KWOK simulated nodes configuration.
+
+    Attributes:
+        nodes: Number of KWOK nodes to create; 0 disables KWOK.
+        batch_size: Number of nodes to create per kubectl apply batch.
+        node_cpu: CPU capacity to advertise per KWOK node.
+        node_memory: Memory capacity to advertise per KWOK node.
+        max_pods: Maximum pods per KWOK node.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     nodes: int = Field(default=0, ge=0)
+    batch_size: int = Field(default=DEFAULT_KWOK_BATCH_SIZE, ge=1)
+    node_cpu: str = DEFAULT_KWOK_NODE_CPU
+    node_memory: str = DEFAULT_KWOK_NODE_MEMORY
+    max_pods: int = DEFAULT_KWOK_MAX_PODS
 
 
-class PyroscopeParams(BaseModel):
-    """Pyroscope installation parameters for PyroscopeSetup.config.
+class PyroscopeConfig(BaseModel):
+    """Pyroscope profiler configuration.
 
     Attributes:
+        enabled: Install Pyroscope profiler.
         namespace: Kubernetes namespace for Pyroscope installation.
     """
 
     model_config = ConfigDict(extra="forbid")
 
+    enabled: bool = False
     namespace: str = DEFAULT_PYROSCOPE_NAMESPACE
 
 
-class PyroscopeSetup(BaseModel):
-    """Pyroscope profiler component options.
-
-    Attributes:
-        enabled: Install Pyroscope profiler.
-        config: Pyroscope installation parameters.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = False
-    config: PyroscopeParams = PyroscopeParams()
-
-
 class SetupConfig(BaseSettings):
-    """Unified setup configuration: YAML preset + E2E_* env var overrides + CLI flags.
+    """Unified setup configuration: YAML preset + E2E_*__* env var overrides + CLI flags.
 
     Env var format uses double-underscore delimiter:
       E2E_CLUSTER__CREATE=false
-      E2E_CLUSTER__CONFIG__WORKER_NODES=10
+      E2E_CLUSTER__WORKER_NODES=10
       E2E_CLUSTER__REGISTRY=myregistry.io
       E2E_GROVE__PROFILING=true
+      E2E_GROVE__LOCAL__SKAFFOLD_PROFILE=my-profile
+      E2E_GROVE__NAMESPACE=grove-system
+      E2E_SCHEDULER__KAI__VERSION=v1.2.3
       E2E_KWOK__NODES=500
+      E2E_KWOK__BATCH_SIZE=100
+      E2E_KWOK__NODE_CPU=64
+      E2E_KWOK__NODE_MEMORY=512Gi
+      E2E_KWOK__MAX_PODS=110
       E2E_PYROSCOPE__ENABLED=true
 
-    Fine-grained infra settings (k3s_image, cluster_name, ports, kai_version,
-    kwok node resources, etc.) remain configurable via flat E2E_* env vars on
-    the underlying K3dConfig/ComponentConfig/KwokConfig.
+    Old env vars (E2E_CLUSTER_NAME, E2E_KAI_VERSION, etc.) are no longer supported.
+    See Env Var Migration table in the plan for the full mapping.
 
     Attributes:
-    cluster: k3d cluster creation, registry/prepull, and sizing config.
-        kai: Kai Scheduler component options.
-        grove: Grove operator component options.
+        cluster: k3d cluster creation, registry/prepull, and sizing config.
+        scheduler: Scheduler backend group (kai).
+        grove: Grove operator behavior and deployment config.
         kwok: KWOK simulated nodes config.
         pyroscope: Pyroscope profiler options.
     """
 
     model_config = SettingsConfigDict(env_prefix="E2E_", env_nested_delimiter="__", extra="forbid")
 
-    cluster: ClusterSetup = ClusterSetup()
-    kai: KaiSetup = KaiSetup()
-    grove: GroveSetup = GroveSetup()
-    kwok: KwokSetup = KwokSetup()
-    pyroscope: PyroscopeSetup = PyroscopeSetup()
+    cluster: ClusterConfig = ClusterConfig()
+    scheduler: SchedulerConfig = SchedulerConfig()
+    grove: GroveConfig = GroveConfig()
+    kwok: KwokConfig = KwokConfig()
+    pyroscope: PyroscopeConfig = PyroscopeConfig()
 
     @classmethod
     def settings_customise_sources(
@@ -296,26 +266,79 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
-def load_setup_config(path: Path) -> SetupConfig:
-    """Load a SetupConfig from a YAML file with optional override YAML.
+def _parse_set_override(s: str) -> dict:
+    """Parse a Helm-style dot-notation override string into a nested dict.
+
+    Splits on the first '=' only, so values containing '=' or '.' are safe.
+    Key is dot-split to build a nested dict; list index syntax ([0]) is not supported.
+
+    Args:
+        s: Override string in 'key.subkey=value' format.
+
+    Returns:
+        Nested dictionary representing the override.
+
+    Raises:
+        ValueError: If the string does not contain '='.
+
+    Examples:
+        >>> _parse_set_override("cluster.worker_nodes=5")
+        {"cluster": {"worker_nodes": "5"}}
+        >>> _parse_set_override("scheduler.kai.version=v1.2.3")
+        {"scheduler": {"kai": {"version": "v1.2.3"}}}
+    """
+    if "=" not in s:
+        raise ValueError(f"Invalid --set override (missing '='): {s!r}")
+    key, value = s.split("=", 1)
+    parts = key.split(".")
+    result: dict = value
+    for part in reversed(parts):
+        result = {part: result}
+    return result
+
+
+def load_setup_config(
+    base_path: Path,
+    values_paths: list[Path] | None = None,
+    set_overrides: list[str] | None = None,
+) -> SetupConfig:
+    """Load a SetupConfig from a YAML file with optional overlay YAMLs and --set overrides.
 
     Precedence (low → high):
-      1. Base YAML (path)
-      3. E2E_*__* env vars (applied automatically via SetupConfig.settings_customise_sources)
-      4. CLI flags (caller's responsibility via model_copy)
+      1. Base YAML (base_path)
+      2. Overlay YAMLs (values_paths, merged in order — later files win)
+      3. --set overrides (set_overrides, applied last before env vars)
+      4. E2E_*__* env vars (highest, applied automatically via settings_customise_sources)
+
+    CLI named flags (e.g., --worker-nodes) are applied by the caller via model_copy
+    after this function returns, giving them the highest priority.
 
     Sub-models use extra="forbid" — unknown YAML keys raise immediately.
 
     Args:
-        path: Path to the base YAML config file (e.g. presets/e2e.yaml).
+        base_path: Path to the base YAML config file (e.g. presets/e2e.yaml).
+        values_paths: Optional list of overlay YAML files to merge in order.
+        set_overrides: Optional list of dot-notation overrides (e.g. "cluster.worker_nodes=5").
+            List index syntax ([0]) is not supported.
 
     Returns:
-        Validated SetupConfig with overrides and env var values applied.
+        Validated SetupConfig with all overrides and env var values applied.
 
     Raises:
-        FileNotFoundError: If config file does not exist.
-        ValidationError: If the merged YAML contains invalid or unknown fields.
+        FileNotFoundError: If any config file does not exist.
+        ValidationError: If the merged config contains invalid or unknown fields.
+        ValueError: If any set_override string is malformed (missing '=').
     """
-    with open(path, encoding="utf-8") as f:
+    with open(base_path, encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
+
+    for overlay_path in values_paths or []:
+        with open(overlay_path, encoding="utf-8") as f:
+            overlay = yaml.safe_load(f) or {}
+        data = _deep_merge(data, overlay)
+
+    for override in set_overrides or []:
+        parsed = _parse_set_override(override)
+        data = _deep_merge(data, parsed)
+
     return SetupConfig(**data)

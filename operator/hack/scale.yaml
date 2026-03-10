@@ -2,12 +2,12 @@
 
 cluster:
   create: true
-  config:
-    worker_nodes: 5
-    worker_memory: "300m"
+  worker_nodes: 5
+  worker_memory: "300m"
 
-kai:
-  enabled: true
+scheduler:
+  kai:
+    enabled: true
 
 grove:
   enabled: true
