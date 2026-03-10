@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/ai-dynamo/grove/operator/e2e/utils/measurement"
 )
@@ -41,7 +42,8 @@ func NewMultiExporter(exporters ...ResultExporter) *MultiExporter {
 	return &MultiExporter{exporters: exporters}
 }
 
-// Export calls Export on each wrapped exporter in order, collecting all errors.
+// Export calls Export on each exporter regardless of prior errors (like io.MultiWriter),
+// collecting all errors via errors.Join.
 func (m *MultiExporter) Export(r *measurement.TrackerResult) error {
 	var errs []error
 	for _, exp := range m.exporters {
@@ -57,7 +59,7 @@ type JSONExporter struct {
 	w io.Writer
 }
 
-// NewJSONExporter creates a JSONExporter that writes to w.
+// NewJSONExporter creates a JSONExporter that writes indented JSON to w.
 func NewJSONExporter(w io.Writer) *JSONExporter {
 	return &JSONExporter{w: w}
 }
@@ -67,6 +69,26 @@ func (e *JSONExporter) Export(r *measurement.TrackerResult) error {
 	enc := json.NewEncoder(e.w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(r)
+}
+
+// JSONFileExporter writes the result as indented JSON to a new file at path.
+type JSONFileExporter struct {
+	path string
+}
+
+// NewJSONFileExporter creates a JSONFileExporter that writes to path.
+func NewJSONFileExporter(path string) *JSONFileExporter {
+	return &JSONFileExporter{path: path}
+}
+
+// Export creates the file, writes indented JSON, and closes it.
+func (e *JSONFileExporter) Export(r *measurement.TrackerResult) error {
+	f, err := os.Create(e.path)
+	if err != nil {
+		return fmt.Errorf("create %s: %w", e.path, err)
+	}
+	defer f.Close()
+	return NewJSONExporter(f).Export(r)
 }
 
 // SummaryExporter writes a human-readable summary to the configured writer.

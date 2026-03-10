@@ -198,11 +198,7 @@ func (t *TimelineTracker) runPhase(ctx context.Context, def PhaseDefinition) err
 	log.Info("action completed", "elapsed", fmt.Sprintf("%.1fs", time.Since(phaseStart).Seconds()))
 
 	if len(def.Milestones) > 0 {
-		milestoneNames := make([]string, len(def.Milestones))
-		for i, m := range def.Milestones {
-			milestoneNames[i] = m.Name
-		}
-		log.Info("waiting for milestones", "milestones", milestoneNames)
+		log.Info("waiting for milestones", "milestones", milestoneNames(def.Milestones))
 	}
 
 	reached, err := t.pollMilestones(ctx, def.Name, phaseStart, def.Milestones)
@@ -217,6 +213,15 @@ func (t *TimelineTracker) runPhase(ctx context.Context, def PhaseDefinition) err
 		"phaseDuration", fmt.Sprintf("%.1fs", time.Since(phaseStart).Seconds()))
 
 	return nil
+}
+
+// milestoneNames extracts the Name field from a slice of MilestoneDefinitions.
+func milestoneNames(defs []MilestoneDefinition) []string {
+	names := make([]string, len(defs))
+	for i, d := range defs {
+		names[i] = d.Name
+	}
+	return names
 }
 
 // pollMilestones polls milestone conditions until all are met or the context is cancelled.
@@ -234,18 +239,15 @@ func (t *TimelineTracker) pollMilestones(
 	for len(remaining) > 0 {
 		select {
 		case <-ctx.Done():
-			pendingNames := make([]string, len(remaining))
-			for i, m := range remaining {
-				pendingNames[i] = m.Name
-			}
 			log.Info("context cancelled while waiting for milestones",
-				"pending", pendingNames,
+				"pending", milestoneNames(remaining),
 				"elapsed", fmt.Sprintf("%.1fs", time.Since(phaseStart).Seconds()))
 			return nil, ctx.Err()
 		case <-time.After(t.pollInterval):
 		}
 
 		pollCount++
+		elapsed := fmt.Sprintf("%.1fs", time.Since(phaseStart).Seconds())
 		var stillPending []MilestoneDefinition
 		for _, def := range remaining {
 			ok, err := def.Condition.Met(ctx)
@@ -260,15 +262,13 @@ func (t *TimelineTracker) pollMilestones(
 					DurationFromPhaseStart: ts.Sub(phaseStart).Seconds(),
 				})
 				log.Info("milestone reached", "milestone", def.Name,
-					"elapsed", fmt.Sprintf("%.1fs", ts.Sub(phaseStart).Seconds()),
+					"elapsed", elapsed,
 					"remaining", len(remaining)-1)
 			} else {
-				if reporter, ok := def.Condition.(ProgressReporter); ok {
-					if pollCount%5 == 0 {
-						log.Info("milestone pending", "milestone", def.Name,
-							"progress", reporter.Progress(ctx),
-							"elapsed", fmt.Sprintf("%.1fs", time.Since(phaseStart).Seconds()))
-					}
+				if reporter, ok := def.Condition.(ProgressReporter); ok && pollCount%5 == 0 {
+					log.Info("milestone pending", "milestone", def.Name,
+						"progress", reporter.Progress(ctx),
+						"elapsed", elapsed)
 				}
 				stillPending = append(stillPending, def)
 			}

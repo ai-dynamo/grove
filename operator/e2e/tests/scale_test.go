@@ -38,6 +38,7 @@ const (
 )
 
 func Test_ScaleTest_5000_MoE(t *testing.T) {
+	diagDir := os.Getenv(DiagnosticsDirEnvVar)
 	logger.Infof("starting scale test: %d expected pods, timeout %v", scaleTestExpectedPods, scaleTestTimeout)
 
 	ctx, cancel := context.WithTimeout(context.Background(), scaleTestTimeout)
@@ -83,15 +84,24 @@ func Test_ScaleTest_5000_MoE(t *testing.T) {
 					ExpectedCount: scaleTestExpectedPods,
 				},
 			},
-			//{
-			//	Name: "pods-ready",
-			//	Condition: &condition.PodsReadyCondition{
-			//		Client:        crClient,
-			//		Namespace:     namespace,
-			//		LabelSelector: labelSelector,
-			//		ExpectedCount: scaleTestExpectedPods,
-			//	},
-			//},
+			{
+				Name: "pods-ready",
+				Condition: &condition.PodsReadyCondition{
+					Client:        crClient,
+					Namespace:     namespace,
+					LabelSelector: labelSelector,
+					ExpectedCount: scaleTestExpectedPods,
+				},
+			},
+			{
+				Name: "pcs-available",
+				Condition: &condition.PCSAvailableCondition{
+					Client:        crClient,
+					Name:          pcsName,
+					Namespace:     namespace,
+					ExpectedCount: 1,
+				},
+			},
 		},
 	})
 
@@ -119,25 +129,21 @@ func Test_ScaleTest_5000_MoE(t *testing.T) {
 	}
 
 	logger.Info("exporting results")
-	exportResult(t, result, runID)
+	exportResult(t, result, diagDir)
 	assertResult(t, result)
 	logger.Infof("scale test completed successfully in %.1fs", result.TestDurationSeconds)
 }
 
-func exportResult(t *testing.T, result *measurement.TrackerResult, runID string) {
+func exportResult(t *testing.T, result *measurement.TrackerResult, diagDir string) {
 	t.Helper()
 
-	jsonFile, err := os.Create(fmt.Sprintf("scale-test-5000-moe-%s.json", runID))
-	if err != nil {
-		t.Fatalf("Failed to create JSON output file: %v", err)
-	}
-	defer jsonFile.Close()
+	filename := fmt.Sprintf("%s-%s.json", result.TestName, result.RunID)
+	path := resolveOutputPath(filename, diagDir)
 
 	multi := exporter.NewMultiExporter(
 		exporter.NewSummaryExporter(os.Stdout),
-		exporter.NewJSONExporter(jsonFile),
+		exporter.NewJSONFileExporter(path),
 	)
-
 	if err := multi.Export(result); err != nil {
 		t.Fatalf("Failed to export results: %v", err)
 	}
