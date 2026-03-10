@@ -34,6 +34,7 @@
     - [Validation](#validation-1)
   - [PodGang: Scheduler API Enhancements](#podgang-scheduler-api-enhancements)
   - [Backward Compatibility](#backward-compatibility)
+    - [Existing PodCliqueSets with topology constraints but no <code>topologyName</code>](#existing-podcliquesets-with-topology-constraints-but-no-topologyname)
   - [Monitoring](#monitoring)
     - [PodCliqueSet Status Conditions](#podcliqueset-status-conditions)
   - [Dependencies](#dependencies)
@@ -478,6 +479,10 @@ type TopologyLevel struct {
 
 // ClusterTopologyStatus defines the observed state of a ClusterTopology.
 type ClusterTopologyStatus struct {
+    // ObservedGeneration is the metadata.generation of the ClusterTopology that was last reconciled.
+    // Consumers can compare this to metadata.generation to determine whether the status is up to date.
+    // +optional
+    ObservedGeneration int64 `json:"observedGeneration,omitempty"`
     // Conditions represent the latest available observations of the ClusterTopology's state.
     // +optional
     Conditions []metav1.Condition `json:"conditions,omitempty"`
@@ -495,6 +500,11 @@ type SchedulerTopologyStatus struct {
     Reference string `json:"reference"`
     // InSync is true when the scheduler backend topology levels match the ClusterTopology levels.
     InSync bool `json:"inSync"`
+    // ObservedGeneration is the metadata.generation of the scheduler backend topology resource
+    // that was last compared. Allows consumers to verify the comparison is current.
+    // Zero if the resource was not found.
+    // +optional
+    ObservedGeneration int64 `json:"observedGeneration,omitempty"`
     // Message provides detail when InSync is false (e.g., describing the mismatch).
     // +optional
     Message string `json:"message,omitempty"`
@@ -517,20 +527,26 @@ The `schedulerTopologyStatuses` field provides per-backend detail. Each entry re
 
 ```yaml
 status:
+  observedGeneration: 3
   conditions:
     - type: SchedulerTopologyInSync
       status: "False"
       reason: Drift
       message: "1 of 2 scheduler backends out of sync"
+      observedGeneration: 3
   schedulerTopologyStatuses:
     - name: kai-scheduler
       reference: h100-kai-topology
       inSync: true
+      observedGeneration: 5       # generation of the kai-scheduler Topology CR
     - name: other-scheduler
       reference: h100-other-topology
       inSync: false
+      observedGeneration: 2       # generation of the other-scheduler Topology CR
       message: "levels mismatch: expected [zone, block, host], got [zone, host]"
 ```
+
+The `observedGeneration` on `ClusterTopologyStatus` records the ClusterTopology's `metadata.generation` that was last reconciled. Consumers can compare `status.observedGeneration` to `metadata.generation` to determine whether the status reflects the latest spec. Each `SchedulerTopologyStatus` entry also carries an `observedGeneration` recording the `metadata.generation` of the scheduler backend topology resource that was last compared, so consumers can verify the drift check was performed against the current version of that resource (zero if the resource was not found).
 
 When a ClusterTopology's `schedulerReferences` is empty, the operator auto-manages the scheduler backend topology. The `SchedulerTopologyInSync` condition is still set — it is expected to be `True` since the operator controls both resources. The `schedulerTopologyStatuses` field will contain a single entry for the auto-managed resource.
 
@@ -970,7 +986,7 @@ Condition States:
 | `Unknown` | `ClusterTopologyNotFound`           | When `ClusterTopology` CR is no longer existing              |
 | `Unknown` | `TopologyAwareSchedulingDisabled`   | When TAS has been disabled cluster-wide while the PCS still has topology constraints |
 | `Unknown` | `TopologyNameMissing`        | When PCS has topology constraints but no `topologyName` (upgrade from single-topology design) |
-| `True`    | `ClusterTopologyLevelsUnavailable`  | When one or more topology levels used by a deployed `PodCliqueSet` are no longer present in `ClusterTopology` (e.g., the ClusterTopology was deleted and recreated with different levels that no longer include the domains used by this PCS) |
+| `True`    | `ClusterTopologyLevelsUnavailable`  | When one or more topology levels used by a deployed `PodCliqueSet` are no longer present in `ClusterTopology` (e.g., the ClusterTopology was deleted and recreated with different levels that no longer include the domains used by this PCS). The reconciler removes the invalid topology constraints from the PodGang resources so the scheduler no longer enforces them. Already-running pods are not evicted — they continue running at their current placement. |
 | `False`   | `AllClusterTopologyLevelsAvailable` | All topology levels used by a deployed `PodCliqueSet` are amongst the supported topology levels as defined in `ClusterTopology` |
 
 ### Dependencies
