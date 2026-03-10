@@ -669,8 +669,8 @@ Condition States:
 
 **Scheduler backend with Topology Aware Scheduling Support**
 
-Currently the only scheduler backend that supports hierarchical TAS is [KAI Scheduler](https://github.com/NVIDIA/KAI-Scheduler). See [here](https://github.com/NVIDIA/KAI-Scheduler/tree/main/docs/topology) for more information. 
-Follow [instructions](https://github.com/NVIDIA/KAI-Scheduler?tab=readme-ov-file#installation) to install KAI scheduler which also will install the required `Topology` CR which gets automatically created by Grove operator.
+Currently the only scheduler backend that supports hierarchical TAS is [KAI Scheduler](https://github.com/kai-scheduler/kai-scheduler). See [here](https://github.com/kai-scheduler/kai-scheduler/tree/main/docs/topology) for more information. 
+Follow [instructions](https://github.com/kai-scheduler/kai-scheduler?tab=readme-ov-file#installation) to install KAI scheduler which also will install the required `Topology` CR which gets automatically created by Grove operator.
 
 > NOTE: However, Grove Operator is not limited to one scheduler backend and any other scheduler providing TAS functionality can be plugged in as well.
 

@@ -421,7 +421,7 @@ def install_kai_scheduler(config: ClusterConfig):
 
     sh.helm(
         "install", "kai-scheduler",
-        f"oci://ghcr.io/nvidia/kai-scheduler/kai-scheduler",
+        f"oci://ghcr.io/kai-scheduler/kai-scheduler/kai-scheduler",
         "--version", config.kai_version,
         "--namespace", "kai-scheduler",
         "--create-namespace",
