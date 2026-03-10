@@ -82,9 +82,9 @@ def node_manifest(node_id: int, kwok_cfg: KwokConfig) -> dict:
     """
     name = f"kwok-node-{node_id}"
     resources = {
-        "cpu": kwok_cfg.kwok_node_cpu,
-        "memory": kwok_cfg.kwok_node_memory,
-        "pods": str(kwok_cfg.kwok_max_pods),
+        "cpu": kwok_cfg.node_cpu,
+        "memory": kwok_cfg.node_memory,
+        "pods": str(kwok_cfg.max_pods),
     }
     return {
         "apiVersion": "v1",
@@ -218,29 +218,29 @@ def _wait_kwok_nodes_ready(timeout: int = 120) -> None:
         console.print("[green]\u2705 All KWOK nodes are ready[/green]")
 
 
-def create_nodes(total: int, kwok_cfg: KwokConfig) -> None:
+def create_nodes(cfg: KwokConfig) -> None:
     """Create KWOK nodes in parallel batches.
 
     Args:
-        total: Total number of KWOK nodes to create.
-        kwok_cfg: KWOK configuration with batch size and node resource limits.
+        cfg: KWOK configuration with node count, batch size, and resource limits.
     """
+    total = cfg.nodes
     if total <= 0:
         console.print("[yellow]No KWOK nodes requested, skipping.[/yellow]")
         return
 
-    logger.info("Creating %d KWOK nodes (batch size=%d)...", total, kwok_cfg.kwok_batch_size)
+    logger.info("Creating %d KWOK nodes (batch size=%d)...", total, cfg.batch_size)
     successes: list[int] = []
     failures: list[tuple[int, str]] = []
 
     batches = []
-    for batch_start in range(0, total, kwok_cfg.kwok_batch_size):
-        batch_end = min(batch_start + kwok_cfg.kwok_batch_size, total)
+    for batch_start in range(0, total, cfg.batch_size):
+        batch_end = min(batch_start + cfg.batch_size, total)
         batches.append(list(range(batch_start, batch_end)))
 
     max_workers = min(len(batches), 5)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(create_node_batch, node_ids, kwok_cfg): node_ids for node_ids in batches}
+        futures = {executor.submit(create_node_batch, node_ids, cfg): node_ids for node_ids in batches}
         for future in as_completed(futures):
             node_ids = futures[future]
             batch_ok, batch_fail = future.result()

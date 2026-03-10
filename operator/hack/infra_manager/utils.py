@@ -22,6 +22,7 @@ import subprocess
 
 import sh
 
+from infra_manager.config import GroveConfig
 from infra_manager.constants import (
     DEFAULT_PPROF_BIND_HOST,
     DEFAULT_PPROF_BIND_PORT,
@@ -48,51 +49,40 @@ def kwok_release_url(version: str) -> str:
     return f"https://github.com/{KWOK_GITHUB_REPO}/releases/download/{version}"
 
 
-def resolve_registry_repos(registry: str | None, port: int) -> tuple[str, str]:
-    """Resolve push/pull registry repos.
+def resolve_registry_repos(port: int) -> tuple[str, str]:
+    """Resolve push/pull registry repos for a k3d local registry.
 
     k3d uses separate names for push (localhost:<port>) and pull (registry:<port>)
     because the push happens from the host while the pull happens inside the cluster.
 
     Args:
-        registry: Explicit registry URL override, or None for k3d local.
         port: k3d local registry port number.
 
     Returns:
         Tuple of (push_repo, pull_repo) registry URLs.
     """
-    if registry:
-        return registry, registry
     return f"localhost:{port}", f"registry:{port}"
 
 
-def collect_grove_helm_overrides(
-    profiling: bool = False,
-    pcs_syncs: int | None = None,
-    pclq_syncs: int | None = None,
-    pcsg_syncs: int | None = None,
-) -> list[str]:
+def collect_grove_helm_overrides(cfg: GroveConfig) -> list[str]:
     """Build helm override strings from grove tuning options.
 
     Args:
-        profiling: Whether to enable pprof on Grove.
-        pcs_syncs: PodCliqueSet concurrent syncs override, or None.
-        pclq_syncs: PodClique concurrent syncs override, or None.
-        pcsg_syncs: PodCliqueScalingGroup concurrent syncs override, or None.
+        cfg: Grove configuration with profiling and sync settings.
 
     Returns:
         List of ``key=value`` strings for ``helm --set`` arguments.
     """
     overrides: list[tuple[bool, str, str]] = [
-        (profiling, HELM_KEY_PROFILING, "true"),
-        (profiling, HELM_KEY_PPROF_BIND_HOST, DEFAULT_PPROF_BIND_HOST),
-        (profiling, HELM_KEY_PPROF_BIND_PORT, str(DEFAULT_PPROF_BIND_PORT)),
-        (pcs_syncs is not None, HELM_KEY_PCS_SYNCS, str(pcs_syncs)),
-        (pclq_syncs is not None, HELM_KEY_PCLQ_SYNCS, str(pclq_syncs)),
-        (pcsg_syncs is not None, HELM_KEY_PCSG_SYNCS, str(pcsg_syncs)),
+        (cfg.profiling, HELM_KEY_PROFILING, "true"),
+        (cfg.profiling, HELM_KEY_PPROF_BIND_HOST, DEFAULT_PPROF_BIND_HOST),
+        (cfg.profiling, HELM_KEY_PPROF_BIND_PORT, str(DEFAULT_PPROF_BIND_PORT)),
+        (cfg.pcs_syncs is not None, HELM_KEY_PCS_SYNCS, str(cfg.pcs_syncs)),
+        (cfg.pclq_syncs is not None, HELM_KEY_PCLQ_SYNCS, str(cfg.pclq_syncs)),
+        (cfg.pcsg_syncs is not None, HELM_KEY_PCSG_SYNCS, str(cfg.pcsg_syncs)),
     ]
     result = [f"{key}={value}" for enabled, key, value in overrides if enabled]
-    if profiling:
+    if cfg.profiling:
         result.extend(_pyroscope_annotation_overrides())
     return result
 

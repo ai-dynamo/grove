@@ -27,7 +27,7 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from infra_manager import console
-from infra_manager.config import K3dConfig
+from infra_manager.config import ClusterConfig
 from infra_manager.constants import (
     CLUSTER_CREATE_RETRY_WAIT_SECONDS,
     CLUSTER_TIMEOUT,
@@ -160,25 +160,25 @@ def prepull_image_groups(
 # ============================================================================
 
 
-def delete_cluster(k3d_cfg: K3dConfig) -> None:
+def delete_cluster(cfg: ClusterConfig) -> None:
     """Delete the k3d cluster.
 
     Args:
-        k3d_cfg: k3d cluster configuration with the cluster name.
+        cfg: k3d cluster configuration with the cluster name.
     """
-    console.print(f"[yellow]\u2139\ufe0f  Deleting k3d cluster '{k3d_cfg.cluster_name}'...[/yellow]")
+    console.print(f"[yellow]\u2139\ufe0f  Deleting k3d cluster '{cfg.name}'...[/yellow]")
     try:
-        sh.k3d("cluster", "delete", k3d_cfg.cluster_name)
-        console.print(f"[green]\u2705 Cluster '{k3d_cfg.cluster_name}' deleted[/green]")
+        sh.k3d("cluster", "delete", cfg.name)
+        console.print(f"[green]\u2705 Cluster '{cfg.name}' deleted[/green]")
     except sh.ErrorReturnCode_1:
-        console.print(f"[yellow]\u26a0\ufe0f  Cluster '{k3d_cfg.cluster_name}' not found or already deleted[/yellow]")
+        console.print(f"[yellow]\u26a0\ufe0f  Cluster '{cfg.name}' not found or already deleted[/yellow]")
 
 
-def create_cluster(k3d_cfg: K3dConfig) -> None:
+def create_cluster(cfg: ClusterConfig) -> None:
     """Create a k3d cluster with retry logic.
 
     Args:
-        k3d_cfg: k3d cluster configuration including retry count.
+        cfg: k3d cluster configuration including retry count.
 
     Raises:
         RetryError: If the cluster cannot be created after all retries.
@@ -186,13 +186,13 @@ def create_cluster(k3d_cfg: K3dConfig) -> None:
     console.print(Panel.fit("Creating k3d cluster", style="bold blue"))
 
     @retry(
-        stop=stop_after_attempt(k3d_cfg.max_retries),
+        stop=stop_after_attempt(cfg.max_retries),
         wait=wait_fixed(CLUSTER_CREATE_RETRY_WAIT_SECONDS),
         reraise=True,
     )
     def _attempt() -> None:
         try:
-            sh.k3d("cluster", "delete", k3d_cfg.cluster_name)
+            sh.k3d("cluster", "delete", cfg.name)
             console.print("[yellow]   Removed existing cluster[/yellow]")
         except sh.ErrorReturnCode_1:
             console.print("[yellow]   No existing cluster found[/yellow]")
@@ -200,19 +200,19 @@ def create_cluster(k3d_cfg: K3dConfig) -> None:
         sh.k3d(
             "cluster",
             "create",
-            k3d_cfg.cluster_name,
+            cfg.name,
             "--servers",
             "1",
             "--agents",
-            str(k3d_cfg.worker_nodes),
+            str(cfg.worker_nodes),
             "--image",
-            k3d_cfg.k3s_image,
+            cfg.k3s_image,
             "--api-port",
-            k3d_cfg.api_port,
+            cfg.api_port,
             "--port",
-            f"{k3d_cfg.lb_port}@loadbalancer",
+            f"{cfg.lb_port}@loadbalancer",
             "--registry-create",
-            f"registry:0.0.0.0:{k3d_cfg.registry_port}",
+            f"registry:0.0.0.0:{cfg.registry_port}",
             "--k3s-arg",
             f"--node-taint={E2E_NODE_ROLE_KEY}=agent:NoSchedule@agent:*",
             "--k3s-node-label",
@@ -222,7 +222,7 @@ def create_cluster(k3d_cfg: K3dConfig) -> None:
             "--k3s-node-label",
             "nvidia.com/gpu.deploy.operands=false@agent:*",
             "--agents-memory",
-            k3d_cfg.worker_memory,
+            cfg.worker_memory,
             "--timeout",
             CLUSTER_TIMEOUT,
             "--wait",

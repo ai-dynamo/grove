@@ -28,7 +28,7 @@ from rich.panel import Panel
 from tenacity import RetryError, retry, stop_after_attempt, wait_fixed
 
 from infra_manager import console
-from infra_manager.config import ComponentConfig, K3dConfig
+from infra_manager.config import ClusterConfig, GroveConfig
 from infra_manager.constants import (
     DEFAULT_GROVE_NAMESPACE,
     E2E_TEST_COMMIT,
@@ -80,11 +80,11 @@ def _check_grove_webhook_ready(operator_dir: Path) -> None:
         raise RuntimeError("Grove webhook not ready")
 
 
-def _build_grove_images(comp_cfg: ComponentConfig, operator_dir: Path, push_repo: str) -> dict[str, str]:
+def _build_grove_images(skaffold_profile: str, operator_dir: Path, push_repo: str) -> dict[str, str]:
     """Run skaffold build and return the built image map.
 
     Args:
-        comp_cfg: Component configuration with the skaffold profile.
+        skaffold_profile: Skaffold profile to use for the build.
         operator_dir: Root directory of the Grove operator source tree.
         push_repo: Registry URL to push built images to.
 
@@ -98,7 +98,7 @@ def _build_grove_images(comp_cfg: ComponentConfig, operator_dir: Path, push_repo
             "--default-repo",
             push_repo,
             "--profile",
-            comp_cfg.skaffold_profile,
+            skaffold_profile,
             "--quiet",
             "--output={{json .}}",
             _cwd=str(operator_dir),
@@ -108,7 +108,8 @@ def _build_grove_images(comp_cfg: ComponentConfig, operator_dir: Path, push_repo
 
 
 def _deploy_grove_charts(
-    comp_cfg: ComponentConfig,
+    skaffold_profile: str,
+    namespace: str,
     operator_dir: Path,
     images: dict[str, str],
     pull_repo: str,
@@ -116,7 +117,8 @@ def _deploy_grove_charts(
     """Run skaffold deploy with resolved image tags.
 
     Args:
-        comp_cfg: Component configuration with skaffold profile and namespace.
+        skaffold_profile: Skaffold profile to use for deployment.
+        namespace: Kubernetes namespace to deploy Grove into.
         operator_dir: Root directory of the Grove operator source tree.
         images: Dictionary mapping image names to their full tagged references.
         pull_repo: Registry URL the cluster uses to pull images.
@@ -129,9 +131,9 @@ def _deploy_grove_charts(
     sh.skaffold(
         "deploy",
         "--profile",
-        comp_cfg.skaffold_profile,
+        skaffold_profile,
         "--namespace",
-        comp_cfg.grove_namespace,
+        namespace,
         "--status-check=false",
         "--default-repo=",
         "--images",
@@ -186,34 +188,30 @@ def _wait_grove_webhook(operator_dir: Path) -> None:
 
 
 def deploy_grove_operator(
-    k3d_cfg: K3dConfig,
-    comp_cfg: ComponentConfig,
+    grove_cfg: GroveConfig,
+    cluster_cfg: ClusterConfig,
     operator_dir: Path,
-    *,
-    registry: str | None = None,
-    profiling: bool = False,
-    pcs_syncs: int | None = None,
-    pclq_syncs: int | None = None,
-    pcsg_syncs: int | None = None,
 ) -> None:
     """Deploy Grove operator using Skaffold.
 
     Builds images, deploys charts, applies helm overrides, and waits for
-    the webhook to become responsive.
+    the webhook to become responsive. Only "local" mode (skaffold build) is
+    currently implemented.
 
     Args:
-        k3d_cfg: k3d cluster configuration for registry port resolution.
-        comp_cfg: Component configuration with skaffold profile and namespace.
+        grove_cfg: Grove operator configuration with namespace, mode, and profiling settings.
+        cluster_cfg: Cluster configuration for registry resolution.
         operator_dir: Root directory of the Grove operator source tree.
-        registry: Container registry URL override, or None for k3d local.
-        profiling: Whether to enable pprof on Grove.
-        pcs_syncs: PodCliqueSet concurrent syncs override, or None.
-        pclq_syncs: PodClique concurrent syncs override, or None.
-        pcsg_syncs: PodCliqueScalingGroup concurrent syncs override, or None.
+
+    Raises:
+        NotImplementedError: If grove_cfg.mode is not "local".
     """
+    if grove_cfg.mode != "local":
+        raise NotImplementedError(f"Grove deploy mode {grove_cfg.mode!r} is not yet implemented")
+
     console.print(Panel.fit("Deploying Grove operator", style="bold blue"))
     try:
-        sh.helm("uninstall", HELM_RELEASE_GROVE, "-n", comp_cfg.grove_namespace)
+        sh.helm("uninstall", HELM_RELEASE_GROVE, "-n", grove_cfg.namespace)
         console.print("[yellow]   Removed existing Grove operator release[/yellow]")
     except sh.ErrorReturnCode_1:
         console.print("[yellow]   No existing Grove operator release found[/yellow]")
@@ -231,23 +229,21 @@ def deploy_grove_operator(
         }
     )
 
-    push_repo, pull_repo = resolve_registry_repos(registry, k3d_cfg.registry_port)
+    if cluster_cfg.registry is not None:
+        push_repo = pull_repo = cluster_cfg.registry
+    else:
+        push_repo, pull_repo = resolve_registry_repos(cluster_cfg.registry_port)
 
-    raw_images = _build_grove_images(comp_cfg, operator_dir, push_repo)
+    raw_images = _build_grove_images(grove_cfg.local.skaffold_profile, operator_dir, push_repo)
     images = {name: tag.replace(push_repo, pull_repo) for name, tag in raw_images.items()}
 
-    _deploy_grove_charts(comp_cfg, operator_dir, images, pull_repo)
+    _deploy_grove_charts(grove_cfg.local.skaffold_profile, grove_cfg.namespace, operator_dir, images, pull_repo)
 
-    helm_overrides = collect_grove_helm_overrides(
-        profiling=profiling,
-        pcs_syncs=pcs_syncs,
-        pclq_syncs=pclq_syncs,
-        pcsg_syncs=pcsg_syncs,
-    )
-    _apply_grove_helm_overrides(operator_dir, helm_overrides, comp_cfg.grove_namespace)
-
+    helm_overrides = collect_grove_helm_overrides(grove_cfg)
     console.print("[yellow]\u2139\ufe0f  Waiting for Grove deployment rollout...[/yellow]")
-    sh.kubectl("rollout", "status", "deployment", "-n", comp_cfg.grove_namespace, "--timeout=5m")
+    sh.kubectl("rollout", "status", "deployment", "-n", grove_cfg.namespace, "--timeout=5m")
+
+    _apply_grove_helm_overrides(operator_dir, helm_overrides, grove_cfg.namespace)
 
     _wait_grove_webhook(operator_dir)
 

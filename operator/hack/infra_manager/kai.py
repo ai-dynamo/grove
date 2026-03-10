@@ -25,7 +25,7 @@ from rich.panel import Panel
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from infra_manager import console
-from infra_manager.config import ComponentConfig
+from infra_manager.config import KaiConfig
 from infra_manager.constants import (
     E2E_NODE_ROLE_KEY,
     HELM_RELEASE_KAI,
@@ -37,14 +37,14 @@ from infra_manager.constants import (
 )
 
 
-def install_kai_scheduler(comp_cfg: ComponentConfig) -> None:
+def install_kai_scheduler(cfg: KaiConfig) -> None:
     """Install Kai Scheduler using Helm.
 
     Args:
-        comp_cfg: Component configuration with the Kai version.
+        cfg: Kai Scheduler configuration with the version.
     """
     console.print(Panel.fit("Installing Kai Scheduler", style="bold blue"))
-    console.print(f"[yellow]Version: {comp_cfg.kai_version}[/yellow]")
+    console.print(f"[yellow]Version: {cfg.version}[/yellow]")
     try:
         sh.helm("uninstall", HELM_RELEASE_KAI, "-n", NS_KAI_SCHEDULER)
         console.print("[yellow]   Removed existing Kai Scheduler release[/yellow]")
@@ -55,7 +55,7 @@ def install_kai_scheduler(comp_cfg: ComponentConfig) -> None:
         HELM_RELEASE_KAI,
         KAI_SCHEDULER_OCI,
         "--version",
-        comp_cfg.kai_version,
+        cfg.version,
         "--namespace",
         NS_KAI_SCHEDULER,
         "--create-namespace",
