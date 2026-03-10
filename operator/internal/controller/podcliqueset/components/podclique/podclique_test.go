@@ -444,10 +444,10 @@ func triageContainersByMNNVLClaim(containers []corev1.Container) (withClaim, wit
 
 func TestBuildResource_ResourceClaimNames(t *testing.T) {
 	tests := []struct {
-		description            string
-		resourceClaimNames     []string
-		expectedClaimNames     []string
-		expectedClaimNamesNil  bool
+		description           string
+		resourceClaimNames    []string
+		expectedClaimNames    []string
+		expectedClaimNamesNil bool
 	}{
 		{
 			description:           "nil resourceClaimNames results in nil on PodClique spec",

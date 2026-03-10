@@ -8913,9 +8913,10 @@ spec:
                 type: integer
               resourceClaimNames:
                 description: |-
-                  ResourceClaimNames is the list of ResourceClaim names that have been created for this PodClique instance.
-                  These claims are injected into the PodSpec of every pod in the PodClique, enabling resource sharing
-                  amongst all pods in the instance. This field is managed by the controller and should not be set by users.
+                  ResourceClaimNames is the list of ResourceClaim names to inject into the PodSpec of every pod
+                  in this PodClique instance, enabling resource sharing amongst all pods in the instance.
+                  When a PodClique is managed by a PCS or PCSG, the controller populates this field automatically
+                  from the ResourceClaimTemplateNames and ResourceClaimTemplateConfigs configuration.
                 items:
                   type: string
                 type: array

@@ -255,6 +255,7 @@ _Appears in:_
 | `minAvailable` _integer_ | MinAvailable serves two purposes:<br />Gang Scheduling:<br />It defines the minimum number of replicas that are guaranteed to be gang scheduled.<br />Gang Termination:<br />It defines the minimum requirement of available replicas for a PodCliqueScalingGroup.<br />Violation of this threshold for a duration beyond TerminationDelay will result in termination of the PodCliqueSet replica that it belongs to.<br />Default: If not specified, it defaults to 1.<br />Constraints:<br />MinAvailable cannot be greater than Replicas.<br />If ScaleConfig is defined then its MinAvailable should not be less than ScaleConfig.MinReplicas. | 1 |  |
 | `scaleConfig` _[AutoScalingConfig](#autoscalingconfig)_ | ScaleConfig is the horizontal pod autoscaler configuration for the pod clique scaling group. |  |  |
 | `topologyConstraint` _[TopologyConstraint](#topologyconstraint)_ | TopologyConstraint defines topology placement requirements for PodCliqueScalingGroup.<br />Must be equal to or stricter than parent PodCliqueSet constraints. |  |  |
+| `resourceClaimTemplateConfigs` _[ResourceClaimTemplateConfig](#resourceclaimtemplateconfig) array_ | ResourceClaimTemplateConfigs is a list of ResourceClaimTemplateConfig which defines a common set of<br />ResourceClaimTemplate names for a set of PodCliques in the scaling group. A ResourceClaim is created per<br />ResourceClaimTemplate name per PodCliqueScalingGroup instance and added to the PodSpec of each PodClique<br />specified in the CliqueNames field. This allows sharing of resources such as accelerators across all pods<br />in the specified PodCliques that are part of one PodCliqueScalingGroup instance. |  |  |
 
 
 #### PodCliqueScalingGroupReplicaRollingUpdateProgress
@@ -310,6 +311,7 @@ _Appears in:_
 | `replicas` _integer_ | Replicas is the desired number of replicas for the PodCliqueScalingGroup.<br />If not specified, it defaults to 1. | 1 |  |
 | `minAvailable` _integer_ | MinAvailable specifies the minimum number of ready replicas required for a PodCliqueScalingGroup to be considered operational.<br />A PodCliqueScalingGroup replica is considered "ready" when its associated PodCliques have sufficient ready or starting pods.<br />If MinAvailable is breached, it will be used to signal that the PodCliqueScalingGroup is no longer operating with the desired availability.<br />MinAvailable cannot be greater than Replicas. If ScaleConfig is defined then its MinAvailable should not be less than ScaleConfig.MinReplicas.<br />It serves two main purposes:<br />1. Gang Scheduling: MinAvailable defines the minimum number of replicas that are guaranteed to be gang scheduled.<br />2. Gang Termination: MinAvailable is used as a lower bound below which a PodGang becomes a candidate for Gang termination.<br />If not specified, it defaults to 1. | 1 |  |
 | `cliqueNames` _string array_ | CliqueNames is the list of PodClique names that are configured in the<br />matching PodCliqueScalingGroup in PodCliqueSet.Spec.Template.PodCliqueScalingGroupConfigs. |  |  |
+| `resourceClaimTemplateConfigs` _[ResourceClaimTemplateConfig](#resourceclaimtemplateconfig) array_ | ResourceClaimTemplateConfigs is the list of ResourceClaimTemplateConfig propagated from<br />PodCliqueScalingGroupConfig. It defines which ResourceClaimTemplates to use and which PodCliques<br />within the scaling group should share the resulting ResourceClaims. |  |  |
 
 
 #### PodCliqueScalingGroupStatus
@@ -482,6 +484,7 @@ _Appears in:_
 | `minAvailable` _integer_ | MinAvailable serves two purposes:<br />1. It defines the minimum number of pods that are guaranteed to be gang scheduled.<br />2. It defines the minimum requirement of available pods in a PodClique. Violation of this threshold will result in termination of the PodGang that it belongs to.<br />If MinAvailable is not set, then it will default to the template Replicas. |  |  |
 | `startsAfter` _string array_ | StartsAfter provides you a way to explicitly define the startup dependencies amongst cliques.<br />If CliqueStartupType in PodGang has been set to 'CliqueStartupTypeExplicit', then to create an ordered start amongst PodClique's StartsAfter can be used.<br />A forest of DAG's can be defined to model any start order dependencies. If there are more than one PodClique's defined and StartsAfter is not set for any of them,<br />then their startup order is random at best and must not be relied upon.<br />Validations:<br />1. If a StartsAfter has been defined and one or more cycles are detected in DAG's then it will be flagged as validation error.<br />2. If StartsAfter is defined and does not identify any PodClique then it will be flagged as a validation error. |  |  |
 | `autoScalingConfig` _[AutoScalingConfig](#autoscalingconfig)_ | ScaleConfig is the horizontal pod autoscaler configuration for a PodClique. |  |  |
+| `resourceClaimNames` _string array_ | ResourceClaimNames is the list of ResourceClaim names to inject into the PodSpec of every pod<br />in this PodClique instance, enabling resource sharing amongst all pods in the instance.<br />When a PodClique is managed by a PCS or PCSG, the controller populates this field automatically<br />from the ResourceClaimTemplateNames and ResourceClaimTemplateConfigs configuration. |  |  |
 
 
 #### PodCliqueStatus
@@ -528,6 +531,7 @@ _Appears in:_
 | `labels` _object (keys:string, values:string)_ | Labels is a map of string keys and values that can be used to organize and categorize<br />(scope and select) objects. May match selectors of replication controllers<br />and services.<br />More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/labels |  |  |
 | `annotations` _object (keys:string, values:string)_ | Annotations is an unstructured key value map stored with a resource that may be<br />set by external tools to store and retrieve arbitrary metadata. They are not<br />queryable and should be preserved when modifying objects.<br />More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations |  |  |
 | `topologyConstraint` _[TopologyConstraint](#topologyconstraint)_ | TopologyConstraint defines topology placement requirements for PodClique.<br />Must be equal to or stricter than parent resource constraints. |  |  |
+| `resourceClaimTemplateNames` _string array_ | ResourceClaimTemplateNames is a list of resource.ResourceClaimTemplate names which will be used to create<br />ResourceClaims that are added to the PodSpec of each Pod in the PodClique instance, thus allowing sharing of<br />resources such as accelerators across all pods in the PodClique. One ResourceClaim is created per<br />ResourceClaimTemplate name per PodClique instance. All ResourceClaims created will be completely managed by Grove.<br />NOTE: This is not the same as adding ResourceClaimTemplate inside the<br />Spec.PodSpec.ResourceClaims[x].ResourceClaimTemplateName in the PodClique since that will create a unique<br />ResourceClaim for each pod in the PodClique. |  |  |
 | `spec` _[PodCliqueSpec](#podcliquespec)_ | Specification of the desired behavior of a PodClique.<br />More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#spec-and-status |  |  |
 
 
@@ -585,6 +589,27 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `current` _string_ | Current captures the current pod name that is a target for update. |  |  |
 | `completed` _string array_ | Completed captures the pod names that have already been updated. |  |  |
+
+
+#### ResourceClaimTemplateConfig
+
+
+
+ResourceClaimTemplateConfig defines a common set of ResourceClaimTemplate names for a set of PodCliques.
+A ResourceClaim is created per ResourceClaimTemplate name per PodCliqueScalingGroup instance and added to the
+PodSpec of each PodClique specified in the CliqueNames field. This allows sharing of resources such as
+accelerators across all pods in the specified PodCliques that are part of one PodCliqueScalingGroup instance.
+
+
+
+_Appears in:_
+- [PodCliqueScalingGroupConfig](#podcliquescalinggroupconfig)
+- [PodCliqueScalingGroupSpec](#podcliquescalinggroupspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `names` _string array_ | Names is a list of ResourceClaimTemplate names which will be used to create ResourceClaims.<br />All ResourceClaimTemplates must exist in the same namespace as the PodCliqueSet. |  |  |
+| `cliqueNames` _string array_ | CliqueNames is a list of names of PodCliques that will share the ResourceClaims created from the<br />ResourceClaimTemplates specified in the Names field. Each name must be a valid clique name within<br />the parent PodCliqueScalingGroupConfig's CliqueNames. |  |  |
 
 
 #### TopologyConstraint
