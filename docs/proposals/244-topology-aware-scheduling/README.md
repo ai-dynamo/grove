@@ -28,6 +28,7 @@
     - [Controller Reconciliation](#controller-reconciliation)
     - [Topology Configuration Updates](#topology-configuration-updates)
   - [ClusterTopology custom resource](#clustertopology-custom-resource)
+    - [Scheduler Backend Topology](#scheduler-backend-topology)
     - [ClusterTopology Lifecycle](#clustertopology-lifecycle)
   - [Topology Constraints in PodCliqueSet](#topology-constraints-in-podcliqueset)
     - [Topology Reference](#topology-reference)
@@ -510,6 +511,8 @@ type SchedulerTopologyStatus struct {
     Message string `json:"message,omitempty"`
 }
 ```
+
+#### Scheduler Backend Topology
 
 **Aggregate condition: `SchedulerTopologyInSync`**
 
