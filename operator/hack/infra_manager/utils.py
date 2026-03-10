@@ -23,12 +23,14 @@ import subprocess
 import sh
 
 from infra_manager.constants import (
-    DEFAULT_PPROF_BIND_ADDRESS,
+    DEFAULT_PPROF_BIND_HOST,
+    DEFAULT_PPROF_BIND_PORT,
     HELM_KEY_ANNOTATION_PREFIX,
     HELM_KEY_PCLQ_SYNCS,
     HELM_KEY_PCS_SYNCS,
     HELM_KEY_PCSG_SYNCS,
-    HELM_KEY_PPROF_BIND_ADDRESS,
+    HELM_KEY_PPROF_BIND_HOST,
+    HELM_KEY_PPROF_BIND_PORT,
     HELM_KEY_PROFILING,
     KWOK_GITHUB_REPO,
 )
@@ -83,7 +85,8 @@ def collect_grove_helm_overrides(
     """
     overrides: list[tuple[bool, str, str]] = [
         (profiling, HELM_KEY_PROFILING, "true"),
-        (profiling, HELM_KEY_PPROF_BIND_ADDRESS, DEFAULT_PPROF_BIND_ADDRESS),
+        (profiling, HELM_KEY_PPROF_BIND_HOST, DEFAULT_PPROF_BIND_HOST),
+        (profiling, HELM_KEY_PPROF_BIND_PORT, str(DEFAULT_PPROF_BIND_PORT)),
         (pcs_syncs is not None, HELM_KEY_PCS_SYNCS, str(pcs_syncs)),
         (pclq_syncs is not None, HELM_KEY_PCLQ_SYNCS, str(pclq_syncs)),
         (pcsg_syncs is not None, HELM_KEY_PCSG_SYNCS, str(pcsg_syncs)),
@@ -100,7 +103,7 @@ def _pyroscope_annotation_overrides() -> list[str]:
     Returns:
         List of ``annotations.<escaped-key>=value`` strings.
     """
-    port = DEFAULT_PPROF_BIND_ADDRESS.split(":")[-1]
+    port = str(DEFAULT_PPROF_BIND_PORT)
     annotations = {
         "profiles.grafana.com/cpu.scrape": "true",
         "profiles.grafana.com/cpu.port": port,
