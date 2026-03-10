@@ -20,17 +20,17 @@
     - [Workload Portability](#workload-portability)
     - [ClusterTopology Deletion](#clustertopology-deletion)
     - [Immutable Topology Levels](#immutable-topology-levels)
-    - [Topology Profile Immutability After Scheduling](#topology-profile-immutability-after-scheduling)
+    - [Topology Immutability After Scheduling](#topology-immutability-after-scheduling)
 - [Design Details](#design-details)
   - [Cluster Admin API](#cluster-admin-api)
     - [Topology Domains](#topology-domains)
     - [Validation](#validation)
-    - [Operator Startup behavior](#operator-startup-behavior)
+    - [Controller Reconciliation](#controller-reconciliation)
     - [Topology Configuration Updates](#topology-configuration-updates)
   - [ClusterTopology custom resource](#clustertopology-custom-resource)
     - [ClusterTopology Lifecycle](#clustertopology-lifecycle)
   - [Topology Constraints in PodCliqueSet](#topology-constraints-in-podcliqueset)
-    - [Topology Profile Reference](#topology-profile-reference)
+    - [Topology Reference](#topology-reference)
     - [Validation](#validation-1)
   - [PodGang: Scheduler API Enhancements](#podgang-scheduler-api-enhancements)
   - [Backward Compatibility](#backward-compatibility)
@@ -39,14 +39,14 @@
   - [Dependencies](#dependencies)
   - [Test Plan](#test-plan)
 - [Alternatives](#alternatives)
-  - [Hybrid Management: Operator-Managed Default + Admin-Created Topologies](#hybrid-management-operator-managed-default--admin-created-topologies)
+  - [Fully Operator-Managed Topologies from Configuration Profiles](#fully-operator-managed-topologies-from-configuration-profiles)
 <!-- /toc -->
 
 ## Summary
 
 AI Inference workloads require low-latency data transfer between model layers or shards. Topology-aware placement of such workloads is critical to maximize performance on GPU scale-out clusters. This GREP proposes a unified topology model in Grove and introduces new API for users to define scheduling constraints that will guarantee topology optimized placement of their workloads.
 
-In clusters with heterogeneous hardware, a single topology definition cannot accurately represent different interconnect hierarchies. This GREP also extends the topology API to support multiple named ClusterTopology resources created by the operator from configured topology profiles, enabling the cluster to be partitioned into segments with distinct topology hierarchies. Each ClusterTopology defines its own set of node label keys, so nodes matching one topology's labels are naturally separated from nodes matching another. Workloads select the appropriate partition via a topology profile reference on PodCliqueSet.
+In clusters with heterogeneous hardware, a single topology definition cannot accurately represent different interconnect hierarchies. This GREP also extends the topology API to support multiple admin-created ClusterTopology resources watched and reconciled by the Grove controller, enabling the cluster to be partitioned into segments with distinct topology hierarchies. Each ClusterTopology defines its own set of node label keys, so nodes matching one topology's labels are naturally separated from nodes matching another. Workloads select the appropriate partition via a topology reference on PodCliqueSet.
 
 ## Motivation
 
@@ -58,7 +58,7 @@ In multi-node disaggregated AI inference workloads, minimizing time-to-first-tok
 
 Since different inference workloads have distinct communication patterns and packing needs, an advanced scheduler, such as KAI, is necessary to ensure topology optimized workload scheduling. Workload operators must be able to declaratively specify their topology and packing requirements when defining `PodCliqueSet`s. Combining expressive workload intent with topology-aware scheduling unlocks significant latency and throughput improvements for production-scale, multi-node LLM inference.
 
-AI clusters often contain heterogeneous hardware with different interconnect characteristics. Each hardware type may require a distinct topology definition for optimal scheduling. For example, a cluster with both 3-level (zone > rack > host) DGX H100 nodes and 4-level (zone > block > rack > host) GB200 NVL72 racks cannot be accurately represented by a single topology definition. Supporting multiple ClusterTopology resources allows administrators to effectively split the cluster along hardware boundaries, where each topology definition captures the interconnect hierarchy of a specific hardware segment. This enables:
+AI clusters often contain heterogeneous hardware with different interconnect characteristics. Each hardware type may require a distinct topology definition for optimal scheduling. For example, a cluster with both 3-level (zone > block > host) DGX H100 nodes and 4-level (zone > block > rack > host) GB200 NVL72 racks cannot be accurately represented by a single topology definition. Supporting multiple ClusterTopology resources allows administrators to effectively split the cluster along hardware boundaries, where each topology definition captures the interconnect hierarchy of a specific hardware segment. This enables:
 
 * **Cluster Partitioning by Hardware**: Each ClusterTopology defines its own node label keys, naturally partitioning the cluster into segments. Workloads targeting a specific topology are scheduled only on nodes that match that topology's labels.
 * **Accurate Infrastructure Modeling**: Administrators can define topologies matching their actual hardware rather than forcing a single approximation across different interconnect hierarchies.
@@ -67,12 +67,12 @@ AI clusters often contain heterogeneous hardware with different interconnect cha
 ### Goals
 
 * Define a uniform cluster topology model for any Kubernetes cluster across cloud providers and on-prem clusters.
-* Enable cluster administrator to declaratively specify the cluster network topology (manually or auto-generated by a tool) as a startup configuration option for Grove operator.
+* Enable cluster administrator to declaratively specify the cluster network topology (manually or auto-generated by a tool) as ClusterTopology resources applied to the cluster.
 * Extend the existing Grove declarative APIs to provide a way to define hierarchical topology pack constraints at `PodCliqueSet`, `PodCliqueScalingGroup` and `PodClique` levels.
 * Enhance existing Grove scheduler APIs (`PodGang`) to translate user-defined topology constraints defined in `PodCliqueSet` to cluster-specific scheduling constraints.
 * Automatically generate and synchronize relevant custom resources for the downstream schedulers that implement topology-aware-scheduling.
-* Define a mechanism for creating multiple named ClusterTopology resources from configured topology profiles.
-* Extend the PodCliqueSet API to reference a specific topology profile.
+* Define a mechanism for the Grove controller to watch and reconcile admin-created ClusterTopology resources.
+* Extend the PodCliqueSet API to reference a specific ClusterTopology.
 
 ### Non-Goals
 
@@ -89,36 +89,34 @@ AI clusters often contain heterogeneous hardware with different interconnect cha
 Grove implements topology-aware scheduling through a two-layer approach:
 
 **Admin Layer:**
-Grove defines a ClusterTopology CRD and manages the lifecycle of all ClusterTopology CRs. Administrators define one or more topology profiles in `OperatorConfiguration`, and the operator creates a `ClusterTopology` resource for each profile at startup. All ClusterTopologies are labeled with `app.kubernetes.io/managed-by: grove-operator` and are fully managed by the operator — manually created ClusterTopology resources are not recognized by Grove controllers.
+Grove defines a ClusterTopology CRD. Administrators create ClusterTopology resources directly via kubectl or GitOps, defining the topology hierarchy for each hardware segment in the cluster. The Grove controller watches all ClusterTopology resources and reconciles them.
 
-The scheduling backend determines what additional resources it requires for topology-aware scheduling. For example, the KAI scheduler requires a `Topology` custom resource for each ClusterTopology. By default, the operator automatically creates the scheduler backend topology CR at startup with an `OwnerReference` to the corresponding ClusterTopology, ensuring cascade deletion.
+Each ClusterTopology can optionally include a `schedulerReferences` field that maps the topology to scheduler backend resources. This field exists to decouple the lifecycle of Grove from the scheduler backend. A scheduler backend such as KAI may be deployed and operational before Grove is installed, and workloads may already be submitted to it with topology constraints independently of Grove. By referencing an existing scheduler backend topology resource rather than always creating one, Grove can be introduced into a cluster without disrupting the scheduler backend's existing topology configuration or the workloads already using it.
 
-Administrators who manage their own scheduler backend topology resources (e.g., created by an external tool or a separate team) can map topology profiles to existing resources via the scheduler profile's `topologyReferences` config in `OperatorConfiguration` (see [GREP-375](../375-scheduler-backend-framework/README.md)). When a topology profile has a corresponding entry in `topologyReferences`, the operator does not create the scheduler backend topology. Instead, it verifies that the referenced topology's levels match the ClusterTopology's levels and reports drift via a `SchedulerTopologyInSync` status condition (see [Scheduler Backend Topology](#scheduler-backend-topology)).
+For example, the KAI scheduler requires a `Topology` custom resource for each ClusterTopology. When `schedulerReferences` is empty, the operator automatically creates the scheduler backend topology CR with an `OwnerReference` to the corresponding ClusterTopology, ensuring cascade deletion. When `schedulerReferences` contains entries, the operator treats the referenced scheduler backend topology as externally managed and performs drift detection instead (see [Scheduler Backend Topology](#scheduler-backend-topology)).
 
 ```yaml
-# ClusterTopology created by operator from "h100-topology" profile
+# Admin-created ClusterTopology for DGX H100 nodes.
+# No schedulerReferences — the operator auto-creates the scheduler backend topology.
 apiVersion: grove.io/v1alpha1
 kind: ClusterTopology
 metadata:
   name: h100-topology
-  labels:
-    app.kubernetes.io/managed-by: grove-operator
 spec:
   levels:
     - domain: zone
       key: topology.kubernetes.io/zone
-    - domain: rack
-      key: topology.kubernetes.io/rack
+    - domain: block
+      key: kubernetes.io/rack
     - domain: host
       key: kubernetes.io/hostname
 ---
-# ClusterTopology created by operator from "gb200-topology" profile
+# Admin-created ClusterTopology for GB200 NVL72 racks.
+# schedulerReferences maps to an externally-managed KAI Topology resource.
 apiVersion: grove.io/v1alpha1
 kind: ClusterTopology
 metadata:
   name: gb200-topology
-  labels:
-    app.kubernetes.io/managed-by: grove-operator
 spec:
   levels:
     - domain: zone
@@ -129,16 +127,19 @@ spec:
       key: example.com/nvlink-domain
     - domain: host
       key: kubernetes.io/hostname
+  schedulerReferences:
+    - name: kai-scheduler
+      reference: gb200-kai-topology
 ```
 
 **User Layer:**
-Workload developers can specify topology constraints at three hierarchical levels (`PodCliqueSet`, `PodCliqueScalingGroup`, and `PodClique`) using domain names. They select which topology to use via the `topologyProfileName` field on PodCliqueSet, which is required when any `TopologyConstraint` is specified.
+Workload developers can specify topology constraints at three hierarchical levels (`PodCliqueSet`, `PodCliqueScalingGroup`, and `PodClique`) using domain names. They select which topology to use via the `topologyName` field on PodCliqueSet, which is required when any `TopologyConstraint` is specified.
 
 The operator validates these constraints against the referenced ClusterTopology using three key validation rules:
 
 1. *Domain existence*: All topology domains referenced in workload's topology constraints must exist in the ClusterTopology CR. This ensures workloads only reference valid, configured topology levels.
-2. *Topology Constraint Hierarchy*: Topology levels are ordered by their position in the ClusterTopology's levels array (index 0 = broadest scope). When topology constraints are hierarchically applied to a workload from PodCliqueSet → PodCliqueScalingGroup → PodClique, each level's constraints must reference a domain that is equal to or narrower (higher index) than the parent level's domain. A child resource cannot specify a broader topology domain than its parent. For example, if the referenced ClusterTopology defines levels `[zone, rack, host]` and the PodCliqueSet specifies `rack`, then PodCliqueScalingGroup can specify `rack` (equal) or `host` (narrower), but not `zone` (broader).
-3. *Topology profile reference*: The `topologyProfileName` must reference an existing ClusterTopology. The reference can only be changed while no pods in the PCS are scheduled.
+2. *Topology Constraint Hierarchy*: Topology levels are ordered by their position in the ClusterTopology's levels array (index 0 = broadest scope). When topology constraints are hierarchically applied to a workload from PodCliqueSet → PodCliqueScalingGroup → PodClique, each level's constraints must reference a domain that is equal to or narrower (higher index) than the parent level's domain. A child resource cannot specify a broader topology domain than its parent. For example, if the referenced ClusterTopology defines levels `[zone, block, host]` and the PodCliqueSet specifies `block`, then PodCliqueScalingGroup can specify `block` (equal) or `host` (narrower), but not `zone` (broader).
+3. *Topology reference*: The `topologyName` must reference an existing ClusterTopology. The reference can only be changed while no pods in the PCS are scheduled.
 
 After validation, the operator translates the topology domain names (e.g., "rack", "host") into cluster-specific topology keys (e.g., "topology.kubernetes.io/zone", "kubernetes.io/hostname") using the referenced ClusterTopology and configures these hierarchical topology keys in the `PodGang` API. The `PodGang` serves as an intermediate representation that will eventually be mapped to the specific types that the configured scheduler backend understands. This abstraction allows workload portability across clusters with different topology configurations and scheduler implementations.
 
@@ -194,7 +195,7 @@ metadata:
 spec:
   replicas: 2
   template:
-    topologyProfileName: h100-topology
+    topologyName: h100-topology
     topologyConstraint:
       packDomain: zone  # Each replica within a zone
     cliques:
@@ -235,18 +236,18 @@ Providing a way to define cluster topology entails that the cluster administrato
 
 * Understand the cluster network topology.
 * Ensure that the nodes are correctly labeled with the topology information.
-* Define appropriate topology profiles in `OperatorConfiguration` when configuring the `Grove` operator.
+* Create appropriate `ClusterTopology` resources via kubectl or GitOps.
 
-CEL validation on the CRD ensures that domain names and node label keys are unique within a ClusterTopology, and that no domain name collides with a key value. However, there is no way for `Grove` operator to ensure that the node labels mapped to each topology domain are in line with the ones actually present on nodes in the kubernetes cluster.
+CEL validation on the CRD ensures that domain names and node label keys are unique within a ClusterTopology. However, there is no way for `Grove` operator to ensure that the node labels mapped to each topology domain are in line with the ones actually present on nodes in the kubernetes cluster.
 
 **Mitigation**
 
-* Adequate documentation will be provided to the cluster administrators to help them properly configure topology profiles in `OperatorConfiguration`.
+* Adequate documentation will be provided to the cluster administrators to help them properly create and manage `ClusterTopology` resources.
 * Tools like [Topograph](https://github.com/NVIDIA/topograph) can be leveraged to automate discovery of cluster network topology and ensuring that topology levels are added as labels on Kubernetes Node(s).
 
 #### Topology Configuration Drift
 
-ClusterTopology levels are immutable after creation (enforced by CEL validation), so the levels of a running ClusterTopology cannot drift. However, when an administrator changes a topology profile's levels in `OperatorConfiguration` and restarts the operator, the operator deletes the existing ClusterTopology and creates a new one with the updated levels (see [Operator Startup behavior](#operator-startup-behavior)). Existing PodCliqueSets that referenced the old topology may now use topology domains that no longer exist in the new ClusterTopology.
+ClusterTopology levels are immutable after creation (enforced by CEL validation), so the levels of a running ClusterTopology cannot drift. To change a topology's levels, the administrator must delete the existing ClusterTopology and create a new one with the updated levels. Existing PodCliqueSets that referenced the old topology may now use topology domains that no longer exist in the new ClusterTopology.
 
 **Mitigation:**
 
@@ -284,11 +285,11 @@ Validating webhook for `PodCliqueSet` will reject resources that are created wit
 
 #### ClusterTopology Deletion
 
-When an administrator removes a topology profile from `OperatorConfiguration` and restarts the operator, the operator deletes the corresponding ClusterTopology. If PodCliqueSets still reference the deleted topology, the PCS reconciler detects this and sets the `TopologyLevelsUnavailable` condition to `Unknown` with reason `ClusterTopologyNotFound`. Invalid topology constraints are removed from the PodGang resources created for those PodCliqueSets.
+When an administrator deletes a ClusterTopology resource, any PodCliqueSets that still reference the deleted topology are affected. The PCS reconciler detects this and sets the `TopologyLevelsUnavailable` condition to `Unknown` with reason `ClusterTopologyNotFound`. Invalid topology constraints are removed from the PodGang resources created for those PodCliqueSets.
 
 **Mitigation**
 
-* Administrators should migrate or delete PodCliqueSets that reference a topology before removing its profile from `OperatorConfiguration`. The kubectl query described in [Monitoring](#monitoring) identifies which PodCliqueSets reference a given topology.
+* Administrators should migrate or delete PodCliqueSets that reference a topology before deleting the ClusterTopology resource. The kubectl query described in [Monitoring](#monitoring) identifies which PodCliqueSets reference a given topology.
 * The `TopologyLevelsUnavailable` condition on affected PodCliqueSets clearly surfaces which workloads lost their topology configuration.
 
 #### Immutable Topology Levels
@@ -297,11 +298,11 @@ A ClusterTopology's `spec.levels` field is immutable after creation, enforced by
 
 **Mitigation**
 
-* To change a topology's levels, administrators update the profile in `OperatorConfiguration` and restart the operator. The operator handles the delete+recreate workflow automatically. If existing PodCliqueSets referenced domains that no longer exist in the new topology, the PCS reconciler sets the `TopologyLevelsUnavailable` condition and removes invalid constraints from PodGang resources. This delete+recreate workflow is consistent with the KAI scheduler's topology update model.
+* To change a topology's levels, administrators must delete the existing ClusterTopology and create a new one. If existing PodCliqueSets referenced domains that no longer exist in the new topology, the PCS reconciler sets the `TopologyLevelsUnavailable` condition and removes invalid constraints from PodGang resources. This delete+recreate approach is consistent with the KAI scheduler's topology update model.
 
-#### Topology Profile Immutability After Scheduling
+#### Topology Immutability After Scheduling
 
-The `topologyProfileName` field on a PodCliqueSet becomes immutable once any pod in the PCS has been scheduled (bound to a node). The scheduler has already made placement decisions based on the referenced topology, and changing the topology reference after scheduling would invalidate those decisions. Users can change `topologyProfileName` freely while all pods are still pending, supporting the topology retry use case (Story 5).
+The `topologyName` field on a PodCliqueSet becomes immutable once any pod in the PCS has been scheduled (bound to a node). The scheduler has already made placement decisions based on the referenced topology, and changing the topology reference after scheduling would invalidate those decisions. Users can change `topologyName` freely while all pods are still pending, supporting the topology retry use case (Story 5).
 
 **Mitigation**
 
@@ -313,93 +314,28 @@ The `topologyProfileName` field on a PodCliqueSet becomes immutable once any pod
 
 ### Cluster Admin API
 
-Topology profiles and scheduler backend topology mappings are defined by a cluster admin as part of `OperatorConfiguration`. Each named topology profile results in a `ClusterTopology` CR managed by the operator at startup. Scheduler backend topology mappings are defined inside each scheduler profile's backend-specific config (see [GREP-375: Scheduler Backend Framework](../375-scheduler-backend-framework/README.md)).
+Topology-aware scheduling is enabled via a flag in `OperatorConfiguration`. ClusterTopology resources are created directly by cluster administrators — the operator does not create or manage them. Each ClusterTopology optionally includes `schedulerReferences` to map topologies to scheduler backend resources.
 
 ```go
 // TopologyAwareSchedulingConfiguration defines the configuration for topology-aware scheduling.
 type TopologyAwareSchedulingConfiguration struct {
 	// Enabled indicates whether topology-aware scheduling is enabled.
 	Enabled bool `json:"enabled"`
-	// TopologyProfiles is a list of named topology profiles.
-	// Each profile defines a set of topology levels and results in a ClusterTopology CR managed by the operator.
-	// +optional
-	TopologyProfiles []TopologyProfile `json:"topologyProfiles,omitempty"`
-}
-
-// TopologyProfile defines a named topology profile with an ordered set of topology levels.
-type TopologyProfile struct {
-	// Name is the unique identifier for this profile.
-	// It becomes the name of the corresponding ClusterTopology CR.
-	// +required
-	Name string `json:"name"`
-	// Levels is an ordered list of topology levels from broadest to narrowest scope.
-	// +required
-	Levels []corev1alpha1.TopologyLevel `json:"levels"`
 }
 ```
 
-Scheduler backend topology references are configured inside each `SchedulerProfile.Config` (GREP-375). For the KAI scheduler, this extends the backend-specific config:
+Scheduler backend topology mappings are defined within each ClusterTopology resource via the `schedulerReferences` field (see [ClusterTopology custom resource](#clustertopology-custom-resource)).
 
-```go
-// KaiSchedulerConfig holds the configuration for the KAI scheduler backend.
-// This is deserialized from SchedulerProfile.Config (runtime.RawExtension) when Name == "kai-scheduler".
-type KaiSchedulerConfig struct {
-	// TopologyReferences maps topology profile names to KAI Topology CR names.
-	// Each entry tells the operator which KAI Topology CR corresponds to a given topology profile.
-	// +optional
-	TopologyReferences []TopologyReference `json:"topologyReferences,omitempty"`
-}
-
-// TopologyReference maps a topology profile to a scheduler backend's topology resource.
-type TopologyReference struct {
-	// ProfileName is the name of the topology profile (must match a TopologyProfile.Name).
-	// +required
-	ProfileName string `json:"profileName"`
-	// ResourceName is the name of the scheduler backend's topology resource (e.g., KAI Topology CR name).
-	// +required
-	ResourceName string `json:"resourceName"`
-}
-```
-
-Example `OperatorConfiguration` (shows TAS and scheduler configuration):
+Example `OperatorConfiguration` (TAS configuration):
 ```yaml
 apiVersion: operator.config.grove.io/v1alpha1
 kind: OperatorConfiguration
 ...
 topologyAwareScheduling:
   enabled: true
-  topologyProfiles:
-    - name: h100-topology
-      levels:
-        - domain: zone
-          key: "topology.kubernetes.io/zone"
-        - domain: rack
-          key: "topology.kubernetes.io/rack"
-        - domain: host
-          key: "kubernetes.io/hostname"
-    - name: gb200-topology
-      levels:
-        - domain: zone
-          key: "topology.kubernetes.io/zone"
-        - domain: block
-          key: "example.com/nvl-block"
-        - domain: rack
-          key: "example.com/nvlink-domain"
-        - domain: host
-          key: "kubernetes.io/hostname"
-scheduler:
-  profiles:
-    - name: "kai-scheduler"
-      default: true
-      config:
-        topologyReferences:
-          - profileName: h100-topology
-            resourceName: h100-kai-topology
-          - profileName: gb200-topology
-            resourceName: gb200-kai-topology
 ```
 
-> NOTE: The above values for `key` are examples and will differ across infrastructure providers. The `topologyReferences` in each scheduler profile's config map topology profiles to the scheduler backend's topology resource names.
+ClusterTopology resources are created by the administrator separately (see [Proposal](#proposal) for full examples with and without `schedulerReferences`).
 
 #### Topology Domains
 
@@ -421,55 +357,52 @@ Using a consistent set of domain names across clusters enables workload portabil
 
 #### Validation
 
-`OperatorConfiguration` is validated upon starting of `Grove` operator. If `TopologyAwareScheduling.Enabled` is true, then following is checked:
+Validation is enforced at the CRD level on ClusterTopology resources via CEL rules and kubebuilder markers:
 
-* At least one `TopologyProfile` must be defined.
-* Each `TopologyProfile` must have a unique name.
-* Within each profile, at least one `TopologyLevel` must be set.
-* Within each profile, each `TopologyLevel` must be unique — neither the domain nor the key should be duplicated.
-* Each `TopologyReference.ProfileName` in any scheduler profile's config must match a defined `TopologyProfile.Name`.
-
-Additional CEL validation on the ClusterTopology CRD ensures that no domain name collides with any key value (prevents ambiguity for scheduler backends).
+* Within each ClusterTopology, at least one `TopologyLevel` must be set.
+* Within each ClusterTopology, each `TopologyLevel` must be unique — neither the domain nor the key should be duplicated.
+* `spec.levels` is immutable after creation (`self == oldSelf`).
 
 > NOTE: There is no validation done for `TopologyLevel.Key` (which is a node label) as that can be different across cloud providers and on-prem data centers.
 
-If any of the validation fails then the operator will exit with a non-zero error code and an appropriate error message which will be visible in the logs of the operator `Pod`.
+If validation fails, the API server rejects the ClusterTopology create/update request.
 
-#### Operator Startup behavior
+#### Controller Reconciliation
 
-When `Grove` operator starts, it checks if TAS is enabled.
+When `Grove` operator starts with TAS enabled, the ClusterTopology controller begins watching all ClusterTopology resources in the cluster.
 
-**TAS is enabled**
+**ClusterTopology created**
 
-* Validate TAS configuration.
+When the controller detects a new ClusterTopology:
 
-* For each topology profile in `TopologyAwareScheduling.TopologyProfiles`:
-  * Ensure a `ClusterTopology` custom resource exists with the profile's name and levels. Since `spec.levels` is immutable, the operator cannot update an existing ClusterTopology's levels directly. If an existing ClusterTopology's levels differ from the profile, the operator deletes it and creates a new one. All operator-managed ClusterTopologies are labeled with `app.kubernetes.io/managed-by: grove-operator`. If the levels match, the operator updates only metadata (e.g., labels) if needed.
+* For each ClusterTopology that does **not** have `schedulerReferences` entries for the active scheduler backend:
+  * Automatically create the corresponding scheduler backend topology CR if it does not exist. For the KAI scheduler, this means creating a `Topology` CR with an `OwnerReference` to the corresponding ClusterTopology. When the ClusterTopology is deleted, the scheduler backend topology is cascade-deleted via the `OwnerReference`.
+  * Set the `SchedulerTopologyInSync` condition to `True` after the auto-created resource is confirmed to exist and its topology levels match the ClusterTopology.
+* For each ClusterTopology that **does** have `schedulerReferences` entries:
+  * The named scheduler backend topology resource is assumed to be externally managed. The controller does not create it. Drift detection is handled via the `SchedulerTopologyInSync` status condition (see [Scheduler Backend Topology](#scheduler-backend-topology)).
 
-* For each topology profile that is **not** referenced in any scheduler backend's `topologyReferences` config:
-  * Automatically create the corresponding scheduler backend topology CR if it does not exist. For the KAI scheduler, this means creating a `Topology` CR with an `OwnerReference` to the corresponding ClusterTopology. When the operator deletes and recreates a ClusterTopology due to level changes, the scheduler backend topology is cascade-deleted via the `OwnerReference` and then recreated alongside the new ClusterTopology.
-* For each topology profile that **is** referenced in a scheduler backend's `topologyReferences` config:
-  * The named scheduler backend topology resource is assumed to be externally managed. The operator does not create it. Drift detection is handled by the ClusterTopology controller (see [Scheduler Backend Topology](#scheduler-backend-topology)).
+The `SchedulerTopologyInSync` condition is reconciled on every sync — if the scheduler backend topology resource is updated externally (levels changed, resource deleted), the controller detects this and updates the condition and `schedulerTopologyStatuses` accordingly.
 
-* Delete any ClusterTopology resources that are labeled `app.kubernetes.io/managed-by: grove-operator` but do not correspond to any configured profile. If PodCliqueSets still reference a deleted topology, the PCS reconciler sets the `TopologyLevelsUnavailable` condition at runtime.
+**ClusterTopology deleted**
 
-If any of the create/delete of `ClusterTopology` CR or scheduler backend topology CR fails, the operator exits with a non-zero exit code and a clear message indicating the issue.
+When a ClusterTopology is deleted:
+
+* Auto-managed scheduler backend topology CRs are cascade-deleted via `OwnerReference`.
+* If PodCliqueSets still reference the deleted topology, the PCS reconciler detects this and sets the `TopologyLevelsUnavailable` condition at runtime.
 
 **TAS is disabled**
 
-* Delete all `ClusterTopology` CRs that are labeled `app.kubernetes.io/managed-by: grove-operator`. Because the scheduler backend topology CRs are owned by their respective `ClusterTopology` CRs (via `OwnerReference`), they will be cascade-deleted when the ClusterTopology is deleted. If PodCliqueSets still reference a deleted topology, the PCS reconciler sets the `TopologyLevelsUnavailable` condition at runtime.
-
-**Only operator-managed ClusterTopologies are recognized.** Grove controllers (PCS reconciler, ClusterTopology controller, PCS validating webhook) only operate on ClusterTopology resources that carry the `app.kubernetes.io/managed-by: grove-operator` label. Manually created ClusterTopology resources without this label are ignored — PodCliqueSets cannot reference them, and the operator will not create scheduler backend topology resources for them.
+* The controller does not watch ClusterTopology resources. Existing ClusterTopology resources remain in the cluster but are not acted upon.
+* If PodCliqueSets reference a ClusterTopology while TAS is disabled, the validating webhook rejects the request.
+* For already-deployed PodCliqueSets that have topology constraints, the PCS reconciler sets the `TopologyLevelsUnavailable` condition to `Unknown` with reason `TopologyAwareSchedulingDisabled` and removes topology constraints from their PodGang resources. This ensures that workloads are not left with stale topology constraints that the scheduler can no longer honor.
 
 #### Topology Configuration Updates
 
-`OperatorConfiguration` is mounted as an immutable `ConfigMap` to the operator. To make any changes to the TAS configuration via `OperatorConfiguration`, the `Grove` operator needs to be restarted with the changed `OperatorConfiguration`.
+ClusterTopology resources are managed directly by cluster administrators via kubectl or GitOps. Since `spec.levels` is immutable (enforced by CEL validation), updating a topology's levels requires deleting the old ClusterTopology and creating a new one.
 
-On restart, the operator reconciles all ClusterTopology resources to match the configured profiles:
-
-* New profiles result in new ClusterTopology CRs.
-* Profiles with changed levels cause a delete+recreate of the corresponding ClusterTopology (see [Operator Startup behavior](#operator-startup-behavior)).
-* Removed profiles cause deletion of the corresponding ClusterTopology CRs. If PodCliqueSets still reference the deleted topology, the PCS reconciler sets the `TopologyLevelsUnavailable` condition (see [ClusterTopology Lifecycle](#clustertopology-lifecycle)).
+* New ClusterTopology resources are picked up automatically by the controller.
+* Deleted ClusterTopology resources trigger `TopologyLevelsUnavailable` conditions on any PodCliqueSets that still reference them.
+* Metadata changes (labels, annotations) can be updated in-place without recreation.
 
 ### ClusterTopology custom resource
 
@@ -504,8 +437,23 @@ type ClusterTopologySpec struct {
     // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="field is immutable"
     // +kubebuilder:validation:XValidation:rule="self.all(x, self.filter(y, y.domain == x.domain).size() == 1)",message="domain must be unique across all levels"
     // +kubebuilder:validation:XValidation:rule="self.all(x, self.filter(y, y.key == x.key).size() == 1)",message="key must be unique across all levels"
-    // +kubebuilder:validation:XValidation:rule="!self.exists(a, self.exists(b, a.domain == b.key))",message="domain names must not collide with key values"
     Levels []TopologyLevel `json:"levels"`
+    // SchedulerReferences maps this topology to scheduler backend topology resources.
+    // When empty, the operator automatically creates and manages the scheduler backend topology.
+    // When populated, the referenced resources are assumed to be externally managed and
+    // the operator performs drift detection instead.
+    // +optional
+    SchedulerReferences []SchedulerReference `json:"schedulerReferences,omitempty"`
+}
+
+// SchedulerReference maps a ClusterTopology to a scheduler backend's topology resource.
+type SchedulerReference struct {
+    // Name is the name of the scheduler backend (e.g., "kai-scheduler").
+    // +required
+    Name string `json:"name"`
+    // Reference is the name of the scheduler backend's topology resource.
+    // +required
+    Reference string `json:"reference"`
 }
 
 type TopologyLevel struct {
@@ -533,68 +481,104 @@ type ClusterTopologyStatus struct {
     // Conditions represent the latest available observations of the ClusterTopology's state.
     // +optional
     Conditions []metav1.Condition `json:"conditions,omitempty"`
+    // SchedulerTopologyStatuses reports the per-backend sync state for each scheduler reference.
+    // +optional
+    SchedulerTopologyStatuses []SchedulerTopologyStatus `json:"schedulerTopologyStatuses,omitempty"`
+}
+
+// SchedulerTopologyStatus reports the sync state between this ClusterTopology and a single
+// scheduler backend's topology resource.
+type SchedulerTopologyStatus struct {
+    // Name is the scheduler backend name (matches SchedulerReference.Name).
+    Name string `json:"name"`
+    // Reference is the scheduler backend topology resource name (matches SchedulerReference.Reference).
+    Reference string `json:"reference"`
+    // InSync is true when the scheduler backend topology levels match the ClusterTopology levels.
+    InSync bool `json:"inSync"`
+    // Message provides detail when InSync is false (e.g., describing the mismatch).
+    // +optional
+    Message string `json:"message,omitempty"`
 }
 ```
 
-The `SchedulerTopologyInSync` condition on `ClusterTopologyStatus` reports the state of the scheduler backend topology for profiles that are referenced in a scheduler backend's `topologyReferences` config:
+**Aggregate condition: `SchedulerTopologyInSync`**
+
+The `SchedulerTopologyInSync` condition on `ClusterTopologyStatus` provides a single aggregate health signal across all scheduler backend topologies. It is `True` only when every backend is in sync:
 
 | Status    | Reason                    | Description                                                                         |
 | --------- | ------------------------- | ------------------------------------------------------------------------------------ |
-| `True`    | `InSync`                  | The scheduler backend topology levels match the ClusterTopology levels               |
-| `False`   | `Drift`                   | The scheduler backend topology levels do not match the ClusterTopology levels        |
-| `Unknown` | `TopologyNotFound`        | The referenced scheduler backend topology resource was not found                     |
+| `True`    | `InSync`                  | All scheduler backend topology levels match the ClusterTopology levels               |
+| `False`   | `Drift`                   | One or more scheduler backend topology levels do not match the ClusterTopology levels |
+| `Unknown` | `TopologyNotFound`        | One or more referenced scheduler backend topology resources were not found           |
 
-When the topology profile is not referenced in any scheduler backend's `topologyReferences`, the operator auto-manages the scheduler backend topology and does not set this condition.
+**Per-backend detail: `schedulerTopologyStatuses`**
+
+The `schedulerTopologyStatuses` field provides per-backend detail. Each entry reports the sync state for a single `schedulerReferences` entry:
+
+```yaml
+status:
+  conditions:
+    - type: SchedulerTopologyInSync
+      status: "False"
+      reason: Drift
+      message: "1 of 2 scheduler backends out of sync"
+  schedulerTopologyStatuses:
+    - name: kai-scheduler
+      reference: h100-kai-topology
+      inSync: true
+    - name: other-scheduler
+      reference: h100-other-topology
+      inSync: false
+      message: "levels mismatch: expected [zone, block, host], got [zone, host]"
+```
+
+When a ClusterTopology's `schedulerReferences` is empty, the operator auto-manages the scheduler backend topology. The `SchedulerTopologyInSync` condition is still set — it is expected to be `True` since the operator controls both resources. The `schedulerTopologyStatuses` field will contain a single entry for the auto-managed resource.
 
 #### ClusterTopology Lifecycle
 
-ClusterTopology resources are cluster-scoped and define the mapping between topology domain names and infrastructure-specific node labels. Their lifecycle is fully managed by the operator from topology profiles configured in `OperatorConfiguration`.
+ClusterTopology resources are cluster-scoped and define the mapping between topology domain names and infrastructure-specific node labels. They are created and managed by cluster administrators. The Grove controller watches and reconciles them.
 
 **Creation**
 
-The operator creates a ClusterTopology for each topology profile at startup. All ClusterTopologies are labeled with `app.kubernetes.io/managed-by: grove-operator`. Manually created ClusterTopology resources without this label are not recognized by Grove controllers.
+Administrators create ClusterTopology resources directly via kubectl or GitOps. The Grove controller watches all ClusterTopology resources and reconciles scheduler backend topology resources based on each ClusterTopology's `schedulerReferences` field.
 
 **Updates**
 
-A ClusterTopology's `spec.levels` field is immutable after creation, enforced by a CEL validation rule (`self == oldSelf`). This matches the immutability contract of the downstream KAI `Topology` CR and eliminates the need for a validating webhook to guard against unsafe level modifications. Metadata changes (labels, annotations) are not affected. To change a topology's levels, administrators update the profile in `OperatorConfiguration` and restart the operator — the operator handles the delete+recreate automatically (see [Topology Configuration Drift](#topology-configuration-drift)).
+A ClusterTopology's `spec.levels` field is immutable after creation, enforced by a CEL validation rule (`self == oldSelf`). This matches the immutability contract of the downstream KAI `Topology` CR. Metadata changes (labels, annotations) are not affected. To change a topology's levels, administrators must delete and recreate the ClusterTopology resource.
 
 **Deletion**
 
-When the operator deletes a ClusterTopology (due to profile removal or TAS being disabled), the deletion proceeds immediately. If PodCliqueSets still reference the deleted topology, the PCS reconciler detects this at runtime and sets the `TopologyLevelsUnavailable` condition to `Unknown` with reason `ClusterTopologyNotFound`. Invalid topology constraints are removed from the PodGang resources created for those PodCliqueSets.
+When an administrator deletes a ClusterTopology, auto-managed scheduler backend topology CRs are cascade-deleted via `OwnerReference`. If PodCliqueSets still reference the deleted topology, the PCS reconciler detects this at runtime and sets the `TopologyLevelsUnavailable` condition to `Unknown` with reason `ClusterTopologyNotFound`. Invalid topology constraints are removed from the PodGang resources created for those PodCliqueSets.
 
 ```mermaid
 sequenceDiagram
     participant Admin
-    participant Op as Operator
     participant API as API Server
+    participant Ctrl as CT Controller
     participant PCSRec as PCS Reconciler
 
-    Note over Admin, PCSRec: Create ClusterTopology (from profile)
+    Note over Admin, PCSRec: Create ClusterTopology
 
     rect rgb(230, 245, 230)
-        Note left of Admin: Admin configures profile<br/>in OperatorConfiguration
-        Admin->>Op: Restart operator
-        Op->>API: Create ClusterTopology<br/>with managed-by label
-        API-->>Op: Created
+        Admin->>API: kubectl apply ClusterTopology
+        API-->>Admin: Created
+        Ctrl->>API: Reconcile: create scheduler<br/>backend topology (if no schedulerReferences)
     end
 
     Note over Admin, PCSRec: Update ClusterTopology Levels (immutable)
 
     Note right of API: Direct updates to spec.levels<br/>are rejected by CEL validation
     rect rgb(230, 245, 230)
-        Note left of Admin: Admin changes profile levels<br/>in OperatorConfiguration
-        Admin->>Op: Restart operator
-        Op->>API: Delete old CT
-        Op->>API: Create new CT with updated levels
+        Admin->>API: kubectl delete old CT
+        Admin->>API: kubectl apply new CT with updated levels
+        Ctrl->>API: Reconcile: create scheduler<br/>backend topology for new CT
     end
 
-    Note over Admin, PCSRec: Remove topology profile
+    Note over Admin, PCSRec: Delete ClusterTopology
 
     rect rgb(245, 230, 230)
-        Note left of Admin: Admin removes profile<br/>from OperatorConfiguration
-        Admin->>Op: Restart operator
-        Op->>API: Delete CT
-        Note right of API: CT deleted
+        Admin->>API: kubectl delete CT
+        Note right of API: CT deleted<br/>Scheduler backend topology<br/>cascade-deleted via OwnerReference
         PCSRec->>API: Reconcile PCS referencing deleted CT
         PCSRec->>API: Set TopologyLevelsUnavailable condition
         PCSRec->>API: Remove invalid constraints from PodGang
@@ -603,15 +587,13 @@ sequenceDiagram
 
 **Scheduler Backend Topology**
 
-The operator manages the relationship between each ClusterTopology and its corresponding scheduler backend topology resource (e.g., KAI `Topology` CR). The behavior depends on whether the topology profile is referenced in a scheduler profile's backend-specific `topologyReferences` config:
+The operator manages the relationship between each ClusterTopology and its corresponding scheduler backend topology resource (e.g., KAI `Topology` CR). The behavior depends on whether the ClusterTopology has entries in its `schedulerReferences` field:
 
-*Auto-managed (profile not in `topologyReferences`):* When a topology profile has no corresponding entry in any scheduler backend's `topologyReferences`, the operator automatically creates and manages the scheduler backend topology CR with an `OwnerReference` to the ClusterTopology. For the KAI scheduler, this means creating a `Topology` CR with the same name as the ClusterTopology. Since both the ClusterTopology and KAI Topology have immutable levels, the operator only needs to handle creation and deletion — no update path is needed. When the ClusterTopology is deleted, the scheduler backend topology is cascade-deleted via the `OwnerReference`.
+*Auto-managed (`schedulerReferences` empty):* When a ClusterTopology's `schedulerReferences` is empty, the operator automatically creates and manages the scheduler backend topology CR with an `OwnerReference` to the ClusterTopology. For the KAI scheduler, this means creating a `Topology` CR with the same name as the ClusterTopology. Since both the ClusterTopology and KAI Topology have immutable levels, the operator only needs to handle creation and deletion — no update path is needed. When the ClusterTopology is deleted, the scheduler backend topology is cascade-deleted via the `OwnerReference`.
 
-*Referenced (profile in `topologyReferences`):* When a topology profile has a corresponding entry in a scheduler backend's `topologyReferences`, the named scheduler backend topology resource is assumed to be externally managed. The operator does not create, update, or delete the referenced topology. Instead, it compares the referenced topology's levels against the ClusterTopology's levels and sets a `SchedulerTopologyInSync` status condition:
+*Referenced (`schedulerReferences` populated):* When a ClusterTopology's `schedulerReferences` contains entries for a scheduler backend, the named scheduler backend topology resource is assumed to be externally managed. The operator does not create, update, or delete the referenced topology. Instead, it compares the referenced topology's levels against the ClusterTopology's levels and reports per-backend sync state in `schedulerTopologyStatuses`. The aggregate `SchedulerTopologyInSync` condition reflects whether all backends are in sync.
 
-* `True` (InSync) — the scheduler backend topology levels match the ClusterTopology levels
-* `False` (Drift) — the levels do not match; the condition message describes the mismatch
-* `Unknown` (TopologyNotFound) — the referenced scheduler backend topology resource was not found
+In both cases the `SchedulerTopologyInSync` condition and `schedulerTopologyStatuses` are set, providing a consistent observability model regardless of whether the scheduler backend topology is auto-managed or externally managed.
 
 ### Topology Constraints in PodCliqueSet
 
@@ -668,8 +650,8 @@ type PodCliqueScalingGroupConfig struct {
 
 `TopologyConstraint` defined at the `PodCliqueScalingGroup` level should be:
 
-* Equal to or lower than the one that is defined at `PodCliqueSet` level.
-* Equal to or higher than the constraints defined for each constituent `PodClique`.
+* Equal to or narrower (higher index) than the constraint defined at the `PodCliqueSet` level.
+* Equal to or broader (lower index) than the constraints defined for each constituent `PodClique`.
 
 At `PodClique` level you can set the topology constraint using:
 
@@ -685,7 +667,7 @@ type PodCliqueTemplateSpec struct {
 }
 ```
 
-`TopologyConstraint` defined at the `PodClique` level should be lower than or equal to the ones defined for the parent resources a.k.a (`PodCliqueScalingGroup` and `PodCliqueSet`).
+`TopologyConstraint` defined at the `PodClique` level should be equal to or narrower (higher index) than the constraints defined for the parent resources (`PodCliqueScalingGroup` and `PodCliqueSet`).
 
 Example PodCliqueSet with topology constraints (For brevity many parts of the PodCliqueSet spec has been omitted):
 
@@ -697,7 +679,7 @@ metadata:
 spec:
   replicas: 1
   template:
-    topologyProfileName: h100-topology
+    topologyName: h100-topology
     topologyConstraint:
       packDomain: "zone"
     cliques:
@@ -711,7 +693,7 @@ spec:
             ...
       - name: p-leader
         topologyConstraint:
-          packDomain: "rack"
+          packDomain: "host"
         spec:
           roleName: prefill-leader
           replicas: 1
@@ -719,7 +701,7 @@ spec:
             ...
       - name: p-worker
         topologyConstraint:
-          packDomain: "rack"
+          packDomain: "host"
         spec:
           roleName: prefill-worker
           replicas: 4
@@ -727,7 +709,7 @@ spec:
             ...
       - name: d-leader
         topologyConstraint:
-          packDomain: "rack"
+          packDomain: "host"
         spec:
           roleName: decode-leader
           replicas: 1
@@ -735,7 +717,7 @@ spec:
             ...
       - name: d-worker
         topologyConstraint:
-          packDomain: "rack"
+          packDomain: "host"
         spec:
           roleName: decode-worker
           replicas: 2
@@ -752,7 +734,7 @@ spec:
           - p-leader
       - name: decode
         topologyConstraint:
-          packDomain: "rack"
+          packDomain: "host"
         replicas: 2
         minAvailable: 1
         cliqueNames:
@@ -762,18 +744,18 @@ spec:
 
 The above example is only a representation of how users can set topology constraints at different levels to control how the pods are going to be packed during the initial deployment.
 
-#### Topology Profile Reference
+#### Topology Reference
 
-A new field `topologyProfileName` is added to `PodCliqueSetTemplateSpec`, alongside the existing `topologyConstraint` field. It is required whenever any `TopologyConstraint` is specified in the PCS:
+A new field `topologyName` is added to `PodCliqueSetTemplateSpec`, alongside the existing `topologyConstraint` field. It is required whenever any `TopologyConstraint` is specified in the PCS:
 
 ```go
 type PodCliqueSetTemplateSpec struct {
     // ... existing fields ...
 
-    // TopologyProfileName is the name of the topology profile (and corresponding ClusterTopology resource)
+    // TopologyName is the name of the ClusterTopology resource
     // to use for topology-aware scheduling. Required when any TopologyConstraint is specified.
     // +optional
-    TopologyProfileName string `json:"topologyProfileName,omitempty"`
+    TopologyName string `json:"topologyName,omitempty"`
 
     // TopologyConstraint defines topology placement requirements for PodCliqueSet.
     // +optional
@@ -792,7 +774,7 @@ metadata:
   name: my-inference
 spec:
   template:
-    topologyProfileName: gb200-topology    # must match a configured topology profile name
+    topologyName: gb200-topology    # must match an existing ClusterTopology name
     topologyConstraint:
       packDomain: rack
     cliques:
@@ -806,8 +788,7 @@ Existing validating webhook which validates `PodCliqueSet`, has been enhanced to
 
 *Rule-1: Check for supported TopologyDomains*
 
-* All topology domains that are referenced in the `PodCliqueSet` must be amongst the defined topology levels in the ClusterTopology referenced by `topologyProfileName`. If a non-supported topology domain is found then creation of the `PodCliqueSet` will be rejected.
-* Topology domains for an already deployed `PodCliqueSet` cannot be changed. Validating webhook will reject such updates on the `PodCliqueSet`.
+* All topology domains that are referenced in the `PodCliqueSet` must be amongst the defined topology levels in the ClusterTopology referenced by `topologyName`. If a non-supported topology domain is found then creation or update of the `PodCliqueSet` will be rejected.
 
 *Rule-2: Check for Hierarchical strictness*
 
@@ -825,38 +806,36 @@ Example:
 | `host` | `rack`  | ❌ No   | `rack` is broader (lower index) than `host`                  |
 | `zone` | `block` | ✅ Yes  | `block` is narrower than `zone`                              |
 
-*Rule-3: Topology profile reference validation*
+*Rule-3: Topology reference validation*
 
-* On create: `topologyProfileName` must be set and the referenced ClusterTopology must exist
-* Reject if any `TopologyConstraint` is set (at PCS, PCSG, or PodClique level) without `topologyProfileName`
-* On update: if `topologyProfileName` is changed, the new ClusterTopology must exist and no pod in the PCS may be scheduled (`ScheduledReplicas == 0` across all PodCliques)
-* Reject if `topologyProfileName` is set but TAS is disabled cluster-wide
-* Reject if any `TopologyConstraint` is set (at PCS, PCSG, or PodClique level) but TAS is disabled cluster-wide
+* `topologyName` must be set if and only if any `TopologyConstraint` is set (at PCS, PCSG, or PodClique level). Setting one without the other is rejected.
+* When set, the referenced ClusterTopology must exist.
+* On update: `topologyName` can only be changed while no pods in the PCS are scheduled (`ScheduledReplicas == 0` across all PodCliques). The new ClusterTopology must exist.
+* Reject if `topologyName` or any `TopologyConstraint` is set but TAS is disabled cluster-wide.
 
-Rules 1 and 2 apply to `TopologyConstraint` fields. Rule-3 validates the `topologyProfileName` reference. Together, these three rules ensure that workloads can only reference valid topology levels, maintain logical topology nesting throughout the resource hierarchy, and target an existing operator-managed ClusterTopology.
+Rules 1 and 2 apply to `TopologyConstraint` fields. Rule-3 validates the `topologyName` reference. Together, these three rules ensure that workloads can only reference valid topology levels, maintain logical topology nesting throughout the resource hierarchy, and target an existing ClusterTopology.
 
 ### PodGang: Scheduler API Enhancements
 
 Grove operator translates the hierarchical topology constraints to infrastructure specific node labels in the `PodGang` scheduler API. The operator resolves the topology as follows:
-* PCS has `TopologyConstraint` set → `topologyProfileName` is required; resolve the ClusterTopology by that name
+* PCS has `TopologyConstraint` set → `topologyName` is required; resolve the ClusterTopology by that name
 * PCS has no `TopologyConstraint` at any level → topology does not apply
 
-The following additional types have been defined to capture the topology constraints. Provision has been made to capture:
+The following additional types have been defined to capture the topology constraints:
 
-* `Required` topology constraints which are hard requirements for the scheduler to consider.  These constraints are guaranteed to be satisfied.
-* `Preferred` topology constraints are soft requirements and often point to the best possible packing that can be achieved.
+* `Required` topology constraints are hard requirements for the scheduler to consider. These constraints are guaranteed to be satisfied.
 
 ```go
-// TopologyConstraint defines topology packing constraints with required and preferred levels.
+// TopologyConstraint defines topology packing constraints for the scheduler.
 type TopologyConstraint struct {
-	// PackConstraint defines topology packing constraint with required and preferred levels.
+	// PackConstraint defines a topology packing constraint.
 	// Operator translates user's level name to corresponding topologyKeys.
 	// +optional
 	PackConstraint *TopologyPackConstraint `json:"packConstraint,omitempty"`
 }
 
 // TopologyPackConstraint defines a topology packing constraint.
-// Each of Required and Preferred fields hold a topologyKey, e.g. "kubernetes.io/hostname" ( these are key of labels added on nodes).
+// The Required field holds a topologyKey, e.g. "kubernetes.io/hostname" (key of labels added on nodes).
 type TopologyPackConstraint struct {
 	// Required defines a topology constraint that must be satisfied as a hard requirement. The workload will not be
 	// scheduled if this constraint cannot be satisfied. Generally, it is easier for the scheduler to satisfy constraints
@@ -865,14 +844,6 @@ type TopologyPackConstraint struct {
 	// Example: "topology.kubernetes.io/rack"
 	// +optional
 	Required *string `json:"required,omitempty"`
-	// Preferred defines best-effort topology constraint. Topology domains that provide the most optimized performance
-	// with dense packing (e.g. host or numa) are typically used as preferred constraints for topology packing. It might be
-	// harder to satisfy these constraints if the topology domains are limited in compute  capacity. Since it is preferred
-	// constraint, it is therefore not binding on the scheduler to mandatorily satisfy this packing constraint. Scheduler
-	// can fall back to higher topology levels (upto Required constraint) if preferred cannot be satisfied.
-	// Example: "kubernetes.io/hostname"
-	// +optional
-	Preferred *string `json:"preferred,omitempty"`
 }
 ```
 
@@ -910,7 +881,7 @@ type PodGangSpec struct {
 	TopologyConstraint *TopologyConstraint `json:"topologyConstraint,omitempty"`
 	// TopologyConstraintGroupConfigs defines TopologyConstraints for a strict subset of PodGroups.
 	// +optional
-	TopologyConstraintGroupConfigs []TopologyConstraintGroupConfig `json:"topologyConstraintGroupConfigs,omitempty"`
+	TopologyConstraintGroupConfigs []TopologyConstraint `json:"topologyConstraintGroupConfigs,omitempty"`
   ...
 }
 
@@ -932,7 +903,20 @@ type PodGroup struct {
 
 TAS is a new feature with no existing production users, so strict backward compatibility is not required at this stage. The API can evolve to the right design without being constrained by prior deployments.
 
-The addition of multiple ClusterTopology resources and the `topologyProfileName` field changes the topology reference model from the single-topology design. Existing PodCliqueSets that use topology constraints will require a `topologyProfileName` field to be added. Existing PodCliqueSets without topology constraints are unaffected.
+The addition of multiple ClusterTopology resources and the `topologyName` field changes the topology reference model from the single-topology design. Existing PodCliqueSets without topology constraints are unaffected.
+
+#### Existing PodCliqueSets with topology constraints but no `topologyName`
+
+Under the previous single-topology design, PodCliqueSets could specify `topologyConstraint` without a `topologyName` — the operator implicitly resolved constraints against the single `grove-topology` ClusterTopology. After upgrading to the multi-topology design, these PCS resources are structurally invalid (the new rules require `topologyName` when any `TopologyConstraint` is set), but they already exist in the cluster — the validating webhook only runs on create and update, not on existing resources.
+
+The PCS reconciler must handle these gracefully during upgrade:
+
+* **Detection**: On each reconciliation, if the PCS has any `TopologyConstraint` set (at PCS, PCSG, or PodClique level) but `topologyName` is empty, the reconciler treats this as an invalid state.
+* **Condition**: The reconciler sets the `TopologyLevelsUnavailable` condition to `Unknown` with reason `TopologyNameMissing` and a message indicating that `topologyName` is required.
+* **PodGang topology removal**: The reconciler removes topology constraints from the PodGang resources created for the PCS, since without a `topologyName` the domains cannot be resolved to node label keys.
+* **Resolution**: The administrator must update the PCS to add `topologyName` referencing a valid ClusterTopology. The validating webhook will then validate the update normally (domain existence, hierarchy rules, etc.). Once the field is set and the referenced ClusterTopology exists with the required domains, the reconciler clears the condition and restores topology constraints on the PodGang.
+
+This ensures that existing workloads are not silently broken — the condition makes the issue visible and the reconciler degrades gracefully by stripping unresolvable topology constraints rather than failing reconciliation entirely.
 
 ### Monitoring
 
@@ -941,13 +925,13 @@ The addition of multiple ClusterTopology resources and the `topologyProfileName`
 Understanding which topologies are in use is important before attempting deletions. Administrators can list which PodCliqueSets reference each ClusterTopology using kubectl:
 
 ```bash
-# List all PCSs grouped by their topology profile reference
+# List all PCSs grouped by their topology reference
 kubectl get podcliquesets -A -o json | jq -r '
   .items[]
   | {
       name: .metadata.name,
       namespace: .metadata.namespace,
-      topology: (.spec.template.topologyProfileName // "<none>")
+      topology: (.spec.template.topologyName // "<none>")
     }
   | [.topology, .namespace + "/" + .name]
   | @tsv
@@ -984,7 +968,9 @@ Condition States:
 | Status    | Reason                              | Description                                                  |
 | --------- | ----------------------------------- | ------------------------------------------------------------ |
 | `Unknown` | `ClusterTopologyNotFound`           | When `ClusterTopology` CR is no longer existing              |
-| `True`    | `ClusterTopologyLevelsUnavailable`  | When one or more topology levels used by a deployed `PodCliqueSet` are no longer present in `ClusterTopology` |
+| `Unknown` | `TopologyAwareSchedulingDisabled`   | When TAS has been disabled cluster-wide while the PCS still has topology constraints |
+| `Unknown` | `TopologyNameMissing`        | When PCS has topology constraints but no `topologyName` (upgrade from single-topology design) |
+| `True`    | `ClusterTopologyLevelsUnavailable`  | When one or more topology levels used by a deployed `PodCliqueSet` are no longer present in `ClusterTopology` (e.g., the ClusterTopology was deleted and recreated with different levels that no longer include the domains used by this PCS) |
 | `False`   | `AllClusterTopologyLevelsAvailable` | All topology levels used by a deployed `PodCliqueSet` are amongst the supported topology levels as defined in `ClusterTopology` |
 
 ### Dependencies
@@ -992,9 +978,9 @@ Condition States:
 **Scheduler backend with Topology Aware Scheduling Support**
 
 Currently the only scheduler backend that supports hierarchical TAS is [KAI Scheduler](https://github.com/NVIDIA/KAI-Scheduler). See [here](https://github.com/NVIDIA/KAI-Scheduler/tree/main/docs/topology) for more information.
-Follow [instructions](https://github.com/NVIDIA/KAI-Scheduler?tab=readme-ov-file#installation) to install KAI scheduler. By default, the operator automatically creates and manages a KAI `Topology` CR for each ClusterTopology in the cluster. Administrators who manage their own KAI `Topology` resources externally can map topology profiles to existing resources via the KAI scheduler's `topologyReferences` config — the operator will then verify drift instead of creating the resource (see [Scheduler Backend Topology](#scheduler-backend-topology)). KAI Scheduler supports multiple `Topology` resources within a single cluster.
+Follow [instructions](https://github.com/NVIDIA/KAI-Scheduler?tab=readme-ov-file#installation) to install KAI scheduler. By default, the operator automatically creates and manages a KAI `Topology` CR for each ClusterTopology that does not have `schedulerReferences` entries for the KAI scheduler. Administrators who manage their own KAI `Topology` resources can reference them via the ClusterTopology's `schedulerReferences` field — the operator will then verify drift instead of creating the resource (see [Scheduler Backend Topology](#scheduler-backend-topology)). KAI Scheduler supports multiple `Topology` resources within a single cluster.
 
-> NOTE: The scheduling backend determines what resources it requires. Grove Operator is not limited to one scheduler backend, and any other scheduler providing TAS functionality can be plugged in via the Scheduler Backend Framework (see [GREP-375](../375-scheduler-backend-framework/README.md)). The `topologyReferences` mechanism in each scheduler profile's config maps topology profiles to backend-specific resources.
+> NOTE: The scheduling backend determines what resources it requires. Grove Operator is not limited to one scheduler backend, and any other scheduler providing TAS functionality can be plugged in via the Scheduler Backend Framework (see [GREP-375](../375-scheduler-backend-framework/README.md)). The `schedulerReferences` mechanism in each ClusterTopology maps the topology to backend-specific resources.
 
 **Nodes labeled with Topology specific labels**
 
@@ -1011,30 +997,31 @@ To enable the scheduler to select/filter nodes that satisfy the topology constra
 
 **Unit tests** for multi-topology:
 
-* PCS validating webhook: `topologyProfileName` existence check on create and update, required when `TopologyConstraint` is set, immutability after scheduling, rejection when TAS is disabled
+* PCS validating webhook: `topologyName` existence check on create and update, required when `TopologyConstraint` is set, immutability after scheduling, rejection when TAS is disabled
 * PCS reconciler: `TopologyLevelsUnavailable` condition logic — set when ClusterTopology is missing or domains are unavailable, cleared when all domains are available
-* PCS reconciler: topology resolution logic that resolves `topologyProfileName` to the correct ClusterTopology when building the PodGang
+* PCS reconciler: topology resolution logic that resolves `topologyName` to the correct ClusterTopology when building the PodGang
 
 **E2E tests** are defined in [Issue#305](https://github.com/ai-dynamo/grove/issues/305).
 
 **E2E tests** for multi-topology:
 
-* Extend existing TAS e2e tests to include a multi-topology case: configure two topology profiles with different label keys, relabel a subset of worker nodes accordingly, deploy a PCS with `topologyProfileName` pointing to each topology, and verify that pods are placed correctly and the KAI PodGroup references the expected topology
+* Extend existing TAS e2e tests to include a multi-topology case: create two ClusterTopology resources with different label keys, relabel a subset of worker nodes accordingly, deploy a PCS with `topologyName` pointing to each topology, and verify that pods are placed correctly and the KAI PodGroup references the expected topology
 
 ## Alternatives
 
-An alternative was discussed to allow cluster admin to externally create `ClusterTopology` CR and provide a controller in Grove whose responsibility would be to reconcile creates/updates/deletes on externally managed `ClusterTopology` resource. Grove operator can then be started by specifying the name of the `ClusterTopology` CR.
+An alternative was discussed to have the operator fully manage ClusterTopology resources from topology profiles defined in `OperatorConfiguration`. In that model, administrators would not create ClusterTopology resources directly — they would define topology profiles in the operator's config, and the operator would create/delete CTs at startup.
 
 In future we will auto-detect cluster topology via tools similar to [Topograph](https://github.com/NVIDIA/topograph) and extend it to also automatically create `ClusterTopology` CR.
 
-### Hybrid Management: Operator-Managed Default + Admin-Created Topologies
+### Fully Operator-Managed Topologies from Configuration Profiles
 
-An alternative is to have the operator manage only a single default topology from `OperatorConfiguration`, while allowing administrators to create additional ClusterTopology resources directly via kubectl or GitOps. This hybrid model gives teams independence — different teams can manage their own topologies without coordinating operator restarts.
+An alternative is to have the operator fully manage all ClusterTopology resources from named topology profiles defined in `OperatorConfiguration`. In this model, administrators never create ClusterTopology resources directly — they define profiles in the operator's startup config, and the operator creates a ClusterTopology for each profile at startup, labels them with `app.kubernetes.io/managed-by: grove-operator`, and ignores manually created CTs.
 
-However, the hybrid model introduces two management paths with different lifecycle guarantees and semantics:
+This model provides a single source of truth (OperatorConfiguration) and a consistent ownership model. However, it introduces several drawbacks:
 
-* The operator-managed default topology is reconciled on each restart and can be accidentally overwritten by a `helm upgrade`.
-* Admin-created topologies are standard Kubernetes resources but are not reconciled by the operator — they can drift from the intended state or be accidentally deleted.
-* Documentation must carefully distinguish between operator-managed and admin-managed topologies to avoid confusion.
+* Topology management is coupled to the operator lifecycle — adding or changing a topology requires redeploying the operator.
+* Administrators cannot use standard Kubernetes workflows (kubectl, GitOps, Argo CD) to manage topologies.
+* Different teams cannot independently manage their own topologies without coordinating operator restarts.
+* The operator must handle complex delete+recreate workflows when topology levels change, since levels are immutable.
 
-With the fully operator-managed model chosen in this proposal, all topologies are defined as named profiles in `OperatorConfiguration`, providing a single source of truth and a consistent ownership model. The trade-off is that topology management is coupled to the operator lifecycle — adding or changing a topology requires redeploying the operator. When a profile is removed while PodCliqueSets still reference it, the PCS reconciler sets the `TopologyLevelsUnavailable` condition and removes invalid topology constraints from PodGang resources (see [ClusterTopology Deletion](#clustertopology-deletion)).
+With the admin-created model chosen in this proposal, ClusterTopology resources are standard Kubernetes resources that can be managed with familiar tooling. The Grove controller watches and reconciles them without needing to own their lifecycle. The trade-off is that there is no single configuration file that declares all topologies — administrators must manage ClusterTopology resources alongside their other cluster resources.
