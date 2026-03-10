@@ -206,8 +206,8 @@ func TestCreateOrGetResourceClaim(t *testing.T) {
 		// Verify the claim was actually created with correct spec.
 		created := &resourcev1.ResourceClaim{}
 		require.NoError(t, cl.Get(context.Background(), types.NamespacedName{Name: claimName, Namespace: namespace}, created))
-		assert.Equal(t, rct.Spec.ObjectMeta.Labels, created.Labels)
-		assert.Equal(t, rct.Spec.ObjectMeta.Annotations, created.Annotations)
+		assert.Equal(t, rct.Spec.Labels, created.Labels)
+		assert.Equal(t, rct.Spec.Annotations, created.Annotations)
 		assert.Len(t, created.Spec.Devices.Requests, 1)
 		assert.Equal(t, "gpu", created.Spec.Devices.Requests[0].Name)
 

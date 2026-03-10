@@ -70,8 +70,8 @@ func CreateOrGetResourceClaim(
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        claimName,
 			Namespace:   namespace,
-			Labels:      rct.Spec.ObjectMeta.Labels,
-			Annotations: rct.Spec.ObjectMeta.Annotations,
+			Labels:      rct.Spec.Labels,
+			Annotations: rct.Spec.Annotations,
 		},
 		Spec: *rct.Spec.Spec.DeepCopy(),
 	}
