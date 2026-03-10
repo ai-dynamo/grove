@@ -19,6 +19,9 @@ package exporter
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -101,9 +104,10 @@ func TestMultiExporter_Export(t *testing.T) {
 		PCSCount:  10,
 	}
 
-	var jsonBuf, summaryBuf bytes.Buffer
+	jsonPath := filepath.Join(t.TempDir(), "result.json")
+	var summaryBuf bytes.Buffer
 	multi := NewMultiExporter(
-		NewJSONExporter(&jsonBuf),
+		NewJSONFileExporter(jsonPath),
 		NewSummaryExporter(&summaryBuf),
 	)
 
@@ -111,7 +115,11 @@ func TestMultiExporter_Export(t *testing.T) {
 		t.Fatalf("MultiExporter.Export() error = %v", err)
 	}
 
-	if jsonBuf.Len() == 0 {
+	jsonData, err := os.ReadFile(jsonPath)
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	if len(jsonData) == 0 {
 		t.Fatal("JSONExporter produced no output")
 	}
 	if summaryBuf.Len() == 0 {
@@ -119,7 +127,7 @@ func TestMultiExporter_Export(t *testing.T) {
 	}
 
 	var got measurement.TrackerResult
-	if err := json.Unmarshal(jsonBuf.Bytes(), &got); err != nil {
+	if err := json.Unmarshal(jsonData, &got); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
 	if got.RunID != "multi-test" {
@@ -127,6 +135,74 @@ func TestMultiExporter_Export(t *testing.T) {
 	}
 
 	assertContains(t, summaryBuf.String(), "ScaleTest_100")
+}
+
+type errExporter struct{ msg string }
+
+func (e *errExporter) Export(_ *measurement.TrackerResult) error { return errors.New(e.msg) }
+
+func TestMultiExporter_ErrorAggregation(t *testing.T) {
+	t.Parallel()
+
+	result := &measurement.TrackerResult{RunID: "err-test"}
+
+	tests := []struct {
+		name       string
+		exporters  []ResultExporter
+		wantErr    bool
+		wantMsg    string
+		wantAllRun bool
+	}{
+		{
+			name: "single failure returns error",
+			exporters: []ResultExporter{
+				&errExporter{msg: "disk full"},
+			},
+			wantErr: true,
+			wantMsg: "disk full",
+		},
+		{
+			name: "continues after first error",
+			exporters: []ResultExporter{
+				&errExporter{msg: "first error"},
+				&errExporter{msg: "second error"},
+			},
+			wantErr:    true,
+			wantMsg:    "first error",
+			wantAllRun: true,
+		},
+		{
+			name: "no errors returns nil",
+			exporters: []ResultExporter{
+				NewJSONExporter(&bytes.Buffer{}),
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := NewMultiExporter(tc.exporters...).Export(result)
+			if tc.wantErr && err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+			if tc.wantMsg != "" && !strings.Contains(err.Error(), tc.wantMsg) {
+				t.Fatalf("error %q does not contain %q", err.Error(), tc.wantMsg)
+			}
+			if tc.wantAllRun {
+				for _, exp := range tc.exporters {
+					ee := exp.(*errExporter)
+					if !strings.Contains(err.Error(), ee.msg) {
+						t.Fatalf("error %q missing message from %q", err.Error(), ee.msg)
+					}
+				}
+			}
+		})
+	}
 }
 
 func assertContains(t *testing.T, s string, want string) {
