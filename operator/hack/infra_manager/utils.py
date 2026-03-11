@@ -27,12 +27,14 @@ from infra_manager.constants import (
     DEFAULT_PPROF_BIND_HOST,
     DEFAULT_PPROF_BIND_PORT,
     HELM_KEY_ANNOTATION_PREFIX,
+    HELM_KEY_BURST,
     HELM_KEY_PCLQ_SYNCS,
     HELM_KEY_PCS_SYNCS,
     HELM_KEY_PCSG_SYNCS,
     HELM_KEY_PPROF_BIND_HOST,
     HELM_KEY_PPROF_BIND_PORT,
     HELM_KEY_PROFILING,
+    HELM_KEY_QPS,
     KWOK_GITHUB_REPO,
 )
 
@@ -82,6 +84,8 @@ def collect_grove_helm_overrides(cfg: GroveConfig) -> list[str]:
         (cfg.pcs_syncs is not None, HELM_KEY_PCS_SYNCS, str(cfg.pcs_syncs)),
         (cfg.pclq_syncs is not None, HELM_KEY_PCLQ_SYNCS, str(cfg.pclq_syncs)),
         (cfg.pcsg_syncs is not None, HELM_KEY_PCSG_SYNCS, str(cfg.pcsg_syncs)),
+        (cfg.qps is not None, HELM_KEY_QPS, str(cfg.qps)),
+        (cfg.burst is not None, HELM_KEY_BURST, str(cfg.burst)),
     ]
     result = [f"{key}={value}" for enabled, key, value in overrides if enabled]
     if cfg.profiling:

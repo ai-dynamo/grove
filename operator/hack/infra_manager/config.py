@@ -140,6 +140,8 @@ class GroveConfig(BaseModel):
         pcs_syncs: PodCliqueSet concurrent syncs override, or None.
         pclq_syncs: PodClique concurrent syncs override, or None.
         pcsg_syncs: PodCliqueScalingGroup concurrent syncs override, or None.
+        qps: Kubernetes client QPS override, or None (uses helm chart default).
+        burst: Kubernetes client burst override, or None (uses helm chart default).
         namespace: Kubernetes namespace for Grove operator.
         mode: Deployment mode — "local" (skaffold build) or "image" (existing image).
         local: Local skaffold build settings.
@@ -153,6 +155,8 @@ class GroveConfig(BaseModel):
     pcs_syncs: int | None = None
     pclq_syncs: int | None = None
     pcsg_syncs: int | None = None
+    qps: float | None = None
+    burst: int | None = None
     namespace: str = DEFAULT_GROVE_NAMESPACE
     mode: Literal["local", "image"] = "local"
     local: LocalBuildConfig = LocalBuildConfig()

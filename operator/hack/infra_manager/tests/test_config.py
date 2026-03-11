@@ -23,6 +23,7 @@ from pydantic import ValidationError
 
 from infra_manager.config import (
     ClusterConfig,
+    GroveConfig,
     _deep_merge,
     _parse_set_override,
     load_setup_config,
@@ -160,6 +161,38 @@ def test_cluster_mutex_validator():
     """registry and prepull_images=True together raises ValidationError."""
     with pytest.raises(ValidationError):
         ClusterConfig(registry="myregistry.io", prepull_images=True)
+
+
+# ---------------------------------------------------------------------------
+# Env var priority
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# GroveConfig — qps/burst defaults and overrides
+# ---------------------------------------------------------------------------
+
+
+def test_grove_qps_burst_defaults():
+    """GroveConfig() has qps=None and burst=None by default."""
+    cfg = GroveConfig()
+
+    assert cfg.qps is None
+    assert cfg.burst is None
+
+
+def test_set_override_grove_qps():
+    """--set grove.qps=200 is parsed as a float."""
+    cfg = load_setup_config(_E2E_YAML, set_overrides=["grove.qps=200"])
+
+    assert cfg.grove.qps == 200.0
+
+
+def test_set_override_grove_burst():
+    """--set grove.burst=500 is parsed as an int."""
+    cfg = load_setup_config(_E2E_YAML, set_overrides=["grove.burst=500"])
+
+    assert cfg.grove.burst == 500
 
 
 # ---------------------------------------------------------------------------

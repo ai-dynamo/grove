@@ -15,7 +15,7 @@
 
 kai_scheduler:
   version: "v0.13.1"
-  helm_chart: "oci://ghcr.io/kai-scheduler/kai-scheduler/kai-scheduler "
+  helm_chart: "oci://ghcr.io/kai-scheduler/kai-scheduler/kai-scheduler"
   images:
     # All Kai Scheduler component images
     - "ghcr.io/kai-scheduler/KAI-Scheduler/admission"

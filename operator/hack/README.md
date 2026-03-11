@@ -54,11 +54,11 @@ pip3 install -r hack/requirements.txt
 ./hack/infra-manager.py setup --help
 
 # Skip specific components
-./hack/infra-manager.py setup --no-install-grove
-./hack/infra-manager.py setup --no-install-kai --no-prepull-images
+./hack/infra-manager.py setup --set grove.enabled=false
+./hack/infra-manager.py setup --set scheduler.kai.enabled=false --set cluster.prepull_images=false
 
 # Scale test setup with KWOK simulated nodes
-./hack/infra-manager.py setup --config presets/scale.yaml --kwok-nodes 1000
+./hack/infra-manager.py setup --config scale.yaml --set kwok.nodes=1000
 ```
 
 ### config-cluster.py

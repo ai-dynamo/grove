@@ -160,6 +160,8 @@ DEFAULT_PPROF_BIND_PORT = 2753
 HELM_KEY_PCS_SYNCS = "config.controllers.podCliqueSet.concurrentSyncs"
 HELM_KEY_PCLQ_SYNCS = "config.controllers.podClique.concurrentSyncs"
 HELM_KEY_PCSG_SYNCS = "config.controllers.podCliqueScalingGroup.concurrentSyncs"
+HELM_KEY_QPS = "config.runtimeClientConnection.qps"
+HELM_KEY_BURST = "config.runtimeClientConnection.burst"
 
 # -- K3d cluster defaults --
 DEFAULT_CLUSTER_NAME = "shared-e2e-test-cluster"
