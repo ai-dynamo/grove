@@ -75,7 +75,7 @@ spec:
     - domain: host
       key: kubernetes.io/hostname
   schedulerReferences:
-    - name: kai-scheduler
+    - schedulerName: kai-scheduler
       reference: gb200-kai-topology
 ```
 
