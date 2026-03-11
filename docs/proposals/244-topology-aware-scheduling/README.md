@@ -380,11 +380,11 @@ When the controller detects a new ClusterTopology:
 
 * For each ClusterTopology that does **not** have `schedulerReferences` entries for the active scheduler backend:
   * Automatically create the corresponding scheduler backend topology CR if it does not exist. For the KAI scheduler, this means creating a `Topology` CR with an `OwnerReference` to the corresponding ClusterTopology. When the ClusterTopology is deleted, the scheduler backend topology is cascade-deleted via the `OwnerReference`.
-  * Set the `SchedulerTopologyInSync` condition to `True` after the auto-created resource is confirmed to exist and its topology levels match the ClusterTopology.
+  * Set the `SchedulerTopologyDrift` condition to `False` after the auto-created resource is confirmed to exist and its topology levels match the ClusterTopology.
 * For each ClusterTopology that **does** have `schedulerReferences` entries:
-  * The named scheduler backend topology resource is assumed to be externally managed. The controller does not create it. Drift detection is handled via the `SchedulerTopologyInSync` status condition (see [Scheduler Backend Topology](#scheduler-backend-topology)).
+  * The named scheduler backend topology resource is assumed to be externally managed. The controller does not create it. Drift detection is handled via the `SchedulerTopologyDrift` status condition (see [Scheduler Backend Topology](#scheduler-backend-topology)).
 
-The `SchedulerTopologyInSync` condition is reconciled on every sync — if the scheduler backend topology resource is updated externally (levels changed, resource deleted), the controller detects this and updates the condition and `schedulerTopologyStatuses` accordingly.
+The `SchedulerTopologyDrift` condition is reconciled on every sync — if the scheduler backend topology resource is updated externally (levels changed, resource deleted), the controller detects this and updates the condition and `schedulerTopologyStatuses` accordingly.
 
 **ClusterTopology deleted**
 
@@ -514,14 +514,14 @@ type SchedulerTopologyStatus struct {
 
 #### Scheduler Backend Topology
 
-**Aggregate condition: `SchedulerTopologyInSync`**
+**Aggregate condition: `SchedulerTopologyDrift`**
 
-The `SchedulerTopologyInSync` condition on `ClusterTopologyStatus` provides a single aggregate health signal across all scheduler backend topologies. It is `True` only when every backend is in sync:
+The `SchedulerTopologyDrift` condition on `ClusterTopologyStatus` provides a single aggregate health signal across all scheduler backend topologies. It is `False` when all backends are in sync (healthy), and `True` when drift is detected:
 
 | Status    | Reason                    | Description                                                                         |
 | --------- | ------------------------- | ------------------------------------------------------------------------------------ |
-| `True`    | `InSync`                  | All scheduler backend topology levels match the ClusterTopology levels               |
-| `False`   | `Drift`                   | One or more scheduler backend topology levels do not match the ClusterTopology levels |
+| `False`   | `InSync`                  | All scheduler backend topology levels match the ClusterTopology levels               |
+| `True`    | `Drift`                   | One or more scheduler backend topology levels do not match the ClusterTopology levels |
 | `Unknown` | `TopologyNotFound`        | One or more referenced scheduler backend topology resources were not found           |
 
 **Per-backend detail: `schedulerTopologyStatuses`**
@@ -532,8 +532,8 @@ The `schedulerTopologyStatuses` field provides per-backend detail. Each entry re
 status:
   observedGeneration: 3
   conditions:
-    - type: SchedulerTopologyInSync
-      status: "False"
+    - type: SchedulerTopologyDrift
+      status: "True"
       reason: Drift
       message: "1 of 2 scheduler backends out of sync"
       observedGeneration: 3
@@ -551,7 +551,7 @@ status:
 
 The `observedGeneration` on `ClusterTopologyStatus` records the ClusterTopology's `metadata.generation` that was last reconciled. Consumers can compare `status.observedGeneration` to `metadata.generation` to determine whether the status reflects the latest spec. Each `SchedulerTopologyStatus` entry also carries an `observedGeneration` recording the `metadata.generation` of the scheduler backend topology resource that was last compared, so consumers can verify the drift check was performed against the current version of that resource (zero if the resource was not found).
 
-When a ClusterTopology's `schedulerReferences` is empty, the operator auto-manages the scheduler backend topology. The `SchedulerTopologyInSync` condition is still set — it is expected to be `True` since the operator controls both resources. The `schedulerTopologyStatuses` field will contain a single entry for the auto-managed resource.
+When a ClusterTopology's `schedulerReferences` is empty, the operator auto-manages the scheduler backend topology. The `SchedulerTopologyDrift` condition is still set — it is expected to be `False` since the operator controls both resources. The `schedulerTopologyStatuses` field will contain a single entry for the auto-managed resource.
 
 #### ClusterTopology Lifecycle
 
@@ -610,9 +610,9 @@ The operator manages the relationship between each ClusterTopology and its corre
 
 *Auto-managed (`schedulerReferences` empty):* When a ClusterTopology's `schedulerReferences` is empty, the operator automatically creates and manages the scheduler backend topology CR with an `OwnerReference` to the ClusterTopology. For the KAI scheduler, this means creating a `Topology` CR with the same name as the ClusterTopology. When the ClusterTopology's levels are updated, the operator deletes and recreates the auto-managed scheduler backend topology CR (since downstream resources like KAI `Topology` have immutable levels). When the ClusterTopology is deleted, the scheduler backend topology is cascade-deleted via the `OwnerReference`.
 
-*Referenced (`schedulerReferences` populated):* When a ClusterTopology's `schedulerReferences` contains entries for a scheduler backend, the named scheduler backend topology resource is assumed to be externally managed. The operator does not create, update, or delete the referenced topology. Instead, it compares the referenced topology's levels against the ClusterTopology's levels and reports per-backend sync state in `schedulerTopologyStatuses`. The aggregate `SchedulerTopologyInSync` condition reflects whether all backends are in sync.
+*Referenced (`schedulerReferences` populated):* When a ClusterTopology's `schedulerReferences` contains entries for a scheduler backend, the named scheduler backend topology resource is assumed to be externally managed. The operator does not create, update, or delete the referenced topology. Instead, it compares the referenced topology's levels against the ClusterTopology's levels and reports per-backend sync state in `schedulerTopologyStatuses`. The aggregate `SchedulerTopologyDrift` condition reflects whether any backends have drifted.
 
-In both cases the `SchedulerTopologyInSync` condition and `schedulerTopologyStatuses` are set, providing a consistent observability model regardless of whether the scheduler backend topology is auto-managed or externally managed.
+In both cases the `SchedulerTopologyDrift` condition and `schedulerTopologyStatuses` are set, providing a consistent observability model regardless of whether the scheduler backend topology is auto-managed or externally managed.
 
 ### Topology Constraints in PodCliqueSet
 
