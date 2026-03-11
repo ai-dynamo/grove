@@ -145,18 +145,23 @@ def _deploy_grove_charts(
     console.print("[green]\u2705 Grove operator deployed[/green]")
 
 
-def _apply_grove_helm_overrides(operator_dir: Path, helm_set_values: list[str], grove_namespace: str) -> None:
+def _apply_grove_helm_overrides(
+    operator_dir: Path,
+    helm_overrides: list[tuple[str, str]],
+    grove_namespace: str,
+) -> None:
     """Apply helm value overrides via ``helm upgrade --reuse-values``.
 
     Args:
         operator_dir: Root directory of the Grove operator source tree.
-        helm_set_values: List of ``key=value`` strings for ``--set`` arguments.
+        helm_overrides: List of ``(helm_flag, "key=value")`` tuples, where
+            ``helm_flag`` is ``"--set"`` or ``"--set-string"``.
         grove_namespace: Kubernetes namespace where Grove is installed.
     """
-    if not helm_set_values:
+    if not helm_overrides:
         return
     console.print("[yellow]\u2139\ufe0f  Applying Grove helm overrides...[/yellow]")
-    set_args = [item for val in helm_set_values for item in ("--set", val)]
+    set_args = [item for flag, val in helm_overrides for item in (flag, val)]
     chart_path = str(operator_dir / REL_CHARTS_DIR)
     sh.helm(
         "upgrade",

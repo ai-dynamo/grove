@@ -66,16 +66,20 @@ def resolve_registry_repos(port: int) -> tuple[str, str]:
     return f"localhost:{port}", f"registry:{port}"
 
 
-def collect_grove_helm_overrides(cfg: GroveConfig) -> list[str]:
-    """Build helm override strings from grove tuning options.
+def collect_grove_helm_overrides(cfg: GroveConfig) -> list[tuple[str, str]]:
+    """Build helm override tuples from grove tuning options.
+
+    Each tuple is ``(helm_flag, "key=value")`` where ``helm_flag`` is either
+    ``"--set"`` (typed) or ``"--set-string"`` (string-forced).
 
     Args:
         cfg: Grove configuration with profiling and sync settings.
 
     Returns:
-        List of ``key=value`` strings for ``helm --set`` arguments.
+        List of ``(helm_flag, "key=value")`` tuples.
         When profiling is enabled, Grafana/Pyroscope pod annotation overrides
-        are also appended for scraping the pprof endpoint.
+        are also appended using ``--set-string`` to prevent helm from coercing
+        annotation values to booleans or integers.
     """
     overrides: list[tuple[bool, str, str]] = [
         (cfg.profiling, HELM_KEY_PROFILING, "true"),
@@ -87,17 +91,21 @@ def collect_grove_helm_overrides(cfg: GroveConfig) -> list[str]:
         (cfg.qps is not None, HELM_KEY_QPS, str(cfg.qps)),
         (cfg.burst is not None, HELM_KEY_BURST, str(cfg.burst)),
     ]
-    result = [f"{key}={value}" for enabled, key, value in overrides if enabled]
+    result: list[tuple[str, str]] = [("--set", f"{key}={value}") for enabled, key, value in overrides if enabled]
     if cfg.profiling:
         result.extend(_pyroscope_annotation_overrides())
     return result
 
 
-def _pyroscope_annotation_overrides() -> list[str]:
-    """Build Grafana/Pyroscope scrape annotation overrides for helm --set.
+def _pyroscope_annotation_overrides() -> list[tuple[str, str]]:
+    """Build Grafana/Pyroscope scrape annotation overrides using ``--set-string``.
+
+    Annotation values must be strings; ``--set-string`` prevents helm from
+    coercing ``"true"`` or port numbers to booleans/integers, which Kubernetes
+    would reject.
 
     Returns:
-        List of ``annotations.<escaped-key>=value`` strings.
+        List of ``("--set-string", "key=value")`` tuples.
     """
     port = str(DEFAULT_PPROF_BIND_PORT)
     annotations = {
@@ -109,7 +117,7 @@ def _pyroscope_annotation_overrides() -> list[str]:
         "profiles.grafana.com/goroutine.port": port,
     }
     return [
-        f"{HELM_KEY_ANNOTATION_PREFIX}.{key.replace('.', '\\.')}={value}"
+        ("--set-string", f"{HELM_KEY_ANNOTATION_PREFIX}.{key.replace('.', '\\.')}={value}")
         for key, value in annotations.items()
     ]
 

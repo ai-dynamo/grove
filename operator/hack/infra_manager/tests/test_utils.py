@@ -21,16 +21,26 @@ from infra_manager.utils import collect_grove_helm_overrides
 
 
 def test_collect_grove_helm_overrides_qps_burst():
-    """qps and burst fields produce the correct helm override strings."""
+    """qps and burst fields produce the correct --set helm override tuples."""
     overrides = collect_grove_helm_overrides(GroveConfig(qps=200.0, burst=500))
 
-    assert any("config.runtimeClientConnection.qps=200.0" in o for o in overrides)
-    assert any("config.runtimeClientConnection.burst=500" in o for o in overrides)
+    assert any("config.runtimeClientConnection.qps=200.0" in val for _, val in overrides)
+    assert any("config.runtimeClientConnection.burst=500" in val for _, val in overrides)
+    assert all(flag == "--set" for flag, val in overrides if "runtimeClientConnection" in val)
 
 
 def test_collect_grove_helm_overrides_qps_burst_none():
     """qps and burst are omitted when not set."""
     overrides = collect_grove_helm_overrides(GroveConfig())
 
-    assert not any("runtimeClientConnection.qps" in o for o in overrides)
-    assert not any("runtimeClientConnection.burst" in o for o in overrides)
+    assert not any("runtimeClientConnection.qps" in val for _, val in overrides)
+    assert not any("runtimeClientConnection.burst" in val for _, val in overrides)
+
+
+def test_collect_grove_helm_overrides_annotation_set_string():
+    """Pyroscope annotation overrides use --set-string to preserve string types."""
+    overrides = collect_grove_helm_overrides(GroveConfig(profiling=True))
+
+    ann = [(flag, val) for flag, val in overrides if "podAnnotations." in val]
+    assert ann, "expected at least one annotation override"
+    assert all(flag == "--set-string" for flag, _ in ann)
