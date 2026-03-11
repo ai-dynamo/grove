@@ -107,8 +107,10 @@ run-e2e: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
 run-e2e:
 	@echo "> Preparing charts (copying CRDs)..."
 	@$(MODULE_HACK_DIR)/prepare-charts.sh
+	@echo "> Compiling e2e tests..."
+	@cd e2e && go test -count=1 -tags=e2e -c -o /tmp/e2e.test ./tests/...
 	@echo "> Running e2e tests..."
-	@cd e2e && go test -count=1 -tags=e2e ./tests/... -v -timeout 45m $(if $(TEST_PATTERN),-run $(TEST_PATTERN))
+	@cd e2e && /tmp/e2e.test -test.v -test.timeout 45m $(if $(TEST_PATTERN),-test.run $(TEST_PATTERN))
 
 # Create a k3d cluster for e2e testing (with Grove and Kai scheduler deployed)
 # This is optional - tests work with any Kubernetes cluster that has the required components

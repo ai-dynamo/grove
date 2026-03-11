@@ -88,6 +88,10 @@ WEBHOOK_READY_POLL_INTERVAL_SECONDS = 5
 KAI_QUEUE_MAX_RETRIES = 12
 KAI_QUEUE_POLL_INTERVAL_SECONDS = 5
 
+# Default per-node memory limit (MB). Used by --agents-memory locally and by
+# kubelet system-reserved in DinD mode to achieve equivalent scheduling behavior.
+DEFAULT_WORKER_MEMORY_MB = 150
+
 
 class ClusterConfig(BaseSettings):
     """
@@ -122,7 +126,7 @@ class ClusterConfig(BaseSettings):
     api_port: int = Field(default=6560, ge=1, le=65535)
     lb_port: str = "8090:80"
     worker_nodes: int = Field(default=30, ge=1, le=100)
-    worker_memory: Optional[str] = Field(default="150m", pattern=r"^\d+[mMgG]?$")
+    worker_memory: Optional[str] = Field(default=f"{DEFAULT_WORKER_MEMORY_MB}m", pattern=r"^\d+[mMgG]?$")
     k3s_image: str = "rancher/k3s:v1.33.5-k3s1"
     kai_version: str = Field(default=DEPENDENCIES['kai_scheduler']['version'], pattern=r"^v[\d.]+(-[\w.]+)?$")
     skaffold_profile: str = "topology-test"
@@ -162,6 +166,18 @@ def run_cmd(cmd, *args, **kwargs) -> Tuple[int, Any]:
         if e.exit_code in ok_codes:
             return e.exit_code, e
         raise
+
+
+def get_system_total_memory_ki() -> Optional[int]:
+    """Read MemTotal from /proc/meminfo (KiB). Returns None on non-Linux systems."""
+    try:
+        with open('/proc/meminfo') as f:
+            for line in f:
+                if line.startswith('MemTotal:'):
+                    return int(line.split()[1])
+    except FileNotFoundError:
+        return None
+    return None
 
 
 # ============================================================================
@@ -265,6 +281,31 @@ def create_cluster(config: ClusterConfig) -> bool:
         if key not in ['nodes_per_zone', 'nodes_per_block', 'nodes_per_rack', 'cluster_timeout', 'max_retries']:
             console.print(f"  {key:20s}: {value}")
 
+    # In DinD, --agents-memory can't be used (broken /proc/meminfo bind-mount), so we
+    # emulate the memory limit via kubelet system-reserved. This makes the scheduler see
+    # limited allocatable memory per node, matching the --agents-memory behavior.
+    dind_memory_args = []
+    if not config.worker_memory:
+        total_ki = get_system_total_memory_ki()
+        if total_ki is not None:
+            target_allocatable_mi = DEFAULT_WORKER_MEMORY_MB
+            eviction_threshold_mi = 100
+            system_reserved_mi = (total_ki // 1024) - target_allocatable_mi - eviction_threshold_mi
+            if system_reserved_mi > 0:
+                console.print(
+                    f"[yellow]ℹ️  DinD mode: detected {total_ki // 1024}Mi system memory, "
+                    f"setting system-reserved={system_reserved_mi}Mi "
+                    f"(target allocatable: ~{target_allocatable_mi}Mi/node)[/yellow]"
+                )
+                dind_memory_args = [
+                    "--k3s-arg", f"--kubelet-arg=system-reserved=memory={system_reserved_mi}Mi@agent:*",
+                ]
+            else:
+                console.print(
+                    f"[yellow]⚠️  DinD mode: system memory too low ({total_ki // 1024}Mi) "
+                    f"to emulate {target_allocatable_mi}Mi allocatable per node, skipping system-reserved[/yellow]"
+                )
+
     for attempt in range(1, config.max_retries + 1):
         console.print(f"[yellow]ℹ️  Cluster creation attempt {attempt} of {config.max_retries}...[/yellow]")
 
@@ -289,7 +330,7 @@ def create_cluster(config: ClusterConfig) -> bool:
             "--k3s-node-label", "node_role.e2e.grove.nvidia.com=agent@agent:*",
             "--k3s-node-label", "nvidia.com/gpu.deploy.operands=false@server:*",
             "--k3s-node-label", "nvidia.com/gpu.deploy.operands=false@agent:*",
-            *(["--agents-memory", config.worker_memory] if config.worker_memory else []),
+            *(["--agents-memory", config.worker_memory] if config.worker_memory else dind_memory_args),
             "--timeout", config.cluster_timeout,
             "--wait",
             _ok_code=[0, 1]
@@ -318,7 +359,7 @@ def wait_for_nodes(config: ClusterConfig, max_restart_rounds: int = 2):
     for attempt in range(1, max_restart_rounds + 2):
         console.print(f"[yellow]ℹ️  Waiting for all nodes to be ready (attempt {attempt})...[/yellow]")
         exit_code, _ = run_cmd(
-            sh.kubectl, "wait", "--for=condition=Ready", "nodes", "--all", "--timeout=10m",
+            sh.kubectl, "wait", "--for=condition=Ready", "nodes", "--all", "--timeout=5m",
             _ok_code=[0, 1],
         )
         if exit_code == 0:
@@ -524,7 +565,7 @@ def main(
     skip_grove: bool = typer.Option(False, "--skip-grove", help="Skip Grove operator deployment"),
     skip_topology: bool = typer.Option(False, "--skip-topology", help="Skip topology label application"),
     skip_prepull: bool = typer.Option(False, "--skip-prepull", help="Skip image pre-pulling (faster but cluster startup will be slower)"),
-    skip_memory_limit: bool = typer.Option(False, "--skip-memory-limit", help="Skip --agents-memory (required for DinD where /proc/meminfo bind-mount fails)"),
+    dind_memory_mode: bool = typer.Option(False, "--dind-memory-mode", help="Use kubelet system-reserved to emulate node memory limits (for DinD where --agents-memory fails)"),
     delete: bool = typer.Option(False, "--delete", help="Delete the cluster and exit"),
 ):
     """
@@ -552,8 +593,8 @@ def main(
         skip_topology = True
     if '--skip-prepull' in sys.argv:
         skip_prepull = True
-    if '--skip-memory-limit' in sys.argv:
-        skip_memory_limit = True
+    if '--dind-memory-mode' in sys.argv:
+        dind_memory_mode = True
 
     config = ClusterConfig()
     script_dir = Path(__file__).resolve().parent
@@ -576,9 +617,9 @@ def main(
     skip_grove = to_bool(skip_grove)
     skip_topology = to_bool(skip_topology)
     skip_prepull = to_bool(skip_prepull)
-    skip_memory_limit = to_bool(skip_memory_limit)
+    dind_memory_mode = to_bool(dind_memory_mode)
 
-    if skip_memory_limit:
+    if dind_memory_mode:
         config.worker_memory = None
 
     # Handle delete mode
