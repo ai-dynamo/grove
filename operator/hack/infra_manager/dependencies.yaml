@@ -14,18 +14,18 @@
 # - Version defaults (can be overridden via E2E_* environment variables)
 
 kai_scheduler:
-  version: "v0.13.0"
-  helm_chart: "oci://ghcr.io/nvidia/kai-scheduler/kai-scheduler"
+  version: "v0.13.1"
+  helm_chart: "oci://ghcr.io/kai-scheduler/kai-scheduler/kai-scheduler "
   images:
     # All Kai Scheduler component images
-    - "ghcr.io/nvidia/kai-scheduler/admission"
-    - "ghcr.io/nvidia/kai-scheduler/binder"
-    - "ghcr.io/nvidia/kai-scheduler/crd-upgrader"
-    - "ghcr.io/nvidia/kai-scheduler/operator"
-    - "ghcr.io/nvidia/kai-scheduler/podgroupcontroller"
-    - "ghcr.io/nvidia/kai-scheduler/podgrouper"
-    - "ghcr.io/nvidia/kai-scheduler/queuecontroller"
-    - "ghcr.io/nvidia/kai-scheduler/scheduler"
+    - "ghcr.io/kai-scheduler/KAI-Scheduler/admission"
+    - "ghcr.io/kai-scheduler/KAI-Scheduler/binder"
+    - "ghcr.io/kai-scheduler/KAI-Scheduler/crd-upgrader"
+    - "ghcr.io/kai-scheduler/KAI-Scheduler/operator"
+    - "ghcr.io/kai-scheduler/KAI-Scheduler/podgroupcontroller"
+    - "ghcr.io/kai-scheduler/KAI-Scheduler/podgrouper"
+    - "ghcr.io/kai-scheduler/KAI-Scheduler/queuecontroller"
+    - "ghcr.io/kai-scheduler/KAI-Scheduler/scheduler"
 
 cert_manager:
   version: "v1.14.4"
