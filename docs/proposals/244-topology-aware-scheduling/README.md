@@ -130,7 +130,7 @@ spec:
     - domain: host
       key: kubernetes.io/hostname
   schedulerReferences:
-    - name: kai-scheduler
+    - schedulerName: kai-scheduler
       reference: gb200-kai-topology
 ```
 
@@ -450,9 +450,9 @@ type ClusterTopologySpec struct {
 
 // SchedulerReference maps a ClusterTopology to a scheduler backend's topology resource.
 type SchedulerReference struct {
-    // Name is the name of the scheduler backend (e.g., "kai-scheduler").
+    // SchedulerName is the name of the scheduler backend (e.g., "kai-scheduler").
     // +required
-    Name string `json:"name"`
+    SchedulerName string `json:"schedulerName"`
     // Reference is the name of the scheduler backend's topology resource.
     // +required
     Reference string `json:"reference"`
@@ -495,8 +495,8 @@ type ClusterTopologyStatus struct {
 // SchedulerTopologyStatus reports the sync state between this ClusterTopology and a single
 // scheduler backend's topology resource.
 type SchedulerTopologyStatus struct {
-    // Name is the scheduler backend name (matches SchedulerReference.Name).
-    Name string `json:"name"`
+    // SchedulerName is the scheduler backend name (matches SchedulerReference.SchedulerName).
+    SchedulerName string `json:"schedulerName"`
     // Reference is the scheduler backend topology resource name (matches SchedulerReference.Reference).
     Reference string `json:"reference"`
     // InSync is true when the scheduler backend topology levels match the ClusterTopology levels.
@@ -538,11 +538,11 @@ status:
       message: "1 of 2 scheduler backends out of sync"
       observedGeneration: 3
   schedulerTopologyStatuses:
-    - name: kai-scheduler
+    - schedulerName: kai-scheduler
       reference: h100-kai-topology
       inSync: true
       observedGeneration: 5       # generation of the kai-scheduler Topology CR
-    - name: other-scheduler
+    - schedulerName: other-scheduler
       reference: h100-other-topology
       inSync: false
       observedGeneration: 2       # generation of the other-scheduler Topology CR
