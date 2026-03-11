@@ -89,15 +89,14 @@ jobs:
   #   test_pattern  (optional) - Go test -run pattern (standard e2e tests)
   #   make_target   (optional) - Makefile target, defaults to run-e2e-full
   e2e:
-    # needs: [test, build, check, changes]
-    # # Run on non-draft PRs (or draft PRs with 'run-e2e' label)
-    # # AND only when operator or .github files are changed
-    # if: |
-    #   github.event_name == 'pull_request' &&
-    #   needs.changes.outputs.e2e-relevant == 'true' &&
-    #   (github.event.pull_request.draft == false || contains(github.event.pull_request.labels.*.name, 'run-e2e'))
-    # # use NVIDIA self-hosted runner with 8 vCPUs and 30GB of ram (on AWS)
-    # # the tests are unstable using the default runner with 4 vCPUs and 16GB of ram
+    needs: [test, build, check, changes]
+    # Run on non-draft PRs (or draft PRs with 'run-e2e' label)
+    # AND only when operator or .github files are changed
+    if: |
+      github.event_name == 'pull_request' &&
+      needs.changes.outputs.e2e-relevant == 'true' &&
+      (github.event.pull_request.draft == false || contains(github.event.pull_request.labels.*.name, 'run-e2e'))
+    # use NVIDIA self-hosted runner setting is on Velonix repository
     runs-on: prod-grove-e2e-v1
     timeout-minutes: 60
     strategy:
