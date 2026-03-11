@@ -25,6 +25,7 @@ spec:
           replicas: 2
           minAvailable: 2
           podSpec:
+            terminationGracePeriodSeconds: 5
             schedulerName: kai-scheduler
             affinity:
               nodeAffinity:
