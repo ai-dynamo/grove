@@ -21,7 +21,7 @@ from __future__ import annotations
 import typer
 
 from infra_manager.cluster import delete_cluster
-from infra_manager.config import K3dConfig
+from infra_manager.config import ClusterConfig
 from infra_manager.kwok import delete_kwok_nodes
 
 app = typer.Typer(help="Delete infrastructure resources.")
@@ -32,10 +32,10 @@ def k3d_cluster(
     cluster_name: str | None = typer.Option(None, "--cluster-name", help="k3d cluster name"),
 ) -> None:
     """Delete the k3d cluster."""
-    k3d_cfg = K3dConfig()
+    cfg = ClusterConfig()
     if cluster_name is not None:
-        k3d_cfg = k3d_cfg.model_copy(update={"cluster_name": cluster_name})
-    delete_cluster(k3d_cfg)
+        cfg = cfg.model_copy(update={"name": cluster_name})
+    delete_cluster(cfg)
 
 
 @app.command("kwok-nodes")
