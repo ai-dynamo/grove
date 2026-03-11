@@ -42,10 +42,17 @@ runs:
     - name: Set up Go
       shell: bash
       run: |
+        REQUIRED="${{ inputs.go-version }}"
         if command -v go &>/dev/null; then
-          echo "Go already installed: $(go version)"
+          INSTALLED="$(go version | grep -oP '\d+\.\d+\.\d+')"
+          if [[ "${INSTALLED}" == "${REQUIRED}" ]]; then
+            echo "Go ${INSTALLED} already installed — matches required version"
+          else
+            echo "Go ${INSTALLED} installed but ${REQUIRED} required"
+            echo "NEED_GO_SETUP=true" >> "$GITHUB_ENV"
+          fi
         else
-          echo "Go not found, installing via actions/setup-go..."
+          echo "Go not found, installing ${REQUIRED}..."
           echo "NEED_GO_SETUP=true" >> "$GITHUB_ENV"
         fi
 
