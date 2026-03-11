@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -211,6 +212,35 @@ func (scm *SharedClusterManager) connectToCluster(ctx context.Context, testImage
 	return nil
 }
 
+// refreshWorkerNodes re-fetches the list of Ready worker nodes from the cluster.
+// This is needed because the node monitoring goroutine may replace NotReady nodes
+// (deleting and restarting them), making the cached workerNodes list stale.
+func (scm *SharedClusterManager) refreshWorkerNodes(ctx context.Context) error {
+	nodes, err := scm.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	var updated []string
+	for _, node := range nodes.Items {
+		if _, isServer := node.Labels["node-role.kubernetes.io/control-plane"]; isServer {
+			continue
+		}
+		if !utils.IsNodeReady(&node) {
+			scm.logger.Debugf("⏭️ Skipping NotReady node during refresh: %s", node.Name)
+			continue
+		}
+		updated = append(updated, node.Name)
+	}
+	sort.Strings(updated)
+
+	if len(updated) != len(scm.workerNodes) {
+		scm.logger.Infof("🔄 Worker nodes changed: %d → %d", len(scm.workerNodes), len(updated))
+	}
+	scm.workerNodes = updated
+	return nil
+}
+
 // PrepareForTest prepares the cluster for a specific test by cordoning the appropriate nodes.
 // It ensures exactly `requiredWorkerNodes` nodes are schedulable by cordoning excess nodes.
 // Returns an error if a previous cleanup operation failed, preventing potentially corrupted test state.
@@ -221,6 +251,10 @@ func (scm *SharedClusterManager) PrepareForTest(ctx context.Context, requiredWor
 
 	if !scm.isSetup {
 		return fmt.Errorf("shared cluster not setup")
+	}
+
+	if err := scm.refreshWorkerNodes(ctx); err != nil {
+		return fmt.Errorf("failed to refresh worker nodes: %w", err)
 	}
 
 	totalWorkerNodes := len(scm.workerNodes)

@@ -282,20 +282,23 @@ def create_cluster(config: ClusterConfig) -> bool:
             console.print(f"  {key:20s}: {value}")
 
     # In DinD, --agents-memory can't be used (broken /proc/meminfo bind-mount), so we
-    # emulate the memory limit via kubelet system-reserved. This makes the scheduler see
-    # limited allocatable memory per node, matching the --agents-memory behavior.
+    # emulate the memory limit via kubelet system-reserved. With --agents-memory Nm, the
+    # container's total memory (capacity) is Nm; kubelet then subtracts its eviction
+    # threshold (~100Mi) to get allocatable. To match this, we set system-reserved so that
+    # capacity - system_reserved = DEFAULT_WORKER_MEMORY_MB, letting kubelet's eviction
+    # threshold naturally reduce allocatable the same way.
     dind_memory_args = []
     if not config.worker_memory:
         total_ki = get_system_total_memory_ki()
         if total_ki is not None:
-            target_allocatable_mi = DEFAULT_WORKER_MEMORY_MB
-            eviction_threshold_mi = 100
-            system_reserved_mi = (total_ki // 1024) - target_allocatable_mi - eviction_threshold_mi
+            system_reserved_mi = (total_ki // 1024) - DEFAULT_WORKER_MEMORY_MB
             if system_reserved_mi > 0:
+                effective_allocatable_mi = DEFAULT_WORKER_MEMORY_MB - 100
                 console.print(
                     f"[yellow]ℹ️  DinD mode: detected {total_ki // 1024}Mi system memory, "
                     f"setting system-reserved={system_reserved_mi}Mi "
-                    f"(target allocatable: ~{target_allocatable_mi}Mi/node)[/yellow]"
+                    f"(effective capacity: ~{DEFAULT_WORKER_MEMORY_MB}Mi/node, "
+                    f"allocatable: ~{effective_allocatable_mi}Mi/node)[/yellow]"
                 )
                 dind_memory_args = [
                     "--k3s-arg", f"--kubelet-arg=system-reserved=memory={system_reserved_mi}Mi@agent:*",
@@ -303,7 +306,7 @@ def create_cluster(config: ClusterConfig) -> bool:
             else:
                 console.print(
                     f"[yellow]⚠️  DinD mode: system memory too low ({total_ki // 1024}Mi) "
-                    f"to emulate {target_allocatable_mi}Mi allocatable per node, skipping system-reserved[/yellow]"
+                    f"to emulate {DEFAULT_WORKER_MEMORY_MB}Mi capacity per node, skipping system-reserved[/yellow]"
                 )
 
     for attempt in range(1, config.max_retries + 1):
