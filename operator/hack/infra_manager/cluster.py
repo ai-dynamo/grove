@@ -191,6 +191,7 @@ def create_cluster(cfg: ClusterConfig) -> None:
         reraise=True,
     )
     def _attempt() -> None:
+        """Delete any existing cluster, then create a fresh one with the configured parameters."""
         try:
             sh.k3d("cluster", "delete", cfg.name)
             console.print("[yellow]   Removed existing cluster[/yellow]")

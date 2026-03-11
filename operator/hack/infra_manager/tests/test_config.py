@@ -47,6 +47,9 @@ def test_deep_merge_nested():
     assert result["a"]["x"] == 99
     assert result["a"]["y"] == 2
     assert result["b"] == 20
+    # base must not be mutated
+    assert base == {"a": {"x": 1, "y": 2}, "b": 10}
+    assert base["a"] == {"x": 1, "y": 2}
 
 
 # ---------------------------------------------------------------------------
@@ -168,9 +171,10 @@ def test_env_var_beats_set_override(monkeypatch):
     """E2E_CLUSTER__WORKER_NODES env var wins over a --set override for the same field."""
     monkeypatch.setenv("E2E_CLUSTER__WORKER_NODES", "5")
 
+    # Use 99 as --set value (distinct from e2e.yaml default of 30 and env var 5)
     cfg = load_setup_config(
         _E2E_YAML,
-        set_overrides=["cluster.worker_nodes=30"],
+        set_overrides=["cluster.worker_nodes=99"],
     )
 
     assert cfg.cluster.worker_nodes == 5

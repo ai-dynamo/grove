@@ -243,6 +243,8 @@ class SetupConfig(BaseSettings):
 
         Default pydantic-settings priority is init > env. We reverse this so
         that E2E_* env vars override values loaded from the YAML file.
+        dotenv_settings and file_secret_settings are intentionally excluded —
+        we do not support .env files; all overrides go through YAML or env vars.
         """
         return (env_settings, init_settings)
 
@@ -291,7 +293,7 @@ def _parse_set_override(s: str) -> dict:
         raise ValueError(f"Invalid --set override (missing '='): {s!r}")
     key, value = s.split("=", 1)
     parts = key.split(".")
-    result: dict = value
+    result: str | dict = value
     for part in reversed(parts):
         result = {part: result}
     return result

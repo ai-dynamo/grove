@@ -72,6 +72,8 @@ def collect_grove_helm_overrides(cfg: GroveConfig) -> list[str]:
 
     Returns:
         List of ``key=value`` strings for ``helm --set`` arguments.
+        When profiling is enabled, Grafana/Pyroscope pod annotation overrides
+        are also appended for scraping the pprof endpoint.
     """
     overrides: list[tuple[bool, str, str]] = [
         (cfg.profiling, HELM_KEY_PROFILING, "true"),

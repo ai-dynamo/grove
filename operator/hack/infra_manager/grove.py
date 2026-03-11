@@ -229,7 +229,7 @@ def deploy_grove_operator(
         }
     )
 
-    if cluster_cfg.registry is not None:
+    if cluster_cfg.registry:
         push_repo = pull_repo = cluster_cfg.registry
     else:
         push_repo, pull_repo = resolve_registry_repos(cluster_cfg.registry_port)
