@@ -103,7 +103,7 @@ NODE_CONDITIONS = [
 ]
 
 E2E_NODE_ROLE_KEY = "node_role.e2e.grove.nvidia.com"
-KAI_SCHEDULER_OCI = "oci://ghcr.io/nvidia/kai-scheduler/kai-scheduler"
+KAI_SCHEDULER_OCI = "oci://ghcr.io/kai-scheduler/kai-scheduler/kai-scheduler"
 GROVE_OPERATOR_IMAGE = "grove-operator"
 GROVE_INITC_IMAGE = "grove-initc"
 GROVE_MODULE_PATH = "github.com/ai-dynamo/grove/operator/internal/version"
