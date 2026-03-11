@@ -36,6 +36,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -93,6 +94,7 @@ type SharedClusterManager struct {
 	clientset     *kubernetes.Clientset
 	restConfig    *rest.Config
 	dynamicClient dynamic.Interface
+	crClient      client.Client
 	cleanup       func()
 	logger        *utils.Logger
 	isSetup       bool
@@ -175,6 +177,13 @@ func (scm *SharedClusterManager) connectToCluster(ctx context.Context, testImage
 		return fmt.Errorf("failed to create dynamic client: %w", err)
 	}
 	scm.dynamicClient = dynamicClient
+
+	// Create controller-runtime client for typed CR access
+	crClient, err := utils.NewCRClient(restConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create controller-runtime client: %w", err)
+	}
+	scm.crClient = crClient
 
 	// Setup test images in registry (if registry port is configured)
 	if scm.registryPort != "" && len(testImages) > 0 {
@@ -530,6 +539,11 @@ func (scm *SharedClusterManager) listRemainingGroveManagedResources(ctx context.
 // GetClients returns the kubernetes clients for tests to use
 func (scm *SharedClusterManager) GetClients() (*kubernetes.Clientset, *rest.Config, dynamic.Interface) {
 	return scm.clientset, scm.restConfig, scm.dynamicClient
+}
+
+// GetCRClient returns the controller-runtime client for typed CR access
+func (scm *SharedClusterManager) GetCRClient() client.Client {
+	return scm.crClient
 }
 
 // GetRegistryPort returns the registry port for test image setup
