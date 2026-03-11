@@ -53,7 +53,7 @@ digraph TASArchitecture {
             <TR><TD><FONT POINT-SIZE="7" COLOR="#666666">Admin Created (kubectl/GitOps)</FONT></TD></TR>
             <TR><TD><FONT POINT-SIZE="7" COLOR="#666666">levels: [zone, block, rack, host]</FONT></TD></TR>
             <TR><TD><FONT POINT-SIZE="7" COLOR="#996600">schedulerReferences:</FONT></TD></TR>
-            <TR><TD><FONT POINT-SIZE="7" COLOR="#996600">  kai → gb200-kai-topology</FONT></TD></TR>
+            <TR><TD><FONT POINT-SIZE="7" COLOR="#996600">  kai-scheduler → gb200-kai-topology</FONT></TD></TR>
             </TABLE>>,
             fillcolor="#dceefb"
         ];
