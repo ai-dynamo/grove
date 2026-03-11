@@ -33,8 +33,6 @@ import (
 
 const (
 	scaleTestExpectedPods = 5000
-	scaleTestPollInterval = 2 * time.Second
-	scaleTestTimeout      = 15 * time.Minute
 )
 
 func Test_ScaleTest_5000_MoE(t *testing.T) {

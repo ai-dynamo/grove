@@ -36,7 +36,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var (
@@ -69,6 +68,11 @@ const (
 	defaultPollTimeout = 4 * time.Minute
 	// defaultPollInterval is the interval for most polling conditions
 	defaultPollInterval = 5 * time.Second
+
+	// scaleTestPollInterval defines the interval at which polling occurs during scale tests, set to 2 seconds.
+	scaleTestPollInterval = 2 * time.Second
+	// scaleTestTimeout defines the timeout for scale tests, set to 15 minutes.
+	scaleTestTimeout = 15 * time.Minute
 
 	// Grove label keys
 	LabelPodClique             = "grove.io/podclique"
