@@ -42,7 +42,7 @@ from infra_manager.constants import (
     DEFAULT_SKAFFOLD_PROFILE,
     DEFAULT_WORKER_MEMORY,
     DEFAULT_WORKER_NODES,
-    DEPENDENCIES,
+    dep_value,
 )
 
 logger = logging.getLogger(__name__)
@@ -116,7 +116,7 @@ class KaiConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
-    version: str = Field(default=DEPENDENCIES["kai_scheduler"]["version"], pattern=r"^v[\d.]+(-[\w.]+)?$")
+    version: str = Field(default=dep_value("kai_scheduler", "version", default="v0.0.0"), pattern=r"^v[\d.]+(-[\w.]+)?$")
 
 
 class SchedulerConfig(BaseModel):

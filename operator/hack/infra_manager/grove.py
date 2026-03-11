@@ -127,7 +127,6 @@ def _deploy_grove_charts(
     for name, tag in images.items():
         console.print(f"  {name}={tag}")
 
-    os.environ["CONTAINER_REGISTRY"] = pull_repo
     sh.skaffold(
         "deploy",
         "--profile",
@@ -141,6 +140,7 @@ def _deploy_grove_charts(
         "--images",
         f"{GROVE_INITC_IMAGE}={images[GROVE_INITC_IMAGE]}",
         _cwd=str(operator_dir),
+        _env={**os.environ, "CONTAINER_REGISTRY": pull_repo},
     )
     console.print("[green]\u2705 Grove operator deployed[/green]")
 
