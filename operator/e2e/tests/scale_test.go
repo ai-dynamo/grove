@@ -56,8 +56,6 @@ func toOperatorMetadata(m *config.GroveMetadata) *measurement.OperatorMetadata {
 
 const (
 	scaleTestExpectedPods = 5000
-	scaleTestPollInterval = 2 * time.Second
-	scaleTestTimeout      = 15 * time.Minute
 )
 
 func Test_ScaleTest_1000(t *testing.T) {
