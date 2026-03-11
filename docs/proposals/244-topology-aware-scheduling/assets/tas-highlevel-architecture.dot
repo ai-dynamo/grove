@@ -67,7 +67,7 @@ digraph TASArchitecture {
             <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">  (when no schedulerReferences)</FONT></TD></TR>
             <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">· drift detection</FONT></TD></TR>
             <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">  (when schedulerReferences set)</FONT></TD></TR>
-            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">· sets SchedulerTopologyInSync</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">· sets SchedulerTopologyDrift</FONT></TD></TR>
             </TABLE>>,
             shape=box,
             style="filled,dashed",
