@@ -23,11 +23,17 @@ import (
 	"fmt"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+const (
+	operatorNamespace       = "grove-system"
+	operatorDeploymentName  = "grove-operator"
+	operatorConfigVolume    = "operator-config"
+	operatorConfigDataKey   = "config.yaml"
 )
 
 // ReadGroveConfig reads and parses the operator's live configuration.
@@ -49,33 +55,33 @@ func ReadGroveConfig(ctx context.Context, crClient client.Client) (*configv1alph
 func findOperatorConfigMapName(ctx context.Context, crClient client.Client) (string, error) {
 	dep := &appsv1.Deployment{}
 	if err := crClient.Get(ctx, types.NamespacedName{
-		Namespace: setup.OperatorNamespace,
-		Name:      setup.OperatorDeploymentName,
+		Namespace: operatorNamespace,
+		Name:      operatorDeploymentName,
 	}, dep); err != nil {
-		return "", fmt.Errorf("getting deployment %q: %w", setup.OperatorDeploymentName, err)
+		return "", fmt.Errorf("getting deployment %q: %w", operatorDeploymentName, err)
 	}
 	for _, vol := range dep.Spec.Template.Spec.Volumes {
-		if vol.Name == setup.OperatorConfigVolumeName && vol.ConfigMap != nil {
+		if vol.Name == operatorConfigVolume && vol.ConfigMap != nil {
 			return vol.ConfigMap.Name, nil
 		}
 	}
 	return "", fmt.Errorf("volume %q not found in deployment %q",
-		setup.OperatorConfigVolumeName, setup.OperatorDeploymentName)
+		operatorConfigVolume, operatorDeploymentName)
 }
 
 // readConfigMapData fetches the operator ConfigMap and returns the config.yaml value.
 func readConfigMapData(ctx context.Context, crClient client.Client, cmName string) (string, error) {
 	cm := &corev1.ConfigMap{}
 	if err := crClient.Get(ctx, types.NamespacedName{
-		Namespace: setup.OperatorNamespace,
+		Namespace: operatorNamespace,
 		Name:      cmName,
 	}, cm); err != nil {
 		return "", fmt.Errorf("getting configmap %q: %w", cmName, err)
 	}
-	data, ok := cm.Data[setup.OperatorConfigDataKey]
+	data, ok := cm.Data[operatorConfigDataKey]
 	if !ok {
 		return "", fmt.Errorf("key %q not found in configmap %q",
-			setup.OperatorConfigDataKey, cmName)
+			operatorConfigDataKey, cmName)
 	}
 	return data, nil
 }
