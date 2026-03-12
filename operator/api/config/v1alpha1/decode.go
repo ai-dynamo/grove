@@ -14,28 +14,26 @@
 // limitations under the License.
 // */
 
-package utils
+package v1alpha1
 
 import (
 	"fmt"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 )
 
-// ParseGroveConfig parses YAML operator configuration using the same scheme codec
-// as the operator at startup (see operator/cmd/cli/cli.go:loadOperatorConfig).
-// Handles JSON struct tags and metav1.Duration fields correctly.
-// No K8s API calls — safe to use in unit tests without a cluster.
-func ParseGroveConfig(data []byte) (*configv1alpha1.OperatorConfiguration, error) {
+// DecodeOperatorConfig parses raw YAML or JSON bytes into an OperatorConfiguration,
+// applying scheme defaults. Uses the same codec as the operator at startup.
+// No I/O or K8s API calls — safe to use in unit tests and tooling.
+func DecodeOperatorConfig(data []byte) (*OperatorConfiguration, error) {
 	configScheme := runtime.NewScheme()
-	if err := configv1alpha1.AddToScheme(configScheme); err != nil {
+	if err := AddToScheme(configScheme); err != nil {
 		return nil, fmt.Errorf("adding config to scheme: %w", err)
 	}
 	configDecoder := serializer.NewCodecFactory(configScheme).UniversalDecoder()
 
-	cfg := &configv1alpha1.OperatorConfiguration{}
+	cfg := &OperatorConfiguration{}
 	if err := runtime.DecodeInto(configDecoder, data, cfg); err != nil {
 		return nil, fmt.Errorf("decoding operator config: %w", err)
 	}

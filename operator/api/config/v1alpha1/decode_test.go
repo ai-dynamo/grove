@@ -14,24 +14,23 @@
 // limitations under the License.
 // */
 
-package utils
+package v1alpha1
 
 import (
 	"testing"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestParseGroveConfig(t *testing.T) {
+func TestDecodeOperatorConfig(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name     string
 		input    []byte
 		wantErr  bool
-		assertFn func(t *testing.T, cfg *configv1alpha1.OperatorConfiguration)
+		assertFn func(t *testing.T, cfg *OperatorConfiguration)
 	}{
 		{
 			name: "happy path: explicit values parsed",
@@ -48,7 +47,7 @@ controllers:
   podClique:
     concurrentSyncs: 4
 `),
-			assertFn: func(t *testing.T, cfg *configv1alpha1.OperatorConfiguration) {
+			assertFn: func(t *testing.T, cfg *OperatorConfiguration) {
 				assert.InDelta(t, float32(200), cfg.ClientConnection.QPS, 0.01)
 				assert.Equal(t, 300, cfg.ClientConnection.Burst)
 				require.NotNil(t, cfg.Controllers.PodCliqueSet.ConcurrentSyncs)
@@ -64,7 +63,7 @@ controllers:
 			input: []byte(`apiVersion: operator.config.grove.io/v1alpha1
 kind: OperatorConfiguration
 `),
-			assertFn: func(t *testing.T, cfg *configv1alpha1.OperatorConfiguration) {
+			assertFn: func(t *testing.T, cfg *OperatorConfiguration) {
 				assert.InDelta(t, float32(100), cfg.ClientConnection.QPS, 0.01)
 				assert.Equal(t, 120, cfg.ClientConnection.Burst)
 				require.NotNil(t, cfg.Controllers.PodCliqueSet.ConcurrentSyncs)
@@ -95,7 +94,7 @@ controllers:
   podClique:
     concurrentSyncs: 4
 `),
-			assertFn: func(t *testing.T, cfg *configv1alpha1.OperatorConfiguration) {
+			assertFn: func(t *testing.T, cfg *OperatorConfiguration) {
 				assert.InDelta(t, float32(500), cfg.ClientConnection.QPS, 0.01)
 				assert.Equal(t, 600, cfg.ClientConnection.Burst)
 				require.NotNil(t, cfg.Controllers.PodCliqueSet.ConcurrentSyncs)
@@ -107,7 +106,7 @@ controllers:
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			cfg, err := ParseGroveConfig(tc.input)
+			cfg, err := DecodeOperatorConfig(tc.input)
 			if tc.wantErr {
 				require.Error(t, err)
 				return
