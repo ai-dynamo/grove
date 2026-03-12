@@ -71,6 +71,9 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 
 	mutateCurrentPodCliqueSetGenerationHash(logger, pcs, pcsg, lo.Flatten(lo.Values(pclqsPerPCSGReplica)))
 
+	// mirror UpdateProgress to the deprecated RollingUpdateProgress field for backward compatibility.
+	mirrorUpdateProgressToRollingUpdateProgress(pcsg)
+
 	if err = r.client.Status().Patch(ctx, pcsg, patchObj); err != nil {
 		logger.Error(err, "failed to update PodCliqueScalingGroup status")
 		return ctrlcommon.ReconcileWithErrors("failed to update the status with label selector and replicas", err)
@@ -271,4 +274,27 @@ func mutateCurrentPodCliqueSetGenerationHash(logger logr.Logger, pcs *grovecorev
 		return
 	}
 	pcsg.Status.CurrentPodCliqueSetGenerationHash = pcs.Status.CurrentGenerationHash
+}
+
+// mirrorUpdateProgressToRollingUpdateProgress mirrors the UpdateProgress field to the deprecated RollingUpdateProgress field
+// for backward compatibility with consumers that still use the old field name.
+func mirrorUpdateProgressToRollingUpdateProgress(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) {
+	if pcsg.Status.UpdateProgress == nil {
+		pcsg.Status.RollingUpdateProgress = nil
+		return
+	}
+
+	pcsg.Status.RollingUpdateProgress = &grovecorev1alpha1.PodCliqueScalingGroupRollingUpdateProgress{
+		UpdateStartedAt:            pcsg.Status.UpdateProgress.UpdateStartedAt,
+		UpdateEndedAt:              pcsg.Status.UpdateProgress.UpdateEndedAt,
+		PodCliqueSetGenerationHash: pcsg.Status.UpdateProgress.PodCliqueSetGenerationHash,
+		UpdatedPodCliques:          pcsg.Status.UpdateProgress.UpdatedPodCliques,
+	}
+
+	if pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate != nil {
+		pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate = &grovecorev1alpha1.PodCliqueScalingGroupReplicaRollingUpdateProgress{
+			Current:   pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current,
+			Completed: pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Completed,
+		}
+	}
 }
