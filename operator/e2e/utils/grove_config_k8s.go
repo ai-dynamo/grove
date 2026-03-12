@@ -41,7 +41,7 @@ func ReadGroveConfig(ctx context.Context, crClient client.Client) (*configv1alph
 	if err != nil {
 		return nil, err
 	}
-	return ParseGroveConfig([]byte(data))
+	return configv1alpha1.DecodeOperatorConfig([]byte(data))
 }
 
 // findOperatorConfigMapName retrieves the ConfigMap name from the operator
