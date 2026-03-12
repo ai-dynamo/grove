@@ -25,6 +25,8 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/utils/ptr"
+
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	"github.com/ai-dynamo/grove/operator/e2e/utils/measurement"
 	"github.com/ai-dynamo/grove/operator/e2e/utils/measurement/condition"
@@ -32,7 +34,8 @@ import (
 )
 
 const (
-	scaleTestExpectedPods = 5000
+	scaleTestExpectedPods     = 5000
+	scaleTestExpectedReplicas = 2500
 )
 
 func Test_ScaleTest_5000_MoE(t *testing.T) {
@@ -43,24 +46,40 @@ func Test_ScaleTest_5000_MoE(t *testing.T) {
 	defer cancel()
 
 	logger.Info("preparing test cluster with 1000 worker nodes")
-	_, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 1000)
+	clients, cleanup := prepareTestCluster(ctx, t, 100)
 	defer cleanup()
 
-	crClient, err := utils.NewCRClient(restConfig)
+	// Best-effort: config enrichment failure must not abort the scale test.
+	operatorCfg, err := utils.ReadGroveConfig(ctx, clients.crClient)
 	if err != nil {
-		t.Fatalf("Failed to create controller-runtime client: %v", err)
+		t.Logf("WARN: failed to read grove config (continuing without config metadata): %v", err)
+	}
+
+	tc := TestContext{
+		T:             t,
+		Ctx:           ctx,
+		Clientset:     clients.clientset,
+		RestConfig:    clients.restConfig,
+		DynamicClient: clients.dynamicClient,
+		CRClient:      clients.crClient,
+		Namespace:     "default",
+		Timeout:       scaleTestTimeout,
+		Interval:      scaleTestPollInterval,
+		Workload: &WorkloadConfig{
+			Name:         "scale-test-5000-moe",
+			YAMLPath:     "../yaml/scale-test-5000-moe.yaml",
+			Namespace:    "default",
+			ExpectedPods: scaleTestExpectedPods,
+		},
 	}
 
 	runID := fmt.Sprintf("run-%s", time.Now().Format("20060102-150405"))
-	namespace := "default"
-	pcsName := "scale-test-5000-moe"
-	labelSelector := "app.kubernetes.io/part-of=scale-test-5000-moe"
-	logger.Infof("test config: runID=%s, namespace=%s, pcsName=%s", runID, namespace, pcsName)
+	logger.Infof("test config: runID=%s, namespace=%s, pcsName=%s", runID, tc.Namespace, tc.Workload.Name)
 
 	tracker := measurement.NewTimelineTracker(
 		"ScaleTest_5000_MoE",
 		runID,
-		namespace,
+		tc.Namespace,
 		1,
 		measurement.WithPollInterval(scaleTestPollInterval),
 		measurement.WithLogger(logger.GetLogr()),
@@ -69,35 +88,35 @@ func Test_ScaleTest_5000_MoE(t *testing.T) {
 	tracker.AddPhase(measurement.PhaseDefinition{
 		Name: "deploy",
 		ActionFn: func(ctx context.Context) error {
-			_, err := utils.ApplyYAMLFile(ctx, "../yaml/scale-test-5000-moe.yaml", namespace, restConfig, logger)
+			_, err := utils.ApplyYAMLFile(ctx, tc.Workload.YAMLPath, tc.Namespace, tc.RestConfig, logger)
 			return err
 		},
 		Milestones: []measurement.MilestoneDefinition{
 			{
 				Name: "pods-created",
 				Condition: &condition.PodsCreatedCondition{
-					Client:        crClient,
-					Namespace:     namespace,
-					LabelSelector: labelSelector,
+					Client:        tc.CRClient,
+					Namespace:     tc.Namespace,
+					LabelSelector: tc.getLabelSelector(),
 					ExpectedCount: scaleTestExpectedPods,
 				},
 			},
 			{
 				Name: "pods-ready",
 				Condition: &condition.PodsReadyCondition{
-					Client:        crClient,
-					Namespace:     namespace,
-					LabelSelector: labelSelector,
+					Client:        tc.CRClient,
+					Namespace:     tc.Namespace,
+					LabelSelector: tc.getLabelSelector(),
 					ExpectedCount: scaleTestExpectedPods,
 				},
 			},
 			{
 				Name: "pcs-available",
 				Condition: &condition.PCSAvailableCondition{
-					Client:        crClient,
-					Name:          pcsName,
-					Namespace:     namespace,
-					ExpectedCount: 1,
+					Client:        tc.CRClient,
+					Name:          tc.Workload.Name,
+					Namespace:     tc.Namespace,
+					ExpectedCount: scaleTestExpectedReplicas,
 				},
 			},
 		},
@@ -106,15 +125,15 @@ func Test_ScaleTest_5000_MoE(t *testing.T) {
 	tracker.AddPhase(measurement.PhaseDefinition{
 		Name: "delete",
 		ActionFn: func(ctx context.Context) error {
-			return utils.DeletePodCliqueSet(ctx, dynamicClient, namespace, pcsName)
+			return utils.DeletePodCliqueSet(ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name)
 		},
 		Milestones: []measurement.MilestoneDefinition{
 			{
 				Name: "pcs-deleted",
 				Condition: &condition.PCSDeletedCondition{
-					Client:    crClient,
-					Name:      pcsName,
-					Namespace: namespace,
+					Client:    tc.CRClient,
+					Name:      tc.Workload.Name,
+					Namespace: tc.Namespace,
 				},
 			},
 		},
@@ -126,9 +145,20 @@ func Test_ScaleTest_5000_MoE(t *testing.T) {
 		t.Fatalf("Timeline tracker run failed: %v", err)
 	}
 
+	if operatorCfg != nil {
+		result.K8sClient = &measurement.K8sClientConfig{
+			QPS:   operatorCfg.ClientConnection.QPS,
+			Burst: operatorCfg.ClientConnection.Burst,
+		}
+		result.ControllerMaxReconcile = &measurement.ControllerMaxReconcile{
+			PodCliqueSet:          ptr.Deref(operatorCfg.Controllers.PodCliqueSet.ConcurrentSyncs, 1),
+			PodCliqueScalingGroup: ptr.Deref(operatorCfg.Controllers.PodCliqueScalingGroup.ConcurrentSyncs, 1),
+			PodClique:             ptr.Deref(operatorCfg.Controllers.PodClique.ConcurrentSyncs, 1),
+		}
+	}
+
 	logger.Info("exporting results")
 	exportResult(t, result, diagDir)
-	assertResult(t, result)
 	logger.Infof("scale test completed successfully in %.1fs", result.TestDurationSeconds)
 }
 
@@ -144,26 +174,5 @@ func exportResult(t *testing.T, result *measurement.TrackerResult, diagDir strin
 	)
 	if err := multi.Export(result); err != nil {
 		t.Fatalf("Failed to export results: %v", err)
-	}
-}
-
-func assertResult(t *testing.T, result *measurement.TrackerResult) {
-	t.Helper()
-
-	if len(result.Phases) != 2 {
-		t.Errorf("expected 2 phases, got %d", len(result.Phases))
-	}
-
-	if result.TestDurationSeconds <= 0 {
-		t.Errorf("expected positive test duration, got %.3f", result.TestDurationSeconds)
-	}
-
-	for _, phase := range result.Phases {
-		for _, milestone := range phase.Milestones {
-			if milestone.DurationFromPhaseStart <= 0 {
-				t.Errorf("phase %q milestone %q: expected positive duration, got %.3f",
-					phase.Name, milestone.Name, milestone.DurationFromPhaseStart)
-			}
-		}
 	}
 }

@@ -107,6 +107,15 @@ func (e *SummaryExporter) Export(r *measurement.TrackerResult) error {
 	ew.write("=== Test: %s (run: %s) ===\n", r.TestName, r.RunID)
 	ew.write("Namespace:        %s\n", r.Namespace)
 	ew.write("PCS count:        %d\n", r.PCSCount)
+	if r.K8sClient != nil {
+		ew.write("K8s client:       QPS=%.0f Burst=%d\n", r.K8sClient.QPS, r.K8sClient.Burst)
+	}
+	if r.ControllerMaxReconcile != nil {
+		ew.write("Max reconcile:    pcs=%d pcsg=%d pclq=%d\n",
+			r.ControllerMaxReconcile.PodCliqueSet,
+			r.ControllerMaxReconcile.PodCliqueScalingGroup,
+			r.ControllerMaxReconcile.PodClique)
+	}
 	ew.write("Total test time:  %.3fs\n", r.TestDurationSeconds)
 	ew.write("Timeline:\n")
 

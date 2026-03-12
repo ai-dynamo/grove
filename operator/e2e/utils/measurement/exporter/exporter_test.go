@@ -39,6 +39,15 @@ func TestSummaryExporter_Export(t *testing.T) {
 		Namespace:           "default",
 		PCSCount:            50,
 		TestDurationSeconds: 72.5,
+		K8sClient: &measurement.K8sClientConfig{
+			QPS:   100,
+			Burst: 150,
+		},
+		ControllerMaxReconcile: &measurement.ControllerMaxReconcile{
+			PodCliqueSet:          1,
+			PodCliqueScalingGroup: 1,
+			PodClique:             1,
+		},
 		Phases: []measurement.Phase{
 			{
 				Name:                  "deploy",
@@ -61,6 +70,11 @@ func TestSummaryExporter_Export(t *testing.T) {
 	assertContains(t, out, "ScaleTest_1000")
 	assertContains(t, out, "run: scale-1")
 	assertContains(t, out, "PCS count:        50")
+	assertContains(t, out, "K8s client:")
+	assertContains(t, out, "QPS=100")
+	assertContains(t, out, "Burst=150")
+	assertContains(t, out, "Max reconcile:")
+	assertContains(t, out, "pcs=1")
 	assertContains(t, out, "Phase: deploy")
 	assertContains(t, out, "all-pods-ready")
 }
