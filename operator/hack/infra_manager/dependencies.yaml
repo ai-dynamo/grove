@@ -1,0 +1,57 @@
+# E2E Test Dependencies
+# =======================
+# This file centralizes all external dependency versions used in E2E tests
+# to ensure consistency between test code, cluster setup scripts, and image pre-pulling.
+#
+# IMPORTANT: When updating versions here, also update:
+# - operator/e2e/tests/cert_management_test.go (certManagerVersion constant)
+# - Any test files that reference these versions
+#
+# The infra-manager.py CLI automatically reads this file and uses
+# these versions for:
+# - Helm chart installations
+# - Image pre-pulling (to speed up cluster creation)
+# - Version defaults (can be overridden via E2E_* environment variables)
+
+kai_scheduler:
+  version: "v0.13.1"
+  helm_chart: "oci://ghcr.io/kai-scheduler/kai-scheduler/kai-scheduler"
+  images:
+    # All Kai Scheduler component images
+    - "ghcr.io/kai-scheduler/KAI-Scheduler/admission"
+    - "ghcr.io/kai-scheduler/KAI-Scheduler/binder"
+    - "ghcr.io/kai-scheduler/KAI-Scheduler/crd-upgrader"
+    - "ghcr.io/kai-scheduler/KAI-Scheduler/operator"
+    - "ghcr.io/kai-scheduler/KAI-Scheduler/podgroupcontroller"
+    - "ghcr.io/kai-scheduler/KAI-Scheduler/podgrouper"
+    - "ghcr.io/kai-scheduler/KAI-Scheduler/queuecontroller"
+    - "ghcr.io/kai-scheduler/KAI-Scheduler/scheduler"
+
+cert_manager:
+  version: "v1.14.4"
+  helm_repo: "https://charts.jetstack.io"
+  helm_chart: "cert-manager"
+  namespace: "cert-manager"
+  images:
+    # Cert-manager component images
+    # Note: These must match the version specified above
+    - "quay.io/jetstack/cert-manager-controller"
+    - "quay.io/jetstack/cert-manager-webhook"
+    - "quay.io/jetstack/cert-manager-cainjector"
+    # Additional images cert-manager may pull
+    - "quay.io/jetstack/cert-manager-acmesolver"
+    - "quay.io/jetstack/cert-manager-ctl"
+
+kwok_controller:
+  version: "v0.7.0"
+
+pyroscope:
+  version: "1.10.0"
+  helm_repo: "https://grafana.github.io/helm-charts"
+  helm_chart: "grafana/pyroscope"
+
+# Test workload images
+test_images:
+  # Lightweight container used for topology and other E2E tests
+  busybox:
+    - "busybox"

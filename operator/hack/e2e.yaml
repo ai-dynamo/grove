@@ -1,0 +1,14 @@
+# E2E test setup preset — functional tests, no KWOK, no Pyroscope.
+
+cluster:
+  create: true
+  worker_nodes: 30
+  worker_memory: "150m"
+
+scheduler:
+  kai:
+    enabled: true
+
+grove:
+  enabled: true
+  profiling: false

@@ -1,0 +1,20 @@
+# Scale test setup preset — smaller real cluster + KWOK nodes + Pyroscope.
+
+cluster:
+  create: true
+  worker_nodes: 5
+  worker_memory: "300m"
+
+scheduler:
+  kai:
+    enabled: true
+
+grove:
+  enabled: true
+  profiling: true
+
+kwok:
+  nodes: 100
+
+pyroscope:
+  enabled: true
