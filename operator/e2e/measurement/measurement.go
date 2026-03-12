@@ -57,14 +57,30 @@ type MilestoneDefinition struct {
 	Condition MilestoneCondition
 }
 
+// K8sClientConfig holds the K8s REST client rate-limit settings used by the operator.
+type K8sClientConfig struct {
+	QPS   float32 `json:"qps"`
+	Burst int     `json:"burst"`
+}
+
+// ControllerMaxReconcile holds the MaxConcurrentReconciles per controller.
+// JSON keys use full CRD names for clarity in archived benchmark artifacts.
+type ControllerMaxReconcile struct {
+	PodCliqueSet          int `json:"podCliqueSet"`
+	PodCliqueScalingGroup int `json:"podCliqueScalingGroup"`
+	PodClique             int `json:"podClique"`
+}
+
 // TrackerResult accumulates all timeline/measurement data for a single run.
 type TrackerResult struct {
-	TestName            string  `json:"testName"`
-	RunID               string  `json:"runID"`
-	Namespace           string  `json:"namespace"`
-	PCSCount            int     `json:"pcsCount"`
-	Phases              []Phase `json:"phases"`
-	TestDurationSeconds float64 `json:"testDurationSeconds"`
+	TestName               string                  `json:"testName"`
+	RunID                  string                  `json:"runID"`
+	Namespace              string                  `json:"namespace"`
+	PCSCount               int                     `json:"pcsCount"`
+	Phases                 []Phase                 `json:"phases"`
+	TestDurationSeconds    float64                 `json:"testDurationSeconds"`
+	K8sClient              *K8sClientConfig        `json:"k8sClient,omitempty"`
+	ControllerMaxReconcile *ControllerMaxReconcile `json:"controllerMaxReconcile,omitempty"`
 }
 
 // TimelineOption configures a TimelineTracker.
