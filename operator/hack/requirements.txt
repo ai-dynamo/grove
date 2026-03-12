@@ -1,6 +1,6 @@
-# Python dependencies for hack scripts
+# Python dependencies for infra-manager (consolidated from hack/e2e-cluster/requirements.txt)
 #
-# Minimum Python version: 3.8+
+# Minimum Python version: 3.10+
 #
 # Install all dependencies:
 #   pip install -r requirements.txt
@@ -8,34 +8,37 @@
 # Or using pip3:
 #   pip3 install -r requirements.txt
 
-# CLI framework - elegant command-line interfaces
-typer==0.12.3
-
 # Beautiful terminal output with colors, emojis, progress bars, and formatting
-rich==13.7.0
+rich==14.3.3
 
 # Pythonic command execution - cleaner than subprocess
-sh==2.0.6
+sh==2.2.2
 
 # Data validation and settings management using Python type annotations
-pydantic==2.5.3
+pydantic==2.12.5
 
 # Settings management for pydantic - automatic environment variable loading
-pydantic-settings==2.1.0
+pydantic-settings==2.13.1
 
 # YAML parsing - for reading centralized dependencies configuration
-PyYAML==6.0.1
+PyYAML==6.0.3
+
+# Retry library with decorator support for resilient operations
+tenacity==9.1.4
+
+# Modern CLI framework with auto-completion and help generation
+typer==0.24.1
 
 # Docker SDK for Python - native Docker API client for image operations
 # Used for parallel image pre-pulling to speed up cluster creation
 # Version 7.1.0+ required for compatibility with requests 2.32.0+
 # See: https://github.com/docker/docker-py/issues/3256
-docker>=7.1.0
+docker==7.1.0
 
 # Note: The script also requires the following external tools:
 #   - k3d (for cluster creation)
 #   - kubectl (for cluster management)
 #   - docker (for container operations)
-#   - helm (for Kai Scheduler installation, unless --skip-kai)
-#   - skaffold (for Grove deployment, unless --skip-grove)
-#   - jq (for JSON parsing, unless --skip-grove)
+#   - helm (for Kai Scheduler installation, unless --no-install-kai)
+#   - skaffold (for Grove deployment, unless --no-install-grove)
+#   - jq (for JSON parsing, unless --no-install-grove)
