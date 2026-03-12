@@ -81,7 +81,8 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 		}
 	}
 
-	if isRollingUpdateInProgress(pcs) {
+	// Orchestrate the rolling recreate when the strategy is RollingRecreate and the update is currently in progress
+	if isAutoUpdateInProgress(pcs) {
 		minAvailableBreachedPCSReplicaIndices := slices.Collect(maps.Keys(delWork.minAvailableBreachedConstituents))
 		if err := r.orchestrateRollingUpdate(ctx, logger, pcs, delWork.pcsIndicesToTerminate, minAvailableBreachedPCSReplicaIndices); err != nil {
 			return err

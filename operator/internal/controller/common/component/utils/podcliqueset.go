@@ -82,6 +82,15 @@ func GetPodCliqueSetName(objectMeta metav1.ObjectMeta) string {
 	return pcsName
 }
 
+// IsAutoUpdateStrategy returns true when PodCliqueSet update strategy is automatically orchestrated by Grove.
+// Only the OnDelete update strategy is not an auto update strategy.
+func IsAutoUpdateStrategy(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+	if pcs == nil {
+		return false
+	}
+	return pcs.Spec.UpdateStrategy == nil || pcs.Spec.UpdateStrategy.Type != grovecorev1alpha1.OnDeleteStrategy
+}
+
 // GetExpectedPCLQNamesGroupByOwner returns the expected unqualified PodClique names which are either owned by PodCliqueSet or PodCliqueScalingGroup.
 func GetExpectedPCLQNamesGroupByOwner(pcs *grovecorev1alpha1.PodCliqueSet) (expectedPCLQNamesForPCS []string, expectedPCLQNamesForPCSG []string) {
 	pcsgConfigs := pcs.Spec.Template.PodCliqueScalingGroupConfigs

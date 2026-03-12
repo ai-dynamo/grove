@@ -43,7 +43,10 @@ func (r _resource) orchestrateRollingUpdate(ctx context.Context, logger logr.Log
 		return err
 	}
 
-	if pcs.Status.RollingUpdateProgress.CurrentlyUpdating != nil && updateWork.currentlyUpdatingReplicaInfo != nil {
+	if len(pcs.Status.UpdateProgress.CurrentlyUpdating) > 0 && updateWork.currentlyUpdatingReplicaInfo != nil {
+		if updateWork.currentlyUpdatingReplicaInfo.updateProgress.done {
+			pcs.Status.UpdateProgress.CurrentlyUpdating[0].UpdateEndedAt = ptr.To(metav1.Now())
+		}
 		if err = r.updatePCSWithReplicaUpdateProgress(ctx, logger, pcs, updateWork.currentlyUpdatingReplicaInfo.updateProgress); err != nil {
 			return err
 		}
@@ -83,8 +86,8 @@ func (r _resource) computePendingUpdateWork(ctx context.Context, pcs *grovecorev
 	for _, replicaInfo := range replicaInfos {
 		replicaInfo.computeUpdateProgress(pcs)
 
-		if pcs.Status.RollingUpdateProgress.CurrentlyUpdating != nil &&
-			pcs.Status.RollingUpdateProgress.CurrentlyUpdating.ReplicaIndex == int32(replicaInfo.replicaIndex) {
+		if len(pcs.Status.UpdateProgress.CurrentlyUpdating) > 0 &&
+			pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex == int32(replicaInfo.replicaIndex) {
 			pendingWork.currentlyUpdatingReplicaInfo = &replicaInfo
 			continue
 		}
@@ -133,30 +136,30 @@ func (r _resource) getPCSReplicaInfos(ctx context.Context, pcs *grovecorev1alpha
 // updatePCSWithReplicaUpdateProgress records the progress of the currently updating replica.
 func (r _resource) updatePCSWithReplicaUpdateProgress(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, currentReplicaUpdateProgress replicaUpdateProgress) error {
 	// Set the updatedCliques
-	updatedCliqueFQNs := lo.Uniq(append(pcs.Status.RollingUpdateProgress.UpdatedPodCliques, currentReplicaUpdateProgress.updatedPCLQFQNs...))
+	updatedCliqueFQNs := lo.Uniq(append(pcs.Status.UpdateProgress.UpdatedPodCliques, currentReplicaUpdateProgress.updatedPCLQFQNs...))
 	// There is a possibility that the replica that is currently getting updated has been deleted due to scale-in.
-	// We need to clean up the already recorded pcsg.Status.RollingUpdateProgress.UpdatedPodCliques.
+	// We need to clean up the already recorded pcsg.Status.UpdateProgress.UpdatedPodCliques.
 	expectedPCLQFQNs := componentutils.GetPodCliqueFQNsForPCSNotInPCSG(pcs)
 	updatedCliqueFQNs = slices.DeleteFunc(updatedCliqueFQNs, func(pclqFQN string) bool {
 		return !slices.Contains(expectedPCLQFQNs, pclqFQN)
 	})
 	slices.Sort(updatedCliqueFQNs)
-	pcs.Status.RollingUpdateProgress.UpdatedPodCliques = updatedCliqueFQNs
+	pcs.Status.UpdateProgress.UpdatedPodCliques = updatedCliqueFQNs
 
 	// Set the updatedPodCliqueScalingGroups
-	updatedPCSGFQNs := lo.Uniq(append(pcs.Status.RollingUpdateProgress.UpdatedPodCliqueScalingGroups, currentReplicaUpdateProgress.updatedPCSGFQNs...))
+	updatedPCSGFQNs := lo.Uniq(append(pcs.Status.UpdateProgress.UpdatedPodCliqueScalingGroups, currentReplicaUpdateProgress.updatedPCSGFQNs...))
 	// There is a possibility that the replica that is currently getting updated has been deleted due to scale-in.
-	// We need to clean up the already recorded pcsg.Status.RollingUpdateProgress.UpdatedPodCliques.
+	// We need to clean up the already recorded pcsg.Status.UpdateProgress.UpdatedPodCliqueScalingGroups.
 	expectedPCSGFQNs := componentutils.GetExpectedPCSGFQNsForPCS(pcs)
 	updatedPCSGFQNs = slices.DeleteFunc(updatedPCSGFQNs, func(pcsgFQN string) bool {
 		return !slices.Contains(expectedPCSGFQNs, pcsgFQN)
 	})
 	slices.Sort(updatedPCSGFQNs)
-	pcs.Status.RollingUpdateProgress.UpdatedPodCliqueScalingGroups = updatedPCSGFQNs
+	pcs.Status.UpdateProgress.UpdatedPodCliqueScalingGroups = updatedPCSGFQNs
 
 	logger.Info("Updating PodCliqueSet status with newly updated PodCliques and PodClique")
 	if err := r.updateRollingUpdateProgressStatus(ctx, logger, pcs); err != nil {
-		logger.Error(err, "failed to update rolling update progress", "replicaIndex", pcs.Status.RollingUpdateProgress.CurrentlyUpdating.ReplicaIndex)
+		logger.Error(err, "failed to update rolling update progress", "replicaIndex", pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex)
 		return err
 	}
 	return nil
@@ -166,13 +169,15 @@ func (r _resource) updatePCSWithReplicaUpdateProgress(ctx context.Context, logge
 func (r _resource) updatePCSWithNextSelectedReplica(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, nextPCSReplicaToUpdate *int) error {
 	if nextPCSReplicaToUpdate == nil {
 		logger.Info("Rolling update has completed")
-		pcs.Status.RollingUpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
-		pcs.Status.RollingUpdateProgress.CurrentlyUpdating = nil
+		pcs.Status.UpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
+		pcs.Status.UpdateProgress.CurrentlyUpdating = nil
 	} else {
 		logger.Info("Initiating rolling update for next replica index", "nextReplicaIndex", *nextPCSReplicaToUpdate)
-		pcs.Status.RollingUpdateProgress.CurrentlyUpdating = &grovecorev1alpha1.PodCliqueSetReplicaRollingUpdateProgress{
-			ReplicaIndex:    int32(*nextPCSReplicaToUpdate),
-			UpdateStartedAt: metav1.Now(),
+		pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{
+			{
+				ReplicaIndex:    int32(*nextPCSReplicaToUpdate),
+				UpdateStartedAt: metav1.Now(),
+			},
 		}
 	}
 	return r.updateRollingUpdateProgressStatus(ctx, logger, pcs)
@@ -294,7 +299,7 @@ func isPCLQUpdateComplete(pclq *grovecorev1alpha1.PodClique, currentPCSGeneratio
 	return false
 }
 
-// isRollingUpdateInProgress checks if a rolling update is currently in progress.
-func isRollingUpdateInProgress(pcs *grovecorev1alpha1.PodCliqueSet) bool {
-	return pcs.Status.RollingUpdateProgress != nil && pcs.Status.RollingUpdateProgress.UpdateEndedAt == nil
+// isAutoUpdateInProgress checks if an update is currently in progress.
+func isAutoUpdateInProgress(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+	return (pcs.Spec.UpdateStrategy == nil || pcs.Spec.UpdateStrategy.Type != grovecorev1alpha1.OnDeleteStrategy) && pcs.Status.UpdateProgress != nil && pcs.Status.UpdateProgress.UpdateEndedAt == nil
 }

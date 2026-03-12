@@ -264,6 +264,52 @@ func TestGetPodCliqueSetName(t *testing.T) {
 	}
 }
 
+// TestIsAutoUpdateStrategy tests the IsAutoUpdateStrategy function.
+func TestIsAutoUpdateStrategy(t *testing.T) {
+	tests := []struct {
+		name     string
+		pcs      *grovecorev1alpha1.PodCliqueSet
+		expected bool
+	}{
+		{
+			name:     "nil_pcs",
+			pcs:      nil,
+			expected: false,
+		},
+		{
+			name: "nil_update_strategy_defaults_to_auto",
+			pcs: &grovecorev1alpha1.PodCliqueSet{
+				Spec: grovecorev1alpha1.PodCliqueSetSpec{},
+			},
+			expected: true,
+		},
+		{
+			name: "rolling_recreate_is_auto",
+			pcs: &grovecorev1alpha1.PodCliqueSet{
+				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+					UpdateStrategy: &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.RollingRecreateStrategy},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "on_delete_is_not_auto",
+			pcs: &grovecorev1alpha1.PodCliqueSet{
+				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+					UpdateStrategy: &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.OnDeleteStrategy},
+				},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, IsAutoUpdateStrategy(tc.pcs))
+		})
+	}
+}
+
 // TestGetPodCliqueSet tests the GetPodCliqueSet function
 func TestGetPodCliqueSet(t *testing.T) {
 	tests := []struct {
