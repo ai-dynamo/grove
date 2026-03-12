@@ -45,7 +45,7 @@ func Test_ScaleTest_5000_MoE(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), scaleTestTimeout)
 	defer cancel()
 
-	logger.Info("preparing test cluster with 1000 worker nodes")
+	logger.Info("preparing test cluster with 100 worker nodes")
 	clients, cleanup := prepareTestCluster(ctx, t, 100)
 	defer cleanup()
 
