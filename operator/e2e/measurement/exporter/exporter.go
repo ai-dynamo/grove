@@ -82,13 +82,21 @@ func NewJSONFileExporter(path string) *JSONFileExporter {
 }
 
 // Export creates the file, writes indented JSON, and closes it.
+// Close is called explicitly (not deferred) so flush errors are not discarded.
 func (e *JSONFileExporter) Export(r *measurement.TrackerResult) error {
 	f, err := os.Create(e.path)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", e.path, err)
 	}
-	defer f.Close()
-	return NewJSONExporter(f).Export(r)
+	writeErr := NewJSONExporter(f).Export(r)
+	closeErr := f.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close %s: %w", e.path, closeErr)
+	}
+	return nil
 }
 
 // SummaryExporter writes a human-readable summary to the configured writer.
