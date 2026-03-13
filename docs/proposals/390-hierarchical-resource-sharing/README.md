@@ -13,6 +13,8 @@
         - [Story 2: Multi-Stage Training Pipeline with GPU Sharing](#story-2-multi-stage-training-pipeline-with-gpu-sharing)
     - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
 - [Design Details](#design-details)
+    - [ResourceClaim Naming Convention](#resourceclaim-naming-convention)
+    - [Owner References](#owner-references)
     - [Common Types](#common-types)
     - [PodClique-Level Resource Sharing](#podclique-level-resource-sharing)
     - [PodCliqueScalingGroup-Level Resource Sharing](#podcliquescalinggroup-level-resource-sharing)
@@ -35,8 +37,10 @@ or more `PodClique` (PCLQ) instances and/or one or more `PodCliqueScalingGroup` 
 turn contains one or more PCLQ instances.
 
 This GREP enhances the `PodCliqueSet` API to allow sharing of cluster resources (such as GPU accelerators) amongst a 
-group of pods at three levels of the Grove hierarchy by leveraging [ResourceClaim](https://github.com/kubernetes/api/blob/ffebe2b51dedadf6a36343b495ca26060cb7a93d/resource/v1/types.go#L741) and [ResourceClaimTemplate](https://github.com/kubernetes/api/blob/ffebe2b51dedadf6a36343b495ca26060cb7a93d/resource/v1/types.go#L1850) 
-offered via Dynamic Resource Allocation (DRA) in Kubernetes. The design enables: 
+group of pods at three levels of the Grove hierarchy by leveraging [ResourceClaim](https://github.com/kubernetes/api/blob/ffebe2b51dedadf6a36343b495ca26060cb7a93d/resource/v1/types.go#L741)
+offered via Dynamic Resource Allocation (DRA) in Kubernetes. Users provide inline `ResourceClaimTemplateSpec`
+definitions, and Grove creates and manages `ResourceClaim` objects directly — no `ResourceClaimTemplate` objects
+are created. The design enables: 
 
 * Pods within a single PCLQ instance to share resources (PCLQ-instance-level),
 * All pods within a single PCLQ replica slot to share resources (per-replica-level), or
@@ -183,6 +187,69 @@ What are the current set of limitations or risks of this proposal? Think broadly
 
 ## Design Details
 
+### ResourceClaim Naming Convention
+
+Grove creates ResourceClaim objects directly from inline specs — no intermediate ResourceClaimTemplate objects are
+created. This is because Kubernetes' built-in RCT-to-RC auto-creation (`resourceClaimTemplateName` in the pod spec)
+creates a unique ResourceClaim per pod, which is the opposite of sharing. For shared claims, we must pre-create
+ResourceClaim objects and reference them via `resourceClaimName` in the pod spec. Since the RCT would not participate
+in any Kubernetes mechanism (no pod references it), it is omitted. The inline specs in `ResourceAllocationConfig`
+serve as the source of truth. ResourceClaimTemplate objects can be added later for observability if needed.
+
+Each RC name is derived from the owning resource's Kubernetes name plus a suffix that encodes the sharing
+scope and the spec index (position in the `ResourceAllocationConfig.Specs` array).
+
+| Scope | RC Name Format |
+|---|---|
+| PCSG-level | `<pcsg.Name>-<pcsgReplicaIndex>-rct-<specIndex>` |
+| PCLQ-instance-level | `<pclq.Name>-rct-<specIndex>` |
+| Per-replica | `<pclq.Name>-<replicaIndex>-sdw-rct-<specIndex>` |
+
+The `rct-<index>` suffix identifies the position of the spec in the `ResourceAllocationConfig.Specs` array. The
+`sdw` segment distinguishes per-replica claims from instance-level claims for the same PodClique.
+
+**Concrete example** — PCS `my-svc` (replica 0), PCSG `mi` (replicas: 2), cliques: `leader` (replicas: 2,
+shadow.replicas: 1 with per-replica spec), `worker` (replicas: 3 with instance-level spec), PCSG-level spec
+for shared interconnect:
+
+```
+PCSG-level ResourceClaims (owned by PCSG):
+  my-svc-0-mi-0-rct-0        → shared by ALL pods in PCSG replica 0
+  my-svc-0-mi-1-rct-0        → shared by ALL pods in PCSG replica 1
+
+PCLQ-instance-level ResourceClaims (owned by PCLQ):
+  my-svc-0-mi-0-worker-rct-0 → shared by all worker pods in PCSG replica 0
+  my-svc-0-mi-1-worker-rct-0 → shared by all worker pods in PCSG replica 1
+
+Per-replica ResourceClaims (owned by PCLQ, explicit deletion on scale-down):
+  my-svc-0-mi-0-leader-0-sdw-rct-0 → shared by leader-0-sdw-0, leader-0-sdw-1
+  my-svc-0-mi-0-leader-1-sdw-rct-0 → shared by leader-1-sdw-0, leader-1-sdw-1
+  my-svc-0-mi-1-leader-0-sdw-rct-0 → shared by leader-0-sdw-0, leader-0-sdw-1
+  my-svc-0-mi-1-leader-1-sdw-rct-0 → shared by leader-1-sdw-0, leader-1-sdw-1
+```
+
+**For standalone PodCliques** (not in a PCSG), the PCLQ resource name is `<pcs>-<pcsIndex>-<pclqTemplate>`,
+so the pattern is the same:
+
+```
+PCLQ-instance-level:
+  my-svc-0-frontend-rct-0              → shared by all frontend pods
+
+Per-replica:
+  my-svc-0-frontend-0-sdw-rct-0       → shared by frontend-0-sdw-0, frontend-0-sdw-1
+  my-svc-0-frontend-1-sdw-rct-0       → shared by frontend-1-sdw-0, frontend-1-sdw-1
+```
+
+### Owner References
+
+ResourceClaim ownership determines garbage collection behavior:
+
+| Scope | Owner | Rationale |
+|---|---|---|
+| PCSG-level | PCSG object | Claim spans all PCLQs in a PCSG replica; GC'd when PCSG is deleted |
+| PCLQ-instance-level | PCLQ object | Claim is per-PCLQ instance; GC'd when PCLQ is deleted |
+| Per-replica | PCLQ object | Created by the pod controller but logically belongs to the PCLQ; on scale-down, the controller must **explicitly delete** per-replica claims for removed replica slots (Kubernetes GC only fires on PCLQ deletion, not on replica reduction) |
+
 ### Common Types
 
 ```go
@@ -196,9 +263,10 @@ type ResourceAllocationConfig struct {
 }
 ```
 
-Users provide `ResourceClaimTemplateSpec` definitions directly via `specs`. Grove creates and fully manages the
-resulting `ResourceClaim` objects, removing the need for users to create `ResourceClaimTemplate` objects separately.
-`Specs` must be non-empty.
+Users provide `ResourceClaimTemplateSpec` definitions directly via `specs`. Grove creates and fully manages
+`ResourceClaim` objects directly from these specs — no intermediate `ResourceClaimTemplate` objects are created.
+See [ResourceClaim Naming Convention](#resourceclaim-naming-convention) for the deterministic naming scheme and
+[Owner References](#owner-references) for garbage collection semantics. `Specs` must be non-empty.
 
 ### PodClique-Level Resource Sharing
 
