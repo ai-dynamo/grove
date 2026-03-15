@@ -372,7 +372,7 @@ def wait_for_nodes(config: ClusterConfig, max_restart_rounds: int = 2):
         not_ready_output = sh.kubectl(
             "get", "nodes",
             "--no-headers",
-            "-o", "custom-columns=NAME:.metadata.name,STATUS:.status.conditions[-1].status",
+            "-o", "custom-columns=NAME:.metadata.name,STATUS:.status.conditions[?(@.type=='Ready')].status",
         ).strip()
 
         not_ready_nodes = [
@@ -393,6 +393,9 @@ def wait_for_nodes(config: ClusterConfig, max_restart_rounds: int = 2):
 
         docker_client = docker.from_env()
         for node_name in not_ready_nodes:
+            if not node_name.startswith(f"k3d-{config.cluster_name}-"):
+                console.print(f"[yellow]   Skipping container {node_name} (not part of cluster '{config.cluster_name}')[/yellow]")
+                continue
             try:
                 container = docker_client.containers.get(node_name)
                 console.print(f"[yellow]   Restarting container {node_name}...[/yellow]")
