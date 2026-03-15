@@ -63,12 +63,21 @@ type K8sClientConfig struct {
 	Burst int     `json:"burst"`
 }
 
-// ControllerMaxReconcile holds the MaxConcurrentReconciles per controller.
+// ControllerMaxReconcile holds the MaxConcurrentReconciles setting per controller,
+// read from the live operator config. Included in benchmark artifacts to correlate
+// throughput results with operator concurrency settings.
 // JSON keys use full CRD names for clarity in archived benchmark artifacts.
 type ControllerMaxReconcile struct {
 	PodCliqueSet          int `json:"podCliqueSet"`
 	PodCliqueScalingGroup int `json:"podCliqueScalingGroup"`
 	PodClique             int `json:"podClique"`
+}
+
+// OperatorMetadata holds grove operator deployment metadata to be embedded in results.
+type OperatorMetadata struct {
+	GroveImage             string
+	K8sClient              *K8sClientConfig
+	ControllerMaxReconcile *ControllerMaxReconcile
 }
 
 // TrackerResult accumulates all timeline/measurement data for a single run.
@@ -79,6 +88,7 @@ type TrackerResult struct {
 	PCSCount               int                     `json:"pcsCount"`
 	Phases                 []Phase                 `json:"phases"`
 	TestDurationSeconds    float64                 `json:"testDurationSeconds"`
+	GroveImage             string                  `json:"groveImage,omitempty"`
 	K8sClient              *K8sClientConfig        `json:"k8sClient,omitempty"`
 	ControllerMaxReconcile *ControllerMaxReconcile `json:"controllerMaxReconcile,omitempty"`
 }
@@ -107,19 +117,21 @@ type PhaseDefinition struct {
 	Name       string
 	ActionFn   func(ctx context.Context) error
 	Milestones []MilestoneDefinition
+	// Timeout is the per-phase deadline. Zero means no per-phase timeout; the parent context governs.
+	Timeout time.Duration
 }
 
 // TimelineTracker records ordered phases/milestones for a test.
 type TimelineTracker struct {
-	testName     string
-	runID        string
-	namespace    string
-	pcsCount     int
-	testStart    time.Time
-	phases       []Phase
-	definitions  []PhaseDefinition
+	testName    string
+	runID       string
+	namespace   string
+	pcsCount    int
+	testStart   time.Time
+	phases      []Phase
+	definitions []PhaseDefinition
 	pollInterval time.Duration
-	logger       logr.Logger
+	logger      logr.Logger
 }
 
 // NewTimelineTracker constructs a new timeline tracker with required metadata.
@@ -145,7 +157,8 @@ func (t *TimelineTracker) AddPhase(def PhaseDefinition) {
 }
 
 // Run executes all defined phases in order and returns the complete result.
-func (t *TimelineTracker) Run(ctx context.Context) (*TrackerResult, error) {
+// metadata is embedded in the result for correlation with operator settings.
+func (t *TimelineTracker) Run(ctx context.Context, metadata *OperatorMetadata) (*TrackerResult, error) {
 	t.logger.Info("timeline tracker started",
 		"test", t.testName, "runID", t.runID, "namespace", t.namespace,
 		"pcsCount", t.pcsCount, "phases", len(t.definitions))
@@ -159,15 +172,15 @@ func (t *TimelineTracker) Run(ctx context.Context) (*TrackerResult, error) {
 		}
 	}
 
-	result := t.buildResult()
+	result := t.buildResult(metadata)
 	t.logger.Info("timeline tracker finished",
 		"test", t.testName, "totalDuration", fmt.Sprintf("%.1fs", result.TestDurationSeconds))
 	return result, nil
 }
 
 // buildResult assembles a TrackerResult from the tracker's metadata and recorded phases.
-func (t *TimelineTracker) buildResult() *TrackerResult {
-	return &TrackerResult{
+func (t *TimelineTracker) buildResult(metadata *OperatorMetadata) *TrackerResult {
+	r := &TrackerResult{
 		TestName:            t.testName,
 		RunID:               t.runID,
 		Namespace:           t.namespace,
@@ -175,6 +188,12 @@ func (t *TimelineTracker) buildResult() *TrackerResult {
 		Phases:              t.copyPhases(),
 		TestDurationSeconds: time.Since(t.testStart).Seconds(),
 	}
+	if metadata != nil {
+		r.GroveImage = metadata.GroveImage
+		r.K8sClient = metadata.K8sClient
+		r.ControllerMaxReconcile = metadata.ControllerMaxReconcile
+	}
+	return r
 }
 
 // copyPhases returns a deep copy of recorded phases.
@@ -195,6 +214,12 @@ func (t *TimelineTracker) runPhase(ctx context.Context, def PhaseDefinition) err
 
 	if def.ActionFn == nil {
 		return fmt.Errorf("phase %q: action cannot be nil", def.Name)
+	}
+
+	if def.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, def.Timeout)
+		defer cancel()
 	}
 
 	phaseStart := time.Now()

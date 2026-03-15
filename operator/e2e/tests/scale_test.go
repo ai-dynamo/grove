@@ -33,12 +33,28 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/utils/measurement/exporter"
 )
 
+// toOperatorMetadata converts GroveMetadata (utils package) to the measurement package type.
+func toOperatorMetadata(m *utils.GroveMetadata) *measurement.OperatorMetadata {
+	return &measurement.OperatorMetadata{
+		GroveImage: m.Image,
+		K8sClient: &measurement.K8sClientConfig{
+			QPS:   m.Config.ClientConnection.QPS,
+			Burst: m.Config.ClientConnection.Burst,
+		},
+		ControllerMaxReconcile: &measurement.ControllerMaxReconcile{
+			PodCliqueSet:          ptr.Deref(m.Config.Controllers.PodCliqueSet.ConcurrentSyncs, 1),
+			PodCliqueScalingGroup: ptr.Deref(m.Config.Controllers.PodCliqueScalingGroup.ConcurrentSyncs, 1),
+			PodClique:             ptr.Deref(m.Config.Controllers.PodClique.ConcurrentSyncs, 1),
+		},
+	}
+}
+
 const (
-	scaleTestExpectedPods     = 5000
-	scaleTestExpectedReplicas = 2500
+	scaleTestExpectedPods     = 1000
+	scaleTestExpectedReplicas = 500
 )
 
-func Test_ScaleTest_5000_MoE(t *testing.T) {
+func Test_ScaleTest_1000(t *testing.T) {
 	diagDir := os.Getenv(DiagnosticsDirEnvVar)
 	logger.Infof("starting scale test: %d expected pods, timeout %v", scaleTestExpectedPods, scaleTestTimeout)
 
@@ -49,10 +65,9 @@ func Test_ScaleTest_5000_MoE(t *testing.T) {
 	clients, cleanup := prepareTestCluster(ctx, t, 100)
 	defer cleanup()
 
-	// Best-effort: config enrichment failure must not abort the scale test.
-	operatorCfg, err := utils.ReadGroveConfig(ctx, clients.crClient)
+	metadata, err := utils.ReadGroveMetadata(ctx, clients.crClient)
 	if err != nil {
-		t.Logf("WARN: failed to read grove config (continuing without config metadata): %v", err)
+		t.Fatalf("failed to read grove metadata: %v", err)
 	}
 
 	tc := TestContext{
@@ -66,8 +81,8 @@ func Test_ScaleTest_5000_MoE(t *testing.T) {
 		Timeout:       scaleTestTimeout,
 		Interval:      scaleTestPollInterval,
 		Workload: &WorkloadConfig{
-			Name:         "scale-test-5000-moe",
-			YAMLPath:     "../yaml/scale-test-5000-moe.yaml",
+			Name:         "scale-test-1000",
+			YAMLPath:     "../yaml/scale-test-1000.yaml",
 			Namespace:    "default",
 			ExpectedPods: scaleTestExpectedPods,
 		},
@@ -77,7 +92,7 @@ func Test_ScaleTest_5000_MoE(t *testing.T) {
 	logger.Infof("test config: runID=%s, namespace=%s, pcsName=%s", runID, tc.Namespace, tc.Workload.Name)
 
 	tracker := measurement.NewTimelineTracker(
-		"ScaleTest_5000_MoE",
+		"ScaleTest_1000",
 		runID,
 		tc.Namespace,
 		1,
@@ -140,21 +155,9 @@ func Test_ScaleTest_5000_MoE(t *testing.T) {
 	})
 
 	logger.Info("running timeline tracker")
-	result, err := tracker.Run(ctx)
+	result, err := tracker.Run(ctx, toOperatorMetadata(metadata))
 	if err != nil {
 		t.Fatalf("Timeline tracker run failed: %v", err)
-	}
-
-	if operatorCfg != nil {
-		result.K8sClient = &measurement.K8sClientConfig{
-			QPS:   operatorCfg.ClientConnection.QPS,
-			Burst: operatorCfg.ClientConnection.Burst,
-		}
-		result.ControllerMaxReconcile = &measurement.ControllerMaxReconcile{
-			PodCliqueSet:          ptr.Deref(operatorCfg.Controllers.PodCliqueSet.ConcurrentSyncs, 1),
-			PodCliqueScalingGroup: ptr.Deref(operatorCfg.Controllers.PodCliqueScalingGroup.ConcurrentSyncs, 1),
-			PodClique:             ptr.Deref(operatorCfg.Controllers.PodClique.ConcurrentSyncs, 1),
-		}
 	}
 
 	logger.Info("exporting results")

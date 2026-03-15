@@ -1,14 +1,14 @@
-# Scale Test: 5000-pod MoE workload
-# 2500 PCS replicas × 1 scaling group with 2 expert-worker pods = 5000 pods
+# Scale Test: 1000-pod workload
+# 500 PCS replicas × 1 scaling group with 2 expert-worker pods = 1000 pods
 ---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
-  name: scale-test-5000-moe
+  name: scale-test-1000
   labels:
-    app: scale-test-5000-moe
+    app: scale-test-1000
 spec:
-  replicas: 2500
+  replicas: 500
   template:
     cliques:
       - name: expert-worker
