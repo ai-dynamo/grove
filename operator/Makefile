@@ -168,10 +168,12 @@ run-e2e-startup-order-full: e2e-cluster-up
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down
 
-# Run startup-ordering e2e tests: disable KWOK so pods run on real kubelet workers,
-# which is required to observe actual init-container readiness transitions.
+# Run startup-ordering e2e tests: 10 real k3d workers (tests require exactly 10 schedulable nodes
+# via PrepareForTest), no KWOK (real kubelet needed for init-container readiness transitions).
 # Usage: make run-e2e-startup-order-full [TEST_PATTERN=<pattern>]
 .PHONY: run-e2e-startup-order-full
+run-e2e-startup-order-full: export E2E_CLUSTER__WORKER_NODES = 10
+run-e2e-startup-order-full: export E2E_CLUSTER__WORKER_MEMORY = 150m
 run-e2e-startup-order-full: export E2E_KWOK__NODES = 0
 run-e2e-startup-order-full: e2e-cluster-up
 	@echo "> Running startup-ordering e2e tests..."
