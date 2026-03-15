@@ -112,7 +112,6 @@ run-e2e:
 
 # Create a k3d cluster for e2e testing (with Grove and Kai scheduler deployed)
 # This is optional - tests work with any Kubernetes cluster that has the required components
-# Pass E2E_CREATE_FLAGS to add CLI flags (e.g. --skip-kai --skip-topology --skip-prepull)
 .PHONY: e2e-cluster-up
 e2e-cluster-up:
 	@$(MODULE_HACK_DIR)/infra-manager.py setup $(E2E_CREATE_FLAGS)
@@ -142,6 +141,7 @@ run-e2e-full: e2e-cluster-up
 # Usage: make run-e2e-mnnvl-full
 .PHONY: run-e2e-mnnvl-full
 run-e2e-mnnvl-full: export E2E_CLUSTER__WORKER_NODES = 2
+run-e2e-mnnvl-full: export E2E_CLUSTER__K3S_IMAGE = $(K3S_IMAGE)
 run-e2e-mnnvl-full: export E2E_CLUSTER__PREPULL_IMAGES = false
 run-e2e-mnnvl-full: export E2E_KWOK__NODES = 0
 run-e2e-mnnvl-full: e2e-cluster-up
@@ -167,6 +167,19 @@ run-e2e-startup-order-full: e2e-cluster-up
 		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down
+
+# Run startup-ordering e2e tests: disable KWOK so pods run on real kubelet workers,
+# which is required to observe actual init-container readiness transitions.
+# Usage: make run-e2e-startup-order-full [TEST_PATTERN=<pattern>]
+.PHONY: run-e2e-startup-order-full
+run-e2e-startup-order-full: export E2E_KWOK__NODES = 0
+run-e2e-startup-order-full: e2e-cluster-up
+	@echo "> Running startup-ordering e2e tests..."
+	@E2E_REGISTRY_PORT=5001 $(MAKE) run-e2e TEST_PATTERN='$(or $(TEST_PATTERN),^Test_SO)' || \
+		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
+	@echo "> Tests passed, cleaning up cluster..."
+	@$(MAKE) e2e-cluster-down
+
 
 # Make targets for local development and testing
 # -------------------------------------------------------------

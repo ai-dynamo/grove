@@ -45,14 +45,14 @@ spec:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   nodeSelectorTerms:
                     - matchExpressions:
-                        - key: node_role.e2e.grove.nvidia.com
+                        - key: type
                           operator: In
                           values:
-                            - agent
+                            - kwok
             tolerations:
-              - key: node_role.e2e.grove.nvidia.com
+              - key: fake-node
                 operator: Equal
-                value: agent
+                value: "true"
                 effect: NoSchedule
             containers:
               - name: worker
@@ -76,14 +76,14 @@ spec:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   nodeSelectorTerms:
                     - matchExpressions:
-                        - key: node_role.e2e.grove.nvidia.com
+                        - key: type
                           operator: In
                           values:
-                            - agent
+                            - kwok
             tolerations:
-              - key: node_role.e2e.grove.nvidia.com
+              - key: fake-node
                 operator: Equal
-                value: agent
+                value: "true"
                 effect: NoSchedule
             containers:
               - name: leader
@@ -109,14 +109,14 @@ spec:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   nodeSelectorTerms:
                     - matchExpressions:
-                        - key: node_role.e2e.grove.nvidia.com
+                        - key: type
                           operator: In
                           values:
-                            - agent
+                            - kwok
             tolerations:
-              - key: node_role.e2e.grove.nvidia.com
+              - key: fake-node
                 operator: Equal
-                value: agent
+                value: "true"
                 effect: NoSchedule
             containers:
               - name: worker
@@ -140,14 +140,14 @@ spec:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   nodeSelectorTerms:
                     - matchExpressions:
-                        - key: node_role.e2e.grove.nvidia.com
+                        - key: type
                           operator: In
                           values:
-                            - agent
+                            - kwok
             tolerations:
-              - key: node_role.e2e.grove.nvidia.com
+              - key: fake-node
                 operator: Equal
-                value: agent
+                value: "true"
                 effect: NoSchedule
             containers:
               - name: leader
@@ -171,14 +171,14 @@ spec:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   nodeSelectorTerms:
                     - matchExpressions:
-                        - key: node_role.e2e.grove.nvidia.com
+                        - key: type
                           operator: In
                           values:
-                            - agent
+                            - kwok
             tolerations:
-              - key: node_role.e2e.grove.nvidia.com
+              - key: fake-node
                 operator: Equal
-                value: agent
+                value: "true"
                 effect: NoSchedule
             containers:
               - name: router

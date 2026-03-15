@@ -45,10 +45,10 @@ spec:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   nodeSelectorTerms:
                     - matchExpressions:
-                        - key: node_role.e2e.grove.nvidia.com
+                        - key: type
                           operator: In
                           values:
-                            - agent
+                            - kwok
               podAntiAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   - labelSelector:
@@ -59,9 +59,9 @@ spec:
                             - tas-pcs-multi-pcsg-0-decoder-0-dworker
                     topologyKey: kubernetes.io/hostname
             tolerations:
-              - key: node_role.e2e.grove.nvidia.com
+              - key: fake-node
                 operator: Equal
-                value: agent
+                value: "true"
                 effect: NoSchedule
             containers:
               - name: worker
@@ -85,10 +85,10 @@ spec:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   nodeSelectorTerms:
                     - matchExpressions:
-                        - key: node_role.e2e.grove.nvidia.com
+                        - key: type
                           operator: In
                           values:
-                            - agent
+                            - kwok
               podAntiAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   - labelSelector:
@@ -99,9 +99,9 @@ spec:
                             - tas-pcs-multi-pcsg-0-decoder-0-dleader
                     topologyKey: kubernetes.io/hostname
             tolerations:
-              - key: node_role.e2e.grove.nvidia.com
+              - key: fake-node
                 operator: Equal
-                value: agent
+                value: "true"
                 effect: NoSchedule
             containers:
               - name: leader
@@ -125,10 +125,10 @@ spec:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   nodeSelectorTerms:
                     - matchExpressions:
-                        - key: node_role.e2e.grove.nvidia.com
+                        - key: type
                           operator: In
                           values:
-                            - agent
+                            - kwok
               podAntiAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   - labelSelector:
@@ -139,9 +139,9 @@ spec:
                             - tas-pcs-multi-pcsg-0-prefill-0-pworker
                     topologyKey: kubernetes.io/hostname
             tolerations:
-              - key: node_role.e2e.grove.nvidia.com
+              - key: fake-node
                 operator: Equal
-                value: agent
+                value: "true"
                 effect: NoSchedule
             containers:
               - name: worker
@@ -165,10 +165,10 @@ spec:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   nodeSelectorTerms:
                     - matchExpressions:
-                        - key: node_role.e2e.grove.nvidia.com
+                        - key: type
                           operator: In
                           values:
-                            - agent
+                            - kwok
               podAntiAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   - labelSelector:
@@ -179,9 +179,9 @@ spec:
                             - tas-pcs-multi-pcsg-0-prefill-0-pleader
                     topologyKey: kubernetes.io/hostname
             tolerations:
-              - key: node_role.e2e.grove.nvidia.com
+              - key: fake-node
                 operator: Equal
-                value: agent
+                value: "true"
                 effect: NoSchedule
             containers:
               - name: leader
@@ -205,10 +205,10 @@ spec:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   nodeSelectorTerms:
                     - matchExpressions:
-                        - key: node_role.e2e.grove.nvidia.com
+                        - key: type
                           operator: In
                           values:
-                            - agent
+                            - kwok
               podAntiAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   - labelSelector:
@@ -219,9 +219,9 @@ spec:
                             - tas-pcs-multi-pcsg-0-router
                     topologyKey: kubernetes.io/hostname
             tolerations:
-              - key: node_role.e2e.grove.nvidia.com
+              - key: fake-node
                 operator: Equal
-                value: agent
+                value: "true"
                 effect: NoSchedule
             containers:
               - name: router
