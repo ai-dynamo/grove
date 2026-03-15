@@ -8,7 +8,7 @@ cluster:
 kwok:
   nodes: 30
   node_cpu: "4"
-  node_memory: "150Mi"
+  node_memory: "8Gi"
 
 scheduler:
   kai:
