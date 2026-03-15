@@ -19,6 +19,7 @@ package measurement
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -37,8 +38,19 @@ type Milestone struct {
 type Phase struct {
 	Name                  string      `json:"name"`
 	StartTime             time.Time   `json:"startTime"`
+	EndTime               time.Time   `json:"endTime,omitempty"`
 	DurationFromTestStart float64     `json:"durationFromTestStartSeconds"`
 	Milestones            []Milestone `json:"milestones"`
+}
+
+// AfterPhaseHook is called once after a phase completes.
+// Receives the phase name and exact start/end times.
+type AfterPhaseHook func(ctx context.Context, phaseName string, start, end time.Time)
+
+// registeredHook pairs a hook function with its execution mode.
+type registeredHook struct {
+	fn    AfterPhaseHook
+	async bool
 }
 
 // MilestoneCondition returns whether a milestone has been reached.
@@ -102,6 +114,23 @@ func WithPollInterval(d time.Duration) TimelineOption {
 	}
 }
 
+// WithAfterPhaseHook registers a synchronous hook invoked after each phase completes.
+// Multiple calls add multiple hooks; all are fired in registration order.
+func WithAfterPhaseHook(hook AfterPhaseHook) TimelineOption {
+	return func(t *TimelineTracker) {
+		t.afterPhaseHooks = append(t.afterPhaseHooks, registeredHook{fn: hook})
+	}
+}
+
+// WithAfterPhaseHookAsync registers an async hook that fires in a background goroutine.
+// Call tracker.Wait() after tracker.Run() to ensure all async hooks complete before
+// the test exits (prevents truncated pprof files).
+func WithAfterPhaseHookAsync(hook AfterPhaseHook) TimelineOption {
+	return func(t *TimelineTracker) {
+		t.afterPhaseHooks = append(t.afterPhaseHooks, registeredHook{fn: hook, async: true})
+	}
+}
+
 // PhaseDefinition holds all inputs for a phase to be executed later.
 type PhaseDefinition struct {
 	Name       string
@@ -111,15 +140,17 @@ type PhaseDefinition struct {
 
 // TimelineTracker records ordered phases/milestones for a test.
 type TimelineTracker struct {
-	testName     string
-	runID        string
-	namespace    string
-	pcsCount     int
-	testStart    time.Time
-	phases       []Phase
-	definitions  []PhaseDefinition
-	pollInterval time.Duration
-	logger       logr.Logger
+	testName        string
+	runID           string
+	namespace       string
+	pcsCount        int
+	testStart       time.Time
+	phases          []Phase
+	definitions     []PhaseDefinition
+	pollInterval    time.Duration
+	logger          logr.Logger
+	afterPhaseHooks []registeredHook
+	wg              sync.WaitGroup
 }
 
 // NewTimelineTracker constructs a new timeline tracker with required metadata.
@@ -163,6 +194,23 @@ func (t *TimelineTracker) Run(ctx context.Context) (*TrackerResult, error) {
 	t.logger.Info("timeline tracker finished",
 		"test", t.testName, "totalDuration", fmt.Sprintf("%.1fs", result.TestDurationSeconds))
 	return result, nil
+}
+
+// Wait blocks until all async after-phase hooks have completed.
+// Call this after Run() returns to ensure no background goroutines are truncated.
+func (t *TimelineTracker) Wait() {
+	t.wg.Wait()
+}
+
+// fireHook invokes a single registered hook, recovering from any panics to keep
+// the test running even if a hook misbehaves.
+func (t *TimelineTracker) fireHook(ctx context.Context, h registeredHook, phaseName string, start, end time.Time) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.logger.Error(fmt.Errorf("panic: %v", r), "after-phase hook panicked", "phase", phaseName)
+		}
+	}()
+	h.fn(ctx, phaseName, start, end)
 }
 
 // buildResult assembles a TrackerResult from the tracker's metadata and recorded phases.
@@ -222,11 +270,24 @@ func (t *TimelineTracker) runPhase(ctx context.Context, def PhaseDefinition) err
 		return err
 	}
 	phase.Milestones = reached
+	phase.EndTime = time.Now()
 
 	t.phases = append(t.phases, phase)
 	log.Info("phase completed",
 		"milestoneCount", len(phase.Milestones),
 		"phaseDuration", fmt.Sprintf("%.1fs", time.Since(phaseStart).Seconds()))
+
+	for _, h := range t.afterPhaseHooks {
+		if h.async {
+			t.wg.Add(1)
+			go func(rh registeredHook) {
+				defer t.wg.Done()
+				t.fireHook(ctx, rh, phase.Name, phase.StartTime, phase.EndTime)
+			}(h)
+		} else {
+			t.fireHook(ctx, h, phase.Name, phase.StartTime, phase.EndTime)
+		}
+	}
 
 	return nil
 }
