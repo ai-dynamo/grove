@@ -142,7 +142,6 @@ run-e2e-full: e2e-cluster-up
 # Usage: make run-e2e-mnnvl-full
 .PHONY: run-e2e-mnnvl-full
 run-e2e-mnnvl-full: export E2E_CLUSTER__WORKER_NODES = 2
-run-e2e-mnnvl-full: export E2E_CLUSTER__K3S_IMAGE = $(K3S_IMAGE)
 run-e2e-mnnvl-full: export E2E_CLUSTER__PREPULL_IMAGES = false
 run-e2e-mnnvl-full: export E2E_KWOK__NODES = 0
 run-e2e-mnnvl-full: e2e-cluster-up
