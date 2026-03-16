@@ -91,8 +91,8 @@ metadata:
 spec:
   replicas: 1
   template:
-    topologyName: h100-topology
     topologyConstraint:
+      topologyName: h100-topology
       packDomain: zone
     cliques:
       - name: prefill
@@ -135,8 +135,8 @@ metadata:
 spec:
   replicas: 1
   template:
-    topologyName: gb200-topology
     topologyConstraint:
+      topologyName: gb200-topology
       packDomain: zone
     cliques:
       - name: prefill
