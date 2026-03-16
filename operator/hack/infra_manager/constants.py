@@ -63,7 +63,7 @@ def dep_value(*keys: str, default: Any = None) -> Any:
 
 CLUSTER_TIMEOUT = "120s"
 NODES_PER_ZONE = 28
-NODES_PER_BLOCK = 14
+NODES_PER_BLOCK = 20
 NODES_PER_RACK = 7
 
 WEBHOOK_READY_MAX_RETRIES = 60
