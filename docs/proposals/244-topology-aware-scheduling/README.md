@@ -20,7 +20,7 @@
     - [Workload Portability](#workload-portability)
     - [ClusterTopology Deletion](#clustertopology-deletion)
     - [Topology Level Updates](#topology-level-updates)
-    - [Topology Immutability After Scheduling](#topology-immutability-after-scheduling)
+    - [Topology Name Immutability](#topology-name-immutability)
 - [Design Details](#design-details)
   - [Cluster Admin API](#cluster-admin-api)
     - [Topology Domains](#topology-domains)
@@ -303,13 +303,11 @@ ClusterTopology `spec.levels` can be updated in-place. When an administrator rem
 * The PCS reconciler detects when referenced topology domains are no longer present and sets the `TopologyLevelsUnavailable` condition to `True` with reason `ClusterTopologyLevelsUnavailable`. Invalid topology constraints are removed from the PodGang resources so the scheduler no longer enforces them. Already-running pods are not evicted.
 * For auto-managed scheduler backend topologies, the CT controller deletes and recreates the scheduler backend topology CR when levels change (since downstream resources like KAI `Topology` have immutable levels).
 
-#### Topology Immutability After Scheduling
+#### Topology Name Immutability
 
-The `topologyName` field on a PodCliqueSet becomes immutable once any pod in the PCS has been scheduled (bound to a node). The scheduler has already made placement decisions based on the referenced topology, and changing the topology reference after scheduling would invalidate those decisions. Users can change `topologyName` freely while all pods are still pending, supporting the topology retry use case (Story 5).
+The `topologyName` field on a PodCliqueSet is immutable after creation. The scheduler makes placement decisions based on the referenced topology, and changing the topology reference would invalidate those decisions and the resolved node label keys in the PodGang. Users who need to change the topology reference must delete the PodCliqueSet and recreate it with the desired topology.
 
-**Mitigation**
-
-* This restriction only applies after pods are scheduled. Users who need to change the topology reference for a running workload can delete the PodCliqueSet and recreate it with the desired topology. The pending-state flexibility supports the common case of retrying on a different topology when the first choice cannot accommodate the gang.
+> NOTE: In the future, when the Grove scheduler backend is implemented, this restriction may be relaxed to allow `topologyName` changes while all pods are still pending (supporting topology retry use cases). The Grove scheduler backend will have tighter integration with the topology lifecycle, making safe re-resolution possible.
 
 ## Design Details
 
@@ -828,7 +826,7 @@ Example:
 
 * `topologyName` must be set if and only if any `TopologyConstraint` is set (at PCS, PCSG, or PodClique level). Setting one without the other is rejected.
 * When set, the referenced ClusterTopology must exist.
-* On update: `topologyName` can only be changed while no pods in the PCS are scheduled (`ScheduledReplicas == 0` across all PodCliques). The new ClusterTopology must exist.
+* `topologyName` is immutable after creation. Updates that change the value are rejected.
 * Reject if `topologyName` or any `TopologyConstraint` is set but TAS is disabled cluster-wide.
 
 Rules 1 and 2 apply to `TopologyConstraint` fields. Rule-3 validates the `topologyName` reference. Together, these three rules ensure that workloads can only reference valid topology levels, maintain logical topology nesting throughout the resource hierarchy, and target an existing ClusterTopology.
@@ -1015,7 +1013,7 @@ To enable the scheduler to select/filter nodes that satisfy the topology constra
 
 **Unit tests** for multi-topology:
 
-* PCS validating webhook: `topologyName` existence check on create and update, required when `TopologyConstraint` is set, immutability after scheduling, rejection when TAS is disabled
+* PCS validating webhook: `topologyName` existence check on create, immutability on update, required when `TopologyConstraint` is set, rejection when TAS is disabled
 * PCS reconciler: `TopologyLevelsUnavailable` condition logic — set when ClusterTopology is missing or domains are unavailable, cleared when all domains are available
 * PCS reconciler: topology resolution logic that resolves `topologyName` to the correct ClusterTopology when building the PodGang
 
