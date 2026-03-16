@@ -63,6 +63,8 @@ class ClusterConfig(BaseModel):
         max_retries: Maximum cluster creation retry attempts.
         worker_nodes: Number of worker nodes to create.
         worker_memory: Memory limit per worker node.
+        dind_memory_mode: Use kubelet system-reserved instead of --agents-memory (for DinD
+            environments where --agents-memory is broken due to /proc/meminfo bind-mount).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -78,6 +80,7 @@ class ClusterConfig(BaseModel):
     max_retries: int = Field(default=DEFAULT_CLUSTER_CREATE_MAX_RETRIES, ge=1, le=10)
     worker_nodes: int = Field(default=DEFAULT_WORKER_NODES, ge=1, le=100)
     worker_memory: str = Field(default=DEFAULT_WORKER_MEMORY, pattern=r"^\d+[mMgG]?$")
+    dind_memory_mode: bool = False
 
     @model_validator(mode="after")
     def _registry_prepull_mutex(self) -> "ClusterConfig":

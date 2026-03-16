@@ -31,6 +31,7 @@ def setup(
     config: Path = typer.Option(None, "--config", help="Path to setup config YAML"),
     values: list[Path] = typer.Option([], "-f", "--values", help="Override YAML files (stackable, merged in order)"),
     set_overrides: list[str] = typer.Option([], "--set", help="Dot-notation overrides: --set cluster.worker_nodes=5 (list index syntax not supported; env vars take priority)"),
+    dind_memory_mode: bool = typer.Option(False, "--dind-memory-mode", help="Use kubelet system-reserved instead of --agents-memory (for DinD environments where --agents-memory is broken)"),
 ) -> None:
     """Run setup workflow from a YAML config file, with optional overrides.
 
@@ -41,4 +42,6 @@ def setup(
     """
     config_path = config if config is not None else SCRIPT_DIR / "e2e.yaml"
     cfg = load_setup_config(config_path, values_paths=values, set_overrides=set_overrides)
+    if dind_memory_mode:
+        cfg = cfg.model_copy(update={"cluster": cfg.cluster.model_copy(update={"dind_memory_mode": True})})
     run_setup(cfg)

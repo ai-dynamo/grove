@@ -32,6 +32,7 @@ from infra_manager.constants import (
     CLUSTER_CREATE_RETRY_WAIT_SECONDS,
     CLUSTER_TIMEOUT,
     DEFAULT_IMAGE_PULL_MAX_WORKERS,
+    DEFAULT_WORKER_MEMORY_MB,
     E2E_NODE_ROLE_KEY,
     LABEL_BLOCK,
     LABEL_CONTROL_PLANE,
@@ -160,6 +161,18 @@ def prepull_image_groups(
 # ============================================================================
 
 
+def _get_system_total_memory_ki() -> int | None:
+    """Read MemTotal from /proc/meminfo (KiB). Returns None on non-Linux systems."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1])
+    except FileNotFoundError:
+        return None
+    return None
+
+
 def delete_cluster(cfg: ClusterConfig) -> None:
     """Delete the k3d cluster.
 
@@ -184,6 +197,35 @@ def create_cluster(cfg: ClusterConfig) -> None:
         RetryError: If the cluster cannot be created after all retries.
     """
     console.print(Panel.fit("Creating k3d cluster", style="bold blue"))
+
+    # In DinD, --agents-memory is broken (DinD bind-mounts /proc/meminfo from the host,
+    # so k3d sees the full host RAM and ignores the flag). Use kubelet system-reserved
+    # instead: set system-reserved = total_host_memory - DEFAULT_WORKER_MEMORY_MB so
+    # each node has ~DEFAULT_WORKER_MEMORY_MB capacity, matching --agents-memory behavior.
+    memory_args: list[str] = []
+    if cfg.dind_memory_mode:
+        total_ki = _get_system_total_memory_ki()
+        if total_ki is not None:
+            system_reserved_mi = (total_ki // 1024) - DEFAULT_WORKER_MEMORY_MB
+            if system_reserved_mi > 0:
+                effective_allocatable_mi = DEFAULT_WORKER_MEMORY_MB - 100
+                console.print(
+                    f"[yellow]\u2139\ufe0f  DinD mode: detected {total_ki // 1024}Mi system memory, "
+                    f"setting system-reserved={system_reserved_mi}Mi "
+                    f"(effective capacity: ~{DEFAULT_WORKER_MEMORY_MB}Mi/node, "
+                    f"allocatable: ~{effective_allocatable_mi}Mi/node)[/yellow]"
+                )
+                memory_args = [
+                    "--k3s-arg",
+                    f"--kubelet-arg=system-reserved=memory={system_reserved_mi}Mi@agent:*",
+                ]
+            else:
+                console.print(
+                    f"[yellow]\u26a0\ufe0f  DinD mode: system memory too low ({total_ki // 1024}Mi) "
+                    f"to emulate {DEFAULT_WORKER_MEMORY_MB}Mi capacity per node, skipping system-reserved[/yellow]"
+                )
+    else:
+        memory_args = ["--agents-memory", cfg.worker_memory]
 
     @retry(
         stop=stop_after_attempt(cfg.max_retries),
@@ -222,15 +264,7 @@ def create_cluster(cfg: ClusterConfig) -> None:
             "nvidia.com/gpu.deploy.operands=false@server:*",
             "--k3s-node-label",
             "nvidia.com/gpu.deploy.operands=false@agent:*",
-            # Per-node memory cap. In DinD environments (e.g. prod-grove-e2e-v1),
-            # --agents-memory is broken: DinD bind-mounts /proc/meminfo from the
-            # host, so k3d sees the full host RAM and ignores this flag. Use kubelet
-            # system-reserved instead for DinD (see create-e2e-cluster.py
-            # --dind-memory-mode). For non-DinD setups this correctly limits each
-            # agent container's allocatable memory, preventing OOM contention across
-            # many workers sharing the host.
-            "--agents-memory",
-            cfg.worker_memory,
+            *memory_args,
             "--timeout",
             CLUSTER_TIMEOUT,
             "--wait",
