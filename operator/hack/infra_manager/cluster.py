@@ -222,6 +222,13 @@ def create_cluster(cfg: ClusterConfig) -> None:
             "nvidia.com/gpu.deploy.operands=false@server:*",
             "--k3s-node-label",
             "nvidia.com/gpu.deploy.operands=false@agent:*",
+            # Per-node memory cap. In DinD environments (e.g. prod-grove-e2e-v1),
+            # --agents-memory is broken: DinD bind-mounts /proc/meminfo from the
+            # host, so k3d sees the full host RAM and ignores this flag. Use kubelet
+            # system-reserved instead for DinD (see create-e2e-cluster.py
+            # --dind-memory-mode). For non-DinD setups this correctly limits each
+            # agent container's allocatable memory, preventing OOM contention across
+            # many workers sharing the host.
             "--agents-memory",
             cfg.worker_memory,
             "--timeout",

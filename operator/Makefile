@@ -120,7 +120,7 @@ e2e-cluster-up:
 # Delete the k3d e2e test cluster
 .PHONY: e2e-cluster-down
 e2e-cluster-down:
-	@$(MODULE_HACK_DIR)/e2e-cluster/create-e2e-cluster.py --delete
+	@$(MODULE_HACK_DIR)/infra-manager.py delete k3d-cluster
 
 # Full e2e test run: create k3d cluster, run tests, then cleanup
 # Usage: make run-e2e-full [TEST_PATTERN=<pattern>]
@@ -141,9 +141,10 @@ run-e2e-full: e2e-cluster-up
 # with MNNVL-specific env overrides and flags.
 # Usage: make run-e2e-mnnvl-full
 .PHONY: run-e2e-mnnvl-full
-run-e2e-mnnvl-full: export E2E_WORKER_NODES = 2
-run-e2e-mnnvl-full: export E2E_K3S_IMAGE = $(K3S_IMAGE)
-run-e2e-mnnvl-full: E2E_CREATE_FLAGS = --skip-prepull
+run-e2e-mnnvl-full: export E2E_CLUSTER__WORKER_NODES = 2
+run-e2e-mnnvl-full: export E2E_CLUSTER__K3S_IMAGE = $(K3S_IMAGE)
+run-e2e-mnnvl-full: export E2E_CLUSTER__PREPULL_IMAGES = false
+run-e2e-mnnvl-full: export E2E_KWOK__NODES = 0
 run-e2e-mnnvl-full: e2e-cluster-up
 	@echo "> Pushing alpine image to local registry..."
 	@docker pull alpine:latest || true
@@ -155,6 +156,18 @@ run-e2e-mnnvl-full: e2e-cluster-up
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down
 
+# Run startup ordering e2e tests with real kubelet workers (no KWOK nodes)
+# Startup ordering tests require real init-container readiness transitions
+.PHONY: run-e2e-startup-order-full
+run-e2e-startup-order-full: export E2E_CLUSTER__WORKER_NODES = 10
+run-e2e-startup-order-full: export E2E_CLUSTER__WORKER_MEMORY = 150m
+run-e2e-startup-order-full: export E2E_KWOK__NODES = 0
+run-e2e-startup-order-full: e2e-cluster-up
+	@echo "> Running startup ordering e2e tests..."
+	@E2E_REGISTRY_PORT=5001 $(MAKE) run-e2e TEST_PATTERN=$(TEST_PATTERN) || \
+		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
+	@echo "> Tests passed, cleaning up cluster..."
+	@$(MAKE) e2e-cluster-down
 
 # Make targets for local development and testing
 # -------------------------------------------------------------

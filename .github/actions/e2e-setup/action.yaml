@@ -61,6 +61,8 @@ runs:
       uses: actions/setup-go@v4
       with:
         go-version: ${{ inputs.go-version }}
+        cache: true
+        cache-dependency-path: operator/go.sum
 
     - name: Install k3d
       shell: bash
@@ -109,4 +111,4 @@ runs:
         pip3 install --break-system-packages -r operator/hack/e2e-cluster/requirements.txt
 
         echo "Verifying Python dependencies..."
-        python3 -c "import docker; import sh; import typer; import pydantic; import rich; print('All dependencies installed successfully')"
+        python3 -c "import docker; import sh; import typer; import pydantic; import pydantic_settings; import rich; print('All dependencies installed successfully')"
