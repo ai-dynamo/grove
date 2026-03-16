@@ -135,13 +135,13 @@ spec:
 ```
 
 **User Layer:**
-Workload developers can specify topology constraints at three hierarchical levels (`PodCliqueSet`, `PodCliqueScalingGroup`, and `PodClique`) using domain names. They select which topology to use via the `topologyName` field on PodCliqueSet, which is required when any `TopologyConstraint` is specified.
+Workload developers can specify topology constraints at three hierarchical levels (`PodCliqueSet`, `PodCliqueScalingGroup`, and `PodClique`) using domain names. They select which topology to use via the `topologyName` field inside the PCS-level `topologyConstraint`, which is required when `packDomain` is specified.
 
 The operator validates these constraints against the referenced ClusterTopology using three key validation rules:
 
 1. *Domain existence*: All topology domains referenced in workload's topology constraints must exist in the ClusterTopology CR. This ensures workloads only reference valid, configured topology levels.
 2. *Topology Constraint Hierarchy*: Topology levels are ordered by their position in the ClusterTopology's levels array (index 0 = broadest scope). When topology constraints are hierarchically applied to a workload from PodCliqueSet → PodCliqueScalingGroup → PodClique, each level's constraints must reference a domain that is equal to or narrower (higher index) than the parent level's domain. A child resource cannot specify a broader topology domain than its parent. For example, if the referenced ClusterTopology defines levels `[zone, block, host]` and the PodCliqueSet specifies `block`, then PodCliqueScalingGroup can specify `block` (equal) or `host` (narrower), but not `zone` (broader).
-3. *Topology reference*: The `topologyName` must reference an existing ClusterTopology. The reference can only be changed while no pods in the PCS are scheduled.
+3. *Topology reference*: The `topologyName` must reference an existing ClusterTopology. The field is immutable after creation.
 
 After validation, the operator translates the topology domain names (e.g., "rack", "host") into cluster-specific topology keys (e.g., "topology.kubernetes.io/zone", "kubernetes.io/hostname") using the referenced ClusterTopology and configures these hierarchical topology keys in the `PodGang` API. The `PodGang` serves as an intermediate representation that will eventually be mapped to the specific types that the configured scheduler backend understands. This abstraction allows workload portability across clusters with different topology configurations and scheduler implementations.
 
@@ -169,9 +169,9 @@ As a cluster administrator managing a cluster with different GPU architectures, 
 
 For a concrete example with DGX H100 and GB200 NVL72 hardware demonstrating the H100 and GB200 paths, see [Story 4: Heterogeneous GPU Cluster Example](story-4-heterogeneous-gpu-example.md).
 
-#### Story 5: Topology Retry Before Scheduling
+#### Story 5: Topology Retry (Future)
 
-As a user submitting a PodCliqueSet to a cluster with multiple scheduling shards, I want to be able to change the target topology while my workload is pending, so I can retry on a different shard if the first one cannot accommodate my gang. Once the gang starts running, the topology should be locked.
+As a user submitting a PodCliqueSet to a cluster with multiple scheduling shards, I want to be able to change the target topology while my workload is pending, so I can retry on a different shard if the first one cannot accommodate my gang. This use case is deferred — `topologyName` is currently immutable after creation. When the Grove scheduler backend is implemented, this restriction may be relaxed to allow topology changes while all pods are still pending.
 
 ### Limitations/Risks & Mitigations
 
@@ -197,8 +197,8 @@ metadata:
 spec:
   replicas: 2
   template:
-    topologyName: h100-topology
     topologyConstraint:
+      topologyName: h100-topology
       packDomain: zone  # Each replica within a zone
     cliques:
       - name: p-leader
@@ -628,11 +628,27 @@ type TopologyConstraint struct {
 }
 ```
 
-`TopologyConstraint` can be specified at three levels:
+`TopologyConstraint` can be specified at three levels. At the `PodCliqueSet` level, a `PodCliqueSetTopologyConstraint` struct extends `TopologyConstraint` with the `topologyName` field. At `PodCliqueScalingGroup` and `PodClique` levels, the base `TopologyConstraint` is used (no `topologyName`).
 
 At `PodCliqueSet` you can set the constraints using:
 
 ```go
+// PodCliqueSetTopologyConstraint defines topology placement requirements for PodCliqueSet.
+// Extends TopologyConstraint with the topology reference (topologyName),
+// which is only available at the PodCliqueSet level.
+type PodCliqueSetTopologyConstraint struct {
+	// TopologyName is the name of the ClusterTopology resource
+	// to use for topology-aware scheduling. Required when PackDomain is specified.
+	// Immutable after creation.
+	// +optional
+	TopologyName string `json:"topologyName,omitempty"`
+	// PackDomain specifies the topology domain for grouping replicas.
+	// Must reference a domain defined in the ClusterTopology's levels.
+	// Controls placement constraint for EACH individual replica instance.
+	// +optional
+	PackDomain TopologyDomain `json:"packDomain,omitempty"`
+}
+
 // PodCliqueSetTemplateSpec defines a template spec for a PodGang.
 // A PodGang does not have a RestartPolicy field because the restart policy is predefined:
 // If the number of pods in any of the cliques falls below the threshold, the entire PodGang will be restarted.
@@ -641,9 +657,10 @@ At `PodCliqueSet` you can set the constraints using:
 // - The "Replicas" value of that clique
 type PodCliqueSetTemplateSpec struct {
   ...
-  	// TopologyConstraint defines topology placement requirements for PodCliqueSet.
+  	// TopologyConstraint defines topology placement requirements for PodCliqueSet,
+	// including the topology reference.
 	// +optional
-	TopologyConstraint *TopologyConstraint `json:"topologyConstraint,omitempty"`
+	TopologyConstraint *PodCliqueSetTopologyConstraint `json:"topologyConstraint,omitempty"`
   ...
 }
 ```
@@ -695,8 +712,8 @@ metadata:
 spec:
   replicas: 1
   template:
-    topologyName: h100-topology
     topologyConstraint:
+      topologyName: h100-topology
       packDomain: "zone"
     cliques:
       - name: router
@@ -762,24 +779,7 @@ The above example is only a representation of how users can set topology constra
 
 #### Topology Reference
 
-A new field `topologyName` is added to `PodCliqueSetTemplateSpec`, alongside the existing `topologyConstraint` field. It is required whenever any `TopologyConstraint` is specified in the PCS:
-
-```go
-type PodCliqueSetTemplateSpec struct {
-    // ... existing fields ...
-
-    // TopologyName is the name of the ClusterTopology resource
-    // to use for topology-aware scheduling. Required when any TopologyConstraint is specified.
-    // +optional
-    TopologyName string `json:"topologyName,omitempty"`
-
-    // TopologyConstraint defines topology placement requirements for PodCliqueSet.
-    // +optional
-    TopologyConstraint *TopologyConstraint `json:"topologyConstraint,omitempty"`
-
-    // ... existing fields ...
-}
-```
+The `topologyName` field is part of the `PodCliqueSetTopologyConstraint` struct (defined above), so it lives inside the PCS-level `topologyConstraint` block. It is required whenever `packDomain` is specified. It is not available at the `PodClique` or `PodCliqueScalingGroup` levels — child resources inherit the topology reference from the PCS.
 
 **Example YAML:**
 
@@ -790,12 +790,13 @@ metadata:
   name: my-inference
 spec:
   template:
-    topologyName: gb200-topology    # must match an existing ClusterTopology name
     topologyConstraint:
+      topologyName: gb200-topology    # must match an existing ClusterTopology name
       packDomain: rack
     cliques:
       - name: worker
-        # ...
+        topologyConstraint:           # no topologyName here — only at PCS level
+          packDomain: host
 ```
 
 #### Validation
@@ -824,7 +825,7 @@ Example:
 
 *Rule-3: Topology reference validation*
 
-* `topologyName` must be set if and only if any `TopologyConstraint` is set (at PCS, PCSG, or PodClique level). Setting one without the other is rejected.
+* `topologyName` (in the PCS-level `topologyConstraint`) must be set if and only if any `packDomain` is set (at PCS, PCSG, or PodClique level). Setting one without the other is rejected.
 * When set, the referenced ClusterTopology must exist.
 * `topologyName` is immutable after creation. Updates that change the value are rejected.
 * Reject if `topologyName` or any `TopologyConstraint` is set but TAS is disabled cluster-wide.
@@ -923,7 +924,7 @@ The addition of multiple ClusterTopology resources and the `topologyName` field 
 
 #### Existing PodCliqueSets with topology constraints but no `topologyName`
 
-Under the previous single-topology design, PodCliqueSets could specify `topologyConstraint` without a `topologyName` — the operator implicitly resolved constraints against the single `grove-topology` ClusterTopology. After upgrading to the multi-topology design, these PCS resources are structurally invalid (the new rules require `topologyName` when any `TopologyConstraint` is set), but they already exist in the cluster — the validating webhook only runs on create and update, not on existing resources.
+Under the previous single-topology design, PodCliqueSets could specify `topologyConstraint` without a `topologyName` — the operator implicitly resolved constraints against the single `grove-topology` ClusterTopology. After upgrading to the multi-topology design, these PCS resources are structurally invalid (the new rules require `topologyName` inside the PCS-level `topologyConstraint` when any `packDomain` is set), but they already exist in the cluster — the validating webhook only runs on create and update, not on existing resources.
 
 The PCS reconciler must handle these gracefully during upgrade:
 
@@ -947,7 +948,7 @@ kubectl get podcliquesets -A -o json | jq -r '
   | {
       name: .metadata.name,
       namespace: .metadata.namespace,
-      topology: (.spec.template.topologyName // "<none>")
+      topology: (.spec.template.topologyConstraint.topologyName // "<none>")
     }
   | [.topology, .namespace + "/" + .name]
   | @tsv

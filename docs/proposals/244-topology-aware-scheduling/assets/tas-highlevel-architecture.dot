@@ -141,7 +141,7 @@ digraph TASArchitecture {
             <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="1" CELLPADDING="2">
             <TR><TD><B>PodCliqueSet</B></TD></TR>
             <TR><TD><FONT POINT-SIZE="8">(with TopologyConstraints)</FONT></TD></TR>
-            <TR><TD><FONT POINT-SIZE="8" COLOR="#0066cc">topologyName: ...</FONT></TD></TR>
+            <TR><TD><FONT POINT-SIZE="8" COLOR="#0066cc">topologyConstraint.topologyName: ...</FONT></TD></TR>
             </TABLE>>,
             fillcolor="#f5f5f5"
         ];
