@@ -32,10 +32,10 @@ spec:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   nodeSelectorTerms:
                     - matchExpressions:
-                        - key: type
+                        - key: node_role.e2e.grove.nvidia.com
                           operator: In
                           values:
-                            - kwok
+                            - agent
               podAntiAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   - labelSelector:
@@ -46,6 +46,10 @@ spec:
                             - tas-no-constraint-0-workers-0-worker
                     topologyKey: kubernetes.io/hostname
             tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
               - key: fake-node
                 operator: Equal
                 value: "true"

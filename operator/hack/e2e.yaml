@@ -2,13 +2,13 @@
 
 cluster:
   create: true
-  worker_nodes: 2
-  worker_memory: "500m"
+  worker_nodes: 0
+  worker_memory: "150m"
 
 kwok:
   nodes: 30
   node_cpu: "4"
-  node_memory: "8Gi"
+  node_memory: "150Mi"
 
 scheduler:
   kai:

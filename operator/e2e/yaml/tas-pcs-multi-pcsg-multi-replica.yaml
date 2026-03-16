@@ -45,11 +45,15 @@ spec:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   nodeSelectorTerms:
                     - matchExpressions:
-                        - key: type
+                        - key: node_role.e2e.grove.nvidia.com
                           operator: In
                           values:
-                            - kwok
+                            - agent
             tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
               - key: fake-node
                 operator: Equal
                 value: "true"
@@ -76,11 +80,15 @@ spec:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   nodeSelectorTerms:
                     - matchExpressions:
-                        - key: type
+                        - key: node_role.e2e.grove.nvidia.com
                           operator: In
                           values:
-                            - kwok
+                            - agent
             tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
               - key: fake-node
                 operator: Equal
                 value: "true"
@@ -109,11 +117,15 @@ spec:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   nodeSelectorTerms:
                     - matchExpressions:
-                        - key: type
+                        - key: node_role.e2e.grove.nvidia.com
                           operator: In
                           values:
-                            - kwok
+                            - agent
             tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
               - key: fake-node
                 operator: Equal
                 value: "true"
@@ -140,11 +152,15 @@ spec:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   nodeSelectorTerms:
                     - matchExpressions:
-                        - key: type
+                        - key: node_role.e2e.grove.nvidia.com
                           operator: In
                           values:
-                            - kwok
+                            - agent
             tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
               - key: fake-node
                 operator: Equal
                 value: "true"
@@ -171,11 +187,15 @@ spec:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   nodeSelectorTerms:
                     - matchExpressions:
-                        - key: type
+                        - key: node_role.e2e.grove.nvidia.com
                           operator: In
                           values:
-                            - kwok
+                            - agent
             tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
               - key: fake-node
                 operator: Equal
                 value: "true"
