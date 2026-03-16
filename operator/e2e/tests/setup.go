@@ -687,3 +687,150 @@ func convertTypedToUnstructured(typed interface{}) (*unstructured.Unstructured, 
 	}
 	return &unstructured.Unstructured{Object: unstructuredMap}, nil
 }
+
+// UpdateTestConfig holds configuration for update strategy test setup (both RollingUpdate and OnDelete).
+// This unified config replaces the separate OnDeleteTestConfig and RollingUpdateTestConfig structs.
+type UpdateTestConfig struct {
+	// Required
+	WorkerNodes  int // Number of worker nodes required for the test
+	ExpectedPods int // Expected pods after initial deployment
+
+	// Required - workload identity
+	WorkloadName string // Name of the workload (e.g., "workload1" or "workload-ondelete")
+	WorkloadYAML string // Path to the workload YAML file (e.g., "../yaml/workload1.yaml")
+
+	// Optional - PCS scaling before tracker starts
+	InitialPCSReplicas int32 // If > 0, scale PCS to this many replicas before starting tracker
+	PostScalePods      int   // Expected pods after initial PCS scaling (required if InitialPCSReplicas > 0)
+
+	// Optional - SIGTERM patch (rolling update specific)
+	PatchSIGTERM bool // If true, patch containers to ignore SIGTERM before scaling
+
+	// Optional - PCSG scaling
+	InitialPCSGReplicas int32  // If > 0, scale PCSGs to this many replicas
+	PCSGName            string // Name of the PCSG scaling group (e.g., "sg-x")
+	PostPCSGScalePods   int    // Expected pods after PCSG scaling
+
+	// Optional - defaults to "default"
+	Namespace string // Defaults to "default"
+}
+
+// setupUpdateTest initializes an update strategy test with the given configuration.
+// It handles:
+// 1. Cluster preparation with required worker nodes
+// 2. TestContext creation with standard parameters
+// 3. Workload deployment and pod verification
+// 4. Optional SIGTERM patch application (before scaling to apply to original workload)
+// 5. Optional PCS scaling to initial replicas
+// 6. Optional PCSG scaling
+// 7. Tracker creation and startup
+//
+// Returns:
+//   - tc: TestContext for the test
+//   - cleanup: Function that should be deferred by the caller (stops tracker and cleans up cluster)
+//   - tracker: Started update tracker - caller can use tracker.getEvents() after stopping
+func setupUpdateTest(t *testing.T, cfg UpdateTestConfig) (TestContext, func(), *updateTracker) {
+	t.Helper()
+	ctx := context.Background()
+
+	// Validate required fields
+	if cfg.WorkloadName == "" {
+		t.Fatalf("UpdateTestConfig.WorkloadName is required")
+	}
+	if cfg.WorkloadYAML == "" {
+		t.Fatalf("UpdateTestConfig.WorkloadYAML is required")
+	}
+
+	// Apply defaults
+	if cfg.Namespace == "" {
+		cfg.Namespace = "default"
+	}
+
+	// Step 1: Prepare test cluster
+	clients, clusterCleanup := prepareTestCluster(ctx, t, cfg.WorkerNodes)
+
+	// Step 2: Create TestContext
+	tc := TestContext{
+		T:             t,
+		Ctx:           ctx,
+		Clientset:     clients.clientset,
+		RestConfig:    clients.restConfig,
+		DynamicClient: clients.dynamicClient,
+		Namespace:     cfg.Namespace,
+		Timeout:       defaultPollTimeout,
+		Interval:      defaultPollInterval,
+		Workload: &WorkloadConfig{
+			Name:         cfg.WorkloadName,
+			YAMLPath:     cfg.WorkloadYAML,
+			Namespace:    cfg.Namespace,
+			ExpectedPods: cfg.ExpectedPods,
+		},
+	}
+
+	// Step 3: Deploy workload and verify initial pods
+	pods, err := deployAndVerifyWorkload(tc)
+	if err != nil {
+		clusterCleanup()
+		t.Fatalf("Failed to deploy workload: %v", err)
+	}
+
+	if err := waitForPods(tc, cfg.ExpectedPods); err != nil {
+		clusterCleanup()
+		t.Fatalf("Failed to wait for pods to be ready: %v", err)
+	}
+
+	if len(pods.Items) != cfg.ExpectedPods {
+		clusterCleanup()
+		t.Fatalf("Expected %d pods, but found %d", cfg.ExpectedPods, len(pods.Items))
+	}
+
+	// Step 4: Optional SIGTERM patch (must happen before scaling to apply to original workload)
+	if cfg.PatchSIGTERM {
+		if err := patchPCSWithSIGTERMIgnoringCommand(tc); err != nil {
+			clusterCleanup()
+			t.Fatalf("Failed to patch PCS with SIGTERM-ignoring command: %v", err)
+		}
+
+		tcLongTimeout := tc
+		tcLongTimeout.Timeout = 2 * time.Minute
+		if err := waitForRollingUpdateComplete(tcLongTimeout, 1); err != nil {
+			clusterCleanup()
+			t.Fatalf("Failed to wait for SIGTERM patch rolling update to complete: %v", err)
+		}
+	}
+
+	// Step 5: Optional PCS scaling
+	if cfg.InitialPCSReplicas > 0 {
+		scalePCSAndWait(tc, cfg.WorkloadName, cfg.InitialPCSReplicas, cfg.PostScalePods, 0)
+
+		if err := waitForPods(tc, cfg.PostScalePods); err != nil {
+			clusterCleanup()
+			t.Fatalf("Failed to wait for pods to be ready after PCS scaling: %v", err)
+		}
+	}
+
+	// Step 6: Optional PCSG scaling
+	if cfg.InitialPCSGReplicas > 0 && cfg.PCSGName != "" {
+		pcsReplicas := int32(1)
+		if cfg.InitialPCSReplicas > 0 {
+			pcsReplicas = cfg.InitialPCSReplicas
+		}
+		scalePCSGAcrossAllReplicasAndWait(tc, cfg.WorkloadName, cfg.PCSGName, pcsReplicas, cfg.InitialPCSGReplicas, cfg.PostPCSGScalePods, 0)
+	}
+
+	// Step 7: Create and start tracker
+	tracker := newUpdateTracker()
+	if err := tracker.Start(tc); err != nil {
+		clusterCleanup()
+		t.Fatalf("Failed to start tracker: %v", err)
+	}
+
+	// Create combined cleanup function
+	// Note: clusterCleanup already handles diagnostics collection on failure
+	cleanup := func() {
+		tracker.Stop()
+		clusterCleanup()
+	}
+
+	return tc, cleanup, tracker
+}

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
@@ -39,7 +40,9 @@ import (
 func Test_OD1_NoAutomaticDeletionOnSpecChange(t *testing.T) {
 	logger.Info("1. Initialize a 10-node Grove cluster")
 	logger.Info("2. Deploy workload with OnDelete strategy, and verify 10 newly created pods")
-	tc, cleanup, tracker := setupOnDeleteTest(t, OnDeleteTestConfig{
+	tc, cleanup, tracker := setupUpdateTest(t, UpdateTestConfig{
+		WorkloadName: "workload-ondelete",
+		WorkloadYAML: "../yaml/workload-ondelete.yaml",
 		WorkerNodes:  10,
 		ExpectedPods: 10,
 	})
@@ -75,7 +78,9 @@ func Test_OD1_NoAutomaticDeletionOnSpecChange(t *testing.T) {
 func Test_OD2_ManualDeletionCreatesUpdatedPod(t *testing.T) {
 	logger.Info("1. Initialize a 10-node Grove cluster")
 	logger.Info("2. Deploy workload with OnDelete strategy, and verify 10 newly created pods")
-	tc, cleanup, _ := setupOnDeleteTest(t, OnDeleteTestConfig{
+	tc, cleanup, _ := setupUpdateTest(t, UpdateTestConfig{
+		WorkloadName: "workload-ondelete",
+		WorkloadYAML: "../yaml/workload-ondelete.yaml",
 		WorkerNodes:  10,
 		ExpectedPods: 10,
 	})
@@ -159,7 +164,9 @@ func Test_OD2_ManualDeletionCreatesUpdatedPod(t *testing.T) {
 func Test_OD3_ScaleInPrefersOutdatedPods(t *testing.T) {
 	logger.Info("1. Initialize a 12-node Grove cluster")
 	logger.Info("2. Deploy workload with OnDelete strategy, and verify 10 newly created pods")
-	tc, cleanup, _ := setupOnDeleteTest(t, OnDeleteTestConfig{
+	tc, cleanup, _ := setupUpdateTest(t, UpdateTestConfig{
+		WorkloadName: "workload-ondelete",
+		WorkloadYAML: "../yaml/workload-ondelete.yaml",
 		WorkerNodes:  12,
 		ExpectedPods: 10,
 	})
@@ -276,7 +283,9 @@ func Test_OD3_ScaleInPrefersOutdatedPods(t *testing.T) {
 func Test_OD4_PCSGNoAutomaticDeletionOnSpecChange(t *testing.T) {
 	logger.Info("1. Initialize a 10-node Grove cluster")
 	logger.Info("2. Deploy workload with OnDelete strategy, and verify 10 newly created pods")
-	tc, cleanup, tracker := setupOnDeleteTest(t, OnDeleteTestConfig{
+	tc, cleanup, tracker := setupUpdateTest(t, UpdateTestConfig{
+		WorkloadName: "workload-ondelete",
+		WorkloadYAML: "../yaml/workload-ondelete.yaml",
 		WorkerNodes:  10,
 		ExpectedPods: 10,
 	})
@@ -308,7 +317,9 @@ func Test_OD4_PCSGNoAutomaticDeletionOnSpecChange(t *testing.T) {
 func Test_OD5_PCSGManualDeletionCreatesUpdatedReplica(t *testing.T) {
 	logger.Info("1. Initialize a 10-node Grove cluster")
 	logger.Info("2. Deploy workload with OnDelete strategy, and verify 10 newly created pods")
-	tc, cleanup, _ := setupOnDeleteTest(t, OnDeleteTestConfig{
+	tc, cleanup, _ := setupUpdateTest(t, UpdateTestConfig{
+		WorkloadName: "workload-ondelete",
+		WorkloadYAML: "../yaml/workload-ondelete.yaml",
 		WorkerNodes:  10,
 		ExpectedPods: 10,
 	})
@@ -371,7 +382,9 @@ func Test_OD5_PCSGManualDeletionCreatesUpdatedReplica(t *testing.T) {
 func Test_OD6_MixedPodCliquesAndPCSG(t *testing.T) {
 	logger.Info("1. Initialize a 10-node Grove cluster")
 	logger.Info("2. Deploy workload with OnDelete strategy, and verify 10 newly created pods")
-	tc, cleanup, tracker := setupOnDeleteTest(t, OnDeleteTestConfig{
+	tc, cleanup, tracker := setupUpdateTest(t, UpdateTestConfig{
+		WorkloadName: "workload-ondelete",
+		WorkloadYAML: "../yaml/workload-ondelete.yaml",
 		WorkerNodes:  10,
 		ExpectedPods: 10,
 	})
@@ -458,7 +471,9 @@ func Test_OD6_MixedPodCliquesAndPCSG(t *testing.T) {
 func Test_OD7_MultipleReplicasPCS(t *testing.T) {
 	logger.Info("1. Initialize a 20-node Grove cluster")
 	logger.Info("2. Deploy workload with OnDelete strategy and 2 PCS replicas, verify 20 pods")
-	tc, cleanup, tracker := setupOnDeleteTest(t, OnDeleteTestConfig{
+	tc, cleanup, tracker := setupUpdateTest(t, UpdateTestConfig{
+		WorkloadName:       "workload-ondelete",
+		WorkloadYAML:       "../yaml/workload-ondelete.yaml",
 		WorkerNodes:        20,
 		ExpectedPods:       10,
 		InitialPCSReplicas: 2,
@@ -508,4 +523,199 @@ func Test_OD7_MultipleReplicasPCS(t *testing.T) {
 	}
 
 	logger.Info("OnDelete Update - Multiple PCS Replicas test (OD-7) completed successfully!")
+}
+
+// Test_OD8_NodeFailureRecoveryWorkflow simulates the node failure recovery workflow from the GREP-291 proposal.
+// Scenario OD-8 (from proposal Testcase 2 / Example Usage):
+// 1. Initialize an 11-node Grove cluster (10 pods + 1 spare node)
+// 2. Deploy workload with OnDelete strategy, and verify 10 newly created pods
+// 3. Identify a node running a pc-a pod (simulating a "failed node")
+// 4. Update pc-a's nodeAffinity to exclude the failed node's hostname (NotIn matchExpression)
+// 5. Verify NO pods are automatically deleted (OnDelete behavior)
+// 6. Manually delete the pod on the "failed node"
+// 7. Verify the replacement pod has the updated nodeAffinity and is NOT on the failed node
+// 8. Verify pods on healthy nodes were never disrupted
+func Test_OD8_NodeFailureRecoveryWorkflow(t *testing.T) {
+	logger.Info("1. Initialize an 11-node Grove cluster (10 pods + 1 spare node)")
+	logger.Info("2. Deploy workload with OnDelete strategy, and verify 10 newly created pods")
+	tc, cleanup, tracker := setupUpdateTest(t, UpdateTestConfig{
+		WorkloadName: "workload-ondelete",
+		WorkloadYAML: "../yaml/workload-ondelete.yaml",
+		WorkerNodes:  11,
+		ExpectedPods: 10,
+	})
+	defer cleanup()
+
+	existingPodNames, err := captureExistingPodNames(tc)
+	if err != nil {
+		t.Fatalf("Failed to capture existing pods: %v", err)
+	}
+
+	logger.Info("3. Identify a node running a pc-a pod (simulating a 'failed node')")
+	podToEvict, err := getFirstPodForClique(tc, "pc-a")
+	if err != nil {
+		t.Fatalf("Failed to get pod for pc-a: %v", err)
+	}
+
+	failedNodeName, err := getNodeForPod(tc, podToEvict)
+	if err != nil {
+		t.Fatalf("Failed to get node for pod %s: %v", podToEvict, err)
+	}
+	logger.Debugf("Simulated failed node: %s (running pod %s)", failedNodeName, podToEvict)
+
+	podsOnFailedNode, err := getPodsOnNode(tc, failedNodeName)
+	if err != nil {
+		t.Fatalf("Failed to get pods on failed node: %v", err)
+	}
+	logger.Debugf("Pods on failed node %s: %v", failedNodeName, podsOnFailedNode)
+
+	healthyNodePods := identifyHealthyNodePods(existingPodNames, podsOnFailedNode)
+	logger.Debugf("Pods on healthy nodes (should not be disrupted): %d pods", len(healthyNodePods))
+
+	logger.Info("4. Update pc-a's nodeAffinity to exclude the failed node's hostname")
+	if err := excludeNodeFromPodCliqueAffinity(tc, "pc-a", failedNodeName); err != nil {
+		t.Fatalf("Failed to update pc-a nodeAffinity to exclude node %s: %v", failedNodeName, err)
+	}
+
+	logger.Info("5. Verify NO pods are automatically deleted (OnDelete behavior)")
+	verifyNoAutomaticDeletionAfterUpdate(tc, tracker, existingPodNames, 10, true)
+	verifyAllPodsFromOriginalSet(tc, existingPodNames)
+
+	logger.Info("6. Manually delete the pod on the 'failed node' (simulating eviction)")
+	if err := deletePodAndWaitForTermination(tc, podToEvict); err != nil {
+		t.Fatalf("Failed to delete pod (simulating eviction): %v", err)
+	}
+
+	if err := waitForRunningPods(tc, 10); err != nil {
+		t.Fatalf("Failed to wait for replacement pod to be created")
+	}
+
+	logger.Info("7. Verify the replacement pod has the updated nodeAffinity and is NOT on the failed node")
+	newPodName, err := findFirstNewPodName(tc, existingPodNames)
+	if err != nil {
+		t.Fatalf("Failed to find replacement pod: %v", err)
+	}
+	logger.Debugf("Replacement pod: %s (replaced evicted pod %s)", newPodName, podToEvict)
+
+	if err := verifyPodHasNodeAffinityExclusion(tc, newPodName, failedNodeName); err != nil {
+		t.Fatalf("Replacement pod does not have expected nodeAffinity exclusion: %v", err)
+	}
+	verifyPodNotOnNode(tc, newPodName, failedNodeName)
+
+	logger.Info("8. Verify pods on healthy nodes were never disrupted")
+	verifyPodsStillPresent(tc, healthyNodePods)
+
+	logger.Info("OnDelete Update - Node Failure Recovery Workflow test (OD-8) completed successfully!")
+}
+
+// Test_OD9_StrategyTransition tests transitioning between RollingRecreate and OnDelete strategies.
+// Scenario OD-9 (from proposal Testcase 2):
+// 1. Initialize a 10-node Grove cluster
+// 2. Deploy workload with OnDelete strategy, and verify 10 newly created pods
+// 3. Update pc-a's spec and verify no auto-deletion (OnDelete behavior confirmed)
+// 4. Switch strategy from OnDelete to RollingRecreate
+// 5. Update pc-b's spec and verify pods ARE automatically recreated (RollingRecreate behavior)
+// 6. Switch strategy back from RollingRecreate to OnDelete
+// 7. Update pc-c's spec and verify no auto-deletion again (OnDelete behavior restored)
+func Test_OD9_StrategyTransition(t *testing.T) {
+	logger.Info("1. Initialize a 10-node Grove cluster")
+	logger.Info("2. Deploy workload with OnDelete strategy, and verify 10 newly created pods")
+	tc, cleanup, tracker := setupUpdateTest(t, UpdateTestConfig{
+		WorkloadName: "workload-ondelete",
+		WorkloadYAML: "../yaml/workload-ondelete.yaml",
+		WorkerNodes:  10,
+		ExpectedPods: 10,
+	})
+	defer cleanup()
+
+	existingPodNames, err := captureExistingPodNames(tc)
+	if err != nil {
+		t.Fatalf("Failed to capture existing pods: %v", err)
+	}
+
+	logger.Info("3. Update pc-a's spec and verify no auto-deletion (OnDelete behavior confirmed)")
+	if err := triggerPodCliqueUpdate(tc, "pc-a"); err != nil {
+		t.Fatalf("Failed to update PodClique pc-a spec: %v", err)
+	}
+
+	verifyNoAutomaticDeletionAfterUpdate(tc, tracker, existingPodNames, 10, true)
+	verifyAllPodsFromOriginalSet(tc, existingPodNames)
+
+	logger.Info("4. Switch strategy from OnDelete to RollingRecreate")
+	if err := updatePCSUpdateStrategy(tc, grovev1alpha1.RollingRecreateStrategy); err != nil {
+		t.Fatalf("Failed to switch update strategy to RollingRecreate: %v", err)
+	}
+
+	logger.Info("5. Update pc-b's spec and verify pods ARE automatically recreated (RollingRecreate behavior)")
+	// Capture pod names before rolling update
+	preRollingUpdatePods, err := captureExistingPodNames(tc)
+	if err != nil {
+		t.Fatalf("Failed to capture pods before rolling update: %v", err)
+	}
+
+	// Trigger update on pc-b — with RollingRecreate, this should automatically recreate pods
+	if err := triggerPodCliqueUpdate(tc, "pc-b"); err != nil {
+		t.Fatalf("Failed to update PodClique pc-b spec: %v", err)
+	}
+
+	// Wait for rolling update to complete
+	// pc-b has 1 replica per PCSG replica (2 PCSG replicas) = 2 pods in PCSG
+	// RollingRecreate should handle the update automatically
+	tcLongTimeout := tc
+	tcLongTimeout.Timeout = 2 * time.Minute
+	if err := waitForRollingUpdateComplete(tcLongTimeout, 1); err != nil {
+		t.Fatalf("Rolling update did not complete after strategy switch to RollingRecreate: %v", err)
+	}
+
+	// Wait for all pods to be running
+	if err := waitForRunningPods(tc, 10); err != nil {
+		t.Fatalf("Failed to wait for pods after rolling update: %v", err)
+	}
+
+	// Verify at least some pods were recreated (pc-b pods should have changed)
+	podsAfterRolling, err := listPods(tc)
+	if err != nil {
+		t.Fatalf("Failed to list pods after rolling update: %v", err)
+	}
+
+	newPodsCreated := 0
+	for _, pod := range podsAfterRolling.Items {
+		if !preRollingUpdatePods[pod.Name] {
+			newPodsCreated++
+			logger.Debugf("New pod after RollingRecreate: %s", pod.Name)
+		}
+	}
+	if newPodsCreated == 0 {
+		t.Fatalf("No pods were recreated after switching to RollingRecreate and triggering update — strategy transition may have failed")
+	}
+	logger.Debugf("RollingRecreate automatically recreated %d pods", newPodsCreated)
+
+	logger.Info("6. Switch strategy back from RollingRecreate to OnDelete")
+	if err := updatePCSUpdateStrategy(tc, grovev1alpha1.OnDeleteStrategy); err != nil {
+		t.Fatalf("Failed to switch update strategy back to OnDelete: %v", err)
+	}
+
+	logger.Info("7. Update pc-c's spec and verify no auto-deletion again (OnDelete behavior restored)")
+	// Re-capture current pod state after the rolling update
+	postSwitchPodNames, err := captureExistingPodNames(tc)
+	if err != nil {
+		t.Fatalf("Failed to capture pods after strategy switch: %v", err)
+	}
+
+	// Start a new tracker for the OnDelete verification
+	tracker2 := newUpdateTracker()
+	if err := tracker2.Start(tc); err != nil {
+		t.Fatalf("Failed to start new tracker: %v", err)
+	}
+	defer tracker2.Stop()
+
+	if err := triggerPodCliqueUpdate(tc, "pc-c"); err != nil {
+		t.Fatalf("Failed to update PodClique pc-c spec: %v", err)
+	}
+
+	// Verify no auto-deletion after switching back to OnDelete
+	verifyNoAutomaticDeletionAfterUpdate(tc, tracker2, postSwitchPodNames, 10, true)
+	verifyAllPodsFromOriginalSet(tc, postSwitchPodNames)
+
+	logger.Info("OnDelete Update - Strategy Transition test (OD-9) completed successfully!")
 }

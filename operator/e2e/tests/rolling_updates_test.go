@@ -38,7 +38,9 @@ import (
 func Test_RU7_RollingUpdatePCSPodClique(t *testing.T) {
 	logger.Info("1. Initialize a 10-node Grove cluster")
 	logger.Info("2. Deploy workload WL1, and verify 10 newly created pods")
-	tc, cleanup, tracker := setupRollingUpdateTest(t, RollingUpdateTestConfig{
+	tc, cleanup, tracker := setupUpdateTest(t, UpdateTestConfig{
+		WorkloadName: "workload1",
+		WorkloadYAML: "../yaml/workload1.yaml",
 		WorkerNodes:  10,
 		ExpectedPods: 10,
 	})
@@ -77,7 +79,9 @@ func Test_RU7_RollingUpdatePCSPodClique(t *testing.T) {
 func Test_RU8_RollingUpdatePCSGPodClique(t *testing.T) {
 	logger.Info("1. Initialize a 10-node Grove cluster")
 	logger.Info("2. Deploy workload WL1, and verify 10 newly created pods")
-	tc, cleanup, tracker := setupRollingUpdateTest(t, RollingUpdateTestConfig{
+	tc, cleanup, tracker := setupUpdateTest(t, UpdateTestConfig{
+		WorkloadName: "workload1",
+		WorkloadYAML: "../yaml/workload1.yaml",
 		WorkerNodes:  10,
 		ExpectedPods: 10,
 	})
@@ -115,7 +119,9 @@ func Test_RU8_RollingUpdatePCSGPodClique(t *testing.T) {
 func Test_RU9_RollingUpdateAllPodCliques(t *testing.T) {
 	logger.Info("1. Initialize a 10-node Grove cluster")
 	logger.Info("2. Deploy workload WL1, and verify 10 newly created pods")
-	tc, cleanup, tracker := setupRollingUpdateTest(t, RollingUpdateTestConfig{
+	tc, cleanup, tracker := setupUpdateTest(t, UpdateTestConfig{
+		WorkloadName: "workload1",
+		WorkloadYAML: "../yaml/workload1.yaml",
 		WorkerNodes:  10,
 		ExpectedPods: 10,
 	})
@@ -211,7 +217,7 @@ func Test_RU10_RollingUpdateInsufficientResources(t *testing.T) {
 	}
 	logger.Debugf("Captured %d existing pods before rolling update", len(existingPodNames))
 
-	tracker := newRollingUpdateTracker()
+	tracker := newUpdateTracker()
 	if err := tracker.Start(tc); err != nil {
 		t.Fatalf("Failed to start tracker: %v", err)
 	}
@@ -293,7 +299,9 @@ func Test_RU10_RollingUpdateInsufficientResources(t *testing.T) {
 func Test_RU11_RollingUpdateWithPCSScaleOut(t *testing.T) {
 	logger.Info("1. Initialize a 30-node Grove cluster")
 	logger.Info("2. Deploy workload WL1 with 2 replicas, and verify 20 newly created pods")
-	tc, cleanup, tracker := setupRollingUpdateTest(t, RollingUpdateTestConfig{
+	tc, cleanup, tracker := setupUpdateTest(t, UpdateTestConfig{
+		WorkloadName:       "workload1",
+		WorkloadYAML:       "../yaml/workload1.yaml",
 		WorkerNodes:        30,
 		ExpectedPods:       10,
 		PatchSIGTERM:       true,
@@ -343,7 +351,9 @@ func Test_RU11_RollingUpdateWithPCSScaleOut(t *testing.T) {
 func Test_RU12_RollingUpdateWithPCSScaleInDuringUpdate(t *testing.T) {
 	logger.Info("1. Initialize a 30-node Grove cluster")
 	logger.Info("2. Deploy workload WL1 with 2 replicas, and verify 20 newly created pods")
-	tc, cleanup, tracker := setupRollingUpdateTest(t, RollingUpdateTestConfig{
+	tc, cleanup, tracker := setupUpdateTest(t, UpdateTestConfig{
+		WorkloadName:       "workload1",
+		WorkloadYAML:       "../yaml/workload1.yaml",
 		WorkerNodes:        30,
 		ExpectedPods:       10,
 		PatchSIGTERM:       true,
@@ -408,7 +418,9 @@ func Test_RU12_RollingUpdateWithPCSScaleInDuringUpdate(t *testing.T) {
 func Test_RU13_RollingUpdateWithPCSScaleInAfterFinalOrdinal(t *testing.T) {
 	logger.Info("1. Initialize a 20-node Grove cluster")
 	logger.Info("2. Deploy workload WL1 with 2 replicas, and verify 20 newly created pods")
-	tc, cleanup, tracker := setupRollingUpdateTest(t, RollingUpdateTestConfig{
+	tc, cleanup, tracker := setupUpdateTest(t, UpdateTestConfig{
+		WorkloadName:       "workload1",
+		WorkloadYAML:       "../yaml/workload1.yaml",
 		WorkerNodes:        20,
 		ExpectedPods:       10,
 		InitialPCSReplicas: 2,
@@ -459,7 +471,9 @@ func Test_RU13_RollingUpdateWithPCSScaleInAfterFinalOrdinal(t *testing.T) {
 func Test_RU14_RollingUpdateWithPCSGScaleOutDuringUpdate(t *testing.T) {
 	logger.Info("1. Initialize a 28-node Grove cluster")
 	logger.Info("2. Deploy workload WL1 with 2 replicas, and verify 20 newly created pods")
-	tc, cleanup, tracker := setupRollingUpdateTest(t, RollingUpdateTestConfig{
+	tc, cleanup, tracker := setupUpdateTest(t, UpdateTestConfig{
+		WorkloadName:       "workload1",
+		WorkloadYAML:       "../yaml/workload1.yaml",
 		WorkerNodes:        28,
 		ExpectedPods:       10,
 		InitialPCSReplicas: 2,
@@ -514,7 +528,9 @@ func Test_RU14_RollingUpdateWithPCSGScaleOutDuringUpdate(t *testing.T) {
 func Test_RU15_RollingUpdateWithPCSGScaleOutBeforeUpdate(t *testing.T) {
 	logger.Info("1. Initialize a 28-node Grove cluster")
 	logger.Info("2. Deploy workload WL1 with 2 replicas, and verify 20 newly created pods")
-	tc, cleanup, tracker := setupRollingUpdateTest(t, RollingUpdateTestConfig{
+	tc, cleanup, tracker := setupUpdateTest(t, UpdateTestConfig{
+		WorkloadName:       "workload1",
+		WorkloadYAML:       "../yaml/workload1.yaml",
 		WorkerNodes:        28,
 		ExpectedPods:       10,
 		InitialPCSReplicas: 2,
@@ -571,7 +587,9 @@ func Test_RU16_RollingUpdateWithPCSGScaleInDuringUpdate(t *testing.T) {
 	logger.Info("1. Initialize a 28-node Grove cluster")
 	logger.Info("2. Deploy workload WL1 with 2 replicas, and verify 20 newly created pods")
 	logger.Info("3. Scale up sg-x to 3 replicas (28 pods) so we can later scale in")
-	tc, cleanup, tracker := setupRollingUpdateTest(t, RollingUpdateTestConfig{
+	tc, cleanup, tracker := setupUpdateTest(t, UpdateTestConfig{
+		WorkloadName:        "workload1",
+		WorkloadYAML:        "../yaml/workload1.yaml",
 		WorkerNodes:         28,
 		ExpectedPods:        10,
 		InitialPCSReplicas:  2,
@@ -629,7 +647,9 @@ func Test_RU17_RollingUpdateWithPCSGScaleInBeforeUpdate(t *testing.T) {
 	logger.Info("1. Initialize a 28-node Grove cluster")
 	logger.Info("2. Deploy workload WL1 with 2 replicas, and verify 20 newly created pods")
 	logger.Info("3. Scale up sg-x to 3 replicas (28 pods) so we can later scale in")
-	tc, cleanup, tracker := setupRollingUpdateTest(t, RollingUpdateTestConfig{
+	tc, cleanup, tracker := setupUpdateTest(t, UpdateTestConfig{
+		WorkloadName:        "workload1",
+		WorkloadYAML:        "../yaml/workload1.yaml",
 		WorkerNodes:         28,
 		ExpectedPods:        10,
 		InitialPCSReplicas:  2,
@@ -723,7 +743,7 @@ func Test_RU18_RollingUpdateWithPodCliqueScaleOutDuringUpdate(t *testing.T) {
 		t.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
 
-	tracker := newRollingUpdateTracker()
+	tracker := newUpdateTracker()
 	if err := tracker.Start(tc); err != nil {
 		t.Fatalf("Failed to start tracker: %v", err)
 	}
@@ -774,7 +794,9 @@ func Test_RU18_RollingUpdateWithPodCliqueScaleOutDuringUpdate(t *testing.T) {
 func Test_RU19_RollingUpdateWithPodCliqueScaleOutBeforeUpdate(t *testing.T) {
 	logger.Info("1. Initialize a 24-node Grove cluster")
 	logger.Info("2. Deploy workload WL1 with 2 replicas, and verify 20 newly created pods")
-	tc, cleanup, tracker := setupRollingUpdateTest(t, RollingUpdateTestConfig{
+	tc, cleanup, tracker := setupUpdateTest(t, UpdateTestConfig{
+		WorkloadName:       "workload1",
+		WorkloadYAML:       "../yaml/workload1.yaml",
 		WorkerNodes:        24,
 		ExpectedPods:       10,
 		InitialPCSReplicas: 2,
@@ -826,7 +848,9 @@ func Test_RU19_RollingUpdateWithPodCliqueScaleOutBeforeUpdate(t *testing.T) {
 func Test_RU20_RollingUpdateWithPodCliqueScaleInDuringUpdate(t *testing.T) {
 	logger.Info("1. Initialize a 22-node Grove cluster")
 	logger.Info("2. Deploy workload WL1 with 2 replicas, and verify 20 newly created pods")
-	tc, cleanup, tracker := setupRollingUpdateTest(t, RollingUpdateTestConfig{
+	tc, cleanup, tracker := setupUpdateTest(t, UpdateTestConfig{
+		WorkloadName:       "workload1",
+		WorkloadYAML:       "../yaml/workload1.yaml",
 		WorkerNodes:        22,
 		ExpectedPods:       10,
 		InitialPCSReplicas: 2,
@@ -889,7 +913,9 @@ func Test_RU20_RollingUpdateWithPodCliqueScaleInDuringUpdate(t *testing.T) {
 func Test_RU21_RollingUpdateWithPodCliqueScaleInBeforeUpdate(t *testing.T) {
 	logger.Info("1. Initialize a 22-node Grove cluster")
 	logger.Info("2. Deploy workload WL1 with 2 replicas, and verify 20 newly created pods")
-	tc, cleanup, tracker := setupRollingUpdateTest(t, RollingUpdateTestConfig{
+	tc, cleanup, tracker := setupUpdateTest(t, UpdateTestConfig{
+		WorkloadName:       "workload1",
+		WorkloadYAML:       "../yaml/workload1.yaml",
 		WorkerNodes:        22,
 		ExpectedPods:       10,
 		InitialPCSReplicas: 2,

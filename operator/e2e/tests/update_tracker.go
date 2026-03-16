@@ -29,29 +29,29 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 )
 
-// podEvent represents a pod lifecycle event during rolling update
+// podEvent represents a pod lifecycle event during an update
 type podEvent struct {
 	Type      watch.EventType
 	Pod       *corev1.Pod
 	Timestamp time.Time
 }
 
-// rollingUpdateTracker tracks pod events during rolling update
-type rollingUpdateTracker struct {
+// updateTracker tracks pod events during updates (rolling, ondelete, etc.)
+type updateTracker struct {
 	events  []podEvent
 	mu      sync.Mutex
 	watcher watch.Interface
 	cancel  context.CancelFunc
 }
 
-// newRollingUpdateTracker creates a new rolling update tracker
-func newRollingUpdateTracker() *rollingUpdateTracker {
-	return &rollingUpdateTracker{}
+// newUpdateTracker creates a new update tracker
+func newUpdateTracker() *updateTracker {
+	return &updateTracker{}
 }
 
 // Start begins watching pod events and blocks until the watcher is ready.
 // Uses tc.Ctx, tc.Clientset, tc.Namespace, and tc.getLabelSelector() for watch configuration.
-func (t *rollingUpdateTracker) Start(tc TestContext) error {
+func (t *updateTracker) Start(tc TestContext) error {
 	watcherCtx, cancel := context.WithCancel(tc.Ctx)
 	t.cancel = cancel
 
@@ -95,7 +95,7 @@ func (t *rollingUpdateTracker) Start(tc TestContext) error {
 }
 
 // Stop stops the watcher and cleans up resources
-func (t *rollingUpdateTracker) Stop() {
+func (t *updateTracker) Stop() {
 	if t.watcher != nil {
 		t.watcher.Stop()
 	}
@@ -104,7 +104,7 @@ func (t *rollingUpdateTracker) Stop() {
 	}
 }
 
-func (t *rollingUpdateTracker) recordEvent(eventType watch.EventType, pod *corev1.Pod) {
+func (t *updateTracker) recordEvent(eventType watch.EventType, pod *corev1.Pod) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.events = append(t.events, podEvent{
@@ -114,7 +114,7 @@ func (t *rollingUpdateTracker) recordEvent(eventType watch.EventType, pod *corev
 	})
 }
 
-func (t *rollingUpdateTracker) getEvents() []podEvent {
+func (t *updateTracker) getEvents() []podEvent {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return append([]podEvent{}, t.events...)

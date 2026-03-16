@@ -19,6 +19,7 @@ package utils
 import (
 	"context"
 	"fmt"
+	"testing"
 	"time"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
@@ -29,7 +30,8 @@ import (
 	"k8s.io/client-go/dynamic"
 )
 
-var podCliqueSetGVR = schema.GroupVersionResource{
+// PodCliqueSetGVR is the GVR for PodCliqueSet
+var PodCliqueSetGVR = schema.GroupVersionResource{
 	Group:    "grove.io",
 	Version:  "v1alpha1",
 	Resource: "podcliquesets",
@@ -38,7 +40,7 @@ var podCliqueSetGVR = schema.GroupVersionResource{
 // DeletePodCliqueSet deletes a PodCliqueSet by name.
 // NotFound errors are ignored; other errors are returned.
 func DeletePodCliqueSet(ctx context.Context, dynamicClient dynamic.Interface, namespace, name string) error {
-	err := dynamicClient.Resource(podCliqueSetGVR).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	err := dynamicClient.Resource(PodCliqueSetGVR).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 	if err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("failed to delete PodCliqueSet %s/%s: %w", namespace, name, err)
 	}
@@ -52,7 +54,7 @@ func DeletePodCliqueSetAndWait(ctx context.Context, dynamicClient dynamic.Interf
 	}
 
 	return PollForCondition(ctx, timeout, interval, func() (bool, error) {
-		_, err := dynamicClient.Resource(podCliqueSetGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+		_, err := dynamicClient.Resource(PodCliqueSetGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 		return errors.IsNotFound(err), nil
 	})
 }
@@ -77,4 +79,21 @@ func WaitForPodClique(ctx context.Context, groveClient groveclient.Interface, na
 		return getErr == nil, nil
 	})
 	return pclq, err
+}
+
+// IsOnDeleteUpdateComplete returns true if the update of the PodCliqueSet has ended. It should be used for PodCliqueSets with UpdateStrategy set to OnDelete.
+func IsOnDeleteUpdateComplete(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+	return pcs.Status.UpdateProgress != nil && pcs.Status.UpdateProgress.UpdateEndedAt != nil
+}
+
+// GetPCSUpdateProgress returns the UpdateProgress of the PodCliqueSet
+func GetPCSUpdateProgress(ctx context.Context, t *testing.T, dynamicClient dynamic.Interface, workloadName, namespace string) (*grovecorev1alpha1.PodCliqueSetUpdateProgress, error) {
+	t.Helper()
+
+	pcs, err := GetPodCliqueSet(ctx, dynamicClient, workloadName, namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	return pcs.Status.UpdateProgress, nil
 }
