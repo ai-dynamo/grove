@@ -32,60 +32,60 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # # Detect which paths have changed to conditionally run E2E tests
-  # changes:
-  #   runs-on: ubuntu-latest
-  #   if: github.event_name == 'pull_request'
-  #   outputs:
-  #     e2e-relevant: ${{ steps.filter.outputs.e2e-relevant }}
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: dorny/paths-filter@v3
-  #       id: filter
-  #       with:
-  #         filters: |
-  #           e2e-relevant:
-  #             - 'operator/**'
-  #             - '.github/**'
+  # Detect which paths have changed to conditionally run E2E tests
+  changes:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    outputs:
+      e2e-relevant: ${{ steps.filter.outputs.e2e-relevant }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            e2e-relevant:
+              - 'operator/**'
+              - '.github/**'
 
-  # test:
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - name: Set up Go
-  #       uses: actions/setup-go@v4
-  #       with:
-  #         go-version: "1.25.7"
-  #         cache: true
-  #         cache-dependency-path: operator/go.sum
-  #     - name: test-unit
-  #       run: make test-unit
-  # build:
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - name: Set up Go
-  #       uses: actions/setup-go@v4
-  #       with:
-  #         go-version: "1.25.7"
-  #         cache: true
-  #         cache-dependency-path: operator/go.sum
-  #     - name: build-operator
-  #       run: make --directory=operator build-operator
-  #     - name: build-initc
-  #       run: make --directory=operator build-initc
-  # check:
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - name: Set up Go
-  #       uses: actions/setup-go@v4
-  #       with:
-  #         go-version: "1.25.7"
-  #         cache: true
-  #         cache-dependency-path: operator/go.sum
-  #     - name: check
-  #       run: make check
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: "1.25.7"
+          cache: true
+          cache-dependency-path: operator/go.sum
+      - name: test-unit
+        run: make test-unit
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: "1.25.7"
+          cache: true
+          cache-dependency-path: operator/go.sum
+      - name: build-operator
+        run: make --directory=operator build-operator
+      - name: build-initc
+        run: make --directory=operator build-initc
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: "1.25.7"
+          cache: true
+          cache-dependency-path: operator/go.sum
+      - name: check
+        run: make check
 
   # E2E tests - only run after build, check, and test jobs succeed
   # Only triggered by changes to operator or .github folders
@@ -95,14 +95,14 @@ jobs:
   #   test_pattern  (optional) - Go test -run pattern (standard e2e tests)
   #   make_target   (optional) - Makefile target, defaults to run-e2e-full
   e2e:
-    # needs: [test, build, check, changes]
-    # # Run on non-draft PRs (or draft PRs with 'run-e2e' label)
-    # # AND only when operator or .github files are changed
-    # if: |
-    #   github.event_name == 'pull_request' &&
-    #   needs.changes.outputs.e2e-relevant == 'true' &&
-    #   (github.event.pull_request.draft == false || contains(github.event.pull_request.labels.*.name, 'run-e2e'))
-    # # use NVIDIA self-hosted runner setting is on Velonix repository
+    needs: [test, build, check, changes]
+    # Run on non-draft PRs (or draft PRs with 'run-e2e' label)
+    # AND only when operator or .github files are changed
+    if: |
+      github.event_name == 'pull_request' &&
+      needs.changes.outputs.e2e-relevant == 'true' &&
+      (github.event.pull_request.draft == false || contains(github.event.pull_request.labels.*.name, 'run-e2e'))
+    # use NVIDIA self-hosted runner setting is on Velonix repository
     runs-on: prod-grove-e2e-v1
     timeout-minutes: 60
     strategy:
