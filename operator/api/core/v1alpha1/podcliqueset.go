@@ -203,9 +203,10 @@ type PodCliqueSetTemplateSpec struct {
 	// If present, create headless service for each PodGang.
 	// +optional
 	HeadlessServiceConfig *HeadlessServiceConfig `json:"headlessServiceConfig,omitempty"`
-	// TopologyConstraint defines topology placement requirements for PodCliqueSet.
+	// TopologyConstraint defines topology placement requirements for PodCliqueSet,
+	// including the topology reference.
 	// +optional
-	TopologyConstraint *TopologyConstraint `json:"topologyConstraint,omitempty"`
+	TopologyConstraint *PodCliqueSetTopologyConstraint `json:"topologyConstraint,omitempty"`
 	// TerminationDelay is the delay after which the gang termination will be triggered.
 	// A gang is a candidate for termination if number of running pods fall below a threshold for any PodClique.
 	// If a PodGang remains a candidate past TerminationDelay then it will be terminated. This allows additional time
@@ -245,15 +246,30 @@ type PodCliqueTemplateSpec struct {
 	Spec PodCliqueSpec `json:"spec"`
 }
 
+// PodCliqueSetTopologyConstraint defines topology placement requirements for PodCliqueSet.
+// Extends TopologyConstraint with the topology reference (topologyName),
+// which is only available at the PodCliqueSet level.
+type PodCliqueSetTopologyConstraint struct {
+	// TopologyName is the name of the ClusterTopology resource
+	// to use for topology-aware scheduling. Required when PackDomain is specified.
+	// Immutable after creation.
+	// +optional
+	TopologyName string `json:"topologyName,omitempty"`
+	// PackDomain specifies the topology domain for grouping replicas.
+	// Must reference a domain defined in the ClusterTopology's levels.
+	// Controls placement constraint for EACH individual replica instance.
+	// +optional
+	PackDomain TopologyDomain `json:"packDomain,omitempty"`
+}
+
 // TopologyConstraint defines topology placement requirements.
 type TopologyConstraint struct {
 	// PackDomain specifies the topology domain for grouping replicas.
+	// Must reference a domain defined in the ClusterTopology's levels.
 	// Controls placement constraint for EACH individual replica instance.
-	// Must be one of: region, zone, datacenter, block, rack, host, numa
 	// Example: "rack" means each replica independently placed within one rack.
 	// Note: Does NOT constrain all replicas to the same rack together.
 	// Different replicas can be in different topology domains.
-	// +kubebuilder:validation:Enum=region;zone;datacenter;block;rack;host;numa
 	PackDomain TopologyDomain `json:"packDomain"`
 }
 
