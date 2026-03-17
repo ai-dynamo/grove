@@ -439,8 +439,9 @@ type ClusterTopologySpec struct {
     Levels []TopologyLevel `json:"levels"`
     // SchedulerReferences maps this topology to scheduler backend topology resources.
     // When empty, the operator automatically creates and manages the scheduler backend topology.
-    // When populated, the referenced resources are assumed to be externally managed and
-    // the operator performs drift detection instead.
+    // When provided, the referenced resources are assumed to be externally managed and
+    // the operator compares the domain/key pairs and their order against the ClusterTopology
+    // levels, reporting any mismatch via the SchedulerTopologyDrift condition.
     // +optional
     SchedulerReferences []SchedulerReference `json:"schedulerReferences,omitempty"`
 }
@@ -811,17 +812,9 @@ Existing validating webhook which validates `PodCliqueSet`, has been enhanced to
 
 As you traverse down the resource hierarchy (PodCliqueSet → PodCliqueScalingGroup → PodClique), topology constraint levels must become equal or narrower (higher index in the ClusterTopology's levels array). A child resource cannot specify a broader topology domain than its parent. If this rule is violated, then the creation of the `PodCliqueSet` will be rejected by the validating webhook.
 
-> NOTE: The hierarchy is determined by the position of domains in the referenced ClusterTopology's levels array, not by a fixed global order. The examples below assume a ClusterTopology with levels ordered as `[zone, block, rack, host, numa]`.
+> NOTE: The hierarchy is determined by the position of domains in the referenced ClusterTopology's levels array.
 
-Example:
-
-| Parent | Child   | Valid? | Reason                                                       |
-| ------ | ------- | ------ | ------------------------------------------------------------ |
-| `rack` | `host`  | ✅ Yes  | `host` is narrower (higher index) than `rack`                |
-| `rack` | `rack`  | ✅ Yes  | Equal is allowed                                             |
-| `rack` | `numa`  | ✅ Yes  | `numa` is the narrowest (highest index)                      |
-| `host` | `rack`  | ❌ No   | `rack` is broader (lower index) than `host`                  |
-| `zone` | `block` | ✅ Yes  | `block` is narrower than `zone`                              |
+Example (assuming levels `[zone, block, rack, host, numa]`): a parent with `rack` can have a child with `host` (narrower) or `rack` (equal), but not `zone` (broader).
 
 *Rule-3: Topology reference validation*
 
