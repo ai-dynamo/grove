@@ -92,7 +92,7 @@ def _run_cluster_creation(cfg: ClusterConfig) -> None:
         RetryError: If the cluster cannot be created after all retries.
     """
     create_cluster(cfg)
-    wait_for_nodes()
+    wait_for_nodes(cfg)
 
 
 def _run_parallel(tasks: dict[str, Callable[[], None]]) -> None:

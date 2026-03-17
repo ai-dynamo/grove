@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -211,6 +212,43 @@ func (scm *SharedClusterManager) connectToCluster(ctx context.Context, testImage
 	return nil
 }
 
+// refreshWorkerNodes re-fetches the list of Ready worker nodes from the cluster,
+// replacing the cached workerNodes slice built during Setup.
+//
+// On the prod-grove-e2e-v1 runner, k3d nodes run as Docker containers inside a
+// Docker-in-Docker (DinD) environment. Under resource contention a k3s-agent
+// process can die silently inside its container, causing that node to go NotReady.
+// The node monitoring goroutine (see StartNodeMonitoring) detects this and restarts
+// the container, but the restarted node gets a fresh registration and the old entry
+// in workerNodes becomes stale. Calling refreshWorkerNodes before each test ensures
+// PrepareForTest operates on the current Ready set rather than a snapshot from cluster
+// setup that may include replaced or not-yet-recovered nodes.
+func (scm *SharedClusterManager) refreshWorkerNodes(ctx context.Context) error {
+	nodes, err := scm.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	var updated []string
+	for _, node := range nodes.Items {
+		if _, isServer := node.Labels["node-role.kubernetes.io/control-plane"]; isServer {
+			continue
+		}
+		if !utils.IsNodeReady(&node) {
+			scm.logger.Debugf("⏭️ Skipping NotReady node during refresh: %s", node.Name)
+			continue
+		}
+		updated = append(updated, node.Name)
+	}
+	sort.Strings(updated)
+
+	if len(updated) != len(scm.workerNodes) {
+		scm.logger.Infof("🔄 Worker nodes changed: %d → %d", len(scm.workerNodes), len(updated))
+	}
+	scm.workerNodes = updated
+	return nil
+}
+
 // PrepareForTest prepares the cluster for a specific test by cordoning the appropriate nodes.
 // It ensures exactly `requiredWorkerNodes` nodes are schedulable by cordoning excess nodes.
 // Returns an error if a previous cleanup operation failed, preventing potentially corrupted test state.
@@ -221,6 +259,10 @@ func (scm *SharedClusterManager) PrepareForTest(ctx context.Context, requiredWor
 
 	if !scm.isSetup {
 		return fmt.Errorf("shared cluster not setup")
+	}
+
+	if err := scm.refreshWorkerNodes(ctx); err != nil {
+		return fmt.Errorf("failed to refresh worker nodes: %w", err)
 	}
 
 	totalWorkerNodes := len(scm.workerNodes)
