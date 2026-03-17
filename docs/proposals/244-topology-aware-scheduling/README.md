@@ -11,7 +11,7 @@
     - [Story 2: Disaggregated Inference Locality](#story-2-disaggregated-inference-locality)
     - [Story 3: NUMA-Aware GPU Benchmarking](#story-3-numa-aware-gpu-benchmarking)
     - [Story 4: Heterogeneous GPU Clusters](#story-4-heterogeneous-gpu-clusters)
-    - [Story 5: Topology Retry Before Scheduling](#story-5-topology-retry-before-scheduling)
+
   - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
     - [Topology Constraints Only Guaranteed for Initial Deployment](#topology-constraints-only-guaranteed-for-initial-deployment)
     - [Operational Complexity](#operational-complexity)
@@ -168,10 +168,6 @@ As a software developer of benchmarking applications, when I request only 2 GPUs
 As a cluster administrator managing a cluster with different GPU architectures, I want to define separate topologies for each architecture to partition the cluster into hardware-specific segments. Each topology captures the interconnect hierarchy of its hardware, and workloads targeting a specific topology are scheduled only on nodes whose labels match that topology's definitions.
 
 For a concrete example with DGX H100 and GB200 NVL72 hardware demonstrating the H100 and GB200 paths, see [Story 4: Heterogeneous GPU Cluster Example](story-4-heterogeneous-gpu-example.md).
-
-#### Story 5: Topology Retry (Future)
-
-As a user submitting a PodCliqueSet to a cluster with multiple scheduling shards, I want to be able to change the target topology while my workload is pending, so I can retry on a different shard if the first one cannot accommodate my gang. This use case is deferred — `topologyName` is currently immutable after creation. When the Grove scheduler backend is implemented, this restriction may be relaxed to allow topology changes while all pods are still pending.
 
 ### Limitations/Risks & Mitigations
 
