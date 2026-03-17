@@ -28,9 +28,9 @@ spec:
                           values:
                             - kwok
             tolerations:
-              - key: fake-node
+              - key: node_role.e2e.grove.nvidia.com
                 operator: Equal
-                value: "true"
+                value: agent
                 effect: NoSchedule
             containers:
               - name: expert-worker
