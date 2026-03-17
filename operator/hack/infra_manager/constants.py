@@ -169,8 +169,19 @@ DEFAULT_REGISTRY_PORT = 5001
 DEFAULT_API_PORT = 6560
 DEFAULT_LB_PORT = "8090:80"
 DEFAULT_WORKER_NODES = 30
-DEFAULT_WORKER_MEMORY_MB = 150
-DEFAULT_WORKER_MEMORY = f"{DEFAULT_WORKER_MEMORY_MB}m"
+DEFAULT_WORKER_MEMORY = "150m"
+
+
+def parse_memory_mb(mem_str: str) -> int:
+    """Return the numeric MiB value from a memory string like '150m' or '2g'."""
+    mem_str = mem_str.strip()
+    if mem_str.endswith(("g", "G")):
+        return int(mem_str[:-1]) * 1024
+    if mem_str.endswith(("m", "M")):
+        return int(mem_str[:-1])
+    return int(mem_str)
+
+
 DEFAULT_K3S_IMAGE = "rancher/k3s:v1.34.2-k3s1"
 DEFAULT_CLUSTER_CREATE_MAX_RETRIES = 3
 

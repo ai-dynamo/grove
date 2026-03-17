@@ -88,9 +88,9 @@ WEBHOOK_READY_POLL_INTERVAL_SECONDS = 5
 KAI_QUEUE_MAX_RETRIES = 12
 KAI_QUEUE_POLL_INTERVAL_SECONDS = 5
 
-# Default per-node memory limit (MB). Used by --agents-memory locally and by
+# Default per-node memory limit. Used by --agents-memory locally and by
 # kubelet system-reserved in DinD mode to achieve equivalent scheduling behavior.
-DEFAULT_WORKER_MEMORY_MB = 150
+DEFAULT_WORKER_MEMORY = "150m"
 
 
 class ClusterConfig(BaseSettings):
@@ -126,7 +126,7 @@ class ClusterConfig(BaseSettings):
     api_port: int = Field(default=6560, ge=1, le=65535)
     lb_port: str = "8090:80"
     worker_nodes: int = Field(default=30, ge=1, le=100)
-    worker_memory: Optional[str] = Field(default=f"{DEFAULT_WORKER_MEMORY_MB}m", pattern=r"^\d+[mMgG]?$")
+    worker_memory: Optional[str] = Field(default=DEFAULT_WORKER_MEMORY, pattern=r"^\d+[mMgG]?$")
     k3s_image: str = "rancher/k3s:v1.34.2-k3s1"
     kai_version: str = Field(default=DEPENDENCIES['kai_scheduler']['version'], pattern=r"^v[\d.]+(-[\w.]+)?$")
     skaffold_profile: str = "topology-test"
@@ -285,19 +285,20 @@ def create_cluster(config: ClusterConfig) -> bool:
     # emulate the memory limit via kubelet system-reserved. With --agents-memory Nm, the
     # container's total memory (capacity) is Nm; kubelet then subtracts its eviction
     # threshold (~100Mi) to get allocatable. To match this, we set system-reserved so that
-    # capacity - system_reserved = DEFAULT_WORKER_MEMORY_MB, letting kubelet's eviction
-    # threshold naturally reduce allocatable the same way.
+    # capacity - system_reserved = worker_memory_mb, letting kubelet's eviction threshold
+    # naturally reduce allocatable the same way.
     dind_memory_args = []
     if not config.worker_memory:
+        worker_memory_mb = int(DEFAULT_WORKER_MEMORY.rstrip("mMgG"))
         total_ki = get_system_total_memory_ki()
         if total_ki is not None:
-            system_reserved_mi = (total_ki // 1024) - DEFAULT_WORKER_MEMORY_MB
+            system_reserved_mi = (total_ki // 1024) - worker_memory_mb
             if system_reserved_mi > 0:
-                effective_allocatable_mi = DEFAULT_WORKER_MEMORY_MB - 100
+                effective_allocatable_mi = worker_memory_mb - 100
                 console.print(
                     f"[yellow]ℹ️  DinD mode: detected {total_ki // 1024}Mi system memory, "
                     f"setting system-reserved={system_reserved_mi}Mi "
-                    f"(effective capacity: ~{DEFAULT_WORKER_MEMORY_MB}Mi/node, "
+                    f"(effective capacity: ~{worker_memory_mb}Mi/node, "
                     f"allocatable: ~{effective_allocatable_mi}Mi/node)[/yellow]"
                 )
                 dind_memory_args = [
@@ -306,7 +307,7 @@ def create_cluster(config: ClusterConfig) -> bool:
             else:
                 console.print(
                     f"[yellow]⚠️  DinD mode: system memory too low ({total_ki // 1024}Mi) "
-                    f"to emulate {DEFAULT_WORKER_MEMORY_MB}Mi capacity per node, skipping system-reserved[/yellow]"
+                    f"to emulate {worker_memory_mb}Mi capacity per node, skipping system-reserved[/yellow]"
                 )
 
     for attempt in range(1, config.max_retries + 1):

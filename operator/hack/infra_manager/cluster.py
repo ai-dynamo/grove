@@ -32,7 +32,7 @@ from infra_manager.constants import (
     CLUSTER_CREATE_RETRY_WAIT_SECONDS,
     CLUSTER_TIMEOUT,
     DEFAULT_IMAGE_PULL_MAX_WORKERS,
-    DEFAULT_WORKER_MEMORY_MB,
+    parse_memory_mb,
     E2E_NODE_ROLE_KEY,
     LABEL_BLOCK,
     LABEL_CONTROL_PLANE,
@@ -200,19 +200,20 @@ def create_cluster(cfg: ClusterConfig) -> None:
 
     # In DinD, --agents-memory is broken (DinD bind-mounts /proc/meminfo from the host,
     # so k3d sees the full host RAM and ignores the flag). Use kubelet system-reserved
-    # instead: set system-reserved = total_host_memory - DEFAULT_WORKER_MEMORY_MB so
-    # each node has ~DEFAULT_WORKER_MEMORY_MB capacity, matching --agents-memory behavior.
+    # instead: set system-reserved = total_host_memory - worker_memory_mb so each node
+    # has ~worker_memory_mb capacity, matching --agents-memory behavior.
     memory_args: list[str] = []
     if cfg.dind_memory_mode:
+        worker_memory_mb = parse_memory_mb(cfg.worker_memory)
         total_ki = _get_system_total_memory_ki()
         if total_ki is not None:
-            system_reserved_mi = (total_ki // 1024) - DEFAULT_WORKER_MEMORY_MB
+            system_reserved_mi = (total_ki // 1024) - worker_memory_mb
             if system_reserved_mi > 0:
-                effective_allocatable_mi = DEFAULT_WORKER_MEMORY_MB - 100
+                effective_allocatable_mi = worker_memory_mb - 100
                 console.print(
                     f"[yellow]\u2139\ufe0f  DinD mode: detected {total_ki // 1024}Mi system memory, "
                     f"setting system-reserved={system_reserved_mi}Mi "
-                    f"(effective capacity: ~{DEFAULT_WORKER_MEMORY_MB}Mi/node, "
+                    f"(effective capacity: ~{worker_memory_mb}Mi/node, "
                     f"allocatable: ~{effective_allocatable_mi}Mi/node)[/yellow]"
                 )
                 memory_args = [
@@ -222,7 +223,7 @@ def create_cluster(cfg: ClusterConfig) -> None:
             else:
                 console.print(
                     f"[yellow]\u26a0\ufe0f  DinD mode: system memory too low ({total_ki // 1024}Mi) "
-                    f"to emulate {DEFAULT_WORKER_MEMORY_MB}Mi capacity per node, skipping system-reserved[/yellow]"
+                    f"to emulate {worker_memory_mb}Mi capacity per node, skipping system-reserved[/yellow]"
                 )
     else:
         memory_args = ["--agents-memory", cfg.worker_memory]
