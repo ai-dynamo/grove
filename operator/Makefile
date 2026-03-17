@@ -155,29 +155,19 @@ run-e2e-mnnvl-full: e2e-cluster-up
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down
 
-# Run startup ordering e2e tests with real kubelet workers (no KWOK nodes)
-# Startup ordering tests require real init-container readiness transitions
-.PHONY: run-e2e-startup-order-full
-run-e2e-startup-order-full: export E2E_CLUSTER__WORKER_NODES = 10
-run-e2e-startup-order-full: export E2E_CLUSTER__WORKER_MEMORY = 150m
-run-e2e-startup-order-full: export E2E_KWOK__NODES = 0
-run-e2e-startup-order-full: e2e-cluster-up
-	@echo "> Running startup ordering e2e tests..."
-	@E2E_REGISTRY_PORT=5001 $(MAKE) run-e2e TEST_PATTERN=$(TEST_PATTERN) || \
-		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
-	@echo "> Tests passed, cleaning up cluster..."
-	@$(MAKE) e2e-cluster-down
+# Create a real-node k3d cluster for e2e testing (no KWOK)
+.PHONY: e2e-cluster-up-real
+e2e-cluster-up-real: export E2E_CLUSTER__WORKER_NODES = 30
+e2e-cluster-up-real: export E2E_CLUSTER__WORKER_MEMORY = 150m
+e2e-cluster-up-real: export E2E_KWOK__NODES = 0
+e2e-cluster-up-real: e2e-cluster-up
 
-# Run startup-ordering e2e tests: 10 real k3d workers (tests require exactly 10 schedulable nodes
-# via PrepareForTest), no KWOK (real kubelet needed for init-container readiness transitions).
-# Usage: make run-e2e-startup-order-full [TEST_PATTERN=<pattern>]
-.PHONY: run-e2e-startup-order-full
-run-e2e-startup-order-full: export E2E_CLUSTER__WORKER_NODES = 10
-run-e2e-startup-order-full: export E2E_CLUSTER__WORKER_MEMORY = 150m
-run-e2e-startup-order-full: export E2E_KWOK__NODES = 0
-run-e2e-startup-order-full: e2e-cluster-up
-	@echo "> Running startup-ordering e2e tests..."
-	@E2E_REGISTRY_PORT=5001 $(MAKE) run-e2e TEST_PATTERN='$(or $(TEST_PATTERN),^Test_SO)' || \
+# Full e2e run on real k3d workers (no KWOK)
+# Usage: make run-e2e-real-full [TEST_PATTERN=<pattern>]
+.PHONY: run-e2e-real-full
+run-e2e-real-full: e2e-cluster-up-real
+	@echo "> Running e2e tests (real nodes)..."
+	@E2E_REGISTRY_PORT=5001 $(MAKE) run-e2e TEST_PATTERN=$(TEST_PATTERN) || \
 		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down

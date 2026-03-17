@@ -115,7 +115,7 @@ jobs:
             test_pattern: "^Test_RU"
           - test_name: startup_ordering
             test_pattern: "^Test_SO"
-            make_target: "run-e2e-startup-order-full"
+            make_target: "run-e2e-real-full"
           - test_name: Topology_Aware_Scheduling
             test_pattern: "^Test_TAS"
           - test_name: cert_management
