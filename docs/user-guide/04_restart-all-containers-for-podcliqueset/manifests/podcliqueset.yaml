@@ -1,0 +1,96 @@
+# Grove PodCliqueSet: pca (nginx:1.25, replicas=2), pcb (nginx:1.25, replicas=4).
+# Each Pod has a restart-watcher sidecar that watches ConfigMap grove-restart-control.
+# When restartGeneration is incremented, watchers exit with code 88 and trigger
+# RestartAllContainers (K8s 1.35+). Replace WATCHER_IMAGE with your built image.
+#
+# Prerequisites:
+# - Kubernetes 1.35+ with RestartAllContainersOnContainerExits and NodeDeclaredFeatures
+# - Grove CRD + Operator installed
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: grove-restart-demo-pcs
+  namespace: grove-restart-demo
+  labels:
+    app: grove-restart-demo
+spec:
+  replicas: 1
+  template:
+    terminationDelay: 1m
+    cliqueStartupType: CliqueStartupTypeExplicit
+    cliques:
+      - name: pca
+        spec:
+          roleName: rolea
+          replicas: 2
+          podSpec:
+            restartPolicy: Always
+            serviceAccountName: grove-restart-demo
+            containers:
+              - name: main
+                image: nginx:1.25
+                ports:
+                  - containerPort: 80
+                resources:
+                  requests:
+                    cpu: 10m
+              - name: restart-watcher
+                image: WATCHER_IMAGE
+                imagePullPolicy: IfNotPresent
+                env:
+                  - name: CM_NAMESPACE
+                    valueFrom:
+                      fieldRef:
+                        fieldPath: metadata.namespace
+                  - name: CM_NAME
+                    value: "grove-restart-control"
+                  - name: KEY_NAME
+                    value: "restartGeneration"
+                  - name: POLL_INTERVAL_SECONDS
+                    value: "5"
+                  - name: TRIGGER_EXIT_CODE
+                    value: "88"
+                restartPolicy: Always
+                restartPolicyRules:
+                  - action: RestartAllContainers
+                    exitCodes:
+                      operator: In
+                      values: [88]
+      - name: pcb
+        spec:
+          roleName: roleb
+          replicas: 4
+          podSpec:
+            restartPolicy: Always
+            serviceAccountName: grove-restart-demo
+            containers:
+              - name: main
+                image: nginx:1.25
+                ports:
+                  - containerPort: 80
+                resources:
+                  requests:
+                    cpu: 10m
+              - name: restart-watcher
+                image: WATCHER_IMAGE
+                imagePullPolicy: IfNotPresent
+                env:
+                  - name: CM_NAMESPACE
+                    valueFrom:
+                      fieldRef:
+                        fieldPath: metadata.namespace
+                  - name: CM_NAME
+                    value: "grove-restart-control"
+                  - name: KEY_NAME
+                    value: "restartGeneration"
+                  - name: POLL_INTERVAL_SECONDS
+                    value: "5"
+                  - name: TRIGGER_EXIT_CODE
+                    value: "88"
+                restartPolicy: Always
+                restartPolicyRules:
+                  - action: RestartAllContainers
+                    exitCodes:
+                      operator: In
+                      values: [88]
