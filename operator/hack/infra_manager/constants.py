@@ -108,7 +108,6 @@ GROVE_OPERATOR_IMAGE = "grove-operator"
 GROVE_INITC_IMAGE = "grove-initc"
 GROVE_MODULE_PATH = "github.com/ai-dynamo/grove/operator/internal/version"
 KWOK_ANNOTATION_KEY = "kwok.x-k8s.io/node"
-KWOK_FAKE_NODE_TAINT_KEY = "fake-node"
 WEBHOOK_READY_KEYWORDS = ["validated", "denied", "error", "invalid", "created", "podcliqueset"]
 
 # -- Namespaces --

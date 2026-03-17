@@ -52,10 +52,6 @@ spec:
                 operator: Equal
                 value: agent
                 effect: NoSchedule
-              - key: fake-node
-                operator: Equal
-                value: "true"
-                effect: NoSchedule
             containers:
               - name: worker
                 image: registry:5001/busybox:latest
@@ -95,10 +91,6 @@ spec:
               - key: node_role.e2e.grove.nvidia.com
                 operator: Equal
                 value: agent
-                effect: NoSchedule
-              - key: fake-node
-                operator: Equal
-                value: "true"
                 effect: NoSchedule
             containers:
               - name: router

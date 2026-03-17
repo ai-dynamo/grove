@@ -33,7 +33,6 @@ from infra_manager.constants import (
     E2E_NODE_ROLE_KEY,
     KWOK_ANNOTATION_KEY,
     KWOK_CONTROLLER_DEPLOYMENT,
-    KWOK_FAKE_NODE_TAINT_KEY,
     KWOK_IP_OCTET_SIZE,
     KWOK_IP_PREFIX,
     KWOK_MANIFESTS,
@@ -101,7 +100,6 @@ def node_manifest(node_id: int, kwok_cfg: KwokConfig) -> dict:
         },
         "spec": {
             "taints": [
-                {"effect": "NoSchedule", "key": KWOK_FAKE_NODE_TAINT_KEY, "value": "true"},
                 {"effect": "NoSchedule", "key": E2E_NODE_ROLE_KEY, "value": "agent"},
             ]
         },
