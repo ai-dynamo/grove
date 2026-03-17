@@ -9,7 +9,7 @@ require (
 	github.com/docker/docker v28.3.3+incompatible
 	github.com/go-logr/logr v1.4.3
 	github.com/go-logr/zapr v1.3.0
-	github.com/kai-scheduler/KAI-scheduler v0.13.1
+	github.com/kai-scheduler/KAI-scheduler v0.13.2
 	github.com/open-policy-agent/cert-controller v0.14.0
 	github.com/samber/lo v1.52.0
 	github.com/spf13/pflag v1.0.10
