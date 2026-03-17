@@ -9252,19 +9252,14 @@ spec:
                             packDomain:
                               description: |-
                                 PackDomain specifies the topology domain for grouping replicas.
+                                Must reference a domain defined in the ClusterTopology's levels.
                                 Controls placement constraint for EACH individual replica instance.
-                                Must be one of: region, zone, datacenter, block, rack, host, numa
                                 Example: "rack" means each replica independently placed within one rack.
                                 Note: Does NOT constrain all replicas to the same rack together.
                                 Different replicas can be in different topology domains.
-                              enum:
-                              - region
-                              - zone
-                              - datacenter
-                              - block
-                              - rack
-                              - host
-                              - numa
+                              maxLength: 63
+                              minLength: 1
+                              pattern: ^[a-z][a-z0-9-]*$
                               type: string
                           required:
                           - packDomain
@@ -9844,19 +9839,14 @@ spec:
                             packDomain:
                               description: |-
                                 PackDomain specifies the topology domain for grouping replicas.
+                                Must reference a domain defined in the ClusterTopology's levels.
                                 Controls placement constraint for EACH individual replica instance.
-                                Must be one of: region, zone, datacenter, block, rack, host, numa
                                 Example: "rack" means each replica independently placed within one rack.
                                 Note: Does NOT constrain all replicas to the same rack together.
                                 Different replicas can be in different topology domains.
-                              enum:
-                              - region
-                              - zone
-                              - datacenter
-                              - block
-                              - rack
-                              - host
-                              - numa
+                              maxLength: 63
+                              minLength: 1
+                              pattern: ^[a-z][a-z0-9-]*$
                               type: string
                           required:
                           - packDomain
@@ -9885,28 +9875,25 @@ spec:
                       Defaults to 4 hours.
                     type: string
                   topologyConstraint:
-                    description: TopologyConstraint defines topology placement requirements
-                      for PodCliqueSet.
+                    description: |-
+                      TopologyConstraint defines topology placement requirements for PodCliqueSet,
+                      including the topology reference.
                     properties:
                       packDomain:
                         description: |-
                           PackDomain specifies the topology domain for grouping replicas.
+                          Must reference a domain defined in the ClusterTopology's levels.
                           Controls placement constraint for EACH individual replica instance.
-                          Must be one of: region, zone, datacenter, block, rack, host, numa
-                          Example: "rack" means each replica independently placed within one rack.
-                          Note: Does NOT constrain all replicas to the same rack together.
-                          Different replicas can be in different topology domains.
-                        enum:
-                        - region
-                        - zone
-                        - datacenter
-                        - block
-                        - rack
-                        - host
-                        - numa
+                        maxLength: 63
+                        minLength: 1
+                        pattern: ^[a-z][a-z0-9-]*$
                         type: string
-                    required:
-                    - packDomain
+                      topologyName:
+                        description: |-
+                          TopologyName is the name of the ClusterTopology resource
+                          to use for topology-aware scheduling. Required when PackDomain is specified.
+                          Immutable after creation.
+                        type: string
                     type: object
                 required:
                 - cliques
