@@ -11,7 +11,6 @@
     - [Story 2: Disaggregated Inference Locality](#story-2-disaggregated-inference-locality)
     - [Story 3: NUMA-Aware GPU Benchmarking](#story-3-numa-aware-gpu-benchmarking)
     - [Story 4: Heterogeneous GPU Clusters](#story-4-heterogeneous-gpu-clusters)
-
   - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
     - [Topology Constraints Only Guaranteed for Initial Deployment](#topology-constraints-only-guaranteed-for-initial-deployment)
     - [Operational Complexity](#operational-complexity)
@@ -495,11 +494,11 @@ type SchedulerTopologyStatus struct {
     Reference string `json:"reference"`
     // InSync is true when the scheduler backend topology levels match the ClusterTopology levels.
     InSync bool `json:"inSync"`
-    // SchedulerBackendTopologyObservedVersion is the metadata.generation of the scheduler backend
+    // SchedulerBackendTopologyObservedGeneration is the metadata.generation of the scheduler backend
     // topology resource that was last compared. Allows consumers to verify the comparison is current.
     // Zero if the resource was not found.
     // +optional
-    SchedulerBackendTopologyObservedVersion int64 `json:"schedulerBackendTopologyObservedVersion,omitempty"`
+    SchedulerBackendTopologyObservedGeneration int64 `json:"schedulerBackendTopologyObservedGeneration,omitempty"`
     // Message provides detail when InSync is false (e.g., describing the mismatch).
     // +optional
     Message string `json:"message,omitempty"`
@@ -535,15 +534,15 @@ status:
     - schedulerName: kai-scheduler
       reference: h100-kai-topology
       inSync: true
-      schedulerBackendTopologyObservedVersion: 5   # generation of the kai-scheduler Topology CR
+      schedulerBackendTopologyObservedGeneration: 5   # generation of the kai-scheduler Topology CR
     - schedulerName: other-scheduler
       reference: h100-other-topology
       inSync: false
-      schedulerBackendTopologyObservedVersion: 2   # generation of the other-scheduler Topology CR
+      schedulerBackendTopologyObservedGeneration: 2   # generation of the other-scheduler Topology CR
       message: "levels mismatch: expected [zone, block, host], got [zone, host]"
 ```
 
-The `observedGeneration` on `ClusterTopologyStatus` records the ClusterTopology's `metadata.generation` that was last reconciled. Consumers can compare `status.observedGeneration` to `metadata.generation` to determine whether the status reflects the latest spec. Each `SchedulerTopologyStatus` entry also carries a `schedulerBackendTopologyObservedVersion` recording the `metadata.generation` of the scheduler backend topology resource that was last compared, so consumers can verify the drift check was performed against the current version of that resource (zero if the resource was not found).
+The `observedGeneration` on `ClusterTopologyStatus` records the ClusterTopology's `metadata.generation` that was last reconciled. Consumers can compare `status.observedGeneration` to `metadata.generation` to determine whether the status reflects the latest spec. Each `SchedulerTopologyStatus` entry also carries a `schedulerBackendTopologyObservedGeneration` recording the `metadata.generation` of the scheduler backend topology resource that was last compared, so consumers can verify the drift check was performed against the current version of that resource (zero if the resource was not found).
 
 When a ClusterTopology's `schedulerReferences` is empty, the operator auto-manages the scheduler backend topology. The `SchedulerTopologyDrift` condition is still set — it is expected to be `False` since the operator controls both resources. The `schedulerTopologyStatuses` field will contain a single entry for the auto-managed resource.
 
