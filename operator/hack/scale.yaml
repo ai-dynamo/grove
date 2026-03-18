@@ -2,7 +2,7 @@
 
 cluster:
   create: true
-  worker_nodes: 5
+  worker_nodes: 0
   worker_memory: "300m"
 
 scheduler:
@@ -12,6 +12,9 @@ scheduler:
 grove:
   enabled: true
   profiling: true
+  pcs_syncs: 20
+  pcsg_syncs: 20
+  pclq_syncs: 20
 
 kwok:
   nodes: 100

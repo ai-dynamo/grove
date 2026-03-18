@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import docker
@@ -32,6 +33,7 @@ from infra_manager.constants import (
     CLUSTER_CREATE_RETRY_WAIT_SECONDS,
     CLUSTER_TIMEOUT,
     DEFAULT_IMAGE_PULL_MAX_WORKERS,
+    parse_memory_mb,
     E2E_NODE_ROLE_KEY,
     LABEL_BLOCK,
     LABEL_CONTROL_PLANE,
@@ -160,6 +162,18 @@ def prepull_image_groups(
 # ============================================================================
 
 
+def _get_system_total_memory_ki() -> int | None:
+    """Read MemTotal from /proc/meminfo (KiB). Returns None on non-Linux systems."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1])
+    except FileNotFoundError:
+        return None
+    return None
+
+
 def delete_cluster(cfg: ClusterConfig) -> None:
     """Delete the k3d cluster.
 
@@ -184,6 +198,36 @@ def create_cluster(cfg: ClusterConfig) -> None:
         RetryError: If the cluster cannot be created after all retries.
     """
     console.print(Panel.fit("Creating k3d cluster", style="bold blue"))
+
+    # In DinD, --agents-memory is broken (DinD bind-mounts /proc/meminfo from the host,
+    # so k3d sees the full host RAM and ignores the flag). Use kubelet system-reserved
+    # instead: set system-reserved = total_host_memory - worker_memory_mb so each node
+    # has ~worker_memory_mb capacity, matching --agents-memory behavior.
+    memory_args: list[str] = []
+    if cfg.dind_memory_mode:
+        worker_memory_mb = parse_memory_mb(cfg.worker_memory)
+        total_ki = _get_system_total_memory_ki()
+        if total_ki is not None:
+            system_reserved_mi = (total_ki // 1024) - worker_memory_mb
+            if system_reserved_mi > 0:
+                effective_allocatable_mi = worker_memory_mb - 100
+                console.print(
+                    f"[yellow]\u2139\ufe0f  DinD mode: detected {total_ki // 1024}Mi system memory, "
+                    f"setting system-reserved={system_reserved_mi}Mi "
+                    f"(effective capacity: ~{worker_memory_mb}Mi/node, "
+                    f"allocatable: ~{effective_allocatable_mi}Mi/node)[/yellow]"
+                )
+                memory_args = [
+                    "--k3s-arg",
+                    f"--kubelet-arg=system-reserved=memory={system_reserved_mi}Mi@agent:*",
+                ]
+            else:
+                console.print(
+                    f"[yellow]\u26a0\ufe0f  DinD mode: system memory too low ({total_ki // 1024}Mi) "
+                    f"to emulate {worker_memory_mb}Mi capacity per node, skipping system-reserved[/yellow]"
+                )
+    else:
+        memory_args = ["--agents-memory", cfg.worker_memory]
 
     @retry(
         stop=stop_after_attempt(cfg.max_retries),
@@ -222,8 +266,7 @@ def create_cluster(cfg: ClusterConfig) -> None:
             "nvidia.com/gpu.deploy.operands=false@server:*",
             "--k3s-node-label",
             "nvidia.com/gpu.deploy.operands=false@agent:*",
-            "--agents-memory",
-            cfg.worker_memory,
+            *memory_args,
             "--timeout",
             CLUSTER_TIMEOUT,
             "--wait",
@@ -233,11 +276,64 @@ def create_cluster(cfg: ClusterConfig) -> None:
     console.print("[green]\u2705 Cluster created successfully[/green]")
 
 
-def wait_for_nodes() -> None:
-    """Wait for all nodes to be ready."""
-    console.print("[yellow]\u2139\ufe0f  Waiting for all nodes to be ready...[/yellow]")
-    sh.kubectl("wait", "--for=condition=Ready", "nodes", "--all", "--timeout=5m")
-    console.print("[green]\u2705 All nodes are ready[/green]")
+def wait_for_nodes(cfg: ClusterConfig, max_restart_rounds: int = 2) -> None:
+    """Wait for all nodes to be ready, restarting failed containers if needed.
+
+    With 30+ k3d nodes, occasionally a k3s-agent process dies silently inside its
+    container during startup due to resource contention. This function detects
+    NotReady nodes after the initial wait, restarts their Docker containers, and
+    retries — up to max_restart_rounds times.
+    """
+    for attempt in range(1, max_restart_rounds + 2):
+        console.print(f"[yellow]\u2139\ufe0f  Waiting for all nodes to be ready (attempt {attempt})...[/yellow]")
+        try:
+            sh.kubectl("wait", "--for=condition=Ready", "nodes", "--all", "--timeout=5m")
+            console.print("[green]\u2705 All nodes are ready[/green]")
+            return
+        except sh.ErrorReturnCode:
+            pass  # timed out — fall through to identify and restart NotReady nodes
+
+        not_ready_output = sh.kubectl(
+            "get", "nodes",
+            "--no-headers",
+            "-o", "custom-columns=NAME:.metadata.name,STATUS:.status.conditions[?(@.type=='Ready')].status",
+        ).strip()
+
+        not_ready_nodes = [
+            line.split()[0]
+            for line in not_ready_output.splitlines()
+            if len(line.split()) >= 2 and line.split()[1] != "True"
+        ]
+
+        if not not_ready_nodes:
+            console.print("[green]\u2705 All nodes are ready[/green]")
+            return
+
+        if attempt > max_restart_rounds:
+            raise RuntimeError(
+                f"{len(not_ready_nodes)} node(s) still NotReady after {max_restart_rounds} "
+                f"restart rounds: {not_ready_nodes}"
+            )
+
+        console.print(f"[yellow]\u26a0\ufe0f  {len(not_ready_nodes)} node(s) NotReady: {not_ready_nodes}[/yellow]")
+
+        docker_client = docker.from_env()
+        for node_name in not_ready_nodes:
+            if not node_name.startswith(f"k3d-{cfg.name}-"):
+                console.print(f"[yellow]   Skipping {node_name} (not part of cluster '{cfg.name}')[/yellow]")
+                continue
+            try:
+                container = docker_client.containers.get(node_name)
+                console.print(f"[yellow]   Restarting container {node_name}...[/yellow]")
+                container.restart(timeout=30)
+                console.print(f"[green]   \u2713 Restarted {node_name}[/green]")
+            except docker.errors.NotFound:
+                console.print(f"[red]   \u2717 Container {node_name} not found[/red]")
+            except Exception as e:
+                console.print(f"[red]   \u2717 Failed to restart {node_name}: {e}[/red]")
+
+        console.print("[yellow]   Waiting 15s for restarted nodes to rejoin...[/yellow]")
+        time.sleep(15)
 
 
 # ============================================================================

@@ -1,0 +1,40 @@
+# Scale Test: 1000-pod workload
+# 500 PCS replicas × 1 scaling group with 2 expert-worker pods = 1000 pods
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: scale-test-1000
+  labels:
+    app: scale-test-1000
+spec:
+  replicas: 500
+  template:
+    cliques:
+      - name: expert-worker
+        spec:
+          roleName: expert
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            schedulerName: default-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: type
+                          operator: In
+                          values:
+                            - kwok
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: expert-worker
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 10Mi

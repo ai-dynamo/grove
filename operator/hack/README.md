@@ -82,7 +82,7 @@ All configuration can be overridden via `E2E_*` environment variables (used by `
 - `E2E_LB_PORT` - Load balancer port mapping (default: `8090:80`)
 - `E2E_WORKER_NODES` - Number of worker nodes (default: `30`)
 - `E2E_WORKER_MEMORY` - Memory per worker node (default: `150m`)
-- `E2E_K3S_IMAGE` - K3s container image (default: `rancher/k3s:v1.33.5-k3s1`)
+- `E2E_K3S_IMAGE` - K3s container image (default: `rancher/k3s:v1.34.2-k3s1`)
 - `E2E_MAX_RETRIES` - Max retries for cluster operations (default: `3`)
 
 **Components (ComponentConfig):**

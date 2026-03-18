@@ -170,6 +170,11 @@ func (w *logWriter) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
+// GetLogr returns the underlying logr.Logger.
+func (l *Logger) GetLogr() logr.Logger {
+	return l.logr
+}
+
 // GetLevel returns the current log level (always returns InfoLevel for now)
 func (l *Logger) GetLevel() LogLevel {
 	// Since logr doesn't expose the level directly, we return InfoLevel as a sensible default
