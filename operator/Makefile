@@ -24,6 +24,8 @@ LD_PACKAGE_PATH := "github.com/ai-dynamo/grove/operator/internal"
 OPERATOR_NAME   := "grove-operator"
 INITC_NAME      := "grove-initc"
 K3S_IMAGE       ?= rancher/k3s:v1.34.2-k3s1
+E2E_REGISTRY_PORT ?= 5001
+E2E_CREATE_FLAGS  ?=
 
 # Include tools targets
 include $(REPO_HACK_DIR)/tools.mk
@@ -112,7 +114,6 @@ run-e2e:
 
 # Create a k3d cluster for e2e testing (with Grove and Kai scheduler deployed)
 # This is optional - tests work with any Kubernetes cluster that has the required components
-# Pass E2E_CREATE_FLAGS to add CLI flags (e.g. --skip-kai --skip-topology --skip-prepull)
 .PHONY: e2e-cluster-up
 e2e-cluster-up:
 	@$(MODULE_HACK_DIR)/infra-manager.py setup $(E2E_CREATE_FLAGS)
@@ -130,7 +131,7 @@ e2e-cluster-down:
 .PHONY: run-e2e-full
 run-e2e-full: e2e-cluster-up
 	@echo "> Running e2e tests..."
-	@E2E_REGISTRY_PORT=5001 $(MAKE) run-e2e TEST_PATTERN=$(TEST_PATTERN) || \
+	@$(MAKE) run-e2e TEST_PATTERN=$(TEST_PATTERN) || \
 		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down
@@ -142,31 +143,44 @@ run-e2e-full: e2e-cluster-up
 # Usage: make run-e2e-mnnvl-full
 .PHONY: run-e2e-mnnvl-full
 run-e2e-mnnvl-full: export E2E_CLUSTER__WORKER_NODES = 2
+run-e2e-mnnvl-full: export E2E_CLUSTER__K3S_IMAGE = $(K3S_IMAGE)
 run-e2e-mnnvl-full: export E2E_CLUSTER__PREPULL_IMAGES = false
 run-e2e-mnnvl-full: export E2E_KWOK__NODES = 0
 run-e2e-mnnvl-full: e2e-cluster-up
 	@echo "> Pushing alpine image to local registry..."
 	@docker pull alpine:latest || true
-	@docker tag alpine:latest localhost:5001/alpine:latest
-	@docker push localhost:5001/alpine:latest
+	@docker tag alpine:latest localhost:$(E2E_REGISTRY_PORT)/alpine:latest
+	@docker push localhost:$(E2E_REGISTRY_PORT)/alpine:latest
 	@echo "> Running autoMNNVL e2e tests (all 4 configurations)..."
 	@python3 $(MODULE_HACK_DIR)/e2e-autoMNNVL/run_autoMNNVL_e2e_all.py || \
 		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down
 
-# Run startup ordering e2e tests with real kubelet workers (no KWOK nodes)
-# Startup ordering tests require real init-container readiness transitions
-.PHONY: run-e2e-startup-order-full
-run-e2e-startup-order-full: export E2E_CLUSTER__WORKER_NODES = 10
-run-e2e-startup-order-full: export E2E_CLUSTER__WORKER_MEMORY = 150m
-run-e2e-startup-order-full: export E2E_KWOK__NODES = 0
-run-e2e-startup-order-full: e2e-cluster-up
-	@echo "> Running startup ordering e2e tests..."
-	@E2E_REGISTRY_PORT=5001 $(MAKE) run-e2e TEST_PATTERN=$(TEST_PATTERN) || \
+# Create a real-node k3d cluster for e2e testing (no KWOK virtual nodes)
+# Uses 30 actual k3d worker containers with 150m memory each.
+# Delegates to e2e-cluster-up with worker/KWOK overrides.
+# Override defaults: make e2e-cluster-up-real E2E_CLUSTER__WORKER_NODES=10
+.PHONY: e2e-cluster-up-real
+e2e-cluster-up-real: export E2E_CLUSTER__WORKER_NODES = 30
+e2e-cluster-up-real: export E2E_CLUSTER__WORKER_MEMORY = 150m
+e2e-cluster-up-real: export E2E_KWOK__NODES = 0
+e2e-cluster-up-real: e2e-cluster-up
+
+# Full e2e test run on real k3d workers (no KWOK virtual nodes)
+# Creates a 30-node real cluster, runs tests, then cleans up on success or failure.
+# Usage: make run-e2e-real-full [TEST_PATTERN=<pattern>]
+# Examples:
+#   make run-e2e-real-full                          # Run all tests on real nodes
+#   make run-e2e-real-full TEST_PATTERN=Test_GS     # Run gang scheduling tests only
+.PHONY: run-e2e-real-full
+run-e2e-real-full: e2e-cluster-up-real
+	@echo "> Running e2e tests (real nodes)..."
+	@$(MAKE) run-e2e TEST_PATTERN=$(TEST_PATTERN) || \
 		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down
+
 
 # Make targets for local development and testing
 # -------------------------------------------------------------

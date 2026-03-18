@@ -1,9 +1,14 @@
-# E2E test setup preset — functional tests, no KWOK, no Pyroscope.
+# E2E test setup preset — functional tests, KWOK for test pods, no Pyroscope.
 
 cluster:
   create: true
-  worker_nodes: 30
+  worker_nodes: 0
   worker_memory: "150m"
+
+kwok:
+  nodes: 30
+  node_cpu: "4"
+  node_memory: "150Mi"
 
 scheduler:
   kai:
