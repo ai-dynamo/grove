@@ -104,7 +104,7 @@ func GetPodGroupOrFail(t *testing.T, tc TestContext, pcsReplica int) *kaischedul
 func Test_TAS1_TopologyInfrastructure(t *testing.T) {
 	ctx := context.Background()
 
-	clientset, _, dynamicClient, cleanup := prepareTestCluster(ctx, t, 0)
+	clients, cleanup := prepareTestCluster(ctx, t, 0)
 	defer cleanup()
 
 	logger.Info("1. Verify ClusterTopology CR exists with correct 4-level hierarchy")
@@ -116,7 +116,7 @@ func Test_TAS1_TopologyInfrastructure(t *testing.T) {
 		{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
 	}
 
-	if err := utils.VerifyClusterTopologyLevels(ctx, dynamicClient, corev1alpha1.DefaultClusterTopologyName, expectedLevels, logger); err != nil {
+	if err := utils.VerifyClusterTopologyLevels(ctx, clients.dynamicClient, corev1alpha1.DefaultClusterTopologyName, expectedLevels, logger); err != nil {
 		t.Fatalf("Failed to verify ClusterTopology levels: %v", err)
 	}
 
@@ -129,7 +129,7 @@ func Test_TAS1_TopologyInfrastructure(t *testing.T) {
 		setup.TopologyLabelHostname,
 	}
 
-	if err := utils.VerifyKAITopologyLevels(ctx, dynamicClient, corev1alpha1.DefaultClusterTopologyName, expectedKeys, logger); err != nil {
+	if err := utils.VerifyKAITopologyLevels(ctx, clients.dynamicClient, corev1alpha1.DefaultClusterTopologyName, expectedKeys, logger); err != nil {
 		t.Fatalf("Failed to verify KAI Topology levels: %v", err)
 	}
 
@@ -137,7 +137,7 @@ func Test_TAS1_TopologyInfrastructure(t *testing.T) {
 
 	// Use label selector to get only worker nodes by role label
 	workerLabelSelector := setup.GetWorkerNodeLabelSelector()
-	nodes, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{
+	nodes, err := clients.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{
 		LabelSelector: workerLabelSelector,
 	})
 	if err != nil {
@@ -174,12 +174,12 @@ func Test_TAS1_TopologyInfrastructure(t *testing.T) {
 func Test_TAS2_MultipleCliquesWithDifferentConstraints(t *testing.T) {
 	ctx := context.Background()
 
-	logger.Info("1. Initialize a 30-node Grove cluster for topology testing")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 30)
+	logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
+	clients, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	expectedPods := 7 // worker-rack: 3 pods, worker-block: 4 pods
-	tc := createTopologyTestContext(t, ctx, clientset, restConfig, dynamicClient,
+	tc := createTopologyTestContext(t, ctx, clients.clientset, clients.restConfig, clients.dynamicClient,
 		"tas-indep-clq", "../yaml/tas-indep-clq.yaml", expectedPods)
 
 	logger.Info("2. Deploy workload (TAS2: multiple cliques with different constraints)")
@@ -226,12 +226,12 @@ func Test_TAS2_MultipleCliquesWithDifferentConstraints(t *testing.T) {
 func Test_TAS3_PCSOnlyConstraint(t *testing.T) {
 	ctx := context.Background()
 
-	logger.Info("1. Initialize a 30-node Grove cluster for topology testing")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 30)
+	logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
+	clients, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	expectedPods := 4 // 2 PCSG workers + 2 router standalone
-	tc := createTopologyTestContext(t, ctx, clientset, restConfig, dynamicClient,
+	tc := createTopologyTestContext(t, ctx, clients.clientset, clients.restConfig, clients.dynamicClient,
 		"tas-sl-pcs-only", "../yaml/tas-sl-pcs-only.yaml", expectedPods)
 
 	logger.Info("2. Deploy workload (TAS3: PCS-only constraint)")
@@ -273,12 +273,12 @@ func Test_TAS3_PCSOnlyConstraint(t *testing.T) {
 func Test_TAS4_PCSGOnlyConstraint(t *testing.T) {
 	ctx := context.Background()
 
-	logger.Info("1. Initialize a 30-node Grove cluster for topology testing")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 30)
+	logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
+	clients, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	expectedPods := 4 // 2 PCSG workers + 2 router standalone
-	tc := createTopologyTestContext(t, ctx, clientset, restConfig, dynamicClient,
+	tc := createTopologyTestContext(t, ctx, clients.clientset, clients.restConfig, clients.dynamicClient,
 		"tas-sl-pcsg-only", "../yaml/tas-sl-pcsg-only.yaml", expectedPods)
 
 	logger.Info("2. Deploy workload (TAS4: PCSG-only constraint)")
@@ -321,12 +321,12 @@ func Test_TAS4_PCSGOnlyConstraint(t *testing.T) {
 func Test_TAS5_HostLevelConstraint(t *testing.T) {
 	ctx := context.Background()
 
-	logger.Info("1. Initialize a 30-node Grove cluster for topology testing")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 30)
+	logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
+	clients, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	expectedPods := 2
-	tc := createTopologyTestContext(t, ctx, clientset, restConfig, dynamicClient,
+	tc := createTopologyTestContext(t, ctx, clients.clientset, clients.restConfig, clients.dynamicClient,
 		"tas-host-level", "../yaml/tas-host-level.yaml", expectedPods)
 
 	logger.Info("2. Deploy workload (TAS5: PCLQ-only host constraint)")
@@ -376,12 +376,12 @@ func Test_TAS5_HostLevelConstraint(t *testing.T) {
 func Test_TAS6_StandalonePCLQOnlyPCSZoneConstraint(t *testing.T) {
 	ctx := context.Background()
 
-	logger.Info("1. Initialize a 30-node Grove cluster for topology testing")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 30)
+	logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
+	clients, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	expectedPods := 4
-	tc := createTopologyTestContext(t, ctx, clientset, restConfig, dynamicClient,
+	tc := createTopologyTestContext(t, ctx, clients.clientset, clients.restConfig, clients.dynamicClient,
 		"tas-standalone-pclq", "../yaml/tas-standalone-pclq-only-pcs-zone.yaml", expectedPods)
 
 	logger.Info("2. Deploy workload (TAS6: Standalone PCLQ with only PCS zone constraint)")
@@ -417,12 +417,12 @@ func Test_TAS6_StandalonePCLQOnlyPCSZoneConstraint(t *testing.T) {
 func Test_TAS7_NoTopologyConstraint(t *testing.T) {
 	ctx := context.Background()
 
-	logger.Info("1. Initialize a 30-node Grove cluster for topology testing")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 30)
+	logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
+	clients, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	expectedPods := 4 // 2 PCSG replicas × 2 pods each
-	tc := createTopologyTestContext(t, ctx, clientset, restConfig, dynamicClient,
+	tc := createTopologyTestContext(t, ctx, clients.clientset, clients.restConfig, clients.dynamicClient,
 		"tas-no-constraint", "../yaml/tas-no-constraint.yaml", expectedPods)
 
 	logger.Info("2. Deploy workload (TAS7: No topology constraints)")
@@ -464,11 +464,11 @@ func Test_TAS8_FullHierarchyWithCascadingConstraints(t *testing.T) {
 	ctx := context.Background()
 
 	logger.Info("1. Initialize an 8-node Grove cluster for topology testing")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 8)
+	clients, cleanup := prepareTestCluster(ctx, t, 8)
 	defer cleanup()
 
 	expectedPods := 8 // 2 PCSG replicas × (prefill: 2 pods + decode: 2 pods)
-	tc := createTopologyTestContext(t, ctx, clientset, restConfig, dynamicClient,
+	tc := createTopologyTestContext(t, ctx, clients.clientset, clients.restConfig, clients.dynamicClient,
 		"tas-hierarchy", "../yaml/tas-hierarchy.yaml", expectedPods)
 
 	logger.Info("2. Deploy workload (TAS8: full 3-level hierarchy with cascading constraints)")
@@ -533,12 +533,12 @@ func Test_TAS8_FullHierarchyWithCascadingConstraints(t *testing.T) {
 func Test_TAS9_PCSPlusPCLQConstraint(t *testing.T) {
 	ctx := context.Background()
 
-	logger.Info("1. Initialize a 30-node Grove cluster for topology testing")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 30)
+	logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
+	clients, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	expectedPods := 2
-	tc := createTopologyTestContext(t, ctx, clientset, restConfig, dynamicClient,
+	tc := createTopologyTestContext(t, ctx, clients.clientset, clients.restConfig, clients.dynamicClient,
 		"tas-pcs-pclq", "../yaml/tas-pcs-pclq.yaml", expectedPods)
 
 	logger.Info("2. Deploy workload (TAS9: PCS block + PCLQ host constraint)")
@@ -576,12 +576,12 @@ func Test_TAS9_PCSPlusPCLQConstraint(t *testing.T) {
 func Test_TAS10_PCSGScalingWithTopologyConstraints(t *testing.T) {
 	ctx := context.Background()
 
-	logger.Info("1. Initialize a 30-node Grove cluster for topology testing")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 30)
+	logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
+	clients, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	expectedPods := 6 // 3 PCSG replicas × 2 pods each
-	tc := createTopologyTestContext(t, ctx, clientset, restConfig, dynamicClient,
+	tc := createTopologyTestContext(t, ctx, clients.clientset, clients.restConfig, clients.dynamicClient,
 		"tas-pcsg-scale", "../yaml/tas-pcsg-scale.yaml", expectedPods)
 
 	logger.Info("2. Deploy workload (TAS10: PCSG scaling with topology constraints)")
@@ -647,12 +647,12 @@ func Test_TAS10_PCSGScalingWithTopologyConstraints(t *testing.T) {
 func Test_TAS11_PCSGPlusPCLQNoParentConstraint(t *testing.T) {
 	ctx := context.Background()
 
-	logger.Info("1. Initialize a 30-node Grove cluster for topology testing")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 30)
+	logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
+	clients, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	expectedPods := 4 // 2 PCSG replicas × 2 pods each
-	tc := createTopologyTestContext(t, ctx, clientset, restConfig, dynamicClient,
+	tc := createTopologyTestContext(t, ctx, clients.clientset, clients.restConfig, clients.dynamicClient,
 		"tas-pcsg-pclq", "../yaml/tas-pcsg-pclq.yaml", expectedPods)
 
 	logger.Info("2. Deploy workload (TAS11: PCSG rack + PCLQ host, no PCS constraint)")
@@ -699,12 +699,12 @@ func Test_TAS11_PCSGPlusPCLQNoParentConstraint(t *testing.T) {
 func Test_TAS12_LargeScalingRatio(t *testing.T) {
 	ctx := context.Background()
 
-	logger.Info("1. Initialize a 30-node Grove cluster for topology testing")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 30)
+	logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
+	clients, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	expectedPods := 20 // Base PodGang: 3 PCSG replicas × 2 pods (6) + Scaled: 7 PCSG replicas × 2 pods (14)
-	tc := createTopologyTestContext(t, ctx, clientset, restConfig, dynamicClient,
+	tc := createTopologyTestContext(t, ctx, clients.clientset, clients.restConfig, clients.dynamicClient,
 		"tas-large-scale", "../yaml/tas-large-scale.yaml", expectedPods)
 
 	logger.Info("2. Deploy workload (TAS12: Large scaling ratio, replicas=10/minAvailable=3)")
@@ -786,12 +786,12 @@ func Test_TAS12_LargeScalingRatio(t *testing.T) {
 func Test_TAS13_InsufficientNodesForConstraint(t *testing.T) {
 	ctx := context.Background()
 
-	logger.Info("1. Initialize a 30-node Grove cluster for topology testing")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 30)
+	logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
+	clients, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	expectedPods := 10
-	tc := createTopologyTestContext(t, ctx, clientset, restConfig, dynamicClient,
+	tc := createTopologyTestContext(t, ctx, clients.clientset, clients.restConfig, clients.dynamicClient,
 		"tas-insuffic", "../yaml/tas-insuffic.yaml", expectedPods)
 
 	logger.Info("2. Deploy workload (TAS13: insufficient nodes for rack constraint)")
@@ -839,12 +839,12 @@ func Test_TAS13_InsufficientNodesForConstraint(t *testing.T) {
 func Test_TAS14_MultiReplicaWithRackConstraint(t *testing.T) {
 	ctx := context.Background()
 
-	logger.Info("1. Initialize a 30-node Grove cluster for topology testing")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 30)
+	logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
+	clients, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	expectedPods := 4
-	tc := createTopologyTestContext(t, ctx, clientset, restConfig, dynamicClient,
+	tc := createTopologyTestContext(t, ctx, clients.clientset, clients.restConfig, clients.dynamicClient,
 		"tas-multirep", "../yaml/tas-multirep.yaml", expectedPods)
 
 	logger.Info("2. Deploy workload (TAS14: multi-replica with rack constraint)")
@@ -890,12 +890,12 @@ func Test_TAS14_MultiReplicaWithRackConstraint(t *testing.T) {
 func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 	ctx := context.Background()
 
-	logger.Info("1. Initialize a 30-node Grove cluster for topology testing")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 30)
+	logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
+	clients, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	expectedPods := 10 // decoder (2×2) + prefill (2×2) + router (2)
-	tc := createTopologyTestContext(t, ctx, clientset, restConfig, dynamicClient,
+	tc := createTopologyTestContext(t, ctx, clients.clientset, clients.restConfig, clients.dynamicClient,
 		"tas-pcs-multi-pcsg", "../yaml/tas-pcs-multi-pcsg.yaml", expectedPods)
 
 	logger.Info("2. Deploy workload (TAS15: disaggregated inference with multiple PCSGs)")
@@ -995,12 +995,12 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 	ctx := context.Background()
 
-	logger.Info("1. Initialize a 30-node Grove cluster for multi-replica PCS testing")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 30)
+	logger.Info("1. Initialize a 28-node Grove cluster for multi-replica PCS testing")
+	clients, cleanup := prepareTestCluster(ctx, t, 28)
 	defer cleanup()
 
 	expectedPods := 20 // PCS replica 0: 10 pods + PCS replica 1: 10 pods
-	tc := createTopologyTestContext(t, ctx, clientset, restConfig, dynamicClient,
+	tc := createTopologyTestContext(t, ctx, clients.clientset, clients.restConfig, clients.dynamicClient,
 		"tas-pcs-multi-pcsg", "../yaml/tas-pcs-multi-pcsg-multi-replica.yaml", expectedPods)
 
 	logger.Info("2. Deploy workload (TAS16: 2 PCS replicas with 3-level topology hierarchy)")
