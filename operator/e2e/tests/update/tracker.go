@@ -16,7 +16,7 @@
 // limitations under the License.
 // */
 
-package tests
+package update
 
 import (
 	"context"
@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ai-dynamo/grove/operator/e2e/tests"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
@@ -31,9 +32,9 @@ import (
 
 // podEvent represents a pod lifecycle event during an update
 type podEvent struct {
-	Type      watch.EventType
-	Pod       *corev1.Pod
-	Timestamp time.Time
+	eventType watch.EventType
+	pod       *corev1.Pod
+	timestamp time.Time
 }
 
 // updateTracker tracks pod events during updates (rolling, ondelete, etc.)
@@ -49,14 +50,14 @@ func newUpdateTracker() *updateTracker {
 	return &updateTracker{}
 }
 
-// Start begins watching pod events and blocks until the watcher is ready.
-// Uses tc.Ctx, tc.Clientset, tc.Namespace, and tc.getLabelSelector() for watch configuration.
-func (t *updateTracker) Start(tc TestContext) error {
+// start begins watching pod events and blocks until the watcher is ready.
+// Uses tc.Ctx, tc.Clientset, tc.Namespace, and tc.GetLabelSelector() for watch configuration.
+func (t *updateTracker) start(tc tests.TestContext) error {
 	watcherCtx, cancel := context.WithCancel(tc.Ctx)
 	t.cancel = cancel
 
 	watcher, err := tc.Clientset.CoreV1().Pods(tc.Namespace).Watch(watcherCtx, metav1.ListOptions{
-		LabelSelector: tc.getLabelSelector(),
+		LabelSelector: tc.GetLabelSelector(),
 	})
 	if err != nil {
 		cancel()
@@ -94,8 +95,8 @@ func (t *updateTracker) Start(tc TestContext) error {
 	}
 }
 
-// Stop stops the watcher and cleans up resources
-func (t *updateTracker) Stop() {
+// stop stops the watcher and cleans up resources
+func (t *updateTracker) stop() {
 	if t.watcher != nil {
 		t.watcher.Stop()
 	}
@@ -108,12 +109,13 @@ func (t *updateTracker) recordEvent(eventType watch.EventType, pod *corev1.Pod) 
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.events = append(t.events, podEvent{
-		Type:      eventType,
-		Pod:       pod.DeepCopy(),
-		Timestamp: time.Now(),
+		eventType: eventType,
+		pod:       pod.DeepCopy(),
+		timestamp: time.Now(),
 	})
 }
 
+// getEvents returns a copy of all recorded events
 func (t *updateTracker) getEvents() []podEvent {
 	t.mu.Lock()
 	defer t.mu.Unlock()

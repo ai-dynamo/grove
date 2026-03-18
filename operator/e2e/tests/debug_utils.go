@@ -143,7 +143,7 @@ func createDiagnosticsOutput(testName, mode, diagDir string) (io.WriteCloser, st
 		if err != nil {
 			// If we can't create a file but stdout is available, continue with stdout only
 			if mode == DiagnosticsModeBoth {
-				logger.Infof("[DIAG] Warning: failed to create diagnostics file: %v (continuing with stdout only)", err)
+				Logger.Infof("[DIAG] Warning: failed to create diagnostics file: %v (continuing with stdout only)", err)
 			} else {
 				return nil, "", err
 			}
@@ -230,13 +230,13 @@ func CollectAllDiagnostics(tc TestContext) {
 	// Create diagnostics output
 	output, filename, err := createDiagnosticsOutput(testName, mode, diagDir)
 	if err != nil {
-		logger.Errorf("Failed to create diagnostics output, falling back to stdout: %v", err)
+		Logger.Errorf("Failed to create diagnostics output, falling back to stdout: %v", err)
 		output = nopCloser{os.Stdout}
 	}
 	defer output.Close()
 
 	// Save reference to stdout logger, then shadow with diagnostics logger
-	stdoutLogger := logger
+	stdoutLogger := Logger
 	logger := utils.NewTestLoggerWithOutput(utils.InfoLevel, output)
 
 	// Log where diagnostics are being written (to main test output)

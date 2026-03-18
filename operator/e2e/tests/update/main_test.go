@@ -16,15 +16,7 @@
 // limitations under the License.
 // */
 
-// Package tests contains end-to-end tests for the Grove operator.
-//
-// These tests are disabled by default due to the 'e2e' build tag above.
-// To run these tests, use:
-//
-//	go test -tags=e2e ./e2e_testing/tests/...
-//
-// Without the -tags=e2e flag, these tests will be skipped entirely.
-package tests
+package update
 
 import (
 	"context"
@@ -32,16 +24,17 @@ import (
 	"testing"
 
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
+	"github.com/ai-dynamo/grove/operator/e2e/tests"
 )
 
-// TestMain manages the lifecycle of the shared cluster for all tests
+// TestMain manages the lifecycle of the shared cluster for update tests.
 func TestMain(m *testing.M) {
 	ctx := context.Background()
 
 	// Setup shared cluster once for all tests
-	sharedCluster := setup.SharedCluster(Logger)
-	if err := sharedCluster.Setup(ctx, TestImages); err != nil {
-		Logger.Errorf("failed to setup shared cluster: %s", err)
+	sharedCluster := setup.SharedCluster(tests.Logger)
+	if err := sharedCluster.Setup(ctx, tests.TestImages); err != nil {
+		tests.Logger.Errorf("failed to setup shared cluster: %s", err)
 		os.Exit(1)
 	}
 

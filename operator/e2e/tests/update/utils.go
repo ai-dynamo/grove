@@ -16,7 +16,7 @@
 // limitations under the License.
 // */
 
-package tests
+package update
 
 import (
 	"encoding/json"
@@ -27,6 +27,7 @@ import (
 	"time"
 
 	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/e2e/tests"
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -41,8 +42,8 @@ import (
 // ============================================================================
 
 // captureExistingPodNames returns a map of all current pod names for the workload.
-func captureExistingPodNames(tc TestContext) (map[string]bool, error) {
-	pods, err := listPods(tc)
+func captureExistingPodNames(tc tests.TestContext) (map[string]bool, error) {
+	pods, err := tests.ListPods(tc)
 	if err != nil {
 		return nil, err
 	}
@@ -52,13 +53,13 @@ func captureExistingPodNames(tc TestContext) (map[string]bool, error) {
 		existingPodNames[pod.Name] = true
 	}
 
-	logger.Debugf("Captured %d existing pods before spec change", len(existingPodNames))
+	tests.Logger.Debugf("Captured %d existing pods before spec change", len(existingPodNames))
 	return existingPodNames, nil
 }
 
 // verifyPodHasUpdatedSpec verifies that a pod has the UPDATE_TRIGGER environment variable,
 // indicating it was created with the updated spec.
-func verifyPodHasUpdatedSpec(tc TestContext, podName string) error {
+func verifyPodHasUpdatedSpec(tc tests.TestContext, podName string) error {
 	tc.T.Helper()
 
 	pod, err := tc.Clientset.CoreV1().Pods(tc.Namespace).Get(tc.Ctx, podName, metav1.GetOptions{})
@@ -78,15 +79,15 @@ func verifyPodHasUpdatedSpec(tc TestContext, podName string) error {
 }
 
 // deletePodAndWaitForTermination deletes a pod and waits until it is fully terminated.
-func deletePodAndWaitForTermination(tc TestContext, podName string) error {
+func deletePodAndWaitForTermination(tc tests.TestContext, podName string) error {
 	tc.T.Helper()
 
 	if err := tc.Clientset.CoreV1().Pods(tc.Namespace).Delete(tc.Ctx, podName, metav1.DeleteOptions{}); err != nil {
 		return fmt.Errorf("failed to delete pod %s: %w", podName, err)
 	}
 
-	err := pollForCondition(tc, func() (bool, error) {
-		pods, err := listPods(tc)
+	err := tests.PollForCondition(tc, func() (bool, error) {
+		pods, err := tests.ListPods(tc)
 		if err != nil {
 			return false, err
 		}
@@ -101,15 +102,15 @@ func deletePodAndWaitForTermination(tc TestContext, podName string) error {
 		return fmt.Errorf("failed to wait for the pod %s to be terminated: %w", podName, err)
 	}
 
-	logger.Debugf("Deleted pod %s, waiting for replacement...", podName)
+	tests.Logger.Debugf("Deleted pod %s, waiting for replacement...", podName)
 	return nil
 }
 
 // getPodsForClique returns the names of all pods belonging to the specified clique.
-func getPodsForClique(tc TestContext, cliqueName string) ([]string, error) {
+func getPodsForClique(tc tests.TestContext, cliqueName string) ([]string, error) {
 	tc.T.Helper()
 
-	pods, err := listPods(tc)
+	pods, err := tests.ListPods(tc)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +129,7 @@ func getPodsForClique(tc TestContext, cliqueName string) ([]string, error) {
 }
 
 // getFirstPodForClique returns the name of the first pod belonging to the specified clique.
-func getFirstPodForClique(tc TestContext, cliqueName string) (string, error) {
+func getFirstPodForClique(tc tests.TestContext, cliqueName string) (string, error) {
 	cliquePods, err := getPodsForClique(tc, cliqueName)
 	if err != nil {
 		return "", err
@@ -140,8 +141,8 @@ func getFirstPodForClique(tc TestContext, cliqueName string) (string, error) {
 }
 
 // findFirstNewPodName returns the name of the first pod not present in the given set.
-func findFirstNewPodName(tc TestContext, existingPodNames map[string]bool) (string, error) {
-	pods, err := listPods(tc)
+func findFirstNewPodName(tc tests.TestContext, existingPodNames map[string]bool) (string, error) {
+	pods, err := tests.ListPods(tc)
 	if err != nil {
 		return "", err
 	}
@@ -157,10 +158,10 @@ func findFirstNewPodName(tc TestContext, existingPodNames map[string]bool) (stri
 
 // verifyAllPodsFromOriginalSet asserts that all current pods are from the original set
 // (no unexpected new pods were created).
-func verifyAllPodsFromOriginalSet(tc TestContext, existingPodNames map[string]bool) {
+func verifyAllPodsFromOriginalSet(tc tests.TestContext, existingPodNames map[string]bool) {
 	tc.T.Helper()
 
-	pods, err := listPods(tc)
+	pods, err := tests.ListPods(tc)
 	if err != nil {
 		tc.T.Fatalf("Failed to list pods: %v", err)
 	}
@@ -173,10 +174,10 @@ func verifyAllPodsFromOriginalSet(tc TestContext, existingPodNames map[string]bo
 }
 
 // getPodsOnNode returns the names of pods scheduled on the specified node.
-func getPodsOnNode(tc TestContext, nodeName string) ([]string, error) {
+func getPodsOnNode(tc tests.TestContext, nodeName string) ([]string, error) {
 	tc.T.Helper()
 
-	pods, err := listPods(tc)
+	pods, err := tests.ListPods(tc)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +193,7 @@ func getPodsOnNode(tc TestContext, nodeName string) ([]string, error) {
 }
 
 // getNodeForPod returns the node name where the specified pod is scheduled.
-func getNodeForPod(tc TestContext, podName string) (string, error) {
+func getNodeForPod(tc tests.TestContext, podName string) (string, error) {
 	tc.T.Helper()
 
 	pod, err := tc.Clientset.CoreV1().Pods(tc.Namespace).Get(tc.Ctx, podName, metav1.GetOptions{})
@@ -221,7 +222,7 @@ func identifyHealthyNodePods(allPods map[string]bool, podsOnExcludedNode []strin
 }
 
 // verifyPodNotOnNode asserts that the specified pod is not scheduled on the given node.
-func verifyPodNotOnNode(tc TestContext, podName string, excludedNodeName string) {
+func verifyPodNotOnNode(tc tests.TestContext, podName string, excludedNodeName string) {
 	tc.T.Helper()
 
 	nodeName, err := getNodeForPod(tc, podName)
@@ -231,14 +232,14 @@ func verifyPodNotOnNode(tc TestContext, podName string, excludedNodeName string)
 	if nodeName == excludedNodeName {
 		tc.T.Fatalf("Pod %s is scheduled on excluded node %s — nodeAffinity exclusion not enforced", podName, excludedNodeName)
 	}
-	logger.Debugf("Pod %s is on node %s (not on excluded node %s)", podName, nodeName, excludedNodeName)
+	tests.Logger.Debugf("Pod %s is on node %s (not on excluded node %s)", podName, nodeName, excludedNodeName)
 }
 
 // verifyPodsStillPresent asserts that all pods in the given set are still present in the cluster.
-func verifyPodsStillPresent(tc TestContext, expectedPods map[string]bool) {
+func verifyPodsStillPresent(tc tests.TestContext, expectedPods map[string]bool) {
 	tc.T.Helper()
 
-	pods, err := listPods(tc)
+	pods, err := tests.ListPods(tc)
 	if err != nil {
 		tc.T.Fatalf("Failed to list pods: %v", err)
 	}
@@ -257,7 +258,7 @@ func verifyPodsStillPresent(tc TestContext, expectedPods map[string]bool) {
 
 // updatePCSUpdateStrategy changes the update strategy type of the PodCliqueSet.
 // Uses tc.Workload.Name as the PCS name.
-func updatePCSUpdateStrategy(tc TestContext, strategyType grovev1alpha1.UpdateStrategyType) error {
+func updatePCSUpdateStrategy(tc tests.TestContext, strategyType grovev1alpha1.UpdateStrategyType) error {
 	tc.T.Helper()
 
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -271,7 +272,7 @@ func updatePCSUpdateStrategy(tc TestContext, strategyType grovev1alpha1.UpdateSt
 		}
 		pcs.Spec.UpdateStrategy.Type = strategyType
 
-		updatedUnstructured, err := convertTypedToUnstructured(&pcs)
+		updatedUnstructured, err := tests.ConvertTypedToUnstructured(&pcs)
 		if err != nil {
 			return fmt.Errorf("failed to convert to unstructured: %w", err)
 		}
@@ -283,7 +284,7 @@ func updatePCSUpdateStrategy(tc TestContext, strategyType grovev1alpha1.UpdateSt
 
 // triggerPodCliqueUpdate triggers an update by adding/updating an environment variable in a PodClique.
 // Uses tc.Workload.Name as the PCS name.
-func triggerPodCliqueUpdate(tc TestContext, cliqueName string) error {
+func triggerPodCliqueUpdate(tc tests.TestContext, cliqueName string) error {
 	pcsGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquesets"}
 	pcsName := tc.Workload.Name
 
@@ -341,7 +342,7 @@ func triggerPodCliqueUpdate(tc TestContext, cliqueName string) error {
 		}
 
 		// Convert back to unstructured
-		updatedUnstructured, err := convertTypedToUnstructured(&pcs)
+		updatedUnstructured, err := tests.ConvertTypedToUnstructured(&pcs)
 		if err != nil {
 			return fmt.Errorf("failed to convert to unstructured: %w", err)
 		}
@@ -359,7 +360,7 @@ func triggerPodCliqueUpdate(tc TestContext, cliqueName string) error {
 // patchPCSWithSIGTERMIgnoringCommand patches all containers in the PCS to use a command that ignores SIGTERM
 // and sets the termination grace period to 5 seconds. This makes pods ignore graceful shutdown but still
 // allows updates to progress in a reasonable time for testing.
-func patchPCSWithSIGTERMIgnoringCommand(tc TestContext) error {
+func patchPCSWithSIGTERMIgnoringCommand(tc tests.TestContext) error {
 	pcsGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquesets"}
 	pcsName := tc.Workload.Name
 
@@ -389,7 +390,7 @@ func patchPCSWithSIGTERMIgnoringCommand(tc TestContext) error {
 			}
 		}
 
-		updatedUnstructured, err := convertTypedToUnstructured(&pcs)
+		updatedUnstructured, err := tests.ConvertTypedToUnstructured(&pcs)
 		if err != nil {
 			return fmt.Errorf("failed to convert to unstructured: %w", err)
 		}
@@ -401,12 +402,12 @@ func patchPCSWithSIGTERMIgnoringCommand(tc TestContext) error {
 
 // waitForRollingUpdateComplete waits for rolling update to complete by checking UpdatedReplicas.
 // Uses tc.Workload.Name as the PCS name and tc.Timeout for the timeout (use a modified tc if a different timeout is needed).
-func waitForRollingUpdateComplete(tc TestContext, expectedReplicas int32) error {
+func waitForRollingUpdateComplete(tc tests.TestContext, expectedReplicas int32) error {
 	pcsGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquesets"}
 	pcsName := tc.Workload.Name
 
 	pollCount := 0
-	return pollForCondition(tc, func() (bool, error) {
+	return tests.PollForCondition(tc, func() (bool, error) {
 		pollCount++
 		unstructuredPCS, err := tc.DynamicClient.Resource(pcsGVR).Namespace(tc.Namespace).Get(tc.Ctx, pcsName, metav1.GetOptions{})
 		if err != nil {
@@ -421,10 +422,10 @@ func waitForRollingUpdateComplete(tc TestContext, expectedReplicas int32) error 
 
 		// Log status every few polls for debugging
 		if pollCount%3 == 1 {
-			logger.Debugf("[waitForRollingUpdateComplete] Poll #%d: UpdatedReplicas=%d, expectedReplicas=%d, RollingUpdateProgress=%v",
+			tests.Logger.Debugf("[waitForRollingUpdateComplete] Poll #%d: UpdatedReplicas=%d, expectedReplicas=%d, RollingUpdateProgress=%v",
 				pollCount, pcs.Status.UpdatedReplicas, expectedReplicas, pcs.Status.RollingUpdateProgress != nil)
 			if pcs.Status.RollingUpdateProgress != nil {
-				logger.Debugf("  UpdateStartedAt=%v, UpdateEndedAt=%v, CurrentlyUpdating=%v",
+				tests.Logger.Debugf("  UpdateStartedAt=%v, UpdateEndedAt=%v, CurrentlyUpdating=%v",
 					pcs.Status.RollingUpdateProgress.UpdateStartedAt,
 					pcs.Status.RollingUpdateProgress.UpdateEndedAt,
 					pcs.Status.RollingUpdateProgress.CurrentlyUpdating)
@@ -437,7 +438,7 @@ func waitForRollingUpdateComplete(tc TestContext, expectedReplicas int32) error 
 		if pcs.Status.UpdatedReplicas == expectedReplicas &&
 			pcs.Status.RollingUpdateProgress != nil &&
 			pcs.Status.RollingUpdateProgress.UpdateEndedAt != nil {
-			logger.Debugf("[waitForRollingUpdateComplete] Rolling update completed after %d polls", pollCount)
+			tests.Logger.Debugf("[waitForRollingUpdateComplete] Rolling update completed after %d polls", pollCount)
 			return true, nil
 		}
 
@@ -470,7 +471,7 @@ func waitForRollingUpdateComplete(tc TestContext, expectedReplicas int32) error 
 //   - Direct patching of PodClique resources (what this function does)
 //
 // See: internal/controller/podcliqueset/components/podclique/podclique.go buildResource()
-func scalePodCliqueInPCS(tc TestContext, cliqueName string, replicas int32) error {
+func scalePodCliqueInPCS(tc tests.TestContext, cliqueName string, replicas int32) error {
 	pcsGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquesets"}
 	pclqGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliques"}
 	pcsName := tc.Workload.Name
@@ -533,7 +534,7 @@ func scalePodCliqueInPCS(tc TestContext, cliqueName string, replicas int32) erro
 // triggerRollingUpdate triggers a rolling update on the specified cliques and returns a channel
 // that receives an error (or nil) when the rolling update finishes.
 // Uses tc.Workload.Name as the PCS name and tc.Timeout for the wait timeout.
-func triggerRollingUpdate(tc TestContext, expectedReplicas int32, cliqueNames ...string) <-chan error {
+func triggerRollingUpdate(tc tests.TestContext, expectedReplicas int32, cliqueNames ...string) <-chan error {
 	errCh := make(chan error, 1)
 	go func() {
 		startTime := time.Now()
@@ -545,15 +546,15 @@ func triggerRollingUpdate(tc TestContext, expectedReplicas int32, cliqueNames ..
 				return
 			}
 		}
-		logger.Debugf("[triggerRollingUpdate] Triggered update on %v, waiting for completion...", cliqueNames)
+		tests.Logger.Debugf("[triggerRollingUpdate] Triggered update on %v, waiting for completion...", cliqueNames)
 
 		// Wait for completion
 		err := waitForRollingUpdateComplete(tc, expectedReplicas)
 		elapsed := time.Since(startTime)
 		if err != nil {
-			logger.Debugf("[triggerRollingUpdate] Rolling update FAILED after %v: %v", elapsed, err)
+			tests.Logger.Debugf("[triggerRollingUpdate] Rolling update FAILED after %v: %v", elapsed, err)
 		} else {
-			logger.Debugf("[triggerRollingUpdate] Rolling update completed in %v", elapsed)
+			tests.Logger.Debugf("[triggerRollingUpdate] Rolling update completed in %v", elapsed)
 		}
 		errCh <- err
 	}()
@@ -563,7 +564,7 @@ func triggerRollingUpdate(tc TestContext, expectedReplicas int32, cliqueNames ..
 // waitForRollingUpdate starts polling for rolling update completion in the background and returns a channel.
 // Use this when you need to trigger an update separately (e.g., when doing something between trigger and wait).
 // For the common case, use triggerRollingUpdate which combines trigger + wait.
-func waitForRollingUpdate(tc TestContext, expectedReplicas int32) <-chan error {
+func waitForRollingUpdate(tc tests.TestContext, expectedReplicas int32) <-chan error {
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- waitForRollingUpdateComplete(tc, expectedReplicas)
@@ -573,12 +574,12 @@ func waitForRollingUpdate(tc TestContext, expectedReplicas int32) <-chan error {
 
 // waitForOrdinalUpdating waits for a specific ordinal to start being updated during rolling update.
 // Uses tc.Workload.Name as the PCS name and tc.Timeout for the timeout (use a modified tc if a different timeout is needed).
-func waitForOrdinalUpdating(tc TestContext, ordinal int32) error {
+func waitForOrdinalUpdating(tc tests.TestContext, ordinal int32) error {
 	pcsGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquesets"}
 	pcsName := tc.Workload.Name
 
 	pollCount := 0
-	return pollForCondition(tc, func() (bool, error) {
+	return tests.PollForCondition(tc, func() (bool, error) {
 		pollCount++
 		unstructuredPCS, err := tc.DynamicClient.Resource(pcsGVR).Namespace(tc.Namespace).Get(tc.Ctx, pcsName, metav1.GetOptions{})
 		if err != nil {
@@ -597,7 +598,7 @@ func waitForOrdinalUpdating(tc TestContext, ordinal int32) error {
 			if pcs.Status.RollingUpdateProgress != nil && pcs.Status.RollingUpdateProgress.CurrentlyUpdating != nil {
 				currentOrdinal = pcs.Status.RollingUpdateProgress.CurrentlyUpdating.ReplicaIndex
 			}
-			logger.Debugf("[waitForOrdinalUpdating] Poll #%d: waiting for ordinal %d, currently updating ordinal: %d",
+			tests.Logger.Debugf("[waitForOrdinalUpdating] Poll #%d: waiting for ordinal %d, currently updating ordinal: %d",
 				pollCount, ordinal, currentOrdinal)
 		}
 
@@ -605,7 +606,7 @@ func waitForOrdinalUpdating(tc TestContext, ordinal int32) error {
 		if pcs.Status.RollingUpdateProgress != nil &&
 			pcs.Status.RollingUpdateProgress.CurrentlyUpdating != nil &&
 			pcs.Status.RollingUpdateProgress.CurrentlyUpdating.ReplicaIndex == ordinal {
-			logger.Debugf("[waitForOrdinalUpdating] Ordinal %d started updating after %d polls", ordinal, pollCount)
+			tests.Logger.Debugf("[waitForOrdinalUpdating] Ordinal %d started updating after %d polls", ordinal, pollCount)
 			return true, nil
 		}
 
@@ -631,7 +632,7 @@ func waitForOrdinalUpdating(tc TestContext, ordinal int32) error {
 //
 // Only the pod name changes (due to GenerateName), while pod.Spec.Hostname represents the pod's
 // logical position in the workload hierarchy and remains constant.
-func getPodIdentifier(tc TestContext, pod *corev1.Pod) string {
+func getPodIdentifier(tc tests.TestContext, pod *corev1.Pod) string {
 	tc.T.Helper()
 
 	// Use hostname as the stable identifier (set by configurePodHostname in pod.go)
@@ -655,20 +656,20 @@ func getPodIdentifier(tc TestContext, pod *corev1.Pod) string {
 //
 // To handle this, we track both ADDED and DELETE events and only consider a hostname
 // as "actively deleting" if there's no replacement pod that was added.
-func verifyOnePodDeletedAtATime(tc TestContext, events []podEvent) {
+func verifyOnePodDeletedAtATime(tc tests.TestContext, events []podEvent) {
 	tc.T.Helper()
 
 	// Log all events for debugging
-	logger.Debug("=== Starting verifyOnePodDeletedAtATime analysis ===")
-	logger.Debugf("Total events captured: %d", len(events))
+	tests.Logger.Debug("=== Starting verifyOnePodDeletedAtATime analysis ===")
+	tests.Logger.Debugf("Total events captured: %d", len(events))
 
 	for i, event := range events {
 		podclique := ""
-		if event.Pod.Labels != nil {
-			podclique = event.Pod.Labels["grove.io/podclique"]
+		if event.pod.Labels != nil {
+			podclique = event.pod.Labels["grove.io/podclique"]
 		}
-		logger.Debugf("Event[%d]: Type=%s PodName=%s Hostname=%s PodClique=%s Timestamp=%v",
-			i, event.Type, event.Pod.Name, event.Pod.Spec.Hostname, podclique, event.Timestamp.Format("15:04:05.000"))
+		tests.Logger.Debugf("Event[%d]: Type=%s PodName=%s Hostname=%s PodClique=%s Timestamp=%v",
+			i, event.eventType, event.pod.Name, event.pod.Spec.Hostname, podclique, event.timestamp.Format("15:04:05.000"))
 	}
 
 	// Track the most recent ADDED pod for each hostname (podID).
@@ -682,22 +683,22 @@ func verifyOnePodDeletedAtATime(tc TestContext, events []podEvent) {
 	maxConcurrentDeletions := 0
 	var violationEvents []string
 
-	logger.Debug("=== Processing events to find concurrent deletions ===")
+	tests.Logger.Debug("=== Processing events to find concurrent deletions ===")
 	for i, event := range events {
-		podID := getPodIdentifier(tc, event.Pod)
-		podName := event.Pod.Name
+		podID := getPodIdentifier(tc, event.pod)
+		podName := event.pod.Name
 
-		switch event.Type {
+		switch event.eventType {
 		case watch.Deleted:
 			// Record the DELETE event for this hostname
 			deletedPods[podID] = podName
-			logger.Debugf("Event[%d] DELETE: podID=%s, podName=%s", i, podID, podName)
+			tests.Logger.Debugf("Event[%d] DELETE: podID=%s, podName=%s", i, podID, podName)
 		case watch.Added:
 			// Record the ADDED event for this hostname
 			addedPods[podID] = podName
-			logger.Debugf("Event[%d] ADDED: podID=%s, podName=%s", i, podID, podName)
+			tests.Logger.Debugf("Event[%d] ADDED: podID=%s, podName=%s", i, podID, podName)
 		case watch.Modified:
-			logger.Debugf("Event[%d] MODIFIED: podID=%s (ignored for deletion tracking)", i, podID)
+			tests.Logger.Debugf("Event[%d] MODIFIED: podID=%s (ignored for deletion tracking)", i, podID)
 		}
 
 		// Calculate "actively deleting" hostnames: those with a DELETE event where
@@ -721,7 +722,7 @@ func verifyOnePodDeletedAtATime(tc TestContext, events []podEvent) {
 				deletingKeys = append(deletingKeys, k)
 			}
 			slices.Sort(deletingKeys)
-			logger.Debugf("Event[%d] State: currentlyDeleting=%d, activelyDeleting=%v",
+			tests.Logger.Debugf("Event[%d] State: currentlyDeleting=%d, activelyDeleting=%v",
 				i, currentlyDeleting, deletingKeys)
 		}
 
@@ -739,11 +740,11 @@ func verifyOnePodDeletedAtATime(tc TestContext, events []podEvent) {
 		}
 	}
 
-	logger.Debugf("=== Analysis complete: maxConcurrentDeletions=%d ===", maxConcurrentDeletions)
+	tests.Logger.Debugf("=== Analysis complete: maxConcurrentDeletions=%d ===", maxConcurrentDeletions)
 	if len(violationEvents) > 0 {
-		logger.Debug("Violation events:")
+		tests.Logger.Debug("Violation events:")
 		for _, v := range violationEvents {
-			logger.Debugf("  %s", v)
+			tests.Logger.Debugf("  %s", v)
 		}
 	}
 
@@ -762,7 +763,7 @@ func verifyOnePodDeletedAtATime(tc TestContext, events []podEvent) {
 //
 // IMPORTANT: This function handles the fact that Kubernetes watch events can arrive out of order.
 // See verifyOnePCSGReplicaDeletedAtATime for detailed explanation.
-func verifyOnePodDeletedAtATimePerPodclique(tc TestContext, events []podEvent) {
+func verifyOnePodDeletedAtATimePerPodclique(tc tests.TestContext, events []podEvent) {
 	tc.T.Helper()
 
 	// Track DELETE and ADDED counts separately per podID per PodClique to handle out-of-order events.
@@ -773,18 +774,18 @@ func verifyOnePodDeletedAtATimePerPodclique(tc TestContext, events []podEvent) {
 
 	for _, event := range events {
 		// All pods should have labels - if nil, that's a bug
-		if event.Pod.Labels == nil {
-			tc.T.Fatalf("Pod %s has no labels, which indicates a bug in pod creation", event.Pod.Name)
+		if event.pod.Labels == nil {
+			tc.T.Fatalf("Pod %s has no labels, which indicates a bug in pod creation", event.pod.Name)
 		}
 
-		podcliqueName, ok := event.Pod.Labels["grove.io/podclique"]
+		podcliqueName, ok := event.pod.Labels["grove.io/podclique"]
 		if !ok {
-			tc.T.Fatalf("Pod %s does not have grove.io/podclique label", event.Pod.Name)
+			tc.T.Fatalf("Pod %s does not have grove.io/podclique label", event.pod.Name)
 		}
 
-		podID := getPodIdentifier(tc, event.Pod)
+		podID := getPodIdentifier(tc, event.pod)
 
-		switch event.Type {
+		switch event.eventType {
 		case watch.Deleted:
 			if deletedCount[podcliqueName] == nil {
 				deletedCount[podcliqueName] = make(map[string]int)
@@ -858,24 +859,24 @@ func verifyOnePodDeletedAtATimePerPodclique(tc TestContext, events []podEvent) {
 //
 // To handle this, we track both DELETE and ADDED counts and calculate "actively updating"
 // replicas based on the difference (DELETE > ADDED means the pod is still in-flight).
-func verifySinglePCSReplicaUpdatedFirst(tc TestContext, events []podEvent) {
+func verifySinglePCSReplicaUpdatedFirst(tc tests.TestContext, events []podEvent) {
 	tc.T.Helper()
 
-	logger.Debug("=== Starting verifySinglePCSReplicaUpdatedFirst analysis ===")
-	logger.Debugf("Total events captured: %d", len(events))
+	tests.Logger.Debug("=== Starting verifySinglePCSReplicaUpdatedFirst analysis ===")
+	tests.Logger.Debugf("Total events captured: %d", len(events))
 
 	// Log all events for debugging
 	for i, event := range events {
 		replicaIdx := 0
-		if val, ok := event.Pod.Labels["grove.io/podcliqueset-replica-index"]; ok {
+		if val, ok := event.pod.Labels["grove.io/podcliqueset-replica-index"]; ok {
 			replicaIdx, _ = strconv.Atoi(val)
 		}
 		podclique := ""
-		if event.Pod.Labels != nil {
-			podclique = event.Pod.Labels["grove.io/podclique"]
+		if event.pod.Labels != nil {
+			podclique = event.pod.Labels["grove.io/podclique"]
 		}
-		logger.Debugf("Event[%d]: Type=%s PodName=%s Hostname=%s Replica=%d PodClique=%s Timestamp=%v",
-			i, event.Type, event.Pod.Name, event.Pod.Spec.Hostname, replicaIdx, podclique, event.Timestamp.Format("15:04:05.000"))
+		tests.Logger.Debugf("Event[%d]: Type=%s PodName=%s Hostname=%s Replica=%d PodClique=%s Timestamp=%v",
+			i, event.eventType, event.pod.Name, event.pod.Spec.Hostname, replicaIdx, podclique, event.timestamp.Format("15:04:05.000"))
 	}
 
 	// Track DELETE and ADDED counts separately per pod identifier per replica to handle out-of-order events.
@@ -886,31 +887,31 @@ func verifySinglePCSReplicaUpdatedFirst(tc TestContext, events []podEvent) {
 	maxConcurrentUpdatingReplicas := 0
 	var violationEvent string
 
-	logger.Debug("=== Processing events to find concurrent replica updates ===")
+	tests.Logger.Debug("=== Processing events to find concurrent replica updates ===")
 	for i, event := range events {
 		// Extract replica index from pod labels (defaults to 0 if not present)
 		replicaIdx := 0
-		if val, ok := event.Pod.Labels["grove.io/podcliqueset-replica-index"]; ok {
+		if val, ok := event.pod.Labels["grove.io/podcliqueset-replica-index"]; ok {
 			replicaIdx, _ = strconv.Atoi(val)
 		}
 
 		// Extract PodClique name - skip pods without this label
-		_, ok := event.Pod.Labels["grove.io/podclique"]
+		_, ok := event.pod.Labels["grove.io/podclique"]
 		if !ok {
 			continue
 		}
 
 		// Get stable pod identifier (hostname) that persists across pod replacements
-		podID := getPodIdentifier(tc, event.Pod)
+		podID := getPodIdentifier(tc, event.pod)
 
 		// Track DELETE and ADDED events
-		switch event.Type {
+		switch event.eventType {
 		case watch.Deleted:
 			if deletedCount[replicaIdx] == nil {
 				deletedCount[replicaIdx] = make(map[string]int)
 			}
 			deletedCount[replicaIdx][podID]++
-			logger.Debugf("Event[%d] DELETE: replica=%d podID=%s deleted=%d added=%d",
+			tests.Logger.Debugf("Event[%d] DELETE: replica=%d podID=%s deleted=%d added=%d",
 				i, replicaIdx, podID, deletedCount[replicaIdx][podID], getReplicaPodCount(addedCount, replicaIdx, podID))
 
 		case watch.Added:
@@ -918,7 +919,7 @@ func verifySinglePCSReplicaUpdatedFirst(tc TestContext, events []podEvent) {
 				addedCount[replicaIdx] = make(map[string]int)
 			}
 			addedCount[replicaIdx][podID]++
-			logger.Debugf("Event[%d] ADDED: replica=%d podID=%s deleted=%d added=%d",
+			tests.Logger.Debugf("Event[%d] ADDED: replica=%d podID=%s deleted=%d added=%d",
 				i, replicaIdx, podID, getReplicaPodCount(deletedCount, replicaIdx, podID), addedCount[replicaIdx][podID])
 		}
 
@@ -945,7 +946,7 @@ func verifySinglePCSReplicaUpdatedFirst(tc TestContext, events []podEvent) {
 				replicas = append(replicas, fmt.Sprintf("replica-%d(%d pods)", idx, count))
 			}
 			slices.Sort(replicas)
-			logger.Debugf("Event[%d] State: numUpdatingReplicas=%d activelyUpdating=%v",
+			tests.Logger.Debugf("Event[%d] State: numUpdatingReplicas=%d activelyUpdating=%v",
 				i, numUpdatingReplicas, replicas)
 		}
 
@@ -957,13 +958,13 @@ func verifySinglePCSReplicaUpdatedFirst(tc TestContext, events []podEvent) {
 			}
 			slices.Sort(replicas)
 			violationEvent = fmt.Sprintf("Event[%d] %s: maxConcurrentUpdatingReplicas increased to %d, activelyUpdating=%v",
-				i, event.Type, maxConcurrentUpdatingReplicas, replicas)
+				i, event.eventType, maxConcurrentUpdatingReplicas, replicas)
 		}
 	}
 
-	logger.Debugf("=== Analysis complete: maxConcurrentUpdatingReplicas=%d ===", maxConcurrentUpdatingReplicas)
+	tests.Logger.Debugf("=== Analysis complete: maxConcurrentUpdatingReplicas=%d ===", maxConcurrentUpdatingReplicas)
 	if violationEvent != "" {
-		logger.Debugf("Max concurrent replicas event: %s", violationEvent)
+		tests.Logger.Debugf("Max concurrent replicas event: %s", violationEvent)
 	}
 
 	// Assert that at most 1 replica was being updated at any point in time.
@@ -1000,25 +1001,25 @@ func getReplicaPodCount(m map[int]map[string]int, replicaIdx int, podID string) 
 // The controller considers a replica "update complete" when new pods are READY, not when old
 // pods are fully terminated. So we track by comparing ADDED vs DELETE counts, allowing
 // ADDED to offset DELETE regardless of order.
-func verifyOnePCSGReplicaDeletedAtATime(tc TestContext, events []podEvent) {
+func verifyOnePCSGReplicaDeletedAtATime(tc tests.TestContext, events []podEvent) {
 	tc.T.Helper()
 
-	logger.Debug("=== Starting verifyOnePCSGReplicaDeletedAtATime analysis ===")
-	logger.Debugf("Total events captured: %d", len(events))
+	tests.Logger.Debug("=== Starting verifyOnePCSGReplicaDeletedAtATime analysis ===")
+	tests.Logger.Debugf("Total events captured: %d", len(events))
 
 	// Log all PCSG-related events for debugging
 	for i, event := range events {
-		if event.Pod.Labels == nil {
+		if event.pod.Labels == nil {
 			continue
 		}
-		replicaID, hasReplicaLabel := event.Pod.Labels["grove.io/podcliquescalinggroup-replica-index"]
+		replicaID, hasReplicaLabel := event.pod.Labels["grove.io/podcliquescalinggroup-replica-index"]
 		if !hasReplicaLabel {
 			continue
 		}
-		pcsgName := event.Pod.Labels["grove.io/podcliquescalinggroup"]
-		podclique := event.Pod.Labels["grove.io/podclique"]
-		logger.Debugf("Event[%d]: Type=%s PodName=%s PCSG=%s ReplicaID=%s PodClique=%s Timestamp=%v",
-			i, event.Type, event.Pod.Name, pcsgName, replicaID, podclique, event.Timestamp.Format("15:04:05.000"))
+		pcsgName := event.pod.Labels["grove.io/podcliquescalinggroup"]
+		podclique := event.pod.Labels["grove.io/podclique"]
+		tests.Logger.Debugf("Event[%d]: Type=%s PodName=%s PCSG=%s ReplicaID=%s PodClique=%s Timestamp=%v",
+			i, event.eventType, event.pod.Name, pcsgName, replicaID, podclique, event.timestamp.Format("15:04:05.000"))
 	}
 
 	// Track DELETE and ADDED counts separately per replica to handle out-of-order events.
@@ -1028,36 +1029,36 @@ func verifyOnePCSGReplicaDeletedAtATime(tc TestContext, events []podEvent) {
 	maxConcurrentDeletions := 0
 	var violationEvent string
 
-	logger.Debug("=== Processing events to find concurrent deletions ===")
+	tests.Logger.Debug("=== Processing events to find concurrent deletions ===")
 	for i, event := range events {
 		// All pods should have labels - if nil, that's a bug
-		if event.Pod.Labels == nil {
-			tc.T.Fatalf("Pod %s has no labels, which indicates a bug in pod creation", event.Pod.Name)
+		if event.pod.Labels == nil {
+			tc.T.Fatalf("Pod %s has no labels, which indicates a bug in pod creation", event.pod.Name)
 		}
 
 		// Only process pods that belong to a PCSG (not all pods have this label)
-		replicaID, hasReplicaLabel := event.Pod.Labels["grove.io/podcliquescalinggroup-replica-index"]
+		replicaID, hasReplicaLabel := event.pod.Labels["grove.io/podcliquescalinggroup-replica-index"]
 		if !hasReplicaLabel {
 			continue
 		}
 
-		pcsgName, ok := event.Pod.Labels["grove.io/podcliquescalinggroup"]
+		pcsgName, ok := event.pod.Labels["grove.io/podcliquescalinggroup"]
 		if !ok {
-			tc.T.Fatalf("Pod %s has PCSG replica index but no PCSG name label", event.Pod.Name)
+			tc.T.Fatalf("Pod %s has PCSG replica index but no PCSG name label", event.pod.Name)
 		}
 
 		// Create a composite key to uniquely identify this PCSG replica globally
 		replicaKey := fmt.Sprintf("%s-%s", pcsgName, replicaID)
 
-		switch event.Type {
+		switch event.eventType {
 		case watch.Deleted:
 			deletedCount[replicaKey]++
-			logger.Debugf("Event[%d] DELETE: pod=%s replica=%s deleted=%d added=%d",
-				i, event.Pod.Name, replicaKey, deletedCount[replicaKey], addedCount[replicaKey])
+			tests.Logger.Debugf("Event[%d] DELETE: pod=%s replica=%s deleted=%d added=%d",
+				i, event.pod.Name, replicaKey, deletedCount[replicaKey], addedCount[replicaKey])
 		case watch.Added:
 			addedCount[replicaKey]++
-			logger.Debugf("Event[%d] ADDED: pod=%s replica=%s deleted=%d added=%d",
-				i, event.Pod.Name, replicaKey, deletedCount[replicaKey], addedCount[replicaKey])
+			tests.Logger.Debugf("Event[%d] ADDED: pod=%s replica=%s deleted=%d added=%d",
+				i, event.pod.Name, replicaKey, deletedCount[replicaKey], addedCount[replicaKey])
 		}
 
 		// Calculate "actively rolling" replicas: those where DELETE count > ADDED count.
@@ -1077,7 +1078,7 @@ func verifyOnePCSGReplicaDeletedAtATime(tc TestContext, events []podEvent) {
 				replicas = append(replicas, fmt.Sprintf("%s:%d", k, v))
 			}
 			slices.Sort(replicas)
-			logger.Debugf("Event[%d] State: concurrent=%d activelyRolling=%v", i, currentConcurrent, replicas)
+			tests.Logger.Debugf("Event[%d] State: concurrent=%d activelyRolling=%v", i, currentConcurrent, replicas)
 		}
 		if currentConcurrent > maxConcurrentDeletions {
 			maxConcurrentDeletions = currentConcurrent
@@ -1090,9 +1091,9 @@ func verifyOnePCSGReplicaDeletedAtATime(tc TestContext, events []podEvent) {
 		}
 	}
 
-	logger.Debugf("=== Analysis complete: maxConcurrentDeletions=%d ===", maxConcurrentDeletions)
+	tests.Logger.Debugf("=== Analysis complete: maxConcurrentDeletions=%d ===", maxConcurrentDeletions)
 	if violationEvent != "" {
-		logger.Debugf("Violation: %s", violationEvent)
+		tests.Logger.Debugf("Violation: %s", violationEvent)
 	}
 
 	// Assert that at most 1 replica was being deleted/replaced at any point in time.
@@ -1115,7 +1116,7 @@ func verifyOnePCSGReplicaDeletedAtATime(tc TestContext, events []podEvent) {
 //
 // IMPORTANT: This function handles the fact that Kubernetes watch events can arrive out of order.
 // See verifyOnePCSGReplicaDeletedAtATime for detailed explanation.
-func verifyOnePCSGReplicaDeletedAtATimePerPCSG(tc TestContext, events []podEvent) {
+func verifyOnePCSGReplicaDeletedAtATimePerPCSG(tc tests.TestContext, events []podEvent) {
 	tc.T.Helper()
 
 	// Track DELETE and ADDED counts separately per replica per PCSG to handle out-of-order events.
@@ -1126,37 +1127,37 @@ func verifyOnePCSGReplicaDeletedAtATimePerPCSG(tc TestContext, events []podEvent
 
 	for _, event := range events {
 		// All pods should have labels - if nil, that's a bug
-		if event.Pod.Labels == nil {
-			tc.T.Fatalf("Pod %s has no labels, which indicates a bug in pod creation", event.Pod.Name)
+		if event.pod.Labels == nil {
+			tc.T.Fatalf("Pod %s has no labels, which indicates a bug in pod creation", event.pod.Name)
 		}
 
 		// Only process pods that belong to a PCSG (not all pods have this label)
-		replicaID, hasReplicaLabel := event.Pod.Labels["grove.io/podcliquescalinggroup-replica-index"]
+		replicaID, hasReplicaLabel := event.pod.Labels["grove.io/podcliquescalinggroup-replica-index"]
 		if !hasReplicaLabel {
 			continue
 		}
 
-		pcsgName, ok := event.Pod.Labels["grove.io/podcliquescalinggroup"]
+		pcsgName, ok := event.pod.Labels["grove.io/podcliquescalinggroup"]
 		if !ok {
-			tc.T.Fatalf("Pod %s has PCSG replica index but no PCSG name label", event.Pod.Name)
+			tc.T.Fatalf("Pod %s has PCSG replica index but no PCSG name label", event.pod.Name)
 		}
 
-		switch event.Type {
+		switch event.eventType {
 		case watch.Deleted:
 			if deletedCount[pcsgName] == nil {
 				deletedCount[pcsgName] = make(map[string]int)
 			}
 			deletedCount[pcsgName][replicaID]++
-			logger.Debugf("Pod %s deleted, replica %s in PCSG %s: deleted=%d added=%d",
-				event.Pod.Name, replicaID, pcsgName,
+			tests.Logger.Debugf("Pod %s deleted, replica %s in PCSG %s: deleted=%d added=%d",
+				event.pod.Name, replicaID, pcsgName,
 				deletedCount[pcsgName][replicaID], getCount(addedCount, pcsgName, replicaID))
 		case watch.Added:
 			if addedCount[pcsgName] == nil {
 				addedCount[pcsgName] = make(map[string]int)
 			}
 			addedCount[pcsgName][replicaID]++
-			logger.Debugf("Pod %s added, replica %s in PCSG %s: deleted=%d added=%d",
-				event.Pod.Name, replicaID, pcsgName,
+			tests.Logger.Debugf("Pod %s added, replica %s in PCSG %s: deleted=%d added=%d",
+				event.pod.Name, replicaID, pcsgName,
 				getCount(deletedCount, pcsgName, replicaID), addedCount[pcsgName][replicaID])
 		}
 
@@ -1196,7 +1197,7 @@ func getCount(m map[string]map[string]int, key1, key2 string) int {
 // Uses tc.Workload.Name as the PCS name.
 // The operation runs asynchronously - receive from the returned channel to block until complete.
 // If delayMs > 0, the operation will sleep for that duration before starting.
-func scalePodClique(tc TestContext, cliqueName string, replicas int32, expectedTotalPods, delayMs int) <-chan error {
+func scalePodClique(tc tests.TestContext, cliqueName string, replicas int32, expectedTotalPods, delayMs int) <-chan error {
 	errCh := make(chan error, 1)
 	go func() {
 		startTime := time.Now()
@@ -1205,35 +1206,35 @@ func scalePodClique(tc TestContext, cliqueName string, replicas int32, expectedT
 			time.Sleep(time.Duration(delayMs) * time.Millisecond)
 		}
 
-		logger.Debugf("[scalePodClique] Scaling %s to %d replicas, expecting %d total pods", cliqueName, replicas, expectedTotalPods)
+		tests.Logger.Debugf("[scalePodClique] Scaling %s to %d replicas, expecting %d total pods", cliqueName, replicas, expectedTotalPods)
 
 		if err := scalePodCliqueInPCS(tc, cliqueName, replicas); err != nil {
 			errCh <- fmt.Errorf("failed to scale PodClique %s: %w", cliqueName, err)
 			return
 		}
 
-		logger.Debugf("[scalePodClique] Scale patch applied, waiting for pods...")
+		tests.Logger.Debugf("[scalePodClique] Scale patch applied, waiting for pods...")
 
 		// Wait for pods to reach expected count
 		pollCount := 0
-		err := pollForCondition(tc, func() (bool, error) {
+		err := tests.PollForCondition(tc, func() (bool, error) {
 			pollCount++
-			pods, err := listPods(tc)
+			pods, err := tests.ListPods(tc)
 			if err != nil {
 				return false, err
 			}
 			if pollCount%3 == 1 {
-				logger.Debugf("[scalePodClique] Poll #%d: current pods=%d, expected=%d", pollCount, len(pods.Items), expectedTotalPods)
+				tests.Logger.Debugf("[scalePodClique] Poll #%d: current pods=%d, expected=%d", pollCount, len(pods.Items), expectedTotalPods)
 			}
 			return len(pods.Items) == expectedTotalPods, nil
 		})
 		elapsed := time.Since(startTime)
 		if err != nil {
-			logger.Debugf("[scalePodClique] Scale %s FAILED after %v: %v", cliqueName, elapsed, err)
+			tests.Logger.Debugf("[scalePodClique] Scale %s FAILED after %v: %v", cliqueName, elapsed, err)
 			errCh <- fmt.Errorf("failed to wait for pods after scaling PodClique %s: %w", cliqueName, err)
 			return
 		}
-		logger.Debugf("[scalePodClique] Scale %s completed in %v (pods=%d)", cliqueName, elapsed, expectedTotalPods)
+		tests.Logger.Debugf("[scalePodClique] Scale %s completed in %v (pods=%d)", cliqueName, elapsed, expectedTotalPods)
 		errCh <- nil
 	}()
 	return errCh
@@ -1243,9 +1244,9 @@ func scalePodClique(tc TestContext, cliqueName string, replicas int32, expectedT
 // OnDelete strategy utilities
 // ============================================================================
 
-func waitForOnDeleteUpdateComplete(tc TestContext) error {
+func waitForOnDeleteUpdateComplete(tc tests.TestContext) error {
 	pollCount := 0
-	return pollForCondition(tc, func() (bool, error) {
+	return tests.PollForCondition(tc, func() (bool, error) {
 		pollCount++
 		pcs, err := utils.GetPodCliqueSet(tc.Ctx, tc.DynamicClient, tc.Workload.Name, tc.Namespace)
 		if err != nil {
@@ -1253,7 +1254,7 @@ func waitForOnDeleteUpdateComplete(tc TestContext) error {
 		}
 
 		if utils.IsOnDeleteUpdateComplete(pcs) {
-			logger.Debugf("[waitForOnDeleteUpdateComplete] OnDelete update marked complete after %d polls (UpdatedReplicas=%d)",
+			tests.Logger.Debugf("[waitForOnDeleteUpdateComplete] OnDelete update marked complete after %d polls (UpdatedReplicas=%d)",
 				pollCount, pcs.Status.UpdatedReplicas)
 			return true, nil
 		}
@@ -1262,7 +1263,7 @@ func waitForOnDeleteUpdateComplete(tc TestContext) error {
 	})
 }
 
-func verifyUpdateProgressFields(tc TestContext) {
+func verifyUpdateProgressFields(tc tests.TestContext) {
 	tc.T.Helper()
 
 	updateProgress, err := utils.GetPCSUpdateProgress(tc.Ctx, tc.T, tc.DynamicClient, tc.Workload.Name, tc.Namespace)
@@ -1295,13 +1296,13 @@ func verifyUpdateProgressFields(tc TestContext) {
 	}
 }
 
-func verifyNoPodsDeleted(tc TestContext, events []podEvent, existingPodNames map[string]bool) {
+func verifyNoPodsDeleted(tc tests.TestContext, events []podEvent, existingPodNames map[string]bool) {
 	tc.T.Helper()
 
 	deletedPods := []string{}
 	for _, event := range events {
-		if event.Type == watch.Deleted && existingPodNames[event.Pod.Name] {
-			deletedPods = append(deletedPods, event.Pod.Name)
+		if event.eventType == watch.Deleted && existingPodNames[event.pod.Name] {
+			deletedPods = append(deletedPods, event.pod.Name)
 		}
 	}
 
@@ -1310,18 +1311,18 @@ func verifyNoPodsDeleted(tc TestContext, events []podEvent, existingPodNames map
 	}
 }
 
-func waitForOnDeleteUpdateCompleteWithTimeout(tc TestContext, timeout time.Duration) error {
+func waitForOnDeleteUpdateCompleteWithTimeout(tc tests.TestContext, timeout time.Duration) error {
 	tcWithTimeout := tc
 	tcWithTimeout.Timeout = timeout
 	return waitForOnDeleteUpdateComplete(tcWithTimeout)
 }
 
-func waitForOnDeleteUpdateCompleteDefault(tc TestContext) error {
+func waitForOnDeleteUpdateCompleteDefault(tc tests.TestContext) error {
 	return waitForOnDeleteUpdateCompleteWithTimeout(tc, 1*time.Minute)
 }
 
 func verifyNoAutomaticDeletionAfterUpdate(
-	tc TestContext,
+	tc tests.TestContext,
 	tracker *updateTracker,
 	existingPodNames map[string]bool,
 	expectedPods int,
@@ -1339,11 +1340,11 @@ func verifyNoAutomaticDeletionAfterUpdate(
 		verifyUpdateProgressFields(tc)
 	}
 
-	tracker.Stop()
+	tracker.stop()
 	events := tracker.getEvents()
 	verifyNoPodsDeleted(tc, events, existingPodNames)
 
-	pods, err := listPods(tc)
+	pods, err := tests.ListPods(tc)
 	if err != nil {
 		tc.T.Fatalf("Failed to list pods: %v", err)
 	}
@@ -1357,7 +1358,7 @@ func verifyNoAutomaticDeletionAfterUpdate(
 // (kubernetes.io/hostname NotIn [nodeName]) to the specified PodClique's nodeAffinity.
 // This simulates the node failure recovery workflow from GREP-291 Example Usage,
 // where a failed node is excluded by adding a NotIn matchExpression for its hostname.
-func excludeNodeFromPodCliqueAffinity(tc TestContext, cliqueName string, nodeName string) error {
+func excludeNodeFromPodCliqueAffinity(tc tests.TestContext, cliqueName string, nodeName string) error {
 	tc.T.Helper()
 
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -1396,7 +1397,7 @@ func excludeNodeFromPodCliqueAffinity(tc TestContext, cliqueName string, nodeNam
 			return fmt.Errorf("clique %s not found in PodCliqueSet %s", cliqueName, tc.Workload.Name)
 		}
 
-		updatedUnstructured, err := convertTypedToUnstructured(&pcs)
+		updatedUnstructured, err := tests.ConvertTypedToUnstructured(&pcs)
 		if err != nil {
 			return fmt.Errorf("failed to convert to unstructured: %w", err)
 		}
@@ -1408,7 +1409,7 @@ func excludeNodeFromPodCliqueAffinity(tc TestContext, cliqueName string, nodeNam
 
 // verifyPodHasNodeAffinityExclusion checks that the given pod's spec contains a
 // kubernetes.io/hostname NotIn matchExpression that excludes the specified node name.
-func verifyPodHasNodeAffinityExclusion(tc TestContext, podName string, excludedNode string) error {
+func verifyPodHasNodeAffinityExclusion(tc tests.TestContext, podName string, excludedNode string) error {
 	tc.T.Helper()
 
 	pod, err := tc.Clientset.CoreV1().Pods(tc.Namespace).Get(tc.Ctx, podName, metav1.GetOptions{})
