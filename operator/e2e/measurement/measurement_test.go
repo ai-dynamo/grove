@@ -50,7 +50,7 @@ func TestTimelineTracker_RunPhase(t *testing.T) {
 		},
 	})
 
-	result, err := tracker.Run(ctx)
+	result, err := tracker.Run(ctx, nil)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -86,7 +86,7 @@ func TestTimelineTracker_RunPhase_ActionError(t *testing.T) {
 		},
 	})
 
-	result, err := tracker.Run(context.Background())
+	result, err := tracker.Run(context.Background(), nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -110,7 +110,7 @@ func TestTimelineTracker_RunPhase_ContextTimeout(t *testing.T) {
 		},
 	})
 
-	result, err := tracker.Run(ctx)
+	result, err := tracker.Run(ctx, nil)
 	if err == nil {
 		t.Fatalf("expected timeout error, got nil")
 	}
@@ -131,7 +131,7 @@ func TestTimelineTracker_ResultMetadata(t *testing.T) {
 		},
 	})
 
-	result, err := tracker.Run(context.Background())
+	result, err := tracker.Run(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -168,7 +168,7 @@ func TestTimelineTracker_ResultPhasesAreCopied(t *testing.T) {
 		},
 	})
 
-	result1, err := tracker.Run(context.Background())
+	result1, err := tracker.Run(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -188,7 +188,7 @@ func TestTimelineTracker_ResultPhasesAreCopied(t *testing.T) {
 		},
 	})
 
-	result2, err := tracker2.Run(context.Background())
+	result2, err := tracker2.Run(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}

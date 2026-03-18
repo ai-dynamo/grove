@@ -113,6 +113,7 @@ func NewSummaryExporter(w io.Writer) *SummaryExporter {
 func (e *SummaryExporter) Export(r *measurement.TrackerResult) error {
 	ew := &errWriter{w: e.w}
 	ew.write("=== Test: %s (run: %s) ===\n", r.TestName, r.RunID)
+	ew.write("Grove image:      %s\n", r.GroveImage)
 	ew.write("Namespace:        %s\n", r.Namespace)
 	ew.write("PCS count:        %d\n", r.PCSCount)
 	if r.K8sClient != nil {
