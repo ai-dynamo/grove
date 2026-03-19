@@ -141,9 +141,9 @@ func groupPCLQsByLabel(pclqs []grovecorev1alpha1.PodClique, labelKey string) map
 	return grouped
 }
 
-// IsPCLQUpdateInProgress checks if PodClique is under rolling update.
-func IsPCLQUpdateInProgress(pclq *grovecorev1alpha1.PodClique) bool {
-	return pclq.Status.RollingUpdateProgress != nil && pclq.Status.RollingUpdateProgress.UpdateEndedAt == nil
+// IsPCLQAutoUpdateInProgress checks if PodClique is under an auto-orchestrated update.
+func IsPCLQAutoUpdateInProgress(pclq *grovecorev1alpha1.PodClique) bool {
+	return pclq.Status.UpdateProgress != nil && pclq.Status.UpdateProgress.UpdateEndedAt == nil
 }
 
 // IsLastPCLQUpdateCompleted checks if the last update of PodClique is completed.

@@ -22,6 +22,7 @@ import (
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/hash"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -350,7 +351,10 @@ func TestInitOrResetUpdate(t *testing.T) {
 			pclq := tt.setupPCLQ(pcsUID)
 
 			fakeClient := testutils.SetupFakeClient(pcs, pclq)
-			reconciler := &Reconciler{client: fakeClient}
+			reconciler := &Reconciler{
+				client: fakeClient,
+				podTemplateSpecHashCache: hash.NewDefaultPodTemplateSpecHashCache(t.Context()),
+			}
 
 			err := reconciler.initOrResetUpdate(context.Background(), pcs, pclq)
 			require.NoError(t, err, "initOrResetUpdate should not return errors")
