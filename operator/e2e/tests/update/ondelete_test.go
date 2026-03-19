@@ -99,22 +99,22 @@ func Test_OD2_ManualDeletionCreatesUpdatedPod(t *testing.T) {
 	tests.Logger.Debugf("Will delete pod %s after spec change", podToDelete)
 
 	tests.Logger.Info("3. Change the specification of pc-a")
-	if err := triggerPodCliqueUpdate(tc, "pc-a"); err != nil {
+	if err = triggerPodCliqueUpdate(tc, "pc-a"); err != nil {
 		t.Fatalf("Failed to update PodClique spec: %v", err)
 	}
 
 	// Wait for update to be marked complete
-	if err := waitForOnDeleteUpdateCompleteWithTimeout(tc, 1*time.Minute); err != nil {
+	if err = waitForOnDeleteUpdateCompleteWithTimeout(tc, 1*time.Minute); err != nil {
 		t.Fatalf("Failed to verify OnDelete update completion: %v", err)
 	}
 
 	tests.Logger.Info("4. Delete a pod manually and verify the replacement uses the new template")
 	// Delete the pod
-	if err := deletePodAndWaitForTermination(tc, podToDelete); err != nil {
+	if err = deletePodAndWaitForTermination(tc, podToDelete); err != nil {
 		t.Fatalf("Failed to delete pod and wait for replacement: %v", err)
 	}
 
-	if err := tests.WaitForRunningPods(tc, 10); err != nil {
+	if err = tests.WaitForRunningPods(tc, 10); err != nil {
 		t.Fatalf("Failed to wait for pod with new specification to be created")
 	}
 
@@ -126,7 +126,7 @@ func Test_OD2_ManualDeletionCreatesUpdatedPod(t *testing.T) {
 	tests.Logger.Debugf("New replacement pod: %s", newPodName)
 
 	// Verify the new pod has the updated spec
-	if err := verifyPodHasUpdatedSpec(tc, newPodName); err != nil {
+	if err = verifyPodHasUpdatedSpec(tc, newPodName); err != nil {
 		t.Fatalf("Replacement pod does not have updated spec: %v", err)
 	}
 
@@ -140,7 +140,7 @@ func Test_OD2_ManualDeletionCreatesUpdatedPod(t *testing.T) {
 	}
 
 	var pclq grovev1alpha1.PodClique
-	if err := utils.ConvertUnstructuredToTyped(unstructuredPCLQ.Object, &pclq); err != nil {
+	if err = utils.ConvertUnstructuredToTyped(unstructuredPCLQ.Object, &pclq); err != nil {
 		t.Fatalf("Failed to convert to PodClique: %v", err)
 	}
 
@@ -298,7 +298,7 @@ func Test_OD4_PCSGNoAutomaticDeletionOnSpecChange(t *testing.T) {
 	}
 
 	tests.Logger.Info("3. Change the specification of pc-b (part of PCSG sg-x)")
-	if err := triggerPodCliqueUpdate(tc, "pc-b"); err != nil {
+	if err = triggerPodCliqueUpdate(tc, "pc-b"); err != nil {
 		t.Fatalf("Failed to update PodClique spec: %v", err)
 	}
 
@@ -338,22 +338,22 @@ func Test_OD5_PCSGManualDeletionCreatesUpdatedReplica(t *testing.T) {
 	tests.Logger.Debugf("Will delete pod %s after spec change", podToDelete)
 
 	tests.Logger.Info("3. Change the specification of pc-c (part of PCSG sg-x)")
-	if err := triggerPodCliqueUpdate(tc, "pc-c"); err != nil {
+	if err = triggerPodCliqueUpdate(tc, "pc-c"); err != nil {
 		t.Fatalf("Failed to update PodClique spec: %v", err)
 	}
 
 	// Wait for update to be marked complete
-	if err := waitForOnDeleteUpdateCompleteWithTimeout(tc, 1*time.Minute); err != nil {
+	if err = waitForOnDeleteUpdateCompleteWithTimeout(tc, 1*time.Minute); err != nil {
 		t.Fatalf("Failed to verify OnDelete update completion: %v", err)
 	}
 
 	tests.Logger.Info("4. Delete a pc-c pod manually and verify the replacement uses the new template")
 	// Delete the pod
-	if err := deletePodAndWaitForTermination(tc, podToDelete); err != nil {
+	if err = deletePodAndWaitForTermination(tc, podToDelete); err != nil {
 		t.Fatalf("Failed to delete pod and wait for replacement: %v", err)
 	}
 
-	if err := tests.WaitForRunningPods(tc, 10); err != nil {
+	if err = tests.WaitForRunningPods(tc, 10); err != nil {
 		t.Fatalf("Failed to wait for pod with new specification to be created")
 	}
 
@@ -365,7 +365,7 @@ func Test_OD5_PCSGManualDeletionCreatesUpdatedReplica(t *testing.T) {
 	tests.Logger.Debugf("New replacement pod: %s", newPodName)
 
 	// Verify the new pod has the updated spec
-	if err := verifyPodHasUpdatedSpec(tc, newPodName); err != nil {
+	if err = verifyPodHasUpdatedSpec(tc, newPodName); err != nil {
 		t.Fatalf("Replacement pod does not have updated spec: %v", err)
 	}
 
@@ -398,7 +398,7 @@ func Test_OD6_MixedPodCliquesAndPCSG(t *testing.T) {
 
 	tests.Logger.Info("3. Change the specification of ALL PodCliques (pc-a, pc-b, pc-c)")
 	for _, cliqueName := range []string{"pc-a", "pc-b", "pc-c"} {
-		if err := triggerPodCliqueUpdate(tc, cliqueName); err != nil {
+		if err = triggerPodCliqueUpdate(tc, cliqueName); err != nil {
 			t.Fatalf("Failed to update PodClique %s spec: %v", cliqueName, err)
 		}
 	}
@@ -419,21 +419,21 @@ func Test_OD6_MixedPodCliquesAndPCSG(t *testing.T) {
 
 	// Delete standalone pod
 	tests.Logger.Debugf("Deleting standalone pod: %s", standalonePodToDelete)
-	if err := deletePodAndWaitForTermination(tc, standalonePodToDelete); err != nil {
+	if err = deletePodAndWaitForTermination(tc, standalonePodToDelete); err != nil {
 		t.Fatalf("Failed to delete standalone pod and wait for replacement: %v", err)
 	}
 
-	if err := tests.WaitForRunningPods(tc, 10); err != nil {
+	if err = tests.WaitForRunningPods(tc, 10); err != nil {
 		t.Fatalf("Failed to wait for pod with new specification to be created")
 	}
 
 	// Delete PCSG pod
 	tests.Logger.Debugf("Deleting PCSG pod: %s", pcsgPodToDelete)
-	if err := deletePodAndWaitForTermination(tc, pcsgPodToDelete); err != nil {
+	if err = deletePodAndWaitForTermination(tc, pcsgPodToDelete); err != nil {
 		t.Fatalf("Failed to delete PCSG pod and wait for replacement: %v", err)
 	}
 
-	if err := tests.WaitForRunningPods(tc, 10); err != nil {
+	if err = tests.WaitForRunningPods(tc, 10); err != nil {
 		t.Fatalf("Failed to wait for pod with new specification to be created")
 	}
 
@@ -488,7 +488,7 @@ func Test_OD7_MultipleReplicasPCS(t *testing.T) {
 	}
 
 	tests.Logger.Info("3. Change the specification of pc-a")
-	if err := triggerPodCliqueUpdate(tc, "pc-a"); err != nil {
+	if err = triggerPodCliqueUpdate(tc, "pc-a"); err != nil {
 		t.Fatalf("Failed to update PodClique spec: %v", err)
 	}
 
@@ -574,7 +574,7 @@ func Test_OD8_NodeFailureRecoveryWorkflow(t *testing.T) {
 	tests.Logger.Debugf("Pods on healthy nodes (should not be disrupted): %d pods", len(healthyNodePods))
 
 	tests.Logger.Info("4. Update pc-a's nodeAffinity to exclude the failed node's hostname")
-	if err := excludeNodeFromPodCliqueAffinity(tc, "pc-a", failedNodeName); err != nil {
+	if err = excludeNodeFromPodCliqueAffinity(tc, "pc-a", failedNodeName); err != nil {
 		t.Fatalf("Failed to update pc-a nodeAffinity to exclude node %s: %v", failedNodeName, err)
 	}
 
@@ -583,11 +583,11 @@ func Test_OD8_NodeFailureRecoveryWorkflow(t *testing.T) {
 	verifyAllPodsFromOriginalSet(tc, existingPodNames)
 
 	tests.Logger.Info("6. Manually delete the pod on the 'failed node' (simulating eviction)")
-	if err := deletePodAndWaitForTermination(tc, podToEvict); err != nil {
+	if err = deletePodAndWaitForTermination(tc, podToEvict); err != nil {
 		t.Fatalf("Failed to delete pod (simulating eviction): %v", err)
 	}
 
-	if err := tests.WaitForRunningPods(tc, 10); err != nil {
+	if err = tests.WaitForRunningPods(tc, 10); err != nil {
 		t.Fatalf("Failed to wait for replacement pod to be created")
 	}
 
@@ -598,7 +598,7 @@ func Test_OD8_NodeFailureRecoveryWorkflow(t *testing.T) {
 	}
 	tests.Logger.Debugf("Replacement pod: %s (replaced evicted pod %s)", newPodName, podToEvict)
 
-	if err := verifyPodHasNodeAffinityExclusion(tc, newPodName, failedNodeName); err != nil {
+	if err = verifyPodHasNodeAffinityExclusion(tc, newPodName, failedNodeName); err != nil {
 		t.Fatalf("Replacement pod does not have expected nodeAffinity exclusion: %v", err)
 	}
 	verifyPodNotOnNode(tc, newPodName, failedNodeName)
@@ -635,7 +635,7 @@ func Test_OD9_StrategyTransition(t *testing.T) {
 	}
 
 	tests.Logger.Info("3. Update pc-a's spec and verify no auto-deletion (OnDelete behavior confirmed)")
-	if err := triggerPodCliqueUpdate(tc, "pc-a"); err != nil {
+	if err = triggerPodCliqueUpdate(tc, "pc-a"); err != nil {
 		t.Fatalf("Failed to update PodClique pc-a spec: %v", err)
 	}
 
@@ -643,7 +643,7 @@ func Test_OD9_StrategyTransition(t *testing.T) {
 	verifyAllPodsFromOriginalSet(tc, existingPodNames)
 
 	tests.Logger.Info("4. Switch strategy from OnDelete to RollingRecreate")
-	if err := updatePCSUpdateStrategy(tc, grovev1alpha1.RollingRecreateStrategy); err != nil {
+	if err = updatePCSUpdateStrategy(tc, grovev1alpha1.RollingRecreateStrategy); err != nil {
 		t.Fatalf("Failed to switch update strategy to RollingRecreate: %v", err)
 	}
 
@@ -655,7 +655,7 @@ func Test_OD9_StrategyTransition(t *testing.T) {
 	}
 
 	// Trigger update on pc-b — with RollingRecreate, this should automatically recreate pods
-	if err := triggerPodCliqueUpdate(tc, "pc-b"); err != nil {
+	if err = triggerPodCliqueUpdate(tc, "pc-b"); err != nil {
 		t.Fatalf("Failed to update PodClique pc-b spec: %v", err)
 	}
 
@@ -664,12 +664,12 @@ func Test_OD9_StrategyTransition(t *testing.T) {
 	// RollingRecreate should handle the update automatically
 	tcLongTimeout := tc
 	tcLongTimeout.Timeout = 2 * time.Minute
-	if err := waitForRollingUpdateComplete(tcLongTimeout, 1); err != nil {
+	if err = waitForRollingUpdateComplete(tcLongTimeout, 1); err != nil {
 		t.Fatalf("Rolling update did not complete after strategy switch to RollingRecreate: %v", err)
 	}
 
 	// Wait for all pods to be running
-	if err := tests.WaitForRunningPods(tc, 10); err != nil {
+	if err = tests.WaitForRunningPods(tc, 10); err != nil {
 		t.Fatalf("Failed to wait for pods after rolling update: %v", err)
 	}
 
@@ -692,7 +692,7 @@ func Test_OD9_StrategyTransition(t *testing.T) {
 	tests.Logger.Debugf("RollingRecreate automatically recreated %d pods", newPodsCreated)
 
 	tests.Logger.Info("6. Switch strategy back from RollingRecreate to OnDelete")
-	if err := updatePCSUpdateStrategy(tc, grovev1alpha1.OnDeleteStrategy); err != nil {
+	if err = updatePCSUpdateStrategy(tc, grovev1alpha1.OnDeleteStrategy); err != nil {
 		t.Fatalf("Failed to switch update strategy back to OnDelete: %v", err)
 	}
 
@@ -705,12 +705,12 @@ func Test_OD9_StrategyTransition(t *testing.T) {
 
 	// Start a new tracker for the OnDelete verification
 	tracker2 := newUpdateTracker()
-	if err := tracker2.start(tc); err != nil {
+	if err = tracker2.start(tc); err != nil {
 		t.Fatalf("Failed to start new tracker: %v", err)
 	}
 	defer tracker2.stop()
 
-	if err := triggerPodCliqueUpdate(tc, "pc-c"); err != nil {
+	if err = triggerPodCliqueUpdate(tc, "pc-c"); err != nil {
 		t.Fatalf("Failed to update PodClique pc-c spec: %v", err)
 	}
 
