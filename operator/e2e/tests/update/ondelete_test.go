@@ -25,7 +25,7 @@ import (
 	"time"
 
 	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	tests "github.com/ai-dynamo/grove/operator/e2e/tests"
+	"github.com/ai-dynamo/grove/operator/e2e/tests"
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -104,7 +104,7 @@ func Test_OD2_ManualDeletionCreatesUpdatedPod(t *testing.T) {
 	}
 
 	// Wait for update to be marked complete
-	if err := waitForOnDeleteUpdateCompleteDefault(tc); err != nil {
+	if err := waitForOnDeleteUpdateCompleteWithTimeout(tc, 1*time.Minute); err != nil {
 		t.Fatalf("Failed to verify OnDelete update completion: %v", err)
 	}
 
@@ -196,24 +196,24 @@ func Test_OD3_ScaleInPrefersOutdatedPods(t *testing.T) {
 	}
 
 	tests.Logger.Info("4. Change the specification of pc-a (triggering OnDelete update)")
-	if err := triggerPodCliqueUpdate(tc, "pc-a"); err != nil {
+	if err = triggerPodCliqueUpdate(tc, "pc-a"); err != nil {
 		t.Fatalf("Failed to update PodClique spec: %v", err)
 	}
 
 	// Wait for update to be marked complete
-	if err := waitForOnDeleteUpdateCompleteDefault(tc); err != nil {
+	if err = waitForOnDeleteUpdateCompleteWithTimeout(tc, 1*time.Minute); err != nil {
 		t.Fatalf("Failed to verify OnDelete update completion: %v", err)
 	}
 
 	tests.Logger.Info("5. Manually delete ONE pc-a pod to update it")
 	// Delete the first pod from pc-a to create one with updated spec
 	podToUpdate := oldPcaPods[0]
-	if err := deletePodAndWaitForTermination(tc, podToUpdate); err != nil {
+	if err = deletePodAndWaitForTermination(tc, podToUpdate); err != nil {
 		t.Fatalf("Failed to delete pod and wait for replacement: %v", err)
 	}
 
 	// wait for the new pc-a pod to be created
-	if err := tests.WaitForReadyPods(tc, 11); err != nil {
+	if err = tests.WaitForReadyPods(tc, 11); err != nil {
 		t.Fatalf("Failed to wait for pod with new specification to be created")
 	}
 
@@ -244,12 +244,12 @@ func Test_OD3_ScaleInPrefersOutdatedPods(t *testing.T) {
 	tests.Logger.Debugf("Updated pod: %s, remaining old pods: %v", updatedPod, oldPcaPods[1:])
 
 	tests.Logger.Info("6. Scale in pc-a from 3 to 2 replicas")
-	if err := scalePodCliqueInPCS(tc, "pc-a", 2); err != nil {
+	if err = scalePodCliqueInPCS(tc, "pc-a", 2); err != nil {
 		t.Fatalf("Failed to scale in PodClique pc-a: %v", err)
 	}
 
 	// Wait for scale-in to complete (back to 10 pods)
-	if err := tests.WaitForPods(tc, 10); err != nil {
+	if err = tests.WaitForPods(tc, 10); err != nil {
 		t.Fatalf("Failed to wait for pods after pc-a scale-in: %v", err)
 	}
 
@@ -343,7 +343,7 @@ func Test_OD5_PCSGManualDeletionCreatesUpdatedReplica(t *testing.T) {
 	}
 
 	// Wait for update to be marked complete
-	if err := waitForOnDeleteUpdateCompleteDefault(tc); err != nil {
+	if err := waitForOnDeleteUpdateCompleteWithTimeout(tc, 1*time.Minute); err != nil {
 		t.Fatalf("Failed to verify OnDelete update completion: %v", err)
 	}
 

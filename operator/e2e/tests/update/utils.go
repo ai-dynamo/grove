@@ -1317,10 +1317,6 @@ func waitForOnDeleteUpdateCompleteWithTimeout(tc tests.TestContext, timeout time
 	return waitForOnDeleteUpdateComplete(tcWithTimeout)
 }
 
-func waitForOnDeleteUpdateCompleteDefault(tc tests.TestContext) error {
-	return waitForOnDeleteUpdateCompleteWithTimeout(tc, 1*time.Minute)
-}
-
 func verifyNoAutomaticDeletionAfterUpdate(
 	tc tests.TestContext,
 	tracker *updateTracker,
