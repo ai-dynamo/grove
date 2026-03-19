@@ -25,6 +25,7 @@ import (
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/hash"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -111,7 +112,7 @@ func TestGetExistingResourceNames(t *testing.T) {
 			existingObjects := createExistingPodCliquesFromPCS(pcs, tc.podCliqueNamesNotOwnedByPCS)
 			// Create a fake client with PodCliques
 			cl := testutils.CreateFakeClientForObjectsMatchingLabels(nil, tc.listErr, pcs.Namespace, grovecorev1alpha1.SchemeGroupVersion.WithKind("PodClique"), getPodCliqueSelectorLabels(pcs.ObjectMeta), existingObjects...)
-			operator := New(cl, groveclientscheme.Scheme, record.NewFakeRecorder(10))
+			operator := New(cl, groveclientscheme.Scheme, record.NewFakeRecorder(10), hash.NewDefaultPodTemplateSpecHashCache(t.Context()))
 			actualPCLQNames, err := operator.GetExistingResourceNames(context.Background(), logr.Discard(), pcs.ObjectMeta)
 			if tc.expectedErr == nil {
 				assert.NoError(t, err)
@@ -164,7 +165,7 @@ func TestDelete(t *testing.T) {
 			existingPodCliques := createDefaultPodCliques(pcsObjMeta, "howl", tc.numExistingPodCliques)
 			// Create a fake client with PodCliques
 			cl := testutils.CreateFakeClientForObjectsMatchingLabels(tc.deleteError, nil, testPCSNamespace, grovecorev1alpha1.SchemeGroupVersion.WithKind("PodClique"), getPodCliqueSelectorLabels(pcsObjMeta), existingPodCliques...)
-			operator := New(cl, groveclientscheme.Scheme, record.NewFakeRecorder(10))
+			operator := New(cl, groveclientscheme.Scheme, record.NewFakeRecorder(10), hash.NewDefaultPodTemplateSpecHashCache(t.Context()))
 			err := operator.Delete(context.Background(), logr.Discard(), pcsObjMeta)
 			if tc.expectedError != nil {
 				testutils.CheckGroveError(t, tc.expectedError, err)
@@ -372,6 +373,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 			pclqTemplateSpec.Spec.PodSpec.Containers = tc.containers
 			pclqTemplateSpec.Spec.PodSpec.InitContainers = tc.initContainers
 			pcsBuilder.WithPodCliqueTemplateSpec(pclqTemplateSpec)
+			pcsBuilder.WithPriorityClassName("high-priority")
 
 			pcs := pcsBuilder.Build()
 
@@ -391,7 +393,10 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 				eventRecorder: record.NewFakeRecorder(10),
 			}
 
-			err := operator.buildResource(logr.Discard(), pclq, pcs, pcsReplica, false)
+			podTemplateHash, err := hash.ComputePCLQPodTemplateHash(pclqTemplateSpec, pcs.Spec.Template.PriorityClassName)
+			require.NoError(t, err)
+
+			err = operator.buildResource(logr.Discard(), pcs, pcsReplica, pclq, false, podTemplateHash)
 			require.NoError(t, err)
 
 			// Verify pod-level claims
