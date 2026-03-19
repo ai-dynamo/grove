@@ -21,7 +21,6 @@ import (
 	"slices"
 	"strings"
 
-	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 
@@ -43,22 +42,19 @@ var allowedStartupTypes = sets.New(grovecorev1alpha1.CliqueStartupTypeInOrder, g
 
 // pcsValidator validates PodCliqueSet resources for create and update operations.
 type pcsValidator struct {
-	operation              admissionv1.Operation
-	pcs                    *grovecorev1alpha1.PodCliqueSet
-	tasEnabled             bool
-	clusterTopologyDomains []string
+	operation             admissionv1.Operation
+	pcs                   *grovecorev1alpha1.PodCliqueSet
+	tasEnabled            bool
+	clusterTopologyLevels []grovecorev1alpha1.TopologyLevel
 }
 
 // newPCSValidator creates a new PodCliqueSet validator for the given operation.
-func newPCSValidator(pcs *grovecorev1alpha1.PodCliqueSet, operation admissionv1.Operation, tasConfig groveconfigv1alpha1.TopologyAwareSchedulingConfiguration) *pcsValidator {
-	topologyDomains := lo.Map(tasConfig.Levels, func(level grovecorev1alpha1.TopologyLevel, _ int) string {
-		return string(level.Domain)
-	})
+func newPCSValidator(pcs *grovecorev1alpha1.PodCliqueSet, operation admissionv1.Operation, tasEnabled bool, clusterTopologyLevels []grovecorev1alpha1.TopologyLevel) *pcsValidator {
 	return &pcsValidator{
-		operation:              operation,
-		pcs:                    pcs,
-		tasEnabled:             tasConfig.Enabled,
-		clusterTopologyDomains: topologyDomains,
+		operation:             operation,
+		pcs:                   pcs,
+		tasEnabled:            tasEnabled,
+		clusterTopologyLevels: clusterTopologyLevels,
 	}
 }
 
@@ -265,7 +261,7 @@ func (v *pcsValidator) validateTerminationDelay(fldPath *field.Path) field.Error
 }
 
 func (v *pcsValidator) validateTopologyConstraintsOnCreate() field.ErrorList {
-	topoConstraintsValidator := newTopologyConstraintsValidator(v.pcs, v.tasEnabled, v.clusterTopologyDomains)
+	topoConstraintsValidator := newTopologyConstraintsValidator(v.pcs, v.tasEnabled, v.clusterTopologyLevels)
 	return topoConstraintsValidator.validate()
 }
 
@@ -525,7 +521,7 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigsUpdate(oldConfigs []g
 }
 
 func (v *pcsValidator) validateTopologyConstraintsUpdate(oldPCS *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
-	return newTopologyConstraintsValidator(v.pcs, v.tasEnabled, v.clusterTopologyDomains).validateUpdate(oldPCS)
+	return newTopologyConstraintsValidator(v.pcs, v.tasEnabled, v.clusterTopologyLevels).validateUpdate(oldPCS)
 }
 
 // requiresOrderValidation checks if the StartupType requires clique order validation.
