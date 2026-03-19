@@ -160,6 +160,16 @@ func createDiagnosticsOutput(testName, mode, diagDir string) (io.WriteCloser, st
 	return newMultiWriteCloser(writers...), filename, nil
 }
 
+// resolveOutputPath resolves the full output path for filename.
+// Uses diagDir if set; otherwise returns filename as-is (relative to cwd).
+// Writability is not checked — callers must handle create errors.
+func resolveOutputPath(filename, diagDir string) string {
+	if diagDir != "" {
+		return filepath.Join(diagDir, filename)
+	}
+	return filename
+}
+
 // createDiagnosticsFile creates a timestamped diagnostics file.
 // The diagDir parameter specifies the directory for the file (empty string uses current dir, fallback to /tmp).
 func createDiagnosticsFile(testName, diagDir string) (*os.File, string, error) {

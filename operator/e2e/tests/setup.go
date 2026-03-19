@@ -36,6 +36,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var (
@@ -69,6 +70,11 @@ const (
 	// defaultPollInterval is the interval for most polling conditions
 	defaultPollInterval = 5 * time.Second
 
+	// scaleTestPollInterval defines the interval at which polling occurs during scale tests, set to 2 seconds.
+	scaleTestPollInterval = 2 * time.Second
+	// scaleTestTimeout defines the timeout for scale tests, set to 15 minutes.
+	scaleTestTimeout = 15 * time.Minute
+
 	// Grove label keys
 	LabelPodClique             = "grove.io/podclique"
 	LabelPodCliqueScalingGroup = "grove.io/podcliquescalinggroup"
@@ -82,6 +88,7 @@ type TestContext struct {
 	Clientset     kubernetes.Interface
 	DynamicClient dynamic.Interface
 	RestConfig    *rest.Config
+	CRClient      client.Client
 	Namespace     string
 	Timeout       time.Duration
 	Interval      time.Duration
@@ -146,12 +153,20 @@ func waitForPodCountAndPhases(tc TestContext, expectedTotal, expectedRunning, ex
 	return utils.WaitForPodCountAndPhases(tc.Ctx, tc.Clientset, tc.Namespace, tc.getLabelSelector(), expectedTotal, expectedRunning, expectedPending, tc.Timeout, tc.Interval)
 }
 
+// clientCollection holds all Kubernetes clients needed by tests.
+type clientCollection struct {
+	clientset     *kubernetes.Clientset
+	restConfig    *rest.Config
+	dynamicClient dynamic.Interface
+	crClient      client.Client
+}
+
 // prepareTestCluster is a helper function that prepares the shared cluster for a test
 // with the specified number of worker nodes and returns the necessary clients and a cleanup function.
 // The cleanup function will fatally fail the test if workload cleanup fails.
 // On test failure, it automatically collects diagnostics before cleanup.
 // On cleanup failure, it also collects diagnostics to help debug why cleanup failed.
-func prepareTestCluster(ctx context.Context, t *testing.T, requiredWorkerNodes int) (*kubernetes.Clientset, *rest.Config, dynamic.Interface, func()) {
+func prepareTestCluster(ctx context.Context, t *testing.T, requiredWorkerNodes int) (clientCollection, func()) {
 	t.Helper()
 
 	// Determine diagnostics configuration from environment variables at setup time for the test
@@ -172,7 +187,6 @@ func prepareTestCluster(ctx context.Context, t *testing.T, requiredWorkerNodes i
 	// Get clients from shared cluster
 	clientset, restConfig, dynamicClient := sharedCluster.GetClients()
 
-	// Create cleanup function that collects diagnostics on failure
 	cleanup := func() {
 		// Create a TestContext for diagnostics collection
 		// Uses "default" namespace since that's where most test workloads run
@@ -208,7 +222,9 @@ func prepareTestCluster(ctx context.Context, t *testing.T, requiredWorkerNodes i
 		}
 	}
 
-	return clientset, restConfig, dynamicClient, cleanup
+	crClient := sharedCluster.GetCRClient()
+
+	return clientCollection{clientset, restConfig, dynamicClient, crClient}, cleanup
 }
 
 // getWorkerNodes retrieves the names of all worker nodes in the cluster,

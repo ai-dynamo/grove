@@ -78,7 +78,7 @@ class ClusterConfig(BaseModel):
     lb_port: str = DEFAULT_LB_PORT
     k3s_image: str = DEFAULT_K3S_IMAGE
     max_retries: int = Field(default=DEFAULT_CLUSTER_CREATE_MAX_RETRIES, ge=1, le=10)
-    worker_nodes: int = Field(default=DEFAULT_WORKER_NODES, ge=1, le=100)
+    worker_nodes: int = Field(default=DEFAULT_WORKER_NODES, ge=0, le=100)
     worker_memory: str = Field(default=DEFAULT_WORKER_MEMORY, pattern=r"^\d+[mMgG]?$")
     dind_memory_mode: bool = False
 

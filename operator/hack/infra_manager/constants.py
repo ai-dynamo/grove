@@ -63,7 +63,7 @@ def dep_value(*keys: str, default: Any = None) -> Any:
 
 CLUSTER_TIMEOUT = "120s"
 NODES_PER_ZONE = 28
-NODES_PER_BLOCK = 14
+NODES_PER_BLOCK = 20
 NODES_PER_RACK = 7
 
 WEBHOOK_READY_MAX_RETRIES = 60
@@ -108,7 +108,6 @@ GROVE_OPERATOR_IMAGE = "grove-operator"
 GROVE_INITC_IMAGE = "grove-initc"
 GROVE_MODULE_PATH = "github.com/ai-dynamo/grove/operator/internal/version"
 KWOK_ANNOTATION_KEY = "kwok.x-k8s.io/node"
-KWOK_FAKE_NODE_TAINT_KEY = "fake-node"
 WEBHOOK_READY_KEYWORDS = ["validated", "denied", "error", "invalid", "created", "podcliqueset"]
 
 # -- Namespaces --

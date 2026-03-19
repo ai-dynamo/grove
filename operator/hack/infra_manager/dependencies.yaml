@@ -18,14 +18,14 @@ kai_scheduler:
   helm_chart: "oci://ghcr.io/kai-scheduler/kai-scheduler/kai-scheduler"
   images:
     # All Kai Scheduler component images
-    - "ghcr.io/kai-scheduler/KAI-Scheduler/admission"
-    - "ghcr.io/kai-scheduler/KAI-Scheduler/binder"
-    - "ghcr.io/kai-scheduler/KAI-Scheduler/crd-upgrader"
-    - "ghcr.io/kai-scheduler/KAI-Scheduler/operator"
-    - "ghcr.io/kai-scheduler/KAI-Scheduler/podgroupcontroller"
-    - "ghcr.io/kai-scheduler/KAI-Scheduler/podgrouper"
-    - "ghcr.io/kai-scheduler/KAI-Scheduler/queuecontroller"
-    - "ghcr.io/kai-scheduler/KAI-Scheduler/scheduler"
+    - "ghcr.io/kai-scheduler/kai-scheduler/admission"
+    - "ghcr.io/kai-scheduler/kai-scheduler/binder"
+    - "ghcr.io/kai-scheduler/kai-scheduler/crd-upgrader"
+    - "ghcr.io/kai-scheduler/kai-scheduler/operator"
+    - "ghcr.io/kai-scheduler/kai-scheduler/podgroupcontroller"
+    - "ghcr.io/kai-scheduler/kai-scheduler/podgrouper"
+    - "ghcr.io/kai-scheduler/kai-scheduler/queuecontroller"
+    - "ghcr.io/kai-scheduler/kai-scheduler/scheduler"
 
 cert_manager:
   version: "v1.14.4"

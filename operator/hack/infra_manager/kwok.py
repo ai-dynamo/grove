@@ -30,9 +30,9 @@ from infra_manager import console, logger
 from infra_manager.config import KwokConfig
 from infra_manager.constants import (
     DEFAULT_KWOK_VERSION,
+    E2E_NODE_ROLE_KEY,
     KWOK_ANNOTATION_KEY,
     KWOK_CONTROLLER_DEPLOYMENT,
-    KWOK_FAKE_NODE_TAINT_KEY,
     KWOK_IP_OCTET_SIZE,
     KWOK_IP_PREFIX,
     KWOK_MANIFESTS,
@@ -67,6 +67,7 @@ def topology_labels(node_id: int) -> dict[str, str]:
         LABEL_RACK: f"rack-{node_id // NODES_PER_RACK}",
         LABEL_HOSTNAME: f"kwok-node-{node_id}",
         LABEL_TYPE: LABEL_TYPE_KWOK,
+        E2E_NODE_ROLE_KEY: "agent",
     }
 
 
@@ -97,7 +98,11 @@ def node_manifest(node_id: int, kwok_cfg: KwokConfig) -> dict:
                 "node.alpha.kubernetes.io/ttl": "0",
             },
         },
-        "spec": {"taints": [{"effect": "NoSchedule", "key": KWOK_FAKE_NODE_TAINT_KEY, "value": "true"}]},
+        "spec": {
+            "taints": [
+                {"effect": "NoSchedule", "key": E2E_NODE_ROLE_KEY, "value": "agent"},
+            ]
+        },
         "status": {
             "capacity": resources,
             "allocatable": resources,

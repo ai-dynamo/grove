@@ -155,42 +155,42 @@ func Test_CM1_CertManagementRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	logger.Info("1. Initialize Grove with auto-provision mode (10 nodes for workload)")
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 10)
+	clients, cleanup := prepareTestCluster(ctx, t, 10)
 
 	logger.Info("2. Install cert-manager and create Certificate")
-	installCertManager(t, ctx, restConfig)
-	defer uninstallCertManager(t, restConfig)
+	installCertManager(t, ctx, clients.restConfig)
+	defer uninstallCertManager(t, clients.restConfig)
 	defer cleanup()
 
 	// Create Issuer and Certificate
 	// Create clients once and reuse them for better performance
-	_, restMapper, err := utils.CreateKubernetesClients(restConfig)
+	_, restMapper, err := utils.CreateKubernetesClients(clients.restConfig)
 	if err != nil {
 		t.Fatalf("Failed to create Kubernetes clients: %v", err)
 	}
-	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerIssuerYAML), "", dynamicClient, restMapper, logger); err != nil {
+	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerIssuerYAML), "", clients.dynamicClient, restMapper, logger); err != nil {
 		t.Fatalf("Failed to apply ClusterIssuer: %v", err)
 	}
-	waitForClusterIssuer(t, ctx, dynamicClient, "selfsigned-issuer")
+	waitForClusterIssuer(t, ctx, clients.dynamicClient, "selfsigned-issuer")
 
-	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerCertificateYAML), "", dynamicClient, restMapper, logger); err != nil {
+	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerCertificateYAML), "", clients.dynamicClient, restMapper, logger); err != nil {
 		t.Fatalf("Failed to apply Certificate: %v", err)
 	}
 
 	// Wait for cert-manager to actually take over the secret.
 	// This is critical because the secret may already exist from auto-provision mode,
 	// and we need to wait for cert-manager to update it (not just check existence).
-	waitForSecretManagedByCertManager(t, ctx, clientset, configv1alpha1.DefaultWebhookSecretName)
+	waitForSecretManagedByCertManager(t, ctx, clients.clientset, configv1alpha1.DefaultWebhookSecretName)
 
 	logger.Info("3. Upgrade Grove to use cert-manager (certProvisionMode=manual)")
-	updateGroveToCertManager(t, ctx, restConfig)
+	updateGroveToCertManager(t, ctx, clients.restConfig)
 
 	logger.Info("4. Verify cert-manager mode is active")
-	verifyCertManagerMode(t, ctx, clientset)
-	verifyWebhookServingCertificate(t, ctx, clientset, restConfig)
+	verifyCertManagerMode(t, ctx, clients.clientset)
+	verifyWebhookServingCertificate(t, ctx, clients.clientset, clients.restConfig)
 
 	logger.Info("5. Deploy and verify workload with cert-manager certs")
-	tc := createTestContext(t, ctx, clientset, dynamicClient, restConfig)
+	tc := createTestContext(t, ctx, clients.clientset, clients.dynamicClient, clients.restConfig)
 	if _, err := deployAndVerifyWorkload(tc); err != nil {
 		t.Fatalf("Failed to deploy workload in Cert-Manager mode: %v", err)
 	}
@@ -201,20 +201,20 @@ func Test_CM1_CertManagementRoundTrip(t *testing.T) {
 	}
 
 	logger.Info("6. Remove cert-manager resources")
-	deleteCertManagerResources(ctx, clientset, dynamicClient)
-	waitForSecret(t, ctx, clientset, configv1alpha1.DefaultWebhookSecretName, false)
+	deleteCertManagerResources(ctx, clients.clientset, clients.dynamicClient)
+	waitForSecret(t, ctx, clients.clientset, configv1alpha1.DefaultWebhookSecretName, false)
 
 	logger.Info("7. Upgrade Grove back to auto-provision mode")
-	updateGroveToAutoProvision(t, ctx, restConfig)
-	waitForSecret(t, ctx, clientset, configv1alpha1.DefaultWebhookSecretName, true)
+	updateGroveToAutoProvision(t, ctx, clients.restConfig)
+	waitForSecret(t, ctx, clients.clientset, configv1alpha1.DefaultWebhookSecretName, true)
 
 	logger.Info("8. Verify auto-provision mode is active")
-	verifyAutoProvisionMode(t, ctx, clientset)
-	verifyWebhookServingCertificate(t, ctx, clientset, restConfig)
+	verifyAutoProvisionMode(t, ctx, clients.clientset)
+	verifyWebhookServingCertificate(t, ctx, clients.clientset, clients.restConfig)
 
 	logger.Info("9. Delete and redeploy workload to test webhooks with auto-provisioned certs")
 	// Delete the existing workload to test that webhooks work with new certs
-	deletePodCliqueSetAndWait(t, ctx, dynamicClient, tc.Workload.Name, tc.Namespace)
+	deletePodCliqueSetAndWait(t, ctx, clients.dynamicClient, tc.Workload.Name, tc.Namespace)
 
 	// Redeploy workload - this will exercise the validating and mutating webhooks
 	if _, err := deployAndVerifyWorkload(tc); err != nil {
