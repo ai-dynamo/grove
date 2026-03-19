@@ -14,7 +14,7 @@
 # - Version defaults (can be overridden via E2E_* environment variables)
 
 kai_scheduler:
-  version: "v0.13.2"
+  version: "v0.13.3"
   helm_chart: "oci://ghcr.io/kai-scheduler/kai-scheduler/kai-scheduler"
   images:
     # All Kai Scheduler component images

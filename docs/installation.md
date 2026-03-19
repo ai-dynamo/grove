@@ -213,4 +213,4 @@ If you encounter issues not covered here:
 Currently the following schedulers support gang scheduling of `PodGang`s created by the Grove operator:
 
 - [kai-scheduler/kai-scheduler](https://github.com/kai-scheduler/kai-scheduler)
-  - Topology Aware Scheduling (TAS) requires [v0.13.2](https://github.com/kai-scheduler/kai-scheduler/releases/tag/v0.13.2)+
+  - Topology Aware Scheduling (TAS) requires [v0.13.3](https://github.com/kai-scheduler/kai-scheduler/releases/tag/v0.13.3)+
