@@ -1,0 +1,33 @@
+# ServiceAccount and RBAC for Pods that run the restart-watcher sidecar.
+# The watcher needs to read the ConfigMap "grove-restart-control" in the same namespace.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: grove-restart-demo
+  namespace: grove-restart-demo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: grove-restart-configmap-reader
+  namespace: grove-restart-demo
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["grove-restart-control"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: grove-restart-demo-read-configmap
+  namespace: grove-restart-demo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: grove-restart-configmap-reader
+subjects:
+  - kind: ServiceAccount
+    name: grove-restart-demo
+    namespace: grove-restart-demo

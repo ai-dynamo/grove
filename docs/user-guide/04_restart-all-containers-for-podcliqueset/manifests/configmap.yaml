@@ -1,0 +1,10 @@
+# ConfigMap watched by restart-watcher sidecars.
+# Increment data.restartGeneration to trigger in-place RestartAllContainers on all Pods
+# that have the watcher sidecar.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grove-restart-control
+  namespace: grove-restart-demo
+data:
+  restartGeneration: "0"
