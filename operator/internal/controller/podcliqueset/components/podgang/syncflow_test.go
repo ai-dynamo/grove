@@ -872,10 +872,11 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			// Setup
-			var pcsTopologyConstraint *grovecorev1alpha1.TopologyConstraint
+			var pcsTopologyConstraint *grovecorev1alpha1.PodCliqueSetTopologyConstraint
 			if tc.pcsTopologyLevel != nil {
-				pcsTopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
-					PackDomain: tc.pcsTopologyLevel.Domain,
+				pcsTopologyConstraint = &grovecorev1alpha1.PodCliqueSetTopologyConstraint{
+					TopologyName: "test-topology",
+					PackDomain:   tc.pcsTopologyLevel.Domain,
 				}
 			}
 			pcs := &grovecorev1alpha1.PodCliqueSet{
