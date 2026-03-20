@@ -56,16 +56,16 @@ const (
 
 func Test_ScaleTest_1000(t *testing.T) {
 	diagDir := os.Getenv(DiagnosticsDirEnvVar)
-	logger.Infof("starting scale test: %d expected pods, timeout %v", scaleTestExpectedPods, scaleTestTimeout)
+	Logger.Infof("starting scale test: %d expected pods, timeout %v", scaleTestExpectedPods, scaleTestTimeout)
 
 	ctx, cancel := context.WithTimeout(context.Background(), scaleTestTimeout)
 	defer cancel()
 
-	logger.Info("preparing test cluster with 100 worker nodes")
-	clients, cleanup := prepareTestCluster(ctx, t, 100)
+	Logger.Info("preparing test cluster with 100 worker nodes")
+	clients, cleanup := PrepareTestCluster(ctx, t, 100)
 	defer cleanup()
 
-	metadata, err := utils.ReadGroveMetadata(ctx, clients.crClient)
+	metadata, err := utils.ReadGroveMetadata(ctx, clients.CRClient)
 	if err != nil {
 		t.Fatalf("failed to read grove metadata: %v", err)
 	}
@@ -73,10 +73,10 @@ func Test_ScaleTest_1000(t *testing.T) {
 	tc := TestContext{
 		T:             t,
 		Ctx:           ctx,
-		Clientset:     clients.clientset,
-		RestConfig:    clients.restConfig,
-		DynamicClient: clients.dynamicClient,
-		CRClient:      clients.crClient,
+		Clientset:     clients.Clientset,
+		RestConfig:    clients.RestConfig,
+		DynamicClient: clients.DynamicClient,
+		CRClient:      clients.CRClient,
 		Namespace:     "default",
 		Timeout:       scaleTestTimeout,
 		Interval:      scaleTestPollInterval,
@@ -89,7 +89,7 @@ func Test_ScaleTest_1000(t *testing.T) {
 	}
 
 	runID := fmt.Sprintf("run-%s", time.Now().Format("20060102-150405"))
-	logger.Infof("test config: runID=%s, namespace=%s, pcsName=%s", runID, tc.Namespace, tc.Workload.Name)
+	Logger.Infof("test config: runID=%s, namespace=%s, pcsName=%s", runID, tc.Namespace, tc.Workload.Name)
 
 	tracker := measurement.NewTimelineTracker(
 		"ScaleTest_1000",
@@ -97,13 +97,13 @@ func Test_ScaleTest_1000(t *testing.T) {
 		tc.Namespace,
 		1,
 		measurement.WithPollInterval(scaleTestPollInterval),
-		measurement.WithLogger(logger.GetLogr()),
+		measurement.WithLogger(Logger.GetLogr()),
 	)
 
 	tracker.AddPhase(measurement.PhaseDefinition{
 		Name: "deploy",
 		ActionFn: func(ctx context.Context) error {
-			_, err := utils.ApplyYAMLFile(ctx, tc.Workload.YAMLPath, tc.Namespace, tc.RestConfig, logger)
+			_, err := utils.ApplyYAMLFile(ctx, tc.Workload.YAMLPath, tc.Namespace, tc.RestConfig, Logger)
 			return err
 		},
 		Milestones: []measurement.MilestoneDefinition{
@@ -112,7 +112,7 @@ func Test_ScaleTest_1000(t *testing.T) {
 				Condition: &condition.PodsCreatedCondition{
 					Client:        tc.CRClient,
 					Namespace:     tc.Namespace,
-					LabelSelector: tc.getLabelSelector(),
+					LabelSelector: tc.GetLabelSelector(),
 					ExpectedCount: scaleTestExpectedPods,
 				},
 			},
@@ -121,7 +121,7 @@ func Test_ScaleTest_1000(t *testing.T) {
 				Condition: &condition.PodsReadyCondition{
 					Client:        tc.CRClient,
 					Namespace:     tc.Namespace,
-					LabelSelector: tc.getLabelSelector(),
+					LabelSelector: tc.GetLabelSelector(),
 					ExpectedCount: scaleTestExpectedPods,
 				},
 			},
@@ -154,15 +154,15 @@ func Test_ScaleTest_1000(t *testing.T) {
 		},
 	})
 
-	logger.Info("running timeline tracker")
+	Logger.Info("running timeline tracker")
 	result, err := tracker.Run(ctx, toOperatorMetadata(metadata))
 	if err != nil {
 		t.Fatalf("Timeline tracker run failed: %v", err)
 	}
 
-	logger.Info("exporting results")
+	Logger.Info("exporting results")
 	exportResult(t, result, diagDir)
-	logger.Infof("scale test completed successfully in %.1fs", result.TestDurationSeconds)
+	Logger.Infof("scale test completed successfully in %.1fs", result.TestDurationSeconds)
 }
 
 func exportResult(t *testing.T, result *measurement.TrackerResult, diagDir string) {

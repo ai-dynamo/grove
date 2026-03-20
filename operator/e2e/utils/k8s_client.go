@@ -41,9 +41,11 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/util/retry"
 
+	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	kubeutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 )
 
@@ -516,4 +518,19 @@ func scaleCRD(ctx context.Context, dynamicClient dynamic.Interface, gvr schema.G
 	}
 
 	return nil
+}
+
+// GetPodCliqueSet returns the PodCliqueSet in `namespace` with `workloadName`
+func GetPodCliqueSet(ctx context.Context, dynamicClient dynamic.Interface, workloadName, namespace string) (*grovev1alpha1.PodCliqueSet, error) {
+	unstructuredPCS, err := dynamicClient.Resource(PodCliqueSetGVR).Namespace(namespace).Get(ctx, workloadName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get PodCliqueSet: %w", err)
+	}
+
+	var pcs grovev1alpha1.PodCliqueSet
+	if err := ConvertUnstructuredToTyped(unstructuredPCS.Object, &pcs); err != nil {
+		return nil, fmt.Errorf("failed to convert to PodCliqueSet: %w", err)
+	}
+
+	return &pcs, nil
 }
