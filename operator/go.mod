@@ -3,13 +3,13 @@ module github.com/ai-dynamo/grove/operator
 go 1.25.0
 
 require (
-	github.com/NVIDIA/KAI-scheduler v0.12.0
 	github.com/ai-dynamo/grove/operator/api v0.0.0
 	github.com/ai-dynamo/grove/operator/client v0.0.0-00010101000000-000000000000
 	github.com/ai-dynamo/grove/scheduler/api v0.0.0
 	github.com/docker/docker v28.3.3+incompatible
 	github.com/go-logr/logr v1.4.3
 	github.com/go-logr/zapr v1.3.0
+	github.com/kai-scheduler/KAI-scheduler v0.13.3
 	github.com/open-policy-agent/cert-controller v0.14.0
 	github.com/samber/lo v1.52.0
 	github.com/spf13/pflag v1.0.10
@@ -131,7 +131,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.35.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	go.yaml.in/yaml/v2 v2.4.2 // indirect
+	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/crypto v0.45.0 // indirect
 	golang.org/x/net v0.47.0 // indirect

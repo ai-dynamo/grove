@@ -24,8 +24,8 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
-	kaitopologyv1alpha1 "github.com/NVIDIA/KAI-scheduler/pkg/apis/kai/v1alpha1"
 	"github.com/go-logr/logr"
+	kaitopologyv1alpha1 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/kai/v1alpha1"
 	"github.com/samber/lo"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -149,7 +149,7 @@ func ensureKAITopology(ctx context.Context, cl client.Client, logger logr.Logger
 
 	if isKAITopologyChanged(existingTopology, desiredTopology) {
 		// KAI Topology needs to be updated. Since KAI Topology has immutable levels, we need to delete and recreate it.
-		// See https://github.com/NVIDIA/KAI-Scheduler/blob/130ab4468f96b25b1899ad2eced0a072dff033e9/pkg/apis/kai/v1alpha1/topology_types.go#L60
+		// See https://github.com/kai-scheduler/KAI-Scheduler/blob/130ab4468f96b25b1899ad2eced0a072dff033e9/pkg/apis/kai/v1alpha1/topology_types.go#L60
 		if err = cl.Delete(ctx, existingTopology); err != nil {
 			return fmt.Errorf("failed to recreate (action: delete) existing KAI Topology %s: %w", name, err)
 		}
