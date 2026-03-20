@@ -96,9 +96,9 @@ func GetPodGroupOrFail(t *testing.T, tc TestContext, pcsReplica int) *kaischedul
 	return podGroup
 }
 
-// Test_TAS1_TopologyInfrastructure verifies that the operator creates ClusterTopology and KAI Topology CRs at startup
-// 1. Verify ClusterTopology CR exists with the correct 4-level hierarchy (zone, block, rack, host)
-// 2. Verify KAI Topology CR exists with matching levels
+// Test_TAS1_TopologyInfrastructure verifies the ClusterTopology controller auto-creates KAI Topology
+// 1. Create a ClusterTopology CR with a 4-level hierarchy (zone, block, rack, host)
+// 2. Verify KAI Topology CR is auto-created with matching levels
 // 3. Verify KAI Topology has owner reference to ClusterTopology
 // 4. Verify worker nodes have topology labels
 func Test_TAS1_TopologyInfrastructure(t *testing.T) {
@@ -107,20 +107,27 @@ func Test_TAS1_TopologyInfrastructure(t *testing.T) {
 	clients, cleanup := prepareTestCluster(ctx, t, 0)
 	defer cleanup()
 
-	logger.Info("1. Verify ClusterTopology CR exists with correct 4-level hierarchy")
+	const topologyName = "e2e-infra-topology"
+
+	logger.Info("1. Create ClusterTopology CR with 4-level hierarchy")
 
 	expectedLevels := []corev1alpha1.TopologyLevel{
-		{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
-		{Domain: corev1alpha1.TopologyDomainBlock, Key: setup.TopologyLabelBlock},
-		{Domain: corev1alpha1.TopologyDomainRack, Key: setup.TopologyLabelRack},
-		{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
+		{Domain: "zone", Key: setup.TopologyLabelZone},
+		{Domain: "block", Key: setup.TopologyLabelBlock},
+		{Domain: "rack", Key: setup.TopologyLabelRack},
+		{Domain: "host", Key: setup.TopologyLabelHostname},
 	}
 
-	if err := utils.VerifyClusterTopologyLevels(ctx, clients.dynamicClient, corev1alpha1.DefaultClusterTopologyName, expectedLevels, logger); err != nil {
+	if err := utils.CreateClusterTopology(ctx, dynamicClient, topologyName, expectedLevels, logger); err != nil {
+		t.Fatalf("Failed to create ClusterTopology: %v", err)
+	}
+	defer utils.DeleteClusterTopology(ctx, dynamicClient, topologyName, logger) //nolint:errcheck
+
+	if err := utils.VerifyClusterTopologyLevels(ctx, clients.dynamicClient, topologyName, expectedLevels, logger); err != nil {
 		t.Fatalf("Failed to verify ClusterTopology levels: %v", err)
 	}
 
-	logger.Info("2. Verify KAI Topology CR exists with matching levels and owner reference")
+	logger.Info("2. Verify KAI Topology CR is auto-created with matching levels and owner reference")
 
 	expectedKeys := []string{
 		setup.TopologyLabelZone,
@@ -129,13 +136,12 @@ func Test_TAS1_TopologyInfrastructure(t *testing.T) {
 		setup.TopologyLabelHostname,
 	}
 
-	if err := utils.VerifyKAITopologyLevels(ctx, clients.dynamicClient, corev1alpha1.DefaultClusterTopologyName, expectedKeys, logger); err != nil {
+	if err := utils.WaitForKAITopology(ctx, clients.dynamicClient, topologyName, expectedKeys, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to verify KAI Topology levels: %v", err)
 	}
 
 	logger.Info("3. Verify worker nodes have topology labels")
 
-	// Use label selector to get only worker nodes by role label
 	workerLabelSelector := setup.GetWorkerNodeLabelSelector()
 	nodes, err := clients.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{
 		LabelSelector: workerLabelSelector,
@@ -144,7 +150,6 @@ func Test_TAS1_TopologyInfrastructure(t *testing.T) {
 		t.Fatalf("Failed to list nodes: %v", err)
 	}
 
-	// Reuse expectedKeys from step 2 (same topology label keys)
 	workerCount := len(nodes.Items)
 	for _, node := range nodes.Items {
 		for _, key := range expectedKeys {
@@ -159,7 +164,6 @@ func Test_TAS1_TopologyInfrastructure(t *testing.T) {
 	}
 
 	logger.Infof("Successfully verified topology labels on %d worker nodes", workerCount)
-	logger.Info("🎉 Topology Infrastructure test completed successfully!")
 }
 
 // Test_TAS2_MultipleCliquesWithDifferentConstraints tests PCS with multiple cliques having different topology constraints

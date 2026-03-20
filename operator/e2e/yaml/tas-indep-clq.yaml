@@ -2,6 +2,21 @@
 # Test scenario: PCS with no constraint, but individual cliques have different constraints (rack vs block)
 ---
 apiVersion: grove.io/v1alpha1
+kind: ClusterTopology
+metadata:
+  name: e2e-topology
+spec:
+  levels:
+    - domain: zone
+      key: kubernetes.io/zone
+    - domain: block
+      key: kubernetes.io/block
+    - domain: rack
+      key: kubernetes.io/rack
+    - domain: host
+      key: kubernetes.io/hostname
+---
+apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
   name: tas-indep-clq
@@ -10,7 +25,9 @@ metadata:
 spec:
   replicas: 1
   template:
-    # NO topology constraint at PCS level
+    topologyConstraint:
+      topologyName: e2e-topology
+    # NO packDomain at PCS level
     cliques:
       - name: worker-rack
         labels:

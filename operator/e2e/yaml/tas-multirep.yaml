@@ -2,6 +2,21 @@
 # Test scenario: PCS with 2 replicas, each replica packs in separate rack
 ---
 apiVersion: grove.io/v1alpha1
+kind: ClusterTopology
+metadata:
+  name: e2e-topology
+spec:
+  levels:
+    - domain: zone
+      key: kubernetes.io/zone
+    - domain: block
+      key: kubernetes.io/block
+    - domain: rack
+      key: kubernetes.io/rack
+    - domain: host
+      key: kubernetes.io/hostname
+---
+apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
   name: tas-multirep
@@ -11,6 +26,7 @@ spec:
   replicas: 2  # Creates 2 separate PodGangs (one per replica)
   template:
     topologyConstraint:
+      topologyName: e2e-topology
       packDomain: rack  # Each replica gang packs within its own rack
     cliques:
       - name: worker
