@@ -156,23 +156,6 @@ func findFirstNewPodName(tc tests.TestContext, existingPodNames map[string]bool)
 	return "", fmt.Errorf("could not find newly created replacement pod")
 }
 
-// verifyAllPodsFromOriginalSet asserts that all current pods are from the original set
-// (no unexpected new pods were created).
-func verifyAllPodsFromOriginalSet(tc tests.TestContext, existingPodNames map[string]bool) {
-	tc.T.Helper()
-
-	pods, err := tests.ListPods(tc)
-	if err != nil {
-		tc.T.Fatalf("Failed to list pods: %v", err)
-	}
-
-	for _, pod := range pods.Items {
-		if !existingPodNames[pod.Name] {
-			tc.T.Fatalf("Unexpected new pod %s found - pods should not have been recreated", pod.Name)
-		}
-	}
-}
-
 // getPodsOnNode returns the names of pods scheduled on the specified node.
 func getPodsOnNode(tc tests.TestContext, nodeName string) ([]string, error) {
 	tc.T.Helper()

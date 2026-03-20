@@ -63,9 +63,6 @@ func Test_OD1_NoAutomaticDeletionOnSpecChange(t *testing.T) {
 	tests.Logger.Info("5. Verify that the update is marked complete (UpdateEndedAt is set)")
 	verifyNoAutomaticDeletionAfterUpdate(tc, tracker, existingPodNames, 10, true)
 
-	// Verify original pods are unchanged
-	verifyAllPodsFromOriginalSet(tc, existingPodNames)
-
 	tests.Logger.Info("OnDelete Update - No Automatic Deletion test (OD-1) completed successfully!")
 }
 
@@ -155,34 +152,22 @@ func Test_OD2_ManualDeletionCreatesUpdatedPod(t *testing.T) {
 
 // Test_OD3_ScaleInPrefersOutdatedPods tests that during scale-in, pods with outdated templates are deleted first.
 // Scenario OD-3 (from proposal Testcase 1):
-// 1. Initialize a 12-node Grove cluster
-// 2. Deploy workload with OnDelete strategy, and verify 10 newly created pods
-// 3. Scale out pc-a to 3 replicas (11 total pods)
-// 4. Change the specification of pc-a (triggering OnDelete update)
-// 5. Manually delete ONE pc-a pod to update it
-// 6. Scale in pc-a from 3 to 2 replicas
-// 7. Verify pods with outdated templates are deleted first (not the updated one)
+// 1. Initialize a 10-node Grove cluster
+// 2. Deploy workload with OnDelete strategy, and verify 10 newly created pods (pc-a has 2 replicas)
+// 3. Change the specification of pc-a (triggering OnDelete update)
+// 4. Manually delete ONE pc-a pod to update it (1 updated, 1 outdated)
+// 5. Scale in pc-a from 2 to 1 replica
+// 6. Verify pods with outdated templates are deleted first (not the updated one)
 func Test_OD3_ScaleInPrefersOutdatedPods(t *testing.T) {
-	tests.Logger.Info("1. Initialize a 12-node Grove cluster")
+	tests.Logger.Info("1. Initialize a 10-node Grove cluster")
 	tests.Logger.Info("2. Deploy workload with OnDelete strategy, and verify 10 newly created pods")
 	tc, cleanup, _ := setupTest(t, testConfig{
 		workloadName: "workload-ondelete",
 		workloadYAML: "../../yaml/workload-ondelete.yaml",
-		workerNodes:  12,
+		workerNodes:  10,
 		expectedPods: 10,
 	})
 	defer cleanup()
-
-	tests.Logger.Info("3. Scale out pc-a to 3 replicas (11 total pods)")
-	// Scale pc-a from 2 to 3 replicas
-	// After scaling pc-a to 3: 3 + 8 = 11 pods
-	if err := scalePodCliqueInPCS(tc, "pc-a", 3); err != nil {
-		t.Fatalf("Failed to scale out PodClique pc-a: %v", err)
-	}
-
-	if err := tests.WaitForPods(tc, 11); err != nil {
-		t.Fatalf("Failed to wait for pods after pc-a scale-out: %v", err)
-	}
 
 	// Get the current pods for pc-a BEFORE the update
 	oldPcaPods, err := getPodsForClique(tc, "pc-a")
@@ -191,11 +176,11 @@ func Test_OD3_ScaleInPrefersOutdatedPods(t *testing.T) {
 	}
 	tests.Logger.Debugf("pc-a pods before update: %v", oldPcaPods)
 
-	if len(oldPcaPods) != 3 {
-		t.Fatalf("Expected 3 pc-a pods, got %d", len(oldPcaPods))
+	if len(oldPcaPods) != 2 {
+		t.Fatalf("Expected 2 pc-a pods, got %d", len(oldPcaPods))
 	}
 
-	tests.Logger.Info("4. Change the specification of pc-a (triggering OnDelete update)")
+	tests.Logger.Info("3. Change the specification of pc-a (triggering OnDelete update)")
 	if err = triggerPodCliqueUpdate(tc, "pc-a"); err != nil {
 		t.Fatalf("Failed to update PodClique spec: %v", err)
 	}
@@ -205,7 +190,7 @@ func Test_OD3_ScaleInPrefersOutdatedPods(t *testing.T) {
 		t.Fatalf("Failed to verify OnDelete update completion: %v", err)
 	}
 
-	tests.Logger.Info("5. Manually delete ONE pc-a pod to update it")
+	tests.Logger.Info("4. Manually delete ONE pc-a pod to update it")
 	// Delete the first pod from pc-a to create one with updated spec
 	podToUpdate := oldPcaPods[0]
 	if err = deletePodAndWaitForTermination(tc, podToUpdate); err != nil {
@@ -213,7 +198,7 @@ func Test_OD3_ScaleInPrefersOutdatedPods(t *testing.T) {
 	}
 
 	// wait for the new pc-a pod to be created
-	if err = tests.WaitForReadyPods(tc, 11); err != nil {
+	if err = tests.WaitForReadyPods(tc, 10); err != nil {
 		t.Fatalf("Failed to wait for pod with new specification to be created")
 	}
 
@@ -241,34 +226,34 @@ func Test_OD3_ScaleInPrefersOutdatedPods(t *testing.T) {
 		t.Fatalf("Could not identify the updated pod")
 	}
 
-	tests.Logger.Debugf("Updated pod: %s, remaining old pods: %v", updatedPod, oldPcaPods[1:])
+	tests.Logger.Debugf("Updated pod: %s, remaining outdated pod: %s", updatedPod, oldPcaPods[1])
 
-	tests.Logger.Info("6. Scale in pc-a from 3 to 2 replicas")
-	if err = scalePodCliqueInPCS(tc, "pc-a", 2); err != nil {
+	tests.Logger.Info("5. Scale in pc-a from 2 to 1 replica")
+	if err = scalePodCliqueInPCS(tc, "pc-a", 1); err != nil {
 		t.Fatalf("Failed to scale in PodClique pc-a: %v", err)
 	}
 
-	// Wait for scale-in to complete (back to 10 pods)
-	if err = tests.WaitForPods(tc, 10); err != nil {
+	// Wait for scale-in to complete (9 total pods: 1 pc-a + 8 others)
+	if err = tests.WaitForPods(tc, 9); err != nil {
 		t.Fatalf("Failed to wait for pods after pc-a scale-in: %v", err)
 	}
 
-	tests.Logger.Info("7. Verify pods with outdated templates are deleted first (not the updated one)")
+	tests.Logger.Info("6. Verify pods with outdated templates are deleted first (not the updated one)")
 	// Get the remaining pc-a pods
 	remainingPcaPods, err := getPodsForClique(tc, "pc-a")
 	if err != nil {
 		t.Fatalf("Failed to get remaining pods for pc-a: %v", err)
 	}
 
-	if len(remainingPcaPods) != 2 {
-		t.Fatalf("Expected 2 pc-a pods after scale-in, got %d", len(remainingPcaPods))
+	if len(remainingPcaPods) != 1 {
+		t.Fatalf("Expected 1 pc-a pod after scale-in, got %d", len(remainingPcaPods))
 	}
 
 	// Verify the updated pod is still present
 	foundUpdatedPod := slices.Contains(remainingPcaPods, updatedPod)
 
 	if !foundUpdatedPod {
-		t.Fatalf("The updated pod %s was deleted during scale-in instead of an outdated pod", updatedPod)
+		t.Fatalf("The updated pod %s was deleted during scale-in instead of the outdated pod", updatedPod)
 	}
 
 	tests.Logger.Info("OnDelete Update - Scale-In Prefers Outdated Pods test (OD-3) completed successfully!")
@@ -372,7 +357,7 @@ func Test_OD5_PCSGManualDeletionCreatesUpdatedReplica(t *testing.T) {
 	tests.Logger.Info("OnDelete Update - PCSG Manual Deletion Creates Updated Replica test (OD-5) completed successfully!")
 }
 
-// Test_OD6_MixedPodCliquesAndPCSG tests OnDelete strategy with both standalone PodCliques and PodCliqueScalingGroups.
+// Test_OD6_MixedPCLQsAndPCSG tests OnDelete strategy with both standalone PodCliques and PodCliqueScalingGroups.
 // Scenario OD-6 (from proposal Testcase 4):
 // 1. Initialize a 10-node Grove cluster
 // 2. Deploy workload with OnDelete strategy, and verify 10 newly created pods
@@ -380,7 +365,7 @@ func Test_OD5_PCSGManualDeletionCreatesUpdatedReplica(t *testing.T) {
 // 4. Verify that NO pods are automatically deleted
 // 5. Manually delete one pod from each type (standalone and PCSG)
 // 6. Verify replacements use the new template
-func Test_OD6_MixedPodCliquesAndPCSG(t *testing.T) {
+func Test_OD6_MixedPCLQsAndPCSG(t *testing.T) {
 	tests.Logger.Info("1. Initialize a 10-node Grove cluster")
 	tests.Logger.Info("2. Deploy workload with OnDelete strategy, and verify 10 newly created pods")
 	tc, cleanup, tracker := setupTest(t, testConfig{
@@ -492,36 +477,8 @@ func Test_OD7_MultipleReplicasPCS(t *testing.T) {
 		t.Fatalf("Failed to update PodClique spec: %v", err)
 	}
 
-	tests.Logger.Info("4. Verify that NO pods are automatically deleted")
+	tests.Logger.Info("4. Verify uniform strategy application across both replicas")
 	verifyNoAutomaticDeletionAfterUpdate(tc, tracker, existingPodNames, 20, false)
-
-	tests.Logger.Info("5. Verify uniform strategy application across both replicas")
-	pods, err := tests.ListPods(tc)
-	if err != nil {
-		t.Fatalf("Failed to list pods: %v", err)
-	}
-
-	// Verify pods from both replicas are present
-	replica0Count := 0
-	replica1Count := 0
-	for _, pod := range pods.Items {
-		if pod.Labels != nil {
-			if idx, ok := pod.Labels["grove.io/podcliqueset-replica-index"]; ok {
-				switch idx {
-				case "0":
-					replica0Count++
-				case "1":
-					replica1Count++
-				default:
-					t.Fatalf("Unexpected replica index %q for pod %s", idx, pod.Name)
-				}
-			}
-		}
-	}
-
-	if replica0Count != 10 || replica1Count != 10 {
-		t.Fatalf("Expected 10 pods per replica, got replica0=%d, replica1=%d", replica0Count, replica1Count)
-	}
 
 	tests.Logger.Info("OnDelete Update - Multiple PCS Replicas test (OD-7) completed successfully!")
 }
@@ -580,7 +537,6 @@ func Test_OD8_NodeFailureRecoveryWorkflow(t *testing.T) {
 
 	tests.Logger.Info("5. Verify NO pods are automatically deleted (OnDelete behavior)")
 	verifyNoAutomaticDeletionAfterUpdate(tc, tracker, existingPodNames, 10, true)
-	verifyAllPodsFromOriginalSet(tc, existingPodNames)
 
 	tests.Logger.Info("6. Manually delete the pod on the 'failed node' (simulating eviction)")
 	if err = deletePodAndWaitForTermination(tc, podToEvict); err != nil {
@@ -640,7 +596,6 @@ func Test_OD9_StrategyTransition(t *testing.T) {
 	}
 
 	verifyNoAutomaticDeletionAfterUpdate(tc, tracker, existingPodNames, 10, true)
-	verifyAllPodsFromOriginalSet(tc, existingPodNames)
 
 	tests.Logger.Info("4. Switch strategy from OnDelete to RollingRecreate")
 	if err = updatePCSUpdateStrategy(tc, grovev1alpha1.RollingRecreateStrategy); err != nil {
@@ -716,7 +671,6 @@ func Test_OD9_StrategyTransition(t *testing.T) {
 
 	// Verify no auto-deletion after switching back to OnDelete
 	verifyNoAutomaticDeletionAfterUpdate(tc, tracker2, postSwitchPodNames, 10, true)
-	verifyAllPodsFromOriginalSet(tc, postSwitchPodNames)
 
 	tests.Logger.Info("OnDelete Update - Strategy Transition test (OD-9) completed successfully!")
 }

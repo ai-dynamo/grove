@@ -18,7 +18,7 @@ spec:
         spec:
           roleName: role-a
           replicas: 2
-          minAvailable: 2
+          minAvailable: 1
           podSpec:
             terminationGracePeriodSeconds: 5
             schedulerName: kai-scheduler
