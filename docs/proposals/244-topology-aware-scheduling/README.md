@@ -355,9 +355,11 @@ Using a consistent set of domain names across clusters enables workload portabil
 
 Validation is enforced at the CRD level on ClusterTopology resources via CEL rules and kubebuilder markers:
 
-* Within each ClusterTopology, at least one `TopologyLevel` must be set.
+* Within each ClusterTopology, at least one `TopologyLevel` must be set and at most 16 levels are allowed.
 * Within each ClusterTopology, each `TopologyLevel` must be unique — neither the domain nor the key should be duplicated.
 * `spec.levels` can be updated in-place. When domains are removed, affected PodCliqueSets are surfaced via the `TopologyLevelsUnavailable` condition.
+
+> **Why MaxItems=16?** The CEL uniqueness rules on `spec.levels` use `self.all(x, self.filter(...))` which has O(n²) cost estimation. Without an explicit upper bound, the Kubernetes API server rejects the CRD because the estimated rule cost exceeds the validation budget. Setting `MaxItems=16` provides a generous upper bound for real-world topology hierarchies (most have 3–6 levels) while keeping the CEL cost within budget.
 
 > NOTE: There is no validation done for `TopologyLevel.Key` (which is a node label) as that can be different across cloud providers and on-prem data centers.
 
@@ -429,6 +431,7 @@ type ClusterTopologySpec struct {
     // Levels is an ordered list of topology levels from broadest to narrowest scope.
     // The order in this list defines the hierarchy (index 0 = broadest level).
     // +kubebuilder:validation:MinItems=1
+    // +kubebuilder:validation:MaxItems=16
     // +kubebuilder:validation:XValidation:rule="self.all(x, self.filter(y, y.domain == x.domain).size() == 1)",message="domain must be unique across all levels"
     // +kubebuilder:validation:XValidation:rule="self.all(x, self.filter(y, y.key == x.key).size() == 1)",message="key must be unique across all levels"
     Levels []TopologyLevel `json:"levels"`
