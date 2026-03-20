@@ -22,12 +22,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	kaitopologyv1alpha1 "github.com/NVIDIA/KAI-scheduler/pkg/apis/kai/v1alpha1"
 	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 )
@@ -268,4 +271,57 @@ func VerifyMultiTypePCSGReplicas(
 		}
 	}
 	return nil
+}
+
+// CreateClusterTopology creates a ClusterTopology resource with the given name and levels.
+func CreateClusterTopology(ctx context.Context, dynamicClient dynamic.Interface, name string, levels []corev1alpha1.TopologyLevel, logger *Logger) error {
+	levelsUnstructured := make([]interface{}, len(levels))
+	for i, level := range levels {
+		levelsUnstructured[i] = map[string]interface{}{
+			"domain": string(level.Domain),
+			"key":    level.Key,
+		}
+	}
+
+	ct := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "grove.io/v1alpha1",
+			"kind":       "ClusterTopology",
+			"metadata": map[string]interface{}{
+				"name": name,
+			},
+			"spec": map[string]interface{}{
+				"levels": levelsUnstructured,
+			},
+		},
+	}
+
+	_, err := dynamicClient.Resource(clusterTopologyGVR).Create(ctx, ct, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create ClusterTopology %s: %w", name, err)
+	}
+	logger.Infof("Created ClusterTopology %s with %d levels", name, len(levels))
+	return nil
+}
+
+// DeleteClusterTopology deletes a ClusterTopology resource by name.
+func DeleteClusterTopology(ctx context.Context, dynamicClient dynamic.Interface, name string, logger *Logger) error {
+	err := dynamicClient.Resource(clusterTopologyGVR).Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to delete ClusterTopology %s: %w", name, err)
+	}
+	logger.Infof("Deleted ClusterTopology %s", name)
+	return nil
+}
+
+// WaitForKAITopology waits for a KAI Topology to be created by the controller and verifies its levels.
+func WaitForKAITopology(ctx context.Context, dynamicClient dynamic.Interface, name string, expectedKeys []string, timeout, interval time.Duration, logger *Logger) error {
+	return wait.PollUntilContextTimeout(ctx, interval, timeout, true, func(ctx context.Context) (bool, error) {
+		err := VerifyKAITopologyLevels(ctx, dynamicClient, name, expectedKeys, logger)
+		if err != nil {
+			logger.Infof("KAI Topology %s not ready yet: %v", name, err)
+			return false, nil
+		}
+		return true, nil
+	})
 }

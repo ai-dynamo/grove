@@ -2,6 +2,21 @@
 # Test scenario: PCS (block) → PCSG (rack) → PCLQ (host) - demonstrating constraint inheritance
 ---
 apiVersion: grove.io/v1alpha1
+kind: ClusterTopology
+metadata:
+  name: e2e-topology
+spec:
+  levels:
+    - domain: zone
+      key: kubernetes.io/zone
+    - domain: block
+      key: kubernetes.io/block
+    - domain: rack
+      key: kubernetes.io/rack
+    - domain: host
+      key: kubernetes.io/hostname
+---
+apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
   name: tas-hierarchy
@@ -11,6 +26,7 @@ spec:
   replicas: 1
   template:
     topologyConstraint:
+      topologyName: e2e-topology
       packDomain: block  # PCS level - broadest
     podCliqueScalingGroups:
       - name: inference-group
