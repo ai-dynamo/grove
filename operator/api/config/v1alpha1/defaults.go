@@ -71,6 +71,37 @@ func SetDefaults_OperatorConfiguration(operatorConfig *OperatorConfiguration) {
 	}
 }
 
+// SetDefaults_SchedulerConfiguration sets defaults for scheduler configuration.
+// Principle: respect all user-explicit values first.
+//
+//  1. If user did not include kube in profiles, add kube.
+//  2. If defaultProfileName is unset, set it to "kube-scheduler". Validation will reject invalid cases.
+func SetDefaults_SchedulerConfiguration(cfg *SchedulerConfiguration) {
+	if len(cfg.Profiles) == 0 {
+		cfg.Profiles = []SchedulerProfile{
+			{Name: SchedulerNameKube},
+		}
+		cfg.DefaultProfileName = string(SchedulerNameKube)
+		return
+	}
+	// 1. If user didn't add kube, add it.
+	hasKube := false
+	for i := range cfg.Profiles {
+		if cfg.Profiles[i].Name == SchedulerNameKube {
+			hasKube = true
+			break
+		}
+	}
+	if !hasKube {
+		cfg.Profiles = append(cfg.Profiles, SchedulerProfile{Name: SchedulerNameKube})
+	}
+
+	// 2. No default profile name → set kube as default.
+	if cfg.DefaultProfileName == "" {
+		cfg.DefaultProfileName = string(SchedulerNameKube)
+	}
+}
+
 // SetDefaults_ServerConfiguration sets defaults for the server configuration.
 func SetDefaults_ServerConfiguration(serverConfig *ServerConfiguration) {
 	if serverConfig.Webhooks.Port == 0 {
