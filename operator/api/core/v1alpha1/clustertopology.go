@@ -60,6 +60,7 @@ type ClusterTopologySpec struct {
 	// Levels is an ordered list of topology levels from broadest to narrowest scope.
 	// The order in this list defines the hierarchy (index 0 = broadest level).
 	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=16
 	// +kubebuilder:validation:XValidation:rule="self.all(x, self.filter(y, y.domain == x.domain).size() == 1)",message="domain must be unique across all levels"
 	// +kubebuilder:validation:XValidation:rule="self.all(x, self.filter(y, y.key == x.key).size() == 1)",message="key must be unique across all levels"
 	Levels []TopologyLevel `json:"levels"`
