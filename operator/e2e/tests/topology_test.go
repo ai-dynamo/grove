@@ -25,6 +25,7 @@ import (
 
 	kaischedulingv2alpha2 "github.com/NVIDIA/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	nameutils "github.com/ai-dynamo/grove/operator/api/common"
+	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
@@ -1080,4 +1081,201 @@ func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 	}
 
 	logger.Info("🎉 TAS16: Multi-replica PCS with 3-level topology hierarchy test completed successfully!")
+}
+
+// Test_TAS17_MultipleClusterTopologies tests workloads using different ClusterTopologies simultaneously
+// 1. Deploy two ClusterTopologies with different level hierarchies:
+//   - topology-a: zone → rack → host (3 levels)
+//   - topology-b: block → host (2 levels)
+//
+// 2. Deploy workload-a referencing topology-a (packs at rack)
+// 3. Deploy workload-b referencing topology-b (packs at host)
+// 4. Verify KAI Topologies are auto-created for both with correct levels
+// 5. Verify workload-a pods are packed at rack level
+// 6. Verify workload-b pods are packed at host level
+func Test_TAS17_MultipleClusterTopologies(t *testing.T) {
+	ctx := context.Background()
+
+	logger.Info("1. Initialize a 28-node Grove cluster for multi-topology testing")
+	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 28)
+	defer cleanup()
+
+	logger.Info("2. Verify KAI Topologies are auto-created for both ClusterTopologies")
+	// The YAML fixture creates both ClusterTopologies and both PCS workloads.
+	// applyYAMLFile will create all resources. The CT controller creates KAI Topologies.
+	tc := createTopologyTestContext(t, ctx, clientset, restConfig, dynamicClient,
+		"tas-multi-topo-a", "../yaml/tas-multi-topology.yaml", 4) // 2 pods per workload = 4 total
+
+	// Deploy all resources from the YAML
+	_, err := applyYAMLFile(tc, tc.Workload.YAMLPath)
+	if err != nil {
+		t.Fatalf("Failed to apply multi-topology YAML: %v", err)
+	}
+
+	// Wait for KAI Topology for topology-a (3 levels)
+	if err := utils.WaitForKAITopology(ctx, dynamicClient, "topology-a",
+		[]string{setup.TopologyLabelZone, setup.TopologyLabelRack, setup.TopologyLabelHostname},
+		defaultPollTimeout, defaultPollInterval, logger); err != nil {
+		t.Fatalf("Failed to verify KAI Topology for topology-a: %v", err)
+	}
+
+	// Wait for KAI Topology for topology-b (2 levels)
+	if err := utils.WaitForKAITopology(ctx, dynamicClient, "topology-b",
+		[]string{setup.TopologyLabelBlock, setup.TopologyLabelHostname},
+		defaultPollTimeout, defaultPollInterval, logger); err != nil {
+		t.Fatalf("Failed to verify KAI Topology for topology-b: %v", err)
+	}
+
+	logger.Info("3. Wait for workload-a pods (rack-packed)")
+	if err := utils.WaitForPods(ctx, restConfig, []string{"default"}, "app=tas-multi-topo-a", 2, defaultPollTimeout, defaultPollInterval, logger); err != nil {
+		t.Fatalf("Failed to wait for workload-a pods: %v", err)
+	}
+
+	logger.Info("4. Wait for workload-b pods (host-packed)")
+	if err := utils.WaitForPods(ctx, restConfig, []string{"default"}, "app=tas-multi-topo-b", 2, defaultPollTimeout, defaultPollInterval, logger); err != nil {
+		t.Fatalf("Failed to wait for workload-b pods: %v", err)
+	}
+
+	logger.Info("5. Verify workload-a pods are in the same rack")
+	allPodsA, err := clientset.CoreV1().Pods("default").List(ctx, metav1.ListOptions{LabelSelector: "app=tas-multi-topo-a"})
+	if err != nil {
+		t.Fatalf("Failed to list workload-a pods: %v", err)
+	}
+	if err := utils.VerifyPodsInSameTopologyDomain(ctx, clientset, allPodsA.Items, setup.TopologyLabelRack, logger); err != nil {
+		t.Fatalf("Failed to verify workload-a pods in same rack: %v", err)
+	}
+
+	logger.Info("6. Verify workload-b pods are on the same host")
+	allPodsB, err := clientset.CoreV1().Pods("default").List(ctx, metav1.ListOptions{LabelSelector: "app=tas-multi-topo-b"})
+	if err != nil {
+		t.Fatalf("Failed to list workload-b pods: %v", err)
+	}
+	if err := utils.VerifyPodsInSameTopologyDomain(ctx, clientset, allPodsB.Items, setup.TopologyLabelHostname, logger); err != nil {
+		t.Fatalf("Failed to verify workload-b pods on same host: %v", err)
+	}
+
+	logger.Info("TAS17: Multiple ClusterTopologies test completed successfully!")
+}
+
+// Test_TAS18_ClusterTopologyDriftDetection tests drift detection for externally-managed scheduler topologies
+// 1. Create a ClusterTopology with schedulerReferences pointing to a non-existent KAI Topology
+// 2. Verify SchedulerTopologyDrift condition becomes Unknown/TopologyNotFound
+// 3. Create the referenced KAI Topology with matching levels
+// 4. Verify SchedulerTopologyDrift condition becomes False/InSync
+func Test_TAS18_ClusterTopologyDriftDetection(t *testing.T) {
+	ctx := context.Background()
+
+	_, _, dynamicClient, cleanup := prepareTestCluster(ctx, t, 0)
+	defer cleanup()
+
+	const (
+		ctName           = "drift-detect-topo"
+		kaiTopologyName  = "external-kai-topology"
+		schedulerName    = "external-scheduler"
+	)
+
+	levels := []corev1alpha1.TopologyLevel{
+		{Domain: "zone", Key: setup.TopologyLabelZone},
+		{Domain: "rack", Key: setup.TopologyLabelRack},
+		{Domain: "host", Key: setup.TopologyLabelHostname},
+	}
+	refs := []corev1alpha1.SchedulerReference{
+		{SchedulerName: schedulerName, Reference: kaiTopologyName},
+	}
+
+	logger.Info("1. Create ClusterTopology with schedulerReference to non-existent KAI Topology")
+	if err := utils.CreateClusterTopologyWithSchedulerReferences(ctx, dynamicClient, ctName, levels, refs, logger); err != nil {
+		t.Fatalf("Failed to create ClusterTopology: %v", err)
+	}
+	defer utils.DeleteClusterTopology(ctx, dynamicClient, ctName, logger) //nolint:errcheck
+
+	logger.Info("2. Verify SchedulerTopologyDrift condition becomes Unknown/TopologyNotFound")
+	if err := utils.WaitForClusterTopologyCondition(ctx, dynamicClient, ctName,
+		apicommonconstants.ConditionTypeSchedulerTopologyDrift,
+		string(metav1.ConditionUnknown),
+		apicommonconstants.ConditionReasonTopologyNotFound,
+		defaultPollTimeout, defaultPollInterval, logger); err != nil {
+		t.Fatalf("Failed to verify TopologyNotFound condition: %v", err)
+	}
+
+	// Verify scheduler topology statuses show the missing reference
+	statuses, err := utils.VerifyClusterTopologySchedulerStatuses(ctx, dynamicClient, ctName, 1, logger)
+	if err != nil {
+		t.Fatalf("Failed to verify scheduler statuses: %v", err)
+	}
+	if statuses[0].InSync {
+		t.Fatalf("Expected scheduler status to be out of sync")
+	}
+	if statuses[0].SchedulerName != schedulerName {
+		t.Fatalf("Expected scheduler name %q, got %q", schedulerName, statuses[0].SchedulerName)
+	}
+
+	logger.Info("TAS18: Drift Detection test completed successfully!")
+}
+
+// Test_TAS19_ClusterTopologyAutoManagedLifecycle tests the CT controller auto-manages KAI Topology lifecycle
+// 1. Create a ClusterTopology (no schedulerReferences) and verify KAI Topology is auto-created
+// 2. Verify SchedulerTopologyDrift condition is False/InSync
+// 3. Update CT levels and verify KAI Topology is recreated with new levels
+// 4. Verify SchedulerTopologyDrift condition remains False/InSync after update
+func Test_TAS19_ClusterTopologyAutoManagedLifecycle(t *testing.T) {
+	ctx := context.Background()
+
+	_, _, dynamicClient, cleanup := prepareTestCluster(ctx, t, 0)
+	defer cleanup()
+
+	const ctName = "lifecycle-topo"
+
+	initialLevels := []corev1alpha1.TopologyLevel{
+		{Domain: "zone", Key: setup.TopologyLabelZone},
+		{Domain: "host", Key: setup.TopologyLabelHostname},
+	}
+
+	logger.Info("1. Create ClusterTopology and verify KAI Topology is auto-created")
+	if err := utils.CreateClusterTopology(ctx, dynamicClient, ctName, initialLevels, logger); err != nil {
+		t.Fatalf("Failed to create ClusterTopology: %v", err)
+	}
+	defer utils.DeleteClusterTopology(ctx, dynamicClient, ctName, logger) //nolint:errcheck
+
+	initialKeys := []string{setup.TopologyLabelZone, setup.TopologyLabelHostname}
+	if err := utils.WaitForKAITopology(ctx, dynamicClient, ctName, initialKeys,
+		defaultPollTimeout, defaultPollInterval, logger); err != nil {
+		t.Fatalf("Failed to verify initial KAI Topology: %v", err)
+	}
+
+	logger.Info("2. Verify SchedulerTopologyDrift condition is False/InSync")
+	if err := utils.WaitForClusterTopologyCondition(ctx, dynamicClient, ctName,
+		apicommonconstants.ConditionTypeSchedulerTopologyDrift,
+		string(metav1.ConditionFalse),
+		apicommonconstants.ConditionReasonInSync,
+		defaultPollTimeout, defaultPollInterval, logger); err != nil {
+		t.Fatalf("Failed to verify InSync condition after creation: %v", err)
+	}
+
+	logger.Info("3. Update CT levels and verify KAI Topology is recreated")
+	updatedLevels := []corev1alpha1.TopologyLevel{
+		{Domain: "zone", Key: setup.TopologyLabelZone},
+		{Domain: "rack", Key: setup.TopologyLabelRack},
+		{Domain: "host", Key: setup.TopologyLabelHostname},
+	}
+	if err := utils.UpdateClusterTopologyLevels(ctx, dynamicClient, ctName, updatedLevels, logger); err != nil {
+		t.Fatalf("Failed to update ClusterTopology levels: %v", err)
+	}
+
+	updatedKeys := []string{setup.TopologyLabelZone, setup.TopologyLabelRack, setup.TopologyLabelHostname}
+	if err := utils.WaitForKAITopology(ctx, dynamicClient, ctName, updatedKeys,
+		defaultPollTimeout, defaultPollInterval, logger); err != nil {
+		t.Fatalf("Failed to verify updated KAI Topology: %v", err)
+	}
+
+	logger.Info("4. Verify SchedulerTopologyDrift condition remains False/InSync after update")
+	if err := utils.WaitForClusterTopologyCondition(ctx, dynamicClient, ctName,
+		apicommonconstants.ConditionTypeSchedulerTopologyDrift,
+		string(metav1.ConditionFalse),
+		apicommonconstants.ConditionReasonInSync,
+		defaultPollTimeout, defaultPollInterval, logger); err != nil {
+		t.Fatalf("Failed to verify InSync condition after update: %v", err)
+	}
+
+	logger.Info("TAS19: Auto-Managed Lifecycle test completed successfully!")
 }
