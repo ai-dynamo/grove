@@ -1,4 +1,4 @@
-# GREP-436: Automated CRD Upgrade Strategy for Grove
+# GREP-436: Automated CRD Upgrade Strategy for Grove Helm Chart
 
 <!-- toc -->
 - [Summary](#summary)
@@ -9,34 +9,39 @@
   - [User Stories](#user-stories)
     - [Story 1](#story-1)
     - [Story 2](#story-2)
-    - [Story 3](#story-3)
   - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
     - [Risk: CRD Deletion on Helm Uninstall](#risk-crd-deletion-on-helm-uninstall)
     - [Risk: RBAC for CRD Management](#risk-rbac-for-crd-management)
-    - [Risk: Init Container Failure Visibility](#risk-init-container-failure-visibility)
+    - [Risk: Hook Job Failure Visibility](#risk-hook-job-failure-visibility)
     - [Risk: Schema Incompatibility During Upgrade](#risk-schema-incompatibility-during-upgrade)
 - [Design Details](#design-details)
-  - [Init Container Using the Operator Image](#init-container-using-the-operator-image)
+  - [Pre-Upgrade Hook Job Using the Operator Image](#pre-upgrade-hook-job-using-the-operator-image)
     - [Embedding CRD YAML in the Operator Binary](#embedding-crd-yaml-in-the-operator-binary)
     - [install-crds Subcommand](#install-crds-subcommand)
-    - [Opting Out of Automated CRD Management](#opting-out-of-automated-crd-management)
-    - [Init Container Spec](#init-container-spec)
+    - [Hook Job Manifest](#hook-job-manifest)
+    - [ServiceAccount and ClusterRole](#serviceaccount-and-clusterrole)
+    - [Hook Cleanup Policy](#hook-cleanup-policy)
     - [Changes to the grove Chart](#changes-to-the-grove-chart)
     - [GitOps Integration](#gitops-integration)
-  - [Considered Alternatives](#considered-alternatives)
-    - [Helm Pre-Upgrade Hook Job](#helm-pre-upgrade-hook-job)
-    - [Hash-Based Skip Optimization](#hash-based-skip-optimization)
   - [Monitoring](#monitoring)
   - [Dependencies](#dependencies)
   - [Test Plan](#test-plan)
   - [Graduation Criteria](#graduation-criteria)
 - [Implementation History](#implementation-history)
+- [Alternatives](#alternatives)
+  - [Comparison of All Approaches](#comparison-of-all-approaches)
+  - [Alternative 1: Separate grove-crds Helm Chart](#alternative-1-separate-grove-crds-helm-chart)
+    - [How It Works](#how-it-works)
+    - [Trade-offs](#trade-offs)
+  - [Alternative 2: installCRDs Value Flag in the grove Chart](#alternative-2-installcrds-value-flag-in-the-grove-chart)
+    - [How It Works](#how-it-works-1)
+    - [Trade-offs](#trade-offs-1)
 - [Appendix](#appendix)
 <!-- /toc -->
 
 ## Summary
 
-Grove currently places its CRDs (`PodCliqueSet`, `PodClique`, `PodCliqueScalingGroup`, `PodGang`, `ClusterTopology`) under the Helm `crds/` directory. Helm 3 intentionally installs CRDs on `helm install` but silently skips them on `helm upgrade`, meaning users upgrading the Grove operator may continue running stale CRD schemas. This GREP proposes adding an init container to the grove operator Deployment that automatically applies all CRDs before the operator process starts. The init container uses the grove operator image itself — which embeds the CRD YAML files via Go's `embed` package — so no external images, no separate Jobs, and no dependency on Helm hook ordering are introduced. A single deployment of the grove operator is sufficient to keep both CRDs and the operator in sync, regardless of the deployment toolchain.
+Grove currently places its CRDs (`PodCliqueSet`, `PodClique`, `PodCliqueScalingGroup`, `PodGang`, `ClusterTopology`) under the Helm `crds/` directory. Helm 3 intentionally installs CRDs on `helm install` but silently skips them on `helm upgrade`, meaning users upgrading the Grove operator may continue running stale CRD schemas. This GREP proposes adding a Helm `pre-install`/`pre-upgrade` hook Job to the `grove` chart that automatically applies all CRDs before the operator is deployed or updated. The hook uses the grove operator image itself — which embeds the CRD YAML files via Go's `embed` package — so no external images, no ConfigMaps, and no etcd size pressure are introduced. A single `helm upgrade grove` is sufficient to keep both CRDs and the operator in sync.
 
 ## Motivation
 
@@ -46,10 +51,9 @@ For an operator such as Grove, where the API surface (`PodCliqueSet`, `PodClique
 
 ### Goals
 
-* Ensure CRDs are applied/upgraded before the operator process starts on every deployment and every restart.
+* Ensure CRDs are applied/upgraded atomically with every `helm install` and `helm upgrade` of the Grove operator.
 * Require zero manual steps from users for CRD lifecycle management during normal upgrades.
-* Work correctly for all deployment models: native Helm, `helm template` with kustomize/ArgoCD/Flux, and raw `kubectl apply`.
-* Allow users to opt out of automated CRD management and take full ownership of CRD lifecycle themselves.
+* Provide a clear, documented path for GitOps users (ArgoCD, Flux) to manage CRD upgrades via sync-waves or `dependsOn`.
 * Preserve existing CRD data — no CRD deletion must occur as part of normal upgrades.
 
 ### Non-Goals
@@ -61,9 +65,9 @@ For an operator such as Grove, where the API surface (`PodCliqueSet`, `PodClique
 
 ## Proposal
 
-Add an init container to the grove operator Deployment that runs the grove operator image with a dedicated `install-crds` subcommand. The init container reads CRD YAML files embedded directly in the binary (via Go's `//go:embed` directive) and applies them to the cluster using server-side apply before the main operator container starts. Kubernetes itself enforces that the init container completes successfully before the operator process runs, making CRD upgrade ordering a property of the Deployment object rather than a property of the deployment toolchain.
+Add a Helm hook Job to the existing `grove` chart that fires on `pre-install` and `pre-upgrade`. The Job runs the grove operator image with a dedicated `install-crds` subcommand that reads CRD YAML files embedded directly in the binary (via Go's `//go:embed` directive) and applies them to the cluster using server-side apply. The operator image is already pulled as part of every `helm upgrade grove`, so no additional image is needed and the CRD version is always guaranteed to match the operator version.
 
-The `crds/` directory is removed from the `grove` chart. The init container becomes the sole owner of CRD lifecycle for both fresh installs and upgrades.
+The `crds/` directory is removed from the `grove` chart. The hook becomes the sole owner of CRD lifecycle for both fresh installs and upgrades.
 
 ### User Stories
 
@@ -73,41 +77,37 @@ As a platform engineer operating Grove in a production cluster, when I run `helm
 
 #### Story 2
 
-As a GitOps engineer managing Grove via ArgoCD or Flux using rendered manifests from `helm template`, I want CRD upgrades to happen automatically when the operator Deployment rolls out, without needing to manage a separate CRD application, sync-wave ordering, or Helm hook lifecycle.
-
-#### Story 3
-
-As a platform engineer with strict change-management requirements, I want to disable Grove's automated CRD management entirely. I will source the CRD manifests directly from the Grove GitHub release, review and approve them through our standard change process, and apply them to the cluster myself before upgrading the operator. I need the operator to start normally without attempting to touch CRDs.
+As a GitOps engineer managing Grove via ArgoCD or Flux, I want CRD upgrades to happen automatically as part of the single `grove` application sync, without needing to manage a separate CRD application or enforce explicit sync-wave ordering.
 
 ### Limitations/Risks & Mitigations
 
 #### Risk: CRD Deletion on Helm Uninstall
 
-The init container applies CRDs directly to the cluster via server-side apply — they are not Helm-managed resources. Therefore `helm uninstall grove` will not delete the CRDs.
+Hook resources annotated with `helm.sh/hook` are created and deleted by Helm as part of the hook lifecycle, but the CRDs themselves are applied directly to the cluster via `kubectl apply` inside the Job — they are not Helm-managed resources. Therefore `helm uninstall grove` will not delete the CRDs.
 
 Users who intentionally want to remove all CRDs must do so explicitly with `kubectl delete crd`.
 
 #### Risk: RBAC for CRD Management
 
-The init container runs under the operator's existing `ServiceAccount` and requires `get`, `create`, `update`, and `patch` verbs on `customresourcedefinitions`. This slightly expands the RBAC footprint of the operator `ServiceAccount`.
+The hook Job requires a `ServiceAccount` and `ClusterRole` with permissions on `apiextensions.k8s.io/customresourcedefinitions`. This slightly expands the RBAC surface of the `grove` chart.
 
-**Mitigation:** The verbs are scoped to the minimum required and cover only the five specific CRD names managed by Grove. The operator already holds broad cluster-scoped RBAC to reconcile its own resources; CRD management is consistent with that footprint.
+**Mitigation:** The `ClusterRole` is scoped to the minimum required verbs (`get`, `create`, `update`, `patch`) and only covers the five specific CRD names managed by Grove. The `ServiceAccount` is used exclusively by the hook Job and is not reused by the operator Deployment. Both resources are annotated with `helm.sh/hook: pre-install,pre-upgrade` and `helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded` so they do not persist after the hook completes.
 
-#### Risk: Init Container Failure Visibility
+#### Risk: Hook Job Failure Visibility
 
-If the init container fails (e.g., due to a transient API server error or RBAC misconfiguration), the operator Pod will not start and Kubernetes will restart the init container according to the Pod's `restartPolicy`. The failure is visible in `kubectl describe pod` and `kubectl logs`.
+A failed hook Job blocks the `helm upgrade` command with a generic hook failure error, requiring the user to inspect Job and Pod logs to determine the root cause.
 
-**Mitigation:** The `install-crds` subcommand logs each CRD name and the outcome of its apply operation (`created`, `updated`, `unchanged`) at `INFO` level and any errors at `ERROR` level before exiting with a non-zero code. Log retrieval is straightforward: `kubectl logs -n grove-system <pod-name> -c crd-installer`. The Pod's restart behaviour (`restartPolicy: Always` on Deployments) means transient failures self-recover without operator intervention.
+**Mitigation:** The `install-crds` subcommand logs each CRD name and the outcome of its apply operation (`created`, `updated`, `unchanged`) at `INFO` level and any errors at `ERROR` level before exiting with a non-zero code. The Helm error message will reference the Job name, making log retrieval straightforward: `kubectl logs -n grove-system job/grove-crd-installer`.
 
 #### Risk: Schema Incompatibility During Upgrade
 
-During a rolling upgrade, new operator Pods must complete the init container (CRD apply) before the operator process starts. Old Pods continue running with the previous CRD schema until they are replaced.
+During a rolling upgrade, the new operator version may start before CRD schemas are fully propagated by the Kubernetes API server.
 
-**Mitigation:** Server-side apply ensures the API server acknowledges the updated schemas before the init container exits. Because new Pods apply CRDs before starting, the schema is always at least as new as the operator version that reads it. The rolling update ensures at most one schema version transition is in progress at any time.
+**Mitigation:** The hook Job runs synchronously and Helm waits for it to complete successfully before proceeding with the rest of the chart resources. Server-side apply ensures the API server acknowledges the updated schemas before the Job exits. The operator's existing readiness probe and leader-election startup sequence provide an additional buffer before the operator begins reconciling.
 
 ## Design Details
 
-### Init Container Using the Operator Image
+### Pre-Upgrade Hook Job Using the Operator Image
 
 #### Embedding CRD YAML in the Operator Binary
 
@@ -138,11 +138,11 @@ func run(ctx context.Context) error {
     // ...
     for _, entry := range entries {
         data, _ := crds.FS.ReadFile("files/" + entry.Name())
-        result, err := applyCRD(ctx, client, data)
-        if err != nil {
+        // server-side apply each CRD
+        if err := applyCRD(ctx, client, data); err != nil {
             return fmt.Errorf("applying %s: %w", entry.Name(), err)
         }
-        log.Info("applied CRD", "name", entry.Name(), "result", result) // result: created|updated|unchanged
+        log.Info("applied CRD", "name", entry.Name())
     }
     return nil
 }
@@ -150,85 +150,105 @@ func run(ctx context.Context) error {
 
 The subcommand uses server-side apply (`--force-conflicts`) so that fields previously managed by other field managers (e.g., a cluster admin who manually patched a CRD) do not block the upgrade.
 
-#### Opting Out of Automated CRD Management
-
-Some users prefer to take full ownership of CRD lifecycle — sourcing CRD manifests directly from the Grove GitHub release, reviewing them through their change-management process, and applying them independently of the operator rollout. The automated init container can be disabled for these users via a `values.yaml` flag:
+#### Hook Job Manifest
 
 ```yaml
-# values.yaml
-crdInstaller:
-  enabled: true  # set to false to disable the init container and manage CRDs manually
-```
-
-When `crdInstaller.enabled` is `false`, the init container is omitted from the Deployment template entirely and the operator's CRD-related RBAC verbs are also removed. The operator starts without attempting to touch CRDs.
-
-Users who opt out are responsible for ensuring the correct CRD schemas are applied before upgrading the operator. CRD manifests for each Grove release are published as part of the GitHub release artifacts and are also available in the `operator/api/core/v1alpha1/crds/` and `scheduler/api/core/v1alpha1/crds/` directories of the release tag.
-
-> **Warning:** Running the operator against stale CRD schemas may result in silent data loss, rejected objects, or undefined reconciliation behaviour. Users who opt out must apply updated CRDs before or simultaneously with upgrading the operator.
-
-#### Init Container Spec
-
-The init container is added directly to the operator Deployment template and is conditional on `crdInstaller.enabled`. It uses the same image reference as the operator container, so no additional image needs to be built, pushed, or pulled:
-
-```yaml
-# templates/deployment.yaml (operator Deployment)
+# templates/crd-installer-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "grove.fullname" . }}-crd-installer
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   template:
     spec:
-      {{- if .Values.crdInstaller.enabled }}
-      initContainers:
+      serviceAccountName: {{ include "grove.fullname" . }}-crd-installer
+      restartPolicy: OnFailure
+      containers:
         - name: crd-installer
           image: "{{ .Values.operator.image.repository }}:{{ .Values.operator.image.tag }}"
           imagePullPolicy: {{ .Values.operator.image.pullPolicy }}
           command: ["/manager", "install-crds"]
-      {{- end }}
-      containers:
-        - name: manager
-          image: "{{ .Values.operator.image.repository }}:{{ .Values.operator.image.tag }}"
-          # ... existing operator container spec
 ```
 
-Kubernetes guarantees that `crd-installer` completes successfully before the `manager` container starts. This ordering is a property of the Pod spec itself and is honoured by every Kubernetes-compatible deployment tool.
+The Job uses the same image reference as the operator Deployment. No additional image needs to be built, pushed, or pulled.
+
+#### ServiceAccount and ClusterRole
+
+```yaml
+# templates/crd-installer-rbac.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "grove.fullname" . }}-crd-installer
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "grove.fullname" . }}-crd-installer
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "grove.fullname" . }}-crd-installer
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "grove.fullname" . }}-crd-installer
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "grove.fullname" . }}-crd-installer
+    namespace: {{ .Release.Namespace }}
+```
+
+All three resources carry the same hook annotations and are cleaned up automatically by Helm after the hook succeeds.
+
+#### Hook Cleanup Policy
+
+`hook-delete-policy: before-hook-creation,hook-succeeded` ensures:
+
+* On each `helm upgrade`, the previous hook Job is deleted before the new one is created, so stale Jobs do not accumulate.
+* On success, the Job is removed immediately, leaving no persistent hook artefacts in the namespace.
+* On failure, the Job is **not** deleted, allowing `kubectl logs` inspection before the next upgrade attempt cleans it up.
 
 #### Changes to the grove Chart
 
-* `charts/crds/` directory is removed — the init container becomes the default CRD delivery mechanism.
-* The init container spec is added to the existing operator Deployment template, guarded by `{{- if .Values.crdInstaller.enabled }}`.
-* No new template files, Jobs, ServiceAccounts, or ClusterRoles are required.
-* The operator `ClusterRole` gains `get`, `create`, `update`, `patch` on `customresourcedefinitions` for the five Grove CRD names, also guarded by `crdInstaller.enabled`.
-* `values.yaml` gains a `crdInstaller.enabled` field defaulting to `true`.
+* `charts/crds/` directory is removed — the hook Job becomes the sole CRD delivery mechanism.
+* New template files are added: `crd-installer-job.yaml`, `crd-installer-rbac.yaml`.
 * `prepare-charts.sh` is updated to copy CRD files into `operator/internal/crds/files/` in addition to (temporarily, during transition) `operator/charts/crds/`.
+* No changes to `values.yaml` are required — the hook uses the same image values already present for the operator Deployment.
 
 #### GitOps Integration
 
-Because the ordering guarantee is provided by Kubernetes (init container semantics), no GitOps-specific configuration is required. The approach works identically across all deployment models:
+Because the hook fires as part of the single `grove` Helm release, no special GitOps configuration is required. ArgoCD and Flux both honour Helm hooks natively:
 
-* **Native Helm**: `helm upgrade grove` rolls out a new Deployment; the init container runs and applies CRDs before the operator starts.
-* **`helm template` + GitOps**: The rendered Deployment manifest contains the init container spec. ArgoCD or Flux applies it; Kubernetes enforces the init container ordering regardless of how the manifest was delivered.
-* **Raw `kubectl apply`**: Identical behaviour — the init container runs before the operator.
+* **ArgoCD** executes `pre-upgrade` hooks during sync and waits for the Job to complete before proceeding with remaining resources. A single `Application` for `grove` is sufficient.
+* **Flux** `helm-controller` respects Helm hook annotations. The `grove` `HelmRelease` resource alone covers both CRD upgrades and operator upgrades.
 
-No sync-wave ordering, `dependsOn` between separate applications, or Helm hook support from the GitOps tool is needed.
-
-### Considered Alternatives
-
-#### Helm Pre-Upgrade Hook Job
-
-An earlier version of this design used a Helm `pre-install`/`pre-upgrade` hook Job instead of an init container. The hook Job ran the same `install-crds` subcommand and achieved the same CRD ordering for native Helm users.
-
-This approach was rejected because the ordering guarantee only holds when the Helm lifecycle layer is active. Customers who use `helm template` to render manifests and manage them in a git repository via kustomize, ArgoCD, or Flux bypass the Helm lifecycle entirely — `helm.sh/hook` annotations become dead metadata and the Job is applied alongside all other resources with no ordering. The init container approach moves the ordering guarantee into the Kubernetes object model, where it is enforced unconditionally by the kubelet regardless of deployment toolchain.
-
-#### Hash-Based Skip Optimization
-
-A possible optimisation is to compute a hash of each CRD's YAML content, store it as an annotation on the CRD object (e.g., `grove.io/crd-content-hash`), and skip the server-side apply call when the hash matches on startup.
-
-This was considered and rejected. Server-side apply is already effectively a no-op when the desired state matches the current state — the API server performs an internal diff and returns `unchanged` without mutating the object. The optimisation would save one write API call per CRD per operator restart (five calls total), which is negligible. In exchange it introduces meaningful complexity: the init container must issue a GET before each apply, handle the case where the annotation is absent (first install, manual CRD edit, annotation stripped by a tool), and maintain the hash computation in sync with the embedded CRD content. The `apply-result: unchanged` log line already provides equivalent auditability. The optimisation is not worth the complexity.
+No sync-wave ordering or `dependsOn` between separate applications is needed.
 
 ### Monitoring
 
 No new metrics or status conditions are introduced by this GREP. Observability of CRD schema state relies on existing Kubernetes mechanisms:
 
 * `kubectl get crd <name> -o jsonpath='{.status.storedVersions}'` reports which API versions are currently served.
-* The init container logs each CRD apply result (`created`, `updated`, `unchanged`) at `INFO` level, providing a clear audit trail per operator rollout.
+* The hook Job logs each CRD apply result at `INFO` level, providing a clear audit trail per upgrade.
 * The grove operator's existing startup validation logs surface any schema mismatch at startup time.
 
 ### Dependencies
@@ -245,39 +265,120 @@ No new metrics or status conditions are introduced by this GREP. Observability o
   1. Installs `grove` at version N using `helm install`.
   2. Simulates a CRD schema change (e.g., adds a new optional field to `PodCliqueSet`) in version N+1.
   3. Runs `helm upgrade grove` to version N+1.
-  4. Asserts that the operator Pod's init container completed successfully.
+  4. Asserts that the hook Job completed successfully.
   5. Asserts that `kubectl get crd podcliquesets.grove.io -o json` reflects the new field.
   6. Verifies that existing `PodCliqueSet` CRs are unaffected.
-* **Opt-out test:** CI verifies that installing with `--set crdInstaller.enabled=false` produces a Deployment with no init container and a ClusterRole without CRD verbs, and that the operator starts normally when CRDs are pre-applied manually.
-* **Init container failure test:** CI verifies that a simulated apply failure (e.g., RBAC denied) causes the operator Pod to remain in `Init:Error` state, and that the init container logs contain the structured error message.
+* **Hook failure test:** CI verifies that a simulated apply failure (e.g., RBAC denied) causes `helm upgrade` to fail with a clear error referencing the hook Job, and that the Job pod logs contain the structured error message.
 
 ### Graduation Criteria
 
 **Alpha (initial merge):**
 
 * `install-crds` subcommand is implemented and CRD YAML is embedded in the operator binary.
-* Init container is added to the operator Deployment template, conditional on `crdInstaller.enabled`.
-* `crdInstaller.enabled` defaults to `true` in `values.yaml`.
+* Hook Job, ServiceAccount, ClusterRole, and ClusterRoleBinding templates are added to the `grove` chart.
 * `crds/` directory is removed from the `grove` chart.
 * A single `helm upgrade grove` correctly upgrades all five CRDs in a live cluster before the operator rolls out.
 * E2E upgrade scenario passes in CI.
-* Opt-out test passes in CI.
-* Init container failure test passes in CI.
+* Hook failure test passes in CI.
 
 **GA:**
 
-* At least two releases have shipped using the init container model without regressions.
+* At least two releases have shipped using the hook-based model without regressions.
 * User-facing documentation confirms that no manual CRD steps are required on upgrade.
 
 ## Implementation History
 
 * 2026-03-19: GREP created, tracking issue [#436](https://github.com/ai-dynamo/grove/issues/436).
-* 2026-03-23: Design updated to use init container instead of Helm pre-upgrade hook Job, to support customers who manage rendered manifests via kustomize/ArgoCD/Flux.
-* 2026-03-23: Added `crdInstaller.enabled` opt-out flag for customers who manage CRD lifecycle independently.
+
+## Alternatives
+
+### Comparison of All Approaches
+
+The table below summarises the three approaches considered against the criteria that matter most for Grove.
+
+| Criterion | Proposed: Hook Job (operator image) | Alternative 1: `grove-crds` chart | Alternative 2: `installCRDs` flag |
+|---|---|---|---|
+| CRDs upgraded on `helm upgrade grove` | **Yes — hook fires automatically** | Only if user also runs `helm upgrade grove-crds` | Only if `--set installCRDs=true` is passed |
+| Operator controls its own CRD lifecycle | **Yes — single command** | No — user must run two commands in order | No — user must remember the flag |
+| Human error vector | **None during normal upgrades** | User forgets to upgrade `grove-crds` first | User forgets to pass `installCRDs=true` |
+| Satisfies Goal 1 (atomic upgrade) | **Yes** | No | No |
+| CRDs deleted on `helm uninstall` | No — applied directly, not Helm-managed | No (`keep` annotation) | No (`keep` annotation) |
+| Works in air-gapped clusters | **Yes — uses operator image already pulled** | Yes — no runtime workloads | Yes — no runtime workloads |
+| Extra RBAC required | Yes — scoped ClusterRole, hook-lifetime only | No | No |
+| CRD size / etcd pressure | **None — embedded in binary, not ConfigMaps** | None | Risk — CRDs inlined in templates (~2 MB total) |
+| Single chart for users | **Yes** | No — two charts | Yes |
+| GitOps complexity | **None — single application** | Requires sync-wave / `dependsOn` | None |
+| Industry precedent | Used by operators with large CRDs | cert-manager, prometheus-operator, Crossplane | cert-manager (older versions) |
+| Failure surface | Job logs via `kubectl logs` | Clear `helm upgrade grove-crds` error | Silent if flag is omitted |
+
+### Alternative 1: Separate grove-crds Helm Chart
+
+#### How It Works
+
+A dedicated `grove-crds` chart is introduced alongside the existing `grove` chart. It contains all five CRDs as regular Helm template resources (under `templates/`, not `crds/`). Because Helm treats resources in `templates/` as full Helm-managed objects, `helm upgrade grove-crds` applies them in place. The `helm.sh/resource-policy: keep` annotation is added to every CRD to prevent cascading deletion on `helm uninstall grove-crds`.
+
+The `crds/` directory is removed from the `grove` chart. Both charts are published as OCI artifacts with matching version tags. Users must run two commands in order:
+
+```bash
+helm upgrade grove-crds oci://ghcr.io/ai-dynamo/grove-crds --version <new-version>
+helm upgrade grove      oci://ghcr.io/ai-dynamo/grove      --version <new-version>
+```
+
+For GitOps environments, a sync-wave or `dependsOn` relationship between the two applications enforces this ordering automatically.
+
+#### Trade-offs
+
+**Key advantage.** The separate chart gives clear, explicit ownership of CRD lifecycle. Users who need to audit or control exactly when CRD schemas change (e.g., operators with strict change-management processes) have a discrete, independently versioned release to approve. The failure surface is also clean — a failed `helm upgrade grove-crds` produces a direct `kubectl apply` error.
+
+**Does not satisfy Goal 1.** A user who runs only `helm upgrade grove` gets a new operator binary but keeps stale CRD schemas — the original problem is not solved for that user. The two-step requirement is documentation-enforced, not technically enforced.
+
+**Human error vector.** If `grove-crds` is not upgraded before `grove`, the cluster is in the same inconsistent state as today. NOTES.txt reminders and release notes reduce but do not eliminate this risk.
+
+**GitOps overhead.** ArgoCD and Flux users must manage two applications with an explicit ordering dependency rather than a single self-contained release.
+
+This alternative is well-suited for organisations with GitOps tooling that can enforce ordering and where explicit CRD change control is valued over the convenience of a single command.
+
+### Alternative 2: installCRDs Value Flag in the grove Chart
+
+#### How It Works
+
+`installCRDs` is a **chart author convention**, not a built-in Helm feature. The CRD YAML files are placed in `templates/` (not `crds/`), making them full Helm-managed resources that `helm upgrade` will apply. A Helm values flag gates whether they are rendered:
+
+```yaml
+# values.yaml
+installCRDs: true
+```
+
+```yaml
+# templates/crds.yaml
+{{- if .Values.installCRDs }}
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: podcliquesets.grove.io
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  # ... full CRD body inlined ...
+{{- end }}
+```
+
+Because the files live in `templates/`, `helm upgrade grove --set installCRDs=true` will issue a server-side apply on each CRD before rolling out the new operator. This pattern is used by cert-manager in its earlier releases.
+
+#### Trade-offs
+
+**Upgrade is not automatic.** CRD upgrades only happen when the user explicitly passes `--set installCRDs=true` to `helm upgrade`. The flag defaults to `true` in `values.yaml`, but any invocation that omits it — or that uses a `values.yaml` override file that does not include it — silently skips CRD upgrades. This recreates the original problem. It does not satisfy Goal 1.
+
+**CRD size inflates Helm release secrets.** Placing all five Grove CRD YAML files inline inside `templates/crds.yaml` adds approximately 2 MB to every rendered chart manifest. Helm stores the full rendered manifest in a Kubernetes Secret (base64-encoded) after each install or upgrade. A 2 MB raw manifest inflates to roughly 2.7 MB base64, approaching etcd's default 1.5 MiB per-object limit and reliably exceeding it. This would cause `helm upgrade` to fail at the secret-write step — a confusing failure mode given that the `PodCliqueSet` CRD alone is ~800 KB.
+
+The `installCRDs` flag combines the human-error risk (flag can be omitted) with the etcd size risk (CRDs inlined in templates), making it the option with the least favourable trade-off profile for Grove's CRD sizes.
 
 ## Appendix
 
 * Tracking issue: [#436 — Helm upgrade does not upgrade CRDs](https://github.com/ai-dynamo/grove/issues/436)
 * Helm 3 CRD documentation: [Helm Docs — Custom Resource Definitions](https://helm.sh/docs/chart_best_practices/custom_resource_definitions/)
 * Go embed package: [pkg.go.dev/embed](https://pkg.go.dev/embed)
-* NIM operator CRD init container pattern: reference implementation used as prior art for this approach.
+* cert-manager CRD chart pattern: [cert-manager installation](https://cert-manager.io/docs/installation/helm/)
+* kube-prometheus-stack CRD subchart: [prometheus-community/helm-charts](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack/charts/crds)
+* Crossplane CRD management: [Crossplane Helm install](https://docs.crossplane.io/latest/software/install/)
+* etcd object size limit: default `--max-request-bytes` is 1.5 MiB; large CRD ConfigMaps approach or exceed this limit.
