@@ -290,89 +290,6 @@ No new metrics or status conditions are introduced by this GREP. Observability o
 
 * 2026-03-19: GREP created, tracking issue [#436](https://github.com/ai-dynamo/grove/issues/436).
 
-## Alternatives
-
-### Comparison of All Approaches
-
-The table below summarises the three approaches considered against the criteria that matter most for Grove.
-
-| Criterion | Proposed: Hook Job (operator image) | Alternative 1: `grove-crds` chart | Alternative 2: `installCRDs` flag |
-|---|---|---|---|
-| CRDs upgraded on `helm upgrade grove` | **Yes — hook fires automatically** | Only if user also runs `helm upgrade grove-crds` | Only if `--set installCRDs=true` is passed |
-| Operator controls its own CRD lifecycle | **Yes — single command** | No — user must run two commands in order | No — user must remember the flag |
-| Human error vector | **None during normal upgrades** | User forgets to upgrade `grove-crds` first | User forgets to pass `installCRDs=true` |
-| Satisfies Goal 1 (atomic upgrade) | **Yes** | No | No |
-| CRDs deleted on `helm uninstall` | No — applied directly, not Helm-managed | No (`keep` annotation) | No (`keep` annotation) |
-| Works in air-gapped clusters | **Yes — uses operator image already pulled** | Yes — no runtime workloads | Yes — no runtime workloads |
-| Extra RBAC required | Yes — scoped ClusterRole, hook-lifetime only | No | No |
-| CRD size / etcd pressure | **None — embedded in binary, not ConfigMaps** | None | Risk — CRDs inlined in templates (~2 MB total) |
-| Single chart for users | **Yes** | No — two charts | Yes |
-| GitOps complexity | **None — single application** | Requires sync-wave / `dependsOn` | None |
-| Industry precedent | Used by operators with large CRDs | cert-manager, prometheus-operator, Crossplane | cert-manager (older versions) |
-| Failure surface | Job logs via `kubectl logs` | Clear `helm upgrade grove-crds` error | Silent if flag is omitted |
-
-### Alternative 1: Separate grove-crds Helm Chart
-
-#### How It Works
-
-A dedicated `grove-crds` chart is introduced alongside the existing `grove` chart. It contains all five CRDs as regular Helm template resources (under `templates/`, not `crds/`). Because Helm treats resources in `templates/` as full Helm-managed objects, `helm upgrade grove-crds` applies them in place. The `helm.sh/resource-policy: keep` annotation is added to every CRD to prevent cascading deletion on `helm uninstall grove-crds`.
-
-The `crds/` directory is removed from the `grove` chart. Both charts are published as OCI artifacts with matching version tags. Users must run two commands in order:
-
-```bash
-helm upgrade grove-crds oci://ghcr.io/ai-dynamo/grove-crds --version <new-version>
-helm upgrade grove      oci://ghcr.io/ai-dynamo/grove      --version <new-version>
-```
-
-For GitOps environments, a sync-wave or `dependsOn` relationship between the two applications enforces this ordering automatically.
-
-#### Trade-offs
-
-**Key advantage.** The separate chart gives clear, explicit ownership of CRD lifecycle. Users who need to audit or control exactly when CRD schemas change (e.g., operators with strict change-management processes) have a discrete, independently versioned release to approve. The failure surface is also clean — a failed `helm upgrade grove-crds` produces a direct `kubectl apply` error.
-
-**Does not satisfy Goal 1.** A user who runs only `helm upgrade grove` gets a new operator binary but keeps stale CRD schemas — the original problem is not solved for that user. The two-step requirement is documentation-enforced, not technically enforced.
-
-**Human error vector.** If `grove-crds` is not upgraded before `grove`, the cluster is in the same inconsistent state as today. NOTES.txt reminders and release notes reduce but do not eliminate this risk.
-
-**GitOps overhead.** ArgoCD and Flux users must manage two applications with an explicit ordering dependency rather than a single self-contained release.
-
-This alternative is well-suited for organisations with GitOps tooling that can enforce ordering and where explicit CRD change control is valued over the convenience of a single command.
-
-### Alternative 2: installCRDs Value Flag in the grove Chart
-
-#### How It Works
-
-`installCRDs` is a **chart author convention**, not a built-in Helm feature. The CRD YAML files are placed in `templates/` (not `crds/`), making them full Helm-managed resources that `helm upgrade` will apply. A Helm values flag gates whether they are rendered:
-
-```yaml
-# values.yaml
-installCRDs: true
-```
-
-```yaml
-# templates/crds.yaml
-{{- if .Values.installCRDs }}
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: podcliquesets.grove.io
-  annotations:
-    helm.sh/resource-policy: keep
-spec:
-  # ... full CRD body inlined ...
-{{- end }}
-```
-
-Because the files live in `templates/`, `helm upgrade grove --set installCRDs=true` will issue a server-side apply on each CRD before rolling out the new operator. This pattern is used by cert-manager in its earlier releases.
-
-#### Trade-offs
-
-**Upgrade is not automatic.** CRD upgrades only happen when the user explicitly passes `--set installCRDs=true` to `helm upgrade`. The flag defaults to `true` in `values.yaml`, but any invocation that omits it — or that uses a `values.yaml` override file that does not include it — silently skips CRD upgrades. This recreates the original problem. It does not satisfy Goal 1.
-
-**CRD size inflates Helm release secrets.** Placing all five Grove CRD YAML files inline inside `templates/crds.yaml` adds approximately 2 MB to every rendered chart manifest. Helm stores the full rendered manifest in a Kubernetes Secret (base64-encoded) after each install or upgrade. A 2 MB raw manifest inflates to roughly 2.7 MB base64, approaching etcd's default 1.5 MiB per-object limit and reliably exceeding it. This would cause `helm upgrade` to fail at the secret-write step — a confusing failure mode given that the `PodCliqueSet` CRD alone is ~800 KB.
-
-The `installCRDs` flag combines the human-error risk (flag can be omitted) with the etcd size risk (CRDs inlined in templates), making it the option with the least favourable trade-off profile for Grove's CRD sizes.
-
 ## Appendix
 
 * Tracking issue: [#436 — Helm upgrade does not upgrade CRDs](https://github.com/ai-dynamo/grove/issues/436)
@@ -381,4 +298,3 @@ The `installCRDs` flag combines the human-error risk (flag can be omitted) with 
 * cert-manager CRD chart pattern: [cert-manager installation](https://cert-manager.io/docs/installation/helm/)
 * kube-prometheus-stack CRD subchart: [prometheus-community/helm-charts](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack/charts/crds)
 * Crossplane CRD management: [Crossplane Helm install](https://docs.crossplane.io/latest/software/install/)
-* etcd object size limit: default `--max-request-bytes` is 1.5 MiB; large CRD ConfigMaps approach or exceed this limit.
