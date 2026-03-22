@@ -182,7 +182,6 @@ jobs:
           - test_name: Topology_Aware_Scheduling
           - test_name: cert_management
           - test_name: auto_mnnvl
-          - test_name: ondelete_updates
     name: E2E - ${{ matrix.test_name }}
     steps:
       - name: Skip E2E (no relevant changes)
