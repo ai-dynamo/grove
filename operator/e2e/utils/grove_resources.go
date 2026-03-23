@@ -29,6 +29,28 @@ import (
 	"k8s.io/client-go/dynamic"
 )
 
+// WaitForPCSCondition polls until the named PodCliqueSet has a condition matching
+// conditionType, expectedStatus, and expectedReason.
+func WaitForPCSCondition(ctx context.Context, dynamicClient dynamic.Interface, namespace, name, conditionType, expectedStatus, expectedReason string, timeout, interval time.Duration, logger *Logger) error {
+	return PollForCondition(ctx, timeout, interval, func() (bool, error) {
+		obj, err := dynamicClient.Resource(podCliqueSetGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return false, nil
+		}
+		var pcs grovecorev1alpha1.PodCliqueSet
+		if err := ConvertUnstructuredToTyped(obj.Object, &pcs); err != nil {
+			return false, nil
+		}
+		for _, cond := range pcs.Status.Conditions {
+			if cond.Type == conditionType && string(cond.Status) == expectedStatus && cond.Reason == expectedReason {
+				logger.Infof("PodCliqueSet %s/%s condition %s=%s reason=%s matched", namespace, name, conditionType, expectedStatus, expectedReason)
+				return true, nil
+			}
+		}
+		return false, nil
+	})
+}
+
 var podCliqueSetGVR = schema.GroupVersionResource{
 	Group:    "grove.io",
 	Version:  "v1alpha1",

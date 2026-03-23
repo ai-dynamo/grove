@@ -1279,3 +1279,64 @@ func Test_TAS19_ClusterTopologyAutoManagedLifecycle(t *testing.T) {
 
 	logger.Info("TAS19: Auto-Managed Lifecycle test completed successfully!")
 }
+
+// Test_TAS20_PCSTopologyLevelsUnavailableCondition tests the TopologyLevelsUnavailable condition lifecycle on a PodCliqueSet.
+// 1. Deploy a PCS referencing a ClusterTopology that does not exist yet
+// 2. Verify TopologyLevelsUnavailable=True / ClusterTopologyNotFound on the PCS
+// 3. Create the referenced ClusterTopology
+// 4. Verify TopologyLevelsUnavailable=False / AllClusterTopologyLevelsAvailable
+// 5. Wait for pods to become Ready (confirms full reconciliation after condition clears)
+func Test_TAS20_PCSTopologyLevelsUnavailableCondition(t *testing.T) {
+	ctx := context.Background()
+
+	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, 2)
+	defer cleanup()
+
+	const (
+		pcsName = "tas-topology-condition"
+		ctName  = "tas20-topology"
+	)
+
+	tc := createTopologyTestContext(t, ctx, clientset, restConfig, dynamicClient,
+		pcsName, "../yaml/tas-topology-condition.yaml", 2)
+
+	logger.Info("1. Deploy PCS referencing a ClusterTopology that does not exist yet")
+	if _, err := applyYAMLFile(tc, tc.Workload.YAMLPath); err != nil {
+		t.Fatalf("Failed to apply workload YAML: %v", err)
+	}
+
+	logger.Info("2. Verify TopologyLevelsUnavailable=True / ClusterTopologyNotFound")
+	if err := utils.WaitForPCSCondition(ctx, dynamicClient, "default", pcsName,
+		apicommonconstants.ConditionTopologyLevelsUnavailable,
+		string(metav1.ConditionTrue),
+		apicommonconstants.ConditionReasonClusterTopologyNotFound,
+		defaultPollTimeout, defaultPollInterval, logger); err != nil {
+		t.Fatalf("Failed to verify ClusterTopologyNotFound condition: %v", err)
+	}
+
+	logger.Info("3. Create the referenced ClusterTopology")
+	levels := []corev1alpha1.TopologyLevel{
+		{Domain: "zone", Key: setup.TopologyLabelZone},
+		{Domain: "rack", Key: setup.TopologyLabelRack},
+		{Domain: "host", Key: setup.TopologyLabelHostname},
+	}
+	if err := utils.CreateClusterTopology(ctx, dynamicClient, ctName, levels, logger); err != nil {
+		t.Fatalf("Failed to create ClusterTopology: %v", err)
+	}
+
+	logger.Info("4. Verify TopologyLevelsUnavailable=False / AllClusterTopologyLevelsAvailable")
+	if err := utils.WaitForPCSCondition(ctx, dynamicClient, "default", pcsName,
+		apicommonconstants.ConditionTopologyLevelsUnavailable,
+		string(metav1.ConditionFalse),
+		apicommonconstants.ConditionReasonAllTopologyLevelsAvailable,
+		defaultPollTimeout, defaultPollInterval, logger); err != nil {
+		t.Fatalf("Failed to verify AllClusterTopologyLevelsAvailable condition: %v", err)
+	}
+
+	logger.Info("5. Wait for pods to be ready (confirms full reconciliation path)")
+	if err := waitForPods(tc, 2); err != nil {
+		t.Fatalf("Failed to wait for pods: %v", err)
+	}
+
+	logger.Info("TAS20: PCS TopologyLevelsUnavailable condition lifecycle test completed successfully!")
+}
