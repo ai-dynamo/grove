@@ -108,6 +108,10 @@ By default, Grove automatically generates and manages TLS certificates for its w
 
 See the [Certificate Management Guide](user-guide/certificate-management.md) for detailed configuration options.
 
+## Auto MNNVL (Multi-Node NVLink)
+
+On clusters with NVIDIA MNNVL support, you can enable automatic Multi-Node NVLink for GPU workloads by setting `config.network.autoMNNVLEnabled: true` in the operator configuration (e.g. via Helm `--set config.network.autoMNNVLEnabled=true`). See the [Auto MNNVL user guide](user-guide/auto-mnnvl.md) for prerequisites, enabling the feature, and usage.
+
 ## Verify Installation
 
 Follow the instructions in the [quickstart guide](quickstart.md) to deploy a PodCliqueSet and validate your installation.
