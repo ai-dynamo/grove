@@ -154,14 +154,16 @@ func ComputePCLQPodTemplateHash(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTem
 	return k8sutils.ComputeHash(&podTemplateSpec)
 }
 
-// IsPCLQUpdateInProgress checks if PodClique is under rolling update.
-func IsPCLQUpdateInProgress(pclq *grovecorev1alpha1.PodClique) bool {
-	return pclq.Status.RollingUpdateProgress != nil && pclq.Status.RollingUpdateProgress.UpdateEndedAt == nil
+// IsPCLQAutoUpdateInProgress checks if PodClique is under an auto-orchestrated update.
+func IsPCLQAutoUpdateInProgress(pclq *grovecorev1alpha1.PodClique) bool {
+	return pclq.Status.UpdateProgress != nil && pclq.Status.UpdateProgress.UpdateEndedAt == nil
 }
 
-// IsLastPCLQUpdateCompleted checks if the last rolling update of PodClique is completed.
+// IsLastPCLQUpdateCompleted checks if the last update of PodClique is completed.
+// For auto update strategies, it returns if all Pods of the PodClique have been updated with the new specification.
+// For the OnDelete strategy, it returns whether the PodClique controller has processed the update by refreshing all hash fields in the PodCliqueStatus, based on which PodCliqueStatus.UpdatedReplicas are calculated.
 func IsLastPCLQUpdateCompleted(pclq *grovecorev1alpha1.PodClique) bool {
-	return pclq.Status.RollingUpdateProgress != nil && pclq.Status.RollingUpdateProgress.UpdateEndedAt != nil
+	return pclq.Status.UpdateProgress != nil && pclq.Status.UpdateProgress.UpdateEndedAt != nil
 }
 
 // GetExpectedPCLQPodTemplateHash finds the matching PodCliqueTemplateSpec from the PodCliqueSet and computes the pod template hash for the PCLQ pod spec.

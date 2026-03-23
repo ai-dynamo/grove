@@ -60,14 +60,16 @@ type PodCliqueSpec struct {
 	Replicas int32 `json:"replicas"`
 	// MinAvailable serves two purposes:
 	// 1. It defines the minimum number of pods that are guaranteed to be gang scheduled.
-	// 2. It defines the minimum requirement of available pods in a PodClique. Violation of this threshold will result in termination of the PodGang that it belongs to.
-	// If MinAvailable is not set, then it will default to the template Replicas.
+	// 2. It defines the minimum requirement of available pods in a PodClique. Violation of this threshold will result
+	// in termination of the PodGang that it belongs to. If MinAvailable is not set, then it will default to the template
+	// Replicas.
 	// +optional
 	MinAvailable *int32 `json:"minAvailable,omitempty"`
 	// StartsAfter provides you a way to explicitly define the startup dependencies amongst cliques.
-	// If CliqueStartupType in PodGang has been set to 'CliqueStartupTypeExplicit', then to create an ordered start amongst PodClique's StartsAfter can be used.
-	// A forest of DAG's can be defined to model any start order dependencies. If there are more than one PodClique's defined and StartsAfter is not set for any of them,
-	// then their startup order is random at best and must not be relied upon.
+	// If CliqueStartupType in PodGang has been set to 'CliqueStartupTypeExplicit', then to create an ordered start
+	// amongst PodClique's StartsAfter can be used. A forest of DAG's can be defined to model any start order dependencies.
+	// If there are more than one PodClique's defined and StartsAfter is not set for any of them, then their startup order
+	// is random at best and must not be relied upon.
 	// Validations:
 	// 1. If a StartsAfter has been defined and one or more cycles are detected in DAG's then it will be flagged as validation error.
 	// 2. If StartsAfter is defined and does not identify any PodClique then it will be flagged as a validation error.
@@ -122,7 +124,8 @@ type PodCliqueStatus struct {
 	// +kubebuilder:default=0
 	ScheduledReplicas int32 `json:"scheduledReplicas"`
 	// Selector is the label selector that determines which pods are part of the PodClique.
-	// PodClique is a unit of scale and this selector is used by HPA to scale the PodClique based on metrics captured for the pods that match this selector.
+	// PodClique is a unit of scale and this selector is used by HPA to scale the PodClique based on metrics captured
+	// for the pods that match this selector.
 	Selector *string `json:"hpaPodSelector,omitempty"`
 	// Conditions represents the latest available observations of the clique by its controller.
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
@@ -133,10 +136,14 @@ type PodCliqueStatus struct {
 	// that the spec of the PodClique at this template hash is fully realized in the PodClique.
 	CurrentPodTemplateHash *string `json:"currentPodTemplateHash,omitempty"`
 	// RollingUpdateProgress provides details about the ongoing rolling update of the PodClique.
+	// Deprecated: Use UpdateProgress instead. This field is maintained for backward compatibility and will be removed in a future release.
 	RollingUpdateProgress *PodCliqueRollingUpdateProgress `json:"rollingUpdateProgress,omitempty"`
+	// UpdateProgress provides details about the ongoing update of the PodClique.
+	UpdateProgress *PodCliqueUpdateProgress `json:"updateProgress,omitempty"`
 }
 
 // PodCliqueRollingUpdateProgress provides details about the ongoing rolling update of the PodClique.
+// Deprecated: Use PodCliqueUpdateProgress instead. This struct is maintained for backward compatibility.
 type PodCliqueRollingUpdateProgress struct {
 	// UpdateStartedAt is the time at which the rolling update started.
 	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
@@ -155,7 +162,34 @@ type PodCliqueRollingUpdateProgress struct {
 	ReadyPodsSelectedToUpdate *PodsSelectedToUpdate `json:"readyPodsSelectedToUpdate,omitempty"`
 }
 
-// PodsSelectedToUpdate captures the current and previous set of pod names that have been selected for update in a rolling update.
+// PodCliqueUpdateProgress provides details about the ongoing update of the PodClique.
+type PodCliqueUpdateProgress struct {
+	// UpdateStartedAt is the time at which the update started.
+	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
+	// UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the
+	// configured update strategy. For auto update strategies where Grove handles the orchestration, while the update is
+	// still in progress it will be nil, and will be set once the update finishes where all Pods are replaced by Grove with
+	// the latest specification. For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which implies
+	// that there is no work pending on Grove. As can be observed with the OnDelete strategy, UpdateEndedAt being set does
+	// not necessarily mean that all Pods are running with the latest specifications.
+	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
+	// PodCliqueSetGenerationHash is the generation hash corresponding to the latest PodCliqueSet spec that this
+	// PodClique should converge to. PodCliqueStatus.CurrentPodCliqueSetGenerationHash is set to this hash once
+	// UpdateEndedAt is set, which marks the end of the update.
+	PodCliqueSetGenerationHash string `json:"podCliqueSetGenerationHash"`
+	// PodTemplateHash is the template hash of the PodClique that the Pods of this PodClique should converge to.
+	// This hash is used to segregate Pods which are up to date with the specification, and ones which are outdated for
+	// preferential deletions in auto update strategies, and in all strategies for scale-ins.
+	// PodCliqueStatus.PodTemplateHash is set to this hash once UpdateEndedAt is set, which marks the end of the update.
+	PodTemplateHash string `json:"podTemplateHash"`
+	// ReadyPodsSelectedToUpdate captures the pod names of ready Pods that are either currently being updated or have
+	// been previously updated. This field is only set for auto update strategies where Grove orchestrates Pod deletions.
+	// For the OnDelete strategy this field is not set, because Pod replacement is initiated by user-driven Pod deletions.
+	ReadyPodsSelectedToUpdate *PodsSelectedToUpdate `json:"readyPodsSelectedToUpdate,omitempty"`
+}
+
+// PodsSelectedToUpdate captures the current and previous set of pod names that have been selected for update in a
+// rolling recreate. It is not set in an OnDelete update.
 type PodsSelectedToUpdate struct {
 	// Current captures the current pod name that is a target for update.
 	Current string `json:"current"`

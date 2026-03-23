@@ -238,8 +238,6 @@ func TestSliceMustHaveUniqueElements(t *testing.T) {
 		name string
 		// slice is the string slice being validated
 		slice []string
-		// msg is the error message to use if validation fails
-		msg string
 		// expectError indicates whether validation should fail
 		expectError bool
 		// expectedDuplicates is the list of duplicate values expected in the error
@@ -248,45 +246,38 @@ func TestSliceMustHaveUniqueElements(t *testing.T) {
 		{
 			name:        "slice with no duplicates passes validation",
 			slice:       []string{"a", "b", "c"},
-			msg:         "must have unique elements",
 			expectError: false,
 		},
 		{
-			name:               "slice with one duplicate returns Invalid error",
+			name:               "slice with one duplicate returns Duplicate error",
 			slice:              []string{"a", "b", "a"},
-			msg:                "must have unique elements",
 			expectError:        true,
 			expectedDuplicates: []string{"a"},
 		},
 		{
-			name:               "slice with multiple duplicates returns Invalid error",
+			name:               "slice with multiple duplicates returns Duplicate error",
 			slice:              []string{"a", "b", "a", "c", "b"},
-			msg:                "must have unique elements",
 			expectError:        true,
 			expectedDuplicates: []string{"a", "b"},
 		},
 		{
 			name:        "empty slice passes validation",
 			slice:       []string{},
-			msg:         "must have unique elements",
 			expectError: false,
 		},
 		{
 			name:        "nil slice passes validation",
 			slice:       nil,
-			msg:         "must have unique elements",
 			expectError: false,
 		},
 		{
 			name:        "slice with single element passes validation",
 			slice:       []string{"a"},
-			msg:         "must have unique elements",
 			expectError: false,
 		},
 		{
-			name:               "slice with all duplicates returns Invalid error",
+			name:               "slice with all duplicates returns Duplicate error",
 			slice:              []string{"a", "a", "a"},
-			msg:                "must have unique elements",
 			expectError:        true,
 			expectedDuplicates: []string{"a"},
 		},
@@ -294,12 +285,16 @@ func TestSliceMustHaveUniqueElements(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			errs := sliceMustHaveUniqueElements(tt.slice, fldPath, tt.msg)
+			errs := sliceMustHaveUniqueElements(tt.slice, fldPath)
 			if tt.expectError {
 				assert.NotEmpty(t, errs)
-				assert.Equal(t, field.ErrorTypeInvalid, errs[0].Type)
-				// Verify the error message contains the error detail
-				assert.Contains(t, errs[0].Detail, tt.msg)
+				assert.Equal(t, field.ErrorTypeDuplicate, errs[0].Type)
+				if len(tt.expectedDuplicates) > 0 {
+					badValues, ok := errs[0].BadValue.([]string)
+					if assert.True(t, ok, "expected BadValue to be []string") {
+						assert.ElementsMatch(t, tt.expectedDuplicates, badValues)
+					}
+				}
 			} else {
 				assert.Empty(t, errs)
 			}

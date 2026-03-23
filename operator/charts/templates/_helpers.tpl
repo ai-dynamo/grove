@@ -28,9 +28,17 @@ config.yaml: |
       concurrentSyncs: {{ .Values.config.controllers.podCliqueSet.concurrentSyncs }}
     podClique:
       concurrentSyncs: {{ .Values.config.controllers.podClique.concurrentSyncs }}
+    podCliqueScalingGroup:
+      concurrentSyncs: {{ .Values.config.controllers.podCliqueScalingGroup.concurrentSyncs }}
   {{- if .Values.config.debugging }}
   debugging:
     enableProfiling: {{ .Values.config.debugging.enableProfiling }}
+    {{- if .Values.config.debugging.pprofBindHost }}
+    pprofBindHost: {{ .Values.config.debugging.pprofBindHost | quote }}
+    {{- end }}
+    {{- if .Values.config.debugging.pprofBindPort }}
+    pprofBindPort: {{ .Values.config.debugging.pprofBindPort }}
+    {{- end }}
   {{- end }}
   logLevel: {{ .Values.config.logLevel | default "info" }}
   logFormat: {{ .Values.config.logFormat | default "json" }}

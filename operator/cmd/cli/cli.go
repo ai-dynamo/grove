@@ -25,8 +25,6 @@ import (
 	operatorvalidation "github.com/ai-dynamo/grove/operator/api/config/validation"
 
 	"github.com/spf13/pflag"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/serializer"
 )
 
 const (
@@ -89,25 +87,15 @@ func (o *LaunchOptions) LoadAndValidateOperatorConfig() (*configv1alpha1.Operato
 }
 
 func (o *LaunchOptions) loadOperatorConfig() (*configv1alpha1.OperatorConfiguration, error) {
-	// Set up scheme and decoder for operator configuration
-	configScheme := runtime.NewScheme()
-	if err := configv1alpha1.AddToScheme(configScheme); err != nil {
-		return nil, fmt.Errorf("%w: error adding to scheme: %w", errLoadOperatorConfig, err)
-	}
-	configDecoder := serializer.NewCodecFactory(configScheme).UniversalDecoder()
-
-	// Read configuration file
 	operatorConfigBytes, err := os.ReadFile(o.ConfigFile)
 	if err != nil {
 		return nil, fmt.Errorf("%w: error reading file: %w", errLoadOperatorConfig, err)
 	}
-
-	// Decode configuration
-	operatorConfig := &configv1alpha1.OperatorConfiguration{}
-	if err = runtime.DecodeInto(configDecoder, operatorConfigBytes, operatorConfig); err != nil {
-		return nil, fmt.Errorf("%w: error decoding operator config: %w", errLoadOperatorConfig, err)
+	cfg, err := configv1alpha1.DecodeOperatorConfig(operatorConfigBytes)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errLoadOperatorConfig, err)
 	}
-	return operatorConfig, nil
+	return cfg, nil
 }
 
 func (o *LaunchOptions) mapFlags(fs *pflag.FlagSet) {

@@ -22,6 +22,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 
@@ -89,26 +90,40 @@ func mapPCSToPCSG() handler.MapFunc {
 		if !ok {
 			return nil
 		}
-		pcsgConfigs := pcs.Spec.Template.PodCliqueScalingGroupConfigs
-		if len(pcsgConfigs) == 0 {
+		if pcs.Status.UpdateProgress == nil {
 			return nil
 		}
-		requests := make([]reconcile.Request, 0, int(pcs.Spec.Replicas)*len(pcsgConfigs))
-		// We are only interested in PCS events during rolling update.
-		if pcs.Status.RollingUpdateProgress != nil && pcs.Status.RollingUpdateProgress.CurrentlyUpdating != nil {
-			pcsReplicaIndex := pcs.Status.RollingUpdateProgress.CurrentlyUpdating.ReplicaIndex
-			for _, pcsgConfig := range pcsgConfigs {
-				pcsgName := apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: int(pcsReplicaIndex)}, pcsgConfig.Name)
-				requests = append(requests, reconcile.Request{
-					NamespacedName: client.ObjectKey{
-						Name:      pcsgName,
-						Namespace: pcs.Namespace,
-					},
-				})
-			}
+		var pcsReplicaIndices []int32
+		if componentutils.IsAutoUpdateStrategy(pcs) &&
+			len(pcs.Status.UpdateProgress.CurrentlyUpdating) > 0 {
+			// Rolling recreate needs to have a CurrentlyUpdating which is used to generate an event for the corresponding PCSG
+			pcsReplicaIndices = lo.RangeFrom(pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex, 1)
+		} else {
+			// OnDelete will not have a specific CurrentlyUpdating, so PCSG resources of all PCS replicas are reconciled
+			pcsReplicaIndices = lo.RangeFrom(int32(0), int(pcs.Spec.Replicas))
 		}
-		return requests
+		return pcsgReconcileRequestsForPCSReplicas(pcs, pcsReplicaIndices)
 	}
+}
+
+func pcsgReconcileRequestsForPCSReplicas(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndices []int32) []reconcile.Request {
+	pcsgConfigs := pcs.Spec.Template.PodCliqueScalingGroupConfigs
+	if len(pcsgConfigs) == 0 {
+		return nil
+	}
+	requests := make([]reconcile.Request, 0, int(pcs.Spec.Replicas)*len(pcsgConfigs))
+	for _, pcsReplicaIndex := range pcsReplicaIndices {
+		for _, pcsgConfig := range pcsgConfigs {
+			pcsgName := apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: int(pcsReplicaIndex)}, pcsgConfig.Name)
+			requests = append(requests, reconcile.Request{
+				NamespacedName: client.ObjectKey{
+					Name:      pcsgName,
+					Namespace: pcs.Namespace,
+				},
+			})
+		}
+	}
+	return requests
 }
 
 // podCliqueSetPredicate filters PodCliqueSet events to only process rolling update status changes
@@ -131,13 +146,17 @@ func shouldEnqueueOnPCSUpdate(event event.UpdateEvent) bool {
 		return false
 	}
 
-	if oldPCS.Status.RollingUpdateProgress != nil && newPCS.Status.RollingUpdateProgress != nil {
-		if utils.OnlyOneIsNil(oldPCS.Status.RollingUpdateProgress.CurrentlyUpdating, newPCS.Status.RollingUpdateProgress.CurrentlyUpdating) ||
-			oldPCS.Status.RollingUpdateProgress.CurrentlyUpdating != nil &&
-				newPCS.Status.RollingUpdateProgress.CurrentlyUpdating != nil &&
-				oldPCS.Status.RollingUpdateProgress.CurrentlyUpdating.ReplicaIndex != newPCS.Status.RollingUpdateProgress.CurrentlyUpdating.ReplicaIndex {
+	if oldPCS.Status.UpdateProgress != nil && newPCS.Status.UpdateProgress != nil {
+		if utils.OnlyOneIsEmpty(oldPCS.Status.UpdateProgress.CurrentlyUpdating, newPCS.Status.UpdateProgress.CurrentlyUpdating) ||
+			len(oldPCS.Status.UpdateProgress.CurrentlyUpdating) > 0 &&
+				len(newPCS.Status.UpdateProgress.CurrentlyUpdating) > 0 &&
+				oldPCS.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex != newPCS.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex {
 			return true
 		}
+	}
+	// Enqueue while using OnDelete since there is no CurrentlyUpdating
+	if newPCS.Status.UpdateProgress != nil && !componentutils.IsAutoUpdateStrategy(newPCS) {
+		return true
 	}
 	return false
 }

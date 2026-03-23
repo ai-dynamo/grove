@@ -184,20 +184,23 @@ spec:
                 format: int32
                 type: integer
               rollingUpdateProgress:
-                description: RollingUpdateProgress provides details about the ongoing
-                  rolling update of the PodCliqueScalingGroup.
+                description: |-
+                  RollingUpdateProgress provides details about the ongoing update of the PodCliqueScalingGroup.
+                  Deprecated: Use UpdateProgress instead. This field is maintained for backward compatibility and will be removed in a future release.
                 properties:
                   podCliqueSetGenerationHash:
                     description: |-
-                      PodCliqueSetGenerationHash is the PodCliqueSet generation hash corresponding to the PodCliqueSet spec that is being rolled out.
-                      While the update is in progress PodCliqueScalingGroupStatus.CurrentPodCliqueSetGenerationHash will not match this hash. Once the update is complete the
-                      value of this field will be copied to PodCliqueScalingGroupStatus.CurrentPodCliqueSetGenerationHash.
+                      PodCliqueSetGenerationHash is the PodCliqueSet generation hash corresponding to the PodCliqueSet spec that is
+                      being rolled out. While the update is in progress PodCliqueScalingGroupStatus.CurrentPodCliqueSetGenerationHash will
+                      not match this hash. Once the update is complete the value of this field will be copied to
+                      PodCliqueScalingGroupStatus.CurrentPodCliqueSetGenerationHash.
                     type: string
                   readyReplicaIndicesSelectedToUpdate:
                     description: |-
-                      ReadyReplicaIndicesSelectedToUpdate provides the rolling update progress of ready replicas of PodCliqueScalingGroup that have been selected for update.
-                      PodCliqueScalingGroup replicas that are either pending or unhealthy will be force updated and the update will not wait for these replicas to become ready.
-                      For all ready replicas, one replica is chosen at a time to update, once it is updated and becomes ready, the next ready replica is chosen for update.
+                      ReadyReplicaIndicesSelectedToUpdate provides the rolling update progress of ready replicas of PodCliqueScalingGroup
+                      that have been selected for update. PodCliqueScalingGroup replicas that are either pending or unhealthy will be
+                      force updated and the update will not wait for these replicas to become ready. For all ready replicas, one replica
+                      is chosen at a time to update, once it is updated and becomes ready, the next ready replica is chosen for update.
                     properties:
                       completed:
                         description: Completed is the list of indices of PodCliqueScalingGroup
@@ -247,6 +250,67 @@ spec:
                 description: Selector is the selector used to identify the pods that
                   belong to this scaling group.
                 type: string
+              updateProgress:
+                description: UpdateProgress provides details about the ongoing update
+                  of the PodCliqueScalingGroup.
+                properties:
+                  podCliqueSetGenerationHash:
+                    description: |-
+                      PodCliqueSetGenerationHash is the generation hash corresponding to the latest PodCliqueSet spec that this
+                      PodCliqueScalingGroup should converge to. PodCliqueScalingGroupStatus.CurrentPodCliqueSetGenerationHash is set to
+                      this hash once UpdateEndedAt is set, which marks the end of the update.
+                    type: string
+                  readyReplicaIndicesSelectedToUpdate:
+                    description: |-
+                      ReadyReplicaIndicesSelectedToUpdate provides the update progress of ready replicas of PodCliqueScalingGroup that
+                      have been selected for update. PodCliqueScalingGroup replicas that are either pending or unhealthy will be force
+                      updated and the update will not wait for these replicas to become ready. For all ready replicas, one replica is
+                      chosen at a time to update, once it is updated and becomes ready, the next ready replica is chosen for update.
+                      This field is only set for auto update strategies where Grove orchestrates Pod deletions.
+                      For OnDelete strategy this field is not set, because Pod replacement is initiated by user-driven Pod deletions.
+                    properties:
+                      completed:
+                        description: Completed is the list of indices of PodCliqueScalingGroup
+                          replicas that have been updated to the latest PodCliqueSet
+                          spec.
+                        items:
+                          format: int32
+                          type: integer
+                        type: array
+                      current:
+                        description: Current is the index of the PodCliqueScalingGroup
+                          replica that is currently being updated.
+                        format: int32
+                        type: integer
+                    required:
+                    - current
+                    type: object
+                  updateEndedAt:
+                    description: |-
+                      UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the
+                      configured update strategy. For auto update strategies where Grove handles the orchestration, while the update is
+                      still in progress it will be nil, and will be set once the update finishes where all PodCliques are replaced by
+                      Grove with the latest specification. For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which
+                      implies that there is no work pending on Grove.
+                    format: date-time
+                    type: string
+                  updateStartedAt:
+                    description: UpdateStartedAt is the time at which the update started.
+                    format: date-time
+                    type: string
+                  updatedPodCliques:
+                    description: |-
+                      UpdatedPodCliques is the list of PodClique names that have been updated to the latest PodCliqueSet spec.
+                      For auto update strategies, this list is updated as and when a PodClique has been fully updated.
+                      For the OnDelete strategy this list is populated as PodCliques are updated after user-driven Pod deletions and
+                      the Pods are running with the latest specification.
+                    items:
+                      type: string
+                    type: array
+                required:
+                - podCliqueSetGenerationHash
+                - updateStartedAt
+                type: object
               updatedReplicas:
                 default: 0
                 description: UpdatedReplicas is the number of PodCliqueScalingGroup

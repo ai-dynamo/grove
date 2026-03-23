@@ -536,8 +536,9 @@ spec:
                 description: |-
                   MinAvailable serves two purposes:
                   1. It defines the minimum number of pods that are guaranteed to be gang scheduled.
-                  2. It defines the minimum requirement of available pods in a PodClique. Violation of this threshold will result in termination of the PodGang that it belongs to.
-                  If MinAvailable is not set, then it will default to the template Replicas.
+                  2. It defines the minimum requirement of available pods in a PodClique. Violation of this threshold will result
+                  in termination of the PodGang that it belongs to. If MinAvailable is not set, then it will default to the template
+                  Replicas.
                 format: int32
                 type: integer
               podSpec:
@@ -8918,9 +8919,10 @@ spec:
               startsAfter:
                 description: |-
                   StartsAfter provides you a way to explicitly define the startup dependencies amongst cliques.
-                  If CliqueStartupType in PodGang has been set to 'CliqueStartupTypeExplicit', then to create an ordered start amongst PodClique's StartsAfter can be used.
-                  A forest of DAG's can be defined to model any start order dependencies. If there are more than one PodClique's defined and StartsAfter is not set for any of them,
-                  then their startup order is random at best and must not be relied upon.
+                  If CliqueStartupType in PodGang has been set to 'CliqueStartupTypeExplicit', then to create an ordered start
+                  amongst PodClique's StartsAfter can be used. A forest of DAG's can be defined to model any start order dependencies.
+                  If there are more than one PodClique's defined and StartsAfter is not set for any of them, then their startup order
+                  is random at best and must not be relied upon.
                   Validations:
                   1. If a StartsAfter has been defined and one or more cycles are detected in DAG's then it will be flagged as validation error.
                   2. If StartsAfter is defined and does not identify any PodClique then it will be flagged as a validation error.
@@ -9006,7 +9008,8 @@ spec:
               hpaPodSelector:
                 description: |-
                   Selector is the label selector that determines which pods are part of the PodClique.
-                  PodClique is a unit of scale and this selector is used by HPA to scale the PodClique based on metrics captured for the pods that match this selector.
+                  PodClique is a unit of scale and this selector is used by HPA to scale the PodClique based on metrics captured
+                  for the pods that match this selector.
                 type: string
               lastErrors:
                 description: LastErrors captures the last errors observed by the controller
@@ -9050,8 +9053,9 @@ spec:
                 format: int32
                 type: integer
               rollingUpdateProgress:
-                description: RollingUpdateProgress provides details about the ongoing
-                  rolling update of the PodClique.
+                description: |-
+                  RollingUpdateProgress provides details about the ongoing rolling update of the PodClique.
+                  Deprecated: Use UpdateProgress instead. This field is maintained for backward compatibility and will be removed in a future release.
                 properties:
                   podCliqueSetGenerationHash:
                     description: |-
@@ -9111,6 +9115,60 @@ spec:
                   scheduled by the kube-scheduler.
                 format: int32
                 type: integer
+              updateProgress:
+                description: UpdateProgress provides details about the ongoing update
+                  of the PodClique.
+                properties:
+                  podCliqueSetGenerationHash:
+                    description: |-
+                      PodCliqueSetGenerationHash is the generation hash corresponding to the latest PodCliqueSet spec that this
+                      PodClique should converge to. PodCliqueStatus.CurrentPodCliqueSetGenerationHash is set to this hash once
+                      UpdateEndedAt is set, which marks the end of the update.
+                    type: string
+                  podTemplateHash:
+                    description: |-
+                      PodTemplateHash is the template hash of the PodClique that the Pods of this PodClique should converge to.
+                      This hash is used to segregate Pods which are up to date with the specification, and ones which are outdated for
+                      preferential deletions in auto update strategies, and in all strategies for scale-ins.
+                      PodCliqueStatus.PodTemplateHash is set to this hash once UpdateEndedAt is set, which marks the end of the update.
+                    type: string
+                  readyPodsSelectedToUpdate:
+                    description: |-
+                      ReadyPodsSelectedToUpdate captures the pod names of ready Pods that are either currently being updated or have
+                      been previously updated. This field is only set for auto update strategies where Grove orchestrates Pod deletions.
+                      For the OnDelete strategy this field is not set, because Pod replacement is initiated by user-driven Pod deletions.
+                    properties:
+                      completed:
+                        description: Completed captures the pod names that have already
+                          been updated.
+                        items:
+                          type: string
+                        type: array
+                      current:
+                        description: Current captures the current pod name that is
+                          a target for update.
+                        type: string
+                    required:
+                    - current
+                    type: object
+                  updateEndedAt:
+                    description: |-
+                      UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the
+                      configured update strategy. For auto update strategies where Grove handles the orchestration, while the update is
+                      still in progress it will be nil, and will be set once the update finishes where all Pods are replaced by Grove with
+                      the latest specification. For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which implies
+                      that there is no work pending on Grove. As can be observed with the OnDelete strategy, UpdateEndedAt being set does
+                      not necessarily mean that all Pods are running with the latest specifications.
+                    format: date-time
+                    type: string
+                  updateStartedAt:
+                    description: UpdateStartedAt is the time at which the update started.
+                    format: date-time
+                    type: string
+                required:
+                - podCliqueSetGenerationHash
+                - podTemplateHash
+                type: object
               updatedReplicas:
                 default: 0
                 description: UpdatedReplicas is the number of Pods that have been

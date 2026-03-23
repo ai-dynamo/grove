@@ -27,6 +27,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	admissionv1 "k8s.io/api/admission/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/utils/ptr"
@@ -885,6 +886,133 @@ func TestValidateScaleConfig(t *testing.T) {
 				}
 			} else {
 				assert.Empty(t, errs)
+			}
+		})
+	}
+}
+
+func TestEnvVarValidation(t *testing.T) {
+	testCases := []struct {
+		description    string
+		containers     []corev1.Container
+		initContainers []corev1.Container
+		errorMatchers  []testutils.ErrorMatcher
+	}{
+		{
+			description: "Valid env var names",
+			containers: []corev1.Container{
+				{
+					Name:  "main",
+					Image: "test:latest",
+					Env: []corev1.EnvVar{
+						{Name: "MY_VAR"},
+						{Name: "_PRIVATE"},
+						{Name: "Var123"},
+						{Name: "MY-VAR"},
+						{Name: "my.var"},
+					},
+				},
+			},
+		},
+		{
+			description: "Env var name starting with digit",
+			containers: []corev1.Container{
+				{
+					Name:  "main",
+					Image: "test:latest",
+					Env:   []corev1.EnvVar{{Name: "1VAR"}},
+				},
+			},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].spec.podSpec.spec.containers[0].env[0].name"},
+			},
+		},
+		{
+			description: "Duplicate env var names in same container",
+			containers: []corev1.Container{
+				{
+					Name:  "main",
+					Image: "test:latest",
+					Env: []corev1.EnvVar{
+						{Name: "MY_VAR"},
+						{Name: "MY_VAR"},
+					},
+				},
+			},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeDuplicate, Field: "spec.template.cliques[0].spec.podSpec.spec.containers[0].env"},
+			},
+		},
+		{
+			description: "Duplicate env var names in initContainers",
+			initContainers: []corev1.Container{
+				{
+					Name:  "init",
+					Image: "test:latest",
+					Env: []corev1.EnvVar{
+						{Name: "INIT_VAR"},
+						{Name: "INIT_VAR"},
+					},
+				},
+			},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeDuplicate, Field: "spec.template.cliques[0].spec.podSpec.spec.initContainers[0].env"},
+			},
+		},
+		{
+			description: "Same env var name in different containers is valid",
+			containers: []corev1.Container{
+				{
+					Name:  "first",
+					Image: "test:latest",
+					Env:   []corev1.EnvVar{{Name: "SHARED_VAR"}},
+				},
+				{
+					Name:  "second",
+					Image: "test:latest",
+					Env:   []corev1.EnvVar{{Name: "SHARED_VAR"}},
+				},
+			},
+		},
+		{
+			description: "Empty env list",
+			containers: []corev1.Container{
+				{
+					Name:  "main",
+					Image: "test:latest",
+				},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			clique := testutils.NewPodCliqueTemplateSpecBuilder("worker").
+				WithReplicas(1).
+				WithRoleName("dummy-worker-role").
+				WithMinAvailable(1)
+
+			for _, c := range tc.containers {
+				clique = clique.WithContainer(c)
+			}
+			for _, c := range tc.initContainers {
+				clique = clique.WithInitContainer(c)
+			}
+
+			pcs := testutils.NewPodCliqueSetBuilder("inference", "default", uuid.NewUUID()).
+				WithReplicas(1).
+				WithTerminationDelay(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithPodCliqueTemplateSpec(clique.Build()).
+				Build()
+
+			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig())
+			_, errs := validator.validate()
+
+			if tc.errorMatchers != nil {
+				testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
+			} else {
+				assert.NoError(t, errs.ToAggregate(), "Expected no validation error for test case: %s", tc.description)
 			}
 		})
 	}

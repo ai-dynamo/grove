@@ -19,6 +19,7 @@ spec:
           replicas: 2
           minAvailable: 1
           podSpec:
+            terminationGracePeriodSeconds: 5
             schedulerName: kai-scheduler
             affinity:
               nodeAffinity:
@@ -36,7 +37,8 @@ spec:
                 effect: NoSchedule
             containers:
               - name: pc-a
-                image: registry:5001/nginx:alpine-slim
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
                 resources:
                   requests:
                     memory: 80Mi
@@ -50,6 +52,7 @@ spec:
           startsAfter:
             - pc-a
           podSpec:
+            terminationGracePeriodSeconds: 5
             schedulerName: kai-scheduler
             affinity:
               nodeAffinity:
@@ -67,7 +70,8 @@ spec:
                 effect: NoSchedule
             containers:
               - name: pc-b
-                image: registry:5001/nginx:alpine-slim
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
                 resources:
                   requests:
                     memory: 80Mi
@@ -81,6 +85,7 @@ spec:
           startsAfter:
             - pc-b
           podSpec:
+            terminationGracePeriodSeconds: 5
             schedulerName: kai-scheduler
             affinity:
               nodeAffinity:
@@ -98,7 +103,8 @@ spec:
                 effect: NoSchedule
             containers:
               - name: pc-c
-                image: registry:5001/nginx:alpine-slim
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
                 resources:
                   requests:
                     memory: 80Mi
