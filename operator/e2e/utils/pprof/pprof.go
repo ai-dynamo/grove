@@ -19,7 +19,9 @@
 package pprof
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -32,7 +34,7 @@ import (
 )
 
 const (
-	defaultAppName         = "grove-operator"
+	defaultAppName         = "grove-system/grove-operator"
 	defaultDownloadTimeout = 30 * time.Second
 	memoryLookbackWindow   = 60 * time.Second
 )
@@ -42,8 +44,10 @@ const (
 type ProfileType string
 
 const (
-	ProfileCPU    ProfileType = "cpu"
-	ProfileMemory ProfileType = "memory"
+	ProfileCPU       ProfileType = "cpu"
+	ProfileMemory    ProfileType = "memory"
+	ProfileGoroutine ProfileType = "goroutine"
+	ProfileMutex     ProfileType = "mutex"
 )
 
 // QueryPrefix returns the Pyroscope metric selector prefix for this profile type.
@@ -54,6 +58,10 @@ func (p ProfileType) QueryPrefix() string {
 		return "process_cpu:cpu:nanoseconds:cpu:nanoseconds"
 	case ProfileMemory:
 		return "memory:inuse_space:bytes::"
+	case ProfileGoroutine:
+		return "goroutine:goroutine:count:goroutine:count"
+	case ProfileMutex:
+		return "mutex:contentions:count::"
 	default:
 		return ""
 	}
@@ -68,7 +76,8 @@ type HTTPClient interface {
 // Option is a functional option for NewDownloader.
 type Option func(*Downloader)
 
-// WithAppName overrides the Pyroscope application name (default: "grove-operator").
+// WithAppName overrides the Pyroscope label filter value (default: "grove-system").
+// Used as the namespace label selector in Pyroscope queries.
 func WithAppName(name string) Option {
 	return func(d *Downloader) { d.appName = name }
 }
@@ -152,6 +161,8 @@ func (d *Downloader) DownloadForPhase(ctx context.Context, phaseName string, sta
 	jobs := []job{
 		{ProfileCPU, start, end},
 		{ProfileMemory, end.Add(-memoryLookbackWindow), end},
+		{ProfileGoroutine, end.Add(-memoryLookbackWindow), end},
+		{ProfileMutex, start, end},
 	}
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -165,19 +176,26 @@ func (d *Downloader) DownloadForPhase(ctx context.Context, phaseName string, sta
 	_ = g.Wait()
 }
 
-// downloadProfile fetches one profile and writes it to outputDir.
+// downloadProfile fetches one profile via the Pyroscope SelectMergeProfile
+// Connect RPC endpoint and writes the pprof protobuf to outputDir.
 // All errors are logged; nothing is returned so DownloadForPhase remains non-fatal.
 func (d *Downloader) downloadProfile(ctx context.Context, phaseName string, p ProfileType, from, to time.Time) {
-	queryURL := buildQuery(d.baseURL, d.appName, p, from, to)
+	body, err := json.Marshal(buildRequest(d.appName, p, from, to))
+	if err != nil {
+		d.logger.Error(err, "marshal profile request", "phase", phaseName, "type", p)
+		return
+	}
 
 	dlCtx, cancel := context.WithTimeout(ctx, d.timeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(dlCtx, http.MethodGet, queryURL, nil)
+	req, err := http.NewRequestWithContext(dlCtx, http.MethodPost, buildURL(d.baseURL), bytes.NewReader(body))
 	if err != nil {
 		d.logger.Error(err, "create profile request", "phase", phaseName, "type", p)
 		return
 	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Connect-Protocol-Version", "1")
 
 	resp, err := d.httpClient.Do(req)
 	if err != nil {
@@ -196,13 +214,19 @@ func (d *Downloader) downloadProfile(ctx context.Context, phaseName string, p Pr
 		return
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	jsonData, err := io.ReadAll(resp.Body)
 	if err != nil {
 		d.logger.Error(err, "read profile response body", "phase", phaseName, "type", p)
 		return
 	}
 
-	filename := fmt.Sprintf("pprof-%s-%s-%s.pprof", d.runID, phaseName, string(p))
+	data, err := jsonProfileToGzipPprof(jsonData)
+	if err != nil {
+		d.logger.Error(err, "convert JSON profile to pprof", "phase", phaseName, "type", p)
+		return
+	}
+
+	filename := fmt.Sprintf("pprof-%s-%s-%s.pprof.gz", d.runID, phaseName, string(p))
 	path := filepath.Join(d.outputDir, filename)
 
 	if err := os.WriteFile(path, data, 0600); err != nil {

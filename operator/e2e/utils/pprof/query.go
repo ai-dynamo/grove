@@ -18,28 +18,33 @@ package pprof
 
 import (
 	"fmt"
-	"net/url"
-	"strconv"
 	"time"
 )
 
-// buildQuery returns the Pyroscope /render URL for the given profile type and time window.
+const selectMergeProfilePath = "/querier.v1.QuerierService/SelectMergeProfile"
+
+// selectMergeRequest is the JSON body for the Pyroscope SelectMergeProfile Connect RPC endpoint.
+type selectMergeRequest struct {
+	ProfileTypeID string `json:"profileTypeID"`
+	LabelSelector string `json:"labelSelector"`
+	Start         int64  `json:"start"`
+	End           int64  `json:"end"`
+}
+
+// buildRequest returns a selectMergeRequest for the given profile type and time window.
 //
 // Pure function — no I/O, no state. Unit-testable by value.
-//
-// Example output:
-//
-//	http://localhost:4040/pyroscope/render?
-//	  query=process_cpu%3A...%7Bservice_name%3D%22grove-operator%22%7D
-//	  &from=1741000000&until=1741003600&format=pprof
-func buildQuery(baseURL, appName string, p ProfileType, from, to time.Time) string {
-	query := fmt.Sprintf(`%s{service_name="%s"}`, p.QueryPrefix(), appName)
+// Filters by service_name which Alloy sets as "namespace/pod-name" on scraped targets.
+func buildRequest(appName string, p ProfileType, from, to time.Time) selectMergeRequest {
+	return selectMergeRequest{
+		ProfileTypeID: p.QueryPrefix(),
+		LabelSelector: fmt.Sprintf(`{service_name="%s"}`, appName),
+		Start:         from.UnixMilli(),
+		End:           to.UnixMilli(),
+	}
+}
 
-	v := url.Values{}
-	v.Set("query", query)
-	v.Set("from", strconv.FormatInt(from.Unix(), 10))
-	v.Set("until", strconv.FormatInt(to.Unix(), 10))
-	v.Set("format", "pprof")
-
-	return baseURL + "/pyroscope/render?" + v.Encode()
+// buildURL returns the full SelectMergeProfile endpoint URL.
+func buildURL(baseURL string) string {
+	return baseURL + selectMergeProfilePath
 }

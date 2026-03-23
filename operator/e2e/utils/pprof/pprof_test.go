@@ -18,11 +18,13 @@ package pprof_test
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,6 +33,9 @@ import (
 
 	"github.com/ai-dynamo/grove/operator/e2e/utils/pprof"
 )
+
+// fakeJSONProfile is a minimal valid JSON-encoded google.perftools.profiles.Profile.
+const fakeJSONProfile = `{"sampleType":[],"stringTable":[""],"periodType":{}}`
 
 func TestDownloader_DownloadForPhase(t *testing.T) {
 	t.Parallel()
@@ -43,11 +48,13 @@ func TestDownloader_DownloadForPhase(t *testing.T) {
 		wantFiles  []string
 	}{
 		{
-			name:       "downloads cpu and memory for phase",
+			name:       "downloads all profile types for phase",
 			httpStatus: http.StatusOK,
 			wantFiles: []string{
-				"pprof-run-001-deploy-cpu.pprof",
-				"pprof-run-001-deploy-memory.pprof",
+				"pprof-run-001-deploy-cpu.pprof.gz",
+				"pprof-run-001-deploy-memory.pprof.gz",
+				"pprof-run-001-deploy-goroutine.pprof.gz",
+				"pprof-run-001-deploy-mutex.pprof.gz",
 			},
 		},
 		{
@@ -69,7 +76,7 @@ func TestDownloader_DownloadForPhase(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(tt.httpStatus)
 				if tt.httpStatus == http.StatusOK {
-					_, _ = w.Write([]byte("fake-pprof-data"))
+					_, _ = w.Write([]byte(fakeJSONProfile))
 				}
 			}))
 			defer srv.Close()
@@ -128,7 +135,7 @@ func TestDownloader_DownloadForPhase_FileNameFormat(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("fake-pprof"))
+		_, _ = w.Write([]byte(fakeJSONProfile))
 	}))
 	defer srv.Close()
 
@@ -136,59 +143,61 @@ func TestDownloader_DownloadForPhase_FileNameFormat(t *testing.T) {
 	d := pprof.NewDownloader(srv.URL, "run-20260312", pprof.WithOutputDir(dir))
 	d.DownloadForPhase(context.Background(), "delete", now.Add(-2*time.Minute), now)
 
-	assert.FileExists(t, filepath.Join(dir, "pprof-run-20260312-delete-cpu.pprof"))
-	assert.FileExists(t, filepath.Join(dir, "pprof-run-20260312-delete-memory.pprof"))
+	assert.FileExists(t, filepath.Join(dir, "pprof-run-20260312-delete-cpu.pprof.gz"))
+	assert.FileExists(t, filepath.Join(dir, "pprof-run-20260312-delete-memory.pprof.gz"))
+	assert.FileExists(t, filepath.Join(dir, "pprof-run-20260312-delete-goroutine.pprof.gz"))
+	assert.FileExists(t, filepath.Join(dir, "pprof-run-20260312-delete-mutex.pprof.gz"))
 }
 
-func TestBuildQuery(t *testing.T) {
+func TestDownloader_UsesConnectRPC(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 12, 10, 0, 0, 0, time.UTC)
 
-	tests := []struct {
-		name        string
-		profileType pprof.ProfileType
-		wantPrefix  string
-	}{
-		{
-			name:        "CPU query contains cpu prefix",
-			profileType: pprof.ProfileCPU,
-			wantPrefix:  "process_cpu",
-		},
-		{
-			name:        "Memory query contains memory prefix",
-			profileType: pprof.ProfileMemory,
-			wantPrefix:  "memory",
-		},
+	var mu sync.Mutex
+	var requests []connectRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req connectRequest
+		_ = json.Unmarshal(body, &req)
+		req.Path = r.URL.Path
+		req.Method = r.Method
+		req.ContentType = r.Header.Get("Content-Type")
+		req.ConnectVersion = r.Header.Get("Connect-Protocol-Version")
+		mu.Lock()
+		requests = append(requests, req)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(fakeJSONProfile))
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	d := pprof.NewDownloader(srv.URL, "r1",
+		pprof.WithOutputDir(dir),
+		pprof.WithAppName("my-namespace"),
+	)
+	d.DownloadForPhase(context.Background(), "phase1", now.Add(-time.Minute), now)
+
+	require.Len(t, requests, 4)
+	for _, req := range requests {
+		assert.Equal(t, "POST", req.Method)
+		assert.Equal(t, "/querier.v1.QuerierService/SelectMergeProfile", req.Path)
+		assert.Equal(t, "application/json", req.ContentType)
+		assert.Equal(t, "1", req.ConnectVersion)
+		assert.Contains(t, req.LabelSelector, "my-namespace")
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			var gotURL string
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				gotURL = r.URL.String()
-				w.WriteHeader(http.StatusOK)
-			}))
-			defer srv.Close()
-
-			dir := t.TempDir()
-			d := pprof.NewDownloader(srv.URL, "r1",
-				pprof.WithOutputDir(dir),
-				pprof.WithAppName("my-app"),
-			)
-			d.DownloadForPhase(context.Background(), "phase1", now.Add(-time.Minute), now)
-
-			// Verify URL reached the server with correct query parameter.
-			require.NotEmpty(t, gotURL)
-			assert.True(t, strings.Contains(gotURL, "/pyroscope/render"),
-				"URL should contain /pyroscope/render, got: %s", gotURL)
-			assert.Contains(t, gotURL, "format=pprof")
-			assert.Contains(t, gotURL, "my-app")
-			assert.Contains(t, gotURL, tt.wantPrefix)
-		})
-	}
+type connectRequest struct {
+	ProfileTypeID  string `json:"profileTypeID"`
+	LabelSelector  string `json:"labelSelector"`
+	Start          int64  `json:"start"`
+	End            int64  `json:"end"`
+	Path           string `json:"-"`
+	Method         string `json:"-"`
+	ContentType    string `json:"-"`
+	ConnectVersion string `json:"-"`
 }
 
 func TestProfileType_QueryPrefix(t *testing.T) {
@@ -196,5 +205,7 @@ func TestProfileType_QueryPrefix(t *testing.T) {
 
 	assert.Contains(t, pprof.ProfileCPU.QueryPrefix(), "cpu")
 	assert.Contains(t, pprof.ProfileMemory.QueryPrefix(), "memory")
+	assert.Contains(t, pprof.ProfileGoroutine.QueryPrefix(), "goroutine")
+	assert.Contains(t, pprof.ProfileMutex.QueryPrefix(), "mutex")
 	assert.Empty(t, pprof.ProfileType("unknown").QueryPrefix())
 }
