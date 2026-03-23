@@ -24,7 +24,7 @@ When auto MNNVL is enabled, Grove will:
 Before enabling auto MNNVL, ensure your cluster meets the following requirements:
 
 1. **NVIDIA GPUs with MNNVL support** on all nodes that will run MNNVL workloads
-2. **NVIDIA DRA driver** installed, which provides the ComputeDomain CRD (`computedomains.resource.nvidia.com`)
+2. **NVIDIA DRA driver** installed, which provides the ComputeDomain CRD (`computedomains.resource.nvidia.com`). See the [NVIDIA DRA driver installation guide](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-operator-dra.html) for setup instructions.
 3. **Homogeneous GPU cluster** -- all nodes must have identical GPU types and NVLink topology. Grove does not validate or enforce cluster homogeneity; it is the cluster administrator's responsibility to ensure this requirement is met. Enabling MNNVL on heterogeneous clusters may result in undefined scheduling behavior.
 4. **Grove operator** deployed via Helm
 
@@ -155,59 +155,10 @@ Grove adds a finalizer (`grove.io/computedomain-finalizer`) to each ComputeDomai
 
 Existing PodCliqueSet resources created before the MNNVL feature was enabled will not have the `grove.io/auto-mnnvl` annotation. These workloads will continue to operate without ComputeDomains, even after the feature is enabled globally. To enable MNNVL for an existing workload, the PCS must be deleted and recreated.
 
-## Configuration Reference
-
-| Helm Value / Annotation | Type | Default | Description |
-|--------------------------|------|---------|-------------|
-| `config.network.autoMNNVLEnabled` | bool | `false` | Enables automatic MNNVL management. When `true`, the operator validates the ComputeDomain CRD at startup and automatically creates ComputeDomains for GPU workloads. |
-| `grove.io/auto-mnnvl` (annotation) | string | Not set | Per-PCS annotation controlling MNNVL. Values: `"enabled"` (auto-set by webhook for GPU workloads) or `"disabled"` (explicit opt-out). Immutable after creation. |
-
-**Limitations:**
+## Limitations
 
 - **One IMEX channel per node:** Currently, only one IMEX domain can be supported per node. Since, ComputeDomains do not support sharing IMEX domain between workloads, each node can only support pods from at most one MNNVL-enabled workload at a time. MNNVL-enabled pods from different workloads cannot share the same node at the same time.
 - **PCS-level granularity:** Auto-MNNVL feature is uniformly applied to the entire PodCliqueSet. All GPU pods in a PCS will automatically get the IMEX channel setup if the underlying GPUs support it. This feature cannot be special-cased for a subset of PodCliques in a PodCliqueSet.
 - **No ComputeDomain customization:** ComputeDomain and ResourceClaimTemplate configurations are automatically generated and cannot be customized. Opt out if you need custom settings.
 - **Immutable annotation:** The `grove.io/auto-mnnvl` annotation cannot be changed after PCS creation. Delete and recreate the PCS to change MNNVL behavior.
 - **No ComputeDomain status propagation:** Grove does not surface ComputeDomain status in PCS status fields. Inspect the ComputeDomain resource directly using `kubectl get computedomain`.
-
-## Examples
-
-### GPU Workload with Auto MNNVL
-
-When auto MNNVL is enabled globally, simply deploy a PCS with GPU containers. Grove handles the rest:
-
-```yaml
-apiVersion: grove.io/v1alpha1
-kind: PodCliqueSet
-metadata:
-  name: distributed-inference
-  namespace: default
-spec:
-  replicas: 2
-  template:
-    cliques:
-      - name: worker
-        spec:
-          replicas: 1
-          podSpec:
-            containers:
-              - name: model-server
-                image: my-inference-server:latest
-                resources:
-                  limits:
-                    nvidia.com/gpu: "8"
-```
-
-After creation, verify that MNNVL is enabled and ComputeDomains exist:
-
-```bash
-# Check the annotation
-kubectl get pcs distributed-inference -o jsonpath='{.metadata.annotations.grove\.io/auto-mnnvl}'
-# Output: enabled
-
-# List ComputeDomains
-kubectl get computedomain -l app.kubernetes.io/part-of=distributed-inference
-# NAME                       AGE
-# distributed-inference-0    10s
-# distributed-inference-1    10s
-```
