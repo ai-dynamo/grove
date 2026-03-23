@@ -9,6 +9,7 @@
   - [User Stories](#user-stories)
     - [Story 1](#story-1)
     - [Story 2](#story-2)
+    - [Story 3](#story-3)
   - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
     - [Risk: CRD Deletion on Helm Uninstall](#risk-crd-deletion-on-helm-uninstall)
     - [Risk: RBAC for CRD Management](#risk-rbac-for-crd-management)
@@ -18,6 +19,7 @@
   - [Init Container Using the Operator Image](#init-container-using-the-operator-image)
     - [Embedding CRD YAML in the Operator Binary](#embedding-crd-yaml-in-the-operator-binary)
     - [install-crds Subcommand](#install-crds-subcommand)
+    - [Opting Out of Automated CRD Management](#opting-out-of-automated-crd-management)
     - [Init Container Spec](#init-container-spec)
     - [Changes to the grove Chart](#changes-to-the-grove-chart)
     - [GitOps Integration](#gitops-integration)
@@ -47,6 +49,7 @@ For an operator such as Grove, where the API surface (`PodCliqueSet`, `PodClique
 * Ensure CRDs are applied/upgraded before the operator process starts on every deployment and every restart.
 * Require zero manual steps from users for CRD lifecycle management during normal upgrades.
 * Work correctly for all deployment models: native Helm, `helm template` with kustomize/ArgoCD/Flux, and raw `kubectl apply`.
+* Allow users to opt out of automated CRD management and take full ownership of CRD lifecycle themselves.
 * Preserve existing CRD data — no CRD deletion must occur as part of normal upgrades.
 
 ### Non-Goals
@@ -71,6 +74,10 @@ As a platform engineer operating Grove in a production cluster, when I run `helm
 #### Story 2
 
 As a GitOps engineer managing Grove via ArgoCD or Flux using rendered manifests from `helm template`, I want CRD upgrades to happen automatically when the operator Deployment rolls out, without needing to manage a separate CRD application, sync-wave ordering, or Helm hook lifecycle.
+
+#### Story 3
+
+As a platform engineer with strict change-management requirements, I want to disable Grove's automated CRD management entirely. I will source the CRD manifests directly from the Grove GitHub release, review and approve them through our standard change process, and apply them to the cluster myself before upgrading the operator. I need the operator to start normally without attempting to touch CRDs.
 
 ### Limitations/Risks & Mitigations
 
@@ -143,20 +150,38 @@ func run(ctx context.Context) error {
 
 The subcommand uses server-side apply (`--force-conflicts`) so that fields previously managed by other field managers (e.g., a cluster admin who manually patched a CRD) do not block the upgrade.
 
+#### Opting Out of Automated CRD Management
+
+Some users prefer to take full ownership of CRD lifecycle — sourcing CRD manifests directly from the Grove GitHub release, reviewing them through their change-management process, and applying them independently of the operator rollout. The automated init container can be disabled for these users via a `values.yaml` flag:
+
+```yaml
+# values.yaml
+crdInstaller:
+  enabled: true  # set to false to disable the init container and manage CRDs manually
+```
+
+When `crdInstaller.enabled` is `false`, the init container is omitted from the Deployment template entirely and the operator's CRD-related RBAC verbs are also removed. The operator starts without attempting to touch CRDs.
+
+Users who opt out are responsible for ensuring the correct CRD schemas are applied before upgrading the operator. CRD manifests for each Grove release are published as part of the GitHub release artifacts and are also available in the `operator/api/core/v1alpha1/crds/` and `scheduler/api/core/v1alpha1/crds/` directories of the release tag.
+
+> **Warning:** Running the operator against stale CRD schemas may result in silent data loss, rejected objects, or undefined reconciliation behaviour. Users who opt out must apply updated CRDs before or simultaneously with upgrading the operator.
+
 #### Init Container Spec
 
-The init container is added directly to the operator Deployment template. It uses the same image reference as the operator container, so no additional image needs to be built, pushed, or pulled:
+The init container is added directly to the operator Deployment template and is conditional on `crdInstaller.enabled`. It uses the same image reference as the operator container, so no additional image needs to be built, pushed, or pulled:
 
 ```yaml
 # templates/deployment.yaml (operator Deployment)
 spec:
   template:
     spec:
+      {{- if .Values.crdInstaller.enabled }}
       initContainers:
         - name: crd-installer
           image: "{{ .Values.operator.image.repository }}:{{ .Values.operator.image.tag }}"
           imagePullPolicy: {{ .Values.operator.image.pullPolicy }}
           command: ["/manager", "install-crds"]
+      {{- end }}
       containers:
         - name: manager
           image: "{{ .Values.operator.image.repository }}:{{ .Values.operator.image.tag }}"
@@ -167,12 +192,12 @@ Kubernetes guarantees that `crd-installer` completes successfully before the `ma
 
 #### Changes to the grove Chart
 
-* `charts/crds/` directory is removed — the init container becomes the sole CRD delivery mechanism.
-* The init container spec is added to the existing operator Deployment template.
+* `charts/crds/` directory is removed — the init container becomes the default CRD delivery mechanism.
+* The init container spec is added to the existing operator Deployment template, guarded by `{{- if .Values.crdInstaller.enabled }}`.
 * No new template files, Jobs, ServiceAccounts, or ClusterRoles are required.
-* The operator `ClusterRole` gains `get`, `create`, `update`, `patch` on `customresourcedefinitions` for the five Grove CRD names.
+* The operator `ClusterRole` gains `get`, `create`, `update`, `patch` on `customresourcedefinitions` for the five Grove CRD names, also guarded by `crdInstaller.enabled`.
+* `values.yaml` gains a `crdInstaller.enabled` field defaulting to `true`.
 * `prepare-charts.sh` is updated to copy CRD files into `operator/internal/crds/files/` in addition to (temporarily, during transition) `operator/charts/crds/`.
-* No changes to `values.yaml` are required — the init container uses the same image values already present for the operator Deployment.
 
 #### GitOps Integration
 
@@ -223,6 +248,7 @@ No new metrics or status conditions are introduced by this GREP. Observability o
   4. Asserts that the operator Pod's init container completed successfully.
   5. Asserts that `kubectl get crd podcliquesets.grove.io -o json` reflects the new field.
   6. Verifies that existing `PodCliqueSet` CRs are unaffected.
+* **Opt-out test:** CI verifies that installing with `--set crdInstaller.enabled=false` produces a Deployment with no init container and a ClusterRole without CRD verbs, and that the operator starts normally when CRDs are pre-applied manually.
 * **Init container failure test:** CI verifies that a simulated apply failure (e.g., RBAC denied) causes the operator Pod to remain in `Init:Error` state, and that the init container logs contain the structured error message.
 
 ### Graduation Criteria
@@ -230,10 +256,12 @@ No new metrics or status conditions are introduced by this GREP. Observability o
 **Alpha (initial merge):**
 
 * `install-crds` subcommand is implemented and CRD YAML is embedded in the operator binary.
-* Init container is added to the operator Deployment template.
+* Init container is added to the operator Deployment template, conditional on `crdInstaller.enabled`.
+* `crdInstaller.enabled` defaults to `true` in `values.yaml`.
 * `crds/` directory is removed from the `grove` chart.
 * A single `helm upgrade grove` correctly upgrades all five CRDs in a live cluster before the operator rolls out.
 * E2E upgrade scenario passes in CI.
+* Opt-out test passes in CI.
 * Init container failure test passes in CI.
 
 **GA:**
@@ -245,6 +273,7 @@ No new metrics or status conditions are introduced by this GREP. Observability o
 
 * 2026-03-19: GREP created, tracking issue [#436](https://github.com/ai-dynamo/grove/issues/436).
 * 2026-03-23: Design updated to use init container instead of Helm pre-upgrade hook Job, to support customers who manage rendered manifests via kustomize/ArgoCD/Flux.
+* 2026-03-23: Added `crdInstaller.enabled` opt-out flag for customers who manage CRD lifecycle independently.
 
 ## Appendix
 
