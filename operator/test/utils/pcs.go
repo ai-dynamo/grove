@@ -142,6 +142,18 @@ func (b *PodCliqueSetBuilder) WithPodCliqueSetGenerationHash(pcsGenerationHash *
 	return b
 }
 
+// WithUpdateStrategy sets the UpdateStrategy for the PodCliqueSet.
+func (b *PodCliqueSetBuilder) WithUpdateStrategy(strategy *grovecorev1alpha1.PodCliqueSetUpdateStrategy) *PodCliqueSetBuilder {
+	b.pcs.Spec.UpdateStrategy = strategy
+	return b
+}
+
+// WithUpdateProgress sets the UpdateProgress in the PodCliqueSet status.
+func (b *PodCliqueSetBuilder) WithUpdateProgress(progress *grovecorev1alpha1.PodCliqueSetUpdateProgress) *PodCliqueSetBuilder {
+	b.pcs.Status.UpdateProgress = progress
+	return b
+}
+
 // WithTopologyConstraint sets the TopologyConstraint for the PodCliqueSet template.
 func (b *PodCliqueSetBuilder) WithTopologyConstraint(constraint *grovecorev1alpha1.TopologyConstraint) *PodCliqueSetBuilder {
 	b.pcs.Spec.Template.TopologyConstraint = constraint

@@ -1055,15 +1055,15 @@ func setupRollingUpdateTest(t *testing.T, cfg RollingUpdateTestConfig) (TestCont
 	}
 
 	// Step 1: Prepare test cluster
-	clientset, restConfig, dynamicClient, clusterCleanup := prepareTestCluster(ctx, t, cfg.WorkerNodes)
+	clients, clusterCleanup := prepareTestCluster(ctx, t, cfg.WorkerNodes)
 
 	// Step 2: Create TestContext
 	tc := TestContext{
 		T:             t,
 		Ctx:           ctx,
-		Clientset:     clientset,
-		RestConfig:    restConfig,
-		DynamicClient: dynamicClient,
+		Clientset:     clients.clientset,
+		RestConfig:    clients.restConfig,
+		DynamicClient: clients.dynamicClient,
 		Namespace:     cfg.Namespace,
 		Timeout:       defaultPollTimeout,
 		Interval:      defaultPollInterval,

@@ -17,6 +17,7 @@
 package cert
 
 import (
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -27,6 +28,11 @@ import (
 	cert "github.com/open-policy-agent/cert-controller/pkg/rotator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 // TestGetWebhooks tests the creation of webhook info structures based on authorizer configuration.
@@ -171,8 +177,8 @@ func TestManageWebhookCerts(t *testing.T) {
 		certsReady := make(chan struct{})
 
 		// Call ManageWebhookCerts with manual mode
-		// Note: mgr is nil because manual mode doesn't use it
-		err := ManageWebhookCerts(nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionModeManual, certsReady)
+		// Note: mgr and cl are nil because manual mode doesn't use them
+		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionModeManual, certsReady)
 
 		// Should return no error
 		require.NoError(t, err)
@@ -190,7 +196,7 @@ func TestManageWebhookCerts(t *testing.T) {
 	t.Run("manual mode with authorizer enabled", func(t *testing.T) {
 		certsReady := make(chan struct{})
 
-		err := ManageWebhookCerts(nil, "/tmp/certs", "test-secret", true, configv1alpha1.CertProvisionModeManual, certsReady)
+		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", true, configv1alpha1.CertProvisionModeManual, certsReady)
 
 		require.NoError(t, err)
 
@@ -209,7 +215,7 @@ func TestManageWebhookCerts(t *testing.T) {
 
 		// Call ManageWebhookCerts with auto mode
 		// This should fail because the namespace file doesn't exist in the test environment
-		err := ManageWebhookCerts(nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionModeAuto, certsReady)
+		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionModeAuto, certsReady)
 
 		// Should return an error because namespace file doesn't exist
 		require.Error(t, err)
@@ -229,7 +235,7 @@ func TestManageWebhookCerts(t *testing.T) {
 		certsReady := make(chan struct{})
 
 		// Even though namespace file doesn't exist, manual mode should succeed
-		err := ManageWebhookCerts(nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionModeManual, certsReady)
+		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionModeManual, certsReady)
 
 		// Should succeed without needing namespace
 		require.NoError(t, err)
@@ -240,7 +246,7 @@ func TestManageWebhookCerts(t *testing.T) {
 	t.Run("unknown mode returns explicit error", func(t *testing.T) {
 		certsReady := make(chan struct{})
 
-		err := ManageWebhookCerts(nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionMode("unknown"), certsReady)
+		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionMode("unknown"), certsReady)
 
 		// Should return an explicit error about unsupported mode
 		require.Error(t, err)
@@ -260,9 +266,77 @@ func TestManageWebhookCerts(t *testing.T) {
 	t.Run("empty mode returns explicit error", func(t *testing.T) {
 		certsReady := make(chan struct{})
 
-		err := ManageWebhookCerts(nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionMode(""), certsReady)
+		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionMode(""), certsReady)
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported cert provision mode")
+	})
+}
+
+// TestCreatePlaceholderSecretIfNotExists tests the secret creation logic.
+func TestCreatePlaceholderSecretIfNotExists(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	t.Run("creates secret when it does not exist", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+		err := createPlaceholderSecretIfNotExists(context.Background(), cl, "test-ns", "test-secret")
+		require.NoError(t, err)
+
+		// Verify the secret was created with the correct attributes
+		secret := &corev1.Secret{}
+		err = cl.Get(t.Context(), types.NamespacedName{Namespace: "test-ns", Name: "test-secret"}, secret)
+		require.NoError(t, err)
+		assert.Equal(t, corev1.SecretTypeTLS, secret.Type)
+		assert.Equal(t, "test-ns", secret.Namespace)
+		assert.Equal(t, "test-secret", secret.Name)
+		assert.Contains(t, secret.Data, "tls.crt")
+		assert.Contains(t, secret.Data, "tls.key")
+		assert.Contains(t, secret.Data, "ca.crt")
+		assert.Empty(t, secret.Data["tls.crt"])
+		assert.Empty(t, secret.Data["tls.key"])
+		assert.Empty(t, secret.Data["ca.crt"])
+	})
+
+	t.Run("created secret has expected labels", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+		err := createPlaceholderSecretIfNotExists(context.Background(), cl, "test-ns", "test-secret")
+		require.NoError(t, err)
+
+		secret := &corev1.Secret{}
+		err = cl.Get(t.Context(), types.NamespacedName{Namespace: "test-ns", Name: "test-secret"}, secret)
+		require.NoError(t, err)
+		assert.Equal(t, "grove-operator", secret.Labels["app.kubernetes.io/managed-by"])
+		assert.Equal(t, "webhook", secret.Labels["app.kubernetes.io/component"])
+		assert.Equal(t, "grove", secret.Labels["app.kubernetes.io/part-of"])
+	})
+
+	t.Run("does not overwrite existing secret", func(t *testing.T) {
+		existingSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "test-ns",
+				Name:      "test-secret",
+			},
+			Type: corev1.SecretTypeTLS,
+			Data: map[string][]byte{
+				"tls.crt": []byte("existing-cert"),
+				"tls.key": []byte("existing-key"),
+				"ca.crt":  []byte("existing-ca"),
+			},
+		}
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existingSecret).Build()
+
+		err := createPlaceholderSecretIfNotExists(context.Background(), cl, "test-ns", "test-secret")
+		require.NoError(t, err)
+
+		// Verify the existing data was preserved
+		secret := &corev1.Secret{}
+		err = cl.Get(t.Context(), types.NamespacedName{Namespace: "test-ns", Name: "test-secret"}, secret)
+		require.NoError(t, err)
+		assert.Equal(t, []byte("existing-cert"), secret.Data["tls.crt"])
+		assert.Equal(t, []byte("existing-key"), secret.Data["tls.key"])
+		assert.Equal(t, []byte("existing-ca"), secret.Data["ca.crt"])
 	})
 }

@@ -23,6 +23,9 @@ KUBECONFIG_PATH := $(if $(KUBECONFIG),$(KUBECONFIG),$(MODULE_HACK_DIR)/kind/kube
 LD_PACKAGE_PATH := "github.com/ai-dynamo/grove/operator/internal"
 OPERATOR_NAME   := "grove-operator"
 INITC_NAME      := "grove-initc"
+K3S_IMAGE       ?= rancher/k3s:v1.34.2-k3s1
+E2E_REGISTRY_PORT ?= 5001
+E2E_CREATE_FLAGS  ?=
 
 # Include tools targets
 include $(REPO_HACK_DIR)/tools.mk
@@ -106,19 +109,19 @@ run-e2e: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
 run-e2e:
 	@echo "> Preparing charts (copying CRDs)..."
 	@$(MODULE_HACK_DIR)/prepare-charts.sh
-	@echo "> Running e2e tests..."
+	@echo "> Running e2e tests (compilation may take a few minutes with no output)..."
 	@cd e2e && go test -count=1 -tags=e2e ./tests/... -v -timeout 45m $(if $(TEST_PATTERN),-run $(TEST_PATTERN))
 
 # Create a k3d cluster for e2e testing (with Grove and Kai scheduler deployed)
 # This is optional - tests work with any Kubernetes cluster that has the required components
 .PHONY: e2e-cluster-up
 e2e-cluster-up:
-	@$(MODULE_HACK_DIR)/e2e-cluster/create-e2e-cluster.py
+	@$(MODULE_HACK_DIR)/infra-manager.py setup $(E2E_CREATE_FLAGS)
 
 # Delete the k3d e2e test cluster
 .PHONY: e2e-cluster-down
 e2e-cluster-down:
-	@$(MODULE_HACK_DIR)/e2e-cluster/create-e2e-cluster.py --delete
+	@$(MODULE_HACK_DIR)/infra-manager.py delete k3d-cluster
 
 # Full e2e test run: create k3d cluster, run tests, then cleanup
 # Usage: make run-e2e-full [TEST_PATTERN=<pattern>]
@@ -128,10 +131,56 @@ e2e-cluster-down:
 .PHONY: run-e2e-full
 run-e2e-full: e2e-cluster-up
 	@echo "> Running e2e tests..."
-	@E2E_REGISTRY_PORT=5001 $(MAKE) run-e2e TEST_PATTERN=$(TEST_PATTERN) || \
+	@$(MAKE) run-e2e TEST_PATTERN=$(TEST_PATTERN) || \
 		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down
+
+# Run autoMNNVL e2e tests (all 4 configurations: supported/unsupported x enabled/disabled)
+# Creates a lightweight k3d cluster (2 workers, no Kai/topology), runs all configurations
+# sequentially via config-cluster.py, then cleans up. Uses the same e2e-cluster-up target
+# with MNNVL-specific env overrides and flags.
+# Usage: make run-e2e-mnnvl-full
+.PHONY: run-e2e-mnnvl-full
+run-e2e-mnnvl-full: export E2E_CLUSTER__WORKER_NODES = 2
+run-e2e-mnnvl-full: export E2E_CLUSTER__K3S_IMAGE = $(K3S_IMAGE)
+run-e2e-mnnvl-full: export E2E_CLUSTER__PREPULL_IMAGES = false
+run-e2e-mnnvl-full: export E2E_KWOK__NODES = 0
+run-e2e-mnnvl-full: e2e-cluster-up
+	@echo "> Pushing alpine image to local registry..."
+	@docker pull alpine:latest || true
+	@docker tag alpine:latest localhost:$(E2E_REGISTRY_PORT)/alpine:latest
+	@docker push localhost:$(E2E_REGISTRY_PORT)/alpine:latest
+	@echo "> Running autoMNNVL e2e tests (all 4 configurations)..."
+	@python3 $(MODULE_HACK_DIR)/e2e-autoMNNVL/run_autoMNNVL_e2e_all.py || \
+		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
+	@echo "> Tests passed, cleaning up cluster..."
+	@$(MAKE) e2e-cluster-down
+
+# Create a real-node k3d cluster for e2e testing (no KWOK virtual nodes)
+# Uses 30 actual k3d worker containers with 150m memory each.
+# Delegates to e2e-cluster-up with worker/KWOK overrides.
+# Override defaults: make e2e-cluster-up-real E2E_CLUSTER__WORKER_NODES=10
+.PHONY: e2e-cluster-up-real
+e2e-cluster-up-real: export E2E_CLUSTER__WORKER_NODES = 30
+e2e-cluster-up-real: export E2E_CLUSTER__WORKER_MEMORY = 150m
+e2e-cluster-up-real: export E2E_KWOK__NODES = 0
+e2e-cluster-up-real: e2e-cluster-up
+
+# Full e2e test run on real k3d workers (no KWOK virtual nodes)
+# Creates a 30-node real cluster, runs tests, then cleans up on success or failure.
+# Usage: make run-e2e-real-full [TEST_PATTERN=<pattern>]
+# Examples:
+#   make run-e2e-real-full                          # Run all tests on real nodes
+#   make run-e2e-real-full TEST_PATTERN=Test_GS     # Run gang scheduling tests only
+.PHONY: run-e2e-real-full
+run-e2e-real-full: e2e-cluster-up-real
+	@echo "> Running e2e tests (real nodes)..."
+	@$(MAKE) run-e2e TEST_PATTERN=$(TEST_PATTERN) || \
+		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
+	@echo "> Tests passed, cleaning up cluster..."
+	@$(MAKE) e2e-cluster-down
+
 
 # Make targets for local development and testing
 # -------------------------------------------------------------

@@ -41,7 +41,7 @@ func TestMutateUpdatedReplica(t *testing.T) {
 			name: "rolling update in progress - count pods with new hash",
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
-					RollingUpdateProgress: &grovecorev1alpha1.PodCliqueRollingUpdateProgress{
+					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
 						PodTemplateHash: "new-hash-v2",
 						UpdateStartedAt: metav1.Time{Time: time.Now()},
 						UpdateEndedAt:   nil, // Still in progress
@@ -69,7 +69,7 @@ func TestMutateUpdatedReplica(t *testing.T) {
 			name: "update just completed - use RollingUpdateProgress hash (edge case)",
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
-					RollingUpdateProgress: &grovecorev1alpha1.PodCliqueRollingUpdateProgress{
+					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
 						PodTemplateHash: "new-hash-v2",
 						UpdateStartedAt: metav1.Time{Time: time.Now().Add(-5 * time.Minute)},
 						UpdateEndedAt:   &metav1.Time{Time: time.Now()}, // Just completed
@@ -97,7 +97,7 @@ func TestMutateUpdatedReplica(t *testing.T) {
 			name: "steady state - no rolling update",
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
-					RollingUpdateProgress:  nil, // No rolling update
+					UpdateProgress:         nil, // No rolling update
 					CurrentPodTemplateHash: ptr.To("stable-hash"),
 				},
 			},
@@ -114,7 +114,7 @@ func TestMutateUpdatedReplica(t *testing.T) {
 			name: "never reconciled - empty hash",
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
-					RollingUpdateProgress:  nil,
+					UpdateProgress:         nil,
 					CurrentPodTemplateHash: nil, // Never set
 				},
 			},
@@ -128,7 +128,7 @@ func TestMutateUpdatedReplica(t *testing.T) {
 			name: "mixed state - some pods match, some don't",
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
-					RollingUpdateProgress:  nil,
+					UpdateProgress:         nil,
 					CurrentPodTemplateHash: ptr.To("current-hash"),
 				},
 			},
@@ -155,7 +155,7 @@ func TestMutateUpdatedReplica(t *testing.T) {
 			name: "rolling update progress exists but pods have different hash",
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
-					RollingUpdateProgress: &grovecorev1alpha1.PodCliqueRollingUpdateProgress{
+					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
 						PodTemplateHash: "target-hash",
 						UpdateStartedAt: metav1.Time{Time: time.Now()},
 					},
@@ -191,5 +191,132 @@ func createPodWithHash(name string, templateHash string) *corev1.Pod {
 				apicommon.LabelPodTemplateHash: templateHash,
 			},
 		},
+	}
+}
+
+// TestMirrorUpdateProgressToRollingUpdateProgressPCLQ tests the mirrorUpdateProgressToRollingUpdateProgress function for PodClique
+func TestMirrorUpdateProgressToRollingUpdateProgressPCLQ(t *testing.T) {
+	updateStartedAt := metav1.Now()
+	updateEndedAt := metav1.NewTime(updateStartedAt.Add(1))
+	tests := []struct {
+		name                          string
+		pclq                          *grovecorev1alpha1.PodClique
+		expectedRollingUpdateProgress *grovecorev1alpha1.PodCliqueRollingUpdateProgress
+	}{
+		{
+			name: "nil UpdateProgress results in nil RollingUpdateProgress",
+			pclq: &grovecorev1alpha1.PodClique{
+				Status: grovecorev1alpha1.PodCliqueStatus{
+					UpdateProgress: nil,
+				},
+			},
+			expectedRollingUpdateProgress: nil,
+		},
+		{
+			name: "UpdateProgress with no ReadyPodsSelectedToUpdate",
+			pclq: &grovecorev1alpha1.PodClique{
+				Status: grovecorev1alpha1.PodCliqueStatus{
+					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
+						UpdateStartedAt:            updateStartedAt,
+						PodCliqueSetGenerationHash: "gen-hash-123",
+						PodTemplateHash:            "pod-hash-456",
+					},
+				},
+			},
+			expectedRollingUpdateProgress: &grovecorev1alpha1.PodCliqueRollingUpdateProgress{
+				UpdateStartedAt:            updateStartedAt,
+				PodCliqueSetGenerationHash: "gen-hash-123",
+				PodTemplateHash:            "pod-hash-456",
+			},
+		},
+		{
+			name: "UpdateProgress with ReadyPodsSelectedToUpdate",
+			pclq: &grovecorev1alpha1.PodClique{
+				Status: grovecorev1alpha1.PodCliqueStatus{
+					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
+						UpdateStartedAt:            updateStartedAt,
+						UpdateEndedAt:              ptr.To(updateEndedAt),
+						PodCliqueSetGenerationHash: "gen-hash-789",
+						PodTemplateHash:            "pod-hash-012",
+						ReadyPodsSelectedToUpdate: &grovecorev1alpha1.PodsSelectedToUpdate{
+							Current:   "pod-1",
+							Completed: []string{"pod-0"},
+						},
+					},
+				},
+			},
+			expectedRollingUpdateProgress: &grovecorev1alpha1.PodCliqueRollingUpdateProgress{
+				UpdateStartedAt:            updateStartedAt,
+				UpdateEndedAt:              ptr.To(updateEndedAt),
+				PodCliqueSetGenerationHash: "gen-hash-789",
+				PodTemplateHash:            "pod-hash-012",
+				ReadyPodsSelectedToUpdate: &grovecorev1alpha1.PodsSelectedToUpdate{
+					Current:   "pod-1",
+					Completed: []string{"pod-0"},
+				},
+			},
+		},
+		{
+			name: "clears existing RollingUpdateProgress when UpdateProgress is nil",
+			pclq: &grovecorev1alpha1.PodClique{
+				Status: grovecorev1alpha1.PodCliqueStatus{
+					UpdateProgress: nil,
+					RollingUpdateProgress: &grovecorev1alpha1.PodCliqueRollingUpdateProgress{
+						UpdateStartedAt:            updateStartedAt,
+						UpdateEndedAt:              ptr.To(updateEndedAt),
+						PodCliqueSetGenerationHash: "old-gen-hash",
+						PodTemplateHash:            "old-pod-hash",
+						ReadyPodsSelectedToUpdate: &grovecorev1alpha1.PodsSelectedToUpdate{
+							Current:   "pod-1",
+							Completed: []string{"pod-0"},
+						},
+					},
+				},
+			},
+			expectedRollingUpdateProgress: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Call the function
+			mirrorUpdateProgressToRollingUpdateProgress(tt.pclq)
+
+			// Assert the result
+			if tt.expectedRollingUpdateProgress == nil {
+				assert.Nil(t, tt.pclq.Status.RollingUpdateProgress,
+					"RollingUpdateProgress should be nil")
+			} else {
+				assert.NotNil(t, tt.pclq.Status.RollingUpdateProgress,
+					"RollingUpdateProgress should not be nil")
+				assert.Equal(t, tt.expectedRollingUpdateProgress.UpdateStartedAt,
+					tt.pclq.Status.RollingUpdateProgress.UpdateStartedAt,
+					"UpdateStartedAt should match")
+				assert.Equal(t, tt.expectedRollingUpdateProgress.UpdateEndedAt,
+					tt.pclq.Status.RollingUpdateProgress.UpdateEndedAt,
+					"UpdateEndedAt should match")
+				assert.Equal(t, tt.expectedRollingUpdateProgress.PodCliqueSetGenerationHash,
+					tt.pclq.Status.RollingUpdateProgress.PodCliqueSetGenerationHash,
+					"PodCliqueSetGenerationHash should match")
+				assert.Equal(t, tt.expectedRollingUpdateProgress.PodTemplateHash,
+					tt.pclq.Status.RollingUpdateProgress.PodTemplateHash,
+					"PodTemplateHash should match")
+
+				// Check ReadyPodsSelectedToUpdate
+				if tt.expectedRollingUpdateProgress.ReadyPodsSelectedToUpdate == nil {
+					assert.Nil(t, tt.pclq.Status.RollingUpdateProgress.ReadyPodsSelectedToUpdate,
+						"ReadyPodsSelectedToUpdate should be nil")
+				} else {
+					assert.NotNil(t, tt.pclq.Status.RollingUpdateProgress.ReadyPodsSelectedToUpdate,
+						"ReadyPodsSelectedToUpdate should not be nil")
+					assert.Equal(t, tt.expectedRollingUpdateProgress.ReadyPodsSelectedToUpdate.Current,
+						tt.pclq.Status.RollingUpdateProgress.ReadyPodsSelectedToUpdate.Current,
+						"Current pod should match")
+					assert.Equal(t, tt.expectedRollingUpdateProgress.ReadyPodsSelectedToUpdate.Completed,
+						tt.pclq.Status.RollingUpdateProgress.ReadyPodsSelectedToUpdate.Completed,
+						"Completed pods should match")
+				}
+			}
+		})
 	}
 }

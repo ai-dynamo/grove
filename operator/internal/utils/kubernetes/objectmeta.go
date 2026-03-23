@@ -40,6 +40,16 @@ func GetFirstOwnerName(resourceObjMeta metav1.ObjectMeta) string {
 	return resourceObjMeta.OwnerReferences[0].Name
 }
 
+// FindOwnerRefByKind returns the first OwnerReference matching the given kind, or nil if none match.
+func FindOwnerRefByKind(ownerRefs []metav1.OwnerReference, kind string) *metav1.OwnerReference {
+	for i := range ownerRefs {
+		if ownerRefs[i].Kind == kind {
+			return &ownerRefs[i]
+		}
+	}
+	return nil
+}
+
 // GetObjectKeyFromObjectMeta creates a client.ObjectKey from the given ObjectMeta.
 func GetObjectKeyFromObjectMeta(objMeta metav1.ObjectMeta) client.ObjectKey {
 	return client.ObjectKey{

@@ -59,16 +59,16 @@ func Test_SO1_InorderStartupOrderWithFullReplicas(t *testing.T) {
 
 	logger.Info("1. Initialize a 10-node Grove cluster")
 	totalPods := 10 // pc-a: 2 replicas, pc-b: 1*2 (scaling group), pc-c: 3*2 (scaling group) = 2+2+6=10
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, totalPods)
+	clients, cleanup := prepareTestCluster(ctx, t, totalPods)
 	defer cleanup()
 
 	logger.Info("2. Deploy workload WL3, and verify 10 newly created pods")
 	tc := TestContext{
 		T:             t,
 		Ctx:           ctx,
-		Clientset:     clientset,
-		RestConfig:    restConfig,
-		DynamicClient: dynamicClient,
+		Clientset:     clients.clientset,
+		RestConfig:    clients.restConfig,
+		DynamicClient: clients.dynamicClient,
 		Namespace:     "default",
 		Timeout:       5 * time.Minute,
 		Interval:      defaultPollInterval,
@@ -117,16 +117,16 @@ func Test_SO2_InorderStartupOrderWithMinReplicas(t *testing.T) {
 
 	logger.Info("1. Initialize a 10-node Grove cluster")
 	totalPods := 10 // pc-a: 2 replicas, pc-b: 1*2 (scaling group), pc-c: 3*2 (scaling group) = 2+2+6=10
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, totalPods)
+	clients, cleanup := prepareTestCluster(ctx, t, totalPods)
 	defer cleanup()
 
 	logger.Info("2. Deploy workload WL4, and verify 10 newly created pods")
 	tc := TestContext{
 		T:             t,
 		Ctx:           ctx,
-		Clientset:     clientset,
-		RestConfig:    restConfig,
-		DynamicClient: dynamicClient,
+		Clientset:     clients.clientset,
+		RestConfig:    clients.restConfig,
+		DynamicClient: clients.dynamicClient,
 		Namespace:     "default",
 		Timeout:       5 * time.Minute,
 		Interval:      defaultPollInterval,
@@ -186,16 +186,16 @@ func Test_SO3_ExplicitStartupOrderWithFullReplicas(t *testing.T) {
 
 	logger.Info("1. Initialize a 10-node Grove cluster")
 	totalPods := 10 // pc-a: 2 replicas, pc-b: 1*2 (scaling group), pc-c: 3*2 (scaling group) = 2+2+6=10
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, totalPods)
+	clients, cleanup := prepareTestCluster(ctx, t, totalPods)
 	defer cleanup()
 
 	logger.Info("2. Deploy workload WL5, and verify 10 newly created pods")
 	tc := TestContext{
 		T:             t,
 		Ctx:           ctx,
-		Clientset:     clientset,
-		RestConfig:    restConfig,
-		DynamicClient: dynamicClient,
+		Clientset:     clients.clientset,
+		RestConfig:    clients.restConfig,
+		DynamicClient: clients.dynamicClient,
 		Namespace:     "default",
 		Timeout:       5 * time.Minute,
 		Interval:      defaultPollInterval,
@@ -245,16 +245,16 @@ func Test_SO4_ExplicitStartupOrderWithMinReplicas(t *testing.T) {
 
 	logger.Info("1. Initialize a 10-node Grove cluster")
 	totalPods := 10 // pc-a: 2 replicas, pc-b: 1*2 (scaling group), pc-c: 3*2 (scaling group) = 2+2+6=10
-	clientset, restConfig, dynamicClient, cleanup := prepareTestCluster(ctx, t, totalPods)
+	clients, cleanup := prepareTestCluster(ctx, t, totalPods)
 	defer cleanup()
 
 	logger.Info("2. Deploy workload WL6, and verify 10 newly created pods")
 	tc := TestContext{
 		T:             t,
 		Ctx:           ctx,
-		Clientset:     clientset,
-		RestConfig:    restConfig,
-		DynamicClient: dynamicClient,
+		Clientset:     clients.clientset,
+		RestConfig:    clients.restConfig,
+		DynamicClient: clients.dynamicClient,
 		Namespace:     "default",
 		Timeout:       5 * time.Minute,
 		Interval:      defaultPollInterval,

@@ -28,7 +28,7 @@ import (
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	ctrllogger "sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -36,7 +36,7 @@ import (
 // Reconciler reconciles PodCliqueScalingGroup objects.
 type Reconciler struct {
 	config                  groveconfigv1alpha1.PodCliqueScalingGroupControllerConfiguration
-	client                  client.Client
+	client                  ctrlclient.Client
 	reconcileStatusRecorder ctrlcommon.ReconcileErrorRecorder
 	operatorRegistry        component.OperatorRegistry[grovecorev1alpha1.PodCliqueScalingGroup]
 }
@@ -75,7 +75,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		deletionOrSpecReconcileFlowResult = r.reconcileSpec(ctx, specLog, pcsg)
 	}
 
-	if statusReconcileResult := r.reconcileStatus(ctx, logger, client.ObjectKeyFromObject(pcsg)); ctrlcommon.ShortCircuitReconcileFlow(statusReconcileResult) {
+	if statusReconcileResult := r.reconcileStatus(ctx, logger, ctrlclient.ObjectKeyFromObject(pcsg)); ctrlcommon.ShortCircuitReconcileFlow(statusReconcileResult) {
 		return statusReconcileResult.Result()
 	}
 

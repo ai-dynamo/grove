@@ -78,3 +78,14 @@ profiles:
                   key: "kubernetes.io/rack"
                 - domain: host
                   key: "kubernetes.io/hostname"
+  - name: mnnvl-test
+    patches:
+      - op: add
+        path: /deploy/helm/releases/0/setValues
+        value:
+          replicaCount: 1
+          config:
+            leaderElection:
+              enabled: false
+            network:
+              autoMNNVLEnabled: true

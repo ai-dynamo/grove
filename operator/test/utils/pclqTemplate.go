@@ -139,8 +139,9 @@ func (b *PodCliqueTemplateSpecBuilder) WithInitContainer(container corev1.Contai
 }
 
 // NewGPUContainer creates a container with GPU resources.
-func NewGPUContainer(name, image string, gpuCount int64) corev1.Container {
-	return corev1.Container{
+// Optional command overrides the image entrypoint (e.g. "sleep", "infinity" for a long-running placeholder).
+func NewGPUContainer(name, image string, gpuCount int64, command ...string) corev1.Container {
+	c := corev1.Container{
 		Name:  name,
 		Image: image,
 		Resources: corev1.ResourceRequirements{
@@ -149,14 +150,23 @@ func NewGPUContainer(name, image string, gpuCount int64) corev1.Container {
 			},
 		},
 	}
+	if len(command) > 0 {
+		c.Command = command
+	}
+	return c
 }
 
 // NewContainer creates a simple container without GPU resources.
-func NewContainer(name, image string) corev1.Container {
-	return corev1.Container{
+// Optional command overrides the image entrypoint (e.g. "sleep", "infinity" for a long-running placeholder).
+func NewContainer(name, image string, command ...string) corev1.Container {
+	c := corev1.Container{
 		Name:  name,
 		Image: image,
 	}
+	if len(command) > 0 {
+		c.Command = command
+	}
+	return c
 }
 
 func (b *PodCliqueTemplateSpecBuilder) withDefaultPodSpec() *PodCliqueTemplateSpecBuilder {
