@@ -1,0 +1,192 @@
+digraph TASArchitecture {
+    // Global settings
+    rankdir=TB;
+    fontname="Helvetica";
+    fontsize=11;
+    node [fontname="Helvetica", fontsize=10, shape=box, style="filled", fillcolor="#f5f5f5", color="#333333", margin="0.15,0.1"];
+    edge [fontname="Helvetica", fontsize=7, color="#555555"];
+    nodesep=0.8;
+    ranksep=0.65;
+    newrank=true;
+
+    // ===== ADMIN LAYER =====
+    subgraph cluster_admin {
+        label="Admin Layer";
+        labeljust="l";
+        labelloc="t";
+        fontsize=13;
+        fontname="Helvetica-Bold";
+        style="dashed";
+        color="#888888";
+        bgcolor="#ffffff";
+        margin="16";
+
+        // Row 1: OperatorConfiguration (simplified — just the TAS flag)
+        opconfig [
+            label=<
+            <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="1" CELLPADDING="1">
+            <TR><TD><B>OperatorConfiguration</B></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7.5" FACE="Courier">topologyAwareScheduling:</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7.5" FACE="Courier">  enabled: true</FONT></TD></TR>
+            </TABLE>>,
+            shape=box,
+            fillcolor="#e8e8e8"
+        ];
+
+        // Row 2: ClusterTopologies + CT Controller
+        ct_h100 [
+            label=<
+            <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="1" CELLPADDING="2">
+            <TR><TD><B>ClusterTopology</B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="9">"h100-topology"</FONT></TD></TR>
+            <TR><TD><FONT POINT-SIZE="7" COLOR="#666666">Admin Created (kubectl/GitOps)</FONT></TD></TR>
+            <TR><TD><FONT POINT-SIZE="7" COLOR="#666666">levels: [zone, block, host]</FONT></TD></TR>
+            </TABLE>>,
+            fillcolor="#dceefb"
+        ];
+
+        ct_gb200 [
+            label=<
+            <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="1" CELLPADDING="2">
+            <TR><TD><B>ClusterTopology</B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="9">"gb200-topology"</FONT></TD></TR>
+            <TR><TD><FONT POINT-SIZE="7" COLOR="#666666">Admin Created (kubectl/GitOps)</FONT></TD></TR>
+            <TR><TD><FONT POINT-SIZE="7" COLOR="#666666">levels: [zone, block, rack, host]</FONT></TD></TR>
+            <TR><TD><FONT POINT-SIZE="7" COLOR="#996600">schedulerReferences:</FONT></TD></TR>
+            <TR><TD><FONT POINT-SIZE="7" COLOR="#996600">  kai-scheduler → gb200-kai-topology</FONT></TD></TR>
+            </TABLE>>,
+            fillcolor="#dceefb"
+        ];
+
+        ct_controller [
+            label=<
+            <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="1" CELLPADDING="2">
+            <TR><TD><B>CT Controller</B></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">· watches ClusterTopology CRs</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">· auto-creates scheduler topo</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">  (when no schedulerReferences)</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">· drift detection</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">  (when schedulerReferences set)</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">· sets SchedulerTopologyDrift</FONT></TD></TR>
+            </TABLE>>,
+            shape=box,
+            style="filled,dashed",
+            fillcolor="#f0f0f0",
+            color="#999999"
+        ];
+
+        // Row 3: Scheduler Backend Topology CRs
+        sched_h100 [
+            label=<
+            <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="1" CELLPADDING="2">
+            <TR><TD><B>Scheduler Backend</B></TD></TR>
+            <TR><TD><B>Topology CR</B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="7" COLOR="#666666">(auto-managed)</FONT></TD></TR>
+            <TR><TD><FONT POINT-SIZE="7" COLOR="#666666">OwnerRef → h100-topology</FONT></TD></TR>
+            </TABLE>>,
+            fillcolor="#e8f5e9"
+        ];
+
+        sched_gb200 [
+            label=<
+            <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="1" CELLPADDING="2">
+            <TR><TD><B>Scheduler Backend</B></TD></TR>
+            <TR><TD><B>Topology CR</B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="7" COLOR="#666666">(externally managed)</FONT></TD></TR>
+            <TR><TD><FONT POINT-SIZE="7" COLOR="#666666">via schedulerReferences</FONT></TD></TR>
+            </TABLE>>,
+            fillcolor="#fff3e0",
+            style="filled,dashed"
+        ];
+
+        scheduler_label [
+            label=<
+            <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0">
+            <TR><TD><FONT POINT-SIZE="8" COLOR="#666666">Used by the</FONT></TD></TR>
+            <TR><TD><FONT POINT-SIZE="8" COLOR="#666666">scheduler backend</FONT></TD></TR>
+            </TABLE>>,
+            shape=plaintext,
+            fillcolor="transparent",
+            style=""
+        ];
+
+        // Row ranking within admin
+        {rank=same; ct_h100; ct_gb200; ct_controller}
+        {rank=same; sched_h100; sched_gb200; scheduler_label}
+    }
+
+    // ===== USER LAYER =====
+    subgraph cluster_user {
+        label="User Layer";
+        labeljust="l";
+        labelloc="t";
+        fontsize=13;
+        fontname="Helvetica-Bold";
+        style="dashed";
+        color="#888888";
+        bgcolor="#ffffff";
+        margin="16";
+
+        grove_operator [
+            label=<
+            <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="1" CELLPADDING="2">
+            <TR><TD><B>Grove Operator</B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="8">(PCS Reconciler)</FONT></TD></TR>
+            </TABLE>>,
+            fillcolor="#e8e8e8"
+        ];
+
+        pcs [
+            label=<
+            <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="1" CELLPADDING="2">
+            <TR><TD><B>PodCliqueSet</B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="8">(with TopologyConstraints)</FONT></TD></TR>
+            <TR><TD><FONT POINT-SIZE="8" COLOR="#0066cc">topologyConstraint.topologyName: ...</FONT></TD></TR>
+            </TABLE>>,
+            fillcolor="#f5f5f5"
+        ];
+
+        podgang [
+            label=<
+            <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="1" CELLPADDING="2">
+            <TR><TD><B>PodGang</B></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="8">Hierarchy of</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="8">TopologyConstraints:</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="8">  - required</FONT></TD></TR>
+            <TR><TD><FONT POINT-SIZE="7" COLOR="#888888"><I>Intermediate type translated by</I></FONT></TD></TR>
+            <TR><TD><FONT POINT-SIZE="7" COLOR="#888888"><I>scheduler backend to aid in TAS.</I></FONT></TD></TR>
+            </TABLE>>,
+            fillcolor="#f5f5f5"
+        ];
+
+        {rank=same; grove_operator; pcs}
+    }
+
+    // ===== EDGES =====
+
+    // Admin Layer: OperatorConfiguration -> CT Controller
+    opconfig -> ct_controller [label="  enables\n  TAS"];
+
+    // Layout: keep CTs below OperatorConfiguration
+    opconfig -> ct_h100 [style=invis];
+    opconfig -> ct_gb200 [style=invis];
+
+    // Admin Layer: CT Controller watches ClusterTopologies
+    ct_controller -> ct_h100 [label="watches", style=dashed, constraint=false];
+    ct_controller -> ct_gb200 [label="watches", style=dashed, constraint=false];
+
+    // Admin Layer: ClusterTopology -> Scheduler Backend
+    ct_h100 -> sched_h100 [label="creates &\nowns (OwnerRef)"];
+    ct_gb200 -> sched_gb200 [label="drift detection\n(schedulerReferences)", style=dashed];
+
+    // Admin Layer: Scheduler Backend -> label
+    sched_h100 -> scheduler_label [style=dashed, arrowhead=none];
+    sched_gb200 -> scheduler_label [style=dashed, arrowhead=none];
+
+    // User Layer internal
+    grove_operator -> pcs [label="reconciles", dir=both];
+    grove_operator -> podgang [label="translates\ndomains → keys"];
+
+    // Layout: force user layer below admin layer
+    sched_h100 -> grove_operator [style=invis];
+}
