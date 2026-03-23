@@ -71,6 +71,7 @@ type resourceType struct {
 var groveManagedResourceTypes = []resourceType{
 	// Grove CRDs
 	{"grove.io", "v1alpha1", "podcliquesets", "PodCliqueSets"},
+	{"grove.io", "v1alpha1", "clustertopologies", "ClusterTopologies"},
 	{"grove.io", "v1alpha1", "podcliquescalinggroups", "PodCliqueScalingGroups"},
 	{"scheduler.grove.io", "v1alpha1", "podgangs", "PodGangs"},
 	{"grove.io", "v1alpha1", "podcliques", "PodCliques"},
@@ -312,6 +313,11 @@ func (scm *SharedClusterManager) CleanupWorkloads(ctx context.Context) error {
 		scm.logger.Warnf("failed to delete PodCliqueSets: %v", err)
 	}
 
+	// Step 1b: Delete ClusterTopologies (cascade-deletes owned KAI Topology objects via OwnerReference)
+	if err := scm.deleteAllResources(ctx, "grove.io", "v1alpha1", "clustertopologies"); err != nil {
+		scm.logger.Warnf("failed to delete ClusterTopologies: %v", err)
+	}
+
 	// Step 2: Poll for all resources and pods to be cleaned up
 	scm.logger.Infof("⏳ Waiting up to %v for cascade deletion to complete...", cleanupTimeout)
 	if err := scm.waitForAllGroveManagedResourcesAndPodsDeleted(ctx, cleanupTimeout, cleanupPollInterval); err != nil {
@@ -441,12 +447,12 @@ func (scm *SharedClusterManager) waitForAllGroveManagedResourcesAndPodsDeleted(c
 				Resource: rt.resource,
 			}
 
-			// PodCliqueSets are user-created top-level resources and don't have the managed-by label,
-			// so we need to check for them without the label selector
+			// PodCliqueSets and ClusterTopologies are user-created top-level resources and don't have
+			// the managed-by label, so we need to check for them without the label selector
 			listOptions := metav1.ListOptions{
 				LabelSelector: labelSelector,
 			}
-			if rt.resource == "podcliquesets" {
+			if rt.resource == "podcliquesets" || rt.resource == "clustertopologies" {
 				listOptions = metav1.ListOptions{}
 			}
 
@@ -512,11 +518,11 @@ func (scm *SharedClusterManager) listRemainingGroveManagedResources(ctx context.
 			Resource: rt.resource,
 		}
 
-		// PodCliqueSets are user-created top-level resources and don't have the managed-by label
+		// PodCliqueSets and ClusterTopologies are user-created top-level resources and don't have the managed-by label
 		listOptions := metav1.ListOptions{
 			LabelSelector: labelSelector,
 		}
-		if rt.resource == "podcliquesets" {
+		if rt.resource == "podcliquesets" || rt.resource == "clustertopologies" {
 			listOptions = metav1.ListOptions{}
 		}
 
