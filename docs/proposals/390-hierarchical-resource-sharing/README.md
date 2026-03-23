@@ -192,11 +192,11 @@ The `rct-<index>` suffix identifies the position of the entry in the `ResourceAl
 PCLQ PerInstance alloc at index 0), PCSG PerReplica alloc at index 0:
 
 ```
-PCSG PerReplica ResourceClaims (owned by PCSG):
+PCSG PerReplica ResourceClaims (owned by all PCLQs in the replica):
   my-svc-0-mi-0-rct-0        → shared by ALL pods in PCSG replica 0
   my-svc-0-mi-1-rct-0        → shared by ALL pods in PCSG replica 1
 
-PCLQ PerInstance ResourceClaims (owned by PCSG):
+PCLQ PerInstance ResourceClaims (owned by the PCLQ):
   my-svc-0-mi-0-worker-rct-0 → shared by all worker pods in PCSG replica 0
   my-svc-0-mi-1-worker-rct-0 → shared by all worker pods in PCSG replica 1
 ```
@@ -211,14 +211,18 @@ PCLQ PerInstance:
 
 ### Owner References
 
-ResourceClaim ownership determines garbage collection behavior:
+ResourceClaim ownership determines garbage collection behavior. The ownership model is designed so that
+**no explicit cleanup is required on scale-down** — Kubernetes GC handles everything automatically:
 
 | Level + Scope | Owner | Rationale |
 |---|---|---|
-| PCSG `PerInstance` | PCSG object | Claim spans all replicas of the PCSG; GC'd when PCSG is deleted |
-| PCSG `PerReplica` | PCSG object | Claim spans all PCLQs in a PCSG replica; GC'd when PCSG is deleted; on scale-down, the controller must **explicitly delete** per-replica claims for removed replica indices |
-| PCLQ `PerInstance` (standalone) | PCS object | Claim is per-PCLQ instance; GC'd when PCS is deleted |
-| PCLQ `PerInstance` (PCSG-owned) | PCSG object | Claim is per-PCLQ instance; GC'd when PCSG is deleted |
+| PCSG `PerInstance` | PCSG object | Claim spans all replicas; persists for the PCSG's lifetime; GC'd when PCSG is deleted |
+| PCSG `PerReplica` | All PCLQs in the replica (multiple owner refs) | Each PCLQ in the replica adds itself as an owner via `SetOwnerReference`. Kubernetes GC deletes the RC when **all** owners are gone — which is exactly what happens when `DeleteAllOf` removes all PCLQs for a replica on scale-down |
+| PCLQ `PerInstance` (standalone) | PCLQ object | GC'd automatically when the PCLQ is deleted on PCS scale-down |
+| PCLQ `PerInstance` (PCSG-owned) | PCLQ object | GC'd automatically when the PCLQ is deleted on PCSG replica scale-down |
+
+RCs are created **after** the PCLQ so that the PCLQ has a UID for the owner reference. Pods referencing
+a not-yet-created RC simply stay `Pending` until the RC is created (milliseconds later in the same reconcile).
 
 ### Common Types
 
