@@ -1127,17 +1127,17 @@ func Test_TAS17_MultipleClusterTopologies(t *testing.T) {
 	}
 
 	logger.Info("3. Wait for workload-a pods (rack-packed)")
-	if err := utils.WaitForPods(ctx, restConfig, []string{"default"}, "app=tas-multi-topo-a", 2, defaultPollTimeout, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPods(ctx, restConfig, []string{"default"}, "app.kubernetes.io/part-of=tas-multi-topo-a", 2, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to wait for workload-a pods: %v", err)
 	}
 
 	logger.Info("4. Wait for workload-b pods (host-packed)")
-	if err := utils.WaitForPods(ctx, restConfig, []string{"default"}, "app=tas-multi-topo-b", 2, defaultPollTimeout, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPods(ctx, restConfig, []string{"default"}, "app.kubernetes.io/part-of=tas-multi-topo-b", 2, defaultPollTimeout, defaultPollInterval, logger); err != nil {
 		t.Fatalf("Failed to wait for workload-b pods: %v", err)
 	}
 
 	logger.Info("5. Verify workload-a pods are in the same rack")
-	allPodsA, err := clientset.CoreV1().Pods("default").List(ctx, metav1.ListOptions{LabelSelector: "app=tas-multi-topo-a"})
+	allPodsA, err := clientset.CoreV1().Pods("default").List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/part-of=tas-multi-topo-a"})
 	if err != nil {
 		t.Fatalf("Failed to list workload-a pods: %v", err)
 	}
@@ -1146,7 +1146,7 @@ func Test_TAS17_MultipleClusterTopologies(t *testing.T) {
 	}
 
 	logger.Info("6. Verify workload-b pods are on the same host")
-	allPodsB, err := clientset.CoreV1().Pods("default").List(ctx, metav1.ListOptions{LabelSelector: "app=tas-multi-topo-b"})
+	allPodsB, err := clientset.CoreV1().Pods("default").List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/part-of=tas-multi-topo-b"})
 	if err != nil {
 		t.Fatalf("Failed to list workload-b pods: %v", err)
 	}
