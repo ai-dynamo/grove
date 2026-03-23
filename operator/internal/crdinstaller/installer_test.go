@@ -20,6 +20,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/ai-dynamo/grove/operator/internal/crdinstaller"
+
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,8 +30,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-
-	"github.com/ai-dynamo/grove/operator/internal/crdinstaller"
 )
 
 // buildFakeClient creates a fake client with apiextensionsv1 scheme registered.

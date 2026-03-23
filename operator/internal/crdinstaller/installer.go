@@ -22,9 +22,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/go-logr/logr"
 	operatorcrds "github.com/ai-dynamo/grove/operator/api/core/v1alpha1/crds"
+
 	schedulercrds "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1/crds"
+	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
