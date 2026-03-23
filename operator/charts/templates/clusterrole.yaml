@@ -173,4 +173,22 @@ rules:
   - patch
   - update
 {{- end }}
+{{- if .Values.crdInstaller.enabled }}
+# CRD installer init container requires permissions to apply Grove CRDs on startup.
+- apiGroups:
+  - apiextensions.k8s.io
+  resources:
+  - customresourcedefinitions
+  resourceNames:
+  - podcliquesets.grove.io
+  - podcliques.grove.io
+  - podcliquescalinggroups.grove.io
+  - clustertopologies.grove.io
+  - podgangs.scheduler.grove.io
+  verbs:
+  - get
+  - create
+  - update
+  - patch
+{{- end }}
 

@@ -26,34 +26,12 @@ SCHEDULER_GO_MODULE_ROOT="${PROJECT_ROOT}/scheduler"
 CHARTS_DIR="${OPERATOR_GO_MODULE_ROOT}/charts"
 
 function copy_crds() {
-  target_path="${OPERATOR_GO_MODULE_ROOT}/charts/crds"
-  echo "Creating ${target_path} to copy the CRDs if not present..."
-  mkdir -p ${target_path}
-
-  echo "Copying grove-operator CRDS..."
-  declare -a crds=("grove.io_podcliquesets.yaml" "grove.io_podcliques.yaml" "grove.io_podcliquescalinggroups.yaml" "grove.io_clustertopologies.yaml")
-  for crd in "${crds[@]}"; do
-    local src_crd_path="${OPERATOR_GO_MODULE_ROOT}/api/core/v1alpha1/crds/${crd}"
-    if [ ! -f ${src_crd_path} ]; then
-      echo "CRD ${crd} not found in ${src_crd_path}, run 'make generate' first"
-      make generate
-    fi
-    echo "Copying CRD ${crd} to ${target_path}"
-    cp ${src_crd_path} ${target_path}
-  done
-
-  echo "Copying scheduler CRDS..."
-  declare -a crds=("scheduler.grove.io_podgangs.yaml")
-  for crd in "${crds[@]}"; do
-    local src_crd_path="${SCHEDULER_GO_MODULE_ROOT}/api/core/v1alpha1/crds/${crd}"
-    if [ ! -f ${src_crd_path} ]; then
-      echo "CRD ${crd} not found in ${src_crd_path}, run 'make generate' first"
-      make --directory="${SCHEDULER_GO_MODULE_ROOT}"/api generate
-    fi
-    echo "Copying CRD ${crd} to ${target_path}"
-    cp ${src_crd_path} ${target_path}
-  done
+  # CRDs are no longer copied to charts/crds/ for Helm chart delivery.
+  # Grove CRDs are now embedded in the operator binary and applied at startup
+  # via an init container running the "install-crds" subcommand (server-side apply).
+  # See operator/internal/crdinstaller and operator/charts/templates/deployment.yaml.
+  echo "CRDs are delivered via the operator init container — no chart CRD copy needed."
 }
 
-echo "Copying CRDs to helm charts..."
+echo "Preparing helm charts..."
 copy_crds

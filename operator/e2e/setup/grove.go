@@ -60,9 +60,14 @@ type WebhooksConfig struct {
 // helmValues mirrors the Helm values.yaml structure, using configv1alpha1 types
 // for config.server to ensure JSON field names stay synchronized with the API.
 type helmValues struct {
-	InstallCRDs bool              `json:"installCRDs"`
-	Config      helmConfigValues  `json:"config"`
-	Webhooks    helmWebhookValues `json:"webhooks"`
+	CRDInstaller helmCRDInstallerValues `json:"crdInstaller"`
+	Config       helmConfigValues       `json:"config"`
+	Webhooks     helmWebhookValues      `json:"webhooks"`
+}
+
+// helmCRDInstallerValues mirrors the crdInstaller section of values.yaml.
+type helmCRDInstallerValues struct {
+	Enabled bool `json:"enabled"`
 }
 
 type helmConfigValues struct {
@@ -86,7 +91,7 @@ type helmWebhookAnnotations struct {
 func (c *GroveConfig) toHelmValues() (map[string]interface{}, error) {
 	anns := helmWebhookAnnotations{Annotations: c.Webhooks.Annotations}
 	hv := helmValues{
-		InstallCRDs: c.InstallCRDs,
+		CRDInstaller: helmCRDInstallerValues{Enabled: c.InstallCRDs},
 		Config: helmConfigValues{
 			Server: configv1alpha1.ServerConfiguration{
 				Webhooks: configv1alpha1.WebhookServer{
