@@ -123,6 +123,8 @@ jobs:
           - test_name: auto_mnnvl
             test_pattern: "^Test_AutoMNNVL"
             make_target: "run-e2e-mnnvl-full"
+          - test_name: crd_installer
+            test_pattern: "^Test_CRD_Installer"
     name: E2E - ${{ matrix.test_name }}
     steps:
       # print runner specs so we have a record in case of failures
@@ -182,6 +184,7 @@ jobs:
           - test_name: Topology_Aware_Scheduling
           - test_name: cert_management
           - test_name: auto_mnnvl
+          - test_name: crd_installer
     name: E2E - ${{ matrix.test_name }}
     steps:
       - name: Skip E2E (no relevant changes)
