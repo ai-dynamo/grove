@@ -34,6 +34,7 @@ type parsedSelector struct {
 	parsed labels.Selector
 }
 
+// get returns the cached label selector, parsing it on first call.
 func (ps *parsedSelector) get() (labels.Selector, error) {
 	if ps.parsed != nil {
 		return ps.parsed, nil
@@ -46,6 +47,7 @@ func (ps *parsedSelector) get() (labels.Selector, error) {
 	return s, nil
 }
 
+// listPods returns all pods in the namespace matching the given label selector.
 func listPods(ctx context.Context, cl client.Client, ns string, sel *parsedSelector) ([]corev1.Pod, error) {
 	s, err := sel.get()
 	if err != nil {

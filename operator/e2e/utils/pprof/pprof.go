@@ -20,8 +20,8 @@ package pprof
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -47,7 +47,6 @@ const (
 	ProfileCPU       ProfileType = "cpu"
 	ProfileMemory    ProfileType = "memory"
 	ProfileGoroutine ProfileType = "goroutine"
-	ProfileMutex     ProfileType = "mutex"
 )
 
 // QueryPrefix returns the Pyroscope metric selector prefix for this profile type.
@@ -60,8 +59,6 @@ func (p ProfileType) QueryPrefix() string {
 		return "memory:inuse_space:bytes::"
 	case ProfileGoroutine:
 		return "goroutine:goroutine:count:goroutine:count"
-	case ProfileMutex:
-		return "mutex:contentions:count::"
 	default:
 		return ""
 	}
@@ -162,7 +159,6 @@ func (d *Downloader) DownloadForPhase(ctx context.Context, phaseName string, sta
 		{ProfileCPU, start, end},
 		{ProfileMemory, end.Add(-memoryLookbackWindow), end},
 		{ProfileGoroutine, end.Add(-memoryLookbackWindow), end},
-		{ProfileMutex, start, end},
 	}
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -177,14 +173,12 @@ func (d *Downloader) DownloadForPhase(ctx context.Context, phaseName string, sta
 }
 
 // downloadProfile fetches one profile via the Pyroscope SelectMergeProfile
-// Connect RPC endpoint and writes the pprof protobuf to outputDir.
+// Connect RPC endpoint using binary protobuf encoding and writes the gzipped
+// pprof protobuf to outputDir.
+// The response is a raw google.v1.Profile binary — standard pprof format.
 // All errors are logged; nothing is returned so DownloadForPhase remains non-fatal.
 func (d *Downloader) downloadProfile(ctx context.Context, phaseName string, p ProfileType, from, to time.Time) {
-	body, err := json.Marshal(buildRequest(d.appName, p, from, to))
-	if err != nil {
-		d.logger.Error(err, "marshal profile request", "phase", phaseName, "type", p)
-		return
-	}
+	body := marshalSelectMergeRequest(d.appName, p, from, to)
 
 	dlCtx, cancel := context.WithTimeout(ctx, d.timeout)
 	defer cancel()
@@ -194,7 +188,7 @@ func (d *Downloader) downloadProfile(ctx context.Context, phaseName string, p Pr
 		d.logger.Error(err, "create profile request", "phase", phaseName, "type", p)
 		return
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/proto")
 	req.Header.Set("Connect-Protocol-Version", "1")
 
 	resp, err := d.httpClient.Do(req)
@@ -214,22 +208,28 @@ func (d *Downloader) downloadProfile(ctx context.Context, phaseName string, p Pr
 		return
 	}
 
-	jsonData, err := io.ReadAll(resp.Body)
+	// Response body is raw binary protobuf google.v1.Profile — standard pprof format.
+	pprofData, err := io.ReadAll(resp.Body)
 	if err != nil {
 		d.logger.Error(err, "read profile response body", "phase", phaseName, "type", p)
 		return
 	}
 
-	data, err := jsonProfileToGzipPprof(jsonData)
-	if err != nil {
-		d.logger.Error(err, "convert JSON profile to pprof", "phase", phaseName, "type", p)
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	if _, err := gz.Write(pprofData); err != nil {
+		d.logger.Error(err, "gzip profile", "phase", phaseName, "type", p)
+		return
+	}
+	if err := gz.Close(); err != nil {
+		d.logger.Error(err, "gzip close", "phase", phaseName, "type", p)
 		return
 	}
 
 	filename := fmt.Sprintf("pprof-%s-%s-%s.pprof.gz", d.runID, phaseName, string(p))
 	path := filepath.Join(d.outputDir, filename)
 
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	if err := os.WriteFile(path, buf.Bytes(), 0600); err != nil {
 		d.logger.Error(err, "write profile file", "phase", phaseName, "type", p, "path", path)
 		return
 	}

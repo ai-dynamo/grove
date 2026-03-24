@@ -64,7 +64,7 @@ func ReadGroveMetadata(ctx context.Context, crClient client.Client) (*GroveMetad
 	}
 	cfg, err := configv1alpha1.DecodeOperatorConfig([]byte(data))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decoding operator config from configmap %q: %w", cmName, err)
 	}
 	return &GroveMetadata{Config: cfg, Image: image}, nil
 }

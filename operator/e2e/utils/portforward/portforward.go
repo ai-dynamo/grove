@@ -128,10 +128,16 @@ func ForwardService(
 	case <-readyChan:
 		cfg.logger.V(1).Info("port-forward established", "pod", podName, "remotePort", remotePort)
 	case err := <-errChan:
+		close(stopChan)
 		return nil, fmt.Errorf("port-forward to %s/%s failed: %w", namespace, podName, err)
 	case <-time.After(portForwardReadyTimeout):
 		close(stopChan)
-		return nil, fmt.Errorf("timeout waiting for port-forward to %s/%s", namespace, podName)
+		select {
+		case pfErr := <-errChan:
+			return nil, fmt.Errorf("port-forward to %s/%s failed (after timeout): %w", namespace, podName, pfErr)
+		default:
+			return nil, fmt.Errorf("timeout waiting for port-forward to %s/%s", namespace, podName)
+		}
 	case <-ctx.Done():
 		close(stopChan)
 		return nil, ctx.Err()

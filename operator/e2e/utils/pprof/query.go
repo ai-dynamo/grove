@@ -19,29 +19,32 @@ package pprof
 import (
 	"fmt"
 	"time"
+
+	"google.golang.org/protobuf/encoding/protowire"
 )
 
 const selectMergeProfilePath = "/querier.v1.QuerierService/SelectMergeProfile"
 
-// selectMergeRequest is the JSON body for the Pyroscope SelectMergeProfile Connect RPC endpoint.
-type selectMergeRequest struct {
-	ProfileTypeID string `json:"profileTypeID"`
-	LabelSelector string `json:"labelSelector"`
-	Start         int64  `json:"start"`
-	End           int64  `json:"end"`
-}
+// marshalSelectMergeRequest encodes a SelectMergeProfileRequest as binary protobuf.
+// The message has only four scalar fields, so protowire encoding is used directly
+// instead of a full descriptor/dynamic-message stack.
+func marshalSelectMergeRequest(appName string, p ProfileType, from, to time.Time) []byte {
+	labelSelector := fmt.Sprintf(`{service_name="%s"}`, appName)
 
-// buildRequest returns a selectMergeRequest for the given profile type and time window.
-//
-// Pure function — no I/O, no state. Unit-testable by value.
-// Filters by service_name which Alloy sets as "namespace/pod-name" on scraped targets.
-func buildRequest(appName string, p ProfileType, from, to time.Time) selectMergeRequest {
-	return selectMergeRequest{
-		ProfileTypeID: p.QueryPrefix(),
-		LabelSelector: fmt.Sprintf(`{service_name="%s"}`, appName),
-		Start:         from.UnixMilli(),
-		End:           to.UnixMilli(),
-	}
+	var b []byte
+	// field 1: profile_typeID (string)
+	b = protowire.AppendTag(b, 1, protowire.BytesType)
+	b = protowire.AppendString(b, p.QueryPrefix())
+	// field 2: label_selector (string)
+	b = protowire.AppendTag(b, 2, protowire.BytesType)
+	b = protowire.AppendString(b, labelSelector)
+	// field 3: start (int64, milliseconds)
+	b = protowire.AppendTag(b, 3, protowire.VarintType)
+	b = protowire.AppendVarint(b, uint64(from.UnixMilli()))
+	// field 4: end (int64, milliseconds)
+	b = protowire.AppendTag(b, 4, protowire.VarintType)
+	b = protowire.AppendVarint(b, uint64(to.UnixMilli()))
+	return b
 }
 
 // buildURL returns the full SelectMergeProfile endpoint URL.

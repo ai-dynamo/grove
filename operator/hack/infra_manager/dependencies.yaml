@@ -46,7 +46,8 @@ kwok_controller:
   version: "v0.7.0"
 
 pyroscope:
-  version: "1.10.0"
+  version: "1.19
+  .0"
   helm_repo: "https://grafana.github.io/helm-charts"
   helm_chart: "grafana/pyroscope"
 
