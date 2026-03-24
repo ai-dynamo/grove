@@ -214,3 +214,9 @@ priorityClass:
   name: grove-operator-priority-critical
   value: 999999550
 
+crdInstaller:
+  # enabled controls whether the operator automatically installs/upgrades Grove CRDs on startup
+  # via an init container. Set to false to manage CRDs manually from the Grove GitHub release.
+  # WARNING: when disabled, you must apply the correct CRD schemas before upgrading the operator.
+  enabled: true
+

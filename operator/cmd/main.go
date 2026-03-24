@@ -29,11 +29,15 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/clustertopology"
 	grovectrl "github.com/ai-dynamo/grove/operator/internal/controller"
 	"github.com/ai-dynamo/grove/operator/internal/controller/cert"
+	"github.com/ai-dynamo/grove/operator/internal/crdinstaller"
 	grovelogger "github.com/ai-dynamo/grove/operator/internal/logger"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	groveversion "github.com/ai-dynamo/grove/operator/internal/version"
 
 	"github.com/spf13/pflag"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -43,6 +47,12 @@ var (
 )
 
 func main() {
+	// Route to install-crds subcommand if requested.
+	if len(os.Args) > 1 && os.Args[1] == "install-crds" {
+		runInstallCRDs()
+		return
+	}
+
 	ctrl.SetLogger(grovelogger.MustNewLogger(false, configv1alpha1.InfoLevel, configv1alpha1.LogFormatJSON))
 	groveInfo := groveversion.New()
 
@@ -148,4 +158,44 @@ func handleErrorAndExit(err error, exitCode int) {
 	}
 	_, _ = fmt.Fprintf(os.Stderr, "Err: %v\n", err)
 	os.Exit(exitCode)
+}
+
+// runInstallCRDs applies all 5 Grove CRDs via server-side apply and exits.
+// This is invoked when the binary is called with the "install-crds" subcommand,
+// typically from the operator Deployment's init container.
+func runInstallCRDs() {
+	log := grovelogger.MustNewLogger(false, configv1alpha1.InfoLevel, configv1alpha1.LogFormatJSON)
+	ctrl.SetLogger(log)
+	installLogger := ctrl.Log.WithName("crd-installer")
+
+	ctx := ctrl.SetupSignalHandler()
+
+	cfg, err := rest.InClusterConfig()
+	if err != nil {
+		installLogger.Error(err, "failed to get in-cluster config")
+		_, _ = fmt.Fprintf(os.Stderr, "Err: %v\n", err)
+		os.Exit(1)
+	}
+
+	scheme := runtime.NewScheme()
+	if err := apiextensionsv1.AddToScheme(scheme); err != nil {
+		installLogger.Error(err, "failed to add apiextensionsv1 to scheme")
+		_, _ = fmt.Fprintf(os.Stderr, "Err: %v\n", err)
+		os.Exit(1)
+	}
+
+	cl, err := client.New(cfg, client.Options{Scheme: scheme})
+	if err != nil {
+		installLogger.Error(err, "failed to create API client")
+		_, _ = fmt.Fprintf(os.Stderr, "Err: %v\n", err)
+		os.Exit(1)
+	}
+
+	installLogger.Info("Installing Grove CRDs")
+	if err := crdinstaller.InstallCRDs(ctx, cl, installLogger); err != nil {
+		installLogger.Error(err, "failed to install CRDs")
+		_, _ = fmt.Fprintf(os.Stderr, "Err: %v\n", err)
+		os.Exit(1)
+	}
+	installLogger.Info("All Grove CRDs installed successfully")
 }

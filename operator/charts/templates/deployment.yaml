@@ -32,6 +32,17 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.crdInstaller.enabled }}
+      initContainers:
+        - name: crd-installer
+          image: {{ include "image" .Values.image }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["install-crds"]
+          volumeMounts:
+            - name: kube-api-access-grove
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+      {{- end }}
       containers:
         - name: grove-operator
           image: {{ include "image" .Values.image }}
