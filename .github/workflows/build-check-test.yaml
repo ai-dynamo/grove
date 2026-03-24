@@ -161,3 +161,28 @@ jobs:
           path: operator/e2e-diagnostics/
           if-no-files-found: warn
           retention-days: 7
+
+  # This job runs with the same matrix as 'e2e' when E2E tests are skipped (no relevant
+  # file changes and no 'run-e2e' label). It reports a passing status so that required
+  # branch protection checks are satisfied even for documentation-only PRs.
+  e2e-skip:
+    needs: [changes]
+    if: |
+      github.event_name == 'pull_request' &&
+      needs.changes.outputs.e2e-relevant != 'true' &&
+      !contains(github.event.pull_request.labels.*.name, 'run-e2e')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - test_name: gang_scheduling
+          - test_name: rolling_updates
+          - test_name: startup_ordering
+          - test_name: Topology_Aware_Scheduling
+          - test_name: cert_management
+          - test_name: auto_mnnvl
+    name: E2E - ${{ matrix.test_name }}
+    steps:
+      - name: Skip E2E (no relevant changes)
+        run: echo "E2E skipped — no changes to operator/ or .github/ and 'run-e2e' label not set"
