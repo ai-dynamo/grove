@@ -154,6 +154,7 @@ func Test_ScaleTest_1000(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Timeline tracker run failed: %v", err)
 	}
+	tracker.Wait()
 
 	Logger.Info("exporting results")
 	exportResult(t, result, diagDir)

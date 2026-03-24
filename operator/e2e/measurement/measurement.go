@@ -259,6 +259,7 @@ func (t *TimelineTracker) copyPhases() []Phase {
 // runPhase executes a single phase definition and records its milestones.
 func (t *TimelineTracker) runPhase(ctx context.Context, def PhaseDefinition) error {
 	log := t.logger.WithValues("phase", def.Name)
+	parentCtx := ctx
 
 	if def.ActionFn == nil {
 		return fmt.Errorf("phase %q: action cannot be nil", def.Name)
@@ -307,7 +308,7 @@ func (t *TimelineTracker) runPhase(ctx context.Context, def PhaseDefinition) err
 			t.wg.Add(1)
 			go func(rh registeredHook) {
 				defer t.wg.Done()
-				t.fireHook(ctx, rh, phase.Name, phase.StartTime, phase.EndTime)
+				t.fireHook(parentCtx, rh, phase.Name, phase.StartTime, phase.EndTime)
 			}(h)
 		} else {
 			t.fireHook(ctx, h, phase.Name, phase.StartTime, phase.EndTime)

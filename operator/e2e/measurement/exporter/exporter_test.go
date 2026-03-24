@@ -204,7 +204,7 @@ func TestMultiExporter_ErrorAggregation(t *testing.T) {
 			if !tc.wantErr && err != nil {
 				t.Fatalf("expected no error, got %v", err)
 			}
-			if tc.wantMsg != "" && !strings.Contains(err.Error(), tc.wantMsg) {
+			if tc.wantMsg != "" && err != nil && !strings.Contains(err.Error(), tc.wantMsg) {
 				t.Fatalf("error %q does not contain %q", err.Error(), tc.wantMsg)
 			}
 			if tc.wantAllRun {
