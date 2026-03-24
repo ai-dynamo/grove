@@ -74,7 +74,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			return ctrl.Result{}, err
 		}
 	} else {
-		r.reconcileDriftDetection(ctx, ct)
+		if err := r.reconcileDriftDetection(ctx, ct); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	ct.Status.ObservedGeneration = ct.Generation
@@ -94,23 +96,22 @@ func (r *Reconciler) reconcileAutoManaged(ctx context.Context, ct *grovecorev1al
 		return fmt.Errorf("failed to build KAI Topology for ClusterTopology %s: %w", ct.Name, err)
 	}
 
-	existingTopology := &kaitopologyv1alpha1.Topology{}
-	err = r.client.Get(ctx, client.ObjectKey{Name: ct.Name}, existingTopology)
+	backendTopology := &kaitopologyv1alpha1.Topology{}
+	err = r.client.Get(ctx, client.ObjectKey{Name: ct.Name}, backendTopology)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			if createErr := r.client.Create(ctx, desiredTopology); createErr != nil {
 				return fmt.Errorf("failed to create KAI Topology %s: %w", ct.Name, createErr)
 			}
 			log.Info("Created KAI Topology", "name", ct.Name)
-			setSchedulerTopologyDriftCondition(ct, metav1.ConditionFalse, apicommonconstants.ConditionReasonInSync, "KAI Topology is in sync with ClusterTopology")
-			ct.Status.SchedulerTopologyStatuses = nil
+			setAutoManagedInSync(ct)
 			return nil
 		}
 		return fmt.Errorf("failed to get KAI Topology %s: %w", ct.Name, err)
 	}
 
-	// The KAI Topology exists. Check if this CT owns it.
-	if !metav1.IsControlledBy(existingTopology, ct) {
+	// The backend topology exists. Check if this CT owns it.
+	if !metav1.IsControlledBy(backendTopology, ct) {
 		msg := fmt.Sprintf("KAI Topology %s exists but is not owned by ClusterTopology %s", ct.Name, ct.Name)
 		log.Error(nil, msg)
 		setSchedulerTopologyDriftCondition(ct, metav1.ConditionTrue, apicommonconstants.ConditionReasonDrift, msg)
@@ -118,9 +119,9 @@ func (r *Reconciler) reconcileAutoManaged(ctx context.Context, ct *grovecorev1al
 	}
 
 	// Owned by this CT. Check if levels changed.
-	if isKAITopologyChanged(existingTopology, desiredTopology) {
+	if isKAITopologyChanged(backendTopology, desiredTopology) {
 		// KAI Topology has immutable levels, so delete and recreate.
-		if deleteErr := r.client.Delete(ctx, existingTopology); deleteErr != nil {
+		if deleteErr := r.client.Delete(ctx, backendTopology); deleteErr != nil {
 			return fmt.Errorf("failed to recreate (action: delete) existing KAI Topology %s: %w", ct.Name, deleteErr)
 		}
 		if createErr := r.client.Create(ctx, desiredTopology); createErr != nil {
@@ -129,62 +130,37 @@ func (r *Reconciler) reconcileAutoManaged(ctx context.Context, ct *grovecorev1al
 		log.Info("Recreated KAI Topology with updated levels", "name", ct.Name)
 	}
 
-	setSchedulerTopologyDriftCondition(ct, metav1.ConditionFalse, apicommonconstants.ConditionReasonInSync, "KAI Topology is in sync with ClusterTopology")
-	ct.Status.SchedulerTopologyStatuses = nil
+	setAutoManagedInSync(ct)
 	return nil
 }
 
 // reconcileDriftDetection handles the drift detection path for externally-managed scheduler topology references.
-func (r *Reconciler) reconcileDriftDetection(ctx context.Context, ct *grovecorev1alpha1.ClusterTopology) {
-	log := ctrl.LoggerFrom(ctx)
-
+func (r *Reconciler) reconcileDriftDetection(ctx context.Context, ct *grovecorev1alpha1.ClusterTopology) error {
 	var (
 		statuses     []grovecorev1alpha1.SchedulerTopologyStatus
 		hasDrift     bool
 		hasNotFound  bool
 		driftDetails []string
+		firstErr     error
 	)
 
 	for _, ref := range ct.Spec.SchedulerReferences {
-		kaiTopology := &kaitopologyv1alpha1.Topology{}
-		err := r.client.Get(ctx, client.ObjectKey{Name: ref.Reference}, kaiTopology)
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				hasNotFound = true
-				statuses = append(statuses, grovecorev1alpha1.SchedulerTopologyStatus{
-					SchedulerName: ref.SchedulerName,
-					Reference:     ref.Reference,
-					InSync:        false,
-					Message:       fmt.Sprintf("KAI Topology %s not found", ref.Reference),
-				})
-				driftDetails = append(driftDetails, fmt.Sprintf("topology %q not found", ref.Reference))
-				continue
-			}
-			log.Error(err, "Failed to get referenced KAI Topology", "reference", ref.Reference)
-			statuses = append(statuses, grovecorev1alpha1.SchedulerTopologyStatus{
-				SchedulerName: ref.SchedulerName,
-				Reference:     ref.Reference,
-				InSync:        false,
-				Message:       fmt.Sprintf("failed to get KAI Topology %s: %v", ref.Reference, err),
-			})
+		status, notFound, err := r.reconcileSchedulerReference(ctx, ct, ref)
+		statuses = append(statuses, status)
+		switch {
+		case notFound:
+			hasNotFound = true
+			driftDetails = append(driftDetails, fmt.Sprintf("topology %q not found", ref.Reference))
+		case err != nil:
 			hasDrift = true
 			driftDetails = append(driftDetails, fmt.Sprintf("error fetching topology %q", ref.Reference))
-			continue
-		}
-
-		inSync, mismatchMsg := compareLevels(ct, kaiTopology)
-		status := grovecorev1alpha1.SchedulerTopologyStatus{
-			SchedulerName: ref.SchedulerName,
-			Reference:     ref.Reference,
-			InSync:        inSync,
-			SchedulerBackendTopologyObservedGeneration: kaiTopology.Generation,
-		}
-		if !inSync {
+			if firstErr == nil {
+				firstErr = err
+			}
+		case !status.InSync:
 			hasDrift = true
-			status.Message = mismatchMsg
-			driftDetails = append(driftDetails, fmt.Sprintf("topology %q: %s", ref.Reference, mismatchMsg))
+			driftDetails = append(driftDetails, fmt.Sprintf("topology %q: %s", ref.Reference, status.Message))
 		}
-		statuses = append(statuses, status)
 	}
 
 	ct.Status.SchedulerTopologyStatuses = statuses
@@ -200,6 +176,50 @@ func (r *Reconciler) reconcileDriftDetection(ctx context.Context, ct *grovecorev
 		setSchedulerTopologyDriftCondition(ct, metav1.ConditionFalse, apicommonconstants.ConditionReasonInSync,
 			"all scheduler backend topologies are in sync with ClusterTopology")
 	}
+
+	return firstErr
+}
+
+// reconcileSchedulerReference fetches the backend topology for a single scheduler reference and
+// compares its levels against the ClusterTopology. Returns the status for this reference, whether
+// the backend topology was not found, and any unexpected fetch error.
+func (r *Reconciler) reconcileSchedulerReference(
+	ctx context.Context,
+	ct *grovecorev1alpha1.ClusterTopology,
+	ref grovecorev1alpha1.SchedulerReference,
+) (grovecorev1alpha1.SchedulerTopologyStatus, bool, error) {
+	log := ctrl.LoggerFrom(ctx)
+
+	backendTopology := &kaitopologyv1alpha1.Topology{}
+	if err := r.client.Get(ctx, client.ObjectKey{Name: ref.Reference}, backendTopology); err != nil {
+		if apierrors.IsNotFound(err) {
+			return grovecorev1alpha1.SchedulerTopologyStatus{
+				SchedulerName: ref.SchedulerName,
+				Reference:     ref.Reference,
+				InSync:        false,
+				Message:       fmt.Sprintf("scheduler backend topology %s not found", ref.Reference),
+			}, true, nil
+		}
+		log.Error(err, "Failed to get referenced scheduler backend topology", "reference", ref.Reference)
+		return grovecorev1alpha1.SchedulerTopologyStatus{
+			SchedulerName: ref.SchedulerName,
+			Reference:     ref.Reference,
+			InSync:        false,
+			Message:       fmt.Sprintf("failed to get scheduler backend topology %s: %v", ref.Reference, err),
+		}, false, err
+	}
+
+	inSync, mismatchMsg := compareLevels(ct, backendTopology)
+	status := grovecorev1alpha1.SchedulerTopologyStatus{
+		SchedulerName: ref.SchedulerName,
+		Reference:     ref.Reference,
+		InSync:        inSync,
+		SchedulerBackendTopologyObservedGeneration: backendTopology.Generation,
+	}
+	if !inSync {
+		status.Message = mismatchMsg
+	}
+	return status, false, nil
 }
 
 // buildKAITopology constructs a KAI Topology resource from a ClusterTopology, setting an owner reference.
@@ -245,6 +265,13 @@ func compareLevels(ct *grovecorev1alpha1.ClusterTopology, kaiTopology *kaitopolo
 		}
 	}
 	return true, ""
+}
+
+// setAutoManagedInSync marks the ClusterTopology as in sync with its auto-managed scheduler backend topology.
+func setAutoManagedInSync(ct *grovecorev1alpha1.ClusterTopology) {
+	setSchedulerTopologyDriftCondition(ct, metav1.ConditionFalse, apicommonconstants.ConditionReasonInSync,
+		"scheduler backend topology is in sync with ClusterTopology")
+	ct.Status.SchedulerTopologyStatuses = nil
 }
 
 // setSchedulerTopologyDriftCondition sets the SchedulerTopologyDrift condition on the ClusterTopology status.
