@@ -19,15 +19,22 @@ package v1alpha1
 import (
 	"fmt"
 
-	"gopkg.in/yaml.v3"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
 )
 
 // DecodeOperatorConfig parses raw YAML or JSON bytes into an OperatorConfiguration,
 // applying scheme defaults. Uses the same codec as the operator at startup.
 // No I/O or K8s API calls — safe to use in unit tests and tooling.
 func DecodeOperatorConfig(data []byte) (*OperatorConfiguration, error) {
+	configScheme := runtime.NewScheme()
+	if err := AddToScheme(configScheme); err != nil {
+		return nil, fmt.Errorf("adding config to scheme: %w", err)
+	}
+	configDecoder := serializer.NewCodecFactory(configScheme).UniversalDecoder()
+
 	cfg := &OperatorConfiguration{}
-	if err := yaml.Unmarshal(data, cfg); err != nil {
+	if err := runtime.DecodeInto(configDecoder, data, cfg); err != nil {
 		return nil, fmt.Errorf("decoding operator config: %w", err)
 	}
 	return cfg, nil
