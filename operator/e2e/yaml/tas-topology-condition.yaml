@@ -1,52 +1,26 @@
-# Workload: SP8 - Large Scaling Ratio
-# Test scenario: PCS with block constraint, PCSG with replicas=10/minAvailable=3, PCLQ with host constraint
----
-apiVersion: grove.io/v1alpha1
-kind: ClusterTopology
-metadata:
-  name: e2e-topology
-spec:
-  levels:
-    - domain: zone
-      key: kubernetes.io/zone
-    - domain: block
-      key: kubernetes.io/block
-    - domain: rack
-      key: kubernetes.io/rack
-    - domain: host
-      key: kubernetes.io/hostname
+# Workload: PCS TopologyLevelsUnavailable Condition Lifecycle
+# Test scenario: PCS references a ClusterTopology that does not yet exist (tas20-topology).
+# The ClusterTopology is created dynamically by the test after verifying the error condition.
 ---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
-  name: tas-large-scale
-  labels:
-    app: tas-large-scale
+  name: tas-topology-condition
 spec:
   replicas: 1
   template:
     topologyConstraint:
-      topologyName: e2e-topology
-      packDomain: block
-    podCliqueScalingGroups:
-      - name: workers
-        replicas: 10
-        minAvailable: 3
-        topologyConstraint:
-        cliqueNames:
-          - worker
+      topologyName: tas20-topology
+      packDomain: rack
     cliques:
       - name: worker
         labels:
           kai.scheduler/queue: test
-        topologyConstraint:
-          packDomain: host
         spec:
           roleName: worker
           replicas: 2
           minAvailable: 2
           podSpec:
-            terminationGracePeriodSeconds: 5
             schedulerName: kai-scheduler
             affinity:
               nodeAffinity:
@@ -68,4 +42,4 @@ spec:
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    memory: 40Mi
+                    memory: 10Mi

@@ -1,54 +1,52 @@
-# Workload 8: SP-1 - Full 3-Level Hierarchy with Cascading Constraints
-# Test scenario: PCS (block) → PCSG (rack) → PCLQ (host) - demonstrating constraint inheritance
+# Multi-Topology Test: Two workloads using different ClusterTopologies
+# - topology-a: 3 levels (zone, rack, host) - workload-a packs at rack level
+# - topology-b: 2 levels (block, host) - workload-b packs at host level
 ---
 apiVersion: grove.io/v1alpha1
 kind: ClusterTopology
 metadata:
-  name: e2e-topology
+  name: topology-a
 spec:
   levels:
     - domain: zone
       key: kubernetes.io/zone
-    - domain: block
-      key: kubernetes.io/block
     - domain: rack
       key: kubernetes.io/rack
     - domain: host
       key: kubernetes.io/hostname
 ---
 apiVersion: grove.io/v1alpha1
+kind: ClusterTopology
+metadata:
+  name: topology-b
+spec:
+  levels:
+    - domain: block
+      key: kubernetes.io/block
+    - domain: host
+      key: kubernetes.io/hostname
+---
+apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
-  name: tas-hierarchy
+  name: tas-multi-topo-a
   labels:
-    app: tas-hierarchy
+    app: tas-multi-topo-a
 spec:
   replicas: 1
   template:
     topologyConstraint:
-      topologyName: e2e-topology
-      packDomain: block  # PCS level - broadest
-    podCliqueScalingGroups:
-      - name: inference-group
-        replicas: 2
-        minAvailable: 2
-        topologyConstraint:
-          packDomain: rack  # PCSG level - stricter than parent
-        cliqueNames:
-          - prefill
-          - decode
+      topologyName: topology-a
+      packDomain: rack
     cliques:
-      - name: prefill
+      - name: worker
         labels:
           kai.scheduler/queue: test
-        topologyConstraint:
-          packDomain: host  # PCLQ level - strictest
         spec:
-          roleName: prefill
+          roleName: worker
           replicas: 2
           minAvailable: 2
           podSpec:
-            terminationGracePeriodSeconds: 5
             schedulerName: kai-scheduler
             affinity:
               nodeAffinity:
@@ -65,23 +63,35 @@ spec:
                 value: agent
                 effect: NoSchedule
             containers:
-              - name: prefill
+              - name: worker
                 image: registry:5001/busybox:latest
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
                     memory: 40Mi
-      - name: decode
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: tas-multi-topo-b
+  labels:
+    app: tas-multi-topo-b
+spec:
+  replicas: 1
+  template:
+    topologyConstraint:
+      topologyName: topology-b
+    cliques:
+      - name: worker
         labels:
           kai.scheduler/queue: test
         topologyConstraint:
-          packDomain: host  # PCLQ level - strictest
+          packDomain: host
         spec:
-          roleName: decode
+          roleName: worker
           replicas: 2
           minAvailable: 2
           podSpec:
-            terminationGracePeriodSeconds: 5
             schedulerName: kai-scheduler
             affinity:
               nodeAffinity:
@@ -98,7 +108,7 @@ spec:
                 value: agent
                 effect: NoSchedule
             containers:
-              - name: decode
+              - name: worker
                 image: registry:5001/busybox:latest
                 command: ["sleep", "infinity"]
                 resources:

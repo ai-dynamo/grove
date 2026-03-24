@@ -34,8 +34,6 @@ const (
 	ExitErrParseCLIArgs
 	// ExitErrLoadOperatorConfig indicates that the application exited due to an error loading the operator configuration.
 	ExitErrLoadOperatorConfig
-	// ExitErrSynchronizeTopology indicates that the application exited due to an error synchronizing the cluster topology.
-	ExitErrSynchronizeTopology
 	// ExitErrInitializeManager indicates that the application exited due to an error initializing the manager.
 	// This includes registration of controllers and webhooks and setting up probes.
 	ExitErrInitializeManager

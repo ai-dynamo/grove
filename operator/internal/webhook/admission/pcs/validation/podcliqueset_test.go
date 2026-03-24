@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -134,7 +133,7 @@ func TestResourceNamingValidation(t *testing.T) {
 
 			pcs := pcsBuilder.Build()
 
-			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig())
+			validator := newPCSValidator(pcs, admissionv1.Create, false, nil)
 			warnings, errs := validator.validate()
 
 			if tc.errorMatchers != nil {
@@ -264,7 +263,7 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 			// Add scaling groups
 			pcs.Spec.Template.PodCliqueScalingGroupConfigs = tc.scalingGroups
 
-			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig())
+			validator := newPCSValidator(pcs, admissionv1.Create, false, nil)
 			warnings, errs := validator.validate()
 
 			if tc.errorMatchers != nil {
@@ -387,7 +386,7 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 			newPCS.Spec.Template.Cliques = tc.newCliques
 
 			// Create validator and validate update
-			validator := newPCSValidator(newPCS, admissionv1.Update, defaultTASConfig())
+			validator := newPCSValidator(newPCS, admissionv1.Update, false, nil)
 			fldPath := field.NewPath("spec").Child("template").Child("cliques")
 			validationErrors := validator.validatePodCliqueUpdate(oldPCS.Spec.Template.Cliques, fldPath)
 
@@ -505,7 +504,7 @@ func TestImmutableFieldsValidation(t *testing.T) {
 			oldPCS := tc.setupOldPCS()
 			newPCS := tc.setupNewPCS()
 
-			validator := newPCSValidator(newPCS, admissionv1.Update, defaultTASConfig())
+			validator := newPCSValidator(newPCS, admissionv1.Update, false, nil)
 			err := validator.validateUpdate(oldPCS)
 
 			if tc.expectError {
@@ -675,7 +674,7 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 			newPCS.Spec.Template.PodCliqueScalingGroupConfigs = tc.newConfigs
 
 			// Create validator and validate update
-			validator := newPCSValidator(newPCS, admissionv1.Update, defaultTASConfig())
+			validator := newPCSValidator(newPCS, admissionv1.Update, false, nil)
 			fldPath := field.NewPath("spec", "template", "podCliqueScalingGroupConfigs")
 			validationErrors := validator.validatePodCliqueScalingGroupConfigsUpdate(tc.oldConfigs, fldPath)
 
@@ -1006,7 +1005,7 @@ func TestEnvVarValidation(t *testing.T) {
 				WithPodCliqueTemplateSpec(clique.Build()).
 				Build()
 
-			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig())
+			validator := newPCSValidator(pcs, admissionv1.Create, false, nil)
 			_, errs := validator.validate()
 
 			if tc.errorMatchers != nil {
@@ -1019,15 +1018,6 @@ func TestEnvVarValidation(t *testing.T) {
 }
 
 // ---------------------------- Helper Functions ----------------------------
-
-// defaultTASConfig returns a default TAS configuration with TAS disabled.
-// This is used for all podcliqueset validation tests since topology constraint
-// validation is tested separately in topologyconstraints_v1_test.go.
-func defaultTASConfig() groveconfigv1alpha1.TopologyAwareSchedulingConfiguration {
-	return groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{
-		Enabled: false,
-	}
-}
 
 // createTestPodCliqueSet creates a basic PodCliqueSet for testing.
 func createTestPodCliqueSet(name string) *grovecorev1alpha1.PodCliqueSet {

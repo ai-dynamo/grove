@@ -2,6 +2,21 @@
 # Test scenario: PCS with single clique constrained to host level
 ---
 apiVersion: grove.io/v1alpha1
+kind: ClusterTopology
+metadata:
+  name: e2e-topology
+spec:
+  levels:
+    - domain: zone
+      key: kubernetes.io/zone
+    - domain: block
+      key: kubernetes.io/block
+    - domain: rack
+      key: kubernetes.io/rack
+    - domain: host
+      key: kubernetes.io/hostname
+---
+apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
   name: tas-host-level
@@ -10,6 +25,8 @@ metadata:
 spec:
   replicas: 1
   template:
+    topologyConstraint:
+      topologyName: e2e-topology
     cliques:
       - name: worker
         labels:

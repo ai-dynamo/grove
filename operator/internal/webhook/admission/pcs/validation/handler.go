@@ -27,8 +27,11 @@ import (
 
 	"github.com/go-logr/logr"
 	admissionv1 "k8s.io/api/admission/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
@@ -43,7 +46,8 @@ const (
 // Handler is a handler for validating PodCliqueSet resources.
 type Handler struct {
 	logger        logr.Logger
-	tasConfig     configv1alpha1.TopologyAwareSchedulingConfiguration
+	client        client.Reader
+	tasEnabled    bool
 	networkConfig configv1alpha1.NetworkAcceleration
 }
 
@@ -51,7 +55,8 @@ type Handler struct {
 func NewHandler(mgr manager.Manager, tasConfig configv1alpha1.TopologyAwareSchedulingConfiguration, networkConfig configv1alpha1.NetworkAcceleration) *Handler {
 	return &Handler{
 		logger:        mgr.GetLogger().WithName("webhook").WithName(Name),
-		tasConfig:     tasConfig,
+		client:        mgr.GetAPIReader(),
+		tasEnabled:    tasConfig.Enabled,
 		networkConfig: networkConfig,
 	}
 }
@@ -64,7 +69,12 @@ func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admis
 		return nil, errors.WrapError(err, ErrValidateCreatePodCliqueSet, string(admissionv1.Create), "failed to cast object to PodCliqueSet")
 	}
 
-	v := newPCSValidator(pcs, admissionv1.Create, h.tasConfig)
+	clusterTopologyLevels, err := h.fetchClusterTopologyLevels(ctx, pcs)
+	if err != nil {
+		return nil, err
+	}
+
+	v := newPCSValidator(pcs, admissionv1.Create, h.tasEnabled, clusterTopologyLevels)
 	var allErrs field.ErrorList
 	allErrs = append(allErrs, v.validateTopologyConstraintsOnCreate()...)
 	warnings, errs := v.validate()
@@ -88,7 +98,7 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 		return nil, errors.WrapError(err, ErrValidateUpdatePodCliqueSet, string(admissionv1.Update), "failed to cast old object to PodCliqueSet")
 	}
 
-	v := newPCSValidator(newPCS, admissionv1.Update, h.tasConfig)
+	v := newPCSValidator(newPCS, admissionv1.Update, h.tasEnabled, nil)
 	warnings, errs := v.validate()
 
 	// Validate MNNVL annotation immutability
@@ -103,6 +113,23 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 // ValidateDelete validates a PodCliqueSet delete request.
 func (h *Handler) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
 	return nil, nil
+}
+
+func (h *Handler) fetchClusterTopologyLevels(ctx context.Context, pcs *v1alpha1.PodCliqueSet) ([]v1alpha1.TopologyLevel, error) {
+	topologyConstraint := pcs.Spec.Template.TopologyConstraint
+	if topologyConstraint == nil || topologyConstraint.TopologyName == "" {
+		return nil, nil
+	}
+	clusterTopology := &v1alpha1.ClusterTopology{}
+	if err := h.client.Get(ctx, types.NamespacedName{Name: topologyConstraint.TopologyName}, clusterTopology); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, field.ErrorList{
+				field.NotFound(field.NewPath("spec", "template", "topologyConstraint", "topologyName"), topologyConstraint.TopologyName),
+			}.ToAggregate()
+		}
+		return nil, errors.WrapError(err, ErrValidateCreatePodCliqueSet, string(admissionv1.Create), "failed to fetch ClusterTopology")
+	}
+	return clusterTopology.Spec.Levels, nil
 }
 
 // castToPodCliqueSet attempts to cast a runtime.Object to a PodCliqueSet.

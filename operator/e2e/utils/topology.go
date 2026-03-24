@@ -22,12 +22,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	kaitopologyv1alpha1 "github.com/NVIDIA/KAI-scheduler/pkg/apis/kai/v1alpha1"
 	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 )
@@ -268,4 +271,165 @@ func VerifyMultiTypePCSGReplicas(
 		}
 	}
 	return nil
+}
+
+// CreateClusterTopology creates a ClusterTopology resource with the given name and levels.
+func CreateClusterTopology(ctx context.Context, dynamicClient dynamic.Interface, name string, levels []corev1alpha1.TopologyLevel, logger *Logger) error {
+	levelsUnstructured := make([]interface{}, len(levels))
+	for i, level := range levels {
+		levelsUnstructured[i] = map[string]interface{}{
+			"domain": string(level.Domain),
+			"key":    level.Key,
+		}
+	}
+
+	ct := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "grove.io/v1alpha1",
+			"kind":       "ClusterTopology",
+			"metadata": map[string]interface{}{
+				"name": name,
+			},
+			"spec": map[string]interface{}{
+				"levels": levelsUnstructured,
+			},
+		},
+	}
+
+	_, err := dynamicClient.Resource(clusterTopologyGVR).Create(ctx, ct, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create ClusterTopology %s: %w", name, err)
+	}
+	logger.Infof("Created ClusterTopology %s with %d levels", name, len(levels))
+	return nil
+}
+
+// DeleteClusterTopology deletes a ClusterTopology resource by name.
+func DeleteClusterTopology(ctx context.Context, dynamicClient dynamic.Interface, name string, logger *Logger) error {
+	err := dynamicClient.Resource(clusterTopologyGVR).Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to delete ClusterTopology %s: %w", name, err)
+	}
+	logger.Infof("Deleted ClusterTopology %s", name)
+	return nil
+}
+
+// WaitForKAITopology waits for a KAI Topology to be created by the controller and verifies its levels.
+func WaitForKAITopology(ctx context.Context, dynamicClient dynamic.Interface, name string, expectedKeys []string, timeout, interval time.Duration, logger *Logger) error {
+	return wait.PollUntilContextTimeout(ctx, interval, timeout, true, func(ctx context.Context) (bool, error) {
+		err := VerifyKAITopologyLevels(ctx, dynamicClient, name, expectedKeys, logger)
+		if err != nil {
+			logger.Infof("KAI Topology %s not ready yet: %v", name, err)
+			return false, nil
+		}
+		return true, nil
+	})
+}
+
+// CreateClusterTopologyWithSchedulerReferences creates a ClusterTopology with external scheduler references for drift detection.
+func CreateClusterTopologyWithSchedulerReferences(ctx context.Context, dynamicClient dynamic.Interface, name string, levels []corev1alpha1.TopologyLevel, refs []corev1alpha1.SchedulerReference, logger *Logger) error {
+	levelsUnstructured := make([]interface{}, len(levels))
+	for i, level := range levels {
+		levelsUnstructured[i] = map[string]interface{}{
+			"domain": string(level.Domain),
+			"key":    level.Key,
+		}
+	}
+	refsUnstructured := make([]interface{}, len(refs))
+	for i, ref := range refs {
+		refsUnstructured[i] = map[string]interface{}{
+			"schedulerName": ref.SchedulerName,
+			"reference":     ref.Reference,
+		}
+	}
+
+	ct := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "grove.io/v1alpha1",
+			"kind":       "ClusterTopology",
+			"metadata": map[string]interface{}{
+				"name": name,
+			},
+			"spec": map[string]interface{}{
+				"levels":              levelsUnstructured,
+				"schedulerReferences": refsUnstructured,
+			},
+		},
+	}
+
+	_, err := dynamicClient.Resource(clusterTopologyGVR).Create(ctx, ct, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create ClusterTopology %s: %w", name, err)
+	}
+	logger.Infof("Created ClusterTopology %s with %d levels and %d scheduler references", name, len(levels), len(refs))
+	return nil
+}
+
+// UpdateClusterTopologyLevels updates the levels of an existing ClusterTopology.
+func UpdateClusterTopologyLevels(ctx context.Context, dynamicClient dynamic.Interface, name string, levels []corev1alpha1.TopologyLevel, logger *Logger) error {
+	ct, err := dynamicClient.Resource(clusterTopologyGVR).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get ClusterTopology %s: %w", name, err)
+	}
+
+	levelsUnstructured := make([]interface{}, len(levels))
+	for i, level := range levels {
+		levelsUnstructured[i] = map[string]interface{}{
+			"domain": string(level.Domain),
+			"key":    level.Key,
+		}
+	}
+
+	spec, _ := ct.Object["spec"].(map[string]interface{})
+	spec["levels"] = levelsUnstructured
+
+	_, err = dynamicClient.Resource(clusterTopologyGVR).Update(ctx, ct, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update ClusterTopology %s: %w", name, err)
+	}
+	logger.Infof("Updated ClusterTopology %s to %d levels", name, len(levels))
+	return nil
+}
+
+// WaitForClusterTopologyCondition waits for a specific condition on a ClusterTopology status.
+func WaitForClusterTopologyCondition(ctx context.Context, dynamicClient dynamic.Interface, name, conditionType, expectedStatus, expectedReason string, timeout, interval time.Duration, logger *Logger) error {
+	return wait.PollUntilContextTimeout(ctx, interval, timeout, true, func(ctx context.Context) (bool, error) {
+		ct, err := dynamicClient.Resource(clusterTopologyGVR).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return false, nil
+		}
+
+		var clusterTopology corev1alpha1.ClusterTopology
+		if err := ConvertUnstructuredToTyped(ct.Object, &clusterTopology); err != nil {
+			return false, nil
+		}
+
+		for _, cond := range clusterTopology.Status.Conditions {
+			if cond.Type == conditionType && string(cond.Status) == expectedStatus && cond.Reason == expectedReason {
+				logger.Infof("ClusterTopology %s condition %s=%s reason=%s matched", name, conditionType, expectedStatus, expectedReason)
+				return true, nil
+			}
+		}
+		return false, nil
+	})
+}
+
+// VerifyClusterTopologySchedulerStatuses checks the SchedulerTopologyStatuses on a ClusterTopology.
+func VerifyClusterTopologySchedulerStatuses(ctx context.Context, dynamicClient dynamic.Interface, name string, expectedCount int, logger *Logger) ([]corev1alpha1.SchedulerTopologyStatus, error) {
+	ct, err := dynamicClient.Resource(clusterTopologyGVR).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ClusterTopology %s: %w", name, err)
+	}
+
+	var clusterTopology corev1alpha1.ClusterTopology
+	if err := ConvertUnstructuredToTyped(ct.Object, &clusterTopology); err != nil {
+		return nil, fmt.Errorf("failed to convert ClusterTopology: %w", err)
+	}
+
+	if len(clusterTopology.Status.SchedulerTopologyStatuses) != expectedCount {
+		return nil, fmt.Errorf("expected %d scheduler topology statuses, got %d", expectedCount, len(clusterTopology.Status.SchedulerTopologyStatuses))
+	}
+
+	logger.Infof("ClusterTopology %s has %d scheduler topology statuses", name, expectedCount)
+	return clusterTopology.Status.SchedulerTopologyStatuses, nil
 }

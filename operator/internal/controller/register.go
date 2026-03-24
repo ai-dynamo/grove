@@ -18,6 +18,7 @@ package controller
 
 import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/controller/clustertopology"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset"
@@ -37,6 +38,10 @@ func RegisterControllers(mgr ctrl.Manager, controllerConfig configv1alpha1.Contr
 	}
 	pcsgReconciler := podcliquescalinggroup.NewReconciler(mgr, controllerConfig.PodCliqueScalingGroup)
 	if err := pcsgReconciler.RegisterWithManager(mgr); err != nil {
+		return err
+	}
+	ctReconciler := clustertopology.NewReconciler(mgr, topologyAwareSchedulingConfig.Enabled)
+	if err := ctReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
 	return nil

@@ -48,6 +48,11 @@ func (f FakeManager) GetScheme() *runtime.Scheme {
 	return f.Scheme
 }
 
+// GetAPIReader returns a client.Reader backed by the fake manager's client.
+func (f *FakeManager) GetAPIReader() client.Reader {
+	return f.Client
+}
+
 // GetWebhookServer returns the webhook server registered with the fake manager
 func (f *FakeManager) GetWebhookServer() webhook.Server {
 	return f.WebhookServer

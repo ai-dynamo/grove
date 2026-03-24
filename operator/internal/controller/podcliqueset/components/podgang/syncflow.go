@@ -72,20 +72,20 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs 
 		)
 	}
 
-	// Implementation NOTE:
-	// In the current version of the code ClusterTopology CR is created by Grove operator and its contents
-	// are based on OperatorConfiguration.TopologyAwareSchedulingConfig. _resource struct already has access
-	// to OperatorConfiguration.TopologyAwareSchedulingConfig so we could have used it directly instead of fetching
-	// ClusterTopology CR again. This is true now, but in future this will change when we introduce support for
-	// externally defined ClusterTopology CR. Hence, fetching ClusterTopology CR here to keep the code future-proof.
 	sc.tasEnabled = r.tasConfig.Enabled
 	if r.tasConfig.Enabled {
-		sc.topologyLevels, err = clustertopology.GetClusterTopologyLevels(ctx, r.client, grovecorev1alpha1.DefaultClusterTopologyName)
-		if err != nil {
-			return nil, groveerr.WrapError(err,
-				errCodeGetClusterTopologyLevels,
-				component.OperationSync,
-				"failed to get cluster topology levels")
+		topologyName := ""
+		if pcs.Spec.Template.TopologyConstraint != nil {
+			topologyName = pcs.Spec.Template.TopologyConstraint.TopologyName
+		}
+		if topologyName != "" {
+			sc.topologyLevels, err = clustertopology.GetClusterTopologyLevels(ctx, r.client, topologyName)
+			if err != nil {
+				return nil, groveerr.WrapError(err,
+					errCodeGetClusterTopologyLevels,
+					component.OperationSync,
+					fmt.Sprintf("failed to get cluster topology levels from ClusterTopology %q", topologyName))
+			}
 		}
 	}
 
@@ -185,7 +185,7 @@ func buildExpectedBasePodGangForPCSReplica(sc *syncContext, pcsReplica int) (*po
 	pg := &podGangInfo{
 		fqn: podGangFQN,
 		// TopologyConstraint for the base PodGang comes from the topology constraint defined at the PCS level.
-		topologyConstraint: createTopologyPackConstraint(sc, client.ObjectKeyFromObject(sc.pcs), sc.pcs.Spec.Template.TopologyConstraint),
+		topologyConstraint: createTopologyPackConstraint(sc, client.ObjectKeyFromObject(sc.pcs), pcsPackDomainAsTopologyConstraint(sc.pcs.Spec.Template.TopologyConstraint)),
 	}
 	pclqInfos := make([]pclqInfo, 0, len(sc.pcs.Spec.Template.Cliques))
 
@@ -313,7 +313,7 @@ func doBuildExpectedScaledPodGangForPCSG(sc *syncContext, pcsgFQN string, pcsgCo
 		} else {
 			// Fall back to PCS-level constraints
 			topologyConstraint = createTopologyPackConstraint(sc, client.ObjectKeyFromObject(sc.pcs),
-				sc.pcs.Spec.Template.TopologyConstraint)
+				pcsPackDomainAsTopologyConstraint(sc.pcs.Spec.Template.TopologyConstraint))
 		}
 	}
 
@@ -362,6 +362,13 @@ func createTopologyPackConstraint(sc *syncContext, nsName types.NamespacedName, 
 		}
 	}
 	return lo.Ternary(pgPackConstraint != nil, &groveschedulerv1alpha1.TopologyConstraint{PackConstraint: pgPackConstraint}, nil)
+}
+
+func pcsPackDomainAsTopologyConstraint(pcsTC *grovecorev1alpha1.PodCliqueSetTopologyConstraint) *grovecorev1alpha1.TopologyConstraint {
+	if pcsTC == nil || pcsTC.PackDomain == "" {
+		return nil
+	}
+	return &grovecorev1alpha1.TopologyConstraint{PackDomain: pcsTC.PackDomain}
 }
 
 // determinePodCliqueReplicas determines replica count considering HPA mutations.

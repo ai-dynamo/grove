@@ -26,7 +26,6 @@ import (
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/cmd/cli"
-	"github.com/ai-dynamo/grove/operator/internal/clustertopology"
 	grovectrl "github.com/ai-dynamo/grove/operator/internal/controller"
 	"github.com/ai-dynamo/grove/operator/internal/controller/cert"
 	grovelogger "github.com/ai-dynamo/grove/operator/internal/logger"
@@ -78,23 +77,13 @@ func main() {
 	ctx := ctrl.SetupSignalHandler()
 
 	// Create a direct (non-cached) client for pre-manager setup tasks.
-	// Both topology synchronization and webhook certificate provisioning run before
-	// mgr.Start(), so the manager's informer cache is not yet available. A direct
-	// client bypasses the cache and talks straight to the API server.
+	// Webhook certificate provisioning runs before mgr.Start(), so the manager's
+	// informer cache is not yet available. A direct client bypasses the cache and
+	// talks straight to the API server.
 	cl, err := client.New(mgr.GetConfig(), client.Options{Scheme: mgr.GetScheme()})
 	if err != nil {
 		logger.Error(err, "failed to create direct API client for pre-start setup")
 		handleErrorAndExit(err, cli.ExitErrInitializeManager)
-	}
-
-	// Initialize or clean up ClusterTopology based on operator configuration.
-	// This must be done before starting the controllers that may depend on the ClusterTopology resource.
-	// NOTE: In this version of the operator the synchronization will additionally ensure that the KAI Topology resource
-	// is created based on the ClusterTopology. When we introduce support for pluggable scheduler backends,
-	// handling of scheduler specified resources will be delegated to the backend scheduler controller.
-	if err = clustertopology.SynchronizeTopology(ctx, cl, logger, operatorConfig); err != nil {
-		logger.Error(err, "failed to synchronize cluster topology")
-		handleErrorAndExit(err, cli.ExitErrSynchronizeTopology)
 	}
 
 	webhookCertsReadyCh := make(chan struct{})

@@ -92,6 +92,19 @@ const (
 	// ConditionTopologyLevelsUnavailable indicates that the required topology levels defined on a PodCliqueSet for topology-aware scheduling are no longer available.
 	// This can happen when the ClusterTopology resource is modified which removes one or more levels required by the PodCliqueSet.
 	ConditionTopologyLevelsUnavailable = "TopologyLevelsUnavailable"
+	// ConditionTypeSchedulerTopologyDrift indicates whether scheduler backend topology resources
+	// are in sync with the ClusterTopology levels. Set on ClusterTopology status.
+	ConditionTypeSchedulerTopologyDrift = "SchedulerTopologyDrift"
+)
+
+// Constants for ClusterTopology Condition Reasons.
+const (
+	// ConditionReasonInSync indicates that all scheduler backend topology levels match the ClusterTopology levels.
+	ConditionReasonInSync = "InSync"
+	// ConditionReasonDrift indicates that one or more scheduler backend topology levels do not match the ClusterTopology levels.
+	ConditionReasonDrift = "Drift"
+	// ConditionReasonTopologyNotFound indicates that one or more referenced scheduler backend topology resources were not found.
+	ConditionReasonTopologyNotFound = "TopologyNotFound"
 )
 
 // Constants for Condition Reasons.
@@ -120,6 +133,12 @@ const (
 	// ConditionReasonAllTopologyLevelsAvailable indicates that all required topology levels defined on a
 	// PodCliqueSet for topology-aware scheduling are defined in the ClusterTopology resource.
 	ConditionReasonAllTopologyLevelsAvailable = "AllClusterTopologyLevelsAvailable"
+	// ConditionReasonTopologyNameMissing indicates that a PodCliqueSet has topology constraints but no topologyName set.
+	// This can occur during upgrade from a single-topology design where topologyName was not required.
+	ConditionReasonTopologyNameMissing = "TopologyNameMissing"
+	// ConditionReasonTopologyAwareSchedulingDisabled indicates that TAS has been disabled cluster-wide
+	// while the PCS still has topology constraints.
+	ConditionReasonTopologyAwareSchedulingDisabled = "TopologyAwareSchedulingDisabled"
 )
 
 const (

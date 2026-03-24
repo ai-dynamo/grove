@@ -17,18 +17,21 @@
 package clustertopology
 
 import (
-	"context"
-
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
-// GetClusterTopologyLevels retrieves the TopologyLevels from the specified ClusterTopology resource.
-func GetClusterTopologyLevels(ctx context.Context, cl client.Client, name string) ([]grovecorev1alpha1.TopologyLevel, error) {
-	clusterTopology := &grovecorev1alpha1.ClusterTopology{}
-	if err := cl.Get(ctx, client.ObjectKey{Name: name}, clusterTopology); err != nil {
-		return nil, err
-	}
-	return clusterTopology.Spec.Levels, nil
+const (
+	controllerName = "clustertopology-controller"
+)
+
+// RegisterWithManager registers the ClusterTopology Reconciler with the manager.
+func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		Named(controllerName).
+		For(&grovecorev1alpha1.ClusterTopology{}).
+		WithEventFilter(predicate.GenerationChangedPredicate{}).
+		Complete(r)
 }
