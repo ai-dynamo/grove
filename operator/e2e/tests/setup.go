@@ -345,6 +345,7 @@ func verifyPodsArePendingWithUnschedulableEvents(tc TestContext, allPodsMustBePe
 					((mostRecentEvent.Reason == "Unschedulable" && mostRecentEvent.Source.Component == "kai-scheduler") ||
 						(mostRecentEvent.Reason == "PodGrouperWarning" && mostRecentEvent.Source.Component == "pod-grouper")) {
 					Logger.Debugf("Pod %s has Unschedulable event: %s", pod.Name, mostRecentEvent.Message)
+					podsWithUnschedulableEvent++
 				} else if mostRecentEvent != nil {
 					Logger.Debugf("Pod %s most recent event is not Unschedulable: type=%s, reason=%s, component=%s",
 						pod.Name, mostRecentEvent.Type, mostRecentEvent.Reason, mostRecentEvent.Source.Component)
