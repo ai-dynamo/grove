@@ -57,21 +57,21 @@ import (
 func Test_SO1_InorderStartupOrderWithFullReplicas(t *testing.T) {
 	ctx := context.Background()
 
-	logger.Info("1. Initialize a 10-node Grove cluster")
+	Logger.Info("1. Initialize a 10-node Grove cluster")
 	totalPods := 10 // pc-a: 2 replicas, pc-b: 1*2 (scaling group), pc-c: 3*2 (scaling group) = 2+2+6=10
-	clients, cleanup := prepareTestCluster(ctx, t, totalPods)
+	clients, cleanup := PrepareTestCluster(ctx, t, totalPods)
 	defer cleanup()
 
-	logger.Info("2. Deploy workload WL3, and verify 10 newly created pods")
+	Logger.Info("2. Deploy workload WL3, and verify 10 newly created pods")
 	tc := TestContext{
 		T:             t,
 		Ctx:           ctx,
-		Clientset:     clients.clientset,
-		RestConfig:    clients.restConfig,
-		DynamicClient: clients.dynamicClient,
+		Clientset:     clients.Clientset,
+		RestConfig:    clients.RestConfig,
+		DynamicClient: clients.DynamicClient,
 		Namespace:     "default",
 		Timeout:       5 * time.Minute,
-		Interval:      defaultPollInterval,
+		Interval:      DefaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload3",
 			YAMLPath:     "../yaml/workload3.yaml",
@@ -80,24 +80,24 @@ func Test_SO1_InorderStartupOrderWithFullReplicas(t *testing.T) {
 		},
 	}
 
-	_, err := deployAndVerifyWorkload(tc)
+	_, err := DeployAndVerifyWorkload(tc)
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 
-	logger.Info("3. Wait for pods to get scheduled and become ready")
-	if err := waitForReadyPods(tc, totalPods); err != nil {
+	Logger.Info("3. Wait for pods to get scheduled and become ready")
+	if err := WaitForReadyPods(tc, totalPods); err != nil {
 		t.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
 
-	logger.Info("4. Verify each pod clique starts in the following order:")
-	logger.Info("   pcs-0-pc-a")
-	logger.Info("   pcs-0-sg-x-0-pc-b, pcs-0-sg-x-1-pc-b")
-	logger.Info("   pcs-0-sg-x-0-pc-c, pcs-0-sg-x-1-pc-c")
+	Logger.Info("4. Verify each pod clique starts in the following order:")
+	Logger.Info("   pcs-0-pc-a")
+	Logger.Info("   pcs-0-sg-x-0-pc-b, pcs-0-sg-x-1-pc-b")
+	Logger.Info("   pcs-0-sg-x-0-pc-c, pcs-0-sg-x-1-pc-c")
 	verifyPodCliqueStartupOrder(t, tc, "pc-a", 2, "pc-b", 2)
 	verifyPodCliqueStartupOrder(t, tc, "pc-b", 2, "pc-c", 6)
 
-	logger.Info("🎉 Inorder startup order with full replicas test completed successfully!")
+	Logger.Info("🎉 Inorder startup order with full replicas test completed successfully!")
 }
 
 // Test_SO2_InorderStartupOrderWithMinReplicas tests inorder startup with min replicas
@@ -115,21 +115,21 @@ func Test_SO1_InorderStartupOrderWithFullReplicas(t *testing.T) {
 func Test_SO2_InorderStartupOrderWithMinReplicas(t *testing.T) {
 	ctx := context.Background()
 
-	logger.Info("1. Initialize a 10-node Grove cluster")
+	Logger.Info("1. Initialize a 10-node Grove cluster")
 	totalPods := 10 // pc-a: 2 replicas, pc-b: 1*2 (scaling group), pc-c: 3*2 (scaling group) = 2+2+6=10
-	clients, cleanup := prepareTestCluster(ctx, t, totalPods)
+	clients, cleanup := PrepareTestCluster(ctx, t, totalPods)
 	defer cleanup()
 
-	logger.Info("2. Deploy workload WL4, and verify 10 newly created pods")
+	Logger.Info("2. Deploy workload WL4, and verify 10 newly created pods")
 	tc := TestContext{
 		T:             t,
 		Ctx:           ctx,
-		Clientset:     clients.clientset,
-		RestConfig:    clients.restConfig,
-		DynamicClient: clients.dynamicClient,
+		Clientset:     clients.Clientset,
+		RestConfig:    clients.RestConfig,
+		DynamicClient: clients.DynamicClient,
 		Namespace:     "default",
 		Timeout:       5 * time.Minute,
-		Interval:      defaultPollInterval,
+		Interval:      DefaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload4",
 			YAMLPath:     "../yaml/workload4.yaml",
@@ -138,23 +138,23 @@ func Test_SO2_InorderStartupOrderWithMinReplicas(t *testing.T) {
 		},
 	}
 
-	_, err := deployAndVerifyWorkload(tc)
+	_, err := DeployAndVerifyWorkload(tc)
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 
-	logger.Info("3. Wait for 10 pods get scheduled and become ready:")
-	logger.Info("   pcs-0-{pc-a = 2}")
-	logger.Info("   pcs-0-{sg-x-0-pc-b = 1, sg-x-0-pc-c = 3} (there are 2 replicas)")
-	logger.Info("   pcs-0-{sg-x-1-pc-b = 1, sg-x-1-pc-c = 3}")
-	if err := waitForReadyPods(tc, totalPods); err != nil {
+	Logger.Info("3. Wait for 10 pods get scheduled and become ready:")
+	Logger.Info("   pcs-0-{pc-a = 2}")
+	Logger.Info("   pcs-0-{sg-x-0-pc-b = 1, sg-x-0-pc-c = 3} (there are 2 replicas)")
+	Logger.Info("   pcs-0-{sg-x-1-pc-b = 1, sg-x-1-pc-c = 3}")
+	if err := WaitForReadyPods(tc, totalPods); err != nil {
 		t.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
 
-	logger.Info("4. Verify startup order within each gang:")
-	logger.Info("   pc-a starts before scaling groups")
-	logger.Info("   Within sg-x-0 (base): pc-a → pc-b → pc-c")
-	logger.Info("   Within sg-x-1 (scaled): pc-b → pc-c (independent)")
+	Logger.Info("4. Verify startup order within each gang:")
+	Logger.Info("   pc-a starts before scaling groups")
+	Logger.Info("   Within sg-x-0 (base): pc-a → pc-b → pc-c")
+	Logger.Info("   Within sg-x-1 (scaled): pc-b → pc-c (independent)")
 
 	// Verify complex startup ordering for scaling groups
 	// minAvailable values from workload4.yaml: pc-a=1, pc-b=1, pc-c=1
@@ -169,7 +169,7 @@ func Test_SO2_InorderStartupOrderWithMinReplicas(t *testing.T) {
 		},
 	})
 
-	logger.Info("🎉 Inorder startup order with min replicas test completed successfully!")
+	Logger.Info("🎉 Inorder startup order with min replicas test completed successfully!")
 }
 
 // Test_SO3_ExplicitStartupOrderWithFullReplicas tests explicit startup order with full replicas
@@ -184,21 +184,21 @@ func Test_SO2_InorderStartupOrderWithMinReplicas(t *testing.T) {
 func Test_SO3_ExplicitStartupOrderWithFullReplicas(t *testing.T) {
 	ctx := context.Background()
 
-	logger.Info("1. Initialize a 10-node Grove cluster")
+	Logger.Info("1. Initialize a 10-node Grove cluster")
 	totalPods := 10 // pc-a: 2 replicas, pc-b: 1*2 (scaling group), pc-c: 3*2 (scaling group) = 2+2+6=10
-	clients, cleanup := prepareTestCluster(ctx, t, totalPods)
+	clients, cleanup := PrepareTestCluster(ctx, t, totalPods)
 	defer cleanup()
 
-	logger.Info("2. Deploy workload WL5, and verify 10 newly created pods")
+	Logger.Info("2. Deploy workload WL5, and verify 10 newly created pods")
 	tc := TestContext{
 		T:             t,
 		Ctx:           ctx,
-		Clientset:     clients.clientset,
-		RestConfig:    clients.restConfig,
-		DynamicClient: clients.dynamicClient,
+		Clientset:     clients.Clientset,
+		RestConfig:    clients.RestConfig,
+		DynamicClient: clients.DynamicClient,
 		Namespace:     "default",
 		Timeout:       5 * time.Minute,
-		Interval:      defaultPollInterval,
+		Interval:      DefaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload5",
 			YAMLPath:     "../yaml/workload5.yaml",
@@ -207,25 +207,25 @@ func Test_SO3_ExplicitStartupOrderWithFullReplicas(t *testing.T) {
 		},
 	}
 
-	_, err := deployAndVerifyWorkload(tc)
+	_, err := DeployAndVerifyWorkload(tc)
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 
-	logger.Info("3. Wait for pods to get scheduled and become ready")
-	if err := waitForReadyPods(tc, tc.Workload.ExpectedPods); err != nil {
+	Logger.Info("3. Wait for pods to get scheduled and become ready")
+	if err := WaitForReadyPods(tc, tc.Workload.ExpectedPods); err != nil {
 		t.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
 
-	logger.Info("4. Verify each pod clique starts in the following order:")
-	logger.Info("   pcs-0-pc-a")
-	logger.Info("   pcs-0-sg-x-0-pc-c, pcs-0-sg-x-1-pc-c")
-	logger.Info("   pcs-0-sg-x-0-pc-b, pcs-0-sg-x-1-pc-b")
+	Logger.Info("4. Verify each pod clique starts in the following order:")
+	Logger.Info("   pcs-0-pc-a")
+	Logger.Info("   pcs-0-sg-x-0-pc-c, pcs-0-sg-x-1-pc-c")
+	Logger.Info("   pcs-0-sg-x-0-pc-b, pcs-0-sg-x-1-pc-b")
 	verifyPodCliqueStartupOrder(t, tc, "pc-a", 2, "pc-c", 6)
 	verifyPodCliqueStartupOrder(t, tc, "pc-a", 2, "pc-b", 2)
 	verifyPodCliqueStartupOrder(t, tc, "pc-c", 6, "pc-b", 2)
 
-	logger.Info("🎉 Explicit startup order with full replicas test completed successfully!")
+	Logger.Info("🎉 Explicit startup order with full replicas test completed successfully!")
 }
 
 // Test_SO4_ExplicitStartupOrderWithMinReplicas tests explicit startup order with min replicas
@@ -243,21 +243,21 @@ func Test_SO3_ExplicitStartupOrderWithFullReplicas(t *testing.T) {
 func Test_SO4_ExplicitStartupOrderWithMinReplicas(t *testing.T) {
 	ctx := context.Background()
 
-	logger.Info("1. Initialize a 10-node Grove cluster")
+	Logger.Info("1. Initialize a 10-node Grove cluster")
 	totalPods := 10 // pc-a: 2 replicas, pc-b: 1*2 (scaling group), pc-c: 3*2 (scaling group) = 2+2+6=10
-	clients, cleanup := prepareTestCluster(ctx, t, totalPods)
+	clients, cleanup := PrepareTestCluster(ctx, t, totalPods)
 	defer cleanup()
 
-	logger.Info("2. Deploy workload WL6, and verify 10 newly created pods")
+	Logger.Info("2. Deploy workload WL6, and verify 10 newly created pods")
 	tc := TestContext{
 		T:             t,
 		Ctx:           ctx,
-		Clientset:     clients.clientset,
-		RestConfig:    clients.restConfig,
-		DynamicClient: clients.dynamicClient,
+		Clientset:     clients.Clientset,
+		RestConfig:    clients.RestConfig,
+		DynamicClient: clients.DynamicClient,
 		Namespace:     "default",
 		Timeout:       5 * time.Minute,
-		Interval:      defaultPollInterval,
+		Interval:      DefaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload6",
 			YAMLPath:     "../yaml/workload6.yaml",
@@ -266,24 +266,24 @@ func Test_SO4_ExplicitStartupOrderWithMinReplicas(t *testing.T) {
 		},
 	}
 
-	_, err := deployAndVerifyWorkload(tc)
+	_, err := DeployAndVerifyWorkload(tc)
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 
-	logger.Info("3. Wait for 10 pods get scheduled and become ready:")
-	logger.Info("   pcs-0-{pc-a = 2}")
-	logger.Info("   pcs-0-{sg-x-0-pc-b = 1, sg-x-0-pc-c = 3} (there are 2 replicas)")
-	logger.Info("   pcs-0-{sg-x-1-pc-b = 1, sg-x-1-pc-c = 3}")
+	Logger.Info("3. Wait for 10 pods get scheduled and become ready:")
+	Logger.Info("   pcs-0-{pc-a = 2}")
+	Logger.Info("   pcs-0-{sg-x-0-pc-b = 1, sg-x-0-pc-c = 3} (there are 2 replicas)")
+	Logger.Info("   pcs-0-{sg-x-1-pc-b = 1, sg-x-1-pc-c = 3}")
 	// Wait for all 10 pods to become ready
-	if err := waitForReadyPods(tc, totalPods); err != nil {
+	if err := WaitForReadyPods(tc, totalPods); err != nil {
 		t.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
 
-	logger.Info("4. Verify startup order within each gang:")
-	logger.Info("   pc-a starts before scaling groups")
-	logger.Info("   Within sg-x-0 (base): pc-a → pc-b → pc-c (explicit dependency)")
-	logger.Info("   Within sg-x-1 (scaled): pc-b → pc-c (independent)")
+	Logger.Info("4. Verify startup order within each gang:")
+	Logger.Info("   pc-a starts before scaling groups")
+	Logger.Info("   Within sg-x-0 (base): pc-a → pc-b → pc-c (explicit dependency)")
+	Logger.Info("   Within sg-x-1 (scaled): pc-b → pc-c (independent)")
 
 	// With minAvailable=1 for the scaling group:
 	// - sg-x-0 (replica 0) is the base PodGang
@@ -302,7 +302,7 @@ func Test_SO4_ExplicitStartupOrderWithMinReplicas(t *testing.T) {
 		},
 	})
 
-	logger.Info("🎉 Explicit startup order with min replicas test completed successfully!")
+	Logger.Info("🎉 Explicit startup order with min replicas test completed successfully!")
 }
 
 // Helper function to get the Ready condition's LastTransitionTime from a pod
@@ -314,7 +314,7 @@ func getReadyConditionTransitionTime(pod v1.Pod) time.Time {
 		}
 	}
 	// Debug: log why we couldn't find a Ready timestamp
-	logger.Debugf("Pod %s has no Ready=True condition. Phase: %s, Conditions: %+v",
+	Logger.Debugf("Pod %s has no Ready=True condition. Phase: %s, Conditions: %+v",
 		pod.Name, pod.Status.Phase, pod.Status.Conditions)
 	return time.Time{}
 }
@@ -398,7 +398,7 @@ func verifyScalingGroupStartupOrder(t *testing.T, tc TestContext, spec ScalingGr
 	t.Helper()
 
 	// Fetch the latest pod state
-	pods, err := listPods(tc)
+	pods, err := ListPods(tc)
 	if err != nil {
 		t.Fatalf("Failed to fetch pods: %v", err)
 	}
@@ -488,7 +488,7 @@ func verifyPodCliqueStartupOrder(t *testing.T, tc TestContext,
 	t.Helper()
 
 	// Always fetch the latest pod state to ensure we have current Ready conditions
-	pods, err := listPods(tc)
+	pods, err := ListPods(tc)
 	if err != nil {
 		t.Fatalf("Failed to fetch pods: %v", err)
 	}
@@ -534,19 +534,19 @@ func verifyGroupStartupOrderWithMinAvailable(t *testing.T, groupBefore, groupAft
 	// Check for pods without Ready timestamps
 	if nthEarliestBefore.IsZero() {
 		// Debug: Show which pods don't have Ready timestamps
-		logger.Errorf("Group %s doesn't have %d pods with valid Ready timestamps. Debugging pod states:", beforeName, minAvailable)
+		Logger.Errorf("Group %s doesn't have %d pods with valid Ready timestamps. Debugging pod states:", beforeName, minAvailable)
 		for i, pod := range groupBefore {
 			readyTime := getReadyConditionTransitionTime(pod)
-			logger.Errorf("  Pod[%d] %s: Phase=%s, ReadyTime=%v", i, pod.Name, pod.Status.Phase, readyTime)
+			Logger.Errorf("  Pod[%d] %s: Phase=%s, ReadyTime=%v", i, pod.Name, pod.Status.Phase, readyTime)
 		}
 		t.Fatalf("Group %s doesn't have %d pods with valid Ready condition timestamps (pods may not be ready yet)", beforeName, minAvailable)
 	}
 	if earliestAfter.IsZero() {
 		// Debug: Show which pods don't have Ready timestamps
-		logger.Errorf("Group %s has no pods with valid Ready timestamps. Debugging pod states:", afterName)
+		Logger.Errorf("Group %s has no pods with valid Ready timestamps. Debugging pod states:", afterName)
 		for i, pod := range groupAfter {
 			readyTime := getReadyConditionTransitionTime(pod)
-			logger.Errorf("  Pod[%d] %s: Phase=%s, ReadyTime=%v", i, pod.Name, pod.Status.Phase, readyTime)
+			Logger.Errorf("  Pod[%d] %s: Phase=%s, ReadyTime=%v", i, pod.Name, pod.Status.Phase, readyTime)
 		}
 		t.Fatalf("Group %s has no pods with valid Ready condition timestamps (pods may not be ready yet)", afterName)
 	}
@@ -558,7 +558,7 @@ func verifyGroupStartupOrderWithMinAvailable(t *testing.T, groupBefore, groupAft
 			afterName, earliestAfter, beforeName, minAvailable, minAvailable, nthEarliestBefore)
 	}
 
-	logger.Debugf("✓ Verified startup order: %s (%d pods ready by %v) → %s (earliest: %v)",
+	Logger.Debugf("✓ Verified startup order: %s (%d pods ready by %v) → %s (earliest: %v)",
 		beforeName, minAvailable, nthEarliestBefore, afterName, earliestAfter)
 }
 
@@ -590,29 +590,29 @@ func getPodsByCliquePattern(pods []v1.Pod, pattern string) []v1.Pod {
 // debugPodState logs detailed state information for all pods in the namespace.
 // Use this to help diagnose why pods might not be becoming Ready.
 func debugPodState(tc TestContext) {
-	pods, err := listPods(tc)
+	pods, err := ListPods(tc)
 	if err != nil {
-		logger.Errorf("Failed to list pods for debugging: %v", err)
+		Logger.Errorf("Failed to list pods for debugging: %v", err)
 		return
 	}
-	logger.Infof("Debug: Found %d pods in namespace %s", len(pods.Items), tc.Namespace)
+	Logger.Infof("Debug: Found %d pods in namespace %s", len(pods.Items), tc.Namespace)
 	for _, pod := range pods.Items {
-		logger.Infof("Pod %s: Phase=%s, Reason=%s, Message=%s", pod.Name, pod.Status.Phase, pod.Status.Reason, pod.Status.Message)
+		Logger.Infof("Pod %s: Phase=%s, Reason=%s, Message=%s", pod.Name, pod.Status.Phase, pod.Status.Reason, pod.Status.Message)
 		for _, cond := range pod.Status.Conditions {
 			if cond.Status != v1.ConditionTrue {
-				logger.Infof("  Condition %s=%s: %s", cond.Type, cond.Status, cond.Message)
+				Logger.Infof("  Condition %s=%s: %s", cond.Type, cond.Status, cond.Message)
 			}
 		}
 		// Log init container statuses
 		for _, status := range pod.Status.InitContainerStatuses {
 			if !status.Ready {
-				logger.Infof("  InitContainer %s: Ready=%v, State=%+v", status.Name, status.Ready, status.State)
+				Logger.Infof("  InitContainer %s: Ready=%v, State=%+v", status.Name, status.Ready, status.State)
 			}
 		}
 		// Log container statuses
 		for _, status := range pod.Status.ContainerStatuses {
 			if !status.Ready {
-				logger.Infof("  Container %s: Ready=%v, State=%+v", status.Name, status.Ready, status.State)
+				Logger.Infof("  Container %s: Ready=%v, State=%+v", status.Name, status.Ready, status.State)
 			}
 		}
 		// Events
@@ -622,7 +622,7 @@ func debugPodState(tc TestContext) {
 		if err == nil {
 			for _, e := range events.Items {
 				if e.Type == "Warning" {
-					logger.Infof("  Event Warning: %s: %s", e.Reason, e.Message)
+					Logger.Infof("  Event Warning: %s: %s", e.Reason, e.Message)
 				}
 			}
 		}

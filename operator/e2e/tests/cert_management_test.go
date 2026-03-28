@@ -83,7 +83,7 @@ func updateGroveToCertManager(t *testing.T, ctx context.Context, restConfig *res
 	if err != nil {
 		t.Fatalf("Failed to get Grove chart directory: %v", err)
 	}
-	if err := setup.UpdateGroveConfiguration(ctx, restConfig, chartDir, certManagerGroveConfig(), logger); err != nil {
+	if err := setup.UpdateGroveConfiguration(ctx, restConfig, chartDir, certManagerGroveConfig(), Logger); err != nil {
 		t.Fatalf("Failed to update Grove to cert-manager mode: %v", err)
 	}
 }
@@ -95,7 +95,7 @@ func updateGroveToAutoProvision(t *testing.T, ctx context.Context, restConfig *r
 	if err != nil {
 		t.Fatalf("Failed to get Grove chart directory: %v", err)
 	}
-	if err := setup.UpdateGroveConfiguration(ctx, restConfig, chartDir, autoProvisionGroveConfig(), logger); err != nil {
+	if err := setup.UpdateGroveConfiguration(ctx, restConfig, chartDir, autoProvisionGroveConfig(), Logger); err != nil {
 		t.Fatalf("Failed to update Grove to auto-provision mode: %v", err)
 	}
 }
@@ -106,7 +106,7 @@ const (
 	// to ensure image pre-pulling works correctly in E2E tests
 	certManagerReleaseName = "cert-manager"
 	certManagerChartRef    = "cert-manager"
-	certManagerVersion     = "v1.14.4"  // Keep in sync with dependencies.yaml
+	certManagerVersion     = "v1.14.4" // Keep in sync with dependencies.yaml
 	certManagerNamespace   = "cert-manager"
 	certManagerRepoURL     = "https://charts.jetstack.io"
 
@@ -154,95 +154,95 @@ spec:
 func Test_CM1_CertManagementRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
-	logger.Info("1. Initialize Grove with auto-provision mode (10 nodes for workload)")
-	clients, cleanup := prepareTestCluster(ctx, t, 10)
+	Logger.Info("1. Initialize Grove with auto-provision mode (10 nodes for workload)")
+	clients, cleanup := PrepareTestCluster(ctx, t, 10)
 
-	logger.Info("2. Install cert-manager and create Certificate")
-	installCertManager(t, ctx, clients.restConfig)
-	defer uninstallCertManager(t, clients.restConfig)
+	Logger.Info("2. Install cert-manager and create Certificate")
+	installCertManager(t, ctx, clients.RestConfig)
+	defer uninstallCertManager(t, clients.RestConfig)
 	defer cleanup()
 
 	// Create Issuer and Certificate
 	// Create clients once and reuse them for better performance
-	_, restMapper, err := utils.CreateKubernetesClients(clients.restConfig)
+	_, restMapper, err := utils.CreateKubernetesClients(clients.RestConfig)
 	if err != nil {
 		t.Fatalf("Failed to create Kubernetes clients: %v", err)
 	}
-	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerIssuerYAML), "", clients.dynamicClient, restMapper, logger); err != nil {
+	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerIssuerYAML), "", clients.DynamicClient, restMapper, Logger); err != nil {
 		t.Fatalf("Failed to apply ClusterIssuer: %v", err)
 	}
-	waitForClusterIssuer(t, ctx, clients.dynamicClient, "selfsigned-issuer")
+	waitForClusterIssuer(t, ctx, clients.DynamicClient, "selfsigned-issuer")
 
-	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerCertificateYAML), "", clients.dynamicClient, restMapper, logger); err != nil {
+	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerCertificateYAML), "", clients.DynamicClient, restMapper, Logger); err != nil {
 		t.Fatalf("Failed to apply Certificate: %v", err)
 	}
 
 	// Wait for cert-manager to actually take over the secret.
 	// This is critical because the secret may already exist from auto-provision mode,
 	// and we need to wait for cert-manager to update it (not just check existence).
-	waitForSecretManagedByCertManager(t, ctx, clients.clientset, configv1alpha1.DefaultWebhookSecretName)
+	waitForSecretManagedByCertManager(t, ctx, clients.Clientset, configv1alpha1.DefaultWebhookSecretName)
 
-	logger.Info("3. Upgrade Grove to use cert-manager (certProvisionMode=manual)")
-	updateGroveToCertManager(t, ctx, clients.restConfig)
+	Logger.Info("3. Upgrade Grove to use cert-manager (certProvisionMode=manual)")
+	updateGroveToCertManager(t, ctx, clients.RestConfig)
 
-	logger.Info("4. Verify cert-manager mode is active")
-	verifyCertManagerMode(t, ctx, clients.clientset)
-	verifyWebhookServingCertificate(t, ctx, clients.clientset, clients.restConfig)
+	Logger.Info("4. Verify cert-manager mode is active")
+	verifyCertManagerMode(t, ctx, clients.Clientset)
+	verifyWebhookServingCertificate(t, ctx, clients.Clientset, clients.RestConfig)
 
-	logger.Info("5. Deploy and verify workload with cert-manager certs")
-	tc := createTestContext(t, ctx, clients.clientset, clients.dynamicClient, clients.restConfig)
-	if _, err := deployAndVerifyWorkload(tc); err != nil {
+	Logger.Info("5. Deploy and verify workload with cert-manager certs")
+	tc := createTestContext(t, ctx, clients.Clientset, clients.DynamicClient, clients.RestConfig)
+	if _, err := DeployAndVerifyWorkload(tc); err != nil {
 		t.Fatalf("Failed to deploy workload in Cert-Manager mode: %v", err)
 	}
 
 	// Wait for all pods to become ready to verify the webhook is working end-to-end
-	if err := waitForPods(tc, tc.Workload.ExpectedPods); err != nil {
+	if err := WaitForPods(tc, tc.Workload.ExpectedPods); err != nil {
 		t.Fatalf("Failed to wait for workload pods to be ready: %v", err)
 	}
 
-	logger.Info("6. Remove cert-manager resources")
-	deleteCertManagerResources(ctx, clients.clientset, clients.dynamicClient)
-	waitForSecret(t, ctx, clients.clientset, configv1alpha1.DefaultWebhookSecretName, false)
+	Logger.Info("6. Remove cert-manager resources")
+	deleteCertManagerResources(ctx, clients.Clientset, clients.DynamicClient)
+	waitForSecret(t, ctx, clients.Clientset, configv1alpha1.DefaultWebhookSecretName, false)
 
-	logger.Info("7. Upgrade Grove back to auto-provision mode")
-	updateGroveToAutoProvision(t, ctx, clients.restConfig)
-	waitForSecret(t, ctx, clients.clientset, configv1alpha1.DefaultWebhookSecretName, true)
+	Logger.Info("7. Upgrade Grove back to auto-provision mode")
+	updateGroveToAutoProvision(t, ctx, clients.RestConfig)
+	waitForSecret(t, ctx, clients.Clientset, configv1alpha1.DefaultWebhookSecretName, true)
 
-	logger.Info("8. Verify auto-provision mode is active")
-	verifyAutoProvisionMode(t, ctx, clients.clientset)
-	verifyWebhookServingCertificate(t, ctx, clients.clientset, clients.restConfig)
+	Logger.Info("8. Verify auto-provision mode is active")
+	verifyAutoProvisionMode(t, ctx, clients.Clientset)
+	verifyWebhookServingCertificate(t, ctx, clients.Clientset, clients.RestConfig)
 
-	logger.Info("9. Delete and redeploy workload to test webhooks with auto-provisioned certs")
+	Logger.Info("9. Delete and redeploy workload to test webhooks with auto-provisioned certs")
 	// Delete the existing workload to test that webhooks work with new certs
-	deletePodCliqueSetAndWait(t, ctx, clients.dynamicClient, tc.Workload.Name, tc.Namespace)
+	deletePodCliqueSetAndWait(t, ctx, clients.DynamicClient, tc.Workload.Name, tc.Namespace)
 
 	// Redeploy workload - this will exercise the validating and mutating webhooks
-	if _, err := deployAndVerifyWorkload(tc); err != nil {
+	if _, err := DeployAndVerifyWorkload(tc); err != nil {
 		t.Fatalf("Failed to deploy workload with auto-provisioned certs: %v", err)
 	}
 
 	// Wait for all pods to become ready
-	if err := waitForPods(tc, tc.Workload.ExpectedPods); err != nil {
+	if err := WaitForPods(tc, tc.Workload.ExpectedPods); err != nil {
 		t.Fatalf("Workload pods not ready after redeploying with auto-provisioned certs: %v", err)
 	}
 
-	logger.Info("🎉 Certificate management round-trip test completed successfully")
+	Logger.Info("🎉 Certificate management round-trip test completed successfully")
 }
 
 func deletePodCliqueSetAndWait(t *testing.T, ctx context.Context, dynamicClient dynamic.Interface, name, namespace string) {
 	t.Helper()
 
-	logger.Debugf("Deleting PodCliqueSet %s/%s", namespace, name)
-	if err := utils.DeletePodCliqueSetAndWait(ctx, dynamicClient, namespace, name, defaultPollTimeout, defaultPollInterval); err != nil {
+	Logger.Debugf("Deleting PodCliqueSet %s/%s", namespace, name)
+	if err := utils.DeletePodCliqueSetAndWait(ctx, dynamicClient, namespace, name, DefaultPollTimeout, DefaultPollInterval); err != nil {
 		t.Fatalf("Failed to delete PodCliqueSet %s: %v", name, err)
 	}
-	logger.Debugf("PodCliqueSet %s/%s deleted", namespace, name)
+	Logger.Debugf("PodCliqueSet %s/%s deleted", namespace, name)
 }
 
 func waitForSecret(t *testing.T, ctx context.Context, clientset *kubernetes.Clientset, name string, shouldExist bool) {
 	t.Helper()
 
-	err := utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err := utils.PollForCondition(ctx, DefaultPollTimeout, DefaultPollInterval, func() (bool, error) {
 		_, err := clientset.CoreV1().Secrets("grove-system").Get(ctx, name, metav1.GetOptions{})
 		if shouldExist {
 			return err == nil, nil
@@ -261,8 +261,8 @@ func waitForSecret(t *testing.T, ctx context.Context, clientset *kubernetes.Clie
 func waitForSecretManagedByCertManager(t *testing.T, ctx context.Context, clientset *kubernetes.Clientset, name string) {
 	t.Helper()
 
-	logger.Debugf("Waiting for secret %s to be managed by cert-manager...", name)
-	err := utils.PollForCondition(ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	Logger.Debugf("Waiting for secret %s to be managed by cert-manager...", name)
+	err := utils.PollForCondition(ctx, DefaultPollTimeout, DefaultPollInterval, func() (bool, error) {
 		secret, err := clientset.CoreV1().Secrets("grove-system").Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return false, nil // Secret doesn't exist yet, keep waiting
@@ -270,7 +270,7 @@ func waitForSecretManagedByCertManager(t *testing.T, ctx context.Context, client
 		// Check if cert-manager has taken ownership of this secret
 		certName := secret.Annotations[certManagerCertNameAnnotation]
 		if certName != "" {
-			logger.Debugf("Secret %s is now managed by cert-manager (certificate: %s)", name, certName)
+			Logger.Debugf("Secret %s is now managed by cert-manager (certificate: %s)", name, certName)
 			return true, nil
 		}
 		return false, nil
@@ -286,17 +286,17 @@ func deleteCertManagerResources(ctx context.Context, clientset *kubernetes.Clien
 
 	// Delete Certificate first (cert-manager resource)
 	if err := dynamicClient.Resource(certGVR).Namespace("grove-system").Delete(ctx, configv1alpha1.DefaultWebhookSecretName, metav1.DeleteOptions{}); err != nil {
-		logger.Warnf("Failed to delete Certificate (may not exist): %v", err)
+		Logger.Warnf("Failed to delete Certificate (may not exist): %v", err)
 	}
 
 	// Delete the Secret managed by cert-manager
 	if err := clientset.CoreV1().Secrets("grove-system").Delete(ctx, configv1alpha1.DefaultWebhookSecretName, metav1.DeleteOptions{}); err != nil {
-		logger.Warnf("Failed to delete Secret (may not exist): %v", err)
+		Logger.Warnf("Failed to delete Secret (may not exist): %v", err)
 	}
 
 	// Delete ClusterIssuer last
 	if err := dynamicClient.Resource(issuerGVR).Delete(ctx, "selfsigned-issuer", metav1.DeleteOptions{}); err != nil {
-		logger.Warnf("Failed to delete ClusterIssuer (may not exist): %v", err)
+		Logger.Warnf("Failed to delete ClusterIssuer (may not exist): %v", err)
 	}
 }
 
@@ -314,8 +314,8 @@ func installCertManager(t *testing.T, ctx context.Context, restConfig *rest.Conf
 		Values: map[string]interface{}{
 			"installCRDs": true,
 		},
-		HelmLoggerFunc: logger.Debugf,
-		Logger:         logger,
+		HelmLoggerFunc: Logger.Debugf,
+		Logger:         Logger,
 	}
 
 	if _, err := setup.InstallHelmChart(cmConfig); err != nil {
@@ -323,7 +323,7 @@ func installCertManager(t *testing.T, ctx context.Context, restConfig *rest.Conf
 	}
 
 	// Ensure cert-manager is actually up and running before returning
-	if err := utils.WaitForPodsInNamespace(ctx, cmConfig.Namespace, restConfig, 3, defaultPollTimeout, defaultPollInterval, logger); err != nil {
+	if err := utils.WaitForPodsInNamespace(ctx, cmConfig.Namespace, restConfig, 3, DefaultPollTimeout, DefaultPollInterval, Logger); err != nil {
 		t.Fatalf("cert-manager pods failed to become ready: %v", err)
 	}
 }
@@ -341,8 +341,8 @@ func createTestContext(t *testing.T, ctx context.Context, clientset *kubernetes.
 		DynamicClient: dynamicClient,
 		RestConfig:    restConfig,
 		Namespace:     "default",
-		Timeout:       defaultPollTimeout,
-		Interval:      defaultPollInterval,
+		Timeout:       DefaultPollTimeout,
+		Interval:      DefaultPollInterval,
 		Workload: &WorkloadConfig{
 			Name:         "workload1",
 			YAMLPath:     workloadPath,
@@ -401,12 +401,12 @@ func uninstallCertManager(t *testing.T, restConfig *rest.Config) {
 		RestConfig:     restConfig,
 		ReleaseName:    certManagerReleaseName,
 		Namespace:      certManagerNamespace,
-		HelmLoggerFunc: logger.Debugf,
-		Logger:         logger,
+		HelmLoggerFunc: Logger.Debugf,
+		Logger:         Logger,
 	}
 
 	if err := setup.UninstallHelmChart(cmConfig); err != nil {
-		logger.Warnf("Failed to uninstall cert-manager (may not exist): %v", err)
+		Logger.Warnf("Failed to uninstall cert-manager (may not exist): %v", err)
 	}
 }
 
@@ -432,7 +432,7 @@ var webhookConfigNames = []string{
 func verifyCertManagerMode(t *testing.T, ctx context.Context, clientset *kubernetes.Clientset) {
 	t.Helper()
 
-	logger.Debug("Verifying cert-manager mode is active...")
+	Logger.Debug("Verifying cert-manager mode is active...")
 
 	// Check webhook configurations have cert-manager annotation
 	for _, webhookName := range webhookConfigNames {
@@ -446,21 +446,21 @@ func verifyCertManagerMode(t *testing.T, ctx context.Context, clientset *kuberne
 		t.Fatalf("Secret verification for cert-manager mode failed: %v", err)
 	}
 
-	logger.Debug("Verified: Grove is using cert-manager certificates")
+	Logger.Debug("Verified: Grove is using cert-manager certificates")
 }
 
 // verifyAutoProvisionMode verifies that Grove is using auto-provisioned certificates.
 func verifyAutoProvisionMode(t *testing.T, ctx context.Context, clientset *kubernetes.Clientset) {
 	t.Helper()
 
-	logger.Debug("Verifying auto-provision mode is active...")
+	Logger.Debug("Verifying auto-provision mode is active...")
 
 	// Check secret does NOT have cert-manager annotations (proving it's managed by Grove's cert-controller)
 	if err := verifyWebhookSecretCertManagerStatus(ctx, clientset, false); err != nil {
 		t.Fatalf("Secret verification for auto-provision mode failed: %v", err)
 	}
 
-	logger.Debug("Verified: Grove is using auto-provisioned certificates (secret not managed by cert-manager)")
+	Logger.Debug("Verified: Grove is using auto-provisioned certificates (secret not managed by cert-manager)")
 }
 
 // verifyWebhookHasCertManagerAnnotation checks if a webhook configuration has the cert-manager annotation.
@@ -478,7 +478,7 @@ func verifyWebhookHasCertManagerAnnotation(ctx context.Context, clientset *kuber
 		if !shouldHave && hasAnnotation {
 			return fmt.Errorf("ValidatingWebhookConfiguration %s has unexpected cert-manager annotation: %s", webhookName, annotationValue)
 		}
-		logger.Debugf("ValidatingWebhookConfiguration %s: cert-manager annotation present=%v (expected=%v)", webhookName, hasAnnotation, shouldHave)
+		Logger.Debugf("ValidatingWebhookConfiguration %s: cert-manager annotation present=%v (expected=%v)", webhookName, hasAnnotation, shouldHave)
 		return nil
 	}
 
@@ -494,7 +494,7 @@ func verifyWebhookHasCertManagerAnnotation(ctx context.Context, clientset *kuber
 		if !shouldHave && hasAnnotation {
 			return fmt.Errorf("MutatingWebhookConfiguration %s has unexpected cert-manager annotation: %s", webhookName, annotationValue)
 		}
-		logger.Debugf("MutatingWebhookConfiguration %s: cert-manager annotation present=%v (expected=%v)", webhookName, hasAnnotation, shouldHave)
+		Logger.Debugf("MutatingWebhookConfiguration %s: cert-manager annotation present=%v (expected=%v)", webhookName, hasAnnotation, shouldHave)
 		return nil
 	}
 
@@ -520,7 +520,7 @@ func verifyWebhookSecretCertManagerStatus(ctx context.Context, clientset *kubern
 		return fmt.Errorf("secret %s is unexpectedly managed by cert-manager (has %s=%s)", configv1alpha1.DefaultWebhookSecretName, certManagerCertNameAnnotation, certName)
 	}
 
-	logger.Debugf("Secret %s: managed by cert-manager=%v (expected=%v)", configv1alpha1.DefaultWebhookSecretName, isManagedByCertManager, expectManaged)
+	Logger.Debugf("Secret %s: managed by cert-manager=%v (expected=%v)", configv1alpha1.DefaultWebhookSecretName, isManagedByCertManager, expectManaged)
 	return nil
 }
 
@@ -532,7 +532,7 @@ func verifyWebhookSecretCertManagerStatus(ctx context.Context, clientset *kubern
 func verifyWebhookServingCertificate(t *testing.T, ctx context.Context, clientset *kubernetes.Clientset, restConfig *rest.Config) {
 	t.Helper()
 
-	logger.Debug("Verifying webhook is serving the correct certificate (with retries for cert reload timing)...")
+	Logger.Debug("Verifying webhook is serving the correct certificate (with retries for cert reload timing)...")
 
 	// Retry for up to 30 seconds to account for:
 	// - Kubernetes secret volume update propagation (can take up to the kubelet sync period)
@@ -542,7 +542,7 @@ func verifyWebhookServingCertificate(t *testing.T, ctx context.Context, clientse
 		// Get the certificate from the Secret
 		expectedCert, err := getCertificateFromSecret(ctx, clientset)
 		if err != nil {
-			logger.Debugf("Failed to get certificate from secret: %v", err)
+			Logger.Debugf("Failed to get certificate from secret: %v", err)
 			return false, nil
 		}
 		lastExpectedSerial = expectedCert.SerialNumber.String()
@@ -550,18 +550,18 @@ func verifyWebhookServingCertificate(t *testing.T, ctx context.Context, clientse
 		// Get the certificate the webhook is actually serving
 		servedCert, err := getServedCertificate(ctx, clientset, restConfig)
 		if err != nil {
-			logger.Debugf("Failed to get served certificate from webhook: %v", err)
+			Logger.Debugf("Failed to get served certificate from webhook: %v", err)
 			return false, nil
 		}
 		lastServedSerial = servedCert.SerialNumber.String()
 
 		// Compare the certificates
 		if certificatesMatch(expectedCert, servedCert) {
-			logger.Debugf("Certificate match! Serial: %s", lastExpectedSerial)
+			Logger.Debugf("Certificate match! Serial: %s", lastExpectedSerial)
 			return true, nil
 		}
 
-		logger.Debugf("Certificate mismatch (will retry): expected serial=%s, served serial=%s",
+		Logger.Debugf("Certificate mismatch (will retry): expected serial=%s, served serial=%s",
 			lastExpectedSerial, lastServedSerial)
 		return false, nil
 	})
@@ -574,7 +574,7 @@ func verifyWebhookServingCertificate(t *testing.T, ctx context.Context, clientse
 			lastExpectedSerial, lastServedSerial)
 	}
 
-	logger.Debug("Verified: webhook is serving the correct certificate from the Secret")
+	Logger.Debug("Verified: webhook is serving the correct certificate from the Secret")
 }
 
 // getCertificateFromSecret retrieves and parses the TLS certificate from the webhook Secret.
@@ -617,7 +617,7 @@ func getServedCertificate(ctx context.Context, clientset *kubernetes.Clientset, 
 	}
 
 	podName := pods.Items[0].Name
-	logger.Debugf("Using operator pod: %s", podName)
+	Logger.Debugf("Using operator pod: %s", podName)
 
 	// Set up port forwarding
 	localPort, stopChan, err := setupPortForward(ctx, restConfig, groveNamespace, podName, 9443)
@@ -688,7 +688,7 @@ func setupPortForward(ctx context.Context, restConfig *rest.Config, namespace, p
 	// Wait for port-forward to be ready or error
 	select {
 	case <-readyChan:
-		logger.Debugf("Port forward established: localhost:%d -> %s:%d", localPort, podName, remotePort)
+		Logger.Debugf("Port forward established: localhost:%d -> %s:%d", localPort, podName, remotePort)
 	case err := <-errChan:
 		return 0, nil, fmt.Errorf("port forward failed: %w", err)
 	case <-time.After(10 * time.Second):
@@ -701,7 +701,7 @@ func setupPortForward(ctx context.Context, restConfig *rest.Config, namespace, p
 
 	// Check for any errors in errOut
 	if errOut.Len() > 0 {
-		logger.Warnf("Port forward stderr: %s", errOut.String())
+		Logger.Warnf("Port forward stderr: %s", errOut.String())
 	}
 
 	return localPort, stopChan, nil

@@ -113,6 +113,8 @@ jobs:
             test_pattern: "^Test_GS"
           - test_name: rolling_updates
             test_pattern: "^Test_RU"
+          - test_name: ondelete_updates
+            test_pattern: "^Test_OD"
           - test_name: startup_ordering
             test_pattern: "^Test_SO"
             make_target: "run-e2e-real-full"
