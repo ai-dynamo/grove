@@ -19,9 +19,6 @@
     - [PodCliqueScalingGroup-Level Resource Sharing](#podcliquescalinggroup-level-resource-sharing)
     - [ResourceClaim Naming Convention](#resourceclaim-naming-convention)
     - [Owner References and Garbage Collection](#owner-references-and-garbage-collection)
-    - [PodGang Generation](#podgang-generation)
-    - [ReplicaConfig (Phase 2)](#replicaconfig-phase-2)
-    - [PodGang Hierarchical Groups (Phase 2)](#podgang-hierarchical-groups-phase-2)
     - [Monitoring](#monitoring)
     - [Dependencies](#dependencies)
     - [Test Plan](#test-plan)
@@ -54,10 +51,6 @@ creates and manages `ResourceClaim` objects directly — no `ResourceClaimTempla
 
 This design ensures proper isolation between replicas during scaling operations and enables composable,
 multi-level resource sharing.
-
-Additionally, this GREP documents a future Phase 2 enhancement — `replicaConfig` — which introduces
-multiple pods per PCLQ replica and requires corresponding changes to the PodGang scheduler API for
-hierarchical group support.
 
 ## Motivation
 
@@ -92,8 +85,6 @@ Real-world workloads require resource sharing at different granularities within 
 - **PCLQ `PerInstance`**: A set of GPUs shared across all replicas of a PodClique instance (e.g. all worker
   replicas in a scaling group replica share one pool of GPUs).
 - **PCLQ `PerReplica`**: A resource dedicated to a single PCLQ replica, shared by all pods within that replica.
-  This becomes meaningful when `replicaConfig.numPods > 1` (Phase 2) — multiple pods in the same replica
-  share the claim. With 1 pod per replica (the default), this creates a per-pod claim.
 
 These scopes are orthogonal and composable. A single PodClique may participate in multiple scopes simultaneously.
 
@@ -109,10 +100,6 @@ These scopes are orthogonal and composable. A single PodClique may participate i
 - Enable users to provide inline `ResourceClaimTemplateSpec` definitions for resource sharing groups.
 
 ### Non Goals
-
-- `replicaConfig` (multiple pods per PCLQ replica) — documented in this GREP but deferred to Phase 2,
-  as it depends on PodGang scheduler API changes for hierarchical group support (see
-  [ReplicaConfig (Phase 2)](#replicaconfig-phase-2)).
 
 ## Proposal
 
@@ -333,9 +320,7 @@ To enable resource sharing among `Pod`s within a `PodClique`, a new field `Resou
 to `PodCliqueTemplateSpec`. Each entry has a `Scope` and a single inline `ResourceClaimTemplateSpec`.
 
 - `PerInstance`: One RC per PCLQ instance — shared by all replica pods in that PCLQ.
-- `PerReplica`: One RC per PCLQ replica — shared by all pods in that replica. With the default of 1 pod
-  per replica, this creates a per-pod claim. This scope becomes meaningful when `replicaConfig.numPods > 1`
-  is introduced in Phase 2, where multiple pods in the same replica share the claim.
+- `PerReplica`: One RC per PCLQ replica — shared by all pods within that replica.
 
 The parent controller (PCS or PCSG) processes the entries, creates the ResourceClaims, and injects the claim
 references into the PCLQ's `PodSpec`.
@@ -576,173 +561,6 @@ whose parent still exists.
 the controller-runtime cache to reflect freshly created PCLQ objects during the same reconcile. It also
 ensures that PCLQ PerInstance RCs survive PCLQ rolling updates — the replacement PCLQ reuses the existing
 RC rather than the old RC being garbage collected and a new one created.
-
-### PodGang Generation
-
-#### Without `replicaConfig` (Phase 1 — current behavior)
-
-When `replicaConfig` is not specified on a PodClique, PodGang generation works exactly as it does today.
-Each PCLQ maps to a single flat `PodGroup` with `PodReferences` listing all pods and `MinReplicas` set
-from the PCLQ's `minAvailable`:
-
-```
-PodGang:
-  podGroups:
-    - name: "leader"
-      podReferences: [leader-0, leader-1, ..., leader-9]
-      minReplicas: 2
-    - name: "worker"
-      podReferences: [worker-0, worker-1, worker-2]
-      minReplicas: 3
-```
-
-No changes to the PodGang API or the KAI-scheduler are required for Phase 1.
-
-#### With `replicaConfig` (Phase 2 — requires scheduler changes)
-
-When `replicaConfig` is specified (`numPods > 1`), each PCLQ replica contains multiple pods. The PodGang
-must express **two levels of `minAvailable`**:
-
-1. **Per-replica**: out of `numPods` pods in a replica, at least `replicaConfig.minAvailable` must be scheduled.
-2. **Per-PCLQ**: out of `replicas` replica sub-groups, at least `pclq.minAvailable` sub-groups must be satisfied.
-
-This requires **hierarchical grouping** in the PodGang API: each PCLQ replica's pods form a sub-group,
-and those sub-groups are grouped together under the parent PCLQ group.
-
-**Example** — PCLQ `worker` with `replicas: 3`, `replicaConfig: {numPods: 2, minAvailable: 1}`,
-`minAvailable: 2`:
-
-```
-PodGang:
-  podGroups:
-    - name: "worker"                     # Parent group for the PCLQ
-      minReplicas: 2                     # At least 2 replica sub-groups must be satisfied
-      subGroups:                         # Hierarchical grouping (new)
-        - name: "worker-0"              # Replica 0 sub-group
-          podReferences: [worker-0-0, worker-0-1]
-          minReplicas: 1                 # At least 1 of 2 pods must be scheduled
-        - name: "worker-1"              # Replica 1 sub-group
-          podReferences: [worker-1-0, worker-1-1]
-          minReplicas: 1
-        - name: "worker-2"              # Replica 2 sub-group
-          podReferences: [worker-2-0, worker-2-1]
-          minReplicas: 1
-```
-
-This hierarchical grouping does not exist in the current PodGang API (`PodGroup` is a flat structure with
-only `PodReferences` and `MinReplicas`). The KAI-scheduler must be updated to support `subGroups` (or an
-equivalent mechanism) before `replicaConfig` can be implemented. The exact PodGang API changes will be
-designed in collaboration with the scheduler team.
-
-### ReplicaConfig (Phase 2)
-
-`ReplicaConfig` introduces support for multiple pods per PCLQ replica. This is motivated by use cases
-such as failover/shadow pods, where a PCLQ replica runs one primary pod and one or more standby pods
-that can take over if the primary fails.
-
-**Proposed API**
-
-```go
-// ReplicaConfig configures multiple pods per PCLQ replica.
-type ReplicaConfig struct {
-	// NumPods is the number of pods to create per PCLQ replica.
-	// Defaults to 1 if not specified.
-	NumPods int32 `json:"numPods"`
-	// MinAvailable is the minimum number of pods within a single replica that must be
-	// available (ready) for the replica to be considered available.
-	MinAvailable int32 `json:"minAvailable"`
-}
-```
-
-Added to `PodCliqueSpec`:
-
-```go
-type PodCliqueSpec struct {
-	...
-	// ReplicaConfig configures multiple pods per replica. If not specified, each
-	// replica contains exactly 1 pod (current behavior).
-	// +optional
-	ReplicaConfig *ReplicaConfig `json:"replicaConfig,omitempty"`
-}
-```
-
-**Example** — a worker PCLQ with 3 replicas, 2 pods per replica (1 primary + 1 shadow), where only 1
-pod per replica needs to be available:
-
-```yaml
-cliques:
-  - name: worker
-    resourceSharing:
-      - scope: PerReplica
-        spec:
-          spec:
-            devices:
-              requests:
-                - name: gpu
-                  deviceClassName: gpu.nvidia.com
-                  count: 1
-    spec:
-      roleName: worker
-      replicas: 3
-      minAvailable: 2
-      replicaConfig:
-        numPods: 2
-        minAvailable: 1
-```
-
-In this example:
-- 3 replicas x 2 pods = 6 pods total
-- `replicaConfig.minAvailable: 1` means only 1 of the 2 pods per replica needs to be ready
-  for the replica to count as available
-- `minAvailable: 2` means at least 2 of the 3 replicas must be available for the PCLQ to
-  be considered healthy
-- The `PerReplica` resource sharing rule creates 1 RC per replica, shared by both pods in
-  that replica (primary and shadow access the same GPU)
-
-**Pod Naming and Environment Variables**
-
-When `replicaConfig` is specified (`numPods > 1`), a new environment variable is injected into
-every container to identify the pod's position within its replica:
-
-| Environment Variable | Description | Example |
-|---|---|---|
-| `GROVE_PCLQ_POD_INDEX` | Flat pod index across the entire PCLQ (existing) | `0`, `1`, `2`, ... |
-| `GROVE_PCLQ_REPLICA_POD_INDEX` | Pod index within its PCLQ replica (new, 0 to `numPods - 1`) | `0`, `1` |
-
-Pod hostnames also change to include the pod index within the replica. Without `replicaConfig`,
-the hostname format is `<pclqName>-<replicaIndex>` (current behavior). With `replicaConfig`, it
-becomes `<pclqName>-<replicaIndex>-<podIndex>`:
-
-| `replicaConfig` | Hostname Format | Example |
-|---|---|---|
-| Not set (default) | `<pclqName>-<replicaIndex>` | `worker-0`, `worker-1` |
-| `numPods: 2` | `<pclqName>-<replicaIndex>-<podIndex>` | `worker-0-0`, `worker-0-1`, `worker-1-0`, `worker-1-1` |
-
-This allows applications to determine both which replica they belong to and their role within
-that replica via hostname parsing or environment variables.
-
-**Dependencies**: This feature requires the PodGang scheduler API to support hierarchical groups
-(see [PodGang Hierarchical Groups (Phase 2)](#podgang-hierarchical-groups-phase-2)). Implementation
-will begin after the KAI-scheduler changes are available.
-
-### PodGang Hierarchical Groups (Phase 2)
-
-The current PodGang API represents each PCLQ as a flat `PodGroup`:
-
-```go
-type PodGroup struct {
-	Name          string           `json:"name"`
-	PodReferences []NamespacedName `json:"podReferences"`
-	MinReplicas   int32            `json:"minReplicas"`
-}
-```
-
-To support `replicaConfig`, the PodGang API needs to be extended with hierarchical grouping. A parent
-`PodGroup` would contain `SubGroups`, each representing a PCLQ replica with its own `PodReferences`
-and `MinReplicas`. The parent's `MinReplicas` expresses how many sub-groups must be satisfied.
-
-This change is required in the KAI-scheduler and will be designed in collaboration with the scheduler
-team. Until then, `replicaConfig` remains documented but unimplemented.
 
 ### Monitoring
 
