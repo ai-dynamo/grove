@@ -85,7 +85,7 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 		return groveerr.New(
 			groveerr.ErrCodeContinueReconcileAndRequeue,
 			component.OperationSync,
-			fmt.Sprintf("rolling update of currently selected Pod: %s is not complete, requeuing", pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate.Current),
+			fmt.Sprintf("rolling update of currently selected Pod: %s is not complete, re-queuing", pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate.Current),
 		)
 	}
 

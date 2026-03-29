@@ -22,6 +22,7 @@ import (
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/hash"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/stretchr/testify/assert"
@@ -45,15 +46,16 @@ func TestCreateOperatorRegistry(t *testing.T) {
 	_ = rbacv1.AddToScheme(scheme)
 	_ = autoscalingv2.AddToScheme(scheme)
 
+	tasConfig := groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{}
+	cl := fake.NewClientBuilder().WithScheme(scheme).Build()
+	mgr := &mockManager{client: cl, scheme: scheme}
+	eventRecorder := record.NewFakeRecorder(10)
+	podTemplateSpecHashCache := hash.NewDefaultPodTemplateSpecHashCache(t.Context())
+
 	// Test registry creation with MNNVL disabled (default)
 	t.Run("creates registry without ComputeDomain when MNNVL is disabled", func(t *testing.T) {
-		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
-		mgr := &mockManager{client: cl, scheme: scheme}
-		eventRecorder := record.NewFakeRecorder(10)
-
-		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{}, groveconfigv1alpha1.NetworkAcceleration{
-			AutoMNNVLEnabled: false,
-		})
+		nwAccelerator := groveconfigv1alpha1.NetworkAcceleration{AutoMNNVLEnabled: false}
+		registry := CreateOperatorRegistry(mgr, eventRecorder, tasConfig, nwAccelerator, podTemplateSpecHashCache)
 
 		require.NotNil(t, registry)
 
@@ -87,13 +89,8 @@ func TestCreateOperatorRegistry(t *testing.T) {
 
 	// Test registry creation with MNNVL enabled
 	t.Run("creates registry with ComputeDomain when MNNVL is enabled", func(t *testing.T) {
-		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
-		mgr := &mockManager{client: cl, scheme: scheme}
-		eventRecorder := record.NewFakeRecorder(10)
-
-		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{}, groveconfigv1alpha1.NetworkAcceleration{
-			AutoMNNVLEnabled: true,
-		})
+		nwAccelerator := groveconfigv1alpha1.NetworkAcceleration{AutoMNNVLEnabled: true}
+		registry := CreateOperatorRegistry(mgr, eventRecorder, tasConfig, nwAccelerator, podTemplateSpecHashCache)
 
 		require.NotNil(t, registry)
 
@@ -124,13 +121,8 @@ func TestCreateOperatorRegistry(t *testing.T) {
 
 	// Test verifying specific operator registrations
 	t.Run("verifies key operator registrations", func(t *testing.T) {
-		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
-		mgr := &mockManager{client: cl, scheme: scheme}
-		eventRecorder := record.NewFakeRecorder(10)
-
-		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{}, groveconfigv1alpha1.NetworkAcceleration{
-			AutoMNNVLEnabled: false,
-		})
+		nwAccelerator := groveconfigv1alpha1.NetworkAcceleration{AutoMNNVLEnabled: false}
+		registry := CreateOperatorRegistry(mgr, eventRecorder, tasConfig, nwAccelerator, podTemplateSpecHashCache)
 
 		// Verify PodClique operator
 		pclqOp, err := registry.GetOperator(component.KindPodClique)
