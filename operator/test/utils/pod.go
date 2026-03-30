@@ -81,6 +81,12 @@ func (b *PodBuilder) WithOwner(ownerName string) *PodBuilder {
 	return b
 }
 
+// WithSchedulerName sets the scheduler name on the Pod spec.
+func (b *PodBuilder) WithSchedulerName(name string) *PodBuilder {
+	b.pod.Spec.SchedulerName = name
+	return b
+}
+
 // WithLabels adds labels to the Pod.
 func (b *PodBuilder) WithLabels(labels map[string]string) *PodBuilder {
 	if b.pod.Labels == nil {
