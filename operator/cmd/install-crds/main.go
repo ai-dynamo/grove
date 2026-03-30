@@ -20,7 +20,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
