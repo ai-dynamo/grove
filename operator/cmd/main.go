@@ -149,4 +149,3 @@ func handleErrorAndExit(err error, exitCode int) {
 	_, _ = fmt.Fprintf(os.Stderr, "Err: %v\n", err)
 	os.Exit(exitCode)
 }
-
