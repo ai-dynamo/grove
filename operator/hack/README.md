@@ -27,7 +27,6 @@ hack/
 ├── docker-build.sh           # Docker build helper
 ├── deploy.sh                 # Deploy operator
 ├── deploy-addons.sh          # Deploy addon components
-├── prepare-charts.sh         # Prepare Helm charts
 ├── kind-up.sh                # Create Kind cluster
 └── kind-down.sh              # Delete Kind cluster
 ```

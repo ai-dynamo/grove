@@ -15,6 +15,9 @@ RUN VERSION=${VERSION} make --directory=operator build-initc-${TARGETOS}-${TARGE
 # Build the operator
 RUN VERSION=${VERSION} make --directory=operator build-operator-${TARGETOS}-${TARGETARCH}
 
+# Build the CRD installer
+RUN VERSION=${VERSION} make --directory=operator build-install-crds-${TARGETOS}-${TARGETARCH}
+
 # All image label keys are as per the OCI recommendations.
 # Reference: https://github.com/opencontainers/image-spec/blob/main/annotations.md#pre-defined-annotation-keys
 
@@ -44,4 +47,5 @@ LABEL org.opencontainers.image.version=${VERSION}
 
 WORKDIR /
 COPY --from=builder /go/src/github.com/ai-dynamo/grove/operator/bin/grove-operator /grove-operator
+COPY --from=builder /go/src/github.com/ai-dynamo/grove/operator/bin/grove-install-crds /grove-install-crds
 ENTRYPOINT ["/grove-operator"]

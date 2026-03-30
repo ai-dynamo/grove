@@ -37,7 +37,7 @@ spec:
         - name: crd-installer
           image: {{ include "image" .Values.image }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          args: ["install-crds"]
+          command: ["/grove-install-crds"]
           volumeMounts:
             - name: kube-api-access-grove
               mountPath: /var/run/secrets/kubernetes.io/serviceaccount

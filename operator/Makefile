@@ -21,8 +21,9 @@ REPO_HACK_DIR   := $(REPO_ROOT)/hack
 KUBECONFIG_PATH := $(if $(KUBECONFIG),$(KUBECONFIG),$(MODULE_HACK_DIR)/kind/kubeconfig)
 # Path of the package that ld-flags writes to
 LD_PACKAGE_PATH := "github.com/ai-dynamo/grove/operator/internal"
-OPERATOR_NAME   := "grove-operator"
-INITC_NAME      := "grove-initc"
+OPERATOR_NAME        := "grove-operator"
+INITC_NAME           := "grove-initc"
+INSTALL_CRDS_NAME    := "grove-install-crds"
 K3S_IMAGE       ?= rancher/k3s:v1.34.2-k3s1
 E2E_REGISTRY_PORT ?= 5001
 E2E_CREATE_FLAGS  ?=
@@ -59,6 +60,18 @@ build-initc:
 .PHONY: build-initc-%
 build-initc-%:
 	@GOOS=$$(echo $* | cut -d- -f 1) GOARCH=$$(echo $* | cut -d- -f 2) PACKAGE_PATH=${LD_PACKAGE_PATH} PROGRAM_NAME=${INITC_NAME} $(MODULE_HACK_DIR)/build-initc.sh
+
+# Builds grove-install-crds for the current platform.
+.PHONY: build-install-crds
+build-install-crds:
+	@PACKAGE_PATH=${LD_PACKAGE_PATH} PROGRAM_NAME=${INSTALL_CRDS_NAME} $(MODULE_HACK_DIR)/build-install-crds.sh
+
+# Builds grove-install-crds for the specified platform.
+# Usage: make build-install-crds-<os>-<arch>
+# Example: make build-install-crds-linux-amd64, make build-install-crds-linux-arm64
+.PHONY: build-install-crds-%
+build-install-crds-%:
+	@GOOS=$$(echo $* | cut -d- -f 1) GOARCH=$$(echo $* | cut -d- -f 2) PACKAGE_PATH=${LD_PACKAGE_PATH} PROGRAM_NAME=${INSTALL_CRDS_NAME} $(MODULE_HACK_DIR)/build-install-crds.sh
 
 # Lints the codebase using GOLANGCI_LINT.
 .PHONY: lint
@@ -107,8 +120,6 @@ cover-html: test-cover
 run-e2e: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
 run-e2e: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
 run-e2e:
-	@echo "> Preparing charts (copying CRDs)..."
-	@$(MODULE_HACK_DIR)/prepare-charts.sh
 	@echo "> Running e2e tests (compilation may take a few minutes with no output)..."
 	@cd e2e && go test -count=1 -tags=e2e ./tests/... -v -timeout 45m $(if $(TEST_PATTERN),-run $(TEST_PATTERN))
 
@@ -217,19 +228,16 @@ endif
 # Deploys grove-operator to a k8s cluster using skaffold.
 .PHONY: deploy
 deploy: $(SKAFFOLD)
-	@$(MODULE_HACK_DIR)/prepare-charts.sh
 	@PACKAGE_PATH=${LD_PACKAGE_PATH} PROGRAM_NAME=${OPERATOR_NAME} $(MODULE_HACK_DIR)/deploy.sh run -m grove-operator -n $(NAMESPACE)
 
 # Deploys grove-operator to a k8s cluster using skaffold in dev mode.
 .PHONY: deploy-dev
 deploy-dev: $(SKAFFOLD)
-	@$(MODULE_HACK_DIR)/prepare-charts.sh
 	@PACKAGE_PATH=${LD_PACKAGE_PATH} PROGRAM_NAME=${OPERATOR_NAME} $(MODULE_HACK_DIR)/deploy.sh dev --cleanup=false --keep-running-on-failure -m grove-operator --trigger='manual' -n $(NAMESPACE)
 
 # Deploys grove-operator to a k8s cluster using skaffold in debug mode.
 .PHONY: deploy-debug
 deploy-debug: $(SKAFFOLD)
-	@$(MODULE_HACK_DIR)/prepare-charts.sh
 	@PACKAGE_PATH=${LD_PACKAGE_PATH} PROGRAM_NAME=${OPERATOR_NAME} $(MODULE_HACK_DIR)/deploy.sh debug --cleanup=false -m grove-operator -p debug -n $(NAMESPACE)
 
 # Undeploys grove-operator from a k8s cluster using skaffold.

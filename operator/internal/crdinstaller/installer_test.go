@@ -64,6 +64,13 @@ spec:
 `
 }
 
+// TestInstallCRDs_AllApplied verifies that InstallCRDs applies all 5 Grove CRDs
+// (operator and scheduler) in a single call with no errors.
+//
+// Flow:
+//  1. Call InstallCRDs against a fresh fake client.
+//  2. For each of the 5 expected CRD names, fetch the object from the API.
+//  3. Assert every fetch succeeds, confirming all CRDs were created.
 func TestInstallCRDs_AllApplied(t *testing.T) {
 	cl := buildFakeClient()
 	ctx := context.Background()
@@ -86,6 +93,12 @@ func TestInstallCRDs_AllApplied(t *testing.T) {
 	}
 }
 
+// TestApplyCRD_ReturnsName verifies that ApplyCRD returns the metadata.name from
+// the CRD YAML it was given, so callers can log or identify which CRD was applied.
+//
+// Flow:
+//  1. Apply a minimal CRD whose name is "testthings.test.io".
+//  2. Assert the returned name string matches that value.
 func TestApplyCRD_ReturnsName(t *testing.T) {
 	cl := buildFakeClient()
 	ctx := context.Background()
@@ -95,6 +108,14 @@ func TestApplyCRD_ReturnsName(t *testing.T) {
 	assert.Equal(t, "testthings.test.io", name)
 }
 
+// TestApplyCRD_Idempotent verifies that applying the same CRD YAML twice does not
+// produce an error. This is important because the installer runs on every operator
+// startup and must be safe to re-run against an already-current cluster.
+//
+// Flow:
+//  1. Apply a minimal CRD — first call creates it.
+//  2. Apply the identical YAML again — second call is a no-op server-side apply.
+//  3. Assert neither call returns an error.
 func TestApplyCRD_Idempotent(t *testing.T) {
 	cl := buildFakeClient()
 	ctx := context.Background()
@@ -108,6 +129,73 @@ func TestApplyCRD_Idempotent(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestApplyCRD_UpdatesExistingContent verifies that applying a CRD with changed
+// content actually mutates the existing object in the cluster, not just leaves it
+// unchanged because it already exists. This covers the upgrade path where a new
+// operator version ships updated CRD schemas.
+//
+// Flow:
+//  1. Apply a CRD with label test-version="1".
+//  2. Fetch the object and confirm the label is "1".
+//  3. Apply the same CRD name again with label test-version="2".
+//  4. Fetch the object again and assert the label was updated to "2".
+func TestApplyCRD_UpdatesExistingContent(t *testing.T) {
+	cl := buildFakeClient()
+	ctx := context.Background()
+
+	const crdName = "testthings.test.io"
+
+	crdYAML := func(labelValue string) []byte {
+		return []byte(`apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: ` + crdName + `
+  labels:
+    test-version: "` + labelValue + `"
+spec:
+  group: test.io
+  names:
+    kind: TestThing
+    listKind: TestThingList
+    plural: testthings
+    singular: testthing
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+`)
+	}
+
+	// First apply: CRD with label test-version=1.
+	_, err := crdinstaller.ApplyCRD(ctx, cl, crdYAML("1"))
+	require.NoError(t, err)
+
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(apiextensionsv1.SchemeGroupVersion.WithKind("CustomResourceDefinition"))
+	require.NoError(t, cl.Get(ctx, client.ObjectKey{Name: crdName}, obj))
+	assert.Equal(t, "1", obj.GetLabels()["test-version"], "initial label should be 1")
+
+	// Second apply: same CRD name with label bumped to test-version=2.
+	_, err = crdinstaller.ApplyCRD(ctx, cl, crdYAML("2"))
+	require.NoError(t, err)
+
+	obj2 := &unstructured.Unstructured{}
+	obj2.SetGroupVersionKind(apiextensionsv1.SchemeGroupVersion.WithKind("CustomResourceDefinition"))
+	require.NoError(t, cl.Get(ctx, client.ObjectKey{Name: crdName}, obj2))
+	assert.Equal(t, "2", obj2.GetLabels()["test-version"], "label should be updated to 2 after second apply")
+}
+
+// TestApplyCRD_ReturnsErrorOnInvalidYAML verifies that ApplyCRD fails fast and
+// returns an error when given YAML that cannot be parsed, rather than silently
+// sending garbage to the API server.
+//
+// Flow:
+//  1. Call ApplyCRD with a syntactically invalid YAML string.
+//  2. Assert an error is returned.
 func TestApplyCRD_ReturnsErrorOnInvalidYAML(t *testing.T) {
 	cl := buildFakeClient()
 	ctx := context.Background()
