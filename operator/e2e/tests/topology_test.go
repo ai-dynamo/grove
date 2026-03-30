@@ -31,9 +31,6 @@ import (
 	"github.com/samber/lo"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 )
 
 // DeployWorkloadAndGetPods deploys workload, waits for pods to be ready, and returns the pod list
@@ -60,18 +57,17 @@ func DeployWorkloadAndGetPods(tc TestContext, expectedPods int) ([]v1.Pod, error
 func createTopologyTestContext(
 	t *testing.T,
 	ctx context.Context,
-	clientset *kubernetes.Clientset,
-	restConfig *rest.Config,
-	dynamicClient dynamic.Interface,
+	clients clientCollection,
 	workloadName, yamlPath string,
 	expectedPods int,
 ) TestContext {
 	return TestContext{
 		T:             t,
 		Ctx:           ctx,
-		Clientset:     clientset,
-		RestConfig:    restConfig,
-		DynamicClient: dynamicClient,
+		Clientset:     clients.clientset,
+		RestConfig:    clients.restConfig,
+		DynamicClient: clients.dynamicClient,
+		RestMapper:    clients.restMapper,
 		Namespace:     "default",
 		Timeout:       DefaultPollTimeout,
 		Interval:      DefaultPollInterval,

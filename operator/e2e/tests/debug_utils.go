@@ -213,7 +213,7 @@ func createDiagnosticsFile(testName, diagDir string) (*os.File, string, error) {
 //   - "stdout": print to stdout only
 //   - "file": write to timestamped file only (default)
 //   - "both": write to both stdout and file
-func CollectAllDiagnostics(tc TestContext) {
+func (tc TestContext) CollectAllDiagnostics() {
 	// Use diagnostics configuration from TestContext (set at test setup time)
 	mode := tc.DiagMode
 	if mode == "" {
@@ -249,10 +249,10 @@ func CollectAllDiagnostics(tc TestContext) {
 	logger.Info("================================================================================")
 
 	// Collect each type of diagnostic, continuing even if one fails
-	dumpOperatorLogs(tc, logger)
-	dumpGroveResources(tc, logger)
-	dumpPodDetails(tc, logger)
-	dumpRecentEvents(tc, logger)
+	tc.dumpOperatorLogs(logger)
+	tc.dumpGroveResources(logger)
+	tc.dumpPodDetails(logger)
+	tc.dumpRecentEvents(logger)
 
 	logger.Info("================================================================================")
 	logger.Info("=== END OF FAILURE DIAGNOSTICS ===")
@@ -266,7 +266,7 @@ func CollectAllDiagnostics(tc TestContext) {
 
 // dumpOperatorLogs captures and prints operator logs at INFO level.
 // Captures all logs from all containers in the operator pod.
-func dumpOperatorLogs(tc TestContext, logger *utils.Logger) {
+func (tc TestContext) dumpOperatorLogs(logger *utils.Logger) {
 	logger.Info("================================================================================")
 	logger.Info("=== OPERATOR LOGS (all) ===")
 	logger.Info("================================================================================")
@@ -356,7 +356,7 @@ func dumpOperatorLogs(tc TestContext, logger *utils.Logger) {
 }
 
 // dumpGroveResources dumps all Grove resources as YAML at INFO level.
-func dumpGroveResources(tc TestContext, logger *utils.Logger) {
+func (tc TestContext) dumpGroveResources(logger *utils.Logger) {
 	logger.Info("================================================================================")
 	logger.Info("=== GROVE RESOURCES ===")
 	logger.Info("================================================================================")
@@ -402,7 +402,7 @@ func dumpGroveResources(tc TestContext, logger *utils.Logger) {
 // dumpPodDetails dumps detailed pod information at INFO level.
 // Lists ALL pods in the namespace (not filtered by workload label selector)
 // to ensure we capture all relevant pods during failure diagnostics.
-func dumpPodDetails(tc TestContext, logger *utils.Logger) {
+func (tc TestContext) dumpPodDetails(logger *utils.Logger) {
 	logger.Info("================================================================================")
 	logger.Info("=== POD DETAILS ===")
 	logger.Info("================================================================================")
@@ -486,7 +486,7 @@ func dumpPodDetails(tc TestContext, logger *utils.Logger) {
 }
 
 // dumpRecentEvents dumps Kubernetes events from the last eventLookbackDuration at INFO level.
-func dumpRecentEvents(tc TestContext, logger *utils.Logger) {
+func (tc TestContext) dumpRecentEvents(logger *utils.Logger) {
 	logger.Info("================================================================================")
 	logger.Infof("=== KUBERNETES EVENTS (last %v) ===", eventLookbackDuration)
 	logger.Info("================================================================================")

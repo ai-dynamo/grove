@@ -36,7 +36,9 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
+	"github.com/docker/docker/daemon/logger"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -162,18 +164,13 @@ func Test_CM1_CertManagementRoundTrip(t *testing.T) {
 	defer uninstallCertManager(t, clients.RestConfig)
 	defer cleanup()
 
-	// Create Issuer and Certificate
-	// Create clients once and reuse them for better performance
-	_, restMapper, err := utils.CreateKubernetesClients(clients.RestConfig)
-	if err != nil {
-		t.Fatalf("Failed to create Kubernetes clients: %v", err)
-	}
-	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerIssuerYAML), "", clients.DynamicClient, restMapper, Logger); err != nil {
+	// Create Issuer and Certificate using pre-created clients from prepareTestCluster
+	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerIssuerYAML), "", clients.dynamicClient, clients.restMapper, logger); err != nil {
 		t.Fatalf("Failed to apply ClusterIssuer: %v", err)
 	}
 	waitForClusterIssuer(t, ctx, clients.DynamicClient, "selfsigned-issuer")
 
-	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerCertificateYAML), "", clients.DynamicClient, restMapper, Logger); err != nil {
+	if _, err := utils.ApplyYAMLData(ctx, []byte(certManagerCertificateYAML), "", clients.dynamicClient, clients.restMapper, logger); err != nil {
 		t.Fatalf("Failed to apply Certificate: %v", err)
 	}
 
@@ -189,14 +186,14 @@ func Test_CM1_CertManagementRoundTrip(t *testing.T) {
 	verifyCertManagerMode(t, ctx, clients.Clientset)
 	verifyWebhookServingCertificate(t, ctx, clients.Clientset, clients.RestConfig)
 
-	Logger.Info("5. Deploy and verify workload with cert-manager certs")
-	tc := createTestContext(t, ctx, clients.Clientset, clients.DynamicClient, clients.RestConfig)
-	if _, err := DeployAndVerifyWorkload(tc); err != nil {
+	logger.Info("5. Deploy and verify workload with cert-manager certs")
+	tc := createTestContext(t, ctx, clients.clientset, clients.dynamicClient, clients.restMapper, clients.restConfig)
+	if _, err := tc.deployAndVerifyWorkload(); err != nil {
 		t.Fatalf("Failed to deploy workload in Cert-Manager mode: %v", err)
 	}
 
 	// Wait for all pods to become ready to verify the webhook is working end-to-end
-	if err := WaitForPods(tc, tc.Workload.ExpectedPods); err != nil {
+	if err := tc.waitForPods(tc.Workload.ExpectedPods); err != nil {
 		t.Fatalf("Failed to wait for workload pods to be ready: %v", err)
 	}
 
@@ -217,12 +214,12 @@ func Test_CM1_CertManagementRoundTrip(t *testing.T) {
 	deletePodCliqueSetAndWait(t, ctx, clients.DynamicClient, tc.Workload.Name, tc.Namespace)
 
 	// Redeploy workload - this will exercise the validating and mutating webhooks
-	if _, err := DeployAndVerifyWorkload(tc); err != nil {
+	if _, err := tc.deployAndVerifyWorkload(); err != nil {
 		t.Fatalf("Failed to deploy workload with auto-provisioned certs: %v", err)
 	}
 
 	// Wait for all pods to become ready
-	if err := WaitForPods(tc, tc.Workload.ExpectedPods); err != nil {
+	if err := tc.waitForPods(tc.Workload.ExpectedPods); err != nil {
 		t.Fatalf("Workload pods not ready after redeploying with auto-provisioned certs: %v", err)
 	}
 
@@ -328,7 +325,7 @@ func installCertManager(t *testing.T, ctx context.Context, restConfig *rest.Conf
 	}
 }
 
-func createTestContext(t *testing.T, ctx context.Context, clientset *kubernetes.Clientset, dynamicClient dynamic.Interface, restConfig *rest.Config) TestContext {
+func createTestContext(t *testing.T, ctx context.Context, clientset *kubernetes.Clientset, dynamicClient dynamic.Interface, restMapper meta.RESTMapper, restConfig *rest.Config) TestContext {
 	t.Helper()
 
 	_, currentFile, _, _ := runtime.Caller(0)
@@ -339,6 +336,7 @@ func createTestContext(t *testing.T, ctx context.Context, clientset *kubernetes.
 		Ctx:           ctx,
 		Clientset:     clientset,
 		DynamicClient: dynamicClient,
+		RestMapper:    restMapper,
 		RestConfig:    restConfig,
 		Namespace:     "default",
 		Timeout:       DefaultPollTimeout,

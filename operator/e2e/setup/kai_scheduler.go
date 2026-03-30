@@ -94,8 +94,13 @@ func CreateDefaultKaiQueues(ctx context.Context, config *HelmInstallConfig) erro
 	_, currentFile, _, _ := runtime.Caller(0)
 	queuesPath := filepath.Join(filepath.Dir(currentFile), "../yaml/queues.yaml")
 
-	// Apply the YAML file using the k8s client
-	appliedResources, err := utils.ApplyYAMLFile(ctx, queuesPath, "", config.RestConfig, config.Logger)
+	// Create clients once and apply
+	dynamicClient, restMapper, err := utils.CreateKubernetesClients(config.RestConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create Kubernetes clients: %w", err)
+	}
+
+	appliedResources, err := utils.ApplyYAMLFileWithClients(ctx, queuesPath, "", dynamicClient, restMapper, config.Logger)
 	if err != nil {
 		return fmt.Errorf("failed to apply queues YAML: %w", err)
 	}
