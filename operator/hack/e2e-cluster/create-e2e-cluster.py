@@ -493,6 +493,7 @@ def deploy_grove_operator(config: ClusterConfig, operator_dir: Path):
         "--default-repo=",
         "--images", f"grove-operator={images['grove-operator']}",
         "--images", f"grove-initc={images['grove-initc']}",
+        "--images", f"grove-install-crds={images['grove-install-crds']}",
         _cwd=str(operator_dir)
     )
 

@@ -35,6 +35,7 @@ from infra_manager.constants import (
     E2E_TEST_TREE_STATE,
     E2E_TEST_VERSION,
     GROVE_INITC_IMAGE,
+    GROVE_INSTALL_CRDS_IMAGE,
     GROVE_MODULE_PATH,
     GROVE_OPERATOR_IMAGE,
     HELM_RELEASE_GROVE,
@@ -139,6 +140,8 @@ def _deploy_grove_charts(
         f"{GROVE_OPERATOR_IMAGE}={images[GROVE_OPERATOR_IMAGE]}",
         "--images",
         f"{GROVE_INITC_IMAGE}={images[GROVE_INITC_IMAGE]}",
+        "--images",
+        f"{GROVE_INSTALL_CRDS_IMAGE}={images[GROVE_INSTALL_CRDS_IMAGE]}",
         _cwd=str(operator_dir),
         _env={**os.environ, "CONTAINER_REGISTRY": pull_repo},
     )
