@@ -219,4 +219,9 @@ crdInstaller:
   # via an init container. Set to false to manage CRDs manually from the Grove GitHub release.
   # WARNING: when disabled, you must apply the correct CRD schemas before upgrading the operator.
   enabled: true
+  image:
+    repository: grove-install-crds
+    # Overrides the image tag whose default is the chart appVersion.
+    tag: v0.1.0-dev
+    pullPolicy: IfNotPresent
 

@@ -34,6 +34,19 @@ build:
         flags:
           - -v
         main: ./initc/cmd
+    - image: grove-install-crds
+      ko: # see https://skaffold.dev/docs/builders/builder-types/ko/
+        dependencies: # configures which files should skaffold watch for changes in dev mode.
+          paths:
+            - api
+            - cmd/install-crds
+            - internal
+            - VERSION
+        flags:
+          - -v
+        ldflags:
+          - '{{.LD_FLAGS}}'
+        main: ./cmd/install-crds
 deploy:
   helm: # see https://skaffold.dev/docs/deployers/helm/
     releases:
@@ -42,6 +55,8 @@ deploy:
         setValueTemplates:
           image.repository: '{{.IMAGE_REPO}}'
           image.tag: "{{.VERSION}}@{{.IMAGE_DIGEST}}"
+          crdInstaller.image.repository: '{{.IMAGE_REPO_grove_install_crds}}'
+          crdInstaller.image.tag: "{{.VERSION}}@{{.IMAGE_DIGEST_grove_install_crds}}"
           deployment.env:
             - name: GROVE_INIT_CONTAINER_IMAGE
               value: "{{.CONTAINER_REGISTRY}}/grove-initc"

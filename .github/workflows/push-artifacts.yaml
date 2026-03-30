@@ -79,6 +79,7 @@ jobs:
       - name: Build Helm chart
         run: |
           sed -i "s#repository: grove-operator#repository: $DOCKER_REGISTRY/grove-operator#" operator/charts/values.yaml
+          sed -i "s#repository: grove-install-crds#repository: $DOCKER_REGISTRY/grove-install-crds#" operator/charts/values.yaml
           sed -i "s#tag:.*#tag: $PACKAGE_VERSION#" operator/charts/values.yaml
           sed -i "s#value: grove-initc#value: $DOCKER_REGISTRY/grove-initc#" operator/charts/values.yaml
           helm package ./operator/charts --app-version $PACKAGE_VERSION --version $PACKAGE_VERSION

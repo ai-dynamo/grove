@@ -47,5 +47,18 @@ LABEL org.opencontainers.image.version=${VERSION}
 
 WORKDIR /
 COPY --from=builder /go/src/github.com/ai-dynamo/grove/operator/bin/grove-operator /grove-operator
-COPY --from=builder /go/src/github.com/ai-dynamo/grove/operator/bin/grove-install-crds /grove-install-crds
 ENTRYPOINT ["/grove-operator"]
+
+# grove-install-crds
+FROM gcr.io/distroless/static-debian11:nonroot AS grove-install-crds
+# Version should be passed as a build argument.
+ARG VERSION
+
+LABEL org.opencontainers.image.title="Grove CRD Installer"
+LABEL org.opencontainers.image.description="Init container that installs and upgrades Grove CRDs via server-side apply"
+LABEL org.opencontainers.image.source="https://github.com/ai-dynamo/grove/tree/main/operator/cmd/install-crds"
+LABEL org.opencontainers.image.version=${VERSION}
+
+WORKDIR /
+COPY --from=builder /go/src/github.com/ai-dynamo/grove/operator/bin/grove-install-crds /grove-install-crds
+ENTRYPOINT ["/grove-install-crds"]

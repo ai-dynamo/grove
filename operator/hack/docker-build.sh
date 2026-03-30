@@ -30,9 +30,11 @@ DOCKER_BUILD_ADDITIONAL_ARGS=${DOCKER_BUILD_ADDITIONAL_ARGS:-""}
 if [[ -n "${REGISTRY:-}" ]]; then
   INITC_IMAGE="${REGISTRY}/grove-initc"
   OPERATOR_IMAGE="${REGISTRY}/grove-operator"
+  INSTALL_CRDS_IMAGE="${REGISTRY}/grove-install-crds"
 else
   INITC_IMAGE="grove-initc"
   OPERATOR_IMAGE="grove-operator"
+  INSTALL_CRDS_IMAGE="grove-install-crds"
 fi
 
 function build_docker_images() {
@@ -57,6 +59,18 @@ function build_docker_images() {
     --tag ${OPERATOR_IMAGE}:latest \
     --tag ${OPERATOR_IMAGE}:${VERSION} \
     --target grove-operator \
+    --file ${MODULE_ROOT}/Dockerfile \
+    $REPO_ROOT # docker context is as the repository root to access `.git/`
+
+  printf '%s\n' "Building grove-install-crds:${VERSION} with:
+   PLATFORM: ${PLATFORM}... "
+  docker buildx build \
+    ${DOCKER_BUILD_ADDITIONAL_ARGS} \
+    --platform ${PLATFORM} \
+    --build-arg VERSION=${VERSION} \
+    --tag ${INSTALL_CRDS_IMAGE}:latest \
+    --tag ${INSTALL_CRDS_IMAGE}:${VERSION} \
+    --target grove-install-crds \
     --file ${MODULE_ROOT}/Dockerfile \
     $REPO_ROOT # docker context is as the repository root to access `.git/`
 }
