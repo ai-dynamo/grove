@@ -282,7 +282,7 @@ Validating webhook for `PodCliqueSet` will reject resources that are created wit
 
 #### ClusterTopology Deletion
 
-When an administrator deletes a ClusterTopology resource, any PodCliqueSets that still reference the deleted topology are affected. The PCS reconciler detects this and sets the `TopologyLevelsUnavailable` condition to `Unknown` with reason `ClusterTopologyNotFound`. Invalid topology constraints are removed from the PodGang resources created for those PodCliqueSets.
+When an administrator deletes a ClusterTopology resource, any PodCliqueSets that still reference the deleted topology are affected. The PCS reconciler detects this and sets the `TopologyLevelsUnavailable` condition to `True` with reason `ClusterTopologyNotFound`. Invalid topology constraints are removed from the PodGang resources created for those PodCliqueSets.
 
 **Mitigation**
 
@@ -566,7 +566,7 @@ A ClusterTopology's `spec.levels` can be updated in-place by administrators. Whe
 
 **Deletion**
 
-When an administrator deletes a ClusterTopology, auto-managed scheduler backend topology CRs are cascade-deleted via `OwnerReference`. If PodCliqueSets still reference the deleted topology, the PCS reconciler detects this at runtime and sets the `TopologyLevelsUnavailable` condition to `Unknown` with reason `ClusterTopologyNotFound`. Invalid topology constraints are removed from the PodGang resources created for those PodCliqueSets.
+When an administrator deletes a ClusterTopology, auto-managed scheduler backend topology CRs are cascade-deleted via `OwnerReference`. If PodCliqueSets still reference the deleted topology, the PCS reconciler detects this at runtime and sets the `TopologyLevelsUnavailable` condition to `True` with reason `ClusterTopologyNotFound`. Invalid topology constraints are removed from the PodGang resources created for those PodCliqueSets.
 
 ```mermaid
 sequenceDiagram
@@ -1028,7 +1028,7 @@ Condition States:
 
 | Status    | Reason                              | Description                                                  |
 | --------- | ----------------------------------- | ------------------------------------------------------------ |
-| `Unknown` | `ClusterTopologyNotFound`           | When `ClusterTopology` CR is no longer existing              |
+| `True`    | `ClusterTopologyNotFound`           | When `ClusterTopology` CR is no longer existing — levels are definitively unavailable |
 | `Unknown` | `TopologyAwareSchedulingDisabled`   | When TAS has been disabled cluster-wide while the PCS still has topology constraints |
 | `Unknown` | `TopologyNameMissing`        | When PCS has topology constraints but no `topologyName` (upgrade from single-topology design) |
 | `True`    | `ClusterTopologyLevelsUnavailable`  | When one or more topology levels used by a deployed `PodCliqueSet` are no longer present in `ClusterTopology` (e.g., the ClusterTopology levels were updated and no longer include the domains used by this PCS). The reconciler removes the invalid topology constraints from the PodGang resources so the scheduler no longer enforces them. Already-running pods are not evicted — they continue running at their current placement. |
