@@ -127,43 +127,78 @@ _Solution_: Grove orchestrates resource sharing via `ResourceClaimTemplateRef` e
 - `resourceSharing` at the PCLQ level with `scope: Shared` creates one ResourceClaim per PCLQ,
   shared across all replicas.
 
-**Concrete example** of the ResourceClaim distribution:
+**Concrete example** of the ResourceClaim distribution for a PCS named `disagg` with 2 replicas,
+demonstrating all three levels with different scopes:
 
 ```
-PCS:
+PCS "disagg" (replicas: 2):
   resourceClaimTemplates:
-    - name: RCT-GPU-POOL-PCA, template: ...
-    - name: RCT-GPU-POOL-PCB, template: ...
-    - name: RCT-NVSWITCH, template: ...
+    - name: shared-store,  template: {shared storage device}
+    - name: gpu-pool-pca,  template: {4 GPUs, nvidia.com}
+    - name: gpu-pool-pcb,  template: {2 GPUs, nvidia.com}
+    - name: nvswitch,      template: {1 NVSwitch fabric, nvswitch.nvidia.com}
+  resourceSharing:
+    - {name: shared-store, scope: Shared}                          # PCS Shared (alloc 0)
+    - {name: shared-store, scope: PerReplica}                      # PCS PerReplica (alloc 1)
   cliques:
-    - PCA: replicas=3,
-           resourceSharing=[{name: RCT-GPU-POOL-PCA, scope: Shared}]
-    - PCB: replicas=2,
-           resourceSharing=[{name: RCT-GPU-POOL-PCB, scope: Shared}]
+    - pca: replicas=3,
+           resourceSharing=[{name: gpu-pool-pca, scope: Shared}]   # PCLQ Shared (alloc 0)
+    - pcb: replicas=2,
+           resourceSharing=[{name: gpu-pool-pcb, scope: Shared}]   # PCLQ Shared (alloc 0)
   scalingGroups:
-    - SGX: {PCA, PCB}, replicas=2,
-           resourceSharing=[{name: RCT-NVSWITCH, scope: PerReplica, childrenNames: [PCA, PCB]}]
+    - sgx: cliqueNames=[pca, pcb], replicas=2,
+           resourceSharing=[{name: nvswitch, scope: PerReplica}]   # PCSG PerReplica (alloc 0)
 ```
 
-The resulting ResourceClaim assignment per pod (PCS name and replica are omitted for brevity):
+Grove creates the following ResourceClaim objects:
 
-| Pod | RC-NVSWITCH (PCSG PerReplica) | RC-GPU-POOL-PCA (PCLQ Shared) | RC-GPU-POOL-PCB (PCLQ Shared) |
-|---|---|---|---|
-| SGX-0-PCA-0 | RC-NVSWITCH-0 | RC-GPU-POOL-PCA-0 | — |
-| SGX-0-PCA-1 | RC-NVSWITCH-0 | RC-GPU-POOL-PCA-0 | — |
-| SGX-0-PCA-2 | RC-NVSWITCH-0 | RC-GPU-POOL-PCA-0 | — |
-| SGX-0-PCB-0 | RC-NVSWITCH-0 | — | RC-GPU-POOL-PCB-0 |
-| SGX-0-PCB-1 | RC-NVSWITCH-0 | — | RC-GPU-POOL-PCB-0 |
-| SGX-1-PCA-0 | RC-NVSWITCH-1 | RC-GPU-POOL-PCA-1 | — |
-| SGX-1-PCA-1 | RC-NVSWITCH-1 | RC-GPU-POOL-PCA-1 | — |
-| SGX-1-PCA-2 | RC-NVSWITCH-1 | RC-GPU-POOL-PCA-1 | — |
-| SGX-1-PCB-0 | RC-NVSWITCH-1 | — | RC-GPU-POOL-PCB-1 |
-| SGX-1-PCB-1 | RC-NVSWITCH-1 | — | RC-GPU-POOL-PCB-1 |
+```
+PCS Shared (1 for the entire PCS):
+  disagg-shr-0                        → shared by ALL pods across ALL PCS replicas
+
+PCS PerReplica (1 per PCS replica):
+  disagg-0-rpl-1                      → shared by ALL pods in PCS replica 0
+  disagg-1-rpl-1                      → shared by ALL pods in PCS replica 1
+
+PCSG PerReplica (1 per PCSG replica, per PCS replica):
+  disagg-0-sgx-0-rpl-0               → shared by ALL pods in PCSG replica 0, PCS replica 0
+  disagg-0-sgx-1-rpl-0               → shared by ALL pods in PCSG replica 1, PCS replica 0
+  disagg-1-sgx-0-rpl-0               → shared by ALL pods in PCSG replica 0, PCS replica 1
+  disagg-1-sgx-1-rpl-0               → shared by ALL pods in PCSG replica 1, PCS replica 1
+
+PCLQ Shared (1 per PCLQ instance):
+  disagg-0-sgx-0-pca-shr-0           → shared by all 3 pca pods in PCSG rep 0, PCS rep 0
+  disagg-0-sgx-1-pca-shr-0           → shared by all 3 pca pods in PCSG rep 1, PCS rep 0
+  disagg-0-sgx-0-pcb-shr-0           → shared by all 2 pcb pods in PCSG rep 0, PCS rep 0
+  disagg-0-sgx-1-pcb-shr-0           → shared by all 2 pcb pods in PCSG rep 1, PCS rep 0
+  disagg-1-sgx-0-pca-shr-0           → (same pattern for PCS replica 1)
+  disagg-1-sgx-1-pca-shr-0
+  disagg-1-sgx-0-pcb-shr-0
+  disagg-1-sgx-1-pcb-shr-0
+```
+
+The resulting ResourceClaim assignment per pod (showing PCS replica 0 only for brevity — PCS replica 1 follows the same pattern):
+
+| Pod | PCS Shared | PCS PerReplica | PCSG PerReplica | PCLQ Shared |
+|---|---|---|---|---|
+| disagg-0-sgx-0-pca-0 | disagg-shr-0 | disagg-0-rpl-1 | disagg-0-sgx-0-rpl-0 | disagg-0-sgx-0-pca-shr-0 |
+| disagg-0-sgx-0-pca-1 | disagg-shr-0 | disagg-0-rpl-1 | disagg-0-sgx-0-rpl-0 | disagg-0-sgx-0-pca-shr-0 |
+| disagg-0-sgx-0-pca-2 | disagg-shr-0 | disagg-0-rpl-1 | disagg-0-sgx-0-rpl-0 | disagg-0-sgx-0-pca-shr-0 |
+| disagg-0-sgx-0-pcb-0 | disagg-shr-0 | disagg-0-rpl-1 | disagg-0-sgx-0-rpl-0 | disagg-0-sgx-0-pcb-shr-0 |
+| disagg-0-sgx-0-pcb-1 | disagg-shr-0 | disagg-0-rpl-1 | disagg-0-sgx-0-rpl-0 | disagg-0-sgx-0-pcb-shr-0 |
+| disagg-0-sgx-1-pca-0 | disagg-shr-0 | disagg-0-rpl-1 | disagg-0-sgx-1-rpl-0 | disagg-0-sgx-1-pca-shr-0 |
+| disagg-0-sgx-1-pca-1 | disagg-shr-0 | disagg-0-rpl-1 | disagg-0-sgx-1-rpl-0 | disagg-0-sgx-1-pca-shr-0 |
+| disagg-0-sgx-1-pca-2 | disagg-shr-0 | disagg-0-rpl-1 | disagg-0-sgx-1-rpl-0 | disagg-0-sgx-1-pca-shr-0 |
+| disagg-0-sgx-1-pcb-0 | disagg-shr-0 | disagg-0-rpl-1 | disagg-0-sgx-1-rpl-0 | disagg-0-sgx-1-pcb-shr-0 |
+| disagg-0-sgx-1-pcb-1 | disagg-shr-0 | disagg-0-rpl-1 | disagg-0-sgx-1-rpl-0 | disagg-0-sgx-1-pcb-shr-0 |
 
 In this example:
-- RC-NVSWITCH-0/1 are PCSG `PerReplica` claims: one per PCSG replica, shared by every pod in that replica
-- RC-GPU-POOL-PCA-0/1 are PCLQ `Shared` claims: one per PCA instance, shared by all PCA replicas within a PCSG replica
-- RC-GPU-POOL-PCB-0/1 are PCLQ `Shared` claims: one per PCB instance, shared by all PCB replicas within a PCSG replica
+- `disagg-shr-0` is the PCS `Shared` claim: one for the entire PCS, shared by all 20 pods
+- `disagg-{0,1}-rpl-1` are PCS `PerReplica` claims: one per PCS replica, shared by all 10 pods in that replica
+- `disagg-{0,1}-sgx-{0,1}-rpl-0` are PCSG `PerReplica` claims: one per PCSG replica, shared by all 5 pods (pca + pcb) in that replica
+- `disagg-{0,1}-sgx-{0,1}-pca-shr-0` are PCLQ `Shared` claims: one per pca instance, shared by all 3 pca pods
+- `disagg-{0,1}-sgx-{0,1}-pcb-shr-0` are PCLQ `Shared` claims: one per pcb instance, shared by all 2 pcb pods
+- Total ResourceClaims: 1 (PCS Shared) + 2 (PCS PerReplica) + 4 (PCSG PerReplica) + 8 (PCLQ Shared) = 15
 
 #### Story 2: Multi-Stage Training Pipeline with GPU Sharing
 
