@@ -134,17 +134,17 @@ demonstrating all three levels with different scopes:
 PCS "disagg" (replicas: 2):
   resourceClaimTemplates:
     - name: shared-store,  template: {shared storage device}
-    - name: gpu-pool-pca,  template: {4 GPUs, nvidia.com}
-    - name: gpu-pool-pcb,  template: {2 GPUs, nvidia.com}
+    - name: h100,          template: {4 GPUs, nvidia.com}
+    - name: b200,          template: {2 GPUs, nvidia.com}
     - name: nvswitch,      template: {1 NVSwitch fabric, nvswitch.nvidia.com}
   resourceSharing:
     - {name: shared-store, scope: Shared}                          # PCS Shared (alloc 0)
     - {name: shared-store, scope: PerReplica}                      # PCS PerReplica (alloc 1)
   cliques:
     - pca: replicas=3,
-           resourceSharing=[{name: gpu-pool-pca, scope: Shared}]   # PCLQ Shared (alloc 0)
+           resourceSharing=[{name: h100, scope: Shared}]            # PCLQ Shared (alloc 0)
     - pcb: replicas=2,
-           resourceSharing=[{name: gpu-pool-pcb, scope: Shared}]   # PCLQ Shared (alloc 0)
+           resourceSharing=[{name: b200, scope: Shared}]            # PCLQ Shared (alloc 0)
   scalingGroups:
     - sgx: cliqueNames=[pca, pcb], replicas=2,
            resourceSharing=[{name: nvswitch, scope: PerReplica}]   # PCSG PerReplica (alloc 0)
