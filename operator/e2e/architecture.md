@@ -38,7 +38,7 @@
                   ▼                                    ▼
     ┌───────────────────────┐           ┌───────────────────────────┐
     │  prepareTest()         │           │  prepareTestCluster()     │
-    │  (suite.go:122)       │           │  (setup.go:174)           │
+    │  (context.go:122)       │           │  (setup.go:174)           │
     │  ── NEW PATH ──       │           │  ── LEGACY PATH ──       │
     │                       │           │                           │
     │  Used by:             │           │  Used by:                 │
@@ -57,7 +57,7 @@
                 ▼
   ┌──────────────────────────────────────────────────┐
   │                  TestContext                        │
-  │               (tests/suite.go)                   │
+  │               (tests/context.go)                   │
   │  ────────────────────────────                    │
   │                                                  │
   │  T         *testing.T                            │
@@ -157,12 +157,12 @@ TestMain
   │     │     ├── SharedCluster.GetAllClients()      ← reuse shared *Clients
   │     │     └── NewTestContext(t, ctx, clients)      ← instantiate all managers
   │     │
-  │     ├── ts.DeployAndVerifyWorkload()             ← high-level helpers
-  │     ├── ts.Topology.VerifyPodsInSame...(...)     ← domain managers
-  │     ├── ts.PodGroups.VerifySubGroups(...)
+  │     ├── tc.DeployAndVerifyWorkload()             ← high-level helpers
+  │     ├── tc.Topology.VerifyPodsInSame...(...)     ← domain managers
+  │     ├── tc.PodGroups.VerifySubGroups(...)
   │     │
   │     └── cleanup()
-  │           ├── if failed: ts.Diag.CollectAll()    ← dump diagnostics
+  │           ├── if failed: tc.Diag.CollectAll()    ← dump diagnostics
   │           └── SharedCluster.CleanupWorkloads()   ← remove all test resources
   │
   ├── test_auto_mnnvl(t)                    ← uses LEGACY path (LegacyTestContext)
@@ -206,7 +206,7 @@ Singleton that owns the cluster lifecycle for the entire test run. Connects to t
 A bundle of all Kubernetes client types needed to interact with the cluster: standard clientset, dynamic client (for CRDs), controller-runtime client, REST mapper, and raw REST config. Created once by `SharedClusterManager` and shared across all managers and tests.
 
 ### TestContext
-The primary abstraction most test files use. Created per-test via `prepareTest()`. Holds the testing context, shared clients, configuration (namespace, timeouts), and all manager instances. Provides convenience methods (e.g. `ts.ListPods()`, `ts.ScalePCS()`) that delegate to managers with per-test defaults. Used by: topology, gang scheduling, scale, startup ordering, rolling updates, cert management tests.
+The primary abstraction most test files use. Created per-test via `prepareTest()`. Holds the testing context, shared clients, configuration (namespace, timeouts), and all manager instances. Provides convenience methods (e.g. `tc.ListPods()`, `tc.ScalePCS()`) that delegate to managers with per-test defaults. Used by: topology, gang scheduling, scale, startup ordering, rolling updates, cert management tests.
 
 ### LegacyTestContext
 Deprecated struct with raw client fields and wrapper methods around standalone utility functions. Still used by `auto-mnnvl/` tests. The legacy `prepareTestCluster()` returns a `clientCollection` which is manually unpacked into a `LegacyTestContext`. Will be removed once all consumers migrate to `TestContext`.
@@ -290,11 +290,11 @@ Every method manually threads the right client through. The logic lives in the `
 
 **TestContext** delegates to manager structs that already hold the clients internally:
 ```go
-func (ts *TestContext) ListPods() (*v1.PodList, error) {
-    return ts.Pods.List(ts.Ctx, ts.Namespace, ts.getLabelSelector())
+func (tc *TestContext) ListPods() (*v1.PodList, error) {
+    return tc.Pods.List(tc.Ctx, tc.Namespace, tc.getLabelSelector())
 }
-func (ts *TestContext) CordonNode(name string) error {
-    return ts.Nodes.Cordon(ts.Ctx, name)
+func (tc *TestContext) CordonNode(name string) error {
+    return tc.Nodes.Cordon(tc.Ctx, name)
 }
 ```
 Managers (`PodManager`, `NodeManager`, etc.) encapsulate the client reference — no need to pass it per call.
@@ -305,8 +305,8 @@ Managers (`PodManager`, `NodeManager`, etc.) encapsulate the client reference �
 
 **TestContext** delegates to a separate `*diagnostics.DiagCollector` struct:
 ```go
-ts.Diag = diagnostics.NewDiagCollector(clients, ns, mode, dir, logger)
-ts.Diag.CollectAll(t.Name())
+tc.Diag = diagnostics.NewDiagCollector(clients, ns, mode, dir, logger)
+tc.Diag.CollectAll(t.Name())
 ```
 
 ### 4. Cleanup: Manual Wiring vs Consistent Pattern
@@ -322,10 +322,10 @@ cleanup := func() {
 }
 ```
 
-**New** cleanup (`suite.go:134-148`) uses the already-constructed test context:
+**New** cleanup (`context.go:134-148`) uses the already-constructed test context:
 ```go
 cleanup := func() {
-    if t.Failed() { ts.Diag.CollectAll(t.Name()) }
+    if t.Failed() { tc.Diag.CollectAll(t.Name()) }
     sharedCluster.CleanupWorkloads(ctx)
 }
 ```

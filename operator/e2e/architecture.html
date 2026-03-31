@@ -446,7 +446,7 @@
       <div class="node node-path-new">
         <span class="badge badge-new">new path</span>
         <div class="node-title">prepareTest()</div>
-        <div class="node-file">suite.go:123</div>
+        <div class="node-file">context.go:123</div>
         <div class="node-desc" style="margin-top:0.5rem; font-size:0.75rem">
           Used by: topology, gang scheduling, scale, startup ordering, rolling updates, cert management
         </div>
@@ -469,7 +469,7 @@
     <!-- TestContext -->
     <div class="node node-suite">
       <div class="node-title" style="font-size:1.1rem">TestContext</div>
-      <div class="node-file">tests/suite.go</div>
+      <div class="node-file">tests/context.go</div>
 
       <div class="suite-inner">
         <div class="suite-field">T &nbsp;<span class="type">*testing.T</span></div>
@@ -578,12 +578,12 @@
 <br>&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;+-- SharedCluster.<span class="fn">GetAllClients()</span> &nbsp;&nbsp;<span class="comment">// reuse shared *Clients</span>
 <br>&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;+-- <span class="fn">NewTestContext</span>(t, ctx, clients) &nbsp;<span class="comment">// instantiate all managers</span>
 <br>&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;|
-<br>&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;+-- ts.<span class="fn">DeployAndVerifyWorkload()</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="comment">// high-level helpers</span>
-<br>&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;+-- ts.Topology.<span class="fn">VerifyPodsInSame...()</span> &nbsp;<span class="comment">// domain managers</span>
-<br>&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;+-- ts.PodGroups.<span class="fn">VerifySubGroups()</span>
+<br>&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;+-- tc.<span class="fn">DeployAndVerifyWorkload()</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="comment">// high-level helpers</span>
+<br>&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;+-- tc.Topology.<span class="fn">VerifyPodsInSame...()</span> &nbsp;<span class="comment">// domain managers</span>
+<br>&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;+-- tc.PodGroups.<span class="fn">VerifySubGroups()</span>
 <br>&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;|
 <br>&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;+-- <span class="warn">cleanup()</span>
-<br>&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;+-- if failed: ts.Diag.<span class="fn">CollectAll()</span> &nbsp;&nbsp;<span class="comment">// dump diagnostics</span>
+<br>&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;+-- if failed: tc.Diag.<span class="fn">CollectAll()</span> &nbsp;&nbsp;<span class="comment">// dump diagnostics</span>
 <br>&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;+-- SharedCluster.<span class="fn">CleanupWorkloads()</span> <span class="comment">// remove all test resources</span>
 <br>&nbsp;&nbsp;|
 <br>&nbsp;&nbsp;+-- <span class="warn">test_auto_mnnvl(t)</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="comment">// uses LEGACY path (TestContext)</span>
@@ -856,13 +856,13 @@
       </div>
       <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:0.75rem;font-family:'SF Mono','Fira Code',monospace;font-size:0.72rem;line-height:1.7">
         <span style="color:#6e7681">// delegates to manager (client inside)</span><br>
-        <span style="color:var(--accent)">func</span> (ts *TestContext) <span style="color:var(--text)">ListPods</span>() {<br>
-        &nbsp;&nbsp;<span style="color:var(--accent)">return</span> <span style="color:var(--green)">ts.Pods</span>.List(<br>
-        &nbsp;&nbsp;&nbsp;&nbsp;ts.Ctx, ts.Namespace, ...)<br>
+        <span style="color:var(--accent)">func</span> (tc *TestContext) <span style="color:var(--text)">ListPods</span>() {<br>
+        &nbsp;&nbsp;<span style="color:var(--accent)">return</span> <span style="color:var(--green)">tc.Pods</span>.List(<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;tc.Ctx, tc.Namespace, ...)<br>
         }<br><br>
-        <span style="color:var(--accent)">func</span> (ts *TestContext) <span style="color:var(--text)">CordonNode</span>(n) {<br>
-        &nbsp;&nbsp;<span style="color:var(--accent)">return</span> <span style="color:var(--green)">ts.Nodes</span>.Cordon(<br>
-        &nbsp;&nbsp;&nbsp;&nbsp;ts.Ctx, n)<br>
+        <span style="color:var(--accent)">func</span> (tc *TestContext) <span style="color:var(--text)">CordonNode</span>(n) {<br>
+        &nbsp;&nbsp;<span style="color:var(--accent)">return</span> <span style="color:var(--green)">tc.Nodes</span>.Cordon(<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;tc.Ctx, n)<br>
         }
       </div>
       <div style="color:var(--text-muted);font-size:0.8rem;margin-top:0.5rem">
@@ -902,9 +902,9 @@
       </div>
       <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:0.75rem;font-family:'SF Mono','Fira Code',monospace;font-size:0.72rem;line-height:1.7">
         <span style="color:#6e7681">// separate struct in diagnostics/</span><br><br>
-        ts.Diag = diagnostics.<span style="color:var(--text)">NewDiagCollector</span>(<br>
+        tc.Diag = diagnostics.<span style="color:var(--text)">NewDiagCollector</span>(<br>
         &nbsp;&nbsp;clients, ns, mode, dir, logger)<br><br>
-        ts.Diag.<span style="color:var(--text)">CollectAll</span>(t.Name())
+        tc.Diag.<span style="color:var(--text)">CollectAll</span>(t.Name())
       </div>
       <div style="color:var(--text-muted);font-size:0.8rem;margin-top:0.5rem">
         Dedicated <code>*DiagCollector</code> struct in its own package. Initialized once per suite with all config. Single method to trigger collection.
@@ -948,12 +948,12 @@
     <div>
       <div style="display:flex;align-items:center;gap:0.4rem;margin-bottom:0.5rem">
         <span class="badge badge-new">new</span>
-        <span style="font-size:0.72rem;color:var(--text-muted);font-family:'SF Mono','Fira Code',monospace">suite.go:134-148</span>
+        <span style="font-size:0.72rem;color:var(--text-muted);font-family:'SF Mono','Fira Code',monospace">context.go:134-148</span>
       </div>
       <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:0.75rem;font-family:'SF Mono','Fira Code',monospace;font-size:0.72rem;line-height:1.7">
         cleanup := <span style="color:var(--accent)">func</span>() {<br>
         &nbsp;&nbsp;<span style="color:var(--accent)">if</span> t.Failed() {<br>
-        &nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--green)">ts.Diag</span>.CollectAll(t.Name())<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--green)">tc.Diag</span>.CollectAll(t.Name())<br>
         &nbsp;&nbsp;}<br>
         &nbsp;&nbsp;sharedCluster.CleanupWorkloads(ctx)<br>
         }

@@ -63,7 +63,7 @@ func Test_ScaleTest_1000(t *testing.T) {
 	defer cancel()
 
 	logger.Info("preparing test cluster with 100 worker nodes")
-	ts, cleanup := prepareTest(ctx, t, 100,
+	tc, cleanup := prepareTest(ctx, t, 100,
 		WithTimeout(scaleTestTimeout),
 		WithInterval(scaleTestPollInterval),
 		WithWorkload(&WorkloadConfig{
@@ -75,18 +75,18 @@ func Test_ScaleTest_1000(t *testing.T) {
 	)
 	defer cleanup()
 
-	metadata, err := ts.Config.ReadGroveMetadata(ctx)
+	metadata, err := tc.Config.ReadGroveMetadata(ctx)
 	if err != nil {
 		t.Fatalf("failed to read grove metadata: %v", err)
 	}
 
 	runID := fmt.Sprintf("run-%s", time.Now().Format("20060102-150405"))
-	logger.Infof("test config: runID=%s, namespace=%s, pcsName=%s", runID, ts.Namespace, ts.Workload.Name)
+	logger.Infof("test config: runID=%s, namespace=%s, pcsName=%s", runID, tc.Namespace, tc.Workload.Name)
 
 	tracker := measurement.NewTimelineTracker(
 		"ScaleTest_1000",
 		runID,
-		ts.Namespace,
+		tc.Namespace,
 		1,
 		measurement.WithPollInterval(scaleTestPollInterval),
 		measurement.WithLogger(Logger.GetLogr()),
@@ -95,34 +95,34 @@ func Test_ScaleTest_1000(t *testing.T) {
 	tracker.AddPhase(measurement.PhaseDefinition{
 		Name: "deploy",
 		ActionFn: func(ctx context.Context) error {
-			_, err := ts.Resources.ApplyYAMLFile(ctx, ts.Workload.YAMLPath, ts.Namespace)
+			_, err := tc.Resources.ApplyYAMLFile(ctx, tc.Workload.YAMLPath, tc.Namespace)
 			return err
 		},
 		Milestones: []measurement.MilestoneDefinition{
 			{
 				Name: "pods-created",
 				Condition: &condition.PodsCreatedCondition{
-					Client:        ts.Clients.CRClient,
-					Namespace:     ts.Namespace,
-					LabelSelector: ts.getLabelSelector(),
+					Client:        tc.Clients.CRClient,
+					Namespace:     tc.Namespace,
+					LabelSelector: tc.getLabelSelector(),
 					ExpectedCount: scaleTestExpectedPods,
 				},
 			},
 			{
 				Name: "pods-ready",
 				Condition: &condition.PodsReadyCondition{
-					Client:        ts.Clients.CRClient,
-					Namespace:     ts.Namespace,
-					LabelSelector: ts.getLabelSelector(),
+					Client:        tc.Clients.CRClient,
+					Namespace:     tc.Namespace,
+					LabelSelector: tc.getLabelSelector(),
 					ExpectedCount: scaleTestExpectedPods,
 				},
 			},
 			{
 				Name: "pcs-available",
 				Condition: &condition.PCSAvailableCondition{
-					Client:        ts.Clients.CRClient,
-					Name:          ts.Workload.Name,
-					Namespace:     ts.Namespace,
+					Client:        tc.Clients.CRClient,
+					Name:          tc.Workload.Name,
+					Namespace:     tc.Namespace,
 					ExpectedCount: scaleTestExpectedReplicas,
 				},
 			},
@@ -132,15 +132,15 @@ func Test_ScaleTest_1000(t *testing.T) {
 	tracker.AddPhase(measurement.PhaseDefinition{
 		Name: "delete",
 		ActionFn: func(ctx context.Context) error {
-			return ts.Workloads.DeletePCS(ctx, ts.Namespace, ts.Workload.Name)
+			return tc.Workloads.DeletePCS(ctx, tc.Namespace, tc.Workload.Name)
 		},
 		Milestones: []measurement.MilestoneDefinition{
 			{
 				Name: "pcs-deleted",
 				Condition: &condition.PCSDeletedCondition{
-					Client:    ts.Clients.CRClient,
-					Name:      ts.Workload.Name,
-					Namespace: ts.Namespace,
+					Client:    tc.Clients.CRClient,
+					Name:      tc.Workload.Name,
+					Namespace: tc.Namespace,
 				},
 			},
 		},
