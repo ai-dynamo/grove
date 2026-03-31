@@ -24,7 +24,6 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/crdinstaller"
 
 	schedulercrds "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1/crds"
-
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
