@@ -517,3 +517,33 @@ func scaleCRD(ctx context.Context, dynamicClient dynamic.Interface, gvr schema.G
 
 	return nil
 }
+
+// InitContainerNames returns the names of all init containers in a pod (for diagnostic messages).
+func InitContainerNames(pod v1.Pod) []string {
+	names := make([]string, len(pod.Spec.InitContainers))
+	for i, c := range pod.Spec.InitContainers {
+		names[i] = c.Name
+	}
+	return names
+}
+
+// GetNestedSlice is a minimal helper to extract a []interface{} from an unstructured object.
+func GetNestedSlice(obj map[string]interface{}, fields ...string) ([]interface{}, bool, error) {
+	cur := obj
+	for i, f := range fields {
+		if i == len(fields)-1 {
+			val, ok := cur[f]
+			if !ok {
+				return nil, false, nil
+			}
+			slice, ok := val.([]interface{})
+			return slice, ok, nil
+		}
+		next, ok := cur[f].(map[string]interface{})
+		if !ok {
+			return nil, false, nil
+		}
+		cur = next
+	}
+	return nil, false, nil
+}

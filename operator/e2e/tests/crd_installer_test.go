@@ -60,7 +60,7 @@ func Test_CRD_Installer_AllCRDsExist(t *testing.T) {
 			continue
 		}
 		// Verify the CRD is established (API server is serving it).
-		conditions, found, err := getNestedSlice(crd.Object, "status", "conditions")
+		conditions, found, err := utils.GetNestedSlice(crd.Object, "status", "conditions")
 		if err != nil || !found {
 			t.Errorf("CRD %q has no status conditions", crdName)
 			continue
@@ -110,7 +110,7 @@ func Test_CRD_Installer_InitContainerCompleted(t *testing.T) {
 
 	if crdInstallerStatus == nil {
 		t.Fatalf("crd-installer init container not found in pod %s; init containers present: %v",
-			pod.Name, initContainerNames(pod))
+			pod.Name, utils.InitContainerNames(pod))
 	}
 	if crdInstallerStatus.State.Terminated == nil {
 		t.Fatalf("crd-installer init container in pod %s is not in Terminated state: %+v",
@@ -156,34 +156,4 @@ func Test_CRD_Installer_Idempotent(t *testing.T) {
 			t.Errorf("CRD %q missing after operator pod restart: %v", crdName, err)
 		}
 	}
-}
-
-// initContainerNames returns the names of all init containers in a pod (for diagnostic messages).
-func initContainerNames(pod v1.Pod) []string {
-	names := make([]string, len(pod.Spec.InitContainers))
-	for i, c := range pod.Spec.InitContainers {
-		names[i] = c.Name
-	}
-	return names
-}
-
-// getNestedSlice is a minimal helper to extract a []interface{} from an unstructured object.
-func getNestedSlice(obj map[string]interface{}, fields ...string) ([]interface{}, bool, error) {
-	cur := obj
-	for i, f := range fields {
-		if i == len(fields)-1 {
-			val, ok := cur[f]
-			if !ok {
-				return nil, false, nil
-			}
-			slice, ok := val.([]interface{})
-			return slice, ok, nil
-		}
-		next, ok := cur[f].(map[string]interface{})
-		if !ok {
-			return nil, false, nil
-		}
-		cur = next
-	}
-	return nil, false, nil
 }

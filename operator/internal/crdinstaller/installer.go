@@ -22,9 +22,6 @@ import (
 	"context"
 	"fmt"
 
-	operatorcrds "github.com/ai-dynamo/grove/operator/api/core/v1alpha1/crds"
-
-	schedulercrds "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1/crds"
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -33,22 +30,11 @@ import (
 
 const fieldManager = "grove-crd-installer"
 
-// allCRDs returns all 5 Grove CRD yaml definitions as a slice of strings.
-func allCRDs() []string {
-	return []string{
-		operatorcrds.PodCliqueCRD(),
-		operatorcrds.PodCliqueSetCRD(),
-		operatorcrds.PodCliqueScalingGroupCRD(),
-		operatorcrds.ClusterTopologyCRD(),
-		schedulercrds.PodGangCRD(),
-	}
-}
-
-// InstallCRDs applies all 5 Grove CRDs via server-side apply and logs each name.
-// It returns an error if any CRD fails to apply.
-func InstallCRDs(ctx context.Context, cl client.Client, log logr.Logger) error {
-	for _, crdYAML := range allCRDs() {
-		name, err := ApplyCRD(ctx, cl, []byte(crdYAML))
+// InstallCRDs applies the given CRD YAML definitions via server-side apply and
+// logs each applied name. It returns an error if any CRD fails to apply.
+func InstallCRDs(ctx context.Context, cl client.Client, log logr.Logger, crds []string) error {
+	for _, crdYAML := range crds {
+		name, err := applyCRD(ctx, cl, []byte(crdYAML))
 		if err != nil {
 			return fmt.Errorf("failed to apply CRD %q: %w", name, err)
 		}
@@ -57,9 +43,9 @@ func InstallCRDs(ctx context.Context, cl client.Client, log logr.Logger) error {
 	return nil
 }
 
-// ApplyCRD applies a single CRD yaml via server-side apply.
+// applyCRD applies a single CRD yaml via server-side apply.
 // It returns the CRD name and any error.
-func ApplyCRD(ctx context.Context, cl client.Client, data []byte) (name string, err error) {
+func applyCRD(ctx context.Context, cl client.Client, data []byte) (name string, err error) {
 	obj := &unstructured.Unstructured{}
 	if err := yaml.Unmarshal(data, &obj.Object); err != nil {
 		return "", fmt.Errorf("failed to unmarshal CRD yaml: %w", err)

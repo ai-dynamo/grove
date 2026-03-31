@@ -20,7 +20,9 @@ import (
 	"context"
 	"testing"
 
+	operatorcrds "github.com/ai-dynamo/grove/operator/api/core/v1alpha1/crds"
 	"github.com/ai-dynamo/grove/operator/internal/crdinstaller"
+	schedulercrds "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1/crds"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
@@ -75,7 +77,14 @@ func TestInstallCRDs_AllApplied(t *testing.T) {
 	cl := buildFakeClient()
 	ctx := context.Background()
 
-	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard())
+	allCRDs := []string{
+		operatorcrds.PodCliqueCRD(),
+		operatorcrds.PodCliqueSetCRD(),
+		operatorcrds.PodCliqueScalingGroupCRD(),
+		operatorcrds.ClusterTopologyCRD(),
+		schedulercrds.PodGangCRD(),
+	}
+	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), allCRDs)
 	require.NoError(t, err)
 
 	// Verify all 5 CRDs exist by name.
@@ -93,60 +102,67 @@ func TestInstallCRDs_AllApplied(t *testing.T) {
 	}
 }
 
-// TestApplyCRD_ReturnsName verifies that ApplyCRD returns the metadata.name from
-// the CRD YAML it was given, so callers can log or identify which CRD was applied.
+// TestInstallCRDs_CreatesByName verifies that InstallCRDs creates the CRD with
+// the exact metadata.name present in the provided YAML.
 //
 // Flow:
-//  1. Apply a minimal CRD whose name is "testthings.test.io".
-//  2. Assert the returned name string matches that value.
-func TestApplyCRD_ReturnsName(t *testing.T) {
+//  1. Call InstallCRDs with a single minimal CRD YAML.
+//  2. Fetch the object by its expected name from the fake client.
+//  3. Assert the fetch succeeds, confirming the name was correctly parsed and applied.
+func TestInstallCRDs_CreatesByName(t *testing.T) {
 	cl := buildFakeClient()
 	ctx := context.Background()
 
-	name, err := crdinstaller.ApplyCRD(ctx, cl, []byte(minimalCRDYAML("testthings.test.io", "test.io", "testthings", "TestThing")))
+	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(),
+		[]string{minimalCRDYAML("testthings.test.io", "test.io", "testthings", "TestThing")},
+	)
 	require.NoError(t, err)
-	assert.Equal(t, "testthings.test.io", name)
+
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(apiextensionsv1.SchemeGroupVersion.WithKind("CustomResourceDefinition"))
+	err = cl.Get(ctx, client.ObjectKey{Name: "testthings.test.io"}, obj)
+	assert.NoError(t, err, "CRD should exist under the name declared in the YAML")
 }
 
-// TestApplyCRD_Idempotent verifies that applying the same CRD YAML twice does not
-// produce an error. This is important because the installer runs on every operator
-// startup and must be safe to re-run against an already-current cluster.
+// TestInstallCRDs_Idempotent verifies that calling InstallCRDs twice with the
+// same CRD YAML does not produce an error. This is important because the installer
+// runs on every operator startup and must be safe to re-run against an
+// already-current cluster.
 //
 // Flow:
-//  1. Apply a minimal CRD — first call creates it.
-//  2. Apply the identical YAML again — second call is a no-op server-side apply.
+//  1. Call InstallCRDs with a single CRD YAML — first call creates it.
+//  2. Call InstallCRDs again with the identical YAML — second call is a no-op server-side apply.
 //  3. Assert neither call returns an error.
-func TestApplyCRD_Idempotent(t *testing.T) {
+func TestInstallCRDs_Idempotent(t *testing.T) {
 	cl := buildFakeClient()
 	ctx := context.Background()
-	yaml := []byte(minimalCRDYAML("testthings.test.io", "test.io", "testthings", "TestThing"))
+	crds := []string{minimalCRDYAML("testthings.test.io", "test.io", "testthings", "TestThing")}
 
-	_, err := crdinstaller.ApplyCRD(ctx, cl, yaml)
+	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), crds)
 	require.NoError(t, err)
 
-	// Second apply of the same yaml must not error.
-	_, err = crdinstaller.ApplyCRD(ctx, cl, yaml)
+	err = crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), crds)
 	require.NoError(t, err)
 }
 
-// TestApplyCRD_UpdatesExistingContent verifies that applying a CRD with changed
-// content actually mutates the existing object in the cluster, not just leaves it
-// unchanged because it already exists. This covers the upgrade path where a new
-// operator version ships updated CRD schemas.
+// TestInstallCRDs_UpdatesExistingContent verifies that calling InstallCRDs with
+// changed CRD content actually mutates the existing object in the cluster, not
+// just leaves it unchanged because it already exists. This covers the upgrade
+// path where a new operator version ships updated CRD schemas.
 //
 // Flow:
-//  1. Apply a CRD with label test-version="1".
+//  1. Call InstallCRDs with a CRD YAML containing label test-version="1".
 //  2. Fetch the object and confirm the label is "1".
-//  3. Apply the same CRD name again with label test-version="2".
+//  3. Call InstallCRDs again with the same CRD name but label test-version="2".
 //  4. Fetch the object again and assert the label was updated to "2".
-func TestApplyCRD_UpdatesExistingContent(t *testing.T) {
+func TestInstallCRDs_UpdatesExistingContent(t *testing.T) {
 	cl := buildFakeClient()
 	ctx := context.Background()
 
 	const crdName = "testthings.test.io"
 
-	crdYAML := func(labelValue string) []byte {
-		return []byte(`apiVersion: apiextensions.k8s.io/v1
+	crdYAML := func(labelValue string) string {
+		return `apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   name: ` + crdName + `
@@ -167,11 +183,10 @@ spec:
     schema:
       openAPIV3Schema:
         type: object
-`)
+`
 	}
 
-	// First apply: CRD with label test-version=1.
-	_, err := crdinstaller.ApplyCRD(ctx, cl, crdYAML("1"))
+	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), []string{crdYAML("1")})
 	require.NoError(t, err)
 
 	obj := &unstructured.Unstructured{}
@@ -179,8 +194,7 @@ spec:
 	require.NoError(t, cl.Get(ctx, client.ObjectKey{Name: crdName}, obj))
 	assert.Equal(t, "1", obj.GetLabels()["test-version"], "initial label should be 1")
 
-	// Second apply: same CRD name with label bumped to test-version=2.
-	_, err = crdinstaller.ApplyCRD(ctx, cl, crdYAML("2"))
+	err = crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), []string{crdYAML("2")})
 	require.NoError(t, err)
 
 	obj2 := &unstructured.Unstructured{}
@@ -189,17 +203,17 @@ spec:
 	assert.Equal(t, "2", obj2.GetLabels()["test-version"], "label should be updated to 2 after second apply")
 }
 
-// TestApplyCRD_ReturnsErrorOnInvalidYAML verifies that ApplyCRD fails fast and
-// returns an error when given YAML that cannot be parsed, rather than silently
-// sending garbage to the API server.
+// TestInstallCRDs_ReturnsErrorOnInvalidYAML verifies that InstallCRDs fails fast
+// and returns an error when given YAML that cannot be parsed, rather than
+// silently sending garbage to the API server.
 //
 // Flow:
-//  1. Call ApplyCRD with a syntactically invalid YAML string.
+//  1. Call InstallCRDs with a syntactically invalid YAML string.
 //  2. Assert an error is returned.
-func TestApplyCRD_ReturnsErrorOnInvalidYAML(t *testing.T) {
+func TestInstallCRDs_ReturnsErrorOnInvalidYAML(t *testing.T) {
 	cl := buildFakeClient()
 	ctx := context.Background()
 
-	_, err := crdinstaller.ApplyCRD(ctx, cl, []byte("not: valid: yaml: [[["))
+	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), []string{"not: valid: yaml: [[["})
 	assert.Error(t, err)
 }
