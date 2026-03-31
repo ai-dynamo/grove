@@ -56,7 +56,7 @@ func (p ProfileType) QueryPrefix() string {
 	case ProfileCPU:
 		return "process_cpu:cpu:nanoseconds:cpu:nanoseconds"
 	case ProfileMemory:
-		return "memory:inuse_space:bytes::"
+		return "memory:inuse_space:bytes:space:bytes"
 	case ProfileGoroutine:
 		return "goroutine:goroutine:count:goroutine:count"
 	default:
@@ -234,5 +234,5 @@ func (d *Downloader) downloadProfile(ctx context.Context, phaseName string, p Pr
 		return
 	}
 
-	d.logger.Info("profile saved", "phase", phaseName, "type", p, "path", path)
+	d.logger.Info("profile saved", "phase", phaseName, "type", p, "path", path, "size", len(pprofData))
 }
