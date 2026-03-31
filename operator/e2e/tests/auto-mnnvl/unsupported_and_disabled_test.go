@@ -30,15 +30,12 @@ func Test_AutoMNNVL_UnsupportedAndDisabled(t *testing.T) {
 	ctx := context.Background()
 
 	// Prepare cluster and get clients (0 = no specific worker node requirement)
-	clientset, restConfig, dynamicClient, groveClient, cleanup := prepareTestCluster(ctx, t, 0)
+	tc, cleanup := prepareTest(ctx, t, 0)
 	defer cleanup()
 
 	// Detect and validate cluster configuration
-	clusterConfig := requireClusterConfig(t, ctx, clientset, restConfig)
+	clusterConfig := requireClusterConfig(t, ctx, tc.Clients)
 	clusterConfig.skipUnless(t, crdUnsupported, featureDisabled)
-
-	// Create test context for subtests
-	tc := createTestContext(t, ctx, clientset, restConfig, dynamicClient, groveClient, clusterConfig)
 
 	// Define all subtests
 	tests := []struct {

@@ -37,15 +37,12 @@ func Test_AutoMNNVL_UnsupportedButEnabled(t *testing.T) {
 	ctx := context.Background()
 
 	// Prepare cluster and get clients (0 = no specific worker node requirement)
-	clientset, restConfig, dynamicClient, groveClient, cleanup := prepareTestCluster(ctx, t, 0)
+	tc, cleanup := prepareTest(ctx, t, 0)
 	defer cleanup()
 
 	// Detect and validate cluster configuration
-	clusterConfig := requireClusterConfig(t, ctx, clientset, restConfig)
+	clusterConfig := requireClusterConfig(t, ctx, tc.Clients)
 	clusterConfig.skipUnless(t, crdUnsupported, featureEnabled)
-
-	// Create test context for subtests
-	tc := createTestContext(t, ctx, clientset, restConfig, dynamicClient, groveClient, clusterConfig)
 
 	// Define all subtests
 	tests := []struct {
@@ -84,7 +81,7 @@ func testOperatorExitsWithoutCDCRD(t *testing.T, tc testContext) {
 	// in the previous (terminated) container's logs.
 	err = utils.PollForCondition(tc.ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		for _, previous := range []bool{false, true} {
-			logs, logErr := tc.clientset.CoreV1().Pods(groveOperatorNamespace).GetLogs(pod.Name, &corev1.PodLogOptions{
+			logs, logErr := tc.Clientset.CoreV1().Pods(groveOperatorNamespace).GetLogs(pod.Name, &corev1.PodLogOptions{
 				Previous: previous,
 			}).DoRaw(tc.ctx)
 			if logErr != nil {
@@ -110,7 +107,7 @@ func testOperatorExitsWithoutCDCRD(t *testing.T, tc testContext) {
 func waitForFailedOperatorPod(tc testContext) (*corev1.Pod, error) {
 	var operatorPod *corev1.Pod
 	err := utils.PollForCondition(tc.ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
-		pods, listErr := tc.clientset.CoreV1().Pods(groveOperatorNamespace).List(tc.ctx, metav1.ListOptions{
+		pods, listErr := tc.Clientset.CoreV1().Pods(groveOperatorNamespace).List(tc.ctx, metav1.ListOptions{
 			LabelSelector: "app.kubernetes.io/name=grove-operator",
 		})
 		if listErr != nil || len(pods.Items) == 0 {

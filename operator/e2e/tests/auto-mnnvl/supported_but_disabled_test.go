@@ -35,15 +35,12 @@ func Test_AutoMNNVL_SupportedButDisabled(t *testing.T) {
 	ctx := context.Background()
 
 	// Prepare cluster and get clients (0 = no specific worker node requirement)
-	clientset, restConfig, dynamicClient, groveClient, cleanup := prepareTestCluster(ctx, t, 0)
+	tc, cleanup := prepareTest(ctx, t, 0)
 	defer cleanup()
 
 	// Detect and validate cluster configuration
-	clusterConfig := requireClusterConfig(t, ctx, clientset, restConfig)
+	clusterConfig := requireClusterConfig(t, ctx, tc.Clients)
 	clusterConfig.skipUnless(t, crdSupported, featureDisabled)
-
-	// Create test context for subtests
-	tc := createTestContext(t, ctx, clientset, restConfig, dynamicClient, groveClient, clusterConfig)
 
 	// Define all subtests
 	tests := []struct {
@@ -70,12 +67,12 @@ func testNoAutoAnnotationAdded(t *testing.T, tc testContext) {
 
 	// Create a PCS with GPU requirement (no annotation)
 	pcs := buildGPUPCS(pcsName, 1)
-	_, err := tc.groveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Create(tc.ctx, pcs, metav1.CreateOptions{})
+	_, err := tc.GroveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Create(tc.ctx, pcs, metav1.CreateOptions{})
 	require.NoError(t, err, "Failed to create PCS")
 	defer deletePCS(tc, pcsName)
 
 	// Verify the PCS does NOT have the auto-mnnvl annotation
-	createdPCS, err := tc.groveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Get(tc.ctx, pcsName, metav1.GetOptions{})
+	createdPCS, err := tc.GroveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Get(tc.ctx, pcsName, metav1.GetOptions{})
 	require.NoError(t, err, "Failed to get created PCS")
 
 	annotations := createdPCS.GetAnnotations()
@@ -98,6 +95,6 @@ func testExplicitEnabledAnnotationRejected(t *testing.T, tc testContext) {
 	annotations[mnnvl.AnnotationAutoMNNVL] = mnnvl.AnnotationAutoMNNVLEnabled
 	pcs.SetAnnotations(annotations)
 
-	_, err := tc.groveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Create(tc.ctx, pcs, metav1.CreateOptions{})
+	_, err := tc.GroveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Create(tc.ctx, pcs, metav1.CreateOptions{})
 	assert.Error(t, err, "PCS with auto-mnnvl: enabled should be rejected when feature is disabled")
 }

@@ -38,7 +38,7 @@ func testNoMNNVLArtifactsWhenDisabled(t *testing.T, tc testContext) {
 
 	// Create a PCS with GPU requirement
 	pcs := buildComprehensivePCS(pcsName, 1)
-	_, err := tc.groveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Create(tc.ctx, pcs, metav1.CreateOptions{})
+	_, err := tc.GroveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Create(tc.ctx, pcs, metav1.CreateOptions{})
 	require.NoError(t, err, "Failed to create PCS")
 	defer deletePCS(tc, pcsName)
 
@@ -59,7 +59,7 @@ func testNoMNNVLArtifactsWhenDisabled(t *testing.T, tc testContext) {
 	// Verify no ComputeDomain exists.
 	// If the CRD itself is not installed (unsupported scenario), the List call returns
 	// a NotFound error -- that also means zero ComputeDomains, which is what we want.
-	cdList, err := tc.dynamicClient.Resource(computeDomainGVR).Namespace(tc.namespace).List(tc.ctx, metav1.ListOptions{})
+	cdList, err := tc.DynamicClient.Resource(computeDomainGVR).Namespace(tc.namespace).List(tc.ctx, metav1.ListOptions{})
 	if k8serrors.IsNotFound(err) {
 		// CRD not installed → no ComputeDomains can exist, which is the expected state.
 	} else {

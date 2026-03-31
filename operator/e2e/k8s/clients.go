@@ -22,6 +22,7 @@ import (
 	"fmt"
 
 	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	groveclient "github.com/ai-dynamo/grove/operator/client/clientset/versioned"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/discovery"
@@ -40,6 +41,7 @@ import (
 type Clients struct {
 	Clientset     kubernetes.Interface
 	DynamicClient dynamic.Interface
+	GroveClient   groveclient.Interface
 	RestMapper    meta.RESTMapper
 	RestConfig    *rest.Config
 	CRClient      client.Client
@@ -78,9 +80,15 @@ func NewClients(restConfig *rest.Config) (*Clients, error) {
 		return nil, fmt.Errorf("create controller-runtime client: %w", err)
 	}
 
+	groveClient, err := groveclient.NewForConfig(restConfig)
+	if err != nil {
+		return nil, fmt.Errorf("create Grove typed client: %w", err)
+	}
+
 	return &Clients{
 		Clientset:     clientset,
 		DynamicClient: dynamicClient,
+		GroveClient:   groveClient,
 		RestMapper:    restMapper,
 		RestConfig:    restConfig,
 		CRClient:      crClient,
