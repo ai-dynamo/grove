@@ -40,9 +40,9 @@ make run-e2e
 
 The test suite will:
 1. Create a k3d cluster with 28 worker nodes
-3. Install Grove, Kai Scheduler, and GPU Operator
-4. Run all e2e testing suites
-5. Clean up the cluster
+2. Install Grove, Kai Scheduler, and GPU Operator
+3. Run all e2e testing suites
+4. Clean up the cluster
 
 ### Running in CI/CD
 
