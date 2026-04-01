@@ -41,6 +41,8 @@ const (
 	LabelPodCliqueScalingGroup = "grove.io/podcliquescalinggroup"
 	// LabelPodCliqueScalingGroupReplicaIndex is a key for a label that sets the replica index of a PodCliqueScalingGroup within PodCliqueSet.
 	LabelPodCliqueScalingGroupReplicaIndex = "grove.io/podcliquescalinggroup-replica-index"
+	// LabelPodCliquePodIndex is a key for a label that sets the index of a pod within its PodClique.
+	LabelPodCliquePodIndex = "grove.io/podclique-pod-index"
 	// LabelPodTemplateHash is a key for a label that sets the hash of the PodSpec. This label will be set on a PodClique and will be shared by all pods in the PodClique.
 	LabelPodTemplateHash = "grove.io/pod-template-hash"
 )

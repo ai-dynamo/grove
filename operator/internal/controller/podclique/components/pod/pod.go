@@ -144,7 +144,7 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 		)
 	}
 
-	labels := getLabels(pclq.ObjectMeta, pcsName, podGangName, pcsReplicaIndex)
+	labels := getLabels(pclq.ObjectMeta, pcsName, podGangName, pcsReplicaIndex, podIndex)
 	pod.ObjectMeta = metav1.ObjectMeta{
 		GenerateName: fmt.Sprintf("%s-", pclq.Name),
 		Namespace:    pclq.Namespace,
@@ -161,7 +161,7 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 	pod.Spec = *pclq.Spec.PodSpec.DeepCopy()
 	pod.Spec.SchedulingGates = []corev1.PodSchedulingGate{{Name: podGangSchedulingGate}}
 	// Add GROVE specific Pod environment variables
-	addEnvironmentVariables(pod, pclq, pcsName, pcsReplicaIndex, podIndex)
+	addEnvironmentVariables(pod, pclq, pcsName, pcsReplicaIndex)
 	// Configure hostname and subdomain for service discovery
 	configurePodHostname(pcsName, pcsReplicaIndex, pclq.Name, pod, podIndex)
 	// If there is a need to enforce a Startup-Order then configure the init container and add it to the Pod Spec.
@@ -215,11 +215,12 @@ func getSelectorLabelsForPods(pclqObjectMeta metav1.ObjectMeta) map[string]strin
 }
 
 // getLabels constructs the complete set of labels for a pod including Grove-specific and template labels
-func getLabels(pclqObjectMeta metav1.ObjectMeta, pcsName, podGangName string, pcsReplicaIndex int) map[string]string {
+func getLabels(pclqObjectMeta metav1.ObjectMeta, pcsName, podGangName string, pcsReplicaIndex, podIndex int) map[string]string {
 	labels := map[string]string{
 		apicommon.LabelPodClique:                pclqObjectMeta.Name,
 		apicommon.LabelPodCliqueSetReplicaIndex: strconv.Itoa(pcsReplicaIndex),
 		apicommon.LabelPodGang:                  podGangName,
+		apicommon.LabelPodCliquePodIndex:        strconv.Itoa(podIndex),
 	}
 	return lo.Assign(
 		apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcsName),
@@ -229,7 +230,7 @@ func getLabels(pclqObjectMeta metav1.ObjectMeta, pcsName, podGangName string, pc
 }
 
 // addEnvironmentVariables adds Grove-specific environment variables to all containers and init-containers.
-func addEnvironmentVariables(pod *corev1.Pod, pclq *grovecorev1alpha1.PodClique, pcsName string, pcsReplicaIndex, podIndex int) {
+func addEnvironmentVariables(pod *corev1.Pod, pclq *grovecorev1alpha1.PodClique, pcsName string, pcsReplicaIndex int) {
 	groveEnvVars := []corev1.EnvVar{
 		{
 			Name:  constants.EnvVarPodCliqueSetName,
@@ -250,8 +251,12 @@ func addEnvironmentVariables(pod *corev1.Pod, pclq *grovecorev1alpha1.PodClique,
 				pod.Namespace),
 		},
 		{
-			Name:  constants.EnvVarPodIndex,
-			Value: strconv.Itoa(podIndex),
+			Name: constants.EnvVarPodIndex,
+			ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{
+					FieldPath: fmt.Sprintf("metadata.labels['%s']", apicommon.LabelPodCliquePodIndex),
+				},
+			},
 		},
 	}
 	componentutils.AddEnvVarsToContainers(pod.Spec.Containers, groveEnvVars)

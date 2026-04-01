@@ -17,6 +17,7 @@ limitations under the License.
 package pod
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/ai-dynamo/grove/operator/api/common"
@@ -193,7 +194,7 @@ func TestAddEnvironmentVariables(t *testing.T) {
 				Spec: tt.pclq.Spec.PodSpec,
 			}
 
-			addEnvironmentVariables(pod, tt.pclq, "test-pcs", 0, 0)
+			addEnvironmentVariables(pod, tt.pclq, "test-pcs", 0)
 
 			// Check that all containers have the expected environment variables
 			for _, container := range pod.Spec.Containers {
@@ -210,8 +211,10 @@ func TestAddEnvironmentVariables(t *testing.T) {
 					}
 				}
 
-				// Verify Grove environment variables use direct values
-				assertGroveEnvVarsDirectValues(t, container, tt.expectedEnvVars)
+				// Verify Grove environment variables use direct values (except pod index which uses fieldRef)
+				directValueEnvVars := filterOutEnvVar(tt.expectedEnvVars, constants.EnvVarPodIndex)
+				assertGroveEnvVarsDirectValues(t, container, directValueEnvVars)
+				assertEnvVarUsesFieldRef(t, container, constants.EnvVarPodIndex, fmt.Sprintf("metadata.labels['%s']", common.LabelPodCliquePodIndex))
 			}
 		})
 	}
@@ -365,7 +368,7 @@ func TestAddGroveEnvironmentVariables_NoDuplicates(t *testing.T) {
 				Spec: tt.pclq.Spec.PodSpec,
 			}
 
-			addEnvironmentVariables(pod, tt.pclq, "test-pcs", 0, 0)
+			addEnvironmentVariables(pod, tt.pclq, "test-pcs", 0)
 
 			// Check that all containers have the expected environment variables
 			for _, container := range pod.Spec.Containers {
@@ -391,7 +394,7 @@ func TestAddGroveEnvironmentVariables_EmptyContainers(t *testing.T) {
 	}
 
 	// Should not panic with empty containers
-	addEnvironmentVariables(pod, pclq, "test-pcs", 0, 0)
+	addEnvironmentVariables(pod, pclq, "test-pcs", 0)
 	assert.Empty(t, pod.Spec.Containers)
 }
 
@@ -420,7 +423,7 @@ func TestAddGroveEnvironmentVariables_MultipleContainers(t *testing.T) {
 		},
 	}
 
-	addEnvironmentVariables(pod, pclq, "test-pcs", 0, 0)
+	addEnvironmentVariables(pod, pclq, "test-pcs", 0)
 
 	// Both containers should have Grove environment variables
 	expectedEnvVars := []string{
@@ -524,4 +527,30 @@ func assertNoDuplicateEnvVars(t *testing.T, container corev1.Container) {
 	for envName, count := range envVarCounts {
 		assert.Equal(t, 1, count, "environment variable %s appears %d times (should be 1)", envName, count)
 	}
+}
+
+func assertEnvVarUsesFieldRef(t *testing.T, container corev1.Container, envVarName, expectedFieldPath string) {
+	for _, env := range container.Env {
+		if env.Name == envVarName {
+			assert.Empty(t, env.Value, "environment variable %s should not have a direct value", envVarName)
+			if assert.NotNil(t, env.ValueFrom, "environment variable %s should use ValueFrom", envVarName) {
+				if assert.NotNil(t, env.ValueFrom.FieldRef, "environment variable %s should use FieldRef", envVarName) {
+					assert.Equal(t, expectedFieldPath, env.ValueFrom.FieldRef.FieldPath,
+						"environment variable %s has wrong FieldPath", envVarName)
+				}
+			}
+			return
+		}
+	}
+	t.Errorf("environment variable %s not found in container %s", envVarName, container.Name)
+}
+
+func filterOutEnvVar(envVars []string, exclude string) []string {
+	var result []string
+	for _, v := range envVars {
+		if v != exclude {
+			result = append(result, v)
+		}
+	}
+	return result
 }
