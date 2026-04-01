@@ -75,7 +75,7 @@ func SetDefaults_OperatorConfiguration(operatorConfig *OperatorConfiguration) {
 // Principle: respect all user-explicit values first.
 //
 //  1. If user did not include kube in profiles, add kube.
-//  2. If defaultProfileName is unset, set it to "kube-scheduler". Validation will reject invalid cases.
+//  2. If defaultProfileName is unset, set it to "default-scheduler". Validation will reject invalid cases.
 func SetDefaults_SchedulerConfiguration(cfg *SchedulerConfiguration) {
 	if len(cfg.Profiles) == 0 {
 		cfg.Profiles = []SchedulerProfile{

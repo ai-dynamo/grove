@@ -241,7 +241,7 @@ func TestValidateSchedulerNames(t *testing.T) {
 			expectErrors:   0,
 		},
 		{
-			name: "single kube-scheduler when enabled (kube only)",
+			name: "single default-scheduler when enabled (kube only)",
 			schedulerConfig: groveconfigv1alpha1.SchedulerConfiguration{
 				Profiles:           []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}},
 				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),

@@ -523,7 +523,7 @@ _Appears in:_
 | `priorityClassName` _string_ | PriorityClassName is the name of the PriorityClass to be used for the PodCliqueSet.<br />If specified, indicates the priority of the PodCliqueSet. "system-node-critical" and<br />"system-cluster-critical" are two special keywords which indicate the<br />highest priorities with the former being the highest priority. Any other<br />name must be defined by creating a PriorityClass object with that name.<br />If not specified, the pod priority will be default or zero if there is no default. |  |  |
 | `headlessServiceConfig` _[HeadlessServiceConfig](#headlessserviceconfig)_ | HeadlessServiceConfig defines the config options for the headless service.<br />If present, create headless service for each PodGang. |  |  |
 | `topologyConstraint` _[TopologyConstraint](#topologyconstraint)_ | TopologyConstraint defines topology placement requirements for PodCliqueSet. |  |  |
-| `terminationDelay` _[Duration](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#duration-v1-meta)_ | TerminationDelay is the delay after which the gang termination will be triggered.<br />A gang is a candidate for termination if number of running pods fall below a threshold for any PodClique.<br />If a PodGang remains a candidate past TerminationDelay then it will be terminated. This allows additional time<br />to the kube-scheduler to re-schedule sufficient pods in the PodGang that will result in having the total number of<br />running pods go above the threshold.<br />Defaults to 4 hours. |  |  |
+| `terminationDelay` _[Duration](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#duration-v1-meta)_ | TerminationDelay is the delay after which the gang termination will be triggered.<br />A gang is a candidate for termination if number of running pods fall below a threshold for any PodClique.<br />If a PodGang remains a candidate past TerminationDelay then it will be terminated. This allows additional time<br />to the backend scheduler to re-schedule sufficient pods in the PodGang that will result in having the total number of<br />running pods go above the threshold.<br />Defaults to 4 hours. |  |  |
 | `podCliqueScalingGroups` _[PodCliqueScalingGroupConfig](#podcliquescalinggroupconfig) array_ | PodCliqueScalingGroupConfigs is a list of scaling groups for the PodCliqueSet. |  |  |
 
 
@@ -604,7 +604,7 @@ _Appears in:_
 | `readyReplicas` _integer_ | ReadyReplicas is the number of ready Pods targeted by this PodClique. | 0 |  |
 | `updatedReplicas` _integer_ | UpdatedReplicas is the number of Pods that have been updated and are at the desired revision of the PodClique. | 0 |  |
 | `scheduleGatedReplicas` _integer_ | ScheduleGatedReplicas is the number of Pods that have been created with one or more scheduling gate(s) set.<br />Sum of ReadyReplicas and ScheduleGatedReplicas will always be <= Replicas. | 0 |  |
-| `scheduledReplicas` _integer_ | ScheduledReplicas is the number of Pods that have been scheduled by the kube-scheduler. | 0 |  |
+| `scheduledReplicas` _integer_ | ScheduledReplicas is the number of Pods that have been scheduled by the backend scheduler. | 0 |  |
 | `hpaPodSelector` _string_ | Selector is the label selector that determines which pods are part of the PodClique.<br />PodClique is a unit of scale and this selector is used by HPA to scale the PodClique based on metrics captured<br />for the pods that match this selector. |  |  |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#condition-v1-meta) array_ | Conditions represents the latest available observations of the clique by its controller. |  |  |
 | `currentPodCliqueSetGenerationHash` _string_ | CurrentPodCliqueSetGenerationHash establishes a correlation to PodCliqueSet generation hash indicating<br />that the spec of the PodCliqueSet at this generation is fully realized in the PodClique. |  |  |
@@ -1026,8 +1026,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `profiles` _[SchedulerProfile](#schedulerprofile) array_ | Profiles is the list of scheduler profiles. Each profile has a backend name and optional config.<br />The kube-scheduler backend is always enabled; use profile name "kube-scheduler" to configure or set it as default.<br />Valid profile names: "kube-scheduler", "kai-scheduler". Use defaultProfileName to designate the default backend. If not set, defaulting sets it to "kube-scheduler". |  |  |
-| `defaultProfileName` _string_ | DefaultProfileName is the name of the default scheduler profile. If unset, defaulting sets it to "kube-scheduler". |  |  |
+| `profiles` _[SchedulerProfile](#schedulerprofile) array_ | Profiles is the list of scheduler profiles. Each profile has a backend name and an optional config.<br />The default-scheduler backend is always enabled to ensure that the kubernetes default scheduler is always enabled and supported.<br />Use profile name "default-scheduler" to configure or set it as default.<br />Valid profile names: "default-scheduler", "kai-scheduler". Use defaultProfileName to designate the default backend. |  |  |
+| `defaultProfileName` _string_ | DefaultProfileName is the name of the default scheduler profile. If unset, defaulting sets it to "default-scheduler"<br />which is the kubernetes default scheduler. |  |  |
 
 
 #### SchedulerName
@@ -1044,7 +1044,7 @@ _Appears in:_
 | Field | Description |
 | --- | --- |
 | `kai-scheduler` | SchedulerNameKai is the KAI scheduler backend.<br /> |
-| `kube-scheduler` | SchedulerNameKube is the profile name for the Kubernetes default scheduler in OperatorConfiguration.<br /> |
+| `default-scheduler` | SchedulerNameKube is the profile name for the Kubernetes default scheduler in OperatorConfiguration.<br /> |
 
 
 #### SchedulerProfile
@@ -1060,7 +1060,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `name` _[SchedulerName](#schedulername)_ | Name is the scheduler profile name. Valid values: "kube-scheduler", "kai-scheduler".<br />For the Kubernetes default scheduler use "kube-scheduler"; Pod.Spec.SchedulerName will be set to "default-scheduler". |  | Enum: [kai-scheduler kube-scheduler] <br />Required: \{\} <br /> |
+| `name` _[SchedulerName](#schedulername)_ | Name is the scheduler profile name.<br />For the Kubernetes default scheduler use the standard "default-scheduler".<br />Ensure that the name chosen is a valid scheduler name. The name will also be directly set in `Pod.Spec.SchedulerName`. |  | Enum: [kai-scheduler default-scheduler] <br />Required: \{\} <br /> |
 | `config` _[RawExtension](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#rawextension-runtime-pkg)_ | Config holds backend-specific options. The operator unmarshals it into the config type for this backend (see backend config types). |  |  |
 
 

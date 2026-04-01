@@ -79,8 +79,7 @@ func (b *Backend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.P
 	return nil
 }
 
-// PreparePod adds Kubernetes default scheduler-specific configuration to the Pod.
-// Pod.Spec.SchedulerName is set to "default-scheduler" (the value expected by kube-apiserver / kube-scheduler).
+// PreparePod prepares the Pod by setting the relevant schedulerName field with the chosen scheduler backend.
 func (b *Backend) PreparePod(pod *corev1.Pod) {
 	pod.Spec.SchedulerName = b.name
 }

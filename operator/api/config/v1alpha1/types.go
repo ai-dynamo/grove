@@ -59,7 +59,7 @@ const (
 	// SchedulerNameKai is the KAI scheduler backend.
 	SchedulerNameKai SchedulerName = "kai-scheduler"
 	// SchedulerNameKube is the profile name for the Kubernetes default scheduler in OperatorConfiguration.
-	SchedulerNameKube SchedulerName = "kube-scheduler"
+	SchedulerNameKube SchedulerName = "default-scheduler"
 )
 
 var (
@@ -69,22 +69,25 @@ var (
 
 // SchedulerConfiguration configures scheduler profiles and which is the default.
 type SchedulerConfiguration struct {
-	// Profiles is the list of scheduler profiles. Each profile has a backend name and optional config.
-	// The kube-scheduler backend is always enabled; use profile name "kube-scheduler" to configure or set it as default.
-	// Valid profile names: "kube-scheduler", "kai-scheduler". Use defaultProfileName to designate the default backend. If not set, defaulting sets it to "kube-scheduler".
+	// Profiles is the list of scheduler profiles. Each profile has a backend name and an optional config.
+	// The default-scheduler backend is always enabled to ensure that the kubernetes default scheduler is always enabled and supported.
+	// Use profile name "default-scheduler" to configure or set it as default.
+	// Valid profile names: "default-scheduler", "kai-scheduler". Use defaultProfileName to designate the default backend.
 	// +optional
 	Profiles []SchedulerProfile `json:"profiles,omitempty"`
-	// DefaultProfileName is the name of the default scheduler profile. If unset, defaulting sets it to "kube-scheduler".
+	// DefaultProfileName is the name of the default scheduler profile. If unset, defaulting sets it to "default-scheduler"
+	// which is the kubernetes default scheduler.
 	// +optional
 	DefaultProfileName string `json:"defaultProfileName,omitempty"`
 }
 
 // SchedulerProfile defines a scheduler backend profile with optional backend-specific config.
 type SchedulerProfile struct {
-	// Name is the scheduler profile name. Valid values: "kube-scheduler", "kai-scheduler".
-	// For the Kubernetes default scheduler use "kube-scheduler"; Pod.Spec.SchedulerName will be set to "default-scheduler".
+	// Name is the scheduler profile name.
+	// For the Kubernetes default scheduler use the standard "default-scheduler".
+	// Ensure that the name chosen is a valid scheduler name. The name will also be directly set in `Pod.Spec.SchedulerName`.
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=kai-scheduler;kube-scheduler
+	// +kubebuilder:validation:Enum=kai-scheduler;default-scheduler
 	Name SchedulerName `json:"name"`
 
 	// Config holds backend-specific options. The operator unmarshals it into the config type for this backend (see backend config types).

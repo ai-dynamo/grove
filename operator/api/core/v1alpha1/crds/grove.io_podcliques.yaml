@@ -9112,7 +9112,7 @@ spec:
               scheduledReplicas:
                 default: 0
                 description: ScheduledReplicas is the number of Pods that have been
-                  scheduled by the kube-scheduler.
+                  scheduled by the backend scheduler.
                 format: int32
                 type: integer
               updateProgress:

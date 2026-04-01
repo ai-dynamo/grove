@@ -20,7 +20,7 @@ import (
 	"fmt"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend/kaischeduler"
+	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend/kai"
 	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend/kube"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -30,7 +30,7 @@ import (
 
 // Compile-time checks that backend implementations satisfy SchedBackend.
 var (
-	_ SchedBackend = (*kaischeduler.Backend)(nil)
+	_ SchedBackend = (*kai.Backend)(nil)
 	_ SchedBackend = (*kube.Backend)(nil)
 )
 
@@ -45,7 +45,7 @@ func newBackendForProfile(cl client.Client, scheme *runtime.Scheme, rec record.E
 		}
 		return b, nil
 	case configv1alpha1.SchedulerNameKai:
-		b := kaischeduler.New(cl, scheme, rec, p)
+		b := kai.New(cl, scheme, rec, p)
 		if err := b.Init(); err != nil {
 			return nil, err
 		}
@@ -61,7 +61,7 @@ var (
 )
 
 // Initialize creates and registers backend instances for each profile in config.Profiles.
-// Defaults are applied to config so that kube-scheduler is always present; only backends
+// Defaults are applied to config so that default-scheduler is always present; only backends
 // named in config.Profiles are started. Called once during operator startup before controllers start.
 func Initialize(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, cfg configv1alpha1.SchedulerConfiguration) error {
 	backends = make(map[string]SchedBackend)

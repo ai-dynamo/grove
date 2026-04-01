@@ -26,7 +26,7 @@ import (
 )
 
 // SchedBackend defines the interface that different scheduler backends must implement.
-// It is defined in this package (consumer side) so that kube and kaischeduler subpackages
+// It is defined in this package (consumer side) so that kube and kai subpackages
 // need not import schedulerbackend, avoiding circular dependencies (see "accept interfaces,
 // return structs" and consumer-defined interfaces in Go / Kubernetes).
 //

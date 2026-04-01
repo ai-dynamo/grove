@@ -301,7 +301,7 @@ func TestValidateSchedulerConfiguration(t *testing.T) {
 		},
 		// defaultProfileName is kube but kube not in profiles
 		{
-			name: "invalid: defaultProfileName not in profiles (kube-scheduler but only kai in profiles)",
+			name: "invalid: defaultProfileName not in profiles (default-scheduler but only kai in profiles)",
 			scheduler: &configv1alpha1.SchedulerConfiguration{
 				Profiles:           []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKai}},
 				DefaultProfileName: string(configv1alpha1.SchedulerNameKube),
@@ -317,7 +317,7 @@ func TestValidateSchedulerConfiguration(t *testing.T) {
 				Profiles: []configv1alpha1.SchedulerProfile{
 					{Name: ""},
 				},
-				DefaultProfileName: "kube-scheduler",
+				DefaultProfileName: "default-scheduler",
 			},
 			expectErrors:   2,
 			expectedFields: []string{"scheduler.profiles[0].name", "scheduler.defaultProfileName"},

@@ -120,7 +120,7 @@ type PodCliqueStatus struct {
 	// Sum of ReadyReplicas and ScheduleGatedReplicas will always be <= Replicas.
 	// +kubebuilder:default=0
 	ScheduleGatedReplicas int32 `json:"scheduleGatedReplicas"`
-	// ScheduledReplicas is the number of Pods that have been scheduled by the kube-scheduler.
+	// ScheduledReplicas is the number of Pods that have been scheduled by the backend scheduler.
 	// +kubebuilder:default=0
 	ScheduledReplicas int32 `json:"scheduledReplicas"`
 	// Selector is the label selector that determines which pods are part of the PodClique.

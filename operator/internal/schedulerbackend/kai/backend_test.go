@@ -14,7 +14,7 @@
 // limitations under the License.
 // */
 
-package kaischeduler
+package kai
 
 import (
 	"testing"
