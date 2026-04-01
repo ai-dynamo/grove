@@ -127,7 +127,7 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjectMeta
 
 // buildResource configures a PodGang with pod groups and priority.
 func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGangInfo, pg *groveschedulerv1alpha1.PodGang) error {
-	pg.Labels = getLabels(pcs.Name)
+	pg.Labels = lo.Assign(pg.Labels, getLabels(pcs.Name))
 	// Merge PCS annotations with computed annotations (topology annotation takes precedence)
 	toplologyAnnotations := make(map[string]string)
 	if r.tasConfig.Enabled {
