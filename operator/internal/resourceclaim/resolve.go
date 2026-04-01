@@ -1,0 +1,71 @@
+// Copyright 2025 The Grove Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package resourceclaim
+
+import (
+	"context"
+	"fmt"
+
+	resourcev1 "k8s.io/api/resource/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+)
+
+// ResolveTemplateSpec resolves a ResourceClaimTemplateRef to its ResourceClaimTemplateSpec.
+// For internal refs, it looks up the spec from the PCS-level resourceClaimTemplates.
+// For external refs, it fetches the Kubernetes ResourceClaimTemplate object from the cluster.
+func ResolveTemplateSpec(
+	ctx context.Context,
+	cl client.Reader,
+	ref *grovecorev1alpha1.ResourceClaimTemplateRef,
+	pcsTemplates []grovecorev1alpha1.ResourceClaimTemplateConfig,
+	pcsNamespace string,
+) (*resourcev1.ResourceClaimTemplateSpec, error) {
+	if ref.IsExternalRef {
+		return resolveExternalRef(ctx, cl, ref, pcsNamespace)
+	}
+	return resolveInternalRef(ref, pcsTemplates)
+}
+
+func resolveInternalRef(
+	ref *grovecorev1alpha1.ResourceClaimTemplateRef,
+	pcsTemplates []grovecorev1alpha1.ResourceClaimTemplateConfig,
+) (*resourcev1.ResourceClaimTemplateSpec, error) {
+	for i := range pcsTemplates {
+		if pcsTemplates[i].Name == ref.Name {
+			return &pcsTemplates[i].Template, nil
+		}
+	}
+	return nil, fmt.Errorf("internal ResourceClaimTemplate %q not found in PCS resourceClaimTemplates", ref.Name)
+}
+
+func resolveExternalRef(
+	ctx context.Context,
+	cl client.Reader,
+	ref *grovecorev1alpha1.ResourceClaimTemplateRef,
+	pcsNamespace string,
+) (*resourcev1.ResourceClaimTemplateSpec, error) {
+	ns := ref.Namespace
+	if ns == "" {
+		ns = pcsNamespace
+	}
+	rct := &resourcev1.ResourceClaimTemplate{}
+	if err := cl.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ns}, rct); err != nil {
+		return nil, fmt.Errorf("failed to get external ResourceClaimTemplate %s/%s: %w", ns, ref.Name, err)
+	}
+	return &rct.Spec, nil
+}

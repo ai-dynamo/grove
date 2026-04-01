@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -30,6 +31,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
+	"github.com/ai-dynamo/grove/operator/internal/resourceclaim"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -42,6 +44,8 @@ type syncContext struct {
 	ctx                            context.Context
 	pcs                            *grovecorev1alpha1.PodCliqueSet
 	pcsg                           *grovecorev1alpha1.PodCliqueScalingGroup
+	pcsgConfig                     *grovecorev1alpha1.PodCliqueScalingGroupConfig
+	pcsReplicaIndex                int
 	existingPCLQs                  []grovecorev1alpha1.PodClique
 	pcsgIndicesToTerminate         []string
 	pcsgIndicesToRequeue           []string
@@ -69,6 +73,13 @@ func (r _resource) prepareSyncContext(ctx context.Context, logger logr.Logger, p
 		)
 	}
 
+	// Resolve PCS replica index and matching PCSG config for resource sharing
+	syncCtx.pcsReplicaIndex, err = getPCSReplicaFromPCSG(pcsg)
+	if err != nil {
+		return nil, err
+	}
+	syncCtx.pcsgConfig = resourceclaim.FindPCSGConfig(syncCtx.pcs, pcsg, syncCtx.pcsReplicaIndex)
+
 	// compute the expected state and get existing state.
 	syncCtx.expectedPCLQFQNsPerPCSGReplica = getExpectedPodCliqueFQNsByPCSGReplica(pcsg)
 	syncCtx.existingPCLQs, err = r.getExistingPCLQs(ctx, pcsg)
@@ -89,6 +100,11 @@ func (r _resource) prepareSyncContext(ctx context.Context, logger logr.Logger, p
 
 // runSyncFlow executes the main synchronization logic for PodCliqueScalingGroup including replica management and updates
 func (r _resource) runSyncFlow(logger logr.Logger, sc *syncContext) error {
+	// Ensure PCSG-level ResourceClaims before creating any PodCliques
+	if err := r.ensurePCSGResourceClaims(sc); err != nil {
+		return err
+	}
+
 	// If there are excess PodCliques than expected, delete the ones that are no longer expected but existing.
 	// This can happen when PCSG replicas have been scaled-in.
 	if err := r.triggerDeletionOfExcessPCSGReplicas(logger, sc); err != nil {
@@ -150,6 +166,15 @@ func (r _resource) triggerDeletionOfExcessPCSGReplicas(logger logr.Logger, sc *s
 		if err := r.triggerDeletionOfPodCliques(sc.ctx, logger, pcsgObjectKey, deletionTasks); err != nil {
 			return err
 		}
+
+		// Cleanup PCSG-level PerReplica ResourceClaims for deleted replicas
+		if sc.pcsgConfig != nil && len(sc.pcsgConfig.ResourceSharing) > 0 {
+			for _, idxStr := range replicaIndicesToDelete {
+				idx, _ := strconv.Atoi(idxStr)
+				_ = resourceclaim.DeletePerReplicaRCs(sc.ctx, r.client, sc.pcsg.Name, sc.pcsg.Namespace, sc.pcsgConfig.ResourceSharing, idx)
+			}
+		}
+
 		return sc.refreshExistingPCLQs(sc.pcsg)
 	}
 	return nil
@@ -196,6 +221,9 @@ func (r _resource) createExpectedPCLQs(logger logr.Logger, sc *syncContext) erro
 			createTask := utils.Task{
 				Name: fmt.Sprintf("CreatePodClique-%s", pclqObjectKey),
 				Fn: func(ctx context.Context) error {
+					if err := r.ensurePCLQResourceClaimsFromFQN(ctx, sc, pclqFQN); err != nil {
+						return err
+					}
 					return r.doCreate(ctx, logger, sc.pcs, sc.pcsg, pcsgReplicaIndex, pclqObjectKey)
 				},
 			}
@@ -227,6 +255,9 @@ func (r _resource) createOrUpdatePCLQs(logger logr.Logger, sc *syncContext) erro
 			createOrUpdateTask := utils.Task{
 				Name: fmt.Sprintf("CreateOrUpdatePodClique-%s", pclqObjectKey),
 				Fn: func(ctx context.Context) error {
+					if err := r.ensurePCLQResourceClaimsFromFQN(ctx, sc, pclqFQN); err != nil {
+						return err
+					}
 					return r.doCreateOrUpdate(ctx, logger, sc.pcs, sc.pcsg, pcsgReplicaIndex, pclqObjectKey, pclqExists)
 				},
 			}
@@ -367,5 +398,93 @@ func (sc *syncContext) refreshExistingPCLQs(pcsg *grovecorev1alpha1.PodCliqueSca
 		}
 	}
 	sc.existingPCLQs = revisedExistingPCLQs
+	return nil
+}
+
+// ensurePCSGResourceClaims creates PCSG-level AllReplicas and PerReplica ResourceClaims.
+func (r _resource) ensurePCSGResourceClaims(sc *syncContext) error {
+	if sc.pcsgConfig == nil || len(sc.pcsgConfig.ResourceSharing) == 0 {
+		return nil
+	}
+	refs := sc.pcsgConfig.ResourceSharing
+
+	// AllReplicas scope: one set of RCs per PCSG
+	if err := resourceclaim.EnsureResourceClaims(
+		sc.ctx, r.client, r.client,
+		sc.pcsg.Name, sc.pcsg.Namespace,
+		refs,
+		sc.pcs.Spec.Template.ResourceClaimTemplates,
+		sc.pcs, r.scheme,
+		nil,
+	); err != nil {
+		return groveerr.WrapError(err,
+			errCodeCreatePodCliques,
+			component.OperationSync,
+			fmt.Sprintf("Error ensuring PCSG-level AllReplicas ResourceClaims for %s", client.ObjectKeyFromObject(sc.pcsg)),
+		)
+	}
+
+	// PerReplica scope: one set of RCs per PCSG replica
+	for pcsgReplicaIndex := range int(sc.pcsg.Spec.Replicas) {
+		repIdx := pcsgReplicaIndex
+		if err := resourceclaim.EnsureResourceClaims(
+			sc.ctx, r.client, r.client,
+			sc.pcsg.Name, sc.pcsg.Namespace,
+			refs,
+			sc.pcs.Spec.Template.ResourceClaimTemplates,
+			sc.pcs, r.scheme,
+			&repIdx,
+		); err != nil {
+			return groveerr.WrapError(err,
+				errCodeCreatePodCliques,
+				component.OperationSync,
+				fmt.Sprintf("Error ensuring PCSG-level PerReplica ResourceClaims for %s rep %d", client.ObjectKeyFromObject(sc.pcsg), pcsgReplicaIndex),
+			)
+		}
+	}
+	return nil
+}
+
+// ensurePCLQResourceClaimsFromFQN extracts the template name from a PCLQ FQN and ensures AllReplicas + PerReplica RCs.
+func (r _resource) ensurePCLQResourceClaimsFromFQN(ctx context.Context, sc *syncContext, pclqFQN string) error {
+	for _, cliqueName := range sc.pcsg.Spec.CliqueNames {
+		if strings.HasSuffix(pclqFQN, cliqueName) {
+			return r.ensurePCLQResourceClaims(ctx, sc.pcs, pclqFQN, cliqueName)
+		}
+	}
+	return nil
+}
+
+// ensurePCLQResourceClaims creates AllReplicas and PerReplica ResourceClaims for a PCLQ within a PCSG.
+func (r _resource) ensurePCLQResourceClaims(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pclqName, pclqTemplateName string) error {
+	pclqTemplateSpec := componentutils.FindPodCliqueTemplateSpecByName(pcs, pclqTemplateName)
+	if pclqTemplateSpec == nil || len(pclqTemplateSpec.ResourceSharing) == 0 {
+		return nil
+	}
+	// AllReplicas: one RC per PCLQ instance
+	if err := resourceclaim.EnsureResourceClaims(
+		ctx, r.client, r.client,
+		pclqName, pcs.Namespace,
+		pclqTemplateSpec.ResourceSharing,
+		pcs.Spec.Template.ResourceClaimTemplates,
+		pcs, r.scheme,
+		nil,
+	); err != nil {
+		return err
+	}
+	// PerReplica: one RC per PCLQ replica (pod index)
+	for replicaIdx := range int(pclqTemplateSpec.Spec.Replicas) {
+		idx := replicaIdx
+		if err := resourceclaim.EnsureResourceClaims(
+			ctx, r.client, r.client,
+			pclqName, pcs.Namespace,
+			pclqTemplateSpec.ResourceSharing,
+			pcs.Spec.Template.ResourceClaimTemplates,
+			pcs, r.scheme,
+			&idx,
+		); err != nil {
+			return err
+		}
+	}
 	return nil
 }

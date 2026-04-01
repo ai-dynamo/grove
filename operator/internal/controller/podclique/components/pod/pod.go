@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -28,6 +29,7 @@ import (
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
+	"github.com/ai-dynamo/grove/operator/internal/resourceclaim"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -164,11 +166,25 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 	addEnvironmentVariables(pod, pclq, pcsName, pcsReplicaIndex)
 	// Configure hostname and subdomain for service discovery
 	configurePodHostname(pcsName, pcsReplicaIndex, pclq.Name, pod, podIndex)
+	// Inject PCLQ-level PerReplica ResourceClaim refs (one per pod/replica)
+	injectPCLQPerReplicaResourceClaimRefs(pcs, pclq, &pod.Spec, podIndex)
 	// If there is a need to enforce a Startup-Order then configure the init container and add it to the Pod Spec.
 	if len(pclq.Spec.StartsAfter) != 0 {
 		return configurePodInitContainer(pcs, pclq, pod)
 	}
 	return nil
+}
+
+// injectPCLQPerReplicaResourceClaimRefs injects PerReplica-scope PCLQ ResourceClaim
+// references into a Pod's spec. Each pod gets its own unique RC based on podIndex.
+func injectPCLQPerReplicaResourceClaimRefs(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, podSpec *corev1.PodSpec, podIndex int) {
+	pclqTemplateSpec, ok := lo.Find(pcs.Spec.Template.Cliques, func(t *grovecorev1alpha1.PodCliqueTemplateSpec) bool {
+		return strings.HasSuffix(pclq.Name, t.Name)
+	})
+	if !ok || len(pclqTemplateSpec.ResourceSharing) == 0 {
+		return
+	}
+	resourceclaim.InjectResourceClaimRefs(podSpec, pclq.Name, pclqTemplateSpec.ResourceSharing, &podIndex)
 }
 
 // Delete removes all Pods associated with the specified PodClique
