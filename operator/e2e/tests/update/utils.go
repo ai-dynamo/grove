@@ -35,6 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/util/retry"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // ============================================================================
@@ -245,59 +246,43 @@ func updatePCSUpdateStrategy(tc tests.TestContext, strategyType grovev1alpha1.Up
 	tc.T.Helper()
 
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		pcs, err := utils.GetPodCliqueSet(tc.Ctx, tc.DynamicClient, tc.Workload.Name, tc.Namespace)
-		if err != nil {
+		var pcs grovev1alpha1.PodCliqueSet
+		if err := tc.CRClient.Get(tc.Ctx, types.NamespacedName{Name: tc.Workload.Name, Namespace: tc.Namespace}, &pcs); err != nil {
 			return fmt.Errorf("failed to fetch PodCliqueSet: %w", err)
 		}
+		pcs.SetGroupVersionKind(grovev1alpha1.SchemeGroupVersion.WithKind("PodCliqueSet"))
+		pcs.SetManagedFields(nil)
+		pcs.SetResourceVersion("")
 
 		if pcs.Spec.UpdateStrategy == nil {
 			pcs.Spec.UpdateStrategy = &grovev1alpha1.PodCliqueSetUpdateStrategy{}
 		}
 		pcs.Spec.UpdateStrategy.Type = strategyType
 
-		updatedUnstructured, err := tests.ConvertTypedToUnstructured(&pcs)
-		if err != nil {
-			return fmt.Errorf("failed to convert to unstructured: %w", err)
-		}
-
-		_, err = tc.DynamicClient.Resource(utils.PodCliqueSetGVR).Namespace(tc.Namespace).Update(tc.Ctx, updatedUnstructured, metav1.UpdateOptions{})
-		return err
+		return tc.CRClient.Patch(tc.Ctx, &pcs, client.Apply, client.FieldOwner("e2e-rolling-update-test"), client.ForceOwnership)
 	})
 }
 
 // triggerPodCliqueUpdate triggers an update by adding/updating an environment variable in a PodClique.
 // Uses tc.Workload.Name as the PCS name.
 func triggerPodCliqueUpdate(tc tests.TestContext, cliqueName string) error {
-	pcsGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquesets"}
 	pcsName := tc.Workload.Name
+	updateValue := fmt.Sprintf("%d", time.Now().UnixNano())
 
-	// Use current timestamp to ensure the value changes
-	updateValue := fmt.Sprintf("%d", time.Now().Unix())
-
-	// Retry on conflict errors (optimistic concurrency control)
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		// Get the unstructured PodCliqueSet
-		unstructuredPCS, err := tc.DynamicClient.Resource(pcsGVR).Namespace(tc.Namespace).Get(tc.Ctx, pcsName, metav1.GetOptions{})
-		if err != nil {
+		var pcs grovev1alpha1.PodCliqueSet
+		if err := tc.CRClient.Get(tc.Ctx, types.NamespacedName{Name: pcsName, Namespace: tc.Namespace}, &pcs); err != nil {
 			return fmt.Errorf("failed to get PodCliqueSet: %w", err)
 		}
+		pcs.SetGroupVersionKind(grovev1alpha1.SchemeGroupVersion.WithKind("PodCliqueSet"))
+		pcs.SetManagedFields(nil)
+		pcs.SetResourceVersion("")
 
-		// Convert unstructured to typed PodCliqueSet
-		var pcs grovev1alpha1.PodCliqueSet
-		err = utils.ConvertUnstructuredToTyped(unstructuredPCS.Object, &pcs)
-		if err != nil {
-			return fmt.Errorf("failed to convert to PodCliqueSet: %w", err)
-		}
-
-		// Find and update the appropriate clique
 		found := false
 		for i, clique := range pcs.Spec.Template.Cliques {
 			if clique.Name == cliqueName {
-				// Update the first container's environment variable
 				if len(clique.Spec.PodSpec.Containers) > 0 {
 					container := &pcs.Spec.Template.Cliques[i].Spec.PodSpec.Containers[0]
-
-					// Check if UPDATE_TRIGGER env var exists
 					envVarFound := false
 					for j := range container.Env {
 						if container.Env[j].Name == "UPDATE_TRIGGER" {
@@ -306,8 +291,6 @@ func triggerPodCliqueUpdate(tc tests.TestContext, cliqueName string) error {
 							break
 						}
 					}
-
-					// If not found, add new env var
 					if !envVarFound {
 						container.Env = append(container.Env, corev1.EnvVar{
 							Name:  "UPDATE_TRIGGER",
@@ -324,19 +307,7 @@ func triggerPodCliqueUpdate(tc tests.TestContext, cliqueName string) error {
 			return fmt.Errorf("clique %s not found in PodCliqueSet %s", cliqueName, pcsName)
 		}
 
-		// Convert back to unstructured
-		updatedUnstructured, err := tests.ConvertTypedToUnstructured(&pcs)
-		if err != nil {
-			return fmt.Errorf("failed to convert to unstructured: %w", err)
-		}
-
-		// Update the resource - will return conflict error if resource was modified
-		_, err = tc.DynamicClient.Resource(pcsGVR).Namespace(tc.Namespace).Update(tc.Ctx, updatedUnstructured, metav1.UpdateOptions{})
-		if err != nil {
-			return err
-		}
-
-		return nil
+		return tc.CRClient.Patch(tc.Ctx, &pcs, client.Apply, client.FieldOwner("e2e-rolling-update-test"), client.ForceOwnership)
 	})
 }
 
@@ -344,42 +315,25 @@ func triggerPodCliqueUpdate(tc tests.TestContext, cliqueName string) error {
 // and sets the termination grace period to 5 seconds. This makes pods ignore graceful shutdown but still
 // allows updates to progress in a reasonable time for testing.
 func patchPCSWithSIGTERMIgnoringCommand(tc tests.TestContext) error {
-	pcsGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquesets"}
-	pcsName := tc.Workload.Name
-
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		unstructuredPCS, err := tc.DynamicClient.Resource(pcsGVR).Namespace(tc.Namespace).Get(tc.Ctx, pcsName, metav1.GetOptions{})
-		if err != nil {
+		var pcs grovev1alpha1.PodCliqueSet
+		if err := tc.CRClient.Get(tc.Ctx, types.NamespacedName{Name: tc.Workload.Name, Namespace: tc.Namespace}, &pcs); err != nil {
 			return fmt.Errorf("failed to get PodCliqueSet: %w", err)
 		}
+		pcs.SetGroupVersionKind(grovev1alpha1.SchemeGroupVersion.WithKind("PodCliqueSet"))
+		pcs.SetManagedFields(nil)
+		pcs.SetResourceVersion("")
 
-		var pcs grovev1alpha1.PodCliqueSet
-		err = utils.ConvertUnstructuredToTyped(unstructuredPCS.Object, &pcs)
-		if err != nil {
-			return fmt.Errorf("failed to convert to PodCliqueSet: %w", err)
-		}
-
-		// Update all cliques: set termination grace period and make containers ignore SIGTERM
 		terminationGracePeriod := int64(5)
 		for i := range pcs.Spec.Template.Cliques {
-			// Set termination grace period to 5 seconds
 			pcs.Spec.Template.Cliques[i].Spec.PodSpec.TerminationGracePeriodSeconds = &terminationGracePeriod
-
-			// Update all containers to use a command that ignores SIGTERM
 			for j := range pcs.Spec.Template.Cliques[i].Spec.PodSpec.Containers {
 				container := &pcs.Spec.Template.Cliques[i].Spec.PodSpec.Containers[j]
-				// Use shell command that traps and ignores SIGTERM, then sleeps forever
 				container.Command = []string{"/bin/sh", "-c", "trap '' TERM; sleep infinity"}
 			}
 		}
 
-		updatedUnstructured, err := tests.ConvertTypedToUnstructured(&pcs)
-		if err != nil {
-			return fmt.Errorf("failed to convert to unstructured: %w", err)
-		}
-
-		_, err = tc.DynamicClient.Resource(pcsGVR).Namespace(tc.Namespace).Update(tc.Ctx, updatedUnstructured, metav1.UpdateOptions{})
-		return err
+		return tc.CRClient.Patch(tc.Ctx, &pcs, client.Apply, client.FieldOwner("e2e-rolling-update-test"), client.ForceOwnership)
 	})
 }
 
@@ -1340,11 +1294,15 @@ func verifyNoAutomaticDeletionAfterUpdate(
 func excludeNodeFromPodCliqueAffinity(tc tests.TestContext, cliqueName string, nodeName string) error {
 	tc.T.Helper()
 
+	pcsName := tc.Workload.Name
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		pcs, err := utils.GetPodCliqueSet(tc.Ctx, tc.DynamicClient, tc.Workload.Name, tc.Namespace)
-		if err != nil {
+		var pcs grovev1alpha1.PodCliqueSet
+		if err := tc.CRClient.Get(tc.Ctx, types.NamespacedName{Name: pcsName, Namespace: tc.Namespace}, &pcs); err != nil {
 			return fmt.Errorf("failed to get PodCliqueSet: %w", err)
 		}
+		pcs.SetGroupVersionKind(grovev1alpha1.SchemeGroupVersion.WithKind("PodCliqueSet"))
+		pcs.SetManagedFields(nil)
+		pcs.SetResourceVersion("")
 
 		found := false
 		for i, clique := range pcs.Spec.Template.Cliques {
@@ -1373,16 +1331,10 @@ func excludeNodeFromPodCliqueAffinity(tc tests.TestContext, cliqueName string, n
 		}
 
 		if !found {
-			return fmt.Errorf("clique %s not found in PodCliqueSet %s", cliqueName, tc.Workload.Name)
+			return fmt.Errorf("clique %s not found in PodCliqueSet %s", cliqueName, pcsName)
 		}
 
-		updatedUnstructured, err := tests.ConvertTypedToUnstructured(&pcs)
-		if err != nil {
-			return fmt.Errorf("failed to convert to unstructured: %w", err)
-		}
-
-		_, err = tc.DynamicClient.Resource(utils.PodCliqueSetGVR).Namespace(tc.Namespace).Update(tc.Ctx, updatedUnstructured, metav1.UpdateOptions{})
-		return err
+		return tc.CRClient.Patch(tc.Ctx, &pcs, client.Apply, client.FieldOwner("e2e-rolling-update-test"), client.ForceOwnership)
 	})
 }
 

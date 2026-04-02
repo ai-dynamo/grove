@@ -185,6 +185,8 @@ type PodCliqueSetReplicaUpdateProgress struct {
 // - The "Replicas" value of that clique
 type PodCliqueSetTemplateSpec struct {
 	// Cliques is a slice of cliques that make up the PodGang. There should be at least one PodClique.
+	// +listType=map
+	// +listMapKey=name
 	Cliques []*PodCliqueTemplateSpec `json:"cliques"`
 	// StartupType defines the type of startup dependency amongst the cliques within a PodGang.
 	// If it is not defined then default of CliqueStartupTypeAnyOrder is used.
