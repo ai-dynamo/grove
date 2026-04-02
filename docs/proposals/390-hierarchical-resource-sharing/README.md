@@ -25,6 +25,8 @@
   - [Implementation History](#implementation-history)
   - [Alternatives](#alternatives)
   - [Appendix](#appendix)
+    - [Follow-up: Common <code>NamespacedName</code> type](#follow-up-common-namespacedname-type)
+    - [DRA Background](#dra-background)
 <!-- /toc -->
 
 ## Summary
