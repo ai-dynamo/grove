@@ -25,6 +25,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/hash"
 	pcscomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 
@@ -43,10 +44,11 @@ type Reconciler struct {
 	reconcileStatusRecorder       ctrlcommon.ReconcileErrorRecorder
 	operatorRegistry              component.OperatorRegistry[grovecorev1alpha1.PodCliqueSet]
 	pcsGenerationHashExpectations sync.Map
+	podTemplateSpecHashCache      *hash.PodTemplateSpecHashCache
 }
 
 // NewReconciler creates a new reconciler for PodCliqueSet.
-func NewReconciler(mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueSetControllerConfiguration, topologyAwareSchedulingConfig configv1alpha1.TopologyAwareSchedulingConfiguration, networkConfig configv1alpha1.NetworkAcceleration) *Reconciler {
+func NewReconciler(mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueSetControllerConfiguration, topologyAwareSchedulingConfig configv1alpha1.TopologyAwareSchedulingConfiguration, networkConfig configv1alpha1.NetworkAcceleration, podTemplateSpecHashCache *hash.PodTemplateSpecHashCache) *Reconciler {
 	eventRecorder := mgr.GetEventRecorderFor(controllerName)
 	client := mgr.GetClient()
 	return &Reconciler{
@@ -54,8 +56,9 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueSetCo
 		tasConfig:                     topologyAwareSchedulingConfig,
 		client:                        client,
 		reconcileStatusRecorder:       ctrlcommon.NewReconcileErrorRecorder(client),
-		operatorRegistry:              pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig),
+		operatorRegistry:              pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, podTemplateSpecHashCache),
 		pcsGenerationHashExpectations: sync.Map{},
+		podTemplateSpecHashCache:      podTemplateSpecHashCache,
 	}
 }
 

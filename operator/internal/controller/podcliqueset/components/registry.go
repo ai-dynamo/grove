@@ -20,6 +20,7 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/hash"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/hpa"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podclique"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podcliquescalinggroup"
@@ -37,10 +38,10 @@ import (
 )
 
 // CreateOperatorRegistry initializes the operator registry for the PodCliqueSet reconciler
-func CreateOperatorRegistry(mgr manager.Manager, eventRecorder record.EventRecorder, topologyAwareSchedulingConfig configv1alpha1.TopologyAwareSchedulingConfiguration, networkConfig configv1alpha1.NetworkAcceleration) component.OperatorRegistry[v1alpha1.PodCliqueSet] {
+func CreateOperatorRegistry(mgr manager.Manager, eventRecorder record.EventRecorder, topologyAwareSchedulingConfig configv1alpha1.TopologyAwareSchedulingConfiguration, networkConfig configv1alpha1.NetworkAcceleration, podTemplateSpecHashCache *hash.PodTemplateSpecHashCache) component.OperatorRegistry[v1alpha1.PodCliqueSet] {
 	cl := mgr.GetClient()
 	reg := component.NewOperatorRegistry[v1alpha1.PodCliqueSet]()
-	reg.Register(component.KindPodClique, podclique.New(cl, mgr.GetScheme(), eventRecorder))
+	reg.Register(component.KindPodClique, podclique.New(cl, mgr.GetScheme(), eventRecorder, podTemplateSpecHashCache))
 	reg.Register(component.KindHeadlessService, service.New(cl, mgr.GetScheme()))
 	reg.Register(component.KindRole, role.New(cl, mgr.GetScheme()))
 	reg.Register(component.KindRoleBinding, rolebinding.New(cl, mgr.GetScheme()))

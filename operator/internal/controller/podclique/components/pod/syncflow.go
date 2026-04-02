@@ -60,12 +60,12 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pclq
 		)
 	}
 
-	sc.expectedPodTemplateHash, err = componentutils.GetExpectedPCLQPodTemplateHash(sc.pcs, pclq.ObjectMeta)
+	sc.expectedPodTemplateHash, err = componentutils.GetExpectedPCLQPodTemplateHash(r.podTemplateSpecHashCache, sc.pcs, pclq.ObjectMeta)
 	if err != nil {
 		return nil, groveerr.WrapError(err,
-			errCodeGetPodCliqueTemplate,
+			errComputePodSpecTemplateHash,
 			component.OperationSync,
-			fmt.Sprintf("failed to compute pod clique template hash for PodClique: %v in PodCliqueSet", client.ObjectKeyFromObject(pclq)),
+			fmt.Sprintf("Error computing pod template spec hash for PodClique: %v", client.ObjectKeyFromObject(pclq)),
 		)
 	}
 
