@@ -103,7 +103,7 @@ spec:
                             ResourceClaim for each pod.
                           items:
                             description: |-
-                              ResourceClaimTemplateRef references a ResourceClaimTemplateSpec and defines the
+                              ResourceSharingEntry references a ResourceClaimTemplateSpec and defines the
                               sharing scope for the resulting ResourceClaim(s).
                             properties:
                               filter:
@@ -113,41 +113,30 @@ spec:
                                 properties:
                                   cliqueNames:
                                     description: CliqueNames lists PodClique template
-                                      names to include or exclude.
+                                      names to include.
                                     items:
                                       type: string
                                     type: array
                                   groupNames:
                                     description: |-
-                                      GroupNames lists PodCliqueScalingGroup config names to include or exclude.
+                                      GroupNames lists PodCliqueScalingGroup config names to include.
                                       Only valid at PCS level.
                                     items:
                                       type: string
                                     type: array
-                                  mode:
-                                    description: |-
-                                      Mode specifies whether the listed names are included or excluded.
-                                      Defaults to Include if not specified.
-                                    enum:
-                                    - Include
-                                    - Exclude
-                                    type: string
                                 type: object
-                              isExternalRef:
-                                description: |-
-                                  IsExternalRef indicates that Name refers to an externally created Kubernetes
-                                  ResourceClaimTemplate object rather than a PCS-level ResourceClaimTemplateConfig.
-                                type: boolean
                               name:
                                 description: |-
-                                  Name of the referenced template. When IsExternalRef is false (default), this must
-                                  match a name in PodCliqueSetTemplateSpec.ResourceClaimTemplates. When IsExternalRef
-                                  is true, this is the name of a Kubernetes ResourceClaimTemplate object.
+                                  Name of the referenced template. Resolved by first looking up
+                                  PodCliqueSetTemplateSpec.ResourceClaimTemplates; if no match is found,
+                                  the operator looks for a Kubernetes ResourceClaimTemplate object in the
+                                  target namespace. Internal templates shadow external ones with the same name.
                                 type: string
                               namespace:
                                 description: |-
-                                  Namespace of the referenced ResourceClaimTemplate. Only used when IsExternalRef
-                                  is true. If empty, defaults to the namespace of the PodCliqueSet.
+                                  Namespace of the external ResourceClaimTemplate. When set, the name is
+                                  resolved as an external Kubernetes ResourceClaimTemplate in the given
+                                  namespace. When empty, defaults to the PCS namespace during resolution.
                                 type: string
                               scope:
                                 description: |-
@@ -9410,7 +9399,7 @@ spec:
                             The optional Filter field controls which PodCliques receive the claims.
                           items:
                             description: |-
-                              ResourceClaimTemplateRef references a ResourceClaimTemplateSpec and defines the
+                              ResourceSharingEntry references a ResourceClaimTemplateSpec and defines the
                               sharing scope for the resulting ResourceClaim(s).
                             properties:
                               filter:
@@ -9420,41 +9409,30 @@ spec:
                                 properties:
                                   cliqueNames:
                                     description: CliqueNames lists PodClique template
-                                      names to include or exclude.
+                                      names to include.
                                     items:
                                       type: string
                                     type: array
                                   groupNames:
                                     description: |-
-                                      GroupNames lists PodCliqueScalingGroup config names to include or exclude.
+                                      GroupNames lists PodCliqueScalingGroup config names to include.
                                       Only valid at PCS level.
                                     items:
                                       type: string
                                     type: array
-                                  mode:
-                                    description: |-
-                                      Mode specifies whether the listed names are included or excluded.
-                                      Defaults to Include if not specified.
-                                    enum:
-                                    - Include
-                                    - Exclude
-                                    type: string
                                 type: object
-                              isExternalRef:
-                                description: |-
-                                  IsExternalRef indicates that Name refers to an externally created Kubernetes
-                                  ResourceClaimTemplate object rather than a PCS-level ResourceClaimTemplateConfig.
-                                type: boolean
                               name:
                                 description: |-
-                                  Name of the referenced template. When IsExternalRef is false (default), this must
-                                  match a name in PodCliqueSetTemplateSpec.ResourceClaimTemplates. When IsExternalRef
-                                  is true, this is the name of a Kubernetes ResourceClaimTemplate object.
+                                  Name of the referenced template. Resolved by first looking up
+                                  PodCliqueSetTemplateSpec.ResourceClaimTemplates; if no match is found,
+                                  the operator looks for a Kubernetes ResourceClaimTemplate object in the
+                                  target namespace. Internal templates shadow external ones with the same name.
                                 type: string
                               namespace:
                                 description: |-
-                                  Namespace of the referenced ResourceClaimTemplate. Only used when IsExternalRef
-                                  is true. If empty, defaults to the namespace of the PodCliqueSet.
+                                  Namespace of the external ResourceClaimTemplate. When set, the name is
+                                  resolved as an external Kubernetes ResourceClaimTemplate in the given
+                                  namespace. When empty, defaults to the PCS namespace during resolution.
                                 type: string
                               scope:
                                 description: |-
@@ -10020,7 +9998,7 @@ spec:
                     items:
                       description: |-
                         ResourceClaimTemplateConfig defines a named ResourceClaimTemplateSpec that can be
-                        referenced by ResourceClaimTemplateRef entries in resourceSharing fields.
+                        referenced by ResourceSharingEntry entries in resourceSharing fields.
                       properties:
                         name:
                           description: Name is a unique identifier for this template
@@ -10713,7 +10691,7 @@ spec:
                       The optional Filter field controls which children receive the claims.
                     items:
                       description: |-
-                        ResourceClaimTemplateRef references a ResourceClaimTemplateSpec and defines the
+                        ResourceSharingEntry references a ResourceClaimTemplateSpec and defines the
                         sharing scope for the resulting ResourceClaim(s).
                       properties:
                         filter:
@@ -10723,41 +10701,30 @@ spec:
                           properties:
                             cliqueNames:
                               description: CliqueNames lists PodClique template names
-                                to include or exclude.
+                                to include.
                               items:
                                 type: string
                               type: array
                             groupNames:
                               description: |-
-                                GroupNames lists PodCliqueScalingGroup config names to include or exclude.
+                                GroupNames lists PodCliqueScalingGroup config names to include.
                                 Only valid at PCS level.
                               items:
                                 type: string
                               type: array
-                            mode:
-                              description: |-
-                                Mode specifies whether the listed names are included or excluded.
-                                Defaults to Include if not specified.
-                              enum:
-                              - Include
-                              - Exclude
-                              type: string
                           type: object
-                        isExternalRef:
-                          description: |-
-                            IsExternalRef indicates that Name refers to an externally created Kubernetes
-                            ResourceClaimTemplate object rather than a PCS-level ResourceClaimTemplateConfig.
-                          type: boolean
                         name:
                           description: |-
-                            Name of the referenced template. When IsExternalRef is false (default), this must
-                            match a name in PodCliqueSetTemplateSpec.ResourceClaimTemplates. When IsExternalRef
-                            is true, this is the name of a Kubernetes ResourceClaimTemplate object.
+                            Name of the referenced template. Resolved by first looking up
+                            PodCliqueSetTemplateSpec.ResourceClaimTemplates; if no match is found,
+                            the operator looks for a Kubernetes ResourceClaimTemplate object in the
+                            target namespace. Internal templates shadow external ones with the same name.
                           type: string
                         namespace:
                           description: |-
-                            Namespace of the referenced ResourceClaimTemplate. Only used when IsExternalRef
-                            is true. If empty, defaults to the namespace of the PodCliqueSet.
+                            Namespace of the external ResourceClaimTemplate. When set, the name is
+                            resolved as an external Kubernetes ResourceClaimTemplate in the given
+                            namespace. When empty, defaults to the PCS namespace during resolution.
                           type: string
                         scope:
                           description: |-

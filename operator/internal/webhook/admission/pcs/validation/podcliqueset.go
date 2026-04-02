@@ -135,10 +135,10 @@ func (v *pcsValidator) validatePCSGResourceSharing(cfg grovecorev1alpha1.PodCliq
 			continue
 		}
 		filterPath := refPath.Child("filter")
+		allErrs = append(allErrs, validateFilter(ref.Filter, filterPath)...)
 		if len(ref.Filter.GroupNames) > 0 {
 			allErrs = append(allErrs, field.Forbidden(filterPath.Child("groupNames"), "groupNames is not valid at PCSG level"))
 		}
-		allErrs = append(allErrs, validateFilterMode(ref.Filter, filterPath)...)
 		for j, cn := range ref.Filter.CliqueNames {
 			if !cliqueNameSet.Has(cn) {
 				allErrs = append(allErrs, field.NotFound(filterPath.Child("cliqueNames").Index(j), cn))
@@ -151,7 +151,7 @@ func (v *pcsValidator) validatePCSGResourceSharing(cfg grovecorev1alpha1.PodCliq
 // validatePCSFilter validates Filter entries in PCS-level ResourceSharing, checking that
 // cliqueNames refer to valid PodClique template names and groupNames refer to valid
 // PodCliqueScalingGroup config names.
-func (v *pcsValidator) validatePCSFilter(refs []grovecorev1alpha1.ResourceClaimTemplateRef, fldPath *field.Path) field.ErrorList {
+func (v *pcsValidator) validatePCSFilter(refs []grovecorev1alpha1.ResourceSharingEntry, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	cliqueNames := sets.New[string]()
 	for _, c := range v.pcs.Spec.Template.Cliques {
@@ -166,7 +166,7 @@ func (v *pcsValidator) validatePCSFilter(refs []grovecorev1alpha1.ResourceClaimT
 			continue
 		}
 		filterPath := fldPath.Index(i).Child("filter")
-		allErrs = append(allErrs, validateFilterMode(ref.Filter, filterPath)...)
+		allErrs = append(allErrs, validateFilter(ref.Filter, filterPath)...)
 		for j, cn := range ref.Filter.CliqueNames {
 			if !cliqueNames.Has(cn) {
 				allErrs = append(allErrs, field.NotFound(filterPath.Child("cliqueNames").Index(j), cn))
@@ -181,12 +181,9 @@ func (v *pcsValidator) validatePCSFilter(refs []grovecorev1alpha1.ResourceClaimT
 	return allErrs
 }
 
-// validateFilterMode validates the filter mode enum and that at least one name is provided.
-func validateFilterMode(f *grovecorev1alpha1.ResourceSharingFilter, fldPath *field.Path) field.ErrorList {
+// validateFilter validates that a filter specifies at least one name.
+func validateFilter(f *grovecorev1alpha1.ResourceSharingFilter, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-	if f.Mode != "" && f.Mode != grovecorev1alpha1.ResourceSharingFilterModeInclude && f.Mode != grovecorev1alpha1.ResourceSharingFilterModeExclude {
-		allErrs = append(allErrs, field.NotSupported(fldPath.Child("mode"), f.Mode, []string{string(grovecorev1alpha1.ResourceSharingFilterModeInclude), string(grovecorev1alpha1.ResourceSharingFilterModeExclude)}))
-	}
 	if len(f.CliqueNames) == 0 && len(f.GroupNames) == 0 {
 		allErrs = append(allErrs, field.Required(fldPath, "filter must specify at least one cliqueNames or groupNames entry"))
 	}
@@ -194,7 +191,7 @@ func validateFilterMode(f *grovecorev1alpha1.ResourceSharingFilter, fldPath *fie
 }
 
 // validatePCLQNoFilter rejects Filter on PCLQ-level resourceSharing since PCLQs have no children to filter.
-func validatePCLQNoFilter(refs []grovecorev1alpha1.ResourceClaimTemplateRef, fldPath *field.Path) field.ErrorList {
+func validatePCLQNoFilter(refs []grovecorev1alpha1.ResourceSharingEntry, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	for i, ref := range refs {
 		if ref.Filter != nil {
@@ -204,8 +201,8 @@ func validatePCLQNoFilter(refs []grovecorev1alpha1.ResourceClaimTemplateRef, fld
 	return allErrs
 }
 
-// validateResourceSharing validates a slice of ResourceClaimTemplateRef entries.
-func (v *pcsValidator) validateResourceSharing(refs []grovecorev1alpha1.ResourceClaimTemplateRef, fldPath *field.Path) field.ErrorList {
+// validateResourceSharing validates a slice of ResourceSharingEntry entries.
+func (v *pcsValidator) validateResourceSharing(refs []grovecorev1alpha1.ResourceSharingEntry, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	templateNames := sets.New[string]()
 	for _, rct := range v.pcs.Spec.Template.ResourceClaimTemplates {
@@ -221,11 +218,8 @@ func (v *pcsValidator) validateResourceSharing(refs []grovecorev1alpha1.Resource
 			allErrs = append(allErrs, field.Duplicate(refPath.Child("name"), ref.Name))
 		}
 		seenNames.Insert(ref.Name)
-		if !ref.IsExternalRef && ref.Name != "" && !templateNames.Has(ref.Name) {
-			allErrs = append(allErrs, field.NotFound(refPath.Child("name"), ref.Name))
-		}
-		if ref.Namespace != "" && !ref.IsExternalRef {
-			allErrs = append(allErrs, field.Invalid(refPath.Child("namespace"), ref.Namespace, "namespace may only be set when isExternalRef is true"))
+		if ref.Namespace != "" && ref.Name != "" && templateNames.Has(ref.Name) {
+			allErrs = append(allErrs, field.Invalid(refPath.Child("namespace"), ref.Namespace, "namespace must be empty when name matches an internal resourceClaimTemplate"))
 		}
 	}
 	return allErrs

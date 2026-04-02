@@ -225,7 +225,7 @@ type PodCliqueSetTemplateSpec struct {
 	//   - PerReplica: one RC per PCS replica, shared across ALL pods in that replica
 	// The optional Filter field controls which children receive the claims.
 	// +optional
-	ResourceSharing []ResourceClaimTemplateRef `json:"resourceSharing,omitempty"`
+	ResourceSharing []ResourceSharingEntry `json:"resourceSharing,omitempty"`
 	// PodCliqueScalingGroupConfigs is a list of scaling groups for the PodCliqueSet.
 	PodCliqueScalingGroupConfigs []PodCliqueScalingGroupConfig `json:"podCliqueScalingGroups,omitempty"`
 }
@@ -260,7 +260,7 @@ type PodCliqueTemplateSpec struct {
 	// Spec.PodSpec.ResourceClaims[x].ResourceClaimTemplateName, which creates a unique
 	// ResourceClaim for each pod.
 	// +optional
-	ResourceSharing []ResourceClaimTemplateRef `json:"resourceSharing,omitempty"`
+	ResourceSharing []ResourceSharingEntry `json:"resourceSharing,omitempty"`
 	// Specification of the desired behavior of a PodClique.
 	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#spec-and-status
 	Spec PodCliqueSpec `json:"spec"`
@@ -315,7 +315,7 @@ type PodCliqueScalingGroupConfig struct {
 	//   - PerReplica: one RC per PCSG replica, shared across all PCLQs in that replica
 	// The optional Filter field controls which PodCliques receive the claims.
 	// +optional
-	ResourceSharing []ResourceClaimTemplateRef `json:"resourceSharing,omitempty"`
+	ResourceSharing []ResourceSharingEntry `json:"resourceSharing,omitempty"`
 	// TopologyConstraint defines topology placement requirements for PodCliqueScalingGroup.
 	// Must be equal to or stricter than parent PodCliqueSet constraints.
 	// +optional
@@ -336,7 +336,7 @@ const (
 )
 
 // ResourceClaimTemplateConfig defines a named ResourceClaimTemplateSpec that can be
-// referenced by ResourceClaimTemplateRef entries in resourceSharing fields.
+// referenced by ResourceSharingEntry entries in resourceSharing fields.
 type ResourceClaimTemplateConfig struct {
 	// Name is a unique identifier for this template within the PodCliqueSet.
 	Name string `json:"name"`
@@ -344,19 +344,17 @@ type ResourceClaimTemplateConfig struct {
 	Template resourcev1.ResourceClaimTemplateSpec `json:"template"`
 }
 
-// ResourceClaimTemplateRef references a ResourceClaimTemplateSpec and defines the
+// ResourceSharingEntry references a ResourceClaimTemplateSpec and defines the
 // sharing scope for the resulting ResourceClaim(s).
-type ResourceClaimTemplateRef struct {
-	// Name of the referenced template. When IsExternalRef is false (default), this must
-	// match a name in PodCliqueSetTemplateSpec.ResourceClaimTemplates. When IsExternalRef
-	// is true, this is the name of a Kubernetes ResourceClaimTemplate object.
+type ResourceSharingEntry struct {
+	// Name of the referenced template. Resolved by first looking up
+	// PodCliqueSetTemplateSpec.ResourceClaimTemplates; if no match is found,
+	// the operator looks for a Kubernetes ResourceClaimTemplate object in the
+	// target namespace. Internal templates shadow external ones with the same name.
 	Name string `json:"name"`
-	// IsExternalRef indicates that Name refers to an externally created Kubernetes
-	// ResourceClaimTemplate object rather than a PCS-level ResourceClaimTemplateConfig.
-	// +optional
-	IsExternalRef bool `json:"isExternalRef,omitempty"`
-	// Namespace of the referenced ResourceClaimTemplate. Only used when IsExternalRef
-	// is true. If empty, defaults to the namespace of the PodCliqueSet.
+	// Namespace of the external ResourceClaimTemplate. When set, the name is
+	// resolved as an external Kubernetes ResourceClaimTemplate in the given
+	// namespace. When empty, defaults to the PCS namespace during resolution.
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
 	// Scope determines the sharing granularity for the ResourceClaims created from
@@ -368,27 +366,13 @@ type ResourceClaimTemplateRef struct {
 	Filter *ResourceSharingFilter `json:"filter,omitempty"`
 }
 
-// ResourceSharingFilterMode defines whether the filter includes or excludes the listed children.
-// +kubebuilder:validation:Enum=Include;Exclude
-type ResourceSharingFilterMode string
-
-const (
-	// ResourceSharingFilterModeInclude means only the listed children receive the claims.
-	ResourceSharingFilterModeInclude ResourceSharingFilterMode = "Include"
-	// ResourceSharingFilterModeExclude means all children except the listed ones receive the claims.
-	ResourceSharingFilterModeExclude ResourceSharingFilterMode = "Exclude"
-)
-
 // ResourceSharingFilter controls which children receive the ResourceClaims.
+// Listed names are included; unlisted children do not receive the claims.
 type ResourceSharingFilter struct {
-	// Mode specifies whether the listed names are included or excluded.
-	// Defaults to Include if not specified.
-	// +optional
-	Mode ResourceSharingFilterMode `json:"mode,omitempty"`
-	// CliqueNames lists PodClique template names to include or exclude.
+	// CliqueNames lists PodClique template names to include.
 	// +optional
 	CliqueNames []string `json:"cliqueNames,omitempty"`
-	// GroupNames lists PodCliqueScalingGroup config names to include or exclude.
+	// GroupNames lists PodCliqueScalingGroup config names to include.
 	// Only valid at PCS level.
 	// +optional
 	GroupNames []string `json:"groupNames,omitempty"`
