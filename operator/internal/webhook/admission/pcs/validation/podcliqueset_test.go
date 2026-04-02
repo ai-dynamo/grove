@@ -24,7 +24,7 @@ import (
 
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend"
+	schedmanager "github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/samber/lo"
@@ -291,7 +291,7 @@ func TestValidateSchedulerNames(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := schedulerbackend.Initialize(cl, cl.Scheme(), recorder, tt.schedulerConfig)
+			err := schedmanager.Initialize(cl, cl.Scheme(), recorder, tt.schedulerConfig)
 			require.NoError(t, err)
 
 			pcsBuilder := testutils.NewPodCliqueSetBuilder("test", "default", uuid.NewUUID()).

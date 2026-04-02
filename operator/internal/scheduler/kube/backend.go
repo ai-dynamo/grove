@@ -21,6 +21,7 @@ import (
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -29,12 +30,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// PodSchedulerName is the value set on Pod.Spec.SchedulerName for the Kubernetes default scheduler.
-const PodSchedulerName = "default-scheduler"
-
-// Backend implements the scheduler backend interface (SchedBackend in schedulerbackend package) for Kubernetes default scheduler.
+// schedulerBackend implements the scheduler backend interface (SchedBackend in schedulerbackend package) for Kubernetes default scheduler.
 // This backend does minimal work - just sets the scheduler name on pods
-type Backend struct {
+type schedulerBackend struct {
 	client        client.Client
 	scheme        *runtime.Scheme
 	name          string
@@ -42,49 +40,51 @@ type Backend struct {
 	profile       configv1alpha1.SchedulerProfile
 }
 
+var _ scheduler.Backend = (*schedulerBackend)(nil)
+
 // New creates a new Kube backend instance. profile is the scheduler profile for default-scheduler;
-// Backend uses profile.Name and may unmarshal profile.Config into KubeSchedulerConfig.
-func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1alpha1.SchedulerProfile) *Backend {
-	return &Backend{
+// schedulerBackend uses profile.Name and may unmarshal profile.Config into KubeSchedulerConfig.
+func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1alpha1.SchedulerProfile) scheduler.Backend {
+	return &schedulerBackend{
 		client:        cl,
 		scheme:        scheme,
-		name:          "default-scheduler",
+		name:          string(configv1alpha1.SchedulerNameKube),
 		eventRecorder: eventRecorder,
 		profile:       profile,
 	}
 }
 
 // Name returns the pod-facing scheduler name (default-scheduler), for lookup and logging.
-func (b *Backend) Name() string {
+func (b *schedulerBackend) Name() string {
 	return b.name
 }
 
 // Init initializes the Kube backend
 // For Kube backend, no special initialization is needed
-func (b *Backend) Init() error {
+func (b *schedulerBackend) Init() error {
 	return nil
 }
 
 // SyncPodGang synchronizes PodGang resources
 // For default kube scheduler, no additional resources are needed
-func (b *Backend) SyncPodGang(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
+func (b *schedulerBackend) SyncPodGang(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
 	// No-op: default kube scheduler doesn't need any custom resources
 	return nil
 }
 
 // OnPodGangDelete handles PodGang deletion
 // For default kube scheduler, no cleanup is needed
-func (b *Backend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
+func (b *schedulerBackend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
 	// No-op: default kube scheduler doesn't have any resources to clean up
 	return nil
 }
 
 // PreparePod prepares the Pod by setting the relevant schedulerName field with the chosen scheduler backend.
-func (b *Backend) PreparePod(pod *corev1.Pod) {
+func (b *schedulerBackend) PreparePod(pod *corev1.Pod) {
 	pod.Spec.SchedulerName = b.name
 }
 
 // ValidatePodCliqueSet runs default-scheduler-specific validations on the PodCliqueSet.
-func (b *Backend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet) error {
+func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet) error {
 	return nil
 }

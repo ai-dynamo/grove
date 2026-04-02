@@ -152,15 +152,16 @@ For detailed lifecycle flow, see [PodGang Lifecycle Changes](#podgang-lifecycle-
 
 ### Scheduler Backend Interface
 
-The core of the framework is the `SchedulerBackend` interface, which defines all operations that a scheduler backend must implement. The interface is intentionally simple and focused:
+The core of the framework is the `Backend` interface, which defines all operations that a scheduler backend must implement. The interface is intentionally simple and focused:
 
 ```go
+package scheduler
 
 // SchedulerBackend defines the interface that different scheduler backends must implement.
 //
 // Architecture: Backend validates PodCliqueSet at admission, converts
 // PodGang to scheduler-specific CR (PodGroup/Workload/etc), and prepares Pods with scheduler-specific configurations.
-type SchedulerBackend interface {
+type Backend interface {
 	// Name is a unique name of the scheduler backend.
 	// Used for logging and identification purposes.
 	Name() string

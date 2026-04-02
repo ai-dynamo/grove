@@ -14,7 +14,7 @@
 // limitations under the License.
 // */
 
-package schedulerbackend
+package manager
 
 import (
 	"testing"

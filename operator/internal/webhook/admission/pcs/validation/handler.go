@@ -24,7 +24,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
-	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend"
+	schedmanager "github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
 
 	"github.com/go-logr/logr"
 	admissionv1 "k8s.io/api/admission/v1"
@@ -127,7 +127,7 @@ func validatePodCliqueSetWithBackend(ctx context.Context, pcs *v1alpha1.PodCliqu
 	if len(pcs.Spec.Template.Cliques) > 0 && pcs.Spec.Template.Cliques[0] != nil {
 		schedulerName = pcs.Spec.Template.Cliques[0].Spec.PodSpec.SchedulerName
 	}
-	backend := schedulerbackend.Get(schedulerName)
+	backend := schedmanager.Get(schedulerName)
 	if backend == nil {
 		return nil
 	}

@@ -20,7 +20,8 @@ import (
 	"context"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	schedmanager "github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -43,13 +44,13 @@ func NewReconciler(mgr ctrl.Manager) *Reconciler {
 	}
 }
 
-func resolveBackend(podGang *groveschedulerv1alpha1.PodGang) schedulerbackend.SchedBackend {
+func resolveBackend(podGang *groveschedulerv1alpha1.PodGang) scheduler.Backend {
 	if name := podGang.Labels[apicommon.LabelSchedulerName]; name != "" {
-		if b := schedulerbackend.Get(name); b != nil {
+		if b := schedmanager.Get(name); b != nil {
 			return b
 		}
 	}
-	return schedulerbackend.GetDefault()
+	return schedmanager.GetDefault()
 }
 
 // Reconcile processes PodGang changes and synchronizes to backend-specific CRs

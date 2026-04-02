@@ -28,7 +28,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
-	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -215,7 +215,7 @@ func getSchedulerNameForPCS(pcs *grovecorev1alpha1.PodCliqueSet) string {
 			return c.Spec.PodSpec.SchedulerName
 		}
 	}
-	if def := schedulerbackend.GetDefault(); def != nil {
+	if def := manager.GetDefault(); def != nil {
 		return def.Name()
 	}
 	return ""

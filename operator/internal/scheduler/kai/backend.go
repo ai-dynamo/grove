@@ -21,6 +21,7 @@ import (
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -29,9 +30,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// Backend implements the scheduler backend interface (SchedBackend in schedulerbackend package) for KAI scheduler.
+// schedulerBackend implements the scheduler Backend interface (SchedBackend in schedulerbackend package) for KAI scheduler.
 // TODO: Converts PodGang → PodGroup
-type Backend struct {
+type schedulerBackend struct {
 	client        client.Client
 	scheme        *runtime.Scheme
 	name          string
@@ -39,45 +40,47 @@ type Backend struct {
 	profile       configv1alpha1.SchedulerProfile
 }
 
+var _ scheduler.Backend = (*schedulerBackend)(nil)
+
 // New creates a new KAI backend instance. profile is the scheduler profile for kai-scheduler;
-// Backend uses profile.Name and may unmarshal profile.Config for kai-specific options.
-func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1alpha1.SchedulerProfile) *Backend {
-	return &Backend{
+// schedulerBackend uses profile.Name and may unmarshal profile.Config for kai-specific options.
+func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1alpha1.SchedulerProfile) scheduler.Backend {
+	return &schedulerBackend{
 		client:        cl,
 		scheme:        scheme,
-		name:          "kai-scheduler",
+		name:          string(configv1alpha1.SchedulerNameKai),
 		eventRecorder: eventRecorder,
 		profile:       profile,
 	}
 }
 
 // Name returns the pod-facing scheduler name (kai-scheduler), for lookup and logging.
-func (b *Backend) Name() string {
+func (b *schedulerBackend) Name() string {
 	return b.name
 }
 
 // Init initializes the KAI backend
-func (b *Backend) Init() error {
+func (b *schedulerBackend) Init() error {
 	return nil
 }
 
 // SyncPodGang converts PodGang to KAI PodGroup and synchronizes it
-func (b *Backend) SyncPodGang(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
+func (b *schedulerBackend) SyncPodGang(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
 	return nil
 }
 
 // OnPodGangDelete removes the PodGroup owned by this PodGang
-func (b *Backend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
+func (b *schedulerBackend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
 	return nil
 }
 
 // PreparePod adds KAI scheduler-specific configuration to the Pod.
 // Sets Pod.Spec.SchedulerName so the pod is scheduled by KAI.
-func (b *Backend) PreparePod(pod *corev1.Pod) {
+func (b *schedulerBackend) PreparePod(pod *corev1.Pod) {
 	pod.Spec.SchedulerName = b.Name()
 }
 
 // ValidatePodCliqueSet runs KAI-specific validations on the PodCliqueSet.
-func (b *Backend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet) error {
+func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet) error {
 	return nil
 }

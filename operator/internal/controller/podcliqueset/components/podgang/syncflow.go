@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"sort"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
@@ -520,84 +519,6 @@ func (r _resource) patchPodGangInitializedStatus(sc *syncContext, podGangName st
 	return nil
 }
 
-// patchPodGangWithPodReferences uses strategic merge patch to update pod references
-func (r _resource) patchPodGangWithPodReferences(sc *syncContext, podGangName string, podGangInfo *podGangInfo) error {
-	// Build PodGroups with pod references from syncContext
-	podGroups := r.buildPodGroupsFromContext(sc, podGangInfo)
-
-	// Create patch object
-	patchPodGang := &groveschedulerv1alpha1.PodGang{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      podGangName,
-			Namespace: sc.pcs.Namespace,
-		},
-		Spec: groveschedulerv1alpha1.PodGangSpec{
-			PodGroups: podGroups,
-		},
-	}
-
-	// Apply patch
-	if err := r.client.Patch(sc.ctx, patchPodGang, client.Merge); err != nil {
-		return groveerr.WrapError(err,
-			errCodeCreateOrPatchPodGang,
-			component.OperationSync,
-			fmt.Sprintf("Failed to patch PodGang %s with pod references", podGangName),
-		)
-	}
-
-	sc.logger.Info("Successfully patched PodGang with pod references",
-		"podGang", podGangName,
-		"numPodGroups", len(podGroups))
-	return nil
-}
-
-// buildPodGroupsFromContext constructs PodGroups with pod references from syncContext data
-func (r _resource) buildPodGroupsFromContext(sc *syncContext, podGangInfo *podGangInfo) []groveschedulerv1alpha1.PodGroup {
-	podsByGroup := r.groupPodsByPodClique(sc, podGangInfo)
-
-	podGroups := make([]groveschedulerv1alpha1.PodGroup, 0, len(podGangInfo.pclqs))
-	for _, pci := range podGangInfo.pclqs {
-		pods := podsByGroup[pci.fqn]
-
-		// Build podReferences list
-		podReferences := make([]groveschedulerv1alpha1.NamespacedName, 0, len(pods))
-		for _, pod := range pods {
-			podReferences = append(podReferences, groveschedulerv1alpha1.NamespacedName{
-				Namespace: pod.Namespace,
-				Name:      pod.Name,
-			})
-		}
-
-		// Sort for consistency
-		// TODO: Consider not trying to sort the podReferences here
-		sort.Slice(podReferences, func(i, j int) bool {
-			return podReferences[i].Name < podReferences[j].Name
-		})
-
-		podGroups = append(podGroups, groveschedulerv1alpha1.PodGroup{
-			Name:               pci.fqn,
-			PodReferences:      podReferences,
-			MinReplicas:        pci.minAvailable,
-			TopologyConstraint: pci.topologyConstraint, // Preserve PodClique-level topology constraint
-		})
-	}
-
-	return podGroups
-}
-
-// findPodGangInfo locates the podGangInfo from expectedPodGangs
-func (r _resource) findPodGangInfo(sc *syncContext, podGangName string) (*podGangInfo, bool) {
-	pgi, found := lo.Find(sc.expectedPodGangs, func(pg *podGangInfo) bool {
-		return pg.fqn == podGangName
-	})
-	if !found {
-		sc.logger.Info("PodGang not found in expectedPodGangs, skipping update",
-			"podGang", podGangName)
-		return nil, false
-	}
-	return pgi, true
-}
-
 // verifyAllPodsCreated checks if all required pods exist before updating PodGang
 func (r _resource) verifyAllPodsCreated(sc *syncContext, pgi *podGangInfo) error {
 	pclqs := sc.getPodCliques(pgi)
@@ -619,17 +540,6 @@ func (r _resource) verifyAllPodsCreated(sc *syncContext, pgi *podGangInfo) error
 		)
 	}
 	return nil
-}
-
-// groupPodsByPodClique organizes pods by their PodClique names
-func (r _resource) groupPodsByPodClique(sc *syncContext, podGangInfo *podGangInfo) map[string][]corev1.Pod {
-	podsByGroup := make(map[string][]corev1.Pod)
-	for _, pclqInfo := range podGangInfo.pclqs {
-		if pods, ok := sc.existingPCLQPods[pclqInfo.fqn]; ok {
-			podsByGroup[pclqInfo.fqn] = pods
-		}
-	}
-	return podsByGroup
 }
 
 // getPodsForPodCliquesPendingCreation counts expected pods from non-existent PodCliques.

@@ -23,7 +23,7 @@ import (
 
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend"
+	schedmanager "github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 
 	"github.com/samber/lo"
@@ -154,13 +154,13 @@ func (v *pcsValidator) validatePodCliqueTemplates(fldPath *field.Path) ([]string
 }
 
 // validateSchedulerNames ensures all pod scheduler names resolve to the same scheduler and that scheduler is enabled.
-// Empty schedulerName is resolved to the default backend name from schedulerbackend.GetDefault().
+// Empty schedulerName is resolved to the default backend name from schedmanager.GetDefault().
 func (v *pcsValidator) validateSchedulerNames(schedulerNames []string, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	specPath := fldPath.Child("spec").Child("podSpec").Child("schedulerName")
 
 	defaultSchedulerName := "default-scheduler"
-	if def := schedulerbackend.GetDefault(); def != nil {
+	if def := schedmanager.GetDefault(); def != nil {
 		defaultSchedulerName = def.Name()
 	}
 
@@ -180,7 +180,7 @@ func (v *pcsValidator) validateSchedulerNames(schedulerNames []string, fldPath *
 	if len(uniqueSchedulerNames) > 0 && uniqueSchedulerNames[0] != "" {
 		pcsSchedulerName = uniqueSchedulerNames[0]
 	}
-	if pcsSchedulerName != "default-scheduler" && schedulerbackend.Get(pcsSchedulerName) == nil {
+	if pcsSchedulerName != "default-scheduler" && schedmanager.Get(pcsSchedulerName) == nil {
 		allErrs = append(allErrs, field.Invalid(
 			specPath,
 			pcsSchedulerName,

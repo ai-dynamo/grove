@@ -14,29 +14,24 @@
 // limitations under the License.
 // */
 
-package schedulerbackend
+package manager
 
 import (
 	"fmt"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend/kai"
-	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend/kube"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler/kai"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler/kube"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// Compile-time checks that backend implementations satisfy SchedBackend.
-var (
-	_ SchedBackend = (*kai.Backend)(nil)
-	_ SchedBackend = (*kube.Backend)(nil)
-)
-
-// newBackendForProfile creates and initializes a SchedBackend for the given profile.
+// newBackendForProfile creates and initializes a Backend for the given profile.
 // Add new scheduler backends by extending this switch (no global registry).
-func newBackendForProfile(cl client.Client, scheme *runtime.Scheme, rec record.EventRecorder, p configv1alpha1.SchedulerProfile) (SchedBackend, error) {
+func newBackendForProfile(cl client.Client, scheme *runtime.Scheme, rec record.EventRecorder, p configv1alpha1.SchedulerProfile) (scheduler.Backend, error) {
 	switch p.Name {
 	case configv1alpha1.SchedulerNameKube:
 		b := kube.New(cl, scheme, rec, p)
@@ -56,15 +51,15 @@ func newBackendForProfile(cl client.Client, scheme *runtime.Scheme, rec record.E
 }
 
 var (
-	backends       map[string]SchedBackend
-	defaultBackend SchedBackend
+	backends       map[string]scheduler.Backend
+	defaultBackend scheduler.Backend
 )
 
 // Initialize creates and registers backend instances for each profile in config.Profiles.
 // Defaults are applied to config so that default-scheduler is always present; only backends
 // named in config.Profiles are started. Called once during operator startup before controllers start.
 func Initialize(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, cfg configv1alpha1.SchedulerConfiguration) error {
-	backends = make(map[string]SchedBackend)
+	backends = make(map[string]scheduler.Backend)
 
 	// New and init each backend from cfg.Profiles (order follows config; duplicate name overwrites).
 	for _, p := range cfg.Profiles {
@@ -82,7 +77,7 @@ func Initialize(client client.Client, scheme *runtime.Scheme, eventRecorder reco
 
 // Get returns the backend for the given name. Empty string is valid and returns the default backend (e.g. when Pod.Spec.SchedulerName is unset).
 // default-scheduler is always available; other backends return nil if not enabled via a profile.
-func Get(name string) SchedBackend {
+func Get(name string) scheduler.Backend {
 	if name == "" {
 		return defaultBackend
 	}
@@ -90,6 +85,6 @@ func Get(name string) SchedBackend {
 }
 
 // GetDefault returns the backend designated as default in OperatorConfiguration (scheduler.defaultProfileName).
-func GetDefault() SchedBackend {
+func GetDefault() scheduler.Backend {
 	return defaultBackend
 }

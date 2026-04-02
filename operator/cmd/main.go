@@ -31,7 +31,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/cert"
 	grovelogger "github.com/ai-dynamo/grove/operator/internal/logger"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
-	"github.com/ai-dynamo/grove/operator/internal/schedulerbackend"
+	schedmanager "github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
 	groveversion "github.com/ai-dynamo/grove/operator/internal/version"
 
 	"github.com/spf13/pflag"
@@ -89,7 +89,7 @@ func main() {
 	}
 
 	// Initialize scheduler backends with the configured schedulers.
-	if err := schedulerbackend.Initialize(
+	if err := schedmanager.Initialize(
 		mgr.GetClient(),
 		mgr.GetScheme(),
 		mgr.GetEventRecorderFor("scheduler-backend"),
