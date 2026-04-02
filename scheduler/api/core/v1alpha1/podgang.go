@@ -170,6 +170,14 @@ const (
 	PodGangConditionTypeDisruptionTarget PodGangConditionType = "DisruptionTarget"
 )
 
+// Constants for PodGang condition reason
+const (
+	// ConditionReasonPodGangPodsCreationPending indicates that not all pods for a PodGang have been created yet.
+	ConditionReasonPodGangPodsCreationPending = "PodGangPodsCreationPending"
+	// ConditionReasonPodGangPodsCreated indicates that all constituent Pods for a PodGang have been created.
+	ConditionReasonPodGangPodsCreated = "PodGangPodsCreated"
+)
+
 // PodGangStatus defines the status of a PodGang.
 type PodGangStatus struct {
 	// Phase is the current phase of a PodGang.

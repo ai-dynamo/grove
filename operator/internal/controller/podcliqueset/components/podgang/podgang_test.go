@@ -29,7 +29,7 @@ func TestSetInitializedCondition(t *testing.T) {
 	pg := &groveschedulerv1alpha1.PodGang{
 		ObjectMeta: metav1.ObjectMeta{Name: "pg-1", Namespace: "default", Generation: 1},
 	}
-	setInitializedCondition(pg, metav1.ConditionFalse, "PodsPending", "waiting")
+	setOrUpdateInitializedCondition(pg, metav1.ConditionFalse, "PodsPending", "waiting")
 	require.Len(t, pg.Status.Conditions, 1)
 	assert.Equal(t, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized), pg.Status.Conditions[0].Type)
 	assert.Equal(t, metav1.ConditionFalse, pg.Status.Conditions[0].Status)
@@ -37,7 +37,7 @@ func TestSetInitializedCondition(t *testing.T) {
 	assert.Equal(t, "waiting", pg.Status.Conditions[0].Message)
 
 	// Update existing condition to ready
-	setInitializedCondition(pg, metav1.ConditionTrue, "Ready", "all ready")
+	setOrUpdateInitializedCondition(pg, metav1.ConditionTrue, "Ready", "all ready")
 	require.Len(t, pg.Status.Conditions, 1)
 	assert.Equal(t, metav1.ConditionTrue, pg.Status.Conditions[0].Status)
 	assert.Equal(t, "Ready", pg.Status.Conditions[0].Reason)
@@ -49,6 +49,6 @@ func TestHasInitializedCondition(t *testing.T) {
 	}
 	assert.False(t, hasInitializedCondition(pg))
 
-	setInitializedCondition(pg, metav1.ConditionFalse, "PodsPending", "waiting")
+	setOrUpdateInitializedCondition(pg, metav1.ConditionFalse, "PodsPending", "waiting")
 	assert.True(t, hasInitializedCondition(pg))
 }

@@ -19,6 +19,7 @@ package podgang
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -33,6 +34,7 @@ import (
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -50,8 +52,8 @@ const (
 	errCodeComputeExistingPodGangs    grovecorev1alpha1.ErrorCode = "ERR_COMPUTE_EXISTING_PODGANG"
 	errCodeSetControllerReference     grovecorev1alpha1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
 	errCodeCreateOrPatchPodGang       grovecorev1alpha1.ErrorCode = "ERR_CREATE_OR_PATCH_PODGANG"
+	errCodeCreatePodGang              grovecorev1alpha1.ErrorCode = "ERR_CREATE_PODGANG"
 	errCodeGetClusterTopologyLevels   grovecorev1alpha1.ErrorCode = "ERR_GET_CLUSTER_TOPOLOGY_LEVELS"
-	errCodeUpdatePodGang              grovecorev1alpha1.ErrorCode = "ERR_UPDATE_PODGANG_WITH_POD_REFS"
 )
 
 type _resource struct {
@@ -146,53 +148,32 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGa
 			fmt.Sprintf("failed to set the controller reference on PodGang %s to PodCliqueSet %v", pgi.fqn, client.ObjectKeyFromObject(pcs)),
 		)
 	}
+	pg.Spec.PodGroups = createPodGroupsForPodGang(pg.Namespace, pgi)
 	pg.Spec.PriorityClassName = pcs.Spec.Template.PriorityClassName
 	pg.Spec.TopologyConstraint = pgi.topologyConstraint
 	pg.Spec.TopologyConstraintGroupConfigs = pgi.pcsgTopologyConstraints
 
-	// Only create PodGroups if they don't exist yet (initial creation)
-	// Once populated, we preserve existing podReferences to avoid clearing them on subsequent reconciles
-	if len(pg.Spec.PodGroups) == 0 {
-		// Create PodGroups with EMPTY podReferences initially
-		pg.Spec.PodGroups = createEmptyPodGroupsForPodGang(*pgi)
-	} else {
-		// PodGroups already exist - preserve them but update MinReplicas and TopologyConstraint if needed
-		expectedPodGroups := make(map[string]struct {
-			minAvailable       int32
-			topologyConstraint *groveschedulerv1alpha1.TopologyConstraint
-		})
-		for _, pclq := range pgi.pclqs {
-			expectedPodGroups[pclq.fqn] = struct {
-				minAvailable       int32
-				topologyConstraint *groveschedulerv1alpha1.TopologyConstraint
-			}{
-				minAvailable:       pclq.minAvailable,
-				topologyConstraint: pclq.topologyConstraint,
-			}
-		}
-
-		// Update MinReplicas and TopologyConstraint for existing PodGroups
-		for i := range pg.Spec.PodGroups {
-			podGroup := &pg.Spec.PodGroups[i]
-			if expectedPG, ok := expectedPodGroups[podGroup.Name]; ok {
-				podGroup.MinReplicas = expectedPG.minAvailable
-				podGroup.TopologyConstraint = expectedPG.topologyConstraint
-			}
-		}
-	}
-
 	return nil
 }
 
-// createEmptyPodGroupsForPodGang creates PodGroups with empty podReferences.
-// These will be populated later when pods are created.
-func createEmptyPodGroupsForPodGang(pgInfo podGangInfo) []groveschedulerv1alpha1.PodGroup {
-	podGroups := lo.Map(pgInfo.pclqs, func(pclq pclqInfo, _ int) groveschedulerv1alpha1.PodGroup {
+func createPodGroupsForPodGang(namespace string, pgInfo *podGangInfo) []groveschedulerv1alpha1.PodGroup {
+	podGroups := lo.Map(pgInfo.pclqs, func(pi pclqInfo, _ int) groveschedulerv1alpha1.PodGroup {
+		namespacedNames := lo.Map(pi.associatedPodNames, func(associatedPodName string, _ int) groveschedulerv1alpha1.NamespacedName {
+			return groveschedulerv1alpha1.NamespacedName{
+				Namespace: namespace,
+				Name:      associatedPodName,
+			}
+		})
+		// sorting the slice of NamespaceName. This prevents unnecessary updates to the PodGang resource if the only thing
+		// that is difference is the order of NamespaceNames.
+		sort.Slice(namespacedNames, func(i, j int) bool {
+			return namespacedNames[i].Name < namespacedNames[j].Name
+		})
 		return groveschedulerv1alpha1.PodGroup{
-			Name:               pclq.fqn,
-			PodReferences:      []groveschedulerv1alpha1.NamespacedName{},
-			MinReplicas:        pclq.minAvailable,
-			TopologyConstraint: pclq.topologyConstraint,
+			Name:               pi.fqn,
+			PodReferences:      namespacedNames,
+			MinReplicas:        pi.minAvailable,
+			TopologyConstraint: pi.topologyConstraint,
 		}
 	})
 	return podGroups
@@ -240,8 +221,8 @@ func getSchedulerNameForPCS(pcs *grovecorev1alpha1.PodCliqueSet) string {
 	return ""
 }
 
-// setInitializedCondition sets or updates the PodGangInitialized condition on the PodGang status.
-func setInitializedCondition(pg *groveschedulerv1alpha1.PodGang, status metav1.ConditionStatus, reason, message string) {
+// setOrUpdateInitializedCondition sets or updates the PodGangInitialized condition on the PodGang status.
+func setOrUpdateInitializedCondition(pg *groveschedulerv1alpha1.PodGang, status metav1.ConditionStatus, reason, message string) {
 	condition := metav1.Condition{
 		Type:               string(groveschedulerv1alpha1.PodGangConditionTypeInitialized),
 		Status:             status,
@@ -250,26 +231,5 @@ func setInitializedCondition(pg *groveschedulerv1alpha1.PodGang, status metav1.C
 		Reason:             reason,
 		Message:            message,
 	}
-
-	found := false
-	for i, cond := range pg.Status.Conditions {
-		if cond.Type == string(groveschedulerv1alpha1.PodGangConditionTypeInitialized) {
-			pg.Status.Conditions[i] = condition
-			found = true
-			break
-		}
-	}
-	if !found {
-		pg.Status.Conditions = append(pg.Status.Conditions, condition)
-	}
-}
-
-// hasInitializedCondition returns true if the PodGang has an Initialized condition.
-func hasInitializedCondition(pg *groveschedulerv1alpha1.PodGang) bool {
-	for _, cond := range pg.Status.Conditions {
-		if cond.Type == string(groveschedulerv1alpha1.PodGangConditionTypeInitialized) {
-			return true
-		}
-	}
-	return false
+	meta.SetStatusCondition(&pg.Status.Conditions, condition)
 }

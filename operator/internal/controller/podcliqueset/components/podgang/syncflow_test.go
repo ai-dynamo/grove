@@ -34,7 +34,6 @@ import (
 	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -283,7 +282,7 @@ func TestVerifyAllPodsCreated(t *testing.T) {
 				existingPCLQs:    tt.existingPCLQs,
 			}
 			r := &_resource{}
-			err := r.verifyAllPodsCreated(sc, tt.podGang.fqn, tt.podGang)
+			err := r.verifyAllPodsCreated(sc, tt.podGang)
 			if tt.wantRequeue {
 				require.Error(t, err)
 				var groveErr *groveerr.GroveError
@@ -407,180 +406,255 @@ func TestGetPodsPendingCreation(t *testing.T) {
 	}
 }
 
-// TestUpdatePodGangWithPodReferences unit tests updatePodGangWithPodReferences.
-func TestUpdatePodGangWithPodReferences(t *testing.T) {
-	ctx := context.Background()
-	logger := ctrllogger.FromContext(ctx).WithName("test")
-
-	t.Run("returns nil when PodGang not in expectedPodGangs", func(t *testing.T) {
-		sc := &syncContext{logger: logger, expectedPodGangs: []*podGangInfo{{fqn: "pg-a"}}}
-		r := &_resource{}
-		err := r.updatePodGangWithPodReferences(sc, "pg-other")
-		require.NoError(t, err)
-	})
-
-	t.Run("returns requeue error when verifyAllPodsCreated fails", func(t *testing.T) {
-		sc := &syncContext{
-			logger:           logger,
-			pcs:              &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Namespace: "default"}},
-			expectedPodGangs: []*podGangInfo{{fqn: "pg-a", pclqs: []pclqInfo{{fqn: "pclq-a", minAvailable: 1}}}},
-			existingPCLQPods: map[string][]v1.Pod{},
-			existingPCLQs:    []grovecorev1alpha1.PodClique{},
-		}
-		r := &_resource{}
-		err := r.updatePodGangWithPodReferences(sc, "pg-a")
-		require.Error(t, err)
-		var groveErr *groveerr.GroveError
-		require.True(t, errors.As(err, &groveErr))
-		assert.Equal(t, groveerr.ErrCodeRequeueAfter, groveErr.Code)
-	})
-
-	t.Run("patches PodReferences and Initialized when all pods ready", func(t *testing.T) {
-		ns := "default"
-		pcs := &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: "pcs", Namespace: ns}}
-		pclq := &grovecorev1alpha1.PodClique{
-			ObjectMeta: metav1.ObjectMeta{Name: "pclq-a", Namespace: ns},
-			Spec:       grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))},
-		}
-		pgExisting := &groveschedulerv1alpha1.PodGang{
-			ObjectMeta: metav1.ObjectMeta{Name: "pg-a", Namespace: ns},
-			Spec:       groveschedulerv1alpha1.PodGangSpec{},
-		}
-		// Pod must have podgang label to pass verifyAllPodsCreated
-		pod := v1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "pod-1",
-				Namespace: ns,
-				Labels:    map[string]string{apicommon.LabelPodGang: "pg-a"},
-			},
-		}
-		fakeClient := testutils.NewTestClientBuilder().
-			WithObjects(pcs, pclq, pgExisting).
-			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
-			Build()
-		sc := &syncContext{
-			ctx:                  ctx,
-			logger:               logger,
-			pcs:                  pcs,
-			expectedPodGangs:     []*podGangInfo{{fqn: "pg-a", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 1, minAvailable: 1}}}},
-			existingPodGangNames: []string{"pg-a"},
-			existingPCLQPods:     map[string][]v1.Pod{"pclq-a": {pod}},
-			existingPCLQs:        []grovecorev1alpha1.PodClique{*pclq},
-		}
-		r := &_resource{client: fakeClient}
-		err := r.updatePodGangWithPodReferences(sc, "pg-a")
-		require.NoError(t, err)
-		pgAfter := &groveschedulerv1alpha1.PodGang{}
-		require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: "pg-a"}, pgAfter))
-		require.Len(t, pgAfter.Spec.PodGroups, 1)
-		assert.Equal(t, "pclq-a", pgAfter.Spec.PodGroups[0].Name)
-		assert.Equal(t, []groveschedulerv1alpha1.NamespacedName{{Namespace: ns, Name: "pod-1"}}, pgAfter.Spec.PodGroups[0].PodReferences)
-		if len(pgAfter.Status.Conditions) > 0 {
-			assert.True(t, lo.ContainsBy(pgAfter.Status.Conditions, func(c metav1.Condition) bool {
-				return c.Type == string(groveschedulerv1alpha1.PodGangConditionTypeInitialized) && c.Status == metav1.ConditionTrue
-			}))
-		}
-	})
-}
-
-// TestCreateOrUpdatePodGangs tests the new flow: create PodGangs first, then update PodReferences when all pods are ready.
+// TestCreateOrUpdatePodGangs tests the createOrUpdatePodGangs flow.
 func TestCreateOrUpdatePodGangs(t *testing.T) {
 	ctx := context.Background()
 	ns := "default"
 	pcsName := "test-pcs"
 	pcsLabels := apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcsName)
-	pcs := &grovecorev1alpha1.PodCliqueSet{
-		ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: ns, UID: "pcs-uid"},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Replicas: 1,
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To(int32(1))}},
+	pgName := "test-pcs-0"
+	pclqName := "test-pcs-0-worker"
+
+	makePCS := func() *grovecorev1alpha1.PodCliqueSet {
+		return &grovecorev1alpha1.PodCliqueSet{
+			ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: ns, UID: "pcs-uid"},
+			Spec: grovecorev1alpha1.PodCliqueSetSpec{
+				Replicas: 1,
+				Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+					Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+						{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To(int32(1))}},
+					},
 				},
 			},
-		},
+		}
 	}
-	pclqName := "test-pcs-0-worker"
-	pclq := &grovecorev1alpha1.PodClique{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: pclqName, Namespace: ns, UID: types.UID("pclq-uid"),
-			Labels:          pcsLabels,
-			OwnerReferences: []metav1.OwnerReference{{Name: pcsName, UID: pcs.UID, Controller: ptr.To(true)}},
-		},
-		Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To(int32(1))},
+	makePCLQ := func() *grovecorev1alpha1.PodClique {
+		return &grovecorev1alpha1.PodClique{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: pclqName, Namespace: ns, UID: "pclq-uid",
+				Labels:          pcsLabels,
+				OwnerReferences: []metav1.OwnerReference{{Name: pcsName, UID: "pcs-uid", Controller: ptr.To(true)}},
+			},
+			Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To(int32(1))},
+		}
 	}
-	pgLabels := lo.Assign(pcsLabels, map[string]string{apicommon.LabelComponentKey: apicommon.LabelComponentNamePodGang})
-	pgCreated := &groveschedulerv1alpha1.PodGang{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "test-pcs-0", Namespace: ns,
-			Labels:          pgLabels,
-			OwnerReferences: []metav1.OwnerReference{{APIVersion: "grove.io/v1alpha1", Kind: "PodCliqueSet", Name: pcsName, UID: pcs.UID, Controller: ptr.To(true)}},
-		},
-		Spec: groveschedulerv1alpha1.PodGangSpec{},
+	makePod := func(name, podGangLabel string) *v1.Pod {
+		labels := lo.Assign(pcsLabels)
+		if podGangLabel != "" {
+			labels[apicommon.LabelPodGang] = podGangLabel
+		}
+		return &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: name, Namespace: ns,
+				Labels:          labels,
+				OwnerReferences: []metav1.OwnerReference{{Name: pclqName, UID: "pclq-uid", Controller: ptr.To(true)}},
+			},
+		}
 	}
-	pod1 := &v1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "worker-0", Namespace: ns,
-			Labels:          lo.Assign(pcsLabels, map[string]string{apicommon.LabelPodGang: "test-pcs-0"}),
-			OwnerReferences: []metav1.OwnerReference{{Name: pclqName, UID: pclq.UID, Controller: ptr.To(true)}},
-		},
-	}
-	pod2 := &v1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "worker-1", Namespace: ns,
-			Labels:          lo.Assign(pcsLabels, map[string]string{apicommon.LabelPodGang: "test-pcs-0"}),
-			OwnerReferences: []metav1.OwnerReference{{Name: pclqName, UID: pclq.UID, Controller: ptr.To(true)}},
-		},
+	makeExistingPodGang := func() *groveschedulerv1alpha1.PodGang {
+		pgLabels := lo.Assign(pcsLabels, map[string]string{apicommon.LabelComponentKey: apicommon.LabelComponentNamePodGang})
+		return &groveschedulerv1alpha1.PodGang{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: pgName, Namespace: ns,
+				Labels:          pgLabels,
+				OwnerReferences: []metav1.OwnerReference{{APIVersion: "grove.io/v1alpha1", Kind: "PodCliqueSet", Name: pcsName, UID: "pcs-uid", Controller: ptr.To(true)}},
+			},
+			Spec: groveschedulerv1alpha1.PodGangSpec{},
+		}
 	}
 
-	t.Run("creates PodGang when not present (Step 1 loop)", func(t *testing.T) {
-		// No PodGang in cluster: Step 1 must create it via createOrUpdatePodGang.
+	t.Run("new PodGang, PCLQ exists but no pods yet - creates PodGang, re-queues (Initialized=False)", func(t *testing.T) {
+		pcs := makePCS()
+		pclq := makePCLQ()
+		// PCLQ exists (created by PodCliqueSet reconciler before PodGang) but PodClique controller
+		// hasn't created pods yet — this is the typical "not ready" scenario.
 		fakeClient := testutils.NewTestClientBuilder().
 			WithObjects(pcs, pclq).
 			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
 			Build()
-		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: &record.FakeRecorder{}}
+		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10)}
 		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
 		require.NoError(t, err)
-		require.Len(t, sc.expectedPodGangs, 1, "expected one PodGang to create")
+		require.Len(t, sc.expectedPodGangs, 1)
 		require.Empty(t, sc.existingPodGangNames, "PodGang should not exist yet")
 
 		result := r.createOrUpdatePodGangs(sc)
-		require.False(t, result.hasErrors(), "createOrUpdatePodGangs should not fail: %v", result.errs)
-		require.Len(t, result.createdPodGangNames, 1, "Step 1 loop should have recorded one creation")
-		assert.Equal(t, "test-pcs-0", result.createdPodGangNames[0])
+		// createOrUpdatePodGang succeeds, but verifyAllPodsCreated fails (no pods) → requeue error
+		require.True(t, result.hasErrors(), "should have requeue error because pods don't exist yet")
+		require.Len(t, result.createdPodGangNames, 1, "PodGang should still be recorded as created")
+		assert.Equal(t, pgName, result.createdPodGangNames[0])
 
+		// Verify PodGang was created in the cluster
 		pgAfter := &groveschedulerv1alpha1.PodGang{}
-		require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: "test-pcs-0"}, pgAfter),
-			"PodGang should exist after Step 1 create")
+		require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: pgName}, pgAfter))
 		assert.Equal(t, pcsName, pgAfter.OwnerReferences[0].Name)
+
+		// Initialized=True should NOT have been set (verification failed)
+		var groveErr *groveerr.GroveError
+		require.True(t, errors.As(result.errs[0], &groveErr))
+		assert.Equal(t, groveerr.ErrCodeRequeueAfter, groveErr.Code)
 	})
 
-	t.Run("updates existing PodGang and fills PodReferences (Step 1 + Step 2)", func(t *testing.T) {
+	t.Run("new PodGang, pods exist but missing PodGang label - creates PodGang, re-queues", func(t *testing.T) {
+		pcs := makePCS()
+		pclq := makePCLQ()
+		// Pods exist but have no grove.io/podgang label
+		pod1 := makePod("worker-0", "")
+		pod2 := makePod("worker-1", "")
 		fakeClient := testutils.NewTestClientBuilder().
-			WithObjects(pcs, pclq, pgCreated, pod1, pod2).
+			WithObjects(pcs, pclq, pod1, pod2).
 			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
 			Build()
-		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: &record.FakeRecorder{}}
+		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10)}
 		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
 		require.NoError(t, err)
-		require.Contains(t, sc.existingPodGangNames, "test-pcs-0")
+		require.Empty(t, sc.existingPodGangNames)
 
 		result := r.createOrUpdatePodGangs(sc)
-		require.False(t, result.hasErrors(), "createOrUpdatePodGangs should not fail: %v", result.errs)
-		// Step 1 still runs and records (createOrUpdatePodGang does patch when exists)
+		// verifyAllPodsCreated fails because pods don't have the PodGang label
+		require.True(t, result.hasErrors(), "should requeue because pods are missing PodGang label")
 		require.Len(t, result.createdPodGangNames, 1)
 
+		var groveErr *groveerr.GroveError
+		require.True(t, errors.As(result.errs[0], &groveErr))
+		assert.Equal(t, groveerr.ErrCodeRequeueAfter, groveErr.Code)
+	})
+
+	t.Run("new PodGang, all pods ready and labeled - creates PodGang, sets Initialized=True", func(t *testing.T) {
+		pcs := makePCS()
+		pclq := makePCLQ()
+		pod1 := makePod("worker-0", pgName)
+		pod2 := makePod("worker-1", pgName)
+		fakeClient := testutils.NewTestClientBuilder().
+			WithObjects(pcs, pclq, pod1, pod2).
+			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
+			Build()
+		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10)}
+		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
+		require.NoError(t, err)
+		require.Empty(t, sc.existingPodGangNames)
+
+		result := r.createOrUpdatePodGangs(sc)
+		require.False(t, result.hasErrors(), "should succeed: %v", result.errs)
+		require.Len(t, result.createdPodGangNames, 1)
+		assert.Equal(t, pgName, result.createdPodGangNames[0])
+
+		// Verify PodGang exists and Initialized=True
 		pgAfter := &groveschedulerv1alpha1.PodGang{}
-		require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: "test-pcs-0"}, pgAfter))
+		require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: pgName}, pgAfter))
+		require.Len(t, pgAfter.Status.Conditions, 1)
+		assert.Equal(t, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized), pgAfter.Status.Conditions[0].Type)
+		assert.Equal(t, metav1.ConditionTrue, pgAfter.Status.Conditions[0].Status)
+	})
+
+	t.Run("existing PodGang, all pods ready - updates PodGang, sets Initialized=True", func(t *testing.T) {
+		pcs := makePCS()
+		pclq := makePCLQ()
+		pg := makeExistingPodGang()
+		pod1 := makePod("worker-0", pgName)
+		pod2 := makePod("worker-1", pgName)
+		fakeClient := testutils.NewTestClientBuilder().
+			WithObjects(pcs, pclq, pg, pod1, pod2).
+			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
+			Build()
+		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10)}
+		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
+		require.NoError(t, err)
+		require.Contains(t, sc.existingPodGangNames, pgName)
+
+		result := r.createOrUpdatePodGangs(sc)
+		require.False(t, result.hasErrors(), "should succeed: %v", result.errs)
+		// Existing PodGang → not recorded as new creation
+		assert.Empty(t, result.createdPodGangNames, "should not record creation for existing PodGang")
+
+		// Verify PodGang was updated and Initialized=True
+		pgAfter := &groveschedulerv1alpha1.PodGang{}
+		require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: pgName}, pgAfter))
 		require.Len(t, pgAfter.Spec.PodGroups, 1)
-		assert.Equal(t, "test-pcs-0-worker", pgAfter.Spec.PodGroups[0].Name)
+		assert.Equal(t, pclqName, pgAfter.Spec.PodGroups[0].Name)
 		assert.Len(t, pgAfter.Spec.PodGroups[0].PodReferences, 2)
-		if len(pgAfter.Status.Conditions) > 0 {
-			assert.True(t, lo.ContainsBy(pgAfter.Status.Conditions, func(c metav1.Condition) bool {
-				return c.Type == string(groveschedulerv1alpha1.PodGangConditionTypeInitialized) && c.Status == metav1.ConditionTrue
-			}))
+		require.NotEmpty(t, pgAfter.Status.Conditions)
+		assert.Equal(t, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized), pgAfter.Status.Conditions[0].Type)
+		assert.Equal(t, metav1.ConditionTrue, pgAfter.Status.Conditions[0].Status)
+	})
+
+	t.Run("existing initialized PodGang, pods replaced - updates PodReferences to replacement pods", func(t *testing.T) {
+		pcs := makePCS()
+		pclq := makePCLQ()
+		pg := makeExistingPodGang()
+		// PodGang already has Initialized=True and old PodReferences (worker-0, worker-1)
+		pg.Spec.PodGroups = []groveschedulerv1alpha1.PodGroup{
+			{
+				Name: pclqName,
+				PodReferences: []groveschedulerv1alpha1.NamespacedName{
+					{Namespace: ns, Name: "worker-0"},
+					{Namespace: ns, Name: "worker-1"},
+				},
+				MinReplicas: 1,
+			},
 		}
+		pg.Status.Conditions = []metav1.Condition{
+			{
+				Type:   string(groveschedulerv1alpha1.PodGangConditionTypeInitialized),
+				Status: metav1.ConditionTrue,
+				Reason: groveschedulerv1alpha1.ConditionReasonPodGangPodsCreated,
+			},
+		}
+		// Original pods (worker-0, worker-1) are gone; replacement pods (worker-2, worker-3) exist with correct label
+		pod1 := makePod("worker-2", pgName)
+		pod2 := makePod("worker-3", pgName)
+		fakeClient := testutils.NewTestClientBuilder().
+			WithObjects(pcs, pclq, pg, pod1, pod2).
+			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
+			Build()
+		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10)}
+		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
+		require.NoError(t, err)
+		require.Contains(t, sc.existingPodGangNames, pgName)
+
+		result := r.createOrUpdatePodGangs(sc)
+		require.False(t, result.hasErrors(), "should succeed: %v", result.errs)
+		assert.Empty(t, result.createdPodGangNames)
+
+		// Verify PodReferences now point to the replacement pods
+		pgAfter := &groveschedulerv1alpha1.PodGang{}
+		require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: pgName}, pgAfter))
+		require.Len(t, pgAfter.Spec.PodGroups, 1)
+		refs := pgAfter.Spec.PodGroups[0].PodReferences
+		require.Len(t, refs, 2)
+		refNames := []string{refs[0].Name, refs[1].Name}
+		assert.ElementsMatch(t, []string{"worker-2", "worker-3"}, refNames, "PodReferences should point to replacement pods, not old ones")
+
+		// Initialized should still be True
+		require.NotEmpty(t, pgAfter.Status.Conditions)
+		assert.Equal(t, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized), pgAfter.Status.Conditions[0].Type)
+		assert.Equal(t, metav1.ConditionTrue, pgAfter.Status.Conditions[0].Status)
+	})
+
+	t.Run("existing PodGang, pods missing PodGang label - updates PodGang, re-queues (no Initialized=True)", func(t *testing.T) {
+		pcs := makePCS()
+		pclq := makePCLQ()
+		pg := makeExistingPodGang()
+		// Pods exist but without the PodGang label
+		pod1 := makePod("worker-0", "")
+		pod2 := makePod("worker-1", "")
+		fakeClient := testutils.NewTestClientBuilder().
+			WithObjects(pcs, pclq, pg, pod1, pod2).
+			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
+			Build()
+		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10)}
+		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
+		require.NoError(t, err)
+		require.Contains(t, sc.existingPodGangNames, pgName)
+
+		result := r.createOrUpdatePodGangs(sc)
+		// createOrUpdatePodGang succeeds, but verifyAllPodsCreated fails → requeue
+		require.True(t, result.hasErrors(), "should requeue because pods are not associated")
+		assert.Empty(t, result.createdPodGangNames, "should not record creation for existing PodGang")
+
+		var groveErr *groveerr.GroveError
+		require.True(t, errors.As(result.errs[0], &groveErr))
+		assert.Equal(t, groveerr.ErrCodeRequeueAfter, groveErr.Code)
 	})
 }
 
