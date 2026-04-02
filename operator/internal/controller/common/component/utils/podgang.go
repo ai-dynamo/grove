@@ -20,7 +20,6 @@ import (
 	"context"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/samber/lo"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -44,4 +43,16 @@ func GetPodGang(ctx context.Context, cl client.Client, podGangName, namespace st
 		return nil, err
 	}
 	return podGang, nil
+}
+
+// GetExistingPodGangs fetches all existing PodGangs that are managed by Grove in the given namespace.
+func GetExistingPodGangs(ctx context.Context, cl client.Client, pcsObjectMeta metav1.ObjectMeta, namespace string) ([]groveschedulerv1alpha1.PodGang, error) {
+	podGangs := groveschedulerv1alpha1.PodGangList{}
+	if err := cl.List(ctx, &podGangs, client.InNamespace(namespace)); err != nil {
+		return nil, err
+	}
+	managedPodGangs := lo.Filter(podGangs.Items, func(pg groveschedulerv1alpha1.PodGang, _ int) bool {
+		return metav1.IsControlledBy(&pg.ObjectMeta, &pcsObjectMeta)
+	})
+	return managedPodGangs, nil
 }

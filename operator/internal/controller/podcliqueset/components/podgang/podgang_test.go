@@ -42,13 +42,3 @@ func TestSetInitializedCondition(t *testing.T) {
 	assert.Equal(t, metav1.ConditionTrue, pg.Status.Conditions[0].Status)
 	assert.Equal(t, "Ready", pg.Status.Conditions[0].Reason)
 }
-
-func TestHasInitializedCondition(t *testing.T) {
-	pg := &groveschedulerv1alpha1.PodGang{
-		ObjectMeta: metav1.ObjectMeta{Name: "pg-1", Namespace: "default"},
-	}
-	assert.False(t, hasInitializedCondition(pg))
-
-	setOrUpdateInitializedCondition(pg, metav1.ConditionFalse, "PodsPending", "waiting")
-	assert.True(t, hasInitializedCondition(pg))
-}

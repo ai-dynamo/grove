@@ -463,7 +463,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		}
 	}
 
-	t.Run("new PodGang, PCLQ exists but no pods yet - creates PodGang, re-queues (Initialized=False)", func(t *testing.T) {
+	t.Run("new PodGang, PCLQ exists but no pods yet - creates PodGang, records requeue error", func(t *testing.T) {
 		pcs := makePCS()
 		pclq := makePCLQ()
 		// PCLQ exists (created by PodCliqueSet reconciler before PodGang) but PodClique controller
@@ -476,10 +476,10 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
 		require.NoError(t, err)
 		require.Len(t, sc.expectedPodGangs, 1)
-		require.Empty(t, sc.existingPodGangNames, "PodGang should not exist yet")
+		require.Empty(t, sc.existingPodGangs, "PodGang should not exist yet")
 
 		result := r.createOrUpdatePodGangs(sc)
-		// createOrUpdatePodGang succeeds, but verifyAllPodsCreated fails (no pods) → requeue error
+		// createOrUpdatePodGang succeeds, but verifyAllPodsCreated fails (no pods) → requeue error recorded, loop continues
 		require.True(t, result.hasErrors(), "should have requeue error because pods don't exist yet")
 		require.Len(t, result.createdPodGangNames, 1, "PodGang should still be recorded as created")
 		assert.Equal(t, pgName, result.createdPodGangNames[0])
@@ -495,7 +495,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		assert.Equal(t, groveerr.ErrCodeRequeueAfter, groveErr.Code)
 	})
 
-	t.Run("new PodGang, pods exist but missing PodGang label - creates PodGang, re-queues", func(t *testing.T) {
+	t.Run("new PodGang, pods exist but missing PodGang label - creates PodGang, records requeue error", func(t *testing.T) {
 		pcs := makePCS()
 		pclq := makePCLQ()
 		// Pods exist but have no grove.io/podgang label
@@ -508,11 +508,11 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10)}
 		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
 		require.NoError(t, err)
-		require.Empty(t, sc.existingPodGangNames)
+		require.Empty(t, sc.existingPodGangs)
 
 		result := r.createOrUpdatePodGangs(sc)
-		// verifyAllPodsCreated fails because pods don't have the PodGang label
-		require.True(t, result.hasErrors(), "should requeue because pods are missing PodGang label")
+		// verifyAllPodsCreated fails because pods don't have the PodGang label → error recorded, loop continues
+		require.True(t, result.hasErrors(), "should have requeue error because pods are missing PodGang label")
 		require.Len(t, result.createdPodGangNames, 1)
 
 		var groveErr *groveerr.GroveError
@@ -532,7 +532,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10)}
 		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
 		require.NoError(t, err)
-		require.Empty(t, sc.existingPodGangNames)
+		require.Empty(t, sc.existingPodGangs)
 
 		result := r.createOrUpdatePodGangs(sc)
 		require.False(t, result.hasErrors(), "should succeed: %v", result.errs)
@@ -560,7 +560,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10)}
 		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
 		require.NoError(t, err)
-		require.Contains(t, sc.existingPodGangNames, pgName)
+		assert.True(t, sc.isExistingPodGang(pgName))
 
 		result := r.createOrUpdatePodGangs(sc)
 		require.False(t, result.hasErrors(), "should succeed: %v", result.errs)
@@ -610,7 +610,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10)}
 		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
 		require.NoError(t, err)
-		require.Contains(t, sc.existingPodGangNames, pgName)
+		assert.True(t, sc.isExistingPodGang(pgName))
 
 		result := r.createOrUpdatePodGangs(sc)
 		require.False(t, result.hasErrors(), "should succeed: %v", result.errs)
@@ -625,13 +625,11 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		refNames := []string{refs[0].Name, refs[1].Name}
 		assert.ElementsMatch(t, []string{"worker-2", "worker-3"}, refNames, "PodReferences should point to replacement pods, not old ones")
 
-		// Initialized should still be True
-		require.NotEmpty(t, pgAfter.Status.Conditions)
-		assert.Equal(t, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized), pgAfter.Status.Conditions[0].Type)
-		assert.Equal(t, metav1.ConditionTrue, pgAfter.Status.Conditions[0].Status)
+		// isPodGangInitialized returns true → patchPodGangInitializedStatus is skipped (no redundant status patch)
+		assert.True(t, sc.isPodGangInitialized(pgName))
 	})
 
-	t.Run("existing PodGang, pods missing PodGang label - updates PodGang, re-queues (no Initialized=True)", func(t *testing.T) {
+	t.Run("existing PodGang, pods missing PodGang label - updates PodGang, records requeue error", func(t *testing.T) {
 		pcs := makePCS()
 		pclq := makePCLQ()
 		pg := makeExistingPodGang()
@@ -645,11 +643,11 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10)}
 		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
 		require.NoError(t, err)
-		require.Contains(t, sc.existingPodGangNames, pgName)
+		assert.True(t, sc.isExistingPodGang(pgName))
 
 		result := r.createOrUpdatePodGangs(sc)
-		// createOrUpdatePodGang succeeds, but verifyAllPodsCreated fails → requeue
-		require.True(t, result.hasErrors(), "should requeue because pods are not associated")
+		// createOrUpdatePodGang succeeds, but verifyAllPodsCreated fails → error recorded, loop continues
+		require.True(t, result.hasErrors(), "should have requeue error because pods are not associated")
 		assert.Empty(t, result.createdPodGangNames, "should not record creation for existing PodGang")
 
 		var groveErr *groveerr.GroveError

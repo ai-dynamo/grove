@@ -97,12 +97,12 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs 
 		)
 	}
 
-	sc.existingPodGangNames, err = r.GetExistingResourceNames(ctx, logger, pcs.ObjectMeta)
+	sc.existingPodGangs, err = componentutils.GetExistingPodGangs(ctx, r.client, pcs.ObjectMeta, pcs.Namespace)
 	if err != nil {
 		return nil, groveerr.WrapError(err,
 			errCodeListPodGangs,
 			component.OperationSync,
-			fmt.Sprintf("Failed to get existing PodGang names for PodCliqueSet: %v", client.ObjectKeyFromObject(sc.pcs)),
+			fmt.Sprintf("Failed to get existing PodGangs for PodCliqueSet: %v", client.ObjectKeyFromObject(sc.pcs)),
 		)
 	}
 
@@ -438,10 +438,7 @@ func (r _resource) runSyncFlow(sc *syncContext) syncFlowResult {
 
 // deleteExcessPodGangs removes PodGangs that are no longer needed.
 func (r _resource) deleteExcessPodGangs(sc *syncContext) error {
-	expectedPodGangNames := lo.Map(sc.expectedPodGangs, func(pg *podGangInfo, _ int) string {
-		return pg.fqn
-	})
-	excessPodGangs, _ := lo.Difference(sc.existingPodGangNames, expectedPodGangNames)
+	excessPodGangs := sc.getExcessPodGangNames()
 	namespace := sc.pcs.Namespace
 	for _, podGangToDelete := range excessPodGangs {
 		pgObjectKey := client.ObjectKey{Namespace: namespace, Name: podGangToDelete}
@@ -476,7 +473,7 @@ func (r _resource) createOrUpdatePodGangs(sc *syncContext) syncFlowResult {
 		}
 
 		// If the PodGang does not exist and the creation succeeded then record the PodGang creation.
-		if !slices.Contains(sc.existingPodGangNames, expectedPG.fqn) {
+		if !sc.isExistingPodGang(expectedPG.fqn) {
 			result.recordPodGangCreation(expectedPG.fqn)
 		}
 
@@ -488,10 +485,12 @@ func (r _resource) createOrUpdatePodGangs(sc *syncContext) syncFlowResult {
 		}
 
 		// Update status to set Initialized=True (idempotent - no need to check current state)
-		if err := r.patchPodGangInitializedStatus(sc, expectedPG.fqn, metav1.ConditionTrue, groveschedulerv1alpha1.ConditionReasonPodGangPodsCreated, "PodGang is fully initialized"); err != nil {
-			sc.logger.Error(err, "failed to update Initialized condition in PodGang status", "PodGangName", expectedPG.fqn)
-			result.recordError(err)
-			return result
+		if !sc.isPodGangInitialized(expectedPG.fqn) {
+			if err := r.patchPodGangInitializedStatus(sc, expectedPG.fqn, metav1.ConditionTrue, groveschedulerv1alpha1.ConditionReasonPodGangPodsCreated, "PodGang is fully initialized"); err != nil {
+				sc.logger.Error(err, "failed to update Initialized condition in PodGang status", "PodGangName", expectedPG.fqn)
+				result.recordError(err)
+				return result
+			}
 		}
 	}
 
@@ -717,11 +716,12 @@ func (r _resource) createOrUpdatePodGang(sc *syncContext, pgInfo *podGangInfo) e
 
 // syncContext holds the relevant state required during the sync flow run.
 type syncContext struct {
-	ctx                  context.Context
-	pcs                  *grovecorev1alpha1.PodCliqueSet
-	logger               logr.Logger
-	expectedPodGangs     []*podGangInfo
-	existingPodGangNames []string
+	ctx              context.Context
+	pcs              *grovecorev1alpha1.PodCliqueSet
+	logger           logr.Logger
+	expectedPodGangs []*podGangInfo
+	existingPodGangs []groveschedulerv1alpha1.PodGang
+	//existingPodGangNames []string
 	deletedPodGangNames  []string
 	existingPCLQPods     map[string][]corev1.Pod
 	existingPCLQs        []grovecorev1alpha1.PodClique
@@ -734,8 +734,34 @@ type syncContext struct {
 // getPodGangNamesPendingCreation identifies PodGangs not yet created.
 func (sc *syncContext) getPodGangNamesPendingCreation() []string {
 	return lo.FilterMap(sc.expectedPodGangs, func(podGang *podGangInfo, _ int) (string, bool) {
-		return podGang.fqn, !slices.Contains(sc.existingPodGangNames, podGang.fqn)
+		return podGang.fqn, !sc.isExistingPodGang(podGang.fqn)
 	})
+}
+
+func (sc *syncContext) isExistingPodGang(podGangName string) bool {
+	return slices.ContainsFunc(sc.existingPodGangs, func(pg groveschedulerv1alpha1.PodGang) bool {
+		return podGangName == pg.Name
+	})
+}
+
+func (sc *syncContext) getExcessPodGangNames() []string {
+	var excessPodGangNames []string
+	expectedPodGangNames := lo.Map(sc.expectedPodGangs, func(pg *podGangInfo, _ int) string {
+		return pg.fqn
+	})
+	for _, existingPodGang := range sc.existingPodGangs {
+		if !slices.Contains(expectedPodGangNames, existingPodGang.Name) {
+			excessPodGangNames = append(excessPodGangNames, existingPodGang.Name)
+		}
+	}
+	return excessPodGangNames
+}
+
+func (sc *syncContext) isPodGangInitialized(podGangName string) bool {
+	foundPG, ok := lo.Find(sc.existingPodGangs, func(pg groveschedulerv1alpha1.PodGang) bool {
+		return podGangName == pg.Name
+	})
+	return ok && k8sutils.IsConditionTrue(foundPG.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized))
 }
 
 // initializeAssignedAndUnassignedPodsForPCS categorizes pods by PodGang assignment.
