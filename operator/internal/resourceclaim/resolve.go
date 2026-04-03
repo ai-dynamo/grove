@@ -35,22 +35,24 @@ func ResolveTemplateSpec(
 	pcsTemplates []grovecorev1alpha1.ResourceClaimTemplateConfig,
 	pcsNamespace string,
 ) (*resourcev1.ResourceClaimTemplateSpec, error) {
-	if spec, _ := resolveInternalRef(ref, pcsTemplates); spec != nil {
+	if spec := resolveInternalRef(ref, pcsTemplates); spec != nil {
 		return spec, nil
 	}
 	return resolveExternalRef(ctx, cl, ref, pcsNamespace)
 }
 
+// resolveInternalRef returns the matching template spec from pcsTemplates, or
+// nil when the name does not match any internal template.
 func resolveInternalRef(
 	ref *grovecorev1alpha1.ResourceSharingSpec,
 	pcsTemplates []grovecorev1alpha1.ResourceClaimTemplateConfig,
-) (*resourcev1.ResourceClaimTemplateSpec, error) {
+) *resourcev1.ResourceClaimTemplateSpec {
 	for i := range pcsTemplates {
 		if pcsTemplates[i].Name == ref.Name {
-			return &pcsTemplates[i].Template, nil
+			return &pcsTemplates[i].Template
 		}
 	}
-	return nil, fmt.Errorf("internal ResourceClaimTemplate %q not found in PCS resourceClaimTemplates", ref.Name)
+	return nil
 }
 
 func resolveExternalRef(

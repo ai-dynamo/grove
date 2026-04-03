@@ -504,6 +504,13 @@ func (r _resource) ensurePCLQResourceClaims(ctx context.Context, pcs *grovecorev
 	if pclqTemplateSpec == nil || len(pclqTemplateSpec.ResourceSharing) == 0 {
 		return nil
 	}
+
+	currentReplicas := int(pclqTemplateSpec.Spec.Replicas)
+	var existingPCLQ grovecorev1alpha1.PodClique
+	if err := r.client.Get(ctx, client.ObjectKey{Name: pclqName, Namespace: pcs.Namespace}, &existingPCLQ); err == nil {
+		currentReplicas = int(existingPCLQ.Spec.Replicas)
+	}
+
 	labels := resourceclaim.ResourceClaimLabels(pcs.Name)
 	// AllReplicas: one RC per PCLQ instance
 	if err := resourceclaim.EnsureResourceClaims(
@@ -518,7 +525,7 @@ func (r _resource) ensurePCLQResourceClaims(ctx context.Context, pcs *grovecorev
 		return err
 	}
 	// PerReplica: one RC per PCLQ replica (pod index)
-	for replicaIdx := range int(pclqTemplateSpec.Spec.Replicas) {
+	for replicaIdx := range currentReplicas {
 		idx := replicaIdx
 		if err := resourceclaim.EnsureResourceClaims(
 			ctx, r.client,
@@ -532,5 +539,9 @@ func (r _resource) ensurePCLQResourceClaims(ctx context.Context, pcs *grovecorev
 			return err
 		}
 	}
-	return nil
+	return resourceclaim.CleanupStalePerReplicaRCs(
+		ctx, r.client,
+		pclqName, pcs.Namespace, pcs.Name,
+		currentReplicas,
+	)
 }

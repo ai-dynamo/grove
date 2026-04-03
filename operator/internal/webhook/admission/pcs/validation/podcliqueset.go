@@ -120,8 +120,12 @@ func (v *pcsValidator) validateResourceClaimTemplates(fldPath *field.Path) field
 	allErrs := field.ErrorList{}
 	names := make([]string, 0, len(v.pcs.Spec.Template.ResourceClaimTemplates))
 	for i, rct := range v.pcs.Spec.Template.ResourceClaimTemplates {
+		rctPath := fldPath.Index(i)
 		if rct.Name == "" {
-			allErrs = append(allErrs, field.Required(fldPath.Index(i).Child("name"), "template name is required"))
+			allErrs = append(allErrs, field.Required(rctPath.Child("name"), "template name is required"))
+		}
+		if len(rct.Template.Spec.Devices.Requests) == 0 {
+			allErrs = append(allErrs, field.Required(rctPath.Child("template", "spec", "devices", "requests"), "at least one device request is required"))
 		}
 		names = append(names, rct.Name)
 	}

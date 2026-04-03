@@ -32,6 +32,7 @@ import (
 	"github.com/stretchr/testify/require"
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
+	resourcev1 "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/tools/record"
@@ -1221,8 +1222,8 @@ func TestValidateResourceClaimTemplates(t *testing.T) {
 		{
 			name: "valid unique names",
 			templates: []grovecorev1alpha1.ResourceClaimTemplateConfig{
-				{Name: "gpu-mps"},
-				{Name: "shared-mem"},
+				{Name: "gpu-mps", Template: resourcev1.ResourceClaimTemplateSpec{Spec: resourcev1.ResourceClaimSpec{Devices: resourcev1.DeviceClaim{Requests: []resourcev1.DeviceRequest{{Name: "gpu"}}}}}},
+				{Name: "shared-mem", Template: resourcev1.ResourceClaimTemplateSpec{Spec: resourcev1.ResourceClaimSpec{Devices: resourcev1.DeviceClaim{Requests: []resourcev1.DeviceRequest{{Name: "mem"}}}}}},
 			},
 		},
 		{
@@ -1232,6 +1233,16 @@ func TestValidateResourceClaimTemplates(t *testing.T) {
 			},
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeRequired, Field: "spec.template.resourceClaimTemplates[0].name"},
+				{ErrorType: field.ErrorTypeRequired, Field: "spec.template.resourceClaimTemplates[0].template.spec.devices.requests"},
+			},
+		},
+		{
+			name: "empty template spec",
+			templates: []grovecorev1alpha1.ResourceClaimTemplateConfig{
+				{Name: "gpu-mps"},
+			},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeRequired, Field: "spec.template.resourceClaimTemplates[0].template.spec.devices.requests"},
 			},
 		},
 		{
@@ -1241,6 +1252,8 @@ func TestValidateResourceClaimTemplates(t *testing.T) {
 				{Name: "gpu-mps"},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeRequired, Field: "spec.template.resourceClaimTemplates[0].template.spec.devices.requests"},
+				{ErrorType: field.ErrorTypeRequired, Field: "spec.template.resourceClaimTemplates[1].template.spec.devices.requests"},
 				{ErrorType: field.ErrorTypeDuplicate, Field: "spec.template.resourceClaimTemplates.name"},
 			},
 		},
