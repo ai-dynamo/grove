@@ -16,6 +16,7 @@ package resourceclaim
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -101,7 +102,7 @@ func EnsureResourceClaims(
 		}
 	}
 	if len(errs) > 0 {
-		return fmt.Errorf("failed to ensure ResourceClaims: %v", errs)
+		return fmt.Errorf("failed to ensure ResourceClaims: %w", errors.Join(errs...))
 	}
 	return nil
 }
@@ -221,7 +222,7 @@ func DeletePerReplicaRCs(
 		}
 	}
 	if len(errs) > 0 {
-		return fmt.Errorf("failed to delete PerReplica RCs: %v", errs)
+		return fmt.Errorf("failed to delete PerReplica RCs: %w", errors.Join(errs...))
 	}
 	return nil
 }
@@ -252,7 +253,7 @@ func DeleteAllRCsWithPrefix(
 		}
 	}
 	if len(errs) > 0 {
-		return fmt.Errorf("failed to delete RCs with prefix %q: %v", prefix, errs)
+		return fmt.Errorf("failed to delete RCs with prefix %q: %w", prefix, errors.Join(errs...))
 	}
 	return nil
 }
@@ -277,26 +278,27 @@ func CleanupStalePerReplicaRCs(
 
 	var errs []error
 	for _, rc := range rcList.Items {
-		if isStaleOwnerPerReplicaRC(ownerName, currentReplicas, rc.Name) {
+		if IsStalePerReplicaRC(ownerName, currentReplicas, rc.Name) {
 			if err := DeleteResourceClaim(ctx, cl, rc.Name, namespace); err != nil {
 				errs = append(errs, fmt.Errorf("delete RC %q: %w", rc.Name, err))
 			}
 		}
 	}
 	if len(errs) > 0 {
-		return fmt.Errorf("failed to cleanup stale PerReplica RCs: %v", errs)
+		return fmt.Errorf("failed to cleanup stale PerReplica RCs: %w", errors.Join(errs...))
 	}
 	return nil
 }
 
-// isStaleOwnerPerReplicaRC returns true if rcName matches the pattern
-// "<ownerName>-<N>-<rctName>" where N >= currentReplicas.
-func isStaleOwnerPerReplicaRC(ownerName string, currentReplicas int, rcName string) bool {
-	prefix := ownerName + "-"
-	if !strings.HasPrefix(rcName, prefix) {
+// IsStalePerReplicaRC returns true if rcName matches the pattern
+// "<prefix>-<N>-<rctName>" where N >= currentReplicas.
+// The "all" segment (used by AllReplicas-scope RCs) is never considered stale.
+func IsStalePerReplicaRC(prefix string, currentReplicas int, rcName string) bool {
+	pfx := prefix + "-"
+	if !strings.HasPrefix(rcName, pfx) {
 		return false
 	}
-	rest := rcName[len(prefix):]
+	rest := rcName[len(pfx):]
 	dashIdx := strings.Index(rest, "-")
 	if dashIdx <= 0 {
 		return false

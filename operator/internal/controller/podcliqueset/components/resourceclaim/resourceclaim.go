@@ -17,8 +17,6 @@ package resourceclaim
 import (
 	"context"
 	"fmt"
-	"strconv"
-	"strings"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
@@ -151,7 +149,7 @@ func (r _resource) cleanupStaleResourceClaims(ctx context.Context, logger logr.L
 
 	var tasks []utils.Task
 	for _, name := range existing {
-		if !isStaleReplicaRC(pcs.Name, int(pcs.Spec.Replicas), name) {
+		if !resourceclaim.IsStalePerReplicaRC(pcs.Name, int(pcs.Spec.Replicas), name) {
 			continue
 		}
 		rcName := name
@@ -173,31 +171,6 @@ func (r _resource) cleanupStaleResourceClaims(ctx context.Context, logger logr.L
 		}
 	}
 	return nil
-}
-
-// isStaleReplicaRC returns true if the RC name belongs to a PCS replica index
-// that is >= currentReplicas (i.e. the replica has been scaled away).
-// RC names follow the pattern "<pcsName>-<segment>-..." where segment is either
-// "all" (PCS AllReplicas, never stale) or a numeric replica index.
-func isStaleReplicaRC(pcsName string, currentReplicas int, rcName string) bool {
-	prefix := pcsName + "-"
-	if !strings.HasPrefix(rcName, prefix) {
-		return false
-	}
-	rest := rcName[len(prefix):]
-	dashIdx := strings.Index(rest, "-")
-	if dashIdx <= 0 {
-		return false
-	}
-	seg := rest[:dashIdx]
-	if seg == "all" {
-		return false
-	}
-	repIdx, err := strconv.Atoi(seg)
-	if err != nil {
-		return false
-	}
-	return repIdx >= currentReplicas
 }
 
 // Delete triggers deletion of all PCS-level ResourceClaims.

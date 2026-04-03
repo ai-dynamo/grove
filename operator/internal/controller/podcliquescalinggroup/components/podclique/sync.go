@@ -167,37 +167,8 @@ func (r _resource) triggerDeletionOfExcessPCSGReplicas(logger logr.Logger, sc *s
 			return err
 		}
 
-		// Cleanup PCSG-level PerReplica ResourceClaims for deleted replicas
-		if sc.pcsgConfig != nil && len(sc.pcsgConfig.ResourceSharing) > 0 {
-			for _, idxStr := range replicaIndicesToDelete {
-				idx, err := strconv.Atoi(idxStr)
-				if err != nil {
-					logger.Error(err, "Failed to parse PCSG replica index for RC cleanup", "index", idxStr)
-					continue
-				}
-				if err := resourceclaim.DeletePerReplicaRCs(sc.ctx, r.client, sc.pcsg.Name, sc.pcsg.Namespace, sc.pcsgConfig.ResourceSharing, idx); err != nil {
-					logger.Error(err, "Failed to cleanup PerReplica ResourceClaims for deleted PCSG replica", "pcsg", sc.pcsg.Name, "replicaIndex", idx)
-				}
-			}
-		}
-
-		// Cleanup PCLQ-within-PCSG ResourceClaims (AllReplicas + PerReplica) for deleted replicas.
-		// When a PCSG replica is deleted, the child PCLQs are garbage-collected, but their
-		// RCs are owned by the PCS and must be explicitly removed.
-		for _, idxStr := range replicaIndicesToDelete {
-			idx, err := strconv.Atoi(idxStr)
-			if err != nil {
-				continue
-			}
-			for _, cliqueName := range sc.pcsg.Spec.CliqueNames {
-				pclqName := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{
-					Name:    sc.pcsg.Name,
-					Replica: idx,
-				}, cliqueName)
-				if err := resourceclaim.DeleteAllRCsWithPrefix(sc.ctx, r.client, pclqName+"-", sc.pcsg.Namespace, sc.pcs.Name); err != nil {
-					logger.Error(err, "Failed to cleanup PCLQ ResourceClaims for deleted PCSG replica", "pclq", pclqName)
-				}
-			}
+		if err := r.cleanupResourceClaimsForDeletedReplicas(sc, logger, replicaIndicesToDelete); err != nil {
+			return err
 		}
 
 		return sc.refreshExistingPCLQs(sc.pcsg)
@@ -426,6 +397,50 @@ func (sc *syncContext) refreshExistingPCLQs(pcsg *grovecorev1alpha1.PodCliqueSca
 	return nil
 }
 
+// cleanupResourceClaimsForDeletedReplicas removes PCSG-level PerReplica RCs and
+// PCLQ-within-PCSG RCs (AllReplicas + PerReplica) for PCSG replicas that have been deleted.
+// RC ownership is on the PCS, so they are not garbage-collected when the PCSG replica is deleted.
+func (r _resource) cleanupResourceClaimsForDeletedReplicas(sc *syncContext, logger logr.Logger, replicaIndicesToDelete []string) error {
+	var errs []error
+
+	for _, idxStr := range replicaIndicesToDelete {
+		idx, err := strconv.Atoi(idxStr)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("parse PCSG replica index %q: %w", idxStr, err))
+			continue
+		}
+
+		// PCSG-level PerReplica RCs
+		if sc.pcsgConfig != nil && len(sc.pcsgConfig.ResourceSharing) > 0 {
+			if err := resourceclaim.DeletePerReplicaRCs(sc.ctx, r.client, sc.pcsg.Name, sc.pcsg.Namespace, sc.pcsgConfig.ResourceSharing, idx); err != nil {
+				errs = append(errs, fmt.Errorf("cleanup PCSG PerReplica RCs for replica %d: %w", idx, err))
+			}
+		}
+
+		// PCLQ-within-PCSG RCs (both AllReplicas + PerReplica).
+		// When a PCSG replica is deleted the child PCLQs are garbage-collected,
+		// but their RCs are owned by the PCS and must be explicitly removed.
+		for _, cliqueName := range sc.pcsg.Spec.CliqueNames {
+			pclqName := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{
+				Name:    sc.pcsg.Name,
+				Replica: idx,
+			}, cliqueName)
+			if err := resourceclaim.DeleteAllRCsWithPrefix(sc.ctx, r.client, pclqName+"-", sc.pcsg.Namespace, sc.pcs.Name); err != nil {
+				errs = append(errs, fmt.Errorf("cleanup PCLQ RCs for %s: %w", pclqName, err))
+			}
+		}
+	}
+
+	if len(errs) > 0 {
+		return groveerr.WrapError(errors.Join(errs...),
+			errCodeCreatePodCliques,
+			component.OperationSync,
+			fmt.Sprintf("failed to cleanup ResourceClaims for deleted PCSG replicas of %s", client.ObjectKeyFromObject(sc.pcsg)),
+		)
+	}
+	return nil
+}
+
 // ensurePCSGResourceClaims creates PCSG-level AllReplicas and PerReplica ResourceClaims.
 func (r _resource) ensurePCSGResourceClaims(sc *syncContext) error {
 	if sc.pcsgConfig == nil || len(sc.pcsgConfig.ResourceSharing) == 0 {
@@ -476,7 +491,7 @@ func (r _resource) ensurePCSGResourceClaims(sc *syncContext) error {
 // ensurePCLQResourceClaimsFromFQN extracts the template name from a PCLQ FQN and ensures AllReplicas + PerReplica RCs.
 func (r _resource) ensurePCLQResourceClaimsFromFQN(ctx context.Context, sc *syncContext, pclqFQN string) error {
 	for _, cliqueName := range sc.pcsg.Spec.CliqueNames {
-		if strings.HasSuffix(pclqFQN, cliqueName) {
+		if strings.HasSuffix(pclqFQN, "-"+cliqueName) {
 			return r.ensurePCLQResourceClaims(ctx, sc.pcs, pclqFQN, cliqueName)
 		}
 	}

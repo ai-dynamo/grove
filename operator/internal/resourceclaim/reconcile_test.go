@@ -498,9 +498,9 @@ func TestCleanupStalePerReplicaRCs(t *testing.T) {
 	})
 }
 
-// --- isStaleOwnerPerReplicaRC ---
+// --- IsStalePerReplicaRC ---
 
-func TestIsStaleOwnerPerReplicaRC(t *testing.T) {
+func TestIsStalePerReplicaRC(t *testing.T) {
 	tests := []struct {
 		name            string
 		ownerName       string
@@ -519,7 +519,7 @@ func TestIsStaleOwnerPerReplicaRC(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, isStaleOwnerPerReplicaRC(tt.ownerName, tt.currentReplicas, tt.rcName))
+			assert.Equal(t, tt.want, IsStalePerReplicaRC(tt.ownerName, tt.currentReplicas, tt.rcName))
 		})
 	}
 }
