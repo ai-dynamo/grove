@@ -170,8 +170,14 @@ func (r _resource) triggerDeletionOfExcessPCSGReplicas(logger logr.Logger, sc *s
 		// Cleanup PCSG-level PerReplica ResourceClaims for deleted replicas
 		if sc.pcsgConfig != nil && len(sc.pcsgConfig.ResourceSharing) > 0 {
 			for _, idxStr := range replicaIndicesToDelete {
-				idx, _ := strconv.Atoi(idxStr)
-				_ = resourceclaim.DeletePerReplicaRCs(sc.ctx, r.client, sc.pcsg.Name, sc.pcsg.Namespace, sc.pcsgConfig.ResourceSharing, idx)
+				idx, err := strconv.Atoi(idxStr)
+				if err != nil {
+					logger.Error(err, "Failed to parse PCSG replica index for RC cleanup", "index", idxStr)
+					continue
+				}
+				if err := resourceclaim.DeletePerReplicaRCs(sc.ctx, r.client, sc.pcsg.Name, sc.pcsg.Namespace, sc.pcsgConfig.ResourceSharing, idx); err != nil {
+					logger.Error(err, "Failed to cleanup PerReplica ResourceClaims for deleted PCSG replica", "pcsg", sc.pcsg.Name, "replicaIndex", idx)
+				}
 			}
 		}
 
@@ -407,13 +413,15 @@ func (r _resource) ensurePCSGResourceClaims(sc *syncContext) error {
 		return nil
 	}
 	refs := sc.pcsgConfig.ResourceSharing
+	labels := resourceclaim.ResourceClaimLabels(sc.pcs.Name)
 
 	// AllReplicas scope: one set of RCs per PCSG
 	if err := resourceclaim.EnsureResourceClaims(
-		sc.ctx, r.client, r.client,
+		sc.ctx, r.client,
 		sc.pcsg.Name, sc.pcsg.Namespace,
 		refs,
 		sc.pcs.Spec.Template.ResourceClaimTemplates,
+		labels,
 		sc.pcs, r.scheme,
 		nil,
 	); err != nil {
@@ -428,10 +436,11 @@ func (r _resource) ensurePCSGResourceClaims(sc *syncContext) error {
 	for pcsgReplicaIndex := range int(sc.pcsg.Spec.Replicas) {
 		repIdx := pcsgReplicaIndex
 		if err := resourceclaim.EnsureResourceClaims(
-			sc.ctx, r.client, r.client,
+			sc.ctx, r.client,
 			sc.pcsg.Name, sc.pcsg.Namespace,
 			refs,
 			sc.pcs.Spec.Template.ResourceClaimTemplates,
+			labels,
 			sc.pcs, r.scheme,
 			&repIdx,
 		); err != nil {
@@ -461,12 +470,14 @@ func (r _resource) ensurePCLQResourceClaims(ctx context.Context, pcs *grovecorev
 	if pclqTemplateSpec == nil || len(pclqTemplateSpec.ResourceSharing) == 0 {
 		return nil
 	}
+	labels := resourceclaim.ResourceClaimLabels(pcs.Name)
 	// AllReplicas: one RC per PCLQ instance
 	if err := resourceclaim.EnsureResourceClaims(
-		ctx, r.client, r.client,
+		ctx, r.client,
 		pclqName, pcs.Namespace,
 		pclqTemplateSpec.ResourceSharing,
 		pcs.Spec.Template.ResourceClaimTemplates,
+		labels,
 		pcs, r.scheme,
 		nil,
 	); err != nil {
@@ -476,10 +487,11 @@ func (r _resource) ensurePCLQResourceClaims(ctx context.Context, pcs *grovecorev
 	for replicaIdx := range int(pclqTemplateSpec.Spec.Replicas) {
 		idx := replicaIdx
 		if err := resourceclaim.EnsureResourceClaims(
-			ctx, r.client, r.client,
+			ctx, r.client,
 			pclqName, pcs.Namespace,
 			pclqTemplateSpec.ResourceSharing,
 			pcs.Spec.Template.ResourceClaimTemplates,
+			labels,
 			pcs, r.scheme,
 			&idx,
 		); err != nil {

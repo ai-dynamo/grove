@@ -138,6 +138,11 @@ func scalePodCliqueSet(tc TestContext, name string, replicas int) error {
 	return utils.ScalePodCliqueSetWithClient(tc.Ctx, tc.DynamicClient, tc.Namespace, name, replicas)
 }
 
+// scalePodClique is a wrapper around utils.ScalePodCliqueWithClient that accepts TestContext
+func scalePodClique(tc TestContext, name string, replicas int) error {
+	return utils.ScalePodCliqueWithClient(tc.Ctx, tc.DynamicClient, tc.Namespace, name, replicas)
+}
+
 // applyYAMLFile is a wrapper around utils.ApplyYAMLFile that accepts TestContext
 func applyYAMLFile(tc TestContext, yamlPath string) ([]utils.AppliedResource, error) {
 	return utils.ApplyYAMLFile(tc.Ctx, yamlPath, tc.Namespace, tc.RestConfig, Logger)

@@ -1,0 +1,150 @@
+# External ResourceClaimTemplate (resolved from the namespace)
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: ext-tpl
+spec:
+  spec:
+    devices:
+      requests:
+        - name: ext-dev
+          exactly:
+            deviceClassName: ext-class
+---
+# PodCliqueSet with multi-level resourceSharing:
+#   PCS level:              int-tpl/AllReplicas + ext-tpl/PerReplica
+#   Standalone PCLQ level:  int-tpl/AllReplicas + int-tpl4/PerReplica (worker-a)
+#   PCSG level:             int-tpl2/AllReplicas + int-tpl3/PerReplica (sga)
+#   PCLQ-in-PCSG level:     int-tpl/AllReplicas + int-tpl2/PerReplica (worker-b in sga)
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: rs-test
+  labels:
+    app: rs-test
+spec:
+  replicas: 1
+  template:
+    resourceClaimTemplates:
+      - name: int-tpl
+        template:
+          spec:
+            devices:
+              requests:
+                - name: int-dev
+                  exactly:
+                    deviceClassName: int-class
+      - name: int-tpl2
+        template:
+          spec:
+            devices:
+              requests:
+                - name: int-dev2
+                  exactly:
+                    deviceClassName: int-class2
+      - name: int-tpl3
+        template:
+          spec:
+            devices:
+              requests:
+                - name: int-dev3
+                  exactly:
+                    deviceClassName: int-class3
+      - name: int-tpl4
+        template:
+          spec:
+            devices:
+              requests:
+                - name: int-dev4
+                  exactly:
+                    deviceClassName: int-class4
+    resourceSharing:
+      - name: int-tpl
+        scope: AllReplicas
+      - name: ext-tpl
+        scope: PerReplica
+    cliques:
+      - name: worker-a
+        labels:
+          kai.scheduler/queue: test
+        resourceSharing:
+          - name: int-tpl
+            scope: AllReplicas
+          - name: int-tpl4
+            scope: PerReplica
+        spec:
+          roleName: role-a
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker-a
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi
+      - name: worker-b
+        labels:
+          kai.scheduler/queue: test
+        resourceSharing:
+          - name: int-tpl
+            scope: AllReplicas
+          - name: int-tpl2
+            scope: PerReplica
+        spec:
+          roleName: role-b
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker-b
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi
+    podCliqueScalingGroups:
+      - name: sga
+        replicas: 2
+        minAvailable: 2
+        cliqueNames:
+          - worker-b
+        resourceSharing:
+          - name: int-tpl2
+            scope: AllReplicas
+          - name: int-tpl3
+            scope: PerReplica

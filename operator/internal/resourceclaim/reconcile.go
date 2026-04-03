@@ -18,6 +18,11 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
+	"strings"
+
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	corev1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
@@ -25,16 +30,15 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 )
 
-// EnsureResourceClaim creates or patches a ResourceClaim with the given spec and owner.
+// EnsureResourceClaim creates or patches a ResourceClaim with the given spec, labels, and owner.
 func EnsureResourceClaim(
 	ctx context.Context,
 	cl client.Client,
 	name, namespace string,
 	spec *resourcev1.ResourceClaimTemplateSpec,
+	labels map[string]string,
 	owner metav1.Object,
 	scheme *runtime.Scheme,
 ) error {
@@ -45,6 +49,7 @@ func EnsureResourceClaim(
 		},
 	}
 	_, err := controllerutil.CreateOrPatch(ctx, cl, rc, func() error {
+		rc.Labels = labels
 		rc.Spec = spec.Spec
 		return controllerutil.SetControllerReference(owner, rc, scheme)
 	})
@@ -65,10 +70,10 @@ func DeleteResourceClaim(ctx context.Context, cl client.Client, name, namespace 
 func EnsureResourceClaims(
 	ctx context.Context,
 	cl client.Client,
-	reader client.Reader,
 	ownerName, namespace string,
 	refs []grovecorev1alpha1.ResourceSharingSpec,
 	pcsTemplates []grovecorev1alpha1.ResourceClaimTemplateConfig,
+	labels map[string]string,
 	owner metav1.Object,
 	scheme *runtime.Scheme,
 	replicaIndex *int, // nil for AllReplicas scope; set for PerReplica scope filtering
@@ -83,7 +88,7 @@ func EnsureResourceClaims(
 			continue
 		}
 
-		spec, err := ResolveTemplateSpec(ctx, reader, ref, pcsTemplates, namespace)
+		spec, err := ResolveTemplateSpec(ctx, cl, ref, pcsTemplates, namespace)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("ref %q (index %d): %w", ref.Name, i, err))
 			continue
@@ -91,7 +96,7 @@ func EnsureResourceClaims(
 
 		rcName := RCName(ownerName, ref, replicaIndex)
 
-		if err := EnsureResourceClaim(ctx, cl, rcName, namespace, spec, owner, scheme); err != nil {
+		if err := EnsureResourceClaim(ctx, cl, rcName, namespace, spec, labels, owner, scheme); err != nil {
 			errs = append(errs, fmt.Errorf("RC %q: %w", rcName, err))
 		}
 	}
@@ -99,6 +104,13 @@ func EnsureResourceClaims(
 		return fmt.Errorf("failed to ensure ResourceClaims: %v", errs)
 	}
 	return nil
+}
+
+// ResourceClaimLabels returns the standard Grove labels for a ResourceClaim owned by a PCS.
+func ResourceClaimLabels(pcsName string) map[string]string {
+	labels := apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcsName)
+	labels[apicommon.LabelComponentKey] = apicommon.LabelComponentNameResourceClaim
+	return labels
 }
 
 // RCName returns the deterministic ResourceClaim name for a given ref and optional replica index.
@@ -180,10 +192,10 @@ func FindPCSGConfig(
 	pcsg *grovecorev1alpha1.PodCliqueScalingGroup,
 	pcsReplicaIndex int,
 ) *grovecorev1alpha1.PodCliqueScalingGroupConfig {
+	pcsNameReplica := apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}
 	for i := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
 		cfg := &pcs.Spec.Template.PodCliqueScalingGroupConfigs[i]
-		fqn := fmt.Sprintf("%s-%d-%s", pcs.Name, pcsReplicaIndex, cfg.Name)
-		if fqn == pcsg.Name {
+		if apicommon.GeneratePodCliqueScalingGroupName(pcsNameReplica, cfg.Name) == pcsg.Name {
 			return cfg
 		}
 	}
@@ -212,4 +224,59 @@ func DeletePerReplicaRCs(
 		return fmt.Errorf("failed to delete PerReplica RCs: %v", errs)
 	}
 	return nil
+}
+
+// CleanupStalePerReplicaRCs lists all ResourceClaims for the PCS and deletes
+// PerReplica-scoped ones whose replica index >= currentReplicas for the given
+// owner. This handles scale-in for any owner level (standalone PCLQ, PCSG, etc.)
+// where the previous replica count is not known upfront.
+func CleanupStalePerReplicaRCs(
+	ctx context.Context,
+	cl client.Client,
+	ownerName, namespace, pcsName string,
+	currentReplicas int,
+) error {
+	rcList := &resourcev1.ResourceClaimList{}
+	if err := cl.List(ctx, rcList,
+		client.InNamespace(namespace),
+		client.MatchingLabels(ResourceClaimLabels(pcsName)),
+	); err != nil {
+		return fmt.Errorf("failed to list ResourceClaims for cleanup: %w", err)
+	}
+
+	var errs []error
+	for _, rc := range rcList.Items {
+		if isStaleOwnerPerReplicaRC(ownerName, currentReplicas, rc.Name) {
+			if err := DeleteResourceClaim(ctx, cl, rc.Name, namespace); err != nil {
+				errs = append(errs, fmt.Errorf("delete RC %q: %w", rc.Name, err))
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to cleanup stale PerReplica RCs: %v", errs)
+	}
+	return nil
+}
+
+// isStaleOwnerPerReplicaRC returns true if rcName matches the pattern
+// "<ownerName>-<N>-<rctName>" where N >= currentReplicas.
+func isStaleOwnerPerReplicaRC(ownerName string, currentReplicas int, rcName string) bool {
+	prefix := ownerName + "-"
+	if !strings.HasPrefix(rcName, prefix) {
+		return false
+	}
+	rest := rcName[len(prefix):]
+	dashIdx := strings.Index(rest, "-")
+	if dashIdx <= 0 {
+		return false
+	}
+	seg := rest[:dashIdx]
+	if seg == "all" {
+		return false
+	}
+	repIdx, err := strconv.Atoi(seg)
+	if err != nil {
+		return false
+	}
+	return repIdx >= currentReplicas
 }

@@ -103,7 +103,7 @@ spec:
                             ResourceClaim for each pod.
                           items:
                             description: |-
-                              ResourceSharingEntry references a ResourceClaimTemplateSpec and defines the
+                              ResourceSharingSpec references a ResourceClaimTemplateSpec and defines the
                               sharing scope for the resulting ResourceClaim(s).
                             properties:
                               filter:
@@ -9399,7 +9399,7 @@ spec:
                             The optional Filter field controls which PodCliques receive the claims.
                           items:
                             description: |-
-                              ResourceSharingEntry references a ResourceClaimTemplateSpec and defines the
+                              ResourceSharingSpec references a ResourceClaimTemplateSpec and defines the
                               sharing scope for the resulting ResourceClaim(s).
                             properties:
                               filter:
@@ -9998,7 +9998,7 @@ spec:
                     items:
                       description: |-
                         ResourceClaimTemplateConfig defines a named ResourceClaimTemplateSpec that can be
-                        referenced by ResourceSharingEntry entries in resourceSharing fields.
+                        referenced by ResourceSharingSpec entries in resourceSharing fields.
                       properties:
                         name:
                           description: Name is a unique identifier for this template
@@ -10691,7 +10691,7 @@ spec:
                       The optional Filter field controls which children receive the claims.
                     items:
                       description: |-
-                        ResourceSharingEntry references a ResourceClaimTemplateSpec and defines the
+                        ResourceSharingSpec references a ResourceClaimTemplateSpec and defines the
                         sharing scope for the resulting ResourceClaim(s).
                       properties:
                         filter:

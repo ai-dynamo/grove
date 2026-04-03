@@ -17,6 +17,8 @@ package resourceclaim
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
@@ -57,7 +59,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 	if err := r.client.List(ctx,
 		objMetaList,
 		client.InNamespace(pcsObjMeta.Namespace),
-		client.MatchingLabels(map[string]string{"grove.io/pcs": pcsObjMeta.Name}),
+		client.MatchingLabels(resourceclaim.ResourceClaimLabels(pcsObjMeta.Name)),
 	); err != nil {
 		return nil, groveerr.WrapError(err,
 			errSyncPCSResourceClaim,
@@ -68,13 +70,15 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 	return k8sutils.FilterMapOwnedResourceNames(pcsObjMeta, objMetaList.Items), nil
 }
 
-// Sync creates or patches PCS-level ResourceClaims (AllReplicas + PerReplica).
+// Sync creates or patches PCS-level ResourceClaims (AllReplicas + PerReplica)
+// and cleans up stale RCs from previous scale-in operations.
 func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
 	refs := pcs.Spec.Template.ResourceSharing
 	if len(refs) == 0 {
 		return nil
 	}
 
+	labels := resourceclaim.ResourceClaimLabels(pcs.Name)
 	tasks := make([]utils.Task, 0, int(pcs.Spec.Replicas)+1)
 
 	// AllReplicas-scope: one set of RCs per PCS (not per replica)
@@ -82,10 +86,11 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 		Name: "EnsurePCSAllReplicasRCs",
 		Fn: func(ctx context.Context) error {
 			return resourceclaim.EnsureResourceClaims(
-				ctx, r.client, r.client,
+				ctx, r.client,
 				pcs.Name, pcs.Namespace,
 				refs,
 				pcs.Spec.Template.ResourceClaimTemplates,
+				labels,
 				pcs, r.scheme,
 				nil,
 			)
@@ -99,10 +104,11 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 			Name: fmt.Sprintf("EnsurePCSPerReplicaRCs-rep-%d", replicaIdx),
 			Fn: func(ctx context.Context) error {
 				return resourceclaim.EnsureResourceClaims(
-					ctx, r.client, r.client,
+					ctx, r.client,
 					pcs.Name, pcs.Namespace,
 					refs,
 					pcs.Spec.Template.ResourceClaimTemplates,
+					labels,
 					pcs, r.scheme,
 					&replicaIdx,
 				)
@@ -118,8 +124,78 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 		)
 	}
 
+	// Clean up stale RCs from previous replicas (e.g. after scale-in)
+	if err := r.cleanupStaleResourceClaims(ctx, logger, pcs); err != nil {
+		return err
+	}
+
 	logger.V(4).Info("Successfully synced PCS-level ResourceClaims")
 	return nil
+}
+
+// cleanupStaleResourceClaims deletes ResourceClaims that belong to PCS replicas
+// that no longer exist after a scale-in. All RCs across every hierarchy level
+// (PCS PerReplica, standalone PCLQ, PCSG, PCLQ-within-PCSG) for a given PCS
+// replica share the name prefix "<pcsName>-<replicaIndex>-", so a simple prefix
+// match identifies stale RCs without needing to traverse the PCS spec.
+func (r _resource) cleanupStaleResourceClaims(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
+	existing, err := r.GetExistingResourceNames(ctx, logger, pcs.ObjectMeta)
+	if err != nil {
+		return err
+	}
+	if len(existing) == 0 {
+		return nil
+	}
+
+	var tasks []utils.Task
+	for _, name := range existing {
+		if !isStaleReplicaRC(pcs.Name, int(pcs.Spec.Replicas), name) {
+			continue
+		}
+		rcName := name
+		logger.V(4).Info("Deleting stale ResourceClaim", "name", rcName)
+		tasks = append(tasks, utils.Task{
+			Name: fmt.Sprintf("DeleteStaleRC-%s", rcName),
+			Fn: func(ctx context.Context) error {
+				return resourceclaim.DeleteResourceClaim(ctx, r.client, rcName, pcs.Namespace)
+			},
+		})
+	}
+	if len(tasks) > 0 {
+		if runResult := utils.RunConcurrently(ctx, logger, tasks); runResult.HasErrors() {
+			return groveerr.WrapError(runResult.GetAggregatedError(),
+				errSyncPCSResourceClaim,
+				component.OperationSync,
+				fmt.Sprintf("Error cleaning up stale ResourceClaims for %s", client.ObjectKeyFromObject(pcs)),
+			)
+		}
+	}
+	return nil
+}
+
+// isStaleReplicaRC returns true if the RC name belongs to a PCS replica index
+// that is >= currentReplicas (i.e. the replica has been scaled away).
+// RC names follow the pattern "<pcsName>-<segment>-..." where segment is either
+// "all" (PCS AllReplicas, never stale) or a numeric replica index.
+func isStaleReplicaRC(pcsName string, currentReplicas int, rcName string) bool {
+	prefix := pcsName + "-"
+	if !strings.HasPrefix(rcName, prefix) {
+		return false
+	}
+	rest := rcName[len(prefix):]
+	dashIdx := strings.Index(rest, "-")
+	if dashIdx <= 0 {
+		return false
+	}
+	seg := rest[:dashIdx]
+	if seg == "all" {
+		return false
+	}
+	repIdx, err := strconv.Atoi(seg)
+	if err != nil {
+		return false
+	}
+	return repIdx >= currentReplicas
 }
 
 // Delete triggers deletion of all PCS-level ResourceClaims.

@@ -167,32 +167,49 @@ func (r _resource) ensurePCLQResourceClaims(ctx context.Context, pcs *grovecorev
 	if !ok || len(pclqTemplateSpec.ResourceSharing) == 0 {
 		return nil
 	}
+
+	// Use the actual PCLQ replica count when available; HPA/KEDA may have
+	// mutated it beyond the PCS template value.
+	currentReplicas := int(pclqTemplateSpec.Spec.Replicas)
+	var existingPCLQ grovecorev1alpha1.PodClique
+	if err := r.client.Get(ctx, client.ObjectKey{Name: pclqName, Namespace: pcs.Namespace}, &existingPCLQ); err == nil {
+		currentReplicas = int(existingPCLQ.Spec.Replicas)
+	}
+
+	labels := resourceclaim.ResourceClaimLabels(pcs.Name)
 	// AllReplicas: one RC per PCLQ instance
 	if err := resourceclaim.EnsureResourceClaims(
-		ctx, r.client, r.client,
+		ctx, r.client,
 		pclqName, pcs.Namespace,
 		pclqTemplateSpec.ResourceSharing,
 		pcs.Spec.Template.ResourceClaimTemplates,
+		labels,
 		pcs, r.scheme,
 		nil,
 	); err != nil {
 		return err
 	}
 	// PerReplica: one RC per PCLQ replica (pod index)
-	for replicaIdx := range int(pclqTemplateSpec.Spec.Replicas) {
+	for replicaIdx := range currentReplicas {
 		idx := replicaIdx
 		if err := resourceclaim.EnsureResourceClaims(
-			ctx, r.client, r.client,
+			ctx, r.client,
 			pclqName, pcs.Namespace,
 			pclqTemplateSpec.ResourceSharing,
 			pcs.Spec.Template.ResourceClaimTemplates,
+			labels,
 			pcs, r.scheme,
 			&idx,
 		); err != nil {
 			return err
 		}
 	}
-	return nil
+	// Cleanup stale PerReplica RCs from previous higher replica counts
+	return resourceclaim.CleanupStalePerReplicaRCs(
+		ctx, r.client,
+		pclqName, pcs.Namespace, pcs.Name,
+		currentReplicas,
+	)
 }
 
 // triggerDeletionOfPodCliques executes deletion tasks for PodCliques.
