@@ -59,7 +59,7 @@ func DeleteResourceClaim(ctx context.Context, cl client.Client, name, namespace 
 	return client.IgnoreNotFound(cl.Delete(ctx, rc))
 }
 
-// EnsureResourceClaims creates ResourceClaims for a list of ResourceSharingEntry entries
+// EnsureResourceClaims creates ResourceClaims for a list of ResourceSharingSpec entries
 // at a given level. It resolves each ref, generates the deterministic name, and creates the RC.
 // Errors are collected and returned as a single aggregated error.
 func EnsureResourceClaims(
@@ -67,7 +67,7 @@ func EnsureResourceClaims(
 	cl client.Client,
 	reader client.Reader,
 	ownerName, namespace string,
-	refs []grovecorev1alpha1.ResourceSharingEntry,
+	refs []grovecorev1alpha1.ResourceSharingSpec,
 	pcsTemplates []grovecorev1alpha1.ResourceClaimTemplateConfig,
 	owner metav1.Object,
 	scheme *runtime.Scheme,
@@ -102,7 +102,7 @@ func EnsureResourceClaims(
 }
 
 // RCName returns the deterministic ResourceClaim name for a given ref and optional replica index.
-func RCName(ownerName string, ref *grovecorev1alpha1.ResourceSharingEntry, replicaIndex *int) string {
+func RCName(ownerName string, ref *grovecorev1alpha1.ResourceSharingSpec, replicaIndex *int) string {
 	if ref.Scope == grovecorev1alpha1.ResourceSharingScopeAllReplicas {
 		return AllReplicasRCName(ownerName, ref.Name)
 	}
@@ -113,7 +113,7 @@ func RCName(ownerName string, ref *grovecorev1alpha1.ResourceSharingEntry, repli
 // When no matchNames are provided (PCLQ-level), filtering is skipped.
 // When Filter is nil, all children match (broadcast).
 // The filter is always include-based: only listed names receive the claims.
-func filterMatches(ref *grovecorev1alpha1.ResourceSharingEntry, matchNames []string) bool {
+func filterMatches(ref *grovecorev1alpha1.ResourceSharingSpec, matchNames []string) bool {
 	if len(matchNames) == 0 || ref.Filter == nil {
 		return true
 	}
@@ -137,7 +137,7 @@ func filterMatches(ref *grovecorev1alpha1.ResourceSharingEntry, matchNames []str
 func InjectResourceClaimRefs(
 	podSpec *corev1.PodSpec,
 	ownerName string,
-	refs []grovecorev1alpha1.ResourceSharingEntry,
+	refs []grovecorev1alpha1.ResourceSharingSpec,
 	replicaIndex *int, // nil = inject AllReplicas-scope RCs; non-nil = inject PerReplica for this replica
 	matchNames ...string,
 ) {
@@ -195,7 +195,7 @@ func DeletePerReplicaRCs(
 	ctx context.Context,
 	cl client.Client,
 	ownerName, namespace string,
-	refs []grovecorev1alpha1.ResourceSharingEntry,
+	refs []grovecorev1alpha1.ResourceSharingSpec,
 	replicaIndex int,
 ) error {
 	var errs []error

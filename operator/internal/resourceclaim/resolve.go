@@ -25,13 +25,13 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 )
 
-// ResolveTemplateSpec resolves a ResourceSharingEntry to its ResourceClaimTemplateSpec.
+// ResolveTemplateSpec resolves a ResourceSharingSpec to its ResourceClaimTemplateSpec.
 // Resolution order: internal PCS-level resourceClaimTemplates first, then external
 // Kubernetes ResourceClaimTemplate objects. Internal templates shadow external ones.
 func ResolveTemplateSpec(
 	ctx context.Context,
 	cl client.Reader,
-	ref *grovecorev1alpha1.ResourceSharingEntry,
+	ref *grovecorev1alpha1.ResourceSharingSpec,
 	pcsTemplates []grovecorev1alpha1.ResourceClaimTemplateConfig,
 	pcsNamespace string,
 ) (*resourcev1.ResourceClaimTemplateSpec, error) {
@@ -42,7 +42,7 @@ func ResolveTemplateSpec(
 }
 
 func resolveInternalRef(
-	ref *grovecorev1alpha1.ResourceSharingEntry,
+	ref *grovecorev1alpha1.ResourceSharingSpec,
 	pcsTemplates []grovecorev1alpha1.ResourceClaimTemplateConfig,
 ) (*resourcev1.ResourceClaimTemplateSpec, error) {
 	for i := range pcsTemplates {
@@ -56,7 +56,7 @@ func resolveInternalRef(
 func resolveExternalRef(
 	ctx context.Context,
 	cl client.Reader,
-	ref *grovecorev1alpha1.ResourceSharingEntry,
+	ref *grovecorev1alpha1.ResourceSharingSpec,
 	pcsNamespace string,
 ) (*resourcev1.ResourceClaimTemplateSpec, error) {
 	ns := ref.Namespace

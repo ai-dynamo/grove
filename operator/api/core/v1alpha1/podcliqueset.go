@@ -225,7 +225,7 @@ type PodCliqueSetTemplateSpec struct {
 	//   - PerReplica: one RC per PCS replica, shared across ALL pods in that replica
 	// The optional Filter field controls which children receive the claims.
 	// +optional
-	ResourceSharing []ResourceSharingEntry `json:"resourceSharing,omitempty"`
+	ResourceSharing []ResourceSharingSpec `json:"resourceSharing,omitempty"`
 	// PodCliqueScalingGroupConfigs is a list of scaling groups for the PodCliqueSet.
 	PodCliqueScalingGroupConfigs []PodCliqueScalingGroupConfig `json:"podCliqueScalingGroups,omitempty"`
 }
@@ -260,7 +260,7 @@ type PodCliqueTemplateSpec struct {
 	// Spec.PodSpec.ResourceClaims[x].ResourceClaimTemplateName, which creates a unique
 	// ResourceClaim for each pod.
 	// +optional
-	ResourceSharing []ResourceSharingEntry `json:"resourceSharing,omitempty"`
+	ResourceSharing []ResourceSharingSpec `json:"resourceSharing,omitempty"`
 	// Specification of the desired behavior of a PodClique.
 	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#spec-and-status
 	Spec PodCliqueSpec `json:"spec"`
@@ -315,7 +315,7 @@ type PodCliqueScalingGroupConfig struct {
 	//   - PerReplica: one RC per PCSG replica, shared across all PCLQs in that replica
 	// The optional Filter field controls which PodCliques receive the claims.
 	// +optional
-	ResourceSharing []ResourceSharingEntry `json:"resourceSharing,omitempty"`
+	ResourceSharing []ResourceSharingSpec `json:"resourceSharing,omitempty"`
 	// TopologyConstraint defines topology placement requirements for PodCliqueScalingGroup.
 	// Must be equal to or stricter than parent PodCliqueSet constraints.
 	// +optional
@@ -336,7 +336,7 @@ const (
 )
 
 // ResourceClaimTemplateConfig defines a named ResourceClaimTemplateSpec that can be
-// referenced by ResourceSharingEntry entries in resourceSharing fields.
+// referenced by ResourceSharingSpec entries in resourceSharing fields.
 type ResourceClaimTemplateConfig struct {
 	// Name is a unique identifier for this template within the PodCliqueSet.
 	Name string `json:"name"`
@@ -344,9 +344,9 @@ type ResourceClaimTemplateConfig struct {
 	Template resourcev1.ResourceClaimTemplateSpec `json:"template"`
 }
 
-// ResourceSharingEntry references a ResourceClaimTemplateSpec and defines the
+// ResourceSharingSpec references a ResourceClaimTemplateSpec and defines the
 // sharing scope for the resulting ResourceClaim(s).
-type ResourceSharingEntry struct {
+type ResourceSharingSpec struct {
 	// Name of the referenced template. Resolved by first looking up
 	// PodCliqueSetTemplateSpec.ResourceClaimTemplates; if no match is found,
 	// the operator looks for a Kubernetes ResourceClaimTemplate object in the

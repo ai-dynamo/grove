@@ -151,7 +151,7 @@ func (v *pcsValidator) validatePCSGResourceSharing(cfg grovecorev1alpha1.PodCliq
 // validatePCSFilter validates Filter entries in PCS-level ResourceSharing, checking that
 // cliqueNames refer to valid PodClique template names and groupNames refer to valid
 // PodCliqueScalingGroup config names.
-func (v *pcsValidator) validatePCSFilter(refs []grovecorev1alpha1.ResourceSharingEntry, fldPath *field.Path) field.ErrorList {
+func (v *pcsValidator) validatePCSFilter(refs []grovecorev1alpha1.ResourceSharingSpec, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	cliqueNames := sets.New[string]()
 	for _, c := range v.pcs.Spec.Template.Cliques {
@@ -191,7 +191,7 @@ func validateFilter(f *grovecorev1alpha1.ResourceSharingFilter, fldPath *field.P
 }
 
 // validatePCLQNoFilter rejects Filter on PCLQ-level resourceSharing since PCLQs have no children to filter.
-func validatePCLQNoFilter(refs []grovecorev1alpha1.ResourceSharingEntry, fldPath *field.Path) field.ErrorList {
+func validatePCLQNoFilter(refs []grovecorev1alpha1.ResourceSharingSpec, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	for i, ref := range refs {
 		if ref.Filter != nil {
@@ -201,8 +201,8 @@ func validatePCLQNoFilter(refs []grovecorev1alpha1.ResourceSharingEntry, fldPath
 	return allErrs
 }
 
-// validateResourceSharing validates a slice of ResourceSharingEntry entries.
-func (v *pcsValidator) validateResourceSharing(refs []grovecorev1alpha1.ResourceSharingEntry, fldPath *field.Path) field.ErrorList {
+// validateResourceSharing validates a slice of ResourceSharingSpec entries.
+func (v *pcsValidator) validateResourceSharing(refs []grovecorev1alpha1.ResourceSharingSpec, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	templateNames := sets.New[string]()
 	for _, rct := range v.pcs.Spec.Template.ResourceClaimTemplates {
