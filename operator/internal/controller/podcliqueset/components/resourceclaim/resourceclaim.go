@@ -67,7 +67,9 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 			fmt.Sprintf("Error listing ResourceClaims for PCS: %s/%s", pcsObjMeta.Namespace, pcsObjMeta.Name),
 		)
 	}
-	return k8sutils.FilterMapOwnedResourceNames(pcsObjMeta, objMetaList.Items), nil
+	names := k8sutils.FilterMapOwnedResourceNames(pcsObjMeta, objMetaList.Items)
+	logger.V(1).Info("Listed existing ResourceClaims", "pcs", pcsObjMeta.Name, "count", len(names))
+	return names, nil
 }
 
 // Sync creates or patches PCS-level ResourceClaims (AllReplicas + PerReplica)
