@@ -100,7 +100,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 	if err != nil {
 		return err
 	}
-	result := r.runSyncFlow(sc)
+	result := r.runSyncFlow(ctx, sc)
 	if result.hasErrors() {
 		return result.getAggregatedError()
 	}

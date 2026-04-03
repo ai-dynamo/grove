@@ -866,6 +866,7 @@ _Appears in:_
 | `podCliqueSet` _[PodCliqueSetControllerConfiguration](#podcliquesetcontrollerconfiguration)_ | PodCliqueSet is the configuration for the PodCliqueSet controller. |  |  |
 | `podClique` _[PodCliqueControllerConfiguration](#podcliquecontrollerconfiguration)_ | PodClique is the configuration for the PodClique controller. |  |  |
 | `podCliqueScalingGroup` _[PodCliqueScalingGroupControllerConfiguration](#podcliquescalinggroupcontrollerconfiguration)_ | PodCliqueScalingGroup is the configuration for the PodCliqueScalingGroup controller. |  |  |
+| `podGang` _[PodGangControllerConfiguration](#podgangcontrollerconfiguration)_ | PodGang is the configuration for the PodGang controller. |  |  |
 
 
 #### DebuggingConfiguration
@@ -1002,6 +1003,22 @@ _Appears in:_
 
 
 PodCliqueSetControllerConfiguration defines the configuration for the PodCliqueSet controller.
+
+
+
+_Appears in:_
+- [ControllerConfiguration](#controllerconfiguration)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `concurrentSyncs` _integer_ | ConcurrentSyncs is the number of workers used for the controller to concurrently work on events. |  |  |
+
+
+#### PodGangControllerConfiguration
+
+
+
+PodGangControllerConfiguration defines the configuration for the PodGang controller.
 
 
 

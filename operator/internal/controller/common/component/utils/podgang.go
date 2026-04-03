@@ -49,11 +49,10 @@ func GetPodGang(ctx context.Context, cl client.Client, podGangName, namespace st
 // GetExistingPodGangs fetches all existing PodGangs that are managed by Grove in the given namespace.
 func GetExistingPodGangs(ctx context.Context, cl client.Client, pcsObjectMeta metav1.ObjectMeta, namespace string) ([]groveschedulerv1alpha1.PodGang, error) {
 	podGangs := groveschedulerv1alpha1.PodGangList{}
-	if err := cl.List(ctx, &podGangs, client.InNamespace(namespace)); err != nil {
+	if err := cl.List(ctx, &podGangs,
+		client.InNamespace(namespace),
+		client.MatchingLabels(GetPodGangSelectorLabels(pcsObjectMeta))); err != nil {
 		return nil, err
 	}
-	managedPodGangs := lo.Filter(podGangs.Items, func(pg groveschedulerv1alpha1.PodGang, _ int) bool {
-		return metav1.IsControlledBy(&pg.ObjectMeta, &pcsObjectMeta)
-	})
-	return managedPodGangs, nil
+	return podGangs.Items, nil
 }

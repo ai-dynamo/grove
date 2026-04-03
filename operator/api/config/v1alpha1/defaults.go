@@ -138,21 +138,28 @@ func SetDefaults_ServerConfiguration(serverConfig *ServerConfiguration) {
 // SetDefaults_PodCliqueSetControllerConfiguration sets defaults for the PodCliqueSetControllerConfiguration.
 func SetDefaults_PodCliqueSetControllerConfiguration(obj *PodCliqueSetControllerConfiguration) {
 	if obj.ConcurrentSyncs == nil {
-		obj.ConcurrentSyncs = ptr.To(1)
+		obj.ConcurrentSyncs = ptr.To(10)
 	}
 }
 
 // SetDefaults_PodCliqueControllerConfiguration sets defaults for the PodCliqueControllerConfiguration.
 func SetDefaults_PodCliqueControllerConfiguration(obj *PodCliqueControllerConfiguration) {
 	if obj.ConcurrentSyncs == nil {
-		obj.ConcurrentSyncs = ptr.To(1)
+		obj.ConcurrentSyncs = ptr.To(10)
 	}
 }
 
 // SetDefaults_PodCliqueScalingGroupControllerConfiguration sets defaults for the PodCliqueScalignGroupControllerConfiguration.
 func SetDefaults_PodCliqueScalingGroupControllerConfiguration(obj *PodCliqueScalingGroupControllerConfiguration) {
 	if obj.ConcurrentSyncs == nil {
-		obj.ConcurrentSyncs = ptr.To(1)
+		obj.ConcurrentSyncs = ptr.To(5)
+	}
+}
+
+// SetDefaults_PodGangControllerConfiguration sets the default for PodGangControllerConfiguration.
+func SetDefaults_PodGangControllerConfiguration(obj *PodGangControllerConfiguration) {
+	if obj.ConcurrentSyncs == nil {
+		obj.ConcurrentSyncs = ptr.To(5)
 	}
 }
 

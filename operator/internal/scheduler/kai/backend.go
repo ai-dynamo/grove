@@ -30,7 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// schedulerBackend implements the scheduler Backend interface (SchedBackend in schedulerbackend package) for KAI scheduler.
+// schedulerBackend implements the scheduler Backend interface (Backend in scheduler package) for KAI scheduler.
 // TODO: Converts PodGang → PodGroup
 type schedulerBackend struct {
 	client        client.Client

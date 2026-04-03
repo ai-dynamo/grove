@@ -46,7 +46,7 @@ func RegisterControllers(mgr ctrl.Manager, config *configv1alpha1.OperatorConfig
 		return err
 	}
 
-	podgangReconciler := podgang.NewReconciler(mgr)
+	podgangReconciler := podgang.NewReconciler(mgr, config.Controllers.PodGang)
 	if err := podgangReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}

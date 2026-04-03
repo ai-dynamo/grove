@@ -159,7 +159,7 @@ func (v *pcsValidator) validateSchedulerNames(schedulerNames []string, fldPath *
 	allErrs := field.ErrorList{}
 	specPath := fldPath.Child("spec").Child("podSpec").Child("schedulerName")
 
-	defaultSchedulerName := "default-scheduler"
+	defaultSchedulerName := string(groveconfigv1alpha1.SchedulerNameKube)
 	if def := schedmanager.GetDefault(); def != nil {
 		defaultSchedulerName = def.Name()
 	}
@@ -180,7 +180,7 @@ func (v *pcsValidator) validateSchedulerNames(schedulerNames []string, fldPath *
 	if len(uniqueSchedulerNames) > 0 && uniqueSchedulerNames[0] != "" {
 		pcsSchedulerName = uniqueSchedulerNames[0]
 	}
-	if pcsSchedulerName != "default-scheduler" && schedmanager.Get(pcsSchedulerName) == nil {
+	if pcsSchedulerName != string(groveconfigv1alpha1.SchedulerNameKube) && schedmanager.Get(pcsSchedulerName) == nil {
 		allErrs = append(allErrs, field.Invalid(
 			specPath,
 			pcsSchedulerName,
@@ -436,10 +436,11 @@ func validateScaleConfig(scaleConfig *grovecorev1alpha1.AutoScalingConfig, minAv
 	// This should ideally not happen, the defaulting webhook will always set the default value for minReplicas.
 	if scaleConfig.MinReplicas == nil {
 		allErrs = append(allErrs, field.Required(fldPath.Child("minReplicas"), "field is required"))
-	}
-	// scaleConfig.MinReplicas should be greater than or equal to minAvailable else it will trigger a PodGang termination.
-	if *scaleConfig.MinReplicas < minAvailable {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("minReplicas"), *scaleConfig.MinReplicas, "must be greater than or equal to podCliqueSpec.minAvailable"))
+	} else {
+		// scaleConfig.MinReplicas should be greater than or equal to minAvailable else it will trigger a PodGang termination.
+		if *scaleConfig.MinReplicas < minAvailable {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("minReplicas"), *scaleConfig.MinReplicas, "must be greater than or equal to podCliqueSpec.minAvailable"))
+		}
 	}
 	if scaleConfig.MaxReplicas < *scaleConfig.MinReplicas {
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("maxReplicas"), scaleConfig.MaxReplicas, "must be greater than or equal to podCliqueSpec.minReplicas"))

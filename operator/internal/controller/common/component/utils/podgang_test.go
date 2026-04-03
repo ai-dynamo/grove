@@ -143,3 +143,166 @@ func TestGetPodGang(t *testing.T) {
 		assert.Nil(t, result)
 	})
 }
+
+// TestGetExistingPodGangs tests fetching PodGangs using server-side label filtering.
+func TestGetExistingPodGangs(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = groveschedulerv1alpha1.AddToScheme(scheme)
+
+	pcsName := "test-pcs"
+	namespace := "default"
+	pcsObjectMeta := metav1.ObjectMeta{
+		Name:      pcsName,
+		Namespace: namespace,
+	}
+	matchingLabels := GetPodGangSelectorLabels(pcsObjectMeta)
+
+	t.Run("returns matching podgangs", func(t *testing.T) {
+		managed := &groveschedulerv1alpha1.PodGang{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "pg-1",
+				Namespace: namespace,
+				Labels:    matchingLabels,
+			},
+		}
+		cl := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(managed).
+			Build()
+
+		result, err := GetExistingPodGangs(t.Context(), cl, pcsObjectMeta, namespace)
+
+		require.NoError(t, err)
+		require.Len(t, result, 1)
+		assert.Equal(t, "pg-1", result[0].Name)
+	})
+
+	t.Run("returns multiple matching podgangs", func(t *testing.T) {
+		pg1 := &groveschedulerv1alpha1.PodGang{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "pg-1",
+				Namespace: namespace,
+				Labels:    matchingLabels,
+			},
+		}
+		pg2 := &groveschedulerv1alpha1.PodGang{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "pg-2",
+				Namespace: namespace,
+				Labels:    matchingLabels,
+			},
+		}
+		cl := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(pg1, pg2).
+			Build()
+
+		result, err := GetExistingPodGangs(t.Context(), cl, pcsObjectMeta, namespace)
+
+		require.NoError(t, err)
+		assert.Len(t, result, 2)
+	})
+
+	t.Run("excludes podgangs belonging to a different PodCliqueSet", func(t *testing.T) {
+		ownedPG := &groveschedulerv1alpha1.PodGang{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "pg-owned",
+				Namespace: namespace,
+				Labels:    matchingLabels,
+			},
+		}
+		otherLabels := GetPodGangSelectorLabels(metav1.ObjectMeta{Name: "other-pcs"})
+		otherPG := &groveschedulerv1alpha1.PodGang{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "pg-other",
+				Namespace: namespace,
+				Labels:    otherLabels,
+			},
+		}
+		cl := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(ownedPG, otherPG).
+			Build()
+
+		result, err := GetExistingPodGangs(t.Context(), cl, pcsObjectMeta, namespace)
+
+		require.NoError(t, err)
+		require.Len(t, result, 1)
+		assert.Equal(t, "pg-owned", result[0].Name)
+	})
+
+	t.Run("excludes podgangs without managed-by label", func(t *testing.T) {
+		unmanagedPG := &groveschedulerv1alpha1.PodGang{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "pg-unmanaged",
+				Namespace: namespace,
+				Labels: map[string]string{
+					apicommon.LabelPartOfKey:    pcsName,
+					apicommon.LabelComponentKey: apicommon.LabelComponentNamePodGang,
+				},
+			},
+		}
+		cl := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(unmanagedPG).
+			Build()
+
+		result, err := GetExistingPodGangs(t.Context(), cl, pcsObjectMeta, namespace)
+
+		require.NoError(t, err)
+		assert.Empty(t, result)
+	})
+
+	t.Run("excludes podgangs with wrong component label", func(t *testing.T) {
+		wrongComponentPG := &groveschedulerv1alpha1.PodGang{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "pg-wrong-component",
+				Namespace: namespace,
+				Labels: map[string]string{
+					apicommon.LabelManagedByKey: apicommon.LabelManagedByValue,
+					apicommon.LabelPartOfKey:    pcsName,
+					apicommon.LabelComponentKey: "something-else",
+				},
+			},
+		}
+		cl := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(wrongComponentPG).
+			Build()
+
+		result, err := GetExistingPodGangs(t.Context(), cl, pcsObjectMeta, namespace)
+
+		require.NoError(t, err)
+		assert.Empty(t, result)
+	})
+
+	t.Run("excludes podgangs in a different namespace", func(t *testing.T) {
+		pgOtherNS := &groveschedulerv1alpha1.PodGang{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "pg-other-ns",
+				Namespace: "other-namespace",
+				Labels:    matchingLabels,
+			},
+		}
+		cl := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(pgOtherNS).
+			Build()
+
+		result, err := GetExistingPodGangs(t.Context(), cl, pcsObjectMeta, namespace)
+
+		require.NoError(t, err)
+		assert.Empty(t, result)
+	})
+
+	t.Run("returns empty when no podgangs exist", func(t *testing.T) {
+		cl := fake.NewClientBuilder().
+			WithScheme(scheme).
+			Build()
+
+		result, err := GetExistingPodGangs(t.Context(), cl, pcsObjectMeta, namespace)
+
+		require.NoError(t, err)
+		assert.Empty(t, result)
+	})
+}

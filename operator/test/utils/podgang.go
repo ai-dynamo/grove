@@ -17,6 +17,8 @@
 package utils
 
 import (
+	"time"
+
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -66,6 +68,22 @@ func (b *PodGangBuilder) WithPodGroup(name string, minReplicas int32) *PodGangBu
 		Name:        name,
 		MinReplicas: minReplicas,
 	})
+	return b
+}
+
+// WithSchedulerName sets the grove.io/scheduler-name label on the PodGang.
+func (b *PodGangBuilder) WithSchedulerName(name string) *PodGangBuilder {
+	if b.pg.Labels == nil {
+		b.pg.Labels = make(map[string]string)
+	}
+	b.pg.Labels[apicommon.LabelSchedulerName] = name
+	return b
+}
+
+// WithDeletionTimestamp sets the DeletionTimestamp on the PodGang to simulate a pending deletion.
+func (b *PodGangBuilder) WithDeletionTimestamp() *PodGangBuilder {
+	now := metav1.NewTime(time.Now())
+	b.pg.DeletionTimestamp = &now
 	return b
 }
 

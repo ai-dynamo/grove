@@ -20,6 +20,7 @@ import (
 	"context"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	schedmanager "github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
 
@@ -34,13 +35,15 @@ import (
 type Reconciler struct {
 	client.Client
 	scheme *runtime.Scheme
+	config configv1alpha1.PodGangControllerConfiguration
 }
 
 // NewReconciler creates a new Reconciler. Backend is resolved per PodGang from the grove.io/scheduler-name label or default.
-func NewReconciler(mgr ctrl.Manager) *Reconciler {
+func NewReconciler(mgr ctrl.Manager, config configv1alpha1.PodGangControllerConfiguration) *Reconciler {
 	return &Reconciler{
 		Client: mgr.GetClient(),
 		scheme: mgr.GetScheme(),
+		config: config,
 	}
 }
 
@@ -64,6 +67,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 
 	backend := resolveBackend(podGang)
+	// This should ideally not happen. If you see this log then there is either something wrong with the defaulting or validation.
 	if backend == nil {
 		log.FromContext(ctx).Error(nil, "No scheduler backend available for PodGang", "podgang", req.NamespacedName)
 		return ctrl.Result{}, nil

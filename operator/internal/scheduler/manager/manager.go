@@ -68,7 +68,9 @@ func Initialize(client client.Client, scheme *runtime.Scheme, eventRecorder reco
 			return fmt.Errorf("failed to initialize %s backend: %w", p.Name, err)
 		}
 		backends[backend.Name()] = backend
-		if cfg.DefaultProfileName != "" && string(p.Name) == cfg.DefaultProfileName {
+		// It is assumed that if you reach here then default profile name is set. OperatorConfiguration scheduler config
+		// validation will fail and will disallow starting Grove operator if default profile is not set.
+		if string(p.Name) == cfg.DefaultProfileName {
 			defaultBackend = backend
 		}
 	}

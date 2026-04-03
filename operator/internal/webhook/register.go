@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
@@ -48,9 +49,9 @@ func Register(mgr manager.Manager, operatorCfg *configv1alpha1.OperatorConfigura
 	if operatorCfg.Authorizer.Enabled {
 		serviceAccountName, ok := os.LookupEnv(constants.EnvVarServiceAccountName)
 		if !ok {
-			return fmt.Errorf("can not register authorizer webhook with no \"%s\" environment vairable", constants.EnvVarServiceAccountName)
+			return fmt.Errorf("can not register authorizer webhook with no \"%s\" environment variable", constants.EnvVarServiceAccountName)
 		}
-		namespace, err := os.ReadFile(constants.OperatorNamespaceFile)
+		namespace, err := os.ReadFile(filepath.Clean(constants.OperatorNamespaceFile))
 		if err != nil {
 			return fmt.Errorf("error reading namespace file with error: %w", err)
 		}

@@ -22,6 +22,7 @@ import (
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
@@ -30,6 +31,9 @@ import (
 func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&groveschedulerv1alpha1.PodGang{}, builder.WithPredicates(podGangSpecChangePredicate())).
+		WithOptions(controller.Options{
+			MaxConcurrentReconciles: *r.config.ConcurrentSyncs,
+		}).
 		Named("podgang").
 		Complete(r)
 }

@@ -61,6 +61,9 @@ func TestRegisterControllers(t *testing.T) {
 				PodCliqueScalingGroup: configv1alpha1.PodCliqueScalingGroupControllerConfiguration{
 					ConcurrentSyncs: ptr.To(1),
 				},
+				PodGang: configv1alpha1.PodGangControllerConfiguration{
+					ConcurrentSyncs: ptr.To(1),
+				},
 			},
 		}
 

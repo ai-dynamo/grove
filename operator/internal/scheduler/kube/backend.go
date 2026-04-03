@@ -30,7 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// schedulerBackend implements the scheduler backend interface (SchedBackend in schedulerbackend package) for Kubernetes default scheduler.
+// schedulerBackend implements the scheduler backend interface (Backend in scheduler package) for Kubernetes default scheduler.
 // This backend does minimal work - just sets the scheduler name on pods
 type schedulerBackend struct {
 	client        client.Client
