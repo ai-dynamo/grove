@@ -109,24 +109,24 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # - test_name: gang_scheduling
-          #   test_pattern: "^Test_GS"
-          # - test_name: rolling_updates
-          #   test_pattern: "^Test_RU"
-          # - test_name: ondelete_updates
-          #   test_pattern: "^Test_OD"
-          # - test_name: startup_ordering
-          #   test_pattern: "^Test_SO"
-          #   make_target: "run-e2e-real-full"
-          # - test_name: Topology_Aware_Scheduling
-          #   test_pattern: "^Test_TAS"
-          # - test_name: cert_management
-          #   test_pattern: "^Test_CM"
-          # - test_name: auto_mnnvl
-          #   test_pattern: "^Test_AutoMNNVL"
-          #   make_target: "run-e2e-mnnvl-full"
-          # - test_name: crd_installer
-          #   test_pattern: "^Test_CRD_Installer"
+          - test_name: gang_scheduling
+            test_pattern: "^Test_GS"
+          - test_name: rolling_updates
+            test_pattern: "^Test_RU"
+          - test_name: ondelete_updates
+            test_pattern: "^Test_OD"
+          - test_name: startup_ordering
+            test_pattern: "^Test_SO"
+            make_target: "run-e2e-real-full"
+          - test_name: Topology_Aware_Scheduling
+            test_pattern: "^Test_TAS"
+          - test_name: cert_management
+            test_pattern: "^Test_CM"
+          - test_name: auto_mnnvl
+            test_pattern: "^Test_AutoMNNVL"
+            make_target: "run-e2e-mnnvl-full"
+          - test_name: crd_installer
+            test_pattern: "^Test_CRD_Installer"
           - test_name: resource_sharing
             test_pattern: "^Test_RS"
     name: E2E - ${{ matrix.test_name }}
@@ -182,13 +182,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # - test_name: gang_scheduling
-          # - test_name: rolling_updates
-          # - test_name: startup_ordering
-          # - test_name: Topology_Aware_Scheduling
-          # - test_name: cert_management
-          # - test_name: auto_mnnvl
-          # - test_name: crd_installer
+          - test_name: gang_scheduling
+          - test_name: rolling_updates
+          - test_name: startup_ordering
+          - test_name: Topology_Aware_Scheduling
+          - test_name: cert_management
+          - test_name: auto_mnnvl
+          - test_name: crd_installer
           - test_name: resource_sharing
     name: E2E - ${{ matrix.test_name }}
     steps:
