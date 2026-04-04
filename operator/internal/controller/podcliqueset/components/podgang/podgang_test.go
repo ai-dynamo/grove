@@ -19,6 +19,8 @@ package podgang
 import (
 	"testing"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
@@ -31,56 +33,96 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-// TestPodGangAnnotationsFromPodCliqueSet verifies that scheduler queue annotations
-// from PodCliqueSet are propagated to PodGang resources.
-// This test reproduces the bug where kai-scheduler-queue annotation is lost when
-// creating instances via dynamo.
-func TestPodGangAnnotationsFromPodCliqueSet(t *testing.T) {
+func TestBuildResource(t *testing.T) {
 	tests := []struct {
-		name                    string
-		pcsAnnotations          map[string]string
-		expectedPodGangContains map[string]string
-		description             string
+		name                      string
+		tasEnabled                bool
+		pcsAnnotations            map[string]string
+		initialPodGangLabels      map[string]string
+		initialPodGangAnnotations map[string]string
+		expectedLabels            map[string]string
+		expectedAnnotations       map[string]string
 	}{
 		{
-			name: "PCS with kai-scheduler-queue annotation",
+			name: "copies PCS annotations onto empty podgang",
 			pcsAnnotations: map[string]string{
 				"nvidia.com/kai-scheduler-queue": "worker-queue",
 			},
-			expectedPodGangContains: map[string]string{
+			expectedLabels: map[string]string{
+				apicommon.LabelComponentKey: apicommon.LabelComponentNamePodGang,
+			},
+			expectedAnnotations: map[string]string{
 				"nvidia.com/kai-scheduler-queue": "worker-queue",
 			},
-			description: "Queue annotation from PCS should be present in PodGang",
 		},
 		{
-			name: "PCS with multiple scheduler annotations",
+			name: "copies multiple PCS annotations onto empty podgang",
 			pcsAnnotations: map[string]string{
 				"nvidia.com/kai-scheduler-queue":      "worker-queue",
 				"nvidia.com/dynamo-discovery-backend": "kubernetes",
 			},
-			expectedPodGangContains: map[string]string{
+			expectedLabels: map[string]string{
+				apicommon.LabelComponentKey: apicommon.LabelComponentNamePodGang,
+			},
+			expectedAnnotations: map[string]string{
 				"nvidia.com/kai-scheduler-queue":      "worker-queue",
 				"nvidia.com/dynamo-discovery-backend": "kubernetes",
 			},
-			description: "Multiple scheduler annotations should be propagated to PodGang",
 		},
 		{
-			name: "PCS with queue annotation and other annotations",
+			name:       "preserves existing annotations on update path when tas is disabled",
+			tasEnabled: false,
 			pcsAnnotations: map[string]string{
-				"nvidia.com/kai-scheduler-queue": "special-queue",
-				"custom.annotation/key":          "value",
+				"nvidia.com/kai-scheduler-queue": "worker-queue",
+				"custom.annotation/from-pcs":     "pcs-value",
 			},
-			expectedPodGangContains: map[string]string{
-				"nvidia.com/kai-scheduler-queue": "special-queue",
-				"custom.annotation/key":          "value",
+			initialPodGangLabels: map[string]string{
+				"external.label/keep": "true",
 			},
-			description: "All PCS annotations including queue should be in PodGang",
+			initialPodGangAnnotations: map[string]string{
+				"external.annotation/keep":                "true",
+				apicommonconstants.AnnotationTopologyName: "existing-topology",
+			},
+			expectedLabels: map[string]string{
+				"external.label/keep":       "true",
+				apicommon.LabelComponentKey: apicommon.LabelComponentNamePodGang,
+			},
+			expectedAnnotations: map[string]string{
+				"nvidia.com/kai-scheduler-queue":          "worker-queue",
+				"custom.annotation/from-pcs":              "pcs-value",
+				"external.annotation/keep":                "true",
+				apicommonconstants.AnnotationTopologyName: "existing-topology",
+			},
+		},
+		{
+			name:       "preserves existing metadata and overrides topology annotation when tas is enabled",
+			tasEnabled: true,
+			pcsAnnotations: map[string]string{
+				"nvidia.com/kai-scheduler-queue": "worker-queue",
+				"custom.annotation/from-pcs":     "pcs-value",
+			},
+			initialPodGangLabels: map[string]string{
+				"external.label/keep": "true",
+			},
+			initialPodGangAnnotations: map[string]string{
+				"external.annotation/keep":                "true",
+				apicommonconstants.AnnotationTopologyName: "old-topology",
+			},
+			expectedLabels: map[string]string{
+				"external.label/keep":       "true",
+				apicommon.LabelComponentKey: apicommon.LabelComponentNamePodGang,
+			},
+			expectedAnnotations: map[string]string{
+				"nvidia.com/kai-scheduler-queue":          "worker-queue",
+				"custom.annotation/from-pcs":              "pcs-value",
+				"external.annotation/keep":                "true",
+				apicommonconstants.AnnotationTopologyName: grovecorev1alpha1.DefaultClusterTopologyName,
+			},
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			// Create PodCliqueSet with scheduler queue annotation
 			pcs := &grovecorev1alpha1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:        "test-pcs",
@@ -104,7 +146,6 @@ func TestPodGangAnnotationsFromPodCliqueSet(t *testing.T) {
 				},
 			}
 
-			// Create a fake client and scheme
 			scheme := runtime.NewScheme()
 			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
 			require.NoError(t, groveschedulerv1alpha1.AddToScheme(scheme))
@@ -114,28 +155,24 @@ func TestPodGangAnnotationsFromPodCliqueSet(t *testing.T) {
 				WithObjects(pcs).
 				Build()
 
-			// Create the podgang resource operator
-			eventRecorder := record.NewFakeRecorder(10)
-			tasConfig := configv1alpha1.TopologyAwareSchedulingConfiguration{
-				Enabled: false,
-			}
-
 			r := &_resource{
 				client:        fakeClient,
 				scheme:        scheme,
-				eventRecorder: eventRecorder,
-				tasConfig:     tasConfig,
-			}
-
-			// Create a PodGang object to be populated
-			pg := &groveschedulerv1alpha1.PodGang{
-				ObjectMeta: metav1.ObjectMeta{
-					Namespace: "default",
-					Name:      "test-pcs-0",
+				eventRecorder: record.NewFakeRecorder(10),
+				tasConfig: configv1alpha1.TopologyAwareSchedulingConfiguration{
+					Enabled: test.tasEnabled,
 				},
 			}
 
-			// Create podGangInfo with mock data
+			pg := &groveschedulerv1alpha1.PodGang{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace:   "default",
+					Name:        "test-pcs-0",
+					Labels:      test.initialPodGangLabels,
+					Annotations: test.initialPodGangAnnotations,
+				},
+			}
+
 			pgi := &podGangInfo{
 				fqn: "test-pcs-0",
 				pclqs: []pclqInfo{
@@ -146,16 +183,21 @@ func TestPodGangAnnotationsFromPodCliqueSet(t *testing.T) {
 				},
 			}
 
-			// Call buildResource which should populate annotations
 			err := r.buildResource(pcs, pgi, pg)
-			require.NoError(t, err, "buildResource should not error")
+			require.NoError(t, err)
 
-			// Verify that all expected annotations are present in PodGang
-			for expectedKey, expectedValue := range test.expectedPodGangContains {
+			for expectedKey, expectedValue := range test.expectedLabels {
+				actualValue, exists := pg.Labels[expectedKey]
+				assert.True(t, exists, "PodGang should have label %s", expectedKey)
+				assert.Equal(t, expectedValue, actualValue,
+					"PodGang label %s should match expected value", expectedKey)
+			}
+
+			for expectedKey, expectedValue := range test.expectedAnnotations {
 				actualValue, exists := pg.Annotations[expectedKey]
 				assert.True(t, exists, "PodGang should have annotation %s", expectedKey)
 				assert.Equal(t, expectedValue, actualValue,
-					"PodGang annotation %s should match PCS annotation", expectedKey)
+					"PodGang annotation %s should match expected value", expectedKey)
 			}
 		})
 	}
