@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	tests "github.com/ai-dynamo/grove/operator/e2e/tests"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,7 +41,7 @@ func Test_AutoMNNVL_SupportedAndEnabled(t *testing.T) {
 	ctx := context.Background()
 
 	// Prepare cluster and get clients (0 = no specific worker node requirement)
-	tc, cleanup := prepareTest(ctx, t, 0)
+	tc, cleanup := tests.PrepareTest(ctx, t, 0)
 	defer cleanup()
 
 	// Detect and validate cluster configuration
@@ -48,9 +49,9 @@ func Test_AutoMNNVL_SupportedAndEnabled(t *testing.T) {
 	clusterConfig.skipUnless(t, crdSupported, featureEnabled)
 
 	// Define all subtests
-	tests := []struct {
+	subtests := []struct {
 		description string
-		fn          func(*testing.T, testContext)
+		fn          func(*testing.T, *tests.TestContext)
 	}{
 		{"PCS gets auto-mnnvl annotation", testPCSGetsAutoAnnotation},
 		{"ComputeDomain created per replica with correct metadata and spec", testComputeDomainCreatedPerReplica},
@@ -63,7 +64,7 @@ func Test_AutoMNNVL_SupportedAndEnabled(t *testing.T) {
 	}
 
 	// Run all subtests
-	for _, tt := range tests {
+	for _, tt := range subtests {
 		t.Run(tt.description, func(t *testing.T) {
 			tt.fn(t, tc)
 		})
@@ -73,18 +74,18 @@ func Test_AutoMNNVL_SupportedAndEnabled(t *testing.T) {
 // testPCSGetsAutoAnnotation verifies that the mutating webhook adds
 // grove.io/auto-mnnvl: enabled annotation to PCS with GPU requirements,
 // and does NOT add it to PCS without GPU requirements.
-func testPCSGetsAutoAnnotation(t *testing.T, tc testContext) {
+func testPCSGetsAutoAnnotation(t *testing.T, tc *tests.TestContext) {
 	t.Run("GPU PCS gets annotation", func(t *testing.T) {
 		pcsName := "test-gpu-annotation"
 
 		// Create a PCS with GPU requirement (no annotation)
 		pcs := buildGPUPCS(pcsName, 1)
-		_, err := tc.GroveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Create(tc.ctx, pcs, metav1.CreateOptions{})
+		_, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Create(tc.Ctx, pcs, metav1.CreateOptions{})
 		require.NoError(t, err, "Failed to create PCS")
 		defer deletePCS(tc, pcsName)
 
 		// Verify the PCS has the auto-mnnvl annotation
-		createdPCS, err := tc.GroveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Get(tc.ctx, pcsName, metav1.GetOptions{})
+		createdPCS, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Get(tc.Ctx, pcsName, metav1.GetOptions{})
 		require.NoError(t, err, "Failed to get created PCS")
 
 		annotations := createdPCS.GetAnnotations()
@@ -97,12 +98,12 @@ func testPCSGetsAutoAnnotation(t *testing.T, tc testContext) {
 
 		// Create a PCS without GPU requirement
 		pcs := buildCPUOnlyPCS(pcsName, 1)
-		_, err := tc.GroveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Create(tc.ctx, pcs, metav1.CreateOptions{})
+		_, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Create(tc.Ctx, pcs, metav1.CreateOptions{})
 		require.NoError(t, err, "Failed to create PCS")
 		defer deletePCS(tc, pcsName)
 
 		// Verify the PCS does NOT have the auto-mnnvl annotation
-		createdPCS, err := tc.GroveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Get(tc.ctx, pcsName, metav1.GetOptions{})
+		createdPCS, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Get(tc.Ctx, pcsName, metav1.GetOptions{})
 		require.NoError(t, err, "Failed to get created PCS")
 
 		annotations := createdPCS.GetAnnotations()
@@ -114,13 +115,13 @@ func testPCSGetsAutoAnnotation(t *testing.T, tc testContext) {
 // testComputeDomainCreatedPerReplica verifies that one ComputeDomain is created
 // for each PCS replica, with correct metadata (finalizer, ownerRef, labels) and
 // spec (numNodes=0, RCT reference).
-func testComputeDomainCreatedPerReplica(t *testing.T, tc testContext) {
+func testComputeDomainCreatedPerReplica(t *testing.T, tc *tests.TestContext) {
 	pcsName := "test-cd-per-replica"
 	replicas := 2
 
 	// Create a PCS with GPU requirement
 	pcs := buildGPUPCS(pcsName, replicas)
-	createdPCS, err := tc.GroveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Create(tc.ctx, pcs, metav1.CreateOptions{})
+	createdPCS, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Create(tc.Ctx, pcs, metav1.CreateOptions{})
 	require.NoError(t, err, "Failed to create PCS")
 	defer deletePCS(tc, pcsName)
 
@@ -136,7 +137,7 @@ func testComputeDomainCreatedPerReplica(t *testing.T, tc testContext) {
 	// Deleting a CD should be blocked while the PCS replica still needs it.
 	// The finalizer should prevent deletion until the PCS replica is no longer using it.
 	cdName := fmt.Sprintf("%s-0", pcsName)
-	err = tc.DynamicClient.Resource(computeDomainGVR).Namespace(tc.namespace).Delete(tc.ctx, cdName, metav1.DeleteOptions{})
+	err = tc.Clients.DynamicClient.Resource(computeDomainGVR).Namespace(tc.Namespace).Delete(tc.Ctx, cdName, metav1.DeleteOptions{})
 	require.NoError(t, err, "Delete request should succeed (sets DeletionTimestamp)")
 
 	// CD should not be deleted while PCS still needs it (finalizer blocks deletion)
@@ -149,27 +150,12 @@ func testComputeDomainCreatedPerReplica(t *testing.T, tc testContext) {
 
 // testResourceClaimInjection is a comprehensive test that verifies resourceClaim injection
 // and annotation propagation across multiple clique types and scaling groups.
-//
-// PCS Structure (short names for 45-char limit):
-//   - Standalone cliques (not in any PCSG):
-//     1. "gpu1": 2 containers (1 GPU, 1 non-GPU)
-//     2. "cpu1": 1 container (no GPU)
-//   - PCSG "sg1" contains:
-//     3. "gpu2": 2 containers (1 GPU, 1 non-GPU)
-//     4. "cpu2": 1 container (no GPU)
-//   - PCSG "sg2" contains:
-//     5. "cpu3": 1 container (no GPU)
-//
-// Verifications:
-//   - GPU cliques have resourceClaims, CPU-only cliques don't
-//   - GPU containers have claim references, non-GPU containers don't
-//   - All PCSGs get the annotation propagated (current behavior)
-func testResourceClaimInjection(t *testing.T, tc testContext) {
+func testResourceClaimInjection(t *testing.T, tc *tests.TestContext) {
 	pcsName := "inj-test"
 
 	// Create the comprehensive PCS
 	pcs := buildComprehensivePCS(pcsName, 1)
-	_, err := tc.GroveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Create(tc.ctx, pcs, metav1.CreateOptions{})
+	_, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Create(tc.Ctx, pcs, metav1.CreateOptions{})
 	require.NoError(t, err, "Failed to create PCS")
 	defer deletePCS(tc, pcsName)
 
@@ -277,12 +263,12 @@ func testResourceClaimInjection(t *testing.T, tc testContext) {
 
 // testScaleOutAndIn verifies that scaling out creates new ComputeDomains with correct content,
 // and scaling in deletes excess ComputeDomains.
-func testScaleOutAndIn(t *testing.T, tc testContext) {
+func testScaleOutAndIn(t *testing.T, tc *tests.TestContext) {
 	pcsName := "test-scale-cd"
 
 	// Create a PCS with 1 replica
 	pcs := buildGPUPCS(pcsName, 1)
-	createdPCS, err := tc.GroveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Create(tc.ctx, pcs, metav1.CreateOptions{})
+	createdPCS, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Create(tc.Ctx, pcs, metav1.CreateOptions{})
 	require.NoError(t, err, "Failed to create PCS")
 	defer deletePCS(tc, pcsName)
 
@@ -316,20 +302,20 @@ func testScaleOutAndIn(t *testing.T, tc testContext) {
 	verifyComputeDomainContent(t, tc, pcsName, 0, createdPCS.GetUID())
 
 	// Verify replicas 1 and 2 are deleted
-	_, err = tc.DynamicClient.Resource(computeDomainGVR).Namespace(tc.namespace).Get(tc.ctx, fmt.Sprintf("%s-1", pcsName), metav1.GetOptions{})
+	_, err = tc.Clients.DynamicClient.Resource(computeDomainGVR).Namespace(tc.Namespace).Get(tc.Ctx, fmt.Sprintf("%s-1", pcsName), metav1.GetOptions{})
 	assert.Error(t, err, "ComputeDomain 1 should be deleted after scale-in")
 
-	_, err = tc.DynamicClient.Resource(computeDomainGVR).Namespace(tc.namespace).Get(tc.ctx, fmt.Sprintf("%s-2", pcsName), metav1.GetOptions{})
+	_, err = tc.Clients.DynamicClient.Resource(computeDomainGVR).Namespace(tc.Namespace).Get(tc.Ctx, fmt.Sprintf("%s-2", pcsName), metav1.GetOptions{})
 	assert.Error(t, err, "ComputeDomain 2 should be deleted after scale-in")
 }
 
 // testPCSDeletionCascadesToCD verifies that deleting PCS also deletes ComputeDomains.
-func testPCSDeletionCascadesToCD(t *testing.T, tc testContext) {
+func testPCSDeletionCascadesToCD(t *testing.T, tc *tests.TestContext) {
 	pcsName := "test-pcs-deletion-cascade"
 
 	// Create a PCS with GPU requirement
 	pcs := buildGPUPCS(pcsName, 2)
-	_, err := tc.GroveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Create(tc.ctx, pcs, metav1.CreateOptions{})
+	_, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Create(tc.Ctx, pcs, metav1.CreateOptions{})
 	require.NoError(t, err, "Failed to create PCS")
 
 	// Wait for ComputeDomains
@@ -345,7 +331,7 @@ func testPCSDeletionCascadesToCD(t *testing.T, tc testContext) {
 }
 
 // testExplicitDisabledAnnotationHonored verifies that auto-mnnvl: disabled prevents injection.
-func testExplicitDisabledAnnotationHonored(t *testing.T, tc testContext) {
+func testExplicitDisabledAnnotationHonored(t *testing.T, tc *tests.TestContext) {
 	pcsName := "test-explicit-disabled"
 
 	// Create a PCS with GPU requirement but explicit disabled annotation
@@ -357,7 +343,7 @@ func testExplicitDisabledAnnotationHonored(t *testing.T, tc testContext) {
 	annotations[mnnvl.AnnotationAutoMNNVL] = mnnvl.AnnotationAutoMNNVLDisabled
 	pcs.SetAnnotations(annotations)
 
-	_, err := tc.GroveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Create(tc.ctx, pcs, metav1.CreateOptions{})
+	_, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Create(tc.Ctx, pcs, metav1.CreateOptions{})
 	require.NoError(t, err, "Failed to create PCS")
 	defer deletePCS(tc, pcsName)
 
@@ -370,7 +356,7 @@ func testExplicitDisabledAnnotationHonored(t *testing.T, tc testContext) {
 
 	// Verify no ComputeDomain was created
 	cdName := fmt.Sprintf("%s-0", pcsName)
-	_, err = tc.DynamicClient.Resource(computeDomainGVR).Namespace(tc.namespace).Get(tc.ctx, cdName, metav1.GetOptions{})
+	_, err = tc.Clients.DynamicClient.Resource(computeDomainGVR).Namespace(tc.Namespace).Get(tc.Ctx, cdName, metav1.GetOptions{})
 	assert.Error(t, err, "No ComputeDomain should be created when annotation is 'disabled'")
 
 	// Verify no MNNVL claims are injected into the clique or containers.
@@ -383,7 +369,7 @@ func testExplicitDisabledAnnotationHonored(t *testing.T, tc testContext) {
 }
 
 // testInvalidAnnotationRejected verifies that invalid annotation values are rejected.
-func testInvalidAnnotationRejected(t *testing.T, tc testContext) {
+func testInvalidAnnotationRejected(t *testing.T, tc *tests.TestContext) {
 	pcsName := "test-invalid-annotation"
 
 	// Create a PCS with invalid annotation value
@@ -395,17 +381,17 @@ func testInvalidAnnotationRejected(t *testing.T, tc testContext) {
 	annotations[mnnvl.AnnotationAutoMNNVL] = "invalid-value"
 	pcs.SetAnnotations(annotations)
 
-	_, err := tc.GroveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Create(tc.ctx, pcs, metav1.CreateOptions{})
+	_, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Create(tc.Ctx, pcs, metav1.CreateOptions{})
 	assert.Error(t, err, "PCS with invalid annotation value should be rejected")
 }
 
 // testAnnotationImmutability verifies that the auto-mnnvl annotation cannot be changed after creation.
-func testAnnotationImmutability(t *testing.T, tc testContext) {
+func testAnnotationImmutability(t *testing.T, tc *tests.TestContext) {
 	pcsName := "test-annotation-immutable"
 
 	// Create a GPU PCS (will get auto-annotated with "enabled")
 	pcs := buildGPUPCS(pcsName, 1)
-	createdPCS, err := tc.GroveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Create(tc.ctx, pcs, metav1.CreateOptions{})
+	createdPCS, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Create(tc.Ctx, pcs, metav1.CreateOptions{})
 	require.NoError(t, err, "Failed to create PCS")
 	defer deletePCS(tc, pcsName)
 
@@ -416,7 +402,7 @@ func testAnnotationImmutability(t *testing.T, tc testContext) {
 
 	// Try to change annotation from "enabled" to "disabled"
 	createdPCS.Annotations[mnnvl.AnnotationAutoMNNVL] = mnnvl.AnnotationAutoMNNVLDisabled
-	_, err = tc.GroveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Update(tc.ctx, createdPCS, metav1.UpdateOptions{})
+	_, err = tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Update(tc.Ctx, createdPCS, metav1.UpdateOptions{})
 	assert.Error(t, err, "Changing auto-mnnvl annotation should be rejected")
 	assert.Contains(t, err.Error(), "immutable", "Error should mention immutability")
 }
@@ -475,11 +461,11 @@ func requireNoContainerMNNVLClaim(t *testing.T, container *corev1.Container) {
 }
 
 // verifyComputeDomainContent verifies that a ComputeDomain exists with correct metadata and spec.
-func verifyComputeDomainContent(t *testing.T, tc testContext, pcsName string, replicaIndex int, pcsUID types.UID) {
+func verifyComputeDomainContent(t *testing.T, tc *tests.TestContext, pcsName string, replicaIndex int, pcsUID types.UID) {
 	t.Helper()
 
 	cdName := fmt.Sprintf("%s-%d", pcsName, replicaIndex)
-	cd, err := tc.DynamicClient.Resource(computeDomainGVR).Namespace(tc.namespace).Get(tc.ctx, cdName, metav1.GetOptions{})
+	cd, err := tc.Clients.DynamicClient.Resource(computeDomainGVR).Namespace(tc.Namespace).Get(tc.Ctx, cdName, metav1.GetOptions{})
 	require.NoError(t, err, "ComputeDomain %s should exist", cdName)
 
 	// Verify finalizer
