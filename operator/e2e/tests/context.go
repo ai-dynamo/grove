@@ -90,8 +90,8 @@ func NewTestContext(t *testing.T, ctx context.Context, clients *k8s.Clients, opt
 		Ctx:       ctx,
 		Clients:   clients,
 		Namespace: "default",
-		Timeout:   defaultPollTimeout,
-		Interval:  defaultPollInterval,
+		Timeout:   DefaultPollTimeout,
+		Interval:  DefaultPollInterval,
 	}
 
 	for _, opt := range opts {
@@ -99,12 +99,12 @@ func NewTestContext(t *testing.T, ctx context.Context, clients *k8s.Clients, opt
 	}
 
 	// Initialize managers
-	tc.Pods = k8s.NewPodManager(clients, logger)
-	tc.Nodes = k8s.NewNodeManager(clients, logger)
-	tc.Resources = k8s.NewResourceManager(clients, logger)
-	tc.Workloads = grove.NewWorkloadManager(clients, tc.Resources, tc.Pods, logger)
-	tc.Topology = grove.NewTopologyVerifier(clients, logger)
-	tc.PodGroups = grove.NewPodGroupVerifier(clients, logger)
+	tc.Pods = k8s.NewPodManager(clients, Logger)
+	tc.Nodes = k8s.NewNodeManager(clients, Logger)
+	tc.Resources = k8s.NewResourceManager(clients, Logger)
+	tc.Workloads = grove.NewWorkloadManager(clients, tc.Resources, tc.Pods, Logger)
+	tc.Topology = grove.NewTopologyVerifier(clients, Logger)
+	tc.PodGroups = grove.NewPodGroupVerifier(clients, Logger)
 	tc.Config = grove.NewOperatorConfig(clients)
 
 	// Initialize diagnostics
@@ -113,16 +113,16 @@ func NewTestContext(t *testing.T, ctx context.Context, clients *k8s.Clients, opt
 		diagMode = diagnostics.ModeFile
 	}
 	diagDir := os.Getenv(diagnostics.DirEnvVar)
-	tc.Diag = diagnostics.NewDiagCollector(clients, tc.Namespace, diagMode, diagDir, logger)
+	tc.Diag = diagnostics.NewDiagCollector(clients, tc.Namespace, diagMode, diagDir, Logger)
 
 	return tc
 }
 
-// prepareTest prepares the shared cluster and returns a TestContext with cleanup function.
-func prepareTest(ctx context.Context, t *testing.T, requiredWorkerNodes int, opts ...TestOption) (*TestContext, func()) {
+// PrepareTest prepares the shared cluster and returns a TestContext with cleanup function.
+func PrepareTest(ctx context.Context, t *testing.T, requiredWorkerNodes int, opts ...TestOption) (*TestContext, func()) {
 	t.Helper()
 
-	sharedCluster := setup.SharedCluster(logger)
+	sharedCluster := setup.SharedCluster(Logger)
 	if err := sharedCluster.PrepareForTest(ctx, requiredWorkerNodes); err != nil {
 		t.Fatalf("Failed to prepare shared cluster: %v", err)
 	}
@@ -136,9 +136,9 @@ func prepareTest(ctx context.Context, t *testing.T, requiredWorkerNodes int, opt
 		}
 
 		if err := sharedCluster.CleanupWorkloads(ctx); err != nil {
-			logger.Error("================================================================================")
-			logger.Error("=== CLEANUP FAILURE - COLLECTING DIAGNOSTICS ===")
-			logger.Error("================================================================================")
+			Logger.Error("================================================================================")
+			Logger.Error("=== CLEANUP FAILURE - COLLECTING DIAGNOSTICS ===")
+			Logger.Error("================================================================================")
 			tc.Diag.CollectAll(t.Name())
 			sharedCluster.MarkCleanupFailed(err)
 			t.Fatalf("Failed to cleanup workloads: %v. All subsequent tests will fail.", err)
@@ -491,13 +491,13 @@ func (tc *TestContext) ScalePCSAsync(pcsName string, replicas int32, expectedTot
 		totalPods, runningPods, pendingPods, err := tc.WaitForPodConditions(expectedTotalPods, expectedPending)
 		elapsed := time.Since(startTime)
 		if err != nil {
-			logger.Infof("[scalePCS] Scale %s FAILED after %v: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
+			Logger.Infof("[scalePCS] Scale %s FAILED after %v: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
 				pcsName, elapsed, totalPods, runningPods, pendingPods, expectedTotalPods, expectedPending)
 			errCh <- fmt.Errorf("failed to wait for expected pod conditions after PCS scaling: %w. Final state: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
 				err, totalPods, runningPods, pendingPods, expectedTotalPods, expectedPending)
 			return
 		}
-		logger.Infof("[scalePCS] Scale %s completed in %v (replicas=%d, pods=%d)", pcsName, elapsed, replicas, totalPods)
+		Logger.Infof("[scalePCS] Scale %s completed in %v (replicas=%d, pods=%d)", pcsName, elapsed, replicas, totalPods)
 		errCh <- nil
 	}()
 	return errCh
@@ -524,13 +524,13 @@ func (tc *TestContext) ScalePCSGAcrossAllReplicasAsync(pcsName, pcsgName string,
 		totalPods, runningPods, pendingPods, err := tc.WaitForPodConditions(expectedTotalPods, expectedPending)
 		elapsed := time.Since(startTime)
 		if err != nil {
-			logger.Infof("[scalePCSGAcrossAllReplicas] Scale %s FAILED after %v: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
+			Logger.Infof("[scalePCSGAcrossAllReplicas] Scale %s FAILED after %v: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
 				pcsgName, elapsed, totalPods, runningPods, pendingPods, expectedTotalPods, expectedPending)
 			errCh <- fmt.Errorf("failed to wait for expected pod conditions after PCSG scaling across all replicas: %w. Final state: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
 				err, totalPods, runningPods, pendingPods, expectedTotalPods, expectedPending)
 			return
 		}
-		logger.Infof("[scalePCSGAcrossAllReplicas] Scale %s completed in %v (pcsgReplicas=%d, pods=%d)", pcsgName, elapsed, pcsgReplicas, totalPods)
+		Logger.Infof("[scalePCSGAcrossAllReplicas] Scale %s completed in %v (pcsgReplicas=%d, pods=%d)", pcsgName, elapsed, pcsgReplicas, totalPods)
 		errCh <- nil
 	}()
 	return errCh

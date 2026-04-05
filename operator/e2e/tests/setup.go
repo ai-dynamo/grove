@@ -115,7 +115,7 @@ func (tc LegacyTestContext) listPods() (*v1.PodList, error) {
 
 // waitForPods is a wrapper around utils.WaitForPodsWithClientset
 func (tc LegacyTestContext) waitForPods(expectedCount int) error {
-	return utils.WaitForPodsWithClientset(tc.Ctx, tc.Clientset, []string{tc.Namespace}, tc.getLabelSelector(), expectedCount, tc.Timeout, tc.Interval, logger)
+	return utils.WaitForPodsWithClientset(tc.Ctx, tc.Clientset, []string{tc.Namespace}, tc.getLabelSelector(), expectedCount, tc.Timeout, tc.Interval, Logger)
 }
 
 // cordonNode is a wrapper around utils.SetNodeSchedulable
@@ -143,7 +143,7 @@ func (tc LegacyTestContext) scalePodCliqueSet(name string, replicas int) error {
 
 // applyYAMLFile is a wrapper around utils.ApplyYAMLFileWithClients
 func (tc LegacyTestContext) applyYAMLFile(yamlPath string) ([]utils.AppliedResource, error) {
-	return utils.ApplyYAMLFileWithClients(tc.Ctx, yamlPath, tc.Namespace, tc.DynamicClient, tc.RestMapper, logger)
+	return utils.ApplyYAMLFileWithClients(tc.Ctx, yamlPath, tc.Namespace, tc.DynamicClient, tc.RestMapper, Logger)
 }
 
 // waitForPodCount is a wrapper around utils.WaitForPodCount
@@ -217,7 +217,7 @@ func PrepareTestCluster(ctx context.Context, t *testing.T, requiredWorkerNodes i
 			Logger.Error("================================================================================")
 			Logger.Error("=== CLEANUP FAILURE - COLLECTING DIAGNOSTICS ===")
 			Logger.Error("================================================================================")
-			CollectAllDiagnostics(diagnosticsTc)
+			diagnosticsTc.CollectAllDiagnostics()
 
 			// Mark cleanup as failed - this will cause all subsequent tests to fail immediately
 			// when they try to prepare the cluster, preventing potentially corrupted test state
@@ -236,11 +236,10 @@ func clientCollectionFromClients(c *k8s.Clients) clientCollection {
 	// SharedClusterManager always creates a *kubernetes.Clientset, so this is safe.
 	cs, _ := c.Clientset.(*kubernetes.Clientset)
 	return clientCollection{
-		clientset:     cs,
-		restConfig:    c.RestConfig,
-		dynamicClient: c.DynamicClient,
-		restMapper:    c.RestMapper,
-		crClient:      c.CRClient,
+		Clientset:     cs,
+		RestConfig:    c.RestConfig,
+		DynamicClient: c.DynamicClient,
+		CRClient:      c.CRClient,
 	}
 }
 
@@ -283,7 +282,7 @@ func assertPodsOnDistinctNodes(t *testing.T, pods []v1.Pod) {
 // This helper reduces the repetitive pattern of listing pods, checking errors, and asserting.
 func (tc LegacyTestContext) listPodsAndAssertDistinctNodes() {
 	tc.T.Helper()
-	pods, err := ListPods(tc)
+	pods, err := tc.listPods()
 	if err != nil {
 		tc.T.Fatalf("Failed to list workload pods: %v", err)
 	}
@@ -324,8 +323,8 @@ func (tc LegacyTestContext) verifyPodsArePendingWithUnschedulableEvents(allPodsM
 	}
 
 	// Now verify that all pending pods have Unschedulable events
-	return PollForCondition(tc, func() (bool, error) {
-		pods, err := ListPods(tc)
+	return tc.pollForCondition(func() (bool, error) {
+		pods, err := tc.listPods()
 		if err != nil {
 			return false, err
 		}
@@ -391,8 +390,8 @@ func (tc LegacyTestContext) verifyPodsArePendingWithUnschedulableEvents(allPodsM
 func (tc LegacyTestContext) waitForPodConditions(expectedTotalPods, expectedPending int) (int, int, int, error) {
 	var lastTotal, lastRunning, lastPending int
 
-	err := PollForCondition(tc, func() (bool, error) {
-		pods, err := ListPods(tc)
+	err := tc.pollForCondition(func() (bool, error) {
+		pods, err := tc.listPods()
 		if err != nil {
 			return false, err
 		}
@@ -494,8 +493,8 @@ func (tc LegacyTestContext) uncordonNodes(nodes []string) {
 // This helper reduces repetition of the polling pattern for checking pod phases.
 func (tc LegacyTestContext) waitForPodPhases(expectedRunning, expectedPending int) error {
 	tc.T.Helper()
-	return PollForCondition(tc, func() (bool, error) {
-		pods, err := ListPods(tc)
+	return tc.pollForCondition(func() (bool, error) {
+		pods, err := tc.listPods()
 		if err != nil {
 			return false, err
 		}
@@ -509,8 +508,8 @@ func (tc LegacyTestContext) waitForPodPhases(expectedRunning, expectedPending in
 // This helper reduces repetition of the polling pattern for checking pod ready state.
 func (tc LegacyTestContext) waitForReadyPods(expectedReady int) error {
 	tc.T.Helper()
-	return PollForCondition(tc, func() (bool, error) {
-		pods, err := ListPods(tc)
+	return tc.pollForCondition(func() (bool, error) {
+		pods, err := tc.listPods()
 		if err != nil {
 			return false, err
 		}
@@ -525,7 +524,7 @@ func (tc LegacyTestContext) waitForReadyPods(expectedReady int) error {
 func (tc LegacyTestContext) setupAndCordonNodes(numToCordon int) []string {
 	tc.T.Helper()
 
-	workerNodes, err := GetWorkerNodes(tc)
+	workerNodes, err := tc.getWorkerNodes()
 	if err != nil {
 		tc.T.Fatalf("Failed to get worker nodes: %v", err)
 	}
@@ -535,7 +534,7 @@ func (tc LegacyTestContext) setupAndCordonNodes(numToCordon int) []string {
 	}
 
 	nodesToCordon := workerNodes[:numToCordon]
-	CordonNodes(tc, nodesToCordon)
+	tc.cordonNodes(nodesToCordon)
 
 	return nodesToCordon
 }
@@ -568,7 +567,7 @@ func (tc LegacyTestContext) deployAndVerifyWorkload() (*v1.PodList, error) {
 		return nil, fmt.Errorf("failed to apply workload YAML: %w", err)
 	}
 
-	pods, err := WaitForPodCount(tc, tc.Workload.ExpectedPods)
+	pods, err := tc.waitForPodCount(tc.Workload.ExpectedPods)
 	if err != nil {
 		return nil, fmt.Errorf("failed to wait for pods to be created: %w", err)
 	}
@@ -601,9 +600,9 @@ func (tc LegacyTestContext) verifyAllPodsArePendingWithSleep() {
 func (tc LegacyTestContext) uncordonNodesAndWaitForPods(nodes []string, expectedPods int) {
 	tc.T.Helper()
 
-	UncordonNodes(tc, nodes)
+	tc.uncordonNodes(nodes)
 
-	if err := WaitForPods(tc, expectedPods); err != nil {
+	if err := tc.waitForPods(expectedPods); err != nil {
 		tc.T.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
 }
@@ -612,8 +611,8 @@ func (tc LegacyTestContext) uncordonNodesAndWaitForPods(nodes []string, expected
 // This is useful for checking min-replicas scheduling where pods need to be running but may not be fully ready yet.
 func (tc LegacyTestContext) waitForRunningPods(expectedRunning int) error {
 	tc.T.Helper()
-	return PollForCondition(tc, func() (bool, error) {
-		pods, err := ListPods(tc)
+	return tc.pollForCondition(func() (bool, error) {
+		pods, err := tc.listPods()
 		if err != nil {
 			return false, err
 		}

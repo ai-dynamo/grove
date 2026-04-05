@@ -59,7 +59,7 @@ func Test_SO1_InorderStartupOrderWithFullReplicas(t *testing.T) {
 
 	Logger.Info("1. Initialize a 10-node Grove cluster")
 	totalPods := 10 // pc-a: 2 replicas, pc-b: 1*2 (scaling group), pc-c: 3*2 (scaling group) = 2+2+6=10
-	tc, cleanup := prepareTest(ctx, t, totalPods,
+	tc, cleanup := PrepareTest(ctx, t, totalPods,
 		WithTimeout(5*time.Minute),
 		WithWorkload(&WorkloadConfig{
 			Name:         "workload3",
@@ -70,25 +70,25 @@ func Test_SO1_InorderStartupOrderWithFullReplicas(t *testing.T) {
 	)
 	defer cleanup()
 
-	logger.Info("2. Deploy workload WL3, and verify 10 newly created pods")
+	Logger.Info("2. Deploy workload WL3, and verify 10 newly created pods")
 	_, err := tc.DeployAndVerifyWorkload()
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 
-	logger.Info("3. Wait for pods to get scheduled and become ready")
+	Logger.Info("3. Wait for pods to get scheduled and become ready")
 	if err := tc.WaitForReadyPods(totalPods); err != nil {
 		t.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
 
-	logger.Info("4. Verify each pod clique starts in the following order:")
-	logger.Info("   pcs-0-pc-a")
-	logger.Info("   pcs-0-sg-x-0-pc-b, pcs-0-sg-x-1-pc-b")
-	logger.Info("   pcs-0-sg-x-0-pc-c, pcs-0-sg-x-1-pc-c")
+	Logger.Info("4. Verify each pod clique starts in the following order:")
+	Logger.Info("   pcs-0-pc-a")
+	Logger.Info("   pcs-0-sg-x-0-pc-b, pcs-0-sg-x-1-pc-b")
+	Logger.Info("   pcs-0-sg-x-0-pc-c, pcs-0-sg-x-1-pc-c")
 	verifyPodCliqueStartupOrder(t, tc, "pc-a", 2, "pc-b", 2)
 	verifyPodCliqueStartupOrder(t, tc, "pc-b", 2, "pc-c", 6)
 
-	logger.Info("Inorder startup order with full replicas test completed successfully!")
+	Logger.Info("Inorder startup order with full replicas test completed successfully!")
 }
 
 // Test_SO2_InorderStartupOrderWithMinReplicas tests inorder startup with min replicas
@@ -108,7 +108,7 @@ func Test_SO2_InorderStartupOrderWithMinReplicas(t *testing.T) {
 
 	Logger.Info("1. Initialize a 10-node Grove cluster")
 	totalPods := 10 // pc-a: 2 replicas, pc-b: 1*2 (scaling group), pc-c: 3*2 (scaling group) = 2+2+6=10
-	tc, cleanup := prepareTest(ctx, t, totalPods,
+	tc, cleanup := PrepareTest(ctx, t, totalPods,
 		WithTimeout(5*time.Minute),
 		WithWorkload(&WorkloadConfig{
 			Name:         "workload4",
@@ -119,16 +119,16 @@ func Test_SO2_InorderStartupOrderWithMinReplicas(t *testing.T) {
 	)
 	defer cleanup()
 
-	logger.Info("2. Deploy workload WL4, and verify 10 newly created pods")
+	Logger.Info("2. Deploy workload WL4, and verify 10 newly created pods")
 	_, err := tc.DeployAndVerifyWorkload()
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 
-	logger.Info("3. Wait for 10 pods get scheduled and become ready:")
-	logger.Info("   pcs-0-{pc-a = 2}")
-	logger.Info("   pcs-0-{sg-x-0-pc-b = 1, sg-x-0-pc-c = 3} (there are 2 replicas)")
-	logger.Info("   pcs-0-{sg-x-1-pc-b = 1, sg-x-1-pc-c = 3}")
+	Logger.Info("3. Wait for 10 pods get scheduled and become ready:")
+	Logger.Info("   pcs-0-{pc-a = 2}")
+	Logger.Info("   pcs-0-{sg-x-0-pc-b = 1, sg-x-0-pc-c = 3} (there are 2 replicas)")
+	Logger.Info("   pcs-0-{sg-x-1-pc-b = 1, sg-x-1-pc-c = 3}")
 	if err := tc.WaitForReadyPods(totalPods); err != nil {
 		t.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
@@ -151,7 +151,7 @@ func Test_SO2_InorderStartupOrderWithMinReplicas(t *testing.T) {
 		},
 	})
 
-	logger.Info("Inorder startup order with min replicas test completed successfully!")
+	Logger.Info("Inorder startup order with min replicas test completed successfully!")
 }
 
 // Test_SO3_ExplicitStartupOrderWithFullReplicas tests explicit startup order with full replicas
@@ -168,7 +168,7 @@ func Test_SO3_ExplicitStartupOrderWithFullReplicas(t *testing.T) {
 
 	Logger.Info("1. Initialize a 10-node Grove cluster")
 	totalPods := 10 // pc-a: 2 replicas, pc-b: 1*2 (scaling group), pc-c: 3*2 (scaling group) = 2+2+6=10
-	tc, cleanup := prepareTest(ctx, t, totalPods,
+	tc, cleanup := PrepareTest(ctx, t, totalPods,
 		WithTimeout(5*time.Minute),
 		WithWorkload(&WorkloadConfig{
 			Name:         "workload5",
@@ -179,26 +179,26 @@ func Test_SO3_ExplicitStartupOrderWithFullReplicas(t *testing.T) {
 	)
 	defer cleanup()
 
-	logger.Info("2. Deploy workload WL5, and verify 10 newly created pods")
+	Logger.Info("2. Deploy workload WL5, and verify 10 newly created pods")
 	_, err := tc.DeployAndVerifyWorkload()
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 
-	logger.Info("3. Wait for pods to get scheduled and become ready")
+	Logger.Info("3. Wait for pods to get scheduled and become ready")
 	if err := tc.WaitForReadyPods(tc.Workload.ExpectedPods); err != nil {
 		t.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
 
-	logger.Info("4. Verify each pod clique starts in the following order:")
-	logger.Info("   pcs-0-pc-a")
-	logger.Info("   pcs-0-sg-x-0-pc-c, pcs-0-sg-x-1-pc-c")
-	logger.Info("   pcs-0-sg-x-0-pc-b, pcs-0-sg-x-1-pc-b")
+	Logger.Info("4. Verify each pod clique starts in the following order:")
+	Logger.Info("   pcs-0-pc-a")
+	Logger.Info("   pcs-0-sg-x-0-pc-c, pcs-0-sg-x-1-pc-c")
+	Logger.Info("   pcs-0-sg-x-0-pc-b, pcs-0-sg-x-1-pc-b")
 	verifyPodCliqueStartupOrder(t, tc, "pc-a", 2, "pc-c", 6)
 	verifyPodCliqueStartupOrder(t, tc, "pc-a", 2, "pc-b", 2)
 	verifyPodCliqueStartupOrder(t, tc, "pc-c", 6, "pc-b", 2)
 
-	logger.Info("Explicit startup order with full replicas test completed successfully!")
+	Logger.Info("Explicit startup order with full replicas test completed successfully!")
 }
 
 // Test_SO4_ExplicitStartupOrderWithMinReplicas tests explicit startup order with min replicas
@@ -218,7 +218,7 @@ func Test_SO4_ExplicitStartupOrderWithMinReplicas(t *testing.T) {
 
 	Logger.Info("1. Initialize a 10-node Grove cluster")
 	totalPods := 10 // pc-a: 2 replicas, pc-b: 1*2 (scaling group), pc-c: 3*2 (scaling group) = 2+2+6=10
-	tc, cleanup := prepareTest(ctx, t, totalPods,
+	tc, cleanup := PrepareTest(ctx, t, totalPods,
 		WithTimeout(5*time.Minute),
 		WithWorkload(&WorkloadConfig{
 			Name:         "workload6",
@@ -229,7 +229,7 @@ func Test_SO4_ExplicitStartupOrderWithMinReplicas(t *testing.T) {
 	)
 	defer cleanup()
 
-	logger.Info("2. Deploy workload WL6, and verify 10 newly created pods")
+	Logger.Info("2. Deploy workload WL6, and verify 10 newly created pods")
 	_, err := tc.DeployAndVerifyWorkload()
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
@@ -266,7 +266,7 @@ func Test_SO4_ExplicitStartupOrderWithMinReplicas(t *testing.T) {
 		},
 	})
 
-	logger.Info("Explicit startup order with min replicas test completed successfully!")
+	Logger.Info("Explicit startup order with min replicas test completed successfully!")
 }
 
 // Helper function to get the Ready condition's LastTransitionTime from a pod
@@ -468,7 +468,7 @@ func verifyGroupStartupOrderWithMinAvailable(t *testing.T, groupBefore, groupAft
 	earliestAfter := getEarliestPodTime(groupAfter)
 
 	if nthEarliestBefore.IsZero() {
-		logger.Errorf("Group %s doesn't have %d pods with valid Ready timestamps. Debugging pod states:", beforeName, minAvailable)
+		Logger.Errorf("Group %s doesn't have %d pods with valid Ready timestamps. Debugging pod states:", beforeName, minAvailable)
 		for i, pod := range groupBefore {
 			readyTime := getReadyConditionTransitionTime(pod)
 			Logger.Errorf("  Pod[%d] %s: Phase=%s, ReadyTime=%v", i, pod.Name, pod.Status.Phase, readyTime)
@@ -476,7 +476,7 @@ func verifyGroupStartupOrderWithMinAvailable(t *testing.T, groupBefore, groupAft
 		t.Fatalf("Group %s doesn't have %d pods with valid Ready condition timestamps (pods may not be ready yet)", beforeName, minAvailable)
 	}
 	if earliestAfter.IsZero() {
-		logger.Errorf("Group %s has no pods with valid Ready timestamps. Debugging pod states:", afterName)
+		Logger.Errorf("Group %s has no pods with valid Ready timestamps. Debugging pod states:", afterName)
 		for i, pod := range groupAfter {
 			readyTime := getReadyConditionTransitionTime(pod)
 			Logger.Errorf("  Pod[%d] %s: Phase=%s, ReadyTime=%v", i, pod.Name, pod.Status.Phase, readyTime)
@@ -489,7 +489,7 @@ func verifyGroupStartupOrderWithMinAvailable(t *testing.T, groupBefore, groupAft
 			afterName, earliestAfter, beforeName, minAvailable, minAvailable, nthEarliestBefore)
 	}
 
-	logger.Debugf("Verified startup order: %s (%d pods ready by %v) -> %s (earliest: %v)",
+	Logger.Debugf("Verified startup order: %s (%d pods ready by %v) -> %s (earliest: %v)",
 		beforeName, minAvailable, nthEarliestBefore, afterName, earliestAfter)
 }
 
@@ -522,7 +522,7 @@ func (tc *TestContext) debugPodState() {
 		return
 	}
 
-	logger.Infof("Debug: Found %d pods in namespace %s", len(pods.Items), tc.Namespace)
+	Logger.Infof("Debug: Found %d pods in namespace %s", len(pods.Items), tc.Namespace)
 	for _, pod := range pods.Items {
 		Logger.Infof("Pod %s: Phase=%s, Reason=%s, Message=%s", pod.Name, pod.Status.Phase, pod.Status.Reason, pod.Status.Message)
 		for _, cond := range pod.Status.Conditions {

@@ -35,7 +35,7 @@ func Test_GS1_GangSchedulingWithFullReplicas(t *testing.T) {
 	Logger.Info("1. Initialize a 10-node Grove cluster, then cordon 1 node")
 	// Setup test cluster with 10 worker nodes
 	expectedPods := 10 // pc-a: 2 replicas, pc-b: 1*2 (scaling group), pc-c: 3*2 (scaling group) = 2+2+6=10
-	tc, cleanup := prepareTest(ctx, t, 10,
+	tc, cleanup := PrepareTest(ctx, t, 10,
 		WithWorkload(&WorkloadConfig{
 			Name:         "workload1",
 			YAMLPath:     "../yaml/workload1.yaml",
@@ -50,18 +50,18 @@ func Test_GS1_GangSchedulingWithFullReplicas(t *testing.T) {
 	workerNodeToCordon := nodesToCordon[0]
 	Logger.Debugf("🚫 Cordoned worker node: %s", workerNodeToCordon)
 
-	logger.Info("2. Deploy workload WL1, and verify 10 newly created pods")
+	Logger.Info("2. Deploy workload WL1, and verify 10 newly created pods")
 	_, err := tc.DeployAndVerifyWorkload()
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 
-	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
+	Logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	if err := tc.VerifyPodsArePendingWithUnschedulableEvents(true, expectedPods); err != nil {
 		t.Fatalf("Failed to verify all pods have Unschedulable events: %v", err)
 	}
 
-	logger.Info("4. Uncordon the node and verify all pods get scheduled")
+	Logger.Info("4. Uncordon the node and verify all pods get scheduled")
 	tc.UncordonNodesAndWaitForPods([]string{workerNodeToCordon}, expectedPods)
 
 	// Verify that each pod is scheduled on a unique node, worker nodes have 150m memory
@@ -86,7 +86,7 @@ func Test_GS2_GangSchedulingWithScalingFullReplicas(t *testing.T) {
 	// Setup cluster (shared or individual based on test run mode)
 	Logger.Info("1. Initialize a 14-node Grove cluster, then cordon 5 nodes")
 
-	tc, cleanup := prepareTest(ctx, t, 14,
+	tc, cleanup := PrepareTest(ctx, t, 14,
 		WithWorkload(&WorkloadConfig{
 			Name:         "workload1",
 			YAMLPath:     "../yaml/workload1.yaml",
@@ -106,13 +106,13 @@ func Test_GS2_GangSchedulingWithScalingFullReplicas(t *testing.T) {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 
-	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
+	Logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	if err := tc.VerifyPodsArePendingWithUnschedulableEvents(true, expectedPods); err != nil {
 		t.Fatalf("Failed to verify all pods have Unschedulable events: %v", err)
 	}
 
-	logger.Info("4. Uncordon 1 node to allow scheduling and verify pods get scheduled")
-	logger.Info("5. Wait for pods to become ready")
+	Logger.Info("4. Uncordon 1 node to allow scheduling and verify pods get scheduled")
+	Logger.Info("5. Wait for pods to become ready")
 	tc.UncordonNodesAndWaitForPods(nodesToCordon[:1], expectedPods)
 
 	Logger.Info("6. Scale PCSG replicas to 3 and verify 4 new pending pods")
@@ -131,7 +131,7 @@ func Test_GS2_GangSchedulingWithScalingFullReplicas(t *testing.T) {
 		t.Fatalf("Pod phase verification failed: %v", err)
 	}
 
-	logger.Info("7. Uncordon remaining nodes and verify all pods get scheduled")
+	Logger.Info("7. Uncordon remaining nodes and verify all pods get scheduled")
 	tc.UncordonNodesAndWaitForPods(nodesToCordon[1:], expectedScaledPods)
 
 	// Verify that each pod is scheduled on a unique node
@@ -152,8 +152,8 @@ func Test_GS2_GangSchedulingWithScalingFullReplicas(t *testing.T) {
 func Test_GS3_GangSchedulingWithPCSScalingFullReplicas(t *testing.T) {
 	ctx := context.Background()
 
-	logger.Info("1. Initialize a 20-node Grove cluster, then cordon 11 nodes")
-	tc, cleanup := prepareTest(ctx, t, 20,
+	Logger.Info("1. Initialize a 20-node Grove cluster, then cordon 11 nodes")
+	tc, cleanup := PrepareTest(ctx, t, 20,
 		WithWorkload(&WorkloadConfig{
 			Name:         "workload1",
 			YAMLPath:     "../yaml/workload1.yaml",
@@ -166,7 +166,7 @@ func Test_GS3_GangSchedulingWithPCSScalingFullReplicas(t *testing.T) {
 	// Setup and cordon nodes
 	nodesToCordon := tc.SetupAndCordonNodes(11)
 
-	logger.Info("2. Deploy workload WL1, and verify 10 newly created pods")
+	Logger.Info("2. Deploy workload WL1, and verify 10 newly created pods")
 	// workloadNamespace set via tc.Namespace
 	expectedPods := 10
 	_, err := tc.DeployAndVerifyWorkload()
@@ -174,13 +174,13 @@ func Test_GS3_GangSchedulingWithPCSScalingFullReplicas(t *testing.T) {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 
-	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
+	Logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	if err := tc.VerifyPodsArePendingWithUnschedulableEvents(true, expectedPods); err != nil {
 		t.Fatalf("Failed to verify all pods have Unschedulable events: %v", err)
 	}
 
-	logger.Info("4. Uncordon 1 node to allow scheduling and verify pods get scheduled")
-	logger.Info("5. Wait for pods to become ready")
+	Logger.Info("4. Uncordon 1 node to allow scheduling and verify pods get scheduled")
+	Logger.Info("5. Wait for pods to become ready")
 	tc.UncordonNodesAndWaitForPods(nodesToCordon[:1], expectedPods)
 
 	Logger.Info("6. Scale PCS replicas to 2 and verify 10 new pending pods")
@@ -194,7 +194,7 @@ func Test_GS3_GangSchedulingWithPCSScalingFullReplicas(t *testing.T) {
 		t.Fatalf("Failed to wait for scaled pods with expected phases: %v", err)
 	}
 
-	logger.Info("7. Uncordon remaining nodes and verify all pods get scheduled")
+	Logger.Info("7. Uncordon remaining nodes and verify all pods get scheduled")
 	tc.UncordonNodesAndWaitForPods(nodesToCordon[1:], expectedScaledPods)
 
 	tc.ListPodsAndAssertDistinctNodes()
@@ -219,7 +219,7 @@ func Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas(t *testing.T) {
 
 	Logger.Info("1. Initialize a 28-node Grove cluster, then cordon 19 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	tc, cleanup := prepareTest(ctx, t, 28,
+	tc, cleanup := PrepareTest(ctx, t, 28,
 		WithWorkload(&WorkloadConfig{
 			Name:         "workload1",
 			YAMLPath:     "../yaml/workload1.yaml",
@@ -232,7 +232,7 @@ func Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas(t *testing.T) {
 	// Setup and cordon nodes
 	nodesToCordon := tc.SetupAndCordonNodes(19)
 
-	logger.Info("2. Deploy workload WL1, and verify 10 newly created pods")
+	Logger.Info("2. Deploy workload WL1, and verify 10 newly created pods")
 	// workloadNamespace set via tc.Namespace
 	expectedPods := 10
 	_, err := tc.DeployAndVerifyWorkload()
@@ -240,23 +240,23 @@ func Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas(t *testing.T) {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 
-	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
+	Logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	if err := tc.VerifyPodsArePendingWithUnschedulableEvents(true, expectedPods); err != nil {
 		t.Fatalf("Failed to verify all pods have Unschedulable events: %v", err)
 	}
 
-	logger.Info("4. Uncordon 1 node to allow scheduling and verify pods get scheduled")
-	logger.Info("5. Wait for pods to become ready")
+	Logger.Info("4. Uncordon 1 node to allow scheduling and verify pods get scheduled")
+	Logger.Info("5. Wait for pods to become ready")
 	tc.UncordonNodesAndWaitForPods(nodesToCordon[:1], expectedPods)
 
 	Logger.Info("6. Scale PCSG replicas to 3 and verify 4 new pending pods")
 	pcsgName := "workload1-0-sg-x"
 	tc.ScalePCSGInstanceAndWait(pcsgName, 3, 14, 4)
 
-	logger.Info("7. Uncordon 4 nodes and verify scaled pods get scheduled")
+	Logger.Info("7. Uncordon 4 nodes and verify scaled pods get scheduled")
 	tc.UncordonNodesAndWaitForPods(nodesToCordon[1:5], 14)
 
-	logger.Info("8. Scale PCS replicas to 2 and verify 10 new pending pods")
+	Logger.Info("8. Scale PCS replicas to 2 and verify 10 new pending pods")
 	tc.ScalePCSAndWait("workload1", 2, 24, 10)
 	tc.UncordonNodesAndWaitForPods(nodesToCordon[5:15], 24)
 
@@ -264,7 +264,7 @@ func Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas(t *testing.T) {
 	secondReplicaPCSGName := "workload1-1-sg-x"
 	tc.ScalePCSGInstanceAndWait(secondReplicaPCSGName, 3, 28, 4)
 
-	logger.Info("10. Uncordon remaining nodes and verify all pods get scheduled")
+	Logger.Info("10. Uncordon remaining nodes and verify all pods get scheduled")
 	tc.UncordonNodesAndWaitForPods(nodesToCordon[15:19], 28)
 
 	tc.ListPodsAndAssertDistinctNodes()
@@ -285,7 +285,7 @@ func Test_GS5_GangSchedulingWithMinReplicas(t *testing.T) {
 
 	Logger.Info("1. Initialize a 10-node Grove cluster, then cordon 8 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	tc, cleanup := prepareTest(ctx, t, 10,
+	tc, cleanup := PrepareTest(ctx, t, 10,
 		WithWorkload(&WorkloadConfig{
 			Name:         "workload2",
 			YAMLPath:     "../yaml/workload2.yaml",
@@ -298,14 +298,14 @@ func Test_GS5_GangSchedulingWithMinReplicas(t *testing.T) {
 	// Setup and cordon nodes
 	nodesToCordon := tc.SetupAndCordonNodes(8)
 
-	logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
+	Logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
 	// workloadNamespace set via tc.Namespace
 	_, err := tc.DeployAndVerifyWorkload()
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 
-	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
+	Logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	tc.VerifyAllPodsArePendingWithSleep()
 
 	tc.UncordonNodes(nodesToCordon[:1])
@@ -315,12 +315,12 @@ func Test_GS5_GangSchedulingWithMinReplicas(t *testing.T) {
 		t.Fatalf("Failed to wait for exactly 3 pods to be scheduled: %v", err)
 	}
 
-	logger.Info("5. Wait for scheduled pods to become ready")
+	Logger.Info("5. Wait for scheduled pods to become ready")
 	if err := tc.WaitForReadyPods(3); err != nil {
 		t.Fatalf("Failed to wait for 3 scheduled pods to become ready: %v", err)
 	}
 
-	logger.Info("6. Uncordon 7 nodes and verify all remaining workload pods get scheduled")
+	Logger.Info("6. Uncordon 7 nodes and verify all remaining workload pods get scheduled")
 	tc.UncordonNodes(nodesToCordon[1:])
 
 	// Wait for all remaining pods to be scheduled and ready
@@ -353,7 +353,7 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 
 	Logger.Info("1. Initialize a 14-node Grove cluster, then cordon 12 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	tc, cleanup := prepareTest(ctx, t, 14,
+	tc, cleanup := PrepareTest(ctx, t, 14,
 		WithWorkload(&WorkloadConfig{
 			Name:         "workload2",
 			YAMLPath:     "../yaml/workload2.yaml",
@@ -366,13 +366,13 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 	// Setup and cordon nodes
 	nodesToCordon := tc.SetupAndCordonNodes(12)
 
-	logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
+	Logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
 	_, err := tc.DeployAndVerifyWorkload()
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 
-	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
+	Logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	tc.VerifyAllPodsArePendingWithSleep()
 
 	Logger.Info("4. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1})")
@@ -384,7 +384,7 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 		t.Fatalf("Failed to wait for exactly 3 pods to be scheduled: %v", err)
 	}
 
-	logger.Info("5. Wait for scheduled pods to become ready")
+	Logger.Info("5. Wait for scheduled pods to become ready")
 	if err := tc.WaitForReadyPods(3); err != nil {
 		t.Fatalf("Failed to wait for 3 scheduled pods to become ready: %v", err)
 	}
@@ -407,7 +407,7 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 
 	tc.ScalePCSGInstanceAndWait(pcsgName, 3, expectedPodsAfterScaling, expectedNewPendingPods)
 
-	logger.Info("9. Verify all newly created pods are pending due to insufficient resources")
+	Logger.Info("9. Verify all newly created pods are pending due to insufficient resources")
 	if err := tc.VerifyPodsArePendingWithUnschedulableEvents(false, 4); err != nil {
 		t.Fatalf("Failed to verify all pending pods have Unschedulable events: %v", err)
 	}
@@ -423,7 +423,7 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 		t.Fatalf("Failed to wait for exactly 2 more pods to be scheduled after PCSG scaling: %v", err)
 	}
 
-	logger.Info("11. Wait for scheduled pods to become ready")
+	Logger.Info("11. Wait for scheduled pods to become ready")
 	if err := tc.WaitForReadyPods(12); err != nil {
 		t.Fatalf("Failed to wait for 12 pods to become ready: %v", err)
 	}
@@ -465,7 +465,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 
 	Logger.Info("1. Initialize a 14-node Grove cluster, then cordon 12 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	tc, cleanup := prepareTest(ctx, t, 14,
+	tc, cleanup := PrepareTest(ctx, t, 14,
 		WithWorkload(&WorkloadConfig{
 			Name:         "workload2",
 			YAMLPath:     "../yaml/workload2.yaml",
@@ -478,13 +478,13 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	// Setup and cordon nodes
 	nodesToCordon := tc.SetupAndCordonNodes(12)
 
-	logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
+	Logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
 	pods, err := tc.DeployAndVerifyWorkload()
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 
-	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
+	Logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	tc.VerifyAllPodsArePendingWithSleep()
 
 	Logger.Info("4. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1})")
@@ -498,7 +498,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 		t.Fatalf("Failed to wait for exactly 3 pods to be scheduled: %v", err)
 	}
 
-	logger.Info("5. Wait for scheduled pods to become ready")
+	Logger.Info("5. Wait for scheduled pods to become ready")
 	if err := tc.WaitForReadyPods(3); err != nil {
 		t.Fatalf("Failed to wait for 3 scheduled pods to become ready: %v", err)
 	}
@@ -512,7 +512,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 		t.Fatalf("Failed to wait for exactly 2 more pods to be scheduled: %v", err)
 	}
 
-	logger.Info("7. Wait for scheduled pods to become ready")
+	Logger.Info("7. Wait for scheduled pods to become ready")
 	if err := tc.WaitForReadyPods(5); err != nil {
 		t.Fatalf("Failed to wait for 5 scheduled pods to become ready: %v", err)
 	}
@@ -549,7 +549,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 		t.Fatalf("Failed to wait for exactly 2 more pods to be scheduled after PCSG scaling: %v", err)
 	}
 
-	logger.Info("13. Wait for scheduled pods to become ready")
+	Logger.Info("13. Wait for scheduled pods to become ready")
 	if err := tc.WaitForReadyPods(12); err != nil {
 		t.Fatalf("Failed to wait for 12 pods to become ready: %v", err)
 	}
@@ -586,7 +586,7 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 
 	Logger.Info("1. Initialize a 14-node Grove cluster, then cordon 12 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	tc, cleanup := prepareTest(ctx, t, 14,
+	tc, cleanup := PrepareTest(ctx, t, 14,
 		WithWorkload(&WorkloadConfig{
 			Name:         "workload2",
 			YAMLPath:     "../yaml/workload2.yaml",
@@ -599,13 +599,13 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 	// Setup and cordon nodes
 	nodesToCordon := tc.SetupAndCordonNodes(12)
 
-	logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
+	Logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
 	_, err := tc.DeployAndVerifyWorkload()
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 
-	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
+	Logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	tc.VerifyAllPodsArePendingWithSleep()
 
 	Logger.Info("4. Set pcs-0-sg-x resource replicas equal to 3, verify 4 more newly created pods")
@@ -613,7 +613,7 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 	expectedPodsAfterScaling := 14
 	tc.ScalePCSGInstanceAndWait(pcsgName, 3, expectedPodsAfterScaling, expectedPodsAfterScaling)
 
-	logger.Info("5. Verify all 14 newly created pods are pending due to insufficient resources")
+	Logger.Info("5. Verify all 14 newly created pods are pending due to insufficient resources")
 	tc.VerifyAllPodsArePendingWithSleep()
 
 	Logger.Info("6. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1})")
@@ -628,7 +628,7 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 		t.Fatalf("Failed to wait for exactly 3 pods to be scheduled: %v", err)
 	}
 
-	logger.Info("7. Wait for scheduled pods to become ready")
+	Logger.Info("7. Wait for scheduled pods to become ready")
 	if err := tc.WaitForReadyPods(3); err != nil {
 		t.Fatalf("Failed to wait for 3 scheduled pods to become ready: %v", err)
 	}
@@ -643,7 +643,7 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 		t.Fatalf("Failed to wait for exactly 4 more pods to be scheduled: %v", err)
 	}
 
-	logger.Info("9. Wait for scheduled pods to become ready")
+	Logger.Info("9. Wait for scheduled pods to become ready")
 	if err := tc.WaitForReadyPods(7); err != nil {
 		t.Fatalf("Failed to wait for 7 scheduled pods to become ready: %v", err)
 	}
@@ -681,7 +681,7 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 
 	Logger.Info("1. Initialize a 20-node Grove cluster, then cordon 18 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	tc, cleanup := prepareTest(ctx, t, 20,
+	tc, cleanup := PrepareTest(ctx, t, 20,
 		WithWorkload(&WorkloadConfig{
 			Name:         "workload2",
 			YAMLPath:     "../yaml/workload2.yaml",
@@ -694,13 +694,13 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 	// Setup and cordon nodes
 	nodesToCordon := tc.SetupAndCordonNodes(18)
 
-	logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
+	Logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
 	pods, err := tc.DeployAndVerifyWorkload()
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 
-	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
+	Logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	tc.VerifyAllPodsArePendingWithSleep()
 
 	Logger.Info("4. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1})")
@@ -714,7 +714,7 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 		t.Fatalf("Failed to wait for exactly 3 pods to be scheduled: %v", err)
 	}
 
-	logger.Info("5. Wait for scheduled pods to become ready")
+	Logger.Info("5. Wait for scheduled pods to become ready")
 	if err := tc.WaitForReadyPods(3); err != nil {
 		t.Fatalf("Failed to wait for 3 scheduled pods to become ready: %v", err)
 	}
@@ -747,7 +747,7 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 		t.Fatalf("Failed to wait for exactly 3 more pods to be scheduled after PCS scaling: %v", err)
 	}
 
-	logger.Info("10. Wait for scheduled pods to become ready")
+	Logger.Info("10. Wait for scheduled pods to become ready")
 	if err := tc.WaitForReadyPods(13); err != nil {
 		t.Fatalf("Failed to wait for 13 pods to become ready: %v", err)
 	}
@@ -784,7 +784,7 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 
 	Logger.Info("1. Initialize a 20-node Grove cluster, then cordon 18 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	tc, cleanup := prepareTest(ctx, t, 20,
+	tc, cleanup := PrepareTest(ctx, t, 20,
 		WithWorkload(&WorkloadConfig{
 			Name:         "workload2",
 			YAMLPath:     "../yaml/workload2.yaml",
@@ -797,7 +797,7 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 	// Setup and cordon nodes
 	nodesToCordon := tc.SetupAndCordonNodes(18)
 
-	logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
+	Logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
 	_, err := tc.DeployAndVerifyWorkload()
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
@@ -813,7 +813,7 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 	expectedPodsAfterScaling := 20
 	tc.ScalePCSAndWait(pcsName, 2, expectedPodsAfterScaling, expectedPodsAfterScaling)
 
-	logger.Info("5. Verify all 20 newly created pods are pending due to insufficient resources")
+	Logger.Info("5. Verify all 20 newly created pods are pending due to insufficient resources")
 	tc.VerifyAllPodsArePendingWithSleep()
 
 	Logger.Info("6. Uncordon 4 nodes and verify a total of 6 pods get scheduled")
@@ -826,7 +826,7 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 		t.Fatalf("Failed to wait for exactly 6 pods to be scheduled: %v", err)
 	}
 
-	logger.Info("7. Wait for scheduled pods to become ready")
+	Logger.Info("7. Wait for scheduled pods to become ready")
 	if err := tc.WaitForReadyPods(6); err != nil {
 		t.Fatalf("Failed to wait for 6 scheduled pods to become ready: %v", err)
 	}
@@ -841,7 +841,7 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 		t.Fatalf("Failed to wait for exactly 4 more pods to be scheduled: %v", err)
 	}
 
-	logger.Info("9. Wait for scheduled pods to become ready")
+	Logger.Info("9. Wait for scheduled pods to become ready")
 	if err := tc.WaitForReadyPods(10); err != nil {
 		t.Fatalf("Failed to wait for 10 scheduled pods to become ready: %v", err)
 	}
@@ -888,7 +888,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 
 	Logger.Info("1. Initialize a 28-node Grove cluster, then cordon 26 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	tc, cleanup := prepareTest(ctx, t, 28,
+	tc, cleanup := PrepareTest(ctx, t, 28,
 		WithWorkload(&WorkloadConfig{
 			Name:         "workload2",
 			YAMLPath:     "../yaml/workload2.yaml",
@@ -901,13 +901,13 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 	// Setup and cordon nodes
 	nodesToCordon := tc.SetupAndCordonNodes(26)
 
-	logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
+	Logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
 	_, err := tc.DeployAndVerifyWorkload()
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 
-	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
+	Logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	tc.VerifyAllPodsArePendingWithSleep()
 
 	Logger.Info("4. Uncordon 1 node")
@@ -916,7 +916,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 		t.Fatalf("Failed to uncordon node %s: %v", firstNodeToUncordon, err)
 	}
 
-	logger.Info("5. Wait for min-replicas pods to be scheduled and ready (should be 3 pods for min-available)")
+	Logger.Info("5. Wait for min-replicas pods to be scheduled and ready (should be 3 pods for min-available)")
 	if err := tc.WaitForRunningPods(3); err != nil {
 		t.Fatalf("Failed to wait for min-replicas pods to be scheduled: %v", err)
 	}
@@ -944,7 +944,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 	remainingNodesSecondWave := nodesToCordon[8:10]
 	tc.UncordonNodes(remainingNodesSecondWave)
 
-	logger.Info("10. Wait for 2 more pods to be scheduled and ready (min-available for sg-x-2)")
+	Logger.Info("10. Wait for 2 more pods to be scheduled and ready (min-available for sg-x-2)")
 	if err := tc.WaitForRunningPods(12); err != nil {
 		t.Fatalf("Failed to wait for PCSG partial scheduling: %v", err)
 	}
@@ -957,14 +957,14 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 		t.Fatalf("Failed to wait for PCSG completion pods to be ready: %v", err)
 	}
 
-	logger.Info("12. Set pcs resource replicas equal to 2, then verify 10 more newly created pods")
+	Logger.Info("12. Set pcs resource replicas equal to 2, then verify 10 more newly created pods")
 	tc.ScalePCSAndWait("workload2", 2, 24, 10)
 
 	Logger.Info("13. Uncordon 3 nodes")
 	remainingNodesFourthWave := nodesToCordon[12:15]
 	tc.UncordonNodes(remainingNodesFourthWave)
 
-	logger.Info("14. Wait for 3 more pods to be scheduled (min-available for pcs-1)")
+	Logger.Info("14. Wait for 3 more pods to be scheduled (min-available for pcs-1)")
 	if err := tc.WaitForRunningPods(17); err != nil {
 		t.Fatalf("Failed to wait for PCS partial scheduling: %v", err)
 	}
@@ -992,7 +992,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 	remainingNodesSixthWave := nodesToCordon[22:24]
 	tc.UncordonNodes(remainingNodesSixthWave)
 
-	logger.Info("19. Wait for 2 more pods to be scheduled (min-available for pcs-1-sg-x-2)")
+	Logger.Info("19. Wait for 2 more pods to be scheduled (min-available for pcs-1-sg-x-2)")
 	if err := tc.WaitForRunningPods(26); err != nil {
 		t.Fatalf("Failed to wait for final PCSG partial scheduling: %v", err)
 	}
@@ -1030,7 +1030,7 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 
 	Logger.Info("1. Initialize a 28-node Grove cluster, then cordon 26 nodes")
 	// Setup cluster (shared or individual based on test run mode)
-	tc, cleanup := prepareTest(ctx, t, 28,
+	tc, cleanup := PrepareTest(ctx, t, 28,
 		WithWorkload(&WorkloadConfig{
 			Name:         "workload2",
 			YAMLPath:     "../yaml/workload2.yaml",
@@ -1043,19 +1043,19 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 	// Setup and cordon nodes
 	nodesToCordon := tc.SetupAndCordonNodes(26)
 
-	logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
+	Logger.Info("2. Deploy workload WL2, and verify 10 newly created pods")
 	_, err := tc.DeployAndVerifyWorkload()
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 
-	logger.Info("3. Verify all workload pods are pending due to insufficient resources")
+	Logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	tc.VerifyAllPodsArePendingWithSleep()
 
-	logger.Info("4. Set pcs resource replicas equal to 2, then verify 10 more newly created pods")
+	Logger.Info("4. Set pcs resource replicas equal to 2, then verify 10 more newly created pods")
 	tc.ScalePCSAndWait("workload2", 2, 20, 20)
 
-	logger.Info("5. Verify all 20 newly created pods are pending due to insufficient resources")
+	Logger.Info("5. Verify all 20 newly created pods are pending due to insufficient resources")
 	if err := tc.WaitForPodCountAndPhases(20, 0, 20); err != nil {
 		t.Fatalf("Failed to verify all 20 pods are pending: %v", err)
 	}
@@ -1068,7 +1068,7 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 	pcsg2Name := "workload2-1-sg-x"
 	tc.ScalePCSGInstanceAndWait(pcsg2Name, 3, 28, 28)
 
-	logger.Info("7. Verify all 28 created pods are pending due to insufficient resources")
+	Logger.Info("7. Verify all 28 created pods are pending due to insufficient resources")
 	if err := tc.WaitForPodCountAndPhases(28, 0, 28); err != nil {
 		t.Fatalf("Failed to verify all 28 pods are pending: %v", err)
 	}
@@ -1081,7 +1081,7 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 		t.Fatalf("Failed to wait for 6 pods to be scheduled: %v", err)
 	}
 
-	logger.Info("9. Wait for scheduled pods to become ready (only the 6 that are scheduled)")
+	Logger.Info("9. Wait for scheduled pods to become ready (only the 6 that are scheduled)")
 	if err := tc.WaitForReadyPods(6); err != nil {
 		t.Fatalf("Failed to wait for 6 pods to be ready: %v", err)
 	}
@@ -1094,7 +1094,7 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 		t.Fatalf("Failed to wait for 8 more pods to be scheduled: %v", err)
 	}
 
-	logger.Info("11. Wait for scheduled pods to become ready (only the 14 that are scheduled)")
+	Logger.Info("11. Wait for scheduled pods to become ready (only the 14 that are scheduled)")
 	if err := tc.WaitForReadyPods(14); err != nil {
 		t.Fatalf("Failed to wait for 14 pods to be ready: %v", err)
 	}

@@ -57,13 +57,13 @@ const (
 
 func Test_ScaleTest_1000(t *testing.T) {
 	diagDir := os.Getenv(diagnostics.DirEnvVar)
-	logger.Infof("starting scale test: %d expected pods, timeout %v", scaleTestExpectedPods, scaleTestTimeout)
+	Logger.Infof("starting scale test: %d expected pods, timeout %v", scaleTestExpectedPods, scaleTestTimeout)
 
 	ctx, cancel := context.WithTimeout(context.Background(), scaleTestTimeout)
 	defer cancel()
 
-	logger.Info("preparing test cluster with 100 worker nodes")
-	tc, cleanup := prepareTest(ctx, t, 100,
+	Logger.Info("preparing test cluster with 100 worker nodes")
+	tc, cleanup := PrepareTest(ctx, t, 100,
 		WithTimeout(scaleTestTimeout),
 		WithInterval(scaleTestPollInterval),
 		WithWorkload(&WorkloadConfig{
@@ -81,7 +81,7 @@ func Test_ScaleTest_1000(t *testing.T) {
 	}
 
 	runID := fmt.Sprintf("run-%s", time.Now().Format("20060102-150405"))
-	logger.Infof("test config: runID=%s, namespace=%s, pcsName=%s", runID, tc.Namespace, tc.Workload.Name)
+	Logger.Infof("test config: runID=%s, namespace=%s, pcsName=%s", runID, tc.Namespace, tc.Workload.Name)
 
 	tracker := measurement.NewTimelineTracker(
 		"ScaleTest_1000",
