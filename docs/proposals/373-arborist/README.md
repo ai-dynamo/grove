@@ -149,7 +149,7 @@ Arborist requires broad read RBAC permissions (Pods, Nodes, Events, pod logs, al
 
 Launching Arborist on a cluster without Grove installed would produce confusing errors.
 
-**Mitigation:** A pre-flight check will verify Grove CRDs exist and fail fast with a clear message before entering the TUI.
+**Mitigation:** A pre-flight check will verify core Grove CRDs (PodCliqueSet, PodCliqueScalingGroup, PodClique) exist and fail fast with a clear message before entering the TUI. Optional CRDs (ClusterTopology) will degrade gracefully with a warning in the TUI error log instead of blocking startup.
 
 #### Sensitive Data in Diagnostic Bundles
 
@@ -196,7 +196,7 @@ kubectl grove [pcs|pcsg|pc|pod] [-n namespace | -A] [-f filter]
 ```
 
 - **Resource type argument** (`pcs`, `pcsg`, `pc`, `pod`) will set the initial hierarchy level (default: `pcs`).
-- **Pre-flight check** will verify Grove CRDs exist before entering the TUI to avoid rendering errors on a non-Grove cluster.
+- **Pre-flight check** will verify core Grove CRDs (PodCliqueSet, PodCliqueScalingGroup, PodClique) exist before entering the TUI to avoid rendering errors on a non-Grove cluster. Optional CRDs (ClusterTopology) degrade gracefully with a warning.
 
 #### Bubble Tea & Informer Integration
 
@@ -234,14 +234,14 @@ Key design decisions:
 - **Unit-testable TUI logic.** All TUI code programs against a `GlobalCache` interface defined in the `clusterstate` package, not against Kubernetes client-go. A `MockGlobalCache` in the same package lets tests exercise navigation, filtering, and rendering without a real cluster. The Kubernetes-specific implementation (`InformerGlobalCache`) lives in a separate `k8s` package.
 - **Cursor stability across snapshot rebuilds.** When informer events trigger a new snapshot (see [Data Flow](#data-flow)), the selected row will be tracked by resource name rather than index, so the cursor will stay on the same logical item even as the underlying data refreshes.
 - **Immutable full-rebuild snapshots.** Each informer-triggered rebuild will construct a new snapshot from scratch rather than incrementally patching the previous one. The snapshot builder will be a pure function over an explicit input struct (informer cache contents), producing an immutable snapshot that the TUI reads without locks during rendering. This trades some rebuild cost for simplicity and correctness — incremental patching would be more performant but introduces subtle consistency bugs when multiple related objects change in the same event burst (e.g., a pod deletion and its parent PodClique status update arriving in the same debounce window). The debounce strategy (250ms quiet / 500ms max wait) keeps rebuild frequency bounded.
-- **Graceful CRD degradation.** Arborist will check for Grove CRD availability at startup using the discovery API. If optional CRDs are absent (e.g., ClusterTopology or PodGang not installed), Arborist will emit a warning and continue with degraded functionality rather than failing. This makes Arborist usable on partial Grove installations, during phased rollouts, and in version-skew scenarios where CRD schemas have been updated but not all CRDs are deployed. Required CRDs (PodCliqueSet) will still trigger a fail-fast pre-flight error.
+- **Graceful CRD degradation.** Arborist will check for Grove CRD availability at startup using the discovery API. If optional CRDs are absent (e.g., ClusterTopology not installed), Arborist will emit a warning and continue with degraded functionality rather than failing. This makes Arborist usable on partial Grove installations, during phased rollouts, and in version-skew scenarios where CRD schemas have been updated but not all CRDs are deployed. Required CRDs (PodCliqueSet, PodCliqueScalingGroup, PodClique) will still trigger a fail-fast pre-flight error.
 - **Informer memory minimization.** The Pod informer watches all pods (not just Grove-managed ones) because non-Grove pods are needed for three-way GPU accounting. To keep the memory footprint low, all informers will register a [`cache.TransformFunc`](https://pkg.go.dev/k8s.io/client-go/tools/cache#TransformFunc) that strips unneeded fields — `managedFields`, unused annotations, container environment variables, verbose status subfields — from objects *before* they enter the informer store. This is the standard Kubernetes approach for reducing informer memory, used in production by projects like kube-state-metrics. The `-n` namespace flag further scopes all informers to a single namespace if desired/required, and Events are bounded by a 1-hour max age cutoff. Because informer objects are stripped, on-demand operations like YAML inspection and log tailing will use direct API calls to fetch complete, fresh data.
 
 #### Data Flow
 
 The TUI will maintain a **snapshot** — a lightweight, point-in-time view of all Grove resources, their hierarchy, GPU summaries, and topology placement. The TUI renders directly from this snapshot. When cluster state changes, a new snapshot is built from scratch to replace the previous one (no incremental patching, avoiding subtle inconsistencies).
 
-1. **Informer watches** are established for Pods, PodCliqueSets, PodCliqueScalingGroups, PodCliques, PodGangs, and ClusterTopology CRs.
+1. **Informer watches** are established for Pods, PodCliqueSets, PodCliqueScalingGroups, PodCliques, and ClusterTopology CRs.
 2. **Informer events** (add/update/delete) are coalesced using a debounce-with-max-wait strategy: wait for 250ms of quiet before rebuilding, but force a rebuild after at most 500ms regardless of ongoing activity. This avoids excessive rebuilds during bursts while guaranteeing bounded staleness.
 3. When the debounce fires, the **snapshot builder** reads current state from the in-memory informer caches (no API server calls), walks owner references to assemble the hierarchy, computes GPU summaries from pod resource requests, and resolves topology placement from node labels.
 4. The new snapshot is delivered to the TUI as an async message and rendered.
@@ -364,7 +364,7 @@ Arborist will be a client-side tool and will not expose metrics or health endpoi
 | [Lip Gloss](https://github.com/charmbracelet/lipgloss) | Terminal styling |
 | [client-go](https://github.com/kubernetes/client-go) | Kubernetes API client and informers |
 | Grove operator API (`operator/api/`) | PodCliqueSet, PodClique, PodCliqueScalingGroup, ClusterTopology types |
-| Grove scheduler API (`scheduler/api/`) | PodGang types |
+| Grove scheduler API (`scheduler/api/`) | PodGang types (diagnostics only) |
 
 ### Test Plan
 
