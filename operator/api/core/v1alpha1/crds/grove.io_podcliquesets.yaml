@@ -108,19 +108,19 @@ spec:
                             properties:
                               filter:
                                 description: |-
-                                  Filter limits which children receive the ResourceClaims.
-                                  If absent, all children receive them (broadcast).
+                                  Filter narrows the scope by restricting which children within the
+                                  chosen Scope receive the ResourceClaims. If absent, all children
+                                  within scope receive them (broadcast).
                                 properties:
-                                  cliqueNames:
-                                    description: CliqueNames lists PodClique template
-                                      names to include.
+                                  childCliqueNames:
+                                    description: ChildCliqueNames limits distribution
+                                      to the named immediate child PodCliques.
                                     items:
                                       type: string
                                     type: array
-                                  groupNames:
-                                    description: |-
-                                      GroupNames lists PodCliqueScalingGroup config names to include.
-                                      Only valid at PCS level.
+                                  childScalingGroupNames:
+                                    description: ChildScalingGroupNames limits distribution
+                                      to the named immediate child PodCliqueScalingGroups.
                                     items:
                                       type: string
                                     type: array
@@ -9404,19 +9404,19 @@ spec:
                             properties:
                               filter:
                                 description: |-
-                                  Filter limits which children receive the ResourceClaims.
-                                  If absent, all children receive them (broadcast).
+                                  Filter narrows the scope by restricting which children within the
+                                  chosen Scope receive the ResourceClaims. If absent, all children
+                                  within scope receive them (broadcast).
                                 properties:
-                                  cliqueNames:
-                                    description: CliqueNames lists PodClique template
-                                      names to include.
+                                  childCliqueNames:
+                                    description: ChildCliqueNames limits distribution
+                                      to the named immediate child PodCliques.
                                     items:
                                       type: string
                                     type: array
-                                  groupNames:
-                                    description: |-
-                                      GroupNames lists PodCliqueScalingGroup config names to include.
-                                      Only valid at PCS level.
+                                  childScalingGroupNames:
+                                    description: ChildScalingGroupNames limits distribution
+                                      to the named immediate child PodCliqueScalingGroups.
                                     items:
                                       type: string
                                     type: array
@@ -10004,8 +10004,8 @@ spec:
                           description: Name is a unique identifier for this template
                             within the PodCliqueSet.
                           type: string
-                        template:
-                          description: Template is the ResourceClaimTemplate spec
+                        templateSpec:
+                          description: TemplateSpec is the ResourceClaimTemplate spec
                             used to create ResourceClaim objects.
                           properties:
                             metadata:
@@ -10679,7 +10679,7 @@ spec:
                           type: object
                       required:
                       - name
-                      - template
+                      - templateSpec
                       type: object
                     type: array
                   resourceSharing:
@@ -10696,19 +10696,19 @@ spec:
                       properties:
                         filter:
                           description: |-
-                            Filter limits which children receive the ResourceClaims.
-                            If absent, all children receive them (broadcast).
+                            Filter narrows the scope by restricting which children within the
+                            chosen Scope receive the ResourceClaims. If absent, all children
+                            within scope receive them (broadcast).
                           properties:
-                            cliqueNames:
-                              description: CliqueNames lists PodClique template names
-                                to include.
+                            childCliqueNames:
+                              description: ChildCliqueNames limits distribution to
+                                the named immediate child PodCliques.
                               items:
                                 type: string
                               type: array
-                            groupNames:
-                              description: |-
-                                GroupNames lists PodCliqueScalingGroup config names to include.
-                                Only valid at PCS level.
+                            childScalingGroupNames:
+                              description: ChildScalingGroupNames limits distribution
+                                to the named immediate child PodCliqueScalingGroups.
                               items:
                                 type: string
                               type: array

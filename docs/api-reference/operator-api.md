@@ -730,7 +730,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `name` _string_ | Name is a unique identifier for this template within the PodCliqueSet. |  |  |
-| `template` _[ResourceClaimTemplateSpec](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#resourceclaimtemplatespec-v1-resource)_ | Template is the ResourceClaimTemplate spec used to create ResourceClaim objects. |  |  |
+| `templateSpec` _[ResourceClaimTemplateSpec](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#resourceclaimtemplatespec-v1-resource)_ | TemplateSpec is the ResourceClaimTemplate spec used to create ResourceClaim objects. |  |  |
 
 
 #### ResourceSharingFilter
@@ -747,8 +747,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `cliqueNames` _string array_ | CliqueNames lists PodClique template names to include. |  |  |
-| `groupNames` _string array_ | GroupNames lists PodCliqueScalingGroup config names to include.<br />Only valid at PCS level. |  |  |
+| `childCliqueNames` _string array_ | ChildCliqueNames limits distribution to the named immediate child PodCliques. |  |  |
+| `childScalingGroupNames` _string array_ | ChildScalingGroupNames limits distribution to the named immediate child PodCliqueScalingGroups. |  |  |
 
 
 #### ResourceSharingScope
@@ -788,7 +788,7 @@ _Appears in:_
 | `name` _string_ | Name of the referenced template. Resolved by first looking up<br />PodCliqueSetTemplateSpec.ResourceClaimTemplates; if no match is found,<br />the operator looks for a Kubernetes ResourceClaimTemplate object in the<br />target namespace. Internal templates shadow external ones with the same name. |  |  |
 | `namespace` _string_ | Namespace of the external ResourceClaimTemplate. When set, the name is<br />resolved as an external Kubernetes ResourceClaimTemplate in the given<br />namespace. When empty, defaults to the PCS namespace during resolution. |  |  |
 | `scope` _[ResourceSharingScope](#resourcesharingscope)_ | Scope determines the sharing granularity for the ResourceClaims created from<br />this template. |  | Enum: [AllReplicas PerReplica] <br /> |
-| `filter` _[ResourceSharingFilter](#resourcesharingfilter)_ | Filter limits which children receive the ResourceClaims.<br />If absent, all children receive them (broadcast). |  |  |
+| `filter` _[ResourceSharingFilter](#resourcesharingfilter)_ | Filter narrows the scope by restricting which children within the<br />chosen Scope receive the ResourceClaims. If absent, all children<br />within scope receive them (broadcast). |  |  |
 
 
 #### TopologyConstraint
