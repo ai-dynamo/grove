@@ -143,10 +143,10 @@ demonstrating all three levels with different scopes:
 ```
 PCS "disagg" (replicas: 2):
   resourceClaimTemplates:
-    - name: res1,          template: {generic DRA resource A}
-    - name: res2,          template: {generic DRA resource B}
-    - name: gpu-pool,      template: {4 GPUs, nvidia.com}
-    - name: metrics-gpu,   template: {1 GPU, nvidia.com}
+    - name: res1,          templateSpec: {generic DRA resource A}
+    - name: res2,          templateSpec: {generic DRA resource B}
+    - name: gpu-pool,      templateSpec: {4 GPUs, nvidia.com}
+    - name: metrics-gpu,   templateSpec: {1 GPU, nvidia.com}
   resourceSharing:
     - {name: res1, scope: AllReplicas}                               # PCS AllReplicas
     - {name: res2, scope: PerReplica}                                # PCS PerReplica
@@ -244,8 +244,8 @@ const (
 type ResourceClaimTemplateConfig struct {
 	// Name is a unique identifier for this template within the PodCliqueSet.
 	Name string `json:"name"`
-	// Template is the ResourceClaimTemplate spec.
-	Template resourcev1.ResourceClaimTemplateSpec `json:"template"`
+	// TemplateSpec is the ResourceClaimTemplate spec.
+	TemplateSpec resourcev1.ResourceClaimTemplateSpec `json:"templateSpec"`
 }
 
 // ResourceSharingSpec references a ResourceClaimTemplateSpec and defines the
@@ -265,8 +265,9 @@ type ResourceSharingSpec struct {
 	// Scope determines the sharing granularity for the ResourceClaims created from
 	// this template.
 	Scope ResourceSharingScope `json:"scope"`
-	// Filter limits which children receive the ResourceClaims.
-	// If absent, all children receive them (broadcast).
+	// Filter narrows the scope by restricting which children within the
+	// chosen Scope receive the ResourceClaims. If absent, all children
+	// within scope receive them (broadcast).
 	// +optional
 	Filter *ResourceSharingFilter `json:"filter,omitempty"`
 }
@@ -274,13 +275,12 @@ type ResourceSharingSpec struct {
 // ResourceSharingFilter controls which children receive the ResourceClaims.
 // Listed names are included; unlisted children do not receive the claims.
 type ResourceSharingFilter struct {
-	// CliqueNames lists PodClique template names to include.
+	// ChildCliqueNames limits distribution to the named immediate child PodCliques.
 	// +optional
-	CliqueNames []string `json:"cliqueNames,omitempty"`
-	// GroupNames lists PodCliqueScalingGroup config names to include.
-	// Only valid at PCS level.
+	ChildCliqueNames []string `json:"childCliqueNames,omitempty"`
+	// ChildScalingGroupNames limits distribution to the named immediate child PodCliqueScalingGroups.
 	// +optional
-	GroupNames []string `json:"groupNames,omitempty"`
+	ChildScalingGroupNames []string `json:"childScalingGroupNames,omitempty"`
 }
 ```
 
@@ -365,7 +365,7 @@ spec:
   template:
     resourceClaimTemplates:
       - name: nvswitch-fabric
-        template:
+        templateSpec:
           spec:
             devices:
               requests:
@@ -407,7 +407,7 @@ spec:
           - name: nvswitch-fabric
             scope: PerReplica
             filter:
-              cliqueNames: [prefill-wkr, decode-wkr]
+              childCliqueNames: [prefill-wkr, decode-wkr]
 ```
 
 In this example:
@@ -476,7 +476,7 @@ spec:
   template:
     resourceClaimTemplates:
       - name: global-gpu-cache
-        template:
+        templateSpec:
           spec:
             devices:
               requests:
@@ -484,7 +484,7 @@ spec:
                   deviceClassName: gpu.nvidia.com
                   count: 4
       - name: replica-gpu-pool
-        template:
+        templateSpec:
           spec:
             devices:
               requests:
@@ -528,7 +528,7 @@ spec:
   template:
     resourceClaimTemplates:
       - name: shared-gpu-cache
-        template:
+        templateSpec:
           spec:
             devices:
               requests:
@@ -536,7 +536,7 @@ spec:
                   deviceClassName: gpu.nvidia.com
                   count: 2
       - name: training-gpu-pool
-        template:
+        templateSpec:
           spec:
             devices:
               requests:
@@ -549,7 +549,7 @@ spec:
       - name: training-gpu-pool
         scope: PerReplica
         filter:
-          groupNames: [training-group]
+          childScalingGroupNames: [training-group]
     cliques:
       - name: preprocessor
         spec:
@@ -586,7 +586,7 @@ spec:
 
 In this example:
 - `shared-gpu-cache` with `AllReplicas` scope and no `filter` → broadcast to all pods (preprocessor, trainer, and standalone monitor)
-- `training-gpu-pool` with `PerReplica` scope and `filter: {groupNames: [training-group]}` → only pods within `training-group` receive the GPU pool. The standalone `monitor` PCLQ does not get it
+- `training-gpu-pool` with `PerReplica` scope and `filter: {childScalingGroupNames: [training-group]}` → only pods within `training-group` receive the GPU pool. The standalone `monitor` PCLQ does not get it
 - This avoids giving GPU access to the monitor pod that doesn't need it
 
 ### PodClique-Level Resource Sharing
@@ -637,7 +637,7 @@ spec:
   template:
     resourceClaimTemplates:
       - name: gpu-pool
-        template:
+        templateSpec:
           spec:
             devices:
               requests:
@@ -720,7 +720,7 @@ spec:
   template:
     resourceClaimTemplates:
       - name: gpu-mps-pool
-        template:
+        templateSpec:
           spec:
             devices:
               requests:
@@ -805,7 +805,7 @@ spec:
           - name: gpu-mps-pool
             scope: PerReplica
             filter:
-              cliqueNames:
+              childCliqueNames:
                 - data-preprocessor
                 - model-trainer
 ```
