@@ -28,7 +28,7 @@ spec:
   template:
     resourceClaimTemplates:
       - name: int-tpl
-        template:
+        templateSpec:
           spec:
             devices:
               requests:
@@ -36,7 +36,7 @@ spec:
                   exactly:
                     deviceClassName: int-class
       - name: int-tpl2
-        template:
+        templateSpec:
           spec:
             devices:
               requests:
@@ -44,7 +44,7 @@ spec:
                   exactly:
                     deviceClassName: int-class2
       - name: int-tpl3
-        template:
+        templateSpec:
           spec:
             devices:
               requests:
@@ -52,7 +52,7 @@ spec:
                   exactly:
                     deviceClassName: int-class3
       - name: int-tpl4
-        template:
+        templateSpec:
           spec:
             devices:
               requests:

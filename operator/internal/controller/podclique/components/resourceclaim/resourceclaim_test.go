@@ -87,7 +87,7 @@ func newPCLQ(replicas int32) *grovecorev1alpha1.PodClique {
 
 var gpuTemplate = grovecorev1alpha1.ResourceClaimTemplateConfig{
 	Name: "gpu-mps",
-	Template: resourcev1.ResourceClaimTemplateSpec{
+	TemplateSpec: resourcev1.ResourceClaimTemplateSpec{
 		Spec: resourcev1.ResourceClaimSpec{
 			Devices: resourcev1.DeviceClaim{
 				Requests: []resourcev1.DeviceRequest{{Name: "gpu"}},

@@ -67,7 +67,7 @@ func TestResourceClaimLabels(t *testing.T) {
 func TestFilterMatches(t *testing.T) {
 	t.Run("no matchNames (PCLQ level) always matches", func(t *testing.T) {
 		ref := &grovecorev1alpha1.ResourceSharingSpec{
-			Filter: &grovecorev1alpha1.ResourceSharingFilter{CliqueNames: []string{"a"}},
+			Filter: &grovecorev1alpha1.ResourceSharingFilter{ChildCliqueNames: []string{"a"}},
 		}
 		assert.True(t, filterMatches(ref, nil))
 		assert.True(t, filterMatches(ref, []string{}))
@@ -80,7 +80,7 @@ func TestFilterMatches(t *testing.T) {
 
 	t.Run("filter with cliqueNames match", func(t *testing.T) {
 		ref := &grovecorev1alpha1.ResourceSharingSpec{
-			Filter: &grovecorev1alpha1.ResourceSharingFilter{CliqueNames: []string{"worker", "router"}},
+			Filter: &grovecorev1alpha1.ResourceSharingFilter{ChildCliqueNames: []string{"worker", "router"}},
 		}
 		assert.True(t, filterMatches(ref, []string{"worker"}))
 		assert.True(t, filterMatches(ref, []string{"router"}))
@@ -89,7 +89,7 @@ func TestFilterMatches(t *testing.T) {
 
 	t.Run("filter with groupNames match", func(t *testing.T) {
 		ref := &grovecorev1alpha1.ResourceSharingSpec{
-			Filter: &grovecorev1alpha1.ResourceSharingFilter{GroupNames: []string{"sga", "sgb"}},
+			Filter: &grovecorev1alpha1.ResourceSharingFilter{ChildScalingGroupNames: []string{"sga", "sgb"}},
 		}
 		assert.True(t, filterMatches(ref, []string{"sga"}))
 		assert.False(t, filterMatches(ref, []string{"sgc"}))
@@ -98,8 +98,8 @@ func TestFilterMatches(t *testing.T) {
 	t.Run("filter with mixed match", func(t *testing.T) {
 		ref := &grovecorev1alpha1.ResourceSharingSpec{
 			Filter: &grovecorev1alpha1.ResourceSharingFilter{
-				CliqueNames: []string{"worker"},
-				GroupNames:  []string{"sga"},
+				ChildCliqueNames:       []string{"worker"},
+				ChildScalingGroupNames: []string{"sga"},
 			},
 		}
 		assert.True(t, filterMatches(ref, []string{"worker"}))
@@ -149,7 +149,7 @@ func TestInjectResourceClaimRefs(t *testing.T) {
 			{
 				Name:   "gpu-mps",
 				Scope:  grovecorev1alpha1.ResourceSharingScopeAllReplicas,
-				Filter: &grovecorev1alpha1.ResourceSharingFilter{CliqueNames: []string{"worker"}},
+				Filter: &grovecorev1alpha1.ResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
 			},
 		}
 		InjectResourceClaimRefs(podSpec, "pcs", refs, nil, "worker")
@@ -164,7 +164,7 @@ func TestInjectResourceClaimRefs(t *testing.T) {
 			{
 				Name:   "gpu-mps",
 				Scope:  grovecorev1alpha1.ResourceSharingScopeAllReplicas,
-				Filter: &grovecorev1alpha1.ResourceSharingFilter{CliqueNames: []string{"worker"}},
+				Filter: &grovecorev1alpha1.ResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
 			},
 		}
 		InjectResourceClaimRefs(podSpec, "pcs", refs, nil, "coordinator")
@@ -345,7 +345,7 @@ func TestEnsureResourceClaims(t *testing.T) {
 	templates := []grovecorev1alpha1.ResourceClaimTemplateConfig{
 		{
 			Name: "gpu-mps",
-			Template: resourcev1.ResourceClaimTemplateSpec{
+			TemplateSpec: resourcev1.ResourceClaimTemplateSpec{
 				Spec: resourcev1.ResourceClaimSpec{
 					Devices: resourcev1.DeviceClaim{
 						Requests: []resourcev1.DeviceRequest{{Name: "gpu"}},
@@ -355,7 +355,7 @@ func TestEnsureResourceClaims(t *testing.T) {
 		},
 		{
 			Name: "shared-mem",
-			Template: resourcev1.ResourceClaimTemplateSpec{
+			TemplateSpec: resourcev1.ResourceClaimTemplateSpec{
 				Spec: resourcev1.ResourceClaimSpec{
 					Devices: resourcev1.DeviceClaim{
 						Requests: []resourcev1.DeviceRequest{{Name: "mem"}},

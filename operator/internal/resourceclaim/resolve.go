@@ -49,7 +49,7 @@ func resolveInternalRef(
 ) *resourcev1.ResourceClaimTemplateSpec {
 	for i := range pcsTemplates {
 		if pcsTemplates[i].Name == ref.Name {
-			return &pcsTemplates[i].Template
+			return &pcsTemplates[i].TemplateSpec
 		}
 	}
 	return nil

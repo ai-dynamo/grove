@@ -340,8 +340,8 @@ const (
 type ResourceClaimTemplateConfig struct {
 	// Name is a unique identifier for this template within the PodCliqueSet.
 	Name string `json:"name"`
-	// Template is the ResourceClaimTemplate spec used to create ResourceClaim objects.
-	Template resourcev1.ResourceClaimTemplateSpec `json:"template"`
+	// TemplateSpec is the ResourceClaimTemplate spec used to create ResourceClaim objects.
+	TemplateSpec resourcev1.ResourceClaimTemplateSpec `json:"templateSpec"`
 }
 
 // ResourceSharingSpec references a ResourceClaimTemplateSpec and defines the
@@ -360,8 +360,9 @@ type ResourceSharingSpec struct {
 	// Scope determines the sharing granularity for the ResourceClaims created from
 	// this template.
 	Scope ResourceSharingScope `json:"scope"`
-	// Filter limits which children receive the ResourceClaims.
-	// If absent, all children receive them (broadcast).
+	// Filter narrows the scope by restricting which children within the
+	// chosen Scope receive the ResourceClaims. If absent, all children
+	// within scope receive them (broadcast).
 	// +optional
 	Filter *ResourceSharingFilter `json:"filter,omitempty"`
 }
@@ -369,13 +370,12 @@ type ResourceSharingSpec struct {
 // ResourceSharingFilter controls which children receive the ResourceClaims.
 // Listed names are included; unlisted children do not receive the claims.
 type ResourceSharingFilter struct {
-	// CliqueNames lists PodClique template names to include.
+	// ChildCliqueNames limits distribution to the named immediate child PodCliques.
 	// +optional
-	CliqueNames []string `json:"cliqueNames,omitempty"`
-	// GroupNames lists PodCliqueScalingGroup config names to include.
-	// Only valid at PCS level.
+	ChildCliqueNames []string `json:"childCliqueNames,omitempty"`
+	// ChildScalingGroupNames limits distribution to the named immediate child PodCliqueScalingGroups.
 	// +optional
-	GroupNames []string `json:"groupNames,omitempty"`
+	ChildScalingGroupNames []string `json:"childScalingGroupNames,omitempty"`
 }
 
 // HeadlessServiceConfig defines the config options for the headless service.

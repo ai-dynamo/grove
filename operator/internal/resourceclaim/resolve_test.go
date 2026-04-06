@@ -43,7 +43,7 @@ func TestResolveTemplateSpec_InternalMatch(t *testing.T) {
 	templates := []grovecorev1alpha1.ResourceClaimTemplateConfig{
 		{
 			Name: "gpu-mps",
-			Template: resourcev1.ResourceClaimTemplateSpec{
+			TemplateSpec: resourcev1.ResourceClaimTemplateSpec{
 				Spec: resourcev1.ResourceClaimSpec{
 					Devices: resourcev1.DeviceClaim{
 						Requests: []resourcev1.DeviceRequest{{Name: "gpu"}},
@@ -79,7 +79,7 @@ func TestResolveTemplateSpec_InternalShadowsExternal(t *testing.T) {
 	internalTemplates := []grovecorev1alpha1.ResourceClaimTemplateConfig{
 		{
 			Name: "gpu-mps",
-			Template: resourcev1.ResourceClaimTemplateSpec{
+			TemplateSpec: resourcev1.ResourceClaimTemplateSpec{
 				Spec: resourcev1.ResourceClaimSpec{
 					Devices: resourcev1.DeviceClaim{
 						Requests: []resourcev1.DeviceRequest{{Name: "internal-gpu"}},

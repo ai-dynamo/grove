@@ -132,7 +132,7 @@ func filterMatches(ref *grovecorev1alpha1.ResourceSharingSpec, matchNames []stri
 		return true
 	}
 	for _, name := range matchNames {
-		if slices.Contains(ref.Filter.CliqueNames, name) || slices.Contains(ref.Filter.GroupNames, name) {
+		if slices.Contains(ref.Filter.ChildCliqueNames, name) || slices.Contains(ref.Filter.ChildScalingGroupNames, name) {
 			return true
 		}
 	}

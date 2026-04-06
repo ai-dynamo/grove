@@ -124,8 +124,8 @@ func (v *pcsValidator) validateResourceClaimTemplates(fldPath *field.Path) field
 		if rct.Name == "" {
 			allErrs = append(allErrs, field.Required(rctPath.Child("name"), "template name is required"))
 		}
-		if len(rct.Template.Spec.Devices.Requests) == 0 {
-			allErrs = append(allErrs, field.Required(rctPath.Child("template", "spec", "devices", "requests"), "at least one device request is required"))
+		if len(rct.TemplateSpec.Spec.Devices.Requests) == 0 {
+			allErrs = append(allErrs, field.Required(rctPath.Child("templateSpec", "spec", "devices", "requests"), "at least one device request is required"))
 		}
 		names = append(names, rct.Name)
 	}
@@ -145,12 +145,12 @@ func (v *pcsValidator) validatePCSGResourceSharing(cfg grovecorev1alpha1.PodCliq
 		}
 		filterPath := refPath.Child("filter")
 		allErrs = append(allErrs, validateFilter(ref.Filter, filterPath)...)
-		if len(ref.Filter.GroupNames) > 0 {
-			allErrs = append(allErrs, field.Forbidden(filterPath.Child("groupNames"), "groupNames is not valid at PCSG level"))
+		if len(ref.Filter.ChildScalingGroupNames) > 0 {
+			allErrs = append(allErrs, field.Forbidden(filterPath.Child("childScalingGroupNames"), "childScalingGroupNames is not valid at PCSG level"))
 		}
-		for j, cn := range ref.Filter.CliqueNames {
+		for j, cn := range ref.Filter.ChildCliqueNames {
 			if !cliqueNameSet.Has(cn) {
-				allErrs = append(allErrs, field.NotFound(filterPath.Child("cliqueNames").Index(j), cn))
+				allErrs = append(allErrs, field.NotFound(filterPath.Child("childCliqueNames").Index(j), cn))
 			}
 		}
 	}
@@ -176,14 +176,14 @@ func (v *pcsValidator) validatePCSFilter(refs []grovecorev1alpha1.ResourceSharin
 		}
 		filterPath := fldPath.Index(i).Child("filter")
 		allErrs = append(allErrs, validateFilter(ref.Filter, filterPath)...)
-		for j, cn := range ref.Filter.CliqueNames {
+		for j, cn := range ref.Filter.ChildCliqueNames {
 			if !cliqueNames.Has(cn) {
-				allErrs = append(allErrs, field.NotFound(filterPath.Child("cliqueNames").Index(j), cn))
+				allErrs = append(allErrs, field.NotFound(filterPath.Child("childCliqueNames").Index(j), cn))
 			}
 		}
-		for j, gn := range ref.Filter.GroupNames {
+		for j, gn := range ref.Filter.ChildScalingGroupNames {
 			if !groupNames.Has(gn) {
-				allErrs = append(allErrs, field.NotFound(filterPath.Child("groupNames").Index(j), gn))
+				allErrs = append(allErrs, field.NotFound(filterPath.Child("childScalingGroupNames").Index(j), gn))
 			}
 		}
 	}
@@ -193,8 +193,8 @@ func (v *pcsValidator) validatePCSFilter(refs []grovecorev1alpha1.ResourceSharin
 // validateFilter validates that a filter specifies at least one name.
 func validateFilter(f *grovecorev1alpha1.ResourceSharingFilter, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-	if len(f.CliqueNames) == 0 && len(f.GroupNames) == 0 {
-		allErrs = append(allErrs, field.Required(fldPath, "filter must specify at least one cliqueNames or groupNames entry"))
+	if len(f.ChildCliqueNames) == 0 && len(f.ChildScalingGroupNames) == 0 {
+		allErrs = append(allErrs, field.Required(fldPath, "filter must specify at least one childCliqueNames or childScalingGroupNames entry"))
 	}
 	return allErrs
 }

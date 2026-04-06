@@ -1222,8 +1222,8 @@ func TestValidateResourceClaimTemplates(t *testing.T) {
 		{
 			name: "valid unique names",
 			templates: []grovecorev1alpha1.ResourceClaimTemplateConfig{
-				{Name: "gpu-mps", Template: resourcev1.ResourceClaimTemplateSpec{Spec: resourcev1.ResourceClaimSpec{Devices: resourcev1.DeviceClaim{Requests: []resourcev1.DeviceRequest{{Name: "gpu"}}}}}},
-				{Name: "shared-mem", Template: resourcev1.ResourceClaimTemplateSpec{Spec: resourcev1.ResourceClaimSpec{Devices: resourcev1.DeviceClaim{Requests: []resourcev1.DeviceRequest{{Name: "mem"}}}}}},
+				{Name: "gpu-mps", TemplateSpec: resourcev1.ResourceClaimTemplateSpec{Spec: resourcev1.ResourceClaimSpec{Devices: resourcev1.DeviceClaim{Requests: []resourcev1.DeviceRequest{{Name: "gpu"}}}}}},
+				{Name: "shared-mem", TemplateSpec: resourcev1.ResourceClaimTemplateSpec{Spec: resourcev1.ResourceClaimSpec{Devices: resourcev1.DeviceClaim{Requests: []resourcev1.DeviceRequest{{Name: "mem"}}}}}},
 			},
 		},
 		{
@@ -1233,7 +1233,7 @@ func TestValidateResourceClaimTemplates(t *testing.T) {
 			},
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeRequired, Field: "spec.template.resourceClaimTemplates[0].name"},
-				{ErrorType: field.ErrorTypeRequired, Field: "spec.template.resourceClaimTemplates[0].template.spec.devices.requests"},
+				{ErrorType: field.ErrorTypeRequired, Field: "spec.template.resourceClaimTemplates[0].templateSpec.spec.devices.requests"},
 			},
 		},
 		{
@@ -1242,7 +1242,7 @@ func TestValidateResourceClaimTemplates(t *testing.T) {
 				{Name: "gpu-mps"},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeRequired, Field: "spec.template.resourceClaimTemplates[0].template.spec.devices.requests"},
+				{ErrorType: field.ErrorTypeRequired, Field: "spec.template.resourceClaimTemplates[0].templateSpec.spec.devices.requests"},
 			},
 		},
 		{
@@ -1252,8 +1252,8 @@ func TestValidateResourceClaimTemplates(t *testing.T) {
 				{Name: "gpu-mps"},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeRequired, Field: "spec.template.resourceClaimTemplates[0].template.spec.devices.requests"},
-				{ErrorType: field.ErrorTypeRequired, Field: "spec.template.resourceClaimTemplates[1].template.spec.devices.requests"},
+				{ErrorType: field.ErrorTypeRequired, Field: "spec.template.resourceClaimTemplates[0].templateSpec.spec.devices.requests"},
+				{ErrorType: field.ErrorTypeRequired, Field: "spec.template.resourceClaimTemplates[1].templateSpec.spec.devices.requests"},
 				{ErrorType: field.ErrorTypeDuplicate, Field: "spec.template.resourceClaimTemplates.name"},
 			},
 		},
@@ -1363,7 +1363,7 @@ func TestValidatePCSFilter(t *testing.T) {
 				{
 					Name:   "gpu-mps",
 					Scope:  grovecorev1alpha1.ResourceSharingScopeAllReplicas,
-					Filter: &grovecorev1alpha1.ResourceSharingFilter{CliqueNames: []string{"worker"}},
+					Filter: &grovecorev1alpha1.ResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
 				},
 			},
 		},
@@ -1377,7 +1377,7 @@ func TestValidatePCSFilter(t *testing.T) {
 				{
 					Name:   "gpu-mps",
 					Scope:  grovecorev1alpha1.ResourceSharingScopeAllReplicas,
-					Filter: &grovecorev1alpha1.ResourceSharingFilter{GroupNames: []string{"sga"}},
+					Filter: &grovecorev1alpha1.ResourceSharingFilter{ChildScalingGroupNames: []string{"sga"}},
 				},
 			},
 		},
@@ -1388,11 +1388,11 @@ func TestValidatePCSFilter(t *testing.T) {
 				{
 					Name:   "gpu-mps",
 					Scope:  grovecorev1alpha1.ResourceSharingScopeAllReplicas,
-					Filter: &grovecorev1alpha1.ResourceSharingFilter{CliqueNames: []string{"nonexistent"}},
+					Filter: &grovecorev1alpha1.ResourceSharingFilter{ChildCliqueNames: []string{"nonexistent"}},
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeNotFound, Field: "spec.template.resourceSharing[0].filter.cliqueNames[0]"},
+				{ErrorType: field.ErrorTypeNotFound, Field: "spec.template.resourceSharing[0].filter.childCliqueNames[0]"},
 			},
 		},
 		{
@@ -1402,11 +1402,11 @@ func TestValidatePCSFilter(t *testing.T) {
 				{
 					Name:   "gpu-mps",
 					Scope:  grovecorev1alpha1.ResourceSharingScopeAllReplicas,
-					Filter: &grovecorev1alpha1.ResourceSharingFilter{GroupNames: []string{"nonexistent"}},
+					Filter: &grovecorev1alpha1.ResourceSharingFilter{ChildScalingGroupNames: []string{"nonexistent"}},
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeNotFound, Field: "spec.template.resourceSharing[0].filter.groupNames[0]"},
+				{ErrorType: field.ErrorTypeNotFound, Field: "spec.template.resourceSharing[0].filter.childScalingGroupNames[0]"},
 			},
 		},
 		{
@@ -1464,7 +1464,7 @@ func TestValidatePCSGResourceSharing(t *testing.T) {
 					{
 						Name:   "gpu-mps",
 						Scope:  grovecorev1alpha1.ResourceSharingScopeAllReplicas,
-						Filter: &grovecorev1alpha1.ResourceSharingFilter{CliqueNames: []string{"worker"}},
+						Filter: &grovecorev1alpha1.ResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
 					},
 				},
 			},
@@ -1479,13 +1479,13 @@ func TestValidatePCSGResourceSharing(t *testing.T) {
 					{
 						Name:   "gpu-mps",
 						Scope:  grovecorev1alpha1.ResourceSharingScopeAllReplicas,
-						Filter: &grovecorev1alpha1.ResourceSharingFilter{GroupNames: []string{"other-sg"}},
+						Filter: &grovecorev1alpha1.ResourceSharingFilter{ChildScalingGroupNames: []string{"other-sg"}},
 					},
 				},
 			},
 			templates: []grovecorev1alpha1.ResourceClaimTemplateConfig{{Name: "gpu-mps"}},
 			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.podCliqueScalingGroups[0].resourceSharing[0].filter.groupNames"},
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.podCliqueScalingGroups[0].resourceSharing[0].filter.childScalingGroupNames"},
 			},
 		},
 		{
@@ -1497,13 +1497,13 @@ func TestValidatePCSGResourceSharing(t *testing.T) {
 					{
 						Name:   "gpu-mps",
 						Scope:  grovecorev1alpha1.ResourceSharingScopeAllReplicas,
-						Filter: &grovecorev1alpha1.ResourceSharingFilter{CliqueNames: []string{"unknown-clique"}},
+						Filter: &grovecorev1alpha1.ResourceSharingFilter{ChildCliqueNames: []string{"unknown-clique"}},
 					},
 				},
 			},
 			templates: []grovecorev1alpha1.ResourceClaimTemplateConfig{{Name: "gpu-mps"}},
 			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeNotFound, Field: "spec.template.podCliqueScalingGroups[0].resourceSharing[0].filter.cliqueNames[0]"},
+				{ErrorType: field.ErrorTypeNotFound, Field: "spec.template.podCliqueScalingGroups[0].resourceSharing[0].filter.childCliqueNames[0]"},
 			},
 		},
 	}
@@ -1548,7 +1548,7 @@ func TestValidatePCLQNoFilter(t *testing.T) {
 				{
 					Name:   "gpu-mps",
 					Scope:  grovecorev1alpha1.ResourceSharingScopeAllReplicas,
-					Filter: &grovecorev1alpha1.ResourceSharingFilter{CliqueNames: []string{"worker"}},
+					Filter: &grovecorev1alpha1.ResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
@@ -1562,7 +1562,7 @@ func TestValidatePCLQNoFilter(t *testing.T) {
 				{
 					Name:   "shared-mem",
 					Scope:  grovecorev1alpha1.ResourceSharingScopePerReplica,
-					Filter: &grovecorev1alpha1.ResourceSharingFilter{GroupNames: []string{"sg"}},
+					Filter: &grovecorev1alpha1.ResourceSharingFilter{ChildScalingGroupNames: []string{"sg"}},
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
