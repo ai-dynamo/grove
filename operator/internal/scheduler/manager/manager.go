@@ -18,6 +18,7 @@ package manager
 
 import (
 	"fmt"
+	"maps"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
@@ -89,4 +90,11 @@ func Get(name string) scheduler.Backend {
 // GetDefault returns the backend designated as default in OperatorConfiguration (scheduler.defaultProfileName).
 func GetDefault() scheduler.Backend {
 	return defaultBackend
+}
+
+// All returns all registered scheduler backends keyed by name.
+func All() map[string]scheduler.Backend {
+	result := make(map[string]scheduler.Backend)
+	maps.Copy(result, backends)
+	return result
 }
