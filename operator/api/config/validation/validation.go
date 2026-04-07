@@ -17,6 +17,7 @@
 package validation
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -73,6 +74,10 @@ func validateSchedulerConfiguration(scheduler *configv1alpha1.SchedulerConfigura
 			}
 			seenNames.Insert(p.Name)
 		}
+
+		if p.Name == configv1alpha1.SchedulerNameVolcano {
+			allErrs = append(allErrs, validateVolcanoSchedulerConfig(p, idxPath.Child("config"))...)
+		}
 	}
 	if !seenNames.Has(configv1alpha1.SchedulerNameKube) {
 		allErrs = append(allErrs, field.Required(profilesPath, fmt.Sprintf("the %q scheduler profile is required", configv1alpha1.SchedulerNameKube)))
@@ -81,6 +86,20 @@ func validateSchedulerConfiguration(scheduler *configv1alpha1.SchedulerConfigura
 		allErrs = append(allErrs, field.Required(defaultProfileNamePath, "default scheduler profile name is required"))
 	} else if !seenNames.Has(configv1alpha1.SchedulerName(scheduler.DefaultProfileName)) {
 		allErrs = append(allErrs, field.Invalid(defaultProfileNamePath, scheduler.DefaultProfileName, "default profile must be one of the configured profiles"))
+	}
+	return allErrs
+}
+
+func validateVolcanoSchedulerConfig(profile configv1alpha1.SchedulerProfile, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	cfg := configv1alpha1.VolcanoSchedulerConfiguration{}
+	if profile.Config != nil && len(profile.Config.Raw) > 0 {
+		if err := json.Unmarshal(profile.Config.Raw, &cfg); err != nil {
+			return append(allErrs, field.Invalid(fldPath, string(profile.Config.Raw), fmt.Sprintf("failed to parse volcano scheduler config: %v", err)))
+		}
+	}
+	if strings.TrimSpace(cfg.Queue) == "" {
+		allErrs = append(allErrs, field.Required(fldPath.Child("queue"), "queue is required for volcano scheduler"))
 	}
 	return allErrs
 }

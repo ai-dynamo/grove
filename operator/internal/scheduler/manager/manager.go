@@ -23,6 +23,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kai"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kube"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler/volcano"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -41,6 +42,12 @@ func newBackendForProfile(cl client.Client, scheme *runtime.Scheme, rec record.E
 		return b, nil
 	case configv1alpha1.SchedulerNameKai:
 		b := kai.New(cl, scheme, rec, p)
+		if err := b.Init(); err != nil {
+			return nil, err
+		}
+		return b, nil
+	case configv1alpha1.SchedulerNameVolcano:
+		b := volcano.New(cl, scheme, rec, p)
 		if err := b.Init(); err != nil {
 			return nil, err
 		}
