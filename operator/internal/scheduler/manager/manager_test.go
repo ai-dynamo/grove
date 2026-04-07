@@ -27,8 +27,8 @@ import (
 	"k8s.io/client-go/tools/record"
 )
 
-// TestInitialize tests backend initialization with different schedulers.
-func TestInitialize(t *testing.T) {
+// TestNewRegistry tests NewRegistry with different scheduler profiles.
+func TestNewRegistry(t *testing.T) {
 	tests := []struct {
 		name          string
 		schedulerName configv1alpha1.SchedulerName
@@ -46,7 +46,7 @@ func TestInitialize(t *testing.T) {
 			name:          "default scheduler initialization",
 			schedulerName: configv1alpha1.SchedulerNameKube,
 			wantErr:       false,
-			expectedName:  "default-scheduler", // kube backend's Name() is the pod-facing name
+			expectedName:  "default-scheduler",
 		},
 		{
 			name:          "unsupported scheduler",
@@ -58,10 +58,6 @@ func TestInitialize(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Reset global state before each test
-			backends = nil
-			defaultBackend = nil
-
 			cl := testutils.CreateDefaultFakeClient(nil)
 			recorder := record.NewFakeRecorder(10)
 
@@ -71,18 +67,19 @@ func TestInitialize(t *testing.T) {
 				},
 				DefaultProfileName: string(tt.schedulerName),
 			}
-			err := Initialize(cl, cl.Scheme(), recorder, cfg)
+			reg, err := NewRegistry(cl, cl.Scheme(), recorder, cfg)
 
 			if tt.wantErr {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.errContains)
-				assert.Nil(t, GetDefault())
+				assert.Nil(t, reg)
 			} else {
 				require.NoError(t, err)
-				require.NotNil(t, GetDefault())
-				name := GetDefault().Name()
+				require.NotNil(t, reg.GetDefault())
+				name := reg.GetDefault().Name()
 				assert.Equal(t, tt.expectedName, name)
-				assert.Equal(t, GetDefault(), Get(name)) // backend is stored under its Name()
+				assert.Equal(t, reg.GetDefault(), reg.Get(name))
+				assert.Nil(t, reg.Get(""), "Get with empty string should return nil, not default")
 			}
 		})
 	}
