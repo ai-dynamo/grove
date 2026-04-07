@@ -29,7 +29,7 @@ import (
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 	"github.com/ai-dynamo/grove/operator/internal/resourceclaim"
-	schedmanager "github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -75,15 +75,17 @@ type _resource struct {
 	scheme            *runtime.Scheme
 	eventRecorder     record.EventRecorder
 	expectationsStore *expect.ExpectationsStore
+	schedRegistry     scheduler.Registry
 }
 
 // New creates a new Pod operator for managing Pod resources within PodCliques
-func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, expectationsStore *expect.ExpectationsStore) component.Operator[grovecorev1alpha1.PodClique] {
+func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, expectationsStore *expect.ExpectationsStore, schedRegistry scheduler.Registry) component.Operator[grovecorev1alpha1.PodClique] {
 	return &_resource{
 		client:            client,
 		scheme:            scheme,
 		eventRecorder:     eventRecorder,
 		expectationsStore: expectationsStore,
+		schedRegistry:     schedRegistry,
 	}
 }
 
@@ -165,7 +167,7 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 
 	// Resolve scheduler: from template or default backend; then prepare pod (schedulerName, annotations, etc.)
 	schedulerName := pclq.Spec.PodSpec.SchedulerName
-	backend := schedmanager.Get(schedulerName)
+	backend := r.schedRegistry.Get(schedulerName)
 	if backend == nil {
 		return groveerr.WrapError(
 			fmt.Errorf("scheduler backend not found or not initialized: %q", schedulerName),
