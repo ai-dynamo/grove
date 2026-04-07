@@ -22,7 +22,6 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
-	schedmanager "github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -34,26 +33,28 @@ import (
 // Reconciler reconciles PodGang objects and converts them to scheduler-specific CRs
 type Reconciler struct {
 	client.Client
-	scheme *runtime.Scheme
-	config configv1alpha1.PodGangControllerConfiguration
+	scheme        *runtime.Scheme
+	config        configv1alpha1.PodGangControllerConfiguration
+	schedRegistry scheduler.Registry
 }
 
 // NewReconciler creates a new Reconciler. Backend is resolved per PodGang from the grove.io/scheduler-name label or default.
-func NewReconciler(mgr ctrl.Manager, config configv1alpha1.PodGangControllerConfiguration) *Reconciler {
+func NewReconciler(mgr ctrl.Manager, config configv1alpha1.PodGangControllerConfiguration, schedRegistry scheduler.Registry) *Reconciler {
 	return &Reconciler{
-		Client: mgr.GetClient(),
-		scheme: mgr.GetScheme(),
-		config: config,
+		Client:        mgr.GetClient(),
+		scheme:        mgr.GetScheme(),
+		config:        config,
+		schedRegistry: schedRegistry,
 	}
 }
 
-func resolveBackend(podGang *groveschedulerv1alpha1.PodGang) scheduler.Backend {
+func (r *Reconciler) resolveBackend(podGang *groveschedulerv1alpha1.PodGang) scheduler.Backend {
 	if name := podGang.Labels[apicommon.LabelSchedulerName]; name != "" {
-		if b := schedmanager.Get(name); b != nil {
+		if b := r.schedRegistry.Get(name); b != nil {
 			return b
 		}
 	}
-	return schedmanager.GetDefault()
+	return r.schedRegistry.GetDefault()
 }
 
 // Reconcile processes PodGang changes and synchronizes to backend-specific CRs
@@ -66,7 +67,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, nil
 	}
 
-	backend := resolveBackend(podGang)
+	backend := r.resolveBackend(podGang)
 	// This should ideally not happen. If you see this log then there is either something wrong with the defaulting or validation.
 	if backend == nil {
 		log.FromContext(ctx).Error(nil, "No scheduler backend available for PodGang", "podgang", req.NamespacedName)

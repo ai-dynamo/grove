@@ -79,3 +79,17 @@ type TopologyAwareSchedBackend interface {
 	// k8sClient may be nil; if so, the backend falls back to its own client.
 	OnTopologyDelete(ctx context.Context, k8sClient client.Client, ct *grovecorev1alpha1.ClusterTopology) error
 }
+
+// Registry provides access to initialized scheduler backends.
+// Use Get to look up a backend by its registered name; use GetDefault
+// for the backend designated as default in OperatorConfiguration.
+type Registry interface {
+	// Get returns the backend registered under name, or nil if not found.
+	// Empty name returns nil; callers that want the default backend
+	// should call GetDefault explicitly.
+	Get(name string) Backend
+
+	// GetDefault returns the backend designated as default in
+	// OperatorConfiguration (scheduler.defaultProfileName).
+	GetDefault() Backend
+}

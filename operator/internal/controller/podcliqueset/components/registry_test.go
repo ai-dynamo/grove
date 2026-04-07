@@ -53,7 +53,7 @@ func TestCreateOperatorRegistry(t *testing.T) {
 
 		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{}, groveconfigv1alpha1.NetworkAcceleration{
 			AutoMNNVLEnabled: false,
-		})
+		}, nil)
 
 		require.NotNil(t, registry)
 
@@ -93,7 +93,7 @@ func TestCreateOperatorRegistry(t *testing.T) {
 
 		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{}, groveconfigv1alpha1.NetworkAcceleration{
 			AutoMNNVLEnabled: true,
-		})
+		}, nil)
 
 		require.NotNil(t, registry)
 
@@ -130,7 +130,7 @@ func TestCreateOperatorRegistry(t *testing.T) {
 
 		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{}, groveconfigv1alpha1.NetworkAcceleration{
 			AutoMNNVLEnabled: false,
-		})
+		}, nil)
 
 		// Verify PodClique operator
 		pclqOp, err := registry.GetOperator(component.KindPodClique)

@@ -26,6 +26,7 @@ import (
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
@@ -663,16 +664,16 @@ func TestRegisterControllersAndWebhooks(t *testing.T) {
 			}
 		}
 
-		registerControllersWithMgr = func(_ ctrl.Manager, _ *configv1alpha1.OperatorConfiguration) error {
+		registerControllersWithMgr = func(_ ctrl.Manager, _ *configv1alpha1.OperatorConfiguration, _ scheduler.Registry) error {
 			controllersCalled = true
 			return tc.controllerErr
 		}
-		registerWebhooksWithMgr = func(_ ctrl.Manager, _ *configv1alpha1.OperatorConfiguration) error {
+		registerWebhooksWithMgr = func(_ ctrl.Manager, _ *configv1alpha1.OperatorConfiguration, _ scheduler.Registry) error {
 			webhooksCalled = true
 			return tc.webhookErr
 		}
 
-		err := RegisterControllersAndWebhooks(&mockManager{}, logr.Discard(), &configv1alpha1.OperatorConfiguration{}, readyCh)
+		err := RegisterControllersAndWebhooks(&mockManager{}, logr.Discard(), &configv1alpha1.OperatorConfiguration{}, readyCh, nil)
 		if tc.expectError {
 			require.Error(t, err, tc.name)
 			if tc.expectedErrFrag != "" {

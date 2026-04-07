@@ -89,7 +89,7 @@ func TestValidateCreate_MNNVL(t *testing.T) {
 				Network:                 networkConfig,
 				Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
 			}
-			handler := NewHandler(mgr, &cfg)
+			handler := NewHandler(mgr, &cfg, nil)
 
 			ctx := context.Background()
 			warnings, err := handler.ValidateCreate(ctx, tt.pcs)
@@ -173,7 +173,7 @@ func TestValidateUpdate_MNNVL(t *testing.T) {
 				Network:                 getDefaultNetworkConfig(),
 				Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
 			}
-			handler := NewHandler(mgr, &cfg)
+			handler := NewHandler(mgr, &cfg, nil)
 
 			ctx := context.Background()
 			warnings, err := handler.ValidateUpdate(ctx, tt.oldPCS, tt.newPCS)
@@ -260,7 +260,7 @@ func TestMNNVL_WebhookPipeline_LegacyPCSUpdate(t *testing.T) {
 				Network:                 networkConfig,
 				Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
 			}
-			validationHandler := NewHandler(mgr, &validationCfg)
+			validationHandler := NewHandler(mgr, &validationCfg, nil)
 
 			ctx := context.Background()
 			warnings, err := validationHandler.ValidateUpdate(ctx, oldPCS, newPCS)
