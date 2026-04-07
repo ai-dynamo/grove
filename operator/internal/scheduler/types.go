@@ -23,6 +23,8 @@ import (
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // Backend defines the interface that different scheduler backends must implement.
@@ -53,4 +55,27 @@ type Backend interface {
 
 	// ValidatePodCliqueSet runs scheduler-specific validations on the PodCliqueSet (e.g. TAS required but not supported).
 	ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) error
+}
+
+// TopologyAwareSchedBackend is an optional interface that Backend
+// implementations may satisfy if they manage a scheduler-specific topology CRD.
+// The ClusterTopology controller type-asserts each registered backend to this
+// interface at startup and calls these methods during reconciliation.
+type TopologyAwareSchedBackend interface {
+	// TopologyGVR returns the GroupVersionResource of the topology CRD
+	// managed by this backend (e.g. KAI's "topologies.kai.scheduler").
+	// The CT controller uses this to register dynamic watches at startup.
+	TopologyGVR() schema.GroupVersionResource
+
+	// SyncTopology creates or updates the scheduler-specific topology resource
+	// for the given ClusterTopology. Called for backends not listed in
+	// the ClusterTopology's schedulerReferences (auto-managed path).
+	// k8sClient may be a non-cached client for use before the manager cache
+	// is started. If nil, the backend falls back to its own client.
+	SyncTopology(ctx context.Context, k8sClient client.Client, ct *grovecorev1alpha1.ClusterTopology) error
+
+	// OnTopologyDelete removes the scheduler-specific topology resource for
+	// the given ClusterTopology. Called on CT deletion (auto-managed path only).
+	// k8sClient may be nil; if so, the backend falls back to its own client.
+	OnTopologyDelete(ctx context.Context, k8sClient client.Client, ct *grovecorev1alpha1.ClusterTopology) error
 }
