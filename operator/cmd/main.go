@@ -89,12 +89,13 @@ func main() {
 	}
 
 	// Initialize scheduler backends with the configured schedulers.
-	if err := schedmanager.Initialize(
+	schedRegistry, err := schedmanager.NewRegistry(
 		mgr.GetClient(),
 		mgr.GetScheme(),
 		mgr.GetEventRecorderFor("scheduler-backend"),
 		operatorConfig.Scheduler,
-	); err != nil {
+	)
+	if err != nil {
 		logger.Error(err, "failed to initialize scheduler backend")
 		handleErrorAndExit(err, cli.ExitErrInitializeSchedulerBackend)
 	}
@@ -129,7 +130,7 @@ func main() {
 	// Certificates need to be generated before the webhooks are started, which can only happen once the manager is started.
 	// Block while generating the certificates, and then start the webhooks.
 	go func() {
-		if err = grovectrl.RegisterControllersAndWebhooks(mgr, logger, operatorConfig, webhookCertsReadyCh); err != nil {
+		if err = grovectrl.RegisterControllersAndWebhooks(mgr, logger, operatorConfig, webhookCertsReadyCh, schedRegistry); err != nil {
 			logger.Error(err, "failed to initialize grove controller manager")
 			handleErrorAndExit(err, cli.ExitErrInitializeManager)
 		}
