@@ -24,7 +24,6 @@ import (
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
-	schedmanager "github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 
 	"github.com/samber/lo"
@@ -74,14 +73,14 @@ func (v *pcsValidator) schedGet(name string) scheduler.Backend {
 	if v.schedRegistry != nil {
 		return v.schedRegistry.Get(name)
 	}
-	return schedmanager.Get(name)
+	return nil
 }
 
 func (v *pcsValidator) schedGetDefault() scheduler.Backend {
 	if v.schedRegistry != nil {
 		return v.schedRegistry.GetDefault()
 	}
-	return schedmanager.GetDefault()
+	return nil
 }
 
 // ---------------------------- validate create of PodCliqueSet -----------------------------------------------
