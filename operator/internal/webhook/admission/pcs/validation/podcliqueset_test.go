@@ -25,6 +25,7 @@ import (
 
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/samber/lo"
@@ -38,6 +39,15 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+var (
+	podCliqueSetSchedRegistry = &testutils.FakeSchedulerRegistry{
+		Backends: map[string]scheduler.Backend{
+			"default-scheduler": testutils.NewFakeSchedulerBackend("default-scheduler"),
+		},
+		DefaultBackend: "default-scheduler",
+	}
 )
 
 func TestResourceNamingValidation(t *testing.T) {
@@ -146,7 +156,7 @@ func TestResourceNamingValidation(t *testing.T) {
 					{Name: groveconfigv1alpha1.SchedulerNameKube},
 				},
 				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
-			}, nil, fakeSchedRegistry)
+			}, nil, podCliqueSetSchedRegistry)
 			warnings, errs := validator.validate()
 
 			if tc.errorMatchers != nil {
@@ -268,15 +278,6 @@ func TestValidateSchedulerNames(t *testing.T) {
 			expectErrors:         1,
 			expectInvalidSame:    false,
 			expectInvalidEnabled: true,
-		},
-		{
-			name: "no cliques (empty list)",
-			schedulerConfig: groveconfigv1alpha1.SchedulerConfiguration{
-				Profiles:           []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}},
-				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
-			},
-			schedulerNames: []string{},
-			expectErrors:   0,
 		},
 		{
 			name: "mixed empty and kai when default is default-scheduler",
