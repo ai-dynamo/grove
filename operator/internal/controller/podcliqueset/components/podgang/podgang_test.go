@@ -19,10 +19,14 @@ package podgang
 import (
 	"testing"
 
+	volcanoscheduler "github.com/ai-dynamo/grove/operator/internal/scheduler/volcano"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
+
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/uuid"
 )
 
 func TestSetInitializedCondition(t *testing.T) {
@@ -41,4 +45,54 @@ func TestSetInitializedCondition(t *testing.T) {
 	require.Len(t, pg.Status.Conditions, 1)
 	assert.Equal(t, metav1.ConditionTrue, pg.Status.Conditions[0].Status)
 	assert.Equal(t, "Ready", pg.Status.Conditions[0].Reason)
+}
+
+func TestResolveQueueForPodGang(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", uuid.NewUUID()).
+		WithAnnotations(map[string]string{volcanoscheduler.QueueAnnotationKey: "gpu-training"}).
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder("worker").
+				WithAnnotations(map[string]string{volcanoscheduler.QueueAnnotationKey: "gpu-training"}).
+				Build(),
+		).
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder("ps").
+				Build(),
+		).
+		Build()
+
+	queue, err := resolveQueueForPodGang(pcs, &podGangInfo{
+		fqn: "pcs-0",
+		pclqs: []pclqInfo{
+			{fqn: "pcs-0-worker"},
+			{fqn: "pcs-0-ps"},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "gpu-training", queue)
+}
+
+func TestResolveQueueForPodGangConflict(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", uuid.NewUUID()).
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder("worker").
+				WithAnnotations(map[string]string{volcanoscheduler.QueueAnnotationKey: "gpu-training"}).
+				Build(),
+		).
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder("ps").
+				WithAnnotations(map[string]string{volcanoscheduler.QueueAnnotationKey: "high-priority"}).
+				Build(),
+		).
+		Build()
+
+	_, err := resolveQueueForPodGang(pcs, &podGangInfo{
+		fqn: "pcs-0",
+		pclqs: []pclqInfo{
+			{fqn: "pcs-0-worker"},
+			{fqn: "pcs-0-ps"},
+		},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "multiple volcano queues")
 }

@@ -94,7 +94,6 @@ type SchedulerProfile struct {
 	Name SchedulerName `json:"name"`
 
 	// Config holds backend-specific options. The operator unmarshals it into the config type for this backend (see backend config types).
-	// For the Volcano backend, config.queue selects the target Volcano queue and defaults to "default".
 	// +optional
 	Config *runtime.RawExtension `json:"config,omitempty"`
 }
@@ -110,14 +109,6 @@ type KubeSchedulerConfig struct {
 	// GangScheduling indicates if Gang scheduling capability is enabled.
 	// +optional
 	GangScheduling bool `json:"gangScheduling,omitempty"`
-}
-
-// VolcanoSchedulerConfiguration defines the configuration for the Volcano backend.
-type VolcanoSchedulerConfiguration struct {
-	// Queue is the Volcano queue name to associate with PodGroups created by Grove.
-	// If unset, defaulting uses "default".
-	// +optional
-	Queue string `json:"queue,omitempty"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

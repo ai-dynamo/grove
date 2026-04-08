@@ -17,11 +17,9 @@
 package v1alpha1
 
 import (
-	"encoding/json"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
 )
 
@@ -31,7 +29,6 @@ const (
 	defaultWebhookServerTLSServerCertDir = "/etc/grove-operator/webhook-certs"
 	defaultPprofBindHost                 = "127.0.0.1"
 	defaultPprofBindPort                 = 2753
-	defaultVolcanoQueue                  = "default"
 )
 
 // SetDefaults_ClientConnectionConfiguration sets defaults for the k8s client connection.
@@ -102,25 +99,6 @@ func SetDefaults_SchedulerConfiguration(cfg *SchedulerConfiguration) {
 	// 2. No default profile name → set kube as default.
 	if cfg.DefaultProfileName == "" {
 		cfg.DefaultProfileName = string(SchedulerNameKube)
-	}
-
-	for i := range cfg.Profiles {
-		if cfg.Profiles[i].Name != SchedulerNameVolcano {
-			continue
-		}
-
-		volcanoCfg := VolcanoSchedulerConfiguration{Queue: defaultVolcanoQueue}
-		if cfg.Profiles[i].Config != nil && len(cfg.Profiles[i].Config.Raw) > 0 {
-			if err := json.Unmarshal(cfg.Profiles[i].Config.Raw, &volcanoCfg); err == nil {
-				if volcanoCfg.Queue == "" {
-					volcanoCfg.Queue = defaultVolcanoQueue
-				}
-			}
-		}
-		raw, err := json.Marshal(volcanoCfg)
-		if err == nil {
-			cfg.Profiles[i].Config = &runtime.RawExtension{Raw: raw}
-		}
 	}
 }
 
