@@ -154,10 +154,10 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 		Labels:       labels,
 		Annotations:  pclq.Annotations,
 	}
-	if pod.ObjectMeta.Annotations == nil {
-		pod.ObjectMeta.Annotations = map[string]string{}
+	if pod.Annotations == nil {
+		pod.Annotations = map[string]string{}
 	}
-	pod.ObjectMeta.Annotations[volcanoscheduler.SubGroupAnnotationKey] = pclq.Name
+	pod.Annotations[volcanoscheduler.SubGroupAnnotationKey] = pclq.Name
 	if err = controllerutil.SetControllerReference(pclq, pod, r.scheme); err != nil {
 		return groveerr.WrapError(err,
 			errCodeSetControllerReference,
