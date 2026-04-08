@@ -184,6 +184,7 @@ func (v *pcsValidator) validateSchedulerNames(schedulerNames []string, fldPath *
 	if len(uniqueSchedulerNames) > 0 && uniqueSchedulerNames[0] != "" {
 		pcsSchedulerName = uniqueSchedulerNames[0]
 	}
+	// default-scheduler is always valid; any other name must appear in the registry of enabled OperatorConfiguration backends.
 	if pcsSchedulerName != "" && pcsSchedulerName != string(groveconfigv1alpha1.SchedulerNameKube) && (v.schedRegistry == nil || v.schedRegistry.Get(pcsSchedulerName) == nil) {
 		allErrs = append(allErrs, field.Invalid(
 			specPath,
