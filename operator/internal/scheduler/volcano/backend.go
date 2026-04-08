@@ -74,6 +74,13 @@ func (b *schedulerBackend) Name() string {
 }
 
 func (b *schedulerBackend) Init() error {
+	queue := &volcanov1beta1.Queue{}
+	if err := b.client.Get(context.Background(), client.ObjectKey{Name: b.config.Queue}, queue); err != nil {
+		return fmt.Errorf("failed to get Volcano queue %q: %w", b.config.Queue, err)
+	}
+	if queue.Status.State != volcanov1beta1.QueueStateOpen {
+		return fmt.Errorf("volcano queue %q is not open: %s", b.config.Queue, queue.Status.State)
+	}
 	return nil
 }
 
