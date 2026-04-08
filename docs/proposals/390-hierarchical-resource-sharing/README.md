@@ -137,6 +137,64 @@ Note: PCLQ `AllReplicas` for a standalone PodClique is distinct from PCSG `PerRe
 creates one RC shared across all replicas of a single PCLQ, while the latter creates one RC per
 scaling group replica shared across multiple PCLQs.
 
+```
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│ PCS "disagg" (2 PCS replicas)                                                    │
+│                                                                                  │
+│ ╔══════════════════════════════════════════════════════════════════════════════╗   │
+│ ║ RC: disagg-all-res1  (PCS AllReplicas)                                     ║   │
+│ ║ Shared by ALL 24 pods across BOTH PCS replicas                             ║   │
+│ ╚══════════════════════════════════════════════════════════════════════════════╝   │
+│        │                                                                         │
+│        ▼                                                                         │
+│ ┌─── PCS Replica 0 ───────────────────────────────────────────────────────────┐  │
+│ │                                                                             │  │
+│ │ ╔═══════════════════════════════════════════════════════════════════════╗    │  │
+│ │ ║ RC: disagg-0-res2  (PCS PerReplica)                                 ║    │  │
+│ │ ║ Shared by all 12 pods in this PCS replica                           ║    │  │
+│ │ ╚═══════════════════════════════════════════════════════════════════════╝    │  │
+│ │        │                                                                    │  │
+│ │        ├─────────────────────────────────┐                                  │  │
+│ │        ▼                                 ▼                                  │  │
+│ │ ┌─── PCSG "sgx" (2 replicas) ──────────────────────┐  ┌─────────────────┐  │  │
+│ │ │                                                   │  │ Standalone      │  │  │
+│ │ │ ┌─── PCSG Replica 0 ─────────────────────────┐   │  │ PCLQ "metrics"  │  │  │
+│ │ │ │                                             │   │  │                 │  │  │
+│ │ │ │ ╔═════════════════════════════════════╗     │   │  │ ╔═════════════╗ │  │  │
+│ │ │ │ ║ RC: disagg-0-sgx-0-gpu-pool        ║     │   │  │ ║ RC: disagg  ║ │  │  │
+│ │ │ │ ║ (PCSG PerReplica, shared by 5 pods)║     │   │  │ ║ -0-metrics  ║ │  │  │
+│ │ │ │ ╚═════════════════════════════════════╝     │   │  │ ║ -all-       ║ │  │  │
+│ │ │ │      │                                      │   │  │ ║ metrics-gpu ║ │  │  │
+│ │ │ │      ├──► [pca-0] [pca-1] [pca-2]          │   │  │ ║ (PCLQ All   ║ │  │  │
+│ │ │ │      │                                      │   │  │ ║  Replicas)  ║ │  │  │
+│ │ │ │      └──► [pcb-0] [pcb-1]                   │   │  │ ╚═════════════╝ │  │  │
+│ │ │ │                                             │   │  │      │          │  │  │
+│ │ │ └─────────────────────────────────────────────┘   │  │      ├►[met-0]  │  │  │
+│ │ │                                                   │  │      │          │  │  │
+│ │ │ ┌─── PCSG Replica 1 ─────────────────────────┐   │  │      └►[met-1]  │  │  │
+│ │ │ │                                             │   │  │                 │  │  │
+│ │ │ │ ╔═════════════════════════════════════╗     │   │  └─────────────────┘  │  │
+│ │ │ │ ║ RC: disagg-0-sgx-1-gpu-pool        ║     │   │                       │  │
+│ │ │ │ ║ (PCSG PerReplica, shared by 5 pods)║     │   │                       │  │
+│ │ │ │ ╚═════════════════════════════════════╝     │   │                       │  │
+│ │ │ │      │                                      │   │                       │  │
+│ │ │ │      ├──► [pca-0] [pca-1] [pca-2]          │   │                       │  │
+│ │ │ │      │                                      │   │                       │  │
+│ │ │ │      └──► [pcb-0] [pcb-1]                   │   │                       │  │
+│ │ │ │                                             │   │                       │  │
+│ │ │ └─────────────────────────────────────────────┘   │                       │  │
+│ │ │                                                   │                       │  │
+│ │ └───────────────────────────────────────────────────┘                       │  │
+│ │                                                                             │  │
+│ └─────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                  │
+│ ┌─── PCS Replica 1 ───────────────────────────────────────────────────────────┐  │
+│ │ ... identical structure, with disagg-1-* naming ...                         │  │
+│ └─────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────┘
+```
+
 **Concrete example** of the ResourceClaim distribution for a PCS named `disagg` with 2 replicas,
 demonstrating all three levels with different scopes:
 
@@ -217,9 +275,19 @@ _Solution_: By leveraging GPU sharing technologies like [NVIDIA Multi-Process Se
 
 ### Limitations/Risks & Mitigations
 
-<!-- 
-What are the current set of limitations or risks of this proposal? Think broadly by considering the impact of the changes proposed on kubernetes ecosystem. Optionally mention ways to mitigate these.
--->
+- **Template-only design**: The current design is exclusively template-based — Grove always creates
+  `ResourceClaim` objects from `ResourceClaimTemplateSpec` definitions (internal or external
+  `ResourceClaimTemplate` objects). There is no mechanism to reference a pre-existing, externally
+  managed `ResourceClaim` directly. This means platform teams cannot wire an already-allocated claim
+  (e.g., a dedicated GPU partition provisioned by a separate system or manually by an admin) into the
+  Grove hierarchy without creating a `ResourceClaimTemplate` that produces an equivalent claim.
+  A future extension could add an optional `resourceClaimName` field to `ResourceSharingSpec` as an
+  alternative to template-based creation, allowing Grove to inject existing claims into pod specs
+  without owning their lifecycle.
+
+- **Immutable resource sharing configuration**: The `resourceSharing` and `resourceClaimTemplates`
+  fields are immutable after creation (see [Immutability of Resource Sharing Fields](#immutability-of-resource-sharing-fields)).
+  Users who need to change resource sharing configuration must delete and recreate the PCS.
 
 ## Design Details
 
@@ -250,7 +318,6 @@ type ResourceClaimTemplateConfig struct {
 
 // ResourceSharingSpec references a ResourceClaimTemplateSpec and defines the
 // sharing scope for the resulting ResourceClaim(s).
-// A given template name must appear at most once per resourceSharing list.
 type ResourceSharingSpec struct {
 	// Name of the referenced template. Resolved by first looking up
 	// PodCliqueSetTemplateSpec.ResourceClaimTemplates; if no match is found,
@@ -886,6 +953,22 @@ using label selectors scoped to the owning resource.
 **Design rationale**: Owning RCs at the same level that defines the sharing aligns the RC lifecycle
 with its owner — deleting a PCLQ, PCSG, or PCS automatically garbage-collects its RCs without
 requiring explicit cleanup.
+
+### Immutability of Resource Sharing Fields
+
+The `resourceSharing` fields (at PCS, PCSG, and PCLQ template levels) and `resourceClaimTemplates`
+are **immutable after creation**. The admission webhook rejects updates that modify these fields.
+
+This mirrors how Kubernetes treats structurally similar fields (e.g., `volumeClaimTemplates` in
+StatefulSets). Mutating resource sharing on a live workload is inherently disruptive — pods would
+need to be rescheduled with different claims, orphaned ResourceClaims would need cleanup, and the
+ordering between removing pod references and deleting claims introduces subtle correctness issues.
+
+Users who need to change resource sharing configuration should delete and recreate the PCS.
+
+> **Follow-up**: If there is demand for in-place mutation, a future iteration could implement
+> a reconcile-based diff (tracking previous state via status or annotations) to handle cleanup
+> and rolling pod updates. Relaxing immutability is a non-breaking change.
 
 ### Monitoring
 
