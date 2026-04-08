@@ -54,6 +54,9 @@ spec:
                   properties:
                     domain:
                       description: Domain is a platform provider-agnostic level identifier.
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-z][a-z0-9-]*$
                       type: string
                     key:
                       description: |-
@@ -68,11 +71,6 @@ spec:
                   - domain
                   - key
                   type: object
-                  x-kubernetes-validations:
-                  - message: domain must match ^[a-z][a-z0-9-]*$ and be at most 63
-                      characters
-                    rule: self.domain.matches('^[a-z][a-z0-9-]*$') && size(self.domain)
-                      <= 63
                 minItems: 1
                 type: array
               schedulerReferences:

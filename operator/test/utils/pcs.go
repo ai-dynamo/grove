@@ -155,7 +155,7 @@ func (b *PodCliqueSetBuilder) WithUpdateProgress(progress *grovecorev1alpha1.Pod
 }
 
 // WithTopologyConstraint sets the TopologyConstraint for the PodCliqueSet template.
-func (b *PodCliqueSetBuilder) WithTopologyConstraint(constraint *grovecorev1alpha1.TopologyConstraint) *PodCliqueSetBuilder {
+func (b *PodCliqueSetBuilder) WithTopologyConstraint(constraint *grovecorev1alpha1.PodCliqueSetTopologyConstraint) *PodCliqueSetBuilder {
 	b.pcs.Spec.Template.TopologyConstraint = constraint
 	return b
 }

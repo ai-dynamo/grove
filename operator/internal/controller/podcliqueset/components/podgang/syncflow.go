@@ -184,7 +184,7 @@ func buildExpectedBasePodGangForPCSReplica(sc *syncContext, pcsReplica int) (*po
 	pg := &podGangInfo{
 		fqn: podGangFQN,
 		// TopologyConstraint for the base PodGang comes from the topology constraint defined at the PCS level.
-		topologyConstraint: createTopologyPackConstraint(sc, client.ObjectKeyFromObject(sc.pcs), sc.pcs.Spec.Template.TopologyConstraint),
+		topologyConstraint: createTopologyPackConstraint(sc, client.ObjectKeyFromObject(sc.pcs), sc.pcs.Spec.Template.TopologyConstraint.ToTopologyConstraint()),
 	}
 	pclqInfos := make([]pclqInfo, 0, len(sc.pcs.Spec.Template.Cliques))
 
@@ -312,7 +312,7 @@ func doBuildExpectedScaledPodGangForPCSG(sc *syncContext, pcsgFQN string, pcsgCo
 		} else {
 			// Fall back to PCS-level constraints
 			topologyConstraint = createTopologyPackConstraint(sc, client.ObjectKeyFromObject(sc.pcs),
-				sc.pcs.Spec.Template.TopologyConstraint)
+				sc.pcs.Spec.Template.TopologyConstraint.ToTopologyConstraint())
 		}
 	}
 
@@ -361,6 +361,15 @@ func createTopologyPackConstraint(sc *syncContext, nsName types.NamespacedName, 
 		}
 	}
 	return lo.Ternary(pgPackConstraint != nil, &groveschedulerv1alpha1.TopologyConstraint{PackConstraint: pgPackConstraint}, nil)
+}
+
+// pcsTopologyConstraintToTopologyConstraint converts a PodCliqueSetTopologyConstraint to a TopologyConstraint.
+// TODO(multi-topology): Remove once createTopologyPackConstraint is refactored to handle PodCliqueSetTopologyConstraint directly.
+func pcsTopologyConstraintToTopologyConstraint(pcsConstraint *grovecorev1alpha1.PodCliqueSetTopologyConstraint) *grovecorev1alpha1.TopologyConstraint {
+	if pcsConstraint == nil {
+		return nil
+	}
+	return &grovecorev1alpha1.TopologyConstraint{PackDomain: pcsConstraint.PackDomain}
 }
 
 // determinePodCliqueReplicas determines replica count considering HPA mutations.

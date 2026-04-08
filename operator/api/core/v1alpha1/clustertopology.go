@@ -109,8 +109,6 @@ type SchedulerTopologyStatus struct {
 // TopologyLevel defines a single level in the topology hierarchy.
 // Maps a platform-agnostic domain to a platform-specific node label key,
 // allowing workload operators a consistent way to reference topology levels when defining TopologyConstraint's.
-//
-// +kubebuilder:validation:XValidation:rule="self.domain.matches('^[a-z][a-z0-9-]*$') && size(self.domain) <= 63",message="domain must match ^[a-z][a-z0-9-]*$ and be at most 63 characters"
 type TopologyLevel struct {
 	// Domain is a platform provider-agnostic level identifier.
 	// +kubebuilder:validation:Required
@@ -127,6 +125,9 @@ type TopologyLevel struct {
 }
 
 // TopologyDomain represents a level in the cluster topology hierarchy.
+// +kubebuilder:validation:MinLength=1
+// +kubebuilder:validation:MaxLength=63
+// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9-]*$`
 type TopologyDomain string
 
 const (

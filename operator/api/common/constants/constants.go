@@ -95,6 +95,9 @@ const (
 	// in schedulerReferences is not enabled or does not support topology management.
 	ConditionReasonTopologyNotFound = "TopologyNotFound"
 
+	// ConditionReasonTopologyNameMissing is the reason when a PodCliqueSet has topology
+	// constraints but no topologyName.
+	ConditionReasonTopologyNameMissing = "TopologyNameMissing"
 )
 
 // Constants for Condition Types
