@@ -11,6 +11,7 @@
   - [Not Supported Yet](#not-supported-yet)
 - [Configuration](#configuration)
   - [Scheduler Profile](#scheduler-profile)
+  - [Examples](#examples)
 - [Design](#design)
   - [Mapping: PodGang -&gt; PodGroup](#mapping-podgang---podgroup)
   - [Pod Preparation](#pod-preparation)
@@ -18,7 +19,6 @@
   - [<code>operator/go.mod</code>](#operatorgomod)
   - [<code>operator/internal/client/scheme.go</code>](#operatorinternalclientschemego)
   - [<code>operator/api/config/v1alpha1/types.go</code>](#operatorapiconfigv1alpha1typesgo)
-  - [<code>operator/api/config/v1alpha1/defaults.go</code>](#operatorapiconfigv1alpha1defaultsgo)
   - [<code>operator/api/config/validation/validation.go</code>](#operatorapiconfigvalidationvalidationgo)
   - [<code>operator/internal/scheduler/manager/manager.go</code>](#operatorinternalschedulermanagermanagergo)
   - [<code>operator/internal/scheduler/volcano/backend.go</code>](#operatorinternalschedulervolcanobackendgo)
@@ -104,7 +104,7 @@ Grove writes this annotation during Pod preparation.
 - PodGang to PodGroup synchronization
 - Pod `schedulerName` preparation
 - Pod Volcano group annotation injection
-- queue configuration and validation
+- workload-scoped queue selection and validation
 
 ### Not Supported Yet
 
@@ -125,22 +125,70 @@ The operator adds a new scheduler profile name:
 scheduler:
   profiles:
   - name: volcano
-    config:
-      queue: default
 ```
 
-`VolcanoSchedulerConfiguration` currently contains:
+Queue selection is workload-scoped through the annotation:
 
 ```go
-type VolcanoSchedulerConfiguration struct {
-	Queue string `json:"queue,omitempty"`
-}
+const QueueAnnotationKey = "scheduling.grove.io/volcano-queue"
 ```
 
 Behavior:
 
-- if `queue` is omitted, it defaults to `default`
-- validation requires the final queue value to be non-empty
+- if the queue annotation is omitted, the effective queue defaults to `default`
+- for `PodCliqueSet`, the recommended entry is `metadata.annotations["scheduling.grove.io/volcano-queue"]`
+- `spec.template.cliques[].annotations["scheduling.grove.io/volcano-queue"]` may repeat the same value, but must not conflict with the PodCliqueSet metadata annotation
+- for direct `PodClique`, use `metadata.annotations["scheduling.grove.io/volcano-queue"]`
+- validation requires the final queue to exist and be in `Open` state
+
+### Examples
+
+Recommended `PodCliqueSet` usage:
+
+```yaml
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: volcano-train
+  annotations:
+    scheduling.grove.io/volcano-queue: gpu-training
+spec:
+  replicas: 1
+  template:
+    cliques:
+      - name: worker
+        spec:
+          replicas: 2
+          podSpec:
+            schedulerName: volcano
+            containers:
+              - name: main
+                image: busybox:1.36
+                command: ["sh", "-c", "sleep 3600"]
+```
+
+Direct `PodClique` usage:
+
+```yaml
+apiVersion: grove.io/v1alpha1
+kind: PodClique
+metadata:
+  name: worker
+  namespace: default
+  annotations:
+    scheduling.grove.io/volcano-queue: gpu-training
+spec:
+  roleName: worker
+  replicas: 2
+  podSpec:
+    schedulerName: volcano
+    containers:
+      - name: main
+        image: busybox:1.36
+        command: ["sh", "-c", "sleep 3600"]
+```
+
+If the queue annotation is omitted entirely, the effective queue is `default`.
 
 ## Design
 
@@ -154,7 +202,7 @@ Grove maps a PodGang into a Volcano PodGroup as follows:
 | `metadata.namespace` | `metadata.namespace` | Same namespace |
 | `sum(spec.podGroups[].minReplicas)` | `spec.minMember` | Gang minimum |
 | `spec.priorityClassName` | `spec.priorityClassName` | Direct mapping |
-| `scheduler.profiles[].config.queue` | `spec.queue` | Defaults to `default` |
+| `metadata.annotations["scheduling.grove.io/volcano-queue"]` on the resolved workload | `spec.queue` | Defaults to `default` |
 
 The operator also sets an owner reference from PodGroup to PodGang so normal Kubernetes garbage collection can clean up the Volcano resource when the Grove resource is deleted.
 
@@ -197,21 +245,14 @@ Adds:
 
 - `SchedulerNameVolcano`
 - `volcano` to supported scheduler names
-- `VolcanoSchedulerConfiguration`
-
-### `operator/api/config/v1alpha1/defaults.go`
-
-Adds Volcano defaulting behavior:
-
-- if Volcano profile config is empty, default `queue` to `default`
 
 ### `operator/api/config/validation/validation.go`
 
 Adds Volcano-specific validation:
 
 - Volcano is accepted as a valid scheduler profile name
-- Volcano config is decoded and validated
-- queue must be non-empty after defaulting
+- queue is no longer scheduler-profile-scoped
+- workload-scoped queue validation happens on admission
 
 ### `operator/internal/scheduler/manager/manager.go`
 
@@ -227,11 +268,12 @@ Key responsibilities:
 - `SyncPodGang()` creates or patches a Volcano PodGroup
 - `OnPodGangDelete()` relies on owner reference based cleanup
 - `PreparePod()` sets `schedulerName` and PodGroup annotation
+- `SyncPodGang()` reads the resolved queue from `PodGang.metadata.annotations["scheduling.grove.io/volcano-queue"]`
 - `ValidatePodCliqueSet()` rejects `topologyConstraint`
 
 ### `operator/charts/templates/clusterrole.yaml`
 
-Adds RBAC for Volcano PodGroup resources.
+Adds RBAC for Volcano PodGroup and Queue resources.
 
 ## Validation Behavior
 

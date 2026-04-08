@@ -92,13 +92,14 @@ config:
   # Supported profile names are default-scheduler, kai-scheduler, and volcano.
   # The volcano backend supports gang scheduling via PodGroup and currently rejects topology-aware scheduling constraints.
   # List profiles to enable backends; set defaultProfileName to the profile that is the default backend.
+  # Volcano queue selection is workload-scoped, not scheduler-profile-scoped.
+  # Use metadata.annotations["scheduling.grove.io/volcano-queue"] on PodCliqueSet or PodClique.
+  # If unset, the effective Volcano queue defaults to "default".
   scheduler:
     profiles:
       - name: default-scheduler
       - name: kai-scheduler
       - name: volcano
-        config:
-          queue: default
   logLevel: info
   logFormat: json
   topologyAwareScheduling:
