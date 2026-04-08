@@ -47,7 +47,7 @@ func TestRegisterWithManager(t *testing.T) {
 		Network:                 configv1alpha1.NetworkAcceleration{},
 		Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
 	}
-	handler := NewHandler(mgr, &cfg, nil)
+	handler := NewHandler(mgr, &cfg, &testutils.FakeRegistry{})
 	err := handler.RegisterWithManager(mgr)
 	require.NoError(t, err)
 }
