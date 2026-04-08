@@ -235,7 +235,7 @@ Providing a way to define cluster topology entails that the cluster administrato
 * Ensure that the nodes are correctly labeled with the topology information.
 * Create appropriate `ClusterTopology` resources via kubectl or GitOps.
 
-CEL validation on the CRD ensures that domain names and node label keys are unique within a ClusterTopology. However, there is no way for `Grove` operator to ensure that the node labels mapped to each topology domain are in line with the ones actually present on nodes in the kubernetes cluster.
+The ClusterTopology validating webhook ensures that domain names and node label keys are unique within a ClusterTopology. However, there is no way for `Grove` operator to ensure that the node labels mapped to each topology domain are in line with the ones actually present on nodes in the kubernetes cluster.
 
 **Mitigation**
 
@@ -353,17 +353,20 @@ Using a consistent set of domain names across clusters enables workload portabil
 
 #### Validation
 
-Validation is enforced at the CRD level on ClusterTopology resources via CEL rules and kubebuilder markers:
+Validation of ClusterTopology resources is split between CRD-level structural constraints and a validating webhook:
 
-* Within each ClusterTopology, at least one `TopologyLevel` must be set and at most 16 levels are allowed.
+**CRD-level (kubebuilder markers):**
+* At least one `TopologyLevel` must be set (`MinItems=1`). No upper bound is enforced at the CRD level.
+
+**ClusterTopology validating webhook:**
 * Within each ClusterTopology, each `TopologyLevel` must be unique — neither the domain nor the key should be duplicated.
 * `spec.levels` can be updated in-place. When domains are removed, affected PodCliqueSets are surfaced via the `TopologyLevelsUnavailable` condition.
 
-> **Why MaxItems=16?** The CEL uniqueness rules on `spec.levels` use `self.all(x, self.filter(...))` which has O(n²) cost estimation. Without an explicit upper bound, the Kubernetes API server rejects the CRD because the estimated rule cost exceeds the validation budget. Setting `MaxItems=16` provides a generous upper bound for real-world topology hierarchies (most have 3–6 levels) while keeping the CEL cost within budget.
+> **Why a webhook instead of CEL?** CEL uniqueness rules on `spec.levels` use `self.all(x, self.filter(...))` which has O(n²) cost estimation. The Kubernetes API server rejects CRDs whose estimated rule cost exceeds the validation budget, which forced an artificial `MaxItems=16` cap on the number of topology levels. Moving these checks to a validating webhook eliminates the cost constraint and removes the level limit entirely. Since a ClusterTopology controller is already required, hosting validation in the same webhook adds no operational overhead.
 
 > NOTE: There is no validation done for `TopologyLevel.Key` (which is a node label) as that can be different across cloud providers and on-prem data centers.
 
-If validation fails, the API server rejects the ClusterTopology create/update request.
+If validation fails, the webhook rejects the ClusterTopology create/update request.
 
 #### Controller Reconciliation
 
@@ -431,9 +434,7 @@ type ClusterTopologySpec struct {
     // Levels is an ordered list of topology levels from broadest to narrowest scope.
     // The order in this list defines the hierarchy (index 0 = broadest level).
     // +kubebuilder:validation:MinItems=1
-    // +kubebuilder:validation:MaxItems=16
-    // +kubebuilder:validation:XValidation:rule="self.all(x, self.filter(y, y.domain == x.domain).size() == 1)",message="domain must be unique across all levels"
-    // +kubebuilder:validation:XValidation:rule="self.all(x, self.filter(y, y.key == x.key).size() == 1)",message="key must be unique across all levels"
+    // Uniqueness of domain and key is enforced by the ClusterTopology validating webhook.
     Levels []TopologyLevel `json:"levels"`
     // SchedulerReferences controls per-backend topology resource management.
     // For each enabled TopologyAwareSchedBackend, the operator checks whether an entry
@@ -1053,11 +1054,13 @@ To enable the scheduler to select/filter nodes that satisfy the topology constra
 
 * `OperatorConfiguration` validation tests are present at `operator/api/config/validation/validation_test.go`
 * Core API helper function tests are included at `operator/api/core/v1alpha1/clustertopology_test.go`
-* Validating webhook specific validation tests are present at `operator/internal/webhook/admission/pcs/validation/topologyconstraints_test.go`
+* ClusterTopology validating webhook tests are present at `operator/internal/webhook/admission/clustertopology/validation/validation_test.go`
+* PCS validating webhook specific validation tests are present at `operator/internal/webhook/admission/pcs/validation/topologyconstraints_test.go`
 * Reconciler specific tests that inspect `PodCliqueSet` topology constraints and update the `PodGang` resource are present at `operator/internal/controller/podcliqueset/components/podgang/syncflow_test.go`
 
 **Unit tests** for multi-topology:
 
+* ClusterTopology validating webhook: domain uniqueness, key uniqueness on create and update
 * PCS validating webhook: `topologyName` existence check on create, immutability on update, required when `TopologyConstraint` is set, rejection when TAS is disabled
 * PCS reconciler: `TopologyLevelsUnavailable` condition logic — set when ClusterTopology is missing or domains are unavailable, cleared when all domains are available
 * PCS reconciler: topology resolution logic that resolves `topologyName` to the correct ClusterTopology when building the PodGang
