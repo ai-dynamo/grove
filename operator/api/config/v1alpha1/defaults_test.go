@@ -17,11 +17,9 @@
 package v1alpha1
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"k8s.io/apimachinery/pkg/runtime"
 )
 
 func TestSetDefaults_SchedulerConfiguration(t *testing.T) {
@@ -118,21 +116,6 @@ func TestSetDefaults_SchedulerConfiguration(t *testing.T) {
 			wantProfiles:       []SchedulerProfile{{Name: SchedulerNameKai}, {Name: SchedulerNameKube}},
 			wantDefaultProfile: string(SchedulerNameKai),
 		},
-		{
-			name: "volcano profile gets default queue config",
-			cfg: &SchedulerConfiguration{
-				Profiles: []SchedulerProfile{
-					{Name: SchedulerNameVolcano},
-					{Name: SchedulerNameKube},
-				},
-				DefaultProfileName: string(SchedulerNameVolcano),
-			},
-			wantProfiles: []SchedulerProfile{
-				{Name: SchedulerNameVolcano, Config: mustRawExtension(t, VolcanoSchedulerConfiguration{Queue: "default"})},
-				{Name: SchedulerNameKube},
-			},
-			wantDefaultProfile: string(SchedulerNameVolcano),
-		},
 	}
 
 	for _, tt := range tests {
@@ -142,13 +125,4 @@ func TestSetDefaults_SchedulerConfiguration(t *testing.T) {
 			assert.Equal(t, tt.wantDefaultProfile, tt.cfg.DefaultProfileName, "DefaultProfileName after defaulting")
 		})
 	}
-}
-
-func mustRawExtension(t *testing.T, in any) *runtime.RawExtension {
-	t.Helper()
-	raw, err := json.Marshal(in)
-	if err != nil {
-		t.Fatalf("json marshal failed: %v", err)
-	}
-	return &runtime.RawExtension{Raw: raw}
 }

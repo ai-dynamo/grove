@@ -309,7 +309,11 @@ func (r _resource) buildResource(logger logr.Logger, pclq *grovecorev1alpha1.Pod
 	controllerutil.AddFinalizer(pclq, apiconstants.FinalizerPodClique)
 	pclq.Labels = getLabels(pcs, pcsReplica, pclqObjectKey, pclqTemplateSpec, apicommon.GeneratePodGangNameForPodCliqueOwnedByPodCliqueSet(pcs, pcsReplica))
 	pclq.Annotations = maps.Clone(pclqTemplateSpec.Annotations)
+	// PodGang owns topology selection; do not propagate a template topology annotation to PodClique pods.
 	delete(pclq.Annotations, apiconstants.AnnotationTopologyName)
+	if len(pclq.Annotations) == 0 {
+		pclq.Annotations = nil
+	}
 	// set PodCliqueSpec
 	// ------------------------------------
 	if pclqExists {

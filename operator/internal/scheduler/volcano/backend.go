@@ -18,7 +18,6 @@ package volcano
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -36,36 +35,24 @@ import (
 	volcanov1beta1 "volcano.sh/apis/pkg/apis/scheduling/v1beta1"
 )
 
-const defaultVolcanoQueue = "default"
-
 type schedulerBackend struct {
 	client        client.Client
 	scheme        *runtime.Scheme
 	name          string
 	eventRecorder record.EventRecorder
 	profile       configv1alpha1.SchedulerProfile
-	config        configv1alpha1.VolcanoSchedulerConfiguration
 }
 
 var _ scheduler.Backend = (*schedulerBackend)(nil)
 
 // New creates a Volcano scheduler backend from the given scheduler profile.
 func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1alpha1.SchedulerProfile) scheduler.Backend {
-	cfg := configv1alpha1.VolcanoSchedulerConfiguration{Queue: defaultVolcanoQueue}
-	if profile.Config != nil && len(profile.Config.Raw) > 0 {
-		_ = json.Unmarshal(profile.Config.Raw, &cfg)
-	}
-	if cfg.Queue == "" {
-		cfg.Queue = defaultVolcanoQueue
-	}
-
 	return &schedulerBackend{
 		client:        cl,
 		scheme:        scheme,
 		name:          string(configv1alpha1.SchedulerNameVolcano),
 		eventRecorder: eventRecorder,
 		profile:       profile,
-		config:        cfg,
 	}
 }
 
@@ -74,13 +61,6 @@ func (b *schedulerBackend) Name() string {
 }
 
 func (b *schedulerBackend) Init() error {
-	queue := &volcanov1beta1.Queue{}
-	if err := b.client.Get(context.Background(), client.ObjectKey{Name: b.config.Queue}, queue); err != nil {
-		return fmt.Errorf("failed to get Volcano queue %q: %w", b.config.Queue, err)
-	}
-	if queue.Status.State != volcanov1beta1.QueueStateOpen {
-		return fmt.Errorf("volcano queue %q is not open: %s", b.config.Queue, queue.Status.State)
-	}
 	return nil
 }
 
@@ -105,7 +85,7 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 		}
 
 		podGroup.Spec.MinMember = minMemberForPodGang(podGang)
-		podGroup.Spec.Queue = b.config.Queue
+		podGroup.Spec.Queue = EffectiveQueueFromAnnotations(podGang.Annotations)
 		podGroup.Spec.PriorityClassName = podGang.Spec.PriorityClassName
 		return nil
 	})

@@ -265,7 +265,8 @@ func (v *pcsValidator) validatePodCliqueTemplates(fldPath *field.Path) ([]string
 	allErrs = append(allErrs, sliceMustHaveUniqueElements(cliqueNames, fldPath.Child("name"))...)
 	allErrs = append(allErrs, sliceMustHaveUniqueElements(cliqueRoles, fldPath.Child("roleName"))...)
 
-	allErrs = append(allErrs, v.validateSchedulerNames(schedulerNames, fldPath)...)
+	schedulerErrs := v.validateSchedulerNames(schedulerNames, fldPath)
+	allErrs = append(allErrs, schedulerErrs...)
 
 	if v.isStartupTypeExplicit() {
 		allErrs = append(allErrs, validateCliqueDependencies(cliqueTemplateSpecs, fldPath)...)
