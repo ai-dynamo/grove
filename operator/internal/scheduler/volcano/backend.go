@@ -85,6 +85,7 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 		}
 
 		podGroup.Spec.MinMember = minMemberForPodGang(podGang)
+		podGroup.Spec.MinTaskMember = minTaskMemberForPodGang(podGang)
 		podGroup.Spec.Queue = EffectiveQueueFromAnnotations(podGang.Annotations)
 		podGroup.Spec.PriorityClassName = podGang.Spec.PriorityClassName
 		return nil
@@ -111,6 +112,9 @@ func (b *schedulerBackend) PreparePod(pod *corev1.Pod) {
 	}
 	pod.Annotations[volcanov1beta1.VolcanoGroupNameAnnotationKey] = podGangName
 	pod.Annotations[volcanov1beta1.KubeGroupNameAnnotationKey] = podGangName
+	if subgroupName := pod.Annotations[SubGroupAnnotationKey]; subgroupName != "" {
+		pod.Annotations[volcanov1beta1.KubeHierarchyAnnotationKey] = subgroupName
+	}
 }
 
 func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecorev1alpha1.PodCliqueSet) error {
@@ -139,4 +143,17 @@ func minMemberForPodGang(podGang *groveschedulerv1alpha1.PodGang) int32 {
 		return 1
 	}
 	return total
+}
+
+func minTaskMemberForPodGang(podGang *groveschedulerv1alpha1.PodGang) map[string]int32 {
+	if len(podGang.Spec.PodGroups) == 0 {
+		return nil
+	}
+
+	minTaskMember := make(map[string]int32, len(podGang.Spec.PodGroups))
+	for _, group := range podGang.Spec.PodGroups {
+		minTaskMember[group.Name] = group.MinReplicas
+	}
+
+	return minTaskMember
 }

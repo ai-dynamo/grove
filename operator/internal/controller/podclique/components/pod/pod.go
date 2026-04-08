@@ -177,7 +177,14 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 			"failed to prepare pod spec with scheduler backend",
 		)
 	}
-	backend.PreparePod(pod)
+	if err = backend.PreparePod(pod); err != nil {
+		return groveerr.WrapError(
+			err,
+			errCodeBuildPodResource,
+			component.OperationSync,
+			"failed to prepare pod spec with scheduler backend",
+		)
+	}
 
 	// Add GROVE specific Pod environment variables
 	addEnvironmentVariables(pod, pclq, pcsName, pcsReplicaIndex)
