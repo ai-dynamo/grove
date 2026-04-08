@@ -758,7 +758,7 @@ func TestRegisterControllersAndWebhooks(t *testing.T) {
 			return tc.webhookErr
 		}
 
-		err := RegisterControllersAndWebhooks(&mockManager{}, logr.Discard(), &configv1alpha1.OperatorConfiguration{}, readyCh, &testutils.FakeRegistry{})
+		err := RegisterControllersAndWebhooks(&mockManager{}, logr.Discard(), &configv1alpha1.OperatorConfiguration{}, readyCh, &testutils.FakeSchedulerRegistry{})
 		if tc.expectError {
 			require.Error(t, err, tc.name)
 			if tc.expectedErrFrag != "" {
