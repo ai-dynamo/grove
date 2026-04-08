@@ -161,13 +161,9 @@ func (v *pcsValidator) validateSchedulerNames(schedulerNames []string, fldPath *
 	allErrs := field.ErrorList{}
 	specPath := fldPath.Child("spec").Child("podSpec").Child("schedulerName")
 
-	defaultSchedulerName := string(groveconfigv1alpha1.SchedulerNameKube)
-	if v.schedRegistry != nil {
-		if def := v.schedRegistry.GetDefault(); def != nil {
-			defaultSchedulerName = def.Name()
-		}
-	}
+	defaultSchedulerName := v.schedRegistry.GetDefault().Name()
 
+	// Check-1: Check if the scheduler names are unique
 	// Resolve empty to default backend name; then require all resolved names to be the same.
 	uniqueSchedulerNames := lo.Uniq(lo.Map(schedulerNames, func(item string, _ int) string {
 		if item == "" {
@@ -179,13 +175,10 @@ func (v *pcsValidator) validateSchedulerNames(schedulerNames []string, fldPath *
 		allErrs = append(allErrs, field.Invalid(specPath, strings.Join(uniqueSchedulerNames, ", "), "the schedulerName for all pods have to be the same"))
 	}
 
-	// Validate that the resolved scheduler is enabled.
-	pcsSchedulerName := ""
-	if len(uniqueSchedulerNames) > 0 && uniqueSchedulerNames[0] != "" {
-		pcsSchedulerName = uniqueSchedulerNames[0]
-	}
+	// Check-2: Validate that the resolved scheduler is enabled.
+	pcsSchedulerName := uniqueSchedulerNames[0]
 	// default-scheduler is always valid; any other name must appear in the registry of enabled OperatorConfiguration backends.
-	if pcsSchedulerName != "" && pcsSchedulerName != string(groveconfigv1alpha1.SchedulerNameKube) && (v.schedRegistry == nil || v.schedRegistry.Get(pcsSchedulerName) == nil) {
+	if v.schedRegistry.Get(pcsSchedulerName) == nil {
 		allErrs = append(allErrs, field.Invalid(
 			specPath,
 			pcsSchedulerName,

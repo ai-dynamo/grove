@@ -168,6 +168,7 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 	schedulerName := pclq.Spec.PodSpec.SchedulerName
 	backend := r.schedRegistry.Get(schedulerName)
 	if backend == nil {
+		// Ideally this should never happen.
 		return groveerr.WrapError(
 			fmt.Errorf("scheduler backend not found or not initialized: %q", schedulerName),
 			errCodeBuildPodResource,

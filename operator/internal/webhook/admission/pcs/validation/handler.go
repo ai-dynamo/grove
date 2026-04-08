@@ -129,16 +129,8 @@ func (h *Handler) validatePodCliqueSetWithBackend(ctx context.Context, pcs *v1al
 	if len(pcs.Spec.Template.Cliques) > 0 && pcs.Spec.Template.Cliques[0] != nil {
 		schedulerName = pcs.Spec.Template.Cliques[0].Spec.PodSpec.SchedulerName
 	}
-	if h.schedRegistry == nil {
-		return nil
-	}
+
 	backend := h.schedRegistry.Get(schedulerName)
-	if backend == nil {
-		backend = h.schedRegistry.GetDefault()
-	}
-	if backend == nil {
-		return nil
-	}
 	return backend.ValidatePodCliqueSet(ctx, pcs)
 }
 
