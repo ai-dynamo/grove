@@ -104,7 +104,7 @@ type Registry interface {
 	// should call GetDefault explicitly.
 	Get(name string) Backend
 
-	// GetDefault returns the backend designated as default in
+	// GetDefault returns the backend marked as default in
 	// OperatorConfiguration (scheduler.defaultProfileName).
 	GetDefault() Backend
 }

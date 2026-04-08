@@ -23,6 +23,7 @@ import (
 
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -36,6 +37,15 @@ import (
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+)
+
+var (
+	fakeSchedRegistry = &testutils.FakeSchedulerRegistry{
+		Backends: map[string]scheduler.Backend{
+			"default-scheduler": testutils.NewFakeSchedulerBackend("default-scheduler"),
+		},
+		DefaultBackend: "default-scheduler",
+	}
 )
 
 // TestNewHandler tests the creation of a new validation handler.
@@ -52,7 +62,7 @@ func TestNewHandler(t *testing.T) {
 		Network:                 getDefaultNetworkConfig(),
 		Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)},
 	}
-	handler := NewHandler(mgr, &cfg, &testutils.FakeRegistry{})
+	handler := NewHandler(mgr, &cfg, fakeSchedRegistry)
 	require.NotNil(t, handler)
 	assert.NotNil(t, handler.logger)
 }
@@ -94,7 +104,16 @@ func TestValidateCreate(t *testing.T) {
 				Spec: grovecorev1alpha1.PodCliqueSetSpec{
 					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
 						StartupType: nil,
-						Cliques:     []*grovecorev1alpha1.PodCliqueTemplateSpec{},
+						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+							{
+								Name: "test-pclq",
+								Spec: grovecorev1alpha1.PodCliqueSpec{
+									RoleName: "test-pclq",
+									PodSpec:  testutils.NewPodWithBuilderWithDefaultSpec("test-pclq-xs345", "default").Build().Spec,
+									Replicas: 1,
+								},
+							},
+						},
 					},
 				},
 			},
@@ -121,9 +140,14 @@ func TestValidateCreate(t *testing.T) {
 			cfg := groveconfigv1alpha1.OperatorConfiguration{
 				TopologyAwareScheduling: getDefaultTASConfig(),
 				Network:                 getDefaultNetworkConfig(),
-				Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)},
+				Scheduler: groveconfigv1alpha1.SchedulerConfiguration{
+					Profiles: []groveconfigv1alpha1.SchedulerProfile{
+						{Name: groveconfigv1alpha1.SchedulerNameKube},
+					},
+					DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+				},
 			}
-			handler := NewHandler(mgr, &cfg, &testutils.FakeRegistry{})
+			handler := NewHandler(mgr, &cfg, fakeSchedRegistry)
 
 			ctx := context.Background()
 			warnings, err := handler.ValidateCreate(ctx, tt.obj)
@@ -257,9 +281,14 @@ func TestValidateUpdate(t *testing.T) {
 			cfg := groveconfigv1alpha1.OperatorConfiguration{
 				TopologyAwareScheduling: getDefaultTASConfig(),
 				Network:                 getDefaultNetworkConfig(),
-				Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)},
+				Scheduler: groveconfigv1alpha1.SchedulerConfiguration{
+					Profiles: []groveconfigv1alpha1.SchedulerProfile{
+						{Name: groveconfigv1alpha1.SchedulerNameKube},
+					},
+					DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+				},
 			}
-			handler := NewHandler(mgr, &cfg, &testutils.FakeRegistry{})
+			handler := NewHandler(mgr, &cfg, fakeSchedRegistry)
 
 			ctx := context.Background()
 			warnings, err := handler.ValidateUpdate(ctx, tt.newObj, tt.oldObj)
@@ -291,7 +320,7 @@ func TestValidateDelete(t *testing.T) {
 		Network:                 getDefaultNetworkConfig(),
 		Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)},
 	}
-	handler := NewHandler(mgr, &cfg, &testutils.FakeRegistry{})
+	handler := NewHandler(mgr, &cfg, fakeSchedRegistry)
 
 	// Deletion validation always succeeds
 	ctx := context.Background()
@@ -407,7 +436,7 @@ func TestLogValidatorFunctionInvocation(t *testing.T) {
 				Network:                 getDefaultNetworkConfig(),
 				Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)},
 			}
-			handler := NewHandler(mgr, &cfg, &testutils.FakeRegistry{})
+			handler := NewHandler(mgr, &cfg, fakeSchedRegistry)
 
 			// This function doesn't return an error, but we can verify it doesn't panic
 			assert.NotPanics(t, func() {

@@ -69,7 +69,7 @@ func TestRegisterControllers(t *testing.T) {
 			},
 		}
 
-		err = RegisterControllers(mgr, &operatorConfig, &testutils.FakeRegistry{})
+		err = RegisterControllers(mgr, &operatorConfig, &testutils.FakeSchedulerRegistry{})
 		require.NoError(t, err)
 	})
 }

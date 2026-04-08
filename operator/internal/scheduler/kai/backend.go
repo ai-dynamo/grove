@@ -48,7 +48,7 @@ func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRec
 	return &schedulerBackend{
 		client:        cl,
 		scheme:        scheme,
-		name:          string(configv1alpha1.SchedulerNameKai),
+		name:          string(profile.Name),
 		eventRecorder: eventRecorder,
 		profile:       profile,
 	}
