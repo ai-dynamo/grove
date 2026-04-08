@@ -35,6 +35,48 @@ import (
 	volcanov1beta1 "volcano.sh/apis/pkg/apis/scheduling/v1beta1"
 )
 
+func newVolcanoQueue(name string, state volcanov1beta1.QueueState) *volcanov1beta1.Queue {
+	return &volcanov1beta1.Queue{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Status: volcanov1beta1.QueueStatus{
+			State: state,
+		},
+	}
+}
+
+func TestBackend_Init(t *testing.T) {
+	t.Run("success with open queue", func(t *testing.T) {
+		cl := testutils.CreateDefaultFakeClient([]client.Object{newVolcanoQueue("default", volcanov1beta1.QueueStateOpen)})
+		recorder := record.NewFakeRecorder(10)
+		profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameVolcano}
+		b := New(cl, cl.Scheme(), recorder, profile)
+
+		require.NoError(t, b.Init())
+	})
+
+	t.Run("queue not found", func(t *testing.T) {
+		cl := testutils.CreateDefaultFakeClient(nil)
+		recorder := record.NewFakeRecorder(10)
+		profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameVolcano}
+		b := New(cl, cl.Scheme(), recorder, profile)
+
+		err := b.Init()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `failed to get Volcano queue "default"`)
+	})
+
+	t.Run("queue not open", func(t *testing.T) {
+		cl := testutils.CreateDefaultFakeClient([]client.Object{newVolcanoQueue("default", volcanov1beta1.QueueStateClosed)})
+		recorder := record.NewFakeRecorder(10)
+		profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameVolcano}
+		b := New(cl, cl.Scheme(), recorder, profile)
+
+		err := b.Init()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `volcano queue "default" is not open: Closed`)
+	})
+}
+
 func TestBackend_PreparePod(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
