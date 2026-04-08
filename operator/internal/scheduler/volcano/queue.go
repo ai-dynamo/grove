@@ -32,6 +32,8 @@ import (
 const (
 	// QueueAnnotationKey is the workload-scoped annotation used to select a Volcano queue.
 	QueueAnnotationKey = "scheduling.grove.io/volcano-queue"
+	// SubGroupAnnotationKey is the pod-scoped annotation used to identify the Volcano subgroup/task within a gang.
+	SubGroupAnnotationKey = "scheduling.grove.io/volcano-subgroup"
 	// DefaultQueue is the default Volcano queue used when no queue annotation is specified.
 	DefaultQueue = "default"
 )
