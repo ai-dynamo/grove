@@ -22,6 +22,7 @@ import (
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -54,15 +55,26 @@ type FakeSchedulerBackend struct{ name string }
 // NewFakeSchedulerBackend creates a new instance of FakeSchedulerBackend.
 func NewFakeSchedulerBackend(name string) scheduler.Backend { return &FakeSchedulerBackend{name: name} }
 
+// Name returns the backend name.
 func (s *FakeSchedulerBackend) Name() string { return s.name }
-func (s *FakeSchedulerBackend) Init() error  { return nil }
+
+// Init is a no-op for the fake backend.
+func (s *FakeSchedulerBackend) Init() error { return nil }
+
+// SyncPodGang is a no-op for the fake backend.
 func (s *FakeSchedulerBackend) SyncPodGang(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
 	return nil
 }
+
+// OnPodGangDelete is a no-op for the fake backend.
 func (s *FakeSchedulerBackend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
 	return nil
 }
+
+// PreparePod is a no-op for the fake backend.
 func (s *FakeSchedulerBackend) PreparePod(_ *corev1.Pod) {}
+
+// ValidatePodCliqueSet is a no-op for the fake backend.
 func (s *FakeSchedulerBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet) error {
 	return nil
 }
