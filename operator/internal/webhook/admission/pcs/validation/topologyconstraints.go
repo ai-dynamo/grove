@@ -253,8 +253,8 @@ func (v *topologyConstraintsValidator) disallowChangesToTopologyConstraintsWhenP
 	var allErrs field.ErrorList
 
 	// Validate PCS level
-	oldPCSConstraint := oldPCS.Spec.Template.TopologyConstraint
-	newPCSConstraint := v.pcs.Spec.Template.TopologyConstraint
+	oldPCSConstraint := oldPCS.Spec.Template.TopologyConstraint.ToTopologyConstraint()
+	newPCSConstraint := v.pcs.Spec.Template.TopologyConstraint.ToTopologyConstraint()
 	if constraintChanged(oldPCSConstraint, newPCSConstraint) {
 		allErrs = append(allErrs, field.Forbidden(
 			fldPath.Child("topologyConstraint"),
@@ -322,4 +322,13 @@ func constraintChangeMsg(kind, name string, old, new *grovecorev1alpha1.Topology
 	}
 	return fmt.Sprintf("%s%s topology constraint cannot be changed from '%s' to '%s'",
 		kind, identifier, old.PackDomain, new.PackDomain)
+}
+
+// pcsTopologyConstraintToTopologyConstraint converts a PodCliqueSetTopologyConstraint to a TopologyConstraint.
+// TODO(multi-topology): Remove once constraintChanged/constraintChangeMsg are refactored to handle PodCliqueSetTopologyConstraint.
+func pcsTopologyConstraintToTopologyConstraint(pcsConstraint *grovecorev1alpha1.PodCliqueSetTopologyConstraint) *grovecorev1alpha1.TopologyConstraint {
+	if pcsConstraint == nil {
+		return nil
+	}
+	return &grovecorev1alpha1.TopologyConstraint{PackDomain: pcsConstraint.PackDomain}
 }

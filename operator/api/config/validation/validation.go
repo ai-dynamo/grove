@@ -18,12 +18,10 @@ package validation
 
 import (
 	"fmt"
-	"regexp"
 	"slices"
 	"strings"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -39,7 +37,6 @@ func ValidateOperatorConfiguration(config *configv1alpha1.OperatorConfiguration)
 	allErrs = append(allErrs, validateLeaderElectionConfiguration(config.LeaderElection, field.NewPath("leaderElection"))...)
 	allErrs = append(allErrs, validateClientConnectionConfiguration(config.ClientConnection, field.NewPath("clientConnection"))...)
 	allErrs = append(allErrs, validateControllerConfiguration(config.Controllers, field.NewPath("controllers"))...)
-	allErrs = append(allErrs, validateTopologyAwareSchedulingConfig(config.TopologyAwareScheduling, field.NewPath("topologyAwareScheduling"))...)
 	return allErrs
 }
 
@@ -160,63 +157,6 @@ func mustBeGreaterThanZeroDuration(duration metav1.Duration, fldPath *field.Path
 	allErrs := field.ErrorList{}
 	if duration.Duration <= 0 {
 		allErrs = append(allErrs, field.Invalid(fldPath, duration, "must be greater than 0"))
-	}
-	return allErrs
-}
-
-// validateTopologyAwareSchedulingConfig validates the cluster topology configuration.
-// When cluster topology is enabled, it ensures the topology name and levels are provided,
-// and validates domain and key uniqueness.
-func validateTopologyAwareSchedulingConfig(clusterTopologyCfg configv1alpha1.TopologyAwareSchedulingConfiguration, fldPath *field.Path) field.ErrorList {
-	allErrs := field.ErrorList{}
-	if !clusterTopologyCfg.Enabled {
-		return allErrs
-	}
-	allErrs = validateClusterTopologyLevels(clusterTopologyCfg.Levels, fldPath.Child("levels"))
-	return allErrs
-}
-
-func validateClusterTopologyLevels(levels []corev1alpha1.TopologyLevel, fldPath *field.Path) field.ErrorList {
-	allErrs := field.ErrorList{}
-	if len(levels) == 0 {
-		allErrs = append(allErrs, field.Required(fldPath, "levels are required when topology is enabled"))
-	}
-	allErrs = append(allErrs, mustHaveSupportedTopologyDomains(levels, fldPath)...)
-	allErrs = append(allErrs, mustHaveUniqueTopologyLevels(levels, fldPath)...)
-	return allErrs
-}
-
-// domainPattern matches the kubebuilder validation pattern: ^[a-z][a-z0-9-]*$
-var domainPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
-
-func mustHaveSupportedTopologyDomains(levels []corev1alpha1.TopologyLevel, fldPath *field.Path) field.ErrorList {
-	allErrs := field.ErrorList{}
-	for i, level := range levels {
-		if !domainPattern.MatchString(string(level.Domain)) {
-			allErrs = append(allErrs, field.Invalid(fldPath.Index(i).Child("domain"), level.Domain,
-				"must match pattern ^[a-z][a-z0-9-]*$"))
-		}
-		if len(level.Domain) > 63 {
-			allErrs = append(allErrs, field.Invalid(fldPath.Index(i).Child("domain"), level.Domain,
-				"must be at most 63 characters"))
-		}
-	}
-	return allErrs
-}
-
-func mustHaveUniqueTopologyLevels(levels []corev1alpha1.TopologyLevel, fldPath *field.Path) field.ErrorList {
-	allErrs := field.ErrorList{}
-	seenDomains := make(map[corev1alpha1.TopologyDomain]struct{})
-	seenKeys := make(map[string]struct{})
-	for i, level := range levels {
-		if _, exists := seenDomains[level.Domain]; exists {
-			allErrs = append(allErrs, field.Duplicate(fldPath.Index(i).Child("domain"), level.Domain))
-		}
-		if _, exists := seenKeys[level.Key]; exists {
-			allErrs = append(allErrs, field.Duplicate(fldPath.Index(i).Child("key"), level.Key))
-		}
-		seenDomains[level.Domain] = struct{}{}
-		seenKeys[level.Key] = struct{}{}
 	}
 	return allErrs
 }
