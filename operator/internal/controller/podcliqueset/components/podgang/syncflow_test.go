@@ -170,7 +170,7 @@ func TestMinAvailableWithHPAScaling(t *testing.T) {
 				Build()
 
 			// Test the PodGang creation logic
-			r := &_resource{client: fakeClient, schedRegistry: &testutils.FakeRegistry{}}
+			r := &_resource{client: fakeClient, schedRegistry: &testutils.FakeSchedulerRegistry{}}
 			sc := &syncContext{
 				pcs: pcs,
 			}
@@ -282,7 +282,7 @@ func TestVerifyAllPodsCreated(t *testing.T) {
 				existingPCLQPods: tt.existingPods,
 				existingPCLQs:    tt.existingPCLQs,
 			}
-			r := &_resource{schedRegistry: &testutils.FakeRegistry{}}
+			r := &_resource{schedRegistry: &testutils.FakeSchedulerRegistry{}}
 			err := r.verifyAllPodsCreated(sc, tt.podGang)
 			if tt.wantRequeue {
 				require.Error(t, err)
@@ -381,7 +381,7 @@ func TestGetPodsPendingCreation(t *testing.T) {
 				Build()
 
 			// Setup test
-			r := &_resource{client: fakeClient, schedRegistry: &testutils.FakeRegistry{}}
+			r := &_resource{client: fakeClient, schedRegistry: &testutils.FakeSchedulerRegistry{}}
 			ctx := t.Context()
 			logger := ctrllogger.FromContext(ctx).WithName("grove-test")
 
@@ -473,7 +473,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 			WithObjects(pcs, pclq).
 			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
 			Build()
-		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: &testutils.FakeRegistry{}}
+		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: &testutils.FakeSchedulerRegistry{}}
 		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
 		require.NoError(t, err)
 		require.Len(t, sc.expectedPodGangs, 1)
@@ -507,7 +507,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 			WithObjects(pcs, pclq, pod1, pod2).
 			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
 			Build()
-		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: &testutils.FakeRegistry{}}
+		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: &testutils.FakeSchedulerRegistry{}}
 		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
 		require.NoError(t, err)
 		require.Empty(t, sc.existingPodGangs)
@@ -532,7 +532,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 			WithObjects(pcs, pclq, pod1, pod2).
 			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
 			Build()
-		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: &testutils.FakeRegistry{}}
+		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: &testutils.FakeSchedulerRegistry{}}
 		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
 		require.NoError(t, err)
 		require.Empty(t, sc.existingPodGangs)
@@ -561,7 +561,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 			WithObjects(pcs, pclq, pg, pod1, pod2).
 			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
 			Build()
-		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: &testutils.FakeRegistry{}}
+		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: &testutils.FakeSchedulerRegistry{}}
 		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
 		require.NoError(t, err)
 		assert.True(t, sc.isExistingPodGang(pgName))
@@ -612,7 +612,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 			WithObjects(pcs, pclq, pg, pod1, pod2).
 			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
 			Build()
-		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: &testutils.FakeRegistry{}}
+		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: &testutils.FakeSchedulerRegistry{}}
 		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
 		require.NoError(t, err)
 		assert.True(t, sc.isExistingPodGang(pgName))
@@ -681,7 +681,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 			WithObjects(pcs, pclq0, pclq1, pod1).
 			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
 			Build()
-		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: &testutils.FakeRegistry{}}
+		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: &testutils.FakeSchedulerRegistry{}}
 		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
 		require.NoError(t, err)
 		require.Len(t, sc.expectedPodGangs, 2, "should have 2 expected PodGangs for 2 PCS replicas")
@@ -720,7 +720,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 			WithObjects(pcs, pclq, pg, pod1, pod2).
 			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
 			Build()
-		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: &testutils.FakeRegistry{}}
+		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: &testutils.FakeSchedulerRegistry{}}
 		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
 		require.NoError(t, err)
 		assert.True(t, sc.isExistingPodGang(pgName))
@@ -919,7 +919,7 @@ func TestComputeExpectedPodGangs(t *testing.T) {
 				},
 			}
 			fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs).Build()
-			r := &_resource{client: fakeClient, schedRegistry: &testutils.FakeRegistry{}}
+			r := &_resource{client: fakeClient, schedRegistry: &testutils.FakeSchedulerRegistry{}}
 			sc := &syncContext{
 				pcs:            pcs,
 				logger:         ctrllogger.FromContext(t.Context()),
@@ -1318,7 +1318,7 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 			}
 
 			fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs).Build()
-			r := &_resource{client: fakeClient, schedRegistry: &testutils.FakeRegistry{}}
+			r := &_resource{client: fakeClient, schedRegistry: &testutils.FakeSchedulerRegistry{}}
 			sc := &syncContext{
 				pcs:            pcs,
 				logger:         ctrllogger.FromContext(t.Context()),

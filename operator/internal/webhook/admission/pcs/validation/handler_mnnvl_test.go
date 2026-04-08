@@ -24,6 +24,7 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/defaulting"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -34,6 +35,15 @@ import (
 	authenticationv1 "k8s.io/api/authentication/v1"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+)
+
+var (
+	schedRegistry = &testutils.FakeSchedulerRegistry{
+		Backends: map[string]scheduler.Backend{
+			"default-scheduler": testutils.NewFakeSchedulerBackend("default-scheduler"),
+		},
+		DefaultBackend: "default-scheduler",
+	}
 )
 
 // TestValidateCreate_MNNVL tests the MNNVL annotation validation on create.
@@ -155,12 +165,16 @@ func TestValidateCreate_MNNVL(t *testing.T) {
 			cfg := configv1alpha1.OperatorConfiguration{
 				TopologyAwareScheduling: getDefaultTASConfig(),
 				Network:                 networkConfig,
-				Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
+				Scheduler: configv1alpha1.SchedulerConfiguration{
+					Profiles: []configv1alpha1.SchedulerProfile{
+						{Name: configv1alpha1.SchedulerNameKube},
+					},
+					DefaultProfileName: string(configv1alpha1.SchedulerNameKube),
+				},
 			}
-			handler := NewHandler(mgr, &cfg, &testutils.FakeRegistry{})
+			handler := NewHandler(mgr, &cfg, schedRegistry)
 
-			ctx := context.Background()
-			warnings, err := handler.ValidateCreate(ctx, tt.pcs)
+			warnings, err := handler.ValidateCreate(t.Context(), tt.pcs)
 
 			if tt.expectError {
 				require.Error(t, err)
@@ -296,10 +310,9 @@ func TestValidateUpdate_MNNVL(t *testing.T) {
 				Network:                 getDefaultNetworkConfig(),
 				Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
 			}
-			handler := NewHandler(mgr, &cfg, &testutils.FakeRegistry{})
+			handler := NewHandler(mgr, &cfg, schedRegistry)
 
-			ctx := context.Background()
-			warnings, err := handler.ValidateUpdate(ctx, tt.oldPCS, tt.newPCS)
+			warnings, err := handler.ValidateUpdate(t.Context(), tt.oldPCS, tt.newPCS)
 
 			if tt.expectError {
 				require.Error(t, err)
@@ -358,7 +371,7 @@ func TestMNNVL_WebhookPipeline_LegacyPCSUpdate(t *testing.T) {
 			Network:                 getDefaultNetworkConfig(),
 			Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
 		}
-		validationHandler := NewHandler(mgr, &validationCfg, &testutils.FakeRegistry{})
+		validationHandler := NewHandler(mgr, &validationCfg, schedRegistry)
 
 		ctx := context.Background()
 		warnings, err := validationHandler.ValidateUpdate(ctx, oldPCS, newPCS)

@@ -48,7 +48,7 @@ func NewReconciler(mgr ctrl.Manager, config configv1alpha1.PodGangControllerConf
 	}
 }
 
-func (r *Reconciler) resolveBackend(podGang *groveschedulerv1alpha1.PodGang) scheduler.Backend {
+func (r *Reconciler) resolveSchedulerBackend(podGang *groveschedulerv1alpha1.PodGang) scheduler.Backend {
 	if name := podGang.Labels[apicommon.LabelSchedulerName]; name != "" {
 		if b := r.schedRegistry.Get(name); b != nil {
 			return b
@@ -67,7 +67,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, nil
 	}
 
-	backend := r.resolveBackend(podGang)
+	backend := r.resolveSchedulerBackend(podGang)
 	// This should ideally not happen. If you see this log then there is either something wrong with the defaulting or validation.
 	if backend == nil {
 		log.FromContext(ctx).Error(nil, "No scheduler backend available for PodGang", "podgang", req.NamespacedName)

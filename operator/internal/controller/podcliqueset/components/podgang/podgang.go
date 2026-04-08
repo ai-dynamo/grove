@@ -233,6 +233,8 @@ func podGangHasTranslatedTopologyConstraints(pgi *podGangInfo) bool {
 }
 
 // getSchedulerNameForPCS returns the scheduler backend name for the PodCliqueSet:
+// First check the PodClique templates to find any schedulerName configured. Validating webhook ensures
+// that there cannot be more than one scheduler name configured for a PCS.
 // the template's schedulerName if set (same across all cliques per validation), else the default backend.
 func (r _resource) getSchedulerNameForPCS(pcs *grovecorev1alpha1.PodCliqueSet) string {
 	for _, c := range pcs.Spec.Template.Cliques {
@@ -240,12 +242,7 @@ func (r _resource) getSchedulerNameForPCS(pcs *grovecorev1alpha1.PodCliqueSet) s
 			return c.Spec.PodSpec.SchedulerName
 		}
 	}
-	if r.schedRegistry != nil {
-		if def := r.schedRegistry.GetDefault(); def != nil {
-			return def.Name()
-		}
-	}
-	return ""
+	return r.schedRegistry.GetDefault().Name()
 }
 
 // setOrUpdateInitializedCondition sets or updates the PodGangInitialized condition on the PodGang status.
