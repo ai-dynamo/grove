@@ -30,6 +30,7 @@ import (
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
+	volcanoscheduler "github.com/ai-dynamo/grove/operator/internal/scheduler/volcano"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -304,7 +305,10 @@ func (r _resource) buildResource(logger logr.Logger, pclq *grovecorev1alpha1.Pod
 		)
 	}
 	pclq.Labels = getLabels(pcs, pcsReplica, pclqObjectKey, pclqTemplateSpec, apicommon.GeneratePodGangNameForPodCliqueOwnedByPodCliqueSet(pcs, pcsReplica))
-	pclq.Annotations = pclqTemplateSpec.Annotations
+	pclq.Annotations = mergedPodCliqueAnnotations(pcs.Annotations, pclqTemplateSpec.Annotations)
+	if len(pclq.Annotations) == 0 {
+		pclq.Annotations = nil
+	}
 	// set PodCliqueSpec
 	// ------------------------------------
 	if pclqExists {
@@ -327,6 +331,14 @@ func (r _resource) buildResource(logger logr.Logger, pclq *grovecorev1alpha1.Pod
 	}
 
 	return nil
+}
+
+func mergedPodCliqueAnnotations(pcsAnnotations, cliqueAnnotations map[string]string) map[string]string {
+	annotations := lo.Assign(map[string]string{}, cliqueAnnotations)
+	if queue := strings.TrimSpace(pcsAnnotations[volcanoscheduler.QueueAnnotationKey]); queue != "" {
+		annotations[volcanoscheduler.QueueAnnotationKey] = queue
+	}
+	return annotations
 }
 
 // identifyFullyQualifiedStartupDependencyNames determines the PodClique startup dependencies based on StartupType.

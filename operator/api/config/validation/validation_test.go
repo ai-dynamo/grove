@@ -17,7 +17,6 @@
 package validation
 
 import (
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -26,18 +25,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
-
-func rawJSON(t *testing.T, input string) *runtime.RawExtension {
-	t.Helper()
-	var js any
-	if err := json.Unmarshal([]byte(input), &js); err != nil {
-		t.Fatalf("invalid json %q: %v", input, err)
-	}
-	return &runtime.RawExtension{Raw: []byte(input)}
-}
 
 func TestValidateTopologyAwareSchedulingConfiguration(t *testing.T) {
 	tests := []struct {
@@ -455,7 +444,7 @@ func TestValidateSchedulerConfiguration(t *testing.T) {
 			name: "valid: volcano and kube profiles with volcano default",
 			scheduler: &configv1alpha1.SchedulerConfiguration{
 				Profiles: []configv1alpha1.SchedulerProfile{
-					{Name: configv1alpha1.SchedulerNameVolcano, Config: rawJSON(t, `{"queue":"default"}`)},
+					{Name: configv1alpha1.SchedulerNameVolcano},
 					{Name: configv1alpha1.SchedulerNameKube},
 				},
 				DefaultProfileName: string(configv1alpha1.SchedulerNameVolcano),
@@ -519,25 +508,12 @@ func TestValidateSchedulerConfiguration(t *testing.T) {
 			name: "valid: volcano is now a supported profile name",
 			scheduler: &configv1alpha1.SchedulerConfiguration{
 				Profiles: []configv1alpha1.SchedulerProfile{
-					{Name: configv1alpha1.SchedulerNameVolcano, Config: rawJSON(t, `{"queue":"default"}`)},
-					{Name: configv1alpha1.SchedulerNameKube},
-				},
-				DefaultProfileName: string(configv1alpha1.SchedulerNameVolcano),
-			},
-			expectErrors: 0,
-		},
-		{
-			name: "invalid: volcano profile missing queue",
-			scheduler: &configv1alpha1.SchedulerConfiguration{
-				Profiles: []configv1alpha1.SchedulerProfile{
 					{Name: configv1alpha1.SchedulerNameVolcano},
 					{Name: configv1alpha1.SchedulerNameKube},
 				},
 				DefaultProfileName: string(configv1alpha1.SchedulerNameVolcano),
 			},
-			expectErrors:   1,
-			expectedFields: []string{"scheduler.profiles[0].config.queue"},
-			expectedTypes:  []field.ErrorType{field.ErrorTypeRequired},
+			expectErrors: 0,
 		},
 		// duplicate profile names
 		{

@@ -24,10 +24,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	volcanov1beta1 "volcano.sh/apis/pkg/apis/scheduling/v1beta1"
 )
 
 // TestInitialize tests backend initialization with different schedulers.
@@ -64,17 +61,7 @@ func TestInitialize(t *testing.T) {
 			backends = nil
 			defaultBackend = nil
 
-			var existingObjects []client.Object
-			if tt.schedulerName == configv1alpha1.SchedulerNameVolcano {
-				existingObjects = append(existingObjects, &volcanov1beta1.Queue{
-					ObjectMeta: metav1.ObjectMeta{Name: "default"},
-					Status: volcanov1beta1.QueueStatus{
-						State: volcanov1beta1.QueueStateOpen,
-					},
-				})
-			}
-
-			cl := testutils.CreateDefaultFakeClient(existingObjects)
+			cl := testutils.CreateDefaultFakeClient(nil)
 			recorder := record.NewFakeRecorder(10)
 
 			cfg := configv1alpha1.SchedulerConfiguration{
