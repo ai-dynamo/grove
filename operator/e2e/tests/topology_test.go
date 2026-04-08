@@ -89,7 +89,7 @@ func Test_TAS1_TopologyInfrastructure(t *testing.T) {
 		{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
 	}
 
-	if err := topologyVerifier.VerifyClusterTopologyLevels(ctx, corev1alpha1.DefaultClusterTopologyName, expectedLevels); err != nil {
+	if err := topologyVerifier.VerifyClusterTopologyLevels(ctx, "grove-topology", expectedLevels); err != nil {
 		t.Fatalf("Failed to verify ClusterTopology levels: %v", err)
 	}
 
@@ -102,7 +102,7 @@ func Test_TAS1_TopologyInfrastructure(t *testing.T) {
 		setup.TopologyLabelHostname,
 	}
 
-	if err := topologyVerifier.VerifyKAITopologyLevels(ctx, corev1alpha1.DefaultClusterTopologyName, expectedKeys); err != nil {
+	if err := topologyVerifier.VerifyKAITopologyLevels(ctx, "grove-topology", expectedKeys); err != nil {
 		t.Fatalf("Failed to verify KAI Topology levels: %v", err)
 	}
 

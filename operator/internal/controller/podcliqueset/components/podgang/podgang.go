@@ -138,7 +138,8 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGa
 		if pg.Annotations == nil {
 			pg.Annotations = make(map[string]string)
 		}
-		pg.Annotations[apicommonconstants.AnnotationTopologyName] = grovecorev1alpha1.DefaultClusterTopologyName
+		// TODO(multi-topology): resolve from PCS topologyName — will be fixed in Task 6
+		pg.Annotations[apicommonconstants.AnnotationTopologyName] = "grove-topology"
 	}
 	if err := controllerutil.SetControllerReference(pcs, pg, r.scheme); err != nil {
 		return groveerr.WrapError(

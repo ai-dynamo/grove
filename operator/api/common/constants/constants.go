@@ -82,6 +82,21 @@ const (
 	EventDeleteError = "DeleteError"
 )
 
+// Constants for ClusterTopology Condition Types and Reasons.
+const (
+	// ConditionSchedulerTopologyDrift is a condition on ClusterTopology indicating whether
+	// any scheduler backend topology resource has drifted from the ClusterTopology levels.
+	ConditionSchedulerTopologyDrift = "SchedulerTopologyDrift"
+
+	// ConditionReasonDrift is the reason when a scheduler backend topology has drifted.
+	ConditionReasonDrift = "Drift"
+
+	// ConditionReasonTopologyNotFound is the reason when a scheduler backend referenced
+	// in schedulerReferences is not enabled or does not support topology management.
+	ConditionReasonTopologyNotFound = "TopologyNotFound"
+
+)
+
 // Constants for Condition Types
 const (
 	// ConditionTypeMinAvailableBreached indicates that the minimum number of ready pods in the PodClique are below the threshold defined in the PodCliqueSpec.MinAvailable threshold.

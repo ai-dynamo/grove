@@ -78,7 +78,8 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs 
 	// externally defined ClusterTopology CR. Hence, fetching ClusterTopology CR here to keep the code future-proof.
 	sc.tasEnabled = r.tasConfig.Enabled
 	if r.tasConfig.Enabled {
-		sc.topologyLevels, err = clustertopology.GetClusterTopologyLevels(ctx, r.client, grovecorev1alpha1.DefaultClusterTopologyName)
+		// TODO(multi-topology): resolve from PCS topologyName — will be fixed in Task 6
+		sc.topologyLevels, err = clustertopology.GetClusterTopologyLevels(ctx, r.client, "grove-topology")
 		if err != nil {
 			return nil, groveerr.WrapError(err,
 				errCodeGetClusterTopologyLevels,

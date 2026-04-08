@@ -94,8 +94,7 @@ func TestEnsureClusterTopologyHostDomainKeyNotOverridden(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, topology)
 	assert.Equal(t, topologyName, topology.Name)
-	// Host domain key should not be overridden
-	grovecorev1alpha1.SortTopologyLevels(topologyLevels)
+	// Levels are stored in user-provided order (no automatic sorting)
 	assert.Equal(t, topologyLevels, topology.Spec.Levels)
 
 	// Verify it was actually created
@@ -376,7 +375,7 @@ func TestSynchronizeTopologyWhenDisabled(t *testing.T) {
 		{Domain: grovecorev1alpha1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
 	}
 	// Create existing ClusterTopology
-	existingClusterTopology := createTestClusterTopology(grovecorev1alpha1.DefaultClusterTopologyName, topologyLevels)
+	existingClusterTopology := createTestClusterTopology("grove-topology", topologyLevels)
 
 	cl := testutils.CreateDefaultFakeClient([]client.Object{existingClusterTopology})
 	logger := logr.Discard()
@@ -396,7 +395,7 @@ func TestSynchronizeTopologyWhenDisabled(t *testing.T) {
 
 	// Verify ClusterTopology was deleted
 	fetchedClusterTopology := &grovecorev1alpha1.ClusterTopology{}
-	err = cl.Get(ctx, client.ObjectKey{Name: grovecorev1alpha1.DefaultClusterTopologyName}, fetchedClusterTopology)
+	err = cl.Get(ctx, client.ObjectKey{Name: "grove-topology"}, fetchedClusterTopology)
 	assert.True(t, apierrors.IsNotFound(err))
 }
 
@@ -448,13 +447,13 @@ func TestSynchronizeTopologyWhenEnabledCreatesResources(t *testing.T) {
 
 	// Verify ClusterTopology was created
 	fetchedClusterTopology := &grovecorev1alpha1.ClusterTopology{}
-	err = cl.Get(ctx, client.ObjectKey{Name: grovecorev1alpha1.DefaultClusterTopologyName}, fetchedClusterTopology)
+	err = cl.Get(ctx, client.ObjectKey{Name: "grove-topology"}, fetchedClusterTopology)
 	require.NoError(t, err)
 	assert.Equal(t, topologyLevels, fetchedClusterTopology.Spec.Levels)
 
 	// Verify KAI Topology was created
 	fetchedKAITopology := &kaitopologyv1alpha1.Topology{}
-	err = cl.Get(ctx, client.ObjectKey{Name: grovecorev1alpha1.DefaultClusterTopologyName}, fetchedKAITopology)
+	err = cl.Get(ctx, client.ObjectKey{Name: "grove-topology"}, fetchedKAITopology)
 	require.NoError(t, err)
 	assert.Len(t, fetchedKAITopology.Spec.Levels, 3)
 	assert.Equal(t, "topology.kubernetes.io/region", fetchedKAITopology.Spec.Levels[0].NodeLabel)
@@ -473,11 +472,11 @@ func TestSynchronizeTopologyWhenEnabledUpdatesExistingResources(t *testing.T) {
 		{Domain: grovecorev1alpha1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
 	}
 	// Create existing ClusterTopology with old levels
-	existingClusterTopology := createTestClusterTopology(grovecorev1alpha1.DefaultClusterTopologyName, oldTopologyLevels)
+	existingClusterTopology := createTestClusterTopology("grove-topology", oldTopologyLevels)
 	// Create existing KAI Topology with old levels
 	existingKAITopology := &kaitopologyv1alpha1.Topology{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: grovecorev1alpha1.DefaultClusterTopologyName,
+			Name: "grove-topology",
 			OwnerReferences: []metav1.OwnerReference{
 				{
 					APIVersion:         grovecorev1alpha1.SchemeGroupVersion.String(),
@@ -521,13 +520,13 @@ func TestSynchronizeTopologyWhenEnabledUpdatesExistingResources(t *testing.T) {
 
 	// Verify ClusterTopology was updated
 	fetchedClusterTopology := &grovecorev1alpha1.ClusterTopology{}
-	err = cl.Get(ctx, client.ObjectKey{Name: grovecorev1alpha1.DefaultClusterTopologyName}, fetchedClusterTopology)
+	err = cl.Get(ctx, client.ObjectKey{Name: "grove-topology"}, fetchedClusterTopology)
 	require.NoError(t, err)
 	assert.Equal(t, newTopologyLevels, fetchedClusterTopology.Spec.Levels)
 
 	// Verify KAI Topology was recreated with new levels
 	fetchedKAITopology := &kaitopologyv1alpha1.Topology{}
-	err = cl.Get(ctx, client.ObjectKey{Name: grovecorev1alpha1.DefaultClusterTopologyName}, fetchedKAITopology)
+	err = cl.Get(ctx, client.ObjectKey{Name: "grove-topology"}, fetchedKAITopology)
 	require.NoError(t, err)
 	assert.Len(t, fetchedKAITopology.Spec.Levels, 3)
 	assert.Equal(t, "topology.kubernetes.io/region", fetchedKAITopology.Spec.Levels[0].NodeLabel)
@@ -541,7 +540,7 @@ func TestSynchronizeTopologyWhenEnabledWithEmptyLevels(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	logger := logr.Discard()
 
-	// Create configuration with no topology levels (should add host level automatically)
+	// Create configuration with no topology levels
 	operatorCfg := &configv1alpha1.OperatorConfiguration{
 		TopologyAwareScheduling: configv1alpha1.TopologyAwareSchedulingConfiguration{
 			Enabled: true,
@@ -555,15 +554,15 @@ func TestSynchronizeTopologyWhenEnabledWithEmptyLevels(t *testing.T) {
 	// Assert
 	require.NoError(t, err)
 
-	// Verify ClusterTopology was created with host level automatically added
+	// Verify ClusterTopology was created with empty levels
 	fetchedClusterTopology := &grovecorev1alpha1.ClusterTopology{}
-	err = cl.Get(ctx, client.ObjectKey{Name: grovecorev1alpha1.DefaultClusterTopologyName}, fetchedClusterTopology)
+	err = cl.Get(ctx, client.ObjectKey{Name: "grove-topology"}, fetchedClusterTopology)
 	require.NoError(t, err)
 	assert.Len(t, fetchedClusterTopology.Spec.Levels, 0)
 
 	// Verify KAI Topology was created
 	fetchedKAITopology := &kaitopologyv1alpha1.Topology{}
-	err = cl.Get(ctx, client.ObjectKey{Name: grovecorev1alpha1.DefaultClusterTopologyName}, fetchedKAITopology)
+	err = cl.Get(ctx, client.ObjectKey{Name: "grove-topology"}, fetchedKAITopology)
 	require.NoError(t, err)
 	assert.Len(t, fetchedKAITopology.Spec.Levels, 0)
 }
@@ -580,7 +579,7 @@ func TestSynchronizeTopologyWhenClusterTopologyCreationFails(t *testing.T) {
 	// Create a client that will fail on creating ClusterTopology
 	createErr := apierrors.NewInternalError(assert.AnError)
 	cl := testutils.NewTestClientBuilder().
-		RecordErrorForObjects(testutils.ClientMethodCreate, createErr, client.ObjectKey{Name: grovecorev1alpha1.DefaultClusterTopologyName}).
+		RecordErrorForObjects(testutils.ClientMethodCreate, createErr, client.ObjectKey{Name: "grove-topology"}).
 		Build()
 
 	operatorCfg := &configv1alpha1.OperatorConfiguration{
@@ -610,7 +609,7 @@ func TestSynchronizeTopologyWhenClusterTopologyUpdateFails(t *testing.T) {
 	// Create existing ClusterTopology
 	existingClusterTopology := &grovecorev1alpha1.ClusterTopology{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: grovecorev1alpha1.DefaultClusterTopologyName,
+			Name: "grove-topology",
 		},
 		Spec: grovecorev1alpha1.ClusterTopologySpec{
 			Levels: oldTopologyLevels,
@@ -621,7 +620,7 @@ func TestSynchronizeTopologyWhenClusterTopologyUpdateFails(t *testing.T) {
 	updateErr := apierrors.NewInternalError(assert.AnError)
 	cl := testutils.NewTestClientBuilder().
 		WithObjects(existingClusterTopology).
-		RecordErrorForObjects(testutils.ClientMethodUpdate, updateErr, client.ObjectKey{Name: grovecorev1alpha1.DefaultClusterTopologyName}).
+		RecordErrorForObjects(testutils.ClientMethodUpdate, updateErr, client.ObjectKey{Name: "grove-topology"}).
 		Build()
 
 	// Try to update with new topology levels
@@ -655,7 +654,7 @@ func TestSynchronizeTopologyWhenDeleteClusterTopologyFails(t *testing.T) {
 	// Create existing ClusterTopology
 	existingClusterTopology := &grovecorev1alpha1.ClusterTopology{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: grovecorev1alpha1.DefaultClusterTopologyName,
+			Name: "grove-topology",
 		},
 		Spec: grovecorev1alpha1.ClusterTopologySpec{
 			Levels: topologyLevels,
@@ -666,7 +665,7 @@ func TestSynchronizeTopologyWhenDeleteClusterTopologyFails(t *testing.T) {
 	deleteErr := apierrors.NewInternalError(assert.AnError)
 	cl := testutils.NewTestClientBuilder().
 		WithObjects(existingClusterTopology).
-		RecordErrorForObjects(testutils.ClientMethodDelete, deleteErr, client.ObjectKey{Name: grovecorev1alpha1.DefaultClusterTopologyName}).
+		RecordErrorForObjects(testutils.ClientMethodDelete, deleteErr, client.ObjectKey{Name: "grove-topology"}).
 		Build()
 	logger := logr.Discard()
 

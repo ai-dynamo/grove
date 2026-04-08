@@ -18,6 +18,7 @@ package validation
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -185,12 +186,19 @@ func validateClusterTopologyLevels(levels []corev1alpha1.TopologyLevel, fldPath 
 	return allErrs
 }
 
+// domainPattern matches the kubebuilder validation pattern: ^[a-z][a-z0-9-]*$
+var domainPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+
 func mustHaveSupportedTopologyDomains(levels []corev1alpha1.TopologyLevel, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-	supportedDomains := corev1alpha1.SupportedTopologyDomains()
 	for i, level := range levels {
-		if !slices.Contains(supportedDomains, level.Domain) {
-			allErrs = append(allErrs, field.Invalid(fldPath.Index(i).Child("domain"), level.Domain, fmt.Sprintf("must be one of %v", supportedDomains)))
+		if !domainPattern.MatchString(string(level.Domain)) {
+			allErrs = append(allErrs, field.Invalid(fldPath.Index(i).Child("domain"), level.Domain,
+				"must match pattern ^[a-z][a-z0-9-]*$"))
+		}
+		if len(level.Domain) > 63 {
+			allErrs = append(allErrs, field.Invalid(fldPath.Index(i).Child("domain"), level.Domain,
+				"must be at most 63 characters"))
 		}
 	}
 	return allErrs

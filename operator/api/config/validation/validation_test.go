@@ -112,16 +112,26 @@ func TestValidateTopologyAwareSchedulingConfiguration(t *testing.T) {
 			expectedTypes:  []field.ErrorType{field.ErrorTypeRequired},
 		},
 		{
-			name: "invalid: unsupported domain",
+			name: "invalid: domain with uppercase",
 			config: configv1alpha1.TopologyAwareSchedulingConfiguration{
 				Enabled: true,
 				Levels: []corev1alpha1.TopologyLevel{
-					{Domain: "invalid-domain", Key: "some.key"},
+					{Domain: "Invalid-Domain", Key: "some.key"},
 				},
 			},
 			expectErrors:   1,
 			expectedFields: []string{"clusterTopology.levels[0].domain"},
 			expectedTypes:  []field.ErrorType{field.ErrorTypeInvalid},
+		},
+		{
+			name: "valid: custom free-form domain",
+			config: configv1alpha1.TopologyAwareSchedulingConfiguration{
+				Enabled: true,
+				Levels: []corev1alpha1.TopologyLevel{
+					{Domain: "my-custom-domain", Key: "example.com/custom"},
+				},
+			},
+			expectErrors:   0,
 		},
 		{
 			name: "invalid: duplicate domains",
