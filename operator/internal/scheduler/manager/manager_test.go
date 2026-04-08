@@ -83,4 +83,21 @@ func TestNewRegistry(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("multiple profiles default is kai", func(t *testing.T) {
+		cl := testutils.CreateDefaultFakeClient(nil)
+		recorder := record.NewFakeRecorder(10)
+		cfg := configv1alpha1.SchedulerConfiguration{
+			Profiles: []configv1alpha1.SchedulerProfile{
+				{Name: configv1alpha1.SchedulerNameKube},
+				{Name: configv1alpha1.SchedulerNameKai},
+			},
+			DefaultProfileName: string(configv1alpha1.SchedulerNameKai),
+		}
+		reg, err := NewRegistry(cl, cl.Scheme(), recorder, cfg)
+		require.NoError(t, err)
+		require.NotNil(t, reg.Get(string(configv1alpha1.SchedulerNameKai)))
+		require.NotNil(t, reg.Get(string(configv1alpha1.SchedulerNameKube)))
+		assert.Equal(t, reg.GetDefault(), reg.Get(string(configv1alpha1.SchedulerNameKai)))
+	})
 }
