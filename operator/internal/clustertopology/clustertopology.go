@@ -31,14 +31,18 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// SynchronizeTopology synchronizes Grove ClusterTopology and scheduler-specific topology resources based on the operator configuration.
-func SynchronizeTopology(ctx context.Context, k8sClient client.Client, logger logr.Logger, operatorCfg *configv1alpha1.OperatorConfiguration, backends map[string]scheduler.Backend) error {
+// SynchronizeTopology synchronizes scheduler-specific topology resources at operator startup.
+// Called before controllers start to ensure backend topologies exist for all ClusterTopology resources.
+// TODO(multi-topology): refactor to list all admin-created ClusterTopologies and sync each, instead of creating from config.
+func SynchronizeTopology(ctx context.Context, cl client.Client, logger logr.Logger, operatorCfg *configv1alpha1.OperatorConfiguration, backends map[string]scheduler.Backend) error {
+	// TODO(multi-topology): resolve from PCS topologyName
+	const defaultTopologyName = "grove-topology"
 	if !operatorCfg.TopologyAwareScheduling.Enabled {
 		logger.Info("cluster topology is disabled, deleting existing ClusterTopology resource if any")
-		return deleteClusterTopology(ctx, k8sClient, grovecorev1alpha1.DefaultClusterTopologyName)
+		return deleteClusterTopology(ctx, cl, defaultTopologyName)
 	}
 	// create or update ClusterTopology based on configuration
-	clusterTopology, err := ensureClusterTopology(ctx, k8sClient, logger, grovecorev1alpha1.DefaultClusterTopologyName, operatorCfg.TopologyAwareScheduling.Levels)
+	clusterTopology, err := ensureClusterTopology(ctx, cl, logger, defaultTopologyName, operatorCfg.TopologyAwareScheduling.Levels)
 	if err != nil {
 		return err
 	}
@@ -49,7 +53,7 @@ func SynchronizeTopology(ctx context.Context, k8sClient client.Client, logger lo
 			logger.V(1).Info("Scheduler backend does not implement TopologyAwareSchedBackend, skipping topology sync", "backend", b.Name())
 			continue
 		}
-		if err := tasBackend.SyncTopology(ctx, k8sClient, clusterTopology); err != nil {
+		if err := tasBackend.SyncTopology(ctx, cl, clusterTopology); err != nil {
 			return fmt.Errorf("failed to sync topology for backend %s: %w", b.Name(), err)
 		}
 	}
@@ -106,22 +110,17 @@ func ensureClusterTopology(ctx context.Context, cl client.Client, logger logr.Lo
 }
 
 // buildClusterTopology constructs a ClusterTopology resource based on the provided topology levels.
-// The function checks if required TopologyDomain (host) is present, if not add it.
-// kubernetes.io/hostname label is added by the Kubelet (see https://kubernetes.io/docs/reference/node/node-labels/)
-// Therefore it is assumed that the host topology level will always be available. In case the admin fails to specify it,
-// we correct that error by explicitly adding it when creating/updating the ClusterTopology resource.
+// Levels are stored in user-provided order (no automatic sorting).
 func buildClusterTopology(name string, topologyLevels []grovecorev1alpha1.TopologyLevel) *grovecorev1alpha1.ClusterTopology {
-	sortedTopologyLevels := make([]grovecorev1alpha1.TopologyLevel, len(topologyLevels))
-	copy(sortedTopologyLevels, topologyLevels)
-	// Sort topology levels to have a consistent order, arranging from broadest to narrowest domain.
-	grovecorev1alpha1.SortTopologyLevels(sortedTopologyLevels)
+	levels := make([]grovecorev1alpha1.TopologyLevel, len(topologyLevels))
+	copy(levels, topologyLevels)
 
 	return &grovecorev1alpha1.ClusterTopology{
 		ObjectMeta: ctrl.ObjectMeta{
 			Name: name,
 		},
 		Spec: grovecorev1alpha1.ClusterTopologySpec{
-			Levels: sortedTopologyLevels,
+			Levels: levels,
 		},
 	}
 }

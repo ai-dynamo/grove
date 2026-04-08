@@ -148,10 +148,29 @@ func (v *topologyConstraintsValidator) validateTopologyDomainsExistInClusterTopo
 	return allErrs
 }
 
+// wellKnownDomainOrder defines the hierarchical order for well-known topology domains.
+// TODO(multi-topology): Task 5 will replace this with validation against the referenced CT's levels.
+var wellKnownDomainOrder = map[grovecorev1alpha1.TopologyDomain]int{
+	grovecorev1alpha1.TopologyDomainRegion:     0,
+	grovecorev1alpha1.TopologyDomainZone:       1,
+	grovecorev1alpha1.TopologyDomainDataCenter: 2,
+	grovecorev1alpha1.TopologyDomainBlock:      3,
+	grovecorev1alpha1.TopologyDomainRack:       4,
+	grovecorev1alpha1.TopologyDomainHost:       5,
+	grovecorev1alpha1.TopologyDomainNuma:       6,
+}
+
 // isParentBroaderThanChild checks if a parent topology constraint domain is broader than (or equal to)
 // a child topology constraint domain. Returns true if valid (parent is broader or equal), false if invalid (parent is narrower).
+// TODO(multi-topology): Task 5 will replace this with position-based comparison using the referenced CT's levels.
 func isParentBroaderThanChild(parentDomain, childDomain grovecorev1alpha1.TopologyDomain) bool {
-	return !parentDomain.IsTopologyDomainNarrower(childDomain)
+	parentOrder, parentKnown := wellKnownDomainOrder[parentDomain]
+	childOrder, childKnown := wellKnownDomainOrder[childDomain]
+	if !parentKnown || !childKnown {
+		// For unknown (custom) domains, we cannot determine hierarchy; allow it.
+		return true
+	}
+	return parentOrder <= childOrder
 }
 
 // buildHierarchyViolationMsg generates an error message when a parent constraint is narrower than a child constraint.

@@ -204,7 +204,8 @@ func (r *Reconciler) mutateTopologyLevelUnavailableConditions(ctx context.Contex
 func (r *Reconciler) computeTopologyLevelsUnavailableCondition(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (*metav1.Condition, error) {
 	var cond *metav1.Condition
 	// Get the TopologyLevel's from ClusterTopology custom resource.
-	topologyLevels, err := clustertopology.GetClusterTopologyLevels(ctx, r.client, grovecorev1alpha1.DefaultClusterTopologyName)
+	// TODO(multi-topology): resolve from PCS topologyName — will be fixed in Task 7
+	topologyLevels, err := clustertopology.GetClusterTopologyLevels(ctx, r.client, "grove-topology")
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// ClusterTopology resource not found, set condition to Unknown
