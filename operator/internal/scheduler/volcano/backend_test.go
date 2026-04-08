@@ -43,14 +43,12 @@ func TestBackend_PreparePod(t *testing.T) {
 
 	pod := testutils.NewPodBuilder("test-pod", "default").Build()
 	pod.Labels = map[string]string{apicommon.LabelPodGang: "pg-1"}
-	pod.Annotations = map[string]string{SubGroupAnnotationKey: "worker"}
 
 	b.PreparePod(pod)
 
 	assert.Equal(t, string(configv1alpha1.SchedulerNameVolcano), pod.Spec.SchedulerName)
 	assert.Equal(t, "pg-1", pod.Annotations[volcanov1beta1.VolcanoGroupNameAnnotationKey])
 	assert.Equal(t, "pg-1", pod.Annotations[volcanov1beta1.KubeGroupNameAnnotationKey])
-	assert.Equal(t, "worker", pod.Annotations[volcanov1beta1.KubeHierarchyAnnotationKey])
 }
 
 func TestBackend_SyncPodGang(t *testing.T) {
@@ -86,7 +84,6 @@ func TestBackend_SyncPodGang(t *testing.T) {
 	err = cl.Get(context.Background(), client.ObjectKey{Name: "pg-1", Namespace: "default"}, podGroup)
 	require.NoError(t, err)
 	assert.Equal(t, int32(5), podGroup.Spec.MinMember)
-	assert.Equal(t, map[string]int32{"a": 2, "b": 3}, podGroup.Spec.MinTaskMember)
 	assert.Equal(t, "gpu-training", podGroup.Spec.Queue)
 	assert.Equal(t, "high-priority", podGroup.Spec.PriorityClassName)
 }

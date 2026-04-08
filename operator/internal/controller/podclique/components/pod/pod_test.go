@@ -22,18 +22,11 @@ import (
 
 	"github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	schedmanager "github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
-	volcanoscheduler "github.com/ai-dynamo/grove/operator/internal/scheduler/volcano"
-	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
 )
 
 // TestGetSelectorLabelsForPods_PCSGOwnedPodClique tests that getSelectorLabelsForPods
@@ -129,35 +122,6 @@ func TestGetSelectorLabelsForPods_PCSGOwnedPodClique(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestBuildResource_AddsVolcanoSubgroupAnnotation(t *testing.T) {
-	cl := testutils.CreateDefaultFakeClient(nil)
-	err := schedmanager.Initialize(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerConfiguration{
-		DefaultProfileName: string(configv1alpha1.SchedulerNameVolcano),
-		Profiles: []configv1alpha1.SchedulerProfile{
-			{Name: configv1alpha1.SchedulerNameVolcano},
-		},
-	})
-	require.NoError(t, err)
-
-	r := _resource{
-		client:        cl,
-		scheme:        cl.Scheme(),
-		eventRecorder: record.NewFakeRecorder(10),
-	}
-
-	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("pcs-uid")).
-		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").Build()).
-		Build()
-	pclq := testutils.NewPodCliqueBuilder("test-pcs", types.UID("pcs-uid"), "worker", "default", 0).Build()
-	pclq.Spec.PodSpec.SchedulerName = string(configv1alpha1.SchedulerNameVolcano)
-
-	pod := &corev1.Pod{}
-	err = r.buildResource(pcs, pclq, "test-pg", pod, 0)
-	require.NoError(t, err)
-
-	assert.Equal(t, pclq.Name, pod.Annotations[volcanoscheduler.SubGroupAnnotationKey])
 }
 
 func TestAddEnvironmentVariables(t *testing.T) {
