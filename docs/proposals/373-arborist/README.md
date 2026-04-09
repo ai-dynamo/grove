@@ -159,7 +159,7 @@ Launching Arborist on a cluster without Grove installed would produce confusing 
 
 Diagnostic bundles do not collect Secrets, ConfigMaps, ServiceAccounts, or pod environment variables. The primary sensitivity risk is operator log content, which may contain request details or error messages that reference cluster-specific information, and CRD YAML dumps, which may contain user-specified annotations or labels with organizational context.
 
-**Mitigation:** Bundles are written to a local `.tgz` and are never transmitted automatically — the user controls where they are shared.
+**Mitigation:** Bundles are written to a local `.tgz` and are never transmitted automatically — the user controls where they are shared. Operators who prefer not to share bundles with the Grove team can use AI coding assistants (e.g., Claude Code) to analyze them locally against the Grove source code, producing high-quality bug reports without sharing the raw data. Sharing bundles directly with the Grove team remains an option for operators who are comfortable doing so.
 
 #### Tight Version Coupling with Operator API
 
