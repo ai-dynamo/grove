@@ -76,10 +76,10 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 // Sync creates or patches PCS-level ResourceClaims (AllReplicas + PerReplica)
 // and cleans up stale RCs from previous scale-in operations.
 func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
-	refs := pcs.Spec.Template.ResourceSharing
-	if len(refs) == 0 {
+	if len(pcs.Spec.Template.ResourceSharing) == 0 {
 		return nil
 	}
+	resourceSharers := resourceclaim.ResourceSharersFromPCS(pcs.Spec.Template.ResourceSharing)
 
 	labels := resourceclaim.ResourceClaimLabels(pcs.Name)
 	tasks := make([]utils.Task, 0, int(pcs.Spec.Replicas)+1)
@@ -91,7 +91,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 			return resourceclaim.EnsureResourceClaims(
 				ctx, r.client,
 				pcs.Name, pcs.Namespace,
-				refs,
+				resourceSharers,
 				pcs.Spec.Template.ResourceClaimTemplates,
 				labels,
 				pcs, r.scheme,
@@ -111,7 +111,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 				return resourceclaim.EnsureResourceClaims(
 					ctx, r.client,
 					pcs.Name, pcs.Namespace,
-					refs,
+					resourceSharers,
 					pcs.Spec.Template.ResourceClaimTemplates,
 					replicaLabels,
 					pcs, r.scheme,

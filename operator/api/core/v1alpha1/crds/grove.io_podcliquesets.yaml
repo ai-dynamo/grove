@@ -101,30 +101,13 @@ spec:
                             This is distinct from adding ResourceClaimTemplate inside
                             Spec.PodSpec.ResourceClaims[x].ResourceClaimTemplateName, which creates a unique
                             ResourceClaim for each pod.
+                            PCLQs have no children to filter, so no Filter field is available.
                           items:
                             description: |-
-                              ResourceSharingSpec references a ResourceClaimTemplateSpec and defines the
-                              sharing scope for the resulting ResourceClaim(s).
+                              ResourceSharingSpecBase contains the common fields shared by all levels of
+                              resource sharing (PCS, PCSG, PCLQ). It is used directly for PCLQ-level
+                              resource sharing where no filter is needed.
                             properties:
-                              filter:
-                                description: |-
-                                  Filter narrows the scope by restricting which children within the
-                                  chosen Scope receive the ResourceClaims. If absent, all children
-                                  within scope receive them (broadcast).
-                                properties:
-                                  childCliqueNames:
-                                    description: ChildCliqueNames limits distribution
-                                      to the named immediate child PodCliques.
-                                    items:
-                                      type: string
-                                    type: array
-                                  childScalingGroupNames:
-                                    description: ChildScalingGroupNames limits distribution
-                                      to the named immediate child PodCliqueScalingGroups.
-                                    items:
-                                      type: string
-                                    type: array
-                                type: object
                               name:
                                 description: |-
                                   Name of the referenced template. Resolved by first looking up
@@ -9397,26 +9380,21 @@ spec:
                               - AllReplicas: one RC for the entire PCSG, shared across all replicas
                               - PerReplica: one RC per PCSG replica, shared across all PCLQs in that replica
                             The optional Filter field controls which PodCliques receive the claims.
+                            At PCSG level, only childCliqueNames filtering is available.
                           items:
                             description: |-
-                              ResourceSharingSpec references a ResourceClaimTemplateSpec and defines the
-                              sharing scope for the resulting ResourceClaim(s).
+                              PCSGResourceSharingSpec defines resource sharing at the PCSG level. The filter
+                              can only target child PodCliques within the scaling group.
                             properties:
                               filter:
                                 description: |-
-                                  Filter narrows the scope by restricting which children within the
-                                  chosen Scope receive the ResourceClaims. If absent, all children
-                                  within scope receive them (broadcast).
+                                  Filter narrows the scope by restricting which child PodCliques receive
+                                  the ResourceClaims. If absent, all PodCliques in the group receive them.
                                 properties:
                                   childCliqueNames:
                                     description: ChildCliqueNames limits distribution
-                                      to the named immediate child PodCliques.
-                                    items:
-                                      type: string
-                                    type: array
-                                  childScalingGroupNames:
-                                    description: ChildScalingGroupNames limits distribution
-                                      to the named immediate child PodCliqueScalingGroups.
+                                      to the named child PodCliques within this scaling
+                                      group.
                                     items:
                                       type: string
                                     type: array
@@ -10691,14 +10669,13 @@ spec:
                       The optional Filter field controls which children receive the claims.
                     items:
                       description: |-
-                        ResourceSharingSpec references a ResourceClaimTemplateSpec and defines the
-                        sharing scope for the resulting ResourceClaim(s).
+                        PCSResourceSharingSpec defines resource sharing at the PCS level. The filter
+                        can target both child PodCliques and child PodCliqueScalingGroups.
                       properties:
                         filter:
                           description: |-
-                            Filter narrows the scope by restricting which children within the
-                            chosen Scope receive the ResourceClaims. If absent, all children
-                            within scope receive them (broadcast).
+                            Filter narrows the scope by restricting which children receive the
+                            ResourceClaims. If absent, all children receive them (broadcast).
                           properties:
                             childCliqueNames:
                               description: ChildCliqueNames limits distribution to

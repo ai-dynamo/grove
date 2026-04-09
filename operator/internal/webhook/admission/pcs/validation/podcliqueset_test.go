@@ -1277,23 +1277,23 @@ func TestValidateResourceClaimTemplates(t *testing.T) {
 	}
 }
 
-func TestValidateResourceSharing(t *testing.T) {
+func TestValidateResourceSharingSpecBases(t *testing.T) {
 	tests := []struct {
 		name          string
 		templates     []grovecorev1alpha1.ResourceClaimTemplateConfig
-		refs          []grovecorev1alpha1.ResourceSharingSpec
+		refs          []grovecorev1alpha1.ResourceSharingSpecBase
 		errorMatchers []testutils.ErrorMatcher
 	}{
 		{
 			name:      "valid refs",
 			templates: []grovecorev1alpha1.ResourceClaimTemplateConfig{{Name: "gpu-mps"}},
-			refs: []grovecorev1alpha1.ResourceSharingSpec{
+			refs: []grovecorev1alpha1.ResourceSharingSpecBase{
 				{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
 			},
 		},
 		{
 			name: "empty ref name",
-			refs: []grovecorev1alpha1.ResourceSharingSpec{
+			refs: []grovecorev1alpha1.ResourceSharingSpecBase{
 				{Name: "", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
@@ -1303,7 +1303,7 @@ func TestValidateResourceSharing(t *testing.T) {
 		{
 			name:      "duplicate refs",
 			templates: []grovecorev1alpha1.ResourceClaimTemplateConfig{{Name: "gpu-mps"}},
-			refs: []grovecorev1alpha1.ResourceSharingSpec{
+			refs: []grovecorev1alpha1.ResourceSharingSpecBase{
 				{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
 				{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopePerReplica},
 			},
@@ -1314,7 +1314,7 @@ func TestValidateResourceSharing(t *testing.T) {
 		{
 			name:      "namespace set for internal template",
 			templates: []grovecorev1alpha1.ResourceClaimTemplateConfig{{Name: "gpu-mps"}},
-			refs: []grovecorev1alpha1.ResourceSharingSpec{
+			refs: []grovecorev1alpha1.ResourceSharingSpecBase{
 				{Name: "gpu-mps", Namespace: "other-ns", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
@@ -1323,7 +1323,7 @@ func TestValidateResourceSharing(t *testing.T) {
 		},
 		{
 			name: "external ref (no internal match) with namespace is valid",
-			refs: []grovecorev1alpha1.ResourceSharingSpec{
+			refs: []grovecorev1alpha1.ResourceSharingSpecBase{
 				{Name: "external-tpl", Namespace: "shared-ns", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
 			},
 		},
@@ -1333,11 +1333,10 @@ func TestValidateResourceSharing(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			pcs := createTestPodCliqueSet("my-pcs")
 			pcs.Spec.Template.ResourceClaimTemplates = tc.templates
-			pcs.Spec.Template.ResourceSharing = tc.refs
 
 			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)})
 			fldPath := field.NewPath("spec", "template", "resourceSharing")
-			errs := validator.validateResourceSharing(tc.refs, fldPath)
+			errs := validator.validateResourceSharingSpecBases(tc.refs, fldPath)
 
 			if tc.errorMatchers != nil {
 				testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
@@ -1348,22 +1347,21 @@ func TestValidateResourceSharing(t *testing.T) {
 	}
 }
 
-func TestValidatePCSFilter(t *testing.T) {
+func TestValidatePCSResourceSharing(t *testing.T) {
 	tests := []struct {
 		name          string
 		cliqueNames   []string
 		groupConfigs  []grovecorev1alpha1.PodCliqueScalingGroupConfig
-		refs          []grovecorev1alpha1.ResourceSharingSpec
+		refs          []grovecorev1alpha1.PCSResourceSharingSpec
 		errorMatchers []testutils.ErrorMatcher
 	}{
 		{
 			name:        "valid filter with known clique name",
 			cliqueNames: []string{"worker"},
-			refs: []grovecorev1alpha1.ResourceSharingSpec{
+			refs: []grovecorev1alpha1.PCSResourceSharingSpec{
 				{
-					Name:   "gpu-mps",
-					Scope:  grovecorev1alpha1.ResourceSharingScopeAllReplicas,
-					Filter: &grovecorev1alpha1.ResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
+					ResourceSharingSpecBase: grovecorev1alpha1.ResourceSharingSpecBase{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
+					Filter:                  &grovecorev1alpha1.PCSResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
 				},
 			},
 		},
@@ -1373,22 +1371,20 @@ func TestValidatePCSFilter(t *testing.T) {
 			groupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
 				{Name: "sga", CliqueNames: []string{"worker"}},
 			},
-			refs: []grovecorev1alpha1.ResourceSharingSpec{
+			refs: []grovecorev1alpha1.PCSResourceSharingSpec{
 				{
-					Name:   "gpu-mps",
-					Scope:  grovecorev1alpha1.ResourceSharingScopeAllReplicas,
-					Filter: &grovecorev1alpha1.ResourceSharingFilter{ChildScalingGroupNames: []string{"sga"}},
+					ResourceSharingSpecBase: grovecorev1alpha1.ResourceSharingSpecBase{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
+					Filter:                  &grovecorev1alpha1.PCSResourceSharingFilter{ChildScalingGroupNames: []string{"sga"}},
 				},
 			},
 		},
 		{
 			name:        "invalid clique name in filter",
 			cliqueNames: []string{"worker"},
-			refs: []grovecorev1alpha1.ResourceSharingSpec{
+			refs: []grovecorev1alpha1.PCSResourceSharingSpec{
 				{
-					Name:   "gpu-mps",
-					Scope:  grovecorev1alpha1.ResourceSharingScopeAllReplicas,
-					Filter: &grovecorev1alpha1.ResourceSharingFilter{ChildCliqueNames: []string{"nonexistent"}},
+					ResourceSharingSpecBase: grovecorev1alpha1.ResourceSharingSpecBase{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
+					Filter:                  &grovecorev1alpha1.PCSResourceSharingFilter{ChildCliqueNames: []string{"nonexistent"}},
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
@@ -1398,11 +1394,10 @@ func TestValidatePCSFilter(t *testing.T) {
 		{
 			name:        "invalid group name in filter",
 			cliqueNames: []string{"worker"},
-			refs: []grovecorev1alpha1.ResourceSharingSpec{
+			refs: []grovecorev1alpha1.PCSResourceSharingSpec{
 				{
-					Name:   "gpu-mps",
-					Scope:  grovecorev1alpha1.ResourceSharingScopeAllReplicas,
-					Filter: &grovecorev1alpha1.ResourceSharingFilter{ChildScalingGroupNames: []string{"nonexistent"}},
+					ResourceSharingSpecBase: grovecorev1alpha1.ResourceSharingSpecBase{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
+					Filter:                  &grovecorev1alpha1.PCSResourceSharingFilter{ChildScalingGroupNames: []string{"nonexistent"}},
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
@@ -1412,11 +1407,10 @@ func TestValidatePCSFilter(t *testing.T) {
 		{
 			name:        "empty filter (no names specified)",
 			cliqueNames: []string{"worker"},
-			refs: []grovecorev1alpha1.ResourceSharingSpec{
+			refs: []grovecorev1alpha1.PCSResourceSharingSpec{
 				{
-					Name:   "gpu-mps",
-					Scope:  grovecorev1alpha1.ResourceSharingScopeAllReplicas,
-					Filter: &grovecorev1alpha1.ResourceSharingFilter{},
+					ResourceSharingSpecBase: grovecorev1alpha1.ResourceSharingSpecBase{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
+					Filter:                  &grovecorev1alpha1.PCSResourceSharingFilter{},
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
@@ -1428,16 +1422,16 @@ func TestValidatePCSFilter(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			pcs := createTestPodCliqueSet("my-pcs")
-			// Replace the default clique with the ones from the test
 			pcs.Spec.Template.Cliques = nil
 			for _, name := range tc.cliqueNames {
 				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createDummyPodCliqueTemplate(name))
 			}
 			pcs.Spec.Template.PodCliqueScalingGroupConfigs = tc.groupConfigs
+			pcs.Spec.Template.ResourceSharing = tc.refs
 
 			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)})
 			fldPath := field.NewPath("spec", "template", "resourceSharing")
-			errs := validator.validatePCSFilter(tc.refs, fldPath)
+			errs := validator.validatePCSResourceSharing(tc.refs, fldPath)
 
 			if tc.errorMatchers != nil {
 				testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
@@ -1460,44 +1454,24 @@ func TestValidatePCSGResourceSharing(t *testing.T) {
 			cfg: grovecorev1alpha1.PodCliqueScalingGroupConfig{
 				Name:        "sga",
 				CliqueNames: []string{"worker"},
-				ResourceSharing: []grovecorev1alpha1.ResourceSharingSpec{
+				ResourceSharing: []grovecorev1alpha1.PCSGResourceSharingSpec{
 					{
-						Name:   "gpu-mps",
-						Scope:  grovecorev1alpha1.ResourceSharingScopeAllReplicas,
-						Filter: &grovecorev1alpha1.ResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
+						ResourceSharingSpecBase: grovecorev1alpha1.ResourceSharingSpecBase{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
+						Filter:                  &grovecorev1alpha1.PCSGResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
 					},
 				},
 			},
 			templates: []grovecorev1alpha1.ResourceClaimTemplateConfig{{Name: "gpu-mps"}},
-		},
-		{
-			name: "groupNames forbidden at PCSG level",
-			cfg: grovecorev1alpha1.PodCliqueScalingGroupConfig{
-				Name:        "sga",
-				CliqueNames: []string{"worker"},
-				ResourceSharing: []grovecorev1alpha1.ResourceSharingSpec{
-					{
-						Name:   "gpu-mps",
-						Scope:  grovecorev1alpha1.ResourceSharingScopeAllReplicas,
-						Filter: &grovecorev1alpha1.ResourceSharingFilter{ChildScalingGroupNames: []string{"other-sg"}},
-					},
-				},
-			},
-			templates: []grovecorev1alpha1.ResourceClaimTemplateConfig{{Name: "gpu-mps"}},
-			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.podCliqueScalingGroups[0].resourceSharing[0].filter.childScalingGroupNames"},
-			},
 		},
 		{
 			name: "invalid clique name in PCSG filter",
 			cfg: grovecorev1alpha1.PodCliqueScalingGroupConfig{
 				Name:        "sga",
 				CliqueNames: []string{"worker"},
-				ResourceSharing: []grovecorev1alpha1.ResourceSharingSpec{
+				ResourceSharing: []grovecorev1alpha1.PCSGResourceSharingSpec{
 					{
-						Name:   "gpu-mps",
-						Scope:  grovecorev1alpha1.ResourceSharingScopeAllReplicas,
-						Filter: &grovecorev1alpha1.ResourceSharingFilter{ChildCliqueNames: []string{"unknown-clique"}},
+						ResourceSharingSpecBase: grovecorev1alpha1.ResourceSharingSpecBase{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
+						Filter:                  &grovecorev1alpha1.PCSGResourceSharingFilter{ChildCliqueNames: []string{"unknown-clique"}},
 					},
 				},
 			},
@@ -1520,61 +1494,6 @@ func TestValidatePCSGResourceSharing(t *testing.T) {
 			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)})
 			fldPath := field.NewPath("spec", "template", "podCliqueScalingGroups").Index(0).Child("resourceSharing")
 			errs := validator.validatePCSGResourceSharing(tc.cfg, fldPath)
-
-			if tc.errorMatchers != nil {
-				testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
-			} else {
-				assert.Empty(t, errs)
-			}
-		})
-	}
-}
-
-func TestValidatePCLQNoFilter(t *testing.T) {
-	tests := []struct {
-		name          string
-		refs          []grovecorev1alpha1.ResourceSharingSpec
-		errorMatchers []testutils.ErrorMatcher
-	}{
-		{
-			name: "no filter is valid",
-			refs: []grovecorev1alpha1.ResourceSharingSpec{
-				{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-			},
-		},
-		{
-			name: "filter at PCLQ level is rejected",
-			refs: []grovecorev1alpha1.ResourceSharingSpec{
-				{
-					Name:   "gpu-mps",
-					Scope:  grovecorev1alpha1.ResourceSharingScopeAllReplicas,
-					Filter: &grovecorev1alpha1.ResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
-				},
-			},
-			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.cliques[0].resourceSharing[0].filter"},
-			},
-		},
-		{
-			name: "multiple refs with mixed filter presence",
-			refs: []grovecorev1alpha1.ResourceSharingSpec{
-				{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-				{
-					Name:   "shared-mem",
-					Scope:  grovecorev1alpha1.ResourceSharingScopePerReplica,
-					Filter: &grovecorev1alpha1.ResourceSharingFilter{ChildScalingGroupNames: []string{"sg"}},
-				},
-			},
-			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.cliques[0].resourceSharing[1].filter"},
-			},
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			fldPath := field.NewPath("spec", "template", "cliques").Index(0).Child("resourceSharing")
-			errs := validatePCLQNoFilter(tc.refs, fldPath)
 
 			if tc.errorMatchers != nil {
 				testutils.AssertErrorMatches(t, errs, tc.errorMatchers)

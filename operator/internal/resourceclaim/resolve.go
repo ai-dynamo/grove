@@ -25,30 +25,30 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// ResolveTemplateSpec resolves a ResourceSharingSpec to its ResourceClaimTemplateSpec.
+// ResolveTemplateSpec resolves a ResourceSharingSpecBase to its ResourceClaimTemplateSpec.
 // Resolution order: internal PCS-level resourceClaimTemplates first, then external
 // Kubernetes ResourceClaimTemplate objects. Internal templates shadow external ones.
 func ResolveTemplateSpec(
 	ctx context.Context,
 	cl client.Reader,
-	ref *grovecorev1alpha1.ResourceSharingSpec,
+	base *grovecorev1alpha1.ResourceSharingSpecBase,
 	pcsTemplates []grovecorev1alpha1.ResourceClaimTemplateConfig,
 	pcsNamespace string,
 ) (*resourcev1.ResourceClaimTemplateSpec, error) {
-	if spec := resolveInternalRef(ref, pcsTemplates); spec != nil {
+	if spec := resolveInternalRef(base, pcsTemplates); spec != nil {
 		return spec, nil
 	}
-	return resolveExternalRef(ctx, cl, ref, pcsNamespace)
+	return resolveExternalRef(ctx, cl, base, pcsNamespace)
 }
 
 // resolveInternalRef returns the matching template spec from pcsTemplates, or
 // nil when the name does not match any internal template.
 func resolveInternalRef(
-	ref *grovecorev1alpha1.ResourceSharingSpec,
+	base *grovecorev1alpha1.ResourceSharingSpecBase,
 	pcsTemplates []grovecorev1alpha1.ResourceClaimTemplateConfig,
 ) *resourcev1.ResourceClaimTemplateSpec {
 	for i := range pcsTemplates {
-		if pcsTemplates[i].Name == ref.Name {
+		if pcsTemplates[i].Name == base.Name {
 			return &pcsTemplates[i].TemplateSpec
 		}
 	}
@@ -58,16 +58,16 @@ func resolveInternalRef(
 func resolveExternalRef(
 	ctx context.Context,
 	cl client.Reader,
-	ref *grovecorev1alpha1.ResourceSharingSpec,
+	base *grovecorev1alpha1.ResourceSharingSpecBase,
 	pcsNamespace string,
 ) (*resourcev1.ResourceClaimTemplateSpec, error) {
-	ns := ref.Namespace
+	ns := base.Namespace
 	if ns == "" {
 		ns = pcsNamespace
 	}
 	rct := &resourcev1.ResourceClaimTemplate{}
-	if err := cl.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ns}, rct); err != nil {
-		return nil, fmt.Errorf("failed to get external ResourceClaimTemplate %s/%s: %w", ns, ref.Name, err)
+	if err := cl.Get(ctx, types.NamespacedName{Name: base.Name, Namespace: ns}, rct); err != nil {
+		return nil, fmt.Errorf("failed to get external ResourceClaimTemplate %s/%s: %w", ns, base.Name, err)
 	}
 	return &rct.Spec, nil
 }

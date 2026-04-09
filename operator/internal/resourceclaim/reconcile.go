@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -33,6 +32,41 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
+
+// ResourceSharer is the common interface for all level-specific resource sharing
+// types (PCS, PCSG, PCLQ). It enables the reconciler to operate uniformly over
+// different resource sharing specs regardless of their filter type.
+type ResourceSharer interface {
+	GetBase() *grovecorev1alpha1.ResourceSharingSpecBase
+	FilterMatches(matchNames ...string) bool
+}
+
+// ResourceSharersFromPCS converts PCS-level specs to the common ResourceSharer interface.
+func ResourceSharersFromPCS(specs []grovecorev1alpha1.PCSResourceSharingSpec) []ResourceSharer {
+	s := make([]ResourceSharer, len(specs))
+	for i := range specs {
+		s[i] = &specs[i]
+	}
+	return s
+}
+
+// ResourceSharersFromPCSG converts PCSG-level specs to the common ResourceSharer interface.
+func ResourceSharersFromPCSG(specs []grovecorev1alpha1.PCSGResourceSharingSpec) []ResourceSharer {
+	s := make([]ResourceSharer, len(specs))
+	for i := range specs {
+		s[i] = &specs[i]
+	}
+	return s
+}
+
+// ResourceSharersFromPCLQ converts PCLQ-level specs to the common ResourceSharer interface.
+func ResourceSharersFromPCLQ(specs []grovecorev1alpha1.ResourceSharingSpecBase) []ResourceSharer {
+	s := make([]ResourceSharer, len(specs))
+	for i := range specs {
+		s[i] = &specs[i]
+	}
+	return s
+}
 
 // EnsureResourceClaim creates or patches a ResourceClaim with the given spec, labels, and owner.
 func EnsureResourceClaim(
@@ -66,14 +100,14 @@ func DeleteResourceClaim(ctx context.Context, cl client.Client, name, namespace 
 	return client.IgnoreNotFound(cl.Delete(ctx, rc))
 }
 
-// EnsureResourceClaims creates ResourceClaims for a list of ResourceSharingSpec entries
+// EnsureResourceClaims creates ResourceClaims for a list of ResourceSharer entries
 // at a given level. It resolves each ref, generates the deterministic name, and creates the RC.
 // Errors are collected and returned as a single aggregated error.
 func EnsureResourceClaims(
 	ctx context.Context,
 	cl client.Client,
 	ownerName, namespace string,
-	refs []grovecorev1alpha1.ResourceSharingSpec,
+	resourceSharers []ResourceSharer,
 	pcsTemplates []grovecorev1alpha1.ResourceClaimTemplateConfig,
 	labels map[string]string,
 	owner metav1.Object,
@@ -81,22 +115,22 @@ func EnsureResourceClaims(
 	replicaIndex *int, // nil for AllReplicas scope; set for PerReplica scope filtering
 ) error {
 	var errs []error
-	for i := range refs {
-		ref := &refs[i]
-		if replicaIndex == nil && ref.Scope != grovecorev1alpha1.ResourceSharingScopeAllReplicas {
+	for i, s := range resourceSharers {
+		base := s.GetBase()
+		if replicaIndex == nil && base.Scope != grovecorev1alpha1.ResourceSharingScopeAllReplicas {
 			continue
 		}
-		if replicaIndex != nil && ref.Scope != grovecorev1alpha1.ResourceSharingScopePerReplica {
+		if replicaIndex != nil && base.Scope != grovecorev1alpha1.ResourceSharingScopePerReplica {
 			continue
 		}
 
-		spec, err := ResolveTemplateSpec(ctx, cl, ref, pcsTemplates, namespace)
+		spec, err := ResolveTemplateSpec(ctx, cl, base, pcsTemplates, namespace)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("ref %q (index %d): %w", ref.Name, i, err))
+			errs = append(errs, fmt.Errorf("ref %q (index %d): %w", base.Name, i, err))
 			continue
 		}
 
-		rcName := RCName(ownerName, ref, replicaIndex)
+		rcName := RCName(ownerName, base, replicaIndex)
 
 		if err := EnsureResourceClaim(ctx, cl, rcName, namespace, spec, labels, owner, scheme); err != nil {
 			errs = append(errs, fmt.Errorf("RC %q: %w", rcName, err))
@@ -115,28 +149,12 @@ func ResourceClaimLabels(pcsName string) map[string]string {
 	return labels
 }
 
-// RCName returns the deterministic ResourceClaim name for a given ref and optional replica index.
-func RCName(ownerName string, ref *grovecorev1alpha1.ResourceSharingSpec, replicaIndex *int) string {
-	if ref.Scope == grovecorev1alpha1.ResourceSharingScopeAllReplicas {
-		return AllReplicasRCName(ownerName, ref.Name)
+// RCName returns the deterministic ResourceClaim name for a given base ref and optional replica index.
+func RCName(ownerName string, base *grovecorev1alpha1.ResourceSharingSpecBase, replicaIndex *int) string {
+	if base.Scope == grovecorev1alpha1.ResourceSharingScopeAllReplicas {
+		return AllReplicasRCName(ownerName, base.Name)
 	}
-	return PerReplicaRCName(ownerName, *replicaIndex, ref.Name)
-}
-
-// filterMatches checks whether a ref's Filter allows injection for the given matchNames.
-// When no matchNames are provided (PCLQ-level), filtering is skipped.
-// When Filter is nil, all children match (broadcast).
-// The filter is always include-based: only listed names receive the claims.
-func filterMatches(ref *grovecorev1alpha1.ResourceSharingSpec, matchNames []string) bool {
-	if len(matchNames) == 0 || ref.Filter == nil {
-		return true
-	}
-	for _, name := range matchNames {
-		if slices.Contains(ref.Filter.ChildCliqueNames, name) || slices.Contains(ref.Filter.ChildScalingGroupNames, name) {
-			return true
-		}
-	}
-	return false
+	return PerReplicaRCName(ownerName, *replicaIndex, base.Name)
 }
 
 // InjectResourceClaimRefs appends ResourceClaim references to a PodSpec for entries
@@ -151,25 +169,24 @@ func filterMatches(ref *grovecorev1alpha1.ResourceSharingSpec, matchNames []stri
 func InjectResourceClaimRefs(
 	podSpec *corev1.PodSpec,
 	ownerName string,
-	refs []grovecorev1alpha1.ResourceSharingSpec,
+	resourceSharers []ResourceSharer,
 	replicaIndex *int, // nil = inject AllReplicas-scope RCs; non-nil = inject PerReplica for this replica
 	matchNames ...string,
 ) {
-	for i := range refs {
-		ref := &refs[i]
-
-		if !filterMatches(ref, matchNames) {
+	for _, s := range resourceSharers {
+		if !s.FilterMatches(matchNames...) {
 			continue
 		}
 
-		if replicaIndex == nil && ref.Scope != grovecorev1alpha1.ResourceSharingScopeAllReplicas {
+		base := s.GetBase()
+		if replicaIndex == nil && base.Scope != grovecorev1alpha1.ResourceSharingScopeAllReplicas {
 			continue
 		}
-		if replicaIndex != nil && ref.Scope != grovecorev1alpha1.ResourceSharingScopePerReplica {
+		if replicaIndex != nil && base.Scope != grovecorev1alpha1.ResourceSharingScopePerReplica {
 			continue
 		}
 
-		rcName := RCName(ownerName, ref, replicaIndex)
+		rcName := RCName(ownerName, base, replicaIndex)
 
 		podSpec.ResourceClaims = append(podSpec.ResourceClaims, corev1.PodResourceClaim{
 			Name:              rcName,
@@ -220,15 +237,16 @@ func DeletePerReplicaRCs(
 	ctx context.Context,
 	cl client.Client,
 	ownerName, namespace string,
-	refs []grovecorev1alpha1.ResourceSharingSpec,
+	resourceSharers []ResourceSharer,
 	replicaIndex int,
 ) error {
 	var errs []error
-	for i := range refs {
-		if refs[i].Scope != grovecorev1alpha1.ResourceSharingScopePerReplica {
+	for _, s := range resourceSharers {
+		base := s.GetBase()
+		if base.Scope != grovecorev1alpha1.ResourceSharingScopePerReplica {
 			continue
 		}
-		rcName := PerReplicaRCName(ownerName, replicaIndex, refs[i].Name)
+		rcName := PerReplicaRCName(ownerName, replicaIndex, base.Name)
 		if err := DeleteResourceClaim(ctx, cl, rcName, namespace); err != nil {
 			errs = append(errs, fmt.Errorf("delete RC %q: %w", rcName, err))
 		}

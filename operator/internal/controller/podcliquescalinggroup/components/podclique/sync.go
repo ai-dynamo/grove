@@ -392,7 +392,7 @@ func (r _resource) ensurePCSGResourceClaims(sc *syncContext) error {
 	if sc.pcsgConfig == nil || len(sc.pcsgConfig.ResourceSharing) == 0 {
 		return nil
 	}
-	refs := sc.pcsgConfig.ResourceSharing
+	resourceSharers := resourceclaim.ResourceSharersFromPCSG(sc.pcsgConfig.ResourceSharing)
 	labels := resourceclaim.ResourceClaimLabels(sc.pcs.Name)
 	labels[apicommon.LabelPodCliqueScalingGroup] = sc.pcsg.Name
 
@@ -400,7 +400,7 @@ func (r _resource) ensurePCSGResourceClaims(sc *syncContext) error {
 	if err := resourceclaim.EnsureResourceClaims(
 		sc.ctx, r.client,
 		sc.pcsg.Name, sc.pcsg.Namespace,
-		refs,
+		resourceSharers,
 		sc.pcs.Spec.Template.ResourceClaimTemplates,
 		labels,
 		sc.pcsg, r.scheme,
@@ -421,7 +421,7 @@ func (r _resource) ensurePCSGResourceClaims(sc *syncContext) error {
 		if err := resourceclaim.EnsureResourceClaims(
 			sc.ctx, r.client,
 			sc.pcsg.Name, sc.pcsg.Namespace,
-			refs,
+			resourceSharers,
 			sc.pcs.Spec.Template.ResourceClaimTemplates,
 			replicaLabels,
 			sc.pcsg, r.scheme,

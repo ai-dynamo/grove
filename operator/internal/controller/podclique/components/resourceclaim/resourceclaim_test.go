@@ -47,7 +47,7 @@ const (
 
 // newPCS returns a minimal PCS with one clique template ("worker") that has
 // the given ResourceSharing specs and ResourceClaimTemplates.
-func newPCS(refs []grovecorev1alpha1.ResourceSharingSpec, templates []grovecorev1alpha1.ResourceClaimTemplateConfig) *grovecorev1alpha1.PodCliqueSet {
+func newPCS(refs []grovecorev1alpha1.ResourceSharingSpecBase, templates []grovecorev1alpha1.ResourceClaimTemplateConfig) *grovecorev1alpha1.PodCliqueSet {
 	return &grovecorev1alpha1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: namespace, UID: "pcs-uid"},
 		Spec: grovecorev1alpha1.PodCliqueSetSpec{
@@ -172,7 +172,7 @@ func TestGetExistingResourceNames(t *testing.T) {
 func TestSync(t *testing.T) {
 	scheme := newTestScheme()
 
-	refs := []grovecorev1alpha1.ResourceSharingSpec{
+	refs := []grovecorev1alpha1.ResourceSharingSpecBase{
 		{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
 		{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopePerReplica},
 	}

@@ -42,117 +42,149 @@ const (
 //   PerReplica:   <owner>-<idx>-<tpl>
 //
 // Hierarchy (from YAML):
-//   PCS "rs-test"          → int-tpl/AllReplicas + ext-tpl/PerReplica
-//   PCLQ "worker-a"        → int-tpl/AllReplicas + int-tpl4/PerReplica  (standalone, replicas=1)
-//   PCSG "sga"             → int-tpl2/AllReplicas + int-tpl3/PerReplica (replicas=2)
-//   PCLQ "worker-b" in sga → int-tpl/AllReplicas + int-tpl2/PerReplica (replicas=1)
+//   PCS "rs-test":
+//     int-tpl5/AllReplicas (broadcast)
+//     ext-tpl/PerReplica   (broadcast)
+//     int-tpl/PerReplica   (filter: childCliqueNames: [worker-a])
+//     int-tpl7/AllReplicas (filter: childScalingGroupNames: [sga])
+//   PCLQ "worker-a" (standalone):
+//     int-tpl4/PerReplica
+//   PCSG "sga" (replicas=2):
+//     int-tpl2/AllReplicas (broadcast)
+//     int-tpl3/PerReplica  (broadcast)
+//     int-tpl8/AllReplicas (filter: childCliqueNames: [worker-b])
+//   PCLQ "worker-b" in sga:
+//     int-tpl6/AllReplicas
+//
+// Filter coverage:
+//   PCS  → childCliqueNames        (int-tpl  targets worker-a only)
+//   PCS  → childScalingGroupNames  (int-tpl7 targets sga only)
+//   PCSG → childCliqueNames        (int-tpl8 targets worker-b only)
 
-// initialRCNames: PCS=1, sga=2, worker-a=1. Total: 11 RCs.
+// initialRCNames: PCS=1, sga=2, worker-a=1 pod. Total: 11 RCs.
 func initialRCNames() []string {
 	return []string{
-		"rs-test-all-int-tpl",
+		// PCS level
+		"rs-test-all-int-tpl5",
 		"rs-test-0-ext-tpl",
-		"rs-test-0-worker-a-all-int-tpl",
+		"rs-test-0-int-tpl",
+		"rs-test-all-int-tpl7",
+		// Standalone PCLQ worker-a
 		"rs-test-0-worker-a-0-int-tpl4",
+		// PCSG sga
 		"rs-test-0-sga-all-int-tpl2",
 		"rs-test-0-sga-0-int-tpl3",
 		"rs-test-0-sga-1-int-tpl3",
-		"rs-test-0-sga-0-worker-b-all-int-tpl",
-		"rs-test-0-sga-1-worker-b-all-int-tpl",
-		"rs-test-0-sga-0-worker-b-0-int-tpl2",
-		"rs-test-0-sga-1-worker-b-0-int-tpl2",
+		"rs-test-0-sga-all-int-tpl8",
+		// PCLQ worker-b in sga
+		"rs-test-0-sga-0-worker-b-all-int-tpl6",
+		"rs-test-0-sga-1-worker-b-all-int-tpl6",
 	}
 }
 
-// pcsgScaleInRCNames: sga 2→1. Total: 8 RCs.
+// pcsgScaleInRCNames: sga 2→1. Total: 9 RCs.
 func pcsgScaleInRCNames() []string {
 	return []string{
-		"rs-test-all-int-tpl",
+		"rs-test-all-int-tpl5",
 		"rs-test-0-ext-tpl",
-		"rs-test-0-worker-a-all-int-tpl",
+		"rs-test-0-int-tpl",
+		"rs-test-all-int-tpl7",
 		"rs-test-0-worker-a-0-int-tpl4",
 		"rs-test-0-sga-all-int-tpl2",
 		"rs-test-0-sga-0-int-tpl3",
-		"rs-test-0-sga-0-worker-b-all-int-tpl",
-		"rs-test-0-sga-0-worker-b-0-int-tpl2",
+		"rs-test-0-sga-all-int-tpl8",
+		"rs-test-0-sga-0-worker-b-all-int-tpl6",
 	}
 }
 
-// pcsgScaleOutRCNames: sga 1→3. Total: 14 RCs.
+// pcsgScaleOutRCNames: sga 1→3. Total: 13 RCs.
 func pcsgScaleOutRCNames() []string {
 	return []string{
-		"rs-test-all-int-tpl",
+		"rs-test-all-int-tpl5",
 		"rs-test-0-ext-tpl",
-		"rs-test-0-worker-a-all-int-tpl",
+		"rs-test-0-int-tpl",
+		"rs-test-all-int-tpl7",
 		"rs-test-0-worker-a-0-int-tpl4",
 		"rs-test-0-sga-all-int-tpl2",
 		"rs-test-0-sga-0-int-tpl3",
 		"rs-test-0-sga-1-int-tpl3",
 		"rs-test-0-sga-2-int-tpl3",
-		"rs-test-0-sga-0-worker-b-all-int-tpl",
-		"rs-test-0-sga-1-worker-b-all-int-tpl",
-		"rs-test-0-sga-2-worker-b-all-int-tpl",
-		"rs-test-0-sga-0-worker-b-0-int-tpl2",
-		"rs-test-0-sga-1-worker-b-0-int-tpl2",
-		"rs-test-0-sga-2-worker-b-0-int-tpl2",
+		"rs-test-0-sga-all-int-tpl8",
+		"rs-test-0-sga-0-worker-b-all-int-tpl6",
+		"rs-test-0-sga-1-worker-b-all-int-tpl6",
+		"rs-test-0-sga-2-worker-b-all-int-tpl6",
 	}
 }
 
-// pclqScaleOutRCNames: worker-a 1→2 (sga still at 3). Total: 15 RCs.
+// pclqScaleOutRCNames: worker-a 1→2 (sga still at 3). Total: 14 RCs.
 func pclqScaleOutRCNames() []string {
 	return append(pcsgScaleOutRCNames(), "rs-test-0-worker-a-1-int-tpl4")
 }
 
 // pcsScaleOutRCNames: PCS 1→2.
-// Rep 0 keeps sga=3, worker-a=1 (14 RCs).
-// Rep 1 created from template: sga=2, worker-a=1 (10 new RCs).
-// Total: 24 RCs.
+// Rep 0 keeps sga=3, worker-a=1 (13 RCs from pcsgScaleOutRCNames).
+// Rep 1 created from template: sga=2, worker-a=1 (9 new RCs).
+// Total: 22 RCs.
 func pcsScaleOutRCNames() []string {
 	names := pcsgScaleOutRCNames()
 	return append(names,
-		// PCS PerReplica
+		// PCS PerReplica for rep 1
 		"rs-test-1-ext-tpl",
-		// Standalone PCLQ worker-a
-		"rs-test-1-worker-a-all-int-tpl",
+		"rs-test-1-int-tpl",
+		// Standalone PCLQ worker-a rep 1
 		"rs-test-1-worker-a-0-int-tpl4",
-		// PCSG sga (template replicas=2)
+		// PCSG sga rep 1 (template replicas=2)
 		"rs-test-1-sga-all-int-tpl2",
 		"rs-test-1-sga-0-int-tpl3",
 		"rs-test-1-sga-1-int-tpl3",
-		// PCLQ-within-PCSG worker-b
-		"rs-test-1-sga-0-worker-b-all-int-tpl",
-		"rs-test-1-sga-1-worker-b-all-int-tpl",
-		"rs-test-1-sga-0-worker-b-0-int-tpl2",
-		"rs-test-1-sga-1-worker-b-0-int-tpl2",
+		"rs-test-1-sga-all-int-tpl8",
+		// PCLQ worker-b in sga rep 1
+		"rs-test-1-sga-0-worker-b-all-int-tpl6",
+		"rs-test-1-sga-1-worker-b-all-int-tpl6",
 	)
 }
 
 // --- Pod RC ref maps ---
+//
+// Filter behaviour on pod injection (matchNames = [pclqTemplateName, pcsgConfigName]):
+//   worker-a pod: matchNames=["worker-a"]
+//     int-tpl5 (broadcast)          → injected
+//     ext-tpl  (broadcast)          → injected
+//     int-tpl  (filter: worker-a)   → injected (matches "worker-a")
+//     int-tpl7 (filter: sga)        → NOT injected ("worker-a" ∉ [sga])
+//   worker-b pod in sga: matchNames=["worker-b","sga"]
+//     int-tpl5 (broadcast)          → injected
+//     ext-tpl  (broadcast)          → injected
+//     int-tpl  (filter: worker-a)   → NOT injected ("worker-b","sga" ∉ [worker-a])
+//     int-tpl7 (filter: sga)        → injected (matches "sga")
+//     int-tpl8 (PCSG filter: worker-b) → injected (matches "worker-b")
 
 // initialPodRefs: 3 pods (PCS=1, sga=2, worker-a=1).
 func initialPodRefs() map[string][]string {
 	return map[string][]string{
 		"rs-test-0-worker-a": {
-			"rs-test-all-int-tpl",
+			"rs-test-all-int-tpl5",
 			"rs-test-0-ext-tpl",
-			"rs-test-0-worker-a-all-int-tpl",
+			"rs-test-0-int-tpl",
 			"rs-test-0-worker-a-0-int-tpl4",
 		},
 		"rs-test-0-sga-0-worker-b": {
-			"rs-test-all-int-tpl",
+			"rs-test-all-int-tpl5",
 			"rs-test-0-ext-tpl",
+			"rs-test-all-int-tpl7",
 			"rs-test-0-sga-all-int-tpl2",
 			"rs-test-0-sga-0-int-tpl3",
-			"rs-test-0-sga-0-worker-b-all-int-tpl",
-			"rs-test-0-sga-0-worker-b-0-int-tpl2",
+			"rs-test-0-sga-all-int-tpl8",
+			"rs-test-0-sga-0-worker-b-all-int-tpl6",
 		},
 		"rs-test-0-sga-1-worker-b": {
-			"rs-test-all-int-tpl",
+			"rs-test-all-int-tpl5",
 			"rs-test-0-ext-tpl",
+			"rs-test-all-int-tpl7",
 			"rs-test-0-sga-all-int-tpl2",
 			"rs-test-0-sga-1-int-tpl3",
-			"rs-test-0-sga-1-worker-b-all-int-tpl",
-			"rs-test-0-sga-1-worker-b-0-int-tpl2",
+			"rs-test-0-sga-all-int-tpl8",
+			"rs-test-0-sga-1-worker-b-all-int-tpl6",
 		},
 	}
 }
@@ -161,18 +193,19 @@ func initialPodRefs() map[string][]string {
 func pcsgScaleInPodRefs() map[string][]string {
 	return map[string][]string{
 		"rs-test-0-worker-a": {
-			"rs-test-all-int-tpl",
+			"rs-test-all-int-tpl5",
 			"rs-test-0-ext-tpl",
-			"rs-test-0-worker-a-all-int-tpl",
+			"rs-test-0-int-tpl",
 			"rs-test-0-worker-a-0-int-tpl4",
 		},
 		"rs-test-0-sga-0-worker-b": {
-			"rs-test-all-int-tpl",
+			"rs-test-all-int-tpl5",
 			"rs-test-0-ext-tpl",
+			"rs-test-all-int-tpl7",
 			"rs-test-0-sga-all-int-tpl2",
 			"rs-test-0-sga-0-int-tpl3",
-			"rs-test-0-sga-0-worker-b-all-int-tpl",
-			"rs-test-0-sga-0-worker-b-0-int-tpl2",
+			"rs-test-0-sga-all-int-tpl8",
+			"rs-test-0-sga-0-worker-b-all-int-tpl6",
 		},
 	}
 }
@@ -181,34 +214,37 @@ func pcsgScaleInPodRefs() map[string][]string {
 func pcsgScaleOutPodRefs() map[string][]string {
 	return map[string][]string{
 		"rs-test-0-worker-a": {
-			"rs-test-all-int-tpl",
+			"rs-test-all-int-tpl5",
 			"rs-test-0-ext-tpl",
-			"rs-test-0-worker-a-all-int-tpl",
+			"rs-test-0-int-tpl",
 			"rs-test-0-worker-a-0-int-tpl4",
 		},
 		"rs-test-0-sga-0-worker-b": {
-			"rs-test-all-int-tpl",
+			"rs-test-all-int-tpl5",
 			"rs-test-0-ext-tpl",
+			"rs-test-all-int-tpl7",
 			"rs-test-0-sga-all-int-tpl2",
 			"rs-test-0-sga-0-int-tpl3",
-			"rs-test-0-sga-0-worker-b-all-int-tpl",
-			"rs-test-0-sga-0-worker-b-0-int-tpl2",
+			"rs-test-0-sga-all-int-tpl8",
+			"rs-test-0-sga-0-worker-b-all-int-tpl6",
 		},
 		"rs-test-0-sga-1-worker-b": {
-			"rs-test-all-int-tpl",
+			"rs-test-all-int-tpl5",
 			"rs-test-0-ext-tpl",
+			"rs-test-all-int-tpl7",
 			"rs-test-0-sga-all-int-tpl2",
 			"rs-test-0-sga-1-int-tpl3",
-			"rs-test-0-sga-1-worker-b-all-int-tpl",
-			"rs-test-0-sga-1-worker-b-0-int-tpl2",
+			"rs-test-0-sga-all-int-tpl8",
+			"rs-test-0-sga-1-worker-b-all-int-tpl6",
 		},
 		"rs-test-0-sga-2-worker-b": {
-			"rs-test-all-int-tpl",
+			"rs-test-all-int-tpl5",
 			"rs-test-0-ext-tpl",
+			"rs-test-all-int-tpl7",
 			"rs-test-0-sga-all-int-tpl2",
 			"rs-test-0-sga-2-int-tpl3",
-			"rs-test-0-sga-2-worker-b-all-int-tpl",
-			"rs-test-0-sga-2-worker-b-0-int-tpl2",
+			"rs-test-0-sga-all-int-tpl8",
+			"rs-test-0-sga-2-worker-b-all-int-tpl6",
 		},
 	}
 }
@@ -217,26 +253,28 @@ func pcsgScaleOutPodRefs() map[string][]string {
 func pcsScaleOutPodRefs() map[string][]string {
 	refs := pcsgScaleOutPodRefs()
 	refs["rs-test-1-worker-a"] = []string{
-		"rs-test-all-int-tpl",
+		"rs-test-all-int-tpl5",
 		"rs-test-1-ext-tpl",
-		"rs-test-1-worker-a-all-int-tpl",
+		"rs-test-1-int-tpl",
 		"rs-test-1-worker-a-0-int-tpl4",
 	}
 	refs["rs-test-1-sga-0-worker-b"] = []string{
-		"rs-test-all-int-tpl",
+		"rs-test-all-int-tpl5",
 		"rs-test-1-ext-tpl",
+		"rs-test-all-int-tpl7",
 		"rs-test-1-sga-all-int-tpl2",
 		"rs-test-1-sga-0-int-tpl3",
-		"rs-test-1-sga-0-worker-b-all-int-tpl",
-		"rs-test-1-sga-0-worker-b-0-int-tpl2",
+		"rs-test-1-sga-all-int-tpl8",
+		"rs-test-1-sga-0-worker-b-all-int-tpl6",
 	}
 	refs["rs-test-1-sga-1-worker-b"] = []string{
-		"rs-test-all-int-tpl",
+		"rs-test-all-int-tpl5",
 		"rs-test-1-ext-tpl",
+		"rs-test-all-int-tpl7",
 		"rs-test-1-sga-all-int-tpl2",
 		"rs-test-1-sga-1-int-tpl3",
-		"rs-test-1-sga-1-worker-b-all-int-tpl",
-		"rs-test-1-sga-1-worker-b-0-int-tpl2",
+		"rs-test-1-sga-all-int-tpl8",
+		"rs-test-1-sga-1-worker-b-all-int-tpl6",
 	}
 	return refs
 }
@@ -244,6 +282,12 @@ func pcsScaleOutPodRefs() map[string][]string {
 // Test_RS1_HierarchicalResourceSharing verifies ResourceClaim lifecycle at all
 // hierarchy levels. It starts with PCS=1 to test PCSG and PCLQ scaling in
 // isolation, then tests PCS scale-out/in at the end.
+//
+// Key filter verifications:
+//   - int-tpl5 (PCS AllReplicas, broadcast) appears on ALL pods
+//   - int-tpl  (PCS PerReplica, filter: childCliqueNames: [worker-a]) appears ONLY on worker-a pods
+//   - int-tpl7 (PCS AllReplicas, filter: childScalingGroupNames: [sga]) appears ONLY on worker-b-in-sga pods
+//   - int-tpl8 (PCSG AllReplicas, filter: childCliqueNames: [worker-b]) appears on worker-b-in-sga pods
 func Test_RS1_HierarchicalResourceSharing(t *testing.T) {
 	ctx := context.Background()
 
@@ -309,17 +353,17 @@ func Test_RS1_HierarchicalResourceSharing(t *testing.T) {
 	if err := scalePodCliqueScalingGroup(tc, "rs-test-0-sga", 1); err != nil {
 		t.Fatalf("Failed to scale PCSG: %v", err)
 	}
-	verifyRCState(t, tc, rcLabelSelector, 8, pcsgScaleInRCNames())
+	verifyRCState(t, tc, rcLabelSelector, 9, pcsgScaleInRCNames())
 	verifyPodState(t, tc, podSelector, 2, pcsgScaleInPodRefs())
-	Logger.Info("   Verified 8 RCs and 2 pods after PCSG scale-in")
+	Logger.Info("   Verified 9 RCs and 2 pods after PCSG scale-in")
 
 	Logger.Info("7. Scale PCSG sga from 1 to 3")
 	if err := scalePodCliqueScalingGroup(tc, "rs-test-0-sga", 3); err != nil {
 		t.Fatalf("Failed to scale PCSG: %v", err)
 	}
-	verifyRCState(t, tc, rcLabelSelector, 14, pcsgScaleOutRCNames())
+	verifyRCState(t, tc, rcLabelSelector, 13, pcsgScaleOutRCNames())
 	verifyPodState(t, tc, podSelector, 4, pcsgScaleOutPodRefs())
-	Logger.Info("   Verified 14 RCs and 4 pods after PCSG scale-out")
+	Logger.Info("   Verified 13 RCs and 4 pods after PCSG scale-out")
 
 	// --- PCLQ scale-out/in (single PCS replica) ---
 
@@ -327,20 +371,20 @@ func Test_RS1_HierarchicalResourceSharing(t *testing.T) {
 	if err := scalePodClique(tc, "rs-test-0-worker-a", 2); err != nil {
 		t.Fatalf("Failed to scale PCLQ: %v", err)
 	}
-	verifyRCState(t, tc, rcLabelSelector, 15, pclqScaleOutRCNames())
+	verifyRCState(t, tc, rcLabelSelector, 14, pclqScaleOutRCNames())
 	_, err = utils.WaitForPodCount(ctx, clients.Clientset, rsNamespace, podSelector, 5, tc.Timeout, tc.Interval)
 	if err != nil {
 		t.Fatalf("Expected 5 pods after PCLQ scale-out but timed out: %v", err)
 	}
-	Logger.Info("   Verified 15 RCs and 5 pods after PCLQ scale-out")
+	Logger.Info("   Verified 14 RCs and 5 pods after PCLQ scale-out")
 
 	Logger.Info("9. Scale standalone PCLQ worker-a from 2 to 1")
 	if err := scalePodClique(tc, "rs-test-0-worker-a", 1); err != nil {
 		t.Fatalf("Failed to scale PCLQ: %v", err)
 	}
-	verifyRCState(t, tc, rcLabelSelector, 14, pcsgScaleOutRCNames())
+	verifyRCState(t, tc, rcLabelSelector, 13, pcsgScaleOutRCNames())
 	verifyPodState(t, tc, podSelector, 4, pcsgScaleOutPodRefs())
-	Logger.Info("   Verified 14 RCs and 4 pods after PCLQ scale-in")
+	Logger.Info("   Verified 13 RCs and 4 pods after PCLQ scale-in")
 
 	// --- PCS scale-out/in ---
 	// Rep 0 retains sga=3 from step 7. Rep 1 is created from template (sga=2).
@@ -349,17 +393,17 @@ func Test_RS1_HierarchicalResourceSharing(t *testing.T) {
 	if err := scalePodCliqueSet(tc, rsWorkloadName, 2); err != nil {
 		t.Fatalf("Failed to scale PCS to 2: %v", err)
 	}
-	verifyRCState(t, tc, rcLabelSelector, 24, pcsScaleOutRCNames())
+	verifyRCState(t, tc, rcLabelSelector, 22, pcsScaleOutRCNames())
 	verifyPodState(t, tc, podSelector, 7, pcsScaleOutPodRefs())
-	Logger.Info("   Verified 24 RCs and 7 pods after PCS scale-out")
+	Logger.Info("   Verified 22 RCs and 7 pods after PCS scale-out")
 
 	Logger.Info("11. Scale PCS from 2 to 1")
 	if err := scalePodCliqueSet(tc, rsWorkloadName, 1); err != nil {
 		t.Fatalf("Failed to scale PCS to 1: %v", err)
 	}
-	verifyRCState(t, tc, rcLabelSelector, 14, pcsgScaleOutRCNames())
+	verifyRCState(t, tc, rcLabelSelector, 13, pcsgScaleOutRCNames())
 	verifyPodState(t, tc, podSelector, 4, pcsgScaleOutPodRefs())
-	Logger.Info("   Verified 14 RCs and 4 pods after PCS scale-in")
+	Logger.Info("   Verified 13 RCs and 4 pods after PCS scale-in")
 
 	Logger.Info("Hierarchical resource sharing e2e test completed successfully!")
 }

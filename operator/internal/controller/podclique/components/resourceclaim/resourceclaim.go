@@ -102,6 +102,7 @@ func (r _resource) Sync(ctx context.Context, _ logr.Logger, pclq *grovecorev1alp
 	if pclqTemplateSpec == nil || len(pclqTemplateSpec.ResourceSharing) == 0 {
 		return nil
 	}
+	resourceSharers := resourceclaim.ResourceSharersFromPCLQ(pclqTemplateSpec.ResourceSharing)
 
 	labels := pclqResourceClaimLabels(pclq.ObjectMeta)
 	currentReplicas := int(pclq.Spec.Replicas)
@@ -110,7 +111,7 @@ func (r _resource) Sync(ctx context.Context, _ logr.Logger, pclq *grovecorev1alp
 	if err := resourceclaim.EnsureResourceClaims(
 		ctx, r.client,
 		pclq.Name, pclq.Namespace,
-		pclqTemplateSpec.ResourceSharing,
+		resourceSharers,
 		pcs.Spec.Template.ResourceClaimTemplates,
 		labels,
 		pclq, r.scheme,
@@ -131,7 +132,7 @@ func (r _resource) Sync(ctx context.Context, _ logr.Logger, pclq *grovecorev1alp
 		if err := resourceclaim.EnsureResourceClaims(
 			ctx, r.client,
 			pclq.Name, pclq.Namespace,
-			pclqTemplateSpec.ResourceSharing,
+			resourceSharers,
 			pcs.Spec.Template.ResourceClaimTemplates,
 			replicaLabels,
 			pclq, r.scheme,

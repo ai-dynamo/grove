@@ -220,20 +220,23 @@ func injectAllResourceClaimRefs(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grove
 
 	// PCS-level: AllReplicas + PerReplica
 	if len(pcs.Spec.Template.ResourceSharing) > 0 {
-		resourceclaim.InjectResourceClaimRefs(podSpec, pcs.Name, pcs.Spec.Template.ResourceSharing, nil, matchNames...)
-		resourceclaim.InjectResourceClaimRefs(podSpec, pcs.Name, pcs.Spec.Template.ResourceSharing, &pcsReplicaIndex, matchNames...)
+		resourceSharers := resourceclaim.ResourceSharersFromPCS(pcs.Spec.Template.ResourceSharing)
+		resourceclaim.InjectResourceClaimRefs(podSpec, pcs.Name, resourceSharers, nil, matchNames...)
+		resourceclaim.InjectResourceClaimRefs(podSpec, pcs.Name, resourceSharers, &pcsReplicaIndex, matchNames...)
 	}
 
 	// PCSG-level: AllReplicas + PerReplica (only when PCLQ belongs to a PCSG)
 	if pcsgConfig != nil && len(pcsgConfig.ResourceSharing) > 0 {
-		resourceclaim.InjectResourceClaimRefs(podSpec, pcsgName, pcsgConfig.ResourceSharing, nil, pclqTemplateSpec.Name)
-		resourceclaim.InjectResourceClaimRefs(podSpec, pcsgName, pcsgConfig.ResourceSharing, &pcsgReplicaIndex, pclqTemplateSpec.Name)
+		resourceSharers := resourceclaim.ResourceSharersFromPCSG(pcsgConfig.ResourceSharing)
+		resourceclaim.InjectResourceClaimRefs(podSpec, pcsgName, resourceSharers, nil, pclqTemplateSpec.Name)
+		resourceclaim.InjectResourceClaimRefs(podSpec, pcsgName, resourceSharers, &pcsgReplicaIndex, pclqTemplateSpec.Name)
 	}
 
 	// PCLQ-level: AllReplicas + PerReplica
 	if len(pclqTemplateSpec.ResourceSharing) > 0 {
-		resourceclaim.InjectResourceClaimRefs(podSpec, pclq.Name, pclqTemplateSpec.ResourceSharing, nil)
-		resourceclaim.InjectResourceClaimRefs(podSpec, pclq.Name, pclqTemplateSpec.ResourceSharing, &podIndex)
+		resourceSharers := resourceclaim.ResourceSharersFromPCLQ(pclqTemplateSpec.ResourceSharing)
+		resourceclaim.InjectResourceClaimRefs(podSpec, pclq.Name, resourceSharers, nil)
+		resourceclaim.InjectResourceClaimRefs(podSpec, pclq.Name, resourceSharers, &podIndex)
 	}
 }
 
