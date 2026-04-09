@@ -153,9 +153,9 @@ Launching Arborist on a cluster without Grove installed would produce confusing 
 
 #### Sensitive Data in Diagnostic Bundles
 
-Diagnostic bundles may inadvertently include sensitive data (e.g., environment variables in operator logs, configuration values in CRD YAML dumps).
+Diagnostic bundles do not collect Secrets, ConfigMaps, ServiceAccounts, or pod environment variables. The primary sensitivity risk is operator log content, which may contain request details or error messages that reference cluster-specific information, and CRD YAML dumps, which may contain user-specified annotations or labels with organizational context.
 
-**Mitigation:** Bundles are written to a local `.tgz` and are never transmitted automatically — the user controls where they are shared. Future work may add redaction of known sensitive fields (e.g., `env[].value`, annotations containing tokens).
+**Mitigation:** Bundles are written to a local `.tgz` and are never transmitted automatically — the user controls where they are shared.
 
 #### Tight Version Coupling with Operator API
 
@@ -318,10 +318,12 @@ kubectl grove diagnostics [-n namespace | -A] [-o output-dir]
 ```
 
 Will collect:
-- **Operator logs** — all available logs from Grove operator pods.
-- **Grove CRD instances** — YAML dumps of PodCliqueSets, PodCliqueScalingGroups, PodCliques, PodGangs.
-- **Pod details** — pod summary table plus YAML for unhealthy pods.
-- **Kubernetes events** — all events related to Grove resources.
+- **Operator logs** — last 2000 log lines from each container in pods matching the `grove-operator` prefix in the operator namespace, plus container status details (ready state, restart count, last termination reason).
+- **Grove CRD instances** — full YAML dumps of PodCliqueSets, PodCliques, PodCliqueScalingGroups, and PodGangs in the target namespace.
+- **Pod details** — tabular summary of all pods in the target namespace (name, phase, ready count, node, conditions), plus container-level waiting/terminated reasons and restart counts for unhealthy pods.
+- **Kubernetes events** — all events in the target namespace from the last 10 minutes (timestamp, type, reason, involved object, message).
+
+Will **not** collect: Secrets, ConfigMaps, ServiceAccounts, environment variable values, or any resources outside the target and operator namespaces.
 
 Output: `grove-diagnostics-YYYY-MM-DD-HHMMSS.tgz`
 
