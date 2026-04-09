@@ -94,6 +94,7 @@ func setupTest(t *testing.T, cfg testConfig) (tests.TestContext, func(), *update
 		Clientset:     clients.Clientset,
 		RestConfig:    clients.RestConfig,
 		DynamicClient: clients.DynamicClient,
+		CRClient:      clients.CRClient,
 		Namespace:     cfg.namespace,
 		Timeout:       tests.DefaultPollTimeout,
 		Interval:      tests.DefaultPollInterval,

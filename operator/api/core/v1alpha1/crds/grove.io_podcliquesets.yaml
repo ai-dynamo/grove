@@ -9274,6 +9274,9 @@ spec:
                       - spec
                       type: object
                     type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
                   headlessServiceConfig:
                     description: |-
                       HeadlessServiceConfig defines the config options for the headless service.
