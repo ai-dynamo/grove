@@ -78,7 +78,8 @@ func ValidateQueueName(queue string) []string {
 	return validation.IsDNS1123Subdomain(strings.TrimSpace(queue))
 }
 
-// ValidateQueueExistsAndIsOpen verifies that the referenced Volcano queue exists and is Open.
+// ValidateQueueExistsAndIsOpen verifies that the resolved Volcano queue exists
+// in the cluster and that its status is Open before the workload is admitted.
 func ValidateQueueExistsAndIsOpen(ctx context.Context, k8sClient client.Reader, queue string) error {
 	if k8sClient == nil {
 		return nil
