@@ -324,10 +324,14 @@ func TestEnsureResourceClaim(t *testing.T) {
 		assert.Equal(t, "my-pcs", rc.OwnerReferences[0].Name)
 	})
 
-	t.Run("patches existing RC", func(t *testing.T) {
+	t.Run("updates only metadata on existing RC", func(t *testing.T) {
 		existingRC := &resourcev1.ResourceClaim{
 			ObjectMeta: metav1.ObjectMeta{Name: "my-rc", Namespace: "default"},
-			Spec:       resourcev1.ResourceClaimSpec{},
+			Spec: resourcev1.ResourceClaimSpec{
+				Devices: resourcev1.DeviceClaim{
+					Requests: []resourcev1.DeviceRequest{{Name: "original-gpu"}},
+				},
+			},
 		}
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existingRC).Build()
 		owner := &grovecorev1alpha1.PodCliqueSet{
@@ -348,8 +352,10 @@ func TestEnsureResourceClaim(t *testing.T) {
 		rc := &resourcev1.ResourceClaim{}
 		err = cl.Get(context.Background(), types.NamespacedName{Name: "my-rc", Namespace: "default"}, rc)
 		require.NoError(t, err)
-		assert.Equal(t, "updated-gpu", rc.Spec.Devices.Requests[0].Name)
+		assert.Equal(t, "original-gpu", rc.Spec.Devices.Requests[0].Name, "spec must not be mutated")
 		assert.Equal(t, apicommon.LabelComponentNameResourceClaim, rc.Labels[apicommon.LabelComponentKey])
+		require.Len(t, rc.OwnerReferences, 1)
+		assert.Equal(t, "my-pcs", rc.OwnerReferences[0].Name)
 	})
 }
 

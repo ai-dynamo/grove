@@ -25,10 +25,12 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/selection"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -68,7 +70,8 @@ func ResourceSharersFromPCLQ(specs []grovecorev1alpha1.ResourceSharingSpecBase) 
 	return s
 }
 
-// EnsureResourceClaim creates or patches a ResourceClaim with the given spec, labels, and owner.
+// EnsureResourceClaim ensures a ResourceClaim exists with the given spec, labels, and owner.
+// ResourceClaim.spec is immutable in Kubernetes, so existing claims only get metadata updates.
 func EnsureResourceClaim(
 	ctx context.Context,
 	cl client.Client,
@@ -78,18 +81,32 @@ func EnsureResourceClaim(
 	owner metav1.Object,
 	scheme *runtime.Scheme,
 ) error {
-	rc := &resourcev1.ResourceClaim{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
+	rc := &resourcev1.ResourceClaim{}
+	err := cl.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, rc)
+	if apierrors.IsNotFound(err) {
+		rc = &resourcev1.ResourceClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: namespace,
+				Labels:    labels,
+			},
+			Spec: spec.Spec,
+		}
+		if err := controllerutil.SetControllerReference(owner, rc, scheme); err != nil {
+			return err
+		}
+		return cl.Create(ctx, rc)
 	}
-	_, err := controllerutil.CreateOrPatch(ctx, cl, rc, func() error {
-		rc.Labels = labels
-		rc.Spec = spec.Spec
-		return controllerutil.SetControllerReference(owner, rc, scheme)
-	})
-	return err
+	if err != nil {
+		return err
+	}
+	// RC already exists — only update metadata (labels, owner reference).
+	// ResourceClaim.spec is immutable in Kubernetes; never attempt to patch it.
+	rc.Labels = labels
+	if err := controllerutil.SetControllerReference(owner, rc, scheme); err != nil {
+		return err
+	}
+	return cl.Update(ctx, rc)
 }
 
 // DeleteResourceClaim deletes a ResourceClaim by name. NotFound errors are ignored.

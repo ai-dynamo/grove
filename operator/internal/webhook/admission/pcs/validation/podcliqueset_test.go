@@ -691,6 +691,81 @@ func TestImmutableFieldsValidation(t *testing.T) {
 			expectError:    true,
 			expectedErrMsg: "field is immutable",
 		},
+		{
+			name: "Invalid: PCS resourceClaimTemplates is immutable",
+			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createTestPodCliqueSet("test")
+				pcs.Spec.Template.ResourceClaimTemplates = []grovecorev1alpha1.ResourceClaimTemplateConfig{
+					{Name: "tpl-a", TemplateSpec: resourcev1.ResourceClaimTemplateSpec{}},
+				}
+				return pcs
+			},
+			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createTestPodCliqueSet("test")
+				pcs.Spec.Template.ResourceClaimTemplates = []grovecorev1alpha1.ResourceClaimTemplateConfig{
+					{Name: "tpl-b", TemplateSpec: resourcev1.ResourceClaimTemplateSpec{}},
+				}
+				return pcs
+			},
+			expectError:    true,
+			expectedErrMsg: "field is immutable",
+		},
+		{
+			name: "Invalid: PCS resourceSharing is immutable",
+			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createTestPodCliqueSet("test")
+				pcs.Spec.Template.ResourceSharing = []grovecorev1alpha1.PCSResourceSharingSpec{
+					{ResourceSharingSpecBase: grovecorev1alpha1.ResourceSharingSpecBase{Name: "share-a", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas}},
+				}
+				return pcs
+			},
+			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createTestPodCliqueSet("test")
+				pcs.Spec.Template.ResourceSharing = []grovecorev1alpha1.PCSResourceSharingSpec{
+					{ResourceSharingSpecBase: grovecorev1alpha1.ResourceSharingSpecBase{Name: "share-a", Scope: grovecorev1alpha1.ResourceSharingScopePerReplica}},
+				}
+				return pcs
+			},
+			expectError:    true,
+			expectedErrMsg: "field is immutable",
+		},
+		{
+			name: "Invalid: PCLQ resourceSharing is immutable",
+			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createTestPodCliqueSet("test")
+				pcs.Spec.Template.Cliques[0].ResourceSharing = []grovecorev1alpha1.ResourceSharingSpecBase{
+					{Name: "share-a", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
+				}
+				return pcs
+			},
+			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createTestPodCliqueSet("test")
+				pcs.Spec.Template.Cliques[0].ResourceSharing = []grovecorev1alpha1.ResourceSharingSpecBase{
+					{Name: "share-a", Scope: grovecorev1alpha1.ResourceSharingScopePerReplica},
+				}
+				return pcs
+			},
+			expectError:    true,
+			expectedErrMsg: "field is immutable",
+		},
+		{
+			name: "Valid: PCS resourceClaimTemplates unchanged",
+			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createTestPodCliqueSet("test")
+				pcs.Spec.Template.ResourceClaimTemplates = []grovecorev1alpha1.ResourceClaimTemplateConfig{
+					{Name: "tpl-a", TemplateSpec: resourcev1.ResourceClaimTemplateSpec{}},
+				}
+				return pcs
+			},
+			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createTestPodCliqueSet("test")
+				pcs.Spec.Template.ResourceClaimTemplates = []grovecorev1alpha1.ResourceClaimTemplateConfig{
+					{Name: "tpl-a", TemplateSpec: resourcev1.ResourceClaimTemplateSpec{}},
+				}
+				return pcs
+			},
+			expectError: false,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -851,6 +926,55 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 				{
 					CliqueNames:  []string{"clique1"},
 					MinAvailable: ptr.To(int32(1)),
+				},
+			},
+			expectedErrors: true,
+			expectedErrMsg: "field is immutable",
+		},
+		{
+			name: "same resourceSharing - should pass",
+			oldConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				{
+					Name:         "sg1",
+					CliqueNames:  []string{"clique1"},
+					MinAvailable: ptr.To(int32(1)),
+					ResourceSharing: []grovecorev1alpha1.PCSGResourceSharingSpec{
+						{ResourceSharingSpecBase: grovecorev1alpha1.ResourceSharingSpecBase{Name: "share-a", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas}},
+					},
+				},
+			},
+			newConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				{
+					Name:         "sg1",
+					CliqueNames:  []string{"clique1"},
+					MinAvailable: ptr.To(int32(1)),
+					ResourceSharing: []grovecorev1alpha1.PCSGResourceSharingSpec{
+						{ResourceSharingSpecBase: grovecorev1alpha1.ResourceSharingSpecBase{Name: "share-a", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas}},
+					},
+				},
+			},
+			expectedErrors: false,
+		},
+		{
+			name: "different resourceSharing - should fail",
+			oldConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				{
+					Name:         "sg1",
+					CliqueNames:  []string{"clique1"},
+					MinAvailable: ptr.To(int32(1)),
+					ResourceSharing: []grovecorev1alpha1.PCSGResourceSharingSpec{
+						{ResourceSharingSpecBase: grovecorev1alpha1.ResourceSharingSpecBase{Name: "share-a", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas}},
+					},
+				},
+			},
+			newConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				{
+					Name:         "sg1",
+					CliqueNames:  []string{"clique1"},
+					MinAvailable: ptr.To(int32(1)),
+					ResourceSharing: []grovecorev1alpha1.PCSGResourceSharingSpec{
+						{ResourceSharingSpecBase: grovecorev1alpha1.ResourceSharingSpecBase{Name: "share-a", Scope: grovecorev1alpha1.ResourceSharingScopePerReplica}},
+					},
 				},
 			},
 			expectedErrors: true,
@@ -1325,6 +1449,15 @@ func TestValidateResourceSharingSpecBases(t *testing.T) {
 			name: "external ref (no internal match) with namespace is valid",
 			refs: []grovecorev1alpha1.ResourceSharingSpecBase{
 				{Name: "external-tpl", Namespace: "shared-ns", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
+			},
+		},
+		{
+			name: "invalid scope",
+			refs: []grovecorev1alpha1.ResourceSharingSpecBase{
+				{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScope("BadScope")},
+			},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeNotSupported, Field: "spec.template.resourceSharing[0].scope"},
 			},
 		},
 	}

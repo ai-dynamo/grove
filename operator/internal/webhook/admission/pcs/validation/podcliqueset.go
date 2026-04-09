@@ -204,6 +204,10 @@ func (v *pcsValidator) validateResourceSharingSpecBases(refs []grovecorev1alpha1
 	for _, rct := range v.pcs.Spec.Template.ResourceClaimTemplates {
 		templateNames.Insert(rct.Name)
 	}
+	validScopes := sets.New(
+		grovecorev1alpha1.ResourceSharingScopeAllReplicas,
+		grovecorev1alpha1.ResourceSharingScopePerReplica,
+	)
 	seenNames := sets.New[string]()
 	for i, ref := range refs {
 		refPath := fldPath.Index(i)
@@ -216,6 +220,9 @@ func (v *pcsValidator) validateResourceSharingSpecBases(refs []grovecorev1alpha1
 		seenNames.Insert(ref.Name)
 		if ref.Namespace != "" && ref.Name != "" && templateNames.Has(ref.Name) {
 			allErrs = append(allErrs, field.Invalid(refPath.Child("namespace"), ref.Namespace, "namespace must be empty when name matches an internal resourceClaimTemplate"))
+		}
+		if !validScopes.Has(ref.Scope) {
+			allErrs = append(allErrs, field.NotSupported(refPath.Child("scope"), ref.Scope, validScopes.UnsortedList()))
 		}
 	}
 	return allErrs
@@ -636,6 +643,8 @@ func (v *pcsValidator) validatePodCliqueSetTemplateSpecUpdate(oldPCS *grovecorev
 	allErrs = append(allErrs, apivalidation.ValidateImmutableField(v.pcs.Spec.Template.StartupType, oldPCS.Spec.Template.StartupType, fldPath.Child("cliqueStartupType"))...)
 	allErrs = append(allErrs, v.validatePodCliqueScalingGroupConfigsUpdate(oldPCS.Spec.Template.PodCliqueScalingGroupConfigs, fldPath.Child("podCliqueScalingGroups"))...)
 	allErrs = append(allErrs, v.validateTopologyConstraintsUpdate(oldPCS)...)
+	allErrs = append(allErrs, apivalidation.ValidateImmutableField(v.pcs.Spec.Template.ResourceClaimTemplates, oldPCS.Spec.Template.ResourceClaimTemplates, fldPath.Child("resourceClaimTemplates"))...)
+	allErrs = append(allErrs, apivalidation.ValidateImmutableField(v.pcs.Spec.Template.ResourceSharing, oldPCS.Spec.Template.ResourceSharing, fldPath.Child("resourceSharing"))...)
 
 	return allErrs
 }
@@ -667,6 +676,7 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigsUpdate(oldConfigs []g
 		configFldPath := fldPath
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newConfig.CliqueNames, oldConfig.CliqueNames, configFldPath.Child("cliqueNames"))...)
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newConfig.MinAvailable, oldConfig.MinAvailable, configFldPath.Child("minAvailable"))...)
+		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newConfig.ResourceSharing, oldConfig.ResourceSharing, configFldPath.Child("resourceSharing"))...)
 	}
 
 	return allErrs
@@ -721,6 +731,7 @@ func (v *pcsValidator) validatePodCliqueUpdate(oldCliques []*grovecorev1alpha1.P
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.MinAvailable, oldIndexCliqueTuple.B.Spec.MinAvailable, cliqueFldPath.Child("minAvailable"))...)
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.StartsAfter, oldIndexCliqueTuple.B.Spec.StartsAfter, cliqueFldPath.Child("startsAfter"))...)
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.PodSpec.SchedulerName, oldIndexCliqueTuple.B.Spec.PodSpec.SchedulerName, cliqueFldPath.Child("podSpec", "schedulerName"))...)
+		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.ResourceSharing, oldIndexCliqueTuple.B.ResourceSharing, fldPath.Child("resourceSharing"))...)
 	}
 
 	return allErrs

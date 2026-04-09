@@ -181,7 +181,9 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 	// Configure hostname and subdomain for service discovery
 	configurePodHostname(pcsName, pcsReplicaIndex, pclq.Name, pod, podIndex)
 	// Inject all ResourceClaim refs (PCS, PCSG, PCLQ) at every scope into the pod
-	injectAllResourceClaimRefs(pcs, pclq, &pod.Spec, pcsReplicaIndex, podIndex)
+	if err := injectAllResourceClaimRefs(pcs, pclq, &pod.Spec, pcsReplicaIndex, podIndex); err != nil {
+		return err
+	}
 	// If there is a need to enforce a Startup-Order then configure the init container and add it to the Pod Spec.
 	if len(pclq.Spec.StartsAfter) != 0 {
 		return configurePodInitContainer(pcs, pclq, pod)
@@ -192,14 +194,14 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 // injectAllResourceClaimRefs is the single consolidated injection point for all
 // ResourceClaim references into a Pod's spec. It injects refs from every level
 // of the hierarchy: PCS, PCSG (if applicable), and PCLQ.
-func injectAllResourceClaimRefs(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, podSpec *corev1.PodSpec, pcsReplicaIndex, podIndex int) {
+func injectAllResourceClaimRefs(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, podSpec *corev1.PodSpec, pcsReplicaIndex, podIndex int) error {
 	cliqueName, err := utils.GetPodCliqueNameFromPodCliqueFQN(pclq.ObjectMeta)
 	if err != nil {
-		return
+		return fmt.Errorf("failed to get PodClique name: %w", err)
 	}
 	pclqTemplateSpec := componentutils.FindPodCliqueTemplateSpecByName(pcs, cliqueName)
 	if pclqTemplateSpec == nil {
-		return
+		return fmt.Errorf("PodClique template %q not found in PCS spec", cliqueName)
 	}
 
 	// Build match names for PCS-level filter resolution
@@ -238,6 +240,7 @@ func injectAllResourceClaimRefs(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grove
 		resourceclaim.InjectResourceClaimRefs(podSpec, pclq.Name, resourceSharers, nil)
 		resourceclaim.InjectResourceClaimRefs(podSpec, pclq.Name, resourceSharers, &podIndex)
 	}
+	return nil
 }
 
 // Delete removes all Pods associated with the specified PodClique

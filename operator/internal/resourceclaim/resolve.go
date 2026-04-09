@@ -47,6 +47,9 @@ func resolveInternalRef(
 	base *grovecorev1alpha1.ResourceSharingSpecBase,
 	pcsTemplates []grovecorev1alpha1.ResourceClaimTemplateConfig,
 ) *resourcev1.ResourceClaimTemplateSpec {
+	if base.Namespace != "" {
+		return nil
+	}
 	for i := range pcsTemplates {
 		if pcsTemplates[i].Name == base.Name {
 			return &pcsTemplates[i].TemplateSpec

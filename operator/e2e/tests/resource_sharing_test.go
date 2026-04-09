@@ -23,10 +23,13 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 const (
@@ -49,6 +52,7 @@ const (
 //     int-tpl7/AllReplicas (filter: childScalingGroupNames: [sga])
 //   PCLQ "worker-a" (standalone):
 //     int-tpl4/PerReplica
+//     ext-ns-tpl/AllReplicas (cross-namespace: rs-shared)
 //   PCSG "sga" (replicas=2):
 //     int-tpl2/AllReplicas (broadcast)
 //     int-tpl3/PerReplica  (broadcast)
@@ -61,7 +65,7 @@ const (
 //   PCS  → childScalingGroupNames  (int-tpl7 targets sga only)
 //   PCSG → childCliqueNames        (int-tpl8 targets worker-b only)
 
-// initialRCNames: PCS=1, sga=2, worker-a=1 pod. Total: 11 RCs.
+// initialRCNames: PCS=1, sga=2, worker-a=1 pod. Total: 12 RCs.
 func initialRCNames() []string {
 	return []string{
 		// PCS level
@@ -71,6 +75,7 @@ func initialRCNames() []string {
 		"rs-test-all-int-tpl7",
 		// Standalone PCLQ worker-a
 		"rs-test-0-worker-a-0-int-tpl4",
+		"rs-test-0-worker-a-all-ext-ns-tpl",
 		// PCSG sga
 		"rs-test-0-sga-all-int-tpl2",
 		"rs-test-0-sga-0-int-tpl3",
@@ -82,7 +87,7 @@ func initialRCNames() []string {
 	}
 }
 
-// pcsgScaleInRCNames: sga 2→1. Total: 9 RCs.
+// pcsgScaleInRCNames: sga 2→1. Total: 10 RCs.
 func pcsgScaleInRCNames() []string {
 	return []string{
 		"rs-test-all-int-tpl5",
@@ -90,6 +95,7 @@ func pcsgScaleInRCNames() []string {
 		"rs-test-0-int-tpl",
 		"rs-test-all-int-tpl7",
 		"rs-test-0-worker-a-0-int-tpl4",
+		"rs-test-0-worker-a-all-ext-ns-tpl",
 		"rs-test-0-sga-all-int-tpl2",
 		"rs-test-0-sga-0-int-tpl3",
 		"rs-test-0-sga-all-int-tpl8",
@@ -97,7 +103,7 @@ func pcsgScaleInRCNames() []string {
 	}
 }
 
-// pcsgScaleOutRCNames: sga 1→3. Total: 13 RCs.
+// pcsgScaleOutRCNames: sga 1→3. Total: 14 RCs.
 func pcsgScaleOutRCNames() []string {
 	return []string{
 		"rs-test-all-int-tpl5",
@@ -105,6 +111,7 @@ func pcsgScaleOutRCNames() []string {
 		"rs-test-0-int-tpl",
 		"rs-test-all-int-tpl7",
 		"rs-test-0-worker-a-0-int-tpl4",
+		"rs-test-0-worker-a-all-ext-ns-tpl",
 		"rs-test-0-sga-all-int-tpl2",
 		"rs-test-0-sga-0-int-tpl3",
 		"rs-test-0-sga-1-int-tpl3",
@@ -116,15 +123,15 @@ func pcsgScaleOutRCNames() []string {
 	}
 }
 
-// pclqScaleOutRCNames: worker-a 1→2 (sga still at 3). Total: 14 RCs.
+// pclqScaleOutRCNames: worker-a 1→2 (sga still at 3). Total: 15 RCs.
 func pclqScaleOutRCNames() []string {
 	return append(pcsgScaleOutRCNames(), "rs-test-0-worker-a-1-int-tpl4")
 }
 
 // pcsScaleOutRCNames: PCS 1→2.
-// Rep 0 keeps sga=3, worker-a=1 (13 RCs from pcsgScaleOutRCNames).
-// Rep 1 created from template: sga=2, worker-a=1 (9 new RCs).
-// Total: 22 RCs.
+// Rep 0 keeps sga=3, worker-a=1 (14 RCs from pcsgScaleOutRCNames).
+// Rep 1 created from template: sga=2, worker-a=1 (10 new RCs).
+// Total: 24 RCs.
 func pcsScaleOutRCNames() []string {
 	names := pcsgScaleOutRCNames()
 	return append(names,
@@ -133,6 +140,7 @@ func pcsScaleOutRCNames() []string {
 		"rs-test-1-int-tpl",
 		// Standalone PCLQ worker-a rep 1
 		"rs-test-1-worker-a-0-int-tpl4",
+		"rs-test-1-worker-a-all-ext-ns-tpl",
 		// PCSG sga rep 1 (template replicas=2)
 		"rs-test-1-sga-all-int-tpl2",
 		"rs-test-1-sga-0-int-tpl3",
@@ -167,6 +175,7 @@ func initialPodRefs() map[string][]string {
 			"rs-test-0-ext-tpl",
 			"rs-test-0-int-tpl",
 			"rs-test-0-worker-a-0-int-tpl4",
+			"rs-test-0-worker-a-all-ext-ns-tpl",
 		},
 		"rs-test-0-sga-0-worker-b": {
 			"rs-test-all-int-tpl5",
@@ -197,6 +206,7 @@ func pcsgScaleInPodRefs() map[string][]string {
 			"rs-test-0-ext-tpl",
 			"rs-test-0-int-tpl",
 			"rs-test-0-worker-a-0-int-tpl4",
+			"rs-test-0-worker-a-all-ext-ns-tpl",
 		},
 		"rs-test-0-sga-0-worker-b": {
 			"rs-test-all-int-tpl5",
@@ -218,6 +228,7 @@ func pcsgScaleOutPodRefs() map[string][]string {
 			"rs-test-0-ext-tpl",
 			"rs-test-0-int-tpl",
 			"rs-test-0-worker-a-0-int-tpl4",
+			"rs-test-0-worker-a-all-ext-ns-tpl",
 		},
 		"rs-test-0-sga-0-worker-b": {
 			"rs-test-all-int-tpl5",
@@ -257,6 +268,7 @@ func pcsScaleOutPodRefs() map[string][]string {
 		"rs-test-1-ext-tpl",
 		"rs-test-1-int-tpl",
 		"rs-test-1-worker-a-0-int-tpl4",
+		"rs-test-1-worker-a-all-ext-ns-tpl",
 	}
 	refs["rs-test-1-sga-0-worker-b"] = []string{
 		"rs-test-all-int-tpl5",
@@ -315,18 +327,21 @@ func Test_RS1_HierarchicalResourceSharing(t *testing.T) {
 	rcLabelSelector := fmt.Sprintf("app.kubernetes.io/managed-by=grove-operator,app.kubernetes.io/part-of=%s,app.kubernetes.io/component=resource-claim", rsWorkloadName)
 	podSelector := fmt.Sprintf("app.kubernetes.io/part-of=%s", rsWorkloadName)
 
-	Logger.Info("2. Deploy workload (PCS=1, sga=2, worker-a=1)")
+	Logger.Info("2. Create cross-namespace RCT (rs-shared/ext-ns-tpl)")
+	createCrossNamespaceRCT(t, tc)
+
+	Logger.Info("3. Deploy workload (PCS=1, sga=2, worker-a=1)")
 	_, err := applyYAMLFile(tc, rsYAMLPath)
 	if err != nil {
 		t.Fatalf("Failed to apply resource sharing workload: %v", err)
 	}
 
-	// --- Verify initial state (11 RCs, 3 pods) ---
+	// --- Verify initial state (12 RCs, 3 pods) ---
 
-	Logger.Info("3. Verify initial ResourceClaim creation (11 RCs)")
-	verifyRCState(t, tc, rcLabelSelector, 11, initialRCNames())
+	Logger.Info("4. Verify initial ResourceClaim creation (12 RCs)")
+	verifyRCState(t, tc, rcLabelSelector, 12, initialRCNames())
 
-	Logger.Info("4. Verify ResourceClaim labels")
+	Logger.Info("5. Verify ResourceClaim labels")
 	rcList, err := utils.ListResourceClaims(ctx, clients.DynamicClient, rsNamespace, rcLabelSelector)
 	if err != nil {
 		t.Fatalf("Failed to list ResourceClaims for label check: %v", err)
@@ -344,66 +359,86 @@ func Test_RS1_HierarchicalResourceSharing(t *testing.T) {
 		}
 	}
 
-	Logger.Info("5. Verify pod ResourceClaim references (3 pods)")
+	Logger.Info("6. Verify pod ResourceClaim references (3 pods)")
 	verifyPodState(t, tc, podSelector, 3, initialPodRefs())
+
+	Logger.Info("7. Verify ownerReferences on initial ResourceClaims")
+	verifyOwnerReferences(t, tc, rcLabelSelector, initialOwnerRefs())
 
 	// --- PCSG scale-in/out (single PCS replica) ---
 
-	Logger.Info("6. Scale PCSG sga from 2 to 1")
+	Logger.Info("8. Scale PCSG sga from 2 to 1")
 	if err := scalePodCliqueScalingGroup(tc, "rs-test-0-sga", 1); err != nil {
 		t.Fatalf("Failed to scale PCSG: %v", err)
 	}
-	verifyRCState(t, tc, rcLabelSelector, 9, pcsgScaleInRCNames())
+	verifyRCState(t, tc, rcLabelSelector, 10, pcsgScaleInRCNames())
 	verifyPodState(t, tc, podSelector, 2, pcsgScaleInPodRefs())
-	Logger.Info("   Verified 9 RCs and 2 pods after PCSG scale-in")
+	Logger.Info("   Verified 10 RCs and 2 pods after PCSG scale-in")
 
-	Logger.Info("7. Scale PCSG sga from 1 to 3")
+	Logger.Info("9. Scale PCSG sga from 1 to 3")
 	if err := scalePodCliqueScalingGroup(tc, "rs-test-0-sga", 3); err != nil {
 		t.Fatalf("Failed to scale PCSG: %v", err)
 	}
-	verifyRCState(t, tc, rcLabelSelector, 13, pcsgScaleOutRCNames())
+	verifyRCState(t, tc, rcLabelSelector, 14, pcsgScaleOutRCNames())
 	verifyPodState(t, tc, podSelector, 4, pcsgScaleOutPodRefs())
-	Logger.Info("   Verified 13 RCs and 4 pods after PCSG scale-out")
+	Logger.Info("   Verified 14 RCs and 4 pods after PCSG scale-out")
 
 	// --- PCLQ scale-out/in (single PCS replica) ---
 
-	Logger.Info("8. Scale standalone PCLQ worker-a from 1 to 2")
+	Logger.Info("10. Scale standalone PCLQ worker-a from 1 to 2")
 	if err := scalePodClique(tc, "rs-test-0-worker-a", 2); err != nil {
 		t.Fatalf("Failed to scale PCLQ: %v", err)
 	}
-	verifyRCState(t, tc, rcLabelSelector, 14, pclqScaleOutRCNames())
-	_, err = utils.WaitForPodCount(ctx, clients.Clientset, rsNamespace, podSelector, 5, tc.Timeout, tc.Interval)
+	verifyRCState(t, tc, rcLabelSelector, 15, pclqScaleOutRCNames())
+	pods, err := utils.WaitForPodCount(ctx, clients.Clientset, rsNamespace, podSelector, 5, tc.Timeout, tc.Interval)
 	if err != nil {
 		t.Fatalf("Expected 5 pods after PCLQ scale-out but timed out: %v", err)
 	}
-	Logger.Info("   Verified 14 RCs and 5 pods after PCLQ scale-out")
+	verifyMultiPodPerReplicaRefs(t, pods.Items, "rs-test-0-worker-a",
+		[]string{
+			"rs-test-all-int-tpl5",
+			"rs-test-0-ext-tpl",
+			"rs-test-0-int-tpl",
+			"rs-test-0-worker-a-all-ext-ns-tpl",
+		},
+		[]string{
+			"rs-test-0-worker-a-0-int-tpl4",
+			"rs-test-0-worker-a-1-int-tpl4",
+		},
+	)
+	Logger.Info("   Verified 15 RCs and 5 pods (per-pod refs) after PCLQ scale-out")
 
-	Logger.Info("9. Scale standalone PCLQ worker-a from 2 to 1")
+	Logger.Info("11. Scale standalone PCLQ worker-a from 2 to 1")
 	if err := scalePodClique(tc, "rs-test-0-worker-a", 1); err != nil {
 		t.Fatalf("Failed to scale PCLQ: %v", err)
 	}
-	verifyRCState(t, tc, rcLabelSelector, 13, pcsgScaleOutRCNames())
+	verifyRCState(t, tc, rcLabelSelector, 14, pcsgScaleOutRCNames())
 	verifyPodState(t, tc, podSelector, 4, pcsgScaleOutPodRefs())
-	Logger.Info("   Verified 13 RCs and 4 pods after PCLQ scale-in")
+	Logger.Info("   Verified 14 RCs and 4 pods after PCLQ scale-in")
 
 	// --- PCS scale-out/in ---
-	// Rep 0 retains sga=3 from step 7. Rep 1 is created from template (sga=2).
+	// Rep 0 retains sga=3 from step 9. Rep 1 is created from template (sga=2).
 
-	Logger.Info("10. Scale PCS from 1 to 2")
+	Logger.Info("12. Scale PCS from 1 to 2")
 	if err := scalePodCliqueSet(tc, rsWorkloadName, 2); err != nil {
 		t.Fatalf("Failed to scale PCS to 2: %v", err)
 	}
-	verifyRCState(t, tc, rcLabelSelector, 22, pcsScaleOutRCNames())
+	verifyRCState(t, tc, rcLabelSelector, 24, pcsScaleOutRCNames())
 	verifyPodState(t, tc, podSelector, 7, pcsScaleOutPodRefs())
-	Logger.Info("   Verified 22 RCs and 7 pods after PCS scale-out")
+	Logger.Info("   Verified 24 RCs and 7 pods after PCS scale-out")
 
-	Logger.Info("11. Scale PCS from 2 to 1")
+	Logger.Info("13. Scale PCS from 2 to 1")
 	if err := scalePodCliqueSet(tc, rsWorkloadName, 1); err != nil {
 		t.Fatalf("Failed to scale PCS to 1: %v", err)
 	}
-	verifyRCState(t, tc, rcLabelSelector, 13, pcsgScaleOutRCNames())
+	verifyRCState(t, tc, rcLabelSelector, 14, pcsgScaleOutRCNames())
 	verifyPodState(t, tc, podSelector, 4, pcsgScaleOutPodRefs())
-	Logger.Info("   Verified 13 RCs and 4 pods after PCS scale-in")
+	Logger.Info("   Verified 14 RCs and 4 pods after PCS scale-in")
+
+	// --- Immutability rejection ---
+
+	Logger.Info("14. Verify webhook rejects immutable resourceSharing change")
+	verifyImmutabilityRejection(t, tc)
 
 	Logger.Info("Hierarchical resource sharing e2e test completed successfully!")
 }
@@ -505,4 +540,182 @@ func extractContainerClaimNames(container v1.Container) []string {
 		names = append(names, claim.Name)
 	}
 	return names
+}
+
+// --- Cross-namespace RCT setup ---
+
+func createCrossNamespaceRCT(t *testing.T, tc TestContext) {
+	t.Helper()
+	ns := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "Namespace",
+			"metadata": map[string]interface{}{
+				"name": "rs-shared",
+			},
+		},
+	}
+	nsGVR := v1.SchemeGroupVersion.WithResource("namespaces")
+	_, err := tc.DynamicClient.Resource(nsGVR).Create(tc.Ctx, ns, metav1.CreateOptions{})
+	if err != nil && !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("Failed to create namespace rs-shared: %v", err)
+	}
+
+	rct := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "resource.k8s.io/v1",
+			"kind":       "ResourceClaimTemplate",
+			"metadata": map[string]interface{}{
+				"name":      "ext-ns-tpl",
+				"namespace": "rs-shared",
+			},
+			"spec": map[string]interface{}{
+				"spec": map[string]interface{}{
+					"devices": map[string]interface{}{
+						"requests": []interface{}{
+							map[string]interface{}{
+								"name": "ext-ns-dev",
+								"exactly": map[string]interface{}{
+									"deviceClassName": "ext-ns-class",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	rctGVR := utils.ResourceClaimGVR
+	rctGVR.Resource = "resourceclaimtemplates"
+	_, err = tc.DynamicClient.Resource(rctGVR).Namespace("rs-shared").Create(tc.Ctx, rct, metav1.CreateOptions{})
+	if err != nil && !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("Failed to create ResourceClaimTemplate rs-shared/ext-ns-tpl: %v", err)
+	}
+}
+
+// --- Owner reference verification ---
+
+type expectedOwner struct {
+	Kind string
+	Name string
+}
+
+func initialOwnerRefs() map[string]expectedOwner {
+	return map[string]expectedOwner{
+		// PCS-level RCs → owned by PodCliqueSet
+		"rs-test-all-int-tpl5": {Kind: "PodCliqueSet", Name: "rs-test"},
+		"rs-test-0-ext-tpl":    {Kind: "PodCliqueSet", Name: "rs-test"},
+		"rs-test-0-int-tpl":    {Kind: "PodCliqueSet", Name: "rs-test"},
+		"rs-test-all-int-tpl7": {Kind: "PodCliqueSet", Name: "rs-test"},
+		// PCLQ worker-a RCs → owned by PodClique
+		"rs-test-0-worker-a-0-int-tpl4":      {Kind: "PodClique", Name: "rs-test-0-worker-a"},
+		"rs-test-0-worker-a-all-ext-ns-tpl":   {Kind: "PodClique", Name: "rs-test-0-worker-a"},
+		// PCSG sga RCs → owned by PodCliqueScalingGroup
+		"rs-test-0-sga-all-int-tpl2": {Kind: "PodCliqueScalingGroup", Name: "rs-test-0-sga"},
+		"rs-test-0-sga-0-int-tpl3":   {Kind: "PodCliqueScalingGroup", Name: "rs-test-0-sga"},
+		"rs-test-0-sga-1-int-tpl3":   {Kind: "PodCliqueScalingGroup", Name: "rs-test-0-sga"},
+		"rs-test-0-sga-all-int-tpl8": {Kind: "PodCliqueScalingGroup", Name: "rs-test-0-sga"},
+		// PCLQ worker-b in sga RCs → owned by PodClique
+		"rs-test-0-sga-0-worker-b-all-int-tpl6": {Kind: "PodClique", Name: "rs-test-0-sga-0-worker-b"},
+		"rs-test-0-sga-1-worker-b-all-int-tpl6": {Kind: "PodClique", Name: "rs-test-0-sga-1-worker-b"},
+	}
+}
+
+func verifyOwnerReferences(t *testing.T, tc TestContext, labelSelector string, expected map[string]expectedOwner) {
+	t.Helper()
+	rcList, err := utils.ListResourceClaims(tc.Ctx, tc.DynamicClient, tc.Namespace, labelSelector)
+	if err != nil {
+		t.Fatalf("Failed to list ResourceClaims for ownerRef check: %v", err)
+	}
+	for _, rc := range rcList.Items {
+		name := rc.GetName()
+		exp, ok := expected[name]
+		if !ok {
+			continue
+		}
+		owners := rc.GetOwnerReferences()
+		if len(owners) == 0 {
+			t.Errorf("RC %s has no ownerReferences", name)
+			continue
+		}
+		found := false
+		for _, ref := range owners {
+			if ref.Kind == exp.Kind && ref.Name == exp.Name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("RC %s: expected owner %s/%s, got %v", name, exp.Kind, exp.Name, owners)
+		}
+	}
+}
+
+// --- Multi-pod PerReplica ref verification ---
+
+func verifyMultiPodPerReplicaRefs(t *testing.T, allPods []v1.Pod, pclqLabel string, commonRefs, uniqueRefs []string) {
+	t.Helper()
+	var matchedPods []v1.Pod
+	for _, pod := range allPods {
+		if pod.Labels[LabelPodClique] == pclqLabel {
+			matchedPods = append(matchedPods, pod)
+		}
+	}
+	if len(matchedPods) != len(uniqueRefs) {
+		t.Fatalf("Expected %d pods for PCLQ %s, got %d", len(uniqueRefs), pclqLabel, len(matchedPods))
+	}
+
+	seenUnique := make(map[string]bool)
+	for _, pod := range matchedPods {
+		podClaimNames := extractPodResourceClaimNames(pod.Spec)
+		expectedTotal := len(commonRefs) + 1
+		if len(podClaimNames) != expectedTotal {
+			t.Errorf("Pod %s (pclq=%s) expected %d refs, got %d: %v", pod.Name, pclqLabel, expectedTotal, len(podClaimNames), podClaimNames)
+			continue
+		}
+		for _, common := range commonRefs {
+			if !slices.Contains(podClaimNames, common) {
+				t.Errorf("Pod %s missing common ref %s", pod.Name, common)
+			}
+		}
+		for _, name := range podClaimNames {
+			if slices.Contains(uniqueRefs, name) {
+				seenUnique[name] = true
+			}
+		}
+	}
+	for _, u := range uniqueRefs {
+		if !seenUnique[u] {
+			t.Errorf("PerReplica ref %s not found on any pod of PCLQ %s", u, pclqLabel)
+		}
+	}
+}
+
+// --- Immutability rejection ---
+
+func verifyImmutabilityRejection(t *testing.T, tc TestContext) {
+	t.Helper()
+	pcs, err := tc.DynamicClient.Resource(utils.PodCliqueSetGVR).Namespace(tc.Namespace).Get(tc.Ctx, rsWorkloadName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get PCS for immutability test: %v", err)
+	}
+
+	spec := pcs.Object["spec"].(map[string]interface{})
+	template := spec["template"].(map[string]interface{})
+	resourceSharing := template["resourceSharing"].([]interface{})
+	rs0 := resourceSharing[0].(map[string]interface{})
+	originalScope := rs0["scope"]
+	if originalScope == "PerReplica" {
+		rs0["scope"] = "AllReplicas"
+	} else {
+		rs0["scope"] = "PerReplica"
+	}
+
+	_, err = tc.DynamicClient.Resource(utils.PodCliqueSetGVR).Namespace(tc.Namespace).Update(tc.Ctx, pcs, metav1.UpdateOptions{})
+	if err == nil {
+		t.Fatal("Expected webhook rejection for immutable resourceSharing change, but update succeeded")
+	}
+	if !strings.Contains(err.Error(), "field is immutable") {
+		t.Fatalf("Expected 'field is immutable' error, got: %v", err)
+	}
 }

@@ -22,6 +22,7 @@ spec:
 #
 #   Standalone PCLQ "worker-a":
 #     int-tpl4 / PerReplica
+#     ext-ns-tpl / AllReplicas  (cross-namespace: rs-shared)
 #
 #   PCSG "sga" (replicas=2):
 #     int-tpl2 / AllReplicas  (no filter → broadcast)
@@ -131,6 +132,9 @@ spec:
         resourceSharing:
           - name: int-tpl4
             scope: PerReplica
+          - name: ext-ns-tpl
+            namespace: rs-shared
+            scope: AllReplicas
         spec:
           roleName: role-a
           replicas: 1
