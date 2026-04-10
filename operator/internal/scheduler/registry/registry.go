@@ -92,41 +92,9 @@ func newSchedulerBackend(cl client.Client, scheme *runtime.Scheme, rec record.Ev
 	}
 }
 
-// registry is the concrete implementation of scheduler.Registry.
-type registry struct {
-	backends       map[string]scheduler.Backend
-	defaultBackend scheduler.Backend
-}
-
-func (r *registry) Get(name string) scheduler.Backend {
-	return r.backends[name]
-}
-
-func (r *registry) GetDefault() scheduler.Backend {
-	return r.defaultBackend
-}
-
-// NewRegistry creates a Registry by initializing backend instances for each
-// profile in cfg.Profiles. Called once during operator startup.
-func NewRegistry(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, cfg configv1alpha1.SchedulerConfiguration) (scheduler.Registry, error) {
-	reg := &registry{backends: make(map[string]scheduler.Backend)}
-	for _, p := range cfg.Profiles {
-		backend, err := newBackendForProfile(cl, scheme, eventRecorder, p)
-		if err != nil {
-			return nil, fmt.Errorf("failed to initialize %s backend: %w", p.Name, err)
-		}
-		reg.backends[backend.Name()] = backend
-		if string(p.Name) == cfg.DefaultProfileName {
-			reg.defaultBackend = backend
-		}
-	}
-	return reg, nil
-}
-
 // All returns all registered scheduler backends keyed by name.
-func All() map[string]scheduler.Backend {
+func (r *registry) All() map[string]scheduler.Backend {
 	result := make(map[string]scheduler.Backend)
-	maps.Copy(result, backends)
+	maps.Copy(result, r.backends)
 	return result
 }
-

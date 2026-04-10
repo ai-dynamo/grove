@@ -49,6 +49,11 @@ func (r *FakeSchedulerRegistry) GetDefault() scheduler.Backend {
 	return r.Backends[r.DefaultBackend]
 }
 
+// All returns all registered scheduler backends keyed by name.
+func (r *FakeSchedulerRegistry) All() map[string]scheduler.Backend {
+	return r.Backends
+}
+
 // FakeSchedulerBackend is a minimal scheduler.Backend implementation for unit tests.
 type FakeSchedulerBackend struct{ name string }
 
