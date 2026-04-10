@@ -188,6 +188,7 @@ func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1alph
 
 // syncPCLQResources synchronizes all managed resources for the PodClique using registered operators
 func (r *Reconciler) syncPCLQResources(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
+	continueReconcileAndRequeueKinds := make([]component.Kind, 0)
 	for _, kind := range getOrderedKindsForSync() {
 		operator, err := r.operatorRegistry.GetOperator(kind)
 		if err != nil {
@@ -195,6 +196,11 @@ func (r *Reconciler) syncPCLQResources(ctx context.Context, logger logr.Logger, 
 		}
 		logger.Info("Syncing PodClique resources", "kind", kind)
 		if err = operator.Sync(ctx, logger, pclq); err != nil {
+			if ctrlutils.ShouldContinueReconcileAndRequeue(err) {
+				logger.Info("components has registered a request to requeue post completion of all components syncs", "kind", kind, "message", err.Error())
+				continueReconcileAndRequeueKinds = append(continueReconcileAndRequeueKinds, kind)
+				continue
+			}
 			if shouldRequeue := ctrlutils.ShouldRequeueAfter(err); shouldRequeue {
 				logger.Info("retrying sync due to components", "kind", kind, "syncRetryInterval", constants.ComponentSyncRetryInterval, "message", err.Error())
 				return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, err.Error())
@@ -202,6 +208,9 @@ func (r *Reconciler) syncPCLQResources(ctx context.Context, logger logr.Logger, 
 			logger.Error(err, "failed to sync PodClique resources", "kind", kind)
 			return ctrlcommon.ReconcileWithErrors("error syncing managed resources", fmt.Errorf("failed to sync %s: %w", kind, err))
 		}
+	}
+	if len(continueReconcileAndRequeueKinds) > 0 {
+		return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, fmt.Sprintf("requeueing sync due to components(s) %v after %s", continueReconcileAndRequeueKinds, constants.ComponentSyncRetryInterval))
 	}
 	return ctrlcommon.ContinueReconcile()
 }
