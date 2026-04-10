@@ -107,4 +107,7 @@ type Registry interface {
 	// GetDefault returns the backend marked as default in
 	// OperatorConfiguration (scheduler.defaultProfileName).
 	GetDefault() Backend
+
+	// All returns all registered scheduler backends keyed by name.
+	All() map[string]Backend
 }
