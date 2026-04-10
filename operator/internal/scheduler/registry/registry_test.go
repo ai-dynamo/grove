@@ -194,3 +194,20 @@ func TestGetDefault(t *testing.T) {
 		assert.Nil(t, reg.GetDefault())
 	})
 }
+
+// TestAll tests the All method of registry in isolation using stub backends.
+func TestAll(t *testing.T) {
+	kubeBackend := testutils.NewFakeSchedulerBackend("kube")
+	kaiBackend := testutils.NewFakeSchedulerBackend("kai")
+	reg := &registry{
+		backends: map[string]scheduler.Backend{
+			"kube": kubeBackend,
+			"kai":  kaiBackend,
+		},
+	}
+	require.NotNil(t, reg.All())
+	assert.Equal(t, reg.All(), map[string]scheduler.Backend{
+		"kube": kubeBackend,
+		"kai":  kaiBackend,
+	})
+}
