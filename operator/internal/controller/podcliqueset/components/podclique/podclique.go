@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
@@ -303,6 +304,8 @@ func (r _resource) buildResource(logger logr.Logger, pclq *grovecorev1alpha1.Pod
 			fmt.Sprintf("Error setting controller reference for PodClique: %v", client.ObjectKeyFromObject(pclq)),
 		)
 	}
+	// Add finalizer at creation so PCLQ controller does not need a separate PATCH on first reconcile.
+	controllerutil.AddFinalizer(pclq, apiconstants.FinalizerPodClique)
 	pclq.Labels = getLabels(pcs, pcsReplica, pclqObjectKey, pclqTemplateSpec, apicommon.GeneratePodGangNameForPodCliqueOwnedByPodCliqueSet(pcs, pcsReplica))
 	pclq.Annotations = pclqTemplateSpec.Annotations
 	// set PodCliqueSpec
