@@ -30,14 +30,18 @@ import (
 )
 
 // GetAvailableIndices returns the `requiredIndicesCount` available indices for pods.
-// Extracts indices from active pod hostnames and returns the available indices,
-// Extracts indices from hostnames of active pods and returns the available indices,
-// filling holes from lowest to highest (starting from 0).
+// It considers as used: indices from active existing pods (by hostname) and any reservedIndices
+// (e.g. indices assigned to in-flight creations not yet observed in the pod list).
+// Available indices are filled from lowest to highest (starting from 0).
 // Active pods are those that are not terminating, not permanently failed (RestartPolicy=Never), and not succeeded.
-func GetAvailableIndices(logger logr.Logger, existingPods []*corev1.Pod, requiredIndicesCount int) ([]int, error) {
+// reservedIndices can be nil; it is used to reserve indices that are already assigned but not yet visible in existingPods.
+func GetAvailableIndices(logger logr.Logger, existingPods []*corev1.Pod, reservedIndices sets.Set[int], requiredIndicesCount int) ([]int, error) {
 	usedIndices, err := extractUsedIndices(logger, existingPods)
 	if err != nil {
 		return nil, err
+	}
+	if len(reservedIndices) > 0 {
+		usedIndices = usedIndices.Union(reservedIndices)
 	}
 	return findAvailableIndices(&usedIndices, requiredIndicesCount), nil
 }
