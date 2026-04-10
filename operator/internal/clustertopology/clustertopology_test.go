@@ -302,3 +302,15 @@ func createTestClusterTopology(name string, levels []grovecorev1alpha1.TopologyL
 		},
 	}
 }
+
+func TestBuildSchedulerReferenceMap(t *testing.T) {
+	refs := []grovecorev1alpha1.SchedulerReference{
+		{SchedulerName: "kai-scheduler", Reference: "kai-topo"},
+		{SchedulerName: "other-scheduler", Reference: "other-topo"},
+	}
+	m := BuildSchedulerReferenceMap(refs)
+	assert.NotNil(t, m["kai-scheduler"])
+	assert.Equal(t, "kai-topo", m["kai-scheduler"].Reference)
+	assert.Nil(t, m["nonexistent"])
+	assert.Empty(t, BuildSchedulerReferenceMap(nil))
+}

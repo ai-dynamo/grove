@@ -37,6 +37,8 @@ func SynchronizeTopology(ctx context.Context, cl client.Client, logger logr.Logg
 	}
 	for i := range ctList.Items {
 		ct := &ctList.Items[i]
+		schedulerRefMap := BuildSchedulerReferenceMap(ct.Spec.SchedulerReferences)
+
 		for _, b := range backends {
 			tasBackend, ok := b.(scheduler.TopologyAwareSchedBackend)
 			if !ok {
@@ -45,7 +47,7 @@ func SynchronizeTopology(ctx context.Context, cl client.Client, logger logr.Logg
 			}
 			// Only sync auto-managed backends (not listed in schedulerReferences).
 			// Externally-managed backends are handled by the CT controller via CheckTopologyDrift.
-			if hasSchedulerReference(ct.Spec.SchedulerReferences, b.Name()) {
+			if _, isExternallyManaged := schedulerRefMap[b.Name()]; isExternallyManaged {
 				continue
 			}
 			if err := tasBackend.SyncTopology(ctx, cl, ct); err != nil {
@@ -57,16 +59,6 @@ func SynchronizeTopology(ctx context.Context, cl client.Client, logger logr.Logg
 	return nil
 }
 
-// hasSchedulerReference returns true if the given scheduler name is listed in the schedulerReferences.
-func hasSchedulerReference(refs []grovecorev1alpha1.SchedulerReference, schedulerName string) bool {
-	for _, ref := range refs {
-		if ref.SchedulerName == schedulerName {
-			return true
-		}
-	}
-	return false
-}
-
 // GetClusterTopologyLevels retrieves the TopologyLevels from the specified ClusterTopology resource.
 func GetClusterTopologyLevels(ctx context.Context, cl client.Client, name string) ([]grovecorev1alpha1.TopologyLevel, error) {
 	clusterTopology := &grovecorev1alpha1.ClusterTopology{}
@@ -74,4 +66,13 @@ func GetClusterTopologyLevels(ctx context.Context, cl client.Client, name string
 		return nil, err
 	}
 	return clusterTopology.Spec.Levels, nil
+}
+
+// BuildSchedulerReferenceMap builds a map from scheduler name to SchedulerReference pointer.
+func BuildSchedulerReferenceMap(refs []grovecorev1alpha1.SchedulerReference) map[string]*grovecorev1alpha1.SchedulerReference {
+	m := make(map[string]*grovecorev1alpha1.SchedulerReference, len(refs))
+	for i := range refs {
+		m[refs[i].SchedulerName] = &refs[i]
+	}
+	return m
 }
