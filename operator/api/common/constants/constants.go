@@ -88,6 +88,9 @@ const (
 	// any scheduler backend topology resource has drifted from the ClusterTopology levels.
 	ConditionSchedulerTopologyDrift = "SchedulerTopologyDrift"
 
+	// ConditionReasonInSync is the reason when all scheduler backend topologies match the ClusterTopology levels.
+	ConditionReasonInSync = "InSync"
+
 	// ConditionReasonDrift is the reason when a scheduler backend topology has drifted.
 	ConditionReasonDrift = "Drift"
 
