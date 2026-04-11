@@ -67,7 +67,7 @@ type testConfig struct {
 //   - tc: TestContext for the test
 //   - cleanup: Function that should be deferred by the caller (stops tracker and cleans up cluster)
 //   - tracker: Started update tracker - caller can use tracker.GetEvents() after stopping
-func setupTest(t *testing.T, cfg testConfig) (tests.TestContext, func(), *updateTracker) {
+func setupTest(t *testing.T, cfg testConfig) (*tests.TestContext, func(), *updateTracker) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -84,36 +84,25 @@ func setupTest(t *testing.T, cfg testConfig) (tests.TestContext, func(), *update
 		cfg.namespace = "default"
 	}
 
-	// Step 1: Prepare test cluster
-	clients, clusterCleanup := tests.PrepareTestCluster(ctx, t, cfg.workerNodes)
-
-	// Step 2: Create TestContext
-	tc := tests.TestContext{
-		T:             t,
-		Ctx:           ctx,
-		Clientset:     clients.Clientset,
-		RestConfig:    clients.RestConfig,
-		DynamicClient: clients.DynamicClient,
-		CRClient:      clients.CRClient,
-		Namespace:     cfg.namespace,
-		Timeout:       tests.DefaultPollTimeout,
-		Interval:      tests.DefaultPollInterval,
-		Workload: &tests.WorkloadConfig{
+	// Step 1+2: Prepare test cluster and create TestContext
+	tc, clusterCleanup := tests.PrepareTest(ctx, t, cfg.workerNodes,
+		tests.WithNamespace(cfg.namespace),
+		tests.WithWorkload(&tests.WorkloadConfig{
 			Name:         cfg.workloadName,
 			YAMLPath:     cfg.workloadYAML,
 			Namespace:    cfg.namespace,
 			ExpectedPods: cfg.expectedPods,
-		},
-	}
+		}),
+	)
 
 	// Step 3: Deploy workload and verify initial pods
-	pods, err := tests.DeployAndVerifyWorkload(tc)
+	pods, err := tc.DeployAndVerifyWorkload()
 	if err != nil {
 		clusterCleanup()
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 
-	if err := tests.WaitForPods(tc, cfg.expectedPods); err != nil {
+	if err := tc.WaitForPods(cfg.expectedPods); err != nil {
 		clusterCleanup()
 		t.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
@@ -130,9 +119,9 @@ func setupTest(t *testing.T, cfg testConfig) (tests.TestContext, func(), *update
 			t.Fatalf("Failed to patch PCS with SIGTERM-ignoring command: %v", err)
 		}
 
-		tcLongTimeout := tc
+		tcLongTimeout := *tc
 		tcLongTimeout.Timeout = 2 * time.Minute
-		if err := waitForRollingUpdateComplete(tcLongTimeout, 1); err != nil {
+		if err := waitForRollingUpdateComplete(&tcLongTimeout, 1); err != nil {
 			clusterCleanup()
 			t.Fatalf("Failed to wait for SIGTERM patch rolling update to complete: %v", err)
 		}
@@ -140,9 +129,9 @@ func setupTest(t *testing.T, cfg testConfig) (tests.TestContext, func(), *update
 
 	// Step 5: Optional PCS scaling
 	if cfg.initialPCSReplicas > 0 {
-		tests.ScalePCSAndWait(tc, cfg.workloadName, cfg.initialPCSReplicas, cfg.postScalePods, 0)
+		tc.ScalePCSAndWait(cfg.workloadName, cfg.initialPCSReplicas, cfg.postScalePods, 0)
 
-		if err := tests.WaitForPods(tc, cfg.postScalePods); err != nil {
+		if err := tc.WaitForPods(cfg.postScalePods); err != nil {
 			clusterCleanup()
 			t.Fatalf("Failed to wait for pods to be ready after PCS scaling: %v", err)
 		}
@@ -154,7 +143,7 @@ func setupTest(t *testing.T, cfg testConfig) (tests.TestContext, func(), *update
 		if cfg.initialPCSReplicas > 0 {
 			pcsReplicas = cfg.initialPCSReplicas
 		}
-		tests.ScalePCSGAcrossAllReplicasAndWait(tc, cfg.workloadName, cfg.pcsgName, pcsReplicas, cfg.initialPCSGReplicas, cfg.postPCSGScalePods, 0)
+		tc.ScalePCSGAcrossAllReplicasAndWait(cfg.workloadName, cfg.pcsgName, pcsReplicas, cfg.initialPCSGReplicas, cfg.postPCSGScalePods, 0)
 	}
 
 	// Step 7: Create and start tracker
