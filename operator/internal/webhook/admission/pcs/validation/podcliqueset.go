@@ -17,6 +17,7 @@
 package validation
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	schedmanager "github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
+	volcanoscheduler "github.com/ai-dynamo/grove/operator/internal/scheduler/volcano"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 
 	"github.com/samber/lo"
@@ -34,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -49,12 +52,13 @@ type pcsValidator struct {
 	tasEnabled             bool
 	clusterTopologyDomains []string
 	schedulerConfig        groveconfigv1alpha1.SchedulerConfiguration
+	k8sClient              client.Reader
 }
 
 // newPCSValidator creates a new PodCliqueSet validator for the given operation.
 // schedulerConfig is the full scheduler configuration; the validator uses it for
 // scheduler-name matching and may use per-scheduler config for future validations.
-func newPCSValidator(pcs *grovecorev1alpha1.PodCliqueSet, operation admissionv1.Operation, tasConfig groveconfigv1alpha1.TopologyAwareSchedulingConfiguration, schedulerConfig groveconfigv1alpha1.SchedulerConfiguration) *pcsValidator {
+func newPCSValidator(pcs *grovecorev1alpha1.PodCliqueSet, operation admissionv1.Operation, tasConfig groveconfigv1alpha1.TopologyAwareSchedulingConfiguration, schedulerConfig groveconfigv1alpha1.SchedulerConfiguration, k8sClient client.Reader) *pcsValidator {
 	topologyDomains := lo.Map(tasConfig.Levels, func(level grovecorev1alpha1.TopologyLevel, _ int) string {
 		return string(level.Domain)
 	})
@@ -64,6 +68,7 @@ func newPCSValidator(pcs *grovecorev1alpha1.PodCliqueSet, operation admissionv1.
 		tasEnabled:             tasConfig.Enabled,
 		clusterTopologyDomains: topologyDomains,
 		schedulerConfig:        schedulerConfig,
+		k8sClient:              k8sClient,
 	}
 }
 
@@ -144,13 +149,82 @@ func (v *pcsValidator) validatePodCliqueTemplates(fldPath *field.Path) ([]string
 	allErrs = append(allErrs, sliceMustHaveUniqueElements(cliqueNames, fldPath.Child("name"))...)
 	allErrs = append(allErrs, sliceMustHaveUniqueElements(cliqueRoles, fldPath.Child("roleName"))...)
 
-	allErrs = append(allErrs, v.validateSchedulerNames(schedulerNames, fldPath)...)
+	schedulerErrs := v.validateSchedulerNames(schedulerNames, fldPath)
+	allErrs = append(allErrs, schedulerErrs...)
+	if len(schedulerErrs) == 0 && v.resolveSchedulerName(schedulerNames) == string(groveconfigv1alpha1.SchedulerNameVolcano) {
+		allErrs = append(allErrs, v.validateVolcanoQueueAnnotations()...)
+	}
 
 	if v.isStartupTypeExplicit() {
 		allErrs = append(allErrs, validateCliqueDependencies(cliqueTemplateSpecs, fldPath)...)
 	}
 
 	return warnings, allErrs
+}
+
+func (v *pcsValidator) resolveSchedulerName(schedulerNames []string) string {
+	defaultSchedulerName := string(groveconfigv1alpha1.SchedulerNameKube)
+	if def := schedmanager.GetDefault(); def != nil {
+		defaultSchedulerName = def.Name()
+	}
+	if len(schedulerNames) == 0 {
+		return defaultSchedulerName
+	}
+	if schedulerNames[0] == "" {
+		return defaultSchedulerName
+	}
+	return schedulerNames[0]
+}
+
+func (v *pcsValidator) validateVolcanoQueueAnnotations() field.ErrorList {
+	allErrs := field.ErrorList{}
+	globalPath := field.NewPath("metadata").Child("annotations").Key(volcanoscheduler.QueueAnnotationKey)
+	globalQueueValue := strings.TrimSpace(v.pcs.Annotations[volcanoscheduler.QueueAnnotationKey])
+	queueFieldPath := globalPath
+	if globalQueueValue != "" {
+		if msgs := volcanoscheduler.ValidateQueueName(globalQueueValue); len(msgs) > 0 {
+			allErrs = append(allErrs, field.Invalid(globalPath, globalQueueValue, strings.Join(msgs, "; ")))
+		}
+	}
+
+	var resolvedQueue string
+	for i, cliqueTemplateSpec := range v.pcs.Spec.Template.Cliques {
+		cliquePath := field.NewPath("spec").Child("template").Child("cliques").Index(i).Child("annotations").Key(volcanoscheduler.QueueAnnotationKey)
+		cliqueQueueValue := strings.TrimSpace(cliqueTemplateSpec.Annotations[volcanoscheduler.QueueAnnotationKey])
+		if cliqueQueueValue != "" {
+			if globalQueueValue == "" && queueFieldPath == globalPath {
+				queueFieldPath = cliquePath
+			}
+			if msgs := volcanoscheduler.ValidateQueueName(cliqueQueueValue); len(msgs) > 0 {
+				allErrs = append(allErrs, field.Invalid(cliquePath, cliqueQueueValue, strings.Join(msgs, "; ")))
+			}
+		}
+
+		queue, err := volcanoscheduler.ResolvePodCliqueQueue(v.pcs.Annotations, cliqueTemplateSpec.Annotations)
+		if err != nil {
+			allErrs = append(allErrs, field.Invalid(cliquePath, cliqueQueueValue, fmt.Sprintf("must match %s when both are specified", globalPath.String())))
+			continue
+		}
+		if resolvedQueue == "" {
+			resolvedQueue = queue
+			continue
+		}
+		if resolvedQueue != queue {
+			allErrs = append(allErrs, field.Invalid(cliquePath, queue, "all PodCliques in a PodCliqueSet using volcano scheduler must resolve to the same queue"))
+		}
+	}
+
+	if len(v.pcs.Spec.Template.Cliques) == 0 {
+		resolvedQueue = volcanoscheduler.EffectiveQueueFromAnnotations(v.pcs.Annotations)
+	}
+
+	if len(allErrs) > 0 {
+		return allErrs
+	}
+	if err := volcanoscheduler.ValidateQueueExistsAndIsOpen(context.Background(), v.k8sClient, resolvedQueue); err != nil {
+		allErrs = append(allErrs, field.Invalid(queueFieldPath, resolvedQueue, err.Error()))
+	}
+	return allErrs
 }
 
 // validateSchedulerNames ensures all pod scheduler names resolve to the same scheduler and that scheduler is enabled.
