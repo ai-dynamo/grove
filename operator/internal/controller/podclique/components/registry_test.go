@@ -22,6 +22,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
+	"github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,8 +46,9 @@ func TestCreateOperatorRegistry(t *testing.T) {
 		mgr := &mockManager{client: cl, scheme: scheme}
 		eventRecorder := record.NewFakeRecorder(10)
 		expectationsStore := expect.NewExpectationsStore()
+		schedRegistry := &utils.FakeSchedulerRegistry{}
 
-		registry := CreateOperatorRegistry(mgr, eventRecorder, expectationsStore)
+		registry := CreateOperatorRegistry(mgr, eventRecorder, expectationsStore, schedRegistry)
 
 		require.NotNil(t, registry)
 
