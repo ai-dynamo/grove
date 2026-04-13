@@ -9,7 +9,7 @@ import (
 	"strconv"
 
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
-	"github.com/ai-dynamo/grove/operator/e2e/utils/measurement"
+	"github.com/ai-dynamo/grove/operator/e2e/measurement"
 	"github.com/ai-dynamo/grove/operator/e2e/utils/portforward"
 	"github.com/ai-dynamo/grove/operator/e2e/utils/pprof"
 )

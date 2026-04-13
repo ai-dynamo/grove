@@ -199,6 +199,27 @@ run-e2e-real-full: e2e-cluster-up-real
 	@$(MAKE) e2e-cluster-down
 
 
+# Create a k3d cluster for scale testing (KWOK nodes + Pyroscope)
+# Uses the scale.yaml preset with 100 KWOK virtual nodes.
+# Override defaults: make scale-cluster-up E2E_CREATE_FLAGS="--set kwok.nodes=200"
+.PHONY: scale-cluster-up
+scale-cluster-up:
+	@$(MODULE_HACK_DIR)/infra-manager.py setup --config $(MODULE_HACK_DIR)/scale.yaml $(E2E_CREATE_FLAGS)
+
+# Delete the scale test cluster
+.PHONY: scale-cluster-down
+scale-cluster-down:
+	@$(MODULE_HACK_DIR)/infra-manager.py delete k3d-cluster
+
+# Run scale tests against an existing cluster
+# Usage: make run-scale-test [DIAG_DIR=<path>] [DIAG_MODE=<mode>]
+.PHONY: run-scale-test
+run-scale-test: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
+run-scale-test: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
+run-scale-test:
+	@echo "> Running scale tests..."
+	@cd e2e && go test -count=1 -tags=e2e ./tests/scale/... -v -timeout 30m
+
 # Make targets for local development and testing
 # -------------------------------------------------------------
 # Starts a local k8s cluster using kind.

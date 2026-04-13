@@ -32,17 +32,12 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/grove/config"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/resources"
+	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
-<<<<<<< HEAD
+
 	"github.com/ai-dynamo/grove/operator/e2e/measurement"
 	"github.com/ai-dynamo/grove/operator/e2e/measurement/condition"
 	"github.com/ai-dynamo/grove/operator/e2e/measurement/exporter"
-=======
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
-	"github.com/ai-dynamo/grove/operator/e2e/utils/measurement"
-	"github.com/ai-dynamo/grove/operator/e2e/utils/measurement/condition"
-	"github.com/ai-dynamo/grove/operator/e2e/utils/measurement/exporter"
->>>>>>> 25ee0ab (fix(e2e): restore scale test package and pprof integration after rebase)
 )
 
 // toOperatorMetadata converts GroveMetadata to the measurement package type.
@@ -62,7 +57,7 @@ func toOperatorMetadata(m *config.GroveMetadata) *measurement.OperatorMetadata {
 }
 
 // Logger for the scale tests.
-var Logger = utils.NewTestLogger(utils.InfoLevel)
+var Logger = log.NewTestLogger(log.InfoLevel)
 
 const (
 	scaleTestExpectedPods     = 1000
