@@ -130,6 +130,7 @@ func TestGetOrderedKindsForSync(t *testing.T) {
 		component.KindHorizontalPodAutoscaler,
 		component.KindPodCliqueSetReplica,
 		component.KindComputeDomain,
+		component.KindResourceClaim,
 		component.KindPodClique,
 		component.KindPodCliqueScalingGroup,
 		component.KindPodGang,

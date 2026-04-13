@@ -81,6 +81,8 @@ const (
 	KindPodCliqueSetReplica Kind = "PodCliqueSetReplica"
 	// KindComputeDomain indicates that the resource is a ComputeDomain.
 	KindComputeDomain Kind = "ComputeDomain"
+	// KindResourceClaim indicates that the resource is a DRA ResourceClaim.
+	KindResourceClaim Kind = "ResourceClaim"
 )
 
 // OperatorRegistry is a facade that gives access to all components operators.

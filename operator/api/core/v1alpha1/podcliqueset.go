@@ -17,6 +17,7 @@
 package v1alpha1
 
 import (
+	resourcev1 "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -216,6 +217,17 @@ type PodCliqueSetTemplateSpec struct {
 	// Defaults to 4 hours.
 	// +optional
 	TerminationDelay *metav1.Duration `json:"terminationDelay,omitempty"`
+	// ResourceClaimTemplates declares named ResourceClaimTemplateSpecs that can be
+	// referenced by name from resourceSharing fields at any level in the hierarchy.
+	// +optional
+	ResourceClaimTemplates []ResourceClaimTemplateConfig `json:"resourceClaimTemplates,omitempty"`
+	// ResourceSharing defines shared ResourceClaims at the PCS level.
+	// Each entry references a template (internal or external) and specifies a Scope:
+	//   - AllReplicas: one RC for the entire PCS, shared across ALL pods in ALL replicas
+	//   - PerReplica: one RC per PCS replica, shared across ALL pods in that replica
+	// The optional Filter field controls which children receive the claims.
+	// +optional
+	ResourceSharing []PCSResourceSharingSpec `json:"resourceSharing,omitempty"`
 	// PodCliqueScalingGroupConfigs is a list of scaling groups for the PodCliqueSet.
 	PodCliqueScalingGroupConfigs []PodCliqueScalingGroupConfig `json:"podCliqueScalingGroups,omitempty"`
 }
@@ -242,6 +254,16 @@ type PodCliqueTemplateSpec struct {
 	// Must be equal to or stricter than parent resource constraints.
 	// +optional
 	TopologyConstraint *TopologyConstraint `json:"topologyConstraint,omitempty"`
+	// ResourceSharing defines shared ResourceClaims for this PodClique.
+	// Each entry references a template (internal or external) and specifies a Scope:
+	//   - AllReplicas: one RC per PCLQ, shared by all replica pods
+	//   - PerReplica: one RC per PCLQ replica, shared by all pods within that replica
+	// This is distinct from adding ResourceClaimTemplate inside
+	// Spec.PodSpec.ResourceClaims[x].ResourceClaimTemplateName, which creates a unique
+	// ResourceClaim for each pod.
+	// PCLQs have no children to filter, so no Filter field is available.
+	// +optional
+	ResourceSharing []ResourceSharingSpecBase `json:"resourceSharing,omitempty"`
 	// Specification of the desired behavior of a PodClique.
 	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#spec-and-status
 	Spec PodCliqueSpec `json:"spec"`
@@ -290,10 +312,96 @@ type PodCliqueScalingGroupConfig struct {
 	// ScaleConfig is the horizontal pod autoscaler configuration for the pod clique scaling group.
 	// +optional
 	ScaleConfig *AutoScalingConfig `json:"scaleConfig,omitempty"`
+	// ResourceSharing defines shared ResourceClaims at the PCSG level.
+	// Each entry references a template (internal or external) and specifies a Scope:
+	//   - AllReplicas: one RC for the entire PCSG, shared across all replicas
+	//   - PerReplica: one RC per PCSG replica, shared across all PCLQs in that replica
+	// The optional Filter field controls which PodCliques receive the claims.
+	// At PCSG level, only childCliqueNames filtering is available.
+	// +optional
+	ResourceSharing []PCSGResourceSharingSpec `json:"resourceSharing,omitempty"`
 	// TopologyConstraint defines topology placement requirements for PodCliqueScalingGroup.
 	// Must be equal to or stricter than parent PodCliqueSet constraints.
 	// +optional
 	TopologyConstraint *TopologyConstraint `json:"topologyConstraint,omitempty"`
+}
+
+// ResourceSharingScope defines the sharing scope for resource claims.
+// +kubebuilder:validation:Enum=AllReplicas;PerReplica
+type ResourceSharingScope string
+
+const (
+	// ResourceSharingScopeAllReplicas creates one ResourceClaim per instance of the owning
+	// resource (PCS, PCLQ, or PCSG), shared across all replicas and pods within that instance.
+	ResourceSharingScopeAllReplicas ResourceSharingScope = "AllReplicas"
+	// ResourceSharingScopePerReplica creates one ResourceClaim per replica, shared
+	// across all pods within that replica.
+	ResourceSharingScopePerReplica ResourceSharingScope = "PerReplica"
+)
+
+// ResourceClaimTemplateConfig defines a named ResourceClaimTemplateSpec that can be
+// referenced by ResourceSharingSpec entries in resourceSharing fields.
+type ResourceClaimTemplateConfig struct {
+	// Name is a unique identifier for this template within the PodCliqueSet.
+	Name string `json:"name"`
+	// TemplateSpec is the ResourceClaimTemplate spec used to create ResourceClaim objects.
+	TemplateSpec resourcev1.ResourceClaimTemplateSpec `json:"templateSpec"`
+}
+
+// ResourceSharingSpecBase contains the common fields shared by all levels of
+// resource sharing (PCS, PCSG, PCLQ). It is used directly for PCLQ-level
+// resource sharing where no filter is needed.
+type ResourceSharingSpecBase struct {
+	// Name of the referenced template. Resolved by first looking up
+	// PodCliqueSetTemplateSpec.ResourceClaimTemplates; if no match is found,
+	// the operator looks for a Kubernetes ResourceClaimTemplate object in the
+	// target namespace. Internal templates shadow external ones with the same name.
+	Name string `json:"name"`
+	// Namespace of the external ResourceClaimTemplate. When set, the name is
+	// resolved as an external Kubernetes ResourceClaimTemplate in the given
+	// namespace. When empty, defaults to the PCS namespace during resolution.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+	// Scope determines the sharing granularity for the ResourceClaims created from
+	// this template.
+	Scope ResourceSharingScope `json:"scope"`
+}
+
+// PCSResourceSharingSpec defines resource sharing at the PCS level. The filter
+// can target both child PodCliques and child PodCliqueScalingGroups.
+type PCSResourceSharingSpec struct {
+	ResourceSharingSpecBase `json:",inline"`
+	// Filter narrows the scope by restricting which children receive the
+	// ResourceClaims. If absent, all children receive them (broadcast).
+	// +optional
+	Filter *PCSResourceSharingFilter `json:"filter,omitempty"`
+}
+
+// PCSResourceSharingFilter controls which children of a PCS receive the ResourceClaims.
+type PCSResourceSharingFilter struct {
+	// ChildCliqueNames limits distribution to the named immediate child PodCliques.
+	// +optional
+	ChildCliqueNames []string `json:"childCliqueNames,omitempty"`
+	// ChildScalingGroupNames limits distribution to the named immediate child PodCliqueScalingGroups.
+	// +optional
+	ChildScalingGroupNames []string `json:"childScalingGroupNames,omitempty"`
+}
+
+// PCSGResourceSharingSpec defines resource sharing at the PCSG level. The filter
+// can only target child PodCliques within the scaling group.
+type PCSGResourceSharingSpec struct {
+	ResourceSharingSpecBase `json:",inline"`
+	// Filter narrows the scope by restricting which child PodCliques receive
+	// the ResourceClaims. If absent, all PodCliques in the group receive them.
+	// +optional
+	Filter *PCSGResourceSharingFilter `json:"filter,omitempty"`
+}
+
+// PCSGResourceSharingFilter controls which child PodCliques of a PCSG receive the ResourceClaims.
+type PCSGResourceSharingFilter struct {
+	// ChildCliqueNames limits distribution to the named child PodCliques within this scaling group.
+	// +optional
+	ChildCliqueNames []string `json:"childCliqueNames,omitempty"`
 }
 
 // HeadlessServiceConfig defines the config options for the headless service.

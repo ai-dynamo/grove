@@ -25,6 +25,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podcliquescalinggroup"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podcliquesetreplica"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podgang"
+	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/resourceclaim"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/role"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/rolebinding"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/satokensecret"
@@ -46,6 +47,7 @@ func CreateOperatorRegistry(mgr manager.Manager, eventRecorder record.EventRecor
 	reg.Register(component.KindRoleBinding, rolebinding.New(cl, mgr.GetScheme()))
 	reg.Register(component.KindServiceAccount, serviceaccount.New(cl, mgr.GetScheme()))
 	reg.Register(component.KindServiceAccountTokenSecret, satokensecret.New(cl, mgr.GetScheme()))
+	reg.Register(component.KindResourceClaim, resourceclaim.New(cl, mgr.GetScheme()))
 	reg.Register(component.KindPodCliqueScalingGroup, podcliquescalinggroup.New(cl, mgr.GetScheme(), eventRecorder))
 	reg.Register(component.KindHorizontalPodAutoscaler, hpa.New(cl, mgr.GetScheme()))
 	reg.Register(component.KindPodGang, podgang.New(cl, mgr.GetScheme(), eventRecorder, topologyAwareSchedulingConfig))

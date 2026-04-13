@@ -521,6 +521,12 @@ func ScalePodCliqueSetWithClient(ctx context.Context, dynamicClient dynamic.Inte
 	return scaleCRD(ctx, dynamicClient, pcsGVR, namespace, name, replicas)
 }
 
+// ScalePodCliqueWithClient scales a PodClique using an existing dynamic client
+func ScalePodCliqueWithClient(ctx context.Context, dynamicClient dynamic.Interface, namespace, name string, replicas int) error {
+	pclqGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliques"}
+	return scaleCRD(ctx, dynamicClient, pclqGVR, namespace, name, replicas)
+}
+
 // scaleCRD is a helper function that patches the replicas field of a custom resource
 func scaleCRD(ctx context.Context, dynamicClient dynamic.Interface, gvr schema.GroupVersionResource, namespace, name string, replicas int) error {
 	scalePatch := map[string]interface{}{

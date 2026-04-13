@@ -46,7 +46,6 @@ import (
 func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) (sc *syncContext, err error) {
 	pcsObjectKey := client.ObjectKeyFromObject(pcs)
 	sc = &syncContext{
-		//ctx:                  ctx,
 		pcs:                  pcs,
 		logger:               logger,
 		existingPCLQPods:     make(map[string][]corev1.Pod),

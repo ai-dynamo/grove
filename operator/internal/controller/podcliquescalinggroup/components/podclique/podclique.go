@@ -62,6 +62,7 @@ const (
 	errCodeUpdateStatus                                  grovecorev1alpha1.ErrorCode = "ERR_UPDATE_STATUS"
 	errCodeComputePendingPodCliqueScalingGroupUpdateWork grovecorev1alpha1.ErrorCode = "ERR_COMPUTE_PENDINGUPDATE_WORK"
 	errCodeCreateOrUpdatePodCliques                      grovecorev1alpha1.ErrorCode = "ERR_CREATE_OR_UPDATE_PODCLIQUES"
+	errCodeSyncPCSGResourceClaim                         grovecorev1alpha1.ErrorCode = "ERR_SYNC_PCSG_RESOURCE_CLAIM"
 )
 
 var (

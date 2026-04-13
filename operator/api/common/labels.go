@@ -85,6 +85,9 @@ const (
 	// LabelComponentNamePodCliqueScalingGroupPodClique is the label key representing the component name
 	// for a PodClique whose owner is a PodCliqueScalingGroup.
 	LabelComponentNamePodCliqueScalingGroupPodClique = "pcsg-podclique"
+	// LabelComponentNameResourceClaim is the label key representing the component name
+	// for a DRA ResourceClaim managed by the resource sharing subsystem.
+	LabelComponentNameResourceClaim = "resource-claim"
 )
 
 // GetDefaultLabelsForPodCliqueSetManagedResources gets the default labels for resources managed by PodCliqueSet.

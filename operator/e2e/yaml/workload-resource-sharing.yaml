@@ -1,0 +1,215 @@
+# External ResourceClaimTemplate (resolved from the namespace)
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: ext-tpl
+spec:
+  spec:
+    devices:
+      requests:
+        - name: ext-dev
+          exactly:
+            deviceClassName: ext-class
+---
+# PodCliqueSet with multi-level resourceSharing covering ALL filter paths:
+#
+#   PCS level:
+#     int-tpl5 / AllReplicas  (no filter → broadcast to all children)
+#     ext-tpl  / PerReplica   (no filter → broadcast)
+#     int-tpl  / PerReplica   (filter: childCliqueNames: [worker-a])
+#     int-tpl7 / AllReplicas  (filter: childScalingGroupNames: [sga])
+#
+#   Standalone PCLQ "worker-a":
+#     int-tpl4 / PerReplica
+#     ext-ns-tpl / AllReplicas  (cross-namespace: rs-shared)
+#
+#   PCSG "sga" (replicas=2):
+#     int-tpl2 / AllReplicas  (no filter → broadcast)
+#     int-tpl3 / PerReplica   (no filter → broadcast)
+#     int-tpl8 / AllReplicas  (filter: childCliqueNames: [worker-b])
+#
+#   PCLQ "worker-b" in sga:
+#     int-tpl6 / AllReplicas
+#
+# Filter coverage:
+#   PCS  → childCliqueNames        (int-tpl  targets worker-a only)
+#   PCS  → childScalingGroupNames  (int-tpl7 targets sga only)
+#   PCSG → childCliqueNames        (int-tpl8 targets worker-b only)
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: rs-test
+  labels:
+    app: rs-test
+spec:
+  replicas: 1
+  template:
+    resourceClaimTemplates:
+      - name: int-tpl
+        templateSpec:
+          spec:
+            devices:
+              requests:
+                - name: int-dev
+                  exactly:
+                    deviceClassName: int-class
+      - name: int-tpl2
+        templateSpec:
+          spec:
+            devices:
+              requests:
+                - name: int-dev2
+                  exactly:
+                    deviceClassName: int-class2
+      - name: int-tpl3
+        templateSpec:
+          spec:
+            devices:
+              requests:
+                - name: int-dev3
+                  exactly:
+                    deviceClassName: int-class3
+      - name: int-tpl4
+        templateSpec:
+          spec:
+            devices:
+              requests:
+                - name: int-dev4
+                  exactly:
+                    deviceClassName: int-class4
+      - name: int-tpl5
+        templateSpec:
+          spec:
+            devices:
+              requests:
+                - name: int-dev5
+                  exactly:
+                    deviceClassName: int-class5
+      - name: int-tpl6
+        templateSpec:
+          spec:
+            devices:
+              requests:
+                - name: int-dev6
+                  exactly:
+                    deviceClassName: int-class6
+      - name: int-tpl7
+        templateSpec:
+          spec:
+            devices:
+              requests:
+                - name: int-dev7
+                  exactly:
+                    deviceClassName: int-class7
+      - name: int-tpl8
+        templateSpec:
+          spec:
+            devices:
+              requests:
+                - name: int-dev8
+                  exactly:
+                    deviceClassName: int-class8
+    resourceSharing:
+      - name: int-tpl5
+        scope: AllReplicas
+      - name: ext-tpl
+        scope: PerReplica
+      - name: int-tpl
+        scope: PerReplica
+        filter:
+          childCliqueNames:
+            - worker-a
+      - name: int-tpl7
+        scope: AllReplicas
+        filter:
+          childScalingGroupNames:
+            - sga
+    cliques:
+      - name: worker-a
+        labels:
+          kai.scheduler/queue: test
+        resourceSharing:
+          - name: int-tpl4
+            scope: PerReplica
+          - name: ext-ns-tpl
+            namespace: rs-shared
+            scope: AllReplicas
+        spec:
+          roleName: role-a
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker-a
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi
+      - name: worker-b
+        labels:
+          kai.scheduler/queue: test
+        resourceSharing:
+          - name: int-tpl6
+            scope: AllReplicas
+        spec:
+          roleName: role-b
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker-b
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi
+    podCliqueScalingGroups:
+      - name: sga
+        replicas: 2
+        minAvailable: 2
+        cliqueNames:
+          - worker-b
+        resourceSharing:
+          - name: int-tpl2
+            scope: AllReplicas
+          - name: int-tpl3
+            scope: PerReplica
+          - name: int-tpl8
+            scope: AllReplicas
+            filter:
+              childCliqueNames:
+                - worker-b

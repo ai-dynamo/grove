@@ -107,10 +107,10 @@ func TestPcsHasNoActiveRollingUpdate(t *testing.T) {
 
 // TestGetOrderedKindsForSync tests the getOrderedKindsForSync function
 func TestGetOrderedKindsForSync(t *testing.T) {
-	// Verifies that the function returns the expected ordered list
 	kinds := getOrderedKindsForSync()
-	assert.Equal(t, 1, len(kinds))
-	assert.Equal(t, component.KindPod, kinds[0])
+	assert.Equal(t, 2, len(kinds))
+	assert.Equal(t, component.KindResourceClaim, kinds[0], "ResourceClaim must be synced before Pod")
+	assert.Equal(t, component.KindPod, kinds[1])
 }
 
 // TestShouldResetOrTriggerUpdate tests the shouldResetOrTriggerUpdate function for PodClique
