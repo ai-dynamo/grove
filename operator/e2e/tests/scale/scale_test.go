@@ -1,6 +1,6 @@
 //go:build e2e
 
-package tests
+package scale
 
 // /*
 // Copyright 2026 The Grove Authors.
@@ -33,9 +33,16 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/resources"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+<<<<<<< HEAD
 	"github.com/ai-dynamo/grove/operator/e2e/measurement"
 	"github.com/ai-dynamo/grove/operator/e2e/measurement/condition"
 	"github.com/ai-dynamo/grove/operator/e2e/measurement/exporter"
+=======
+	"github.com/ai-dynamo/grove/operator/e2e/utils"
+	"github.com/ai-dynamo/grove/operator/e2e/utils/measurement"
+	"github.com/ai-dynamo/grove/operator/e2e/utils/measurement/condition"
+	"github.com/ai-dynamo/grove/operator/e2e/utils/measurement/exporter"
+>>>>>>> 25ee0ab (fix(e2e): restore scale test package and pprof integration after rebase)
 )
 
 // toOperatorMetadata converts GroveMetadata to the measurement package type.
@@ -54,8 +61,14 @@ func toOperatorMetadata(m *config.GroveMetadata) *measurement.OperatorMetadata {
 	}
 }
 
+// Logger for the scale tests.
+var Logger = utils.NewTestLogger(utils.InfoLevel)
+
 const (
-	scaleTestExpectedPods = 5000
+	scaleTestExpectedPods     = 1000
+	scaleTestExpectedReplicas = 1
+	scaleTestPollInterval     = 100 * time.Millisecond
+	scaleTestTimeout          = 15 * time.Minute
 )
 
 func Test_ScaleTest_1000(t *testing.T) {
@@ -71,7 +84,7 @@ func Test_ScaleTest_1000(t *testing.T) {
 		testctx.WithInterval(scaleTestPollInterval),
 		testctx.WithWorkload(&testctx.WorkloadConfig{
 			Name:         "scale-test-1000",
-			YAMLPath:     "../yaml/scale-test-1000.yaml",
+			YAMLPath:     "../../yaml/scale-test-1000.yaml",
 			Namespace:    "default",
 			ExpectedPods: scaleTestExpectedPods,
 		}),
@@ -86,13 +99,23 @@ func Test_ScaleTest_1000(t *testing.T) {
 	runID := fmt.Sprintf("run-%s", time.Now().Format("20060102-150405"))
 	Logger.Infof("test config: runID=%s, namespace=%s, pcsName=%s", runID, tc.Namespace, tc.Workload.Name)
 
-	tracker := measurement.NewTimelineTracker(
-		"ScaleTest_5000_MoE",
-		runID,
-		namespace,
-		1,
+	pprofOpt, pprofCleanup := setupPprofHook(ctx, tc.Clients, runID, diagDir, loadPyroscopeConfig())
+	defer pprofCleanup()
+
+	opts := []measurement.TimelineOption{
 		measurement.WithPollInterval(scaleTestPollInterval),
 		measurement.WithLogger(Logger.GetLogr()),
+	}
+	if pprofOpt != nil {
+		opts = append(opts, pprofOpt)
+	}
+
+	tracker := measurement.NewTimelineTracker(
+		"ScaleTest_1000",
+		runID,
+		tc.Namespace,
+		1,
+		opts...,
 	)
 
 	tracker.AddPhase(measurement.PhaseDefinition{
@@ -161,10 +184,11 @@ func Test_ScaleTest_1000(t *testing.T) {
 	Logger.Infof("scale test completed successfully in %.1fs", result.TestDurationSeconds)
 }
 
-func exportResult(t *testing.T, result *measurement.TrackerResult, runID string) {
+func exportResult(t *testing.T, result *measurement.TrackerResult, diagDir string) {
 	t.Helper()
 
-	jsonFile, err := os.Create(fmt.Sprintf("scale-test-5000-moe-%s.json", runID))
+	outputPath := resolveOutputPath(fmt.Sprintf("scale-test-%s.json", time.Now().Format("20060102-150405")), diagDir)
+	jsonFile, err := os.Create(outputPath)
 	if err != nil {
 		t.Fatalf("Failed to create JSON output file: %v", err)
 	}

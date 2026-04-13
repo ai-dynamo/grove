@@ -24,15 +24,17 @@ import (
 	"testing"
 
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
+	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 )
 
 // TestMain manages the lifecycle of the shared cluster for all scale tests.
 func TestMain(m *testing.M) {
 	ctx := context.Background()
+	testctx.Logger = Logger
 
-	sharedCluster := setup.SharedCluster(logger)
+	sharedCluster := setup.SharedCluster(Logger)
 	if err := sharedCluster.Setup(ctx, nil); err != nil {
-		logger.Errorf("failed to setup shared cluster: %s", err)
+		Logger.Errorf("failed to setup shared cluster: %s", err)
 		os.Exit(1)
 	}
 
