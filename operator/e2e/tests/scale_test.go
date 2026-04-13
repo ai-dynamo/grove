@@ -22,19 +22,24 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"k8s.io/utils/ptr"
 
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
+	"github.com/ai-dynamo/grove/operator/e2e/diagnostics"
+	"github.com/ai-dynamo/grove/operator/e2e/grove/config"
+	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/resources"
+	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/utils/measurement"
 	"github.com/ai-dynamo/grove/operator/e2e/utils/measurement/condition"
 	"github.com/ai-dynamo/grove/operator/e2e/utils/measurement/exporter"
 )
 
-// toOperatorMetadata converts GroveMetadata (utils package) to the measurement package type.
-func toOperatorMetadata(m *utils.GroveMetadata) *measurement.OperatorMetadata {
+// toOperatorMetadata converts GroveMetadata to the measurement package type.
+func toOperatorMetadata(m *config.GroveMetadata) *measurement.OperatorMetadata {
 	return &measurement.OperatorMetadata{
 		GroveImage: m.Image,
 		K8sClient: &measurement.K8sClientConfig{
@@ -55,37 +60,28 @@ const (
 )
 
 func Test_ScaleTest_1000(t *testing.T) {
-	diagDir := os.Getenv(DiagnosticsDirEnvVar)
+	diagDir := os.Getenv(diagnostics.DirEnvVar)
 	Logger.Infof("starting scale test: %d expected pods, timeout %v", scaleTestExpectedPods, scaleTestTimeout)
 
 	ctx, cancel := context.WithTimeout(context.Background(), scaleTestTimeout)
 	defer cancel()
 
 	Logger.Info("preparing test cluster with 100 worker nodes")
-	clients, cleanup := PrepareTestCluster(ctx, t, 100)
-	defer cleanup()
-
-	metadata, err := utils.ReadGroveMetadata(ctx, clients.CRClient)
-	if err != nil {
-		t.Fatalf("failed to read grove metadata: %v", err)
-	}
-
-	tc := TestContext{
-		T:             t,
-		Ctx:           ctx,
-		Clientset:     clients.Clientset,
-		RestConfig:    clients.RestConfig,
-		DynamicClient: clients.DynamicClient,
-		CRClient:      clients.CRClient,
-		Namespace:     "default",
-		Timeout:       scaleTestTimeout,
-		Interval:      scaleTestPollInterval,
-		Workload: &WorkloadConfig{
+	tc, cleanup := testctx.PrepareTest(ctx, t, 100,
+		testctx.WithTimeout(scaleTestTimeout),
+		testctx.WithInterval(scaleTestPollInterval),
+		testctx.WithWorkload(&testctx.WorkloadConfig{
 			Name:         "scale-test-1000",
 			YAMLPath:     "../yaml/scale-test-1000.yaml",
 			Namespace:    "default",
 			ExpectedPods: scaleTestExpectedPods,
-		},
+		}),
+	)
+	defer cleanup()
+
+	metadata, err := config.NewOperatorConfig(tc.Clients).ReadGroveMetadata(ctx)
+	if err != nil {
+		t.Fatalf("failed to read grove metadata: %v", err)
 	}
 
 	runID := fmt.Sprintf("run-%s", time.Now().Format("20060102-150405"))
@@ -103,14 +99,14 @@ func Test_ScaleTest_1000(t *testing.T) {
 	tracker.AddPhase(measurement.PhaseDefinition{
 		Name: "deploy",
 		ActionFn: func(ctx context.Context) error {
-			_, err := utils.ApplyYAMLFile(ctx, tc.Workload.YAMLPath, tc.Namespace, tc.RestConfig, Logger)
+			_, err := resources.NewResourceManager(tc.Clients, Logger).ApplyYAMLFile(ctx, tc.Workload.YAMLPath, tc.Namespace)
 			return err
 		},
 		Milestones: []measurement.MilestoneDefinition{
 			{
 				Name: "pods-created",
 				Condition: &condition.PodsCreatedCondition{
-					Client:        tc.CRClient,
+					Client:        tc.Clients.CRClient,
 					Namespace:     tc.Namespace,
 					LabelSelector: tc.GetLabelSelector(),
 					ExpectedCount: scaleTestExpectedPods,
@@ -119,7 +115,7 @@ func Test_ScaleTest_1000(t *testing.T) {
 			{
 				Name: "pods-ready",
 				Condition: &condition.PodsReadyCondition{
-					Client:        tc.CRClient,
+					Client:        tc.Clients.CRClient,
 					Namespace:     tc.Namespace,
 					LabelSelector: tc.GetLabelSelector(),
 					ExpectedCount: scaleTestExpectedPods,
@@ -128,7 +124,7 @@ func Test_ScaleTest_1000(t *testing.T) {
 			{
 				Name: "pcs-available",
 				Condition: &condition.PCSAvailableCondition{
-					Client:        tc.CRClient,
+					Client:        tc.Clients.CRClient,
 					Name:          tc.Workload.Name,
 					Namespace:     tc.Namespace,
 					ExpectedCount: scaleTestExpectedReplicas,
@@ -140,13 +136,13 @@ func Test_ScaleTest_1000(t *testing.T) {
 	tracker.AddPhase(measurement.PhaseDefinition{
 		Name: "delete",
 		ActionFn: func(ctx context.Context) error {
-			return utils.DeletePodCliqueSet(ctx, tc.DynamicClient, tc.Namespace, tc.Workload.Name)
+			return workload.NewWorkloadManager(tc.Clients, Logger).DeletePCS(ctx, tc.Namespace, tc.Workload.Name)
 		},
 		Milestones: []measurement.MilestoneDefinition{
 			{
 				Name: "pcs-deleted",
 				Condition: &condition.PCSDeletedCondition{
-					Client:    tc.CRClient,
+					Client:    tc.Clients.CRClient,
 					Name:      tc.Workload.Name,
 					Namespace: tc.Namespace,
 				},
@@ -178,4 +174,14 @@ func exportResult(t *testing.T, result *measurement.TrackerResult, diagDir strin
 	if err := multi.Export(result); err != nil {
 		t.Fatalf("Failed to export results: %v", err)
 	}
+}
+
+// resolveOutputPath resolves the full output path for filename.
+// Uses diagDir if set; otherwise returns filename as-is (relative to cwd).
+// Writability is not checked — callers must handle create errors.
+func resolveOutputPath(filename, diagDir string) string {
+	if diagDir != "" {
+		return filepath.Join(diagDir, filename)
+	}
+	return filename
 }

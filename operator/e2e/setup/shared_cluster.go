@@ -1,3 +1,5 @@
+//go:build e2e
+
 // /*
 // Copyright 2025 The Grove Authors.
 //
@@ -26,6 +28,7 @@ import (
 	"time"
 
 	"github.com/ai-dynamo/grove/operator/api/common"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	"github.com/ai-dynamo/grove/operator/internal/utils/ioutil"
 	"github.com/docker/docker/api/types/image"
@@ -95,6 +98,7 @@ type SharedClusterManager struct {
 	restConfig    *rest.Config
 	dynamicClient dynamic.Interface
 	crClient      client.Client
+	clients       *clients.Clients // All clients bundled together, created once during setup
 	cleanup       func()
 	logger        *utils.Logger
 	isSetup       bool
@@ -184,6 +188,13 @@ func (scm *SharedClusterManager) connectToCluster(ctx context.Context, testImage
 		return fmt.Errorf("failed to create controller-runtime client: %w", err)
 	}
 	scm.crClient = crClient
+
+	// Create bundled clients (includes REST mapper, created once for all tests)
+	clients, err := clients.NewClients(restConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create bundled k8s clients: %w", err)
+	}
+	scm.clients = clients
 
 	// Setup test images in registry (if registry port is configured)
 	if scm.registryPort != "" && len(testImages) > 0 {
@@ -536,9 +547,17 @@ func (scm *SharedClusterManager) listRemainingGroveManagedResources(ctx context.
 	}
 }
 
-// GetClients returns the kubernetes clients for tests to use
+// Deprecated: Use GetAllClients instead which returns a bundled Clients struct
+// including the REST mapper (created once, not per-test).
 func (scm *SharedClusterManager) GetClients() (*kubernetes.Clientset, *rest.Config, dynamic.Interface) {
 	return scm.clientset, scm.restConfig, scm.dynamicClient
+}
+
+// GetAllClients returns the bundled Clients struct containing all Kubernetes clients
+// including the REST mapper. These clients are created once during cluster setup
+// and shared across all tests.
+func (scm *SharedClusterManager) GetAllClients() *clients.Clients {
+	return scm.clients
 }
 
 // GetCRClient returns the controller-runtime client for typed CR access

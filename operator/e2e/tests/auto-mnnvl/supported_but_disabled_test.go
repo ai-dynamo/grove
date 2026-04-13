@@ -22,6 +22,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,20 +36,17 @@ func Test_AutoMNNVL_SupportedButDisabled(t *testing.T) {
 	ctx := context.Background()
 
 	// Prepare cluster and get clients (0 = no specific worker node requirement)
-	clientset, restConfig, dynamicClient, groveClient, cleanup := prepareTestCluster(ctx, t, 0)
+	tc, cleanup := testctx.PrepareTest(ctx, t, 0)
 	defer cleanup()
 
 	// Detect and validate cluster configuration
-	clusterConfig := requireClusterConfig(t, ctx, clientset, restConfig)
+	clusterConfig := requireClusterConfig(t, ctx, tc.Clients)
 	clusterConfig.skipUnless(t, crdSupported, featureDisabled)
 
-	// Create test context for subtests
-	tc := createTestContext(t, ctx, clientset, restConfig, dynamicClient, groveClient, clusterConfig)
-
 	// Define all subtests
-	tests := []struct {
+	subtests := []struct {
 		description string
-		fn          func(*testing.T, testContext)
+		fn          func(*testing.T, *testctx.TestContext)
 	}{
 		{"no auto annotation added", testNoAutoAnnotationAdded},
 		{"explicit enabled annotation rejected", testExplicitEnabledAnnotationRejected},
@@ -56,7 +54,7 @@ func Test_AutoMNNVL_SupportedButDisabled(t *testing.T) {
 	}
 
 	// Run all subtests
-	for _, tt := range tests {
+	for _, tt := range subtests {
 		t.Run(tt.description, func(t *testing.T) {
 			tt.fn(t, tc)
 		})
@@ -65,17 +63,17 @@ func Test_AutoMNNVL_SupportedButDisabled(t *testing.T) {
 
 // testNoAutoAnnotationAdded verifies that the webhook doesn't add the auto-mnnvl
 // annotation when the feature is disabled.
-func testNoAutoAnnotationAdded(t *testing.T, tc testContext) {
+func testNoAutoAnnotationAdded(t *testing.T, tc *testctx.TestContext) {
 	pcsName := "test-no-auto-annotation"
 
 	// Create a PCS with GPU requirement (no annotation)
 	pcs := buildGPUPCS(pcsName, 1)
-	_, err := tc.groveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Create(tc.ctx, pcs, metav1.CreateOptions{})
+	_, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Create(tc.Ctx, pcs, metav1.CreateOptions{})
 	require.NoError(t, err, "Failed to create PCS")
 	defer deletePCS(tc, pcsName)
 
 	// Verify the PCS does NOT have the auto-mnnvl annotation
-	createdPCS, err := tc.groveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Get(tc.ctx, pcsName, metav1.GetOptions{})
+	createdPCS, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Get(tc.Ctx, pcsName, metav1.GetOptions{})
 	require.NoError(t, err, "Failed to get created PCS")
 
 	annotations := createdPCS.GetAnnotations()
@@ -86,7 +84,7 @@ func testNoAutoAnnotationAdded(t *testing.T, tc testContext) {
 
 // testExplicitEnabledAnnotationRejected verifies that explicitly setting
 // auto-mnnvl: enabled is rejected when the feature is disabled globally.
-func testExplicitEnabledAnnotationRejected(t *testing.T, tc testContext) {
+func testExplicitEnabledAnnotationRejected(t *testing.T, tc *testctx.TestContext) {
 	pcsName := "test-explicit-enabled-rejected"
 
 	// Create a PCS with explicit enabled annotation
@@ -98,6 +96,6 @@ func testExplicitEnabledAnnotationRejected(t *testing.T, tc testContext) {
 	annotations[mnnvl.AnnotationAutoMNNVL] = mnnvl.AnnotationAutoMNNVLEnabled
 	pcs.SetAnnotations(annotations)
 
-	_, err := tc.groveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Create(tc.ctx, pcs, metav1.CreateOptions{})
+	_, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Create(tc.Ctx, pcs, metav1.CreateOptions{})
 	assert.Error(t, err, "PCS with auto-mnnvl: enabled should be rejected when feature is disabled")
 }

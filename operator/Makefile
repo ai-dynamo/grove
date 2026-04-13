@@ -123,6 +123,12 @@ run-e2e:
 	@echo "> Running e2e tests (compilation may take a few minutes with no output)..."
 	@cd e2e && go test -count=1 -tags=e2e ./tests/... -v -timeout 45m $(if $(TEST_PATTERN),-run $(TEST_PATTERN))
 
+# Same as run-e2e but with gotestsum for cleaner pass/fail summaries and colored output
+.PHONY: run-e2e-verbose
+run-e2e-verbose: $(GOTESTSUM)
+	@echo "> Running e2e tests (verbose)..."
+	@cd e2e && $(GOTESTSUM) --format short-verbose -- -count=1 -tags=e2e ./tests/... -timeout 45m $(if $(TEST_PATTERN),-run $(TEST_PATTERN))
+
 # Create a k3d cluster for e2e testing (with Grove and Kai scheduler deployed)
 # This is optional - tests work with any Kubernetes cluster that has the required components
 .PHONY: e2e-cluster-up

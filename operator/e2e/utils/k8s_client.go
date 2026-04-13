@@ -57,9 +57,9 @@ type AppliedResource struct {
 	GVR       schema.GroupVersionResource
 }
 
-// ApplyYAMLFile applies a YAML file containing Kubernetes resources
-// namespace parameter is optional - pass empty string to use namespace from YAML
-func ApplyYAMLFile(ctx context.Context, yamlFilePath string, namespace string, restConfig *rest.Config, logger *Logger) ([]AppliedResource, error) {
+// ApplyYAMLFileWithClients applies a YAML file containing Kubernetes resources using pre-created clients.
+// namespace parameter is optional - pass empty string to use namespace from YAML.
+func ApplyYAMLFileWithClients(ctx context.Context, yamlFilePath string, namespace string, dynamicClient dynamic.Interface, restMapper meta.RESTMapper, logger *Logger) ([]AppliedResource, error) {
 	logger.Debugf("📄 Applying resources from %s...\n", yamlFilePath)
 
 	// Read the YAML file
@@ -68,22 +68,24 @@ func ApplyYAMLFile(ctx context.Context, yamlFilePath string, namespace string, r
 		return nil, fmt.Errorf("failed to read YAML file %s: %w", yamlFilePath, err)
 	}
 
+	return ApplyYAMLData(ctx, yamlData, namespace, dynamicClient, restMapper, logger)
+}
+
+// ApplyYAMLFile applies a YAML file containing Kubernetes resources.
+// Deprecated: Use ApplyYAMLFileWithClients with pre-created clients instead.
+// It creates new dynamic client and REST mapper on every call, which adds unnecessary overhead.
+func ApplyYAMLFile(ctx context.Context, yamlFilePath string, namespace string, restConfig *rest.Config, logger *Logger) ([]AppliedResource, error) {
 	dynamicClient, restMapper, err := CreateKubernetesClients(restConfig)
 	if err != nil {
 		return nil, err
 	}
-	return ApplyYAMLData(ctx, yamlData, namespace, dynamicClient, restMapper, logger)
+	return ApplyYAMLFileWithClients(ctx, yamlFilePath, namespace, dynamicClient, restMapper, logger)
 }
 
-// WaitForPods waits for pods to be ready in the specified namespaces
+// WaitForPodsWithClientset waits for pods to be ready in the specified namespaces using a pre-created clientset.
 // labelSelector is optional (pass empty string for all pods), timeout of 0 defaults to 5 minutes, interval of 0 defaults to 5 seconds
 // expectedCount is the expected number of pods (pass 0 to skip count validation)
-func WaitForPods(ctx context.Context, restConfig *rest.Config, namespaces []string, labelSelector string, expectedCount int, timeout time.Duration, interval time.Duration, logger *Logger) error {
-	clientset, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		return fmt.Errorf("failed to create clientset: %w", err)
-	}
-
+func WaitForPodsWithClientset(ctx context.Context, clientset kubernetes.Interface, namespaces []string, labelSelector string, expectedCount int, timeout time.Duration, interval time.Duration, logger *Logger) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -135,6 +137,17 @@ func WaitForPods(ctx context.Context, restConfig *rest.Config, namespaces []stri
 
 		return allReady, nil
 	})
+}
+
+// WaitForPods waits for pods to be ready in the specified namespaces.
+// Deprecated: Use WaitForPodsWithClientset with a pre-created clientset instead.
+// It creates a new clientset on every call, which adds unnecessary overhead.
+func WaitForPods(ctx context.Context, restConfig *rest.Config, namespaces []string, labelSelector string, expectedCount int, timeout time.Duration, interval time.Duration, logger *Logger) error {
+	clientset, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create clientset: %w", err)
+	}
+	return WaitForPodsWithClientset(ctx, clientset, namespaces, labelSelector, expectedCount, timeout, interval, logger)
 }
 
 // ApplyYAMLData applies YAML data to Kubernetes.
@@ -296,7 +309,14 @@ func updateResource(ctx context.Context, dynamicClient dynamic.Interface, gvr sc
 	return dynamicClient.Resource(gvr).Update(ctx, obj, metav1.UpdateOptions{})
 }
 
-// WaitForPodsInNamespace waits for all pods in a namespace to be ready
+// WaitForPodsInNamespaceWithClientset waits for all pods in a namespace to be ready using a pre-created clientset.
+// expectedCount is the expected number of pods (pass 0 to skip count validation)
+func WaitForPodsInNamespaceWithClientset(ctx context.Context, namespace string, clientset kubernetes.Interface, expectedCount int, timeout time.Duration, interval time.Duration, logger *Logger) error {
+	return WaitForPodsWithClientset(ctx, clientset, []string{namespace}, "", expectedCount, timeout, interval, logger)
+}
+
+// WaitForPodsInNamespace waits for all pods in a namespace to be ready.
+// Deprecated: Use WaitForPodsInNamespaceWithClientset with a pre-created clientset instead.
 // expectedCount is the expected number of pods (pass 0 to skip count validation)
 func WaitForPodsInNamespace(ctx context.Context, namespace string, restConfig *rest.Config, expectedCount int, timeout time.Duration, interval time.Duration, logger *Logger) error {
 	return WaitForPods(ctx, restConfig, []string{namespace}, "", expectedCount, timeout, interval, logger)

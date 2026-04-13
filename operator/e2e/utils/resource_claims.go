@@ -21,36 +21,43 @@ import (
 	"fmt"
 	"time"
 
-	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/dynamic"
+	resourcev1 "k8s.io/api/resource/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// ResourceClaimGVR is the GVR for resource.k8s.io/v1 ResourceClaim.
-var ResourceClaimGVR = schema.GroupVersionResource{
-	Group:    "resource.k8s.io",
-	Version:  "v1",
-	Resource: "resourceclaims",
-}
-
 // ListResourceClaims lists ResourceClaims in a namespace filtered by label selector.
-func ListResourceClaims(ctx context.Context, dynamicClient dynamic.Interface, namespace, labelSelector string) (*unstructured.UnstructuredList, error) {
-	return dynamicClient.Resource(ResourceClaimGVR).Namespace(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labelSelector,
-	})
+func ListResourceClaims(ctx context.Context, crClient client.Client, namespace, labelSelector string) (*resourcev1.ResourceClaimList, error) {
+	var list resourcev1.ResourceClaimList
+	opts := []client.ListOption{
+		client.InNamespace(namespace),
+	}
+	if labelSelector != "" {
+		selector, err := labels.Parse(labelSelector)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse label selector %q: %w", labelSelector, err)
+		}
+		opts = append(opts, client.MatchingLabelsSelector{Selector: selector})
+	}
+	if err := crClient.List(ctx, &list, opts...); err != nil {
+		return nil, err
+	}
+	return &list, nil
 }
 
 // GetResourceClaim gets a single ResourceClaim by name.
-func GetResourceClaim(ctx context.Context, dynamicClient dynamic.Interface, namespace, name string) (*unstructured.Unstructured, error) {
-	return dynamicClient.Resource(ResourceClaimGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+func GetResourceClaim(ctx context.Context, crClient client.Client, namespace, name string) (*resourcev1.ResourceClaim, error) {
+	var rc resourcev1.ResourceClaim
+	if err := crClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &rc); err != nil {
+		return nil, err
+	}
+	return &rc, nil
 }
 
 // WaitForResourceClaimCount polls until the number of ResourceClaims matching the label selector equals expectedCount.
-func WaitForResourceClaimCount(ctx context.Context, dynamicClient dynamic.Interface, namespace, labelSelector string, expectedCount int, timeout, interval time.Duration) error {
+func WaitForResourceClaimCount(ctx context.Context, crClient client.Client, namespace, labelSelector string, expectedCount int, timeout, interval time.Duration) error {
 	return PollForCondition(ctx, timeout, interval, func() (bool, error) {
-		list, err := ListResourceClaims(ctx, dynamicClient, namespace, labelSelector)
+		list, err := ListResourceClaims(ctx, crClient, namespace, labelSelector)
 		if err != nil {
 			return false, err
 		}
@@ -59,12 +66,12 @@ func WaitForResourceClaimCount(ctx context.Context, dynamicClient dynamic.Interf
 }
 
 // WaitForResourceClaimsByName polls until all named ResourceClaims exist.
-func WaitForResourceClaimsByName(ctx context.Context, dynamicClient dynamic.Interface, namespace string, names []string, timeout, interval time.Duration) error {
+func WaitForResourceClaimsByName(ctx context.Context, crClient client.Client, namespace string, names []string, timeout, interval time.Duration) error {
 	return PollForCondition(ctx, timeout, interval, func() (bool, error) {
 		for _, name := range names {
-			_, err := GetResourceClaim(ctx, dynamicClient, namespace, name)
+			_, err := GetResourceClaim(ctx, crClient, namespace, name)
 			if err != nil {
-				if errors.IsNotFound(err) {
+				if client.IgnoreNotFound(err) == nil {
 					return false, nil
 				}
 				return false, err
@@ -75,11 +82,11 @@ func WaitForResourceClaimsByName(ctx context.Context, dynamicClient dynamic.Inte
 }
 
 // WaitForResourceClaimDeletion polls until the named ResourceClaim no longer exists.
-func WaitForResourceClaimDeletion(ctx context.Context, dynamicClient dynamic.Interface, namespace, name string, timeout, interval time.Duration) error {
+func WaitForResourceClaimDeletion(ctx context.Context, crClient client.Client, namespace, name string, timeout, interval time.Duration) error {
 	return PollForCondition(ctx, timeout, interval, func() (bool, error) {
-		_, err := GetResourceClaim(ctx, dynamicClient, namespace, name)
+		_, err := GetResourceClaim(ctx, crClient, namespace, name)
 		if err != nil {
-			if errors.IsNotFound(err) {
+			if client.IgnoreNotFound(err) == nil {
 				return true, nil
 			}
 			return false, err
@@ -88,24 +95,24 @@ func WaitForResourceClaimDeletion(ctx context.Context, dynamicClient dynamic.Int
 	})
 }
 
-// ResourceClaimNames extracts the names from a list of unstructured ResourceClaims.
-func ResourceClaimNames(list *unstructured.UnstructuredList) []string {
+// ResourceClaimNames extracts the names from a list of ResourceClaims.
+func ResourceClaimNames(list *resourcev1.ResourceClaimList) []string {
 	names := make([]string, 0, len(list.Items))
 	for _, item := range list.Items {
-		names = append(names, item.GetName())
+		names = append(names, item.Name)
 	}
 	return names
 }
 
 // DeleteResourceClaimTemplate deletes a ResourceClaimTemplate by name. NotFound errors are ignored.
-func DeleteResourceClaimTemplate(ctx context.Context, dynamicClient dynamic.Interface, namespace, name string) error {
-	rctGVR := schema.GroupVersionResource{
-		Group:    "resource.k8s.io",
-		Version:  "v1",
-		Resource: "resourceclaimtemplates",
-	}
-	err := dynamicClient.Resource(rctGVR).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
-	if err != nil && !errors.IsNotFound(err) {
+func DeleteResourceClaimTemplate(ctx context.Context, crClient client.Client, namespace, name string) error {
+	rct := &resourcev1.ResourceClaimTemplate{}
+	rct.Name = name
+	rct.Namespace = namespace
+	if err := crClient.Delete(ctx, rct); err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			return nil
+		}
 		return fmt.Errorf("failed to delete ResourceClaimTemplate %s/%s: %w", namespace, name, err)
 	}
 	return nil

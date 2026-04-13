@@ -23,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -37,26 +38,23 @@ func Test_AutoMNNVL_UnsupportedButEnabled(t *testing.T) {
 	ctx := context.Background()
 
 	// Prepare cluster and get clients (0 = no specific worker node requirement)
-	clientset, restConfig, dynamicClient, groveClient, cleanup := prepareTestCluster(ctx, t, 0)
+	tc, cleanup := testctx.PrepareTest(ctx, t, 0)
 	defer cleanup()
 
 	// Detect and validate cluster configuration
-	clusterConfig := requireClusterConfig(t, ctx, clientset, restConfig)
+	clusterConfig := requireClusterConfig(t, ctx, tc.Clients)
 	clusterConfig.skipUnless(t, crdUnsupported, featureEnabled)
 
-	// Create test context for subtests
-	tc := createTestContext(t, ctx, clientset, restConfig, dynamicClient, groveClient, clusterConfig)
-
 	// Define all subtests
-	tests := []struct {
+	subtests := []struct {
 		description string
-		fn          func(*testing.T, testContext)
+		fn          func(*testing.T, *testctx.TestContext)
 	}{
 		{"operator exits when CD CRD is missing", testOperatorExitsWithoutCDCRD},
 	}
 
 	// Run all subtests
-	for _, tt := range tests {
+	for _, tt := range subtests {
 		t.Run(tt.description, func(t *testing.T) {
 			tt.fn(t, tc)
 		})
@@ -65,7 +63,7 @@ func Test_AutoMNNVL_UnsupportedButEnabled(t *testing.T) {
 
 // testOperatorExitsWithoutCDCRD verifies that the operator fails preflight
 // when MNNVL is enabled but the ComputeDomain CRD is missing.
-func testOperatorExitsWithoutCDCRD(t *testing.T, tc testContext) {
+func testOperatorExitsWithoutCDCRD(t *testing.T, tc *testctx.TestContext) {
 	pod, err := waitForFailedOperatorPod(tc)
 	require.NoError(t, err, "Failed to find grove-operator pod")
 
@@ -82,11 +80,11 @@ func testOperatorExitsWithoutCDCRD(t *testing.T, tc testContext) {
 	// Check both current and previous container logs because the operator
 	// crashes on preflight failure and the error message may only appear
 	// in the previous (terminated) container's logs.
-	err = utils.PollForCondition(tc.ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = utils.PollForCondition(tc.Ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		for _, previous := range []bool{false, true} {
-			logs, logErr := tc.clientset.CoreV1().Pods(groveOperatorNamespace).GetLogs(pod.Name, &corev1.PodLogOptions{
+			logs, logErr := tc.Clients.Clientset.CoreV1().Pods(groveOperatorNamespace).GetLogs(pod.Name, &corev1.PodLogOptions{
 				Previous: previous,
-			}).DoRaw(tc.ctx)
+			}).DoRaw(tc.Ctx)
 			if logErr != nil {
 				continue
 			}
@@ -107,10 +105,10 @@ func testOperatorExitsWithoutCDCRD(t *testing.T, tc testContext) {
 // The old pod may have RestartCount > 0 from cert-refresh restarts, so we
 // filter by !Ready to ensure we return the actually-crashing pod whose logs
 // contain the preflight failure.
-func waitForFailedOperatorPod(tc testContext) (*corev1.Pod, error) {
+func waitForFailedOperatorPod(tc *testctx.TestContext) (*corev1.Pod, error) {
 	var operatorPod *corev1.Pod
-	err := utils.PollForCondition(tc.ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
-		pods, listErr := tc.clientset.CoreV1().Pods(groveOperatorNamespace).List(tc.ctx, metav1.ListOptions{
+	err := utils.PollForCondition(tc.Ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+		pods, listErr := tc.Clients.Clientset.CoreV1().Pods(groveOperatorNamespace).List(tc.Ctx, metav1.ListOptions{
 			LabelSelector: "app.kubernetes.io/name=grove-operator",
 		})
 		if listErr != nil || len(pods.Items) == 0 {

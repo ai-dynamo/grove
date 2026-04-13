@@ -30,8 +30,8 @@ import (
 	"time"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	groveclient "github.com/ai-dynamo/grove/operator/client/clientset/versioned"
-	"github.com/ai-dynamo/grove/operator/e2e/setup"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
+	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -40,7 +40,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
@@ -105,11 +104,11 @@ func init() {
 // requireClusterConfig returns the cached cluster MNNVL configuration, detecting it on first call.
 // This function is safe to call from multiple tests - detection only happens once.
 // If detection fails, the test is marked as fatal.
-func requireClusterConfig(t *testing.T, ctx context.Context, clientset kubernetes.Interface, restConfig *rest.Config) *clusterMNNVLConfig {
+func requireClusterConfig(t *testing.T, ctx context.Context, clients *clients.Clients) *clusterMNNVLConfig {
 	t.Helper()
 
 	configOnce.Do(func() {
-		cachedConfig, configErr = detectClusterConfig(ctx, clientset, restConfig)
+		cachedConfig, configErr = detectClusterConfig(ctx, clients)
 		if configErr == nil {
 			logger.Infof("Detected cluster MNNVL config: %s", cachedConfig)
 		}
@@ -124,18 +123,18 @@ func requireClusterConfig(t *testing.T, ctx context.Context, clientset kubernete
 
 // detectClusterConfig detects the MNNVL configuration from the cluster.
 // It checks both the operator ConfigMap and the presence of the ComputeDomain CRD.
-func detectClusterConfig(ctx context.Context, clientset kubernetes.Interface, restConfig *rest.Config) (*clusterMNNVLConfig, error) {
+func detectClusterConfig(ctx context.Context, clients *clients.Clients) (*clusterMNNVLConfig, error) {
 	config := &clusterMNNVLConfig{}
 
 	// Detect if MNNVL feature is enabled in operator config
-	featureEnabled, err := detectAutoMNNVLEnabled(ctx, clientset)
+	featureEnabled, err := detectAutoMNNVLEnabled(ctx, clients.Clientset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to detect feature enabled: %w", err)
 	}
 	config.featureEnabled = featureEnabled
 
 	// Detect if ComputeDomain CRD exists
-	crdSupported, err := detectComputeDomainCRDExists(ctx, restConfig)
+	crdSupported, err := detectComputeDomainCRDExists(ctx, clients.RestConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to detect CRD supported: %w", err)
 	}
@@ -216,72 +215,6 @@ func detectComputeDomainCRDExists(ctx context.Context, restConfig *rest.Config) 
 	}
 
 	return true, nil
-}
-
-// testContext holds common test parameters for MNNVL e2e tests
-type testContext struct {
-	t             *testing.T
-	ctx           context.Context
-	clientset     kubernetes.Interface
-	groveClient   groveclient.Interface
-	dynamicClient dynamic.Interface
-	restConfig    *rest.Config
-	namespace     string
-	clusterConfig *clusterMNNVLConfig
-}
-
-// prepareTestCluster is a helper that prepares the cluster for a test.
-// It returns the clients and a cleanup function.
-func prepareTestCluster(ctx context.Context, t *testing.T, requiredWorkerNodes int) (kubernetes.Interface, *rest.Config, dynamic.Interface, groveclient.Interface, func()) {
-	t.Helper()
-
-	// Get the cluster instance
-	sharedCluster := setup.SharedCluster(logger)
-
-	// Prepare cluster with required worker nodes
-	if err := sharedCluster.PrepareForTest(ctx, requiredWorkerNodes); err != nil {
-		t.Fatalf("Failed to prepare cluster: %v", err)
-	}
-
-	// Get clients from cluster
-	clientset, restConfig, dynamicClient := sharedCluster.GetClients()
-
-	// Create Grove typed client
-	groveClient, err := groveclient.NewForConfig(restConfig)
-	if err != nil {
-		t.Fatalf("Failed to create Grove client: %v", err)
-	}
-
-	// Create cleanup function
-	cleanup := func() {
-		if err := sharedCluster.CleanupWorkloads(ctx); err != nil {
-			t.Fatalf("Failed to cleanup workloads: %v", err)
-		}
-	}
-
-	return clientset, restConfig, dynamicClient, groveClient, cleanup
-}
-
-// createTestContext creates a testContext with all necessary clients and configuration
-func createTestContext(
-	t *testing.T,
-	ctx context.Context,
-	clientset kubernetes.Interface,
-	restConfig *rest.Config,
-	dynamicClient dynamic.Interface,
-	groveClient groveclient.Interface,
-	clusterConfig *clusterMNNVLConfig,
-) testContext {
-	return testContext{
-		t:             t,
-		ctx:           ctx,
-		clientset:     clientset,
-		groveClient:   groveClient,
-		dynamicClient: dynamicClient,
-		restConfig:    restConfig,
-		namespace:     "default",
-		clusterConfig: clusterConfig,
-	}
 }
 
 const (
@@ -404,19 +337,19 @@ func buildComprehensivePCS(name string, replicas int) *grovecorev1alpha1.PodCliq
 }
 
 // deletePCS deletes a PCS by name
-func deletePCS(tc testContext, name string) {
-	_ = utils.DeletePodCliqueSet(tc.ctx, tc.dynamicClient, tc.namespace, name)
+func deletePCS(tc *testctx.TestContext, name string) {
+	_ = utils.DeletePodCliqueSet(tc.Ctx, tc.Clients.DynamicClient, tc.Namespace, name)
 }
 
 // scalePCS scales a PCS to the specified number of replicas
-func scalePCS(tc testContext, name string, replicas int) error {
-	return utils.ScalePodCliqueSetWithClient(tc.ctx, tc.dynamicClient, tc.namespace, name, replicas)
+func scalePCS(tc *testctx.TestContext, name string, replicas int) error {
+	return utils.ScalePodCliqueSetWithClient(tc.Ctx, tc.Clients.DynamicClient, tc.Namespace, name, replicas)
 }
 
 // waitForComputeDomainCount waits for the specified number of ComputeDomains for a PCS
-func waitForComputeDomainCount(tc testContext, pcsName string, expectedCount int) error {
-	return utils.PollForCondition(tc.ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
-		list, err := tc.dynamicClient.Resource(computeDomainGVR).Namespace(tc.namespace).List(tc.ctx, metav1.ListOptions{
+func waitForComputeDomainCount(tc *testctx.TestContext, pcsName string, expectedCount int) error {
+	return utils.PollForCondition(tc.Ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+		list, err := tc.Clients.DynamicClient.Resource(computeDomainGVR).Namespace(tc.Namespace).List(tc.Ctx, metav1.ListOptions{
 			LabelSelector: fmt.Sprintf("app.kubernetes.io/part-of=%s", pcsName),
 		})
 		if err != nil {
@@ -427,11 +360,11 @@ func waitForComputeDomainCount(tc testContext, pcsName string, expectedCount int
 }
 
 // waitForPCSG waits for a PCSG to exist and returns it
-func waitForPCSG(tc testContext, pcsgName string) (*grovecorev1alpha1.PodCliqueScalingGroup, error) {
-	return utils.WaitForPodCliqueScalingGroup(tc.ctx, tc.groveClient, tc.namespace, pcsgName, defaultPollTimeout, defaultPollInterval)
+func waitForPCSG(tc *testctx.TestContext, pcsgName string) (*grovecorev1alpha1.PodCliqueScalingGroup, error) {
+	return utils.WaitForPodCliqueScalingGroup(tc.Ctx, tc.Clients.GroveClient, tc.Namespace, pcsgName, defaultPollTimeout, defaultPollInterval)
 }
 
 // waitForPCLQ waits for a PCLQ to exist and returns it
-func waitForPCLQ(tc testContext, pclqName string) (*grovecorev1alpha1.PodClique, error) {
-	return utils.WaitForPodClique(tc.ctx, tc.groveClient, tc.namespace, pclqName, defaultPollTimeout, defaultPollInterval)
+func waitForPCLQ(tc *testctx.TestContext, pclqName string) (*grovecorev1alpha1.PodClique, error) {
+	return utils.WaitForPodClique(tc.Ctx, tc.Clients.GroveClient, tc.Namespace, pclqName, defaultPollTimeout, defaultPollInterval)
 }

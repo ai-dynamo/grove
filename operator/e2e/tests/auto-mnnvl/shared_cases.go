@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,12 +34,12 @@ import (
 // annotations, or resourceClaims are produced for a GPU-capable PCS. It is shared
 // across test suites because the expected behavior is identical regardless of why
 // the feature is inactive.
-func testNoMNNVLArtifactsWhenDisabled(t *testing.T, tc testContext) {
+func testNoMNNVLArtifactsWhenDisabled(t *testing.T, tc *testctx.TestContext) {
 	pcsName := "test-no-cd-created"
 
 	// Create a PCS with GPU requirement
 	pcs := buildComprehensivePCS(pcsName, 1)
-	_, err := tc.groveClient.GroveV1alpha1().PodCliqueSets(tc.namespace).Create(tc.ctx, pcs, metav1.CreateOptions{})
+	_, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Create(tc.Ctx, pcs, metav1.CreateOptions{})
 	require.NoError(t, err, "Failed to create PCS")
 	defer deletePCS(tc, pcsName)
 
@@ -59,7 +60,7 @@ func testNoMNNVLArtifactsWhenDisabled(t *testing.T, tc testContext) {
 	// Verify no ComputeDomain exists.
 	// If the CRD itself is not installed (unsupported scenario), the List call returns
 	// a NotFound error -- that also means zero ComputeDomains, which is what we want.
-	cdList, err := tc.dynamicClient.Resource(computeDomainGVR).Namespace(tc.namespace).List(tc.ctx, metav1.ListOptions{})
+	cdList, err := tc.Clients.DynamicClient.Resource(computeDomainGVR).Namespace(tc.Namespace).List(tc.Ctx, metav1.ListOptions{})
 	if k8serrors.IsNotFound(err) {
 		// CRD not installed → no ComputeDomains can exist, which is the expected state.
 	} else {

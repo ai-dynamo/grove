@@ -99,13 +99,9 @@ func main() {
 		handleErrorAndExit(err, cli.ExitErrInitializeSchedulerBackend)
 	}
 
-	// TODO: Move this to the proper scheduler backend.
 	// Initialize or clean up ClusterTopology based on operator configuration.
 	// This must be done before starting the controllers that may depend on the ClusterTopology resource.
-	// NOTE: In this version of the operator the synchronization will additionally ensure that the KAI Topology resource
-	// is created based on the ClusterTopology. When we introduce support for pluggable scheduler backends,
-	// handling of scheduler specified resources will be delegated to the backend scheduler controller.
-	if err = clustertopology.SynchronizeTopology(ctx, cl, logger, operatorConfig); err != nil {
+	if err = clustertopology.SynchronizeTopology(ctx, cl, logger, operatorConfig, schedmanager.All()); err != nil {
 		logger.Error(err, "failed to synchronize cluster topology")
 		handleErrorAndExit(err, cli.ExitErrSynchronizeTopology)
 	}

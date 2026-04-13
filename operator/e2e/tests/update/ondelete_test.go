@@ -111,7 +111,7 @@ func Test_OD2_ManualDeletionCreatesUpdatedPod(t *testing.T) {
 		t.Fatalf("Failed to delete pod and wait for replacement: %v", err)
 	}
 
-	if err = tests.WaitForRunningPods(tc, 10); err != nil {
+	if err = tc.WaitForRunningPods( 10); err != nil {
 		t.Fatalf("Failed to wait for pod with new specification to be created")
 	}
 
@@ -131,7 +131,7 @@ func Test_OD2_ManualDeletionCreatesUpdatedPod(t *testing.T) {
 	// Get PCLQ and verify UpdatedReplicas has increased
 	pclqName := fmt.Sprintf("%s-%d-%s", tc.Workload.Name, 0, "pc-a")
 	pclqGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliques"}
-	unstructuredPCLQ, err := tc.DynamicClient.Resource(pclqGVR).Namespace(tc.Namespace).Get(tc.Ctx, pclqName, metav1.GetOptions{})
+	unstructuredPCLQ, err := tc.Clients.DynamicClient.Resource(pclqGVR).Namespace(tc.Namespace).Get(tc.Ctx, pclqName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Failed to get PodClique: %v", err)
 	}
@@ -198,7 +198,7 @@ func Test_OD3_ScaleInPrefersOutdatedPods(t *testing.T) {
 	}
 
 	// wait for the new pc-a pod to be created
-	if err = tests.WaitForReadyPods(tc, 10); err != nil {
+	if err = tc.WaitForReadyPods( 10); err != nil {
 		t.Fatalf("Failed to wait for pod with new specification to be created")
 	}
 
@@ -234,7 +234,7 @@ func Test_OD3_ScaleInPrefersOutdatedPods(t *testing.T) {
 	}
 
 	// Wait for scale-in to complete (9 total pods: 1 pc-a + 8 others)
-	if err = tests.WaitForPods(tc, 9); err != nil {
+	if err = tc.WaitForPods( 9); err != nil {
 		t.Fatalf("Failed to wait for pods after pc-a scale-in: %v", err)
 	}
 
@@ -338,7 +338,7 @@ func Test_OD5_PCSGManualDeletionCreatesUpdatedReplica(t *testing.T) {
 		t.Fatalf("Failed to delete pod and wait for replacement: %v", err)
 	}
 
-	if err = tests.WaitForRunningPods(tc, 10); err != nil {
+	if err = tc.WaitForRunningPods( 10); err != nil {
 		t.Fatalf("Failed to wait for pod with new specification to be created")
 	}
 
@@ -408,7 +408,7 @@ func Test_OD6_MixedPCLQsAndPCSG(t *testing.T) {
 		t.Fatalf("Failed to delete standalone pod and wait for replacement: %v", err)
 	}
 
-	if err = tests.WaitForRunningPods(tc, 10); err != nil {
+	if err = tc.WaitForRunningPods( 10); err != nil {
 		t.Fatalf("Failed to wait for pod with new specification to be created")
 	}
 
@@ -418,13 +418,13 @@ func Test_OD6_MixedPCLQsAndPCSG(t *testing.T) {
 		t.Fatalf("Failed to delete PCSG pod and wait for replacement: %v", err)
 	}
 
-	if err = tests.WaitForRunningPods(tc, 10); err != nil {
+	if err = tc.WaitForRunningPods( 10); err != nil {
 		t.Fatalf("Failed to wait for pod with new specification to be created")
 	}
 
 	tests.Logger.Info("6. Verify replacements use the new template")
 	// Get final pod list
-	finalPods, err := tests.ListPods(tc)
+	finalPods, err := tc.ListPods()
 	if err != nil {
 		t.Fatalf("Failed to list pods after deletions: %v", err)
 	}
@@ -543,7 +543,7 @@ func Test_OD8_NodeFailureRecoveryWorkflow(t *testing.T) {
 		t.Fatalf("Failed to delete pod (simulating eviction): %v", err)
 	}
 
-	if err = tests.WaitForRunningPods(tc, 10); err != nil {
+	if err = tc.WaitForRunningPods( 10); err != nil {
 		t.Fatalf("Failed to wait for replacement pod to be created")
 	}
 
@@ -617,19 +617,19 @@ func Test_OD9_StrategyTransition(t *testing.T) {
 	// Wait for rolling update to complete
 	// pc-b has 1 replica per PCSG replica (2 PCSG replicas) = 2 pods in PCSG
 	// RollingRecreate should handle the update automatically
-	tcLongTimeout := tc
+	tcLongTimeout := *tc
 	tcLongTimeout.Timeout = 2 * time.Minute
-	if err = waitForRollingUpdateComplete(tcLongTimeout, 1); err != nil {
+	if err = waitForRollingUpdateComplete(&tcLongTimeout, 1); err != nil {
 		t.Fatalf("Rolling update did not complete after strategy switch to RollingRecreate: %v", err)
 	}
 
 	// Wait for all pods to be running
-	if err = tests.WaitForRunningPods(tc, 10); err != nil {
+	if err = tc.WaitForRunningPods(10); err != nil {
 		t.Fatalf("Failed to wait for pods after rolling update: %v", err)
 	}
 
 	// Verify at least some pods were recreated (pc-b pods should have changed)
-	podsAfterRolling, err := tests.ListPods(tc)
+	podsAfterRolling, err := tc.ListPods()
 	if err != nil {
 		t.Fatalf("Failed to list pods after rolling update: %v", err)
 	}
