@@ -30,8 +30,8 @@ import (
 	"time"
 
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
+	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -72,13 +72,13 @@ var groveResourceTypes = []groveResourceType{
 type DiagCollector struct {
 	clients   *clients.Clients
 	namespace string
-	logger    *utils.Logger
+	logger    *log.Logger
 	mode      string
 	dir       string
 }
 
 // NewDiagCollector creates a DiagCollector.
-func NewDiagCollector(clients *clients.Clients, namespace, mode, dir string, logger *utils.Logger) *DiagCollector {
+func NewDiagCollector(clients *clients.Clients, namespace, mode, dir string, logger *log.Logger) *DiagCollector {
 	if mode == "" {
 		mode = ModeFile
 	}
@@ -100,7 +100,7 @@ func (dc *DiagCollector) CollectAll(ctx context.Context, testName string) {
 	}
 	defer output.Close()
 
-	diagLogger := utils.NewTestLoggerWithOutput(utils.InfoLevel, output)
+	diagLogger := log.NewTestLoggerWithOutput(log.InfoLevel, output)
 
 	if filename != "" {
 		dc.logger.Infof("Writing diagnostics to file: %s", filename)
@@ -124,7 +124,7 @@ func (dc *DiagCollector) CollectAll(ctx context.Context, testName string) {
 	}
 }
 
-func (dc *DiagCollector) dumpOperatorLogs(ctx context.Context, logger *utils.Logger) {
+func (dc *DiagCollector) dumpOperatorLogs(ctx context.Context, logger *log.Logger) {
 	logger.Info("================================================================================")
 	logger.Info("=== OPERATOR LOGS (all) ===")
 	logger.Info("================================================================================")
@@ -206,7 +206,7 @@ func (dc *DiagCollector) dumpOperatorLogs(ctx context.Context, logger *utils.Log
 	}
 }
 
-func (dc *DiagCollector) dumpGroveResources(ctx context.Context, logger *utils.Logger) {
+func (dc *DiagCollector) dumpGroveResources(ctx context.Context, logger *log.Logger) {
 	logger.Info("================================================================================")
 	logger.Info("=== GROVE RESOURCES ===")
 	logger.Info("================================================================================")
@@ -243,7 +243,7 @@ func (dc *DiagCollector) dumpGroveResources(ctx context.Context, logger *utils.L
 	}
 }
 
-func (dc *DiagCollector) dumpPodDetails(ctx context.Context, logger *utils.Logger) {
+func (dc *DiagCollector) dumpPodDetails(ctx context.Context, logger *log.Logger) {
 	logger.Info("================================================================================")
 	logger.Info("=== POD DETAILS ===")
 	logger.Info("================================================================================")
@@ -313,7 +313,7 @@ func (dc *DiagCollector) dumpPodDetails(ctx context.Context, logger *utils.Logge
 	}
 }
 
-func (dc *DiagCollector) dumpRecentEvents(ctx context.Context, logger *utils.Logger) {
+func (dc *DiagCollector) dumpRecentEvents(ctx context.Context, logger *log.Logger) {
 	logger.Info("================================================================================")
 	logger.Infof("=== KUBERNETES EVENTS (last %v) ===", eventLookbackDuration)
 	logger.Info("================================================================================")

@@ -27,7 +27,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
+	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/cli"
@@ -60,7 +60,7 @@ type HelmInstallConfig struct {
 	// HelmLoggerFunc is called for Helm operation logging.
 	HelmLoggerFunc func(format string, v ...interface{})
 	// Logger is the full logger for component operations.
-	Logger *utils.Logger
+	Logger *log.Logger
 	// RepoURL is the base URL of the Helm repository (optional, for direct chart downloads).
 	RepoURL string
 	// ReuseValues reuses the last release's values and merges in the new values.

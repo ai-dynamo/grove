@@ -27,7 +27,7 @@ import (
 	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
+	"github.com/ai-dynamo/grove/operator/e2e/log"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -56,11 +56,11 @@ type PCSGTypeConfig struct {
 // TopologyVerifier provides Grove topology verification using pre-created Kubernetes clients.
 type TopologyVerifier struct {
 	clients *clients.Clients
-	logger  *utils.Logger
+	logger  *log.Logger
 }
 
 // NewTopologyVerifier creates a TopologyVerifier bound to the given clients.
-func NewTopologyVerifier(clients *clients.Clients, logger *utils.Logger) *TopologyVerifier {
+func NewTopologyVerifier(clients *clients.Clients, logger *log.Logger) *TopologyVerifier {
 	return &TopologyVerifier{clients: clients, logger: logger}
 }
 

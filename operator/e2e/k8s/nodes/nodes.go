@@ -25,10 +25,11 @@ import (
 
 	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
+	"github.com/ai-dynamo/grove/operator/e2e/log"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/retry"
 )
 
@@ -37,11 +38,11 @@ const defaultNodePollInterval = 2 * time.Second
 // NodeManager provides node operations using pre-created Kubernetes clients.
 type NodeManager struct {
 	clients *clients.Clients
-	logger  *utils.Logger
+	logger  *log.Logger
 }
 
 // NewNodeManager creates a NodeManager bound to the given clients.
-func NewNodeManager(c *clients.Clients, logger *utils.Logger) *NodeManager {
+func NewNodeManager(c *clients.Clients, logger *log.Logger) *NodeManager {
 	return &NodeManager{clients: c, logger: logger}
 }
 
@@ -149,4 +150,53 @@ func (nm *NodeManager) WaitAndGetReady(ctx context.Context, nodeName string, tim
 		return false, nil
 	})
 	return node, err
+}
+
+// SetNodeSchedulable sets a node to be schedulable or unschedulable (cordon/uncordon)
+// using a raw Kubernetes clientset. Uses retry logic for optimistic concurrency conflicts.
+func SetNodeSchedulable(ctx context.Context, clientset kubernetes.Interface, nodeName string, schedulable bool) error {
+	action := "uncordon"
+	if !schedulable {
+		action = "cordon"
+	}
+
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		node, err := clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get node %s for %s: %w", nodeName, action, err)
+		}
+
+		if node.Spec.Unschedulable == !schedulable {
+			return nil
+		}
+
+		node.Spec.Unschedulable = !schedulable
+		_, err = clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to %s node %s: %w", action, nodeName, err)
+		}
+		return nil
+	})
+}
+
+// WaitAndGetReadyNode waits for a specific node to become ready and returns it.
+// Uses a raw Kubernetes clientset for use in setup code that doesn't have a Clients bundle.
+func WaitAndGetReadyNode(ctx context.Context, clientset kubernetes.Interface, nodeName string, timeout time.Duration, logger *log.Logger) (node *v1.Node, err error) {
+	err = k8s.PollForCondition(ctx, timeout, defaultNodePollInterval, func() (bool, error) {
+		node, err = clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+		if err != nil {
+			if errors.IsNotFound(err) {
+				logger.Debugf("Node %s not found yet, waiting...", nodeName)
+				return false, nil
+			}
+			return false, err
+		}
+		if IsReady(node) {
+			logger.Debugf("Node %s is ready", nodeName)
+			return true, nil
+		}
+		logger.Debugf("Node %s found but not ready yet, waiting...", nodeName)
+		return false, nil
+	})
+	return
 }

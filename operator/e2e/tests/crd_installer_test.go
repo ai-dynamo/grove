@@ -23,8 +23,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ai-dynamo/grove/operator/e2e/k8s"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
+	k8spods "github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -60,7 +62,7 @@ func Test_CRD_Installer_AllCRDsExist(t *testing.T) {
 			continue
 		}
 		// Verify the CRD is established (API server is serving it).
-		conditions, found, err := utils.GetNestedSlice(crd.Object, "status", "conditions")
+		conditions, found, err := k8s.GetNestedSlice(crd.Object, "status", "conditions")
 		if err != nil || !found {
 			t.Errorf("CRD %q has no status conditions", crdName)
 			continue
@@ -110,7 +112,7 @@ func Test_CRD_Installer_InitContainerCompleted(t *testing.T) {
 
 	if crdInstallerStatus == nil {
 		t.Fatalf("crd-installer init container not found in pod %s; init containers present: %v",
-			pod.Name, utils.InitContainerNames(pod))
+			pod.Name, k8spods.InitContainerNames(pod))
 	}
 	if crdInstallerStatus.State.Terminated == nil {
 		t.Fatalf("crd-installer init container in pod %s is not in Terminated state: %+v",
@@ -145,7 +147,11 @@ func Test_CRD_Installer_Idempotent(t *testing.T) {
 	Logger.Infof("deleted operator pod %s, waiting for replacement to be ready", podName)
 
 	// Wait for a new, ready operator pod to appear.
-	if err := utils.WaitForPodsInNamespace(ctx, setup.OperatorNamespace, restConfig, 1, 3*time.Minute, 5*time.Second, Logger); err != nil {
+	crdClients, err := clients.NewClients(restConfig)
+	if err != nil {
+		t.Fatalf("Failed to create clients: %v", err)
+	}
+	if err := k8spods.NewPodManager(crdClients, Logger).WaitForReadyInNamespace(ctx, setup.OperatorNamespace, 1, 3*time.Minute, 5*time.Second); err != nil {
 		t.Fatalf("operator pod did not become ready after restart: %v", err)
 	}
 

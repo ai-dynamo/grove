@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ai-dynamo/grove/operator/e2e/utils/measurement"
+	"github.com/ai-dynamo/grove/operator/e2e/measurement"
 )
 
 func TestSummaryExporter_Export(t *testing.T) {

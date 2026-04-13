@@ -35,11 +35,11 @@ import (
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/resources"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -253,7 +253,7 @@ func deletePodCliqueSetAndWait(t *testing.T, ctx context.Context, tc *testctx.Te
 func waitForSecret(t *testing.T, ctx context.Context, clientset kubernetes.Interface, name string, shouldExist bool) {
 	t.Helper()
 
-	err := utils.PollForCondition(ctx, testctx.DefaultPollTimeout, testctx.DefaultPollInterval, func() (bool, error) {
+	err := k8s.PollForCondition(ctx, testctx.DefaultPollTimeout, testctx.DefaultPollInterval, func() (bool, error) {
 		_, err := clientset.CoreV1().Secrets("grove-system").Get(ctx, name, metav1.GetOptions{})
 		if shouldExist {
 			return err == nil, nil
@@ -273,7 +273,7 @@ func waitForSecretManagedByCertManager(t *testing.T, ctx context.Context, client
 	t.Helper()
 
 	Logger.Debugf("Waiting for secret %s to be managed by cert-manager...", name)
-	err := utils.PollForCondition(ctx, testctx.DefaultPollTimeout, testctx.DefaultPollInterval, func() (bool, error) {
+	err := k8s.PollForCondition(ctx, testctx.DefaultPollTimeout, testctx.DefaultPollInterval, func() (bool, error) {
 		secret, err := clientset.CoreV1().Secrets("grove-system").Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return false, nil // Secret doesn't exist yet, keep waiting
@@ -349,7 +349,7 @@ func waitForClusterIssuer(t *testing.T, ctx context.Context, dynamicClient dynam
 		Resource: "clusterissuers",
 	}
 
-	err := utils.PollForCondition(ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
+	err := k8s.PollForCondition(ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
 		issuer, err := dynamicClient.Resource(issuerGVR).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return false, nil
@@ -526,7 +526,7 @@ func verifyWebhookServingCertificate(t *testing.T, ctx context.Context, clientse
 	// - Kubernetes secret volume update propagation (can take up to the kubelet sync period)
 	// - certwatcher 10-second polling interval
 	var lastExpectedSerial, lastServedSerial string
-	err := utils.PollForCondition(ctx, 30*time.Second, 2*time.Second, func() (bool, error) {
+	err := k8s.PollForCondition(ctx, 30*time.Second, 2*time.Second, func() (bool, error) {
 		// Get the certificate from the Secret
 		expectedCert, err := getCertificateFromSecret(ctx, clientset)
 		if err != nil {

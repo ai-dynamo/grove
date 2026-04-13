@@ -35,7 +35,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
+	nodeutils "github.com/ai-dynamo/grove/operator/e2e/k8s/nodes"
+	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"github.com/docker/docker/api/types/container"
 	dockerclient "github.com/docker/docker/client"
 	v1 "k8s.io/api/core/v1"
@@ -98,7 +99,7 @@ func getRestConfig() (*rest.Config, error) {
 // 3. Deletes the not ready node from Kubernetes
 // 4. Finds and restarts the corresponding Docker container (node names match container names exactly)
 // 5. The restarted container will rejoin the cluster as a new node
-func StartNodeMonitoring(ctx context.Context, clientset *kubernetes.Clientset, logger *utils.Logger) func() {
+func StartNodeMonitoring(ctx context.Context, clientset *kubernetes.Clientset, logger *log.Logger) func() {
 	logger.Debug("🔍 Starting node monitoring for not ready nodes...")
 
 	// Create a context that can be cancelled to stop the monitoring
@@ -129,7 +130,7 @@ func StartNodeMonitoring(ctx context.Context, clientset *kubernetes.Clientset, l
 }
 
 // checkAndReplaceNotReadyNodes checks for nodes that are not ready and replaces them
-func checkAndReplaceNotReadyNodes(ctx context.Context, clientset *kubernetes.Clientset, logger *utils.Logger) error {
+func checkAndReplaceNotReadyNodes(ctx context.Context, clientset *kubernetes.Clientset, logger *log.Logger) error {
 	// List all nodes
 	nodes, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -137,7 +138,7 @@ func checkAndReplaceNotReadyNodes(ctx context.Context, clientset *kubernetes.Cli
 	}
 
 	for _, node := range nodes.Items {
-		if !utils.IsNodeReady(&node) {
+		if !nodeutils.IsReady(&node) {
 			// Skip cordoned nodes because even if they're also not ready, we don't want to replace
 			// them with an uncordoned node as it'll break tests. When/if the node becomes uncordoned,
 			// the node monitoring will automatically replace it then as it's needed.
@@ -161,7 +162,7 @@ func checkAndReplaceNotReadyNodes(ctx context.Context, clientset *kubernetes.Cli
 }
 
 // replaceNotReadyNode handles the process of replacing a not ready node
-func replaceNotReadyNode(ctx context.Context, node *v1.Node, clientset *kubernetes.Clientset, logger *utils.Logger) error {
+func replaceNotReadyNode(ctx context.Context, node *v1.Node, clientset *kubernetes.Clientset, logger *log.Logger) error {
 	nodeName := node.Name
 	originalNodeLabels := node.Labels
 
@@ -179,7 +180,7 @@ func replaceNotReadyNode(ctx context.Context, node *v1.Node, clientset *kubernet
 
 	// Step 3: Wait for the node to become ready
 	logger.Debugf("⏳ Waiting for node to become ready: %s", nodeName)
-	readyNode, err := utils.WaitAndGetReadyNode(ctx, clientset, nodeName, defaultPollTimeout, logger)
+	readyNode, err := nodeutils.WaitAndGetReadyNode(ctx, clientset, nodeName, defaultPollTimeout, logger)
 	if err != nil {
 		return fmt.Errorf("node %s did not become ready: %w", nodeName, err)
 	}
@@ -194,7 +195,7 @@ func replaceNotReadyNode(ctx context.Context, node *v1.Node, clientset *kubernet
 }
 
 // restartNodeContainer finds and restarts the Docker container corresponding to a k3d node
-func restartNodeContainer(ctx context.Context, nodeName string, logger *utils.Logger) error {
+func restartNodeContainer(ctx context.Context, nodeName string, logger *log.Logger) error {
 	// Create Docker client
 	dockerClient, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
 	if err != nil {
@@ -243,7 +244,7 @@ func restartNodeContainer(ctx context.Context, nodeName string, logger *utils.Lo
 }
 
 // reapplyNodeLabels reapplies the original labels to a replaced node
-func reapplyNodeLabels(ctx context.Context, clientset *kubernetes.Clientset, node *v1.Node, labels map[string]string, logger *utils.Logger) error {
+func reapplyNodeLabels(ctx context.Context, clientset *kubernetes.Clientset, node *v1.Node, labels map[string]string, logger *log.Logger) error {
 	nodeTopologyLabelsPatch := &v1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Labels: labels,

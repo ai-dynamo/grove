@@ -33,9 +33,9 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/resources"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
-	"github.com/ai-dynamo/grove/operator/e2e/utils/measurement"
-	"github.com/ai-dynamo/grove/operator/e2e/utils/measurement/condition"
-	"github.com/ai-dynamo/grove/operator/e2e/utils/measurement/exporter"
+	"github.com/ai-dynamo/grove/operator/e2e/measurement"
+	"github.com/ai-dynamo/grove/operator/e2e/measurement/condition"
+	"github.com/ai-dynamo/grove/operator/e2e/measurement/exporter"
 )
 
 // toOperatorMetadata converts GroveMetadata to the measurement package type.

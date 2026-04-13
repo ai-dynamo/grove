@@ -32,14 +32,14 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/nodes"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/resources"
+	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Logger is set by the tests package init() to share the singleton logger.
-var Logger *utils.Logger
+var Logger *log.Logger
 
 const (
 	// DefaultPollTimeout is the timeout for most polling conditions

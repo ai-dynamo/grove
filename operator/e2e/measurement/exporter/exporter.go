@@ -23,7 +23,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/ai-dynamo/grove/operator/e2e/utils/measurement"
+	"github.com/ai-dynamo/grove/operator/e2e/measurement"
 )
 
 // ResultExporter writes a TrackerResult to a destination.

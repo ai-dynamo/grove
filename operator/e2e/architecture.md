@@ -135,7 +135,7 @@
   │                                                                  │
   │  ┌──────────────────┐ ┌──────────────────┐ ┌────────────────┐  │
   │  │  DiagCollector   │ │     Logger       │ │  Measurement   │  │
-  │  │ (diagnostics/)   │ │  (e2e/log/)      │ │ (utils/meas.)  │  │
+  │  │ (diagnostics/)   │ │  (e2e/log/)      │ │ (measurement/) │  │
   │  │ ──────────────   │ │  ──────────────  │ │ ────────────   │  │
   │  │ CollectAll       │ │  Debugf/Infof    │ │ Phase tracking │  │
   │  │ dumpOperatorLogs │ │  Warnf/Errorf    │ │ Milestones     │  │
@@ -239,8 +239,8 @@ Structured logging wrapper around zap. Provides leveled logging (Debug/Info/Warn
 ### WorkloadConfig
 Simple configuration struct that pairs a workload name with its YAML path, namespace, and expected pod count. Generates the label selector (`app.kubernetes.io/part-of=<name>`) used to find the workload's pods.
 
-### Measurement Framework (utils/measurement/)
-Performance tracking framework. Defines phases and milestones within a test, tracks timing, and produces structured results for benchmarking workload deployment times. Self-contained subpackage with no dependency on the parent utils.
+### Measurement Framework (measurement/)
+Performance tracking framework. Defines phases and milestones within a test, tracks timing, and produces structured results for benchmarking workload deployment times. Self-contained subpackage with no external e2e dependencies.
 
 ## Package Dependency Graph
 

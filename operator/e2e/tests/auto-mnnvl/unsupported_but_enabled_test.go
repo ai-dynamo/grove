@@ -23,8 +23,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -80,7 +80,7 @@ func testOperatorExitsWithoutCDCRD(t *testing.T, tc *testctx.TestContext) {
 	// Check both current and previous container logs because the operator
 	// crashes on preflight failure and the error message may only appear
 	// in the previous (terminated) container's logs.
-	err = utils.PollForCondition(tc.Ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err = k8s.PollForCondition(tc.Ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		for _, previous := range []bool{false, true} {
 			logs, logErr := tc.Clients.Clientset.CoreV1().Pods(groveOperatorNamespace).GetLogs(pod.Name, &corev1.PodLogOptions{
 				Previous: previous,
@@ -107,7 +107,7 @@ func testOperatorExitsWithoutCDCRD(t *testing.T, tc *testctx.TestContext) {
 // contain the preflight failure.
 func waitForFailedOperatorPod(tc *testctx.TestContext) (*corev1.Pod, error) {
 	var operatorPod *corev1.Pod
-	err := utils.PollForCondition(tc.Ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	err := k8s.PollForCondition(tc.Ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		pods, listErr := tc.Clients.Clientset.CoreV1().Pods(groveOperatorNamespace).List(tc.Ctx, metav1.ListOptions{
 			LabelSelector: "app.kubernetes.io/name=grove-operator",
 		})

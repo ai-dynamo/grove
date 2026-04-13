@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/resources"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -98,12 +98,12 @@ func CreateDefaultKaiQueues(ctx context.Context, config *HelmInstallConfig) erro
 	queuesPath := filepath.Join(filepath.Dir(currentFile), "../yaml/queues.yaml")
 
 	// Create clients once and apply
-	clients, err := clients.NewClients(config.RestConfig)
+	k8sClients, err := clients.NewClients(config.RestConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create Kubernetes clients: %w", err)
 	}
 
-	appliedResources, err := utils.ApplyYAMLFileWithClients(ctx, queuesPath, "", clients.DynamicClient, clients.RestMapper, config.Logger)
+	appliedResources, err := resources.NewResourceManager(k8sClients, config.Logger).ApplyYAMLFile(ctx, queuesPath, "")
 	if err != nil {
 		return fmt.Errorf("failed to apply queues YAML: %w", err)
 	}

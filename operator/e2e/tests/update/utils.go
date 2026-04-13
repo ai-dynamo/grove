@@ -27,10 +27,10 @@ import (
 	"time"
 
 	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -354,7 +354,7 @@ func waitForRollingUpdateComplete(tc *testctx.TestContext, expectedReplicas int3
 		}
 
 		var pcs grovev1alpha1.PodCliqueSet
-		err = utils.ConvertUnstructuredToTyped(unstructuredPCS.Object, &pcs)
+		err = k8s.ConvertUnstructuredToTyped(unstructuredPCS.Object, &pcs)
 		if err != nil {
 			return false, err
 		}
@@ -422,7 +422,7 @@ func scalePodCliqueInPCS(tc *testctx.TestContext, cliqueName string, replicas in
 	}
 
 	var pcs grovev1alpha1.PodCliqueSet
-	if err := utils.ConvertUnstructuredToTyped(unstructuredPCS.Object, &pcs); err != nil {
+	if err := k8s.ConvertUnstructuredToTyped(unstructuredPCS.Object, &pcs); err != nil {
 		return fmt.Errorf("failed to convert to PodCliqueSet: %w", err)
 	}
 
@@ -526,7 +526,7 @@ func waitForOrdinalUpdating(tc *testctx.TestContext, ordinal int32) error {
 		}
 
 		var pcs grovev1alpha1.PodCliqueSet
-		err = utils.ConvertUnstructuredToTyped(unstructuredPCS.Object, &pcs)
+		err = k8s.ConvertUnstructuredToTyped(unstructuredPCS.Object, &pcs)
 		if err != nil {
 			return false, err
 		}
@@ -1187,12 +1187,12 @@ func waitForOnDeleteUpdateComplete(tc *testctx.TestContext) error {
 	pollCount := 0
 	return k8s.PollForCondition(tc.Ctx, tc.Timeout, tc.Interval, func() (bool, error) {
 		pollCount++
-		pcs, err := utils.GetPodCliqueSet(tc.Ctx, tc.Clients.DynamicClient, tc.Workload.Name, tc.Namespace)
+		pcs, err := workload.GetPodCliqueSet(tc.Ctx, tc.Clients.DynamicClient, tc.Workload.Name, tc.Namespace)
 		if err != nil {
 			return false, err
 		}
 
-		if utils.IsOnDeleteUpdateComplete(pcs) {
+		if workload.IsOnDeleteUpdateComplete(pcs) {
 			tests.Logger.Debugf("[waitForOnDeleteUpdateComplete] OnDelete update marked complete after %d polls (UpdatedReplicas=%d)",
 				pollCount, pcs.Status.UpdatedReplicas)
 			return true, nil
@@ -1205,7 +1205,7 @@ func waitForOnDeleteUpdateComplete(tc *testctx.TestContext) error {
 func verifyUpdateProgressFields(tc *testctx.TestContext) {
 	tc.T.Helper()
 
-	updateProgress, err := utils.GetPCSUpdateProgress(tc.Ctx, tc.T, tc.Clients.DynamicClient, tc.Workload.Name, tc.Namespace)
+	updateProgress, err := workload.GetPCSUpdateProgress(tc.Ctx, tc.T, tc.Clients.DynamicClient, tc.Workload.Name, tc.Namespace)
 	if err != nil {
 		tc.T.Fatalf("Failed to get UpdateProgress: %v", err)
 	}

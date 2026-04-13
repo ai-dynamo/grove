@@ -30,9 +30,11 @@ import (
 	"time"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
+	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 	"gopkg.in/yaml.v3"
@@ -94,11 +96,11 @@ var (
 	configErr error
 
 	// logger for the tests
-	logger *utils.Logger
+	logger *log.Logger
 )
 
 func init() {
-	logger = utils.NewTestLogger(utils.InfoLevel)
+	logger = log.NewTestLogger(log.InfoLevel)
 }
 
 // requireClusterConfig returns the cached cluster MNNVL configuration, detecting it on first call.
@@ -338,17 +340,17 @@ func buildComprehensivePCS(name string, replicas int) *grovecorev1alpha1.PodCliq
 
 // deletePCS deletes a PCS by name
 func deletePCS(tc *testctx.TestContext, name string) {
-	_ = utils.DeletePodCliqueSet(tc.Ctx, tc.Clients.DynamicClient, tc.Namespace, name)
+	_ = workload.DeletePodCliqueSet(tc.Ctx, tc.Clients.DynamicClient, tc.Namespace, name)
 }
 
 // scalePCS scales a PCS to the specified number of replicas
 func scalePCS(tc *testctx.TestContext, name string, replicas int) error {
-	return utils.ScalePodCliqueSetWithClient(tc.Ctx, tc.Clients.DynamicClient, tc.Namespace, name, replicas)
+	return workload.ScalePodCliqueSetWithClient(tc.Ctx, tc.Clients.DynamicClient, tc.Namespace, name, replicas)
 }
 
 // waitForComputeDomainCount waits for the specified number of ComputeDomains for a PCS
 func waitForComputeDomainCount(tc *testctx.TestContext, pcsName string, expectedCount int) error {
-	return utils.PollForCondition(tc.Ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	return k8s.PollForCondition(tc.Ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
 		list, err := tc.Clients.DynamicClient.Resource(computeDomainGVR).Namespace(tc.Namespace).List(tc.Ctx, metav1.ListOptions{
 			LabelSelector: fmt.Sprintf("app.kubernetes.io/part-of=%s", pcsName),
 		})
@@ -361,10 +363,10 @@ func waitForComputeDomainCount(tc *testctx.TestContext, pcsName string, expected
 
 // waitForPCSG waits for a PCSG to exist and returns it
 func waitForPCSG(tc *testctx.TestContext, pcsgName string) (*grovecorev1alpha1.PodCliqueScalingGroup, error) {
-	return utils.WaitForPodCliqueScalingGroup(tc.Ctx, tc.Clients.GroveClient, tc.Namespace, pcsgName, defaultPollTimeout, defaultPollInterval)
+	return workload.WaitForPodCliqueScalingGroup(tc.Ctx, tc.Clients.GroveClient, tc.Namespace, pcsgName, defaultPollTimeout, defaultPollInterval)
 }
 
 // waitForPCLQ waits for a PCLQ to exist and returns it
 func waitForPCLQ(tc *testctx.TestContext, pclqName string) (*grovecorev1alpha1.PodClique, error) {
-	return utils.WaitForPodClique(tc.Ctx, tc.Clients.GroveClient, tc.Namespace, pclqName, defaultPollTimeout, defaultPollInterval)
+	return workload.WaitForPodCliqueStandalone(tc.Ctx, tc.Clients.GroveClient, tc.Namespace, pclqName, defaultPollTimeout, defaultPollInterval)
 }

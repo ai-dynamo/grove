@@ -24,9 +24,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	tests "github.com/ai-dynamo/grove/operator/e2e/tests"
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	"k8s.io/apimachinery/pkg/watch"
 )
 
@@ -223,7 +223,7 @@ func Test_RU10_RollingUpdateInsufficientResources(t *testing.T) {
 	tests.Logger.Info("5. Verify exactly one pod is deleted and a new Pending pod is created (delete-first strategy)")
 
 	// Poll until we see exactly 1 pod deleted and 1 new pod created, verifying delete-first behavior
-	pollErr := utils.PollForCondition(ctx, 2*time.Minute, 2*time.Second, func() (bool, error) {
+	pollErr := k8s.PollForCondition(ctx, 2*time.Minute, 2*time.Second, func() (bool, error) {
 		events := tracker.getEvents()
 		var deletedExistingPods []string
 		var addedPods []string

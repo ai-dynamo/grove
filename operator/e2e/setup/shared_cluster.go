@@ -28,8 +28,10 @@ import (
 	"time"
 
 	"github.com/ai-dynamo/grove/operator/api/common"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
+	nodeutils "github.com/ai-dynamo/grove/operator/e2e/k8s/nodes"
+	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"github.com/ai-dynamo/grove/operator/internal/utils/ioutil"
 	"github.com/docker/docker/api/types/image"
 	dockerclient "github.com/docker/docker/client"
@@ -100,7 +102,7 @@ type SharedClusterManager struct {
 	crClient      client.Client
 	clients       *clients.Clients // All clients bundled together, created once during setup
 	cleanup       func()
-	logger        *utils.Logger
+	logger        *log.Logger
 	isSetup       bool
 	workerNodes   []string
 	registryPort  string
@@ -114,7 +116,7 @@ var (
 )
 
 // SharedCluster returns the singleton shared cluster manager
-func SharedCluster(logger *utils.Logger) *SharedClusterManager {
+func SharedCluster(logger *log.Logger) *SharedClusterManager {
 	once.Do(func() {
 		sharedCluster = &SharedClusterManager{
 			logger: logger,
@@ -183,7 +185,7 @@ func (scm *SharedClusterManager) connectToCluster(ctx context.Context, testImage
 	scm.dynamicClient = dynamicClient
 
 	// Create controller-runtime client for typed CR access
-	crClient, err := utils.NewCRClient(restConfig)
+	crClient, err := clients.NewCRClient(restConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create controller-runtime client: %w", err)
 	}
@@ -254,7 +256,7 @@ func (scm *SharedClusterManager) refreshWorkerNodes(ctx context.Context) error {
 		if _, isServer := node.Labels["node-role.kubernetes.io/control-plane"]; isServer {
 			continue
 		}
-		if !utils.IsNodeReady(&node) {
+		if !nodeutils.IsReady(&node) {
 			scm.logger.Debugf("⏭️ Skipping NotReady node during refresh: %s", node.Name)
 			continue
 		}
@@ -297,7 +299,7 @@ func (scm *SharedClusterManager) PrepareForTest(ctx context.Context, requiredWor
 
 		for i, nodeName := range nodesToCordon {
 			scm.logger.Debugf("  Cordoning node %d/%d: %s", i+1, len(nodesToCordon), nodeName)
-			if err := utils.SetNodeSchedulable(ctx, scm.clientset, nodeName, false); err != nil {
+			if err := nodeutils.SetNodeSchedulable(ctx, scm.clientset, nodeName, false); err != nil {
 				scm.logger.Errorf("Failed to cordon node %s (attempt to cordon node %d/%d): %v", nodeName, i+1, len(nodesToCordon), err)
 				return fmt.Errorf("failed to cordon node %s: %w", nodeName, err)
 			}
@@ -420,7 +422,7 @@ func (scm *SharedClusterManager) resetNodeStates(ctx context.Context) error {
 	scm.logger.Debugf("🔄 Resetting node states: uncordoning %d worker nodes", len(scm.workerNodes))
 
 	for i, nodeName := range scm.workerNodes {
-		if err := utils.SetNodeSchedulable(ctx, scm.clientset, nodeName, true); err != nil {
+		if err := nodeutils.SetNodeSchedulable(ctx, scm.clientset, nodeName, true); err != nil {
 			scm.logger.Errorf("Failed to uncordon node %s (node %d/%d): %v", nodeName, i+1, len(scm.workerNodes), err)
 			return fmt.Errorf("failed to uncordon node %s: %w", nodeName, err)
 		}
@@ -436,7 +438,7 @@ func (scm *SharedClusterManager) waitForAllGroveManagedResourcesAndPodsDeleted(c
 	lastLogTime := startTime
 	logInterval := 30 * time.Second // Log progress every 30 seconds
 
-	return utils.PollForCondition(ctx, timeout, interval, func() (bool, error) {
+	return k8s.PollForCondition(ctx, timeout, interval, func() (bool, error) {
 		allResourcesDeleted := true
 		totalResources := 0
 		var resourceDetails []string

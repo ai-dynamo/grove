@@ -27,7 +27,7 @@ import (
 	nameutils "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
+	"github.com/ai-dynamo/grove/operator/e2e/log"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/utils/ptr"
@@ -68,11 +68,11 @@ type ScaledPCSGConfig struct {
 // PodGroupVerifier provides KAI PodGroup verification using pre-created Kubernetes clients.
 type PodGroupVerifier struct {
 	clients *clients.Clients
-	logger  *utils.Logger
+	logger  *log.Logger
 }
 
 // NewPodGroupVerifier creates a PodGroupVerifier bound to the given clients.
-func NewPodGroupVerifier(clients *clients.Clients, logger *utils.Logger) *PodGroupVerifier {
+func NewPodGroupVerifier(clients *clients.Clients, logger *log.Logger) *PodGroupVerifier {
 	return &PodGroupVerifier{clients: clients, logger: logger}
 }
 

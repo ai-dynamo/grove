@@ -94,3 +94,22 @@ func NewClients(restConfig *rest.Config) (*Clients, error) {
 		CRClient:      crClient,
 	}, nil
 }
+
+// NewCRClient creates a controller-runtime client with the Grove scheme registered.
+// This is useful when only a CR client is needed without the full Clients bundle.
+func NewCRClient(restConfig *rest.Config) (client.Client, error) {
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("add client-go scheme: %w", err)
+	}
+	if err := corev1alpha1.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("add Grove scheme: %w", err)
+	}
+
+	cl, err := client.New(restConfig, client.Options{Scheme: scheme})
+	if err != nil {
+		return nil, fmt.Errorf("create controller-runtime client: %w", err)
+	}
+
+	return cl, nil
+}

@@ -25,7 +25,7 @@ import (
 
 	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
+	"github.com/ai-dynamo/grove/operator/e2e/log"
 	kubeutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -44,11 +44,11 @@ type PodPhaseCount struct {
 // PodManager provides pod operations using pre-created Kubernetes clients.
 type PodManager struct {
 	clients *clients.Clients
-	logger  *utils.Logger
+	logger  *log.Logger
 }
 
 // NewPodManager creates a PodManager bound to the given clients.
-func NewPodManager(c *clients.Clients, logger *utils.Logger) *PodManager {
+func NewPodManager(c *clients.Clients, logger *log.Logger) *PodManager {
 	return &PodManager{clients: c, logger: logger}
 }
 
@@ -200,4 +200,13 @@ func VerifyPhases(pods *v1.PodList, expectedRunning, expectedPending int) error 
 	}
 
 	return nil
+}
+
+// InitContainerNames returns the names of all init containers in a pod.
+func InitContainerNames(pod v1.Pod) []string {
+	names := make([]string, len(pod.Spec.InitContainers))
+	for i, c := range pod.Spec.InitContainers {
+		names[i] = c.Name
+	}
+	return names
 }

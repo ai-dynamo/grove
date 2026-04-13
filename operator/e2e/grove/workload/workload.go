@@ -29,7 +29,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/resources"
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
+	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -54,11 +54,11 @@ type WorkloadManager struct {
 	clients   *clients.Clients
 	resources *resources.ResourceManager
 	pods      *pods.PodManager
-	logger    *utils.Logger
+	logger    *log.Logger
 }
 
 // NewWorkloadManager creates a WorkloadManager bound to the given clients.
-func NewWorkloadManager(clients *clients.Clients, logger *utils.Logger) *WorkloadManager {
+func NewWorkloadManager(clients *clients.Clients, logger *log.Logger) *WorkloadManager {
 	return &WorkloadManager{
 		clients:   clients,
 		resources: resources.NewResourceManager(clients, logger),

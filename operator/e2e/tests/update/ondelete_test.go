@@ -25,8 +25,8 @@ import (
 	"time"
 
 	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
@@ -137,7 +137,7 @@ func Test_OD2_ManualDeletionCreatesUpdatedPod(t *testing.T) {
 	}
 
 	var pclq grovev1alpha1.PodClique
-	if err = utils.ConvertUnstructuredToTyped(unstructuredPCLQ.Object, &pclq); err != nil {
+	if err = k8s.ConvertUnstructuredToTyped(unstructuredPCLQ.Object, &pclq); err != nil {
 		t.Fatalf("Failed to convert to PodClique: %v", err)
 	}
 

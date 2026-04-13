@@ -27,7 +27,7 @@ import (
 	"strings"
 
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
+	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -50,11 +50,11 @@ type AppliedResource struct {
 // ResourceManager provides Kubernetes resource operations using pre-created clients.
 type ResourceManager struct {
 	clients *clients.Clients
-	logger  *utils.Logger
+	logger  *log.Logger
 }
 
 // NewResourceManager creates a ResourceManager bound to the given clients.
-func NewResourceManager(c *clients.Clients, logger *utils.Logger) *ResourceManager {
+func NewResourceManager(c *clients.Clients, logger *log.Logger) *ResourceManager {
 	return &ResourceManager{clients: c, logger: logger}
 }
 

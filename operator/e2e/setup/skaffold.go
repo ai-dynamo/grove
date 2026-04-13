@@ -29,7 +29,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
+	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"github.com/samber/lo"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -53,7 +53,7 @@ type SkaffoldInstallConfig struct {
 	// Env are environment variables required by skaffold.yaml (e.g., VERSION, LD_FLAGS).
 	Env map[string]string
 	// Logger is the logger for operations (optional, will use default if nil).
-	Logger *utils.Logger
+	Logger *log.Logger
 }
 
 // Validate validates the configuration.
@@ -73,7 +73,7 @@ func (c *SkaffoldInstallConfig) Validate() error {
 
 	// Set defaults
 	if c.Logger == nil {
-		c.Logger = utils.NewTestLogger(utils.InfoLevel)
+		c.Logger = log.NewTestLogger(log.InfoLevel)
 	}
 	if c.Env == nil {
 		c.Env = make(map[string]string)
@@ -173,7 +173,7 @@ func runSkaffoldBuild(ctx context.Context, absSkaffoldPath, skaffoldDir, kubecon
 	cmd.Stdout = &stdout
 
 	// cmd.Stderr is logging, it'll get passed on at debug level only
-	cmd.Stderr = config.Logger.WriterLevel(utils.DebugLevel)
+	cmd.Stderr = config.Logger.WriterLevel(log.DebugLevel)
 
 	config.Logger.Debugf("   Running: skaffold %v", args)
 	if err := cmd.Run(); err != nil {
@@ -244,8 +244,8 @@ func runSkaffoldDeploy(ctx context.Context, absSkaffoldPath, skaffoldDir, kubeco
 	cmd.Env = append(cmd.Env, fmt.Sprintf("CONTAINER_REGISTRY=%s", config.PullRepo))
 
 	// log cmd.Stdout and cmd.Stderr at debug level only
-	cmd.Stdout = config.Logger.WriterLevel(utils.DebugLevel)
-	cmd.Stderr = config.Logger.WriterLevel(utils.DebugLevel)
+	cmd.Stdout = config.Logger.WriterLevel(log.DebugLevel)
+	cmd.Stderr = config.Logger.WriterLevel(log.DebugLevel)
 
 	config.Logger.Debugf("   Running: skaffold %v", args)
 	return cmd.Run()
@@ -253,7 +253,7 @@ func runSkaffoldDeploy(ctx context.Context, absSkaffoldPath, skaffoldDir, kubeco
 
 // writeTemporaryKubeconfig converts a rest.Config to a kubeconfig file and writes it to a temporary location.
 // Returns the path to the temporary file and a cleanup function.
-func writeTemporaryKubeconfig(restConfig *rest.Config, logger *utils.Logger) (string, func(), error) {
+func writeTemporaryKubeconfig(restConfig *rest.Config, logger *log.Logger) (string, func(), error) {
 	// Create a temporary file for the kubeconfig
 	tmpFile, err := os.CreateTemp("", "kubeconfig-*.yaml")
 	if err != nil {
