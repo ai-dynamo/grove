@@ -16,6 +16,19 @@ package resourceclaim
 
 import "fmt"
 
+// RC naming convention:
+//
+//	AllReplicas: <ownerName>-all-<rctName>
+//	PerReplica:  <ownerName>-<replicaIndex>-<rctName>
+//
+// The "all" keyword serves as a delimiter for AllReplicas-scope names. Since
+// Kubernetes names only allow [a-z0-9-], there is no special character available
+// as an unambiguous separator. If a PCS name contains "-all-" (e.g. "my-all-pcs"),
+// a theoretical collision is possible with another PCS whose name/template
+// combination produces the same concatenated string. In practice this requires
+// two PCS instances in the same namespace with overlapping owner+template name
+// segments, which is extremely unlikely.
+
 // AllReplicasRCName returns the deterministic name for an AllReplicas-scope ResourceClaim.
 // Format: <ownerName>-all-<rctName>
 func AllReplicasRCName(ownerName, rctName string) string {

@@ -396,7 +396,22 @@ func (r _resource) ensurePCSGResourceClaims(sc *syncContext) error {
 	labels := resourceclaim.ResourceClaimLabels(sc.pcs.Name)
 	labels[apicommon.LabelPodCliqueScalingGroup] = sc.pcsg.Name
 
-	// AllReplicas scope: one set of RCs per PCSG, owned by the PCSG
+	if err := r.ensurePCSGAllReplicasRCs(sc, resourceSharers, labels); err != nil {
+		return err
+	}
+	if err := r.ensurePCSGPerReplicaRCs(sc, resourceSharers, labels); err != nil {
+		return err
+	}
+
+	return resourceclaim.CleanupStalePerReplicaRCs(
+		sc.ctx, r.client,
+		sc.pcsg.Namespace, labels,
+		int(sc.pcsg.Spec.Replicas),
+		apicommon.LabelPodCliqueScalingGroupReplicaIndex,
+	)
+}
+
+func (r _resource) ensurePCSGAllReplicasRCs(sc *syncContext, resourceSharers []resourceclaim.ResourceSharer, labels map[string]string) error {
 	if err := resourceclaim.EnsureResourceClaims(
 		sc.ctx, r.client,
 		sc.pcsg.Name, sc.pcsg.Namespace,
@@ -412,8 +427,10 @@ func (r _resource) ensurePCSGResourceClaims(sc *syncContext) error {
 			fmt.Sprintf("Error ensuring PCSG-level AllReplicas ResourceClaims for %s", client.ObjectKeyFromObject(sc.pcsg)),
 		)
 	}
+	return nil
+}
 
-	// PerReplica scope: one set of RCs per PCSG replica, owned by the PCSG
+func (r _resource) ensurePCSGPerReplicaRCs(sc *syncContext, resourceSharers []resourceclaim.ResourceSharer, labels map[string]string) error {
 	for pcsgReplicaIndex := range int(sc.pcsg.Spec.Replicas) {
 		repIdx := pcsgReplicaIndex
 		replicaLabels := maps.Clone(labels)
@@ -434,11 +451,5 @@ func (r _resource) ensurePCSGResourceClaims(sc *syncContext) error {
 			)
 		}
 	}
-
-	return resourceclaim.CleanupStalePerReplicaRCs(
-		sc.ctx, r.client,
-		sc.pcsg.Namespace, labels,
-		int(sc.pcsg.Spec.Replicas),
-		apicommon.LabelPodCliqueScalingGroupReplicaIndex,
-	)
+	return nil
 }

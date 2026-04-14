@@ -26,6 +26,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/resources"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/utils"
@@ -443,6 +444,16 @@ func Test_RS1_HierarchicalResourceSharing(t *testing.T) {
 
 	Logger.Info("15. Verify webhook rejects immutable resourceSharing change")
 	verifyImmutabilityRejection(t, tc)
+
+	Logger.Info("16. Delete PCS and verify all ResourceClaims are garbage-collected")
+	wm := workload.NewWorkloadManager(tc.Clients, Logger)
+	if err := wm.DeletePCSAndWait(ctx, tc.Namespace, rsWorkloadName, tc.Timeout, tc.Interval); err != nil {
+		t.Fatalf("Failed to delete PCS: %v", err)
+	}
+	if err := utils.WaitForResourceClaimCount(ctx, crClient, tc.Namespace, rcLabelSelector, 0, tc.Timeout, tc.Interval); err != nil {
+		t.Fatalf("Expected 0 ResourceClaims after PCS deletion but timed out: %v", err)
+	}
+	Logger.Info("   Verified all ResourceClaims garbage-collected after PCS deletion")
 
 	Logger.Info("Hierarchical resource sharing e2e test completed successfully!")
 }

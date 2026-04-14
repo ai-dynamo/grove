@@ -23,6 +23,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
+	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -95,14 +96,24 @@ func EnsureResourceClaim(
 		if err := controllerutil.SetControllerReference(owner, rc, scheme); err != nil {
 			return err
 		}
-		return cl.Create(ctx, rc)
-	}
-	if err != nil {
+		if createErr := cl.Create(ctx, rc); createErr != nil {
+			if !apierrors.IsAlreadyExists(createErr) {
+				return createErr
+			}
+			// Stale cache: the RC was created between our Get and Create.
+			// Re-fetch and fall through to the update path below.
+			if err := cl.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, rc); err != nil {
+				return err
+			}
+		} else {
+			return nil
+		}
+	} else if err != nil {
 		return err
 	}
 	// RC already exists — only update metadata (labels, owner reference).
 	// ResourceClaim.spec is immutable in Kubernetes; never attempt to patch it.
-	rc.Labels = labels
+	rc.Labels = lo.Assign(rc.Labels, labels)
 	if err := controllerutil.SetControllerReference(owner, rc, scheme); err != nil {
 		return err
 	}
@@ -167,6 +178,7 @@ func ResourceClaimLabels(pcsName string) map[string]string {
 }
 
 // RCName returns the deterministic ResourceClaim name for a given base ref and optional replica index.
+// Callers must ensure replicaIndex is non-nil when base.Scope is PerReplica.
 func RCName(ownerName string, base *grovecorev1alpha1.ResourceSharingSpecBase, replicaIndex *int) string {
 	if base.Scope == grovecorev1alpha1.ResourceSharingScopeAllReplicas {
 		return AllReplicasRCName(ownerName, base.Name)
@@ -281,6 +293,10 @@ func DeletePerReplicaRCs(
 // All requirements are merged into a single MatchingLabelsSelector to avoid
 // issues with MatchingLabels + MatchingLabelsSelector option merging in
 // controller-runtime's DeleteAllOf / List.
+//
+// NOTE: The NotIn requirement enumerates all valid replica indices [0..currentReplicas-1],
+// so the selector size grows linearly with replica count. This is acceptable at
+// current scale but worth noting for very large replica counts.
 func CleanupStalePerReplicaRCs(
 	ctx context.Context,
 	cl client.Client,
