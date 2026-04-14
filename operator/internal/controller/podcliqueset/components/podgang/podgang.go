@@ -134,12 +134,11 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGa
 		}
 		pg.Labels[apicommon.LabelSchedulerName] = schedName
 	}
-	if r.tasConfig.Enabled {
+	if r.tasConfig.Enabled && pcs.Spec.Template.TopologyConstraint != nil && pcs.Spec.Template.TopologyConstraint.TopologyName != "" {
 		if pg.Annotations == nil {
 			pg.Annotations = make(map[string]string)
 		}
-		// TODO(multi-topology): resolve from PCS topologyName — will be fixed in Task 6
-		pg.Annotations[apicommonconstants.AnnotationTopologyName] = "grove-topology"
+		pg.Annotations[apicommonconstants.AnnotationTopologyName] = pcs.Spec.Template.TopologyConstraint.TopologyName
 	}
 	if err := controllerutil.SetControllerReference(pcs, pg, r.scheme); err != nil {
 		return groveerr.WrapError(
