@@ -22,8 +22,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+	"github.com/ai-dynamo/grove/operator/e2e/waiter"
+	kubeutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

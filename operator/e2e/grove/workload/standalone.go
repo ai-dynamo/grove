@@ -43,6 +43,7 @@ var PodCliqueSetGVR = schema.GroupVersionResource{
 	Resource: "podcliquesets",
 }
 
+
 // GetPodCliqueSet returns a typed PodCliqueSet by name from the given namespace.
 func GetPodCliqueSet(ctx context.Context, dynamicClient dynamic.Interface, workloadName, namespace string) (*grovecorev1alpha1.PodCliqueSet, error) {
 	unstructuredPCS, err := dynamicClient.Resource(PodCliqueSetGVR).Namespace(namespace).Get(ctx, workloadName, metav1.GetOptions{})
