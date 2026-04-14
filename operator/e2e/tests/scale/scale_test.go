@@ -62,8 +62,18 @@ var Logger = log.NewTestLogger(log.InfoLevel)
 const (
 	scaleTestExpectedPods     = 1000
 	scaleTestExpectedReplicas = 1
+	scaleTestPCSCount         = 1
+	scaleTestWorkerNodes      = 100
 	scaleTestPollInterval     = 100 * time.Millisecond
 	scaleTestTimeout          = 15 * time.Minute
+
+	scaleTestName      = "ScaleTest_1000"
+	scaleTestWorkload  = "scale-test-1000"
+	scaleTestYAMLPath  = "../../yaml/scale-test-1000.yaml"
+	scaleTestNamespace = "default"
+
+	runIDTimeFormat   = "20060102-150405"
+	outputFilePattern = "scale-test-%s.json"
 )
 
 func Test_ScaleTest_1000(t *testing.T) {
@@ -73,14 +83,14 @@ func Test_ScaleTest_1000(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), scaleTestTimeout)
 	defer cancel()
 
-	Logger.Info("preparing test cluster with 100 worker nodes")
-	tc, cleanup := testctx.PrepareTest(ctx, t, 100,
+	Logger.Infof("preparing test cluster with %d worker nodes", scaleTestWorkerNodes)
+	tc, cleanup := testctx.PrepareTest(ctx, t, scaleTestWorkerNodes,
 		testctx.WithTimeout(scaleTestTimeout),
 		testctx.WithInterval(scaleTestPollInterval),
 		testctx.WithWorkload(&testctx.WorkloadConfig{
-			Name:         "scale-test-1000",
-			YAMLPath:     "../../yaml/scale-test-1000.yaml",
-			Namespace:    "default",
+			Name:         scaleTestWorkload,
+			YAMLPath:     scaleTestYAMLPath,
+			Namespace:    scaleTestNamespace,
 			ExpectedPods: scaleTestExpectedPods,
 		}),
 	)
@@ -91,7 +101,7 @@ func Test_ScaleTest_1000(t *testing.T) {
 		t.Fatalf("failed to read grove metadata: %v", err)
 	}
 
-	runID := fmt.Sprintf("run-%s", time.Now().Format("20060102-150405"))
+	runID := fmt.Sprintf("run-%s", time.Now().Format(runIDTimeFormat))
 	Logger.Infof("test config: runID=%s, namespace=%s, pcsName=%s", runID, tc.Namespace, tc.Workload.Name)
 
 	pprofOpt, pprofCleanup := setupPprofHook(ctx, tc.Clients, runID, diagDir, loadPyroscopeConfig())
@@ -106,10 +116,10 @@ func Test_ScaleTest_1000(t *testing.T) {
 	}
 
 	tracker := measurement.NewTimelineTracker(
-		"ScaleTest_1000",
+		scaleTestName,
 		runID,
 		tc.Namespace,
-		1,
+		scaleTestPCSCount,
 		opts...,
 	)
 
@@ -175,14 +185,19 @@ func Test_ScaleTest_1000(t *testing.T) {
 	tracker.Wait()
 
 	Logger.Info("exporting results")
-	exportResult(t, result, diagDir)
+	exportResult(t, result, diagDir, scaleTestName)
 	Logger.Infof("scale test completed successfully in %.1fs", result.TestDurationSeconds)
 }
 
-func exportResult(t *testing.T, result *measurement.TrackerResult, diagDir string) {
+func exportResult(t *testing.T, result *measurement.TrackerResult, diagDir, testName string) {
 	t.Helper()
 
-	outputPath := resolveOutputPath(fmt.Sprintf("scale-test-%s.json", time.Now().Format("20060102-150405")), diagDir)
+	outputPath := resolveOutputPath(fmt.Sprintf(outputFilePattern, time.Now().Format(runIDTimeFormat)), diagDir, testName)
+	if dir := filepath.Dir(outputPath); dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("Failed to create output directory: %v", err)
+		}
+	}
 	jsonFile, err := os.Create(outputPath)
 	if err != nil {
 		t.Fatalf("Failed to create JSON output file: %v", err)
@@ -199,12 +214,11 @@ func exportResult(t *testing.T, result *measurement.TrackerResult, diagDir strin
 	}
 }
 
-// resolveOutputPath resolves the full output path for filename.
-// Uses diagDir if set; otherwise returns filename as-is (relative to cwd).
-// Writability is not checked — callers must handle create errors.
-func resolveOutputPath(filename, diagDir string) string {
+// resolveOutputPath builds the output path: <diagDir>/<testName>/<filename>.
+// Falls back to <testName>/<filename> when diagDir is empty.
+func resolveOutputPath(filename, diagDir, testName string) string {
 	if diagDir != "" {
-		return filepath.Join(diagDir, filename)
+		return filepath.Join(diagDir, testName, filename)
 	}
-	return filename
+	return filepath.Join(testName, filename)
 }

@@ -34,6 +34,13 @@ type parsedSelector struct {
 	parsed labels.Selector
 }
 
+// init sets the raw selector string once. Subsequent calls are no-ops.
+func (ps *parsedSelector) init(raw string) {
+	if ps.raw == "" {
+		ps.raw = raw
+	}
+}
+
 // get returns the cached label selector, parsing it on first call.
 func (ps *parsedSelector) get() (labels.Selector, error) {
 	if ps.parsed != nil {
@@ -77,7 +84,7 @@ func (c *PodsCreatedCondition) Met(ctx context.Context) (bool, error) {
 		return false, errors.New("expected count cannot be negative")
 	}
 
-	c.sel.raw = c.LabelSelector
+	c.sel.init(c.LabelSelector)
 	pods, err := listPods(ctx, c.Client, c.Namespace, &c.sel)
 	if err != nil {
 		return false, err
@@ -108,7 +115,7 @@ func (c *PodsReadyCondition) Met(ctx context.Context) (bool, error) {
 		return false, errors.New("expected count cannot be negative")
 	}
 
-	c.sel.raw = c.LabelSelector
+	c.sel.init(c.LabelSelector)
 	pods, err := listPods(ctx, c.Client, c.Namespace, &c.sel)
 	if err != nil {
 		return false, err
