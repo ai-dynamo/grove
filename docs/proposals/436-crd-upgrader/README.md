@@ -29,15 +29,6 @@
   - [Dependencies](#dependencies)
   - [Test Plan](#test-plan)
   - [Graduation Criteria](#graduation-criteria)
-- [Implementation History](#implementation-history)
-- [Alternatives](#alternatives)
-  - [Comparison of All Approaches](#comparison-of-all-approaches)
-  - [Alternative 1: Separate grove-crds Helm Chart](#alternative-1-separate-grove-crds-helm-chart)
-    - [How It Works](#how-it-works)
-    - [Trade-offs](#trade-offs)
-  - [Alternative 2: installCRDs Value Flag in the grove Chart](#alternative-2-installcrds-value-flag-in-the-grove-chart)
-    - [How It Works](#how-it-works-1)
-    - [Trade-offs](#trade-offs-1)
 - [Appendix](#appendix)
 <!-- /toc -->
 
