@@ -82,7 +82,7 @@ func TestDownloader_DownloadForPhase(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(tt.httpStatus)
 				if tt.httpStatus == http.StatusOK {
 					_, _ = w.Write(profile)
@@ -143,7 +143,7 @@ func TestDownloader_DownloadForPhase_FileNameFormat(t *testing.T) {
 	now := time.Date(2026, 3, 12, 10, 0, 0, 0, time.UTC)
 	profile := fakeBinaryProfile()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(profile)
 	}))
@@ -164,7 +164,7 @@ func TestDownloader_DownloadForPhase_OutputIsValidGzip(t *testing.T) {
 	now := time.Date(2026, 3, 12, 10, 0, 0, 0, time.UTC)
 	profile := fakeBinaryProfile()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(profile)
 	}))
