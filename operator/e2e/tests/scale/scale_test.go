@@ -72,8 +72,8 @@ const (
 	scaleTestYAMLPath  = "../../yaml/scale-test-1000.yaml"
 	scaleTestNamespace = "default"
 
-	runIDTimeFormat   = "20060102-150405"
-	outputFilePattern = "scale-test-%s.json"
+	runIDTimeFormat    = "20060102-150405"
+	outputResultsFile = "scale-test-results.json"
 )
 
 func Test_ScaleTest_1000(t *testing.T) {
@@ -104,7 +104,15 @@ func Test_ScaleTest_1000(t *testing.T) {
 	runID := fmt.Sprintf("run-%s", time.Now().Format(runIDTimeFormat))
 	Logger.Infof("test config: runID=%s, namespace=%s, pcsName=%s", runID, tc.Namespace, tc.Workload.Name)
 
-	pprofOpt, pprofCleanup := setupPprofHook(ctx, tc.Clients, runID, diagDir, loadPyroscopeConfig())
+	outputDir := filepath.Join(scaleTestName, runID)
+	if diagDir != "" {
+		outputDir = filepath.Join(diagDir, scaleTestName, runID)
+	}
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		t.Fatalf("failed to create output directory: %v", err)
+	}
+
+	pprofOpt, pprofCleanup := setupPprofHook(ctx, tc.Clients, runID, outputDir, loadPyroscopeConfig())
 	defer pprofCleanup()
 
 	opts := []measurement.TimelineOption{
@@ -185,19 +193,14 @@ func Test_ScaleTest_1000(t *testing.T) {
 	tracker.Wait()
 
 	Logger.Info("exporting results")
-	exportResult(t, result, diagDir, scaleTestName)
+	exportResult(t, result, outputDir)
 	Logger.Infof("scale test completed successfully in %.1fs", result.TestDurationSeconds)
 }
 
-func exportResult(t *testing.T, result *measurement.TrackerResult, diagDir, testName string) {
+func exportResult(t *testing.T, result *measurement.TrackerResult, outputDir string) {
 	t.Helper()
 
-	outputPath := resolveOutputPath(fmt.Sprintf(outputFilePattern, time.Now().Format(runIDTimeFormat)), diagDir, testName)
-	if dir := filepath.Dir(outputPath); dir != "." {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			t.Fatalf("Failed to create output directory: %v", err)
-		}
-	}
+	outputPath := filepath.Join(outputDir, outputResultsFile)
 	jsonFile, err := os.Create(outputPath)
 	if err != nil {
 		t.Fatalf("Failed to create JSON output file: %v", err)
@@ -212,13 +215,4 @@ func exportResult(t *testing.T, result *measurement.TrackerResult, diagDir, test
 	if err := multi.Export(result); err != nil {
 		t.Fatalf("Failed to export results: %v", err)
 	}
-}
-
-// resolveOutputPath builds the output path: <diagDir>/<testName>/<filename>.
-// Falls back to <testName>/<filename> when diagDir is empty.
-func resolveOutputPath(filename, diagDir, testName string) string {
-	if diagDir != "" {
-		return filepath.Join(diagDir, testName, filename)
-	}
-	return filepath.Join(testName, filename)
 }

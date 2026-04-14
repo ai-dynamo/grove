@@ -43,6 +43,7 @@ const (
 // String value appears in output file names.
 type ProfileType string
 
+// Supported profile types for Pyroscope downloads.
 const (
 	ProfileCPU       ProfileType = "cpu"
 	ProfileMemory    ProfileType = "memory"
