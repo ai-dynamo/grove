@@ -17,23 +17,27 @@
 package validation
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
 
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/clustertopology"
 	schedmanager "github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 
 	"github.com/samber/lo"
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1validation "k8s.io/apimachinery/pkg/apis/meta/v1/validation"
 	"k8s.io/apimachinery/pkg/util/sets"
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -48,17 +52,19 @@ type pcsValidator struct {
 	pcs             *grovecorev1alpha1.PodCliqueSet
 	tasEnabled      bool
 	schedulerConfig groveconfigv1alpha1.SchedulerConfiguration
+	client          client.Client
 }
 
 // newPCSValidator creates a new PodCliqueSet validator for the given operation.
 // schedulerConfig is the full scheduler configuration; the validator uses it for
 // scheduler-name matching and may use per-scheduler config for future validations.
-func newPCSValidator(pcs *grovecorev1alpha1.PodCliqueSet, operation admissionv1.Operation, tasConfig groveconfigv1alpha1.TopologyAwareSchedulingConfiguration, schedulerConfig groveconfigv1alpha1.SchedulerConfiguration) *pcsValidator {
+func newPCSValidator(pcs *grovecorev1alpha1.PodCliqueSet, operation admissionv1.Operation, tasConfig groveconfigv1alpha1.TopologyAwareSchedulingConfiguration, schedulerConfig groveconfigv1alpha1.SchedulerConfiguration, cl client.Client) *pcsValidator {
 	return &pcsValidator{
 		operation:       operation,
 		pcs:             pcs,
 		tasEnabled:      tasConfig.Enabled,
 		schedulerConfig: schedulerConfig,
+		client:          cl,
 	}
 }
 
@@ -412,10 +418,15 @@ func (v *pcsValidator) validateTerminationDelay(fldPath *field.Path) field.Error
 	return allErrs
 }
 
-func (v *pcsValidator) validateTopologyConstraintsOnCreate() field.ErrorList {
-	// TODO(multi-topology): Task 6 will resolve domains from the referenced ClusterTopology.
-	topoConstraintsValidator := newTopologyConstraintsValidator(v.pcs, v.tasEnabled, nil)
-	return topoConstraintsValidator.validate()
+func (v *pcsValidator) validateTopologyConstraintsOnCreate(ctx context.Context) field.ErrorList {
+	if !v.tasEnabled {
+		return newTopologyConstraintsValidator(v.pcs, v.tasEnabled, nil).validate()
+	}
+	domains, errs := v.resolveTopologyDomains(ctx)
+	if len(errs) > 0 {
+		return errs
+	}
+	return newTopologyConstraintsValidator(v.pcs, v.tasEnabled, domains).validate()
 }
 
 // validatePodCliqueTemplateSpec validates a single PodClique template specification including metadata and spec.
@@ -679,8 +690,68 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigsUpdate(oldConfigs []g
 }
 
 func (v *pcsValidator) validateTopologyConstraintsUpdate(oldPCS *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
-	// TODO(multi-topology): Task 6 will resolve domains from the referenced ClusterTopology.
+	// Domain/hierarchy validation is not needed on update because topology constraints are immutable.
+	// Only topologyName and packDomain immutability are checked here.
 	return newTopologyConstraintsValidator(v.pcs, v.tasEnabled, nil).validateUpdate(oldPCS)
+}
+
+// resolveTopologyDomains resolves the ordered list of topology domains from the ClusterTopology
+// referenced by the PCS's topologyName. Returns nil domains (no validation) if no topology constraints exist.
+func (v *pcsValidator) resolveTopologyDomains(ctx context.Context) ([]string, field.ErrorList) {
+	topologyName := ""
+	if v.pcs.Spec.Template.TopologyConstraint != nil {
+		topologyName = v.pcs.Spec.Template.TopologyConstraint.TopologyName
+	}
+
+	hasAnyConstraint := pcsHasAnyTopologyConstraint(v.pcs)
+
+	// No constraints at all — nothing to validate.
+	if !hasAnyConstraint {
+		return nil, nil
+	}
+
+	fldPath := field.NewPath("spec", "template", "topologyConstraint", "topologyName")
+
+	// Constraints exist but topologyName is missing.
+	if topologyName == "" {
+		return nil, field.ErrorList{field.Required(fldPath,
+			"spec.template.topologyConstraint with topologyName must be set when topology constraints are defined at any level")}
+	}
+
+	// Fetch the referenced ClusterTopology.
+	levels, err := clustertopology.GetClusterTopologyLevels(ctx, v.client, topologyName)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, field.ErrorList{field.Invalid(fldPath, topologyName,
+				fmt.Sprintf("ClusterTopology %q not found", topologyName))}
+		}
+		return nil, field.ErrorList{field.InternalError(fldPath,
+			fmt.Errorf("failed to fetch ClusterTopology %q: %w", topologyName, err))}
+	}
+
+	domains := make([]string, len(levels))
+	for i, level := range levels {
+		domains[i] = string(level.Domain)
+	}
+	return domains, nil
+}
+
+// pcsHasAnyTopologyConstraint returns true if the PCS has any topology constraint at any level.
+func pcsHasAnyTopologyConstraint(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+	if pcs.Spec.Template.TopologyConstraint != nil {
+		return true
+	}
+	for _, clique := range pcs.Spec.Template.Cliques {
+		if clique.TopologyConstraint != nil {
+			return true
+		}
+	}
+	for _, pcsg := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		if pcsg.TopologyConstraint != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // requiresOrderValidation checks if the StartupType requires clique order validation.
