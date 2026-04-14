@@ -114,17 +114,19 @@ func (v *topologyConstraintsValidator) disallowConstraintsForCreateWhenTASIsDisa
 }
 
 // validateTopologyDomainsExistInClusterTopology ensures that all specified topology constraint domains exist in the cluster topology.
-// When clusterTopologyDomains is nil, validation is skipped (domains will be validated at runtime against the referenced CT).
+// When clusterTopologyDomains is nil, validation is skipped (no topology constraints or topologyName not set).
 func (v *topologyConstraintsValidator) validateTopologyDomainsExistInClusterTopology(fldPath *field.Path) field.ErrorList {
-	// TODO(multi-topology): Task 6 will resolve domains from the referenced ClusterTopology instead of relying on config.
 	if v.clusterTopologyDomains == nil {
 		return nil
 	}
 
 	var allErrs field.ErrorList
 
-	// Helper to validate a single domain
+	// Helper to validate a single domain. Empty packDomain is valid — it means no packing at this level.
 	validateDomain := func(domain grovecorev1alpha1.TopologyDomain, fieldPath *field.Path) {
+		if domain == "" {
+			return
+		}
 		if !slices.Contains(v.clusterTopologyDomains, string(domain)) {
 			allErrs = append(allErrs, field.Invalid(fieldPath, domain,
 				fmt.Sprintf("topology domain '%s' does not exist in cluster topology %v",
@@ -154,29 +156,16 @@ func (v *topologyConstraintsValidator) validateTopologyDomainsExistInClusterTopo
 	return allErrs
 }
 
-// wellKnownDomainOrder defines the hierarchical order for well-known topology domains.
-// TODO(multi-topology): Task 5 will replace this with validation against the referenced CT's levels.
-var wellKnownDomainOrder = map[grovecorev1alpha1.TopologyDomain]int{
-	grovecorev1alpha1.TopologyDomainRegion:     0,
-	grovecorev1alpha1.TopologyDomainZone:       1,
-	grovecorev1alpha1.TopologyDomainDataCenter: 2,
-	grovecorev1alpha1.TopologyDomainBlock:      3,
-	grovecorev1alpha1.TopologyDomainRack:       4,
-	grovecorev1alpha1.TopologyDomainHost:       5,
-	grovecorev1alpha1.TopologyDomainNuma:       6,
-}
-
 // isParentBroaderThanChild checks if a parent topology constraint domain is broader than (or equal to)
-// a child topology constraint domain. Returns true if valid (parent is broader or equal), false if invalid (parent is narrower).
-// TODO(multi-topology): Task 5 will replace this with position-based comparison using the referenced CT's levels.
-func isParentBroaderThanChild(parentDomain, childDomain grovecorev1alpha1.TopologyDomain) bool {
-	parentOrder, parentKnown := wellKnownDomainOrder[parentDomain]
-	childOrder, childKnown := wellKnownDomainOrder[childDomain]
-	if !parentKnown || !childKnown {
-		// For unknown (custom) domains, we cannot determine hierarchy; allow it.
+// a child topology constraint domain using the ordered clusterTopologyDomains slice (index 0 = broadest).
+// If either domain is not in the slice, the check is skipped (returns true).
+func isParentBroaderThanChild(parentDomain, childDomain grovecorev1alpha1.TopologyDomain, clusterTopologyDomains []string) bool {
+	parentIdx := slices.Index(clusterTopologyDomains, string(parentDomain))
+	childIdx := slices.Index(clusterTopologyDomains, string(childDomain))
+	if parentIdx == -1 || childIdx == -1 {
 		return true
 	}
-	return parentOrder <= childOrder
+	return parentIdx <= childIdx
 }
 
 // buildHierarchyViolationMsg generates an error message when a parent constraint is narrower than a child constraint.
@@ -205,7 +194,7 @@ func (v *topologyConstraintsValidator) validateHierarchicalTopologyConstraints(f
 		// Validate: PodCliqueSet must be broader than all PodCliques
 		for _, clique := range v.pcs.Spec.Template.Cliques {
 			if clique.TopologyConstraint != nil {
-				if !isParentBroaderThanChild(pcsDomain, clique.TopologyConstraint.PackDomain) {
+				if !isParentBroaderThanChild(pcsDomain, clique.TopologyConstraint.PackDomain, v.clusterTopologyDomains) {
 					allErrs = append(allErrs, field.Invalid(
 						fldPath.Child("topologyConstraint"),
 						pcsDomain,
@@ -218,7 +207,7 @@ func (v *topologyConstraintsValidator) validateHierarchicalTopologyConstraints(f
 		// Validate: PodCliqueSet must be broader than all PodCliqueScalingGroups
 		for _, pcsg := range v.pcs.Spec.Template.PodCliqueScalingGroupConfigs {
 			if pcsg.TopologyConstraint != nil {
-				if !isParentBroaderThanChild(pcsDomain, pcsg.TopologyConstraint.PackDomain) {
+				if !isParentBroaderThanChild(pcsDomain, pcsg.TopologyConstraint.PackDomain, v.clusterTopologyDomains) {
 					allErrs = append(allErrs, field.Invalid(
 						fldPath.Child("topologyConstraint"),
 						pcsDomain,
@@ -240,7 +229,7 @@ func (v *topologyConstraintsValidator) validateHierarchicalTopologyConstraints(f
 			// Find the clique by name
 			matchingPCLQTemplate := utils.FindPodCliqueTemplateSpecByName(v.pcs, cliqueName)
 			if matchingPCLQTemplate != nil && matchingPCLQTemplate.TopologyConstraint != nil {
-				if !isParentBroaderThanChild(pcsgDomain, matchingPCLQTemplate.TopologyConstraint.PackDomain) {
+				if !isParentBroaderThanChild(pcsgDomain, matchingPCLQTemplate.TopologyConstraint.PackDomain, v.clusterTopologyDomains) {
 					allErrs = append(allErrs, field.Invalid(
 						fldPath.Child("podCliqueScalingGroupConfigs").Index(i).Child("topologyConstraint"),
 						pcsgDomain,
@@ -257,6 +246,21 @@ func (v *topologyConstraintsValidator) validateHierarchicalTopologyConstraints(f
 // disallowChangesToTopologyConstraintsWhenPCSIsUpdated ensures that topology constraints are not modified during updates.
 func (v *topologyConstraintsValidator) disallowChangesToTopologyConstraintsWhenPCSIsUpdated(oldPCS *grovecorev1alpha1.PodCliqueSet, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
+
+	// Validate topologyName immutability
+	oldTopologyName := ""
+	newTopologyName := ""
+	if oldPCS.Spec.Template.TopologyConstraint != nil {
+		oldTopologyName = oldPCS.Spec.Template.TopologyConstraint.TopologyName
+	}
+	if v.pcs.Spec.Template.TopologyConstraint != nil {
+		newTopologyName = v.pcs.Spec.Template.TopologyConstraint.TopologyName
+	}
+	if oldTopologyName != newTopologyName {
+		allErrs = append(allErrs, field.Forbidden(
+			fldPath.Child("topologyConstraint").Child("topologyName"),
+			fmt.Sprintf("topologyName cannot be changed from %q to %q", oldTopologyName, newTopologyName)))
+	}
 
 	// Validate PCS level
 	oldPCSConstraint := oldPCS.Spec.Template.TopologyConstraint.ToTopologyConstraint()
@@ -328,13 +332,4 @@ func constraintChangeMsg(kind, name string, old, new *grovecorev1alpha1.Topology
 	}
 	return fmt.Sprintf("%s%s topology constraint cannot be changed from '%s' to '%s'",
 		kind, identifier, old.PackDomain, new.PackDomain)
-}
-
-// pcsTopologyConstraintToTopologyConstraint converts a PodCliqueSetTopologyConstraint to a TopologyConstraint.
-// TODO(multi-topology): Remove once constraintChanged/constraintChangeMsg are refactored to handle PodCliqueSetTopologyConstraint.
-func pcsTopologyConstraintToTopologyConstraint(pcsConstraint *grovecorev1alpha1.PodCliqueSetTopologyConstraint) *grovecorev1alpha1.TopologyConstraint {
-	if pcsConstraint == nil {
-		return nil
-	}
-	return &grovecorev1alpha1.TopologyConstraint{PackDomain: pcsConstraint.PackDomain}
 }
