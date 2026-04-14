@@ -76,6 +76,10 @@ jobs:
         run: |
           make --directory=operator docker-build PLATFORM=linux/amd64,linux/arm64 VERSION=$PACKAGE_VERSION REGISTRY=$DOCKER_REGISTRY DOCKER_BUILD_ADDITIONAL_ARGS=--push
 
+      - name: Copy CRDs to charts
+        run: |
+          ./operator/hack/prepare-charts.sh
+
       - name: Build Helm chart
         run: |
           sed -i "s#repository: grove-operator#repository: $DOCKER_REGISTRY/grove-operator#" operator/charts/values.yaml
