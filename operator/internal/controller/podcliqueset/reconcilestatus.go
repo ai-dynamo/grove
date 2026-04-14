@@ -190,6 +190,24 @@ func (r *Reconciler) computePCSGsStatus(pcsGenerationHash *string, expectedPCSGs
 
 func (r *Reconciler) mutateTopologyLevelUnavailableConditions(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
 	if !r.tasConfig.Enabled {
+		// If TAS is disabled but PCS has topology constraints, surface a warning condition.
+		if len(getUniqueTopologyDomainsInPodCliqueSet(pcs)) > 0 {
+			cond := metav1.Condition{
+				Type:               apicommonconstants.ConditionTopologyLevelsUnavailable,
+				Status:             metav1.ConditionUnknown,
+				Reason:             apicommonconstants.ConditionReasonTopologyAwareSchedulingDisabled,
+				Message:            "Topology constraints are defined but Topology Aware Scheduling is disabled",
+				ObservedGeneration: pcs.Generation,
+				LastTransitionTime: metav1.Now(),
+			}
+			if k8sutils.HasConditionChanged(pcs.Status.Conditions, cond) {
+				logger.Info("Updating TopologyLevelsUnavailable condition for PodCliqueSet",
+					"pcs", client.ObjectKeyFromObject(pcs),
+					"reason", cond.Reason)
+				meta.SetStatusCondition(&pcs.Status.Conditions, cond)
+			}
+			return nil
+		}
 		// Clear any existing topology level unavailable conditions if TAS is disabled
 		meta.RemoveStatusCondition(&pcs.Status.Conditions, apicommonconstants.ConditionTopologyLevelsUnavailable)
 		return nil
@@ -199,13 +217,13 @@ func (r *Reconciler) mutateTopologyLevelUnavailableConditions(ctx context.Contex
 	if err != nil {
 		return err
 	}
-	if k8sutils.HasConditionChanged(pcs.Status.Conditions, *newCond) {
+	if k8sutils.HasConditionChanged(pcs.Status.Conditions, newCond) {
 		logger.Info("Updating TopologyLevelsUnavailable condition for PodCliqueSet",
 			"pcs", client.ObjectKeyFromObject(pcs),
 			"type", newCond.Type,
 			"status", newCond.Status,
 			"reason", newCond.Reason)
-		meta.SetStatusCondition(&pcs.Status.Conditions, *newCond)
+		meta.SetStatusCondition(&pcs.Status.Conditions, newCond)
 	}
 	return nil
 }
@@ -215,52 +233,74 @@ func (r *Reconciler) mutateTopologyLevelUnavailableConditions(ctx context.Contex
 // If any topology levels used by the PodCliqueSet are not available in the ClusterTopology, it sets the condition to True.
 // If all topology levels are available, it sets the condition to False.
 // If the ClusterTopology resource is not found, it sets the condition to Unknown.
-func (r *Reconciler) computeTopologyLevelsUnavailableCondition(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (*metav1.Condition, error) {
-	var cond *metav1.Condition
-	// Get the TopologyLevel's from ClusterTopology custom resource.
-	// TODO(multi-topology): resolve from PCS topologyName — will be fixed in Task 7
-	topologyLevels, err := clustertopology.GetClusterTopologyLevels(ctx, r.client, "grove-topology")
+func (r *Reconciler) computeTopologyLevelsUnavailableCondition(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (metav1.Condition, error) {
+	topologyName := ""
+	if pcs.Spec.Template.TopologyConstraint != nil {
+		topologyName = pcs.Spec.Template.TopologyConstraint.TopologyName
+	}
+
+	// If topologyName is missing but topology constraints exist, report as unknown.
+	if topologyName == "" && len(getUniqueTopologyDomainsInPodCliqueSet(pcs)) > 0 {
+		return metav1.Condition{
+			Type:               apicommonconstants.ConditionTopologyLevelsUnavailable,
+			Status:             metav1.ConditionUnknown,
+			Reason:             apicommonconstants.ConditionReasonTopologyNameMissing,
+			Message:            "topologyName is required when topology constraints are set; update PodCliqueSet to add topologyName",
+			ObservedGeneration: pcs.Generation,
+			LastTransitionTime: metav1.Now(),
+		}, nil
+	}
+
+	// If no topology constraints at all, report all available.
+	if topologyName == "" {
+		return metav1.Condition{
+			Type:               apicommonconstants.ConditionTopologyLevelsUnavailable,
+			Status:             metav1.ConditionFalse,
+			Reason:             apicommonconstants.ConditionReasonAllTopologyLevelsAvailable,
+			Message:            "No topology constraints defined",
+			ObservedGeneration: pcs.Generation,
+			LastTransitionTime: metav1.Now(),
+		}, nil
+	}
+
+	topologyLevels, err := clustertopology.GetClusterTopologyLevels(ctx, r.client, topologyName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			// ClusterTopology resource not found, set condition to Unknown
-			cond = &metav1.Condition{
+			return metav1.Condition{
 				Type:               apicommonconstants.ConditionTopologyLevelsUnavailable,
 				Status:             metav1.ConditionUnknown,
 				Reason:             apicommonconstants.ConditionReasonClusterTopologyNotFound,
 				Message:            "ClusterTopology resource not found",
 				ObservedGeneration: pcs.Generation,
 				LastTransitionTime: metav1.Now(),
-			}
-			return cond, nil
+			}, nil
 		}
-		return nil, fmt.Errorf("failed to get topology levels: %w", err)
+		return metav1.Condition{}, fmt.Errorf("failed to get topology levels: %w", err)
 	}
 	availableTopologyDomains := lo.Map(topologyLevels, func(tl grovecorev1alpha1.TopologyLevel, _ int) grovecorev1alpha1.TopologyDomain { return tl.Domain })
-	// Check PodCliqueSet for unavailable topology levels
+	// Check PodCliqueSet for unavailable topology levels.
+	// The webhook guarantees PackDomain is non-empty when TopologyConstraint is set,
+	// so getUniqueTopologyDomainsInPodCliqueSet will not return zero-value domains.
 	pcsTopologyDomains := getUniqueTopologyDomainsInPodCliqueSet(pcs)
 	unavailableTopologyDomains, _ := lo.Difference(pcsTopologyDomains, availableTopologyDomains)
 	if len(unavailableTopologyDomains) > 0 {
-		// Some topology levels are unavailable
-		cond = &metav1.Condition{
+		return metav1.Condition{
 			Type:               apicommonconstants.ConditionTopologyLevelsUnavailable,
 			Status:             metav1.ConditionTrue,
 			Reason:             apicommonconstants.ConditionReasonTopologyLevelsUnavailable,
 			Message:            fmt.Sprintf("Unavailable topology domains: %v", unavailableTopologyDomains),
 			ObservedGeneration: pcs.Generation,
 			LastTransitionTime: metav1.Now(),
-		}
-	} else {
-		// All topology levels are available
-		cond = &metav1.Condition{
-			Type:               apicommonconstants.ConditionTopologyLevelsUnavailable,
-			Status:             metav1.ConditionFalse,
-			Reason:             apicommonconstants.ConditionReasonAllTopologyLevelsAvailable,
-			Message:            "All topology levels are available",
-			ObservedGeneration: pcs.Generation,
-			LastTransitionTime: metav1.Now(),
-		}
+		}, nil
 	}
-	return cond, nil
+	return metav1.Condition{
+		Type:               apicommonconstants.ConditionTopologyLevelsUnavailable,
+		Status:             metav1.ConditionFalse,
+		Reason:             apicommonconstants.ConditionReasonAllTopologyLevelsAvailable,
+		Message:            "All topology levels are available",
+		ObservedGeneration: pcs.Generation,
+		LastTransitionTime: metav1.Now(),
+	}, nil
 }
 
 // getUniqueTopologyDomainsInPodCliqueSet extracts unique topology domains from the PodCliqueSet's topology constraints.

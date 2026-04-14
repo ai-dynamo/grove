@@ -101,6 +101,10 @@ const (
 	// ConditionReasonTopologyNameMissing is the reason when a PodCliqueSet has topology
 	// constraints but no topologyName.
 	ConditionReasonTopologyNameMissing = "TopologyNameMissing"
+
+	// ConditionReasonTopologyAwareSchedulingDisabled is the reason when a PodCliqueSet has topology
+	// constraints but Topology Aware Scheduling is disabled in the operator configuration.
+	ConditionReasonTopologyAwareSchedulingDisabled = "TopologyAwareSchedulingDisabled"
 )
 
 // Constants for Condition Types

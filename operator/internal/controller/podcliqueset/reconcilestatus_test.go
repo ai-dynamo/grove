@@ -20,11 +20,14 @@ import (
 	"context"
 	"testing"
 
+	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
+	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/utils/ptr"
@@ -377,6 +380,194 @@ func TestMirrorUpdateProgressToRollingUpdateProgressPCS(t *testing.T) {
 						"CurrentlyUpdating.UpdateStartedAt should match")
 				}
 			}
+		})
+	}
+}
+
+// TestMutateTopologyLevelUnavailableConditions tests the mutateTopologyLevelUnavailableConditions function.
+// It covers TAS-disabled paths, backward-compat paths (missing topologyName), and fully-specified
+// ClusterTopology paths (not found, unavailable domains, all available).
+func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
+	// basePCS returns a PodCliqueSet with a PCS-level TopologyConstraint pointing at "my-topology".
+	basePCS := func(topologyName string) *grovecorev1alpha1.PodCliqueSet {
+		var tc *grovecorev1alpha1.PodCliqueSetTopologyConstraint
+		if topologyName != "" {
+			tc = &grovecorev1alpha1.PodCliqueSetTopologyConstraint{
+				TopologyName: topologyName,
+				PackDomain:   grovecorev1alpha1.TopologyDomainRack,
+			}
+		}
+		return &grovecorev1alpha1.PodCliqueSet{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       testPCSName,
+				Namespace:  testNamespace,
+				Generation: 1,
+			},
+			Spec: grovecorev1alpha1.PodCliqueSetSpec{
+				Replicas: 1,
+				Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+					TopologyConstraint: tc,
+					Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+						{
+							Name: "worker",
+							Spec: grovecorev1alpha1.PodCliqueSpec{
+								Replicas:     1,
+								MinAvailable: ptr.To(int32(1)),
+							},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	// clusterTopology builds a ClusterTopology with the given levels.
+	clusterTopology := func(name string, levels []grovecorev1alpha1.TopologyLevel) *grovecorev1alpha1.ClusterTopology {
+		return &grovecorev1alpha1.ClusterTopology{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec: grovecorev1alpha1.ClusterTopologySpec{
+				Levels: levels,
+			},
+		}
+	}
+
+	standardLevels := []grovecorev1alpha1.TopologyLevel{
+		{Domain: grovecorev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
+		{Domain: grovecorev1alpha1.TopologyDomainRack, Key: "topology.kubernetes.io/rack"},
+	}
+
+	testCases := []struct {
+		name           string
+		tasEnabled     bool
+		setupPCS       func() *grovecorev1alpha1.PodCliqueSet
+		extraObjects   []client.Object
+		wantErr        bool
+		wantCondNil    bool // true when we expect the condition to be absent
+		wantStatus     metav1.ConditionStatus
+		wantReason     string
+		wantMsgContain string
+	}{
+		{
+			name:       "TAS disabled, no topology constraints — condition removed",
+			tasEnabled: false,
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return basePCS("") // no TopologyConstraint at any level
+			},
+			wantCondNil: true,
+		},
+		{
+			name:       "TAS disabled, PCS has topology constraints — Unknown/TopologyAwareSchedulingDisabled",
+			tasEnabled: false,
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := basePCS("")
+				// Add a clique-level constraint so getUniqueTopologyDomainsInPodCliqueSet returns domains.
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					PackDomain: grovecorev1alpha1.TopologyDomainRack,
+				}
+				return pcs
+			},
+			wantStatus:     metav1.ConditionUnknown,
+			wantReason:     apicommonconstants.ConditionReasonTopologyAwareSchedulingDisabled,
+			wantMsgContain: "disabled",
+		},
+		{
+			name:       "TAS enabled, topologyName set, CT exists, all domains available — False/AllClusterTopologyLevelsAvailable",
+			tasEnabled: true,
+			setupPCS:   func() *grovecorev1alpha1.PodCliqueSet { return basePCS("my-topology") },
+			extraObjects: []client.Object{
+				clusterTopology("my-topology", standardLevels),
+			},
+			wantStatus:     metav1.ConditionFalse,
+			wantReason:     apicommonconstants.ConditionReasonAllTopologyLevelsAvailable,
+			wantMsgContain: "available",
+		},
+		{
+			name:       "TAS enabled, topologyName set, CT exists, some domains unavailable — True/ClusterTopologyLevelsUnavailable",
+			tasEnabled: true,
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := basePCS("my-topology")
+				// Add a clique-level constraint with a domain not present in the CT levels.
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					PackDomain: grovecorev1alpha1.TopologyDomainHost, // "host" is not in standardLevels
+				}
+				return pcs
+			},
+			extraObjects: []client.Object{
+				// CT only has zone and rack — "host" is missing.
+				clusterTopology("my-topology", standardLevels),
+			},
+			wantStatus:     metav1.ConditionTrue,
+			wantReason:     apicommonconstants.ConditionReasonTopologyLevelsUnavailable,
+			wantMsgContain: "Unavailable",
+		},
+		{
+			name:         "TAS enabled, topologyName set, CT not found — Unknown/ClusterTopologyNotFound",
+			tasEnabled:   true,
+			setupPCS:     func() *grovecorev1alpha1.PodCliqueSet { return basePCS("missing-topology") },
+			extraObjects: nil, // no CT in fake store
+			wantStatus:   metav1.ConditionUnknown,
+			wantReason:   apicommonconstants.ConditionReasonClusterTopologyNotFound,
+		},
+		{
+			name:       "TAS enabled, no topologyName, clique has constraints (backward compat) — Unknown/TopologyNameMissing",
+			tasEnabled: true,
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := basePCS("") // PCS-level TopologyConstraint is nil
+				// Only a clique-level constraint is present, without a PCS-level topologyName.
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					PackDomain: grovecorev1alpha1.TopologyDomainRack,
+				}
+				return pcs
+			},
+			wantStatus:     metav1.ConditionUnknown,
+			wantReason:     apicommonconstants.ConditionReasonTopologyNameMissing,
+			wantMsgContain: "topologyName is required",
+		},
+		{
+			name:           "TAS enabled, no constraints at all — False/AllClusterTopologyLevelsAvailable with no-constraints message",
+			tasEnabled:     true,
+			setupPCS:       func() *grovecorev1alpha1.PodCliqueSet { return basePCS("") },
+			extraObjects:   nil,
+			wantStatus:     metav1.ConditionFalse,
+			wantReason:     apicommonconstants.ConditionReasonAllTopologyLevelsAvailable,
+			wantMsgContain: "No topology constraints defined",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			pcs := tc.setupPCS()
+			existingObjects := []client.Object{pcs}
+			existingObjects = append(existingObjects, tc.extraObjects...)
+			fakeClient := testutils.CreateDefaultFakeClient(existingObjects)
+
+			r := &Reconciler{
+				client:    fakeClient,
+				tasConfig: configv1alpha1.TopologyAwareSchedulingConfiguration{Enabled: tc.tasEnabled},
+			}
+
+			err := r.mutateTopologyLevelUnavailableConditions(context.Background(), logr.Discard(), pcs)
+
+			if tc.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+
+			cond := apimeta.FindStatusCondition(pcs.Status.Conditions, apicommonconstants.ConditionTopologyLevelsUnavailable)
+			if tc.wantCondNil {
+				assert.Nil(t, cond, "expected condition to be absent")
+				return
+			}
+			if !assert.NotNil(t, cond, "expected condition to be present") {
+				return
+			}
+			assert.Equal(t, tc.wantStatus, cond.Status, "condition status mismatch")
+			assert.Equal(t, tc.wantReason, cond.Reason, "condition reason mismatch")
+			if tc.wantMsgContain != "" {
+				assert.Contains(t, cond.Message, tc.wantMsgContain, "condition message mismatch")
+			}
+			assert.Equal(t, pcs.Generation, cond.ObservedGeneration, "ObservedGeneration should match PCS generation")
 		})
 	}
 }
