@@ -647,6 +647,14 @@ def main(
             require_command(cmd)
     console.print("[green]✅ All required tools are available[/green]")
 
+    # Prepare charts
+    if not skip_grove:
+        console.print(Panel.fit("Preparing Helm charts", style="bold blue"))
+        prepare_charts = operator_dir / "hack/prepare-charts.sh"
+        if prepare_charts.exists():
+            sh.bash(str(prepare_charts))
+            console.print("[green]✅ Charts prepared[/green]")
+
     # Create cluster
     if not create_cluster(config):
         raise typer.Exit(1)

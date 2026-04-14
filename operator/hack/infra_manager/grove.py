@@ -245,9 +245,6 @@ def deploy_grove_operator(
     raw_images = _build_grove_images(grove_cfg.local.skaffold_profile, operator_dir, push_repo)
     images = {name: tag.replace(push_repo, pull_repo) for name, tag in raw_images.items()}
 
-    console.print("[yellow]Copying CRDs to charts...[/yellow]")
-    sh.bash(operator_dir / "hack" / "prepare-charts.sh", _cwd=str(operator_dir))
-
     _deploy_grove_charts(grove_cfg.local.skaffold_profile, grove_cfg.namespace, operator_dir, images, pull_repo)
 
     helm_overrides = collect_grove_helm_overrides(grove_cfg)
