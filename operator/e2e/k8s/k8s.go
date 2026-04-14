@@ -35,7 +35,9 @@ import (
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	crlog "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // K8s is the unified Kubernetes client for e2e tests.
@@ -63,6 +65,13 @@ func newScheme() (*runtime.Scheme, error) {
 		return nil, err
 	}
 	return scheme, nil
+}
+
+func init() {
+	// Initialize the controller-runtime logger to suppress the
+	// "log.SetLogger(...) was never called" warning that fires when
+	// client.Client handles API warning headers.
+	crlog.SetLogger(klog.Background())
 }
 
 // New creates a K8s client from a rest.Config.
