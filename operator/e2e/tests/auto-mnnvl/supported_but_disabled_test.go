@@ -98,6 +98,6 @@ func testExplicitEnabledAnnotationRejected(t *testing.T, tc *testctx.TestContext
 	annotations[mnnvl.AnnotationAutoMNNVL] = mnnvl.AnnotationAutoMNNVLEnabled
 	pcs.SetAnnotations(annotations)
 
-	err = tc.K8s.Create(tc.Ctx, pcs)
+	err := tc.K8s.Create(tc.Ctx, pcs)
 	assert.Error(t, err, "PCS with auto-mnnvl: enabled should be rejected when feature is disabled")
 }
