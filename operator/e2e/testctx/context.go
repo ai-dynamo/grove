@@ -27,7 +27,6 @@ import (
 
 	"github.com/ai-dynamo/grove/operator/e2e/diagnostics"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
-	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/nodes"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
@@ -35,7 +34,6 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Logger is set by the tests package init() to share the singleton logger.
@@ -187,11 +185,6 @@ func (tc *TestContext) GetLabelSelector() string {
 	return tc.Workload.GetLabelSelector()
 }
 
-// PollForCondition wraps k8s.PollForCondition with suite defaults.
-func (tc *TestContext) PollForCondition(condition func() (bool, error)) error {
-	return k8s.PollForCondition(tc.Ctx, tc.Timeout, tc.Interval, condition)
-}
-
 // ListPods lists pods matching the current workload's label selector.
 func (tc *TestContext) ListPods() (*v1.PodList, error) {
 	return tc.newPodManager().List(tc.Ctx, tc.Namespace, tc.GetLabelSelector())
@@ -214,39 +207,19 @@ func (tc *TestContext) WaitForPodCountAndPhases(expectedTotal, expectedRunning, 
 
 // WaitForPodPhases waits for pods to reach specific running and pending counts.
 func (tc *TestContext) WaitForPodPhases(expectedRunning, expectedPending int) error {
-	return tc.PollForCondition(func() (bool, error) {
-		podList, err := tc.ListPods()
-		if err != nil {
-			return false, err
-		}
-		count := pods.CountPodsByPhase(podList)
-		return count.Running == expectedRunning && count.Pending == expectedPending, nil
-	})
+	return tc.newPodManager().WaitForPhases(tc.Ctx, tc.Namespace, tc.GetLabelSelector(), expectedRunning, expectedPending, tc.Timeout, tc.Interval)
 }
 
 // WaitForReadyPods waits for a specific number of pods to be ready.
 func (tc *TestContext) WaitForReadyPods(expectedReady int) error {
 	tc.T.Helper()
-	return tc.PollForCondition(func() (bool, error) {
-		podList, err := tc.ListPods()
-		if err != nil {
-			return false, err
-		}
-		return pods.CountReady(podList) == expectedReady, nil
-	})
+	return tc.newPodManager().WaitForReadyCount(tc.Ctx, tc.Namespace, tc.GetLabelSelector(), expectedReady, tc.Timeout, tc.Interval)
 }
 
 // WaitForRunningPods waits for a specific number of pods to be in Running phase.
 func (tc *TestContext) WaitForRunningPods(expectedRunning int) error {
 	tc.T.Helper()
-	return tc.PollForCondition(func() (bool, error) {
-		podList, err := tc.ListPods()
-		if err != nil {
-			return false, err
-		}
-		count := pods.CountPodsByPhase(podList)
-		return count.Running == expectedRunning, nil
-	})
+	return tc.newPodManager().WaitForPhases(tc.Ctx, tc.Namespace, tc.GetLabelSelector(), expectedRunning, -1, tc.Timeout, tc.Interval)
 }
 
 // CordonNode marks a node as unschedulable.
@@ -321,18 +294,7 @@ func (tc *TestContext) DeployAndVerifyWorkload() (*v1.PodList, error) {
 
 // VerifyAllPodsArePending verifies that all pods matching the label selector are pending.
 func (tc *TestContext) VerifyAllPodsArePending() error {
-	return tc.PollForCondition(func() (bool, error) {
-		pods, err := tc.ListPods()
-		if err != nil {
-			return false, err
-		}
-		for _, pod := range pods.Items {
-			if pod.Status.Phase != v1.PodPending {
-				return false, nil
-			}
-		}
-		return true, nil
-	})
+	return tc.newPodManager().WaitForAllPending(tc.Ctx, tc.Namespace, tc.GetLabelSelector(), tc.Timeout, tc.Interval)
 }
 
 // VerifyPodsArePendingWithUnschedulableEvents verifies that pods are pending with Unschedulable events.
@@ -343,49 +305,7 @@ func (tc *TestContext) VerifyPodsArePendingWithUnschedulableEvents(allPodsMustBe
 		}
 	}
 
-	return tc.PollForCondition(func() (bool, error) {
-		pods, err := tc.ListPods()
-		if err != nil {
-			return false, err
-		}
-
-		podsWithUnschedulableEvent := 0
-		pendingCount := 0
-
-		for _, pod := range pods.Items {
-			if pod.Status.Phase == v1.PodPending {
-				pendingCount++
-
-				events, err := tc.Clients.Clientset.CoreV1().Events(tc.Namespace).List(tc.Ctx, metav1.ListOptions{
-					FieldSelector: fmt.Sprintf("involvedObject.name=%s,involvedObject.kind=Pod", pod.Name),
-				})
-				if err != nil {
-					return false, err
-				}
-
-				var mostRecentEvent *v1.Event
-				for i := range events.Items {
-					event := &events.Items[i]
-					if mostRecentEvent == nil || event.LastTimestamp.After(mostRecentEvent.LastTimestamp.Time) {
-						mostRecentEvent = event
-					}
-				}
-
-				if mostRecentEvent != nil &&
-					mostRecentEvent.Type == v1.EventTypeWarning &&
-					((mostRecentEvent.Reason == "Unschedulable" && mostRecentEvent.Source.Component == "kai-scheduler") ||
-						(mostRecentEvent.Reason == "PodGrouperWarning" && mostRecentEvent.Source.Component == "pod-grouper")) {
-					podsWithUnschedulableEvent++
-				}
-			}
-		}
-
-		if expectedPendingCount > 0 && pendingCount != expectedPendingCount {
-			return false, nil
-		}
-
-		return podsWithUnschedulableEvent == pendingCount, nil
-	})
+	return tc.newPodManager().WaitForUnschedulableEvents(tc.Ctx, tc.Namespace, tc.GetLabelSelector(), expectedPendingCount, tc.Timeout, tc.Interval)
 }
 
 // assertPodsOnDistinctNodes asserts that the pods are scheduled on distinct nodes and fails the test if not.
@@ -454,21 +374,8 @@ func (tc *TestContext) VerifyAllPodsArePendingWithSleep() {
 
 // WaitForPodConditions polls until the expected pod state is reached.
 func (tc *TestContext) WaitForPodConditions(expectedTotalPods, expectedPending int) (int, int, int, error) {
-	var lastTotal, lastRunning, lastPending int
-
-	err := tc.PollForCondition(func() (bool, error) {
-		podList, err := tc.ListPods()
-		if err != nil {
-			return false, err
-		}
-		count := pods.CountPodsByPhase(podList)
-		lastTotal = count.Total
-		lastRunning = count.Running
-		lastPending = count.Pending
-		return lastTotal == expectedTotalPods && lastPending == expectedPending, nil
-	})
-
-	return lastTotal, lastRunning, lastPending, err
+	count, err := tc.newPodManager().WaitForMatchingPhases(tc.Ctx, tc.Namespace, tc.GetLabelSelector(), expectedTotalPods, expectedPending, tc.Timeout, tc.Interval)
+	return count.Total, count.Running, count.Pending, err
 }
 
 // ScalePCSAndWait scales a PCS and waits for the expected pod conditions.

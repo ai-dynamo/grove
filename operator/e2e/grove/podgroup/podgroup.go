@@ -27,6 +27,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
+	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -165,16 +166,15 @@ func (pv *PodGroupVerifier) GetKAIPodGroupsForPCS(ctx context.Context, namespace
 
 // WaitForKAIPodGroups waits for KAI PodGroups for the given PCS to exist and returns them.
 func (pv *PodGroupVerifier) WaitForKAIPodGroups(ctx context.Context, namespace, pcsName string, timeout, interval time.Duration) ([]kaischedulingv2alpha2.PodGroup, error) {
-	var podGroups []kaischedulingv2alpha2.PodGroup
-	err := k8s.PollForCondition(ctx, timeout, interval, func() (bool, error) {
-		pgs, err := pv.GetKAIPodGroupsForPCS(ctx, namespace, pcsName)
-		if err != nil {
-			pv.logger.Debugf("Waiting for KAI PodGroups for PCS %s/%s: %v", namespace, pcsName, err)
-			return false, nil
-		}
-		podGroups = pgs
-		return true, nil
-	})
+	w := waiter.New[[]kaischedulingv2alpha2.PodGroup]().
+		WithTimeout(timeout).
+		WithInterval(interval).
+		WithRetryOnError().
+		WithLogger(pv.logger)
+	podGroups, err := w.WaitFor(ctx,
+		waiter.ToFetchFunc2(pv.GetKAIPodGroupsForPCS, namespace, pcsName),
+		waiter.AlwaysTrue[[]kaischedulingv2alpha2.PodGroup],
+	)
 	if err != nil {
 		return nil, fmt.Errorf("timed out waiting for KAI PodGroups for PCS %s/%s: %w", namespace, pcsName, err)
 	}

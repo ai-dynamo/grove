@@ -19,6 +19,7 @@
 package update
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -29,8 +30,10 @@ import (
 	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
+	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -89,18 +92,11 @@ func deletePodAndWaitForTermination(tc *testctx.TestContext, podName string) err
 		return fmt.Errorf("failed to delete pod %s: %w", podName, err)
 	}
 
-	err := k8s.PollForCondition(tc.Ctx, tc.Timeout, tc.Interval, func() (bool, error) {
-		pods, err := tc.ListPods()
-		if err != nil {
-			return false, err
-		}
-		for _, pod := range pods.Items {
-			if pod.Name == podName {
-				return false, nil
-			}
-		}
-		return true, nil
-	})
+	pm := pods.NewPodManager(tc.Clients, testctx.Logger)
+	w := waiter.New[*corev1.PodList]().
+		WithTimeout(tc.Timeout).
+		WithInterval(tc.Interval)
+	_, err := w.WaitFor(tc.Ctx, pm.FetchFunc(tc.Ctx, tc.Namespace, tc.GetLabelSelector()), pods.ExcludesPod(podName))
 	if err != nil {
 		return fmt.Errorf("failed to wait for the pod %s to be terminated: %w", podName, err)
 	}
@@ -342,22 +338,14 @@ func patchPCSWithSIGTERMIgnoringCommand(tc *testctx.TestContext) error {
 // waitForRollingUpdateComplete waits for rolling update to complete by checking UpdatedReplicas.
 // Uses tc.Workload.Name as the PCS name and tc.Timeout for the timeout (use a modified tc if a different timeout is needed).
 func waitForRollingUpdateComplete(tc *testctx.TestContext, expectedReplicas int32) error {
-	pcsGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquesets"}
 	pcsName := tc.Workload.Name
 
 	pollCount := 0
-	return k8s.PollForCondition(tc.Ctx, tc.Timeout, tc.Interval, func() (bool, error) {
+	fetchPCS := waiter.FetchFunc[*grovev1alpha1.PodCliqueSet](func(_ context.Context) (*grovev1alpha1.PodCliqueSet, error) {
+		return workload.GetPodCliqueSet(tc.Ctx, tc.Clients.DynamicClient, pcsName, tc.Namespace)
+	})
+	predicate := waiter.Predicate[*grovev1alpha1.PodCliqueSet](func(pcs *grovev1alpha1.PodCliqueSet) bool {
 		pollCount++
-		unstructuredPCS, err := tc.Clients.DynamicClient.Resource(pcsGVR).Namespace(tc.Namespace).Get(tc.Ctx, pcsName, metav1.GetOptions{})
-		if err != nil {
-			return false, err
-		}
-
-		var pcs grovev1alpha1.PodCliqueSet
-		err = k8s.ConvertUnstructuredToTyped(unstructuredPCS.Object, &pcs)
-		if err != nil {
-			return false, err
-		}
 
 		// Log status every few polls for debugging
 		if pollCount%3 == 1 {
@@ -378,11 +366,16 @@ func waitForRollingUpdateComplete(tc *testctx.TestContext, expectedReplicas int3
 			pcs.Status.RollingUpdateProgress != nil &&
 			pcs.Status.RollingUpdateProgress.UpdateEndedAt != nil {
 			tests.Logger.Debugf("[waitForRollingUpdateComplete] Rolling update completed after %d polls", pollCount)
-			return true, nil
+			return true
 		}
 
-		return false, nil
+		return false
 	})
+	w := waiter.New[*grovev1alpha1.PodCliqueSet]().
+		WithTimeout(tc.Timeout).
+		WithInterval(tc.Interval)
+	err := w.WaitUntil(tc.Ctx, fetchPCS, predicate)
+	return err
 }
 
 // scalePodCliqueInPCS scales all PodClique instances for a given clique name across all PCS replicas.
@@ -514,22 +507,14 @@ func waitForRollingUpdate(tc *testctx.TestContext, expectedReplicas int32) <-cha
 // waitForOrdinalUpdating waits for a specific ordinal to start being updated during rolling update.
 // Uses tc.Workload.Name as the PCS name and tc.Timeout for the timeout (use a modified tc if a different timeout is needed).
 func waitForOrdinalUpdating(tc *testctx.TestContext, ordinal int32) error {
-	pcsGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquesets"}
 	pcsName := tc.Workload.Name
 
 	pollCount := 0
-	return k8s.PollForCondition(tc.Ctx, tc.Timeout, tc.Interval, func() (bool, error) {
+	fetchPCS := waiter.FetchFunc[*grovev1alpha1.PodCliqueSet](func(_ context.Context) (*grovev1alpha1.PodCliqueSet, error) {
+		return workload.GetPodCliqueSet(tc.Ctx, tc.Clients.DynamicClient, pcsName, tc.Namespace)
+	})
+	predicate := waiter.Predicate[*grovev1alpha1.PodCliqueSet](func(pcs *grovev1alpha1.PodCliqueSet) bool {
 		pollCount++
-		unstructuredPCS, err := tc.Clients.DynamicClient.Resource(pcsGVR).Namespace(tc.Namespace).Get(tc.Ctx, pcsName, metav1.GetOptions{})
-		if err != nil {
-			return false, err
-		}
-
-		var pcs grovev1alpha1.PodCliqueSet
-		err = k8s.ConvertUnstructuredToTyped(unstructuredPCS.Object, &pcs)
-		if err != nil {
-			return false, err
-		}
 
 		// Log status every few polls for debugging
 		if pollCount%3 == 1 {
@@ -546,11 +531,16 @@ func waitForOrdinalUpdating(tc *testctx.TestContext, ordinal int32) error {
 			pcs.Status.RollingUpdateProgress.CurrentlyUpdating != nil &&
 			pcs.Status.RollingUpdateProgress.CurrentlyUpdating.ReplicaIndex == ordinal {
 			tests.Logger.Debugf("[waitForOrdinalUpdating] Ordinal %d started updating after %d polls", ordinal, pollCount)
-			return true, nil
+			return true
 		}
 
-		return false, nil
+		return false
 	})
+	w := waiter.New[*grovev1alpha1.PodCliqueSet]().
+		WithTimeout(tc.Timeout).
+		WithInterval(tc.Interval)
+	err := w.WaitUntil(tc.Ctx, fetchPCS, predicate)
+	return err
 }
 
 // getPodIdentifier returns a stable identifier for a pod based on its logical position in the workload.
@@ -1155,18 +1145,8 @@ func scalePodClique(tc *testctx.TestContext, cliqueName string, replicas int32, 
 		tests.Logger.Debugf("[scalePodClique] Scale patch applied, waiting for pods...")
 
 		// Wait for pods to reach expected count
-		pollCount := 0
-		err := k8s.PollForCondition(tc.Ctx, tc.Timeout, tc.Interval, func() (bool, error) {
-			pollCount++
-			pods, err := tc.ListPods()
-			if err != nil {
-				return false, err
-			}
-			if pollCount%3 == 1 {
-				tests.Logger.Debugf("[scalePodClique] Poll #%d: current pods=%d, expected=%d", pollCount, len(pods.Items), expectedTotalPods)
-			}
-			return len(pods.Items) == expectedTotalPods, nil
-		})
+		pm := pods.NewPodManager(tc.Clients, tests.Logger)
+		_, err := pm.WaitForCount(tc.Ctx, tc.Namespace, tc.GetLabelSelector(), expectedTotalPods, tc.Timeout, tc.Interval)
 		elapsed := time.Since(startTime)
 		if err != nil {
 			tests.Logger.Debugf("[scalePodClique] Scale %s FAILED after %v: %v", cliqueName, elapsed, err)
@@ -1185,21 +1165,21 @@ func scalePodClique(tc *testctx.TestContext, cliqueName string, replicas int32, 
 
 func waitForOnDeleteUpdateComplete(tc *testctx.TestContext) error {
 	pollCount := 0
-	return k8s.PollForCondition(tc.Ctx, tc.Timeout, tc.Interval, func() (bool, error) {
+	fetchPCS := waiter.FetchFunc[*grovev1alpha1.PodCliqueSet](func(_ context.Context) (*grovev1alpha1.PodCliqueSet, error) {
+		return workload.GetPodCliqueSet(tc.Ctx, tc.Clients.DynamicClient, tc.Workload.Name, tc.Namespace)
+	})
+	predicate := waiter.Predicate[*grovev1alpha1.PodCliqueSet](func(pcs *grovev1alpha1.PodCliqueSet) bool {
 		pollCount++
-		pcs, err := workload.GetPodCliqueSet(tc.Ctx, tc.Clients.DynamicClient, tc.Workload.Name, tc.Namespace)
-		if err != nil {
-			return false, err
-		}
-
 		if workload.IsOnDeleteUpdateComplete(pcs) {
 			tests.Logger.Debugf("[waitForOnDeleteUpdateComplete] OnDelete update marked complete after %d polls (UpdatedReplicas=%d)",
 				pollCount, pcs.Status.UpdatedReplicas)
-			return true, nil
+			return true
 		}
-
-		return false, nil
+		return false
 	})
+	w := waiter.New[*grovev1alpha1.PodCliqueSet]().WithTimeout(tc.Timeout).WithInterval(tc.Interval)
+	_, err := w.WaitFor(tc.Ctx, fetchPCS, predicate)
+	return err
 }
 
 func verifyUpdateProgressFields(tc *testctx.TestContext) {

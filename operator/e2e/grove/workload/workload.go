@@ -25,11 +25,11 @@ import (
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	groveclient "github.com/ai-dynamo/grove/operator/client/clientset/versioned"
-	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/resources"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
+	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -75,17 +75,8 @@ func (wm *WorkloadManager) ScalePCS(ctx context.Context, namespace, name string,
 // ScalePCSG scales a PodCliqueScalingGroup to the specified replica count.
 // It waits for the PCSG to exist before scaling.
 func (wm *WorkloadManager) ScalePCSG(ctx context.Context, namespace, name string, replicas int, timeout, interval time.Duration) error {
-	// Wait for PCSG to exist
-	err := k8s.PollForCondition(ctx, timeout, interval, func() (bool, error) {
-		_, err := wm.clients.DynamicClient.Resource(podCliqueScalingGroupGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			if errors.IsNotFound(err) {
-				return false, nil
-			}
-			return false, err
-		}
-		return true, nil
-	})
+	w := waiter.New[*grovecorev1alpha1.PodCliqueScalingGroup]().WithTimeout(timeout).WithInterval(interval)
+	_, err := waiter.WaitForResource(ctx, w, name, wm.clients.GroveClient.GroveV1alpha1().PodCliqueScalingGroups(namespace).Get)
 	if err != nil {
 		return fmt.Errorf("failed to find PodCliqueScalingGroup %s: %w", name, err)
 	}
@@ -107,49 +98,24 @@ func (wm *WorkloadManager) DeletePCSAndWait(ctx context.Context, namespace, name
 	if err := wm.DeletePCS(ctx, namespace, name); err != nil {
 		return err
 	}
-
-	return k8s.PollForCondition(ctx, timeout, interval, func() (bool, error) {
-		_, err := wm.clients.DynamicClient.Resource(podCliqueSetGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-		if errors.IsNotFound(err) {
-			return true, nil
-		}
-		if err != nil {
-			return false, err
-		}
-		return false, nil
-	})
+	w := waiter.New[*grovecorev1alpha1.PodCliqueSet]().
+		WithTimeout(timeout).
+		WithInterval(interval)
+	return waiter.WaitForResourceDeletion(ctx, w, name, wm.clients.GroveClient.GroveV1alpha1().PodCliqueSets(namespace).Get)
 }
 
 // WaitForPCSG polls until a PodCliqueScalingGroup exists and returns it.
 func (wm *WorkloadManager) WaitForPCSG(ctx context.Context, namespace, name string, timeout, interval time.Duration) (*grovecorev1alpha1.PodCliqueScalingGroup, error) {
-	var pcsg *grovecorev1alpha1.PodCliqueScalingGroup
-	err := k8s.PollForCondition(ctx, timeout, interval, func() (bool, error) {
-		var getErr error
-		pcsg, getErr = wm.clients.GroveClient.GroveV1alpha1().PodCliqueScalingGroups(namespace).Get(ctx, name, metav1.GetOptions{})
-		if errors.IsNotFound(getErr) {
-			return false, nil
-		}
-		if getErr != nil {
-			return false, getErr
-		}
-		return true, nil
-	})
-	return pcsg, err
+	w := waiter.New[*grovecorev1alpha1.PodCliqueScalingGroup]().
+		WithTimeout(timeout).
+		WithInterval(interval)
+	return waiter.WaitForResource(ctx, w, name, wm.clients.GroveClient.GroveV1alpha1().PodCliqueScalingGroups(namespace).Get)
 }
 
 // WaitForPodClique polls until a PodClique exists and returns it.
 func (wm *WorkloadManager) WaitForPodClique(ctx context.Context, groveClient groveclient.Interface, namespace, name string, timeout, interval time.Duration) (*grovecorev1alpha1.PodClique, error) {
-	var pclq *grovecorev1alpha1.PodClique
-	err := k8s.PollForCondition(ctx, timeout, interval, func() (bool, error) {
-		var getErr error
-		pclq, getErr = groveClient.GroveV1alpha1().PodCliques(namespace).Get(ctx, name, metav1.GetOptions{})
-		if errors.IsNotFound(getErr) {
-			return false, nil
-		}
-		if getErr != nil {
-			return false, getErr
-		}
-		return true, nil
-	})
-	return pclq, err
+	w := waiter.New[*grovecorev1alpha1.PodClique]().
+		WithTimeout(timeout).
+		WithInterval(interval)
+	return waiter.WaitForResource(ctx, w, name, groveClient.GroveV1alpha1().PodCliques(namespace).Get)
 }

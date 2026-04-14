@@ -28,10 +28,10 @@ import (
 	"time"
 
 	"github.com/ai-dynamo/grove/operator/api/common"
-	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
 	nodeutils "github.com/ai-dynamo/grove/operator/e2e/k8s/nodes"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
+	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	"github.com/ai-dynamo/grove/operator/internal/utils/ioutil"
 	"github.com/docker/docker/api/types/image"
 	dockerclient "github.com/docker/docker/client"
@@ -192,11 +192,11 @@ func (scm *SharedClusterManager) connectToCluster(ctx context.Context, testImage
 	scm.crClient = crClient
 
 	// Create bundled clients (includes REST mapper, created once for all tests)
-	clients, err := clients.NewClients(restConfig)
+	allClients, err := clients.NewClients(restConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create bundled k8s clients: %w", err)
 	}
-	scm.clients = clients
+	scm.clients = allClients
 
 	// Setup test images in registry (if registry port is configured)
 	if scm.registryPort != "" && len(testImages) > 0 {
@@ -438,9 +438,8 @@ func (scm *SharedClusterManager) waitForAllGroveManagedResourcesAndPodsDeleted(c
 	lastLogTime := startTime
 	logInterval := 30 * time.Second // Log progress every 30 seconds
 
-	return k8s.PollForCondition(ctx, timeout, interval, func() (bool, error) {
-		allResourcesDeleted := true
-		totalResources := 0
+	fetchRemainingCount := waiter.FetchFunc[int](func(ctx context.Context) (int, error) {
+		totalRemaining := 0
 		var resourceDetails []string
 
 		// Create label selector for Grove-managed resources
@@ -470,8 +469,7 @@ func (scm *SharedClusterManager) waitForAllGroveManagedResourcesAndPodsDeleted(c
 			}
 
 			if len(resourceList.Items) > 0 {
-				allResourcesDeleted = false
-				totalResources += len(resourceList.Items)
+				totalRemaining += len(resourceList.Items)
 				for _, item := range resourceList.Items {
 					deletionTS := item.GetDeletionTimestamp()
 					if deletionTS != nil {
@@ -484,33 +482,35 @@ func (scm *SharedClusterManager) waitForAllGroveManagedResourcesAndPodsDeleted(c
 		}
 
 		// Check pods
-		allPodsDeleted := true
 		nonSystemPods := 0
 		pods, err := scm.clientset.CoreV1().Pods("default").List(ctx, metav1.ListOptions{})
 		if err == nil {
 			for _, pod := range pods.Items {
 				if !isSystemPod(&pod) {
-					allPodsDeleted = false
 					nonSystemPods++
 				}
 			}
 		}
+		totalRemaining += nonSystemPods
 
-		if allResourcesDeleted && allPodsDeleted {
+		if totalRemaining == 0 {
 			scm.logger.Infof("✅ All resources deleted after %v", time.Since(startTime).Round(time.Second))
-			return true, nil
+		} else {
+			// Log progress at intervals for visibility
+			now := time.Now()
+			if now.Sub(lastLogTime) >= logInterval {
+				lastLogTime = now
+				elapsed := now.Sub(startTime).Round(time.Second)
+				scm.logger.Infof("⏳ [%v elapsed] Waiting for %d resources and %d pods. Details: %v", elapsed, totalRemaining-nonSystemPods, nonSystemPods, resourceDetails)
+			}
 		}
 
-		// Log progress at intervals for visibility
-		now := time.Now()
-		if now.Sub(lastLogTime) >= logInterval {
-			lastLogTime = now
-			elapsed := now.Sub(startTime).Round(time.Second)
-			scm.logger.Infof("⏳ [%v elapsed] Waiting for %d resources and %d pods. Details: %v", elapsed, totalResources, nonSystemPods, resourceDetails)
-		}
-
-		return false, nil
+		return totalRemaining, nil
 	})
+	w := waiter.New[int]().
+		WithTimeout(timeout).
+		WithInterval(interval)
+	return w.WaitUntil(ctx, fetchRemainingCount, waiter.IsZero[int])
 }
 
 // listRemainingGroveManagedResources lists remaining Grove resources for debugging

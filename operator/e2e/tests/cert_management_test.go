@@ -35,12 +35,12 @@ import (
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
-	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/resources"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
-	"k8s.io/apimachinery/pkg/api/errors"
+	"github.com/ai-dynamo/grove/operator/e2e/waiter"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -251,13 +251,17 @@ func deletePodCliqueSetAndWait(t *testing.T, ctx context.Context, tc *testctx.Te
 func waitForSecret(t *testing.T, ctx context.Context, clientset kubernetes.Interface, name string, shouldExist bool) {
 	t.Helper()
 
-	err := k8s.PollForCondition(ctx, testctx.DefaultPollTimeout, testctx.DefaultPollInterval, func() (bool, error) {
-		_, err := clientset.CoreV1().Secrets("grove-system").Get(ctx, name, metav1.GetOptions{})
-		if shouldExist {
-			return err == nil, nil
-		}
-		return errors.IsNotFound(err), nil
-	})
+	w := waiter.New[*corev1.Secret]().
+		WithTimeout(testctx.DefaultPollTimeout).
+		WithInterval(testctx.DefaultPollInterval)
+	getFn := clientset.CoreV1().Secrets(groveNamespace).Get
+
+	var err error
+	if shouldExist {
+		_, err = waiter.WaitForResource(ctx, w.WithRetryOnError(), name, getFn)
+	} else {
+		err = waiter.WaitForResourceDeletion(ctx, w, name, getFn)
+	}
 	if err != nil {
 		t.Fatalf("Timeout waiting for secret %s (shouldExist=%v): %v", name, shouldExist, err)
 	}
@@ -271,19 +275,22 @@ func waitForSecretManagedByCertManager(t *testing.T, ctx context.Context, client
 	t.Helper()
 
 	Logger.Debugf("Waiting for secret %s to be managed by cert-manager...", name)
-	err := k8s.PollForCondition(ctx, testctx.DefaultPollTimeout, testctx.DefaultPollInterval, func() (bool, error) {
-		secret, err := clientset.CoreV1().Secrets("grove-system").Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return false, nil // Secret doesn't exist yet, keep waiting
-		}
-		// Check if cert-manager has taken ownership of this secret
+
+	fetchSecret := waiter.FetchByName(name, clientset.CoreV1().Secrets(groveNamespace).Get)
+	isManagedByCertManager := waiter.Predicate[*corev1.Secret](func(secret *corev1.Secret) bool {
 		certName := secret.Annotations[certManagerCertNameAnnotation]
 		if certName != "" {
 			Logger.Debugf("Secret %s is now managed by cert-manager (certificate: %s)", name, certName)
-			return true, nil
+			return true
 		}
-		return false, nil
+		return false
 	})
+
+	w := waiter.New[*corev1.Secret]().
+		WithTimeout(testctx.DefaultPollTimeout).
+		WithInterval(testctx.DefaultPollInterval).
+		WithRetryOnError()
+	err := w.WaitUntil(ctx, fetchSecret, isManagedByCertManager)
 	if err != nil {
 		t.Fatalf("Timeout waiting for secret %s to be managed by cert-manager: %v", name, err)
 	}
@@ -294,12 +301,13 @@ func deleteCertManagerResources(ctx context.Context, clientset kubernetes.Interf
 	issuerGVR := schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "clusterissuers"}
 
 	// Delete Certificate first (cert-manager resource)
-	if err := dynamicClient.Resource(certGVR).Namespace("grove-system").Delete(ctx, configv1alpha1.DefaultWebhookSecretName, metav1.DeleteOptions{}); err != nil {
+	if err := dynamicClient.Resource(certGVR).Namespace(groveNamespace).
+		Delete(ctx, configv1alpha1.DefaultWebhookSecretName, metav1.DeleteOptions{}); err != nil {
 		Logger.Warnf("Failed to delete Certificate (may not exist): %v", err)
 	}
 
 	// Delete the Secret managed by cert-manager
-	if err := clientset.CoreV1().Secrets("grove-system").Delete(ctx, configv1alpha1.DefaultWebhookSecretName, metav1.DeleteOptions{}); err != nil {
+	if err := clientset.CoreV1().Secrets(groveNamespace).Delete(ctx, configv1alpha1.DefaultWebhookSecretName, metav1.DeleteOptions{}); err != nil {
 		Logger.Warnf("Failed to delete Secret (may not exist): %v", err)
 	}
 
@@ -346,14 +354,15 @@ func waitForClusterIssuer(t *testing.T, ctx context.Context, dynamicClient dynam
 		Resource: "clusterissuers",
 	}
 
-	err := k8s.PollForCondition(ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
-		issuer, err := dynamicClient.Resource(issuerGVR).Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return false, nil
-		}
-
-		return checkReadyStatus(issuer), nil
+	fetchIssuer := waiter.FetchFunc[*unstructured.Unstructured](func(ctx context.Context) (*unstructured.Unstructured, error) {
+		return dynamicClient.Resource(issuerGVR).Get(ctx, name, metav1.GetOptions{})
 	})
+
+	w := waiter.New[*unstructured.Unstructured]().
+		WithTimeout(30 * time.Second).
+		WithInterval(1 * time.Second).
+		WithRetryOnError()
+	err := w.WaitUntil(ctx, fetchIssuer, func(issuer *unstructured.Unstructured) bool { return checkReadyStatus(issuer) })
 
 	if err != nil {
 		t.Fatalf("ClusterIssuer %s failed to become Ready: %v", name, err)
@@ -401,7 +410,7 @@ const (
 	// certManagerCertNameAnnotation is the annotation cert-manager adds to secrets it manages
 	certManagerCertNameAnnotation = "cert-manager.io/certificate-name"
 	// groveNamespace is the namespace where Grove is installed
-	groveNamespace = "grove-system"
+	groveNamespace = setup.OperatorNamespace
 )
 
 // webhookNames lists the ValidatingWebhookConfiguration and MutatingWebhookConfiguration names to check
@@ -521,35 +530,36 @@ func verifyWebhookServingCertificate(t *testing.T, ctx context.Context, clientse
 
 	// Retry for up to 30 seconds to account for:
 	// - Kubernetes secret volume update propagation (can take up to the kubelet sync period)
-	// - certwatcher 10-second polling interval
+	// - certwatcher 2-second polling interval
 	var lastExpectedSerial, lastServedSerial string
-	err := k8s.PollForCondition(ctx, 30*time.Second, 2*time.Second, func() (bool, error) {
-		// Get the certificate from the Secret
-		expectedCert, err := getCertificateFromSecret(ctx, clientset)
-		if err != nil {
-			Logger.Debugf("Failed to get certificate from secret: %v", err)
-			return false, nil
-		}
-		lastExpectedSerial = expectedCert.SerialNumber.String()
-
-		// Get the certificate the webhook is actually serving
+	fetchServedCert := waiter.FetchFunc[*x509.Certificate](func(ctx context.Context) (*x509.Certificate, error) {
 		servedCert, err := getServedCertificate(ctx, clientset, restConfig)
 		if err != nil {
 			Logger.Debugf("Failed to get served certificate from webhook: %v", err)
-			return false, nil
 		}
+		return servedCert, err
+	})
+	matchesSecretCert := waiter.Predicate[*x509.Certificate](func(servedCert *x509.Certificate) bool {
 		lastServedSerial = servedCert.SerialNumber.String()
-
-		// Compare the certificates
+		expectedCert, err := getCertificateFromSecret(ctx, clientset)
+		if err != nil {
+			Logger.Debugf("Failed to get certificate from secret: %v", err)
+			return false
+		}
+		lastExpectedSerial = expectedCert.SerialNumber.String()
 		if certificatesMatch(expectedCert, servedCert) {
 			Logger.Debugf("Certificate match! Serial: %s", lastExpectedSerial)
-			return true, nil
+			return true
 		}
-
 		Logger.Debugf("Certificate mismatch (will retry): expected serial=%s, served serial=%s",
 			lastExpectedSerial, lastServedSerial)
-		return false, nil
+		return false
 	})
+	w := waiter.New[*x509.Certificate]().
+		WithTimeout(30 * time.Second).
+		WithInterval(2 * time.Second).
+		WithRetryOnError()
+	err := w.WaitUntil(ctx, fetchServedCert, matchesSecretCert)
 
 	if err != nil {
 		t.Fatalf("Certificate mismatch: webhook is not serving the expected certificate after retries.\n"+

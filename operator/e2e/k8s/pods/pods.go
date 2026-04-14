@@ -23,13 +23,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
+	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	kubeutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 // PodPhaseCount holds counts of pods by phase.
@@ -73,43 +72,26 @@ func (pm *PodManager) WaitForReady(ctx context.Context, namespaces []string, lab
 
 	pm.logger.Debugf("Waiting for pods to be ready in namespaces: %v", namespaces)
 
-	return wait.PollUntilContextTimeout(ctx, interval, timeout, true, func(ctx context.Context) (bool, error) {
-		totalPods := 0
-		readyPods := 0
-
+	fetchPods := waiter.FetchFunc[*v1.PodList](func(ctx context.Context) (*v1.PodList, error) {
+		var allPods v1.PodList
 		for _, namespace := range namespaces {
 			pods, err := pm.clients.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 				LabelSelector: labelSelector,
 			})
 			if err != nil {
-				pm.logger.Errorf("Failed to list pods in namespace %s: %v", namespace, err)
-				return false, nil
+				return nil, fmt.Errorf("failed to list pods in namespace %s: %w", namespace, err)
 			}
-
-			for _, pod := range pods.Items {
-				totalPods++
-				if kubeutils.IsPodReady(&pod) {
-					readyPods++
-				}
-			}
+			allPods.Items = append(allPods.Items, pods.Items...)
 		}
-
-		if totalPods == 0 {
-			pm.logger.Debug("No pods found yet, resources may still be creating pods...")
-			return false, nil
-		}
-
-		if expectedCount > 0 && totalPods != expectedCount {
-			pm.logger.Debugf("Expected %d pods but found %d pods", expectedCount, totalPods)
-			return false, nil
-		}
-
-		if readyPods < totalPods {
-			pm.logger.Debugf("Waiting for %d more pods to become ready...", totalPods-readyPods)
-		}
-
-		return readyPods == totalPods, nil
+		return &allPods, nil
 	})
+	w := waiter.New[*v1.PodList]().
+		WithTimeout(timeout).
+		WithInterval(interval).
+		WithRetryOnError().
+		WithLogger(pm.logger)
+	_, err := w.WaitFor(ctx, fetchPods, AllReady(expectedCount))
+	return err
 }
 
 // WaitForReadyInNamespace waits for pods to be ready in a single namespace.
@@ -121,15 +103,11 @@ func (pm *PodManager) WaitForReadyInNamespace(ctx context.Context, namespace str
 // WaitForCount waits for a specific number of pods to be created with the given label selector.
 // Returns the pod list once the expected count is reached.
 func (pm *PodManager) WaitForCount(ctx context.Context, namespace, labelSelector string, expectedCount int, timeout, interval time.Duration) (*v1.PodList, error) {
-	var pods *v1.PodList
-	err := k8s.PollForCondition(ctx, timeout, interval, func() (bool, error) {
-		var err error
-		pods, err = pm.List(ctx, namespace, labelSelector)
-		if err != nil {
-			return false, err
-		}
-		return len(pods.Items) == expectedCount, nil
-	})
+	fetchPods := pm.FetchFunc(ctx, namespace, labelSelector)
+	w := waiter.New[*v1.PodList]().
+		WithTimeout(timeout).
+		WithInterval(interval)
+	pods, err := w.WaitFor(ctx, fetchPods, CountEquals(expectedCount))
 	if err != nil {
 		return nil, fmt.Errorf("failed to wait for %d pods with selector %q in namespace %s: %w", expectedCount, labelSelector, namespace, err)
 	}
@@ -139,20 +117,60 @@ func (pm *PodManager) WaitForCount(ctx context.Context, namespace, labelSelector
 // WaitForCountAndPhases waits for pods to reach specific total count and phase counts.
 // Pass -1 for any count you want to skip verification.
 func (pm *PodManager) WaitForCountAndPhases(ctx context.Context, namespace, labelSelector string, expectedTotal, expectedRunning, expectedPending int, timeout, interval time.Duration) error {
-	return k8s.PollForCondition(ctx, timeout, interval, func() (bool, error) {
-		pods, err := pm.List(ctx, namespace, labelSelector)
-		if err != nil {
-			return false, err
+	fetchPods := pm.FetchFunc(ctx, namespace, labelSelector)
+	w := waiter.New[*v1.PodList]().
+		WithTimeout(timeout).
+		WithInterval(interval)
+	_, err := w.WaitFor(ctx, fetchPods, MatchPhases(expectedTotal, expectedRunning, expectedPending))
+	return err
+}
+
+// WaitForPhases waits for pods to reach specific running and pending counts.
+func (pm *PodManager) WaitForPhases(ctx context.Context, namespace, labelSelector string, expectedRunning, expectedPending int, timeout, interval time.Duration) error {
+	fetchPods := pm.FetchFunc(ctx, namespace, labelSelector)
+	w := waiter.New[*v1.PodList]().WithTimeout(timeout).WithInterval(interval)
+	_, err := w.WaitFor(ctx, fetchPods, MatchPhases(-1, expectedRunning, expectedPending))
+	return err
+}
+
+// WaitForReadyCount waits for a specific number of ready pods.
+func (pm *PodManager) WaitForReadyCount(ctx context.Context, namespace, labelSelector string, expectedReady int, timeout, interval time.Duration) error {
+	fetchPods := pm.FetchFunc(ctx, namespace, labelSelector)
+	w := waiter.New[*v1.PodList]().WithTimeout(timeout).WithInterval(interval)
+	_, err := w.WaitFor(ctx, fetchPods, ReadyCount(expectedReady))
+	return err
+}
+
+// WaitForAllPending waits until all pods are in Pending phase.
+func (pm *PodManager) WaitForAllPending(ctx context.Context, namespace, labelSelector string, timeout, interval time.Duration) error {
+	fetchPods := pm.FetchFunc(ctx, namespace, labelSelector)
+	w := waiter.New[*v1.PodList]().WithTimeout(timeout).WithInterval(interval)
+	_, err := w.WaitFor(ctx, fetchPods, AllPending())
+	return err
+}
+
+// WaitForUnschedulableEvents waits until all pending pods have Unschedulable or PodGrouperWarning events.
+// Pass expectedPendingCount > 0 to validate the pending pod count; pass 0 to skip.
+func (pm *PodManager) WaitForUnschedulableEvents(ctx context.Context, namespace, labelSelector string, expectedPendingCount int, timeout, interval time.Duration) error {
+	fetchPods := pm.FetchFunc(ctx, namespace, labelSelector)
+	w := waiter.New[*v1.PodList]().WithTimeout(timeout).WithInterval(interval)
+	_, err := w.WaitFor(ctx, fetchPods, HasUnschedulableEvents(ctx, pm.clients.Clientset, namespace, expectedPendingCount))
+	return err
+}
+
+// WaitForMatchingPhases waits for pods to reach expected total and pending counts, and returns the phase counts.
+func (pm *PodManager) WaitForMatchingPhases(ctx context.Context, namespace, labelSelector string, expectedTotal, expectedPending int, timeout, interval time.Duration) (PodPhaseCount, error) {
+	fetchPods := pm.FetchFunc(ctx, namespace, labelSelector)
+	w := waiter.New[*v1.PodList]().WithTimeout(timeout).WithInterval(interval)
+	podList, err := w.WaitFor(ctx, fetchPods, MatchPhases(expectedTotal, -1, expectedPending))
+	if err != nil {
+		// Return last known state for error reporting.
+		if lastPods, listErr := pm.List(ctx, namespace, labelSelector); listErr == nil {
+			return CountPodsByPhase(lastPods), err
 		}
-
-		count := CountPodsByPhase(pods)
-
-		totalMatch := expectedTotal < 0 || count.Total == expectedTotal
-		runningMatch := expectedRunning < 0 || count.Running == expectedRunning
-		pendingMatch := expectedPending < 0 || count.Pending == expectedPending
-
-		return totalMatch && runningMatch && pendingMatch, nil
-	})
+		return PodPhaseCount{}, err
+	}
+	return CountPodsByPhase(podList), nil
 }
 
 // CountPodsByPhase counts pods by their phase and returns a PodPhaseCount.

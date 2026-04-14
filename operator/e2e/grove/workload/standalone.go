@@ -28,6 +28,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	groveclient "github.com/ai-dynamo/grove/operator/client/clientset/versioned"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s"
+	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -41,6 +42,7 @@ var PodCliqueSetGVR = schema.GroupVersionResource{
 	Version:  "v1alpha1",
 	Resource: "podcliquesets",
 }
+
 
 // GetPodCliqueSet returns a typed PodCliqueSet by name from the given namespace.
 func GetPodCliqueSet(ctx context.Context, dynamicClient dynamic.Interface, workloadName, namespace string) (*grovecorev1alpha1.PodCliqueSet, error) {
@@ -92,24 +94,14 @@ func ScalePodCliqueSetWithClient(ctx context.Context, dynamicClient dynamic.Inte
 
 // WaitForPodCliqueScalingGroup polls until a PodCliqueScalingGroup exists and returns it.
 func WaitForPodCliqueScalingGroup(ctx context.Context, groveClient groveclient.Interface, namespace, name string, timeout, interval time.Duration) (*grovecorev1alpha1.PodCliqueScalingGroup, error) {
-	var pcsg *grovecorev1alpha1.PodCliqueScalingGroup
-	err := k8s.PollForCondition(ctx, timeout, interval, func() (bool, error) {
-		var getErr error
-		pcsg, getErr = groveClient.GroveV1alpha1().PodCliqueScalingGroups(namespace).Get(ctx, name, metav1.GetOptions{})
-		return getErr == nil, nil
-	})
-	return pcsg, err
+	w := waiter.New[*grovecorev1alpha1.PodCliqueScalingGroup]().WithTimeout(timeout).WithInterval(interval)
+	return waiter.WaitForResource(ctx, w, name, groveClient.GroveV1alpha1().PodCliqueScalingGroups(namespace).Get)
 }
 
-// WaitForPodClique polls until a PodClique exists and returns it.
+// WaitForPodCliqueStandalone polls until a PodClique exists and returns it.
 func WaitForPodCliqueStandalone(ctx context.Context, groveClient groveclient.Interface, namespace, name string, timeout, interval time.Duration) (*grovecorev1alpha1.PodClique, error) {
-	var pclq *grovecorev1alpha1.PodClique
-	err := k8s.PollForCondition(ctx, timeout, interval, func() (bool, error) {
-		var getErr error
-		pclq, getErr = groveClient.GroveV1alpha1().PodCliques(namespace).Get(ctx, name, metav1.GetOptions{})
-		return getErr == nil, nil
-	})
-	return pclq, err
+	w := waiter.New[*grovecorev1alpha1.PodClique]().WithTimeout(timeout).WithInterval(interval)
+	return waiter.WaitForResource(ctx, w, name, groveClient.GroveV1alpha1().PodCliques(namespace).Get)
 }
 
 func scaleCRDStandalone(ctx context.Context, dynamicClient dynamic.Interface, gvr schema.GroupVersionResource, namespace, name string, replicas int) error {

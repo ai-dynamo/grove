@@ -23,8 +23,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+	"github.com/ai-dynamo/grove/operator/e2e/waiter"
+	kubeutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -80,22 +81,27 @@ func testOperatorExitsWithoutCDCRD(t *testing.T, tc *testctx.TestContext) {
 	// Check both current and previous container logs because the operator
 	// crashes on preflight failure and the error message may only appear
 	// in the previous (terminated) container's logs.
-	err = k8s.PollForCondition(tc.Ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	fetchLogs := waiter.FetchFunc[[]byte](func(ctx context.Context) ([]byte, error) {
+		var allLogs []byte
 		for _, previous := range []bool{false, true} {
 			logs, logErr := tc.Clients.Clientset.CoreV1().Pods(groveOperatorNamespace).GetLogs(pod.Name, &corev1.PodLogOptions{
 				Previous: previous,
-			}).DoRaw(tc.Ctx)
-			if logErr != nil {
-				continue
-			}
-			logText := string(logs)
-			if strings.Contains(logText, "MNNVL preflight check failed") &&
-				strings.Contains(logText, "ComputeDomain CRD") {
-				return true, nil
+			}).DoRaw(ctx)
+			if logErr == nil {
+				allLogs = append(allLogs, logs...)
 			}
 		}
-		return false, nil
+		return allLogs, nil
 	})
+	containsPreflightError := waiter.Predicate[[]byte](func(logs []byte) bool {
+		logText := string(logs)
+		return strings.Contains(logText, "MNNVL preflight check failed") &&
+			strings.Contains(logText, "ComputeDomain CRD")
+	})
+	w := waiter.New[[]byte]().
+		WithTimeout(defaultPollTimeout).
+		WithInterval(defaultPollInterval)
+	err = w.WaitUntil(tc.Ctx, fetchLogs, containsPreflightError)
 	assert.NoError(t, err, "Operator logs should show preflight failure due to missing CRD")
 }
 
@@ -106,38 +112,31 @@ func testOperatorExitsWithoutCDCRD(t *testing.T, tc *testctx.TestContext) {
 // filter by !Ready to ensure we return the actually-crashing pod whose logs
 // contain the preflight failure.
 func waitForFailedOperatorPod(tc *testctx.TestContext) (*corev1.Pod, error) {
-	var operatorPod *corev1.Pod
-	err := k8s.PollForCondition(tc.Ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
-		pods, listErr := tc.Clients.Clientset.CoreV1().Pods(groveOperatorNamespace).List(tc.Ctx, metav1.ListOptions{
+	w := waiter.New[*corev1.Pod]().
+		WithTimeout(defaultPollTimeout).
+		WithInterval(defaultPollInterval)
+	fetchFailedPod := waiter.FetchFunc[*corev1.Pod](func(ctx context.Context) (*corev1.Pod, error) {
+		pods, listErr := tc.Clients.Clientset.CoreV1().Pods(groveOperatorNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: "app.kubernetes.io/name=grove-operator",
 		})
 		if listErr != nil || len(pods.Items) == 0 {
-			return false, nil
+			return nil, nil
 		}
 		for i := range pods.Items {
 			pod := &pods.Items[i]
-			if isPodReady(pod) {
+			if kubeutils.IsPodReady(pod) {
 				continue
 			}
 			for _, status := range pod.Status.ContainerStatuses {
 				if status.State.Terminated != nil ||
 					status.LastTerminationState.Terminated != nil ||
 					status.RestartCount > 0 {
-					operatorPod = pod
-					return true, nil
+					return pod, nil
 				}
 			}
 		}
-		return false, nil
+		return nil, nil
 	})
+	operatorPod, err := w.WaitFor(tc.Ctx, fetchFailedPod, waiter.IsNotZero[*corev1.Pod])
 	return operatorPod, err
-}
-
-func isPodReady(pod *corev1.Pod) bool {
-	for _, cond := range pod.Status.Conditions {
-		if cond.Type == corev1.PodReady {
-			return cond.Status == corev1.ConditionTrue
-		}
-	}
-	return false
 }

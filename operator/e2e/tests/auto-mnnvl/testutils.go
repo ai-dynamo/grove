@@ -31,15 +31,16 @@ import (
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
-	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 	"gopkg.in/yaml.v3"
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
@@ -350,15 +351,19 @@ func scalePCS(tc *testctx.TestContext, name string, replicas int) error {
 
 // waitForComputeDomainCount waits for the specified number of ComputeDomains for a PCS
 func waitForComputeDomainCount(tc *testctx.TestContext, pcsName string, expectedCount int) error {
-	return k8s.PollForCondition(tc.Ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
-		list, err := tc.Clients.DynamicClient.Resource(computeDomainGVR).Namespace(tc.Namespace).List(tc.Ctx, metav1.ListOptions{
+	fetchComputeDomains := waiter.FetchFunc[*unstructured.UnstructuredList](func(ctx context.Context) (*unstructured.UnstructuredList, error) {
+		return tc.Clients.DynamicClient.Resource(computeDomainGVR).Namespace(tc.Namespace).List(ctx, metav1.ListOptions{
 			LabelSelector: fmt.Sprintf("app.kubernetes.io/part-of=%s", pcsName),
 		})
-		if err != nil {
-			return false, nil
-		}
-		return len(list.Items) == expectedCount, nil
 	})
+	hasExpectedCount := waiter.Predicate[*unstructured.UnstructuredList](func(list *unstructured.UnstructuredList) bool {
+		return len(list.Items) == expectedCount
+	})
+	w := waiter.New[*unstructured.UnstructuredList]().
+		WithTimeout(defaultPollTimeout).
+		WithInterval(defaultPollInterval).
+		WithRetryOnError()
+	return w.WaitUntil(tc.Ctx, fetchComputeDomains, hasExpectedCount)
 }
 
 // waitForPCSG waits for a PCSG to exist and returns it

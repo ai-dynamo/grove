@@ -23,11 +23,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
+	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/retry"
@@ -130,26 +129,14 @@ func IsReady(node *v1.Node) bool {
 }
 
 // WaitAndGetReady waits for a specific node to become ready and returns it.
+// NotFound errors are treated as "not yet created" and polling continues.
 func (nm *NodeManager) WaitAndGetReady(ctx context.Context, nodeName string, timeout time.Duration) (*v1.Node, error) {
-	var node *v1.Node
-	err := k8s.PollForCondition(ctx, timeout, defaultNodePollInterval, func() (bool, error) {
-		var err error
-		node, err = nm.clients.Clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
-		if err != nil {
-			if errors.IsNotFound(err) {
-				nm.logger.Debugf("Node %s not found yet, waiting...", nodeName)
-				return false, nil
-			}
-			return false, err
-		}
-		if IsReady(node) {
-			nm.logger.Debugf("Node %s is ready", nodeName)
-			return true, nil
-		}
-		nm.logger.Debugf("Node %s found but not ready yet, waiting...", nodeName)
-		return false, nil
-	})
-	return node, err
+	w := waiter.New[*v1.Node]().
+		WithTimeout(timeout).
+		WithInterval(defaultNodePollInterval).
+		WithLogger(nm.logger)
+	return w.WaitFor(ctx, waiter.FetchByName(nodeName, nm.clients.Clientset.CoreV1().Nodes().Get),
+		func(node *v1.Node) bool { return node != nil && IsReady(node) })
 }
 
 // SetNodeSchedulable sets a node to be schedulable or unschedulable (cordon/uncordon)
@@ -181,22 +168,12 @@ func SetNodeSchedulable(ctx context.Context, clientset kubernetes.Interface, nod
 
 // WaitAndGetReadyNode waits for a specific node to become ready and returns it.
 // Uses a raw Kubernetes clientset for use in setup code that doesn't have a Clients bundle.
-func WaitAndGetReadyNode(ctx context.Context, clientset kubernetes.Interface, nodeName string, timeout time.Duration, logger *log.Logger) (node *v1.Node, err error) {
-	err = k8s.PollForCondition(ctx, timeout, defaultNodePollInterval, func() (bool, error) {
-		node, err = clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
-		if err != nil {
-			if errors.IsNotFound(err) {
-				logger.Debugf("Node %s not found yet, waiting...", nodeName)
-				return false, nil
-			}
-			return false, err
-		}
-		if IsReady(node) {
-			logger.Debugf("Node %s is ready", nodeName)
-			return true, nil
-		}
-		logger.Debugf("Node %s found but not ready yet, waiting...", nodeName)
-		return false, nil
-	})
-	return
+// NotFound errors are treated as "not yet created" and polling continues.
+func WaitAndGetReadyNode(ctx context.Context, clientset kubernetes.Interface, nodeName string, timeout time.Duration, logger *log.Logger) (*v1.Node, error) {
+	w := waiter.New[*v1.Node]().
+		WithTimeout(timeout).
+		WithInterval(defaultNodePollInterval).
+		WithLogger(logger)
+	return w.WaitFor(ctx, waiter.FetchByName(nodeName, clientset.CoreV1().Nodes().Get),
+		func(node *v1.Node) bool { return node != nil && IsReady(node) })
 }
