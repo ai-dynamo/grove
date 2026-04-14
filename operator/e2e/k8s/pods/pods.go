@@ -23,12 +23,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	kubeutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // PodPhaseCount holds counts of pods by phase.
@@ -42,24 +42,26 @@ type PodPhaseCount struct {
 
 // PodManager provides pod operations using pre-created Kubernetes clients.
 type PodManager struct {
-	clients *clients.Clients
-	logger  *log.Logger
+	cl     client.Client
+	logger *log.Logger
 }
 
-// NewPodManager creates a PodManager bound to the given clients.
-func NewPodManager(c *clients.Clients, logger *log.Logger) *PodManager {
-	return &PodManager{clients: c, logger: logger}
+// NewPodManager creates a PodManager bound to the given client.
+func NewPodManager(cl client.Client, logger *log.Logger) *PodManager {
+	return &PodManager{cl: cl, logger: logger}
 }
 
 // List lists pods in a namespace with an optional label selector.
 func (pm *PodManager) List(ctx context.Context, namespace, labelSelector string) (*v1.PodList, error) {
-	pods, err := pm.clients.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labelSelector,
-	})
-	if err != nil {
+	var podList v1.PodList
+	opts := []client.ListOption{client.InNamespace(namespace)}
+	if labelSelector != "" {
+		opts = append(opts, &client.ListOptions{Raw: &metav1.ListOptions{LabelSelector: labelSelector}})
+	}
+	if err := pm.cl.List(ctx, &podList, opts...); err != nil {
 		return nil, fmt.Errorf("failed to list pods in namespace %s: %w", namespace, err)
 	}
-	return pods, nil
+	return &podList, nil
 }
 
 // WaitForReady waits for pods to be ready in the specified namespaces.
@@ -75,13 +77,15 @@ func (pm *PodManager) WaitForReady(ctx context.Context, namespaces []string, lab
 	fetchPods := waiter.FetchFunc[*v1.PodList](func(ctx context.Context) (*v1.PodList, error) {
 		var allPods v1.PodList
 		for _, namespace := range namespaces {
-			pods, err := pm.clients.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-				LabelSelector: labelSelector,
-			})
-			if err != nil {
+			var podList v1.PodList
+			opts := []client.ListOption{client.InNamespace(namespace)}
+			if labelSelector != "" {
+				opts = append(opts, &client.ListOptions{Raw: &metav1.ListOptions{LabelSelector: labelSelector}})
+			}
+			if err := pm.cl.List(ctx, &podList, opts...); err != nil {
 				return nil, fmt.Errorf("failed to list pods in namespace %s: %w", namespace, err)
 			}
-			allPods.Items = append(allPods.Items, pods.Items...)
+			allPods.Items = append(allPods.Items, podList.Items...)
 		}
 		return &allPods, nil
 	})
@@ -154,7 +158,7 @@ func (pm *PodManager) WaitForAllPending(ctx context.Context, namespace, labelSel
 func (pm *PodManager) WaitForUnschedulableEvents(ctx context.Context, namespace, labelSelector string, expectedPendingCount int, timeout, interval time.Duration) error {
 	fetchPods := pm.FetchFunc(ctx, namespace, labelSelector)
 	w := waiter.New[*v1.PodList]().WithTimeout(timeout).WithInterval(interval)
-	_, err := w.WaitFor(ctx, fetchPods, HasUnschedulableEvents(ctx, pm.clients.Clientset, namespace, expectedPendingCount))
+	_, err := w.WaitFor(ctx, fetchPods, HasUnschedulableEvents(ctx, pm.cl, namespace, expectedPendingCount))
 	return err
 }
 

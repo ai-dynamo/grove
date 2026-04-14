@@ -28,23 +28,22 @@ package setup
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	nodeutils "github.com/ai-dynamo/grove/operator/e2e/k8s/nodes"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"github.com/docker/docker/api/types/container"
 	dockerclient "github.com/docker/docker/client"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	k8stypes "k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -99,7 +98,7 @@ func getRestConfig() (*rest.Config, error) {
 // 3. Deletes the not ready node from Kubernetes
 // 4. Finds and restarts the corresponding Docker container (node names match container names exactly)
 // 5. The restarted container will rejoin the cluster as a new node
-func StartNodeMonitoring(ctx context.Context, clientset *kubernetes.Clientset, logger *log.Logger) func() {
+func StartNodeMonitoring(ctx context.Context, k8sClient *k8s.K8s, logger *log.Logger) func() {
 	logger.Debug("🔍 Starting node monitoring for not ready nodes...")
 
 	// Create a context that can be cancelled to stop the monitoring
@@ -116,7 +115,7 @@ func StartNodeMonitoring(ctx context.Context, clientset *kubernetes.Clientset, l
 				logger.Debug("🛑 Stopping node monitoring...")
 				return
 			case <-ticker.C:
-				if err := checkAndReplaceNotReadyNodes(monitorCtx, clientset, logger); err != nil {
+				if err := checkAndReplaceNotReadyNodes(monitorCtx, k8sClient, logger); err != nil {
 					logger.Errorf("Error during node monitoring: %v", err)
 				}
 			}
@@ -130,14 +129,14 @@ func StartNodeMonitoring(ctx context.Context, clientset *kubernetes.Clientset, l
 }
 
 // checkAndReplaceNotReadyNodes checks for nodes that are not ready and replaces them
-func checkAndReplaceNotReadyNodes(ctx context.Context, clientset *kubernetes.Clientset, logger *log.Logger) error {
+func checkAndReplaceNotReadyNodes(ctx context.Context, k8sClient *k8s.K8s, logger *log.Logger) error {
 	// List all nodes
-	nodes, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	if err != nil {
+	var nodeList v1.NodeList
+	if err := k8sClient.List(ctx, &nodeList); err != nil {
 		return fmt.Errorf("failed to list nodes: %w", err)
 	}
 
-	for _, node := range nodes.Items {
+	for _, node := range nodeList.Items {
 		if !nodeutils.IsReady(&node) {
 			// Skip cordoned nodes because even if they're also not ready, we don't want to replace
 			// them with an uncordoned node as it'll break tests. When/if the node becomes uncordoned,
@@ -149,7 +148,7 @@ func checkAndReplaceNotReadyNodes(ctx context.Context, clientset *kubernetes.Cli
 
 			logger.Warnf("🚨 Found not ready node: %s", node.Name)
 
-			if err := replaceNotReadyNode(ctx, &node, clientset, logger); err != nil {
+			if err := replaceNotReadyNode(ctx, &node, k8sClient, logger); err != nil {
 				logger.Errorf("Failed to replace not ready node %s: %v", node.Name, err)
 				continue
 			}
@@ -162,13 +161,13 @@ func checkAndReplaceNotReadyNodes(ctx context.Context, clientset *kubernetes.Cli
 }
 
 // replaceNotReadyNode handles the process of replacing a not ready node
-func replaceNotReadyNode(ctx context.Context, node *v1.Node, clientset *kubernetes.Clientset, logger *log.Logger) error {
+func replaceNotReadyNode(ctx context.Context, node *v1.Node, k8sClient *k8s.K8s, logger *log.Logger) error {
 	nodeName := node.Name
 	originalNodeLabels := node.Labels
 
 	// Step 1: Delete the node from Kubernetes
 	logger.Debugf("🗑️ Deleting node from Kubernetes: %s", nodeName)
-	if err := clientset.CoreV1().Nodes().Delete(ctx, nodeName, metav1.DeleteOptions{}); err != nil {
+	if err := k8sClient.Delete(ctx, &v1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}); err != nil {
 		return fmt.Errorf("failed to delete node %s: %w", nodeName, err)
 	}
 
@@ -180,14 +179,15 @@ func replaceNotReadyNode(ctx context.Context, node *v1.Node, clientset *kubernet
 
 	// Step 3: Wait for the node to become ready
 	logger.Debugf("⏳ Waiting for node to become ready: %s", nodeName)
-	readyNode, err := nodeutils.WaitAndGetReadyNode(ctx, clientset, nodeName, defaultPollTimeout, logger)
+	nm := nodeutils.NewNodeManager(k8sClient, logger)
+	readyNode, err := nm.WaitForReady(ctx, nodeName, defaultPollTimeout)
 	if err != nil {
 		return fmt.Errorf("node %s did not become ready: %w", nodeName, err)
 	}
 
 	// Step 4: Reapply original labels to the replaced node
 	logger.Debugf("🏷️  Reapplying original labels to replaced node: %s", nodeName)
-	if err := reapplyNodeLabels(ctx, clientset, readyNode, originalNodeLabels, logger); err != nil {
+	if err := reapplyNodeLabels(ctx, k8sClient, readyNode, originalNodeLabels, logger); err != nil {
 		return fmt.Errorf("failed to reapply labels to node %s: %w", nodeName, err)
 	}
 
@@ -244,20 +244,10 @@ func restartNodeContainer(ctx context.Context, nodeName string, logger *log.Logg
 }
 
 // reapplyNodeLabels reapplies the original labels to a replaced node
-func reapplyNodeLabels(ctx context.Context, clientset *kubernetes.Clientset, node *v1.Node, labels map[string]string, logger *log.Logger) error {
-	nodeTopologyLabelsPatch := &v1.Node{
-		ObjectMeta: metav1.ObjectMeta{
-			Labels: labels,
-		},
-	}
-
-	patchBytes, err := json.Marshal(nodeTopologyLabelsPatch)
-	if err != nil {
-		return fmt.Errorf("failed to marshal patch data for node %s: %w", node.Name, err)
-	}
-
-	_, err = clientset.CoreV1().Nodes().Patch(ctx, node.Name, k8stypes.StrategicMergePatchType, patchBytes, metav1.PatchOptions{})
-	if err != nil {
+func reapplyNodeLabels(ctx context.Context, k8sClient *k8s.K8s, node *v1.Node, labels map[string]string, logger *log.Logger) error {
+	patch := client.MergeFrom(node.DeepCopy())
+	node.Labels = labels
+	if err := k8sClient.Patch(ctx, node, patch); err != nil {
 		return fmt.Errorf("failed to patch node %s with labels: %w", node.Name, err)
 	}
 

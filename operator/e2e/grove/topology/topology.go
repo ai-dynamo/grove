@@ -24,27 +24,11 @@ import (
 	"fmt"
 
 	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	"github.com/ai-dynamo/grove/operator/e2e/k8s"
-	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
 	kaitopologyv1alpha1 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/kai/v1alpha1"
 	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-)
-
-var (
-	clusterTopologyGVR = schema.GroupVersionResource{
-		Group:    "grove.io",
-		Version:  "v1alpha1",
-		Resource: "clustertopologies",
-	}
-
-	kaiTopologyGVR = schema.GroupVersionResource{
-		Group:    "kai.scheduler",
-		Version:  "v1alpha1",
-		Resource: "topologies",
-	}
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // PCSGTypeConfig defines configuration for a PCSG type verification.
@@ -53,27 +37,22 @@ type PCSGTypeConfig struct {
 	FQN  string // Fully-qualified PCSG name
 }
 
-// TopologyVerifier provides Grove topology verification using pre-created Kubernetes clients.
+// TopologyVerifier provides Grove topology verification using a controller-runtime client.
 type TopologyVerifier struct {
-	clients *clients.Clients
-	logger  *log.Logger
+	cl     client.Client
+	logger *log.Logger
 }
 
-// NewTopologyVerifier creates a TopologyVerifier bound to the given clients.
-func NewTopologyVerifier(clients *clients.Clients, logger *log.Logger) *TopologyVerifier {
-	return &TopologyVerifier{clients: clients, logger: logger}
+// NewTopologyVerifier creates a TopologyVerifier bound to the given client.
+func NewTopologyVerifier(cl client.Client, logger *log.Logger) *TopologyVerifier {
+	return &TopologyVerifier{cl: cl, logger: logger}
 }
 
 // VerifyClusterTopologyLevels verifies that a ClusterTopology CR exists with the expected topology levels.
 func (tv *TopologyVerifier) VerifyClusterTopologyLevels(ctx context.Context, name string, expectedLevels []corev1alpha1.TopologyLevel) error {
-	unstructuredCT, err := tv.clients.DynamicClient.Resource(clusterTopologyGVR).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to get ClusterTopology %s: %w", name, err)
-	}
-
 	var clusterTopology corev1alpha1.ClusterTopology
-	if err := k8s.ConvertUnstructuredToTyped(unstructuredCT.Object, &clusterTopology); err != nil {
-		return fmt.Errorf("failed to convert ClusterTopology to typed: %w", err)
+	if err := tv.cl.Get(ctx, types.NamespacedName{Name: name}, &clusterTopology); err != nil {
+		return fmt.Errorf("failed to get ClusterTopology %s: %w", name, err)
 	}
 
 	if len(clusterTopology.Spec.Levels) != len(expectedLevels) {
@@ -93,14 +72,9 @@ func (tv *TopologyVerifier) VerifyClusterTopologyLevels(ctx context.Context, nam
 
 // VerifyKAITopologyLevels verifies that a KAI Topology CR exists with the expected levels.
 func (tv *TopologyVerifier) VerifyKAITopologyLevels(ctx context.Context, name string, expectedKeys []string) error {
-	unstructuredTopology, err := tv.clients.DynamicClient.Resource(kaiTopologyGVR).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to get KAI Topology %s: %w", name, err)
-	}
-
 	var kaiTopology kaitopologyv1alpha1.Topology
-	if err := k8s.ConvertUnstructuredToTyped(unstructuredTopology.Object, &kaiTopology); err != nil {
-		return fmt.Errorf("failed to convert KAI Topology to typed: %w", err)
+	if err := tv.cl.Get(ctx, types.NamespacedName{Name: name}, &kaiTopology); err != nil {
+		return fmt.Errorf("failed to get KAI Topology %s: %w", name, err)
 	}
 
 	if len(kaiTopology.Spec.Levels) != len(expectedKeys) {
@@ -151,8 +125,8 @@ func (tv *TopologyVerifier) VerifyPodsInSameTopologyDomain(ctx context.Context, 
 		return fmt.Errorf("pod %s has no assigned node", firstPod.Name)
 	}
 
-	firstNode, err := tv.clients.Clientset.CoreV1().Nodes().Get(ctx, firstPod.Spec.NodeName, metav1.GetOptions{})
-	if err != nil {
+	var firstNode v1.Node
+	if err := tv.cl.Get(ctx, types.NamespacedName{Name: firstPod.Spec.NodeName}, &firstNode); err != nil {
 		return fmt.Errorf("failed to get node %s: %w", firstPod.Spec.NodeName, err)
 	}
 
@@ -166,8 +140,8 @@ func (tv *TopologyVerifier) VerifyPodsInSameTopologyDomain(ctx context.Context, 
 			return fmt.Errorf("pod %s has no assigned node", pod.Name)
 		}
 
-		node, err := tv.clients.Clientset.CoreV1().Nodes().Get(ctx, pod.Spec.NodeName, metav1.GetOptions{})
-		if err != nil {
+		var node v1.Node
+		if err := tv.cl.Get(ctx, types.NamespacedName{Name: pod.Spec.NodeName}, &node); err != nil {
 			return fmt.Errorf("failed to get node %s: %w", pod.Spec.NodeName, err)
 		}
 

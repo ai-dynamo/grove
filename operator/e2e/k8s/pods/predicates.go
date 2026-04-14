@@ -26,7 +26,7 @@ import (
 	kubeutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // FetchFunc returns a FetchFunc that lists pods in the given namespace with the given label selector.
@@ -109,7 +109,7 @@ func ExcludesPod(podName string) waiter.Predicate[*v1.PodList] {
 // HasUnschedulableEvents returns a Predicate that checks all pending pods have
 // Unschedulable or PodGrouperWarning events. Pass expectedPendingCount > 0 to
 // also validate the pending pod count; pass 0 to skip that validation.
-func HasUnschedulableEvents(ctx context.Context, clientset kubernetes.Interface, namespace string, expectedPendingCount int) waiter.Predicate[*v1.PodList] {
+func HasUnschedulableEvents(ctx context.Context, cl client.Reader, namespace string, expectedPendingCount int) waiter.Predicate[*v1.PodList] {
 	return func(podList *v1.PodList) bool {
 		podsWithUnschedulableEvent := 0
 		pendingCount := 0
@@ -118,15 +118,17 @@ func HasUnschedulableEvents(ctx context.Context, clientset kubernetes.Interface,
 				continue
 			}
 			pendingCount++
-			events, err := clientset.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{
-				FieldSelector: fmt.Sprintf("involvedObject.name=%s,involvedObject.kind=Pod", pod.Name),
-			})
+			var eventList v1.EventList
+			err := cl.List(ctx, &eventList, client.InNamespace(namespace),
+				&client.ListOptions{Raw: &metav1.ListOptions{
+					FieldSelector: fmt.Sprintf("involvedObject.name=%s,involvedObject.kind=Pod", pod.Name),
+				}})
 			if err != nil {
 				return false
 			}
 			var mostRecentEvent *v1.Event
-			for i := range events.Items {
-				event := &events.Items[i]
+			for i := range eventList.Items {
+				event := &eventList.Items[i]
 				if mostRecentEvent == nil || event.LastTimestamp.After(mostRecentEvent.LastTimestamp.Time) {
 					mostRecentEvent = event
 				}

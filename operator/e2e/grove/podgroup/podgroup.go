@@ -23,22 +23,13 @@ import (
 	"fmt"
 	"time"
 
+	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	nameutils "github.com/ai-dynamo/grove/operator/api/common"
-	"github.com/ai-dynamo/grove/operator/e2e/k8s"
-	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
-	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
-
-var kaiPodGroupGVR = schema.GroupVersionResource{
-	Group:    "scheduling.run.ai",
-	Version:  "v2alpha2",
-	Resource: "podgroups",
-}
 
 // ExpectedSubGroup defines the expected structure of a KAI PodGroup SubGroup for verification.
 type ExpectedSubGroup struct {
@@ -66,15 +57,15 @@ type ScaledPCSGConfig struct {
 	Constraint    string
 }
 
-// PodGroupVerifier provides KAI PodGroup verification using pre-created Kubernetes clients.
+// PodGroupVerifier provides KAI PodGroup verification using a controller-runtime client.
 type PodGroupVerifier struct {
-	clients *clients.Clients
-	logger  *log.Logger
+	cl     client.Client
+	logger *log.Logger
 }
 
-// NewPodGroupVerifier creates a PodGroupVerifier bound to the given clients.
-func NewPodGroupVerifier(clients *clients.Clients, logger *log.Logger) *PodGroupVerifier {
-	return &PodGroupVerifier{clients: clients, logger: logger}
+// NewPodGroupVerifier creates a PodGroupVerifier bound to the given client.
+func NewPodGroupVerifier(cl client.Client, logger *log.Logger) *PodGroupVerifier {
+	return &PodGroupVerifier{cl: cl, logger: logger}
 }
 
 // CreateExpectedStandalonePCLQSubGroup creates an ExpectedSubGroup for a standalone PodClique (not in PCSG).
@@ -140,28 +131,19 @@ func createExpectedPCLQInPCSGSubGroup(pcsName string, pcsReplica int, sgName str
 
 // GetKAIPodGroupsForPCS retrieves all KAI PodGroups for a given PodCliqueSet by label selector.
 func (pv *PodGroupVerifier) GetKAIPodGroupsForPCS(ctx context.Context, namespace, pcsName string) ([]kaischedulingv2alpha2.PodGroup, error) {
-	labelSelector := fmt.Sprintf("app.kubernetes.io/part-of=%s", pcsName)
-	unstructuredList, err := pv.clients.DynamicClient.Resource(kaiPodGroupGVR).Namespace(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labelSelector,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list KAI PodGroups with label %s in namespace %s: %w", labelSelector, namespace, err)
+	var podGroupList kaischedulingv2alpha2.PodGroupList
+	if err := pv.cl.List(ctx, &podGroupList,
+		client.InNamespace(namespace),
+		client.MatchingLabels{"app.kubernetes.io/part-of": pcsName},
+	); err != nil {
+		return nil, fmt.Errorf("failed to list KAI PodGroups with label app.kubernetes.io/part-of=%s in namespace %s: %w", pcsName, namespace, err)
 	}
 
-	podGroups := make([]kaischedulingv2alpha2.PodGroup, 0, len(unstructuredList.Items))
-	for _, item := range unstructuredList.Items {
-		var podGroup kaischedulingv2alpha2.PodGroup
-		if err := k8s.ConvertUnstructuredToTyped(item.Object, &podGroup); err != nil {
-			return nil, fmt.Errorf("failed to convert KAI PodGroup to typed: %w", err)
-		}
-		podGroups = append(podGroups, podGroup)
-	}
-
-	if len(podGroups) == 0 {
+	if len(podGroupList.Items) == 0 {
 		return nil, fmt.Errorf("no KAI PodGroups found for PCS %s in namespace %s", pcsName, namespace)
 	}
 
-	return podGroups, nil
+	return podGroupList.Items, nil
 }
 
 // WaitForKAIPodGroups waits for KAI PodGroups for the given PCS to exist and returns them.

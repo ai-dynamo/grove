@@ -27,7 +27,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // testNoMNNVLArtifactsWhenDisabled verifies that no ComputeDomains, auto-mnnvl
@@ -39,7 +40,7 @@ func testNoMNNVLArtifactsWhenDisabled(t *testing.T, tc *testctx.TestContext) {
 
 	// Create a PCS with GPU requirement
 	pcs := buildComprehensivePCS(pcsName, 1)
-	_, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Create(tc.Ctx, pcs, metav1.CreateOptions{})
+	err := tc.K8s.Create(tc.Ctx, pcs)
 	require.NoError(t, err, "Failed to create PCS")
 	defer deletePCS(tc, pcsName)
 
@@ -60,7 +61,9 @@ func testNoMNNVLArtifactsWhenDisabled(t *testing.T, tc *testctx.TestContext) {
 	// Verify no ComputeDomain exists.
 	// If the CRD itself is not installed (unsupported scenario), the List call returns
 	// a NotFound error -- that also means zero ComputeDomains, which is what we want.
-	cdList, err := tc.Clients.DynamicClient.Resource(computeDomainGVR).Namespace(tc.Namespace).List(tc.Ctx, metav1.ListOptions{})
+	cdList := &unstructured.UnstructuredList{}
+	cdList.SetGroupVersionKind(computeDomainGVK.GroupVersion().WithKind(computeDomainGVK.Kind + "List"))
+	err = tc.K8s.List(tc.Ctx, cdList, client.InNamespace(tc.Namespace))
 	if k8serrors.IsNotFound(err) {
 		// CRD not installed → no ComputeDomains can exist, which is the expected state.
 	} else {

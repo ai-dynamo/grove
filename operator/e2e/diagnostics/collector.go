@@ -29,12 +29,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 )
 
@@ -57,20 +58,20 @@ const (
 // groveResourceType defines a Grove resource type for diagnostics.
 type groveResourceType struct {
 	name     string
-	gvr      schema.GroupVersionResource
+	gvk      schema.GroupVersionKind
 	singular string
 }
 
 var groveResourceTypes = []groveResourceType{
-	{"PodCliqueSets", schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquesets"}, "PODCLIQUESET"},
-	{"PodCliques", schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliques"}, "PODCLIQUE"},
-	{"PodCliqueScalingGroups", schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquescalinggroups"}, "PODCLIQUESCALINGGROUP"},
-	{"PodGangs", schema.GroupVersionResource{Group: "scheduler.grove.io", Version: "v1alpha1", Resource: "podgangs"}, "PODGANG"},
+	{"PodCliqueSets", schema.GroupVersionKind{Group: "grove.io", Version: "v1alpha1", Kind: "PodCliqueSetList"}, "PODCLIQUESET"},
+	{"PodCliques", schema.GroupVersionKind{Group: "grove.io", Version: "v1alpha1", Kind: "PodCliqueList"}, "PODCLIQUE"},
+	{"PodCliqueScalingGroups", schema.GroupVersionKind{Group: "grove.io", Version: "v1alpha1", Kind: "PodCliqueScalingGroupList"}, "PODCLIQUESCALINGGROUP"},
+	{"PodGangs", schema.GroupVersionKind{Group: "scheduler.grove.io", Version: "v1alpha1", Kind: "PodGangList"}, "PODGANG"},
 }
 
 // DiagCollector collects diagnostics from a Kubernetes cluster on test failure.
 type DiagCollector struct {
-	clients   *clients.Clients
+	k8s       *k8s.K8s
 	namespace string
 	logger    *log.Logger
 	mode      string
@@ -78,7 +79,7 @@ type DiagCollector struct {
 }
 
 // NewDiagCollector creates a DiagCollector.
-func NewDiagCollector(clients *clients.Clients, namespace, mode, dir string, logger *log.Logger) *DiagCollector {
+func NewDiagCollector(k8sClient *k8s.K8s, namespace, mode, dir string, logger *log.Logger) *DiagCollector {
 	if mode == "" {
 		mode = ModeFile
 	}
@@ -86,7 +87,7 @@ func NewDiagCollector(clients *clients.Clients, namespace, mode, dir string, log
 		logger = log.NewTestLogger(log.InfoLevel)
 	}
 	return &DiagCollector{
-		clients:   clients,
+		k8s:       k8sClient,
 		namespace: namespace,
 		logger:    logger,
 		mode:      mode,
@@ -131,14 +132,15 @@ func (dc *DiagCollector) dumpOperatorLogs(ctx context.Context, logger *log.Logge
 	logger.Info("================================================================================")
 	logger.Info("=== OPERATOR LOGS (all) ===")
 	logger.Info("================================================================================")
-	pods, err := dc.clients.Clientset.CoreV1().Pods(setup.OperatorNamespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
+
+	var podList corev1.PodList
+	if err := dc.k8s.List(ctx, &podList, client.InNamespace(setup.OperatorNamespace)); err != nil {
 		logger.Infof("[DIAG] Failed to list pods in namespace %s: %v", setup.OperatorNamespace, err)
 		return
 	}
 
 	foundOperator := false
-	for _, pod := range pods.Items {
+	for _, pod := range podList.Items {
 		if !strings.HasPrefix(pod.Name, setup.OperatorDeploymentName) {
 			continue
 		}
@@ -173,7 +175,7 @@ func (dc *DiagCollector) dumpOperatorLogs(ctx context.Context, logger *log.Logge
 		for _, container := range pod.Spec.Containers {
 			logger.Infof("--- Container: %s Logs ---", container.Name)
 
-			req := dc.clients.Clientset.CoreV1().Pods(setup.OperatorNamespace).GetLogs(pod.Name, &corev1.PodLogOptions{
+			req := dc.k8s.GetLogs(setup.OperatorNamespace, pod.Name, &corev1.PodLogOptions{
 				Container: container.Name,
 			})
 
@@ -216,19 +218,21 @@ func (dc *DiagCollector) dumpGroveResources(ctx context.Context, logger *log.Log
 
 	for _, rt := range groveResourceTypes {
 		logger.Infof("[DIAG] Listing %s in namespace %s...", rt.name, dc.namespace)
-		resources, err := dc.clients.DynamicClient.Resource(rt.gvr).Namespace(dc.namespace).List(ctx, metav1.ListOptions{})
-		if err != nil {
+
+		list := &unstructured.UnstructuredList{}
+		list.SetGroupVersionKind(rt.gvk)
+		if err := dc.k8s.List(ctx, list, client.InNamespace(dc.namespace)); err != nil {
 			logger.Infof("[DIAG] Failed to list %s: %v", rt.name, err)
 			continue
 		}
 
-		if len(resources.Items) == 0 {
+		if len(list.Items) == 0 {
 			logger.Infof("[DIAG] No %s found in namespace %s", rt.name, dc.namespace)
 			continue
 		}
 
-		logger.Infof("[DIAG] Found %d %s", len(resources.Items), rt.name)
-		for _, resource := range resources.Items {
+		logger.Infof("[DIAG] Found %d %s", len(list.Items), rt.name)
+		for _, resource := range list.Items {
 			logger.Info("--------------------------------------------------------------------------------")
 			logger.Infof("--- %s: %s ---", rt.singular, resource.GetName())
 			logger.Info("--------------------------------------------------------------------------------")
@@ -252,22 +256,23 @@ func (dc *DiagCollector) dumpPodDetails(ctx context.Context, logger *log.Logger)
 	logger.Info("================================================================================")
 
 	logger.Infof("[DIAG] Listing all pods in namespace %s...", dc.namespace)
-	pods, err := dc.clients.Clientset.CoreV1().Pods(dc.namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
+
+	var podList corev1.PodList
+	if err := dc.k8s.List(ctx, &podList, client.InNamespace(dc.namespace)); err != nil {
 		logger.Infof("[DIAG] Failed to list pods: %v", err)
 		return
 	}
 
-	if len(pods.Items) == 0 {
+	if len(podList.Items) == 0 {
 		logger.Infof("[DIAG] No pods found in namespace %s", dc.namespace)
 		return
 	}
 
-	logger.Infof("[DIAG] Found %d pods in namespace %s", len(pods.Items), dc.namespace)
+	logger.Infof("[DIAG] Found %d pods in namespace %s", len(podList.Items), dc.namespace)
 	logger.Infof("%-40s %-12s %-10s %-45s %s", "NAME", "PHASE", "READY", "NODE", "CONDITIONS")
 	logger.Info(strings.Repeat("-", 140))
 
-	for _, pod := range pods.Items {
+	for _, pod := range podList.Items {
 		readyContainers := 0
 		totalContainers := len(pod.Spec.Containers)
 		for _, cs := range pod.Status.ContainerStatuses {
@@ -322,15 +327,16 @@ func (dc *DiagCollector) dumpRecentEvents(ctx context.Context, logger *log.Logge
 	logger.Info("================================================================================")
 
 	logger.Infof("[DIAG] Listing events in namespace %s...", dc.namespace)
-	events, err := dc.clients.Clientset.CoreV1().Events(dc.namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
+
+	var eventList corev1.EventList
+	if err := dc.k8s.List(ctx, &eventList, client.InNamespace(dc.namespace)); err != nil {
 		logger.Infof("[DIAG] Failed to list events: %v", err)
 		return
 	}
 
 	cutoff := time.Now().Add(-eventLookbackDuration)
 	var recentEvents []corev1.Event
-	for _, event := range events.Items {
+	for _, event := range eventList.Items {
 		eventTime := event.LastTimestamp.Time
 		if eventTime.IsZero() {
 			eventTime = event.EventTime.Time

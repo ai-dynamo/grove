@@ -23,10 +23,10 @@ import (
 	"fmt"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -43,20 +43,20 @@ type GroveMetadata struct {
 	Image  string
 }
 
-// OperatorConfig provides access to Grove operator configuration using pre-created clients.
+// OperatorConfig provides access to Grove operator configuration using a controller-runtime client.
 type OperatorConfig struct {
-	clients *clients.Clients
+	cl client.Client
 }
 
-// NewOperatorConfig creates an OperatorConfig bound to the given clients.
-func NewOperatorConfig(clients *clients.Clients) *OperatorConfig {
-	return &OperatorConfig{clients: clients}
+// NewOperatorConfig creates an OperatorConfig bound to the given client.
+func NewOperatorConfig(cl client.Client) *OperatorConfig {
+	return &OperatorConfig{cl: cl}
 }
 
 // ReadGroveMetadata fetches the operator Deployment and returns both the config and image.
 func (oc *OperatorConfig) ReadGroveMetadata(ctx context.Context) (*GroveMetadata, error) {
 	dep := &appsv1.Deployment{}
-	if err := oc.clients.CRClient.Get(ctx, types.NamespacedName{
+	if err := oc.cl.Get(ctx, types.NamespacedName{
 		Namespace: operatorNamespace,
 		Name:      operatorDeploymentName,
 	}, dep); err != nil {
@@ -73,7 +73,7 @@ func (oc *OperatorConfig) ReadGroveMetadata(ctx context.Context) (*GroveMetadata
 	}
 
 	cm := &corev1.ConfigMap{}
-	if err := oc.clients.CRClient.Get(ctx, types.NamespacedName{
+	if err := oc.cl.Get(ctx, types.NamespacedName{
 		Namespace: operatorNamespace,
 		Name:      cmName,
 	}, cm); err != nil {
