@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -60,11 +61,11 @@ func testNoMNNVLArtifactsWhenDisabled(t *testing.T, tc *testctx.TestContext) {
 
 	// Verify no ComputeDomain exists.
 	// If the CRD itself is not installed (unsupported scenario), the List call returns
-	// a NotFound error -- that also means zero ComputeDomains, which is what we want.
+	// a "no matches for kind" error — that also means zero ComputeDomains, which is what we want.
 	cdList := &unstructured.UnstructuredList{}
 	cdList.SetGroupVersionKind(computeDomainGVK.GroupVersion().WithKind(computeDomainGVK.Kind + "List"))
 	err = tc.K8s.List(tc.Ctx, cdList, client.InNamespace(tc.Namespace))
-	if k8serrors.IsNotFound(err) {
+	if k8serrors.IsNotFound(err) || meta.IsNoMatchError(err) {
 		// CRD not installed → no ComputeDomains can exist, which is the expected state.
 	} else {
 		require.NoError(t, err, "Failed to list ComputeDomains")
