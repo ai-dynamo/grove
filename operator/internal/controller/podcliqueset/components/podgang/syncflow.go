@@ -364,15 +364,6 @@ func createTopologyPackConstraint(sc *syncContext, nsName types.NamespacedName, 
 	return lo.Ternary(pgPackConstraint != nil, &groveschedulerv1alpha1.TopologyConstraint{PackConstraint: pgPackConstraint}, nil)
 }
 
-// pcsTopologyConstraintToTopologyConstraint converts a PodCliqueSetTopologyConstraint to a TopologyConstraint.
-// TODO(multi-topology): Remove once createTopologyPackConstraint is refactored to handle PodCliqueSetTopologyConstraint directly.
-func pcsTopologyConstraintToTopologyConstraint(pcsConstraint *grovecorev1alpha1.PodCliqueSetTopologyConstraint) *grovecorev1alpha1.TopologyConstraint {
-	if pcsConstraint == nil {
-		return nil
-	}
-	return &grovecorev1alpha1.TopologyConstraint{PackDomain: pcsConstraint.PackDomain}
-}
-
 // determinePodCliqueReplicas determines replica count considering HPA mutations.
 func determinePodCliqueReplicas(sc *syncContext, pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec, pclqFQN string, belongsToPCSG bool) int32 {
 	if belongsToPCSG || pclqTemplateSpec.Spec.ScaleConfig == nil {
