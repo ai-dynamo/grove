@@ -221,7 +221,6 @@ func getSchedulerNameForPCS(pcs *grovecorev1alpha1.PodCliqueSet) string {
 	return ""
 }
 
-
 // setOrUpdateInitializedCondition sets or updates the PodGangInitialized condition on the PodGang status.
 func setOrUpdateInitializedCondition(pg *groveschedulerv1alpha1.PodGang, status metav1.ConditionStatus, reason, message string) {
 	condition := metav1.Condition{
