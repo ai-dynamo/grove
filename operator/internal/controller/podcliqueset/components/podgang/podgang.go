@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -30,7 +29,6 @@ import (
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
-	volcanoscheduler "github.com/ai-dynamo/grove/operator/internal/scheduler/volcano"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -142,21 +140,6 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGa
 		}
 		pg.Annotations[apicommonconstants.AnnotationTopologyName] = grovecorev1alpha1.DefaultClusterTopologyName
 	}
-	if getSchedulerNameForPCS(pcs) == string(configv1alpha1.SchedulerNameVolcano) {
-		queue, err := resolveQueueForPodGang(pcs, pgi)
-		if err != nil {
-			return groveerr.WrapError(
-				err,
-				errCodeCreatePodGang,
-				component.OperationSync,
-				fmt.Sprintf("failed to resolve volcano queue for PodGang %s", pgi.fqn),
-			)
-		}
-		if pg.Annotations == nil {
-			pg.Annotations = make(map[string]string)
-		}
-		pg.Annotations[volcanoscheduler.QueueAnnotationKey] = queue
-	}
 	if err := controllerutil.SetControllerReference(pcs, pg, r.scheme); err != nil {
 		return groveerr.WrapError(
 			err,
@@ -238,36 +221,6 @@ func getSchedulerNameForPCS(pcs *grovecorev1alpha1.PodCliqueSet) string {
 	return ""
 }
 
-// resolveQueueForPodGang computes the effective Volcano queue for a PodGang by
-// resolving the queue annotation across all constituent PodCliques. PodCliqueSet
-// metadata provides the global queue, clique annotations may repeat the same
-// value, and any conflict is rejected.
-func resolveQueueForPodGang(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGangInfo) (string, error) {
-	resolvedQueue := ""
-	for _, pi := range pgi.pclqs {
-		pclqTemplateSpec, found := lo.Find(pcs.Spec.Template.Cliques, func(spec *grovecorev1alpha1.PodCliqueTemplateSpec) bool {
-			return spec != nil && strings.HasSuffix(pi.fqn, spec.Name)
-		})
-		if !found {
-			return "", fmt.Errorf("PodCliqueTemplateSpec for PodClique %q not found in PodCliqueSet %s", pi.fqn, client.ObjectKeyFromObject(pcs))
-		}
-		queue, err := volcanoscheduler.ResolvePodCliqueQueue(pcs.Annotations, pclqTemplateSpec.Annotations)
-		if err != nil {
-			return "", err
-		}
-		if resolvedQueue == "" {
-			resolvedQueue = queue
-			continue
-		}
-		if resolvedQueue != queue {
-			return "", fmt.Errorf("found multiple volcano queues for PodGang %q", pgi.fqn)
-		}
-	}
-	if resolvedQueue == "" {
-		return volcanoscheduler.EffectiveQueueFromAnnotations(pcs.Annotations), nil
-	}
-	return resolvedQueue, nil
-}
 
 // setOrUpdateInitializedCondition sets or updates the PodGangInitialized condition on the PodGang status.
 func setOrUpdateInitializedCondition(pg *groveschedulerv1alpha1.PodGang, status metav1.ConditionStatus, reason, message string) {
