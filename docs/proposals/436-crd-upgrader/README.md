@@ -22,6 +22,7 @@
     - [Init Container in the Deployment](#init-container-in-the-deployment)
     - [Conditional RBAC](#conditional-rbac)
     - [Manual Upgrade Path (default)](#manual-upgrade-path-default)
+    - [Note for helm template / GitOps users](#note-for-helm-template--gitops-users)
   - [Considered Alternatives](#considered-alternatives)
     - [Helm Pre-Upgrade Hook Job](#helm-pre-upgrade-hook-job)
     - [Separate grove-crds Helm Chart](#separate-grove-crds-helm-chart)
@@ -63,11 +64,13 @@ This GREP does not force a new behaviour on all users. It adds a supported, test
 
 Two paths exist side-by-side after this change:
 
-**Default path (manual):** The `crds/` directory remains in the `grove` chart. Helm installs CRDs on `helm install` as today. On `helm upgrade`, CRDs are not touched by Helm. Users who want to upgrade CRDs manually apply the latest CRD manifests from the Grove GitHub release assets before upgrading the operator. This is identical to the behaviour before this GREP.
+Grove is deployed using a variety of toolchains. Some users run `helm install`/`helm upgrade` directly. Others render manifests with `helm template` (piped to `kubectl apply` or committed to a GitOps repo) and apply them via ArgoCD, Flux, or kustomize. These toolchains interact with the `crds/` directory differently: `helm install` applies it automatically, but `helm template` silently omits it unless `--include-crds` is passed, and GitOps tools that render manifests offline never see it. This GREP must work correctly across all of these deployment styles.
 
-**Opt-in path (automated):** Users set `crdInstaller.enabled: true` in their values. A `crd-installer` init container is injected into the grove operator Deployment. On every Pod start — including rollouts triggered by `helm upgrade` — the init container runs the `grove-install-crds` image, which applies all five Grove CRDs via server-side apply before the main operator container starts. Kubernetes enforces that the init container completes successfully before the operator process runs, making CRD upgrade ordering a property of the Deployment itself rather than of the deployment toolchain.
+**Default path (manual):** The `crds/` directory remains in the `grove` chart. `helm install` applies CRDs from it on a fresh install as today. On `helm upgrade`, CRDs are not touched by Helm. Users who use `helm template` or GitOps tooling must handle CRDs separately (see [Note for helm template / GitOps users](#note-for-helm-template--gitops-users) below). Users who want to upgrade CRDs manually apply the latest CRD manifests before upgrading the operator. This is identical to the behaviour before this GREP.
 
-When `crdInstaller.enabled: true` the RBAC rules for `apiextensions.k8s.io` are conditionally added to the operator ClusterRole.
+**Opt-in path (automated):** Users set `crdInstaller.enabled: true` in their values. A `crd-installer` init container is injected into the grove operator Deployment. On every Pod start — including rollouts triggered by `helm upgrade`, `helm template | kubectl apply`, or a GitOps sync — the init container runs the `grove-install-crds` image, which applies all five Grove CRDs via server-side apply before the main operator container starts. Kubernetes enforces that the init container completes successfully before the operator process runs, making CRD lifecycle management a property of the Deployment itself rather than of the deployment toolchain.
+
+When `crdInstaller.enabled: true` the RBAC rules for `apiextensions.k8s.io` are conditionally added to the operator ClusterRole. This provides the necessary RBAC for the init container to install the CRDs.
 
 ### User Stories
 
@@ -81,7 +84,7 @@ As a platform engineer who prefers a fully automated upgrade path, I set `crdIns
 
 #### Story 3
 
-As a GitOps engineer managing Grove via ArgoCD or Flux with rendered manifests from `helm template`, I set `crdInstaller.enabled: true` so that CRD upgrades happen automatically when the operator Deployment rolls out, without needing a separate CRD application or sync-wave ordering.
+As a GitOps engineer managing Grove via ArgoCD or Flux with rendered manifests from `helm template`, I need CRDs to be present on both fresh installs and upgrades. `helm template` does **not** render the `crds/` directory by default — the `--include-crds` flag is required to emit CRD manifests. Rather than managing that flag and a separate CRD sync-wave, I set `crdInstaller.enabled: true` once. The init container handles both cases identically: it calls server-side apply with `create`/`patch`, so it creates CRDs if they are absent on a fresh cluster and upgrades them on subsequent rollouts.
 
 ### Limitations/Risks & Mitigations
 
@@ -193,7 +196,14 @@ helm upgrade grove oci://ghcr.io/ai-dynamo/grove --version <version>
 
 The `--force-conflicts` flag is required because Helm holds field ownership over `.spec.versions` on CRDs it originally installed. Without it, `kubectl apply --server-side` reports a conflict and refuses to update.
 
-The CRD manifests are published as a single `crds.yaml` release asset containing all five CRDs, concatenated with `---` separators.
+#### Note for helm template / GitOps users
+
+`helm template` does **not** render the `crds/` directory unless `--include-crds` is passed. Users rendering manifests with `helm template` and applying them via ArgoCD, Flux, or `kubectl apply` will not get CRDs installed on a fresh cluster unless they either:
+
+1. Pass `--include-crds` to `helm template` and apply the resulting CRD manifests as a separate sync-wave before the operator manifests, or
+2. Set `crdInstaller.enabled: true` — the recommended approach for GitOps users.
+
+With `crdInstaller.enabled: true`, the init container handles fresh installs (CRDs absent → creates them) and upgrades (CRDs present → patches them) identically, with no sync-wave ordering required.
 
 ### Considered Alternatives
 

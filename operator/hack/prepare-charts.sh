@@ -30,8 +30,8 @@ function copy_crds() {
   mkdir -p ${target_path}
 
   echo "Copying grove-operator CRDS..."
-  declare -a crds=("grove.io_podcliquesets.yaml" "grove.io_podcliques.yaml" "grove.io_podcliquescalinggroups.yaml" "grove.io_clustertopologies.yaml")
-  for crd in "${crds[@]}"; do
+  declare -a operator_crds=("grove.io_podcliquesets.yaml" "grove.io_podcliques.yaml" "grove.io_podcliquescalinggroups.yaml" "grove.io_clustertopologies.yaml")
+  for crd in "${operator_crds[@]}"; do
     local src_crd_path="${OPERATOR_GO_MODULE_ROOT}/api/core/v1alpha1/crds/${crd}"
     if [ ! -f ${src_crd_path} ]; then
       echo "CRD ${crd} not found in ${src_crd_path}, run 'make generate' first"
@@ -42,8 +42,8 @@ function copy_crds() {
   done
 
   echo "Copying scheduler CRDS..."
-  declare -a crds=("scheduler.grove.io_podgangs.yaml")
-  for crd in "${crds[@]}"; do
+  declare -a scheduler_crds=("scheduler.grove.io_podgangs.yaml")
+  for crd in "${scheduler_crds[@]}"; do
     local src_crd_path="${SCHEDULER_GO_MODULE_ROOT}/api/core/v1alpha1/crds/${crd}"
     if [ ! -f ${src_crd_path} ]; then
       echo "CRD ${crd} not found in ${src_crd_path}, run 'make generate' first"
