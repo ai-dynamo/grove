@@ -79,7 +79,7 @@ func ValidateQueueName(queue string) []string {
 }
 
 // ValidateQueueExistsAndIsOpen verifies that the resolved Volcano queue exists
-// in the cluster and that its status is Open before the workload is admitted.
+// in the cluster and that its status is Open before admitting the workload.
 func ValidateQueueExistsAndIsOpen(ctx context.Context, k8sClient client.Reader, queue string) error {
 	if k8sClient == nil {
 		return nil
