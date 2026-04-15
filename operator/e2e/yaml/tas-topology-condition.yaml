@@ -1,31 +1,23 @@
-# Workload: SP5 - PCSG+PCLQ Topology (no PCS constraint)
-# Test scenario: No PCS constraint, PCSG with rack constraint, PCLQ with host constraint
+# Workload: PCS TopologyLevelsUnavailable Condition Lifecycle
+# Test scenario: PCS references a ClusterTopology that does not yet exist (tas20-topology).
+# The ClusterTopology is created dynamically by the test after verifying the error condition.
 ---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
-  name: tas-pcsg-pclq
+  name: tas-topology-condition
   labels:
-    app: tas-pcsg-pclq
+    app: tas-topology-condition
 spec:
   replicas: 1
   template:
     topologyConstraint:
-      topologyName: grove-topology
-    podCliqueScalingGroups:
-      - name: workers
-        replicas: 2
-        minAvailable: 2
-        topologyConstraint:
-          packDomain: rack
-        cliqueNames:
-          - worker
+      topologyName: tas20-topology
+      packDomain: rack
     cliques:
       - name: worker
         labels:
           kai.scheduler/queue: test
-        topologyConstraint:
-          packDomain: host
         spec:
           roleName: worker
           replicas: 2
@@ -53,4 +45,4 @@ spec:
                 command: ["sleep", "infinity"]
                 resources:
                   requests:
-                    memory: 40Mi
+                    memory: 10Mi

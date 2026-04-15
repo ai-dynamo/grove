@@ -10,6 +10,8 @@ metadata:
 spec:
   replicas: 1
   template:
+    topologyConstraint:
+      topologyName: grove-topology
     # NO topology constraint at PCS level
     cliques:
       - name: worker-rack
