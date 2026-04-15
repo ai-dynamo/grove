@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -37,6 +38,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	ctrlmanager "sigs.k8s.io/controller-runtime/pkg/manager"
@@ -756,4 +758,90 @@ func TestRegisterControllersAndWebhooks(t *testing.T) {
 		registerControllersWithMgr = originalRegisterControllers
 		registerWebhooksWithMgr = originalRegisterWebhooks
 	}
+}
+
+// TestPodCacheFiltering verifies that the manager's cache only stores pods with the
+// grove managed-by label and ignores unmanaged pods. This is an integration test that
+// requires a real API server (envtest).
+func TestPodCacheFiltering(t *testing.T) {
+	testEnv := &envtest.Environment{}
+	envCfg, err := testEnv.Start()
+	if err != nil {
+		t.Skipf("Skipping test: kubebuilder test environment not available: %v", err)
+		return
+	}
+	defer func() {
+		require.NoError(t, testEnv.Stop())
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr, err := ctrl.NewManager(envCfg, ctrl.Options{
+		Scheme: groveclientscheme.Scheme,
+		Cache:  cacheOptions(),
+	})
+	require.NoError(t, err)
+
+	// Start the manager in the background so the cache syncs.
+	go func() {
+		if err := mgr.Start(ctx); err != nil {
+			// Only log; cancellation is expected.
+			fmt.Printf("manager stopped: %v\n", err)
+		}
+	}()
+
+	// Wait for the cache to sync before creating pods.
+	synced := mgr.GetCache().WaitForCacheSync(ctx)
+	require.True(t, synced, "cache failed to sync")
+
+	// Use a direct (uncached) client to create pods, so writes bypass the filtered cache.
+	directClient, err := client.New(envCfg, client.Options{Scheme: groveclientscheme.Scheme})
+	require.NoError(t, err)
+
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "cache-filter-test"}}
+	require.NoError(t, directClient.Create(ctx, ns))
+
+	managedPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "managed-pod",
+			Namespace: ns.Name,
+			Labels: map[string]string{
+				apicommon.LabelManagedByKey: apicommon.LabelManagedByValue,
+			},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "c", Image: "busybox"}},
+		},
+	}
+
+	unmanagedPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "unmanaged-pod",
+			Namespace: ns.Name,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "c", Image: "busybox"}},
+		},
+	}
+
+	require.NoError(t, directClient.Create(ctx, managedPod))
+	require.NoError(t, directClient.Create(ctx, unmanagedPod))
+
+	// Verify via the direct client that both pods exist in the API server.
+	var allPods corev1.PodList
+	require.NoError(t, directClient.List(ctx, &allPods, client.InNamespace(ns.Name)))
+	require.Len(t, allPods.Items, 2, "both pods should exist in the API server")
+
+	// Query the cache — it should only return the managed pod.
+	cachedClient := mgr.GetClient()
+	var cachedPods corev1.PodList
+	require.Eventually(t, func() bool {
+		if err := cachedClient.List(ctx, &cachedPods, client.InNamespace(ns.Name)); err != nil {
+			return false
+		}
+		return len(cachedPods.Items) == 1
+	}, 5*time.Second, 200*time.Millisecond, "cache should contain exactly 1 pod")
+
+	assert.Equal(t, "managed-pod", cachedPods.Items[0].Name)
 }

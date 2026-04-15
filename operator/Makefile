@@ -88,13 +88,13 @@ format: $(GOIMPORTS_REVISER)
 
 # Run all unit tests
 .PHONY: test-unit
-test-unit:
-	@go test ./...
+test-unit: $(SETUP_ENVTEST)
+	@KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use -p path)" go test ./...
 
 # Run all unit tests with code coverage
 .PHONY: test-cover
-test-cover:
-	@go test ./... -coverprofile=coverage.out
+test-cover: $(SETUP_ENVTEST)
+	@KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use -p path)" go test ./... -coverprofile=coverage.out
 
 # Generate HTML coverage report
 .PHONY: cover-html
