@@ -11,6 +11,7 @@ spec:
   replicas: 1
   template:
     topologyConstraint:
+      topologyName: grove-topology
       packDomain: zone
     cliques:
       - name: worker

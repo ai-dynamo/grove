@@ -10,6 +10,8 @@ metadata:
 spec:
   replicas: 1
   template:
+    topologyConstraint:
+      topologyName: grove-topology
     podCliqueScalingGroups:
       - name: workers
         replicas: 2

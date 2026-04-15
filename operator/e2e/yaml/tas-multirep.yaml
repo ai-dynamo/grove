@@ -11,6 +11,7 @@ spec:
   replicas: 2  # Creates 2 separate PodGangs (one per replica)
   template:
     topologyConstraint:
+      topologyName: grove-topology
       packDomain: rack  # Each replica gang packs within its own rack
     cliques:
       - name: worker
