@@ -333,3 +333,4 @@ Potential follow-up work includes:
 - richer PodGroup status integration
 - optional queue existence checks during initialization
 - additional end-to-end coverage in automated CI
+- Volcano sub PodGroup support from 1.14
