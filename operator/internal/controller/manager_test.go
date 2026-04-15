@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -32,7 +33,9 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/rest"
@@ -319,8 +322,8 @@ func TestCreateManagerOptions(t *testing.T) {
 		assert.Empty(t, opts.PprofBindAddress)
 	})
 
-	// Test that cache is configured with a label selector for Pods
-	t.Run("pod cache filtered by managed-by label", func(t *testing.T) {
+	// Test that cache is configured with managed-by label selectors for all core types
+	t.Run("core types filtered by managed-by label", func(t *testing.T) {
 		cfg := &configv1alpha1.OperatorConfiguration{
 			Server: configv1alpha1.ServerConfiguration{
 				Metrics: &configv1alpha1.Server{
@@ -351,25 +354,38 @@ func TestCreateManagerOptions(t *testing.T) {
 		expectedSelector := labels.SelectorFromSet(labels.Set{
 			apicommon.LabelManagedByKey: apicommon.LabelManagedByValue,
 		})
+
+		// All core Kubernetes types managed by the operator should be filtered.
+		// Secret is intentionally excluded — the webhook TLS secret may be created
+		// by Helm without the managed-by label.
+		expectedTypes := []client.Object{
+			&corev1.Pod{},
+			&corev1.ServiceAccount{},
+			&corev1.Service{},
+			&rbacv1.Role{},
+			&rbacv1.RoleBinding{},
+			&autoscalingv2.HorizontalPodAutoscaler{},
+		}
+
 		require.NotNil(t, opts.Cache.ByObject)
-		podCacheOpts, found := opts.Cache.ByObject[&corev1.Pod{}]
-		// ByObject uses pointer keys; find the Pod entry by type
-		if !found {
+		for _, expectedObj := range expectedTypes {
+			typeName := reflect.TypeOf(expectedObj).Elem().Name()
+			// ByObject uses pointer keys; find the entry by type
+			var found bool
 			for obj, byObj := range opts.Cache.ByObject {
-				if _, ok := obj.(*corev1.Pod); ok {
-					podCacheOpts = byObj
+				if reflect.TypeOf(obj) == reflect.TypeOf(expectedObj) {
 					found = true
+					assert.Equal(t, expectedSelector, byObj.Label, "wrong label selector for %s", typeName)
 					break
 				}
 			}
+			assert.True(t, found, "expected cache.ByObject to contain an entry for %s", typeName)
 		}
-		require.True(t, found, "expected cache.ByObject to contain an entry for *corev1.Pod")
-		assert.Equal(t, expectedSelector, podCacheOpts.Label)
 
-		// Verify the selector matches grove-managed pods and rejects others
-		assert.True(t, podCacheOpts.Label.Matches(labels.Set{apicommon.LabelManagedByKey: apicommon.LabelManagedByValue}))
-		assert.False(t, podCacheOpts.Label.Matches(labels.Set{}))
-		assert.False(t, podCacheOpts.Label.Matches(labels.Set{apicommon.LabelManagedByKey: "other"}))
+		// Verify the selector matches grove-managed resources and rejects others
+		assert.True(t, expectedSelector.Matches(labels.Set{apicommon.LabelManagedByKey: apicommon.LabelManagedByValue}))
+		assert.False(t, expectedSelector.Matches(labels.Set{}))
+		assert.False(t, expectedSelector.Matches(labels.Set{apicommon.LabelManagedByKey: "other"}))
 	})
 
 	// Test with no debugging configuration
