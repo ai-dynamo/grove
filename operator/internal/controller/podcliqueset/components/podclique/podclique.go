@@ -333,9 +333,16 @@ func (r _resource) buildResource(logger logr.Logger, pclq *grovecorev1alpha1.Pod
 	return nil
 }
 
+// mergedPodCliqueAnnotations preserves PodClique-local annotations and only
+// backfills the Volcano queue annotation from the PodCliqueSet when the
+// PodClique template does not specify its own queue.
 func mergedPodCliqueAnnotations(pcsAnnotations, cliqueAnnotations map[string]string) map[string]string {
 	annotations := lo.Assign(map[string]string{}, cliqueAnnotations)
-	if queue := strings.TrimSpace(pcsAnnotations[volcanoscheduler.QueueAnnotationKey]); queue != "" {
+	queue := strings.TrimSpace(annotations[volcanoscheduler.QueueAnnotationKey])
+	if queue == "" {
+		queue = strings.TrimSpace(pcsAnnotations[volcanoscheduler.QueueAnnotationKey])
+	}
+	if queue != "" {
 		annotations[volcanoscheduler.QueueAnnotationKey] = queue
 	}
 	return annotations
