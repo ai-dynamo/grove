@@ -69,6 +69,12 @@ func (b *PodCliqueTemplateSpecBuilder) WithLabels(labels map[string]string) *Pod
 	return b
 }
 
+// WithAnnotations sets the annotations for the PodCliqueTemplateSpec.
+func (b *PodCliqueTemplateSpecBuilder) WithAnnotations(annotations map[string]string) *PodCliqueTemplateSpecBuilder {
+	b.pclqTemplateSpec.Annotations = annotations
+	return b
+}
+
 // WithStartsAfter sets the StartsAfter field for the PodCliqueTemplateSpec.
 func (b *PodCliqueTemplateSpecBuilder) WithStartsAfter(startsAfter []string) *PodCliqueTemplateSpecBuilder {
 	b.pclqTemplateSpec.Spec.StartsAfter = startsAfter

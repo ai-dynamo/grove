@@ -75,8 +75,8 @@ func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admis
 	warnings, errs := v.validate()
 	allErrs = append(allErrs, errs...)
 
-	// Validate MNNVL annotation: reject if annotation="true" but feature is disabled
-	allErrs = append(allErrs, mnnvl.ValidateMetadataOnCreate(pcs, h.networkConfig.AutoMNNVLEnabled)...)
+	// Validate MNNVL annotations on PCS metadata and spec (clique templates)
+	allErrs = append(allErrs, mnnvl.ValidatePCSOnCreate(pcs, h.networkConfig.AutoMNNVLEnabled)...)
 
 	// Scheduler-backend-specific validation
 	if err := validatePodCliqueSetWithBackend(ctx, pcs); err != nil {
@@ -101,8 +101,8 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 	v := newPCSValidator(newPCS, admissionv1.Update, h.tasConfig, h.schedulerConfig)
 	warnings, errs := v.validate()
 
-	// Validate MNNVL annotation immutability
-	errs = append(errs, mnnvl.ValidateMetadataOnUpdate(oldPCS, newPCS)...)
+	// Validate MNNVL annotation immutability on PCS metadata and spec (clique templates)
+	errs = append(errs, mnnvl.ValidatePCSOnUpdate(oldPCS, newPCS)...)
 
 	// Scheduler-backend-specific validation
 	if err := validatePodCliqueSetWithBackend(ctx, newPCS); err != nil {

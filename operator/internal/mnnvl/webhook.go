@@ -64,117 +64,145 @@ func MutateAutoMNNVL(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, au
 		"value", AnnotationAutoMNNVLEnabled)
 }
 
-// ValidateMetadataOnCreate validates metadata-level concerns on PCS creation.
-// This is the entry point for metadata validation during create operations.
-func ValidateMetadataOnCreate(pcs *grovecorev1alpha1.PodCliqueSet, autoMNNVLEnabled bool) field.ErrorList {
-	return validateAutoMNNVLAnnotationOnCreate(pcs, autoMNNVLEnabled)
-}
-
-// validateAutoMNNVLAnnotationOnCreate validates the grove.io/auto-mnnvl annotation on creation.
-// Returns field errors if the annotation value is invalid or if MNNVL is requested but not enabled.
-func validateAutoMNNVLAnnotationOnCreate(pcs *grovecorev1alpha1.PodCliqueSet, autoMNNVLEnabled bool) field.ErrorList {
-	value, exists := pcs.Annotations[AnnotationAutoMNNVL]
-	if !exists {
-		return nil
-	}
-
-	annotationPath := field.NewPath("metadata", "annotations", AnnotationAutoMNNVL)
-
+// ValidatePCSOnCreate validates all MNNVL annotations on a PodCliqueSet during creation:
+// PCS-level metadata and each PodCliqueTemplateSpec in the spec.
+func ValidatePCSOnCreate(pcs *grovecorev1alpha1.PodCliqueSet, autoMNNVLEnabled bool) field.ErrorList {
 	allErrs := field.ErrorList{}
-	allErrs = append(allErrs, validateAutoMNNVLAnnotationValue(value, annotationPath)...)
-	allErrs = append(allErrs, validateMNNVLFeatureEnabled(value, autoMNNVLEnabled, annotationPath)...)
-
+	allErrs = append(allErrs, validateMetadataOnCreate(pcs, autoMNNVLEnabled)...)
+	allErrs = append(allErrs, validateSpecOnCreate(pcs, autoMNNVLEnabled)...)
 	return allErrs
 }
 
-// validateAutoMNNVLAnnotationValue validates the annotation has an allowed value.
-func validateAutoMNNVLAnnotationValue(value string, path *field.Path) field.ErrorList {
-	if value != AnnotationAutoMNNVLEnabled && value != AnnotationAutoMNNVLDisabled {
-		return field.ErrorList{
-			field.Invalid(
-				path,
-				value,
-				fmt.Sprintf("must be %q or %q", AnnotationAutoMNNVLEnabled, AnnotationAutoMNNVLDisabled),
-			),
-		}
-	}
-	return nil
+// ValidatePCSOnUpdate validates MNNVL annotation immutability on a PodCliqueSet during update:
+// PCS-level metadata and each PodCliqueTemplateSpec in the spec.
+func ValidatePCSOnUpdate(oldPCS, newPCS *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
+	allErrs := field.ErrorList{}
+	allErrs = append(allErrs, validateMetadataOnUpdate(oldPCS, newPCS)...)
+	allErrs = append(allErrs, validateSpecOnUpdate(oldPCS, newPCS)...)
+	return allErrs
 }
 
-// validateMNNVLFeatureEnabled validates MNNVL is enabled when annotation requests it.
-// This prevents users from explicitly requesting MNNVL when the cluster doesn't support it.
-func validateMNNVLFeatureEnabled(value string, autoMNNVLEnabled bool, path *field.Path) field.ErrorList {
-	if value == AnnotationAutoMNNVLEnabled && !autoMNNVLEnabled {
-		return field.ErrorList{
-			field.Invalid(
-				path,
-				value,
+func validateMetadataOnCreate(pcs *grovecorev1alpha1.PodCliqueSet, autoMNNVLEnabled bool) field.ErrorList {
+	return validateMNNVLAnnotationsOnCreate(pcs.Annotations, autoMNNVLEnabled, field.NewPath("metadata", "annotations"))
+}
+
+func validateSpecOnCreate(pcs *grovecorev1alpha1.PodCliqueSet, autoMNNVLEnabled bool) field.ErrorList {
+	return validatePodCliqueSetTemplateSpecOnCreate(&pcs.Spec.Template, autoMNNVLEnabled, field.NewPath("spec", "template"))
+}
+
+func validateMetadataOnUpdate(oldPCS, newPCS *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
+	return validateMNNVLAnnotationsImmutability(oldPCS.Annotations, newPCS.Annotations, field.NewPath("metadata", "annotations"))
+}
+
+func validateSpecOnUpdate(oldPCS, newPCS *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
+	return validatePodCliqueSetTemplateSpecOnUpdate(&oldPCS.Spec.Template, &newPCS.Spec.Template, field.NewPath("spec", "template"))
+}
+
+// validateMNNVLAnnotationsOnCreate validates both MNNVL annotations on a single
+// annotation map: value correctness, feature enablement, and conflict detection.
+func validateMNNVLAnnotationsOnCreate(annotations map[string]string, autoMNNVLEnabled bool, basePath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	if value, exists := annotations[AnnotationAutoMNNVL]; exists {
+		path := basePath.Child(AnnotationAutoMNNVL)
+		if value != AnnotationAutoMNNVLEnabled && value != AnnotationAutoMNNVLDisabled {
+			allErrs = append(allErrs, field.Invalid(path, value,
+				fmt.Sprintf("must be %q or %q", AnnotationAutoMNNVLEnabled, AnnotationAutoMNNVLDisabled)))
+		}
+		if value == AnnotationAutoMNNVLEnabled && !autoMNNVLEnabled {
+			allErrs = append(allErrs, field.Invalid(path, value,
 				fmt.Sprintf("MNNVL is not enabled in the operator configuration. "+
-					"Either enable MNNVL globally or remove the %s annotation", AnnotationAutoMNNVL),
-			),
+					"Either enable MNNVL globally or remove the %s annotation", AnnotationAutoMNNVL)))
 		}
 	}
-	return nil
-}
 
-// ValidateMetadataOnUpdate validates metadata-level concerns on PCS update.
-// This is the entry point for metadata validation during update operations.
-func ValidateMetadataOnUpdate(oldPCS, newPCS *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
-	return validateAutoMNNVLAnnotationOnUpdate(oldPCS, newPCS)
-}
+	if value, exists := annotations[AnnotationMNNVLGroup]; exists {
+		path := basePath.Child(AnnotationMNNVLGroup)
+		if err := ValidateMNNVLGroupName(value); err != nil {
+			allErrs = append(allErrs, field.Invalid(path, value, err.Error()))
+		}
+		if !autoMNNVLEnabled {
+			allErrs = append(allErrs, field.Invalid(path, value,
+				fmt.Sprintf("MNNVL is not enabled in the operator configuration. "+
+					"Either enable MNNVL globally or remove the %s annotation", AnnotationMNNVLGroup)))
+		}
+	}
 
-// validateAutoMNNVLAnnotationOnUpdate ensures the grove.io/auto-mnnvl annotation is immutable.
-// Returns field errors if the annotation was added, removed, or its value was changed.
-func validateAutoMNNVLAnnotationOnUpdate(oldPCS, newPCS *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
-	oldValue, oldExists := getAnnotationValue(oldPCS, AnnotationAutoMNNVL)
-	newValue, newExists := getAnnotationValue(newPCS, AnnotationAutoMNNVL)
-
-	annotationPath := field.NewPath("metadata", "annotations", AnnotationAutoMNNVL)
-
-	allErrs := field.ErrorList{}
-	allErrs = append(allErrs, validateAnnotationNotAdded(oldExists, newExists, annotationPath)...)
-	allErrs = append(allErrs, validateAnnotationNotRemoved(oldExists, newExists, annotationPath)...)
-	allErrs = append(allErrs, validateAnnotationNotChanged(oldValue, newValue, oldExists, newExists, annotationPath)...)
+	if err := DetectMNNVLConflict(annotations); err != nil {
+		allErrs = append(allErrs, field.Forbidden(basePath, err.Error()))
+	}
 
 	return allErrs
 }
 
-// validateAnnotationNotAdded validates that the annotation was not added after creation.
-func validateAnnotationNotAdded(oldExists, newExists bool, path *field.Path) field.ErrorList {
+func validatePodCliqueSetTemplateSpecOnCreate(templateSpec *grovecorev1alpha1.PodCliqueSetTemplateSpec, autoMNNVLEnabled bool, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	for i, clique := range templateSpec.Cliques {
+		if clique == nil {
+			continue
+		}
+		allErrs = append(allErrs, validatePodCliqueTemplateSpecOnCreate(clique, autoMNNVLEnabled, fldPath.Child("cliques").Index(i))...)
+	}
+	return allErrs
+}
+
+func validatePodCliqueTemplateSpecOnCreate(clique *grovecorev1alpha1.PodCliqueTemplateSpec, autoMNNVLEnabled bool, fldPath *field.Path) field.ErrorList {
+	return validateMNNVLAnnotationsOnCreate(clique.Annotations, autoMNNVLEnabled, fldPath.Child("annotations"))
+}
+
+func validatePodCliqueSetTemplateSpecOnUpdate(oldTemplate, newTemplate *grovecorev1alpha1.PodCliqueSetTemplateSpec, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	for i := 0; i < len(oldTemplate.Cliques) && i < len(newTemplate.Cliques); i++ {
+		if oldTemplate.Cliques[i] == nil || newTemplate.Cliques[i] == nil {
+			continue
+		}
+		allErrs = append(allErrs, validatePodCliqueTemplateSpecOnUpdate(oldTemplate.Cliques[i], newTemplate.Cliques[i], fldPath.Child("cliques").Index(i))...)
+	}
+	return allErrs
+}
+func validatePodCliqueTemplateSpecOnUpdate(oldClique, newClique *grovecorev1alpha1.PodCliqueTemplateSpec, fldPath *field.Path) field.ErrorList {
+	return validateMNNVLAnnotationsImmutability(oldClique.Annotations, newClique.Annotations, fldPath.Child("annotations"))
+}
+
+// validateMNNVLAnnotationsImmutability checks both MNNVL annotations are
+// unchanged between old and new annotation maps.
+func validateMNNVLAnnotationsImmutability(oldAnnotations, newAnnotations map[string]string, basePath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	for _, key := range []string{AnnotationAutoMNNVL, AnnotationMNNVLGroup} {
+		path := basePath.Child(key)
+		oldValue, oldExists := oldAnnotations[key]
+		newValue, newExists := newAnnotations[key]
+		allErrs = append(allErrs, validateAnnotationNotAdded(oldExists, newExists, key, path)...)
+		allErrs = append(allErrs, validateAnnotationNotRemoved(oldExists, newExists, key, path)...)
+		allErrs = append(allErrs, validateAnnotationNotChanged(oldValue, newValue, oldExists, newExists, key, path)...)
+	}
+	return allErrs
+}
+
+
+func validateAnnotationNotAdded(oldExists, newExists bool, annotationKey string, path *field.Path) field.ErrorList {
 	if !oldExists && newExists {
 		return field.ErrorList{
-			field.Forbidden(
-				path,
-				fmt.Sprintf("annotation %s cannot be added after PodCliqueSet creation", AnnotationAutoMNNVL),
-			),
+			field.Forbidden(path, fmt.Sprintf("annotation %s cannot be added after PodCliqueSet creation", annotationKey)),
 		}
 	}
 	return nil
 }
 
-// validateAnnotationNotRemoved validates that the annotation was not removed after creation.
-func validateAnnotationNotRemoved(oldExists, newExists bool, path *field.Path) field.ErrorList {
+func validateAnnotationNotRemoved(oldExists, newExists bool, annotationKey string, path *field.Path) field.ErrorList {
 	if oldExists && !newExists {
 		return field.ErrorList{
-			field.Forbidden(
-				path,
-				fmt.Sprintf("annotation %s cannot be removed after PodCliqueSet creation", AnnotationAutoMNNVL),
-			),
+			field.Forbidden(path, fmt.Sprintf("annotation %s cannot be removed after PodCliqueSet creation", annotationKey)),
 		}
 	}
 	return nil
 }
 
-// validateAnnotationNotChanged validates that the annotation value was not changed.
-func validateAnnotationNotChanged(oldValue, newValue string, oldExists, newExists bool, path *field.Path) field.ErrorList {
+func validateAnnotationNotChanged(oldValue, newValue string, oldExists, newExists bool, annotationKey string, path *field.Path) field.ErrorList {
 	if newExists && oldExists && oldValue != newValue {
 		return field.ErrorList{
-			field.Invalid(
-				path,
-				newValue,
-				fmt.Sprintf("annotation %s is immutable and cannot be changed from %q to %q",
-					AnnotationAutoMNNVL, oldValue, newValue),
-			),
+			field.Invalid(path, newValue, fmt.Sprintf("annotation %s is immutable and cannot be changed from %q to %q",
+				annotationKey, oldValue, newValue)),
 		}
 	}
 	return nil
