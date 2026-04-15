@@ -12,22 +12,47 @@
     - [Story 3: Multiple MNNVL Groups](#story-3-multiple-mnnvl-groups)
     - [Story 4: PCS-Level Default With PCLQ Override](#story-4-pcs-level-default-with-pclq-override)
   - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
+    - [Limitation: Node scheduling constraints for enrolled PodCliques](#limitation-node-scheduling-constraints-for-enrolled-podcliques)
+    - [Limitation: One IMEX channel per node](#limitation-one-imex-channel-per-node)
+    - [Limitation: No ComputeDomain customization](#limitation-no-computedomain-customization)
 - [Design Details](#design-details)
   - [Annotation Semantics](#annotation-semantics)
+    - [<code>grove.io/auto-mnnvl</code> — MNNVL on/off](#groveioauto-mnnvl--mnnvl-onoff)
+    - [<code>grove.io/mnnvl-group</code> — group assignment (optional)](#groveiomnnvl-group--group-assignment-optional)
   - [Operator Behavior](#operator-behavior)
+    - [ComputeDomain Lifecycle](#computedomain-lifecycle)
+    - [CD Naming Convention](#cd-naming-convention)
+    - [Reconciliation Ordering](#reconciliation-ordering)
+    - [ComputeDomain Resource Structure](#computedomain-resource-structure)
   - [Configuration](#configuration)
+    - [Impact on Existing Workloads When Configuration Changes](#impact-on-existing-workloads-when-configuration-changes)
   - [Decision Flow](#decision-flow)
   - [Behavior Matrix](#behavior-matrix)
   - [Webhook Behavior](#webhook-behavior)
+    - [Mutating Webhook (on Create)](#mutating-webhook-on-create)
+    - [Validating Webhook (on Create)](#validating-webhook-on-create)
+    - [Validating Webhook (on Update)](#validating-webhook-on-update)
   - [Backward Compatibility](#backward-compatibility)
   - [Monitoring](#monitoring)
-  - [Dependencies (*Optional*)](#dependencies-optional)
+  - [Dependencies (<em>Optional</em>)](#dependencies-optional)
   - [Test Plan](#test-plan)
   - [Graduation Criteria](#graduation-criteria)
+    - [Alpha](#alpha)
+    - [Beta](#beta)
+    - [GA](#ga)
 - [Implementation History](#implementation-history)
 - [Open Questions](#open-questions)
-- [Alternatives (*Optional*)](#alternatives-optional)
-- [Appendix (*Optional*)](#appendix-optional)
+  - [1. Annotation vs. label for group declaration](#1-annotation-vs-label-for-group-declaration)
+  - [2. Reject vs. silently ignore annotations when the feature is disabled](#2-reject-vs-silently-ignore-annotations-when-the-feature-is-disabled)
+- [Alternatives (<em>Optional</em>)](#alternatives-optional)
+- [Appendix (<em>Optional</em>)](#appendix-optional)
+  - [Background](#background)
+    - [What is MNNVL?](#what-is-mnnvl)
+    - [IMEX Channels](#imex-channels)
+    - [Using MNNVL in Kubernetes](#using-mnnvl-in-kubernetes)
+    - [ComputeDomain Status Lifecycle](#computedomain-status-lifecycle)
+  - [Terminology](#terminology)
+  - [Homogeneous vs. Heterogeneous Clusters](#homogeneous-vs-heterogeneous-clusters)
 <!-- /toc -->
 
 ## Summary
@@ -41,7 +66,7 @@ The feature is controlled by two annotations with cleanly separated responsibili
 
 Both annotations can be placed on a **PodCliqueSet**, **PodCliqueScalingGroup**, or **PodClique**, and propagate downward (PCS → PCSG → PCLQ) with lower layers overriding higher ones. Either annotation can exist independently.
 
-The feature uses an **opt-in model**: no PCS receives MNNVL unless it or its sub-resources carry the `auto-mnnvl` or `mnnvl-group` annotation. The cluster-level configuration (`mnnvl.mode`) controls whether the feature is available — not whether individual workloads use it.
+The feature uses an **opt-in model**: no PCS receives MNNVL unless it or its sub-resources carry the `auto-mnnvl` or `mnnvl-group` annotation. The cluster-level configuration (`autoMNNVLEnabled`) controls whether the feature is available — not whether individual workloads use it.
 
 ## Motivation
 
@@ -391,15 +416,12 @@ spec:
 
 ### Configuration
 
-The auto-MNNVL feature is controlled via the `mnnvl.mode` field in `OperatorConfiguration`:
+The auto-MNNVL feature is controlled via the existing `network.autoMNNVLEnabled` boolean in `OperatorConfiguration`. This field is **unchanged** from Phase 1:
 
 | Value | Default | Behavior |
 |---|---|---|
-| `auto` | **Yes** | Feature is active **if** the `ComputeDomain` CRD is present in the cluster at startup. If absent, the operator starts normally but rejects any PCS with `grove.io/auto-mnnvl` or `grove.io/mnnvl-group` annotations at admission time. |
-| `enabled` | No | Feature is always active. The operator validates that the CRD is installed at startup and **fails to start** if missing. |
-| `disabled` | No | Feature is off. Any PCS with `grove.io/auto-mnnvl` or `grove.io/mnnvl-group` annotations is rejected. |
-
-**CRD detection caching:** For both `auto` and `enabled` modes, the CRD presence check is performed **once at operator startup**. The result is cached for the lifetime of the controller process. The operator does not re-check the CRD on every PCS submission — the feature state (ON or OFF) is determined at startup and remains fixed until the operator is restarted.
+| `true` | No | Feature is active. The operator validates that the `ComputeDomain` CRD is installed at startup and **fails to start** if missing. |
+| `false` | **Yes** | Feature is off. Any PCS with `grove.io/auto-mnnvl` or `grove.io/mnnvl-group` annotations is rejected at admission time. |
 
 ```yaml
 # OperatorConfiguration example
@@ -407,81 +429,41 @@ apiVersion: grove.io/v1alpha1
 kind: OperatorConfiguration
 spec:
   network:
-    mnnvl:
-      mode: auto  # default; valid values: auto, enabled, disabled
+    autoMNNVLEnabled: true
 ```
 
 **Important:** The configuration controls whether the feature is **available**, not whether individual workloads use it. MNNVL is always opt-in via the annotation — the operator never automatically applies MNNVL to any PCS.
 
-#### Breaking Change: Configuration Field Rename
+**No configuration migration needed.** This GREP reuses the existing `autoMNNVLEnabled` field. Existing Helm values and operator configurations continue to work unchanged.
 
-This GREP replaces the previous `network.autoMNNVLEnabled` boolean field with `network.mnnvl.mode`. The Helm chart provides automatic migration for upgrades (see migration table below). The new field structure is:
+#### Impact on Existing Workloads When Configuration Changes
 
-```yaml
-# Old (removed)
-config:
-  network:
-    autoMNNVLEnabled: true
+Changing `autoMNNVLEnabled` must **not** affect currently running workloads:
 
-# New (required)
-config:
-  network:
-    mnnvl:
-      mode: auto  # or: enabled, disabled
-```
-
-**Migration from `autoMNNVLEnabled`:** The Helm chart and operator handle migration automatically. The behavior differs between fresh installs and upgrades:
-
-- **Fresh install with old field → fail.** Using `autoMNNVLEnabled` on a new installation is rejected with a clear error message instructing the user to use `mnnvl.mode`. There is no reason to accept a deprecated field on a brand-new deployment.
-- **Upgrade with old field → convert + warn.** To avoid blocking the upgrade path for existing deployments, the template converts `true` → `enabled`, `false` → `disabled`, and the operator logs a deprecation warning at startup. The Helm `NOTES.txt` also prints a migration notice.
-
-The Helm template can distinguish these cases using `{{ .Release.IsInstall }}` vs `{{ .Release.IsUpgrade }}`.
-
-| # | Operation | User's custom values | Old behavior | Template renders | New behavior | Notes |
-|---|---|---|---|---|---|---|
-| 1 | Fresh install | nothing | N/A | `mnnvl.mode: auto` | ON if CRD present | New default |
-| 2 | Fresh install | `mnnvl.mode: enabled` or `disabled` | N/A | as specified | Explicit | User provides new field |
-| 3 | Fresh install | `autoMNNVLEnabled: true/false` | N/A | **Fail** | Install rejected | Error: deprecated field, use `mnnvl.mode` |
-| 4 | Upgrade | nothing (used old default) | OFF | `mnnvl.mode: auto` | ON if CRD present | Behavior change — deprecation warning |
-| 5 | Upgrade | `mnnvl.mode: auto` or `enabled` or `disabled` | depends | as specified | Explicit | User already migrated to new field |
-| 6 | Upgrade | `autoMNNVLEnabled: true/false` | depends | `true`→`enabled`, `false`→`disabled` | No change | Converted + deprecation warning |
-| 7 | Upgrade | both old + new set | depends | `mnnvl.mode` wins | depends | New field takes precedence, old ignored + deprecation warning |
-
-> **Note:** Scenario 4 carries a risk of silent behavioral change — the old default `false` becomes `auto`, which enables the feature if the CRD is present. The deprecation warning is emitted to alert the user.
-
-See [Alternative 2](#alternatives-optional) for a stricter approach that avoids automatic migration entirely.
-
-#### Impact on Existing Workloads When Mode Changes
-
-Changing `mnnvl.mode` must **not** affect currently running workloads:
-
-- Switching `mnnvl.mode` from `auto` or `enabled` to `disabled` does **not** delete existing ComputeDomains or modify existing PCS resources.
+- Switching `autoMNNVLEnabled` from `true` to `false` does **not** delete existing ComputeDomains or modify existing PCS resources.
 - New PCS submissions with `grove.io/auto-mnnvl` or `grove.io/mnnvl-group` annotations will be rejected after the change.
 - To remove MNNVL from an existing workload, the PCS must be deleted and recreated.
 
 ### Decision Flow
 
-The following flowchart shows the complete decision logic from operator startup through PCS admission. The CRD check in the startup phase runs once and the result is cached — subsequent PCS submissions use the cached feature state:
+The following flowchart shows the complete decision logic from operator startup through PCS admission:
 
 ```mermaid
 flowchart TD
-    StartUp["Operator Startup"] --> CheckMode{"mnnvl.mode?"}
+    StartUp["Operator Startup"] --> CheckEnabled{"autoMNNVLEnabled?"}
 
-    CheckMode -->|disabled| FeatureOff["Feature OFF"]
-    CheckMode -->|enabled| CRDEnabled{"CRD present?"}
-    CheckMode -->|auto| CRDAuto{"CRD present?"}
+    CheckEnabled -->|false| FeatureOff["Feature OFF"]
+    CheckEnabled -->|true| CRDCheck{"CRD present?"}
 
-    CRDEnabled -->|No| FailStart["Operator fails to start"]
-    CRDEnabled -->|Yes| FeatureOn["Feature ON"]
-    CRDAuto -->|No| FeatureOff
-    CRDAuto -->|Yes| FeatureOn
+    CRDCheck -->|No| FailStart["Operator fails to start"]
+    CRDCheck -->|Yes| FeatureOn["Feature ON"]
 
     FeatureOff --> PCSSubmitOff["PCS Submitted"]
     FeatureOn --> PCSSubmitOn["PCS Submitted"]
 
     PCSSubmitOff --> HasAnnotationOff{"Has auto-mnnvl or\nmnnvl-group annotation?"}
     HasAnnotationOff -->|No| AcceptNoMNNVL1["Accept: no MNNVL"]
-    HasAnnotationOff -->|Yes| RejectDisabled["Reject: feature disabled\nor CRD unavailable"]
+    HasAnnotationOff -->|Yes| RejectDisabled["Reject: feature disabled"]
 
     PCSSubmitOn --> CheckConflict{"Any disabled +\nmnnvl-group conflict?"}
     CheckConflict -->|Yes| RejectConflict["Reject: contradictory\nannotations"]
@@ -500,7 +482,7 @@ flowchart TD
 
 ### Behavior Matrix
 
-The `auto` config mode resolves to `enabled` (CRD present) or `disabled` (CRD absent) at operator startup, so it is not listed separately — see the [Decision Flow](#decision-flow) flowchart.
+Feature state is ON when `autoMNNVLEnabled: true` and OFF when `autoMNNVLEnabled: false`. When `autoMNNVLEnabled: true`, the CRD must be present — otherwise the operator fails to start (not a per-PCS decision).
 
 | # | Feature state | `auto-mnnvl` | `mnnvl-group` | Result |
 |---|---|---|---|---|
@@ -515,8 +497,6 @@ The `auto` config mode resolves to `enabled` (CRD present) or `disabled` (CRD ab
 | 9 | ON | `enabled` | explicit on non-GPU | **Reject:** explicit MNNVL on non-GPU PCLQ |
 | 10 | ON | PCS `enabled`, PCLQ `disabled` | absent | No MNNVL |
 
-`enabled` config with no CRD → **operator fails to start** (not a per-PCS decision).
-
 ### Webhook Behavior
 
 #### Mutating Webhook (on Create)
@@ -530,7 +510,7 @@ The validating webhook enforces:
 - **Value validation (`auto-mnnvl`):** Must be `"enabled"` or `"disabled"` (case-insensitive). Invalid values are rejected.
 - **Value validation (`mnnvl-group`):** Must be a valid Kubernetes name component (lowercase alphanumeric or dashes, starting and ending with alphanumeric, max 63 chars). Invalid values are rejected.
 - **Conflict detection:** If `auto-mnnvl: disabled` and `mnnvl-group` are both present on the same resource (PCS, PCSG, or PCLQ), reject — these are contradictory.
-- **Feature disabled:** If the feature is off (config `disabled`, or config `auto` with no CRD), reject any PCS that has `grove.io/auto-mnnvl` or `grove.io/mnnvl-group` at any level.
+- **Feature disabled:** If the feature is off (`autoMNNVLEnabled: false`), reject any PCS that has `grove.io/auto-mnnvl` or `grove.io/mnnvl-group` at any level.
 - **Non-GPU PCLQ with explicit annotation:** If a non-GPU PCLQ carries an explicit `grove.io/mnnvl-group` or `grove.io/auto-mnnvl: "enabled"` annotation, reject the PCS. Inherited annotations from PCS/PCSG level are not subject to this check.
 
 #### Validating Webhook (on Update)
@@ -563,7 +543,7 @@ ComputeDomain observability follows the same pattern as previous iterations: **K
 ### Dependencies (*Optional*)
 
 - NVIDIA IMEX drivers must be installed on nodes where enrolled PodClique pods are scheduled.
-- The `ComputeDomain` CRD must be available in the cluster (required for `enabled` mode, auto-detected for `auto` mode). See the [NVIDIA GPU driver installation guide](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-operator-dra.html).
+- The `ComputeDomain` CRD must be available in the cluster when `autoMNNVLEnabled: true`. See the [NVIDIA GPU driver installation guide](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-operator-dra.html).
 
 ### Test Plan
 
@@ -578,11 +558,8 @@ ComputeDomain observability follows the same pattern as previous iterations: **K
   - PCS with explicit MNNVL annotation on non-GPU PCLQ → rejected.
   - PCS with PCS-level `auto-mnnvl: enabled`, non-GPU PCLQ inherits → silently skipped, no RCT for that PCLQ.
   - PCS scale-up/scale-down → CDs created/deleted accordingly.
-  - Mode `disabled` + annotations → rejected.
-  - Mode `auto` + CRD absent + annotations → rejected.
-  - Mode `enabled` + CRD absent → operator fails to start.
-  - Fresh install with old `autoMNNVLEnabled` field → install rejected.
-  - Upgrade with old `autoMNNVLEnabled: true` → converted to `mnnvl.mode: enabled` + deprecation warning.
+  - `autoMNNVLEnabled: false` + annotations → rejected.
+  - `autoMNNVLEnabled: true` + CRD absent → operator fails to start.
   - Annotation immutability: update attempts on both annotations rejected.
 
 ### Graduation Criteria
@@ -592,7 +569,7 @@ ComputeDomain observability follows the same pattern as previous iterations: **K
 - Annotation propagation (PCS → PCSG → standalone PCLQ) working for both annotations.
 - Dual CD naming (`{pcs}-{replica}` default, `{pcs}-{replica}-{group}` per-group) working.
 - Conflict detection (`disabled` + `mnnvl-group`) enforced.
-- Three-value configuration (`auto` / `enabled` / `disabled`) with backward compatibility.
+- Boolean configuration (`autoMNNVLEnabled`) unchanged from Phase 1 — no migration required.
 - Unit and basic integration tests passing.
 
 #### Beta
@@ -608,7 +585,7 @@ ComputeDomain observability follows the same pattern as previous iterations: **K
 ## Implementation History
 
 - **Phase 1 (completed):** Cluster-wide auto-MNNVL feature using `grove.io/auto-mnnvl` annotation and boolean `autoMNNVLEnabled` config. Single ComputeDomain per PCS replica, all GPU PCLQs enrolled. See [MNNVL Design Doc](../../designs/mnnvl-design.md).
-- **This GREP (Phase 2):** Extends the feature with a second annotation `grove.io/mnnvl-group` for group-based ComputeDomains, multi-layer propagation (PCS → PCSG → PCLQ), opt-in model, and three-value configuration. Fully backward compatible with Phase 1.
+- **This GREP (Phase 2):** Extends the feature with a second annotation `grove.io/mnnvl-group` for group-based ComputeDomains, multi-layer propagation (PCS → PCSG → PCLQ), and opt-in model. Fully backward compatible with Phase 1 — no configuration changes required.
 
 ## Open Questions
 
@@ -627,11 +604,7 @@ This GREP proposes using **annotations** (`grove.io/auto-mnnvl` and `grove.io/mn
 - Labels propagate to pods and are queryable (`kubectl get pods -l grove.io/mnnvl-group=training`), which aids observability.
 - However, the operator could add a label to pods as a secondary step even if the declaration is via annotation.
 
-### 2. Two-value vs. three-value configuration mode
-
-The current proposal uses three values: `disabled`, `enabled`, and `auto`. An alternative is two values: `disabled` and `auto` (removing `enabled`). The upside is simplicity. The downside is that cluster administrators who want to guarantee MNNVL availability lose the ability to catch CRD misconfigurations at operator startup.
-
-### 3. Reject vs. silently ignore annotations when the feature is disabled
+### 2. Reject vs. silently ignore annotations when the feature is disabled
 
 When the feature is disabled and a user submits a PCS with `grove.io/auto-mnnvl` or `grove.io/mnnvl-group` annotations, the current proposal rejects the PCS. An alternative is to silently ignore the annotations. The benefit is **portability** — the same manifest works everywhere. The risk is **silent performance degradation** — the user requested MNNVL but the workload runs without it.
 
@@ -664,10 +637,18 @@ The `grove.io/auto-mnnvl` annotation would be **deprecated**. Existing `auto-mnn
 
 The single-annotation approach is more compact and has zero conflict states, but it requires deprecating `auto-mnnvl`, introduces the `"none"` reserved keyword, and forces Phase 1 users to update their manifests.
 
-**Alternative 2: No automatic migration — breaking change on old field.**
-Instead of automatic conversion, the operator **fails to start** if it encounters the old `autoMNNVLEnabled` field, with a clear error message instructing the user to migrate to `mnnvl.mode`. This applies to both fresh installs and upgrades.
+**Alternative 2: Three-value configuration with `auto` mode.**
+Instead of a boolean `autoMNNVLEnabled`, introduce a three-value `mnnvl.mode` field (`auto`, `enabled`, `disabled`):
 
-This approach avoids all silent misconfiguration risks and keeps the Helm template simple (no `IsInstall` / `IsUpgrade` branching). The cost is that existing deployments must update their Helm values before upgrading — the upgrade will fail otherwise.
+| Value | Behavior |
+|---|---|
+| `auto` (default) | Feature is active **if** the `ComputeDomain` CRD is present at startup. If absent, the operator starts normally but rejects MNNVL-annotated PCS at admission time. |
+| `enabled` | Feature is always active. Operator fails to start if CRD is missing. |
+| `disabled` | Feature is off. MNNVL-annotated PCS are rejected. |
+
+The `auto` mode removes the need for administrators to explicitly enable the feature — it "just works" when the CRD is installed. This comes at the cost of additional complexity (CRD detection at startup, caching the result, three code paths instead of two) and a configuration migration from the existing `autoMNNVLEnabled` boolean to the new `mnnvl.mode` string.
+
+This alternative was discussed and rejected in the DR meeting. The presence of the `ComputeDomain` CRD does not guarantee that MNNVL is operational on the cluster — the CRD may be installed without the underlying IMEX hardware or driver being functional. By keeping `autoMNNVLEnabled` as an explicit boolean, the responsibility to declare that MNNVL is available and working rests with the cluster administrator, who has the knowledge to make that determination. The `auto` mode would silently imply MNNVL readiness based on CRD presence alone, which could lead to workloads being enrolled in MNNVL on clusters that cannot actually support it.
 
 ## Appendix (*Optional*)
 
