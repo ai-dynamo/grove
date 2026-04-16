@@ -114,7 +114,13 @@ func (v *topologyConstraintsValidator) disallowConstraintsForCreateWhenTASIsDisa
 }
 
 // validateTopologyDomainsExistInClusterTopology ensures that all specified topology constraint domains exist in the cluster topology.
+// When clusterTopologyDomains is nil, validation is skipped (domains will be validated at runtime against the referenced CT).
 func (v *topologyConstraintsValidator) validateTopologyDomainsExistInClusterTopology(fldPath *field.Path) field.ErrorList {
+	// TODO(multi-topology): Task 6 will resolve domains from the referenced ClusterTopology instead of relying on config.
+	if v.clusterTopologyDomains == nil {
+		return nil
+	}
+
 	var allErrs field.ErrorList
 
 	// Helper to validate a single domain

@@ -44,26 +44,21 @@ var allowedStartupTypes = sets.New(grovecorev1alpha1.CliqueStartupTypeInOrder, g
 
 // pcsValidator validates PodCliqueSet resources for create and update operations.
 type pcsValidator struct {
-	operation              admissionv1.Operation
-	pcs                    *grovecorev1alpha1.PodCliqueSet
-	tasEnabled             bool
-	clusterTopologyDomains []string
-	schedulerConfig        groveconfigv1alpha1.SchedulerConfiguration
+	operation       admissionv1.Operation
+	pcs             *grovecorev1alpha1.PodCliqueSet
+	tasEnabled      bool
+	schedulerConfig groveconfigv1alpha1.SchedulerConfiguration
 }
 
 // newPCSValidator creates a new PodCliqueSet validator for the given operation.
 // schedulerConfig is the full scheduler configuration; the validator uses it for
 // scheduler-name matching and may use per-scheduler config for future validations.
 func newPCSValidator(pcs *grovecorev1alpha1.PodCliqueSet, operation admissionv1.Operation, tasConfig groveconfigv1alpha1.TopologyAwareSchedulingConfiguration, schedulerConfig groveconfigv1alpha1.SchedulerConfiguration) *pcsValidator {
-	topologyDomains := lo.Map(tasConfig.Levels, func(level grovecorev1alpha1.TopologyLevel, _ int) string {
-		return string(level.Domain)
-	})
 	return &pcsValidator{
-		operation:              operation,
-		pcs:                    pcs,
-		tasEnabled:             tasConfig.Enabled,
-		clusterTopologyDomains: topologyDomains,
-		schedulerConfig:        schedulerConfig,
+		operation:       operation,
+		pcs:             pcs,
+		tasEnabled:      tasConfig.Enabled,
+		schedulerConfig: schedulerConfig,
 	}
 }
 
@@ -418,7 +413,8 @@ func (v *pcsValidator) validateTerminationDelay(fldPath *field.Path) field.Error
 }
 
 func (v *pcsValidator) validateTopologyConstraintsOnCreate() field.ErrorList {
-	topoConstraintsValidator := newTopologyConstraintsValidator(v.pcs, v.tasEnabled, v.clusterTopologyDomains)
+	// TODO(multi-topology): Task 6 will resolve domains from the referenced ClusterTopology.
+	topoConstraintsValidator := newTopologyConstraintsValidator(v.pcs, v.tasEnabled, nil)
 	return topoConstraintsValidator.validate()
 }
 
@@ -683,7 +679,8 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigsUpdate(oldConfigs []g
 }
 
 func (v *pcsValidator) validateTopologyConstraintsUpdate(oldPCS *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
-	return newTopologyConstraintsValidator(v.pcs, v.tasEnabled, v.clusterTopologyDomains).validateUpdate(oldPCS)
+	// TODO(multi-topology): Task 6 will resolve domains from the referenced ClusterTopology.
+	return newTopologyConstraintsValidator(v.pcs, v.tasEnabled, nil).validateUpdate(oldPCS)
 }
 
 // requiresOrderValidation checks if the StartupType requires clique order validation.
