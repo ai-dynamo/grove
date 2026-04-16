@@ -166,7 +166,7 @@ func TestInjectResourceClaimRefs(t *testing.T) {
 		resourceSharers := ResourceSharersFromPCS([]grovecorev1alpha1.PCSResourceSharingSpec{
 			{
 				ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-				Filter:                  &grovecorev1alpha1.PCSResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
+				Filter:              &grovecorev1alpha1.PCSResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
 			},
 		})
 		InjectResourceClaimRefs(podSpec, "pcs", resourceSharers, nil, "worker")
@@ -180,7 +180,7 @@ func TestInjectResourceClaimRefs(t *testing.T) {
 		resourceSharers := ResourceSharersFromPCS([]grovecorev1alpha1.PCSResourceSharingSpec{
 			{
 				ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-				Filter:                  &grovecorev1alpha1.PCSResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
+				Filter:              &grovecorev1alpha1.PCSResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
 			},
 		})
 		InjectResourceClaimRefs(podSpec, "pcs", resourceSharers, nil, "coordinator")

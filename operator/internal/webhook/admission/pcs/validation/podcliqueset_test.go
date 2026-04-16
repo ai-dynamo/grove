@@ -1494,7 +1494,7 @@ func TestValidatePCSResourceSharing(t *testing.T) {
 			refs: []grovecorev1alpha1.PCSResourceSharingSpec{
 				{
 					ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-					Filter:                  &grovecorev1alpha1.PCSResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
+					Filter:              &grovecorev1alpha1.PCSResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
 				},
 			},
 		},
@@ -1507,7 +1507,7 @@ func TestValidatePCSResourceSharing(t *testing.T) {
 			refs: []grovecorev1alpha1.PCSResourceSharingSpec{
 				{
 					ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-					Filter:                  &grovecorev1alpha1.PCSResourceSharingFilter{ChildScalingGroupNames: []string{"sga"}},
+					Filter:              &grovecorev1alpha1.PCSResourceSharingFilter{ChildScalingGroupNames: []string{"sga"}},
 				},
 			},
 		},
@@ -1517,7 +1517,7 @@ func TestValidatePCSResourceSharing(t *testing.T) {
 			refs: []grovecorev1alpha1.PCSResourceSharingSpec{
 				{
 					ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-					Filter:                  &grovecorev1alpha1.PCSResourceSharingFilter{ChildCliqueNames: []string{"nonexistent"}},
+					Filter:              &grovecorev1alpha1.PCSResourceSharingFilter{ChildCliqueNames: []string{"nonexistent"}},
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
@@ -1530,7 +1530,7 @@ func TestValidatePCSResourceSharing(t *testing.T) {
 			refs: []grovecorev1alpha1.PCSResourceSharingSpec{
 				{
 					ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-					Filter:                  &grovecorev1alpha1.PCSResourceSharingFilter{ChildScalingGroupNames: []string{"nonexistent"}},
+					Filter:              &grovecorev1alpha1.PCSResourceSharingFilter{ChildScalingGroupNames: []string{"nonexistent"}},
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
@@ -1543,7 +1543,7 @@ func TestValidatePCSResourceSharing(t *testing.T) {
 			refs: []grovecorev1alpha1.PCSResourceSharingSpec{
 				{
 					ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-					Filter:                  &grovecorev1alpha1.PCSResourceSharingFilter{},
+					Filter:              &grovecorev1alpha1.PCSResourceSharingFilter{},
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
@@ -1590,7 +1590,7 @@ func TestValidatePCSGResourceSharing(t *testing.T) {
 				ResourceSharing: []grovecorev1alpha1.PCSGResourceSharingSpec{
 					{
 						ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-						Filter:                  &grovecorev1alpha1.PCSGResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
+						Filter:              &grovecorev1alpha1.PCSGResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
 					},
 				},
 			},
@@ -1604,7 +1604,7 @@ func TestValidatePCSGResourceSharing(t *testing.T) {
 				ResourceSharing: []grovecorev1alpha1.PCSGResourceSharingSpec{
 					{
 						ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-						Filter:                  &grovecorev1alpha1.PCSGResourceSharingFilter{ChildCliqueNames: []string{"unknown-clique"}},
+						Filter:              &grovecorev1alpha1.PCSGResourceSharingFilter{ChildCliqueNames: []string{"unknown-clique"}},
 					},
 				},
 			},
