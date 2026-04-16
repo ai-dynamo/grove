@@ -39,7 +39,7 @@ config.yaml: |
     {{- range .Values.config.scheduler.profiles }}
     - name: {{ .name }}
       {{- if hasKey . "config" }}
-      config: {{ toYaml .config | nindent 4 }}
+      config: {{ toYaml .config | nindent 8 }}
       {{- end }}
     {{- end }}
   {{- end }}
