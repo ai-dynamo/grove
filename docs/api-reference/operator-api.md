@@ -706,7 +706,7 @@ _Appears in:_
 | `labels` _object (keys:string, values:string)_ | Labels is a map of string keys and values that can be used to organize and categorize<br />(scope and select) objects. May match selectors of replication controllers<br />and services.<br />More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/labels |  |  |
 | `annotations` _object (keys:string, values:string)_ | Annotations is an unstructured key value map stored with a resource that may be<br />set by external tools to store and retrieve arbitrary metadata. They are not<br />queryable and should be preserved when modifying objects.<br />More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations |  |  |
 | `topologyConstraint` _[TopologyConstraint](#topologyconstraint)_ | TopologyConstraint defines topology placement requirements for PodClique.<br />Must be equal to or stricter than parent resource constraints. |  |  |
-| `resourceSharing` _[ResourceSharingSpecBase](#resourcesharingspecbase) array_ | ResourceSharing defines shared ResourceClaims for this PodClique.<br />Each entry references a template (internal or external) and specifies a Scope:<br />  - AllReplicas: one RC per PCLQ, shared by all replica pods<br />  - PerReplica: one RC per PCLQ replica, shared by all pods within that replica<br />This is distinct from adding ResourceClaimTemplate inside<br />Spec.PodSpec.ResourceClaims[x].ResourceClaimTemplateName, which creates a unique<br />ResourceClaim for each pod.<br />PCLQs have no children to filter, so no Filter field is available. |  |  |
+| `resourceSharing` _[ResourceSharingSpec](#resourcesharingspec) array_ | ResourceSharing defines shared ResourceClaims for this PodClique.<br />Each entry references a template (internal or external) and specifies a Scope:<br />  - AllReplicas: one RC per PCLQ, shared by all replica pods<br />  - PerReplica: one RC per PCLQ replica, shared by all pods within that replica<br />This is distinct from adding ResourceClaimTemplate inside<br />Spec.PodSpec.ResourceClaims[x].ResourceClaimTemplateName, which creates a unique<br />ResourceClaim for each pod.<br />PCLQs have no children to filter, so no Filter field is available. |  |  |
 | `spec` _[PodCliqueSpec](#podcliquespec)_ | Specification of the desired behavior of a PodClique.<br />More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#spec-and-status |  |  |
 
 
@@ -818,7 +818,7 @@ _Validation:_
 _Appears in:_
 - [PCSGResourceSharingSpec](#pcsgresourcesharingspec)
 - [PCSResourceSharingSpec](#pcsresourcesharingspec)
-- [ResourceSharingSpecBase](#resourcesharingspecbase)
+- [ResourceSharingSpec](#resourcesharingspec)
 
 | Field | Description |
 | --- | --- |
@@ -826,11 +826,11 @@ _Appears in:_
 | `PerReplica` | ResourceSharingScopePerReplica creates one ResourceClaim per replica, shared<br />across all pods within that replica.<br /> |
 
 
-#### ResourceSharingSpecBase
+#### ResourceSharingSpec
 
 
 
-ResourceSharingSpecBase contains the common fields shared by all levels of
+ResourceSharingSpec contains the common fields shared by all levels of
 resource sharing (PCS, PCSG, PCLQ). It is used directly for PCLQ-level
 resource sharing where no filter is needed.
 
