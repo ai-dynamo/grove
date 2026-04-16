@@ -30,7 +30,7 @@ import (
 
 const (
 	// DefaultTimeout is the default polling timeout.
-	DefaultTimeout = 4 * time.Minute
+	DefaultTimeout = 2 * time.Minute
 	// DefaultInterval is the default polling interval.
 	DefaultInterval = 5 * time.Second
 )
