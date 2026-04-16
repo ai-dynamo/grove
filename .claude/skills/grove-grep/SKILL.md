@@ -1,1 +1,0 @@
-../../../.agents/skills/grove-grep/SKILL.md
