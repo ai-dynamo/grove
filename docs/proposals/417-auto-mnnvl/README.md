@@ -293,7 +293,7 @@ grove.io/mnnvl-group: "<value>"
 - **Explicit annotation on the PCLQ:** If a non-GPU PCLQ carries its own `grove.io/mnnvl-group` or `grove.io/auto-mnnvl: "enabled"` annotation, the validating webhook **rejects** the PCS. Explicitly requesting MNNVL for a PodClique that has no GPUs is a user error.
 - **Inherited from PCS or PCSG:** If a non-GPU PCLQ inherits MNNVL enrollment from a parent layer (PCS or PCSG), it is **silently skipped** — no RCT injection, no error. This allows PCS-level defaults without requiring `disabled` overrides on every non-GPU PCLQ.
 
-**Immutability:** Both `grove.io/auto-mnnvl` and `grove.io/mnnvl-group` are **immutable** after PCS creation. The validating webhook rejects any update that attempts to add, modify, or remove either annotation at any level (PCS, PCSG, PCLQ). To change MNNVL assignment, the PCS must be deleted and recreated.
+**Immutability:** Both `grove.io/auto-mnnvl` and `grove.io/mnnvl-group` are **immutable** after PCS creation. The validating webhook rejects any update that attempts to add, modify, or remove either annotation at any level (PCS, PCSG, PCLQ). To change MNNVL assignment, the PCS must be deleted and recreated. The rationale is that modifying MNNVL assignment on a live workload would require tearing down existing ComputeDomains, re-wiring RCT references in already-running pods, and coordinating rescheduling — all while the workload is active. The complexity and risk of mid-flight changes far outweigh the benefit, especially since delete-and-recreate achieves the same result cleanly.
 
 **Example — multiple groups with a non-enrolled PCLQ:**
 
@@ -387,6 +387,8 @@ Group names are scoped to the PCS — different PCS resources can use the same g
 #### Reconciliation Ordering
 
 ComputeDomain resources must be synced **before** creating PCLQs and PCSGs, ensuring the CD exists before pods that reference its RCT are created. If CD creation fails, the sync stops and requeues for retry.
+
+**Teardown ordering** follows the inverse pattern. On PCS deletion or scale-in, the PCS controller removes pods and PCLQs first, then removes the `grove.io/computedomain-finalizer` from the CD, allowing it to be garbage-collected via `ownerReferences`. The finalizer guarantees that the CD is not deleted while pods still reference its RCT — explicit teardown ordering logic is not required because the finalizer enforces it.
 
 #### ComputeDomain Resource Structure
 
