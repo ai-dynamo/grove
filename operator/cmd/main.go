@@ -99,9 +99,9 @@ func main() {
 		handleErrorAndExit(err, cli.ExitErrInitializeSchedulerBackend)
 	}
 
-	// Initialize or clean up ClusterTopology based on operator configuration.
+	// Synchronize backend topologies for all existing ClusterTopology resources.
 	// This must be done before starting the controllers that may depend on the ClusterTopology resource.
-	if err = clustertopology.SynchronizeTopology(ctx, cl, logger, operatorConfig, schedmanager.All()); err != nil {
+	if err = clustertopology.SynchronizeTopology(ctx, cl, logger, schedmanager.All()); err != nil {
 		logger.Error(err, "failed to synchronize cluster topology")
 		handleErrorAndExit(err, cli.ExitErrSynchronizeTopology)
 	}
