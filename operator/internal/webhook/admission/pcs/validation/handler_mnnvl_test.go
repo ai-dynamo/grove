@@ -70,7 +70,6 @@ func TestValidateCreate_MNNVL(t *testing.T) {
 			autoMNNVLEnabled: false,
 			expectError:      false,
 		},
-		// mnnvl-group on PCS metadata
 		{
 			description:      "mnnvl-group on PCS + feature enabled -> no error",
 			pcs:              createValidPCSWithGPU(map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}),
@@ -101,20 +100,20 @@ func TestValidateCreate_MNNVL(t *testing.T) {
 		// mnnvl-group on clique template
 		{
 			description:      "mnnvl-group on clique + feature enabled -> no error",
-			pcs:              createValidPCSWithCliqueAnnotations(nil, map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}),
+			pcs:              createValidPCSWithCliqueAnnotations(map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}),
 			autoMNNVLEnabled: true,
 			expectError:      false,
 		},
 		{
 			description:      "invalid mnnvl-group on clique -> error",
-			pcs:              createValidPCSWithCliqueAnnotations(nil, map[string]string{mnnvl.AnnotationMNNVLGroup: "-bad"}),
+			pcs:              createValidPCSWithCliqueAnnotations(map[string]string{mnnvl.AnnotationMNNVLGroup: "-bad"}),
 			autoMNNVLEnabled: true,
 			expectError:      true,
 			errorContains:    "not a valid DNS-1123 label",
 		},
 		{
 			description:      "conflict on clique: disabled + group -> error",
-			pcs:              createValidPCSWithCliqueAnnotations(nil, map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled, mnnvl.AnnotationMNNVLGroup: "training"}),
+			pcs:              createValidPCSWithCliqueAnnotations(map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled, mnnvl.AnnotationMNNVLGroup: "training"}),
 			autoMNNVLEnabled: true,
 			expectError:      true,
 			errorContains:    "contradictory",
@@ -205,7 +204,6 @@ func TestValidateUpdate_MNNVL(t *testing.T) {
 			newPCS:      createValidPCSWithGPU(nil),
 			expectError: false,
 		},
-		// mnnvl-group immutability on PCS metadata
 		{
 			description: "mnnvl-group unchanged -> no error",
 			oldPCS:      createValidPCSWithGPU(map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}),
@@ -229,14 +227,14 @@ func TestValidateUpdate_MNNVL(t *testing.T) {
 		// mnnvl-group immutability on clique template
 		{
 			description: "clique mnnvl-group unchanged -> no error",
-			oldPCS:      createValidPCSWithCliqueAnnotations(nil, map[string]string{mnnvl.AnnotationMNNVLGroup: "training"}),
-			newPCS:      createValidPCSWithCliqueAnnotations(nil, map[string]string{mnnvl.AnnotationMNNVLGroup: "training"}),
+			oldPCS:      createValidPCSWithCliqueAnnotations(map[string]string{mnnvl.AnnotationMNNVLGroup: "training"}),
+			newPCS:      createValidPCSWithCliqueAnnotations(map[string]string{mnnvl.AnnotationMNNVLGroup: "training"}),
 			expectError: false,
 		},
 		{
 			description:   "clique mnnvl-group changed -> error",
-			oldPCS:        createValidPCSWithCliqueAnnotations(nil, map[string]string{mnnvl.AnnotationMNNVLGroup: "training"}),
-			newPCS:        createValidPCSWithCliqueAnnotations(nil, map[string]string{mnnvl.AnnotationMNNVLGroup: "inference"}),
+			oldPCS:        createValidPCSWithCliqueAnnotations(map[string]string{mnnvl.AnnotationMNNVLGroup: "training"}),
+			newPCS:        createValidPCSWithCliqueAnnotations(map[string]string{mnnvl.AnnotationMNNVLGroup: "inference"}),
 			expectError:   true,
 			errorContains: "immutable",
 		},
@@ -379,11 +377,10 @@ func createValidPCSWithGPU(annotations map[string]string) *grovecorev1alpha1.Pod
 		Build()
 }
 
-// createValidPCSWithCliqueAnnotations creates a fully valid PCS with PCS-level
-// and clique-level annotations for testing spec-level validation.
-func createValidPCSWithCliqueAnnotations(pcsAnnotations, cliqueAnnotations map[string]string) *grovecorev1alpha1.PodCliqueSet {
+// createValidPCSWithCliqueAnnotations creates a fully valid PCS with
+// clique-level annotations for testing spec-level validation.
+func createValidPCSWithCliqueAnnotations(cliqueAnnotations map[string]string) *grovecorev1alpha1.PodCliqueSet {
 	return testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
-		WithAnnotations(pcsAnnotations).
 		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
 		WithTerminationDelay(4 * time.Hour).
 		WithPodCliqueTemplateSpec(

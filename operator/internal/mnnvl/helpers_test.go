@@ -397,10 +397,9 @@ type cliqueAnnotation struct {
 	annotations map[string]string
 }
 
-// createPCSWithCliques creates a PCS with PCS-level annotations and per-clique annotations.
-func createPCSWithCliques(pcsAnnotations map[string]string, cliques []cliqueAnnotation) *grovecorev1alpha1.PodCliqueSet {
-	builder := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
-		WithAnnotations(pcsAnnotations)
+// createPCSWithCliques creates a PCS with per-clique annotations.
+func createPCSWithCliques(cliques []cliqueAnnotation) *grovecorev1alpha1.PodCliqueSet {
+	builder := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "")
 	for _, c := range cliques {
 		builder.WithPodCliqueTemplateSpec(
 			testutils.NewPodCliqueTemplateSpecBuilder(c.name).

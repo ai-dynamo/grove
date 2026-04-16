@@ -349,7 +349,7 @@ func TestValidatePCSOnCreate_Spec(t *testing.T) {
 	}{
 		{
 			description: "valid mnnvl-group on clique template + feature enabled -> no error",
-			pcs: createPCSWithCliques(nil, []cliqueAnnotation{
+			pcs: createPCSWithCliques([]cliqueAnnotation{
 				{name: "workers", annotations: map[string]string{AnnotationMNNVLGroup: "workers"}},
 			}),
 			autoMNNVLEnabled: true,
@@ -357,7 +357,7 @@ func TestValidatePCSOnCreate_Spec(t *testing.T) {
 		},
 		{
 			description: "invalid mnnvl-group on clique template -> error",
-			pcs: createPCSWithCliques(nil, []cliqueAnnotation{
+			pcs: createPCSWithCliques([]cliqueAnnotation{
 				{name: "workers", annotations: map[string]string{AnnotationMNNVLGroup: "INVALID"}},
 			}),
 			autoMNNVLEnabled: true,
@@ -366,7 +366,7 @@ func TestValidatePCSOnCreate_Spec(t *testing.T) {
 		},
 		{
 			description: "conflict on clique template (disabled + group) -> error",
-			pcs: createPCSWithCliques(nil, []cliqueAnnotation{
+			pcs: createPCSWithCliques([]cliqueAnnotation{
 				{name: "workers", annotations: map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLDisabled, AnnotationMNNVLGroup: "training"}},
 			}),
 			autoMNNVLEnabled: true,
@@ -375,7 +375,7 @@ func TestValidatePCSOnCreate_Spec(t *testing.T) {
 		},
 		{
 			description: "mnnvl-group on clique template + feature disabled -> error",
-			pcs: createPCSWithCliques(nil, []cliqueAnnotation{
+			pcs: createPCSWithCliques([]cliqueAnnotation{
 				{name: "workers", annotations: map[string]string{AnnotationMNNVLGroup: "workers"}},
 			}),
 			autoMNNVLEnabled: false,
@@ -384,7 +384,7 @@ func TestValidatePCSOnCreate_Spec(t *testing.T) {
 		},
 		{
 			description: "clique with empty mnnvl-group -> error",
-			pcs: createPCSWithCliques(nil, []cliqueAnnotation{
+			pcs: createPCSWithCliques([]cliqueAnnotation{
 				{name: "workers", annotations: map[string]string{AnnotationMNNVLGroup: ""}},
 			}),
 			autoMNNVLEnabled: true,
@@ -393,7 +393,7 @@ func TestValidatePCSOnCreate_Spec(t *testing.T) {
 		},
 		{
 			description: "multiple cliques, one valid one invalid -> error",
-			pcs: createPCSWithCliques(nil, []cliqueAnnotation{
+			pcs: createPCSWithCliques([]cliqueAnnotation{
 				{name: "workers", annotations: map[string]string{AnnotationMNNVLGroup: "workers"}},
 				{name: "encoders", annotations: map[string]string{AnnotationMNNVLGroup: "-bad"}},
 			}),
@@ -403,7 +403,7 @@ func TestValidatePCSOnCreate_Spec(t *testing.T) {
 		},
 		{
 			description: "multiple cliques all valid -> no error",
-			pcs: createPCSWithCliques(nil, []cliqueAnnotation{
+			pcs: createPCSWithCliques([]cliqueAnnotation{
 				{name: "workers", annotations: map[string]string{AnnotationMNNVLGroup: "training"}},
 				{name: "encoders", annotations: map[string]string{AnnotationMNNVLGroup: "encoding"}},
 			}),
@@ -412,7 +412,7 @@ func TestValidatePCSOnCreate_Spec(t *testing.T) {
 		},
 		{
 			description: "clique without annotations -> no error",
-			pcs: createPCSWithCliques(nil, []cliqueAnnotation{
+			pcs: createPCSWithCliques([]cliqueAnnotation{
 				{name: "workers", annotations: nil},
 			}),
 			autoMNNVLEnabled: true,
@@ -444,20 +444,20 @@ func TestValidatePCSOnUpdate_Spec(t *testing.T) {
 	}{
 		{
 			description: "clique-level mnnvl-group unchanged -> no error",
-			oldPCS: createPCSWithCliques(nil, []cliqueAnnotation{
+			oldPCS: createPCSWithCliques([]cliqueAnnotation{
 				{name: "workers", annotations: map[string]string{AnnotationMNNVLGroup: "training"}},
 			}),
-			newPCS: createPCSWithCliques(nil, []cliqueAnnotation{
+			newPCS: createPCSWithCliques([]cliqueAnnotation{
 				{name: "workers", annotations: map[string]string{AnnotationMNNVLGroup: "training"}},
 			}),
 			expectError: false,
 		},
 		{
 			description: "clique-level mnnvl-group added -> error",
-			oldPCS: createPCSWithCliques(nil, []cliqueAnnotation{
+			oldPCS: createPCSWithCliques([]cliqueAnnotation{
 				{name: "workers", annotations: nil},
 			}),
-			newPCS: createPCSWithCliques(nil, []cliqueAnnotation{
+			newPCS: createPCSWithCliques([]cliqueAnnotation{
 				{name: "workers", annotations: map[string]string{AnnotationMNNVLGroup: "training"}},
 			}),
 			expectError: true,
@@ -465,10 +465,10 @@ func TestValidatePCSOnUpdate_Spec(t *testing.T) {
 		},
 		{
 			description: "clique-level mnnvl-group removed -> error",
-			oldPCS: createPCSWithCliques(nil, []cliqueAnnotation{
+			oldPCS: createPCSWithCliques([]cliqueAnnotation{
 				{name: "workers", annotations: map[string]string{AnnotationMNNVLGroup: "training"}},
 			}),
-			newPCS: createPCSWithCliques(nil, []cliqueAnnotation{
+			newPCS: createPCSWithCliques([]cliqueAnnotation{
 				{name: "workers", annotations: nil},
 			}),
 			expectError: true,
@@ -476,10 +476,10 @@ func TestValidatePCSOnUpdate_Spec(t *testing.T) {
 		},
 		{
 			description: "clique-level mnnvl-group changed -> error",
-			oldPCS: createPCSWithCliques(nil, []cliqueAnnotation{
+			oldPCS: createPCSWithCliques([]cliqueAnnotation{
 				{name: "workers", annotations: map[string]string{AnnotationMNNVLGroup: "training"}},
 			}),
-			newPCS: createPCSWithCliques(nil, []cliqueAnnotation{
+			newPCS: createPCSWithCliques([]cliqueAnnotation{
 				{name: "workers", annotations: map[string]string{AnnotationMNNVLGroup: "inference"}},
 			}),
 			expectError: true,
@@ -487,10 +487,10 @@ func TestValidatePCSOnUpdate_Spec(t *testing.T) {
 		},
 		{
 			description: "clique without annotations on both -> no error",
-			oldPCS: createPCSWithCliques(nil, []cliqueAnnotation{
+			oldPCS: createPCSWithCliques([]cliqueAnnotation{
 				{name: "workers", annotations: nil},
 			}),
-			newPCS: createPCSWithCliques(nil, []cliqueAnnotation{
+			newPCS: createPCSWithCliques([]cliqueAnnotation{
 				{name: "workers", annotations: nil},
 			}),
 			expectError: false,

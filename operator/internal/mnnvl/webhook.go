@@ -160,6 +160,7 @@ func validatePodCliqueSetTemplateSpecOnUpdate(oldTemplate, newTemplate *grovecor
 	}
 	return allErrs
 }
+
 func validatePodCliqueTemplateSpecOnUpdate(oldClique, newClique *grovecorev1alpha1.PodCliqueTemplateSpec, fldPath *field.Path) field.ErrorList {
 	return validateMNNVLAnnotationsImmutability(oldClique.Annotations, newClique.Annotations, fldPath.Child("annotations"))
 }
@@ -178,7 +179,6 @@ func validateMNNVLAnnotationsImmutability(oldAnnotations, newAnnotations map[str
 	}
 	return allErrs
 }
-
 
 func validateAnnotationNotAdded(oldExists, newExists bool, annotationKey string, path *field.Path) field.ErrorList {
 	if !oldExists && newExists {
