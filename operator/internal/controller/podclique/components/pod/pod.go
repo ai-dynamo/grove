@@ -250,7 +250,7 @@ func injectPCSGResourceClaimRefs(podSpec *corev1.PodSpec, pcsgConfig *grovecorev
 	resourceclaim.InjectResourceClaimRefs(podSpec, pcsgName, resourceSharers, &replicaIndex, cliqueName)
 }
 
-func injectPCLQResourceClaimRefs(podSpec *corev1.PodSpec, pclqName string, resourceSharing []grovecorev1alpha1.ResourceSharingSpecBase, podIndex int) {
+func injectPCLQResourceClaimRefs(podSpec *corev1.PodSpec, pclqName string, resourceSharing []grovecorev1alpha1.ResourceSharingSpec, podIndex int) {
 	if len(resourceSharing) == 0 {
 		return
 	}

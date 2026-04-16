@@ -104,7 +104,7 @@ spec:
                             PCLQs have no children to filter, so no Filter field is available.
                           items:
                             description: |-
-                              ResourceSharingSpecBase contains the common fields shared by all levels of
+                              ResourceSharingSpec contains the common fields shared by all levels of
                               resource sharing (PCS, PCSG, PCLQ). It is used directly for PCLQ-level
                               resource sharing where no filter is needed.
                             properties:

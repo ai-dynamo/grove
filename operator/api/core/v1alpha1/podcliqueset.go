@@ -263,7 +263,7 @@ type PodCliqueTemplateSpec struct {
 	// ResourceClaim for each pod.
 	// PCLQs have no children to filter, so no Filter field is available.
 	// +optional
-	ResourceSharing []ResourceSharingSpecBase `json:"resourceSharing,omitempty"`
+	ResourceSharing []ResourceSharingSpec `json:"resourceSharing,omitempty"`
 	// Specification of the desired behavior of a PodClique.
 	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#spec-and-status
 	Spec PodCliqueSpec `json:"spec"`
@@ -348,10 +348,10 @@ type ResourceClaimTemplateConfig struct {
 	TemplateSpec resourcev1.ResourceClaimTemplateSpec `json:"templateSpec"`
 }
 
-// ResourceSharingSpecBase contains the common fields shared by all levels of
+// ResourceSharingSpec contains the common fields shared by all levels of
 // resource sharing (PCS, PCSG, PCLQ). It is used directly for PCLQ-level
 // resource sharing where no filter is needed.
-type ResourceSharingSpecBase struct {
+type ResourceSharingSpec struct {
 	// Name of the referenced template. Resolved by first looking up
 	// PodCliqueSetTemplateSpec.ResourceClaimTemplates; if no match is found,
 	// the operator looks for a Kubernetes ResourceClaimTemplate object in the
@@ -370,7 +370,7 @@ type ResourceSharingSpecBase struct {
 // PCSResourceSharingSpec defines resource sharing at the PCS level. The filter
 // can target both child PodCliques and child PodCliqueScalingGroups.
 type PCSResourceSharingSpec struct {
-	ResourceSharingSpecBase `json:",inline"`
+	ResourceSharingSpec `json:",inline"`
 	// Filter narrows the scope by restricting which children receive the
 	// ResourceClaims. If absent, all children receive them (broadcast).
 	// +optional
@@ -390,7 +390,7 @@ type PCSResourceSharingFilter struct {
 // PCSGResourceSharingSpec defines resource sharing at the PCSG level. The filter
 // can only target child PodCliques within the scaling group.
 type PCSGResourceSharingSpec struct {
-	ResourceSharingSpecBase `json:",inline"`
+	ResourceSharingSpec `json:",inline"`
 	// Filter narrows the scope by restricting which child PodCliques receive
 	// the ResourceClaims. If absent, all PodCliques in the group receive them.
 	// +optional

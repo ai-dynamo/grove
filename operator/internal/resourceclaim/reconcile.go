@@ -40,7 +40,7 @@ import (
 // types (PCS, PCSG, PCLQ). It enables the reconciler to operate uniformly over
 // different resource sharing specs regardless of their filter type.
 type ResourceSharer interface {
-	GetBase() *grovecorev1alpha1.ResourceSharingSpecBase
+	GetBase() *grovecorev1alpha1.ResourceSharingSpec
 	FilterMatches(matchNames ...string) bool
 }
 
@@ -63,7 +63,7 @@ func ResourceSharersFromPCSG(specs []grovecorev1alpha1.PCSGResourceSharingSpec) 
 }
 
 // ResourceSharersFromPCLQ converts PCLQ-level specs to the common ResourceSharer interface.
-func ResourceSharersFromPCLQ(specs []grovecorev1alpha1.ResourceSharingSpecBase) []ResourceSharer {
+func ResourceSharersFromPCLQ(specs []grovecorev1alpha1.ResourceSharingSpec) []ResourceSharer {
 	s := make([]ResourceSharer, len(specs))
 	for i := range specs {
 		s[i] = &specs[i]
@@ -179,7 +179,7 @@ func ResourceClaimLabels(pcsName string) map[string]string {
 
 // RCName returns the deterministic ResourceClaim name for a given base ref and optional replica index.
 // Callers must ensure replicaIndex is non-nil when base.Scope is PerReplica.
-func RCName(ownerName string, base *grovecorev1alpha1.ResourceSharingSpecBase, replicaIndex *int) string {
+func RCName(ownerName string, base *grovecorev1alpha1.ResourceSharingSpec, replicaIndex *int) string {
 	if base.Scope == grovecorev1alpha1.ResourceSharingScopeAllReplicas {
 		return AllReplicasRCName(ownerName, base.Name)
 	}

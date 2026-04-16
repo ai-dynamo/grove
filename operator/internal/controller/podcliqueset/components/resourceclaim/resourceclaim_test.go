@@ -139,8 +139,8 @@ func TestSync(t *testing.T) {
 	scheme := newTestScheme()
 
 	refs := []grovecorev1alpha1.PCSResourceSharingSpec{
-		{ResourceSharingSpecBase: grovecorev1alpha1.ResourceSharingSpecBase{Name: "gpu-shared", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas}},
-		{ResourceSharingSpecBase: grovecorev1alpha1.ResourceSharingSpecBase{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopePerReplica}},
+		{ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-shared", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas}},
+		{ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopePerReplica}},
 	}
 	templates := []grovecorev1alpha1.ResourceClaimTemplateConfig{gpuTemplate, gpuSharedTemplate}
 
@@ -218,7 +218,7 @@ func TestSync(t *testing.T) {
 
 	t.Run("AllReplicas RC is shared across replicas", func(t *testing.T) {
 		allReplicasOnly := []grovecorev1alpha1.PCSResourceSharingSpec{
-			{ResourceSharingSpecBase: grovecorev1alpha1.ResourceSharingSpecBase{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas}},
+			{ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas}},
 		}
 		pcs := newPCS(3, allReplicasOnly, templates)
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs).Build()
@@ -240,7 +240,7 @@ func TestSync(t *testing.T) {
 
 	t.Run("PerReplica creates one RC per replica", func(t *testing.T) {
 		perReplicaOnly := []grovecorev1alpha1.PCSResourceSharingSpec{
-			{ResourceSharingSpecBase: grovecorev1alpha1.ResourceSharingSpecBase{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopePerReplica}},
+			{ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopePerReplica}},
 		}
 		pcs := newPCS(3, perReplicaOnly, templates)
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs).Build()

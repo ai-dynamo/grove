@@ -135,11 +135,11 @@ func (v *pcsValidator) validateResourceClaimTemplates(fldPath *field.Path) field
 // validatePCSResourceSharing validates PCS-level ResourceSharing entries and their filters.
 func (v *pcsValidator) validatePCSResourceSharing(refs []grovecorev1alpha1.PCSResourceSharingSpec, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-	bases := make([]grovecorev1alpha1.ResourceSharingSpecBase, len(refs))
+	bases := make([]grovecorev1alpha1.ResourceSharingSpec, len(refs))
 	for i := range refs {
-		bases[i] = refs[i].ResourceSharingSpecBase
+		bases[i] = refs[i].ResourceSharingSpec
 	}
-	allErrs = append(allErrs, v.validateResourceSharingSpecBases(bases, fldPath)...)
+	allErrs = append(allErrs, v.validateResourceSharingSpecs(bases, fldPath)...)
 
 	cliqueNames := sets.New[string]()
 	for _, c := range v.pcs.Spec.Template.Cliques {
@@ -175,11 +175,11 @@ func (v *pcsValidator) validatePCSResourceSharing(refs []grovecorev1alpha1.PCSRe
 func (v *pcsValidator) validatePCSGResourceSharing(cfg grovecorev1alpha1.PodCliqueScalingGroupConfig, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	cliqueNameSet := sets.New(cfg.CliqueNames...)
-	bases := make([]grovecorev1alpha1.ResourceSharingSpecBase, len(cfg.ResourceSharing))
+	bases := make([]grovecorev1alpha1.ResourceSharingSpec, len(cfg.ResourceSharing))
 	for i := range cfg.ResourceSharing {
-		bases[i] = cfg.ResourceSharing[i].ResourceSharingSpecBase
+		bases[i] = cfg.ResourceSharing[i].ResourceSharingSpec
 	}
-	allErrs = append(allErrs, v.validateResourceSharingSpecBases(bases, fldPath)...)
+	allErrs = append(allErrs, v.validateResourceSharingSpecs(bases, fldPath)...)
 	for i, ref := range cfg.ResourceSharing {
 		if ref.Filter == nil {
 			continue
@@ -197,8 +197,8 @@ func (v *pcsValidator) validatePCSGResourceSharing(cfg grovecorev1alpha1.PodCliq
 	return allErrs
 }
 
-// validateResourceSharingSpecBases validates the common fields (Name, Namespace, Scope) across all levels.
-func (v *pcsValidator) validateResourceSharingSpecBases(refs []grovecorev1alpha1.ResourceSharingSpecBase, fldPath *field.Path) field.ErrorList {
+// validateResourceSharingSpecs validates the common fields (Name, Namespace, Scope) across all levels.
+func (v *pcsValidator) validateResourceSharingSpecs(refs []grovecorev1alpha1.ResourceSharingSpec, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	templateNames := sets.New[string]()
 	for _, rct := range v.pcs.Spec.Template.ResourceClaimTemplates {
@@ -431,7 +431,7 @@ func (v *pcsValidator) validatePodCliqueTemplateSpec(cliqueTemplateSpec *groveco
 	allErrs = append(allErrs, metav1validation.ValidateLabels(cliqueTemplateSpec.Labels, fldPath.Child("labels"))...)
 	allErrs = append(allErrs, apivalidation.ValidateAnnotations(cliqueTemplateSpec.Annotations, fldPath.Child("annotations"))...)
 
-	allErrs = append(allErrs, v.validateResourceSharingSpecBases(cliqueTemplateSpec.ResourceSharing, fldPath.Child("resourceSharing"))...)
+	allErrs = append(allErrs, v.validateResourceSharingSpecs(cliqueTemplateSpec.ResourceSharing, fldPath.Child("resourceSharing"))...)
 	warnings, errs := v.validatePodCliqueSpec(cliqueTemplateSpec.Name, cliqueTemplateSpec.Spec, fldPath.Child("spec"))
 	if len(errs) != 0 {
 		allErrs = append(allErrs, errs...)

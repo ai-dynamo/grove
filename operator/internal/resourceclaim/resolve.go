@@ -25,13 +25,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// ResolveTemplateSpec resolves a ResourceSharingSpecBase to its ResourceClaimTemplateSpec.
+// ResolveTemplateSpec resolves a ResourceSharingSpec to its ResourceClaimTemplateSpec.
 // Resolution order: internal PCS-level resourceClaimTemplates first, then external
 // Kubernetes ResourceClaimTemplate objects. Internal templates shadow external ones.
 func ResolveTemplateSpec(
 	ctx context.Context,
 	cl client.Reader,
-	base *grovecorev1alpha1.ResourceSharingSpecBase,
+	base *grovecorev1alpha1.ResourceSharingSpec,
 	pcsTemplates []grovecorev1alpha1.ResourceClaimTemplateConfig,
 	pcsNamespace string,
 ) (*resourcev1.ResourceClaimTemplateSpec, error) {
@@ -44,7 +44,7 @@ func ResolveTemplateSpec(
 // resolveInternalRef returns the matching template spec from pcsTemplates, or
 // nil when the name does not match any internal template.
 func resolveInternalRef(
-	base *grovecorev1alpha1.ResourceSharingSpecBase,
+	base *grovecorev1alpha1.ResourceSharingSpec,
 	pcsTemplates []grovecorev1alpha1.ResourceClaimTemplateConfig,
 ) *resourcev1.ResourceClaimTemplateSpec {
 	if base.Namespace != "" {
@@ -61,7 +61,7 @@ func resolveInternalRef(
 func resolveExternalRef(
 	ctx context.Context,
 	cl client.Reader,
-	base *grovecorev1alpha1.ResourceSharingSpecBase,
+	base *grovecorev1alpha1.ResourceSharingSpec,
 	pcsNamespace string,
 ) (*resourcev1.ResourceClaimTemplateSpec, error) {
 	ns := base.Namespace

@@ -17,14 +17,14 @@ package v1alpha1
 import "slices"
 
 // GetBase returns the base resource sharing fields.
-func (b *ResourceSharingSpecBase) GetBase() *ResourceSharingSpecBase { return b }
+func (b *ResourceSharingSpec) GetBase() *ResourceSharingSpec { return b }
 
 // FilterMatches returns true since PCLQ-level entries have no filter.
-func (b *ResourceSharingSpecBase) FilterMatches(_ ...string) bool { return true }
+func (b *ResourceSharingSpec) FilterMatches(_ ...string) bool { return true }
 
 // GetBase returns the base resource sharing fields.
-func (s *PCSResourceSharingSpec) GetBase() *ResourceSharingSpecBase {
-	return &s.ResourceSharingSpecBase
+func (s *PCSResourceSharingSpec) GetBase() *ResourceSharingSpec {
+	return &s.ResourceSharingSpec
 }
 
 // FilterMatches checks whether the PCS filter allows injection for the given names.
@@ -42,8 +42,8 @@ func (s *PCSResourceSharingSpec) FilterMatches(matchNames ...string) bool {
 }
 
 // GetBase returns the base resource sharing fields.
-func (s *PCSGResourceSharingSpec) GetBase() *ResourceSharingSpecBase {
-	return &s.ResourceSharingSpecBase
+func (s *PCSGResourceSharingSpec) GetBase() *ResourceSharingSpec {
+	return &s.ResourceSharingSpec
 }
 
 // FilterMatches checks whether the PCSG filter allows injection for the given names.

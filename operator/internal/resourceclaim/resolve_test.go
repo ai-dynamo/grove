@@ -39,7 +39,7 @@ func TestResolveTemplateSpec_InternalMatch(t *testing.T) {
 	scheme := newTestScheme()
 	cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	ref := &grovecorev1alpha1.ResourceSharingSpecBase{Name: "gpu-mps"}
+	ref := &grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps"}
 	templates := []grovecorev1alpha1.ResourceClaimTemplateConfig{
 		{
 			Name: "gpu-mps",
@@ -75,7 +75,7 @@ func TestResolveTemplateSpec_InternalShadowsExternal(t *testing.T) {
 	}
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(externalRCT).Build()
 
-	ref := &grovecorev1alpha1.ResourceSharingSpecBase{Name: "gpu-mps"}
+	ref := &grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps"}
 	internalTemplates := []grovecorev1alpha1.ResourceClaimTemplateConfig{
 		{
 			Name: "gpu-mps",
@@ -109,7 +109,7 @@ func TestResolveTemplateSpec_ExternalFallback(t *testing.T) {
 	}
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(externalRCT).Build()
 
-	ref := &grovecorev1alpha1.ResourceSharingSpecBase{Name: "gpu-mps"}
+	ref := &grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps"}
 	emptyInternal := []grovecorev1alpha1.ResourceClaimTemplateConfig{}
 
 	spec, err := ResolveTemplateSpec(context.Background(), cl, ref, emptyInternal, "default")
@@ -132,7 +132,7 @@ func TestResolveTemplateSpec_ExternalWithExplicitNamespace(t *testing.T) {
 	}
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(externalRCT).Build()
 
-	ref := &grovecorev1alpha1.ResourceSharingSpecBase{Name: "gpu-mps", Namespace: "other-ns"}
+	ref := &grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Namespace: "other-ns"}
 	emptyInternal := []grovecorev1alpha1.ResourceClaimTemplateConfig{}
 
 	spec, err := ResolveTemplateSpec(context.Background(), cl, ref, emptyInternal, "default")
@@ -144,7 +144,7 @@ func TestResolveTemplateSpec_NotFound(t *testing.T) {
 	scheme := newTestScheme()
 	cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	ref := &grovecorev1alpha1.ResourceSharingSpecBase{Name: "nonexistent"}
+	ref := &grovecorev1alpha1.ResourceSharingSpec{Name: "nonexistent"}
 	emptyInternal := []grovecorev1alpha1.ResourceClaimTemplateConfig{}
 
 	spec, err := ResolveTemplateSpec(context.Background(), cl, ref, emptyInternal, "default")
