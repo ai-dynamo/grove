@@ -26,8 +26,8 @@ import (
 func validateClusterTopologyLevels(levels []grovecorev1alpha1.TopologyLevel, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 
-	seenDomains := make(map[grovecorev1alpha1.TopologyDomain]struct{})
-	seenKeys := make(map[string]struct{})
+	seenDomains := make(map[grovecorev1alpha1.TopologyDomain]bool)
+	seenKeys := make(map[string]bool)
 
 	for i, level := range levels {
 		levelPath := fldPath.Index(i)
@@ -35,12 +35,12 @@ func validateClusterTopologyLevels(levels []grovecorev1alpha1.TopologyLevel, fld
 		if _, exists := seenDomains[level.Domain]; exists {
 			allErrs = append(allErrs, field.Duplicate(levelPath.Child("domain"), level.Domain))
 		}
-		seenDomains[level.Domain] = struct{}{}
+		seenDomains[level.Domain] = true
 
 		if _, exists := seenKeys[level.Key]; exists {
 			allErrs = append(allErrs, field.Duplicate(levelPath.Child("key"), level.Key))
 		}
-		seenKeys[level.Key] = struct{}{}
+		seenKeys[level.Key] = true
 	}
 
 	return allErrs
