@@ -24,15 +24,22 @@ import (
 	"strconv"
 	"time"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	"github.com/ai-dynamo/grove/operator/internal/controller/cert"
 	"github.com/ai-dynamo/grove/operator/internal/webhook"
 
 	"github.com/go-logr/logr"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	ctrlmetricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -87,6 +94,7 @@ func createManagerOptions(operatorCfg *configv1alpha1.OperatorConfiguration) ctr
 	opts := ctrl.Options{
 		Scheme:                  groveclientscheme.Scheme,
 		GracefulShutdownTimeout: ptr.To(5 * time.Second),
+		Cache:                   cacheOptions(),
 		Metrics: ctrlmetricsserver.Options{
 			BindAddress: net.JoinHostPort(operatorCfg.Server.Metrics.BindAddress, strconv.Itoa(operatorCfg.Server.Metrics.Port)),
 		},
@@ -116,6 +124,27 @@ func createManagerOptions(operatorCfg *configv1alpha1.OperatorConfiguration) ctr
 		}
 	}
 	return opts
+}
+
+// cacheOptions returns cache configuration that restricts informers for shared
+// core types to only grove-managed resources via label selectors.
+// Grove CRDs are not filtered because all instances are grove-managed by definition.
+func cacheOptions() cache.Options {
+	managedByGrove := cache.ByObject{
+		Label: labels.SelectorFromSet(labels.Set{
+			apicommon.LabelManagedByKey: apicommon.LabelManagedByValue,
+		}),
+	}
+	return cache.Options{
+		ByObject: map[client.Object]cache.ByObject{
+			&corev1.Pod{}:                            managedByGrove,
+			&corev1.ServiceAccount{}:                 managedByGrove,
+			&corev1.Service{}:                        managedByGrove,
+			&rbacv1.Role{}:                           managedByGrove,
+			&rbacv1.RoleBinding{}:                    managedByGrove,
+			&autoscalingv2.HorizontalPodAutoscaler{}: managedByGrove,
+		},
+	}
 }
 
 // getRestConfig creates a Kubernetes REST config with customized client connection settings.

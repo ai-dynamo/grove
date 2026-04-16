@@ -46,6 +46,7 @@ from infra_manager.constants import (
     DEPENDENCIES,
     NS_KAI_SCHEDULER,
     OPERATOR_DIR,
+    REL_PREPARE_CHARTS,
     REL_QUEUES_YAML,
     SCRIPT_DIR,
     dep_value,
@@ -73,6 +74,12 @@ def _check_prerequisites(install_kai: bool, install_grove: bool, grove_mode: str
         require_command(cmd)
     console.print("[green]\u2705 All required tools are available[/green]")
 
+    if install_grove:
+        console.print(Panel.fit("Preparing Helm charts", style="bold blue"))
+        prepare_charts = operator_dir / REL_PREPARE_CHARTS
+        if prepare_charts.exists():
+            sh.bash(str(prepare_charts))
+            console.print("[green]\u2705 Charts prepared[/green]")
 
 
 def _run_cluster_creation(cfg: ClusterConfig) -> None:

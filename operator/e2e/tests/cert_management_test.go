@@ -55,7 +55,6 @@ import (
 // This uses manual cert provisioning and configures webhook annotations for cert-manager CA injection.
 func certManagerGroveConfig() *setup.GroveConfig {
 	return &setup.GroveConfig{
-		InstallCRDs: true,
 		Webhooks: setup.WebhooksConfig{
 			CertProvisionMode: configv1alpha1.CertProvisionModeManual,
 			SecretName:        configv1alpha1.DefaultWebhookSecretName,
@@ -72,7 +71,6 @@ func certManagerGroveConfig() *setup.GroveConfig {
 // cleared when switching back to auto mode.
 func autoProvisionGroveConfig() *setup.GroveConfig {
 	return &setup.GroveConfig{
-		InstallCRDs: true,
 		Webhooks: setup.WebhooksConfig{
 			CertProvisionMode: configv1alpha1.CertProvisionModeAuto,
 			SecretName:        configv1alpha1.DefaultWebhookSecretName,
@@ -338,7 +336,6 @@ func installCertManager(t *testing.T, ctx context.Context, tc *testctx.TestConte
 		t.Fatalf("cert-manager pods failed to become ready: %v", err)
 	}
 }
-
 
 func waitForClusterIssuer(t *testing.T, ctx context.Context, dynamicClient dynamic.Interface, name string) {
 	t.Helper()

@@ -56,6 +56,14 @@ const (
 	// automatic MNNVL support should be disabled.
 	AnnotationAutoMNNVLDisabled = "disabled"
 
+	// AnnotationMNNVLGroup is the annotation key used to assign a PodClique to a named
+	// MNNVL group. PodCliques with the same group name share a ComputeDomain per replica.
+	// The presence of this annotation implicitly enables MNNVL — auto-mnnvl: enabled is
+	// not required when mnnvl-group is set.
+	// The value must be a valid Kubernetes name component (lowercase alphanumeric or dashes,
+	// starting and ending with alphanumeric, max 63 characters).
+	AnnotationMNNVLGroup = "grove.io/mnnvl-group"
+
 	// FinalizerComputeDomain is the finalizer added to ComputeDomains to prevent accidental
 	// deletion while workloads are using them. This finalizer is removed by the PCS controller
 	// during scale-in or PCS deletion.

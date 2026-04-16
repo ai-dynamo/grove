@@ -18,12 +18,14 @@ package mnnvl
 
 import (
 	"fmt"
+	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 // IsAutoMNNVLEnabled checks if MNNVL is enabled via the grove.io/auto-mnnvl annotation.
@@ -32,6 +34,36 @@ func IsAutoMNNVLEnabled(annotations map[string]string) bool {
 		return false
 	}
 	return annotations[AnnotationAutoMNNVL] == AnnotationAutoMNNVLEnabled
+}
+
+// ValidateMNNVLGroupName validates that the given string is a valid DNS-1123
+// label, suitable for use as an mnnvl-group annotation value. The group name
+// becomes part of the ComputeDomain resource name, so it must conform to
+// Kubernetes naming rules.
+func ValidateMNNVLGroupName(name string) error {
+	if name == "" {
+		return fmt.Errorf("mnnvl-group value must not be empty")
+	}
+	if errs := validation.IsDNS1123Label(name); len(errs) > 0 {
+		return fmt.Errorf("mnnvl-group value %q is not a valid DNS-1123 label: %s", name, strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// DetectMNNVLConflict returns an error if the annotations contain contradictory
+// MNNVL settings: auto-mnnvl: disabled combined with a mnnvl-group value.
+func DetectMNNVLConflict(annotations map[string]string) error {
+	if annotations == nil {
+		return nil
+	}
+	autoVal, hasAuto := annotations[AnnotationAutoMNNVL]
+	_, hasGroup := annotations[AnnotationMNNVLGroup]
+	if hasAuto && strings.EqualFold(autoVal, AnnotationAutoMNNVLDisabled) && hasGroup {
+		return fmt.Errorf("contradictory MNNVL annotations: %s is %q but %s is also set; "+
+			"cannot disable MNNVL and assign a group simultaneously",
+			AnnotationAutoMNNVL, autoVal, AnnotationMNNVLGroup)
+	}
+	return nil
 }
 
 // GenerateRCTName creates the ResourceClaimTemplate name for a PCS replica.
@@ -92,13 +124,4 @@ func containerHasGPU(container *corev1.Container) bool {
 		}
 	}
 	return false
-}
-
-// getAnnotationValue safely retrieves an annotation value from a PCS.
-func getAnnotationValue(pcs *grovecorev1alpha1.PodCliqueSet, key string) (string, bool) {
-	if pcs.Annotations == nil {
-		return "", false
-	}
-	value, exists := pcs.Annotations[key]
-	return value, exists
 }

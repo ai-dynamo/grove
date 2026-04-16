@@ -55,7 +55,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25.7'
+          go-version: '1.26.1'
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -75,6 +75,10 @@ jobs:
       - name: Docker build & push
         run: |
           make --directory=operator docker-build PLATFORM=linux/amd64,linux/arm64 VERSION=$PACKAGE_VERSION REGISTRY=$DOCKER_REGISTRY DOCKER_BUILD_ADDITIONAL_ARGS=--push
+
+      - name: Copy CRDs to charts
+        run: |
+          ./operator/hack/prepare-charts.sh
 
       - name: Build Helm chart
         run: |

@@ -114,6 +114,171 @@ func TestGenerateRCTName(t *testing.T) {
 	}
 }
 
+func TestValidateMNNVLGroupName(t *testing.T) {
+	tests := []struct {
+		description string
+		name        string
+		expectErr   bool
+	}{
+		{
+			description: "simple lowercase name",
+			name:        "training",
+			expectErr:   false,
+		},
+		{
+			description: "name with dashes",
+			name:        "my-workers",
+			expectErr:   false,
+		},
+		{
+			description: "single character",
+			name:        "a",
+			expectErr:   false,
+		},
+		{
+			description: "alphanumeric with numbers",
+			name:        "group1",
+			expectErr:   false,
+		},
+		{
+			description: "starts with number",
+			name:        "1group",
+			expectErr:   false,
+		},
+		{
+			description: "max length (63 chars)",
+			name:        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			expectErr:   false,
+		},
+		{
+			description: "empty string",
+			name:        "",
+			expectErr:   true,
+		},
+		{
+			description: "exceeds 63 chars",
+			name:        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			expectErr:   true,
+		},
+		{
+			description: "uppercase letters",
+			name:        "Training",
+			expectErr:   true,
+		},
+		{
+			description: "contains underscore",
+			name:        "my_group",
+			expectErr:   true,
+		},
+		{
+			description: "contains dot",
+			name:        "my.group",
+			expectErr:   true,
+		},
+		{
+			description: "contains space",
+			name:        "my group",
+			expectErr:   true,
+		},
+		{
+			description: "starts with dash",
+			name:        "-workers",
+			expectErr:   true,
+		},
+		{
+			description: "ends with dash",
+			name:        "workers-",
+			expectErr:   true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.description, func(t *testing.T) {
+			err := ValidateMNNVLGroupName(tc.name)
+			if tc.expectErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestDetectMNNVLConflict(t *testing.T) {
+	tests := []struct {
+		description string
+		annotations map[string]string
+		expectErr   bool
+	}{
+		{
+			description: "nil annotations — no conflict",
+			annotations: nil,
+			expectErr:   false,
+		},
+		{
+			description: "empty annotations — no conflict",
+			annotations: map[string]string{},
+			expectErr:   false,
+		},
+		{
+			description: "auto-mnnvl enabled only — no conflict",
+			annotations: map[string]string{
+				AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled,
+			},
+			expectErr: false,
+		},
+		{
+			description: "auto-mnnvl disabled only — no conflict",
+			annotations: map[string]string{
+				AnnotationAutoMNNVL: AnnotationAutoMNNVLDisabled,
+			},
+			expectErr: false,
+		},
+		{
+			description: "mnnvl-group only — no conflict",
+			annotations: map[string]string{
+				AnnotationMNNVLGroup: "workers",
+			},
+			expectErr: false,
+		},
+		{
+			description: "enabled + group — no conflict",
+			annotations: map[string]string{
+				AnnotationAutoMNNVL:  AnnotationAutoMNNVLEnabled,
+				AnnotationMNNVLGroup: "workers",
+			},
+			expectErr: false,
+		},
+		{
+			description: "disabled + group — conflict",
+			annotations: map[string]string{
+				AnnotationAutoMNNVL:  AnnotationAutoMNNVLDisabled,
+				AnnotationMNNVLGroup: "workers",
+			},
+			expectErr: true,
+		},
+		{
+			description: "disabled (uppercase) + group — conflict (case-insensitive)",
+			annotations: map[string]string{
+				AnnotationAutoMNNVL:  "Disabled",
+				AnnotationMNNVLGroup: "training",
+			},
+			expectErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.description, func(t *testing.T) {
+			err := DetectMNNVLConflict(tc.annotations)
+			if tc.expectErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
 func Test_hasGPURequirement(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -225,6 +390,25 @@ func createPCSWithGPU(annotations map[string]string) *grovecorev1alpha1.PodCliqu
 				Build(),
 		).
 		Build()
+}
+
+type cliqueAnnotation struct {
+	name        string
+	annotations map[string]string
+}
+
+// createPCSWithCliques creates a PCS with per-clique annotations.
+func createPCSWithCliques(cliques []cliqueAnnotation) *grovecorev1alpha1.PodCliqueSet {
+	builder := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "")
+	for _, c := range cliques {
+		builder.WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder(c.name).
+				WithAnnotations(c.annotations).
+				WithContainer(testutils.NewGPUContainer("train", "nvidia/cuda:latest", 8)).
+				Build(),
+		)
+	}
+	return builder.Build()
 }
 
 // createPCSWithoutGPU creates a PCS without GPU using the builder for tests in this package.

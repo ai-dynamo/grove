@@ -24,9 +24,11 @@ hack/
 ├── kind/                     # Kind cluster configuration
 ├── build-operator.sh         # Build operator image
 ├── build-initc.sh            # Build init container image
+├── build-install-crds.sh     # Build grove-install-crds image
 ├── docker-build.sh           # Docker build helper
 ├── deploy.sh                 # Deploy operator
 ├── deploy-addons.sh          # Deploy addon components
+├── prepare-charts.sh         # Prepare Helm charts (copy CRDs to charts/crds/)
 ├── kind-up.sh                # Create Kind cluster
 └── kind-down.sh              # Delete Kind cluster
 ```

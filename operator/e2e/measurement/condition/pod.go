@@ -28,14 +28,41 @@ import (
 	kubeutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 )
 
-func listPods(ctx context.Context, cl client.Client, ns, sel string) ([]corev1.Pod, error) {
-	parsed, err := labels.Parse(sel)
+// parsedSelector caches a parsed label selector to avoid re-parsing on every poll.
+type parsedSelector struct {
+	raw    string
+	parsed labels.Selector
+}
+
+// init sets the raw selector string once. Subsequent calls are no-ops.
+func (ps *parsedSelector) init(raw string) {
+	if ps.raw == "" {
+		ps.raw = raw
+	}
+}
+
+// get returns the cached label selector, parsing it on first call.
+func (ps *parsedSelector) get() (labels.Selector, error) {
+	if ps.parsed != nil {
+		return ps.parsed, nil
+	}
+	s, err := labels.Parse(ps.raw)
 	if err != nil {
 		return nil, fmt.Errorf("parse label selector: %w", err)
 	}
+	ps.parsed = s
+	return s, nil
+}
+
+// listPods returns all pods in the namespace matching the given label selector.
+func listPods(ctx context.Context, cl client.Client, ns string, sel *parsedSelector) ([]corev1.Pod, error) {
+	s, err := sel.get()
+	if err != nil {
+		return nil, err
+	}
 
 	var podList corev1.PodList
-	if err := cl.List(ctx, &podList, client.InNamespace(ns), client.MatchingLabelsSelector{Selector: parsed}); err != nil {
+	if err := cl.List(ctx, &podList, client.InNamespace(ns), client.MatchingLabelsSelector{Selector: s}); err != nil {
 		return nil, fmt.Errorf("list pods: %w", err)
 	}
 	return podList.Items, nil
@@ -48,6 +75,7 @@ type PodsCreatedCondition struct {
 	LabelSelector string
 	ExpectedCount int
 	lastCount     int
+	sel           parsedSelector
 }
 
 // Met returns true once the expected pod count exists.
@@ -56,7 +84,8 @@ func (c *PodsCreatedCondition) Met(ctx context.Context) (bool, error) {
 		return false, errors.New("expected count cannot be negative")
 	}
 
-	pods, err := listPods(ctx, c.Client, c.Namespace, c.LabelSelector)
+	c.sel.init(c.LabelSelector)
+	pods, err := listPods(ctx, c.Client, c.Namespace, &c.sel)
 	if err != nil {
 		return false, err
 	}
@@ -77,6 +106,7 @@ type PodsReadyCondition struct {
 	LabelSelector string
 	ExpectedCount int
 	lastReady     int
+	sel           parsedSelector
 }
 
 // Met returns true once the expected number of pods are Ready.
@@ -85,7 +115,8 @@ func (c *PodsReadyCondition) Met(ctx context.Context) (bool, error) {
 		return false, errors.New("expected count cannot be negative")
 	}
 
-	pods, err := listPods(ctx, c.Client, c.Namespace, c.LabelSelector)
+	c.sel.init(c.LabelSelector)
+	pods, err := listPods(ctx, c.Client, c.Namespace, &c.sel)
 	if err != nil {
 		return false, err
 	}

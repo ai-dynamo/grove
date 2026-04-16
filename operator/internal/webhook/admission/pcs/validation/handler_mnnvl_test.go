@@ -70,6 +70,54 @@ func TestValidateCreate_MNNVL(t *testing.T) {
 			autoMNNVLEnabled: false,
 			expectError:      false,
 		},
+		{
+			description:      "mnnvl-group on PCS + feature enabled -> no error",
+			pcs:              createValidPCSWithGPU(map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}),
+			autoMNNVLEnabled: true,
+			expectError:      false,
+		},
+		{
+			description:      "mnnvl-group on PCS + feature disabled -> error",
+			pcs:              createValidPCSWithGPU(map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}),
+			autoMNNVLEnabled: false,
+			expectError:      true,
+			errorContains:    "MNNVL is not enabled",
+		},
+		{
+			description:      "invalid mnnvl-group on PCS -> error",
+			pcs:              createValidPCSWithGPU(map[string]string{mnnvl.AnnotationMNNVLGroup: "INVALID"}),
+			autoMNNVLEnabled: true,
+			expectError:      true,
+			errorContains:    "not a valid DNS-1123 label",
+		},
+		{
+			description:      "conflict: auto-mnnvl disabled + mnnvl-group on PCS -> error",
+			pcs:              createValidPCSWithGPU(map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled, mnnvl.AnnotationMNNVLGroup: "training"}),
+			autoMNNVLEnabled: true,
+			expectError:      true,
+			errorContains:    "contradictory",
+		},
+		// mnnvl-group on clique template
+		{
+			description:      "mnnvl-group on clique + feature enabled -> no error",
+			pcs:              createValidPCSWithCliqueAnnotations(map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}),
+			autoMNNVLEnabled: true,
+			expectError:      false,
+		},
+		{
+			description:      "invalid mnnvl-group on clique -> error",
+			pcs:              createValidPCSWithCliqueAnnotations(map[string]string{mnnvl.AnnotationMNNVLGroup: "-bad"}),
+			autoMNNVLEnabled: true,
+			expectError:      true,
+			errorContains:    "not a valid DNS-1123 label",
+		},
+		{
+			description:      "conflict on clique: disabled + group -> error",
+			pcs:              createValidPCSWithCliqueAnnotations(map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled, mnnvl.AnnotationMNNVLGroup: "training"}),
+			autoMNNVLEnabled: true,
+			expectError:      true,
+			errorContains:    "contradictory",
+		},
 	}
 
 	for _, tt := range tests {
@@ -155,6 +203,40 @@ func TestValidateUpdate_MNNVL(t *testing.T) {
 			oldPCS:      createValidPCSWithGPU(nil),
 			newPCS:      createValidPCSWithGPU(nil),
 			expectError: false,
+		},
+		{
+			description: "mnnvl-group unchanged -> no error",
+			oldPCS:      createValidPCSWithGPU(map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}),
+			newPCS:      createValidPCSWithGPU(map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}),
+			expectError: false,
+		},
+		{
+			description:   "mnnvl-group added -> error",
+			oldPCS:        createValidPCSWithGPU(nil),
+			newPCS:        createValidPCSWithGPU(map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}),
+			expectError:   true,
+			errorContains: "cannot be added",
+		},
+		{
+			description:   "mnnvl-group changed -> error",
+			oldPCS:        createValidPCSWithGPU(map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}),
+			newPCS:        createValidPCSWithGPU(map[string]string{mnnvl.AnnotationMNNVLGroup: "training"}),
+			expectError:   true,
+			errorContains: "immutable",
+		},
+		// mnnvl-group immutability on clique template
+		{
+			description: "clique mnnvl-group unchanged -> no error",
+			oldPCS:      createValidPCSWithCliqueAnnotations(map[string]string{mnnvl.AnnotationMNNVLGroup: "training"}),
+			newPCS:      createValidPCSWithCliqueAnnotations(map[string]string{mnnvl.AnnotationMNNVLGroup: "training"}),
+			expectError: false,
+		},
+		{
+			description:   "clique mnnvl-group changed -> error",
+			oldPCS:        createValidPCSWithCliqueAnnotations(map[string]string{mnnvl.AnnotationMNNVLGroup: "training"}),
+			newPCS:        createValidPCSWithCliqueAnnotations(map[string]string{mnnvl.AnnotationMNNVLGroup: "inference"}),
+			expectError:   true,
+			errorContains: "immutable",
 		},
 	}
 
@@ -279,7 +361,7 @@ func TestMNNVL_WebhookPipeline_LegacyPCSUpdate(t *testing.T) {
 	}
 }
 
-// createValidPCSWithGPU creates a fully valid PCS with GPU for validation tests.
+// createValidPCSWithGPU creates a fully valid PCS with GPU and PCS-level annotations.
 func createValidPCSWithGPU(annotations map[string]string) *grovecorev1alpha1.PodCliqueSet {
 	return testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
 		WithAnnotations(annotations).
@@ -289,6 +371,23 @@ func createValidPCSWithGPU(annotations map[string]string) *grovecorev1alpha1.Pod
 			testutils.NewPodCliqueTemplateSpecBuilder("worker").
 				WithRoleName("worker").
 				WithMinAvailable(1).
+				WithContainer(testutils.NewGPUContainer("train", "nvidia/cuda:latest", 8)).
+				Build(),
+		).
+		Build()
+}
+
+// createValidPCSWithCliqueAnnotations creates a fully valid PCS with
+// clique-level annotations for testing spec-level validation.
+func createValidPCSWithCliqueAnnotations(cliqueAnnotations map[string]string) *grovecorev1alpha1.PodCliqueSet {
+	return testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
+		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+		WithTerminationDelay(4 * time.Hour).
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder("worker").
+				WithRoleName("worker").
+				WithMinAvailable(1).
+				WithAnnotations(cliqueAnnotations).
 				WithContainer(testutils.NewGPUContainer("train", "nvidia/cuda:latest", 8)).
 				Build(),
 		).

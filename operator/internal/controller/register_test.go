@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 
 	"github.com/stretchr/testify/require"
 	"k8s.io/utils/ptr"
@@ -46,7 +47,7 @@ func TestRegisterControllers(t *testing.T) {
 
 	// Test successful registration with valid configuration
 	t.Run("successful registration", func(t *testing.T) {
-		mgr, err := ctrl.NewManager(cfg, ctrl.Options{})
+		mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: groveclientscheme.Scheme})
 		require.NoError(t, err)
 
 		operatorConfig := configv1alpha1.OperatorConfiguration{

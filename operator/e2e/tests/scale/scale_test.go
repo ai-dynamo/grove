@@ -1,6 +1,6 @@
 //go:build e2e
 
-package tests
+package scale
 
 // /*
 // Copyright 2026 The Grove Authors.
@@ -32,7 +32,9 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/grove/config"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/resources"
+	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+
 	"github.com/ai-dynamo/grove/operator/e2e/measurement"
 	"github.com/ai-dynamo/grove/operator/e2e/measurement/condition"
 	"github.com/ai-dynamo/grove/operator/e2e/measurement/exporter"
@@ -54,9 +56,24 @@ func toOperatorMetadata(m *config.GroveMetadata) *measurement.OperatorMetadata {
 	}
 }
 
+// Logger for the scale tests.
+var Logger = log.NewTestLogger(log.InfoLevel)
+
 const (
 	scaleTestExpectedPods     = 1000
-	scaleTestExpectedReplicas = 500
+	scaleTestExpectedReplicas = 1
+	scaleTestPCSCount         = 1
+	scaleTestWorkerNodes      = 100
+	scaleTestPollInterval     = 100 * time.Millisecond
+	scaleTestTimeout          = 15 * time.Minute
+
+	scaleTestName      = "ScaleTest_1000"
+	scaleTestWorkload  = "scale-test-1000"
+	scaleTestYAMLPath  = "../../yaml/scale-test-1000.yaml"
+	scaleTestNamespace = "default"
+
+	runIDTimeFormat    = "20060102-150405"
+	outputResultsFile = "scale-test-results.json"
 )
 
 func Test_ScaleTest_1000(t *testing.T) {
@@ -66,14 +83,14 @@ func Test_ScaleTest_1000(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), scaleTestTimeout)
 	defer cancel()
 
-	Logger.Info("preparing test cluster with 100 worker nodes")
-	tc, cleanup := testctx.PrepareTest(ctx, t, 100,
+	Logger.Infof("preparing test cluster with %d worker nodes", scaleTestWorkerNodes)
+	tc, cleanup := testctx.PrepareTest(ctx, t, scaleTestWorkerNodes,
 		testctx.WithTimeout(scaleTestTimeout),
 		testctx.WithInterval(scaleTestPollInterval),
 		testctx.WithWorkload(&testctx.WorkloadConfig{
-			Name:         "scale-test-1000",
-			YAMLPath:     "../yaml/scale-test-1000.yaml",
-			Namespace:    "default",
+			Name:         scaleTestWorkload,
+			YAMLPath:     scaleTestYAMLPath,
+			Namespace:    scaleTestNamespace,
 			ExpectedPods: scaleTestExpectedPods,
 		}),
 	)
@@ -84,16 +101,34 @@ func Test_ScaleTest_1000(t *testing.T) {
 		t.Fatalf("failed to read grove metadata: %v", err)
 	}
 
-	runID := fmt.Sprintf("run-%s", time.Now().Format("20060102-150405"))
+	runID := fmt.Sprintf("run-%s", time.Now().Format(runIDTimeFormat))
 	Logger.Infof("test config: runID=%s, namespace=%s, pcsName=%s", runID, tc.Namespace, tc.Workload.Name)
 
-	tracker := measurement.NewTimelineTracker(
-		"ScaleTest_1000",
-		runID,
-		tc.Namespace,
-		1,
+	outputDir := filepath.Join(scaleTestName, runID)
+	if diagDir != "" {
+		outputDir = filepath.Join(diagDir, scaleTestName, runID)
+	}
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		t.Fatalf("failed to create output directory: %v", err)
+	}
+
+	pprofOpt, pprofCleanup := setupPprofHook(ctx, tc.Clients, runID, outputDir, loadPyroscopeConfig())
+	defer pprofCleanup()
+
+	opts := []measurement.TimelineOption{
 		measurement.WithPollInterval(scaleTestPollInterval),
 		measurement.WithLogger(Logger.GetLogr()),
+	}
+	if pprofOpt != nil {
+		opts = append(opts, pprofOpt)
+	}
+
+	tracker := measurement.NewTimelineTracker(
+		scaleTestName,
+		runID,
+		tc.Namespace,
+		scaleTestPCSCount,
+		opts...,
 	)
 
 	tracker.AddPhase(measurement.PhaseDefinition{
@@ -155,33 +190,29 @@ func Test_ScaleTest_1000(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Timeline tracker run failed: %v", err)
 	}
+	tracker.Wait()
 
 	Logger.Info("exporting results")
-	exportResult(t, result, diagDir)
+	exportResult(t, result, outputDir)
 	Logger.Infof("scale test completed successfully in %.1fs", result.TestDurationSeconds)
 }
 
-func exportResult(t *testing.T, result *measurement.TrackerResult, diagDir string) {
+func exportResult(t *testing.T, result *measurement.TrackerResult, outputDir string) {
 	t.Helper()
 
-	filename := fmt.Sprintf("%s-%s.json", result.TestName, result.RunID)
-	path := resolveOutputPath(filename, diagDir)
+	outputPath := filepath.Join(outputDir, outputResultsFile)
+	jsonFile, err := os.Create(outputPath)
+	if err != nil {
+		t.Fatalf("Failed to create JSON output file: %v", err)
+	}
+	defer jsonFile.Close()
 
 	multi := exporter.NewMultiExporter(
 		exporter.NewSummaryExporter(os.Stdout),
-		exporter.NewJSONFileExporter(path),
+		exporter.NewJSONExporter(jsonFile),
 	)
+
 	if err := multi.Export(result); err != nil {
 		t.Fatalf("Failed to export results: %v", err)
 	}
-}
-
-// resolveOutputPath resolves the full output path for filename.
-// Uses diagDir if set; otherwise returns filename as-is (relative to cwd).
-// Writability is not checked — callers must handle create errors.
-func resolveOutputPath(filename, diagDir string) string {
-	if diagDir != "" {
-		return filepath.Join(diagDir, filename)
-	}
-	return filename
 }

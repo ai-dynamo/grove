@@ -31,6 +31,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/rest"
 )
 
 var crdGVR = schema.GroupVersionResource{
@@ -48,8 +49,42 @@ var groveCRDNames = []string{
 	"podgangs.scheduler.grove.io",
 }
 
+// crdInstallerGroveConfig returns a GroveConfig with the crd-installer init container enabled.
+func crdInstallerGroveConfig() *setup.GroveConfig {
+	return &setup.GroveConfig{
+		InstallCRDs: true,
+	}
+}
+
+// defaultGroveConfig returns a GroveConfig with the crd-installer init container disabled (the default).
+func defaultGroveConfig() *setup.GroveConfig {
+	return &setup.GroveConfig{
+		InstallCRDs: false,
+	}
+}
+
+// enableCRDInstaller enables the crd-installer init container via Helm upgrade and returns a cleanup
+// function that restores the default configuration (crdInstaller.enabled=false).
+func enableCRDInstaller(t *testing.T, ctx context.Context, restConfig *rest.Config) func() {
+	t.Helper()
+	chartDir, err := setup.GetGroveChartDir()
+	if err != nil {
+		t.Fatalf("failed to get Grove chart directory: %v", err)
+	}
+	if err := setup.UpdateGroveConfiguration(ctx, restConfig, chartDir, crdInstallerGroveConfig(), Logger); err != nil {
+		t.Fatalf("failed to enable crd-installer: %v", err)
+	}
+	return func() {
+		if err := setup.UpdateGroveConfiguration(ctx, restConfig, chartDir, defaultGroveConfig(), Logger); err != nil {
+			t.Fatalf("failed to restore default Grove config after test: %v", err)
+		}
+	}
+}
+
 // Test_CRD_Installer_AllCRDsExist verifies that all 5 Grove CRDs are present and
 // established in the cluster after the operator has been deployed.
+// This test does not require crdInstaller.enabled=true — CRDs are installed by the
+// Helm crds/ directory on fresh install regardless of the crdInstaller flag.
 func Test_CRD_Installer_AllCRDsExist(t *testing.T) {
 	ctx := context.Background()
 	sharedCluster := setup.SharedCluster(Logger)
@@ -85,11 +120,15 @@ func Test_CRD_Installer_AllCRDsExist(t *testing.T) {
 }
 
 // Test_CRD_Installer_InitContainerCompleted verifies that the crd-installer init container
-// in the operator Pod ran to successful completion (exit code 0).
+// in the operator Pod ran to successful completion (exit code 0) when crdInstaller.enabled=true.
 func Test_CRD_Installer_InitContainerCompleted(t *testing.T) {
 	ctx := context.Background()
 	sharedCluster := setup.SharedCluster(Logger)
-	clientset, _, _ := sharedCluster.GetClients()
+	clientset, restConfig, _ := sharedCluster.GetClients()
+
+	// Enable the crd-installer init container for this test and restore the default when done.
+	disableCRDInstaller := enableCRDInstaller(t, ctx, restConfig)
+	defer disableCRDInstaller()
 
 	pods, err := clientset.CoreV1().Pods(setup.OperatorNamespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "app.kubernetes.io/name=grove-operator",
@@ -126,10 +165,16 @@ func Test_CRD_Installer_InitContainerCompleted(t *testing.T) {
 
 // Test_CRD_Installer_Idempotent verifies that restarting the operator Pod (which re-runs
 // the crd-installer init container) does not corrupt or remove existing CRDs.
+// crdInstaller.enabled=true is required for this test since the idempotency check relies
+// on the init container running again on pod restart.
 func Test_CRD_Installer_Idempotent(t *testing.T) {
 	ctx := context.Background()
 	sharedCluster := setup.SharedCluster(Logger)
 	clientset, restConfig, dynamicClient := sharedCluster.GetClients()
+
+	// Enable the crd-installer init container for this test and restore the default when done.
+	disableCRDInstaller := enableCRDInstaller(t, ctx, restConfig)
+	defer disableCRDInstaller()
 
 	// Get the current operator pod name.
 	pods, err := clientset.CoreV1().Pods(setup.OperatorNamespace).List(ctx, metav1.ListOptions{
