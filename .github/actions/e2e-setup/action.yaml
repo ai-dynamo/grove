@@ -26,48 +26,90 @@ inputs:
 runs:
   using: "composite"
   steps:
-    # NVIDIA self-hosted runners don't have make installed by default
+    # Most tools (Go, k3d, skaffold, helm, make, python3) are pre-installed in the
+    # runner image (eks-grove-e2e-runner). Each step checks first and only installs
+    # if missing, so this action works on both baked and vanilla runners.
+
     - name: Install build-essential for make
       shell: bash
       run: |
-        sudo apt-get update
-        sudo apt install build-essential -y
+        if command -v make &>/dev/null; then
+          echo "make already installed: $(make --version | head -1)"
+        else
+          sudo apt-get update && sudo apt install build-essential -y
+        fi
 
     - name: Set up Go
+      shell: bash
+      run: |
+        REQUIRED="${{ inputs.go-version }}"
+        if command -v go &>/dev/null; then
+          INSTALLED="$(go version | grep -oP '\d+\.\d+\.\d+')"
+          if [[ "${INSTALLED}" == "${REQUIRED}" ]]; then
+            echo "Go ${INSTALLED} already installed — matches required version"
+          else
+            echo "Go ${INSTALLED} installed but ${REQUIRED} required"
+            echo "NEED_GO_SETUP=true" >> "$GITHUB_ENV"
+          fi
+        else
+          echo "Go not found, installing ${REQUIRED}..."
+          echo "NEED_GO_SETUP=true" >> "$GITHUB_ENV"
+        fi
+
+    - name: Set up Go (fallback)
+      if: env.NEED_GO_SETUP == 'true'
       uses: actions/setup-go@v4
       with:
         go-version: ${{ inputs.go-version }}
+        cache: true
+        cache-dependency-path: operator/go.sum
 
     - name: Install k3d
       shell: bash
       run: |
-        curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
-        k3d version
+        if command -v k3d &>/dev/null; then
+          echo "k3d already installed: $(k3d version | head -1)"
+        else
+          curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+          k3d version
+        fi
 
     - name: Install skaffold
       shell: bash
       run: |
-        curl -Lo skaffold https://storage.googleapis.com/skaffold/releases/latest/skaffold-linux-amd64
-        sudo install skaffold /usr/local/bin/
-        skaffold version
+        if command -v skaffold &>/dev/null; then
+          echo "Skaffold already installed: $(skaffold version)"
+        else
+          curl -Lo skaffold https://storage.googleapis.com/skaffold/releases/latest/skaffold-linux-amd64
+          sudo install skaffold /usr/local/bin/
+          skaffold version
+        fi
 
     - name: Install Helm
       shell: bash
       run: |
-        curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-        helm version
+        if command -v helm &>/dev/null; then
+          echo "Helm already installed: $(helm version --short)"
+        else
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm version
+        fi
 
     - name: Install Python3 and pip
       shell: bash
       run: |
-        sudo apt-get update
-        sudo apt-get install -y python3 python3-pip
+        if command -v python3 &>/dev/null && command -v pip3 &>/dev/null; then
+          echo "Python3 already installed: $(python3 --version)"
+        else
+          sudo apt-get update && sudo apt-get install -y python3 python3-pip
+        fi
 
     - name: Install Python dependencies
       shell: bash
       run: |
         echo "Installing Python dependencies..."
         pip3 install --break-system-packages -r operator/hack/e2e-cluster/requirements.txt
+        pip3 install --break-system-packages -r operator/hack/requirements.txt
 
         echo "Verifying Python dependencies..."
-        python3 -c "import docker; import sh; import typer; import pydantic; import rich; print('All dependencies installed successfully')"
+        python3 -c "import docker; import sh; import typer; import pydantic; import pydantic_settings; import rich; import tenacity; print('All dependencies installed successfully')"

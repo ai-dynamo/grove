@@ -55,7 +55,9 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: "1.25.7"
+          go-version: "1.26.1"
+          cache: true
+          cache-dependency-path: operator/go.sum
       - name: test-unit
         run: make test-unit
   build:
@@ -65,7 +67,9 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: "1.25.7"
+          go-version: "1.26.1"
+          cache: true
+          cache-dependency-path: operator/go.sum
       - name: build-operator
         run: make --directory=operator build-operator
       - name: build-initc
@@ -77,7 +81,9 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: "1.25.7"
+          go-version: "1.26.1"
+          cache: true
+          cache-dependency-path: operator/go.sum
       - name: check
         run: make check
 
@@ -96,9 +102,8 @@ jobs:
       github.event_name == 'pull_request' &&
       needs.changes.outputs.e2e-relevant == 'true' &&
       (github.event.pull_request.draft == false || contains(github.event.pull_request.labels.*.name, 'run-e2e'))
-    # use NVIDIA self-hosted runner with 8 vCPUs and 30GB of ram (on AWS)
-    # the tests are unstable using the default runner with 4 vCPUs and 16GB of ram
-    runs-on: cpu-amd-m5-2xlarge
+    # use NVIDIA self-hosted runner setting is on Velonix repository
+    runs-on: prod-grove-e2e-v1
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -108,8 +113,11 @@ jobs:
             test_pattern: "^Test_GS"
           - test_name: rolling_updates
             test_pattern: "^Test_RU"
+          - test_name: ondelete_updates
+            test_pattern: "^Test_OD"
           - test_name: startup_ordering
             test_pattern: "^Test_SO"
+            make_target: "run-e2e-real-full"
           - test_name: Topology_Aware_Scheduling
             test_pattern: "^Test_TAS"
           - test_name: cert_management
@@ -117,6 +125,8 @@ jobs:
           - test_name: auto_mnnvl
             test_pattern: "^Test_AutoMNNVL"
             make_target: "run-e2e-mnnvl-full"
+          - test_name: crd_installer
+            test_pattern: "^Test_CRD_Installer"
     name: E2E - ${{ matrix.test_name }}
     steps:
       # print runner specs so we have a record in case of failures
@@ -133,7 +143,7 @@ jobs:
 
       - name: Run e2e tests - ${{ matrix.test_name }}
         run: |
-          make ${{ matrix.make_target || 'run-e2e-full' }} TEST_PATTERN='${{ matrix.test_pattern }}'
+          make ${{ matrix.make_target || 'run-e2e-full' }} TEST_PATTERN='${{ matrix.test_pattern }}' E2E_CREATE_FLAGS='--dind-memory-mode'
         working-directory: operator
 
       # The test code handles cleanup via Teardown(), but this step provides
@@ -155,3 +165,29 @@ jobs:
           path: operator/e2e-diagnostics/
           if-no-files-found: warn
           retention-days: 7
+
+  # This job runs with the same matrix as 'e2e' when E2E tests are skipped (no relevant
+  # file changes and no 'run-e2e' label). It reports a passing status so that required
+  # branch protection checks are satisfied even for documentation-only PRs.
+  e2e-skip:
+    needs: [changes]
+    if: |
+      github.event_name == 'pull_request' &&
+      needs.changes.outputs.e2e-relevant != 'true' &&
+      !contains(github.event.pull_request.labels.*.name, 'run-e2e')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - test_name: gang_scheduling
+          - test_name: rolling_updates
+          - test_name: startup_ordering
+          - test_name: Topology_Aware_Scheduling
+          - test_name: cert_management
+          - test_name: auto_mnnvl
+          - test_name: crd_installer
+    name: E2E - ${{ matrix.test_name }}
+    steps:
+      - name: Skip E2E (no relevant changes)
+        run: echo "E2E skipped — no changes to operator/ or .github/ and 'run-e2e' label not set"

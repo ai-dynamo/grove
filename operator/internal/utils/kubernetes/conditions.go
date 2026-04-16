@@ -60,3 +60,10 @@ func GetConditionStatus(conditions []metav1.Condition, conditionType string) *me
 	}
 	return &foundCond.Status
 }
+
+// HasCondition checks if the condition of type conditionType is already present in the existing slice of conditions.
+// Returns true if it does else it returns false.
+func HasCondition(existingConditions []metav1.Condition, conditionType string) bool {
+	foundInitializedCond := meta.FindStatusCondition(existingConditions, conditionType)
+	return foundInitializedCond != nil
+}

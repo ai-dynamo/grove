@@ -233,3 +233,50 @@ func TestOnlyOneIsNilWithDifferentTypes(t *testing.T) {
 		})
 	}
 }
+
+func TestOnlyOneIsEmpty(t *testing.T) {
+	testCases := []struct {
+		description string
+		objA        []string
+		objB        []string
+		expected    bool
+	}{
+		{
+			description: "both empty should return false",
+			objA:        []string{},
+			objB:        []string{},
+			expected:    false,
+		},
+		{
+			description: "first empty, second non-empty should return true",
+			objA:        []string{},
+			objB:        []string{"test"},
+			expected:    true,
+		},
+		{
+			description: "first non-empty, second empty should return true",
+			objA:        []string{"test"},
+			objB:        []string{},
+			expected:    true,
+		},
+		{
+			description: "both non-empty should return false",
+			objA:        []string{"test1"},
+			objB:        []string{"test2"},
+			expected:    false,
+		},
+		{
+			description: "nil and empty should return false",
+			objA:        nil,
+			objB:        []string{},
+			expected:    false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			result := OnlyOneIsEmpty(tc.objA, tc.objB)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}

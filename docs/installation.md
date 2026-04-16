@@ -108,6 +108,10 @@ By default, Grove automatically generates and manages TLS certificates for its w
 
 See the [Certificate Management Guide](user-guide/certificate-management.md) for detailed configuration options.
 
+## Auto MNNVL (Multi-Node NVLink)
+
+On clusters with NVIDIA MNNVL support, you can enable automatic Multi-Node NVLink for GPU workloads by setting `config.network.autoMNNVLEnabled: true` in the operator configuration (e.g. via Helm `--set config.network.autoMNNVLEnabled=true`). See the [Auto MNNVL user guide](user-guide/auto-mnnvl.md) for prerequisites, enabling the feature, and usage.
+
 ## Verify Installation
 
 Follow the instructions in the [quickstart guide](quickstart.md) to deploy a PodCliqueSet and validate your installation.
@@ -212,5 +216,5 @@ If you encounter issues not covered here:
 
 Currently the following schedulers support gang scheduling of `PodGang`s created by the Grove operator:
 
-- [NVIDIA/KAI-scheduler](https://github.com/NVIDIA/KAI-Scheduler)
-  - Topology Aware Scheduling (TAS) requires [v0.13.0-rc1](https://github.com/NVIDIA/KAI-Scheduler/releases/tag/v0.13.0-rc1)+
+- [kai-scheduler/kai-scheduler](https://github.com/kai-scheduler/kai-scheduler)
+  - Topology Aware Scheduling (TAS) requires [v0.14.0](https://github.com/kai-scheduler/kai-scheduler/releases/tag/v0.14.0)+

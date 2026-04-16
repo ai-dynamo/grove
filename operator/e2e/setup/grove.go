@@ -1,3 +1,5 @@
+//go:build e2e
+
 // /*
 // Copyright 2025 The Grove Authors.
 //
@@ -30,7 +32,10 @@ import (
 	"runtime"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
+	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"gopkg.in/yaml.v3"
 	"k8s.io/client-go/rest"
 )
@@ -60,9 +65,14 @@ type WebhooksConfig struct {
 // helmValues mirrors the Helm values.yaml structure, using configv1alpha1 types
 // for config.server to ensure JSON field names stay synchronized with the API.
 type helmValues struct {
-	InstallCRDs bool              `json:"installCRDs"`
-	Config      helmConfigValues  `json:"config"`
-	Webhooks    helmWebhookValues `json:"webhooks"`
+	CRDInstaller helmCRDInstallerValues `json:"crdInstaller"`
+	Config       helmConfigValues       `json:"config"`
+	Webhooks     helmWebhookValues      `json:"webhooks"`
+}
+
+// helmCRDInstallerValues mirrors the crdInstaller section of values.yaml.
+type helmCRDInstallerValues struct {
+	Enabled bool `json:"enabled"`
 }
 
 type helmConfigValues struct {
@@ -86,7 +96,7 @@ type helmWebhookAnnotations struct {
 func (c *GroveConfig) toHelmValues() (map[string]interface{}, error) {
 	anns := helmWebhookAnnotations{Annotations: c.Webhooks.Annotations}
 	hv := helmValues{
-		InstallCRDs: c.InstallCRDs,
+		CRDInstaller: helmCRDInstallerValues{Enabled: c.InstallCRDs},
 		Config: helmConfigValues{
 			Server: configv1alpha1.ServerConfiguration{
 				Webhooks: configv1alpha1.WebhookServer{
@@ -106,7 +116,7 @@ func (c *GroveConfig) toHelmValues() (map[string]interface{}, error) {
 		},
 	}
 
-	return utils.ConvertTypedToUnstructured(hv)
+	return k8s.ConvertTypedToUnstructured(hv)
 }
 
 // UpdateGroveConfiguration updates the Grove operator configuration.
@@ -120,7 +130,7 @@ func (c *GroveConfig) toHelmValues() (map[string]interface{}, error) {
 // Use GetGroveChartDir() to obtain the default chart directory path.
 //
 // This approach avoids wasteful rebuilds while staying compatible with the Skaffold installation.
-func UpdateGroveConfiguration(ctx context.Context, restConfig *rest.Config, chartDir string, config *GroveConfig, logger *utils.Logger) error {
+func UpdateGroveConfiguration(ctx context.Context, restConfig *rest.Config, chartDir string, config *GroveConfig, logger *log.Logger) error {
 	chartVersion, err := getChartVersion(chartDir)
 	if err != nil {
 		return fmt.Errorf("failed to get chart version: %w", err)
@@ -154,7 +164,12 @@ func UpdateGroveConfiguration(ctx context.Context, restConfig *rest.Config, char
 	}
 
 	// Wait for Grove operator pod to be ready after upgrade
-	if err := utils.WaitForPodsInNamespace(ctx, OperatorNamespace, restConfig, 1, defaultPollTimeout, defaultPollInterval, logger); err != nil {
+	waitClients, err := clients.NewClients(restConfig)
+	if err != nil {
+		return fmt.Errorf("create clients for pod wait: %w", err)
+	}
+	podsManager := pods.NewPodManager(waitClients, logger)
+	if err := podsManager.WaitForReadyInNamespace(ctx, OperatorNamespace, 1, defaultPollTimeout, defaultPollInterval); err != nil {
 		return fmt.Errorf("grove operator pod not ready after upgrade: %w", err)
 	}
 

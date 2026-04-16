@@ -39,11 +39,10 @@ make run-e2e
 ```
 
 The test suite will:
-1. Copy CRDs to Helm charts (via `prepare-charts.sh`)
-2. Create a k3d cluster with 28 worker nodes
-3. Install Grove, Kai Scheduler, and GPU Operator
-4. Run all e2e testing suites
-5. Clean up the cluster
+1. Create a k3d cluster with 28 worker nodes
+2. Install Grove, Kai Scheduler, and GPU Operator
+3. Run all e2e testing suites
+4. Clean up the cluster
 
 ### Running in CI/CD
 
@@ -82,8 +81,8 @@ To update a dependency version:
 helmCharts:
   kaiScheduler:
     releaseName: kai-scheduler
-    chartRef: oci://ghcr.io/nvidia/kai-scheduler/kai-scheduler
-    version: v0.9.4  # <- Update this version
+    chartRef: oci://ghcr.io/kai-scheduler/kai-scheduler/kai-scheduler
+    version: v0.14.0  # <- Update this version
     namespace: kai-scheduler
 ```
 
@@ -97,14 +96,6 @@ images:
 ```
 
 ## Troubleshooting
-
-### "No matches for kind PodCliqueSet" Error
-
-This means CRDs weren't copied to the Helm charts. The `make run-e2e` target automatically runs `prepare-charts.sh`, but if you're running tests manually:
-```bash
-./hack/prepare-charts.sh
-cd e2e && go clean -testcache && go test -tags=e2e ./tests/... -v ---timeout 45m
-```
 
 ### Stale k3d Cluster
 

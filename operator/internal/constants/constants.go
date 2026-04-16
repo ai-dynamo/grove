@@ -81,6 +81,8 @@ const (
 const (
 	// ReasonPodGangCreateOrUpdateSuccessful is an event reason which represents a successful creation or updating of a PodGang.
 	ReasonPodGangCreateOrUpdateSuccessful = "PodGangCreateOrUpdateSuccessful"
+	// ReasonPodGangCreateFailed is an event reason which represents that the creation of PodGang failed.
+	ReasonPodGangCreateFailed = "PodGangCreateFailed"
 	// ReasonPodGangCreateOrUpdateFailed is an event reason which represents that the creation or updating of PodGang failed.
 	ReasonPodGangCreateOrUpdateFailed = "PodGangCreateOrUpdateFailed"
 	// ReasonPodGangDeleteSuccessful is an event reason which represents a successful deletion of a PodGang.

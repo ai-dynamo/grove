@@ -28,6 +28,7 @@ GO_ADD_LICENSE    := $(TOOLS_BIN_DIR)/addlicense
 SKAFFOLD          := $(TOOLS_BIN_DIR)/skaffold
 CRD_REF_DOCS      := $(TOOLS_BIN_DIR)/crd-ref-docs
 MDTOC			  := $(TOOLS_BIN_DIR)/mdtoc
+GOTESTSUM         := $(TOOLS_BIN_DIR)/gotestsum
 
 # default tool versions
 # -------------------------------------------------------------------------
@@ -40,6 +41,7 @@ GO_ADD_LICENSE_VERSION    ?= v1.2.0
 SKAFFOLD_VERSION          ?= v2.16.1
 CRD_REF_DOCS_VERSION      ?= v0.2.0
 MDTOC_VERSION             ?= latest
+GOTESTSUM_VERSION         ?= latest
 
 export PATH := $(abspath $(TOOLS_BIN_DIR)):$(PATH)
 
@@ -61,7 +63,7 @@ $(CONTROLLER_GEN):
 	GOBIN=$(abspath $(TOOLS_BIN_DIR)) go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION)
 
 $(SETUP_ENVTEST):
-	GOBIN=$(abspath $(TOOLS_BIN_DIR)) go install sigs.k8s.io/controller-runtime/tools/setup-envtest
+	GOBIN=$(abspath $(TOOLS_BIN_DIR)) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
 
 $(GOLANGCI_LINT):
 	@# CGO_ENABLED has to be set to 1 in order for golangci-lint to be able to load plugins
@@ -91,3 +93,6 @@ $(CRD_REF_DOCS):
 
 $(MDTOC):
 	GOBIN=$(abspath $(TOOLS_BIN_DIR)) go install sigs.k8s.io/mdtoc@latest
+
+$(GOTESTSUM):
+	GOBIN=$(abspath $(TOOLS_BIN_DIR)) go install gotest.tools/gotestsum@$(GOTESTSUM_VERSION)

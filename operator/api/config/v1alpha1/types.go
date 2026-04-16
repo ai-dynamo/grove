@@ -20,6 +20,7 @@ import (
 	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // LogFormat defines the format of the log.
@@ -51,6 +52,62 @@ var (
 	AllLogFormats = []LogFormat{LogFormatJSON, LogFormatText}
 )
 
+// SchedulerName defines the name of the scheduler backend (used in OperatorConfiguration scheduler.profiles[].name).
+type SchedulerName string
+
+const (
+	// SchedulerNameKai is the KAI scheduler backend.
+	SchedulerNameKai SchedulerName = "kai-scheduler"
+	// SchedulerNameKube is the profile name for the Kubernetes default scheduler in OperatorConfiguration.
+	SchedulerNameKube SchedulerName = "default-scheduler"
+)
+
+var (
+	// SupportedSchedulerNames is the list of profile names allowed in scheduler.profiles[].name.
+	SupportedSchedulerNames = []SchedulerName{SchedulerNameKai, SchedulerNameKube}
+)
+
+// SchedulerConfiguration configures scheduler profiles and which is the default.
+type SchedulerConfiguration struct {
+	// Profiles is the list of scheduler profiles. Each profile has a backend name and an optional config.
+	// The default-scheduler backend is always enabled to ensure that the kubernetes default scheduler is always enabled and supported.
+	// Use profile name "default-scheduler" to configure or set it as default.
+	// Valid profile names: "default-scheduler", "kai-scheduler". Use defaultProfileName to designate the default backend.
+	// +optional
+	Profiles []SchedulerProfile `json:"profiles,omitempty"`
+	// DefaultProfileName is the name of the default scheduler profile. If unset, defaulting sets it to "default-scheduler"
+	// which is the kubernetes default scheduler.
+	// +optional
+	DefaultProfileName string `json:"defaultProfileName,omitempty"`
+}
+
+// SchedulerProfile defines a scheduler backend profile with optional backend-specific config.
+type SchedulerProfile struct {
+	// Name is the scheduler profile name.
+	// For the Kubernetes default scheduler use the standard "default-scheduler".
+	// Ensure that the name chosen is a valid scheduler name. The name will also be directly set in `Pod.Spec.SchedulerName`.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Enum=kai-scheduler;default-scheduler
+	Name SchedulerName `json:"name"`
+
+	// Config holds backend-specific options. The operator unmarshals it into the config type for this backend (see backend config types).
+	// +optional
+	Config *runtime.RawExtension `json:"config,omitempty"`
+}
+
+// KaiSchedulerConfiguration defines the configuration for the kai-scheduler backend.
+type KaiSchedulerConfiguration struct {
+	// Reserved for future kai-scheduler-specific options.
+}
+
+// KubeSchedulerConfig holds the configuration for the default scheduler.
+// Used when unmarshalling SchedulerProfile.Config for default-scheduler.
+type KubeSchedulerConfig struct {
+	// GangScheduling indicates if Gang scheduling capability is enabled.
+	// +optional
+	GangScheduling bool `json:"gangScheduling,omitempty"`
+}
+
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // OperatorConfiguration defines the configuration for the Grove operator.
@@ -67,6 +124,8 @@ type OperatorConfiguration struct {
 	TopologyAwareScheduling TopologyAwareSchedulingConfiguration `json:"topologyAwareScheduling"`
 	// +optional
 	Network NetworkAcceleration `json:"network,omitempty"` // Network is the configuration for network acceleration features like MNNVL.
+	// Scheduler configures which scheduler backends are active and their per-backend options.
+	Scheduler SchedulerConfiguration `json:"scheduler"`
 }
 
 // LeaderElectionConfiguration defines the configuration for the leader election.
@@ -193,6 +252,8 @@ type ControllerConfiguration struct {
 	PodClique PodCliqueControllerConfiguration `json:"podClique"`
 	// PodCliqueScalingGroup is the configuration for the PodCliqueScalingGroup controller.
 	PodCliqueScalingGroup PodCliqueScalingGroupControllerConfiguration `json:"podCliqueScalingGroup"`
+	// PodGang is the configuration for the PodGang controller.
+	PodGang PodGangControllerConfiguration `json:"podGang"`
 }
 
 // PodCliqueSetControllerConfiguration defines the configuration for the PodCliqueSet controller.
@@ -211,6 +272,13 @@ type PodCliqueControllerConfiguration struct {
 
 // PodCliqueScalingGroupControllerConfiguration defines the configuration for the PodCliqueScalingGroup controller.
 type PodCliqueScalingGroupControllerConfiguration struct {
+	// ConcurrentSyncs is the number of workers used for the controller to concurrently work on events.
+	// +optional
+	ConcurrentSyncs *int `json:"concurrentSyncs,omitempty"`
+}
+
+// PodGangControllerConfiguration defines the configuration for the PodGang controller.
+type PodGangControllerConfiguration struct {
 	// ConcurrentSyncs is the number of workers used for the controller to concurrently work on events.
 	// +optional
 	ConcurrentSyncs *int `json:"concurrentSyncs,omitempty"`

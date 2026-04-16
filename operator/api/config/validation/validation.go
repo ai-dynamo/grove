@@ -34,6 +34,7 @@ import (
 func ValidateOperatorConfiguration(config *configv1alpha1.OperatorConfiguration) field.ErrorList {
 	allErrs := field.ErrorList{}
 	allErrs = append(allErrs, validateLogConfiguration(config)...)
+	allErrs = append(allErrs, validateSchedulerConfiguration(&config.Scheduler, field.NewPath("scheduler"))...)
 	allErrs = append(allErrs, validateLeaderElectionConfiguration(config.LeaderElection, field.NewPath("leaderElection"))...)
 	allErrs = append(allErrs, validateClientConnectionConfiguration(config.ClientConnection, field.NewPath("clientConnection"))...)
 	allErrs = append(allErrs, validateControllerConfiguration(config.Controllers, field.NewPath("controllers"))...)
@@ -48,6 +49,38 @@ func validateLogConfiguration(config *configv1alpha1.OperatorConfiguration) fiel
 	}
 	if len(strings.TrimSpace(string(config.LogFormat))) > 0 && !sets.New(configv1alpha1.AllLogFormats...).Has(config.LogFormat) {
 		allErrs = append(allErrs, field.NotSupported(field.NewPath("logFormat"), config.LogFormat, configv1alpha1.AllLogFormats))
+	}
+	return allErrs
+}
+
+func validateSchedulerConfiguration(scheduler *configv1alpha1.SchedulerConfiguration, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	profilesPath := fldPath.Child("profiles")
+	defaultProfileNamePath := fldPath.Child("defaultProfileName")
+	if len(scheduler.Profiles) == 0 {
+		allErrs = append(allErrs, field.Required(profilesPath, "at least one scheduler profile is required"))
+	}
+	seenNames := sets.New[configv1alpha1.SchedulerName]()
+	for i, p := range scheduler.Profiles {
+		idxPath := profilesPath.Index(i)
+		if len(strings.TrimSpace(string(p.Name))) == 0 {
+			allErrs = append(allErrs, field.Required(idxPath.Child("name"), "scheduler profile name is required"))
+		} else if !slices.Contains(configv1alpha1.SupportedSchedulerNames, p.Name) {
+			allErrs = append(allErrs, field.NotSupported(idxPath.Child("name"), p.Name, configv1alpha1.SupportedSchedulerNames))
+		} else {
+			if seenNames.Has(p.Name) {
+				allErrs = append(allErrs, field.Duplicate(idxPath.Child("name"), p.Name))
+			}
+			seenNames.Insert(p.Name)
+		}
+	}
+	if !seenNames.Has(configv1alpha1.SchedulerNameKube) {
+		allErrs = append(allErrs, field.Required(profilesPath, fmt.Sprintf("the %q scheduler profile is required", configv1alpha1.SchedulerNameKube)))
+	}
+	if strings.TrimSpace(scheduler.DefaultProfileName) == "" {
+		allErrs = append(allErrs, field.Required(defaultProfileNamePath, "default scheduler profile name is required"))
+	} else if !seenNames.Has(configv1alpha1.SchedulerName(scheduler.DefaultProfileName)) {
+		allErrs = append(allErrs, field.Invalid(defaultProfileNamePath, scheduler.DefaultProfileName, "default profile must be one of the configured profiles"))
 	}
 	return allErrs
 }
@@ -84,19 +117,33 @@ func validateClientConnectionConfiguration(cfg configv1alpha1.ClientConnectionCo
 func validateControllerConfiguration(controllerCfg configv1alpha1.ControllerConfiguration, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	allErrs = append(allErrs, validatePodCliqueSetControllerConfiguration(controllerCfg.PodCliqueSet, fldPath.Child("podCliqueSet"))...)
-	allErrs = append(allErrs, validatePodCliqueScalingGroupConfiguration(controllerCfg.PodCliqueScalingGroup, fldPath.Child("podCliqueSet"))...)
+	allErrs = append(allErrs, validatePodCliqueScalingGroupConfiguration(controllerCfg.PodCliqueScalingGroup, fldPath.Child("podCliqueScalingGroup"))...)
+	allErrs = append(allErrs, validatePodCliqueControllerConfiguration(controllerCfg.PodClique, fldPath.Child("podClique"))...)
+	allErrs = append(allErrs, validatePodGangControllerConfiguration(controllerCfg.PodGang, fldPath.Child("podGang"))...)
 	return allErrs
 }
 
-func validatePodCliqueSetControllerConfiguration(pcsCfg configv1alpha1.PodCliqueSetControllerConfiguration, fldPath *field.Path) field.ErrorList {
+func validatePodCliqueSetControllerConfiguration(pcsControllerCfg configv1alpha1.PodCliqueSetControllerConfiguration, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-	allErrs = append(allErrs, validateConcurrentSyncs(pcsCfg.ConcurrentSyncs, fldPath)...)
+	allErrs = append(allErrs, validateConcurrentSyncs(pcsControllerCfg.ConcurrentSyncs, fldPath)...)
 	return allErrs
 }
 
-func validatePodCliqueScalingGroupConfiguration(pcsgCfg configv1alpha1.PodCliqueScalingGroupControllerConfiguration, fldPath *field.Path) field.ErrorList {
+func validatePodCliqueScalingGroupConfiguration(pcsgControllerCfg configv1alpha1.PodCliqueScalingGroupControllerConfiguration, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-	allErrs = append(allErrs, validateConcurrentSyncs(pcsgCfg.ConcurrentSyncs, fldPath)...)
+	allErrs = append(allErrs, validateConcurrentSyncs(pcsgControllerCfg.ConcurrentSyncs, fldPath)...)
+	return allErrs
+}
+
+func validatePodCliqueControllerConfiguration(pclqControllerConfig configv1alpha1.PodCliqueControllerConfiguration, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	allErrs = append(allErrs, validateConcurrentSyncs(pclqControllerConfig.ConcurrentSyncs, fldPath)...)
+	return allErrs
+}
+
+func validatePodGangControllerConfiguration(pgControllerCfg configv1alpha1.PodGangControllerConfiguration, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	allErrs = append(allErrs, validateConcurrentSyncs(pgControllerCfg.ConcurrentSyncs, fldPath)...)
 	return allErrs
 }
 

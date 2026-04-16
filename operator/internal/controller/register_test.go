@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 
 	"github.com/stretchr/testify/require"
 	"k8s.io/utils/ptr"
@@ -46,43 +47,28 @@ func TestRegisterControllers(t *testing.T) {
 
 	// Test successful registration with valid configuration
 	t.Run("successful registration", func(t *testing.T) {
-		mgr, err := ctrl.NewManager(cfg, ctrl.Options{})
+		mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: groveclientscheme.Scheme})
 		require.NoError(t, err)
 
-		controllerConfig := configv1alpha1.ControllerConfiguration{
-			PodCliqueSet: configv1alpha1.PodCliqueSetControllerConfiguration{
-				ConcurrentSyncs: ptr.To(1),
-			},
-			PodClique: configv1alpha1.PodCliqueControllerConfiguration{
-				ConcurrentSyncs: ptr.To(1),
-			},
-			PodCliqueScalingGroup: configv1alpha1.PodCliqueScalingGroupControllerConfiguration{
-				ConcurrentSyncs: ptr.To(1),
+		operatorConfig := configv1alpha1.OperatorConfiguration{
+			Scheduler: configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKai}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKai)},
+			Controllers: configv1alpha1.ControllerConfiguration{
+				PodCliqueSet: configv1alpha1.PodCliqueSetControllerConfiguration{
+					ConcurrentSyncs: ptr.To(1),
+				},
+				PodClique: configv1alpha1.PodCliqueControllerConfiguration{
+					ConcurrentSyncs: ptr.To(1),
+				},
+				PodCliqueScalingGroup: configv1alpha1.PodCliqueScalingGroupControllerConfiguration{
+					ConcurrentSyncs: ptr.To(1),
+				},
+				PodGang: configv1alpha1.PodGangControllerConfiguration{
+					ConcurrentSyncs: ptr.To(1),
+				},
 			},
 		}
 
-		err = RegisterControllers(mgr, controllerConfig, configv1alpha1.TopologyAwareSchedulingConfiguration{}, configv1alpha1.NetworkAcceleration{})
-		require.NoError(t, err)
-	})
-
-	// Test registration with different concurrency settings
-	t.Run("registration with higher concurrency", func(t *testing.T) {
-		mgr, err := ctrl.NewManager(cfg, ctrl.Options{})
-		require.NoError(t, err)
-
-		controllerConfig := configv1alpha1.ControllerConfiguration{
-			PodCliqueSet: configv1alpha1.PodCliqueSetControllerConfiguration{
-				ConcurrentSyncs: ptr.To(5),
-			},
-			PodClique: configv1alpha1.PodCliqueControllerConfiguration{
-				ConcurrentSyncs: ptr.To(10),
-			},
-			PodCliqueScalingGroup: configv1alpha1.PodCliqueScalingGroupControllerConfiguration{
-				ConcurrentSyncs: ptr.To(3),
-			},
-		}
-
-		err = RegisterControllers(mgr, controllerConfig, configv1alpha1.TopologyAwareSchedulingConfiguration{}, configv1alpha1.NetworkAcceleration{})
+		err = RegisterControllers(mgr, &operatorConfig)
 		require.NoError(t, err)
 	})
 }

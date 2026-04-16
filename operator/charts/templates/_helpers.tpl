@@ -30,6 +30,19 @@ config.yaml: |
       concurrentSyncs: {{ .Values.config.controllers.podClique.concurrentSyncs }}
     podCliqueScalingGroup:
       concurrentSyncs: {{ .Values.config.controllers.podCliqueScalingGroup.concurrentSyncs }}
+  {{- if and .Values.config.scheduler .Values.config.scheduler.profiles }}
+  scheduler:
+    {{- if .Values.config.scheduler.defaultProfileName }}
+    defaultProfileName: {{ .Values.config.scheduler.defaultProfileName }}
+    {{- end }}
+    profiles:
+    {{- range .Values.config.scheduler.profiles }}
+    - name: {{ .name }}
+      {{- if hasKey . "config" }}
+      config: {{ toYaml .config | nindent 4 }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
   {{- if .Values.config.debugging }}
   debugging:
     enableProfiling: {{ .Values.config.debugging.enableProfiling }}

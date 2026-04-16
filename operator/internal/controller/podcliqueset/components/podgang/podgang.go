@@ -19,6 +19,7 @@ package podgang
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -27,11 +28,13 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -49,6 +52,7 @@ const (
 	errCodeComputeExistingPodGangs    grovecorev1alpha1.ErrorCode = "ERR_COMPUTE_EXISTING_PODGANG"
 	errCodeSetControllerReference     grovecorev1alpha1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
 	errCodeCreateOrPatchPodGang       grovecorev1alpha1.ErrorCode = "ERR_CREATE_OR_PATCH_PODGANG"
+	errCodeCreatePodGang              grovecorev1alpha1.ErrorCode = "ERR_CREATE_PODGANG"
 	errCodeGetClusterTopologyLevels   grovecorev1alpha1.ErrorCode = "ERR_GET_CLUSTER_TOPOLOGY_LEVELS"
 )
 
@@ -89,21 +93,16 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 }
 
 // Sync creates, updates, or deletes PodGang resources to match the desired state.
+// NEW FLOW: PodGangs are created with empty podReferences before Pods are created.
 func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
 	logger.Info("Syncing PodGang resources")
 	sc, err := r.prepareSyncFlow(ctx, logger, pcs)
 	if err != nil {
 		return err
 	}
-	result := r.runSyncFlow(sc)
+	result := r.runSyncFlow(ctx, sc)
 	if result.hasErrors() {
 		return result.getAggregatedError()
-	}
-	if result.hasPodGangsPendingCreation() {
-		return groveerr.New(groveerr.ErrCodeRequeueAfter,
-			component.OperationSync,
-			fmt.Sprintf("PodGangs pending creation: %v", result.podsGangsPendingCreation),
-		)
 	}
 	return nil
 }
@@ -128,6 +127,13 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjectMeta
 // buildResource configures a PodGang with pod groups and priority.
 func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGangInfo, pg *groveschedulerv1alpha1.PodGang) error {
 	pg.Labels = getLabels(pcs.Name)
+	// Set scheduler name so the podgang controller can resolve the correct backend
+	if schedName := getSchedulerNameForPCS(pcs); schedName != "" {
+		if pg.Labels == nil {
+			pg.Labels = make(map[string]string)
+		}
+		pg.Labels[apicommon.LabelSchedulerName] = schedName
+	}
 	if r.tasConfig.Enabled {
 		if pg.Annotations == nil {
 			pg.Annotations = make(map[string]string)
@@ -146,7 +152,31 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGa
 	pg.Spec.PriorityClassName = pcs.Spec.Template.PriorityClassName
 	pg.Spec.TopologyConstraint = pgi.topologyConstraint
 	pg.Spec.TopologyConstraintGroupConfigs = pgi.pcsgTopologyConstraints
+
 	return nil
+}
+
+func createPodGroupsForPodGang(namespace string, pgInfo *podGangInfo) []groveschedulerv1alpha1.PodGroup {
+	podGroups := lo.Map(pgInfo.pclqs, func(pi pclqInfo, _ int) groveschedulerv1alpha1.PodGroup {
+		namespacedNames := lo.Map(pi.associatedPodNames, func(associatedPodName string, _ int) groveschedulerv1alpha1.NamespacedName {
+			return groveschedulerv1alpha1.NamespacedName{
+				Namespace: namespace,
+				Name:      associatedPodName,
+			}
+		})
+		// sorting the slice of NamespaceName. This prevents unnecessary updates to the PodGang resource if the only thing
+		// that is difference is the order of NamespaceNames.
+		sort.Slice(namespacedNames, func(i, j int) bool {
+			return namespacedNames[i].Name < namespacedNames[j].Name
+		})
+		return groveschedulerv1alpha1.PodGroup{
+			Name:               pi.fqn,
+			PodReferences:      namespacedNames,
+			MinReplicas:        pi.minAvailable,
+			TopologyConstraint: pi.topologyConstraint,
+		}
+	})
+	return podGroups
 }
 
 // getPodGangSelectorLabels returns labels for selecting all PodGangs of a PodCliqueSet.
@@ -175,4 +205,31 @@ func getLabels(pcsName string) map[string]string {
 		map[string]string{
 			apicommon.LabelComponentKey: apicommon.LabelComponentNamePodGang,
 		})
+}
+
+// getSchedulerNameForPCS returns the scheduler backend name for the PodCliqueSet:
+// the template's schedulerName if set (same across all cliques per validation), else the default backend.
+func getSchedulerNameForPCS(pcs *grovecorev1alpha1.PodCliqueSet) string {
+	for _, c := range pcs.Spec.Template.Cliques {
+		if c != nil && c.Spec.PodSpec.SchedulerName != "" {
+			return c.Spec.PodSpec.SchedulerName
+		}
+	}
+	if def := manager.GetDefault(); def != nil {
+		return def.Name()
+	}
+	return ""
+}
+
+// setOrUpdateInitializedCondition sets or updates the PodGangInitialized condition on the PodGang status.
+func setOrUpdateInitializedCondition(pg *groveschedulerv1alpha1.PodGang, status metav1.ConditionStatus, reason, message string) {
+	condition := metav1.Condition{
+		Type:               string(groveschedulerv1alpha1.PodGangConditionTypeInitialized),
+		Status:             status,
+		ObservedGeneration: pg.Generation,
+		LastTransitionTime: metav1.Now(),
+		Reason:             reason,
+		Message:            message,
+	}
+	meta.SetStatusCondition(&pg.Status.Conditions, condition)
 }

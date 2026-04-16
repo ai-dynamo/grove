@@ -44,4 +44,6 @@ func SetObjectDefaults_OperatorConfiguration(in *OperatorConfiguration) {
 	SetDefaults_PodCliqueSetControllerConfiguration(&in.Controllers.PodCliqueSet)
 	SetDefaults_PodCliqueControllerConfiguration(&in.Controllers.PodClique)
 	SetDefaults_PodCliqueScalingGroupControllerConfiguration(&in.Controllers.PodCliqueScalingGroup)
+	SetDefaults_PodGangControllerConfiguration(&in.Controllers.PodGang)
+	SetDefaults_SchedulerConfiguration(&in.Scheduler)
 }

@@ -55,7 +55,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25.7'
+          go-version: '1.26.1'
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -83,6 +83,7 @@ jobs:
       - name: Build Helm chart
         run: |
           sed -i "s#repository: grove-operator#repository: $DOCKER_REGISTRY/grove-operator#" operator/charts/values.yaml
+          sed -i "s#repository: grove-install-crds#repository: $DOCKER_REGISTRY/grove-install-crds#" operator/charts/values.yaml
           sed -i "s#tag:.*#tag: $PACKAGE_VERSION#" operator/charts/values.yaml
           sed -i "s#value: grove-initc#value: $DOCKER_REGISTRY/grove-initc#" operator/charts/values.yaml
           helm package ./operator/charts --app-version $PACKAGE_VERSION --version $PACKAGE_VERSION

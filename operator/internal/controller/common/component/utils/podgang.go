@@ -45,3 +45,14 @@ func GetPodGang(ctx context.Context, cl client.Client, podGangName, namespace st
 	}
 	return podGang, nil
 }
+
+// GetExistingPodGangs fetches all existing PodGangs that are managed by Grove in the given namespace.
+func GetExistingPodGangs(ctx context.Context, cl client.Client, pcsObjectMeta metav1.ObjectMeta, namespace string) ([]groveschedulerv1alpha1.PodGang, error) {
+	podGangs := groveschedulerv1alpha1.PodGangList{}
+	if err := cl.List(ctx, &podGangs,
+		client.InNamespace(namespace),
+		client.MatchingLabels(GetPodGangSelectorLabels(pcsObjectMeta))); err != nil {
+		return nil, err
+	}
+	return podGangs.Items, nil
+}

@@ -157,18 +157,18 @@ Users may not understand why their spec changes are not being applied automatica
 type UpdateStrategyType string
 
 const (
-    // RollingRecreateStrategyType indicates that pods and/or PodCliques will be progressively
+    // RollingRecreateStrategy indicates that pods and/or PodCliques will be progressively
     // deleted and created one at a time, when the template changes.
     // For standalone PodCliques, pods are deleted and created one at a time. 
     // For PodCliques belonging to PodCliqueScalingGroups, replicas of the
     // PodCliqueScalingGroup (i.e. a set of PodCliques) are deleted and created one at a time.
     // This is the default update strategy.
-    RollingRecreateStrategyType UpdateStrategyType = "RollingRecreate"
+    RollingRecreateStrategy UpdateStrategyType = "RollingRecreate"
     
-    // OnDeleteStrategyType indicates that pods will only be updated when
+    // OnDeleteStrategy indicates that pods will only be updated when
     // they are manually deleted. Changes to templates do not automatically
     // trigger pod deletions.
-    OnDeleteStrategyType UpdateStrategyType = "OnDelete"
+    OnDeleteStrategy UpdateStrategyType = "OnDelete"
 )
 ```
 

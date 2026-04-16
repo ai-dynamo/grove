@@ -88,6 +88,12 @@ config:
       concurrentSyncs: 3
     podCliqueScalingGroup:
       concurrentSyncs: 3
+  # Scheduler configures which scheduler backends are active. default-scheduler is always available.
+  # List profiles to enable backends; set defaultProfileName to the profile that is the default backend.
+  scheduler:
+    profiles:
+      - name: default-scheduler
+      - name: kai-scheduler
   logLevel: info
   logFormat: json
   topologyAwareScheduling:
@@ -213,4 +219,17 @@ priorityClass:
   enabled: false
   name: grove-operator-priority-critical
   value: 999999550
+
+crdInstaller:
+  # enabled controls whether the operator automatically installs/upgrades Grove CRDs on startup
+  # via an init container. Defaults to false — CRDs are installed by Helm on fresh install via
+  # the crds/ directory, and upgrades are managed manually by the user.
+  # Set to true to opt in to automated CRD upgrades on every helm upgrade.
+  # WARNING: when enabled, the operator ServiceAccount receives apiextensions.k8s.io permissions.
+  enabled: false
+  image:
+    repository: grove-install-crds
+    # Overrides the image tag whose default is the chart appVersion.
+    tag: v0.1.0-dev
+    pullPolicy: IfNotPresent
 
