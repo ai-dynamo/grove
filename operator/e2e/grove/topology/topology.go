@@ -251,6 +251,18 @@ func (tv *TopologyVerifier) EnsureClusterTopology(ctx context.Context, name stri
 	return nil
 }
 
+// EnsureClusterTopology creates a ClusterTopology if it does not already exist.
+// If it already exists it is left unchanged. This is safe to call from multiple
+// tests that share the same cluster-scoped ClusterTopology.
+func (tv *TopologyVerifier) EnsureClusterTopology(ctx context.Context, name string, levels []corev1alpha1.TopologyLevel) error {
+	err := tv.CreateClusterTopology(ctx, name, levels)
+	if apierrors.IsAlreadyExists(err) {
+		tv.logger.Infof("ClusterTopology %s already exists, skipping creation", name)
+		return nil
+	}
+	return err
+}
+
 // CreateClusterTopologyWithSchedulerReferences creates a ClusterTopology CR with levels and schedulerReferences.
 func (tv *TopologyVerifier) CreateClusterTopologyWithSchedulerReferences(ctx context.Context, name string, levels []corev1alpha1.TopologyLevel, refs []corev1alpha1.SchedulerReference) error {
 	ct := &corev1alpha1.ClusterTopology{

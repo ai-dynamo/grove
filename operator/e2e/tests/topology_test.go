@@ -39,6 +39,25 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// groveTopologyLevels is the standard 4-level topology used by TAS1-TAS16.
+// These levels match the node labels applied by the e2e cluster setup.
+var groveTopologyLevels = []corev1alpha1.TopologyLevel{
+	{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
+	{Domain: corev1alpha1.TopologyDomainBlock, Key: setup.TopologyLabelBlock},
+	{Domain: corev1alpha1.TopologyDomainRack, Key: setup.TopologyLabelRack},
+	{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
+}
+
+// ensureGroveTopology creates the shared "grove-topology" ClusterTopology if it does not already
+// exist. TAS1-TAS16 all reference this topology; TAS1 is expected to run first and create it, but
+// each test calls this so that tests can also run in isolation.
+func ensureGroveTopology(ctx context.Context, t *testing.T, tv *topology.TopologyVerifier) {
+	t.Helper()
+	if err := tv.EnsureClusterTopology(ctx, "grove-topology", groveTopologyLevels); err != nil {
+		t.Fatalf("Failed to ensure grove-topology ClusterTopology: %v", err)
+	}
+}
+
 // DeployWorkloadAndGetPods deploys workload, waits for pods to be ready, and returns the pod list
 func DeployWorkloadAndGetPods(tc *testctx.TestContext, expectedPods int) ([]v1.Pod, error) {
 	if _, err := tc.DeployAndVerifyWorkload(); err != nil {
@@ -71,11 +90,13 @@ func GetPodGroupOrFail(t *testing.T, tc *testctx.TestContext, podGroupVerifier *
 	return podGroup
 }
 
-// Test_TAS1_TopologyInfrastructure verifies that the operator creates ClusterTopology and KAI Topology CRs at startup
-// 1. Verify ClusterTopology CR exists with the correct 4-level hierarchy (zone, block, rack, host)
-// 2. Verify KAI Topology CR exists with matching levels
-// 3. Verify KAI Topology has owner reference to ClusterTopology
-// 4. Verify worker nodes have topology labels
+// Test_TAS1_TopologyInfrastructure verifies the ClusterTopology → KAI Topology sync loop.
+// 1. Create "grove-topology" ClusterTopology with the standard 4-level hierarchy (zone, block, rack, host)
+// 2. Verify the operator auto-creates a matching KAI Topology CR
+// 3. Verify worker nodes have the expected topology labels
+//
+// Note: grove-topology is NOT cleaned up after this test — it is shared cluster infrastructure
+// used by TAS2-TAS16. ensureGroveTopology() in each subsequent test is idempotent.
 func Test_TAS1_TopologyInfrastructure(t *testing.T) {
 	ctx := context.Background()
 
@@ -83,26 +104,20 @@ func Test_TAS1_TopologyInfrastructure(t *testing.T) {
 	defer cleanup()
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 
-	Logger.Info("1. Verify ClusterTopology CR exists with correct 4-level hierarchy")
+	Logger.Info("1. Create grove-topology ClusterTopology with standard 4-level hierarchy")
+	ensureGroveTopology(ctx, t, topologyVerifier)
 
-	expectedLevels := []corev1alpha1.TopologyLevel{
-		{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
-		{Domain: corev1alpha1.TopologyDomainBlock, Key: setup.TopologyLabelBlock},
-		{Domain: corev1alpha1.TopologyDomainRack, Key: setup.TopologyLabelRack},
-		{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
-	}
-
-	if err := topologyVerifier.VerifyClusterTopologyLevels(ctx, "grove-topology", expectedLevels); err != nil {
-		t.Fatalf("Failed to verify ClusterTopology levels: %v", err)
-	}
-
-	Logger.Info("2. Verify KAI Topology CR exists with matching levels and owner reference")
+	Logger.Info("2. Verify KAI Topology CR is auto-created with matching levels")
 
 	expectedKeys := []string{
 		setup.TopologyLabelZone,
 		setup.TopologyLabelBlock,
 		setup.TopologyLabelRack,
 		setup.TopologyLabelHostname,
+	}
+
+	if err := topologyVerifier.WaitForKAITopology(ctx, "grove-topology", expectedKeys, tc.Timeout, tc.Interval); err != nil {
+		t.Fatalf("Failed to wait for KAI Topology: %v", err)
 	}
 
 	if err := topologyVerifier.VerifyKAITopologyLevels(ctx, "grove-topology", expectedKeys); err != nil {
@@ -135,7 +150,7 @@ func Test_TAS1_TopologyInfrastructure(t *testing.T) {
 	}
 
 	Logger.Infof("Successfully verified topology labels on %d worker nodes", workerCount)
-	Logger.Info("🎉 Topology Infrastructure test completed successfully!")
+	Logger.Info("Topology Infrastructure test completed successfully!")
 }
 
 // Test_TAS2_MultipleCliquesWithDifferentConstraints tests PCS with multiple cliques having different topology constraints
@@ -164,6 +179,7 @@ func Test_TAS2_MultipleCliquesWithDifferentConstraints(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS2: multiple cliques with different constraints)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -193,7 +209,7 @@ func Test_TAS2_MultipleCliquesWithDifferentConstraints(t *testing.T) {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
-	Logger.Info("🎉 TAS2: Multiple Cliques with Different Constraints test completed successfully!")
+	Logger.Info("TAS2: Multiple Cliques with Different Constraints test completed successfully!")
 }
 
 // Test_TAS3_PCSOnlyConstraint tests constraint only at PCS level with no PCSG/PCLQ constraints
@@ -222,6 +238,7 @@ func Test_TAS3_PCSOnlyConstraint(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS3: PCS-only constraint)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -250,7 +267,7 @@ func Test_TAS3_PCSOnlyConstraint(t *testing.T) {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
-	Logger.Info("🎉 TAS3: PCS-Only Constraint test completed successfully!")
+	Logger.Info("TAS3: PCS-Only Constraint test completed successfully!")
 }
 
 // Test_TAS4_PCSGOnlyConstraint tests constraint only at PCSG level with no PCS/PCLQ constraints
@@ -275,6 +292,7 @@ func Test_TAS4_PCSGOnlyConstraint(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS4: PCSG-only constraint)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -305,7 +323,7 @@ func Test_TAS4_PCSGOnlyConstraint(t *testing.T) {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
-	Logger.Info("🎉 TAS4: PCSG-Only Constraint test completed successfully!")
+	Logger.Info("TAS4: PCSG-Only Constraint test completed successfully!")
 }
 
 // Test_TAS5_HostLevelConstraint tests PCLQ-only constraint with host-level packing
@@ -329,6 +347,7 @@ func Test_TAS5_HostLevelConstraint(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS5: PCLQ-only host constraint)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -360,7 +379,7 @@ func Test_TAS5_HostLevelConstraint(t *testing.T) {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
-	Logger.Info("🎉 TAS5: Host-Level Constraint test completed successfully!")
+	Logger.Info("TAS5: Host-Level Constraint test completed successfully!")
 }
 
 // Test_TAS6_StandalonePCLQOnlyPCSZoneConstraint tests standalone PCLQ with only PCS zone constraint (no PCSG layer)
@@ -390,6 +409,7 @@ func Test_TAS6_StandalonePCLQOnlyPCSZoneConstraint(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS6: Standalone PCLQ with only PCS zone constraint)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -413,7 +433,7 @@ func Test_TAS6_StandalonePCLQOnlyPCSZoneConstraint(t *testing.T) {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
-	Logger.Info("🎉 TAS6: Standalone PCLQ with Only PCS Zone Constraint test completed successfully!")
+	Logger.Info("TAS6: Standalone PCLQ with Only PCS Zone Constraint test completed successfully!")
 }
 
 // Test_TAS7_NoTopologyConstraint tests gang scheduling without any topology constraints
@@ -434,6 +454,7 @@ func Test_TAS7_NoTopologyConstraint(t *testing.T) {
 		}),
 	)
 	defer cleanup()
+	// TAS7 YAML has no topologyName — grove-topology not needed.
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
 	Logger.Info("2. Deploy workload (TAS7: No topology constraints)")
@@ -461,7 +482,7 @@ func Test_TAS7_NoTopologyConstraint(t *testing.T) {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
-	Logger.Info("🎉 TAS7: No Topology Constraint test completed successfully!")
+	Logger.Info("TAS7: No Topology Constraint test completed successfully!")
 }
 
 // Test_TAS8_FullHierarchyWithCascadingConstraints tests 3-level topology hierarchy with cascading constraints
@@ -488,6 +509,7 @@ func Test_TAS8_FullHierarchyWithCascadingConstraints(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS8: full 3-level hierarchy with cascading constraints)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -539,7 +561,7 @@ func Test_TAS8_FullHierarchyWithCascadingConstraints(t *testing.T) {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
-	Logger.Info("🎉 TAS8: Full Hierarchy with Cascading Constraints test completed successfully!")
+	Logger.Info("TAS8: Full Hierarchy with Cascading Constraints test completed successfully!")
 }
 
 // Test_TAS9_PCSPlusPCLQConstraint tests PCS block constraint combined with PCLQ host constraint
@@ -564,6 +586,7 @@ func Test_TAS9_PCSPlusPCLQConstraint(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS9: PCS block + PCLQ host constraint)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -586,7 +609,7 @@ func Test_TAS9_PCSPlusPCLQConstraint(t *testing.T) {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
-	Logger.Info("🎉 TAS9: PCS+PCLQ Constraint test completed successfully!")
+	Logger.Info("TAS9: PCS+PCLQ Constraint test completed successfully!")
 }
 
 // Test_TAS10_PCSGScalingWithTopologyConstraints tests PCSG scaling with rack constraints
@@ -613,6 +636,7 @@ func Test_TAS10_PCSGScalingWithTopologyConstraints(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS10: PCSG scaling with topology constraints)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -667,7 +691,7 @@ func Test_TAS10_PCSGScalingWithTopologyConstraints(t *testing.T) {
 		}
 	})
 
-	Logger.Info("🎉 TAS10: PCSG Scaling with Topology Constraints test completed successfully!")
+	Logger.Info("TAS10: PCSG Scaling with Topology Constraints test completed successfully!")
 }
 
 // Test_TAS11_PCSGPlusPCLQNoParentConstraint tests PCSG rack + PCLQ host constraints without PCS constraint
@@ -692,6 +716,7 @@ func Test_TAS11_PCSGPlusPCLQNoParentConstraint(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS11: PCSG rack + PCLQ host, no PCS constraint)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -723,7 +748,7 @@ func Test_TAS11_PCSGPlusPCLQNoParentConstraint(t *testing.T) {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
-	Logger.Info("🎉 TAS11: PCSG+PCLQ Constraint test completed successfully!")
+	Logger.Info("TAS11: PCSG+PCLQ Constraint test completed successfully!")
 }
 
 // Test_TAS12_LargeScalingRatio tests large PCSG scaling ratio with minAvailable
@@ -750,6 +775,7 @@ func Test_TAS12_LargeScalingRatio(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS12: Large scaling ratio, replicas=10/minAvailable=3)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -817,7 +843,7 @@ func Test_TAS12_LargeScalingRatio(t *testing.T) {
 		}
 	}
 
-	Logger.Info("🎉 TAS12: Large Scaling Ratio test completed successfully!")
+	Logger.Info("TAS12: Large Scaling Ratio test completed successfully!")
 }
 
 // Test_TAS13_InsufficientNodesForConstraint tests gang scheduling failure with unsatisfiable topology constraint
@@ -841,6 +867,7 @@ func Test_TAS13_InsufficientNodesForConstraint(t *testing.T) {
 	)
 	defer cleanup()
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
+	ensureGroveTopology(ctx, t, topology.NewTopologyVerifier(tc.Client, Logger))
 
 	Logger.Info("2. Deploy workload (TAS13: insufficient nodes for rack constraint)")
 	_, err := tc.DeployAndVerifyWorkload()
@@ -876,7 +903,7 @@ func Test_TAS13_InsufficientNodesForConstraint(t *testing.T) {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
-	Logger.Info("🎉 TAS13: Insufficient Nodes for Constraint test completed successfully!")
+	Logger.Info("TAS13: Insufficient Nodes for Constraint test completed successfully!")
 }
 
 // Test_TAS14_MultiReplicaWithRackConstraint tests multiple PCS replicas with rack constraints
@@ -901,6 +928,7 @@ func Test_TAS14_MultiReplicaWithRackConstraint(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS14: multi-replica with rack constraint)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -930,7 +958,7 @@ func Test_TAS14_MultiReplicaWithRackConstraint(t *testing.T) {
 		}
 	}
 
-	Logger.Info("🎉 TAS14: Multi-Replica with Rack Constraint test completed successfully!")
+	Logger.Info("TAS14: Multi-Replica with Rack Constraint test completed successfully!")
 }
 
 // Test_TAS15_DisaggregatedInferenceMultiplePCSGs tests disaggregated inference with multiple PCSGs
@@ -958,6 +986,7 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS15: disaggregated inference with multiple PCSGs)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -1045,7 +1074,7 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 		}
 	})
 
-	Logger.Info("🎉 TAS15: Disaggregated Inference with Multiple PCSGs test completed successfully!")
+	Logger.Info("TAS15: Disaggregated Inference with Multiple PCSGs test completed successfully!")
 }
 
 // Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy tests multi-replica PCS with full 3-level topology hierarchy
@@ -1071,6 +1100,7 @@ func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS16: 2 PCS replicas with 3-level topology hierarchy)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -1143,7 +1173,7 @@ func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 		}
 	}
 
-	Logger.Info("🎉 TAS16: Multi-replica PCS with 3-level topology hierarchy test completed successfully!")
+	Logger.Info("TAS16: Multi-replica PCS with 3-level topology hierarchy test completed successfully!")
 }
 
 // Test_TAS17_HeterogeneousGPUCluster tests multi-topology scheduling across H100 and GB200 hardware segments.
@@ -1445,11 +1475,14 @@ func Test_TAS19_AutoManagedCTLifecycle(t *testing.T) {
 }
 
 // Test_TAS20_PCSTopologyLevelsUnavailableCondition tests the PCS TopologyLevelsUnavailable condition lifecycle.
-// 1. Deploy PCS that references a non-existent ClusterTopology (tas20-topology)
-// 2. Verify TopologyLevelsUnavailable = Unknown/ClusterTopologyNotFound on PCS
-// 3. Create the ClusterTopology
-// 4. Verify TopologyLevelsUnavailable = False/AllClusterTopologyLevelsAvailable
-// 5. Wait for pods to become ready
+// The webhook rejects a PCS referencing a non-existent CT, so we simulate the deletion scenario:
+// 1. Create the ClusterTopology (tas20-topology)
+// 2. Deploy the PCS (admitted since CT exists)
+// 3. Delete the ClusterTopology (simulates CT removed after job was created)
+// 4. Verify TopologyLevelsUnavailable = Unknown/ClusterTopologyNotFound on PCS
+// 5. Re-create the ClusterTopology
+// 6. Verify TopologyLevelsUnavailable = False/AllClusterTopologyLevelsAvailable
+// 7. Wait for pods to become ready
 func Test_TAS20_PCSTopologyLevelsUnavailableCondition(t *testing.T) {
 	ctx := context.Background()
 
@@ -1465,26 +1498,13 @@ func Test_TAS20_PCSTopologyLevelsUnavailableCondition(t *testing.T) {
 	defer cleanup()
 	tv := topology.NewTopologyVerifier(tc.Clients, Logger)
 
-	Logger.Info("2. Apply PCS workload YAML (references non-existent tas20-topology)")
-	if _, err := tc.ApplyYAMLFile(tc.Workload.YAMLPath); err != nil {
-		t.Fatalf("Failed to apply topology condition workload YAML: %v", err)
-	}
-
-	Logger.Info("3. Wait for TopologyLevelsUnavailable = Unknown/ClusterTopologyNotFound on PCS")
-	if err := tv.WaitForPCSCondition(ctx, "default", "tas-topology-condition",
-		apicommonconstants.ConditionTopologyLevelsUnavailable,
-		string(metav1.ConditionUnknown),
-		apicommonconstants.ConditionReasonClusterTopologyNotFound,
-		tc.Timeout, tc.Interval); err != nil {
-		t.Fatalf("Failed to wait for TopologyLevelsUnavailable=Unknown/ClusterTopologyNotFound: %v", err)
-	}
-
-	Logger.Info("4. Create the ClusterTopology that the PCS references")
 	levels := []corev1alpha1.TopologyLevel{
 		{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
 		{Domain: corev1alpha1.TopologyDomainRack, Key: setup.TopologyLabelRack},
 		{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
 	}
+
+	Logger.Info("2. Create tas20-topology ClusterTopology")
 	if err := tv.CreateClusterTopology(ctx, "tas20-topology", levels); err != nil {
 		t.Fatalf("Failed to create tas20-topology: %v", err)
 	}
@@ -1536,7 +1556,7 @@ func Test_TAS20_PCSTopologyLevelsUnavailableCondition(t *testing.T) {
 		t.Fatalf("Failed to wait for TopologyLevelsUnavailable=False/AllClusterTopologyLevelsAvailable: %v", err)
 	}
 
-	Logger.Info("6. Wait for all pods to be ready")
+	Logger.Info("8. Wait for all pods to be ready")
 	if err := tc.WaitForPods(2); err != nil {
 		t.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
