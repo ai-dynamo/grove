@@ -495,6 +495,31 @@ func TestValidatePCSOnUpdate_Spec(t *testing.T) {
 			}),
 			expectError: false,
 		},
+		{
+			description: "two cliques reordered (AnyOrder): MNNVL annotations unchanged per clique name -> no error",
+			oldPCS: createPCSWithCliques([]cliqueAnnotation{
+				{name: "workers", annotations: map[string]string{AnnotationMNNVLGroup: "training"}},
+				{name: "encoders", annotations: map[string]string{AnnotationMNNVLGroup: "encoding"}},
+			}),
+			newPCS: createPCSWithCliques([]cliqueAnnotation{
+				{name: "encoders", annotations: map[string]string{AnnotationMNNVLGroup: "encoding"}},
+				{name: "workers", annotations: map[string]string{AnnotationMNNVLGroup: "training"}},
+			}),
+			expectError: false,
+		},
+		{
+			description: "two cliques reordered and mnnvl-group changed on one clique (by name) -> error",
+			oldPCS: createPCSWithCliques([]cliqueAnnotation{
+				{name: "workers", annotations: map[string]string{AnnotationMNNVLGroup: "training"}},
+				{name: "encoders", annotations: map[string]string{AnnotationMNNVLGroup: "encoding"}},
+			}),
+			newPCS: createPCSWithCliques([]cliqueAnnotation{
+				{name: "encoders", annotations: map[string]string{AnnotationMNNVLGroup: "encoding"}},
+				{name: "workers", annotations: map[string]string{AnnotationMNNVLGroup: "inference"}},
+			}),
+			expectError: true,
+			errorMsg:    "immutable",
+		},
 	}
 
 	for _, test := range tests {

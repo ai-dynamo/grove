@@ -25,6 +25,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
+const mnnvlNotEnabledMsgFormat = "MNNVL is not enabled in the operator configuration. Either enable MNNVL globally or remove the %s annotation"
+
 // MutateAutoMNNVL adds the grove.io/auto-mnnvl annotation to a PodCliqueSet
 // if all conditions are met:
 // 1. Annotation does not already exist
@@ -111,8 +113,7 @@ func validateMNNVLAnnotationsOnCreate(annotations map[string]string, autoMNNVLEn
 		}
 		if value == AnnotationAutoMNNVLEnabled && !autoMNNVLEnabled {
 			allErrs = append(allErrs, field.Invalid(path, value,
-				fmt.Sprintf("MNNVL is not enabled in the operator configuration. "+
-					"Either enable MNNVL globally or remove the %s annotation", AnnotationAutoMNNVL)))
+				fmt.Sprintf(mnnvlNotEnabledMsgFormat, AnnotationAutoMNNVL)))
 		}
 	}
 
@@ -123,8 +124,7 @@ func validateMNNVLAnnotationsOnCreate(annotations map[string]string, autoMNNVLEn
 		}
 		if !autoMNNVLEnabled {
 			allErrs = append(allErrs, field.Invalid(path, value,
-				fmt.Sprintf("MNNVL is not enabled in the operator configuration. "+
-					"Either enable MNNVL globally or remove the %s annotation", AnnotationMNNVLGroup)))
+				fmt.Sprintf(mnnvlNotEnabledMsgFormat, AnnotationMNNVLGroup)))
 		}
 	}
 
@@ -150,13 +150,32 @@ func validatePodCliqueTemplateSpecOnCreate(clique *grovecorev1alpha1.PodCliqueTe
 	return validateMNNVLAnnotationsOnCreate(clique.Annotations, autoMNNVLEnabled, fldPath.Child("annotations"))
 }
 
+// validatePodCliqueSetTemplateSpecOnUpdate checks MNNVL annotation immutability for each clique
+// template. Old and new specs are matched by clique name, not slice index: the default
+// CliqueStartupTypeAnyOrder allows reordering cliques, and PCS validation already pairs by name.
+// Adding, removing, or renaming cliques is not allowed on update; that is enforced by the
+// PodCliqueSet validating admission path (validatePodCliqueUpdate), which runs after this
+// package’s ValidatePCSOnUpdate. A new clique name with no counterpart in oldTemplate is
+// therefore skipped here. Field paths use the index in newTemplate so errors point at the
+// object being admitted.
 func validatePodCliqueSetTemplateSpecOnUpdate(oldTemplate, newTemplate *grovecorev1alpha1.PodCliqueSetTemplateSpec, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-	for i := 0; i < len(oldTemplate.Cliques) && i < len(newTemplate.Cliques); i++ {
-		if oldTemplate.Cliques[i] == nil || newTemplate.Cliques[i] == nil {
+	oldByName := make(map[string]*grovecorev1alpha1.PodCliqueTemplateSpec, len(oldTemplate.Cliques))
+	for _, clique := range oldTemplate.Cliques {
+		if clique == nil {
 			continue
 		}
-		allErrs = append(allErrs, validatePodCliqueTemplateSpecOnUpdate(oldTemplate.Cliques[i], newTemplate.Cliques[i], fldPath.Child("cliques").Index(i))...)
+		oldByName[clique.Name] = clique
+	}
+	for i, newClique := range newTemplate.Cliques {
+		if newClique == nil {
+			continue
+		}
+		oldClique, ok := oldByName[newClique.Name]
+		if !ok {
+			continue
+		}
+		allErrs = append(allErrs, validatePodCliqueTemplateSpecOnUpdate(oldClique, newClique, fldPath.Child("cliques").Index(i))...)
 	}
 	return allErrs
 }
