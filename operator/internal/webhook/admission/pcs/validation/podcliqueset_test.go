@@ -1392,7 +1392,7 @@ func TestValidateResourceClaimTemplates(t *testing.T) {
 			pcs := createTestPodCliqueSet("my-pcs")
 			pcs.Spec.Template.ResourceClaimTemplates = tc.templates
 
-			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)})
+			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, podCliqueSetSchedRegistry)
 			fldPath := field.NewPath("spec", "template", "resourceClaimTemplates")
 			errs := validator.validateResourceClaimTemplates(fldPath)
 
@@ -1471,7 +1471,7 @@ func TestValidateResourceSharingSpecs(t *testing.T) {
 			pcs := createTestPodCliqueSet("my-pcs")
 			pcs.Spec.Template.ResourceClaimTemplates = tc.templates
 
-			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)})
+			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, podCliqueSetSchedRegistry)
 			fldPath := field.NewPath("spec", "template", "resourceSharing")
 			errs := validator.validateResourceSharingSpecs(tc.refs, fldPath)
 
@@ -1566,7 +1566,7 @@ func TestValidatePCSResourceSharing(t *testing.T) {
 			pcs.Spec.Template.PodCliqueScalingGroupConfigs = tc.groupConfigs
 			pcs.Spec.Template.ResourceSharing = tc.refs
 
-			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)})
+			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, podCliqueSetSchedRegistry)
 			fldPath := field.NewPath("spec", "template", "resourceSharing")
 			errs := validator.validatePCSResourceSharing(tc.refs, fldPath)
 
@@ -1628,7 +1628,7 @@ func TestValidatePCSGResourceSharing(t *testing.T) {
 				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createDummyPodCliqueTemplate(cn))
 			}
 
-			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)})
+			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, podCliqueSetSchedRegistry)
 			fldPath := field.NewPath("spec", "template", "podCliqueScalingGroups").Index(0).Child("resourceSharing")
 			errs := validator.validatePCSGResourceSharing(tc.cfg, fldPath)
 
