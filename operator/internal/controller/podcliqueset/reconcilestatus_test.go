@@ -532,6 +532,33 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 			wantReason:     apicommonconstants.ConditionReasonAllTopologyLevelsAvailable,
 			wantMsgContain: "No topology constraints defined",
 		},
+		{
+			name:       "TAS enabled, PCS topologyName set with empty packDomain, PCSG has valid packDomain — False/AllClusterTopologyLevelsAvailable",
+			tasEnabled: true,
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := basePCS("")
+				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.PodCliqueSetTopologyConstraint{
+					TopologyName: "my-topology",
+					// PackDomain intentionally empty: only topologyName is set at PCS level
+				}
+				pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+					{
+						Name:        "workers",
+						CliqueNames: []string{"worker"},
+						TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+							PackDomain: grovecorev1alpha1.TopologyDomainRack,
+						},
+					},
+				}
+				return pcs
+			},
+			extraObjects: []client.Object{
+				clusterTopology("my-topology", standardLevels),
+			},
+			wantStatus:     metav1.ConditionFalse,
+			wantReason:     apicommonconstants.ConditionReasonAllTopologyLevelsAvailable,
+			wantMsgContain: "available",
+		},
 	}
 
 	for _, tc := range testCases {
@@ -568,6 +595,88 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 				assert.Contains(t, cond.Message, tc.wantMsgContain, "condition message mismatch")
 			}
 			assert.Equal(t, pcs.Generation, cond.ObservedGeneration, "ObservedGeneration should match PCS generation")
+		})
+	}
+}
+
+func TestGetUniqueTopologyDomainsInPodCliqueSet(t *testing.T) {
+	makePCS := func(pcsTCFn func(*grovecorev1alpha1.PodCliqueSetTemplateSpec)) *grovecorev1alpha1.PodCliqueSet {
+		pcs := &grovecorev1alpha1.PodCliqueSet{
+			Spec: grovecorev1alpha1.PodCliqueSetSpec{
+				Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+					Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+						{Name: "worker"},
+					},
+				},
+			},
+		}
+		if pcsTCFn != nil {
+			pcsTCFn(&pcs.Spec.Template)
+		}
+		return pcs
+	}
+
+	tests := []struct {
+		name        string
+		setupPCS    func() *grovecorev1alpha1.PodCliqueSet
+		wantDomains []grovecorev1alpha1.TopologyDomain
+	}{
+		{
+			name:        "no constraints — empty result",
+			setupPCS:    func() *grovecorev1alpha1.PodCliqueSet { return makePCS(nil) },
+			wantDomains: nil,
+		},
+		{
+			name: "PCS-level topologyName only, empty packDomain — empty result",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return makePCS(func(tmpl *grovecorev1alpha1.PodCliqueSetTemplateSpec) {
+					tmpl.TopologyConstraint = &grovecorev1alpha1.PodCliqueSetTopologyConstraint{
+						TopologyName: "my-topology",
+						// PackDomain intentionally empty
+					}
+				})
+			},
+			wantDomains: nil,
+		},
+		{
+			name: "PCS-level topologyName and non-empty packDomain — packDomain included",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return makePCS(func(tmpl *grovecorev1alpha1.PodCliqueSetTemplateSpec) {
+					tmpl.TopologyConstraint = &grovecorev1alpha1.PodCliqueSetTopologyConstraint{
+						TopologyName: "my-topology",
+						PackDomain:   grovecorev1alpha1.TopologyDomainRack,
+					}
+				})
+			},
+			wantDomains: []grovecorev1alpha1.TopologyDomain{grovecorev1alpha1.TopologyDomainRack},
+		},
+		{
+			name: "PCS empty packDomain + PCSG non-empty packDomain — only PCSG domain included",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return makePCS(func(tmpl *grovecorev1alpha1.PodCliqueSetTemplateSpec) {
+					tmpl.TopologyConstraint = &grovecorev1alpha1.PodCliqueSetTopologyConstraint{
+						TopologyName: "my-topology",
+						// PackDomain intentionally empty
+					}
+					tmpl.PodCliqueScalingGroupConfigs = []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+						{
+							Name:        "workers",
+							CliqueNames: []string{"worker"},
+							TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+								PackDomain: grovecorev1alpha1.TopologyDomainRack,
+							},
+						},
+					}
+				})
+			},
+			wantDomains: []grovecorev1alpha1.TopologyDomain{grovecorev1alpha1.TopologyDomainRack},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := getUniqueTopologyDomainsInPodCliqueSet(tt.setupPCS())
+			assert.ElementsMatch(t, tt.wantDomains, got)
 		})
 	}
 }

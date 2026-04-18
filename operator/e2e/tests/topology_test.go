@@ -323,6 +323,16 @@ func Test_TAS4_PCSGOnlyConstraint(t *testing.T) {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
+	Logger.Info("5. Verify TopologyLevelsUnavailable = False (PCSG constraint only, empty PCS-level packDomain)")
+	tv := topology.NewTopologyVerifier(tc.Client, Logger)
+	if err := tv.WaitForPCSCondition(ctx, "default", tc.Workload.Name,
+		apicommonconstants.ConditionTopologyLevelsUnavailable,
+		string(metav1.ConditionFalse),
+		apicommonconstants.ConditionReasonAllTopologyLevelsAvailable,
+		tc.Timeout, tc.Interval); err != nil {
+		t.Fatalf("Failed to verify TopologyLevelsUnavailable is False: %v", err)
+	}
+
 	Logger.Info("TAS4: PCSG-Only Constraint test completed successfully!")
 }
 
@@ -1190,7 +1200,7 @@ func Test_TAS17_HeterogeneousGPUCluster(t *testing.T) {
 	Logger.Info("1. Initialize a 28-node Grove cluster for heterogeneous GPU testing")
 	tc, cleanup := testctx.PrepareTest(ctx, t, 28)
 	defer cleanup()
-	tv := topology.NewTopologyVerifier(tc.Clients, Logger)
+	tv := topology.NewTopologyVerifier(tc.Client, Logger)
 
 	Logger.Info("2. Get worker node names and split into H100/GB200 segments")
 	workerNodes, err := tv.GetWorkerNodeNames(ctx)
@@ -1200,8 +1210,8 @@ func Test_TAS17_HeterogeneousGPUCluster(t *testing.T) {
 	if len(workerNodes) < 28 {
 		t.Fatalf("Expected at least 28 worker nodes, got %d", len(workerNodes))
 	}
-	const gb200NodesPerBlock = 7 // 14 GB200 nodes split into 2 blocks of 7
-	h100Nodes := workerNodes[:14]  // H100 segment (first 14 nodes keep default labels)
+	const gb200NodesPerBlock = 7  // 14 GB200 nodes split into 2 blocks of 7
+	h100Nodes := workerNodes[:14] // H100 segment (first 14 nodes keep default labels)
 	gb200Nodes := workerNodes[14:28]
 
 	Logger.Info("3. Relabel GB200 nodes: remove kubernetes.io/rack, add NVLink labels")
@@ -1211,8 +1221,8 @@ func Test_TAS17_HeterogeneousGPUCluster(t *testing.T) {
 			NodeName:     nodeName,
 			RemoveLabels: []string{setup.TopologyLabelRack},
 			AddLabels: map[string]string{
-				"example.com/nvl-block":      fmt.Sprintf("block-%d", idx/gb200NodesPerBlock),
-				"example.com/nvlink-domain":  fmt.Sprintf("nvl-domain-%d", idx),
+				"example.com/nvl-block":     fmt.Sprintf("block-%d", idx/gb200NodesPerBlock),
+				"example.com/nvlink-domain": fmt.Sprintf("nvl-domain-%d", idx),
 			},
 		})
 	}
@@ -1293,7 +1303,14 @@ func Test_TAS17_HeterogeneousGPUCluster(t *testing.T) {
 		WithInterval(tc.Interval).
 		WithRetryOnError().
 		WaitFor(ctx, func(ctx context.Context) (*v1.PodList, error) {
-			return tc.Clients.Clientset.CoreV1().Pods("default").List(ctx, metav1.ListOptions{LabelSelector: h100LabelSelector})
+			var podList v1.PodList
+			if err := tc.Client.List(ctx, &podList, &client.ListOptions{
+				Namespace: "default",
+				Raw:       &metav1.ListOptions{LabelSelector: h100LabelSelector},
+			}); err != nil {
+				return nil, err
+			}
+			return &podList, nil
 		}, allRunning)
 	if err != nil {
 		t.Fatalf("Failed to wait for H100 pods: %v", err)
@@ -1307,7 +1324,14 @@ func Test_TAS17_HeterogeneousGPUCluster(t *testing.T) {
 		WithInterval(tc.Interval).
 		WithRetryOnError().
 		WaitFor(ctx, func(ctx context.Context) (*v1.PodList, error) {
-			return tc.Clients.Clientset.CoreV1().Pods("default").List(ctx, metav1.ListOptions{LabelSelector: gb200LabelSelector})
+			var podList v1.PodList
+			if err := tc.Client.List(ctx, &podList, &client.ListOptions{
+				Namespace: "default",
+				Raw:       &metav1.ListOptions{LabelSelector: gb200LabelSelector},
+			}); err != nil {
+				return nil, err
+			}
+			return &podList, nil
 		}, allRunning)
 	if err != nil {
 		t.Fatalf("Failed to wait for GB200 pods: %v", err)
@@ -1354,7 +1378,7 @@ func Test_TAS18_ClusterTopologyDriftDetection(t *testing.T) {
 	Logger.Info("1. Initialize test environment (0 nodes needed)")
 	tc, cleanup := testctx.PrepareTest(ctx, t, 0)
 	defer cleanup()
-	tv := topology.NewTopologyVerifier(tc.Clients, Logger)
+	tv := topology.NewTopologyVerifier(tc.Client, Logger)
 
 	Logger.Info("2. Create CT with schedulerReferences pointing to non-existent KAI Topology")
 	levels := []corev1alpha1.TopologyLevel{
@@ -1413,7 +1437,7 @@ func Test_TAS19_AutoManagedCTLifecycle(t *testing.T) {
 	Logger.Info("1. Initialize test environment (0 nodes needed)")
 	tc, cleanup := testctx.PrepareTest(ctx, t, 0)
 	defer cleanup()
-	tv := topology.NewTopologyVerifier(tc.Clients, Logger)
+	tv := topology.NewTopologyVerifier(tc.Client, Logger)
 
 	Logger.Info("2. Create CT with 2 levels (zone, host) — no schedulerReferences")
 	levels2 := []corev1alpha1.TopologyLevel{
@@ -1496,7 +1520,7 @@ func Test_TAS20_PCSTopologyLevelsUnavailableCondition(t *testing.T) {
 		}),
 	)
 	defer cleanup()
-	tv := topology.NewTopologyVerifier(tc.Clients, Logger)
+	tv := topology.NewTopologyVerifier(tc.Client, Logger)
 
 	levels := []corev1alpha1.TopologyLevel{
 		{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
