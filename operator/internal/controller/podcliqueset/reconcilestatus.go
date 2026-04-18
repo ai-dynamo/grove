@@ -278,9 +278,6 @@ func (r *Reconciler) computeTopologyLevelsUnavailableCondition(ctx context.Conte
 		return metav1.Condition{}, fmt.Errorf("failed to get topology levels: %w", err)
 	}
 	availableTopologyDomains := lo.Map(topologyLevels, func(tl grovecorev1alpha1.TopologyLevel, _ int) grovecorev1alpha1.TopologyDomain { return tl.Domain })
-	// Check PodCliqueSet for unavailable topology levels.
-	// The webhook guarantees PackDomain is non-empty when TopologyConstraint is set,
-	// so getUniqueTopologyDomainsInPodCliqueSet will not return zero-value domains.
 	pcsTopologyDomains := getUniqueTopologyDomainsInPodCliqueSet(pcs)
 	unavailableTopologyDomains, _ := lo.Difference(pcsTopologyDomains, availableTopologyDomains)
 	if len(unavailableTopologyDomains) > 0 {
@@ -308,7 +305,8 @@ func (r *Reconciler) computeTopologyLevelsUnavailableCondition(ctx context.Conte
 // to gather the topology domains specified in their topology constraints and returns a list of unique domains.
 func getUniqueTopologyDomainsInPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) []grovecorev1alpha1.TopologyDomain {
 	topologyDomains := sets.New[grovecorev1alpha1.TopologyDomain]()
-	if pcs.Spec.Template.TopologyConstraint != nil {
+	if pcs.Spec.Template.TopologyConstraint != nil &&
+		pcs.Spec.Template.TopologyConstraint.PackDomain != "" {
 		topologyDomains.Insert(pcs.Spec.Template.TopologyConstraint.PackDomain)
 	}
 	// iterate over all PCLQs to get their topology constraints
