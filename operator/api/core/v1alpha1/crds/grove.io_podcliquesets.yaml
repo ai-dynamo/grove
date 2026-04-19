@@ -9342,6 +9342,15 @@ spec:
                         Each member PodClique.Replicas will be computed as a product of PodCliqueScalingGroupConfig.Replicas and PodCliqueTemplateSpec.Spec.Replicas.
                         NOTE: If a PodCliqueScalingGroupConfig is defined, then for the member PodClique's, individual AutoScalingConfig cannot be defined.
                       properties:
+                        annotations:
+                          additionalProperties:
+                            type: string
+                          description: |-
+                            Annotations is an unstructured key value map stored with a resource that may be
+                            set by external tools to store and retrieve arbitrary metadata. They are not
+                            queryable and should be preserved when modifying objects.
+                            More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations
+                          type: object
                         cliqueNames:
                           description: CliqueNames is the list of names of the PodClique's
                             that are part of the scaling group.

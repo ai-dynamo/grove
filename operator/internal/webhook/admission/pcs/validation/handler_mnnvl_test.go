@@ -118,6 +118,27 @@ func TestValidateCreate_MNNVL(t *testing.T) {
 			expectError:      true,
 			errorContains:    "contradictory",
 		},
+		// mnnvl-group on PCSG config
+		{
+			description:      "mnnvl-group on PCSG config + feature enabled -> no error",
+			pcs:              createValidPCSWithPCSGConfigAnnotations(map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}),
+			autoMNNVLEnabled: true,
+			expectError:      false,
+		},
+		{
+			description:      "invalid mnnvl-group on PCSG config -> error",
+			pcs:              createValidPCSWithPCSGConfigAnnotations(map[string]string{mnnvl.AnnotationMNNVLGroup: "-bad"}),
+			autoMNNVLEnabled: true,
+			expectError:      true,
+			errorContains:    "not a valid DNS-1123 label",
+		},
+		{
+			description:      "conflict on PCSG config: disabled + group -> error",
+			pcs:              createValidPCSWithPCSGConfigAnnotations(map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled, mnnvl.AnnotationMNNVLGroup: "training"}),
+			autoMNNVLEnabled: true,
+			expectError:      true,
+			errorContains:    "contradictory",
+		},
 	}
 
 	for _, tt := range tests {
@@ -237,6 +258,27 @@ func TestValidateUpdate_MNNVL(t *testing.T) {
 			newPCS:        createValidPCSWithCliqueAnnotations(map[string]string{mnnvl.AnnotationMNNVLGroup: "inference"}),
 			expectError:   true,
 			errorContains: "immutable",
+		},
+		// mnnvl-group immutability on PCSG config
+		{
+			description: "PCSG config mnnvl-group unchanged -> no error",
+			oldPCS:      createValidPCSWithPCSGConfigAnnotations(map[string]string{mnnvl.AnnotationMNNVLGroup: "training"}),
+			newPCS:      createValidPCSWithPCSGConfigAnnotations(map[string]string{mnnvl.AnnotationMNNVLGroup: "training"}),
+			expectError: false,
+		},
+		{
+			description:   "PCSG config mnnvl-group changed -> error",
+			oldPCS:        createValidPCSWithPCSGConfigAnnotations(map[string]string{mnnvl.AnnotationMNNVLGroup: "training"}),
+			newPCS:        createValidPCSWithPCSGConfigAnnotations(map[string]string{mnnvl.AnnotationMNNVLGroup: "inference"}),
+			expectError:   true,
+			errorContains: "immutable",
+		},
+		{
+			description:   "PCSG config mnnvl-group added -> error",
+			oldPCS:        createValidPCSWithPCSGConfigAnnotations(nil),
+			newPCS:        createValidPCSWithPCSGConfigAnnotations(map[string]string{mnnvl.AnnotationMNNVLGroup: "training"}),
+			expectError:   true,
+			errorContains: "cannot be added",
 		},
 	}
 
@@ -391,5 +433,26 @@ func createValidPCSWithCliqueAnnotations(cliqueAnnotations map[string]string) *g
 				WithContainer(testutils.NewGPUContainer("train", "nvidia/cuda:latest", 8)).
 				Build(),
 		).
+		Build()
+}
+
+// createValidPCSWithPCSGConfigAnnotations creates a fully valid PCS with a
+// PCSG config carrying the given annotations, for testing spec-level validation.
+func createValidPCSWithPCSGConfigAnnotations(pcsgAnnotations map[string]string) *grovecorev1alpha1.PodCliqueSet {
+	return testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
+		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+		WithTerminationDelay(4 * time.Hour).
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder("worker").
+				WithRoleName("worker").
+				WithMinAvailable(1).
+				WithContainer(testutils.NewGPUContainer("train", "nvidia/cuda:latest", 8)).
+				Build(),
+		).
+		WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			Name:        "scaling-group-1",
+			CliqueNames: []string{"worker"},
+			Annotations: pcsgAnnotations,
+		}).
 		Build()
 }

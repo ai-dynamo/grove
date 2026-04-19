@@ -290,6 +290,12 @@ type PodCliqueScalingGroupConfig struct {
 	Name string `json:"name"`
 	// CliqueNames is the list of names of the PodClique's that are part of the scaling group.
 	CliqueNames []string `json:"cliqueNames"`
+	// Annotations is an unstructured key value map stored with a resource that may be
+	// set by external tools to store and retrieve arbitrary metadata. They are not
+	// queryable and should be preserved when modifying objects.
+	// More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
 	// Replicas is the desired number of replicas for the scaling group at template level.
 	// This allows one to control the replicas of the scaling group at startup.
 	// If not specified, it defaults to 1.
