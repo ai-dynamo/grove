@@ -220,6 +220,35 @@ func VerifyPhases(pods *v1.PodList, expectedRunning, expectedPending int) error 
 	return nil
 }
 
+// WaitForFailedPod polls until a pod matching the label selector is found that is NOT Ready
+// and has a terminated or restarted container. Returns the failed pod.
+func (pm *PodManager) WaitForFailedPod(ctx context.Context, namespace, labelSelector string, timeout, interval time.Duration) (*v1.Pod, error) {
+	fetchFailedPod := waiter.FetchFunc[*v1.Pod](func(ctx context.Context) (*v1.Pod, error) {
+		podList, err := pm.List(ctx, namespace, labelSelector)
+		if err != nil || len(podList.Items) == 0 {
+			return nil, nil
+		}
+		for i := range podList.Items {
+			pod := &podList.Items[i]
+			if kubeutils.IsPodReady(pod) {
+				continue
+			}
+			for _, status := range pod.Status.ContainerStatuses {
+				if status.State.Terminated != nil ||
+					status.LastTerminationState.Terminated != nil ||
+					status.RestartCount > 0 {
+					return pod, nil
+				}
+			}
+		}
+		return nil, nil
+	})
+	w := waiter.New[*v1.Pod]().
+		WithTimeout(timeout).
+		WithInterval(interval)
+	return w.WaitFor(ctx, fetchFailedPod, waiter.IsNotZero[*v1.Pod])
+}
+
 // InitContainerNames returns the names of all init containers in a pod.
 func InitContainerNames(pod v1.Pod) []string {
 	names := make([]string, len(pod.Spec.InitContainers))

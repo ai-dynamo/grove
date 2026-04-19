@@ -43,7 +43,6 @@ var PodCliqueSetGVR = schema.GroupVersionResource{
 	Resource: "podcliquesets",
 }
 
-
 // GetPodCliqueSet returns a typed PodCliqueSet by name from the given namespace.
 func GetPodCliqueSet(ctx context.Context, dynamicClient dynamic.Interface, workloadName, namespace string) (*grovecorev1alpha1.PodCliqueSet, error) {
 	unstructuredPCS, err := dynamicClient.Resource(PodCliqueSetGVR).Namespace(namespace).Get(ctx, workloadName, metav1.GetOptions{})
@@ -94,14 +93,26 @@ func ScalePodCliqueSetWithClient(ctx context.Context, dynamicClient dynamic.Inte
 
 // WaitForPodCliqueScalingGroup polls until a PodCliqueScalingGroup exists and returns it.
 func WaitForPodCliqueScalingGroup(ctx context.Context, groveClient groveclient.Interface, namespace, name string, timeout, interval time.Duration) (*grovecorev1alpha1.PodCliqueScalingGroup, error) {
-	w := waiter.New[*grovecorev1alpha1.PodCliqueScalingGroup]().WithTimeout(timeout).WithInterval(interval)
+	w := waiter.New[*grovecorev1alpha1.PodCliqueScalingGroup]().
+		WithTimeout(timeout).
+		WithInterval(interval)
 	return waiter.WaitForResource(ctx, w, name, groveClient.GroveV1alpha1().PodCliqueScalingGroups(namespace).Get)
 }
 
 // WaitForPodCliqueStandalone polls until a PodClique exists and returns it.
 func WaitForPodCliqueStandalone(ctx context.Context, groveClient groveclient.Interface, namespace, name string, timeout, interval time.Duration) (*grovecorev1alpha1.PodClique, error) {
-	w := waiter.New[*grovecorev1alpha1.PodClique]().WithTimeout(timeout).WithInterval(interval)
+	w := waiter.New[*grovecorev1alpha1.PodClique]().
+		WithTimeout(timeout).
+		WithInterval(interval)
 	return waiter.WaitForResource(ctx, w, name, groveClient.GroveV1alpha1().PodCliques(namespace).Get)
+}
+
+// WaitForPodCliqueSetDeletion polls until a PodCliqueSet no longer exists.
+func WaitForPodCliqueSetDeletion(ctx context.Context, groveClient groveclient.Interface, namespace, name string, timeout, interval time.Duration) error {
+	w := waiter.New[*grovecorev1alpha1.PodCliqueSet]().
+		WithTimeout(timeout).
+		WithInterval(interval)
+	return waiter.WaitForResourceDeletion(ctx, w, name, groveClient.GroveV1alpha1().PodCliqueSets(namespace).Get)
 }
 
 func scaleCRDStandalone(ctx context.Context, dynamicClient dynamic.Interface, gvr schema.GroupVersionResource, namespace, name string, replicas int) error {

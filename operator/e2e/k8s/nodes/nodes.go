@@ -128,9 +128,9 @@ func IsReady(node *v1.Node) bool {
 	return false
 }
 
-// WaitAndGetReady waits for a specific node to become ready and returns it.
+// WaitForReady waits for a specific node to become ready and returns it.
 // NotFound errors are treated as "not yet created" and polling continues.
-func (nm *NodeManager) WaitAndGetReady(ctx context.Context, nodeName string, timeout time.Duration) (*v1.Node, error) {
+func (nm *NodeManager) WaitForReady(ctx context.Context, nodeName string, timeout time.Duration) (*v1.Node, error) {
 	w := waiter.New[*v1.Node]().
 		WithTimeout(timeout).
 		WithInterval(defaultNodePollInterval).
