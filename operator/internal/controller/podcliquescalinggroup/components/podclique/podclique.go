@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"slices"
 	"strconv"
 	"strings"
@@ -258,13 +259,34 @@ func (r _resource) doCreate(ctx context.Context, logger logr.Logger, pcs *grovec
 
 // doCreateOrUpdate creates or updates a PodClique resource using CreateOrPatch.
 // This preserves the existing replicas value to avoid overwriting HPA-managed scaling.
-func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsgReplicaIndex int, pclqObjectKey client.ObjectKey, pclqExists bool) error {
+// cachedSpecHash is the grove.io/spec-hash annotation read off the already-listed PodClique
+// (empty when absent). When it equals the freshly computed hash, the reconcile is a pure no-op.
+// templateHash is the precomputed ComputePCLQPodTemplateHash value from syncContext; passing
+// it in avoids a dump.ForHash per PodClique.
+func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsgReplicaIndex int, pclqObjectKey client.ObjectKey, pclqExists bool, cachedSpecHash string, templateHash string) error {
 	logger.Info("Running CreateOrUpdate PodClique", "pclqObjectKey", pclqObjectKey)
-	pclq := emptyPodClique(pclqObjectKey)
 	pcsgObjKey := client.ObjectKeyFromObject(pcsg)
 
-	opResult, err := controllerutil.CreateOrPatch(ctx, r.client, pclq, func() error {
-		return r.buildResource(logger, pcs, pcsg, pcsgReplicaIndex, pclq, pclqExists)
+	desiredSpecHash := computePCLQSpecHashForPCSG(pcs, pcsg, pcsgReplicaIndex, pclqObjectKey, templateHash)
+	if pclqExists && desiredSpecHash != "" && cachedSpecHash == desiredSpecHash {
+		logger.V(4).Info("PodClique spec hash unchanged, skipping no-op update", "pclqObjectKey", pclqObjectKey)
+		return nil
+	}
+
+	pclq := emptyPodClique(pclqObjectKey)
+	opResult, err := k8sutils.CreateOrUpdate(ctx, r.client, pclq, func() error {
+		if err := r.buildResource(logger, pcs, pcsg, pcsgReplicaIndex, pclq, pclqExists); err != nil {
+			return err
+		}
+		if desiredSpecHash != "" {
+			merged := make(map[string]string, len(pclq.Annotations)+1)
+			for k, v := range pclq.Annotations {
+				merged[k] = v
+			}
+			merged[apiconstants.AnnotationSpecHash] = desiredSpecHash
+			pclq.Annotations = merged
+		}
+		return nil
 	})
 	if err != nil {
 		r.eventRecorder.Eventf(pcsg, corev1.EventTypeWarning, constants.ReasonPodCliqueCreateOrUpdateFailed, "PodClique %v creation or update failed: %v", pclqObjectKey, err)
@@ -278,6 +300,36 @@ func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs
 	r.eventRecorder.Eventf(pcsg, corev1.EventTypeNormal, constants.ReasonPodCliqueCreateOrUpdateSuccessful, "PodClique %v created or updated successfully", pclqObjectKey)
 	logger.Info("Triggered create or update of PodClique for PodCliqueScalingGroup", "pcsgObjKey", pcsgObjKey, "pclqObjectKey", pclqObjectKey, "result", opResult)
 	return nil
+}
+
+// computePCLQSpecHashForPCSG returns a stable hash of every input buildResource uses to
+// configure a PodClique owned by the PodCliqueScalingGroup. Returns "" when the template
+// cannot be located (signals "unknown, do not skip"). templateHash is the precomputed
+// ComputePCLQPodTemplateHash value passed through from syncContext so dump.ForHash runs
+// once per template instead of once per (replica × template).
+func computePCLQSpecHashForPCSG(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsgReplicaIndex int, pclqObjectKey client.ObjectKey, templateHash string) string {
+	pclqTemplateSpec, foundAtIndex, ok := lo.FindIndexOf(pcs.Spec.Template.Cliques, func(t *grovecorev1alpha1.PodCliqueTemplateSpec) bool {
+		return strings.HasSuffix(pclqObjectKey.Name, t.Name)
+	})
+	if !ok {
+		return ""
+	}
+	pcsReplicaIndex, err := getPCSReplicaFromPCSG(pcsg)
+	if err != nil {
+		return ""
+	}
+	if templateHash == "" {
+		templateHash = componentutils.ComputePCLQPodTemplateHash(pclqTemplateSpec, pcs.Spec.Template.PriorityClassName)
+	}
+	h := fnv.New32a()
+	_, _ = fmt.Fprintf(h, "%s|%d|%d|%d|%d", templateHash, pcsReplicaIndex, pcsgReplicaIndex, foundAtIndex, pcsg.Spec.Replicas)
+	if pcs.Spec.Template.StartupType != nil {
+		_, _ = fmt.Fprintf(h, "|%s", string(*pcs.Spec.Template.StartupType))
+	}
+	if mnnvl.IsAutoMNNVLEnabled(pcsg.Annotations) {
+		_, _ = fmt.Fprint(h, "|mnnvl")
+	}
+	return fmt.Sprintf("%08x", h.Sum32())
 }
 
 // buildResource constructs a PodClique resource from templates, setting up metadata, labels, dependencies and environment variables.

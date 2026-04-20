@@ -19,11 +19,13 @@ package podclique
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"slices"
 	"strconv"
 	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
@@ -68,6 +70,14 @@ func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.Even
 
 // GetExistingResourceNames returns the names of all the existing resources that the PodClique Operator manages.
 func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Logger, pcsObjMeta metav1.ObjectMeta) ([]string, error) {
+	names, _, err := r.listExistingPCLQs(ctx, logger, pcsObjMeta)
+	return names, err
+}
+
+// listExistingPCLQs returns the owned PodClique names and a name→spec-hash map extracted from
+// the single PartialObjectMetadata list call. The spec-hash map lets the createOrUpdate path
+// short-circuit no-op reconciles without an extra per-object Get.
+func (r _resource) listExistingPCLQs(ctx context.Context, logger logr.Logger, pcsObjMeta metav1.ObjectMeta) ([]string, map[string]string, error) {
 	logger.Info("Looking for existing PodCliques")
 	pclqPartialObjMetaList, err := k8sutils.ListExistingPartialObjectMetadata(ctx,
 		r.client,
@@ -75,18 +85,19 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 		pcsObjMeta,
 		getPodCliqueSelectorLabels(pcsObjMeta))
 	if err != nil {
-		return nil, groveerr.WrapError(err,
+		return nil, nil, groveerr.WrapError(err,
 			errCodeListPodCliques,
 			component.OperationGetExistingResourceNames,
 			fmt.Sprintf("Error listing PodCliques for PodCliqueSet: %v", k8sutils.GetObjectKeyFromObjectMeta(pcsObjMeta)),
 		)
 	}
-	return k8sutils.FilterMapOwnedResourceNames(pcsObjMeta, pclqPartialObjMetaList), nil
+	names, hashes := k8sutils.FilterOwnedResourceNamesAndAnnotation(pcsObjMeta, pclqPartialObjMetaList, apiconstants.AnnotationSpecHash)
+	return names, hashes, nil
 }
 
 // Sync synchronizes all resources that the PodClique Operator manages.
 func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
-	existingPCLQFQNs, err := r.GetExistingResourceNames(ctx, logger, pcs.ObjectMeta)
+	existingPCLQFQNs, existingSpecHashes, err := r.listExistingPCLQs(ctx, logger, pcs.ObjectMeta)
 	if err != nil {
 		return groveerr.WrapError(err,
 			errSyncPodClique,
@@ -98,7 +109,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 	if err := r.triggerDeletionOfExcessPCLQs(ctx, logger, pcs, existingPCLQFQNs); err != nil {
 		return err
 	}
-	if err := r.createOrUpdatePCLQs(ctx, logger, pcs, existingPCLQFQNs); err != nil {
+	if err := r.createOrUpdatePCLQs(ctx, logger, pcs, existingPCLQFQNs, existingSpecHashes); err != nil {
 		return err
 	}
 
@@ -125,8 +136,16 @@ func (r _resource) triggerDeletionOfExcessPCLQs(ctx context.Context, logger logr
 }
 
 // createOrUpdatePCLQs creates or updates all expected PodCliques for the PodCliqueSet.
-func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, existingPCLQFQNs []string) error {
+// existingSpecHashes, extracted from the initial list call, lets doCreateOrUpdate skip
+// no-op reconciles without a per-PodClique Get.
+func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, existingPCLQFQNs []string, existingSpecHashes map[string]string) error {
 	expectedPCLQNames, _ := componentutils.GetExpectedPCLQNamesGroupByOwner(pcs)
+	// Precompute the pod-template hash once per template (it's identical across replicas).
+	// Without this we'd run dump.ForHash for every one of the N replicas × M templates PodCliques.
+	templateHashes := make(map[string]string, len(pcs.Spec.Template.Cliques))
+	for _, ts := range pcs.Spec.Template.Cliques {
+		templateHashes[ts.Name] = componentutils.ComputePCLQPodTemplateHash(ts, pcs.Spec.Template.PriorityClassName)
+	}
 	tasks := make([]utils.Task, 0, len(expectedPCLQNames))
 
 	for pcsReplica := range pcs.Spec.Replicas {
@@ -136,10 +155,11 @@ func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, 
 				Namespace: pcs.Namespace,
 			}
 			pclqExists := slices.Contains(existingPCLQFQNs, pclqObjectKey.Name)
+			cachedSpecHash := existingSpecHashes[pclqObjectKey.Name]
 			createOrUpdateTask := utils.Task{
 				Name: fmt.Sprintf("CreateOrUpdatePodClique-%s", pclqObjectKey),
 				Fn: func(ctx context.Context) error {
-					return r.doCreateOrUpdate(ctx, logger, pcs, pcsReplica, pclqObjectKey, pclqExists)
+					return r.doCreateOrUpdate(ctx, logger, pcs, pcsReplica, pclqObjectKey, pclqExists, cachedSpecHash, templateHashes)
 				},
 			}
 			tasks = append(tasks, createOrUpdateTask)
@@ -258,13 +278,38 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjectMeta
 }
 
 // doCreateOrUpdate creates or updates a single PodClique resource.
-func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int32, pclqObjectKey client.ObjectKey, pclqExists bool) error {
+// cachedSpecHash is the grove.io/spec-hash annotation value read from the list call
+// (empty when the PodClique is new or the annotation is absent). When it matches the
+// desired hash the reconcile is a pure no-op: no Get, no patch.
+// templateHashes is a precomputed map of template-name → PodTemplateHash so each reconcile
+// pays the dump.ForHash cost once per template instead of once per (replica × template).
+func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int32, pclqObjectKey client.ObjectKey, pclqExists bool, cachedSpecHash string, templateHashes map[string]string) error {
 	logger.Info("Running CreateOrUpdate PodClique", "pclqObjectKey", pclqObjectKey)
-	pclq := emptyPodClique(pclqObjectKey)
 	pcsObjKey := client.ObjectKeyFromObject(pcs)
 
-	opResult, err := controllerutil.CreateOrPatch(ctx, r.client, pclq, func() error {
-		return r.buildResource(logger, pclq, pcs, int(pcsReplica), pclqExists)
+	desiredSpecHash := computePCLQSpecHashForPCS(pcs, pcsReplica, pclqObjectKey, templateHashes)
+	if pclqExists && desiredSpecHash != "" && cachedSpecHash == desiredSpecHash {
+		logger.V(4).Info("PodClique spec hash unchanged, skipping no-op update", "pclqObjectKey", pclqObjectKey)
+		return nil
+	}
+
+	pclq := emptyPodClique(pclqObjectKey)
+	opResult, err := k8sutils.CreateOrUpdate(ctx, r.client, pclq, func() error {
+		if err := r.buildResource(logger, pclq, pcs, int(pcsReplica), pclqExists); err != nil {
+			return err
+		}
+		// Stamp the spec hash so future reconciles can short-circuit. buildResource assigns
+		// pclq.Annotations = pclqTemplateSpec.Annotations (shared reference) so we must copy
+		// before inserting our key to avoid mutating the PCS spec in memory.
+		if desiredSpecHash != "" {
+			merged := make(map[string]string, len(pclq.Annotations)+1)
+			for k, v := range pclq.Annotations {
+				merged[k] = v
+			}
+			merged[apiconstants.AnnotationSpecHash] = desiredSpecHash
+			pclq.Annotations = merged
+		}
+		return nil
 	})
 	if err != nil {
 		r.eventRecorder.Eventf(pcs, corev1.EventTypeWarning, constants.ReasonPodCliqueCreateOrUpdateFailed, "PodClique %v creation or updation failed: %v", pclqObjectKey, err)
@@ -278,6 +323,33 @@ func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs
 	r.eventRecorder.Eventf(pcs, corev1.EventTypeNormal, constants.ReasonPodCliqueCreateOrUpdateSuccessful, "PodClique %v created or updated successfully", pclqObjectKey)
 	logger.Info("triggered create or update of PodClique for PodCliqueSet", "pcs", pcsObjKey, "pclqObjectKey", pclqObjectKey, "result", opResult)
 	return nil
+}
+
+// computePCLQSpecHashForPCS returns a stable hash of every input buildResource uses to
+// configure a PodClique owned directly by the PodCliqueSet. Returns "" when the template
+// cannot be located (signals "unknown, do not skip"). templateHashes provides a precomputed
+// ComputePCLQPodTemplateHash value per template-name so the expensive dump.ForHash runs
+// once per template rather than once per (replica × template).
+func computePCLQSpecHashForPCS(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int32, pclqObjectKey client.ObjectKey, templateHashes map[string]string) string {
+	pclqTemplateSpec, foundAtIndex, ok := lo.FindIndexOf(pcs.Spec.Template.Cliques, func(t *grovecorev1alpha1.PodCliqueTemplateSpec) bool {
+		return strings.HasSuffix(pclqObjectKey.Name, t.Name)
+	})
+	if !ok {
+		return ""
+	}
+	templateHash, ok := templateHashes[pclqTemplateSpec.Name]
+	if !ok {
+		templateHash = componentutils.ComputePCLQPodTemplateHash(pclqTemplateSpec, pcs.Spec.Template.PriorityClassName)
+	}
+	h := fnv.New32a()
+	_, _ = fmt.Fprintf(h, "%s|%d|%d", templateHash, pcsReplica, foundAtIndex)
+	if pcs.Spec.Template.StartupType != nil {
+		_, _ = fmt.Fprintf(h, "|%s", string(*pcs.Spec.Template.StartupType))
+	}
+	if mnnvl.IsAutoMNNVLEnabled(pcs.Annotations) {
+		_, _ = fmt.Fprint(h, "|mnnvl")
+	}
+	return fmt.Sprintf("%08x", h.Sum32())
 }
 
 // buildResource configures a PodClique with the desired state from the template.

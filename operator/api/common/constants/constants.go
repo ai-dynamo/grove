@@ -45,6 +45,10 @@ const (
 	AnnotationDisableManagedResourceProtection = "grove.io/disable-managed-resource-protection"
 	// AnnotationTopologyName is an annotation set on PodGang to allow KAI scheduler to discover which topology to use.
 	AnnotationTopologyName = "grove.io/topology-name"
+	// AnnotationSpecHash is an annotation set by reconcilers on managed resources to cache a
+	// hash of the inputs used to build the resource. When the next reconcile computes the same
+	// hash, the CreateOrUpdate call can be skipped entirely without a Get or diff.
+	AnnotationSpecHash = "grove.io/spec-hash"
 )
 
 // Constants for Grove environment variables

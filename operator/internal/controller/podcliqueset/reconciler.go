@@ -19,6 +19,7 @@ package podcliqueset
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
@@ -62,6 +63,17 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueSetCo
 // Reconcile reconciles a PodCliqueSet resource.
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := ctrllogger.FromContext(ctx).WithName(controllerName)
+
+	// Reconcile-duration trace is gated at V(4) so --v=4 unlocks it for perf investigations
+	// without spamming production logs. time.Now() is cheap enough that an always-on read is
+	// fine even when the log call is elided.
+	var reconcileStart time.Time
+	if logger.V(4).Enabled() {
+		reconcileStart = time.Now()
+		defer func() {
+			logger.V(4).Info("reconcile completed", "durationMs", time.Since(reconcileStart).Milliseconds())
+		}()
+	}
 
 	pcs := &grovecorev1alpha1.PodCliqueSet{}
 	if result := ctrlutils.GetPodCliqueSet(ctx, r.client, logger, req.NamespacedName, pcs); ctrlcommon.ShortCircuitReconcileFlow(result) {

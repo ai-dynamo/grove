@@ -39,7 +39,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 // prepareSyncFlow computes the required state for synchronizing PodGang resources.
@@ -593,9 +592,10 @@ func (r _resource) createOrUpdatePodGang(ctx context.Context, sc *syncContext, p
 		Namespace: sc.pcs.Namespace,
 		Name:      pgInfo.fqn,
 	}
+
 	pg := emptyPodGang(pgObjectKey)
 	sc.logger.Info("CreateOrPatch PodGang", "objectKey", pgObjectKey)
-	_, err := controllerutil.CreateOrPatch(ctx, r.client, pg, func() error {
+	_, err := k8sutils.CreateOrUpdate(ctx, r.client, pg, func() error {
 		return r.buildResource(sc.pcs, pgInfo, pg)
 	})
 	if err != nil {

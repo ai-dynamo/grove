@@ -47,6 +47,7 @@ type syncContext struct {
 	pcsgConfig                     *grovecorev1alpha1.PodCliqueScalingGroupConfig
 	pcsReplicaIndex                int
 	existingPCLQs                  []grovecorev1alpha1.PodClique
+	existingSpecHashes             map[string]string
 	pcsgIndicesToTerminate         []string
 	pcsgIndicesToRequeue           []string
 	expectedPCLQFQNsPerPCSGReplica map[int][]string
@@ -86,6 +87,7 @@ func (r _resource) prepareSyncContext(ctx context.Context, logger logr.Logger, p
 	if err != nil {
 		return nil, err
 	}
+	syncCtx.existingSpecHashes = extractSpecHashesFromPCLQs(syncCtx.existingPCLQs)
 
 	// compute the PCSG indices that have their MinAvailableBreached condition set to true. Segregated these into two
 	// pcsgIndicesToTerminate will have the indices for which the TerminationDelay has expired.
@@ -241,10 +243,12 @@ func (r _resource) createOrUpdatePCLQs(logger logr.Logger, sc *syncContext) erro
 				Namespace: sc.pcsg.Namespace,
 			}
 			pclqExists := slices.Contains(existingPCLQFQNs, pclqFQN)
+			cachedSpecHash := sc.existingSpecHashes[pclqFQN]
+			templateHash := sc.expectedPCLQPodTemplateHashMap[pclqFQN]
 			createOrUpdateTask := utils.Task{
 				Name: fmt.Sprintf("CreateOrUpdatePodClique-%s", pclqObjectKey),
 				Fn: func(ctx context.Context) error {
-					return r.doCreateOrUpdate(ctx, logger, sc.pcs, sc.pcsg, pcsgReplicaIndex, pclqObjectKey, pclqExists)
+					return r.doCreateOrUpdate(ctx, logger, sc.pcs, sc.pcsg, pcsgReplicaIndex, pclqObjectKey, pclqExists, cachedSpecHash, templateHash)
 				},
 			}
 			tasks = append(tasks, createOrUpdateTask)
@@ -321,6 +325,18 @@ func getExpectedPodCliqueFQNsByPCSGReplica(pcsg *grovecorev1alpha1.PodCliqueScal
 		expectedPCLQFQNs[pcsgReplicaIndex] = pclqFQNs
 	}
 	return expectedPCLQFQNs
+}
+
+// extractSpecHashesFromPCLQs returns a name→spec-hash map built from the grove.io/spec-hash
+// annotation present on already-loaded PodCliques. Entries without the annotation are omitted.
+func extractSpecHashesFromPCLQs(pclqs []grovecorev1alpha1.PodClique) map[string]string {
+	m := make(map[string]string, len(pclqs))
+	for i := range pclqs {
+		if v := pclqs[i].Annotations[constants.AnnotationSpecHash]; v != "" {
+			m[pclqs[i].Name] = v
+		}
+	}
+	return m
 }
 
 // getExistingPCLQs retrieves all PodCliques owned by the specified PodCliqueScalingGroup

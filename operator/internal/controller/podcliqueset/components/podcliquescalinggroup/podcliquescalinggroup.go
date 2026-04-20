@@ -19,10 +19,12 @@ package podcliquescalinggroup
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"slices"
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
@@ -64,7 +66,14 @@ func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.Even
 }
 
 // GetExistingResourceNames returns the names of all the existing resources that the PodCliqueScalingGroup Operator manages.
-func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, pcsObjMeta metav1.ObjectMeta) ([]string, error) {
+func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Logger, pcsObjMeta metav1.ObjectMeta) ([]string, error) {
+	names, _, err := r.listExistingPCSGs(ctx, logger, pcsObjMeta)
+	return names, err
+}
+
+// listExistingPCSGs returns the owned PCSG names and the name→spec-hash annotation map
+// extracted from the single PartialObjectMetadata list call.
+func (r _resource) listExistingPCSGs(ctx context.Context, _ logr.Logger, pcsObjMeta metav1.ObjectMeta) ([]string, map[string]string, error) {
 	objMetaList := &metav1.PartialObjectMetadataList{}
 	objMetaList.SetGroupVersionKind(grovecorev1alpha1.SchemeGroupVersion.WithKind("PodCliqueScalingGroup"))
 	if err := r.client.List(ctx,
@@ -72,18 +81,19 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 		client.InNamespace(pcsObjMeta.Namespace),
 		client.MatchingLabels(getPodCliqueScalingGroupSelectorLabels(pcsObjMeta)),
 	); err != nil {
-		return nil, groveerr.WrapError(err,
+		return nil, nil, groveerr.WrapError(err,
 			errListPodCliqueScalingGroup,
 			component.OperationGetExistingResourceNames,
 			fmt.Sprintf("Error listing PodCliqueScalingGroup for PodCliqueSet: %v", k8sutils.GetObjectKeyFromObjectMeta(pcsObjMeta)),
 		)
 	}
-	return k8sutils.FilterMapOwnedResourceNames(pcsObjMeta, objMetaList.Items), nil
+	names, hashes := k8sutils.FilterOwnedResourceNamesAndAnnotation(pcsObjMeta, objMetaList.Items, apiconstants.AnnotationSpecHash)
+	return names, hashes, nil
 }
 
 // Sync synchronizes all resources that the PodCliqueScalingGroup Operator manages.
 func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
-	existingPCSGNames, err := r.GetExistingResourceNames(ctx, logger, pcs.ObjectMeta)
+	existingPCSGNames, existingSpecHashes, err := r.listExistingPCSGs(ctx, logger, pcs.ObjectMeta)
 	if err != nil {
 		return groveerr.WrapError(err,
 			errListPodCliqueScalingGroup,
@@ -103,10 +113,11 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 				Namespace: pcs.Namespace,
 			}
 			pcsgExists := slices.Contains(existingPCSGNames, pcsgName)
+			cachedSpecHash := existingSpecHashes[pcsgName]
 			createOrUpdateTask := utils.Task{
 				Name: fmt.Sprintf("CreateOrUpdatePodCliqueScalingGroup-%s", pcsgObjectKey),
 				Fn: func(ctx context.Context) error {
-					return r.doCreateOrUpdate(ctx, logger, pcs, int(pcsReplica), pcsgObjectKey, pcsgConfig, pcsgExists)
+					return r.doCreateOrUpdate(ctx, logger, pcs, int(pcsReplica), pcsgObjectKey, pcsgConfig, pcsgExists, cachedSpecHash)
 				},
 			}
 			tasks = append(tasks, createOrUpdateTask)
@@ -159,17 +170,31 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjMeta me
 }
 
 // doCreateOrUpdate creates or updates a single PCSG resource.
-func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int, pcsgObjectKey client.ObjectKey, pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig, pcsgExists bool) error {
+// cachedSpecHash is the grove.io/spec-hash annotation read from the initial list call.
+// When it equals the freshly computed hash, the reconcile is a pure no-op (no Get, no patch).
+func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int, pcsgObjectKey client.ObjectKey, pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig, pcsgExists bool, cachedSpecHash string) error {
 	logger.Info("CreateOrUpdate PodCliqueScalingGroup", "objectKey", pcsgObjectKey)
-	pcsg := emptyPodCliqueScalingGroup(pcsgObjectKey)
 
-	if _, err := controllerutil.CreateOrPatch(ctx, r.client, pcsg, func() error {
+	desiredSpecHash := computePCSGSpecHash(pcs, pcsReplica, pcsgObjectKey, pcsgConfig)
+	if pcsgExists && desiredSpecHash != "" && cachedSpecHash == desiredSpecHash {
+		logger.V(4).Info("PodCliqueScalingGroup spec hash unchanged, skipping no-op update", "objectKey", pcsgObjectKey)
+		return nil
+	}
+
+	pcsg := emptyPodCliqueScalingGroup(pcsgObjectKey)
+	if _, err := k8sutils.CreateOrUpdate(ctx, r.client, pcsg, func() error {
 		if err := r.buildResource(pcsg, pcs, pcsReplica, pcsgConfig, pcsgExists); err != nil {
 			return groveerr.WrapError(err,
 				errCodeCreatePodCliqueScalingGroup,
 				component.OperationSync,
 				fmt.Sprintf("Error creating or updating PodCliqueScalingGroup: %v for PodCliqueSet: %v", pcsgObjectKey, client.ObjectKeyFromObject(pcs)),
 			)
+		}
+		if desiredSpecHash != "" {
+			if pcsg.Annotations == nil {
+				pcsg.Annotations = make(map[string]string, 1)
+			}
+			pcsg.Annotations[apiconstants.AnnotationSpecHash] = desiredSpecHash
 		}
 		return nil
 	}); err != nil {
@@ -197,6 +222,25 @@ func (r _resource) doDelete(ctx context.Context, logger logr.Logger, pcs *grovec
 	r.eventRecorder.Eventf(pcs, corev1.EventTypeNormal, constants.ReasonPodCliqueScalingGroupDeleteSuccessful, "Deleted PodCliqueScalingGroup %v", pcsgObjectKey)
 	logger.Info("Triggered delete of PodCliqueScalingGroup", "objectKey", pcsgObjectKey)
 	return nil
+}
+
+// computePCSGSpecHash returns a stable hash of the inputs buildResource uses to configure
+// a PodCliqueScalingGroup. Spec.Replicas is intentionally excluded because it is only
+// applied on first create (HPA-managed after that), and the short-circuit path only fires
+// when the PCSG already exists.
+func computePCSGSpecHash(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int, pcsgObjectKey client.ObjectKey, pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig) string {
+	h := fnv.New32a()
+	_, _ = fmt.Fprintf(h, "%s|%s|%d", pcs.Name, pcsgObjectKey.Name, pcsReplica)
+	if pcsgConfig.MinAvailable != nil {
+		_, _ = fmt.Fprintf(h, "|ma:%d", *pcsgConfig.MinAvailable)
+	}
+	for _, cliqueName := range pcsgConfig.CliqueNames {
+		_, _ = fmt.Fprintf(h, "|c:%s", cliqueName)
+	}
+	if mnnvl.IsAutoMNNVLEnabled(pcs.Annotations) {
+		_, _ = fmt.Fprint(h, "|mnnvl")
+	}
+	return fmt.Sprintf("%08x", h.Sum32())
 }
 
 // buildResource configures a PCSG with the desired state from the template.
