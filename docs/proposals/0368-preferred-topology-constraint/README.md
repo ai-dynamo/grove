@@ -60,7 +60,6 @@ As a **Run:ai platform operator** deploying Dynamo workloads over Grove, I want 
 ### Limitations/Risks & Mitigations
 
 - **Scheduler performance:** `packDomainPreferred` triggers a scheduling algorithm that might be compute-intensive. Misuse (e.g. setting it on all workloads at scale) could degrade scheduler performance. *Mitigation: it's an explicit opt-in, never a default.*
-- **Interaction with `packDomain`:** The semantics when both fields are set need to be well-defined.
 
 ## Design Details
 
