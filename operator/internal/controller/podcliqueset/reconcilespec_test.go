@@ -137,14 +137,15 @@ func TestGetKindSyncGroups(t *testing.T) {
 		component.KindPodCliqueScalingGroup,
 		component.KindPodGang,
 	}
-	seen := make(map[component.Kind]int)
+	seen := make(map[component.Kind]bool)
 	for _, group := range groups {
 		for _, k := range group {
-			seen[k]++
+			assert.False(t, seen[k], "kind %s appeared in more than one group", k)
+			seen[k] = true
 		}
 	}
 	for _, k := range expectedKinds {
-		assert.Equal(t, 1, seen[k], "kind %s should appear exactly once across groups", k)
+		assert.True(t, seen[k], "kind %s should appear in some group", k)
 	}
 }
 

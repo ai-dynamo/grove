@@ -43,7 +43,7 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	pclqObjectKey := client.ObjectKeyFromObject(pclq)
 	// Snapshot status for both the merge-patch base AND a change check below. When the
 	// status is unchanged — common during steady-state reconciles — we skip the API call
-	// entirely. This cut ~1.5s of subResourceClient.Patch CPU in the 500-PCLQ scale test.
+	// entirely.
 	originalStatus := pclq.Status.DeepCopy()
 	patch := client.MergeFrom(pclq.DeepCopy())
 
