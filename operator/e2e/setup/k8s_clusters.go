@@ -28,6 +28,7 @@ package setup
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -41,6 +42,7 @@ import (
 	dockerclient "github.com/docker/docker/client"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -245,9 +247,16 @@ func restartNodeContainer(ctx context.Context, nodeName string, logger *log.Logg
 
 // reapplyNodeLabels reapplies the original labels to a replaced node
 func reapplyNodeLabels(ctx context.Context, k8sClient *k8s.K8s, node *v1.Node, labels map[string]string, logger *log.Logger) error {
-	patch := client.MergeFrom(node.DeepCopy())
-	node.Labels = labels
-	if err := k8sClient.Patch(ctx, node, patch); err != nil {
+	patchBytes, err := json.Marshal(map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"labels": labels,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to marshal label patch for node %s: %w", node.Name, err)
+	}
+
+	if err := k8sClient.Patch(ctx, node, client.RawPatch(types.MergePatchType, patchBytes)); err != nil {
 		return fmt.Errorf("failed to patch node %s with labels: %w", node.Name, err)
 	}
 
