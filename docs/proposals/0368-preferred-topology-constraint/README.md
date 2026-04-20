@@ -26,11 +26,11 @@
 
 ## Summary
 
-Grove currently supports topology-aware scheduling through a required constraint (`packDomain`), which fails the workload entirely if the requested topology cannot be satisfied. This GREP introduces a **preferred** topology constraint — a best-effort mode that requests topology-aware placement without making it a hard requirement. If the constraint cannot be met, the workload is still scheduled rather than failing, making topology optimization accessible in scenarios where strict placement is undesirable or incompatible with the scheduler.
+Grove currently supports topology-aware scheduling through a required constraint (`packDomain`), which blocks the workload pending resources if the requested topology cannot be satisfied. This GREP introduces a **preferred** topology constraint — a best-effort mode that requests topology-aware placement without making it a hard requirement. If the constraint cannot be met, the workload is still scheduled rather than remaining blocked, making topology optimization accessible in scenarios where strict placement is undesirable or incompatible with the scheduler.
 
 ## Motivation
 
-Grove is increasingly used as an orchestration layer by higher-level tools (e.g. Dynamo on Run:ai) that manage workload submission on behalf of users. These tools often want to apply topology preferences automatically — without exposing scheduling decisions to end users — but cannot do so today because the only available topology constraint is required (`packDomain`), which risks failing workloads when the topology cannot be satisfied.
+Grove is increasingly used as an orchestration layer by higher-level tools (e.g. Dynamo on Run:ai) that manage workload submission on behalf of users. These tools often want to apply topology preferences automatically — without exposing scheduling decisions to end users — but cannot do so today because the only available topology constraint is required (`packDomain`), which risks blocking workloads indefinitely when the topology cannot be satisfied.
 
 Additionally, preferred topology scheduling is a compute-intensive operation for the scheduler. It therefore cannot be enabled by default for all workloads — it must be an explicit opt-in. Exposing a preferred constraint API gives tools and users a way to request best-effort topology placement, decoupled from the all-or-nothing semantics of the current required constraint.
 
@@ -47,7 +47,7 @@ Additionally, preferred topology scheduling is a compute-intensive operation for
 
 ## Proposal
 
-This GREP proposes adding a `packDomainPreferred` field alongside the existing `packDomain` field on `PodClique`, `PodGangScalingGroup`, and `PodCliqueSet`. When set, it signals to the scheduler that topology-aware placement is desired at the specified domain level on a best-effort basis — the workload is never failed if the constraint cannot be satisfied.
+This GREP proposes adding a `packDomainPreferred` field alongside the existing `packDomain` field on `PodClique`, `PodGangScalingGroup`, and `PodCliqueSet`. When set, it signals to the scheduler that topology-aware placement is desired at the specified domain level on a best-effort basis — the workload is never blocked if the constraint cannot be satisfied.
 
 `packDomainPreferred` and `packDomain` can coexist on the same resource. For example, a user may set `packDomainPreferred=host` and `packDomain=rack` to express that host-level packing is desired but not required, while rack-level packing is mandatory. When both are set, the scheduler attempts preferred placement first and falls back toward the required level if the preferred constraint cannot be satisfied. It is recommended (but not enforced) that `packDomainPreferred` be stricter than or equal to `packDomain` — setting a coarser preferred level than the required one is semantically redundant.
 
@@ -99,7 +99,10 @@ The domain-to-key translation follows the same existing path: looking up the dom
 
 ### Webhook Validation
 
-The admission webhook (`operator/internal/webhook/admission/pcs/validation/topologyconstraints.go`) validates that child constraints are stricter than or equal to parent constraints. This validation must be extended to cover `PackDomainPreferred` with the same hierarchy rules.
+The admission webhook (`operator/internal/webhook/admission/pcs/validation/topologyconstraints.go`) must be extended to cover `PackDomainPreferred` with the same rules that apply to `PackDomain`:
+
+- **Domain existence:** A `packDomainPreferred` value that does not exist in the `ClusterTopology` CR is rejected at admission time, same as `packDomain`.
+- **Hierarchy:** `packDomainPreferred` on a child resource must be stricter than or equal to the parent's `packDomainPreferred`.
 
 ### Monitoring
 
