@@ -30,6 +30,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -65,6 +66,24 @@ func (wm *WorkloadManager) ScalePCSG(ctx context.Context, namespace, name string
 	}
 
 	return wm.resources.ScaleCRD(ctx, gvk.PodCliqueScalingGroup, namespace, name, replicas)
+}
+
+// TriggerPCSReconcile bumps a benchmark annotation on a PodCliqueSet without touching its
+// spec. This forces the operator to run one reconcile cycle so we can measure the CPU cost
+// of a no-op pass. triggerID is embedded in the annotation value so repeated calls always
+// produce a new watch event.
+func (wm *WorkloadManager) TriggerPCSReconcile(ctx context.Context, namespace, name, triggerID string) error {
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+	}
+	patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"grove.io/reconcile-trigger":%q}}}`, triggerID))
+	if err := wm.cl.Patch(ctx, pcs, client.RawPatch(types.MergePatchType, patch)); err != nil {
+		return fmt.Errorf("trigger PCS reconcile %s/%s: %w", namespace, name, err)
+	}
+	return nil
 }
 
 // DeletePCS deletes a PodCliqueSet by name. NotFound errors are ignored.
