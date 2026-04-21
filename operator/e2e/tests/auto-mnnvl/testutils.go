@@ -30,6 +30,7 @@ import (
 	"time"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/e2e/grove/gvk"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
@@ -42,7 +43,6 @@ import (
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
@@ -228,12 +228,6 @@ const (
 	defaultPollInterval = 2 * time.Second
 )
 
-// GVR for ComputeDomain (no typed client available)
-var computeDomainGVK = schema.GroupVersionKind{
-	Group:   mnnvl.ComputeDomainGroup,
-	Version: mnnvl.ComputeDomainVersion,
-	Kind:    mnnvl.ComputeDomainKind,
-}
 
 // buildGPUPCS builds a PCS with GPU requirements
 func buildGPUPCS(name string, replicas int) *grovecorev1alpha1.PodCliqueSet {
@@ -357,7 +351,7 @@ func scalePCS(tc *testctx.TestContext, name string, replicas int) error {
 func waitForComputeDomainCount(tc *testctx.TestContext, pcsName string, expectedCount int) error {
 	fetchComputeDomains := waiter.FetchFunc[*unstructured.UnstructuredList](func(ctx context.Context) (*unstructured.UnstructuredList, error) {
 		list := &unstructured.UnstructuredList{}
-		list.SetGroupVersionKind(computeDomainGVK.GroupVersion().WithKind(computeDomainGVK.Kind + "List"))
+		list.SetGroupVersionKind(gvk.ComputeDomain.GroupVersion().WithKind(gvk.ComputeDomain.Kind + "List"))
 		if err := tc.Client.List(ctx, list, client.InNamespace(tc.Namespace), client.MatchingLabels{"app.kubernetes.io/part-of": pcsName}); err != nil {
 			return nil, err
 		}

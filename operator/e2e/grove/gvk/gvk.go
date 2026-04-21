@@ -19,7 +19,10 @@
 // Package gvk defines canonical GroupVersionKind constants for all CRDs used in e2e tests.
 package gvk
 
-import "k8s.io/apimachinery/pkg/runtime/schema"
+import (
+	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+)
 
 // Grove CRDs.
 var (
@@ -45,5 +48,14 @@ var (
 		Group:   "scheduler.grove.io",
 		Version: "v1alpha1",
 		Kind:    "PodGang",
+	}
+)
+
+// ComputeDomain Third-party CRDs used in e2e tests.
+var (
+	ComputeDomain = schema.GroupVersionKind{
+		Group:   mnnvl.ComputeDomainGroup,
+		Version: mnnvl.ComputeDomainVersion,
+		Kind:    mnnvl.ComputeDomainKind,
 	}
 )
