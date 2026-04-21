@@ -157,9 +157,18 @@ func TestCheckAllParentsReady(t *testing.T) {
 			deps := &ParentPodCliqueDependencies{
 				pclqFQNToMinAvailable: tt.pclqFQNToMinAvailable,
 				currentPCLQReadyPods:  tt.currentPCLQReadyPods,
+				allReadyCh:            make(chan struct{}, 1),
 			}
 
-			result := deps.checkAllParentsReady()
+			deps.notifyIfAllParentsReady()
+
+			result := false
+			select {
+			case <-deps.allReadyCh:
+				result = true
+			default:
+			}
+
 			assert.Equal(t, tt.expected, result, "Readiness check should match expected result")
 		})
 	}
@@ -365,10 +374,6 @@ func TestNewPodCliqueStateWithInfo(t *testing.T) {
 				assert.True(t, exists, "Ready pods set should exist for dependency %s", depName)
 				assert.Equal(t, 0, readySet.Len(), "Ready pods set should be empty initially for %s", depName)
 			}
-
-			// Verify channel is created with correct buffer size
-			assert.NotNil(t, result.allReadyCh, "Channel should be initialized")
-			assert.Equal(t, len(tt.dependencies), cap(result.allReadyCh), "Channel buffer size should match dependency count")
 		})
 	}
 }
