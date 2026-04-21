@@ -23,7 +23,6 @@ import (
 	"strings"
 	"testing"
 
-	common "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
@@ -67,7 +66,7 @@ func Test_AutoMNNVL_UnsupportedButEnabled(t *testing.T) {
 // testOperatorExitsWithoutCDCRD verifies that the operator fails preflight
 // when MNNVL is enabled but the ComputeDomain CRD is missing.
 func testOperatorExitsWithoutCDCRD(t *testing.T, tc *testctx.TestContext) {
-	pod, err := tc.WaitForFailedPod(groveOperatorNamespace, common.LabelAppNameKey+"="+setup.OperatorDeploymentName)
+	pod, err := tc.WaitForFailedPod(groveOperatorNamespace, setup.OperatorPodLabelSelector)
 	require.NoError(t, err, "Failed to find grove-operator pod")
 
 	hasTerminated := false
@@ -119,7 +118,7 @@ func waitForFailedOperatorPod(tc *testctx.TestContext) (*corev1.Pod, error) {
 		WithInterval(defaultPollInterval)
 	fetchFailedPod := waiter.FetchFunc[*corev1.Pod](func(ctx context.Context) (*corev1.Pod, error) {
 		var podList corev1.PodList
-		listErr := tc.Client.List(ctx, &podList, client.InNamespace(groveOperatorNamespace), client.MatchingLabels{common.LabelAppNameKey: setup.OperatorDeploymentName})
+		listErr := tc.Client.List(ctx, &podList, client.InNamespace(groveOperatorNamespace), setup.OperatorPodLabels)
 		pods := &podList
 		if listErr != nil || len(pods.Items) == 0 {
 			return nil, nil

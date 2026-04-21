@@ -279,7 +279,7 @@ func Test_TAS4_PCSGOnlyConstraint(t *testing.T) {
 	}
 
 	Logger.Info("3. Verify PCSG worker pods (2 total, 1 per replica) in same rack")
-	if err := topologyVerifier.VerifyLabeledPodsInTopologyDomain(tc.Ctx, allPods, nameutils.nameutils.LabelPodCliqueScalingGroup, "tas-sl-pcsg-only-0-workers", 2, setup.TopologyLabelRack); err != nil {
+	if err := topologyVerifier.VerifyLabeledPodsInTopologyDomain(tc.Ctx, allPods, nameutils.LabelPodCliqueScalingGroup, "tas-sl-pcsg-only-0-workers", 2, setup.TopologyLabelRack); err != nil {
 		t.Fatalf("Failed to verify worker pods in same rack: %v", err)
 	}
 
@@ -906,7 +906,7 @@ func Test_TAS14_MultiReplicaWithRackConstraint(t *testing.T) {
 
 	Logger.Info("3. Verify each PCS replica's pods (2) are in same rack")
 	for pcsReplica := 0; pcsReplica < 2; pcsReplica++ {
-		replicaPods := topology.FilterPodsByLabel(allPods, nameutils.nameutils.LabelPodCliqueSetReplicaIndex, fmt.Sprintf("%d", pcsReplica))
+		replicaPods := topology.FilterPodsByLabel(allPods, nameutils.LabelPodCliqueSetReplicaIndex, fmt.Sprintf("%d", pcsReplica))
 		if len(replicaPods) != 2 {
 			t.Fatalf("Expected 2 replica-%d pods, got %d", pcsReplica, len(replicaPods))
 		}
@@ -1077,7 +1077,7 @@ func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 	// Verify for each PCS replica
 	for pcsReplica := 0; pcsReplica < 2; pcsReplica++ {
 		replicaLabel := fmt.Sprintf("%d", pcsReplica)
-		replicaPods := topology.FilterPodsByLabel(allPods, nameutils.nameutils.LabelPodCliqueSetReplicaIndex, replicaLabel)
+		replicaPods := topology.FilterPodsByLabel(allPods, nameutils.LabelPodCliqueSetReplicaIndex, replicaLabel)
 		if len(replicaPods) != 10 {
 			t.Fatalf("Expected 10 pods for PCS replica %d, got %d", pcsReplica, len(replicaPods))
 		}

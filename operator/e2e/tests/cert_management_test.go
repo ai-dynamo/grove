@@ -33,7 +33,7 @@ import (
 	"testing"
 	"time"
 
-	common "github.com/ai-dynamo/grove/operator/api/common"
+
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
@@ -611,7 +611,7 @@ func getCertificateFromSecret(ctx context.Context, k8sClient *k8sclient.Client) 
 func getServedCertificate(ctx context.Context, k8sClient *k8sclient.Client) (*x509.Certificate, error) {
 	// Find the grove-operator pod
 	var podList corev1.PodList
-	if err := k8sClient.List(ctx, &podList, client.InNamespace(groveNamespace), client.MatchingLabels{common.LabelAppNameKey: setup.OperatorDeploymentName}); err != nil {
+	if err := k8sClient.List(ctx, &podList, client.InNamespace(groveNamespace), setup.OperatorPodLabels); err != nil {
 		return nil, fmt.Errorf("failed to list operator pods: %w", err)
 	}
 	if len(podList.Items) == 0 {
