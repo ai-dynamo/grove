@@ -109,7 +109,11 @@ func newPodCliqueStateWithInfo(podCliqueDependencies map[string]int, namespace, 
 
 // WaitForReady waits for all upstream start-up dependencies to be ready.
 func (c *ParentPodCliqueDependencies) WaitForReady(ctx context.Context, log logr.Logger) error {
-	defer close(c.allReadyCh) // Close the channel the informers write to *after* the context they use is cancelled.
+	// Close allReadyCh last: informer event handlers write to it, so we must
+	// wait for their goroutines to drain (via factory.Shutdown below) before
+	// closing the channel. Otherwise a pod Add/Update/Delete event firing
+	// after we return can trigger "send on closed channel". See #548.
+	defer close(c.allReadyCh)
 
 	log.Info("Parent PodClique(s) being waited on", "pclqFQNToMinAvailable", c.pclqFQNToMinAvailable)
 
@@ -131,7 +135,6 @@ func (c *ParentPodCliqueDependencies) WaitForReady(ctx context.Context, log logr
 	}
 
 	eventHandlerContext, cancel := context.WithCancel(ctx)
-	defer cancel() // Cancel the context used by the informers if the wait is successful, or an err occurs.
 
 	// Create informer factory to watch pods matching the PodGang label
 	factory := informers.NewSharedInformerFactoryWithOptions(
@@ -143,6 +146,14 @@ func (c *ParentPodCliqueDependencies) WaitForReady(ctx context.Context, log logr
 		},
 		),
 	)
+	// Cancel the informers' context when we return, then block until their
+	// goroutines have terminated. factory.Shutdown drains the listener
+	// goroutines spawned by factory.Start so that no handler can race with
+	// the deferred close(c.allReadyCh) above.
+	defer func() {
+		cancel()
+		factory.Shutdown()
+	}()
 	if err := c.registerEventHandler(factory, log); err != nil {
 		return groveerr.WrapError(
 			err,
