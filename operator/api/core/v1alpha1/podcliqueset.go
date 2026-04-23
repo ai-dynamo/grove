@@ -274,8 +274,8 @@ type PodCliqueTemplateSpec struct {
 type PodCliqueSetTopologyConstraint struct {
 	// TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.
 	// Required when PackDomain is specified. Immutable after creation.
-	// +optional
-	TopologyName string `json:"topologyName,omitempty"`
+	// +required
+	TopologyName string `json:"topologyName"`
 	// PackDomain specifies the topology domain for grouping replicas.
 	// Must reference a domain defined in the referenced ClusterTopology's levels.
 	// +optional
