@@ -258,7 +258,7 @@ Will render the Grove CRD hierarchy as a full-screen navigable tree with a conte
 
 ![Arborist Forest View (PCS List)](arborist-forest-pcs.jpg)
 
-![Arborist Forest View (PCSG + PC Drill View)](arborist-forest-pcsg_pc_drill.jpg)
+![Arborist Forest View (PCSG + PC Drill View)](arborist-forest-pcsg_pc_drill_2.jpg)
 
 Features:
 - **6-level hierarchy** with automatic single-replica level skipping for cleaner display.
