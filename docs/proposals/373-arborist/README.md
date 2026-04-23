@@ -258,7 +258,7 @@ Will render the Grove CRD hierarchy as a full-screen navigable tree with a conte
 
 ![Arborist Forest View (PCS List)](arborist-forest-pcs.jpg)
 
-![Arborist Forest View *)CSG + PC Drill View)](aborist-forest-pcsg_pc_drill.jpg)
+![Arborist Forest View (PCSG + PC Drill View)](arborist-forest-pcsg_pc_drill.jpg)
 
 Features:
 - **6-level hierarchy** with automatic single-replica level skipping for cleaner display.
@@ -271,11 +271,11 @@ Features:
 
 Will render the cluster topology as a domain-based drill-down view with GPU utilization bars. Pressing `t` from the forest view enters the topology view at the top-level domain list. The user drills into successively narrower domains (e.g., zone → block → rack → host), with a pods pane showing which pods are placed at the current drill level.
 
-![Arborist Topology View (Root)](aborist-topology-root-level.jpg)
+![Arborist Topology View (Root)](arborist-topology-root-level.jpg)
 
-![Aborist Topology View (Block Drill)](aborist-toplogy-block-drill.jpg)
+![Arborist Topology View (Block Drill)](arborist-topology-block-drill.jpg)
 
-![Aborist Topology View (Rack Drill)](aborist-topology-rack-drill.jpg)
+![Arborist Topology View (Rack Drill)](arborist-topology-rack-drill.jpg)
 
 Features:
 - **Domain hierarchy** ordered (eg zone → block → rack → host) and navigated via drill-in/drill-back.
@@ -305,7 +305,7 @@ kubectl grove topology [domain] [pcs-name] [-n namespace | -A]
 
 Example output:
 
-![Arborist CLI Topology Block](aborist-cli-topology-block.jpg)
+![Arborist CLI Topology Block](arborist-cli-topology-block.jpg)
 
 Features:
 - **Domain filtering** by positional argument (e.g., `rack`, `block`, `host`).
