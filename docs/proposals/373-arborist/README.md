@@ -349,7 +349,7 @@ Both GPU allocation models will be supported: the legacy device plugin model (`n
 
 A `kubectl-grove` entry point will be provided, which kubectl automatically discovers as a plugin when it is on `$PATH`. Running `kubectl grove <subcommand>` will be transparently forwarded to the binary. Distribution via [Krew](https://krew.sigs.k8s.io/) (the kubectl plugin manager) is planned.
 
-The source will live in the Grove monorepo at `tools/arborist/` (currently `arborist/` during initial development, to be relocated).
+The source will live in the Grove monorepo at `tools/arborist/`.
 
 ### k9s Plugin
 
