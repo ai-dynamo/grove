@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/stretchr/testify/assert"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -376,7 +377,6 @@ func TestValidateUpdateTopologyNameImmutability(t *testing.T) {
 			newPCSConstraint: &grovecorev1alpha1.PodCliqueSetTopologyConstraint{TopologyName: "topo-a", PackDomain: "zone"},
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint.topologyName"},
-				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint"},
 			},
 		},
 		{
@@ -385,7 +385,6 @@ func TestValidateUpdateTopologyNameImmutability(t *testing.T) {
 			newPCSConstraint: nil,
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint.topologyName"},
-				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint"},
 			},
 		},
 	}
@@ -396,6 +395,7 @@ func TestValidateUpdateTopologyNameImmutability(t *testing.T) {
 			newPCS := buildTestPCS(tc.newPCSConstraint, nil, nil)
 			validator := newTopologyConstraintsValidator(newPCS, true, nil)
 			errs := validator.validateUpdate(oldPCS)
+			assert.Len(t, errs, len(tc.errorMatchers), "unexpected number of errors")
 			testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
 		})
 	}
