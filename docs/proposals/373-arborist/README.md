@@ -264,7 +264,7 @@ Features:
 - **6-level hierarchy** with automatic single-replica level skipping for cleaner display.
 - **Drill-in / drill-back** navigation (Enter / Backspace) to focus on a subtree.
 - **Live filtering** (press `/`) with inline autocomplete.
-- **Events pane** showing Kubernetes events scoped to the selected resource and its descendants.
+- **Events pane** showing Kubernetes events scoped to the selected resource and its descendants. Defaults to suppressing `Normal` events (which are dominated by `Started`/`Pulled`/`Scheduled` noise) and only displays `Warning`+ severity; a keybinding toggles showing all events.
 - **GPU columns** with three-way accounting at every level.
 
 ##### Topology View
