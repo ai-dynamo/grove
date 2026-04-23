@@ -19,6 +19,7 @@ package clustertopology
 import (
 	"context"
 
+	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	schedmanager "github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
@@ -78,7 +79,7 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 func (r *Reconciler) mapBackendTopologyToCT(backendName string) handler.MapFunc {
 	return func(ctx context.Context, obj client.Object) []ctrl.Request {
 		for _, ref := range obj.GetOwnerReferences() {
-			if ref.Kind == "ClusterTopology" && ref.APIVersion == grovecorev1alpha1.SchemeGroupVersion.String() {
+			if ref.Kind == apicommonconstants.KindClusterTopology && ref.APIVersion == grovecorev1alpha1.SchemeGroupVersion.String() {
 				return []ctrl.Request{{
 					NamespacedName: client.ObjectKey{Name: ref.Name},
 				}}
