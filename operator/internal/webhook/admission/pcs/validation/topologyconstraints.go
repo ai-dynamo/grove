@@ -156,16 +156,15 @@ func (v *topologyConstraintsValidator) validateTopologyDomainsExistInClusterTopo
 	return allErrs
 }
 
-// isParentBroaderThanChild checks if a parent topology constraint domain is broader than (or equal to)
-// a child topology constraint domain using the ordered clusterTopologyDomains slice (index 0 = broadest).
-// If either domain is not in the slice, the check is skipped (returns true).
-func isParentBroaderThanChild(parentDomain, childDomain grovecorev1alpha1.TopologyDomain, clusterTopologyDomains []string) bool {
+// hasHierarchyViolation reports whether the parent domain is narrower than the child domain,
+// which violates the constraint hierarchy. Returns false when either domain is unknown (check skipped).
+func hasHierarchyViolation(parentDomain, childDomain grovecorev1alpha1.TopologyDomain, clusterTopologyDomains []string) bool {
 	parentIdx := slices.Index(clusterTopologyDomains, string(parentDomain))
 	childIdx := slices.Index(clusterTopologyDomains, string(childDomain))
 	if parentIdx == -1 || childIdx == -1 {
-		return true
+		return false
 	}
-	return parentIdx <= childIdx
+	return parentIdx > childIdx
 }
 
 // buildHierarchyViolationMsg generates an error message when a parent constraint is narrower than a child constraint.
@@ -194,7 +193,7 @@ func (v *topologyConstraintsValidator) validateHierarchicalTopologyConstraints(f
 		// Validate: PodCliqueSet must be broader than all PodCliques
 		for _, clique := range v.pcs.Spec.Template.Cliques {
 			if clique.TopologyConstraint != nil {
-				if !isParentBroaderThanChild(pcsDomain, clique.TopologyConstraint.PackDomain, v.clusterTopologyDomains) {
+				if hasHierarchyViolation(pcsDomain, clique.TopologyConstraint.PackDomain, v.clusterTopologyDomains) {
 					allErrs = append(allErrs, field.Invalid(
 						fldPath.Child("topologyConstraint"),
 						pcsDomain,
@@ -207,7 +206,7 @@ func (v *topologyConstraintsValidator) validateHierarchicalTopologyConstraints(f
 		// Validate: PodCliqueSet must be broader than all PodCliqueScalingGroups
 		for _, pcsg := range v.pcs.Spec.Template.PodCliqueScalingGroupConfigs {
 			if pcsg.TopologyConstraint != nil {
-				if !isParentBroaderThanChild(pcsDomain, pcsg.TopologyConstraint.PackDomain, v.clusterTopologyDomains) {
+				if hasHierarchyViolation(pcsDomain, pcsg.TopologyConstraint.PackDomain, v.clusterTopologyDomains) {
 					allErrs = append(allErrs, field.Invalid(
 						fldPath.Child("topologyConstraint"),
 						pcsDomain,
@@ -229,7 +228,7 @@ func (v *topologyConstraintsValidator) validateHierarchicalTopologyConstraints(f
 			// Find the clique by name
 			matchingPCLQTemplate := utils.FindPodCliqueTemplateSpecByName(v.pcs, cliqueName)
 			if matchingPCLQTemplate != nil && matchingPCLQTemplate.TopologyConstraint != nil {
-				if !isParentBroaderThanChild(pcsgDomain, matchingPCLQTemplate.TopologyConstraint.PackDomain, v.clusterTopologyDomains) {
+				if hasHierarchyViolation(pcsgDomain, matchingPCLQTemplate.TopologyConstraint.PackDomain, v.clusterTopologyDomains) {
 					allErrs = append(allErrs, field.Invalid(
 						fldPath.Child("podCliqueScalingGroupConfigs").Index(i).Child("topologyConstraint"),
 						pcsgDomain,
