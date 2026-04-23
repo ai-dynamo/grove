@@ -23,6 +23,7 @@ import (
 
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -34,6 +35,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -123,6 +125,19 @@ var _ scheduler.Backend = (*fakeNonTASBackend)(nil)
 
 // -- Helpers --
 
+// drainEvents reads all available events from the channel without blocking.
+func drainEvents(ch <-chan string) []string {
+	var events []string
+	for {
+		select {
+		case e := <-ch:
+			events = append(events, e)
+		default:
+			return events
+		}
+	}
+}
+
 func createTestCT(name string) *grovecorev1alpha1.ClusterTopology {
 	return &grovecorev1alpha1.ClusterTopology{
 		ObjectMeta: metav1.ObjectMeta{
@@ -162,6 +177,7 @@ func TestReconcile_AutoManaged_SyncsTopology(t *testing.T) {
 	r := &Reconciler{
 		Client:   cl,
 		backends: map[string]scheduler.Backend{"kai-scheduler": backend},
+		recorder: record.NewFakeRecorder(10),
 	}
 
 	result, err := doReconcile(r, "my-topology")
@@ -203,6 +219,7 @@ func TestReconcile_ExternallyManaged_InSync(t *testing.T) {
 	r := &Reconciler{
 		Client:   cl,
 		backends: map[string]scheduler.Backend{"kai-scheduler": backend},
+		recorder: record.NewFakeRecorder(10),
 	}
 
 	result, err := doReconcile(r, "my-topology")
@@ -243,6 +260,7 @@ func TestReconcile_ExternallyManaged_Drift(t *testing.T) {
 	r := &Reconciler{
 		Client:   cl,
 		backends: map[string]scheduler.Backend{"kai-scheduler": backend},
+		recorder: record.NewFakeRecorder(10),
 	}
 
 	result, err := doReconcile(r, "my-topology")
@@ -275,6 +293,7 @@ func TestReconcile_SyncTopologyError(t *testing.T) {
 	r := &Reconciler{
 		Client:   cl,
 		backends: map[string]scheduler.Backend{"kai-scheduler": backend},
+		recorder: record.NewFakeRecorder(10),
 	}
 
 	_, err := doReconcile(r, "my-topology")
@@ -309,6 +328,7 @@ func TestReconcile_CheckDriftError(t *testing.T) {
 	r := &Reconciler{
 		Client:   cl,
 		backends: map[string]scheduler.Backend{"kai-scheduler": backend},
+		recorder: record.NewFakeRecorder(10),
 	}
 
 	_, err := doReconcile(r, "my-topology")
@@ -338,6 +358,7 @@ func TestReconcile_NonTASBackendIgnored(t *testing.T) {
 			"kube-scheduler": nonTAS,
 			"kai-scheduler":  tasBackend,
 		},
+		recorder: record.NewFakeRecorder(10),
 	}
 
 	result, err := doReconcile(r, "my-topology")
@@ -356,6 +377,7 @@ func TestReconcile_NotFound(t *testing.T) {
 	r := &Reconciler{
 		Client:   cl,
 		backends: map[string]scheduler.Backend{},
+		recorder: record.NewFakeRecorder(10),
 	}
 
 	result, err := doReconcile(r, "deleted-topology")
@@ -373,6 +395,7 @@ func TestReconcile_NoTASBackends_RemovesCondition(t *testing.T) {
 	r := &Reconciler{
 		Client:   cl,
 		backends: map[string]scheduler.Backend{},
+		recorder: record.NewFakeRecorder(10),
 	}
 
 	result, err := doReconcile(r, "my-topology")
@@ -384,6 +407,63 @@ func TestReconcile_NoTASBackends_RemovesCondition(t *testing.T) {
 	assert.Empty(t, fetched.Status.SchedulerTopologyStatuses)
 	cond := getDriftCondition(fetched)
 	assert.Nil(t, cond, "condition should be removed when there are no TAS backends")
+}
+
+func TestReconcile_EmitsDriftEvents(t *testing.T) {
+	ct := createTestCT("my-topology")
+	ct.Spec.SchedulerReferences = []grovecorev1alpha1.SchedulerReference{
+		{SchedulerName: "kai-scheduler", Reference: "external-topology"},
+	}
+	cl := testutils.NewTestClientBuilder().
+		WithObjects(ct).
+		WithStatusSubresource(ct).
+		Build()
+
+	backend := &fakeBackend{name: "kai-scheduler"}
+	fakeRecorder := record.NewFakeRecorder(10)
+	r := &Reconciler{
+		Client:   cl,
+		backends: map[string]scheduler.Backend{"kai-scheduler": backend},
+		recorder: fakeRecorder,
+	}
+
+	// First reconcile: Unknown -> InSync (transition occurs) -> Normal event
+	backend.driftInSync = true
+	_, err := doReconcile(r, "my-topology")
+	require.NoError(t, err)
+
+	var firstEvent string
+	select {
+	case event := <-fakeRecorder.Events:
+		firstEvent = event
+	default:
+		t.Fatal("expected a sync event on first reconcile transition")
+	}
+	assert.Contains(t, firstEvent, "Normal")
+	assert.Contains(t, firstEvent, internalconstants.ReasonTopologyInSync)
+
+	// Second reconcile: InSync -> Drift (transition occurs) -> Warning event
+	backend.driftInSync = false
+	backend.driftMessage = "KAI Topology levels differ"
+	_, err = doReconcile(r, "my-topology")
+	require.NoError(t, err)
+
+	driftEvent := drainEvents(fakeRecorder.Events)
+	require.Len(t, driftEvent, 1, "expected exactly one Warning event for drift transition")
+	assert.Contains(t, driftEvent[0], "Warning")
+	assert.Contains(t, driftEvent[0], internalconstants.ReasonTopologyDriftDetected)
+	assert.Contains(t, driftEvent[0], "drifted")
+
+	// Third reconcile: Drift -> InSync (transition occurs) -> Normal event
+	backend.driftInSync = true
+	backend.driftMessage = ""
+	_, err = doReconcile(r, "my-topology")
+	require.NoError(t, err)
+
+	syncEvent := drainEvents(fakeRecorder.Events)
+	require.Len(t, syncEvent, 1, "expected exactly one Normal event for sync transition")
+	assert.Contains(t, syncEvent[0], "Normal")
+	assert.Contains(t, syncEvent[0], internalconstants.ReasonTopologyInSync)
 }
 
 // -- Unit tests for helper functions --

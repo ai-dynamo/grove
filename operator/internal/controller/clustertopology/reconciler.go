@@ -25,10 +25,13 @@ import (
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	ctutils "github.com/ai-dynamo/grove/operator/internal/clustertopology"
+	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -39,6 +42,7 @@ import (
 type Reconciler struct {
 	client.Client
 	backends map[string]scheduler.Backend
+	recorder record.EventRecorder
 }
 
 // Reconcile reconciles a ClusterTopology resource.
@@ -103,7 +107,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		ct.Status.ObservedGeneration = ct.Generation
 	}
 	ct.Status.SchedulerTopologyStatuses = statuses
+	var prevStatus metav1.ConditionStatus
+	if c := meta.FindStatusCondition(ct.Status.Conditions, apicommonconstants.ConditionSchedulerTopologyDrift); c != nil {
+		prevStatus = c.Status
+	}
 	setSchedulerTopologyDriftCondition(ct, statuses)
+	newCondition := meta.FindStatusCondition(ct.Status.Conditions, apicommonconstants.ConditionSchedulerTopologyDrift)
+	r.emitDriftTransitionEvent(ct, prevStatus, newCondition)
 
 	if err := r.Status().Update(ctx, ct); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to update ClusterTopology status: %w", err)
@@ -143,6 +153,22 @@ func setSchedulerTopologyDriftCondition(ct *grovecorev1alpha1.ClusterTopology, s
 			Message:            "One or more scheduler backend topologies have drifted",
 			ObservedGeneration: ct.Generation,
 		})
+	}
+}
+
+// emitDriftTransitionEvent emits a Kubernetes event when the SchedulerTopologyDrift
+// condition transitions between statuses.
+func (r *Reconciler) emitDriftTransitionEvent(ct *grovecorev1alpha1.ClusterTopology, prevStatus metav1.ConditionStatus, next *metav1.Condition) {
+	if next == nil || prevStatus == next.Status {
+		return
+	}
+	switch next.Status {
+	case metav1.ConditionTrue:
+		r.recorder.Eventf(ct, corev1.EventTypeWarning, internalconstants.ReasonTopologyDriftDetected,
+			"One or more scheduler backend topologies have drifted")
+	case metav1.ConditionFalse:
+		r.recorder.Eventf(ct, corev1.EventTypeNormal, internalconstants.ReasonTopologyInSync,
+			"All scheduler backend topologies are in sync")
 	}
 }
 

@@ -37,6 +37,7 @@ func NewReconciler(mgr ctrl.Manager) *Reconciler {
 	return &Reconciler{
 		Client:   mgr.GetClient(),
 		backends: schedmanager.All(),
+		recorder: mgr.GetEventRecorderFor("clustertopology-controller"),
 	}
 }
 
