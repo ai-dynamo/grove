@@ -261,10 +261,11 @@ func (v *topologyConstraintsValidator) disallowChangesToTopologyConstraintsWhenP
 			fmt.Sprintf("topologyName cannot be changed from %q to %q", oldTopologyName, newTopologyName)))
 	}
 
-	// Validate PCS level
+	// Validate PCS level packDomain only when topologyName is unchanged; adding or removing
+	// the whole topologyConstraint (which changes topologyName) is already reported above.
 	oldPCSConstraint := oldPCS.Spec.Template.TopologyConstraint.ToTopologyConstraint()
 	newPCSConstraint := v.pcs.Spec.Template.TopologyConstraint.ToTopologyConstraint()
-	if constraintChanged(oldPCSConstraint, newPCSConstraint) {
+	if oldTopologyName == newTopologyName && constraintChanged(oldPCSConstraint, newPCSConstraint) {
 		allErrs = append(allErrs, field.Forbidden(
 			fldPath.Child("topologyConstraint"),
 			constraintChangeMsg(apicommonconstants.KindPodCliqueSet, "", oldPCSConstraint, newPCSConstraint)))
