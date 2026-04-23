@@ -67,6 +67,10 @@ func (f *fakeBackend) TopologyGVR() schema.GroupVersionResource {
 	return schema.GroupVersionResource{Group: "fake", Version: "v1", Resource: "topologies"}
 }
 
+func (f *fakeBackend) TopologyResourceName(ct *grovecorev1alpha1.ClusterTopology) string {
+	return ct.Name
+}
+
 func (f *fakeBackend) CheckTopologyDrift(_ context.Context, _ *grovecorev1alpha1.ClusterTopology, _ grovecorev1alpha1.SchedulerReference) (bool, string, int64, error) {
 	f.driftCalled = true
 	return f.driftInSync, f.driftMessage, f.driftGen, f.driftErr
@@ -173,6 +177,7 @@ func TestReconcile_AutoManaged_SyncsTopology(t *testing.T) {
 	require.Len(t, fetched.Status.SchedulerTopologyStatuses, 1)
 	assert.True(t, fetched.Status.SchedulerTopologyStatuses[0].InSync)
 	assert.Equal(t, "kai-scheduler", fetched.Status.SchedulerTopologyStatuses[0].SchedulerName)
+	assert.Equal(t, "my-topology", fetched.Status.SchedulerTopologyStatuses[0].Reference)
 
 	cond := getDriftCondition(fetched)
 	require.NotNil(t, cond)
@@ -280,6 +285,7 @@ func TestReconcile_SyncTopologyError(t *testing.T) {
 	require.Len(t, fetched.Status.SchedulerTopologyStatuses, 1)
 	assert.False(t, fetched.Status.SchedulerTopologyStatuses[0].InSync)
 	assert.Contains(t, fetched.Status.SchedulerTopologyStatuses[0].Message, "sync failed")
+	assert.Equal(t, "my-topology", fetched.Status.SchedulerTopologyStatuses[0].Reference)
 
 	cond := getDriftCondition(fetched)
 	require.NotNil(t, cond)

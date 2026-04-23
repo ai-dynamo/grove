@@ -67,6 +67,11 @@ type TopologyAwareSchedBackend interface {
 	// The CT controller uses this to register dynamic watches at startup.
 	TopologyGVR() schema.GroupVersionResource
 
+	// TopologyResourceName returns the name of the backend-specific topology resource
+	// that corresponds to the given ClusterTopology. Called for auto-managed backends
+	// to populate SchedulerTopologyStatus.Reference.
+	TopologyResourceName(ct *grovecorev1alpha1.ClusterTopology) string
+
 	// SyncTopology creates or updates the scheduler-specific topology resource
 	// for the given ClusterTopology. Called for backends not listed in
 	// the ClusterTopology's schedulerReferences (auto-managed path).

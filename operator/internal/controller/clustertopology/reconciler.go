@@ -69,7 +69,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 				reconcileErr = errors.Join(reconcileErr, err)
 				statuses = append(statuses, grovecorev1alpha1.SchedulerTopologyStatus{
 					SchedulerName: b.Name(),
-					Reference:     ct.Name,
+					Reference:     tasBackend.TopologyResourceName(ct),
 					InSync:        false,
 					Message:       err.Error(),
 				})
@@ -77,7 +77,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			} else {
 				statuses = append(statuses, grovecorev1alpha1.SchedulerTopologyStatus{
 					SchedulerName: b.Name(),
-					Reference:     ct.Name,
+					Reference:     tasBackend.TopologyResourceName(ct),
 					InSync:        true,
 				})
 			}

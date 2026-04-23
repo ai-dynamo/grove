@@ -46,6 +46,12 @@ func (b *schedulerBackend) TopologyGVR() schema.GroupVersionResource {
 	}
 }
 
+// TopologyResourceName returns the name of the KAI Topology resource for the given ClusterTopology.
+// KAI topology resources are always named after their ClusterTopology.
+func (b *schedulerBackend) TopologyResourceName(ct *grovecorev1alpha1.ClusterTopology) string {
+	return ct.Name
+}
+
 // SyncTopology creates or updates the KAI Topology resource for the given ClusterTopology.
 func (b *schedulerBackend) SyncTopology(ctx context.Context, k8sClient client.Client, ct *grovecorev1alpha1.ClusterTopology) error {
 	if k8sClient == nil {
