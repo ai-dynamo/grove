@@ -616,29 +616,11 @@ _Appears in:_
 | `cliqueStartupType` _[CliqueStartupType](#cliquestartuptype)_ | StartupType defines the type of startup dependency amongst the cliques within a PodGang.<br />If it is not defined then default of CliqueStartupTypeAnyOrder is used. | CliqueStartupTypeAnyOrder | Enum: [CliqueStartupTypeAnyOrder CliqueStartupTypeInOrder CliqueStartupTypeExplicit] <br /> |
 | `priorityClassName` _string_ | PriorityClassName is the name of the PriorityClass to be used for the PodCliqueSet.<br />If specified, indicates the priority of the PodCliqueSet. "system-node-critical" and<br />"system-cluster-critical" are two special keywords which indicate the<br />highest priorities with the former being the highest priority. Any other<br />name must be defined by creating a PriorityClass object with that name.<br />If not specified, the pod priority will be default or zero if there is no default. |  |  |
 | `headlessServiceConfig` _[HeadlessServiceConfig](#headlessserviceconfig)_ | HeadlessServiceConfig defines the config options for the headless service.<br />If present, create headless service for each PodGang. |  |  |
-| `topologyConstraint` _[PodCliqueSetTopologyConstraint](#podcliquesettopologyconstraint)_ | TopologyConstraint defines topology placement requirements for PodCliqueSet. |  |  |
+| `topologyConstraint` _[TopologyConstraint](#topologyconstraint)_ | TopologyConstraint defines topology placement requirements for PodCliqueSet. |  |  |
 | `terminationDelay` _[Duration](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#duration-v1-meta)_ | TerminationDelay is the delay after which the gang termination will be triggered.<br />A gang is a candidate for termination if number of running pods fall below a threshold for any PodClique.<br />If a PodGang remains a candidate past TerminationDelay then it will be terminated. This allows additional time<br />to the backend scheduler to re-schedule sufficient pods in the PodGang that will result in having the total number of<br />running pods go above the threshold.<br />Defaults to 4 hours. |  |  |
 | `resourceClaimTemplates` _[ResourceClaimTemplateConfig](#resourceclaimtemplateconfig) array_ | ResourceClaimTemplates declares named ResourceClaimTemplateSpecs that can be<br />referenced by name from resourceSharing fields at any level in the hierarchy. |  |  |
 | `resourceSharing` _[PCSResourceSharingSpec](#pcsresourcesharingspec) array_ | ResourceSharing defines shared ResourceClaims at the PCS level.<br />Each entry references a template (internal or external) and specifies a Scope:<br />  - AllReplicas: one RC for the entire PCS, shared across ALL pods in ALL replicas<br />  - PerReplica: one RC per PCS replica, shared across ALL pods in that replica<br />The optional Filter field controls which children receive the claims. |  |  |
 | `podCliqueScalingGroups` _[PodCliqueScalingGroupConfig](#podcliquescalinggroupconfig) array_ | PodCliqueScalingGroupConfigs is a list of scaling groups for the PodCliqueSet. |  |  |
-
-
-#### PodCliqueSetTopologyConstraint
-
-
-
-PodCliqueSetTopologyConstraint defines topology placement requirements for PodCliqueSet.
-Extends the base topology constraint with a reference to a specific ClusterTopology.
-
-
-
-_Appears in:_
-- [PodCliqueSetTemplateSpec](#podcliquesettemplatespec)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `topologyName` _string_ | TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.<br />Required when PackDomain is specified. Immutable after creation. |  |  |
-| `packDomain` _[TopologyDomain](#topologydomain)_ | PackDomain specifies the topology domain for grouping replicas.<br />Must reference a domain defined in the referenced ClusterTopology's levels. |  | MaxLength: 63 <br />MinLength: 1 <br />Pattern: `^[a-z][a-z0-9-]*$` <br /> |
 
 
 #### PodCliqueSetUpdateProgress
@@ -933,10 +915,12 @@ TopologyConstraint defines topology placement requirements.
 
 _Appears in:_
 - [PodCliqueScalingGroupConfig](#podcliquescalinggroupconfig)
+- [PodCliqueSetTemplateSpec](#podcliquesettemplatespec)
 - [PodCliqueTemplateSpec](#podcliquetemplatespec)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
+| `topologyName` _string_ | TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.<br />When omitted, this constraint inherits the topology from its parent resource.<br />Current webhook validation rejects PodCliqueSets that resolve to more than one topologyName.<br />Immutable after creation. |  |  |
 | `packDomain` _[TopologyDomain](#topologydomain)_ | PackDomain specifies the topology domain for grouping replicas.<br />Controls placement constraint for EACH individual replica instance.<br />Must reference a domain defined in the ClusterTopology's levels.<br />Example: "rack" means each replica independently placed within one rack.<br />Note: Does NOT constrain all replicas to the same rack together.<br />Different replicas can be in different topology domains. |  | MaxLength: 63 <br />MinLength: 1 <br />Pattern: `^[a-z][a-z0-9-]*$` <br /> |
 
 
@@ -952,7 +936,6 @@ _Validation:_
 - Pattern: `^[a-z][a-z0-9-]*$`
 
 _Appears in:_
-- [PodCliqueSetTopologyConstraint](#podcliquesettopologyconstraint)
 - [TopologyConstraint](#topologyconstraint)
 - [TopologyLevel](#topologylevel)
 
