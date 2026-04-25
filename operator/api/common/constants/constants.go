@@ -102,6 +102,10 @@ const (
 	// constraints but no topologyName.
 	ConditionReasonTopologyNameMissing = "TopologyNameMissing"
 
+	// ConditionReasonTopologyNameMismatch is the reason when a child topologyName
+	// does not match the PCS-level topologyName.
+	ConditionReasonTopologyNameMismatch = "TopologyNameMismatch"
+
 	// ConditionReasonTopologyAwareSchedulingDisabled is the reason when a PodCliqueSet has topology
 	// constraints but Topology Aware Scheduling is disabled in the operator configuration.
 	ConditionReasonTopologyAwareSchedulingDisabled = "TopologyAwareSchedulingDisabled"

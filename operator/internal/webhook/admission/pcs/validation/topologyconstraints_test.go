@@ -20,9 +20,9 @@ import (
 	"testing"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	"github.com/stretchr/testify/assert"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
+	"github.com/stretchr/testify/assert"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"

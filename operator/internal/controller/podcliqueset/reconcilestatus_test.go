@@ -23,6 +23,7 @@ import (
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -524,6 +525,21 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 			wantMsgContain: "topologyName is required",
 		},
 		{
+			name:       "TAS enabled, child topologyName mismatches PCS — Unknown/TopologyNameMismatch",
+			tasEnabled: true,
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := basePCS("my-topology")
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					TopologyName: "other-topology",
+					PackDomain:   grovecorev1alpha1.TopologyDomainRack,
+				}
+				return pcs
+			},
+			wantStatus:     metav1.ConditionUnknown,
+			wantReason:     apicommonconstants.ConditionReasonTopologyNameMismatch,
+			wantMsgContain: "must match spec.template.topologyConstraint.topologyName",
+		},
+		{
 			name:           "TAS enabled, no constraints at all — False/AllClusterTopologyLevelsAvailable with no-constraints message",
 			tasEnabled:     true,
 			setupPCS:       func() *grovecorev1alpha1.PodCliqueSet { return basePCS("") },
@@ -675,7 +691,7 @@ func TestGetUniqueTopologyDomainsInPodCliqueSet(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := getUniqueTopologyDomainsInPodCliqueSet(tt.setupPCS())
+			got := componentutils.GetUniqueTopologyDomainsInPodCliqueSet(tt.setupPCS())
 			assert.ElementsMatch(t, tt.wantDomains, got)
 		})
 	}

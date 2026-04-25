@@ -18,6 +18,7 @@ package validation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/clustertopology"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	schedmanager "github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 
@@ -690,33 +692,39 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigsUpdate(oldConfigs []g
 }
 
 func (v *pcsValidator) validateTopologyConstraintsUpdate(oldPCS *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
+	// Allow invalid legacy objects to be repaired under the current rules by validating
+	// the new object as if it were a create.
+	if _, err := componentutils.ResolveTopologyNameForPodCliqueSet(oldPCS); err != nil {
+		return v.validateTopologyConstraintsOnCreate(context.Background())
+	}
+
 	// Domain/hierarchy validation is not needed on update because topology constraints are immutable.
-	// Only topologyName and packDomain immutability are checked here.
+	// Only topologyName and packDomain immutability are checked here for already valid objects.
 	return newTopologyConstraintsValidator(v.pcs, v.tasEnabled, nil).validateUpdate(oldPCS)
 }
 
 // resolveTopologyDomains resolves the ordered list of topology domains from the ClusterTopology
 // referenced by the PCS's topologyName. Returns nil domains (no validation) if no topology constraints exist.
 func (v *pcsValidator) resolveTopologyDomains(ctx context.Context) ([]string, field.ErrorList) {
-	topologyName := ""
-	if v.pcs.Spec.Template.TopologyConstraint != nil {
-		topologyName = v.pcs.Spec.Template.TopologyConstraint.TopologyName
-	}
-
-	hasAnyConstraint := pcsHasAnyTopologyConstraint(v.pcs)
-
 	// No constraints at all — nothing to validate.
-	if !hasAnyConstraint {
+	if !componentutils.HasAnyTopologyConstraint(v.pcs) {
 		return nil, nil
 	}
 
-	fldPath := field.NewPath("spec", "template", "topologyConstraint", "topologyName")
-
-	// Constraints exist but topologyName is missing.
-	if topologyName == "" {
-		return nil, field.ErrorList{field.Required(fldPath,
-			"spec.template.topologyConstraint with topologyName must be set when topology constraints are defined at any level")}
+	topologyName, err := componentutils.ResolveTopologyNameForPodCliqueSet(v.pcs)
+	if err != nil {
+		fldPath := field.NewPath("spec", "template", "topologyConstraint", "topologyName")
+		if errors.Is(err, componentutils.ErrTopologyNameMissing) {
+			return nil, field.ErrorList{field.Required(fldPath,
+				"spec.template.topologyConstraint.topologyName must be set when topology constraints are defined")}
+		}
+		if errors.Is(err, componentutils.ErrTopologyNameMismatch) {
+			return nil, childTopologyNameMismatchFieldErrors(v.pcs)
+		}
+		return nil, field.ErrorList{field.InternalError(fldPath, err)}
 	}
+
+	fldPath := field.NewPath("spec", "template", "topologyConstraint", "topologyName")
 
 	// Fetch the referenced ClusterTopology.
 	levels, err := clustertopology.GetClusterTopologyLevels(ctx, v.client, topologyName)
@@ -736,22 +744,36 @@ func (v *pcsValidator) resolveTopologyDomains(ctx context.Context) ([]string, fi
 	return domains, nil
 }
 
-// pcsHasAnyTopologyConstraint returns true if the PCS has any topology constraint at any level.
-func pcsHasAnyTopologyConstraint(pcs *grovecorev1alpha1.PodCliqueSet) bool {
-	if pcs.Spec.Template.TopologyConstraint != nil {
-		return true
+func childTopologyNameMismatchFieldErrors(pcs *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
+	var allErrs field.ErrorList
+	if pcs.Spec.Template.TopologyConstraint == nil || pcs.Spec.Template.TopologyConstraint.TopologyName == "" {
+		return allErrs
 	}
-	for _, clique := range pcs.Spec.Template.Cliques {
-		if clique.TopologyConstraint != nil {
-			return true
+	pcsTopologyName := pcs.Spec.Template.TopologyConstraint.TopologyName
+
+	for i, clique := range pcs.Spec.Template.Cliques {
+		if clique.TopologyConstraint != nil &&
+			clique.TopologyConstraint.TopologyName != "" &&
+			clique.TopologyConstraint.TopologyName != pcsTopologyName {
+			allErrs = append(allErrs, field.Invalid(
+				field.NewPath("spec", "template", "cliques").Index(i).Child("topologyConstraint", "topologyName"),
+				clique.TopologyConstraint.TopologyName,
+				fmt.Sprintf("topologyName must match spec.template.topologyConstraint.topologyName (%q)", pcsTopologyName)))
 		}
 	}
-	for _, pcsg := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-		if pcsg.TopologyConstraint != nil {
-			return true
+
+	for i, pcsg := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		if pcsg.TopologyConstraint != nil &&
+			pcsg.TopologyConstraint.TopologyName != "" &&
+			pcsg.TopologyConstraint.TopologyName != pcsTopologyName {
+			allErrs = append(allErrs, field.Invalid(
+				field.NewPath("spec", "template", "podCliqueScalingGroups").Index(i).Child("topologyConstraint", "topologyName"),
+				pcsg.TopologyConstraint.TopologyName,
+				fmt.Sprintf("topologyName must match spec.template.topologyConstraint.topologyName (%q)", pcsTopologyName)))
 		}
 	}
-	return false
+
+	return allErrs
 }
 
 // requiresOrderValidation checks if the StartupType requires clique order validation.

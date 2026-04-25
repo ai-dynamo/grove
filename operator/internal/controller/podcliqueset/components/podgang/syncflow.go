@@ -72,11 +72,8 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs 
 
 	sc.tasEnabled = r.tasConfig.Enabled
 	if r.tasConfig.Enabled {
-		topologyName := ""
-		if pcs.Spec.Template.TopologyConstraint != nil {
-			topologyName = pcs.Spec.Template.TopologyConstraint.TopologyName
-		}
-		if topologyName != "" {
+		topologyName, resolveErr := componentutils.ResolveTopologyNameForPodCliqueSet(pcs)
+		if resolveErr == nil && topologyName != "" {
 			sc.topologyLevels, err = clustertopology.GetClusterTopologyLevels(ctx, r.client, topologyName)
 			if err != nil {
 				return nil, groveerr.WrapError(err,
@@ -185,7 +182,7 @@ func buildExpectedBasePodGangForPCSReplica(sc *syncContext, pcsReplica int) (*po
 	pg := &podGangInfo{
 		fqn: podGangFQN,
 		// TopologyConstraint for the base PodGang comes from the topology constraint defined at the PCS level.
-		topologyConstraint: createTopologyPackConstraint(sc, client.ObjectKeyFromObject(sc.pcs), sc.pcs.Spec.Template.TopologyConstraint.ToTopologyConstraint()),
+		topologyConstraint: createTopologyPackConstraint(sc, client.ObjectKeyFromObject(sc.pcs), sc.pcs.Spec.Template.TopologyConstraint),
 	}
 	pclqInfos := make([]pclqInfo, 0, len(sc.pcs.Spec.Template.Cliques))
 
@@ -313,7 +310,7 @@ func doBuildExpectedScaledPodGangForPCSG(sc *syncContext, pcsgFQN string, pcsgCo
 		} else {
 			// Fall back to PCS-level constraints
 			topologyConstraint = createTopologyPackConstraint(sc, client.ObjectKeyFromObject(sc.pcs),
-				sc.pcs.Spec.Template.TopologyConstraint.ToTopologyConstraint())
+				sc.pcs.Spec.Template.TopologyConstraint)
 		}
 	}
 
