@@ -17,6 +17,7 @@
 package validation
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -33,10 +34,12 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func TestResourceNamingValidation(t *testing.T) {
@@ -1637,6 +1640,153 @@ func TestValidatePCSGResourceSharing(t *testing.T) {
 	}
 }
 
+func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
+	schedulerConfig := groveconfigv1alpha1.SchedulerConfiguration{
+		Profiles:           []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}},
+		DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+	}
+	tasConfig := groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{Enabled: true}
+
+	tests := []struct {
+		name          string
+		operation     admissionv1.Operation
+		setupOldPCS   func() *grovecorev1alpha1.PodCliqueSet
+		setupNewPCS   func() *grovecorev1alpha1.PodCliqueSet
+		clusterObjs   []client.Object
+		errorMatchers []testutils.ErrorMatcher
+	}{
+		{
+			name:      "create allows PCS topologyName with child packDomain only",
+			operation: admissionv1.Create,
+			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createTestPodCliqueSet("pcs-topology-create")
+				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					TopologyName: "topo-a",
+					PackDomain:   grovecorev1alpha1.TopologyDomainZone,
+				}
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					PackDomain: grovecorev1alpha1.TopologyDomainHost,
+				}
+				return pcs
+			},
+			clusterObjs: []client.Object{createTestClusterTopology()},
+		},
+		{
+			name:      "create allows child topologyName when it matches PCS",
+			operation: admissionv1.Create,
+			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createTestPodCliqueSet("pcs-child-topology-match")
+				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					TopologyName: "topo-a",
+					PackDomain:   grovecorev1alpha1.TopologyDomainZone,
+				}
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					TopologyName: "topo-a",
+					PackDomain:   grovecorev1alpha1.TopologyDomainHost,
+				}
+				return pcs
+			},
+			clusterObjs: []client.Object{createTestClusterTopology()},
+		},
+		{
+			name:      "create rejects child topologyName that differs from PCS",
+			operation: admissionv1.Create,
+			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createTestPodCliqueSet("pcs-child-topology-mismatch")
+				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					TopologyName: "topo-a",
+					PackDomain:   grovecorev1alpha1.TopologyDomainZone,
+				}
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					TopologyName: "topo-b",
+					PackDomain:   grovecorev1alpha1.TopologyDomainHost,
+				}
+				return pcs
+			},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].topologyConstraint.topologyName"},
+			},
+		},
+		{
+			name:      "update repairs legacy missing PCS topologyName",
+			operation: admissionv1.Update,
+			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createTestPodCliqueSet("pcs-repair-missing")
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					PackDomain: grovecorev1alpha1.TopologyDomainHost,
+				}
+				return pcs
+			},
+			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createTestPodCliqueSet("pcs-repair-missing")
+				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					TopologyName: "topo-a",
+					PackDomain:   grovecorev1alpha1.TopologyDomainZone,
+				}
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					PackDomain: grovecorev1alpha1.TopologyDomainHost,
+				}
+				return pcs
+			},
+			clusterObjs: []client.Object{createTestClusterTopology()},
+		},
+		{
+			name:      "update repairs legacy child topologyName by adding the same PCS topologyName",
+			operation: admissionv1.Update,
+			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createTestPodCliqueSet("pcs-repair-child")
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					TopologyName: "topo-a",
+					PackDomain:   grovecorev1alpha1.TopologyDomainHost,
+				}
+				return pcs
+			},
+			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createTestPodCliqueSet("pcs-repair-child")
+				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					TopologyName: "topo-a",
+					PackDomain:   grovecorev1alpha1.TopologyDomainZone,
+				}
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					PackDomain: grovecorev1alpha1.TopologyDomainHost,
+				}
+				return pcs
+			},
+			clusterObjs: []client.Object{createTestClusterTopology()},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeClient := testutils.CreateDefaultFakeClient(tc.clusterObjs)
+			newPCS := tc.setupNewPCS()
+			validator := newPCSValidator(newPCS, tc.operation, tasConfig, schedulerConfig, fakeClient)
+
+			var (
+				err  error
+				errs field.ErrorList
+			)
+			switch tc.operation {
+			case admissionv1.Create:
+				_, errs = validator.validate()
+				errs = append(errs, validator.validateTopologyConstraintsOnCreate(context.Background())...)
+				err = errs.ToAggregate()
+			case admissionv1.Update:
+				err = validator.validateUpdate(tc.setupOldPCS())
+			default:
+				t.Fatalf("unsupported operation %s", tc.operation)
+			}
+
+			if tc.errorMatchers != nil {
+				require.Error(t, err)
+				testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
 // ---------------------------- Helper Functions ----------------------------
 
 // defaultTASConfig returns a default TAS configuration with TAS disabled.
@@ -1677,5 +1827,18 @@ func createScalingGroupConfig(name string, cliqueNames []string) grovecorev1alph
 	return grovecorev1alpha1.PodCliqueScalingGroupConfig{
 		Name:        name,
 		CliqueNames: cliqueNames,
+	}
+}
+
+func createTestClusterTopology() *grovecorev1alpha1.ClusterTopology {
+	return &grovecorev1alpha1.ClusterTopology{
+		ObjectMeta: metav1.ObjectMeta{Name: "topo-a"},
+		Spec: grovecorev1alpha1.ClusterTopologySpec{
+			Levels: []grovecorev1alpha1.TopologyLevel{
+				{Domain: grovecorev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
+				{Domain: grovecorev1alpha1.TopologyDomainRack, Key: "topology.grove.io/rack"},
+				{Domain: grovecorev1alpha1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
+			},
+		},
 	}
 }

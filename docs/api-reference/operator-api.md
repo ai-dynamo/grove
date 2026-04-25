@@ -623,6 +623,8 @@ _Appears in:_
 | `podCliqueScalingGroups` _[PodCliqueScalingGroupConfig](#podcliquescalinggroupconfig) array_ | PodCliqueScalingGroupConfigs is a list of scaling groups for the PodCliqueSet. |  |  |
 
 
+
+
 #### PodCliqueSetUpdateProgress
 
 
@@ -920,7 +922,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `topologyName` _string_ | TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.<br />When omitted, this constraint inherits the topology from its parent resource.<br />Current webhook validation rejects PodCliqueSets that resolve to more than one topologyName.<br />Immutable after creation. |  |  |
+| `topologyName` _string_ | TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.<br />The PodCliqueSet-level topologyName selects the ClusterTopology for the workload.<br />Child constraints may repeat the same topologyName, but must not change it.<br />Immutable after creation. |  |  |
 | `packDomain` _[TopologyDomain](#topologydomain)_ | PackDomain specifies the topology domain for grouping replicas.<br />Controls placement constraint for EACH individual replica instance.<br />Must reference a domain defined in the ClusterTopology's levels.<br />Example: "rack" means each replica independently placed within one rack.<br />Note: Does NOT constrain all replicas to the same rack together.<br />Different replicas can be in different topology domains. |  | MaxLength: 63 <br />MinLength: 1 <br />Pattern: `^[a-z][a-z0-9-]*$` <br /> |
 
 

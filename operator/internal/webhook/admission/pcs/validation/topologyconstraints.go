@@ -22,7 +22,7 @@ import (
 
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	"github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
@@ -226,7 +226,7 @@ func (v *topologyConstraintsValidator) validateHierarchicalTopologyConstraints(f
 		pcsgDomain := pcsg.TopologyConstraint.PackDomain
 		for _, cliqueName := range pcsg.CliqueNames {
 			// Find the clique by name
-			matchingPCLQTemplate := utils.FindPodCliqueTemplateSpecByName(v.pcs, cliqueName)
+			matchingPCLQTemplate := componentutils.FindPodCliqueTemplateSpecByName(v.pcs, cliqueName)
 			if matchingPCLQTemplate != nil && matchingPCLQTemplate.TopologyConstraint != nil {
 				if hasHierarchyViolation(pcsgDomain, matchingPCLQTemplate.TopologyConstraint.PackDomain, v.clusterTopologyDomains) {
 					allErrs = append(allErrs, field.Invalid(
@@ -263,8 +263,8 @@ func (v *topologyConstraintsValidator) disallowChangesToTopologyConstraintsWhenP
 
 	// Validate PCS level packDomain only when topologyName is unchanged; adding or removing
 	// the whole topologyConstraint (which changes topologyName) is already reported above.
-	oldPCSConstraint := oldPCS.Spec.Template.TopologyConstraint.ToTopologyConstraint()
-	newPCSConstraint := v.pcs.Spec.Template.TopologyConstraint.ToTopologyConstraint()
+	oldPCSConstraint := oldPCS.Spec.Template.TopologyConstraint
+	newPCSConstraint := v.pcs.Spec.Template.TopologyConstraint
 	if oldTopologyName == newTopologyName && constraintChanged(oldPCSConstraint, newPCSConstraint) {
 		allErrs = append(allErrs, field.Forbidden(
 			fldPath.Child("topologyConstraint"),
@@ -314,7 +314,7 @@ func constraintChanged(old, new *grovecorev1alpha1.TopologyConstraint) bool {
 	if old == nil || new == nil {
 		return true
 	}
-	return old.PackDomain != new.PackDomain
+	return old.TopologyName != new.TopologyName || old.PackDomain != new.PackDomain
 }
 
 // constraintChangeMsg generates a specific error message based on the type of change.
@@ -329,6 +329,10 @@ func constraintChangeMsg(kind, name string, old, new *grovecorev1alpha1.Topology
 	}
 	if new == nil {
 		return fmt.Sprintf("%s%s topology constraint cannot be removed after creation", kind, identifier)
+	}
+	if old.TopologyName != new.TopologyName {
+		return fmt.Sprintf("%s%s topology constraint topologyName cannot be changed from '%s' to '%s'",
+			kind, identifier, old.TopologyName, new.TopologyName)
 	}
 	return fmt.Sprintf("%s%s topology constraint cannot be changed from '%s' to '%s'",
 		kind, identifier, old.PackDomain, new.PackDomain)

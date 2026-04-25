@@ -23,6 +23,7 @@ import (
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -390,9 +391,9 @@ func TestMirrorUpdateProgressToRollingUpdateProgressPCS(t *testing.T) {
 func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 	// basePCS returns a PodCliqueSet with a PCS-level TopologyConstraint pointing at "my-topology".
 	basePCS := func(topologyName string) *grovecorev1alpha1.PodCliqueSet {
-		var tc *grovecorev1alpha1.PodCliqueSetTopologyConstraint
+		var tc *grovecorev1alpha1.TopologyConstraint
 		if topologyName != "" {
-			tc = &grovecorev1alpha1.PodCliqueSetTopologyConstraint{
+			tc = &grovecorev1alpha1.TopologyConstraint{
 				TopologyName: topologyName,
 				PackDomain:   grovecorev1alpha1.TopologyDomainRack,
 			}
@@ -537,7 +538,7 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 			tasEnabled: true,
 			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
 				pcs := basePCS("")
-				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.PodCliqueSetTopologyConstraint{
+				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
 					TopologyName: "my-topology",
 					// PackDomain intentionally empty: only topologyName is set at PCS level
 				}
@@ -630,7 +631,7 @@ func TestGetUniqueTopologyDomainsInPodCliqueSet(t *testing.T) {
 			name: "PCS-level topologyName only, empty packDomain — empty result",
 			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
 				return makePCS(func(tmpl *grovecorev1alpha1.PodCliqueSetTemplateSpec) {
-					tmpl.TopologyConstraint = &grovecorev1alpha1.PodCliqueSetTopologyConstraint{
+					tmpl.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
 						TopologyName: "my-topology",
 						// PackDomain intentionally empty
 					}
@@ -642,7 +643,7 @@ func TestGetUniqueTopologyDomainsInPodCliqueSet(t *testing.T) {
 			name: "PCS-level topologyName and non-empty packDomain — packDomain included",
 			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
 				return makePCS(func(tmpl *grovecorev1alpha1.PodCliqueSetTemplateSpec) {
-					tmpl.TopologyConstraint = &grovecorev1alpha1.PodCliqueSetTopologyConstraint{
+					tmpl.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
 						TopologyName: "my-topology",
 						PackDomain:   grovecorev1alpha1.TopologyDomainRack,
 					}
@@ -654,7 +655,7 @@ func TestGetUniqueTopologyDomainsInPodCliqueSet(t *testing.T) {
 			name: "PCS empty packDomain + PCSG non-empty packDomain — only PCSG domain included",
 			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
 				return makePCS(func(tmpl *grovecorev1alpha1.PodCliqueSetTemplateSpec) {
-					tmpl.TopologyConstraint = &grovecorev1alpha1.PodCliqueSetTopologyConstraint{
+					tmpl.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
 						TopologyName: "my-topology",
 						// PackDomain intentionally empty
 					}
@@ -675,7 +676,7 @@ func TestGetUniqueTopologyDomainsInPodCliqueSet(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := getUniqueTopologyDomainsInPodCliqueSet(tt.setupPCS())
+			got := componentutils.GetUniqueTopologyDomainsInPodCliqueSet(tt.setupPCS())
 			assert.ElementsMatch(t, tt.wantDomains, got)
 		})
 	}

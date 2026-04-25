@@ -208,7 +208,7 @@ type PodCliqueSetTemplateSpec struct {
 	HeadlessServiceConfig *HeadlessServiceConfig `json:"headlessServiceConfig,omitempty"`
 	// TopologyConstraint defines topology placement requirements for PodCliqueSet.
 	// +optional
-	TopologyConstraint *PodCliqueSetTopologyConstraint `json:"topologyConstraint,omitempty"`
+	TopologyConstraint *TopologyConstraint `json:"topologyConstraint,omitempty"`
 	// TerminationDelay is the delay after which the gang termination will be triggered.
 	// A gang is a candidate for termination if number of running pods fall below a threshold for any PodClique.
 	// If a PodGang remains a candidate past TerminationDelay then it will be terminated. This allows additional time
@@ -269,29 +269,14 @@ type PodCliqueTemplateSpec struct {
 	Spec PodCliqueSpec `json:"spec"`
 }
 
-// PodCliqueSetTopologyConstraint defines topology placement requirements for PodCliqueSet.
-// Extends the base topology constraint with a reference to a specific ClusterTopology.
-type PodCliqueSetTopologyConstraint struct {
-	// TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.
-	// Required when PackDomain is specified. Immutable after creation.
-	// +required
-	TopologyName string `json:"topologyName"`
-	// PackDomain specifies the topology domain for grouping replicas.
-	// Must reference a domain defined in the referenced ClusterTopology's levels.
-	// +optional
-	PackDomain TopologyDomain `json:"packDomain,omitempty"`
-}
-
-// ToTopologyConstraint returns the base TopologyConstraint (without the topology name).
-func (tc *PodCliqueSetTopologyConstraint) ToTopologyConstraint() *TopologyConstraint {
-	if tc == nil {
-		return nil
-	}
-	return &TopologyConstraint{PackDomain: tc.PackDomain}
-}
-
 // TopologyConstraint defines topology placement requirements.
 type TopologyConstraint struct {
+	// TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.
+	// The PodCliqueSet-level topologyName selects the ClusterTopology for the workload.
+	// Child constraints may repeat the same topologyName, but must not change it.
+	// Immutable after creation.
+	// +optional
+	TopologyName string `json:"topologyName,omitempty"`
 	// PackDomain specifies the topology domain for grouping replicas.
 	// Controls placement constraint for EACH individual replica instance.
 	// Must reference a domain defined in the ClusterTopology's levels.

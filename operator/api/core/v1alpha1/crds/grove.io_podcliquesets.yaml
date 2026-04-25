@@ -9303,6 +9303,13 @@ spec:
                               minLength: 1
                               pattern: ^[a-z][a-z0-9-]*$
                               type: string
+                            topologyName:
+                              description: |-
+                                TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.
+                                The PodCliqueSet-level topologyName selects the ClusterTopology for the workload.
+                                Child constraints may repeat the same topologyName, but must not change it.
+                                Immutable after creation.
+                              type: string
                           type: object
                       required:
                       - name
@@ -9951,6 +9958,13 @@ spec:
                               maxLength: 63
                               minLength: 1
                               pattern: ^[a-z][a-z0-9-]*$
+                              type: string
+                            topologyName:
+                              description: |-
+                                TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.
+                                The PodCliqueSet-level topologyName selects the ClusterTopology for the workload.
+                                Child constraints may repeat the same topologyName, but must not change it.
+                                Immutable after creation.
                               type: string
                           type: object
                       required:
@@ -10730,7 +10744,11 @@ spec:
                       packDomain:
                         description: |-
                           PackDomain specifies the topology domain for grouping replicas.
-                          Must reference a domain defined in the referenced ClusterTopology's levels.
+                          Controls placement constraint for EACH individual replica instance.
+                          Must reference a domain defined in the ClusterTopology's levels.
+                          Example: "rack" means each replica independently placed within one rack.
+                          Note: Does NOT constrain all replicas to the same rack together.
+                          Different replicas can be in different topology domains.
                         maxLength: 63
                         minLength: 1
                         pattern: ^[a-z][a-z0-9-]*$
@@ -10738,7 +10756,9 @@ spec:
                       topologyName:
                         description: |-
                           TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.
-                          Required when PackDomain is specified. Immutable after creation.
+                          The PodCliqueSet-level topologyName selects the ClusterTopology for the workload.
+                          Child constraints may repeat the same topologyName, but must not change it.
+                          Immutable after creation.
                         type: string
                     type: object
                 required:
