@@ -24,19 +24,22 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
-	"github.com/ai-dynamo/grove/operator/internal/utils"
+	"github.com/ai-dynamo/grove/operator/internal/expect"
 
 	"github.com/go-logr/logr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
-// triggerDeletionFlow handles the deletion of a PodClique and its managed resources
+// triggerDeletionFlow handles the deletion of a PodClique. Owned Pods (and any
+// PCLQ-scoped ResourceClaims) carry a controller owner reference back to this
+// PodClique, so removing the finalizer hands the cascade off to the Kubernetes
+// garbage collector. Local in-memory state (the expectations store) is the only
+// thing the controller still has to clean up itself.
 func (r *Reconciler) triggerDeletionFlow(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
 	dLog := logger.WithValues("operation", "delete")
 	deleteStepFns := []ctrlcommon.ReconcileStepFn[grovecorev1alpha1.PodClique]{
-		r.deletePodCliqueResources,
-		r.verifyNoResourcesAwaitsCleanup,
+		r.clearPodCliqueExpectations,
 		r.removeFinalizer,
 	}
 	for _, fn := range deleteStepFns {
@@ -44,34 +47,21 @@ func (r *Reconciler) triggerDeletionFlow(ctx context.Context, logger logr.Logger
 			return stepResult
 		}
 	}
-	dLog.Info("PodClique deleted successfully")
+	dLog.Info("PodClique finalizer removed; Kubernetes garbage collector will cascade-delete owned Pods")
 	return ctrlcommon.DoNotRequeue()
 }
 
-// deletePodCliqueResources triggers concurrent deletion of all resources managed by the PodClique operators
-func (r *Reconciler) deletePodCliqueResources(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
-	operators := r.operatorRegistry.GetAllOperators()
-	deleteTasks := make([]utils.Task, 0, len(operators))
-	for kind, operator := range operators {
-		deleteTasks = append(deleteTasks, utils.Task{
-			Name: fmt.Sprintf("delete-%s", kind),
-			Fn: func(ctx context.Context) error {
-				return operator.Delete(ctx, logger, pclq.ObjectMeta)
-			},
-		})
+// clearPodCliqueExpectations drops the in-memory expectations entry for this
+// PodClique so the store does not retain stale UIDs after the object is gone.
+func (r *Reconciler) clearPodCliqueExpectations(_ context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
+	key, err := expect.ControlleeKeyFunc(pclq)
+	if err != nil {
+		return ctrlcommon.ReconcileWithErrors("error building expectations store key", fmt.Errorf("failed to build expectations store key for PodClique %v: %w", client.ObjectKeyFromObject(pclq), err))
 	}
-	logger.Info("Triggering delete of PodClique resources")
-	if runResult := utils.RunConcurrently(ctx, logger, deleteTasks); runResult.HasErrors() {
-		deletionErr := runResult.GetAggregatedError()
-		logger.Error(deletionErr, "Error deleting managed resources", "summary", runResult.GetSummary())
-		return ctrlcommon.ReconcileWithErrors("error deleting managed resources", deletionErr)
+	if err := r.expectationsStore.DeleteExpectations(logger, key); err != nil {
+		return ctrlcommon.ReconcileWithErrors("error clearing expectations", err)
 	}
 	return ctrlcommon.ContinueReconcile()
-}
-
-// verifyNoResourcesAwaitsCleanup ensures all managed resources have been fully deleted before allowing finalizer removal
-func (r *Reconciler) verifyNoResourcesAwaitsCleanup(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
-	return ctrlutils.VerifyNoResourceAwaitsCleanup(ctx, logger, r.operatorRegistry, pclq.ObjectMeta)
 }
 
 // removeFinalizer removes the PodClique finalizer to allow Kubernetes to complete the deletion
