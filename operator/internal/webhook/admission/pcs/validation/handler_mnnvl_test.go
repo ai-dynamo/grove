@@ -118,7 +118,6 @@ func TestValidateCreate_MNNVL(t *testing.T) {
 			expectError:      true,
 			errorContains:    "contradictory",
 		},
-		// mnnvl-group on PCSG config
 		{
 			description:      "mnnvl-group on PCSG config + feature enabled -> no error",
 			pcs:              createValidPCSWithPCSGConfigAnnotations(map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}),

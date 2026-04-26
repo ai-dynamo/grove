@@ -67,9 +67,13 @@ func DetectMNNVLConflict(annotations map[string]string) error {
 }
 
 // GenerateRCTName creates the ResourceClaimTemplate name for a PCS replica.
-// The RCT name matches the ComputeDomain name: {pcs-name}-{replica-index}
-func GenerateRCTName(pcsNameReplica apicommon.ResourceNameReplica) string {
-	return fmt.Sprintf("%s-%d", pcsNameReplica.Name, pcsNameReplica.Replica)
+// Without a group: {pcs-name}-{replica-index} (default CD).
+// With a group: {pcs-name}-{replica-index}-{group-name}.
+func GenerateRCTName(pcsNameReplica apicommon.ResourceNameReplica, groupName string) string {
+	if groupName == "" {
+		return fmt.Sprintf("%s-%d", pcsNameReplica.Name, pcsNameReplica.Replica)
+	}
+	return fmt.Sprintf("%s-%d-%s", pcsNameReplica.Name, pcsNameReplica.Replica, groupName)
 }
 
 // hasGPURequirement checks if any container in any clique of the PCS requests nvidia.com/gpu.

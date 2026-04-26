@@ -32,7 +32,7 @@ func InjectMNNVLIntoPodSpec(logger logr.Logger, podSpec *corev1.PodSpec, pcsName
 		return
 	}
 
-	rctName := GenerateRCTName(pcsNameReplica)
+	rctName := GenerateRCTName(pcsNameReplica, "")
 
 	// Check if already injected (idempotent)
 	for _, claim := range podSpec.ResourceClaims {

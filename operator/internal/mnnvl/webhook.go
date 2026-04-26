@@ -168,6 +168,7 @@ func validatePodCliqueTemplateSpecOnCreate(clique *grovecorev1alpha1.PodCliqueTe
 func validatePodCliqueSetTemplateSpecOnUpdate(oldTemplate, newTemplate *grovecorev1alpha1.PodCliqueSetTemplateSpec, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
+	// Validate cliques
 	oldByName := make(map[string]*grovecorev1alpha1.PodCliqueTemplateSpec, len(oldTemplate.Cliques))
 	for _, clique := range oldTemplate.Cliques {
 		if clique == nil {
@@ -186,6 +187,7 @@ func validatePodCliqueSetTemplateSpecOnUpdate(oldTemplate, newTemplate *grovecor
 		allErrs = append(allErrs, validatePodCliqueTemplateSpecOnUpdate(oldClique, newClique, fldPath.Child("cliques").Index(i))...)
 	}
 
+	// Validate PCSG Configs
 	oldPCSGByName := make(map[string]*grovecorev1alpha1.PodCliqueScalingGroupConfig, len(oldTemplate.PodCliqueScalingGroupConfigs))
 	for i := range oldTemplate.PodCliqueScalingGroupConfigs {
 		oldPCSGByName[oldTemplate.PodCliqueScalingGroupConfigs[i].Name] = &oldTemplate.PodCliqueScalingGroupConfigs[i]

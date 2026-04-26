@@ -64,6 +64,10 @@ const (
 	// starting and ending with alphanumeric, max 63 characters).
 	AnnotationMNNVLGroup = "grove.io/mnnvl-group"
 
+	// LabelMNNVLGroup is a label applied to ComputeDomain resources to identify which
+	// MNNVL group they belong to. This enables filtering and selection of CDs by group.
+	LabelMNNVLGroup = "grove.io/mnnvl-group"
+
 	// FinalizerComputeDomain is the finalizer added to ComputeDomains to prevent accidental
 	// deletion while workloads are using them. This finalizer is removed by the PCS controller
 	// during scale-in or PCS deletion.

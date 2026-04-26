@@ -87,28 +87,44 @@ func TestGenerateRCTName(t *testing.T) {
 	tests := []struct {
 		description    string
 		pcsNameReplica apicommon.ResourceNameReplica
+		groupName      string
 		expected       string
 	}{
 		{
-			description:    "simple name with index 0",
+			description:    "default group index 0",
 			pcsNameReplica: apicommon.ResourceNameReplica{Name: "my-pcs", Replica: 0},
+			groupName:      "",
 			expected:       "my-pcs-0",
 		},
 		{
-			description:    "name with index 5",
+			description:    "default group index 5",
 			pcsNameReplica: apicommon.ResourceNameReplica{Name: "workload", Replica: 5},
+			groupName:      "",
 			expected:       "workload-5",
 		},
 		{
-			description:    "name with dashes",
+			description:    "default group with dashes",
 			pcsNameReplica: apicommon.ResourceNameReplica{Name: "my-long-pcs-name", Replica: 10},
+			groupName:      "",
 			expected:       "my-long-pcs-name-10",
+		},
+		{
+			description:    "named group",
+			pcsNameReplica: apicommon.ResourceNameReplica{Name: "my-pcs", Replica: 0},
+			groupName:      "workers",
+			expected:       "my-pcs-0-workers",
+		},
+		{
+			description:    "named group higher replica",
+			pcsNameReplica: apicommon.ResourceNameReplica{Name: "training", Replica: 3},
+			groupName:      "encoders",
+			expected:       "training-3-encoders",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
-			result := GenerateRCTName(tc.pcsNameReplica)
+			result := GenerateRCTName(tc.pcsNameReplica, tc.groupName)
 			assert.Equal(t, tc.expected, result)
 		})
 	}

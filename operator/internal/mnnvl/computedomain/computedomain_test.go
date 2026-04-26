@@ -83,22 +83,35 @@ func Test_generateComputeDomainName(t *testing.T) {
 	testCases := []struct {
 		description string
 		input       apicommon.ResourceNameReplica
+		groupName   string
 		expected    string
 	}{
 		{
-			description: "replica 0",
+			description: "default group replica 0",
 			input:       apicommon.ResourceNameReplica{Name: "mypcs", Replica: 0},
 			expected:    "mypcs-0",
 		},
 		{
-			description: "replica 5",
+			description: "default group replica 5",
 			input:       apicommon.ResourceNameReplica{Name: "mypcs", Replica: 5},
 			expected:    "mypcs-5",
 		},
 		{
-			description: "different pcs name",
+			description: "default group different pcs name",
 			input:       apicommon.ResourceNameReplica{Name: "other-pcs", Replica: 3},
 			expected:    "other-pcs-3",
+		},
+		{
+			description: "named group",
+			input:       apicommon.ResourceNameReplica{Name: "mypcs", Replica: 0},
+			groupName:   "workers",
+			expected:    "mypcs-0-workers",
+		},
+		{
+			description: "named group higher replica",
+			input:       apicommon.ResourceNameReplica{Name: "training", Replica: 2},
+			groupName:   "encoders",
+			expected:    "training-2-encoders",
 		},
 	}
 
@@ -106,54 +119,90 @@ func Test_generateComputeDomainName(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
 			t.Parallel()
-			result := generateComputeDomainName(tc.input)
+			result := generateComputeDomainName(tc.input, tc.groupName)
 			assert.Equal(t, tc.expected, result)
 		})
 	}
 }
 
-func TestParseReplicaIndexFromName(t *testing.T) {
+func TestGetRequiredCDNames(t *testing.T) {
 	testCases := []struct {
-		description   string
-		cdName        string
-		pcsName       string
-		expectedIndex int
-		expectError   bool
+		description    string
+		pcs            *grovecorev1alpha1.PodCliqueSet
+		expectedGroups map[string]struct{}
 	}{
 		{
-			description:   "valid name replica 0",
-			cdName:        "mypcs-0",
-			pcsName:       "mypcs",
-			expectedIndex: 0,
-			expectError:   false,
+			description: "auto-mnnvl enabled, 2 replicas — default group",
+			pcs:         createPCSWithMNNVLEnabled(2),
+			expectedGroups: map[string]struct{}{
+				"": {},
+			},
 		},
 		{
-			description:   "valid name replica 5",
-			cdName:        "mypcs-5",
-			pcsName:       "mypcs",
-			expectedIndex: 5,
-			expectError:   false,
+			description: "mnnvl-group on PCS, 2 replicas — named group",
+			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createPCSWithGPU(2)
+				pcs.Annotations = map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}
+				return pcs
+			}(),
+			expectedGroups: map[string]struct{}{
+				"workers": {},
+			},
 		},
 		{
-			description:   "wrong prefix",
-			cdName:        "other-0",
-			pcsName:       "mypcs",
-			expectedIndex: -1,
-			expectError:   true,
+			description: "clique-level groups — two distinct groups",
+			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createPCSWithGPU(1)
+				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, &grovecorev1alpha1.PodCliqueTemplateSpec{
+					Name:        "clique2",
+					Annotations: map[string]string{mnnvl.AnnotationMNNVLGroup: "encoders"},
+				})
+				pcs.Spec.Template.Cliques[0].Annotations = map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}
+				return pcs
+			}(),
+			expectedGroups: map[string]struct{}{
+				"workers":  {},
+				"encoders": {},
+			},
 		},
 		{
-			description:   "non-numeric replica index",
-			cdName:        "mypcs-abc",
-			pcsName:       "mypcs",
-			expectedIndex: -1,
-			expectError:   true,
+			description: "PCSG config group propagates to clique",
+			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createPCSWithGPU(1)
+				pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+					{
+						Name:        "sg1",
+						CliqueNames: []string{"clique1"},
+						Annotations: map[string]string{mnnvl.AnnotationMNNVLGroup: "training"},
+					},
+				}
+				return pcs
+			}(),
+			expectedGroups: map[string]struct{}{
+				"training": {},
+			},
 		},
 		{
-			description:   "empty cd name",
-			cdName:        "",
-			pcsName:       "mypcs",
-			expectedIndex: -1,
-			expectError:   true,
+			description: "PCS default group + clique named group — both collected",
+			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createPCSWithMNNVLEnabled(2)
+				pcs.Spec.Template.Cliques[0].Annotations = map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}
+				return pcs
+			}(),
+			expectedGroups: map[string]struct{}{
+				"":        {},
+				"workers": {},
+			},
+		},
+		{
+			description:    "no MNNVL annotations — empty list",
+			pcs:            createPCSWithGPU(2),
+			expectedGroups: nil,
+		},
+		{
+			description:    "auto-mnnvl disabled — empty list",
+			pcs:            createPCSWithMNNVLDisabled(),
+			expectedGroups: nil,
 		},
 	}
 
@@ -161,77 +210,147 @@ func TestParseReplicaIndexFromName(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
 			t.Parallel()
-			index, err := parseReplicaIndexFromName(tc.cdName, tc.pcsName)
-			if tc.expectError {
-				assert.Error(t, err)
-				assert.Equal(t, tc.expectedIndex, index)
-			} else {
-				assert.NoError(t, err)
-				assert.Equal(t, tc.expectedIndex, index)
+			result := getRequiredCDNames(tc.pcs)
+			if tc.expectedGroups == nil {
+				assert.Nil(t, result)
+				return
+			}
+			actualGroups := make(map[string]struct{})
+			for _, cd := range result {
+				actualGroups[cd.groupName] = struct{}{}
+			}
+			assert.Equal(t, tc.expectedGroups, actualGroups)
+
+			expectedCount := len(tc.expectedGroups) * int(tc.pcs.Spec.Replicas)
+			assert.Len(t, result, expectedCount, "should have one CD per group per replica")
+		})
+	}
+}
+
+func TestResolveGroupName(t *testing.T) {
+	testCases := []struct {
+		description   string
+		annotations   map[string]string
+		expectedGroup string
+		expectedOk    bool
+	}{
+		{
+			description:   "auto-mnnvl enabled only — default group",
+			annotations:   map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled},
+			expectedGroup: "",
+			expectedOk:    true,
+		},
+		{
+			description:   "mnnvl-group only — named group",
+			annotations:   map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"},
+			expectedGroup: "workers",
+			expectedOk:    true,
+		},
+		{
+			description: "both — group takes precedence",
+			annotations: map[string]string{
+				mnnvl.AnnotationAutoMNNVL:  mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "training",
+			},
+			expectedGroup: "training",
+			expectedOk:    true,
+		},
+		{
+			description: "auto-mnnvl disabled — not enrolled",
+			annotations: map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled},
+			expectedOk:  false,
+		},
+		{
+			description: "no annotations — not enrolled",
+			annotations: nil,
+			expectedOk:  false,
+		},
+	}
+
+	t.Parallel()
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			t.Parallel()
+			group, ok := resolveGroupName(tc.annotations)
+			assert.Equal(t, tc.expectedOk, ok)
+			if ok {
+				assert.Equal(t, tc.expectedGroup, group)
 			}
 		})
 	}
 }
 
-// TestHasMNNVLEnabled has been moved to operator/internal/mnnvl/helpers_test.go
-// since the function is now exported as mnnvl.IsAutoMNNVLEnabled
-
-func TestGetCDFQNsToDelete(t *testing.T) {
+func TestTriageCDs(t *testing.T) {
 	testCases := []struct {
 		description      string
-		pcsName          string
-		desiredReplicas  int
+		requiredCDs      []cdNameInfo
 		existingCDFQNs   []string
+		expectedToCreate []cdNameInfo
 		expectedToDelete []string
-		expectError      bool
 	}{
 		{
-			description:      "no excess - exact match",
-			pcsName:          "pcs",
-			desiredReplicas:  3,
-			existingCDFQNs:   []string{"pcs-0", "pcs-1", "pcs-2"},
-			expectedToDelete: []string{},
-			expectError:      false,
-		},
-		{
-			description:      "scale in by 1",
-			pcsName:          "pcs",
-			desiredReplicas:  2,
-			existingCDFQNs:   []string{"pcs-0", "pcs-1", "pcs-2"},
-			expectedToDelete: []string{"pcs-2"},
-			expectError:      false,
-		},
-		{
-			description:      "scale in by 2",
-			pcsName:          "pcs",
-			desiredReplicas:  1,
-			existingCDFQNs:   []string{"pcs-0", "pcs-1", "pcs-2"},
-			expectedToDelete: []string{"pcs-1", "pcs-2"},
-			expectError:      false,
-		},
-		{
-			description:      "scale to zero",
-			pcsName:          "pcs",
-			desiredReplicas:  0,
+			description: "exact match — nothing to create or delete",
+			requiredCDs: []cdNameInfo{
+				{name: "pcs-0", replicaIndex: 0},
+				{name: "pcs-1", replicaIndex: 1},
+			},
 			existingCDFQNs:   []string{"pcs-0", "pcs-1"},
-			expectedToDelete: []string{"pcs-0", "pcs-1"},
-			expectError:      false,
-		},
-		{
-			description:      "no existing CDs",
-			pcsName:          "pcs",
-			desiredReplicas:  3,
-			existingCDFQNs:   []string{},
-			expectedToDelete: []string{},
-			expectError:      false,
-		},
-		{
-			description:      "invalid CD name format",
-			pcsName:          "pcs",
-			desiredReplicas:  2,
-			existingCDFQNs:   []string{"pcs-invalid"},
+			expectedToCreate: nil,
 			expectedToDelete: nil,
-			expectError:      true,
+		},
+		{
+			description: "scale out — create missing",
+			requiredCDs: []cdNameInfo{
+				{name: "pcs-0", replicaIndex: 0},
+				{name: "pcs-1", replicaIndex: 1},
+				{name: "pcs-2", replicaIndex: 2},
+			},
+			existingCDFQNs: []string{"pcs-0"},
+			expectedToCreate: []cdNameInfo{
+				{name: "pcs-1", replicaIndex: 1},
+				{name: "pcs-2", replicaIndex: 2},
+			},
+			expectedToDelete: nil,
+		},
+		{
+			description: "scale in — delete excess",
+			requiredCDs: []cdNameInfo{
+				{name: "pcs-0", replicaIndex: 0},
+			},
+			existingCDFQNs:   []string{"pcs-0", "pcs-1", "pcs-2"},
+			expectedToCreate: nil,
+			expectedToDelete: []string{"pcs-1", "pcs-2"},
+		},
+		{
+			description: "group rename — delete old, create new",
+			requiredCDs: []cdNameInfo{
+				{name: "pcs-0-encoders", replicaIndex: 0, groupName: "encoders"},
+				{name: "pcs-1-encoders", replicaIndex: 1, groupName: "encoders"},
+			},
+			existingCDFQNs: []string{"pcs-0-workers", "pcs-1-workers"},
+			expectedToCreate: []cdNameInfo{
+				{name: "pcs-0-encoders", replicaIndex: 0, groupName: "encoders"},
+				{name: "pcs-1-encoders", replicaIndex: 1, groupName: "encoders"},
+			},
+			expectedToDelete: []string{"pcs-0-workers", "pcs-1-workers"},
+		},
+		{
+			description: "all new — nothing existing",
+			requiredCDs: []cdNameInfo{
+				{name: "pcs-0", replicaIndex: 0},
+			},
+			existingCDFQNs: nil,
+			expectedToCreate: []cdNameInfo{
+				{name: "pcs-0", replicaIndex: 0},
+			},
+			expectedToDelete: nil,
+		},
+		{
+			description:      "all excess — nothing required",
+			requiredCDs:      nil,
+			existingCDFQNs:   []string{"pcs-0", "pcs-1"},
+			expectedToCreate: nil,
+			expectedToDelete: []string{"pcs-0", "pcs-1"},
 		},
 	}
 
@@ -239,13 +358,13 @@ func TestGetCDFQNsToDelete(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
 			t.Parallel()
-			result, err := getCDFQNsToDelete(tc.pcsName, tc.desiredReplicas, tc.existingCDFQNs)
-			if tc.expectError {
-				assert.Error(t, err)
+			toCreate, toDelete := triageCDs(tc.requiredCDs, tc.existingCDFQNs)
+			if tc.expectedToCreate == nil {
+				assert.Empty(t, toCreate)
 			} else {
-				assert.NoError(t, err)
-				assert.ElementsMatch(t, tc.expectedToDelete, result)
+				assert.Equal(t, tc.expectedToCreate, toCreate)
 			}
+			assert.ElementsMatch(t, tc.expectedToDelete, toDelete)
 		})
 	}
 }
@@ -347,6 +466,8 @@ func TestSyncCreatesComputeDomains(t *testing.T) {
 				assert.Equal(t, apicommon.LabelManagedByValue, cd.GetLabels()[apicommon.LabelManagedByKey])
 				assert.Equal(t, testPCSName, cd.GetLabels()[apicommon.LabelPartOfKey])
 				assert.Equal(t, labelComponentNameComputeDomain, cd.GetLabels()[apicommon.LabelComponentKey])
+				_, hasGroupLabel := cd.GetLabels()[mnnvl.LabelMNNVLGroup]
+				assert.False(t, hasGroupLabel, "default group CD should not have mnnvl-group label")
 
 				// Verify CD has finalizer
 				assert.Contains(t, cd.GetFinalizers(), mnnvl.FinalizerComputeDomain)
@@ -437,6 +558,32 @@ func TestSyncIdempotent(t *testing.T) {
 		cd := emptyComputeDomain(client.ObjectKey{Name: cdName, Namespace: testPCSNamespace})
 		err := cl.Get(context.Background(), client.ObjectKeyFromObject(cd), cd)
 		assert.NoError(t, err, "CD %s should exist", cdName)
+	}
+}
+
+// TestSyncWithGroupAnnotation tests that Sync creates group-named CDs.
+func TestSyncWithGroupAnnotation(t *testing.T) {
+	pcs := createPCSWithGPU(2)
+	pcs.Annotations = map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}
+
+	cl := createTestClient()
+	operator := New(cl, testScheme, record.NewFakeRecorder(10))
+
+	err := operator.Sync(context.Background(), logr.Discard(), pcs)
+	require.NoError(t, err)
+
+	expectedNames := []string{"test-pcs-0-workers", "test-pcs-1-workers"}
+	for _, cdName := range expectedNames {
+		cd := emptyComputeDomain(client.ObjectKey{Name: cdName, Namespace: testPCSNamespace})
+		err := cl.Get(context.Background(), client.ObjectKeyFromObject(cd), cd)
+		assert.NoError(t, err, "CD %s should exist", cdName)
+
+		assert.Equal(t, "workers", cd.GetLabels()[mnnvl.LabelMNNVLGroup], "CD should have mnnvl-group label")
+
+		rctName, found, err := unstructured.NestedString(cd.Object, "spec", "channel", "resourceClaimTemplate", "name")
+		assert.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, cdName, rctName, "RCT name should match CD name")
 	}
 }
 
