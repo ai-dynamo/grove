@@ -23,16 +23,17 @@ import (
 	"fmt"
 	"testing"
 
-	kaischedulingv2alpha2 "github.com/NVIDIA/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	nameutils "github.com/ai-dynamo/grove/operator/api/common"
 	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/podgroup"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/topology"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	"github.com/samber/lo"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // DeployWorkloadAndGetPods deploys workload, waits for pods to be ready, and returns the pod list
@@ -77,7 +78,7 @@ func Test_TAS1_TopologyInfrastructure(t *testing.T) {
 
 	tc, cleanup := testctx.PrepareTest(ctx, t, 0)
 	defer cleanup()
-	topologyVerifier := topology.NewTopologyVerifier(tc.Clients, Logger)
+	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 
 	Logger.Info("1. Verify ClusterTopology CR exists with correct 4-level hierarchy")
 
@@ -109,16 +110,16 @@ func Test_TAS1_TopologyInfrastructure(t *testing.T) {
 
 	// Use label selector to get only worker nodes by role label
 	workerLabelSelector := setup.GetWorkerNodeLabelSelector()
-	nodes, err := tc.Clients.Clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{
-		LabelSelector: workerLabelSelector,
-	})
-	if err != nil {
+	var nodeList v1.NodeList
+	if err := tc.Client.List(ctx, &nodeList, &client.ListOptions{
+		Raw: &metav1.ListOptions{LabelSelector: workerLabelSelector},
+	}); err != nil {
 		t.Fatalf("Failed to list nodes: %v", err)
 	}
 
 	// Reuse expectedKeys from step 2 (same topology label keys)
-	workerCount := len(nodes.Items)
-	for _, node := range nodes.Items {
+	workerCount := len(nodeList.Items)
+	for _, node := range nodeList.Items {
 		for _, key := range expectedKeys {
 			if value, ok := node.Labels[key]; !ok || value == "" {
 				t.Errorf("Node %s missing %s label", node.Name, key)
@@ -157,8 +158,8 @@ func Test_TAS2_MultipleCliquesWithDifferentConstraints(t *testing.T) {
 		}),
 	)
 	defer cleanup()
-	topologyVerifier := topology.NewTopologyVerifier(tc.Clients, Logger)
-	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Clients, Logger)
+	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
+	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
 	Logger.Info("2. Deploy workload (TAS2: multiple cliques with different constraints)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
@@ -167,12 +168,12 @@ func Test_TAS2_MultipleCliquesWithDifferentConstraints(t *testing.T) {
 	}
 
 	Logger.Info("3. Verify worker-rack pods (3) are in the same rack")
-	if err := topologyVerifier.VerifyLabeledPodsInTopologyDomain(tc.Ctx, allPods, LabelPodClique, "tas-indep-clq-0-worker-rack", 3, setup.TopologyLabelRack); err != nil {
+	if err := topologyVerifier.VerifyLabeledPodsInTopologyDomain(tc.Ctx, allPods, nameutils.LabelPodClique, "tas-indep-clq-0-worker-rack", 3, setup.TopologyLabelRack); err != nil {
 		t.Fatalf("Failed to verify worker-rack pods in same rack: %v", err)
 	}
 
 	Logger.Info("4. Verify worker-block pods (4) are in the same block")
-	if err := topologyVerifier.VerifyLabeledPodsInTopologyDomain(tc.Ctx, allPods, LabelPodClique, "tas-indep-clq-0-worker-block", 4, setup.TopologyLabelBlock); err != nil {
+	if err := topologyVerifier.VerifyLabeledPodsInTopologyDomain(tc.Ctx, allPods, nameutils.LabelPodClique, "tas-indep-clq-0-worker-block", 4, setup.TopologyLabelBlock); err != nil {
 		t.Fatalf("Failed to verify worker-block pods in same block: %v", err)
 	}
 
@@ -215,8 +216,8 @@ func Test_TAS3_PCSOnlyConstraint(t *testing.T) {
 		}),
 	)
 	defer cleanup()
-	topologyVerifier := topology.NewTopologyVerifier(tc.Clients, Logger)
-	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Clients, Logger)
+	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
+	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
 	Logger.Info("2. Deploy workload (TAS3: PCS-only constraint)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
@@ -268,8 +269,8 @@ func Test_TAS4_PCSGOnlyConstraint(t *testing.T) {
 		}),
 	)
 	defer cleanup()
-	topologyVerifier := topology.NewTopologyVerifier(tc.Clients, Logger)
-	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Clients, Logger)
+	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
+	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
 	Logger.Info("2. Deploy workload (TAS4: PCSG-only constraint)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
@@ -278,7 +279,7 @@ func Test_TAS4_PCSGOnlyConstraint(t *testing.T) {
 	}
 
 	Logger.Info("3. Verify PCSG worker pods (2 total, 1 per replica) in same rack")
-	if err := topologyVerifier.VerifyLabeledPodsInTopologyDomain(tc.Ctx, allPods, LabelPodCliqueScalingGroup, "tas-sl-pcsg-only-0-workers", 2, setup.TopologyLabelRack); err != nil {
+	if err := topologyVerifier.VerifyLabeledPodsInTopologyDomain(tc.Ctx, allPods, nameutils.LabelPodCliqueScalingGroup, "tas-sl-pcsg-only-0-workers", 2, setup.TopologyLabelRack); err != nil {
 		t.Fatalf("Failed to verify worker pods in same rack: %v", err)
 	}
 
@@ -322,8 +323,8 @@ func Test_TAS5_HostLevelConstraint(t *testing.T) {
 		}),
 	)
 	defer cleanup()
-	topologyVerifier := topology.NewTopologyVerifier(tc.Clients, Logger)
-	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Clients, Logger)
+	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
+	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
 	Logger.Info("2. Deploy workload (TAS5: PCLQ-only host constraint)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
@@ -383,8 +384,8 @@ func Test_TAS6_StandalonePCLQOnlyPCSZoneConstraint(t *testing.T) {
 		}),
 	)
 	defer cleanup()
-	topologyVerifier := topology.NewTopologyVerifier(tc.Clients, Logger)
-	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Clients, Logger)
+	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
+	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
 	Logger.Info("2. Deploy workload (TAS6: Standalone PCLQ with only PCS zone constraint)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
@@ -430,7 +431,7 @@ func Test_TAS7_NoTopologyConstraint(t *testing.T) {
 		}),
 	)
 	defer cleanup()
-	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Clients, Logger)
+	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
 	Logger.Info("2. Deploy workload (TAS7: No topology constraints)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
@@ -481,8 +482,8 @@ func Test_TAS8_FullHierarchyWithCascadingConstraints(t *testing.T) {
 		}),
 	)
 	defer cleanup()
-	topologyVerifier := topology.NewTopologyVerifier(tc.Clients, Logger)
-	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Clients, Logger)
+	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
+	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
 	Logger.Info("2. Deploy workload (TAS8: full 3-level hierarchy with cascading constraints)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
@@ -494,7 +495,7 @@ func Test_TAS8_FullHierarchyWithCascadingConstraints(t *testing.T) {
 	cliqueTypes := []string{"prefill", "decode"}
 	for pcsgReplica := 0; pcsgReplica < 2; pcsgReplica++ {
 		for _, cliqueType := range cliqueTypes {
-			cliquePods := topology.FilterPodsByLabel(allPods, LabelPodClique,
+			cliquePods := topology.FilterPodsByLabel(allPods, nameutils.LabelPodClique,
 				fmt.Sprintf("tas-hierarchy-0-inference-group-%d-%s", pcsgReplica, cliqueType))
 			if len(cliquePods) != 2 {
 				t.Fatalf("Expected 2 %s pods for PCSG replica %d, got %d", cliqueType, pcsgReplica, len(cliquePods))
@@ -557,8 +558,8 @@ func Test_TAS9_PCSPlusPCLQConstraint(t *testing.T) {
 		}),
 	)
 	defer cleanup()
-	topologyVerifier := topology.NewTopologyVerifier(tc.Clients, Logger)
-	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Clients, Logger)
+	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
+	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
 	Logger.Info("2. Deploy workload (TAS9: PCS block + PCLQ host constraint)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
@@ -606,8 +607,8 @@ func Test_TAS10_PCSGScalingWithTopologyConstraints(t *testing.T) {
 		}),
 	)
 	defer cleanup()
-	topologyVerifier := topology.NewTopologyVerifier(tc.Clients, Logger)
-	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Clients, Logger)
+	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
+	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
 	Logger.Info("2. Deploy workload (TAS10: PCSG scaling with topology constraints)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
@@ -685,8 +686,8 @@ func Test_TAS11_PCSGPlusPCLQNoParentConstraint(t *testing.T) {
 		}),
 	)
 	defer cleanup()
-	topologyVerifier := topology.NewTopologyVerifier(tc.Clients, Logger)
-	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Clients, Logger)
+	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
+	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
 	Logger.Info("2. Deploy workload (TAS11: PCSG rack + PCLQ host, no PCS constraint)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
@@ -743,8 +744,8 @@ func Test_TAS12_LargeScalingRatio(t *testing.T) {
 		}),
 	)
 	defer cleanup()
-	topologyVerifier := topology.NewTopologyVerifier(tc.Clients, Logger)
-	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Clients, Logger)
+	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
+	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
 	Logger.Info("2. Deploy workload (TAS12: Large scaling ratio, replicas=10/minAvailable=3)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
@@ -836,7 +837,7 @@ func Test_TAS13_InsufficientNodesForConstraint(t *testing.T) {
 		}),
 	)
 	defer cleanup()
-	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Clients, Logger)
+	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
 	Logger.Info("2. Deploy workload (TAS13: insufficient nodes for rack constraint)")
 	_, err := tc.DeployAndVerifyWorkload()
@@ -894,8 +895,8 @@ func Test_TAS14_MultiReplicaWithRackConstraint(t *testing.T) {
 		}),
 	)
 	defer cleanup()
-	topologyVerifier := topology.NewTopologyVerifier(tc.Clients, Logger)
-	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Clients, Logger)
+	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
+	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
 	Logger.Info("2. Deploy workload (TAS14: multi-replica with rack constraint)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
@@ -905,7 +906,7 @@ func Test_TAS14_MultiReplicaWithRackConstraint(t *testing.T) {
 
 	Logger.Info("3. Verify each PCS replica's pods (2) are in same rack")
 	for pcsReplica := 0; pcsReplica < 2; pcsReplica++ {
-		replicaPods := topology.FilterPodsByLabel(allPods, "grove.io/podcliqueset-replica-index", fmt.Sprintf("%d", pcsReplica))
+		replicaPods := topology.FilterPodsByLabel(allPods, nameutils.LabelPodCliqueSetReplicaIndex, fmt.Sprintf("%d", pcsReplica))
 		if len(replicaPods) != 2 {
 			t.Fatalf("Expected 2 replica-%d pods, got %d", pcsReplica, len(replicaPods))
 		}
@@ -951,8 +952,8 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 		}),
 	)
 	defer cleanup()
-	topologyVerifier := topology.NewTopologyVerifier(tc.Clients, Logger)
-	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Clients, Logger)
+	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
+	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
 	Logger.Info("2. Deploy workload (TAS15: disaggregated inference with multiple PCSGs)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
@@ -982,7 +983,7 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 	}
 
 	Logger.Info("5. Verify router pods (2 standalone, no PCSG label)")
-	routerPods := topology.FilterPodsByLabel(allPods, LabelPodClique, routerPCLQ)
+	routerPods := topology.FilterPodsByLabel(allPods, nameutils.LabelPodClique, routerPCLQ)
 	if len(routerPods) != 2 {
 		t.Fatalf("Expected 2 router pods, got %d", len(routerPods))
 	}
@@ -1064,8 +1065,8 @@ func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 		}),
 	)
 	defer cleanup()
-	topologyVerifier := topology.NewTopologyVerifier(tc.Clients, Logger)
-	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Clients, Logger)
+	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
+	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
 	Logger.Info("2. Deploy workload (TAS16: 2 PCS replicas with 3-level topology hierarchy)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
@@ -1076,7 +1077,7 @@ func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 	// Verify for each PCS replica
 	for pcsReplica := 0; pcsReplica < 2; pcsReplica++ {
 		replicaLabel := fmt.Sprintf("%d", pcsReplica)
-		replicaPods := topology.FilterPodsByLabel(allPods, "grove.io/podcliqueset-replica-index", replicaLabel)
+		replicaPods := topology.FilterPodsByLabel(allPods, nameutils.LabelPodCliqueSetReplicaIndex, replicaLabel)
 		if len(replicaPods) != 10 {
 			t.Fatalf("Expected 10 pods for PCS replica %d, got %d", pcsReplica, len(replicaPods))
 		}
@@ -1114,7 +1115,7 @@ func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 
 		// Verify router pods (2 standalone)
 		Logger.Infof("4.%d. Verify router pods (2 standalone)", pcsReplica+1)
-		routerPods := topology.FilterPodsByLabel(replicaPods, LabelPodClique, routerPCLQ)
+		routerPods := topology.FilterPodsByLabel(replicaPods, nameutils.LabelPodClique, routerPCLQ)
 		if len(routerPods) != 2 {
 			t.Fatalf("Expected 2 router pods for PCS replica %d, got %d", pcsReplica, len(routerPods))
 		}

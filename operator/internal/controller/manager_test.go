@@ -19,21 +19,30 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	ctrlmanager "sigs.k8s.io/controller-runtime/pkg/manager"
 	ctrlwebhook "sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -313,6 +322,72 @@ func TestCreateManagerOptions(t *testing.T) {
 		assert.Empty(t, opts.PprofBindAddress)
 	})
 
+	// Test that cache is configured with managed-by label selectors for all core types
+	t.Run("core types filtered by managed-by label", func(t *testing.T) {
+		cfg := &configv1alpha1.OperatorConfiguration{
+			Server: configv1alpha1.ServerConfiguration{
+				Metrics: &configv1alpha1.Server{
+					BindAddress: "0.0.0.0",
+					Port:        8080,
+				},
+				HealthProbes: &configv1alpha1.Server{
+					BindAddress: "0.0.0.0",
+					Port:        8081,
+				},
+				Webhooks: configv1alpha1.WebhookServer{
+					Server: configv1alpha1.Server{
+						BindAddress: "0.0.0.0",
+						Port:        9443,
+					},
+					ServerCertDir: "/tmp/certs",
+				},
+			},
+			LeaderElection: configv1alpha1.LeaderElectionConfiguration{
+				Enabled:      false,
+				ResourceName: "operator-lock",
+				ResourceLock: "leases",
+			},
+		}
+
+		opts := createManagerOptions(cfg)
+
+		expectedSelector := labels.SelectorFromSet(labels.Set{
+			apicommon.LabelManagedByKey: apicommon.LabelManagedByValue,
+		})
+
+		// All core Kubernetes types managed by the operator should be filtered.
+		// Secret is intentionally excluded — the webhook TLS secret may be created
+		// by Helm without the managed-by label.
+		expectedTypes := []client.Object{
+			&corev1.Pod{},
+			&corev1.ServiceAccount{},
+			&corev1.Service{},
+			&rbacv1.Role{},
+			&rbacv1.RoleBinding{},
+			&autoscalingv2.HorizontalPodAutoscaler{},
+		}
+
+		require.NotNil(t, opts.Cache.ByObject)
+		for _, expectedObj := range expectedTypes {
+			typeName := reflect.TypeOf(expectedObj).Elem().Name()
+			// ByObject uses pointer keys; find the entry by type
+			var found bool
+			for obj, byObj := range opts.Cache.ByObject {
+				if reflect.TypeOf(obj) == reflect.TypeOf(expectedObj) {
+					found = true
+					assert.Equal(t, expectedSelector, byObj.Label, "wrong label selector for %s", typeName)
+					break
+				}
+			}
+			assert.True(t, found, "expected cache.ByObject to contain an entry for %s", typeName)
+		}
+
+		// Verify the selector matches grove-managed resources and rejects others
+		assert.True(t, expectedSelector.Matches(labels.Set{apicommon.LabelManagedByKey: apicommon.LabelManagedByValue}))
+		assert.False(t, expectedSelector.Matches(labels.Set{}))
+		assert.False(t, expectedSelector.Matches(labels.Set{apicommon.LabelManagedByKey: "other"}))
+	})
+
 	// Test with no debugging configuration
 	t.Run("no debugging configuration", func(t *testing.T) {
 		cfg := &configv1alpha1.OperatorConfiguration{
@@ -468,8 +543,19 @@ func (w *mockWebhookServer) WebhookMux() *http.ServeMux {
 }
 
 // TestCreateManager tests the creation of a controller-runtime manager
-// with operator configuration.
+// with operator configuration. Requires a real API server because the
+// cache.ByObject config triggers API discovery during manager creation.
 func TestCreateManager(t *testing.T) {
+	testEnv := &envtest.Environment{}
+	envCfg, err := testEnv.Start()
+	if err != nil {
+		t.Skipf("Skipping test: kubebuilder test environment not available: %v", err)
+		return
+	}
+	defer func() {
+		require.NoError(t, testEnv.Stop())
+	}()
+
 	// Save original function and restore after test
 	originalGetConfigOrDie := ctrl.GetConfigOrDie
 	defer func() { ctrl.GetConfigOrDie = originalGetConfigOrDie }()
@@ -477,9 +563,7 @@ func TestCreateManager(t *testing.T) {
 	// Test with valid configuration
 	t.Run("valid configuration", func(t *testing.T) {
 		ctrl.GetConfigOrDie = func() *rest.Config {
-			return &rest.Config{
-				Host: "https://test-cluster:6443",
-			}
+			return rest.CopyConfig(envCfg)
 		}
 
 		cfg := &configv1alpha1.OperatorConfiguration{
@@ -690,4 +774,90 @@ func TestRegisterControllersAndWebhooks(t *testing.T) {
 		registerControllersWithMgr = originalRegisterControllers
 		registerWebhooksWithMgr = originalRegisterWebhooks
 	}
+}
+
+// TestPodCacheFiltering verifies that the manager's cache only stores pods with the
+// grove managed-by label and ignores unmanaged pods. This is an integration test that
+// requires a real API server (envtest).
+func TestPodCacheFiltering(t *testing.T) {
+	testEnv := &envtest.Environment{}
+	envCfg, err := testEnv.Start()
+	if err != nil {
+		t.Skipf("Skipping test: kubebuilder test environment not available: %v", err)
+		return
+	}
+	defer func() {
+		require.NoError(t, testEnv.Stop())
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr, err := ctrl.NewManager(envCfg, ctrl.Options{
+		Scheme: groveclientscheme.Scheme,
+		Cache:  cacheOptions(),
+	})
+	require.NoError(t, err)
+
+	// Start the manager in the background so the cache syncs.
+	go func() {
+		if err := mgr.Start(ctx); err != nil {
+			// Only log; cancellation is expected.
+			fmt.Printf("manager stopped: %v\n", err)
+		}
+	}()
+
+	// Wait for the cache to sync before creating pods.
+	synced := mgr.GetCache().WaitForCacheSync(ctx)
+	require.True(t, synced, "cache failed to sync")
+
+	// Use a direct (uncached) client to create pods, so writes bypass the filtered cache.
+	directClient, err := client.New(envCfg, client.Options{Scheme: groveclientscheme.Scheme})
+	require.NoError(t, err)
+
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "cache-filter-test"}}
+	require.NoError(t, directClient.Create(ctx, ns))
+
+	managedPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "managed-pod",
+			Namespace: ns.Name,
+			Labels: map[string]string{
+				apicommon.LabelManagedByKey: apicommon.LabelManagedByValue,
+			},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "c", Image: "busybox"}},
+		},
+	}
+
+	unmanagedPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "unmanaged-pod",
+			Namespace: ns.Name,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "c", Image: "busybox"}},
+		},
+	}
+
+	require.NoError(t, directClient.Create(ctx, managedPod))
+	require.NoError(t, directClient.Create(ctx, unmanagedPod))
+
+	// Verify via the direct client that both pods exist in the API server.
+	var allPods corev1.PodList
+	require.NoError(t, directClient.List(ctx, &allPods, client.InNamespace(ns.Name)))
+	require.Len(t, allPods.Items, 2, "both pods should exist in the API server")
+
+	// Query the cache — it should only return the managed pod.
+	cachedClient := mgr.GetClient()
+	var cachedPods corev1.PodList
+	require.Eventually(t, func() bool {
+		if err := cachedClient.List(ctx, &cachedPods, client.InNamespace(ns.Name)); err != nil {
+			return false
+		}
+		return len(cachedPods.Items) == 1
+	}, 5*time.Second, 200*time.Millisecond, "cache should contain exactly 1 pod")
+
+	assert.Equal(t, "managed-pod", cachedPods.Items[0].Name)
 }

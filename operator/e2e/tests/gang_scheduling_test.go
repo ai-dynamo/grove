@@ -204,7 +204,7 @@ func Test_GS3_GangSchedulingWithPCSScalingFullReplicas(t *testing.T) {
 	Logger.Info("🎉 Gang-scheduling PCS scaling test completed successfully!")
 }
 
-// TestGangSchedulingWithPCSAndPCSGScalingFullReplicas verifies gang scheduling while scaling both PodCliqueSet and PodCliqueScalingGroup replicas
+// Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas verifies gang scheduling while scaling both PodCliqueSet and PodCliqueScalingGroup replicas
 // Scenario GS-4:
 // 1. Initialize a 28-node Grove cluster, then cordon 19 nodes
 // 2. Deploy workload WL1, and verify 10 newly created pods

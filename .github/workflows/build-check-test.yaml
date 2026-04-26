@@ -55,7 +55,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: "1.25.7"
+          go-version: "1.26.1"
           cache: true
           cache-dependency-path: operator/go.sum
       - name: test-unit
@@ -67,7 +67,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: "1.25.7"
+          go-version: "1.26.1"
           cache: true
           cache-dependency-path: operator/go.sum
       - name: build-operator
@@ -81,7 +81,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: "1.25.7"
+          go-version: "1.26.1"
           cache: true
           cache-dependency-path: operator/go.sum
       - name: check
@@ -127,6 +127,8 @@ jobs:
             make_target: "run-e2e-mnnvl-full"
           - test_name: crd_installer
             test_pattern: "^Test_CRD_Installer"
+          - test_name: resource_sharing
+            test_pattern: "^Test_RS"
     name: E2E - ${{ matrix.test_name }}
     steps:
       # print runner specs so we have a record in case of failures
@@ -187,6 +189,7 @@ jobs:
           - test_name: cert_management
           - test_name: auto_mnnvl
           - test_name: crd_installer
+          - test_name: resource_sharing
     name: E2E - ${{ matrix.test_name }}
     steps:
       - name: Skip E2E (no relevant changes)

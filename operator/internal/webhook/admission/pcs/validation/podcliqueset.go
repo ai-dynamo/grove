@@ -102,6 +102,8 @@ func (v *pcsValidator) validatePodCliqueSetTemplateSpec(fldPath *field.Path) ([]
 	allErrs := field.ErrorList{}
 
 	allErrs = append(allErrs, validateEnumType(v.pcs.Spec.Template.StartupType, allowedStartupTypes, fldPath.Child("cliqueStartupType"))...)
+	allErrs = append(allErrs, v.validateResourceClaimTemplates(fldPath.Child("resourceClaimTemplates"))...)
+	allErrs = append(allErrs, v.validatePCSResourceSharing(v.pcs.Spec.Template.ResourceSharing, fldPath.Child("resourceSharing"))...)
 	warnings, errs := v.validatePodCliqueTemplates(fldPath.Child("cliques"))
 	if len(errs) != 0 {
 		allErrs = append(allErrs, errs...)
@@ -110,6 +112,120 @@ func (v *pcsValidator) validatePodCliqueSetTemplateSpec(fldPath *field.Path) ([]
 	allErrs = append(allErrs, v.validateTerminationDelay(fldPath.Child("terminationDelay"))...)
 
 	return warnings, allErrs
+}
+
+// validateResourceClaimTemplates validates PCS-level ResourceClaimTemplateConfig entries.
+func (v *pcsValidator) validateResourceClaimTemplates(fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	names := make([]string, 0, len(v.pcs.Spec.Template.ResourceClaimTemplates))
+	for i, rct := range v.pcs.Spec.Template.ResourceClaimTemplates {
+		rctPath := fldPath.Index(i)
+		if rct.Name == "" {
+			allErrs = append(allErrs, field.Required(rctPath.Child("name"), "template name is required"))
+		}
+		if len(rct.TemplateSpec.Spec.Devices.Requests) == 0 {
+			allErrs = append(allErrs, field.Required(rctPath.Child("templateSpec", "spec", "devices", "requests"), "at least one device request is required"))
+		}
+		names = append(names, rct.Name)
+	}
+	allErrs = append(allErrs, sliceMustHaveUniqueElements(names, fldPath.Child("name"))...)
+	return allErrs
+}
+
+// validatePCSResourceSharing validates PCS-level ResourceSharing entries and their filters.
+func (v *pcsValidator) validatePCSResourceSharing(refs []grovecorev1alpha1.PCSResourceSharingSpec, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	bases := make([]grovecorev1alpha1.ResourceSharingSpec, len(refs))
+	for i := range refs {
+		bases[i] = refs[i].ResourceSharingSpec
+	}
+	allErrs = append(allErrs, v.validateResourceSharingSpecs(bases, fldPath)...)
+
+	cliqueNames := sets.New[string]()
+	for _, c := range v.pcs.Spec.Template.Cliques {
+		cliqueNames.Insert(c.Name)
+	}
+	groupNames := sets.New[string]()
+	for _, g := range v.pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		groupNames.Insert(g.Name)
+	}
+	for i, ref := range refs {
+		if ref.Filter == nil {
+			continue
+		}
+		filterPath := fldPath.Index(i).Child("filter")
+		if len(ref.Filter.ChildCliqueNames) == 0 && len(ref.Filter.ChildScalingGroupNames) == 0 {
+			allErrs = append(allErrs, field.Required(filterPath, "filter must specify at least one childCliqueNames or childScalingGroupNames entry"))
+		}
+		for j, cn := range ref.Filter.ChildCliqueNames {
+			if !cliqueNames.Has(cn) {
+				allErrs = append(allErrs, field.NotFound(filterPath.Child("childCliqueNames").Index(j), cn))
+			}
+		}
+		for j, gn := range ref.Filter.ChildScalingGroupNames {
+			if !groupNames.Has(gn) {
+				allErrs = append(allErrs, field.NotFound(filterPath.Child("childScalingGroupNames").Index(j), gn))
+			}
+		}
+	}
+	return allErrs
+}
+
+// validatePCSGResourceSharing validates PCSG-level ResourceSharing entries and their filters.
+func (v *pcsValidator) validatePCSGResourceSharing(cfg grovecorev1alpha1.PodCliqueScalingGroupConfig, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	cliqueNameSet := sets.New(cfg.CliqueNames...)
+	bases := make([]grovecorev1alpha1.ResourceSharingSpec, len(cfg.ResourceSharing))
+	for i := range cfg.ResourceSharing {
+		bases[i] = cfg.ResourceSharing[i].ResourceSharingSpec
+	}
+	allErrs = append(allErrs, v.validateResourceSharingSpecs(bases, fldPath)...)
+	for i, ref := range cfg.ResourceSharing {
+		if ref.Filter == nil {
+			continue
+		}
+		filterPath := fldPath.Index(i).Child("filter")
+		if len(ref.Filter.ChildCliqueNames) == 0 {
+			allErrs = append(allErrs, field.Required(filterPath, "filter must specify at least one childCliqueNames entry"))
+		}
+		for j, cn := range ref.Filter.ChildCliqueNames {
+			if !cliqueNameSet.Has(cn) {
+				allErrs = append(allErrs, field.NotFound(filterPath.Child("childCliqueNames").Index(j), cn))
+			}
+		}
+	}
+	return allErrs
+}
+
+// validateResourceSharingSpecs validates the common fields (Name, Namespace, Scope) across all levels.
+func (v *pcsValidator) validateResourceSharingSpecs(refs []grovecorev1alpha1.ResourceSharingSpec, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	templateNames := sets.New[string]()
+	for _, rct := range v.pcs.Spec.Template.ResourceClaimTemplates {
+		templateNames.Insert(rct.Name)
+	}
+	validScopes := sets.New(
+		grovecorev1alpha1.ResourceSharingScopeAllReplicas,
+		grovecorev1alpha1.ResourceSharingScopePerReplica,
+	)
+	seenNames := sets.New[string]()
+	for i, ref := range refs {
+		refPath := fldPath.Index(i)
+		if ref.Name == "" {
+			allErrs = append(allErrs, field.Required(refPath.Child("name"), "reference name is required"))
+		}
+		if ref.Name != "" && seenNames.Has(ref.Name) {
+			allErrs = append(allErrs, field.Duplicate(refPath.Child("name"), ref.Name))
+		}
+		seenNames.Insert(ref.Name)
+		if ref.Namespace != "" && ref.Name != "" && templateNames.Has(ref.Name) {
+			allErrs = append(allErrs, field.Invalid(refPath.Child("namespace"), ref.Namespace, "namespace must be empty when name matches an internal resourceClaimTemplate"))
+		}
+		if !validScopes.Has(ref.Scope) {
+			allErrs = append(allErrs, field.NotSupported(refPath.Child("scope"), ref.Scope, validScopes.UnsortedList()))
+		}
+	}
+	return allErrs
 }
 
 // validatePodCliqueTemplates validates all PodClique templates ensuring unique names, roles, scheduler names, and proper dependencies.
@@ -265,6 +381,9 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigs(fldPath *field.Path)
 				allErrs = append(allErrs, field.Invalid(fldPath.Index(i).Child("scaleConfig", "minReplicas"), *scalingGroupConfig.ScaleConfig.MinReplicas, "scaleConfig.minReplicas must be greater than or equal to minAvailable"))
 			}
 		}
+
+		// validate PCSG-level ResourceSharing
+		allErrs = append(allErrs, v.validatePCSGResourceSharing(scalingGroupConfig, fldPath.Index(i).Child("resourceSharing"))...)
 	}
 
 	// validate that the scaling group names are unique
@@ -312,6 +431,7 @@ func (v *pcsValidator) validatePodCliqueTemplateSpec(cliqueTemplateSpec *groveco
 	allErrs = append(allErrs, metav1validation.ValidateLabels(cliqueTemplateSpec.Labels, fldPath.Child("labels"))...)
 	allErrs = append(allErrs, apivalidation.ValidateAnnotations(cliqueTemplateSpec.Annotations, fldPath.Child("annotations"))...)
 
+	allErrs = append(allErrs, v.validateResourceSharingSpecs(cliqueTemplateSpec.ResourceSharing, fldPath.Child("resourceSharing"))...)
 	warnings, errs := v.validatePodCliqueSpec(cliqueTemplateSpec.Name, cliqueTemplateSpec.Spec, fldPath.Child("spec"))
 	if len(errs) != 0 {
 		allErrs = append(allErrs, errs...)
@@ -523,6 +643,8 @@ func (v *pcsValidator) validatePodCliqueSetTemplateSpecUpdate(oldPCS *grovecorev
 	allErrs = append(allErrs, apivalidation.ValidateImmutableField(v.pcs.Spec.Template.StartupType, oldPCS.Spec.Template.StartupType, fldPath.Child("cliqueStartupType"))...)
 	allErrs = append(allErrs, v.validatePodCliqueScalingGroupConfigsUpdate(oldPCS.Spec.Template.PodCliqueScalingGroupConfigs, fldPath.Child("podCliqueScalingGroups"))...)
 	allErrs = append(allErrs, v.validateTopologyConstraintsUpdate(oldPCS)...)
+	allErrs = append(allErrs, apivalidation.ValidateImmutableField(v.pcs.Spec.Template.ResourceClaimTemplates, oldPCS.Spec.Template.ResourceClaimTemplates, fldPath.Child("resourceClaimTemplates"))...)
+	allErrs = append(allErrs, apivalidation.ValidateImmutableField(v.pcs.Spec.Template.ResourceSharing, oldPCS.Spec.Template.ResourceSharing, fldPath.Child("resourceSharing"))...)
 
 	return allErrs
 }
@@ -554,6 +676,7 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigsUpdate(oldConfigs []g
 		configFldPath := fldPath
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newConfig.CliqueNames, oldConfig.CliqueNames, configFldPath.Child("cliqueNames"))...)
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newConfig.MinAvailable, oldConfig.MinAvailable, configFldPath.Child("minAvailable"))...)
+		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newConfig.ResourceSharing, oldConfig.ResourceSharing, configFldPath.Child("resourceSharing"))...)
 	}
 
 	return allErrs
@@ -608,6 +731,7 @@ func (v *pcsValidator) validatePodCliqueUpdate(oldCliques []*grovecorev1alpha1.P
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.MinAvailable, oldIndexCliqueTuple.B.Spec.MinAvailable, cliqueFldPath.Child("minAvailable"))...)
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.StartsAfter, oldIndexCliqueTuple.B.Spec.StartsAfter, cliqueFldPath.Child("startsAfter"))...)
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.PodSpec.SchedulerName, oldIndexCliqueTuple.B.Spec.PodSpec.SchedulerName, cliqueFldPath.Child("podSpec", "schedulerName"))...)
+		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.ResourceSharing, oldIndexCliqueTuple.B.ResourceSharing, fldPath.Index(newCliqueIndex).Child("resourceSharing"))...)
 	}
 
 	return allErrs

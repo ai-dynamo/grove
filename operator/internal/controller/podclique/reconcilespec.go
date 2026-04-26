@@ -233,9 +233,11 @@ func (r *Reconciler) recordIncompleteReconcile(ctx context.Context, logger logr.
 	return *errResult
 }
 
-// getOrderedKindsForSync returns the ordered list of resource kinds to synchronize for PodClique
+// getOrderedKindsForSync returns the ordered list of resource kinds to synchronize for PodClique.
+// ResourceClaims are synced before Pods so that DRA claims exist before pods reference them.
 func getOrderedKindsForSync() []component.Kind {
 	return []component.Kind{
+		component.KindResourceClaim,
 		component.KindPod,
 	}
 }

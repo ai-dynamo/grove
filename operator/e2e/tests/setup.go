@@ -23,15 +23,15 @@ import (
 	"flag"
 	"time"
 
+	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/klog/v2"
 )
 
 var (
 	// Logger for the tests (exported for sub-packages)
-	Logger *utils.Logger
+	Logger *log.Logger
 
 	// TestImages are the Docker images to push to the test registry
 	TestImages = []string{"busybox:latest"}
@@ -51,7 +51,7 @@ func init() {
 	}
 
 	// increase Logger verbosity for debugging
-	Logger = utils.NewTestLogger(utils.InfoLevel)
+	Logger = log.NewTestLogger(log.InfoLevel)
 	testctx.Logger = Logger
 }
 
@@ -61,9 +61,6 @@ const (
 	// scaleTestTimeout defines the timeout for scale tests, set to 15 minutes.
 	scaleTestTimeout = 15 * time.Minute
 
-	// Grove label keys
-	LabelPodClique             = "grove.io/podclique"
-	LabelPodCliqueScalingGroup = "grove.io/podcliquescalinggroup"
 )
 
 // ConvertTypedToUnstructured converts a typed object to an unstructured object

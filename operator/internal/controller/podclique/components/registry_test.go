@@ -39,8 +39,7 @@ func TestCreateOperatorRegistry(t *testing.T) {
 	_ = grovecorev1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 
-	// Test successful registry creation
-	t.Run("creates registry with pod operator", func(t *testing.T) {
+	t.Run("creates registry with resourceclaim and pod operators", func(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 		mgr := &mockManager{client: cl, scheme: scheme}
 		eventRecorder := record.NewFakeRecorder(10)
@@ -55,10 +54,15 @@ func TestCreateOperatorRegistry(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotNil(t, podOp)
 
-		// Verify only one operator is registered
+		// Verify ResourceClaim operator is registered
+		rcOp, err := registry.GetOperator(component.KindResourceClaim)
+		require.NoError(t, err)
+		assert.NotNil(t, rcOp)
+
 		allOps := registry.GetAllOperators()
-		assert.Len(t, allOps, 1)
+		assert.Len(t, allOps, 2)
 		assert.Contains(t, allOps, component.KindPod)
+		assert.Contains(t, allOps, component.KindResourceClaim)
 	})
 }
 

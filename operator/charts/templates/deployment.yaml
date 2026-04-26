@@ -46,6 +46,12 @@ spec:
         - name: grove-operator
           image: {{ include "image" .Values.image }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if and .Values.config.debugging .Values.config.debugging.enableProfiling }}
+          ports:
+            - name: pprof
+              containerPort: {{ .Values.config.debugging.pprofBindPort }}
+              protocol: TCP
+          {{- end }}
           args:
             - --config=/etc/grove-operator/config/config.yaml
           {{- if .Values.config.server.healthProbes.enable }}

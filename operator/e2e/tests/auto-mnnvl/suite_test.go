@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
+	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 )
 
 // TestMain manages the lifecycle of the cluster for all MNNVL tests.
@@ -31,6 +32,7 @@ import (
 // in hack/e2e-autoMNNVL/.
 func TestMain(m *testing.M) {
 	ctx := context.Background()
+	testctx.Logger = logger
 
 	sharedCluster := setup.SharedCluster(logger)
 	if err := sharedCluster.Setup(ctx, nil); err != nil {

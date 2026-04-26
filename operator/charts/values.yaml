@@ -222,9 +222,11 @@ priorityClass:
 
 crdInstaller:
   # enabled controls whether the operator automatically installs/upgrades Grove CRDs on startup
-  # via an init container. Set to false to manage CRDs manually from the Grove GitHub release.
-  # WARNING: when disabled, you must apply the correct CRD schemas before upgrading the operator.
-  enabled: true
+  # via an init container. Defaults to false — CRDs are installed by Helm on fresh install via
+  # the crds/ directory, and upgrades are managed manually by the user.
+  # Set to true to opt in to automated CRD upgrades on every helm upgrade.
+  # WARNING: when enabled, the operator ServiceAccount receives apiextensions.k8s.io permissions.
+  enabled: false
   image:
     repository: grove-install-crds
     # Overrides the image tag whose default is the chart appVersion.

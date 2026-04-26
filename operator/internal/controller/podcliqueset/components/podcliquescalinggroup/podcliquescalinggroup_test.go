@@ -435,7 +435,6 @@ func TestBuildResource(t *testing.T) {
 		validate func(*testing.T, *grovecorev1alpha1.PodCliqueScalingGroup)
 	}{
 		{
-			// Tests building a basic PodCliqueScalingGroup
 			name: "basic_pcsg",
 			pcs: &grovecorev1alpha1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
@@ -459,6 +458,53 @@ func TestBuildResource(t *testing.T) {
 				assert.Equal(t, []string{"clique1", "clique2"}, pcsg.Spec.CliqueNames)
 				assert.Contains(t, pcsg.Labels, apicommon.LabelPodCliqueSetReplicaIndex)
 				assert.Equal(t, "0", pcsg.Labels[apicommon.LabelPodCliqueSetReplicaIndex])
+			},
+		},
+		{
+			name: "config annotations are copied to PCSG",
+			pcs: &grovecorev1alpha1.PodCliqueSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pcs",
+					Namespace: "default",
+					UID:       "pcs-uid",
+				},
+			},
+			pcsgCfg: &grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				Name:         "pcsg1",
+				MinAvailable: ptr.To(int32(1)),
+				Replicas:     ptr.To(int32(1)),
+				CliqueNames:  []string{"clique1"},
+				Annotations: map[string]string{
+					"example.com/team":    "platform",
+					"example.com/version": "v2",
+				},
+			},
+			pcsReplica: 0,
+			validate: func(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) {
+				require.NotNil(t, pcsg.Annotations)
+				assert.Equal(t, "platform", pcsg.Annotations["example.com/team"])
+				assert.Equal(t, "v2", pcsg.Annotations["example.com/version"])
+				assert.Len(t, pcsg.Annotations, 2)
+			},
+		},
+		{
+			name: "no config annotations results in nil PCSG annotations",
+			pcs: &grovecorev1alpha1.PodCliqueSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pcs",
+					Namespace: "default",
+					UID:       "pcs-uid",
+				},
+			},
+			pcsgCfg: &grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				Name:         "pcsg1",
+				MinAvailable: ptr.To(int32(1)),
+				Replicas:     ptr.To(int32(1)),
+				CliqueNames:  []string{"clique1"},
+			},
+			pcsReplica: 0,
+			validate: func(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) {
+				assert.Nil(t, pcsg.Annotations)
 			},
 		},
 	}
@@ -495,33 +541,87 @@ func TestBuildResource(t *testing.T) {
 // TestBuildResource_MNNVLAnnotationPropagation tests that the MNNVL annotation is properly propagated from PCS to PCSG.
 func TestBuildResource_MNNVLAnnotationPropagation(t *testing.T) {
 	tests := []struct {
-		description            string
-		pcsAnnotations         map[string]string
-		expectedPCSGAnnotation string // empty means no MNNVL annotation expected
+		description         string
+		pcsAnnotations      map[string]string
+		pcsgConfigAnnotions map[string]string
+		expectedAnnotations map[string]string // nil means no MNNVL annotations expected
 	}{
 		{
-			description: "MNNVL enabled on PCS propagates to PCSG",
+			description: "PCS auto-mnnvl enabled, no config annotations — PCS propagates",
 			pcsAnnotations: map[string]string{
 				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
 			},
-			expectedPCSGAnnotation: mnnvl.AnnotationAutoMNNVLEnabled,
+			expectedAnnotations: map[string]string{
+				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+			},
 		},
 		{
-			description: "MNNVL disabled on PCS does not propagate to PCSG",
+			description: "PCS auto-mnnvl disabled — propagates disabled",
 			pcsAnnotations: map[string]string{
 				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled,
 			},
-			expectedPCSGAnnotation: "",
+			expectedAnnotations: map[string]string{
+				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled,
+			},
 		},
 		{
-			description:            "No MNNVL annotation on PCS does not propagate to PCSG",
-			pcsAnnotations:         nil,
-			expectedPCSGAnnotation: "",
+			description:         "No MNNVL anywhere — nothing propagates",
+			pcsAnnotations:      nil,
+			expectedAnnotations: nil,
 		},
 		{
-			description:            "Other annotations on PCS without MNNVL do not propagate MNNVL to PCSG",
-			pcsAnnotations:         map[string]string{"some-other-annotation": "value"},
-			expectedPCSGAnnotation: "",
+			description:         "Non-MNNVL PCS annotations — nothing propagates",
+			pcsAnnotations:      map[string]string{"some-other-annotation": "value"},
+			expectedAnnotations: nil,
+		},
+		{
+			description: "PCSG config has mnnvl-group + PCS has auto-mnnvl — both present",
+			pcsAnnotations: map[string]string{
+				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+			},
+			pcsgConfigAnnotions: map[string]string{
+				mnnvl.AnnotationMNNVLGroup: "training",
+			},
+			expectedAnnotations: map[string]string{
+				mnnvl.AnnotationMNNVLGroup: "training",
+				mnnvl.AnnotationAutoMNNVL:  mnnvl.AnnotationAutoMNNVLEnabled,
+			},
+		},
+		{
+			description:    "PCSG config has auto-mnnvl — config takes priority over PCS",
+			pcsAnnotations: nil,
+			pcsgConfigAnnotions: map[string]string{
+				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+			},
+			expectedAnnotations: map[string]string{
+				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+			},
+		},
+		{
+			description: "PCSG config has both annotations — both propagated",
+			pcsAnnotations: map[string]string{
+				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+			},
+			pcsgConfigAnnotions: map[string]string{
+				mnnvl.AnnotationAutoMNNVL:  mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "workers",
+			},
+			expectedAnnotations: map[string]string{
+				mnnvl.AnnotationAutoMNNVL:  mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "workers",
+			},
+		},
+		{
+			description: "PCSG config has disabled — overrides PCS enabled",
+			pcsAnnotations: map[string]string{
+				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+			},
+			pcsgConfigAnnotions: map[string]string{
+				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled,
+			},
+			expectedAnnotations: map[string]string{
+				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled,
+			},
 		},
 	}
 
@@ -539,11 +639,12 @@ func TestBuildResource_MNNVLAnnotationPropagation(t *testing.T) {
 				},
 			}
 
-			pcsgCfg := &grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			pcsgCfg := grovecorev1alpha1.PodCliqueScalingGroupConfig{
 				Name:         "pcsg1",
 				MinAvailable: ptr.To(int32(1)),
 				Replicas:     ptr.To(int32(2)),
 				CliqueNames:  []string{"clique1"},
+				Annotations:  tc.pcsgConfigAnnotions,
 			}
 
 			r := &_resource{
@@ -557,18 +658,27 @@ func TestBuildResource_MNNVLAnnotationPropagation(t *testing.T) {
 				},
 			}
 
-			err := r.buildResource(pcsg, pcs, 0, *pcsgCfg, false)
+			err := r.buildResource(pcsg, pcs, 0, pcsgCfg, false)
 			require.NoError(t, err)
 
-			if tc.expectedPCSGAnnotation != "" {
+			if tc.expectedAnnotations != nil {
 				require.NotNil(t, pcsg.Annotations, "PCSG should have annotations")
-				assert.Equal(t, tc.expectedPCSGAnnotation, pcsg.Annotations[mnnvl.AnnotationAutoMNNVL],
-					"MNNVL annotation should be propagated from PCS to PCSG")
+				for key, expectedVal := range tc.expectedAnnotations {
+					assert.Equal(t, expectedVal, pcsg.Annotations[key],
+						"annotation %s should have expected value", key)
+				}
+				for _, key := range []string{mnnvl.AnnotationAutoMNNVL, mnnvl.AnnotationMNNVLGroup} {
+					if _, expected := tc.expectedAnnotations[key]; !expected {
+						_, exists := pcsg.Annotations[key]
+						assert.False(t, exists, "annotation %s should not be present", key)
+					}
+				}
 			} else {
-				// Either annotations is nil or the MNNVL annotation is not present
 				if pcsg.Annotations != nil {
-					_, exists := pcsg.Annotations[mnnvl.AnnotationAutoMNNVL]
-					assert.False(t, exists, "MNNVL annotation should not be present on PCSG")
+					_, hasAuto := pcsg.Annotations[mnnvl.AnnotationAutoMNNVL]
+					_, hasGroup := pcsg.Annotations[mnnvl.AnnotationMNNVLGroup]
+					assert.False(t, hasAuto, "auto-mnnvl annotation should not be present on PCSG")
+					assert.False(t, hasGroup, "mnnvl-group annotation should not be present on PCSG")
 				}
 			}
 		})

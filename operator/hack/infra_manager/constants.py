@@ -139,6 +139,7 @@ LABEL_CONTROL_PLANE = "node-role.kubernetes.io/control-plane"
 REL_WORKLOAD_YAML = "e2e/yaml/workload1.yaml"
 REL_QUEUES_YAML = "e2e/yaml/queues.yaml"
 REL_CHARTS_DIR = "charts"
+REL_PREPARE_CHARTS = "hack/prepare-charts.sh"
 
 # -- KWOK --
 KWOK_GITHUB_REPO = "kubernetes-sigs/kwok"

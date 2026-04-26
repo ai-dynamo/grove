@@ -36,7 +36,7 @@ func Test_AutoMNNVL_UnsupportedAndDisabled(t *testing.T) {
 	defer cleanup()
 
 	// Detect and validate cluster configuration
-	clusterConfig := requireClusterConfig(t, ctx, tc.Clients)
+	clusterConfig := requireClusterConfig(t, ctx, tc.Client)
 	clusterConfig.skipUnless(t, crdUnsupported, featureDisabled)
 
 	// Define all subtests

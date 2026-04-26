@@ -63,7 +63,7 @@ $(CONTROLLER_GEN):
 	GOBIN=$(abspath $(TOOLS_BIN_DIR)) go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION)
 
 $(SETUP_ENVTEST):
-	GOBIN=$(abspath $(TOOLS_BIN_DIR)) go install sigs.k8s.io/controller-runtime/tools/setup-envtest
+	GOBIN=$(abspath $(TOOLS_BIN_DIR)) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
 
 $(GOLANGCI_LINT):
 	@# CGO_ENABLED has to be set to 1 in order for golangci-lint to be able to load plugins

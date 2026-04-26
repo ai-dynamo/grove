@@ -81,8 +81,8 @@ To update a dependency version:
 helmCharts:
   kaiScheduler:
     releaseName: kai-scheduler
-    chartRef: oci://ghcr.io/nvidia/kai-scheduler/kai-scheduler
-    version: v0.9.4  # <- Update this version
+    chartRef: oci://ghcr.io/kai-scheduler/kai-scheduler/kai-scheduler
+    version: v0.14.0  # <- Update this version
     namespace: kai-scheduler
 ```
 

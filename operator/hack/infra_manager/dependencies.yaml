@@ -14,7 +14,7 @@
 # - Version defaults (can be overridden via E2E_* environment variables)
 
 kai_scheduler:
-  version: "v0.13.1"
+  version: "v0.14.0"
   helm_chart: "oci://ghcr.io/kai-scheduler/kai-scheduler/kai-scheduler"
   images:
     # All Kai Scheduler component images
@@ -46,7 +46,7 @@ kwok_controller:
   version: "v0.7.0"
 
 pyroscope:
-  version: "1.10.0"
+  version: "1.19.0"
   helm_repo: "https://grafana.github.io/helm-charts"
   helm_chart: "grafana/pyroscope"
 

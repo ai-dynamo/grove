@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"time"
@@ -30,6 +31,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
+	"github.com/ai-dynamo/grove/operator/internal/resourceclaim"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -42,6 +44,8 @@ type syncContext struct {
 	ctx                            context.Context
 	pcs                            *grovecorev1alpha1.PodCliqueSet
 	pcsg                           *grovecorev1alpha1.PodCliqueScalingGroup
+	pcsgConfig                     *grovecorev1alpha1.PodCliqueScalingGroupConfig
+	pcsReplicaIndex                int
 	existingPCLQs                  []grovecorev1alpha1.PodClique
 	pcsgIndicesToTerminate         []string
 	pcsgIndicesToRequeue           []string
@@ -69,6 +73,13 @@ func (r _resource) prepareSyncContext(ctx context.Context, logger logr.Logger, p
 		)
 	}
 
+	// Resolve PCS replica index and matching PCSG config for resource sharing
+	syncCtx.pcsReplicaIndex, err = getPCSReplicaFromPCSG(pcsg)
+	if err != nil {
+		return nil, err
+	}
+	syncCtx.pcsgConfig = resourceclaim.FindPCSGConfig(syncCtx.pcs, pcsg, syncCtx.pcsReplicaIndex)
+
 	// compute the expected state and get existing state.
 	syncCtx.expectedPCLQFQNsPerPCSGReplica = getExpectedPodCliqueFQNsByPCSGReplica(pcsg)
 	syncCtx.existingPCLQs, err = r.getExistingPCLQs(ctx, pcsg)
@@ -89,6 +100,11 @@ func (r _resource) prepareSyncContext(ctx context.Context, logger logr.Logger, p
 
 // runSyncFlow executes the main synchronization logic for PodCliqueScalingGroup including replica management and updates
 func (r _resource) runSyncFlow(logger logr.Logger, sc *syncContext) error {
+	// Ensure PCSG-level ResourceClaims before creating any PodCliques
+	if err := r.ensurePCSGResourceClaims(sc); err != nil {
+		return err
+	}
+
 	// If there are excess PodCliques than expected, delete the ones that are no longer expected but existing.
 	// This can happen when PCSG replicas have been scaled-in.
 	if err := r.triggerDeletionOfExcessPCSGReplicas(logger, sc); err != nil {
@@ -150,6 +166,7 @@ func (r _resource) triggerDeletionOfExcessPCSGReplicas(logger logr.Logger, sc *s
 		if err := r.triggerDeletionOfPodCliques(sc.ctx, logger, pcsgObjectKey, deletionTasks); err != nil {
 			return err
 		}
+
 		return sc.refreshExistingPCLQs(sc.pcsg)
 	}
 	return nil
@@ -288,7 +305,6 @@ func getMinAvailableBreachedPCSGIndices(logger logr.Logger, existingPCLQs []grov
 	return
 }
 
-// getExpectedPodCliqueFQNsByPCSGReplica computes expected PCLQ names per expected PCSG replica.
 // It returns a map with the key being the PCSG replica index and the value is the expected PCLQ FQNs for that replica. In addition
 // it also returns the total number of expected PCLQs.
 func getExpectedPodCliqueFQNsByPCSGReplica(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[int][]string {
@@ -367,5 +383,73 @@ func (sc *syncContext) refreshExistingPCLQs(pcsg *grovecorev1alpha1.PodCliqueSca
 		}
 	}
 	sc.existingPCLQs = revisedExistingPCLQs
+	return nil
+}
+
+// ensurePCSGResourceClaims creates PCSG-level AllReplicas and PerReplica ResourceClaims
+// and cleans up stale PerReplica RCs from previous scale-in operations.
+func (r _resource) ensurePCSGResourceClaims(sc *syncContext) error {
+	if sc.pcsgConfig == nil || len(sc.pcsgConfig.ResourceSharing) == 0 {
+		return nil
+	}
+	resourceSharers := resourceclaim.ResourceSharersFromPCSG(sc.pcsgConfig.ResourceSharing)
+	labels := resourceclaim.ResourceClaimLabels(sc.pcs.Name)
+	labels[apicommon.LabelPodCliqueScalingGroup] = sc.pcsg.Name
+
+	if err := r.ensurePCSGAllReplicasRCs(sc, resourceSharers, labels); err != nil {
+		return err
+	}
+	if err := r.ensurePCSGPerReplicaRCs(sc, resourceSharers, labels); err != nil {
+		return err
+	}
+
+	return resourceclaim.CleanupStalePerReplicaRCs(
+		sc.ctx, r.client,
+		sc.pcsg.Namespace, labels,
+		int(sc.pcsg.Spec.Replicas),
+		apicommon.LabelPodCliqueScalingGroupReplicaIndex,
+	)
+}
+
+func (r _resource) ensurePCSGAllReplicasRCs(sc *syncContext, resourceSharers []resourceclaim.ResourceSharer, labels map[string]string) error {
+	if err := resourceclaim.EnsureResourceClaims(
+		sc.ctx, r.client,
+		sc.pcsg.Name, sc.pcsg.Namespace,
+		resourceSharers,
+		sc.pcs.Spec.Template.ResourceClaimTemplates,
+		labels,
+		sc.pcsg, r.scheme,
+		nil,
+	); err != nil {
+		return groveerr.WrapError(err,
+			errCodeSyncPCSGResourceClaim,
+			component.OperationSync,
+			fmt.Sprintf("Error ensuring PCSG-level AllReplicas ResourceClaims for %s", client.ObjectKeyFromObject(sc.pcsg)),
+		)
+	}
+	return nil
+}
+
+func (r _resource) ensurePCSGPerReplicaRCs(sc *syncContext, resourceSharers []resourceclaim.ResourceSharer, labels map[string]string) error {
+	for pcsgReplicaIndex := range int(sc.pcsg.Spec.Replicas) {
+		repIdx := pcsgReplicaIndex
+		replicaLabels := maps.Clone(labels)
+		replicaLabels[apicommon.LabelPodCliqueScalingGroupReplicaIndex] = strconv.Itoa(repIdx)
+		if err := resourceclaim.EnsureResourceClaims(
+			sc.ctx, r.client,
+			sc.pcsg.Name, sc.pcsg.Namespace,
+			resourceSharers,
+			sc.pcs.Spec.Template.ResourceClaimTemplates,
+			replicaLabels,
+			sc.pcsg, r.scheme,
+			&repIdx,
+		); err != nil {
+			return groveerr.WrapError(err,
+				errCodeSyncPCSGResourceClaim,
+				component.OperationSync,
+				fmt.Sprintf("Error ensuring PCSG-level PerReplica ResourceClaims for %s rep %d", client.ObjectKeyFromObject(sc.pcsg), pcsgReplicaIndex),
+			)
+		}
+	}
 	return nil
 }

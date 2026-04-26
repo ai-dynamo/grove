@@ -175,6 +175,79 @@ _Appears in:_
 | `Delete` | LastOperationTypeDelete indicates that the last operation was a delete operation.<br /> |
 
 
+#### PCSGResourceSharingFilter
+
+
+
+PCSGResourceSharingFilter controls which child PodCliques of a PCSG receive the ResourceClaims.
+
+
+
+_Appears in:_
+- [PCSGResourceSharingSpec](#pcsgresourcesharingspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `childCliqueNames` _string array_ | ChildCliqueNames limits distribution to the named child PodCliques within this scaling group. |  |  |
+
+
+#### PCSGResourceSharingSpec
+
+
+
+PCSGResourceSharingSpec defines resource sharing at the PCSG level. The filter
+can only target child PodCliques within the scaling group.
+
+
+
+_Appears in:_
+- [PodCliqueScalingGroupConfig](#podcliquescalinggroupconfig)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name of the referenced template. Resolved by first looking up<br />PodCliqueSetTemplateSpec.ResourceClaimTemplates; if no match is found,<br />the operator looks for a Kubernetes ResourceClaimTemplate object in the<br />target namespace. Internal templates shadow external ones with the same name. |  |  |
+| `namespace` _string_ | Namespace of the external ResourceClaimTemplate. When set, the name is<br />resolved as an external Kubernetes ResourceClaimTemplate in the given<br />namespace. When empty, defaults to the PCS namespace during resolution. |  |  |
+| `scope` _[ResourceSharingScope](#resourcesharingscope)_ | Scope determines the sharing granularity for the ResourceClaims created from<br />this template. |  | Enum: [AllReplicas PerReplica] <br /> |
+| `filter` _[PCSGResourceSharingFilter](#pcsgresourcesharingfilter)_ | Filter narrows the scope by restricting which child PodCliques receive<br />the ResourceClaims. If absent, all PodCliques in the group receive them. |  |  |
+
+
+#### PCSResourceSharingFilter
+
+
+
+PCSResourceSharingFilter controls which children of a PCS receive the ResourceClaims.
+
+
+
+_Appears in:_
+- [PCSResourceSharingSpec](#pcsresourcesharingspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `childCliqueNames` _string array_ | ChildCliqueNames limits distribution to the named immediate child PodCliques. |  |  |
+| `childScalingGroupNames` _string array_ | ChildScalingGroupNames limits distribution to the named immediate child PodCliqueScalingGroups. |  |  |
+
+
+#### PCSResourceSharingSpec
+
+
+
+PCSResourceSharingSpec defines resource sharing at the PCS level. The filter
+can target both child PodCliques and child PodCliqueScalingGroups.
+
+
+
+_Appears in:_
+- [PodCliqueSetTemplateSpec](#podcliquesettemplatespec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name of the referenced template. Resolved by first looking up<br />PodCliqueSetTemplateSpec.ResourceClaimTemplates; if no match is found,<br />the operator looks for a Kubernetes ResourceClaimTemplate object in the<br />target namespace. Internal templates shadow external ones with the same name. |  |  |
+| `namespace` _string_ | Namespace of the external ResourceClaimTemplate. When set, the name is<br />resolved as an external Kubernetes ResourceClaimTemplate in the given<br />namespace. When empty, defaults to the PCS namespace during resolution. |  |  |
+| `scope` _[ResourceSharingScope](#resourcesharingscope)_ | Scope determines the sharing granularity for the ResourceClaims created from<br />this template. |  | Enum: [AllReplicas PerReplica] <br /> |
+| `filter` _[PCSResourceSharingFilter](#pcsresourcesharingfilter)_ | Filter narrows the scope by restricting which children receive the<br />ResourceClaims. If absent, all children receive them (broadcast). |  |  |
+
+
 #### PodClique
 
 
@@ -252,9 +325,11 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `name` _string_ | Name is the name of the PodCliqueScalingGroupConfig. This should be unique within the PodCliqueSet.<br />It allows consumers to give a semantic name to a group of PodCliques that needs to be scaled together. |  |  |
 | `cliqueNames` _string array_ | CliqueNames is the list of names of the PodClique's that are part of the scaling group. |  |  |
+| `annotations` _object (keys:string, values:string)_ | Annotations is an unstructured key value map stored with a resource that may be<br />set by external tools to store and retrieve arbitrary metadata. They are not<br />queryable and should be preserved when modifying objects.<br />More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations |  |  |
 | `replicas` _integer_ | Replicas is the desired number of replicas for the scaling group at template level.<br />This allows one to control the replicas of the scaling group at startup.<br />If not specified, it defaults to 1. | 1 |  |
 | `minAvailable` _integer_ | MinAvailable serves two purposes:<br />Gang Scheduling:<br />It defines the minimum number of replicas that are guaranteed to be gang scheduled.<br />Gang Termination:<br />It defines the minimum requirement of available replicas for a PodCliqueScalingGroup.<br />Violation of this threshold for a duration beyond TerminationDelay will result in termination of the PodCliqueSet replica that it belongs to.<br />Default: If not specified, it defaults to 1.<br />Constraints:<br />MinAvailable cannot be greater than Replicas.<br />If ScaleConfig is defined then its MinAvailable should not be less than ScaleConfig.MinReplicas. | 1 |  |
 | `scaleConfig` _[AutoScalingConfig](#autoscalingconfig)_ | ScaleConfig is the horizontal pod autoscaler configuration for the pod clique scaling group. |  |  |
+| `resourceSharing` _[PCSGResourceSharingSpec](#pcsgresourcesharingspec) array_ | ResourceSharing defines shared ResourceClaims at the PCSG level.<br />Each entry references a template (internal or external) and specifies a Scope:<br />  - AllReplicas: one RC for the entire PCSG, shared across all replicas<br />  - PerReplica: one RC per PCSG replica, shared across all PCLQs in that replica<br />The optional Filter field controls which PodCliques receive the claims.<br />At PCSG level, only childCliqueNames filtering is available. |  |  |
 | `topologyConstraint` _[TopologyConstraint](#topologyconstraint)_ | TopologyConstraint defines topology placement requirements for PodCliqueScalingGroup.<br />Must be equal to or stricter than parent PodCliqueSet constraints. |  |  |
 
 
@@ -524,6 +599,8 @@ _Appears in:_
 | `headlessServiceConfig` _[HeadlessServiceConfig](#headlessserviceconfig)_ | HeadlessServiceConfig defines the config options for the headless service.<br />If present, create headless service for each PodGang. |  |  |
 | `topologyConstraint` _[TopologyConstraint](#topologyconstraint)_ | TopologyConstraint defines topology placement requirements for PodCliqueSet. |  |  |
 | `terminationDelay` _[Duration](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#duration-v1-meta)_ | TerminationDelay is the delay after which the gang termination will be triggered.<br />A gang is a candidate for termination if number of running pods fall below a threshold for any PodClique.<br />If a PodGang remains a candidate past TerminationDelay then it will be terminated. This allows additional time<br />to the backend scheduler to re-schedule sufficient pods in the PodGang that will result in having the total number of<br />running pods go above the threshold.<br />Defaults to 4 hours. |  |  |
+| `resourceClaimTemplates` _[ResourceClaimTemplateConfig](#resourceclaimtemplateconfig) array_ | ResourceClaimTemplates declares named ResourceClaimTemplateSpecs that can be<br />referenced by name from resourceSharing fields at any level in the hierarchy. |  |  |
+| `resourceSharing` _[PCSResourceSharingSpec](#pcsresourcesharingspec) array_ | ResourceSharing defines shared ResourceClaims at the PCS level.<br />Each entry references a template (internal or external) and specifies a Scope:<br />  - AllReplicas: one RC for the entire PCS, shared across ALL pods in ALL replicas<br />  - PerReplica: one RC per PCS replica, shared across ALL pods in that replica<br />The optional Filter field controls which children receive the claims. |  |  |
 | `podCliqueScalingGroups` _[PodCliqueScalingGroupConfig](#podcliquescalinggroupconfig) array_ | PodCliqueScalingGroupConfigs is a list of scaling groups for the PodCliqueSet. |  |  |
 
 
@@ -630,6 +707,7 @@ _Appears in:_
 | `labels` _object (keys:string, values:string)_ | Labels is a map of string keys and values that can be used to organize and categorize<br />(scope and select) objects. May match selectors of replication controllers<br />and services.<br />More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/labels |  |  |
 | `annotations` _object (keys:string, values:string)_ | Annotations is an unstructured key value map stored with a resource that may be<br />set by external tools to store and retrieve arbitrary metadata. They are not<br />queryable and should be preserved when modifying objects.<br />More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations |  |  |
 | `topologyConstraint` _[TopologyConstraint](#topologyconstraint)_ | TopologyConstraint defines topology placement requirements for PodClique.<br />Must be equal to or stricter than parent resource constraints. |  |  |
+| `resourceSharing` _[ResourceSharingSpec](#resourcesharingspec) array_ | ResourceSharing defines shared ResourceClaims for this PodClique.<br />Each entry references a template (internal or external) and specifies a Scope:<br />  - AllReplicas: one RC per PCLQ, shared by all replica pods<br />  - PerReplica: one RC per PCLQ replica, shared by all pods within that replica<br />This is distinct from adding ResourceClaimTemplate inside<br />Spec.PodSpec.ResourceClaims[x].ResourceClaimTemplateName, which creates a unique<br />ResourceClaim for each pod.<br />PCLQs have no children to filter, so no Filter field is available. |  |  |
 | `spec` _[PodCliqueSpec](#podcliquespec)_ | Specification of the desired behavior of a PodClique.<br />More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#spec-and-status |  |  |
 
 
@@ -709,6 +787,66 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `current` _string_ | Current captures the current pod name that is a target for update. |  |  |
 | `completed` _string array_ | Completed captures the pod names that have already been updated. |  |  |
+
+
+#### ResourceClaimTemplateConfig
+
+
+
+ResourceClaimTemplateConfig defines a named ResourceClaimTemplateSpec that can be
+referenced by ResourceSharingSpec entries in resourceSharing fields.
+
+
+
+_Appears in:_
+- [PodCliqueSetTemplateSpec](#podcliquesettemplatespec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name is a unique identifier for this template within the PodCliqueSet. |  |  |
+| `templateSpec` _[ResourceClaimTemplateSpec](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#resourceclaimtemplatespec-v1-resource)_ | TemplateSpec is the ResourceClaimTemplate spec used to create ResourceClaim objects. |  |  |
+
+
+#### ResourceSharingScope
+
+_Underlying type:_ _string_
+
+ResourceSharingScope defines the sharing scope for resource claims.
+
+_Validation:_
+- Enum: [AllReplicas PerReplica]
+
+_Appears in:_
+- [PCSGResourceSharingSpec](#pcsgresourcesharingspec)
+- [PCSResourceSharingSpec](#pcsresourcesharingspec)
+- [ResourceSharingSpec](#resourcesharingspec)
+
+| Field | Description |
+| --- | --- |
+| `AllReplicas` | ResourceSharingScopeAllReplicas creates one ResourceClaim per instance of the owning<br />resource (PCS, PCLQ, or PCSG), shared across all replicas and pods within that instance.<br /> |
+| `PerReplica` | ResourceSharingScopePerReplica creates one ResourceClaim per replica, shared<br />across all pods within that replica.<br /> |
+
+
+#### ResourceSharingSpec
+
+
+
+ResourceSharingSpec contains the common fields shared by all levels of
+resource sharing (PCS, PCSG, PCLQ). It is used directly for PCLQ-level
+resource sharing where no filter is needed.
+
+
+
+_Appears in:_
+- [PCSGResourceSharingSpec](#pcsgresourcesharingspec)
+- [PCSResourceSharingSpec](#pcsresourcesharingspec)
+- [PodCliqueTemplateSpec](#podcliquetemplatespec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name of the referenced template. Resolved by first looking up<br />PodCliqueSetTemplateSpec.ResourceClaimTemplates; if no match is found,<br />the operator looks for a Kubernetes ResourceClaimTemplate object in the<br />target namespace. Internal templates shadow external ones with the same name. |  |  |
+| `namespace` _string_ | Namespace of the external ResourceClaimTemplate. When set, the name is<br />resolved as an external Kubernetes ResourceClaimTemplate in the given<br />namespace. When empty, defaults to the PCS namespace during resolution. |  |  |
+| `scope` _[ResourceSharingScope](#resourcesharingscope)_ | Scope determines the sharing granularity for the ResourceClaims created from<br />this template. |  | Enum: [AllReplicas PerReplica] <br /> |
 
 
 #### TopologyConstraint

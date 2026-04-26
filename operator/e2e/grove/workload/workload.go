@@ -24,78 +24,58 @@ import (
 	"time"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	groveclient "github.com/ai-dynamo/grove/operator/client/clientset/versioned"
-	"github.com/ai-dynamo/grove/operator/e2e/k8s"
-	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
-	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
+	"github.com/ai-dynamo/grove/operator/e2e/grove/gvk"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/resources"
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
+	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-var (
-	podCliqueSetGVR = schema.GroupVersionResource{
-		Group:    "grove.io",
-		Version:  "v1alpha1",
-		Resource: "podcliquesets",
-	}
-
-	podCliqueScalingGroupGVR = schema.GroupVersionResource{
-		Group:    "grove.io",
-		Version:  "v1alpha1",
-		Resource: "podcliquescalinggroups",
-	}
-)
-
-// WorkloadManager provides Grove workload operations using pre-created Kubernetes clients.
+// WorkloadManager provides Grove workload operations using a controller-runtime client.
 type WorkloadManager struct {
-	clients   *clients.Clients
+	cl        client.Client
+	k8s       *k8sclient.Client
 	resources *resources.ResourceManager
-	pods      *pods.PodManager
-	logger    *utils.Logger
+	logger    *log.Logger
 }
 
-// NewWorkloadManager creates a WorkloadManager bound to the given clients.
-func NewWorkloadManager(clients *clients.Clients, logger *utils.Logger) *WorkloadManager {
+// NewWorkloadManager creates a WorkloadManager bound to the given K8s client.
+func NewWorkloadManager(k8s *k8sclient.Client, logger *log.Logger) *WorkloadManager {
 	return &WorkloadManager{
-		clients:   clients,
-		resources: resources.NewResourceManager(clients, logger),
-		pods:      pods.NewPodManager(clients, logger),
+		cl:        k8s,
+		k8s:       k8s,
+		resources: resources.NewResourceManager(k8s, logger),
 		logger:    logger,
 	}
 }
 
 // ScalePCS scales a PodCliqueSet to the specified replica count.
 func (wm *WorkloadManager) ScalePCS(ctx context.Context, namespace, name string, replicas int) error {
-	return wm.resources.ScaleCRD(ctx, podCliqueSetGVR, namespace, name, replicas)
+	return wm.resources.ScaleCRD(ctx, gvk.PodCliqueSet, namespace, name, replicas)
 }
 
 // ScalePCSG scales a PodCliqueScalingGroup to the specified replica count.
 // It waits for the PCSG to exist before scaling.
 func (wm *WorkloadManager) ScalePCSG(ctx context.Context, namespace, name string, replicas int, timeout, interval time.Duration) error {
-	// Wait for PCSG to exist
-	err := k8s.PollForCondition(ctx, timeout, interval, func() (bool, error) {
-		_, err := wm.clients.DynamicClient.Resource(podCliqueScalingGroupGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			if errors.IsNotFound(err) {
-				return false, nil
-			}
-			return false, err
-		}
-		return true, nil
-	})
+	_, err := WaitForPodCliqueScalingGroup(ctx, wm.k8s, namespace, name, timeout, interval)
 	if err != nil {
 		return fmt.Errorf("failed to find PodCliqueScalingGroup %s: %w", name, err)
 	}
 
-	return wm.resources.ScaleCRD(ctx, podCliqueScalingGroupGVR, namespace, name, replicas)
+	return wm.resources.ScaleCRD(ctx, gvk.PodCliqueScalingGroup, namespace, name, replicas)
 }
 
 // DeletePCS deletes a PodCliqueSet by name. NotFound errors are ignored.
 func (wm *WorkloadManager) DeletePCS(ctx context.Context, namespace, name string) error {
-	err := wm.clients.DynamicClient.Resource(podCliqueSetGVR).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+	}
+	err := wm.cl.Delete(ctx, pcs)
 	if err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("failed to delete PodCliqueSet %s/%s: %w", namespace, name, err)
 	}
@@ -107,49 +87,15 @@ func (wm *WorkloadManager) DeletePCSAndWait(ctx context.Context, namespace, name
 	if err := wm.DeletePCS(ctx, namespace, name); err != nil {
 		return err
 	}
-
-	return k8s.PollForCondition(ctx, timeout, interval, func() (bool, error) {
-		_, err := wm.clients.DynamicClient.Resource(podCliqueSetGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-		if errors.IsNotFound(err) {
-			return true, nil
-		}
-		if err != nil {
-			return false, err
-		}
-		return false, nil
-	})
+	return WaitForPodCliqueSetDeletion(ctx, wm.k8s, namespace, name, timeout, interval)
 }
 
 // WaitForPCSG polls until a PodCliqueScalingGroup exists and returns it.
 func (wm *WorkloadManager) WaitForPCSG(ctx context.Context, namespace, name string, timeout, interval time.Duration) (*grovecorev1alpha1.PodCliqueScalingGroup, error) {
-	var pcsg *grovecorev1alpha1.PodCliqueScalingGroup
-	err := k8s.PollForCondition(ctx, timeout, interval, func() (bool, error) {
-		var getErr error
-		pcsg, getErr = wm.clients.GroveClient.GroveV1alpha1().PodCliqueScalingGroups(namespace).Get(ctx, name, metav1.GetOptions{})
-		if errors.IsNotFound(getErr) {
-			return false, nil
-		}
-		if getErr != nil {
-			return false, getErr
-		}
-		return true, nil
-	})
-	return pcsg, err
+	return WaitForPodCliqueScalingGroup(ctx, wm.k8s, namespace, name, timeout, interval)
 }
 
 // WaitForPodClique polls until a PodClique exists and returns it.
-func (wm *WorkloadManager) WaitForPodClique(ctx context.Context, groveClient groveclient.Interface, namespace, name string, timeout, interval time.Duration) (*grovecorev1alpha1.PodClique, error) {
-	var pclq *grovecorev1alpha1.PodClique
-	err := k8s.PollForCondition(ctx, timeout, interval, func() (bool, error) {
-		var getErr error
-		pclq, getErr = groveClient.GroveV1alpha1().PodCliques(namespace).Get(ctx, name, metav1.GetOptions{})
-		if errors.IsNotFound(getErr) {
-			return false, nil
-		}
-		if getErr != nil {
-			return false, getErr
-		}
-		return true, nil
-	})
-	return pclq, err
+func (wm *WorkloadManager) WaitForPodClique(ctx context.Context, namespace, name string, timeout, interval time.Duration) (*grovecorev1alpha1.PodClique, error) {
+	return WaitForPodCliqueStandalone(ctx, wm.k8s, namespace, name, timeout, interval)
 }

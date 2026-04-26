@@ -421,7 +421,7 @@ def install_kai_scheduler(config: ClusterConfig):
 
     sh.helm(
         "install", "kai-scheduler",
-        f"oci://ghcr.io/nvidia/kai-scheduler/kai-scheduler",
+        f"oci://ghcr.io/kai-scheduler/kai-scheduler/kai-scheduler",
         "--version", config.kai_version,
         "--namespace", "kai-scheduler",
         "--create-namespace",
@@ -646,6 +646,14 @@ def main(
         for cmd in ["skaffold", "jq"]:
             require_command(cmd)
     console.print("[green]✅ All required tools are available[/green]")
+
+    # Prepare charts
+    if not skip_grove:
+        console.print(Panel.fit("Preparing Helm charts", style="bold blue"))
+        prepare_charts = operator_dir / "hack/prepare-charts.sh"
+        if prepare_charts.exists():
+            sh.bash(str(prepare_charts))
+            console.print("[green]✅ Charts prepared[/green]")
 
     # Create cluster
     if not create_cluster(config):

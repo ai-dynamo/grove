@@ -25,21 +25,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/e2e/diagnostics"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
-	"github.com/ai-dynamo/grove/operator/e2e/k8s"
-	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/nodes"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/resources"
+	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
 	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Logger is set by the tests package init() to share the singleton logger.
-var Logger *utils.Logger
+var Logger *log.Logger
 
 const (
 	// DefaultPollTimeout is the timeout for most polling conditions
@@ -59,7 +58,7 @@ type WorkloadConfig struct {
 // GetLabelSelector returns the label selector calculated from the workload name.
 // The label selector follows the pattern: "app.kubernetes.io/part-of=<name>"
 func (w WorkloadConfig) GetLabelSelector() string {
-	return fmt.Sprintf("app.kubernetes.io/part-of=%s", w.Name)
+	return fmt.Sprintf("%s=%s", common.LabelPartOfKey, w.Name)
 }
 
 // TestContext is the primary per-test helper struct.
@@ -68,8 +67,8 @@ type TestContext struct {
 	T   *testing.T
 	Ctx context.Context
 
-	// Shared clients (created once per test run, goroutine-safe)
-	Clients *clients.Clients
+	// Shared client (created once per test run, goroutine-safe)
+	Client *k8sclient.Client
 
 	// Per-suite configuration
 	Namespace string
@@ -101,12 +100,12 @@ func WithWorkload(wc *WorkloadConfig) TestOption {
 	return func(tc *TestContext) { tc.Workload = wc }
 }
 
-// NewTestContext creates a TestContext from shared clients with optional configuration.
-func NewTestContext(t *testing.T, ctx context.Context, clients *clients.Clients, opts ...TestOption) *TestContext {
+// NewTestContext creates a TestContext from a K8s client with optional configuration.
+func NewTestContext(t *testing.T, ctx context.Context, k8sClient *k8sclient.Client, opts ...TestOption) *TestContext {
 	tc := &TestContext{
 		T:         t,
 		Ctx:       ctx,
-		Clients:   clients,
+		Client:    k8sClient,
 		Namespace: "default",
 		Timeout:   DefaultPollTimeout,
 		Interval:  DefaultPollInterval,
@@ -128,8 +127,8 @@ func PrepareTest(ctx context.Context, t *testing.T, requiredWorkerNodes int, opt
 		t.Fatalf("Failed to prepare shared cluster: %v", err)
 	}
 
-	clients := sharedCluster.GetAllClients()
-	tc := NewTestContext(t, ctx, clients, opts...)
+	k8sClient := sharedCluster.GetClient()
+	tc := NewTestContext(t, ctx, k8sClient, opts...)
 
 	// Initialize diagnostics for cleanup
 	diagMode := os.Getenv(diagnostics.ModeEnvVar)
@@ -137,7 +136,7 @@ func PrepareTest(ctx context.Context, t *testing.T, requiredWorkerNodes int, opt
 		diagMode = diagnostics.ModeFile
 	}
 	diagDir := os.Getenv(diagnostics.DirEnvVar)
-	diag := diagnostics.NewDiagCollector(clients, tc.Namespace, diagMode, diagDir, Logger)
+	diag := diagnostics.NewDiagCollector(k8sClient, tc.Namespace, diagMode, diagDir, Logger)
 
 	cleanup := func() {
 		if t.Failed() {
@@ -145,9 +144,11 @@ func PrepareTest(ctx context.Context, t *testing.T, requiredWorkerNodes int, opt
 		}
 
 		if err := sharedCluster.CleanupWorkloads(ctx); err != nil {
-			Logger.Error("================================================================================")
-			Logger.Error("=== CLEANUP FAILURE - COLLECTING DIAGNOSTICS ===")
-			Logger.Error("================================================================================")
+			if Logger != nil {
+				Logger.Error("================================================================================")
+				Logger.Error("=== CLEANUP FAILURE - COLLECTING DIAGNOSTICS ===")
+				Logger.Error("================================================================================")
+			}
 			diag.CollectAll(ctx, t.Name())
 			sharedCluster.MarkCleanupFailed(err)
 			t.Fatalf("Failed to cleanup workloads: %v. All subsequent tests will fail.", err)
@@ -161,22 +162,22 @@ func PrepareTest(ctx context.Context, t *testing.T, requiredWorkerNodes int, opt
 
 // newPodManager creates a PodManager for internal use by convenience methods.
 func (tc *TestContext) newPodManager() *pods.PodManager {
-	return pods.NewPodManager(tc.Clients, Logger)
+	return pods.NewPodManager(tc.Client, Logger)
 }
 
 // newNodeManager creates a NodeManager for internal use by convenience methods.
 func (tc *TestContext) newNodeManager() *nodes.NodeManager {
-	return nodes.NewNodeManager(tc.Clients, Logger)
+	return nodes.NewNodeManager(tc.Client, Logger)
 }
 
 // newResourceManager creates a ResourceManager for internal use by convenience methods.
 func (tc *TestContext) newResourceManager() *resources.ResourceManager {
-	return resources.NewResourceManager(tc.Clients, Logger)
+	return resources.NewResourceManager(tc.Client, Logger)
 }
 
 // newWorkloadManager creates a WorkloadManager for internal use by convenience methods.
 func (tc *TestContext) newWorkloadManager() *workload.WorkloadManager {
-	return workload.NewWorkloadManager(tc.Clients, Logger)
+	return workload.NewWorkloadManager(tc.Client, Logger)
 }
 
 // GetLabelSelector returns the label selector for the current workload.
@@ -185,11 +186,6 @@ func (tc *TestContext) GetLabelSelector() string {
 		return ""
 	}
 	return tc.Workload.GetLabelSelector()
-}
-
-// PollForCondition wraps k8s.PollForCondition with suite defaults.
-func (tc *TestContext) PollForCondition(condition func() (bool, error)) error {
-	return k8s.PollForCondition(tc.Ctx, tc.Timeout, tc.Interval, condition)
 }
 
 // ListPods lists pods matching the current workload's label selector.
@@ -214,39 +210,25 @@ func (tc *TestContext) WaitForPodCountAndPhases(expectedTotal, expectedRunning, 
 
 // WaitForPodPhases waits for pods to reach specific running and pending counts.
 func (tc *TestContext) WaitForPodPhases(expectedRunning, expectedPending int) error {
-	return tc.PollForCondition(func() (bool, error) {
-		podList, err := tc.ListPods()
-		if err != nil {
-			return false, err
-		}
-		count := pods.CountPodsByPhase(podList)
-		return count.Running == expectedRunning && count.Pending == expectedPending, nil
-	})
+	return tc.newPodManager().WaitForPhases(tc.Ctx, tc.Namespace, tc.GetLabelSelector(), expectedRunning, expectedPending, tc.Timeout, tc.Interval)
 }
 
 // WaitForReadyPods waits for a specific number of pods to be ready.
 func (tc *TestContext) WaitForReadyPods(expectedReady int) error {
 	tc.T.Helper()
-	return tc.PollForCondition(func() (bool, error) {
-		podList, err := tc.ListPods()
-		if err != nil {
-			return false, err
-		}
-		return pods.CountReady(podList) == expectedReady, nil
-	})
+	return tc.newPodManager().WaitForReadyCount(tc.Ctx, tc.Namespace, tc.GetLabelSelector(), expectedReady, tc.Timeout, tc.Interval)
 }
 
 // WaitForRunningPods waits for a specific number of pods to be in Running phase.
 func (tc *TestContext) WaitForRunningPods(expectedRunning int) error {
 	tc.T.Helper()
-	return tc.PollForCondition(func() (bool, error) {
-		podList, err := tc.ListPods()
-		if err != nil {
-			return false, err
-		}
-		count := pods.CountPodsByPhase(podList)
-		return count.Running == expectedRunning, nil
-	})
+	return tc.newPodManager().WaitForPhases(tc.Ctx, tc.Namespace, tc.GetLabelSelector(), expectedRunning, -1, tc.Timeout, tc.Interval)
+}
+
+// WaitForFailedPod polls until a pod matching the label selector is not Ready and has terminated or restarted.
+func (tc *TestContext) WaitForFailedPod(namespace, labelSelector string) (*v1.Pod, error) {
+	tc.T.Helper()
+	return tc.newPodManager().WaitForFailedPod(tc.Ctx, namespace, labelSelector, tc.Timeout, tc.Interval)
 }
 
 // CordonNode marks a node as unschedulable.
@@ -321,18 +303,7 @@ func (tc *TestContext) DeployAndVerifyWorkload() (*v1.PodList, error) {
 
 // VerifyAllPodsArePending verifies that all pods matching the label selector are pending.
 func (tc *TestContext) VerifyAllPodsArePending() error {
-	return tc.PollForCondition(func() (bool, error) {
-		pods, err := tc.ListPods()
-		if err != nil {
-			return false, err
-		}
-		for _, pod := range pods.Items {
-			if pod.Status.Phase != v1.PodPending {
-				return false, nil
-			}
-		}
-		return true, nil
-	})
+	return tc.newPodManager().WaitForAllPending(tc.Ctx, tc.Namespace, tc.GetLabelSelector(), tc.Timeout, tc.Interval)
 }
 
 // VerifyPodsArePendingWithUnschedulableEvents verifies that pods are pending with Unschedulable events.
@@ -343,49 +314,7 @@ func (tc *TestContext) VerifyPodsArePendingWithUnschedulableEvents(allPodsMustBe
 		}
 	}
 
-	return tc.PollForCondition(func() (bool, error) {
-		pods, err := tc.ListPods()
-		if err != nil {
-			return false, err
-		}
-
-		podsWithUnschedulableEvent := 0
-		pendingCount := 0
-
-		for _, pod := range pods.Items {
-			if pod.Status.Phase == v1.PodPending {
-				pendingCount++
-
-				events, err := tc.Clients.Clientset.CoreV1().Events(tc.Namespace).List(tc.Ctx, metav1.ListOptions{
-					FieldSelector: fmt.Sprintf("involvedObject.name=%s,involvedObject.kind=Pod", pod.Name),
-				})
-				if err != nil {
-					return false, err
-				}
-
-				var mostRecentEvent *v1.Event
-				for i := range events.Items {
-					event := &events.Items[i]
-					if mostRecentEvent == nil || event.LastTimestamp.After(mostRecentEvent.LastTimestamp.Time) {
-						mostRecentEvent = event
-					}
-				}
-
-				if mostRecentEvent != nil &&
-					mostRecentEvent.Type == v1.EventTypeWarning &&
-					((mostRecentEvent.Reason == "Unschedulable" && mostRecentEvent.Source.Component == "kai-scheduler") ||
-						(mostRecentEvent.Reason == "PodGrouperWarning" && mostRecentEvent.Source.Component == "pod-grouper")) {
-					podsWithUnschedulableEvent++
-				}
-			}
-		}
-
-		if expectedPendingCount > 0 && pendingCount != expectedPendingCount {
-			return false, nil
-		}
-
-		return podsWithUnschedulableEvent == pendingCount, nil
-	})
+	return tc.newPodManager().WaitForUnschedulableEvents(tc.Ctx, tc.Namespace, tc.GetLabelSelector(), expectedPendingCount, tc.Timeout, tc.Interval)
 }
 
 // assertPodsOnDistinctNodes asserts that the pods are scheduled on distinct nodes and fails the test if not.
@@ -454,21 +383,8 @@ func (tc *TestContext) VerifyAllPodsArePendingWithSleep() {
 
 // WaitForPodConditions polls until the expected pod state is reached.
 func (tc *TestContext) WaitForPodConditions(expectedTotalPods, expectedPending int) (int, int, int, error) {
-	var lastTotal, lastRunning, lastPending int
-
-	err := tc.PollForCondition(func() (bool, error) {
-		podList, err := tc.ListPods()
-		if err != nil {
-			return false, err
-		}
-		count := pods.CountPodsByPhase(podList)
-		lastTotal = count.Total
-		lastRunning = count.Running
-		lastPending = count.Pending
-		return lastTotal == expectedTotalPods && lastPending == expectedPending, nil
-	})
-
-	return lastTotal, lastRunning, lastPending, err
+	count, err := tc.newPodManager().WaitForMatchingPhases(tc.Ctx, tc.Namespace, tc.GetLabelSelector(), expectedTotalPods, expectedPending, tc.Timeout, tc.Interval)
+	return count.Total, count.Running, count.Pending, err
 }
 
 // ScalePCSAndWait scales a PCS and waits for the expected pod conditions.
