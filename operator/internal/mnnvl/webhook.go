@@ -143,6 +143,13 @@ func validatePodCliqueSetTemplateSpecOnCreate(templateSpec *grovecorev1alpha1.Po
 		}
 		allErrs = append(allErrs, validatePodCliqueTemplateSpecOnCreate(clique, autoMNNVLEnabled, fldPath.Child("cliques").Index(i))...)
 	}
+	for i := range templateSpec.PodCliqueScalingGroupConfigs {
+		pcsgConfig := &templateSpec.PodCliqueScalingGroupConfigs[i]
+		allErrs = append(allErrs, validateMNNVLAnnotationsOnCreate(
+			pcsgConfig.Annotations, autoMNNVLEnabled,
+			fldPath.Child("podCliqueScalingGroups").Index(i).Child("annotations"),
+		)...)
+	}
 	return allErrs
 }
 
@@ -160,6 +167,7 @@ func validatePodCliqueTemplateSpecOnCreate(clique *grovecorev1alpha1.PodCliqueTe
 // object being admitted.
 func validatePodCliqueSetTemplateSpecOnUpdate(oldTemplate, newTemplate *grovecorev1alpha1.PodCliqueSetTemplateSpec, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
+
 	oldByName := make(map[string]*grovecorev1alpha1.PodCliqueTemplateSpec, len(oldTemplate.Cliques))
 	for _, clique := range oldTemplate.Cliques {
 		if clique == nil {
@@ -177,6 +185,23 @@ func validatePodCliqueSetTemplateSpecOnUpdate(oldTemplate, newTemplate *grovecor
 		}
 		allErrs = append(allErrs, validatePodCliqueTemplateSpecOnUpdate(oldClique, newClique, fldPath.Child("cliques").Index(i))...)
 	}
+
+	oldPCSGByName := make(map[string]*grovecorev1alpha1.PodCliqueScalingGroupConfig, len(oldTemplate.PodCliqueScalingGroupConfigs))
+	for i := range oldTemplate.PodCliqueScalingGroupConfigs {
+		oldPCSGByName[oldTemplate.PodCliqueScalingGroupConfigs[i].Name] = &oldTemplate.PodCliqueScalingGroupConfigs[i]
+	}
+	for i := range newTemplate.PodCliqueScalingGroupConfigs {
+		newConfig := &newTemplate.PodCliqueScalingGroupConfigs[i]
+		oldConfig, ok := oldPCSGByName[newConfig.Name]
+		if !ok {
+			continue
+		}
+		allErrs = append(allErrs, validateMNNVLAnnotationsImmutability(
+			oldConfig.Annotations, newConfig.Annotations,
+			fldPath.Child("podCliqueScalingGroups").Index(i).Child("annotations"),
+		)...)
+	}
+
 	return allErrs
 }
 

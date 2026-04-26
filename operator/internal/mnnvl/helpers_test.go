@@ -411,6 +411,22 @@ func createPCSWithCliques(cliques []cliqueAnnotation) *grovecorev1alpha1.PodCliq
 	return builder.Build()
 }
 
+// createPCSWithPCSGConfigAnnotations creates a PCS with a single PCSG config carrying the given annotations.
+func createPCSWithPCSGConfigAnnotations(annotations map[string]string) *grovecorev1alpha1.PodCliqueSet {
+	builder := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder("worker").
+				WithContainer(testutils.NewGPUContainer("train", "nvidia/cuda:latest", 8)).
+				Build(),
+		)
+	builder.WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
+		Name:        "scaling-group-1",
+		CliqueNames: []string{"worker"},
+		Annotations: annotations,
+	})
+	return builder.Build()
+}
+
 // createPCSWithoutGPU creates a PCS without GPU using the builder for tests in this package.
 func createPCSWithoutGPU(annotations map[string]string) *grovecorev1alpha1.PodCliqueSet {
 	return testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").

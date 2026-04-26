@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	resourcev1 "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -56,45 +57,57 @@ func GetResourceClaim(ctx context.Context, crClient client.Client, namespace, na
 	return &rc, nil
 }
 
+// fetchResourceClaims returns a FetchFunc that lists ResourceClaims by label selector.
+func fetchResourceClaims(crClient client.Client, namespace, labelSelector string) waiter.FetchFunc[*resourcev1.ResourceClaimList] {
+	return func(ctx context.Context) (*resourcev1.ResourceClaimList, error) {
+		return ListResourceClaims(ctx, crClient, namespace, labelSelector)
+	}
+}
+
+// claimCountEquals returns a Predicate that checks the list has exactly n items.
+func claimCountEquals(n int) waiter.Predicate[*resourcev1.ResourceClaimList] {
+	return func(list *resourcev1.ResourceClaimList) bool { return len(list.Items) == n }
+}
+
+// claimNamesExist returns a Predicate that checks all named claims are present.
+func claimNamesExist(names []string) waiter.Predicate[*resourcev1.ResourceClaimList] {
+	return func(list *resourcev1.ResourceClaimList) bool {
+		existing := make(map[string]bool, len(list.Items))
+		for _, rc := range list.Items {
+			existing[rc.Name] = true
+		}
+		for _, name := range names {
+			if !existing[name] {
+				return false
+			}
+		}
+		return true
+	}
+}
+
 // WaitForResourceClaimCount polls until the number of ResourceClaims matching the label selector equals expectedCount.
 func WaitForResourceClaimCount(ctx context.Context, crClient client.Client, namespace, labelSelector string, expectedCount int, timeout, interval time.Duration) error {
-	return PollForCondition(ctx, timeout, interval, func() (bool, error) {
-		list, err := ListResourceClaims(ctx, crClient, namespace, labelSelector)
-		if err != nil {
-			return false, err
-		}
-		return len(list.Items) == expectedCount, nil
-	})
+	w := waiter.New[*resourcev1.ResourceClaimList]().WithTimeout(timeout).WithInterval(interval)
+	return w.WaitUntil(ctx, fetchResourceClaims(crClient, namespace, labelSelector), claimCountEquals(expectedCount))
 }
 
 // WaitForResourceClaimsByName polls until all named ResourceClaims exist.
 func WaitForResourceClaimsByName(ctx context.Context, crClient client.Client, namespace string, names []string, timeout, interval time.Duration) error {
-	return PollForCondition(ctx, timeout, interval, func() (bool, error) {
-		for _, name := range names {
-			_, err := GetResourceClaim(ctx, crClient, namespace, name)
-			if err != nil {
-				if client.IgnoreNotFound(err) == nil {
-					return false, nil
-				}
-				return false, err
-			}
-		}
-		return true, nil
-	})
+	w := waiter.New[*resourcev1.ResourceClaimList]().WithTimeout(timeout).WithInterval(interval)
+	return w.WaitUntil(ctx, fetchResourceClaims(crClient, namespace, ""), claimNamesExist(names))
 }
 
 // WaitForResourceClaimDeletion polls until the named ResourceClaim no longer exists.
 func WaitForResourceClaimDeletion(ctx context.Context, crClient client.Client, namespace, name string, timeout, interval time.Duration) error {
-	return PollForCondition(ctx, timeout, interval, func() (bool, error) {
-		_, err := GetResourceClaim(ctx, crClient, namespace, name)
-		if err != nil {
-			if client.IgnoreNotFound(err) == nil {
-				return true, nil
-			}
-			return false, err
+	fetchClaim := waiter.FetchFunc[*resourcev1.ResourceClaim](func(ctx context.Context) (*resourcev1.ResourceClaim, error) {
+		rc, err := GetResourceClaim(ctx, crClient, namespace, name)
+		if client.IgnoreNotFound(err) == nil && rc == nil {
+			return nil, nil
 		}
-		return false, nil
+		return rc, err
 	})
+	w := waiter.New[*resourcev1.ResourceClaim]().WithTimeout(timeout).WithInterval(interval)
+	return w.WaitUntil(ctx, fetchClaim, waiter.IsZero[*resourcev1.ResourceClaim])
 }
 
 // ResourceClaimNames extracts the names from a list of ResourceClaims.

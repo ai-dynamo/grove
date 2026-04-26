@@ -103,7 +103,7 @@ func newPodCliqueStateWithInfo(podCliqueDependencies map[string]int, namespace, 
 		podGang:               podGang,
 		pclqFQNToMinAvailable: podCliqueDependencies,
 		currentPCLQReadyPods:  currentlyReadyPods,
-		allReadyCh:            make(chan struct{}, len(podCliqueDependencies)),
+		allReadyCh:            make(chan struct{}, 1),
 	}
 }
 
@@ -131,7 +131,6 @@ func (c *ParentPodCliqueDependencies) WaitForReady(ctx context.Context, log logr
 	}
 
 	eventHandlerContext, cancel := context.WithCancel(ctx)
-	defer cancel() // Cancel the context used by the informers if the wait is successful, or an err occurs.
 
 	// Create informer factory to watch pods matching the PodGang label
 	factory := informers.NewSharedInformerFactoryWithOptions(
@@ -140,9 +139,13 @@ func (c *ParentPodCliqueDependencies) WaitForReady(ctx context.Context, log logr
 		informers.WithNamespace(c.namespace),
 		informers.WithTweakListOptions(func(opts *metav1.ListOptions) {
 			opts.LabelSelector = selector.String()
-		},
-		),
+		}),
 	)
+	defer func() {
+		cancel() // Cancel the context used by the informers if the wait is successful, or an err occurs.
+		factory.Shutdown()
+	}()
+
 	if err := c.registerEventHandler(factory, log); err != nil {
 		return groveerr.WrapError(
 			err,
@@ -199,9 +202,7 @@ func (c *ParentPodCliqueDependencies) registerEventHandler(factory informers.Sha
 			}
 
 			c.refreshReadyPodsOfPodClique(pod, false)
-			if c.checkAllParentsReady() {
-				c.allReadyCh <- struct{}{}
-			}
+			c.notifyIfAllParentsReady()
 		},
 		UpdateFunc: func(_, newObj any) {
 			c.mutex.Lock()
@@ -212,9 +213,7 @@ func (c *ParentPodCliqueDependencies) registerEventHandler(factory informers.Sha
 			}
 
 			c.refreshReadyPodsOfPodClique(pod, false)
-			if c.checkAllParentsReady() {
-				c.allReadyCh <- struct{}{}
-			}
+			c.notifyIfAllParentsReady()
 		},
 		DeleteFunc: func(obj any) {
 			c.mutex.Lock()
@@ -228,9 +227,7 @@ func (c *ParentPodCliqueDependencies) registerEventHandler(factory informers.Sha
 			}
 
 			c.refreshReadyPodsOfPodClique(pod, true)
-			if c.checkAllParentsReady() {
-				c.allReadyCh <- struct{}{}
-			}
+			c.notifyIfAllParentsReady()
 		},
 	}, cache.HandlerOptions{Logger: &log})
 	return err
@@ -264,14 +261,18 @@ func (c *ParentPodCliqueDependencies) refreshReadyPodsOfPodClique(pod *corev1.Po
 	}
 }
 
-// checkAllParentsReady returns true when all parent PodCliques have met their minimum ready pod requirements.
-func (c *ParentPodCliqueDependencies) checkAllParentsReady() bool {
+// notifyIfAllParentsReady will notify consumers if all PCLQ pods are ready.
+func (c *ParentPodCliqueDependencies) notifyIfAllParentsReady() {
 	for cliqueName, readyPods := range c.currentPCLQReadyPods {
 		if len(readyPods) < c.pclqFQNToMinAvailable[cliqueName] {
-			return false
+			return
 		}
 	}
-	return true
+
+	select {
+	case c.allReadyCh <- struct{}{}:
+	default: // already notified
+	}
 }
 
 // getLabelSelectorForPods returns the label selector to filter pods belonging to the specified PodGang.

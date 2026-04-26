@@ -33,7 +33,7 @@ import (
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s"
-	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"gopkg.in/yaml.v3"
@@ -164,11 +164,11 @@ func UpdateGroveConfiguration(ctx context.Context, restConfig *rest.Config, char
 	}
 
 	// Wait for Grove operator pod to be ready after upgrade
-	waitClients, err := clients.NewClients(restConfig)
+	k8sClient, err := k8sclient.New(restConfig)
 	if err != nil {
-		return fmt.Errorf("create clients for pod wait: %w", err)
+		return fmt.Errorf("create k8s client for pod wait: %w", err)
 	}
-	podsManager := pods.NewPodManager(waitClients, logger)
+	podsManager := pods.NewPodManager(k8sClient, logger)
 	if err := podsManager.WaitForReadyInNamespace(ctx, OperatorNamespace, 1, defaultPollTimeout, defaultPollInterval); err != nil {
 		return fmt.Errorf("grove operator pod not ready after upgrade: %w", err)
 	}

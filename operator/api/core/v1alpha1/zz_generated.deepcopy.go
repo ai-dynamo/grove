@@ -400,6 +400,13 @@ func (in *PodCliqueScalingGroupConfig) DeepCopyInto(out *PodCliqueScalingGroupCo
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.Annotations != nil {
+		in, out := &in.Annotations, &out.Annotations
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
 	if in.Replicas != nil {
 		in, out := &in.Replicas, &out.Replicas
 		*out = new(int32)

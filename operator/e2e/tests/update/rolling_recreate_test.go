@@ -24,9 +24,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	tests "github.com/ai-dynamo/grove/operator/e2e/tests"
+	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	"k8s.io/apimachinery/pkg/watch"
 )
 
@@ -223,11 +223,22 @@ func Test_RU10_RollingUpdateInsufficientResources(t *testing.T) {
 	tests.Logger.Info("5. Verify exactly one pod is deleted and a new Pending pod is created (delete-first strategy)")
 
 	// Poll until we see exactly 1 pod deleted and 1 new pod created, verifying delete-first behavior
-	pollErr := k8s.PollForCondition(ctx, 2*time.Minute, 2*time.Second, func() (bool, error) {
+	fetchEvents := waiter.FetchFunc[[]podEvent](func(_ context.Context) ([]podEvent, error) {
 		events := tracker.getEvents()
+		deletedCount := 0
+		for _, event := range events {
+			if event.eventType == watch.Deleted && existingPodNames[event.pod.Name] {
+				deletedCount++
+			}
+		}
+		if deletedCount > 1 {
+			return nil, fmt.Errorf("rolling update progressed beyond first deletion - expected 1 pod deleted but got %d (not delete-first strategy)", deletedCount)
+		}
+		return events, nil
+	})
+	isDeleteFirst := waiter.Predicate[[]podEvent](func(events []podEvent) bool {
 		var deletedExistingPods []string
 		var addedPods []string
-
 		for _, event := range events {
 			switch event.eventType {
 			case watch.Deleted:
@@ -242,26 +253,19 @@ func Test_RU10_RollingUpdateInsufficientResources(t *testing.T) {
 				}
 			}
 		}
-
-		// Check if we've reached the expected delete-first state
 		deletedCount := len(deletedExistingPods)
 		addedCount := len(addedPods)
-
-		// If more than 1 pod was deleted, the test should fail (not delete-first)
-		if deletedCount > 1 {
-			return false, fmt.Errorf("rolling update progressed beyond first deletion - expected 1 pod deleted but got %d: %v (not delete-first strategy)", deletedCount, deletedExistingPods)
-		}
-
-		// Success: exactly 1 deleted and 1 new pod created
 		if deletedCount == 1 && addedCount == 1 {
 			tests.Logger.Infof("Delete-first strategy verified: 1 pod deleted (%v), 1 new pod created (%v)", deletedExistingPods, addedPods)
-			return true, nil
+			return true
 		}
-
-		// Still waiting for the condition
 		tests.Logger.Debugf("Waiting for delete-first state: deleted=%d (want 1), added=%d (want 1)", deletedCount, addedCount)
-		return false, nil
+		return false
 	})
+	w := waiter.New[[]podEvent]().
+		WithTimeout(2 * time.Minute).
+		WithInterval(2 * time.Second)
+	pollErr := w.WaitUntil(ctx, fetchEvents, isDeleteFirst)
 
 	if pollErr != nil {
 		t.Fatalf("Failed to verify delete-first strategy: %v", pollErr)
@@ -848,7 +852,7 @@ func Test_RU20_RollingUpdateWithPodCliqueScaleInDuringUpdate(t *testing.T) {
 		t.Fatalf("Failed to scale out PodClique pc-a: %v", err)
 	}
 
-	if err := tc.WaitForPods( 22); err != nil {
+	if err := tc.WaitForPods(22); err != nil {
 		t.Fatalf("Failed to wait for pods after pc-a scale-out: %v", err)
 	}
 

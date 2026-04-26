@@ -25,10 +25,8 @@ import (
 	"time"
 
 	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // Test_OD1_NoAutomaticDeletionOnSpecChange tests that OnDelete strategy does not automatically delete pods when spec changes.
@@ -130,15 +128,9 @@ func Test_OD2_ManualDeletionCreatesUpdatedPod(t *testing.T) {
 	tests.Logger.Info("5. Verify status fields accurately reflect the update state")
 	// Get PCLQ and verify UpdatedReplicas has increased
 	pclqName := fmt.Sprintf("%s-%d-%s", tc.Workload.Name, 0, "pc-a")
-	pclqGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliques"}
-	unstructuredPCLQ, err := tc.Clients.DynamicClient.Resource(pclqGVR).Namespace(tc.Namespace).Get(tc.Ctx, pclqName, metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("Failed to get PodClique: %v", err)
-	}
-
 	var pclq grovev1alpha1.PodClique
-	if err = k8s.ConvertUnstructuredToTyped(unstructuredPCLQ.Object, &pclq); err != nil {
-		t.Fatalf("Failed to convert to PodClique: %v", err)
+	if err = tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: pclqName}, &pclq); err != nil {
+		t.Fatalf("Failed to get PodClique: %v", err)
 	}
 
 	if pclq.Status.UpdatedReplicas != int32(1) {
