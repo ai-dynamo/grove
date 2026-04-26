@@ -24,53 +24,24 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
-	"github.com/ai-dynamo/grove/operator/internal/utils"
 
 	"github.com/go-logr/logr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
-// triggerDeletionFlow handles the deletion of a PodCliqueSet and its managed resources
+// triggerDeletionFlow handles the deletion of a PodCliqueSet.
+// Owned resources (PodCliqueScalingGroup, PodClique, Service, ServiceAccount, Role,
+// RoleBinding, HPA, PodGang, ResourceClaim, etc.) carry a controller owner reference
+// to the PodCliqueSet, so removing the finalizer hands cleanup to the Kubernetes
+// garbage collector — which cascades the entire subtree without per-resource
+// reconcile work in this controller.
 func (r *Reconciler) triggerDeletionFlow(ctx context.Context, logger logr.Logger, pcs *v1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
-	deleteStepFns := []ctrlcommon.ReconcileStepFn[v1alpha1.PodCliqueSet]{
-		r.deletePodCliqueSetResources,
-		r.verifyNoResourcesAwaitsCleanup,
-		r.removeFinalizer,
+	if stepResult := r.removeFinalizer(ctx, logger, pcs); ctrlcommon.ShortCircuitReconcileFlow(stepResult) {
+		return r.recordIncompleteDeletion(ctx, logger, pcs, &stepResult)
 	}
-	for _, fn := range deleteStepFns {
-		if stepResult := fn(ctx, logger, pcs); ctrlcommon.ShortCircuitReconcileFlow(stepResult) {
-			return r.recordIncompleteDeletion(ctx, logger, pcs, &stepResult)
-		}
-	}
-	logger.Info("PodCliqueSet deleted successfully")
+	logger.Info("PodCliqueSet finalizer removed; Kubernetes garbage collector will cascade-delete owned resources")
 	return ctrlcommon.DoNotRequeue()
-}
-
-// deletePodCliqueSetResources triggers concurrent deletion of all managed resources for the PodCliqueSet.
-func (r *Reconciler) deletePodCliqueSetResources(ctx context.Context, logger logr.Logger, pcs *v1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
-	operators := r.operatorRegistry.GetAllOperators()
-	deleteTasks := make([]utils.Task, 0, len(operators))
-	for kind, operator := range operators {
-		deleteTasks = append(deleteTasks, utils.Task{
-			Name: fmt.Sprintf("delete-%s", kind),
-			Fn: func(ctx context.Context) error {
-				return operator.Delete(ctx, logger, pcs.ObjectMeta)
-			},
-		})
-	}
-	logger.Info("Triggering delete of PodCliqueSet resources")
-	if runResult := utils.RunConcurrently(ctx, logger, deleteTasks); runResult.HasErrors() {
-		deletionErr := runResult.GetAggregatedError()
-		logger.Error(deletionErr, "Error deleting managed resources", "summary", runResult.GetSummary())
-		return ctrlcommon.ReconcileWithErrors("error deleting managed resources", deletionErr)
-	}
-	return ctrlcommon.ContinueReconcile()
-}
-
-// verifyNoResourcesAwaitsCleanup ensures all managed resources have been cleaned up before finalizer removal.
-func (r *Reconciler) verifyNoResourcesAwaitsCleanup(ctx context.Context, logger logr.Logger, pcs *v1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
-	return ctrlutils.VerifyNoResourceAwaitsCleanup(ctx, logger, r.operatorRegistry, pcs.ObjectMeta)
 }
 
 // removeFinalizer removes the PodCliqueSet finalizer if present.
