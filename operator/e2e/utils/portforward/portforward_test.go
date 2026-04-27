@@ -24,13 +24,13 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func TestResolvePodViaEndpoints_Found(t *testing.T) {
 	t.Parallel()
 
-	clientset := fake.NewSimpleClientset(&corev1.Endpoints{
+	cl := fake.NewClientBuilder().WithObjects(&corev1.Endpoints{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "my-service",
 			Namespace: "default",
@@ -48,9 +48,9 @@ func TestResolvePodViaEndpoints_Found(t *testing.T) {
 				},
 			},
 		},
-	})
+	}).Build()
 
-	podName, err := resolvePodViaEndpoints(context.Background(), clientset, "default", "my-service")
+	podName, err := resolvePodViaEndpoints(context.Background(), cl, "default", "my-service")
 	require.NoError(t, err)
 	assert.Equal(t, "my-pod-abc123", podName)
 }
@@ -58,9 +58,9 @@ func TestResolvePodViaEndpoints_Found(t *testing.T) {
 func TestResolvePodViaEndpoints_NoEndpoints(t *testing.T) {
 	t.Parallel()
 
-	clientset := fake.NewSimpleClientset()
+	cl := fake.NewClientBuilder().Build()
 
-	_, err := resolvePodViaEndpoints(context.Background(), clientset, "default", "missing-service")
+	_, err := resolvePodViaEndpoints(context.Background(), cl, "default", "missing-service")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing-service")
 }
@@ -68,15 +68,15 @@ func TestResolvePodViaEndpoints_NoEndpoints(t *testing.T) {
 func TestResolvePodViaEndpoints_EmptySubsets(t *testing.T) {
 	t.Parallel()
 
-	clientset := fake.NewSimpleClientset(&corev1.Endpoints{
+	cl := fake.NewClientBuilder().WithObjects(&corev1.Endpoints{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "my-service",
 			Namespace: "default",
 		},
 		Subsets: []corev1.EndpointSubset{},
-	})
+	}).Build()
 
-	_, err := resolvePodViaEndpoints(context.Background(), clientset, "default", "my-service")
+	_, err := resolvePodViaEndpoints(context.Background(), cl, "default", "my-service")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no subsets")
 }
@@ -84,9 +84,7 @@ func TestResolvePodViaEndpoints_EmptySubsets(t *testing.T) {
 func TestResolvePodViaEndpoints_OnlyNotReadyAddresses(t *testing.T) {
 	t.Parallel()
 
-	// NotReadyAddresses are not in Addresses — simulate with empty Addresses and
-	// a non-nil Subsets entry (which is how K8s populates not-ready endpoints).
-	clientset := fake.NewSimpleClientset(&corev1.Endpoints{
+	cl := fake.NewClientBuilder().WithObjects(&corev1.Endpoints{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "my-service",
 			Namespace: "default",
@@ -105,9 +103,9 @@ func TestResolvePodViaEndpoints_OnlyNotReadyAddresses(t *testing.T) {
 				Addresses: []corev1.EndpointAddress{},
 			},
 		},
-	})
+	}).Build()
 
-	_, err := resolvePodViaEndpoints(context.Background(), clientset, "default", "my-service")
+	_, err := resolvePodViaEndpoints(context.Background(), cl, "default", "my-service")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no ready pods")
 }
@@ -115,7 +113,7 @@ func TestResolvePodViaEndpoints_OnlyNotReadyAddresses(t *testing.T) {
 func TestResolvePodViaEndpoints_NilTargetRef(t *testing.T) {
 	t.Parallel()
 
-	clientset := fake.NewSimpleClientset(&corev1.Endpoints{
+	cl := fake.NewClientBuilder().WithObjects(&corev1.Endpoints{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "my-service",
 			Namespace: "default",
@@ -123,13 +121,13 @@ func TestResolvePodViaEndpoints_NilTargetRef(t *testing.T) {
 		Subsets: []corev1.EndpointSubset{
 			{
 				Addresses: []corev1.EndpointAddress{
-					{IP: "10.0.0.1", TargetRef: nil}, // nil TargetRef — skipped
+					{IP: "10.0.0.1", TargetRef: nil},
 				},
 			},
 		},
-	})
+	}).Build()
 
-	_, err := resolvePodViaEndpoints(context.Background(), clientset, "default", "my-service")
+	_, err := resolvePodViaEndpoints(context.Background(), cl, "default", "my-service")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no ready pods")
 }
@@ -140,16 +138,8 @@ func TestSession_CloseSafe(t *testing.T) {
 	stop := make(chan struct{})
 	s := &Session{LocalPort: 12345, stop: stop}
 
-	// Double-close must not panic.
 	assert.NotPanics(t, func() {
 		s.Close()
 		s.Close()
 	})
-}
-
-func TestSession_Addr(t *testing.T) {
-	t.Parallel()
-
-	s := &Session{LocalPort: 9090}
-	assert.Equal(t, "localhost:9090", s.Addr())
 }

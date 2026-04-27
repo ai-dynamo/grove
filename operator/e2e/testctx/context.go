@@ -25,9 +25,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/e2e/diagnostics"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
-	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/nodes"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/resources"
@@ -57,7 +58,7 @@ type WorkloadConfig struct {
 // GetLabelSelector returns the label selector calculated from the workload name.
 // The label selector follows the pattern: "app.kubernetes.io/part-of=<name>"
 func (w WorkloadConfig) GetLabelSelector() string {
-	return fmt.Sprintf("app.kubernetes.io/part-of=%s", w.Name)
+	return fmt.Sprintf("%s=%s", common.LabelPartOfKey, w.Name)
 }
 
 // TestContext is the primary per-test helper struct.
@@ -66,8 +67,8 @@ type TestContext struct {
 	T   *testing.T
 	Ctx context.Context
 
-	// Shared clients (created once per test run, goroutine-safe)
-	Clients *clients.Clients
+	// Shared client (created once per test run, goroutine-safe)
+	Client *k8sclient.Client
 
 	// Per-suite configuration
 	Namespace string
@@ -99,12 +100,12 @@ func WithWorkload(wc *WorkloadConfig) TestOption {
 	return func(tc *TestContext) { tc.Workload = wc }
 }
 
-// NewTestContext creates a TestContext from shared clients with optional configuration.
-func NewTestContext(t *testing.T, ctx context.Context, clients *clients.Clients, opts ...TestOption) *TestContext {
+// NewTestContext creates a TestContext from a K8s client with optional configuration.
+func NewTestContext(t *testing.T, ctx context.Context, k8sClient *k8sclient.Client, opts ...TestOption) *TestContext {
 	tc := &TestContext{
 		T:         t,
 		Ctx:       ctx,
-		Clients:   clients,
+		Client:    k8sClient,
 		Namespace: "default",
 		Timeout:   DefaultPollTimeout,
 		Interval:  DefaultPollInterval,
@@ -126,8 +127,8 @@ func PrepareTest(ctx context.Context, t *testing.T, requiredWorkerNodes int, opt
 		t.Fatalf("Failed to prepare shared cluster: %v", err)
 	}
 
-	clients := sharedCluster.GetAllClients()
-	tc := NewTestContext(t, ctx, clients, opts...)
+	k8sClient := sharedCluster.GetClient()
+	tc := NewTestContext(t, ctx, k8sClient, opts...)
 
 	// Initialize diagnostics for cleanup
 	diagMode := os.Getenv(diagnostics.ModeEnvVar)
@@ -135,7 +136,7 @@ func PrepareTest(ctx context.Context, t *testing.T, requiredWorkerNodes int, opt
 		diagMode = diagnostics.ModeFile
 	}
 	diagDir := os.Getenv(diagnostics.DirEnvVar)
-	diag := diagnostics.NewDiagCollector(clients, tc.Namespace, diagMode, diagDir, Logger)
+	diag := diagnostics.NewDiagCollector(k8sClient, tc.Namespace, diagMode, diagDir, Logger)
 
 	cleanup := func() {
 		if t.Failed() {
@@ -161,22 +162,22 @@ func PrepareTest(ctx context.Context, t *testing.T, requiredWorkerNodes int, opt
 
 // newPodManager creates a PodManager for internal use by convenience methods.
 func (tc *TestContext) newPodManager() *pods.PodManager {
-	return pods.NewPodManager(tc.Clients, Logger)
+	return pods.NewPodManager(tc.Client, Logger)
 }
 
 // newNodeManager creates a NodeManager for internal use by convenience methods.
 func (tc *TestContext) newNodeManager() *nodes.NodeManager {
-	return nodes.NewNodeManager(tc.Clients, Logger)
+	return nodes.NewNodeManager(tc.Client, Logger)
 }
 
 // newResourceManager creates a ResourceManager for internal use by convenience methods.
 func (tc *TestContext) newResourceManager() *resources.ResourceManager {
-	return resources.NewResourceManager(tc.Clients, Logger)
+	return resources.NewResourceManager(tc.Client, Logger)
 }
 
 // newWorkloadManager creates a WorkloadManager for internal use by convenience methods.
 func (tc *TestContext) newWorkloadManager() *workload.WorkloadManager {
-	return workload.NewWorkloadManager(tc.Clients, Logger)
+	return workload.NewWorkloadManager(tc.Client, Logger)
 }
 
 // GetLabelSelector returns the label selector for the current workload.

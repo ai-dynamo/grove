@@ -28,7 +28,7 @@ import (
 	"time"
 
 	"github.com/ai-dynamo/grove/operator/api/common"
-	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
 	nodeutils "github.com/ai-dynamo/grove/operator/e2e/k8s/nodes"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
@@ -37,10 +37,8 @@ import (
 	dockerclient "github.com/docker/docker/client"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -64,43 +62,25 @@ const (
 	EnvRegistryPort = "E2E_REGISTRY_PORT"
 )
 
-// resourceType represents a Kubernetes resource type for cleanup operations
-type resourceType struct {
-	group    string
-	version  string
-	resource string
-	name     string
-}
-
-// groveManagedResourceTypes defines all resource types managed by Grove operator that need to be tracked for cleanup
-var groveManagedResourceTypes = []resourceType{
-	// Grove CRDs
-	{"grove.io", "v1alpha1", "podcliquesets", "PodCliqueSets"},
-	{"grove.io", "v1alpha1", "podcliquescalinggroups", "PodCliqueScalingGroups"},
-	{"scheduler.grove.io", "v1alpha1", "podgangs", "PodGangs"},
-	{"grove.io", "v1alpha1", "podcliques", "PodCliques"},
-	// Kubernetes core resources
-	{"", "v1", "services", "Services"},
-	{"", "v1", "serviceaccounts", "ServiceAccounts"},
-	{"", "v1", "secrets", "Secrets"},
-	// RBAC resources
-	{"rbac.authorization.k8s.io", "v1", "roles", "Roles"},
-	{"rbac.authorization.k8s.io", "v1", "rolebindings", "RoleBindings"},
-	// Autoscaling resources
-	{"autoscaling", "v2", "horizontalpodautoscalers", "HorizontalPodAutoscalers"},
-	// NVIDIA ComputeDomain (created by MNNVL feature, has finalizers that must be processed)
-	{"resource.nvidia.com", "v1beta1", "computedomains", "ComputeDomains"},
+// listUnstructured lists unstructured resources using client.Client.
+func listUnstructured(ctx context.Context, cl client.Client, rt resourceType, opts ...client.ListOption) (*unstructured.UnstructuredList, error) {
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   rt.Group,
+		Version: rt.Version,
+		Kind:    rt.kind + "List",
+	})
+	if err := cl.List(ctx, list, opts...); err != nil {
+		return nil, err
+	}
+	return list, nil
 }
 
 // SharedClusterManager manages a shared Kubernetes cluster for E2E tests.
 // It connects to an existing cluster via kubeconfig and manages test lifecycle operations
 // like workload cleanup and node cordoning.
 type SharedClusterManager struct {
-	clientset     *kubernetes.Clientset
-	restConfig    *rest.Config
-	dynamicClient dynamic.Interface
-	crClient      client.Client
-	clients       *clients.Clients // All clients bundled together, created once during setup
+	k8s           *k8sclient.Client
 	cleanup       func()
 	logger        *log.Logger
 	isSetup       bool
@@ -168,35 +148,13 @@ func (scm *SharedClusterManager) connectToCluster(ctx context.Context, testImage
 	if err != nil {
 		return fmt.Errorf("failed to get cluster config: %w", err)
 	}
-	scm.restConfig = restConfig
 
-	// Create clientset from restConfig
-	clientset, err := kubernetes.NewForConfig(restConfig)
+	// Create unified K8s client
+	k8sClient, err := k8sclient.New(restConfig)
 	if err != nil {
-		return fmt.Errorf("failed to create clientset: %w", err)
+		return fmt.Errorf("failed to create K8s client: %w", err)
 	}
-	scm.clientset = clientset
-
-	// Create dynamic client from restConfig
-	dynamicClient, err := dynamic.NewForConfig(restConfig)
-	if err != nil {
-		return fmt.Errorf("failed to create dynamic client: %w", err)
-	}
-	scm.dynamicClient = dynamicClient
-
-	// Create controller-runtime client for typed CR access
-	crClient, err := clients.NewCRClient(restConfig)
-	if err != nil {
-		return fmt.Errorf("failed to create controller-runtime client: %w", err)
-	}
-	scm.crClient = crClient
-
-	// Create bundled clients (includes REST mapper, created once for all tests)
-	allClients, err := clients.NewClients(restConfig)
-	if err != nil {
-		return fmt.Errorf("failed to create bundled k8s clients: %w", err)
-	}
-	scm.clients = allClients
+	scm.k8s = k8sClient
 
 	// Setup test images in registry (if registry port is configured)
 	if scm.registryPort != "" && len(testImages) > 0 {
@@ -206,24 +164,22 @@ func (scm *SharedClusterManager) connectToCluster(ctx context.Context, testImage
 	}
 
 	// Get list of worker nodes for cordoning management
-	nodes, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	if err != nil {
+	var nodeList v1.NodeList
+	if err := scm.k8s.List(ctx, &nodeList); err != nil {
 		return fmt.Errorf("failed to list nodes: %w", err)
 	}
 
 	scm.workerNodes = make([]string, 0)
-	for _, node := range nodes.Items {
+	for _, node := range nodeList.Items {
 		if _, isServer := node.Labels["node-role.kubernetes.io/control-plane"]; !isServer {
 			scm.workerNodes = append(scm.workerNodes, node.Name)
 		}
 	}
 
 	// Start node monitoring to handle unhealthy k3d nodes during test execution.
-	// This is critical for k3d clusters where nodes can become NotReady due to resource pressure.
-	// The monitoring automatically detects and replaces unhealthy nodes to prevent test flakiness.
-	nodeMonitoringCleanup := StartNodeMonitoring(ctx, clientset, scm.logger)
+	nodeMonitoringCleanup := StartNodeMonitoring(ctx, scm.k8s, scm.logger)
 
-	// Cleanup function stops node monitoring - we don't delete the cluster when tests finish
+	// Cleanup function stops node monitoring
 	scm.cleanup = func() {
 		nodeMonitoringCleanup()
 		scm.logger.Info("ℹ️  Test run complete - cluster preserved for inspection or reuse")
@@ -246,13 +202,13 @@ func (scm *SharedClusterManager) connectToCluster(ctx context.Context, testImage
 // PrepareForTest operates on the current Ready set rather than a snapshot from cluster
 // setup that may include replaced or not-yet-recovered nodes.
 func (scm *SharedClusterManager) refreshWorkerNodes(ctx context.Context) error {
-	nodes, err := scm.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	if err != nil {
+	var nodeList v1.NodeList
+	if err := scm.k8s.List(ctx, &nodeList); err != nil {
 		return fmt.Errorf("failed to list nodes: %w", err)
 	}
 
 	var updated []string
-	for _, node := range nodes.Items {
+	for _, node := range nodeList.Items {
 		if _, isServer := node.Labels["node-role.kubernetes.io/control-plane"]; isServer {
 			continue
 		}
@@ -299,7 +255,7 @@ func (scm *SharedClusterManager) PrepareForTest(ctx context.Context, requiredWor
 
 		for i, nodeName := range nodesToCordon {
 			scm.logger.Debugf("  Cordoning node %d/%d: %s", i+1, len(nodesToCordon), nodeName)
-			if err := nodeutils.SetNodeSchedulable(ctx, scm.clientset, nodeName, false); err != nil {
+			if err := nodeutils.SetNodeSchedulable(ctx, scm.k8s, nodeName, false); err != nil {
 				scm.logger.Errorf("Failed to cordon node %s (attempt to cordon node %d/%d): %v", nodeName, i+1, len(nodesToCordon), err)
 				return fmt.Errorf("failed to cordon node %s: %w", nodeName, err)
 			}
@@ -321,7 +277,7 @@ func (scm *SharedClusterManager) CleanupWorkloads(ctx context.Context) error {
 	scm.logger.Info("🧹 Cleaning up workloads from shared cluster...")
 
 	// Step 1: Delete PodCliqueSets first (should cascade delete other resources)
-	if err := scm.deleteAllResources(ctx, "grove.io", "v1alpha1", "podcliquesets"); err != nil {
+	if err := scm.deleteAllResources(ctx, pcsResourceType); err != nil {
 		scm.logger.Warnf("failed to delete PodCliqueSets: %v", err)
 	}
 
@@ -343,37 +299,28 @@ func (scm *SharedClusterManager) CleanupWorkloads(ctx context.Context) error {
 }
 
 // deleteAllResources deletes all resources of a specific type across all namespaces
-func (scm *SharedClusterManager) deleteAllResources(ctx context.Context, group, version, resource string) error {
-	gvr := schema.GroupVersionResource{
-		Group:    group,
-		Version:  version,
-		Resource: resource,
-	}
-
-	// List all resources across all namespaces
-	resourceList, err := scm.dynamicClient.Resource(gvr).List(ctx, metav1.ListOptions{})
+func (scm *SharedClusterManager) deleteAllResources(ctx context.Context, rt resourceType) error {
+	resourceList, err := listUnstructured(ctx, scm.k8s, rt)
 	if err != nil {
-		return fmt.Errorf("failed to list %s: %w", resource, err)
+		return fmt.Errorf("failed to list %s: %w", rt.name, err)
 	}
 
 	if len(resourceList.Items) == 0 {
-		scm.logger.Debugf("No %s found to delete", resource)
+		scm.logger.Debugf("No %s found to delete", rt.name)
 		return nil
 	}
 
-	scm.logger.Infof("🗑️ Deleting %d %s...", len(resourceList.Items), resource)
+	scm.logger.Infof("🗑️ Deleting %d %s...", len(resourceList.Items), rt.name)
 
-	// Delete each resource
 	for _, item := range resourceList.Items {
 		namespace := item.GetNamespace()
 		name := item.GetName()
 
-		scm.logger.Debugf("Deleting %s %s/%s", resource, namespace, name)
-		err := scm.dynamicClient.Resource(gvr).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
-		if err != nil {
-			scm.logger.Warnf("failed to delete %s %s/%s: %v", resource, namespace, name, err)
+		scm.logger.Debugf("Deleting %s %s/%s", rt.name, namespace, name)
+		if err := scm.k8s.Delete(ctx, &item); err != nil {
+			scm.logger.Warnf("failed to delete %s %s/%s: %v", rt.name, namespace, name, err)
 		} else {
-			scm.logger.Debugf("✓ Delete request sent for %s %s/%s", resource, namespace, name)
+			scm.logger.Debugf("✓ Delete request sent for %s %s/%s", rt.name, namespace, name)
 		}
 	}
 
@@ -399,14 +346,14 @@ func isSystemPod(pod *v1.Pod) bool {
 
 // listRemainingPods lists remaining pods for debugging
 func (scm *SharedClusterManager) listRemainingPods(ctx context.Context, namespace string) {
-	pods, err := scm.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
+	var podList v1.PodList
+	if err := scm.k8s.List(ctx, &podList, client.InNamespace(namespace)); err != nil {
 		scm.logger.Errorf("Failed to list remaining pods: %v", err)
 		return
 	}
 
 	nonSystemPods := []string{}
-	for _, pod := range pods.Items {
+	for _, pod := range podList.Items {
 		if !isSystemPod(&pod) {
 			nonSystemPods = append(nonSystemPods, fmt.Sprintf("%s (Phase: %s)", pod.Name, pod.Status.Phase))
 		}
@@ -422,7 +369,7 @@ func (scm *SharedClusterManager) resetNodeStates(ctx context.Context) error {
 	scm.logger.Debugf("🔄 Resetting node states: uncordoning %d worker nodes", len(scm.workerNodes))
 
 	for i, nodeName := range scm.workerNodes {
-		if err := nodeutils.SetNodeSchedulable(ctx, scm.clientset, nodeName, true); err != nil {
+		if err := nodeutils.SetNodeSchedulable(ctx, scm.k8s, nodeName, true); err != nil {
 			scm.logger.Errorf("Failed to uncordon node %s (node %d/%d): %v", nodeName, i+1, len(scm.workerNodes), err)
 			return fmt.Errorf("failed to uncordon node %s: %w", nodeName, err)
 		}
@@ -447,22 +394,14 @@ func (scm *SharedClusterManager) waitForAllGroveManagedResourcesAndPodsDeleted(c
 
 		// Check Grove resources
 		for _, rt := range groveManagedResourceTypes {
-			gvr := schema.GroupVersionResource{
-				Group:    rt.group,
-				Version:  rt.version,
-				Resource: rt.resource,
-			}
-
 			// PodCliqueSets are user-created top-level resources and don't have the managed-by label,
 			// so we need to check for them without the label selector
-			listOptions := metav1.ListOptions{
-				LabelSelector: labelSelector,
-			}
-			if rt.resource == "podcliquesets" {
-				listOptions = metav1.ListOptions{}
+			var opts []client.ListOption
+			if rt.Resource != pcsResourceType.Resource {
+				opts = append(opts, &client.ListOptions{Raw: &metav1.ListOptions{LabelSelector: labelSelector}})
 			}
 
-			resourceList, err := scm.dynamicClient.Resource(gvr).List(ctx, listOptions)
+			resourceList, err := listUnstructured(ctx, scm.k8s, rt, opts...)
 			if err != nil {
 				// If we can't list the resource type, assume it doesn't exist or is being deleted
 				continue
@@ -483,9 +422,9 @@ func (scm *SharedClusterManager) waitForAllGroveManagedResourcesAndPodsDeleted(c
 
 		// Check pods
 		nonSystemPods := 0
-		pods, err := scm.clientset.CoreV1().Pods("default").List(ctx, metav1.ListOptions{})
-		if err == nil {
-			for _, pod := range pods.Items {
+		var podList v1.PodList
+		if err := scm.k8s.List(ctx, &podList, client.InNamespace("default")); err == nil {
+			for _, pod := range podList.Items {
 				if !isSystemPod(&pod) {
 					nonSystemPods++
 				}
@@ -519,21 +458,13 @@ func (scm *SharedClusterManager) listRemainingGroveManagedResources(ctx context.
 	labelSelector := fmt.Sprintf("%s=%s", common.LabelManagedByKey, common.LabelManagedByValue)
 
 	for _, rt := range groveManagedResourceTypes {
-		gvr := schema.GroupVersionResource{
-			Group:    rt.group,
-			Version:  rt.version,
-			Resource: rt.resource,
-		}
-
 		// PodCliqueSets are user-created top-level resources and don't have the managed-by label
-		listOptions := metav1.ListOptions{
-			LabelSelector: labelSelector,
-		}
-		if rt.resource == "podcliquesets" {
-			listOptions = metav1.ListOptions{}
+		var opts []client.ListOption
+		if rt.Resource != pcsResourceType.Resource {
+			opts = append(opts, &client.ListOptions{Raw: &metav1.ListOptions{LabelSelector: labelSelector}})
 		}
 
-		resourceList, err := scm.dynamicClient.Resource(gvr).List(ctx, listOptions)
+		resourceList, err := listUnstructured(ctx, scm.k8s, rt, opts...)
 		if err != nil {
 			scm.logger.Errorf("Failed to list %s: %v", rt.name, err)
 			continue
@@ -549,22 +480,9 @@ func (scm *SharedClusterManager) listRemainingGroveManagedResources(ctx context.
 	}
 }
 
-// Deprecated: Use GetAllClients instead which returns a bundled Clients struct
-// including the REST mapper (created once, not per-test).
-func (scm *SharedClusterManager) GetClients() (*kubernetes.Clientset, *rest.Config, dynamic.Interface) {
-	return scm.clientset, scm.restConfig, scm.dynamicClient
-}
-
-// GetAllClients returns the bundled Clients struct containing all Kubernetes clients
-// including the REST mapper. These clients are created once during cluster setup
-// and shared across all tests.
-func (scm *SharedClusterManager) GetAllClients() *clients.Clients {
-	return scm.clients
-}
-
-// GetCRClient returns the controller-runtime client for typed CR access
-func (scm *SharedClusterManager) GetCRClient() client.Client {
-	return scm.crClient
+// GetClient returns the unified K8s client struct
+func (scm *SharedClusterManager) GetClient() *k8sclient.Client {
+	return scm.k8s
 }
 
 // GetRegistryPort returns the registry port for test image setup

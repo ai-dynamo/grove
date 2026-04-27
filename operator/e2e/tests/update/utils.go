@@ -27,16 +27,16 @@ import (
 	"strings"
 	"time"
 
+	common "github.com/ai-dynamo/grove/operator/api/common"
 	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
-	"github.com/ai-dynamo/grove/operator/e2e/k8s"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/util/retry"
@@ -46,6 +46,15 @@ import (
 // ============================================================================
 // Common update utilities
 // ============================================================================
+
+// getPCS fetches a PodCliqueSet by name using the K8s client.
+func getPCS(tc *testctx.TestContext, pcsName string) (*grovev1alpha1.PodCliqueSet, error) {
+	var pcs grovev1alpha1.PodCliqueSet
+	if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Name: pcsName, Namespace: tc.Namespace}, &pcs); err != nil {
+		return nil, err
+	}
+	return &pcs, nil
+}
 
 // captureExistingPodNames returns a map of all current pod names for the workload.
 func captureExistingPodNames(tc *testctx.TestContext) (map[string]bool, error) {
@@ -68,8 +77,8 @@ func captureExistingPodNames(tc *testctx.TestContext) (map[string]bool, error) {
 func verifyPodHasUpdatedSpec(tc *testctx.TestContext, podName string) error {
 	tc.T.Helper()
 
-	pod, err := tc.Clients.Clientset.CoreV1().Pods(tc.Namespace).Get(tc.Ctx, podName, metav1.GetOptions{})
-	if err != nil {
+	var pod corev1.Pod
+	if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: podName}, &pod); err != nil {
 		return fmt.Errorf("failed to get pod %s: %w", podName, err)
 	}
 
@@ -88,11 +97,11 @@ func verifyPodHasUpdatedSpec(tc *testctx.TestContext, podName string) error {
 func deletePodAndWaitForTermination(tc *testctx.TestContext, podName string) error {
 	tc.T.Helper()
 
-	if err := tc.Clients.Clientset.CoreV1().Pods(tc.Namespace).Delete(tc.Ctx, podName, metav1.DeleteOptions{}); err != nil {
+	if err := tc.Client.Delete(tc.Ctx, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: podName, Namespace: tc.Namespace}}); err != nil {
 		return fmt.Errorf("failed to delete pod %s: %w", podName, err)
 	}
 
-	pm := pods.NewPodManager(tc.Clients, testctx.Logger)
+	pm := pods.NewPodManager(tc.Client, testctx.Logger)
 	w := waiter.New[*corev1.PodList]().
 		WithTimeout(tc.Timeout).
 		WithInterval(tc.Interval)
@@ -119,7 +128,7 @@ func getPodsForClique(tc *testctx.TestContext, cliqueName string) ([]string, err
 		if pod.Labels == nil {
 			continue
 		}
-		if pclq, ok := pod.Labels["grove.io/podclique"]; ok && strings.HasSuffix(pclq, "-"+cliqueName) {
+		if pclq, ok := pod.Labels[common.LabelPodClique]; ok && strings.HasSuffix(pclq, "-"+cliqueName) {
 			cliquePods = append(cliquePods, pod.Name)
 		}
 	}
@@ -178,8 +187,8 @@ func getPodsOnNode(tc *testctx.TestContext, nodeName string) ([]string, error) {
 func getNodeForPod(tc *testctx.TestContext, podName string) (string, error) {
 	tc.T.Helper()
 
-	pod, err := tc.Clients.Clientset.CoreV1().Pods(tc.Namespace).Get(tc.Ctx, podName, metav1.GetOptions{})
-	if err != nil {
+	var pod corev1.Pod
+	if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: podName}, &pod); err != nil {
 		return "", fmt.Errorf("failed to get pod %s: %w", podName, err)
 	}
 	if pod.Spec.NodeName == "" {
@@ -245,7 +254,7 @@ func updatePCSUpdateStrategy(tc *testctx.TestContext, strategyType grovev1alpha1
 
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var pcs grovev1alpha1.PodCliqueSet
-		if err := tc.Clients.CRClient.Get(tc.Ctx, types.NamespacedName{Name: tc.Workload.Name, Namespace: tc.Namespace}, &pcs); err != nil {
+		if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Name: tc.Workload.Name, Namespace: tc.Namespace}, &pcs); err != nil {
 			return fmt.Errorf("failed to fetch PodCliqueSet: %w", err)
 		}
 		pcs.SetGroupVersionKind(grovev1alpha1.SchemeGroupVersion.WithKind("PodCliqueSet"))
@@ -257,7 +266,7 @@ func updatePCSUpdateStrategy(tc *testctx.TestContext, strategyType grovev1alpha1
 		}
 		pcs.Spec.UpdateStrategy.Type = strategyType
 
-		return tc.Clients.CRClient.Patch(tc.Ctx, &pcs, client.Apply, client.FieldOwner("e2e-rolling-update-test"), client.ForceOwnership)
+		return tc.Client.Patch(tc.Ctx, &pcs, client.Apply, client.FieldOwner("e2e-rolling-update-test"), client.ForceOwnership)
 	})
 }
 
@@ -269,7 +278,7 @@ func triggerPodCliqueUpdate(tc *testctx.TestContext, cliqueName string) error {
 
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var pcs grovev1alpha1.PodCliqueSet
-		if err := tc.Clients.CRClient.Get(tc.Ctx, types.NamespacedName{Name: pcsName, Namespace: tc.Namespace}, &pcs); err != nil {
+		if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Name: pcsName, Namespace: tc.Namespace}, &pcs); err != nil {
 			return fmt.Errorf("failed to get PodCliqueSet: %w", err)
 		}
 		pcs.SetGroupVersionKind(grovev1alpha1.SchemeGroupVersion.WithKind("PodCliqueSet"))
@@ -305,7 +314,7 @@ func triggerPodCliqueUpdate(tc *testctx.TestContext, cliqueName string) error {
 			return fmt.Errorf("clique %s not found in PodCliqueSet %s", cliqueName, pcsName)
 		}
 
-		return tc.Clients.CRClient.Patch(tc.Ctx, &pcs, client.Apply, client.FieldOwner("e2e-rolling-update-test"), client.ForceOwnership)
+		return tc.Client.Patch(tc.Ctx, &pcs, client.Apply, client.FieldOwner("e2e-rolling-update-test"), client.ForceOwnership)
 	})
 }
 
@@ -315,7 +324,7 @@ func triggerPodCliqueUpdate(tc *testctx.TestContext, cliqueName string) error {
 func patchPCSWithSIGTERMIgnoringCommand(tc *testctx.TestContext) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var pcs grovev1alpha1.PodCliqueSet
-		if err := tc.Clients.CRClient.Get(tc.Ctx, types.NamespacedName{Name: tc.Workload.Name, Namespace: tc.Namespace}, &pcs); err != nil {
+		if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Name: tc.Workload.Name, Namespace: tc.Namespace}, &pcs); err != nil {
 			return fmt.Errorf("failed to get PodCliqueSet: %w", err)
 		}
 		pcs.SetGroupVersionKind(grovev1alpha1.SchemeGroupVersion.WithKind("PodCliqueSet"))
@@ -331,7 +340,7 @@ func patchPCSWithSIGTERMIgnoringCommand(tc *testctx.TestContext) error {
 			}
 		}
 
-		return tc.Clients.CRClient.Patch(tc.Ctx, &pcs, client.Apply, client.FieldOwner("e2e-rolling-update-test"), client.ForceOwnership)
+		return tc.Client.Patch(tc.Ctx, &pcs, client.Apply, client.FieldOwner("e2e-rolling-update-test"), client.ForceOwnership)
 	})
 }
 
@@ -341,9 +350,7 @@ func waitForRollingUpdateComplete(tc *testctx.TestContext, expectedReplicas int3
 	pcsName := tc.Workload.Name
 
 	pollCount := 0
-	fetchPCS := waiter.FetchFunc[*grovev1alpha1.PodCliqueSet](func(_ context.Context) (*grovev1alpha1.PodCliqueSet, error) {
-		return workload.GetPodCliqueSet(tc.Ctx, tc.Clients.DynamicClient, pcsName, tc.Namespace)
-	})
+	fetchPCS := waiter.FetchByName(pcsName, k8sclient.Getter[*grovev1alpha1.PodCliqueSet](tc.Client, tc.Namespace))
 	predicate := waiter.Predicate[*grovev1alpha1.PodCliqueSet](func(pcs *grovev1alpha1.PodCliqueSet) bool {
 		pollCount++
 
@@ -404,19 +411,12 @@ func waitForRollingUpdateComplete(tc *testctx.TestContext, expectedReplicas int3
 //
 // See: internal/controller/podcliqueset/components/podclique/podclique.go buildResource()
 func scalePodCliqueInPCS(tc *testctx.TestContext, cliqueName string, replicas int32) error {
-	pcsGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquesets"}
-	pclqGVR := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliques"}
 	pcsName := tc.Workload.Name
 
 	// Get the PCS to find out how many replicas it has
-	unstructuredPCS, err := tc.Clients.DynamicClient.Resource(pcsGVR).Namespace(tc.Namespace).Get(tc.Ctx, pcsName, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to get PodCliqueSet: %w", err)
-	}
-
 	var pcs grovev1alpha1.PodCliqueSet
-	if err := k8s.ConvertUnstructuredToTyped(unstructuredPCS.Object, &pcs); err != nil {
-		return fmt.Errorf("failed to convert to PodCliqueSet: %w", err)
+	if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Name: pcsName, Namespace: tc.Namespace}, &pcs); err != nil {
+		return fmt.Errorf("failed to get PodCliqueSet: %w", err)
 	}
 
 	// Verify the clique exists in the PCS template
@@ -448,9 +448,10 @@ func scalePodCliqueInPCS(tc *testctx.TestContext, cliqueName string, replicas in
 				return fmt.Errorf("failed to marshal patch: %w", err)
 			}
 
-			_, err = tc.Clients.DynamicClient.Resource(pclqGVR).Namespace(tc.Namespace).Patch(
-				tc.Ctx, pclqName, types.MergePatchType, patchBytes, metav1.PatchOptions{})
-			return err
+			pclq := grovev1alpha1.PodClique{
+				ObjectMeta: metav1.ObjectMeta{Name: pclqName, Namespace: tc.Namespace},
+			}
+			return tc.Client.Patch(tc.Ctx, &pclq, client.RawPatch(types.MergePatchType, patchBytes))
 		}); err != nil {
 			return fmt.Errorf("failed to scale PodClique %s: %w", pclqName, err)
 		}
@@ -510,9 +511,7 @@ func waitForOrdinalUpdating(tc *testctx.TestContext, ordinal int32) error {
 	pcsName := tc.Workload.Name
 
 	pollCount := 0
-	fetchPCS := waiter.FetchFunc[*grovev1alpha1.PodCliqueSet](func(_ context.Context) (*grovev1alpha1.PodCliqueSet, error) {
-		return workload.GetPodCliqueSet(tc.Ctx, tc.Clients.DynamicClient, pcsName, tc.Namespace)
-	})
+	fetchPCS := waiter.FetchByName(pcsName, k8sclient.Getter[*grovev1alpha1.PodCliqueSet](tc.Client, tc.Namespace))
 	predicate := waiter.Predicate[*grovev1alpha1.PodCliqueSet](func(pcs *grovev1alpha1.PodCliqueSet) bool {
 		pollCount++
 
@@ -595,7 +594,7 @@ func verifyOnePodDeletedAtATime(tc *testctx.TestContext, events []podEvent) {
 	for i, event := range events {
 		podclique := ""
 		if event.pod.Labels != nil {
-			podclique = event.pod.Labels["grove.io/podclique"]
+			podclique = event.pod.Labels[common.LabelPodClique]
 		}
 		tests.Logger.Debugf("Event[%d]: Type=%s PodName=%s Hostname=%s PodClique=%s Timestamp=%v",
 			i, event.eventType, event.pod.Name, event.pod.Spec.Hostname, podclique, event.timestamp.Format("15:04:05.000"))
@@ -707,7 +706,7 @@ func verifyOnePodDeletedAtATimePerPodclique(tc *testctx.TestContext, events []po
 			tc.T.Fatalf("Pod %s has no labels, which indicates a bug in pod creation", event.pod.Name)
 		}
 
-		podcliqueName, ok := event.pod.Labels["grove.io/podclique"]
+		podcliqueName, ok := event.pod.Labels[common.LabelPodClique]
 		if !ok {
 			tc.T.Fatalf("Pod %s does not have grove.io/podclique label", event.pod.Name)
 		}
@@ -797,12 +796,12 @@ func verifySinglePCSReplicaUpdatedFirst(tc *testctx.TestContext, events []podEve
 	// Log all events for debugging
 	for i, event := range events {
 		replicaIdx := 0
-		if val, ok := event.pod.Labels["grove.io/podcliqueset-replica-index"]; ok {
+		if val, ok := event.pod.Labels[common.LabelPodCliqueSetReplicaIndex]; ok {
 			replicaIdx, _ = strconv.Atoi(val)
 		}
 		podclique := ""
 		if event.pod.Labels != nil {
-			podclique = event.pod.Labels["grove.io/podclique"]
+			podclique = event.pod.Labels[common.LabelPodClique]
 		}
 		tests.Logger.Debugf("Event[%d]: Type=%s PodName=%s Hostname=%s Replica=%d PodClique=%s Timestamp=%v",
 			i, event.eventType, event.pod.Name, event.pod.Spec.Hostname, replicaIdx, podclique, event.timestamp.Format("15:04:05.000"))
@@ -820,12 +819,12 @@ func verifySinglePCSReplicaUpdatedFirst(tc *testctx.TestContext, events []podEve
 	for i, event := range events {
 		// Extract replica index from pod labels (defaults to 0 if not present)
 		replicaIdx := 0
-		if val, ok := event.pod.Labels["grove.io/podcliqueset-replica-index"]; ok {
+		if val, ok := event.pod.Labels[common.LabelPodCliqueSetReplicaIndex]; ok {
 			replicaIdx, _ = strconv.Atoi(val)
 		}
 
 		// Extract PodClique name - skip pods without this label
-		_, ok := event.pod.Labels["grove.io/podclique"]
+		_, ok := event.pod.Labels[common.LabelPodClique]
 		if !ok {
 			continue
 		}
@@ -941,12 +940,12 @@ func verifyOnePCSGReplicaDeletedAtATime(tc *testctx.TestContext, events []podEve
 		if event.pod.Labels == nil {
 			continue
 		}
-		replicaID, hasReplicaLabel := event.pod.Labels["grove.io/podcliquescalinggroup-replica-index"]
+		replicaID, hasReplicaLabel := event.pod.Labels[common.LabelPodCliqueScalingGroupReplicaIndex]
 		if !hasReplicaLabel {
 			continue
 		}
-		pcsgName := event.pod.Labels["grove.io/podcliquescalinggroup"]
-		podclique := event.pod.Labels["grove.io/podclique"]
+		pcsgName := event.pod.Labels[common.LabelPodCliqueScalingGroup]
+		podclique := event.pod.Labels[common.LabelPodClique]
 		tests.Logger.Debugf("Event[%d]: Type=%s PodName=%s PCSG=%s ReplicaID=%s PodClique=%s Timestamp=%v",
 			i, event.eventType, event.pod.Name, pcsgName, replicaID, podclique, event.timestamp.Format("15:04:05.000"))
 	}
@@ -966,12 +965,12 @@ func verifyOnePCSGReplicaDeletedAtATime(tc *testctx.TestContext, events []podEve
 		}
 
 		// Only process pods that belong to a PCSG (not all pods have this label)
-		replicaID, hasReplicaLabel := event.pod.Labels["grove.io/podcliquescalinggroup-replica-index"]
+		replicaID, hasReplicaLabel := event.pod.Labels[common.LabelPodCliqueScalingGroupReplicaIndex]
 		if !hasReplicaLabel {
 			continue
 		}
 
-		pcsgName, ok := event.pod.Labels["grove.io/podcliquescalinggroup"]
+		pcsgName, ok := event.pod.Labels[common.LabelPodCliqueScalingGroup]
 		if !ok {
 			tc.T.Fatalf("Pod %s has PCSG replica index but no PCSG name label", event.pod.Name)
 		}
@@ -1061,12 +1060,12 @@ func verifyOnePCSGReplicaDeletedAtATimePerPCSG(tc *testctx.TestContext, events [
 		}
 
 		// Only process pods that belong to a PCSG (not all pods have this label)
-		replicaID, hasReplicaLabel := event.pod.Labels["grove.io/podcliquescalinggroup-replica-index"]
+		replicaID, hasReplicaLabel := event.pod.Labels[common.LabelPodCliqueScalingGroupReplicaIndex]
 		if !hasReplicaLabel {
 			continue
 		}
 
-		pcsgName, ok := event.pod.Labels["grove.io/podcliquescalinggroup"]
+		pcsgName, ok := event.pod.Labels[common.LabelPodCliqueScalingGroup]
 		if !ok {
 			tc.T.Fatalf("Pod %s has PCSG replica index but no PCSG name label", event.pod.Name)
 		}
@@ -1145,7 +1144,7 @@ func scalePodClique(tc *testctx.TestContext, cliqueName string, replicas int32, 
 		tests.Logger.Debugf("[scalePodClique] Scale patch applied, waiting for pods...")
 
 		// Wait for pods to reach expected count
-		pm := pods.NewPodManager(tc.Clients, tests.Logger)
+		pm := pods.NewPodManager(tc.Client, tests.Logger)
 		_, err := pm.WaitForCount(tc.Ctx, tc.Namespace, tc.GetLabelSelector(), expectedTotalPods, tc.Timeout, tc.Interval)
 		elapsed := time.Since(startTime)
 		if err != nil {
@@ -1166,7 +1165,7 @@ func scalePodClique(tc *testctx.TestContext, cliqueName string, replicas int32, 
 func waitForOnDeleteUpdateComplete(tc *testctx.TestContext) error {
 	pollCount := 0
 	fetchPCS := waiter.FetchFunc[*grovev1alpha1.PodCliqueSet](func(_ context.Context) (*grovev1alpha1.PodCliqueSet, error) {
-		return workload.GetPodCliqueSet(tc.Ctx, tc.Clients.DynamicClient, tc.Workload.Name, tc.Namespace)
+		return getPCS(tc, tc.Workload.Name)
 	})
 	predicate := waiter.Predicate[*grovev1alpha1.PodCliqueSet](func(pcs *grovev1alpha1.PodCliqueSet) bool {
 		pollCount++
@@ -1185,10 +1184,11 @@ func waitForOnDeleteUpdateComplete(tc *testctx.TestContext) error {
 func verifyUpdateProgressFields(tc *testctx.TestContext) {
 	tc.T.Helper()
 
-	updateProgress, err := workload.GetPCSUpdateProgress(tc.Ctx, tc.T, tc.Clients.DynamicClient, tc.Workload.Name, tc.Namespace)
+	pcs, err := getPCS(tc, tc.Workload.Name)
 	if err != nil {
-		tc.T.Fatalf("Failed to get UpdateProgress: %v", err)
+		tc.T.Fatalf("Failed to get PCS for UpdateProgress: %v", err)
 	}
+	updateProgress := pcs.Status.RollingUpdateProgress
 
 	if updateProgress == nil {
 		tc.T.Fatalf("UpdateProgress should not be nil after OnDelete update")
@@ -1279,7 +1279,7 @@ func excludeNodeFromPodCliqueAffinity(tc *testctx.TestContext, cliqueName string
 	pcsName := tc.Workload.Name
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var pcs grovev1alpha1.PodCliqueSet
-		if err := tc.Clients.CRClient.Get(tc.Ctx, types.NamespacedName{Name: pcsName, Namespace: tc.Namespace}, &pcs); err != nil {
+		if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Name: pcsName, Namespace: tc.Namespace}, &pcs); err != nil {
 			return fmt.Errorf("failed to get PodCliqueSet: %w", err)
 		}
 		pcs.SetGroupVersionKind(grovev1alpha1.SchemeGroupVersion.WithKind("PodCliqueSet"))
@@ -1316,7 +1316,7 @@ func excludeNodeFromPodCliqueAffinity(tc *testctx.TestContext, cliqueName string
 			return fmt.Errorf("clique %s not found in PodCliqueSet %s", cliqueName, pcsName)
 		}
 
-		return tc.Clients.CRClient.Patch(tc.Ctx, &pcs, client.Apply, client.FieldOwner("e2e-rolling-update-test"), client.ForceOwnership)
+		return tc.Client.Patch(tc.Ctx, &pcs, client.Apply, client.FieldOwner("e2e-rolling-update-test"), client.ForceOwnership)
 	})
 }
 
@@ -1325,8 +1325,8 @@ func excludeNodeFromPodCliqueAffinity(tc *testctx.TestContext, cliqueName string
 func verifyPodHasNodeAffinityExclusion(tc *testctx.TestContext, podName string, excludedNode string) error {
 	tc.T.Helper()
 
-	pod, err := tc.Clients.Clientset.CoreV1().Pods(tc.Namespace).Get(tc.Ctx, podName, metav1.GetOptions{})
-	if err != nil {
+	var pod corev1.Pod
+	if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: podName}, &pod); err != nil {
 		return fmt.Errorf("failed to get pod %s: %w", podName, err)
 	}
 

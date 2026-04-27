@@ -26,9 +26,10 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
 )
@@ -74,7 +75,7 @@ func WithLogger(l logr.Logger) Option {
 func ForwardService(
 	ctx context.Context,
 	restCfg *rest.Config,
-	clientset kubernetes.Interface,
+	cl client.Reader,
 	namespace string,
 	serviceName string,
 	remotePort int,
@@ -85,7 +86,7 @@ func ForwardService(
 		opt(cfg)
 	}
 
-	podName, err := resolvePodViaEndpoints(ctx, clientset, namespace, serviceName)
+	podName, err := resolvePodViaEndpoints(ctx, cl, namespace, serviceName)
 	if err != nil {
 		return nil, fmt.Errorf("resolve pod for service %q: %w", serviceName, err)
 	}
@@ -180,11 +181,11 @@ func ForwardService(
 // Subsets[*].Addresses, not NotReadyAddresses).
 func resolvePodViaEndpoints(
 	ctx context.Context,
-	clientset kubernetes.Interface,
+	cl client.Reader,
 	namespace, serviceName string,
 ) (string, error) {
-	endpoints, err := clientset.CoreV1().Endpoints(namespace).Get(ctx, serviceName, metav1.GetOptions{})
-	if err != nil {
+	var endpoints corev1.Endpoints
+	if err := cl.Get(ctx, types.NamespacedName{Namespace: namespace, Name: serviceName}, &endpoints); err != nil {
 		return "", fmt.Errorf("get endpoints for %q: %w", serviceName, err)
 	}
 	if len(endpoints.Subsets) == 0 {

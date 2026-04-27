@@ -22,11 +22,12 @@ import (
 	"context"
 	"testing"
 
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // Test_AutoMNNVL_SupportedButDisabled is the test suite for when Auto-MNNVL feature is disabled
@@ -40,7 +41,7 @@ func Test_AutoMNNVL_SupportedButDisabled(t *testing.T) {
 	defer cleanup()
 
 	// Detect and validate cluster configuration
-	clusterConfig := requireClusterConfig(t, ctx, tc.Clients)
+	clusterConfig := requireClusterConfig(t, ctx, tc.Client)
 	clusterConfig.skipUnless(t, crdSupported, featureDisabled)
 
 	// Define all subtests
@@ -68,12 +69,13 @@ func testNoAutoAnnotationAdded(t *testing.T, tc *testctx.TestContext) {
 
 	// Create a PCS with GPU requirement (no annotation)
 	pcs := buildGPUPCS(pcsName, 1)
-	_, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Create(tc.Ctx, pcs, metav1.CreateOptions{})
+	err := tc.Client.Create(tc.Ctx, pcs)
 	require.NoError(t, err, "Failed to create PCS")
 	defer deletePCS(tc, pcsName)
 
 	// Verify the PCS does NOT have the auto-mnnvl annotation
-	createdPCS, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Get(tc.Ctx, pcsName, metav1.GetOptions{})
+	var createdPCS grovecorev1alpha1.PodCliqueSet
+	err = tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: pcsName}, &createdPCS)
 	require.NoError(t, err, "Failed to get created PCS")
 
 	annotations := createdPCS.GetAnnotations()
@@ -96,6 +98,6 @@ func testExplicitEnabledAnnotationRejected(t *testing.T, tc *testctx.TestContext
 	annotations[mnnvl.AnnotationAutoMNNVL] = mnnvl.AnnotationAutoMNNVLEnabled
 	pcs.SetAnnotations(annotations)
 
-	_, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Create(tc.Ctx, pcs, metav1.CreateOptions{})
+	err := tc.Client.Create(tc.Ctx, pcs)
 	assert.Error(t, err, "PCS with auto-mnnvl: enabled should be rejected when feature is disabled")
 }
