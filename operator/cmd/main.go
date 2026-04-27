@@ -31,7 +31,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/cert"
 	grovelogger "github.com/ai-dynamo/grove/operator/internal/logger"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
-	schedmanager "github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
+	schedulerregistry "github.com/ai-dynamo/grove/operator/internal/scheduler/registry"
 	groveversion "github.com/ai-dynamo/grove/operator/internal/version"
 
 	"github.com/spf13/pflag"
@@ -89,19 +89,20 @@ func main() {
 	}
 
 	// Initialize scheduler backends with the configured schedulers.
-	if err := schedmanager.Initialize(
+	schedRegistry, err := schedulerregistry.New(
 		mgr.GetClient(),
 		mgr.GetScheme(),
 		mgr.GetEventRecorderFor("scheduler-backend"),
 		operatorConfig.Scheduler,
-	); err != nil {
+	)
+	if err != nil {
 		logger.Error(err, "failed to initialize scheduler backend")
 		handleErrorAndExit(err, cli.ExitErrInitializeSchedulerBackend)
 	}
 
 	// Initialize or clean up ClusterTopology based on operator configuration.
 	// This must be done before starting the controllers that may depend on the ClusterTopology resource.
-	if err = clustertopology.SynchronizeTopology(ctx, cl, logger, operatorConfig, schedmanager.All()); err != nil {
+	if err = clustertopology.SynchronizeTopology(ctx, cl, logger, operatorConfig, schedRegistry.All()); err != nil {
 		logger.Error(err, "failed to synchronize cluster topology")
 		handleErrorAndExit(err, cli.ExitErrSynchronizeTopology)
 	}
@@ -129,7 +130,7 @@ func main() {
 	// Certificates need to be generated before the webhooks are started, which can only happen once the manager is started.
 	// Block while generating the certificates, and then start the webhooks.
 	go func() {
-		if err = grovectrl.RegisterControllersAndWebhooks(mgr, logger, operatorConfig, webhookCertsReadyCh); err != nil {
+		if err = grovectrl.RegisterControllersAndWebhooks(mgr, logger, operatorConfig, webhookCertsReadyCh, schedRegistry); err != nil {
 			logger.Error(err, "failed to initialize grove controller manager")
 			handleErrorAndExit(err, cli.ExitErrInitializeManager)
 		}
