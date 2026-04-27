@@ -27,6 +27,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
+	volcanoscheduler "github.com/ai-dynamo/grove/operator/internal/scheduler/volcano"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -175,6 +176,39 @@ func TestDelete(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMergedPodCliqueAnnotations(t *testing.T) {
+	t.Run("preserves clique annotations and only backfills queue from pcs", func(t *testing.T) {
+		pcsAnnotations := map[string]string{
+			volcanoscheduler.QueueAnnotationKey: "default",
+			"pcs-only":                          "ignored",
+		}
+		cliqueAnnotations := map[string]string{
+			"clique-only": "kept",
+		}
+
+		annotations := mergedPodCliqueAnnotations(pcsAnnotations, cliqueAnnotations)
+
+		assert.Equal(t, "kept", annotations["clique-only"])
+		assert.Equal(t, "default", annotations[volcanoscheduler.QueueAnnotationKey])
+		assert.NotContains(t, annotations, "pcs-only")
+	})
+
+	t.Run("does not override clique queue annotation", func(t *testing.T) {
+		pcsAnnotations := map[string]string{
+			volcanoscheduler.QueueAnnotationKey: "default",
+		}
+		cliqueAnnotations := map[string]string{
+			volcanoscheduler.QueueAnnotationKey: "gpu-training",
+			"clique-only":                       "kept",
+		}
+
+		annotations := mergedPodCliqueAnnotations(pcsAnnotations, cliqueAnnotations)
+
+		assert.Equal(t, "gpu-training", annotations[volcanoscheduler.QueueAnnotationKey])
+		assert.Equal(t, "kept", annotations["clique-only"])
+	})
 }
 
 func getExistingPodCliques(t *testing.T, cl client.Client, pcsObjMeta metav1.ObjectMeta) []grovecorev1alpha1.PodClique {
