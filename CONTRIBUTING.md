@@ -60,6 +60,21 @@ You must use your real name (sorry, no pseudonyms or anonymous contributions).
 If you set your `user.name` and `user.email` using git config, you can sign
 your commit automatically with `git commit -s`.
 
+## Local Git Hooks
+
+This repository includes tracked hooks for local validation. Install them once
+per clone with:
+
+    make install-hooks
+
+Remove them with:
+
+    make uninstall-hooks
+
+The pre-commit hook runs `make validate`, which executes the same validation
+steps as `make check` without the final clean-tree assertion. The pre-push hook
+runs `make test`.
+
 ## Pull Request Requirements
 
 Every pull request must reference at least one **open** GitHub issue in its description. This ensures that all changes are tracked and linked to project requirements or bug reports.
