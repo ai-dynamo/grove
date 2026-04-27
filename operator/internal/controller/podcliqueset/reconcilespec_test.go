@@ -117,9 +117,11 @@ func TestUpdateObservedGeneration(t *testing.T) {
 	}
 }
 
-// TestGetOrderedKindsForSync tests the getOrderedKindsForSync function
-func TestGetOrderedKindsForSync(t *testing.T) {
-	kinds := getOrderedKindsForSync()
+// TestGetKindSyncGroups tests that every expected component kind appears in exactly one
+// sync group and that the number of groups is at least 1.
+func TestGetKindSyncGroups(t *testing.T) {
+	groups := getKindSyncGroups()
+	assert.NotEmpty(t, groups)
 
 	expectedKinds := []component.Kind{
 		component.KindServiceAccount,
@@ -135,10 +137,15 @@ func TestGetOrderedKindsForSync(t *testing.T) {
 		component.KindPodCliqueScalingGroup,
 		component.KindPodGang,
 	}
-
-	assert.Equal(t, len(expectedKinds), len(kinds))
-	for i, expected := range expectedKinds {
-		assert.Equal(t, expected, kinds[i])
+	seen := make(map[component.Kind]bool)
+	for _, group := range groups {
+		for _, k := range group {
+			assert.False(t, seen[k], "kind %s appeared in more than one group", k)
+			seen[k] = true
+		}
+	}
+	for _, k := range expectedKinds {
+		assert.True(t, seen[k], "kind %s should appear in some group", k)
 	}
 }
 

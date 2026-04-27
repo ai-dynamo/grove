@@ -30,6 +30,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -48,6 +49,7 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 		return result
 	}
 
+	originalStatus := pcsg.Status.DeepCopy()
 	patchObj := client.MergeFrom(pcsg.DeepCopy())
 
 	pcs, err := componentutils.GetPodCliqueSet(ctx, r.client, pcsg.ObjectMeta)
@@ -73,6 +75,10 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 
 	// mirror UpdateProgress to the deprecated RollingUpdateProgress field for backward compatibility.
 	mirrorUpdateProgressToRollingUpdateProgress(pcsg)
+
+	if equality.Semantic.DeepEqual(*originalStatus, pcsg.Status) {
+		return ctrlcommon.ContinueReconcile()
+	}
 
 	if err = r.client.Status().Patch(ctx, pcsg, patchObj); err != nil {
 		logger.Error(err, "failed to update PodCliqueScalingGroup status")

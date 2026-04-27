@@ -25,24 +25,51 @@ import (
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// GetPCLQPods lists all Pods that belong to a PodClique
-func GetPCLQPods(ctx context.Context, cl client.Client, pcsName string, pclq *grovecorev1alpha1.PodClique) ([]*corev1.Pod, error) {
+// pclqPodsCacheKey is a context key for per-reconcile memoization of GetPCLQPods results.
+// A PodClique reconcile calls GetPCLQPods from both reconcileSpec and reconcileStatus;
+// without the cache we list+filter the informer cache twice per reconcile. Stash the result
+// on a fresh ctx via WithPCLQPodsCache and the second call reuses it.
+type pclqPodsCacheKey struct{}
+
+// pclqPodsCache holds one slot per PodClique UID. UIDs are used rather than names so a
+// stale cache entry can never bleed into a recreated object with the same name.
+type pclqPodsCache struct {
+	byUID map[types.UID][]*corev1.Pod
+}
+
+// WithPCLQPodsCache returns a context that memoizes GetPCLQPods results for the lifetime of
+// one reconcile. Call this once at the top of Reconcile and propagate the returned context.
+func WithPCLQPodsCache(ctx context.Context) context.Context {
+	return context.WithValue(ctx, pclqPodsCacheKey{}, &pclqPodsCache{byUID: make(map[types.UID][]*corev1.Pod, 1)})
+}
+
+// GetPCLQPods lists all Pods that belong to a PodClique.
+// The selector uses only LabelPodClique because the PodClique name is unique across the
+// cluster; filtering on the parent managed-by/part-of labels would add two more per-pod
+// labels.Set.Lookup calls per match with no correctness benefit. Ownership is still
+// validated by IsControlledBy below.
+//
+// When ctx carries a cache from WithPCLQPodsCache, the first call populates the cache and
+// subsequent calls in the same reconcile return the cached slice without hitting the
+// informer.
+func GetPCLQPods(ctx context.Context, cl client.Client, _ string, pclq *grovecorev1alpha1.PodClique) ([]*corev1.Pod, error) {
+	cache, _ := ctx.Value(pclqPodsCacheKey{}).(*pclqPodsCache)
+	if cache != nil {
+		if pods, ok := cache.byUID[pclq.UID]; ok {
+			return pods, nil
+		}
+	}
 	podList := &corev1.PodList{}
 	if err := cl.List(ctx,
 		podList,
 		client.InNamespace(pclq.Namespace),
-		client.MatchingLabels(
-			lo.Assign(
-				apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcsName),
-				map[string]string{
-					apicommon.LabelPodClique: pclq.Name,
-				},
-			),
-		)); err != nil {
+		client.MatchingLabels{apicommon.LabelPodClique: pclq.Name},
+	); err != nil {
 		return nil, err
 	}
 	ownedPods := make([]*corev1.Pod, 0, len(podList.Items))
@@ -50,6 +77,9 @@ func GetPCLQPods(ctx context.Context, cl client.Client, pcsName string, pclq *gr
 		if metav1.IsControlledBy(&pod, pclq) {
 			ownedPods = append(ownedPods, &pod)
 		}
+	}
+	if cache != nil {
+		cache.byUID[pclq.UID] = ownedPods
 	}
 	return ownedPods, nil
 }
