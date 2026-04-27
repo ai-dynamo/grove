@@ -271,15 +271,25 @@ type PodCliqueTemplateSpec struct {
 
 // TopologyConstraint defines topology placement requirements.
 type TopologyConstraint struct {
+	// TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.
+	// The PodCliqueSet-level topologyName selects the ClusterTopology for the workload.
+	// Child constraints may repeat the same topologyName, but must not change it.
+	// Immutable after creation.
+	// +optional
+	TopologyName string `json:"topologyName,omitempty"`
 	// PackDomain specifies the topology domain for grouping replicas.
 	// Controls placement constraint for EACH individual replica instance.
-	// Must be one of: region, zone, datacenter, block, rack, host, numa
+	// Must reference a domain defined in the ClusterTopology's levels.
 	// Example: "rack" means each replica independently placed within one rack.
 	// Note: Does NOT constrain all replicas to the same rack together.
 	// Different replicas can be in different topology domains.
-	// +kubebuilder:validation:Enum=region;zone;datacenter;block;rack;host;numa
-	PackDomain TopologyDomain `json:"packDomain"`
+	// +optional
+	PackDomain TopologyDomain `json:"packDomain,omitempty"`
 }
+
+// PodCliqueSetTopologyConstraint is kept as a Go type alias for compatibility
+// with existing tests and helper code. The API model uses TopologyConstraint.
+type PodCliqueSetTopologyConstraint = TopologyConstraint
 
 // PodCliqueScalingGroupConfig is a group of PodClique's that are scaled together.
 // Each member PodClique.Replicas will be computed as a product of PodCliqueScalingGroupConfig.Replicas and PodCliqueTemplateSpec.Spec.Replicas.

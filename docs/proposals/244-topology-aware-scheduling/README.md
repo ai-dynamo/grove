@@ -81,7 +81,7 @@ AI clusters often contain heterogeneous hardware with different interconnect cha
 * Define and honor pack constraints for proportional scaling amongst scaling groups. For e.g. one wishes to proportionally scale decodes and prefills in a disaggregated inference workload and ensure that decodes and prefills for every such scale are packed optimally.
 * Automatic topology discovery or inference from node labels.
 * Dynamic topology switching for running workloads.
-* Cross-topology scheduling within a single PodCliqueSet.
+* Honoring multiple topology references within a single PodCliqueSet in current scheduler backends.
 
 ## Proposal
 
@@ -134,13 +134,13 @@ spec:
 ```
 
 **User Layer:**
-Workload developers can specify topology constraints at three hierarchical levels (`PodCliqueSet`, `PodCliqueScalingGroup`, and `PodClique`) using domain names. They select which topology to use via the `topologyName` field inside the PCS-level `topologyConstraint`, which is required when `packDomain` is specified.
+Workload developers can specify topology constraints at three hierarchical levels (`PodCliqueSet`, `PodCliqueScalingGroup`, and `PodClique`) using domain names. The shared API type includes `topologyName`. In the current implementation, the `PodCliqueSet`-level `topologyName` selects the `ClusterTopology` for the workload. Child resources may omit `topologyName`, or repeat the same value for consistency, but they must not change it. Child `packDomain` values always resolve against the PCS-level topology. This is a temporary restriction driven by current scheduler backend limitations; a future enhancement may allow different parts of a single `PodCliqueSet` to reference different topologies.
 
 The operator validates these constraints against the referenced ClusterTopology using three key validation rules:
 
 1. *Domain existence*: All topology domains referenced in workload's topology constraints must exist in the ClusterTopology CR. This ensures workloads only reference valid, configured topology levels.
 2. *Topology Constraint Hierarchy*: Topology levels are ordered by their position in the ClusterTopology's levels array (index 0 = broadest scope). When topology constraints are hierarchically applied to a workload from PodCliqueSet → PodCliqueScalingGroup → PodClique, each level's constraints must reference a domain that is equal to or narrower (higher index) than the parent level's domain. A child resource cannot specify a broader topology domain than its parent. For example, if the referenced ClusterTopology defines levels `[zone, block, host]` and the PodCliqueSet specifies `block`, then PodCliqueScalingGroup can specify `block` (equal) or `host` (narrower), but not `zone` (broader).
-3. *Topology reference*: The `topologyName` must reference an existing ClusterTopology. The field is immutable after creation.
+3. *Topology reference*: when topology constraints are used, `spec.template.topologyConstraint.topologyName` must be set and must reference an existing ClusterTopology. In the current implementation, child constraints may repeat `topologyName`, but only with the same value as the PodCliqueSet. The field is immutable after creation.
 
 After validation, the operator translates the topology domain names (e.g., "rack", "host") into cluster-specific topology keys (e.g., "topology.kubernetes.io/zone", "kubernetes.io/hostname") using the referenced ClusterTopology and configures these hierarchical topology keys in the `PodGang` API. The `PodGang` serves as an intermediate representation that will eventually be mapped to the specific types that the configured scheduler backend understands. This abstraction allows workload portability across clusters with different topology configurations and scheduler implementations.
 
@@ -235,7 +235,7 @@ Providing a way to define cluster topology entails that the cluster administrato
 * Ensure that the nodes are correctly labeled with the topology information.
 * Create appropriate `ClusterTopology` resources via kubectl or GitOps.
 
-CEL validation on the CRD ensures that domain names and node label keys are unique within a ClusterTopology. However, there is no way for `Grove` operator to ensure that the node labels mapped to each topology domain are in line with the ones actually present on nodes in the kubernetes cluster.
+The ClusterTopology validating webhook ensures that domain names and node label keys are unique within a ClusterTopology. However, there is no way for `Grove` operator to ensure that the node labels mapped to each topology domain are in line with the ones actually present on nodes in the kubernetes cluster.
 
 **Mitigation**
 
@@ -353,17 +353,20 @@ Using a consistent set of domain names across clusters enables workload portabil
 
 #### Validation
 
-Validation is enforced at the CRD level on ClusterTopology resources via CEL rules and kubebuilder markers:
+Validation of ClusterTopology resources is split between CRD-level structural constraints and a validating webhook:
 
-* Within each ClusterTopology, at least one `TopologyLevel` must be set and at most 16 levels are allowed.
+**CRD-level (kubebuilder markers):**
+* At least one `TopologyLevel` must be set (`MinItems=1`). No upper bound is enforced at the CRD level.
+
+**ClusterTopology validating webhook:**
 * Within each ClusterTopology, each `TopologyLevel` must be unique — neither the domain nor the key should be duplicated.
 * `spec.levels` can be updated in-place. When domains are removed, affected PodCliqueSets are surfaced via the `TopologyLevelsUnavailable` condition.
 
-> **Why MaxItems=16?** The CEL uniqueness rules on `spec.levels` use `self.all(x, self.filter(...))` which has O(n²) cost estimation. Without an explicit upper bound, the Kubernetes API server rejects the CRD because the estimated rule cost exceeds the validation budget. Setting `MaxItems=16` provides a generous upper bound for real-world topology hierarchies (most have 3–6 levels) while keeping the CEL cost within budget.
+> **Why a webhook instead of CEL?** CEL uniqueness rules on `spec.levels` use `self.all(x, self.filter(...))` which has O(n²) cost estimation. The Kubernetes API server rejects CRDs whose estimated rule cost exceeds the validation budget, which forced an artificial `MaxItems=16` cap on the number of topology levels. Moving these checks to a validating webhook eliminates the cost constraint and removes the level limit entirely. Since a ClusterTopology controller is already required, hosting validation in the same webhook adds no operational overhead.
 
 > NOTE: There is no validation done for `TopologyLevel.Key` (which is a node label) as that can be different across cloud providers and on-prem data centers.
 
-If validation fails, the API server rejects the ClusterTopology create/update request.
+If validation fails, the webhook rejects the ClusterTopology create/update request.
 
 #### Controller Reconciliation
 
@@ -431,9 +434,7 @@ type ClusterTopologySpec struct {
     // Levels is an ordered list of topology levels from broadest to narrowest scope.
     // The order in this list defines the hierarchy (index 0 = broadest level).
     // +kubebuilder:validation:MinItems=1
-    // +kubebuilder:validation:MaxItems=16
-    // +kubebuilder:validation:XValidation:rule="self.all(x, self.filter(y, y.domain == x.domain).size() == 1)",message="domain must be unique across all levels"
-    // +kubebuilder:validation:XValidation:rule="self.all(x, self.filter(y, y.key == x.key).size() == 1)",message="key must be unique across all levels"
+    // Uniqueness of domain and key is enforced by the ClusterTopology validating webhook.
     Levels []TopologyLevel `json:"levels"`
     // SchedulerReferences controls per-backend topology resource management.
     // For each enabled TopologyAwareSchedBackend, the operator checks whether an entry
@@ -665,33 +666,17 @@ Adding a new `TopologyAwareSchedBackend` to the operator configuration automatic
 
 ### Topology Constraints in PodCliqueSet
 
-`PodCliqueSet` API has been enhanced, allowing users to specify topology constraints. A new type `TopologyConstraint` has been introduced which allows users to define `required` topology constraints that must be satisfied for the scheduling to succeed.
+`PodCliqueSet` API has been enhanced to allow topology constraints to be specified at all three levels (`PodCliqueSet`, `PodCliqueScalingGroup`, and `PodClique`). The same `TopologyConstraint` type is used everywhere. It includes an optional `topologyName`. In the current implementation, the `PodCliqueSet`-level `topologyName` selects the topology for the workload. Child constraints may omit `topologyName`, or repeat the same value, but they may not select a different topology. Child constraints may also use `packDomain`. This is intentionally more restrictive than the API shape, and is expected to be relaxed once scheduler backends support different topologies within a single `PodCliqueSet`.
+
+The shared API type is:
 
 ```go
 // TopologyConstraint defines topology placement requirements.
 type TopologyConstraint struct {
-	// PackDomain specifies the topology domain for grouping replicas.
-	// Must reference a domain defined in the ClusterTopology's levels.
-	// Controls placement constraint for EACH individual replica instance.
-	// Example: "rack" means each replica independently placed within one rack.
-	// Note: Does NOT constrain all replicas to the same rack together.
-	// Different replicas can be in different topology domains.
-	PackDomain TopologyDomain `json:"packDomain"`
-}
-```
-
-`TopologyConstraint` can be specified at three levels. At the `PodCliqueSet` level, a `PodCliqueSetTopologyConstraint` struct extends `TopologyConstraint` with the `topologyName` field. At `PodCliqueScalingGroup` and `PodClique` levels, the base `TopologyConstraint` is used (no `topologyName`).
-
-At `PodCliqueSet` you can set the constraints using:
-
-```go
-// PodCliqueSetTopologyConstraint defines topology placement requirements for PodCliqueSet.
-// Extends TopologyConstraint with the topology reference (topologyName),
-// which is only available at the PodCliqueSet level.
-type PodCliqueSetTopologyConstraint struct {
 	// TopologyName is the name of the ClusterTopology resource
-	// to use for topology-aware scheduling. Required when PackDomain is specified.
-	// Immutable after creation.
+	// to use for topology-aware scheduling.
+	// The PodCliqueSet-level topologyName selects the ClusterTopology for the workload.
+	// Child constraints may repeat the same topologyName, but must not change it.
 	// +optional
 	TopologyName string `json:"topologyName,omitempty"`
 	// PackDomain specifies the topology domain for grouping replicas.
@@ -700,6 +685,11 @@ type PodCliqueSetTopologyConstraint struct {
 	// +optional
 	PackDomain TopologyDomain `json:"packDomain,omitempty"`
 }
+```
+
+At `PodCliqueSet` level, the constraint is attached as:
+
+```go
 
 // PodCliqueSetTemplateSpec defines a template spec for a PodGang.
 // A PodGang does not have a RestartPolicy field because the restart policy is predefined:
@@ -709,15 +699,14 @@ type PodCliqueSetTopologyConstraint struct {
 // - The "Replicas" value of that clique
 type PodCliqueSetTemplateSpec struct {
   ...
-  	// TopologyConstraint defines topology placement requirements for PodCliqueSet,
-	// including the topology reference.
+  	// TopologyConstraint defines topology placement requirements for PodCliqueSet.
 	// +optional
-	TopologyConstraint *PodCliqueSetTopologyConstraint `json:"topologyConstraint,omitempty"`
+	TopologyConstraint *TopologyConstraint `json:"topologyConstraint,omitempty"`
   ...
 }
 ```
 
-At `PodCliqueScalingGroup` level you can set the topology constraint using:
+At `PodCliqueScalingGroup` level, the constraint is attached as:
 
 ```go
 // PodCliqueScalingGroupConfig is a group of PodClique's that are scaled together.
@@ -738,7 +727,7 @@ type PodCliqueScalingGroupConfig struct {
 * Equal to or narrower (higher index) than the constraint defined at the `PodCliqueSet` level.
 * Equal to or broader (lower index) than the constraints defined for each constituent `PodClique`.
 
-At `PodClique` level you can set the topology constraint using:
+At `PodClique` level, the constraint is attached using the same `TopologyConstraint` type:
 
 ```go
 // PodCliqueTemplateSpec defines a template spec for a PodClique.
@@ -831,7 +820,9 @@ The above example is only a representation of how users can set topology constra
 
 #### Topology Reference
 
-The `topologyName` field is part of the `PodCliqueSetTopologyConstraint` struct (defined above), so it lives inside the PCS-level `topologyConstraint` block. It is required whenever `packDomain` is specified. It is not available at the `PodClique` or `PodCliqueScalingGroup` levels — child resources inherit the topology reference from the PCS.
+The API uses the shared `TopologyConstraint` type at the `PodCliqueSet`, `PodCliqueScalingGroup`, and `PodClique` levels. In the current implementation, the `PodCliqueSet`-level `topologyName` selects the `ClusterTopology` for the workload. `PodCliqueScalingGroup` and `PodClique` constraints may omit `topologyName`, or repeat the same value, but they must not specify a different topology.
+
+> NOTE: This is a temporary validation rule. The API is intentionally shaped so that a future enhancement can allow different `PodCliqueScalingGroup` and `PodClique` subtrees within one `PodCliqueSet` to reference different `ClusterTopology` resources once scheduler backends support that behavior.
 
 **Example YAML:**
 
@@ -847,7 +838,7 @@ spec:
       packDomain: rack
     cliques:
       - name: worker
-        topologyConstraint:           # no topologyName here — only at PCS level
+        topologyConstraint:
           packDomain: host
 ```
 
@@ -869,8 +860,9 @@ Example (assuming levels `[zone, block, rack, host, numa]`): a parent with `rack
 
 *Rule-3: Topology reference validation*
 
-* `topologyName` (in the PCS-level `topologyConstraint`) must be set if and only if any `packDomain` is set (at PCS, PCSG, or PodClique level). Setting one without the other is rejected.
-* When set, the referenced ClusterTopology must exist.
+* When any topology constraint is set, `spec.template.topologyConstraint.topologyName` must be set.
+* In the current implementation, if a `PodCliqueScalingGroup` or `PodClique` sets `topologyName`, it must exactly match `spec.template.topologyConstraint.topologyName`.
+* When `topologyName` is set on the `PodCliqueSet`, the referenced `ClusterTopology` must exist.
 * `topologyName` is immutable after creation. Updates that change the value are rejected.
 * Reject if `topologyName` or any `TopologyConstraint` is set but TAS is disabled cluster-wide.
 
@@ -878,9 +870,10 @@ Rules 1 and 2 apply to `TopologyConstraint` fields. Rule-3 validates the `topolo
 
 ### PodGang: Scheduler API Enhancements
 
-Grove operator translates the hierarchical topology constraints to infrastructure specific node labels in the `PodGang` scheduler API. The operator resolves the topology as follows:
-* PCS has `TopologyConstraint` set → `topologyName` is required; resolve the ClusterTopology by that name
+Grove operator translates the hierarchical topology constraints to infrastructure specific node labels in the `PodGang` scheduler API. The operator first resolves topology references as described in [Effective Topology Resolution](#effective-topology-resolution), then:
+* PCS has topology constraints and sets PCS-level `topologyName` → resolve the corresponding `ClusterTopology`
 * PCS has no `TopologyConstraint` at any level → topology does not apply
+* PCS has child-level `topologyName` that differs from the PCS-level value → rejected by the validating webhook in the current release
 
 The following additional types have been defined to capture the topology constraints:
 
@@ -916,7 +909,7 @@ This is the top level constraint defined at the `PodGang` level that applies to 
 
 * `PodGang` that comprises of minimum number of replicas across all standalone `PodClique` and `PodCliqueScalingGroup`s that together make a workload functional. At present we also name this as the `base` PodGang. For the base PodGang, `TopologyConstraint` is the value of `PodCliqueSetTemplateSpec.TopologyConstraint` (`spec.template.topologyConstraint`)
 * `PodGang`that is created for every replica of `PodCliqueScalingGroup` above the `minAvailable` as specified in `spec.template.podCliqueScalingGroups[x].minAvailable`. At present we call these as `scaled` PodGang. For the scaled PodGang, `TopologyConstraint` is the value of `PodCliqueScalingGroupConfig.TopologyConstraint` (`spec.template.podCliqueScalingGroups[x].topologyConstraint`).
-  * In case there is no topology constraint defined at `spec.template.podCliqueScalingGroups[x].topologyConstraint` then it will inherit the topology constraint  defined at `spec.template.topologyConstraint` if defined.
+  * In case there is no topology constraint defined at `spec.template.podCliqueScalingGroups[x].topologyConstraint`, the scaled PodGang falls back to the PCS-level topology constraint defined at `spec.template.topologyConstraint`. In both cases the selected `ClusterTopology` still comes from the PCS-level `topologyName`.
 
 
 **PodGangSpec.TopologyConstraintGroupConfigs**
@@ -968,14 +961,14 @@ The addition of multiple ClusterTopology resources and the `topologyName` field 
 
 #### Existing PodCliqueSets with topology constraints but no `topologyName`
 
-Under the previous single-topology design, PodCliqueSets could specify `topologyConstraint` without a `topologyName` — the operator implicitly resolved constraints against the single `grove-topology` ClusterTopology. After upgrading to the multi-topology design, these PCS resources are structurally invalid (the new rules require `topologyName` inside the PCS-level `topologyConstraint` when any `packDomain` is set), but they already exist in the cluster — the validating webhook only runs on create and update, not on existing resources.
+Under the previous single-topology design, PodCliqueSets could specify `topologyConstraint` without a `topologyName` — the operator implicitly resolved constraints against the single `grove-topology` ClusterTopology. After upgrading to the multi-topology design, these PCS resources are structurally invalid because topology-aware PCS resources must now set an explicit `topologyName` on `spec.template.topologyConstraint`. Child resources may repeat the same value, but may not select a different topology. These objects may already exist in the cluster — the validating webhook only runs on create and update, not on existing resources.
 
 The PCS reconciler must handle these gracefully during upgrade:
 
-* **Detection**: On each reconciliation, if the PCS has any `TopologyConstraint` set (at PCS, PCSG, or PodClique level) but `topologyName` is empty, the reconciler treats this as an invalid state.
-* **Condition**: The reconciler sets the `TopologyLevelsUnavailable` condition to `Unknown` with reason `TopologyNameMissing` and a message indicating that `topologyName` is required.
-* **PodGang topology removal**: The reconciler removes topology constraints from the PodGang resources created for the PCS, since without a `topologyName` the domains cannot be resolved to node label keys.
-* **Resolution**: The administrator must update the PCS to add `topologyName` referencing a valid ClusterTopology. The validating webhook will then validate the update normally (domain existence, hierarchy rules, etc.). Once the field is set and the referenced ClusterTopology exists with the required domains, the reconciler clears the condition and restores topology constraints on the PodGang.
+* **Detection**: On each reconciliation, if the PCS has topology constraints but does not set `spec.template.topologyConstraint.topologyName`, the reconciler treats this as an invalid state. The reconciler also treats any child-level `topologyName` that differs from the PCS-level value as invalid.
+* **Condition**: The reconciler sets the `TopologyLevelsUnavailable` condition to `Unknown` with reason `TopologyNameMissing` and a message indicating that a topology name is required.
+* **PodGang topology removal**: The reconciler removes topology constraints from the PodGang resources created for the PCS, since without a valid PCS-level `topologyName` the domains cannot be resolved to node label keys.
+* **Resolution**: The administrator must update the PCS so `spec.template.topologyConstraint.topologyName` is set to a valid topology and any child-level `topologyName` fields either match that value or are cleared. The validating webhook will then validate the update normally (domain existence, hierarchy rules, topology-name consistency, etc.). Once the field is set and the referenced ClusterTopology exists with the required domains, the reconciler clears the condition and restores topology constraints on the PodGang.
 
 This ensures that existing workloads are not silently broken — the condition makes the issue visible and the reconciler degrades gracefully by stripping unresolvable topology constraints rather than failing reconciliation entirely.
 
@@ -986,15 +979,25 @@ This ensures that existing workloads are not silently broken — the condition m
 Understanding which topologies are in use is important before attempting deletions. Administrators can list which PodCliqueSets reference each ClusterTopology using kubectl:
 
 ```bash
-# List all PCSs grouped by their topology reference
+# List all PCSs grouped by the topology names referenced anywhere in the spec
 kubectl get podcliquesets -A -o json | jq -r '
   .items[]
   | {
       name: .metadata.name,
       namespace: .metadata.namespace,
-      topology: (.spec.template.topologyConstraint.topologyName // "<none>")
+      topologies: (
+        [
+          .spec.template.topologyConstraint.topologyName,
+          (.spec.template.cliques[]?.topologyConstraint.topologyName),
+          (.spec.template.podCliqueScalingGroups[]?.topologyConstraint.topologyName)
+        ]
+        | map(select(. != null and . != ""))
+        | unique
+        | if length == 0 then ["<none>"] else . end
+        | join(",")
+      )
     }
-  | [.topology, .namespace + "/" + .name]
+  | [.topologies, .namespace + "/" + .name]
   | @tsv
 ' | sort | column -t
 ```
@@ -1031,6 +1034,7 @@ Condition States:
 | `True`    | `ClusterTopologyNotFound`           | When `ClusterTopology` CR is no longer existing — levels are definitively unavailable |
 | `Unknown` | `TopologyAwareSchedulingDisabled`   | When TAS has been disabled cluster-wide while the PCS still has topology constraints |
 | `Unknown` | `TopologyNameMissing`        | When PCS has topology constraints but no `topologyName` (upgrade from single-topology design) |
+| `Unknown` | `TopologyNameMismatch`      | When a `PodCliqueScalingGroup` or `PodClique` sets `topologyName` to a value different from the PCS-level topologyName |
 | `True`    | `ClusterTopologyLevelsUnavailable`  | When one or more topology levels used by a deployed `PodCliqueSet` are no longer present in `ClusterTopology` (e.g., the ClusterTopology levels were updated and no longer include the domains used by this PCS). The reconciler removes the invalid topology constraints from the PodGang resources so the scheduler no longer enforces them. Already-running pods are not evicted — they continue running at their current placement. |
 | `False`   | `AllClusterTopologyLevelsAvailable` | All topology levels used by a deployed `PodCliqueSet` are amongst the supported topology levels as defined in `ClusterTopology` |
 
@@ -1053,14 +1057,16 @@ To enable the scheduler to select/filter nodes that satisfy the topology constra
 
 * `OperatorConfiguration` validation tests are present at `operator/api/config/validation/validation_test.go`
 * Core API helper function tests are included at `operator/api/core/v1alpha1/clustertopology_test.go`
-* Validating webhook specific validation tests are present at `operator/internal/webhook/admission/pcs/validation/topologyconstraints_test.go`
+* ClusterTopology validating webhook tests are present at `operator/internal/webhook/admission/clustertopology/validation/validation_test.go`
+* PCS validating webhook specific validation tests are present at `operator/internal/webhook/admission/pcs/validation/topologyconstraints_test.go`
 * Reconciler specific tests that inspect `PodCliqueSet` topology constraints and update the `PodGang` resource are present at `operator/internal/controller/podcliqueset/components/podgang/syncflow_test.go`
 
 **Unit tests** for multi-topology:
 
+* ClusterTopology validating webhook: domain uniqueness, key uniqueness on create and update
 * PCS validating webhook: `topologyName` existence check on create, immutability on update, required when `TopologyConstraint` is set, rejection when TAS is disabled
-* PCS reconciler: `TopologyLevelsUnavailable` condition logic — set when ClusterTopology is missing or domains are unavailable, cleared when all domains are available
-* PCS reconciler: topology resolution logic that resolves `topologyName` to the correct ClusterTopology when building the PodGang
+* PCS reconciler: `TopologyLevelsUnavailable` condition logic — set when ClusterTopology is missing, topologyName is missing, child-level topologyName mismatches the PCS-level value, or domains are unavailable, cleared when all domains are available
+* PCS reconciler: topology resolution logic that resolves the PCS-level `topologyName` to the correct ClusterTopology when building the PodGang
 
 **E2E tests** are defined in [Issue#305](https://github.com/ai-dynamo/grove/issues/305).
 

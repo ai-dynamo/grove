@@ -99,6 +99,14 @@ const (
 	ReasonPodCliqueSetReplicaDeleteFailed = "PodCliqueSetReplicaDeleteFailed"
 )
 
+// constants for ClusterTopology lifecycle events
+const (
+	// ReasonTopologyInSync is an event reason when all scheduler backend topologies return to in-sync.
+	ReasonTopologyInSync = "TopologyInSync"
+	// ReasonTopologyDriftDetected is an event reason when a scheduler backend topology drift is detected.
+	ReasonTopologyDriftDetected = "TopologyDriftDetected"
+)
+
 // constants for ComputeDomain lifecycle events
 const (
 	// ReasonComputeDomainCreateSuccessful is an event reason which represents a successful creation of a ComputeDomain.

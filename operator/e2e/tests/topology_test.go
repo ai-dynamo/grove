@@ -21,20 +21,42 @@ package tests
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 
 	nameutils "github.com/ai-dynamo/grove/operator/api/common"
+	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/podgroup"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/topology"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	"github.com/samber/lo"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// groveTopologyLevels is the standard 4-level topology used by TAS1-TAS16.
+// These levels match the node labels applied by the e2e cluster setup.
+var groveTopologyLevels = []corev1alpha1.TopologyLevel{
+	{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
+	{Domain: corev1alpha1.TopologyDomainBlock, Key: setup.TopologyLabelBlock},
+	{Domain: corev1alpha1.TopologyDomainRack, Key: setup.TopologyLabelRack},
+	{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
+}
+
+// ensureGroveTopology creates the shared "grove-topology" ClusterTopology if it does not already
+// exist. TAS1-TAS16 all reference this topology; TAS1 is expected to run first and create it, but
+// each test calls this so that tests can also run in isolation.
+func ensureGroveTopology(ctx context.Context, t *testing.T, tv *topology.TopologyVerifier) {
+	t.Helper()
+	if err := tv.EnsureClusterTopology(ctx, "grove-topology", groveTopologyLevels); err != nil {
+		t.Fatalf("Failed to ensure grove-topology ClusterTopology: %v", err)
+	}
+}
 
 // DeployWorkloadAndGetPods deploys workload, waits for pods to be ready, and returns the pod list
 func DeployWorkloadAndGetPods(tc *testctx.TestContext, expectedPods int) ([]v1.Pod, error) {
@@ -68,11 +90,13 @@ func GetPodGroupOrFail(t *testing.T, tc *testctx.TestContext, podGroupVerifier *
 	return podGroup
 }
 
-// Test_TAS1_TopologyInfrastructure verifies that the operator creates ClusterTopology and KAI Topology CRs at startup
-// 1. Verify ClusterTopology CR exists with the correct 4-level hierarchy (zone, block, rack, host)
-// 2. Verify KAI Topology CR exists with matching levels
-// 3. Verify KAI Topology has owner reference to ClusterTopology
-// 4. Verify worker nodes have topology labels
+// Test_TAS1_TopologyInfrastructure verifies the ClusterTopology → KAI Topology sync loop.
+// 1. Create "grove-topology" ClusterTopology with the standard 4-level hierarchy (zone, block, rack, host)
+// 2. Verify the operator auto-creates a matching KAI Topology CR
+// 3. Verify worker nodes have the expected topology labels
+//
+// Note: grove-topology is NOT cleaned up after this test — it is shared cluster infrastructure
+// used by TAS2-TAS16. ensureGroveTopology() in each subsequent test is idempotent.
 func Test_TAS1_TopologyInfrastructure(t *testing.T) {
 	ctx := context.Background()
 
@@ -80,20 +104,10 @@ func Test_TAS1_TopologyInfrastructure(t *testing.T) {
 	defer cleanup()
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 
-	Logger.Info("1. Verify ClusterTopology CR exists with correct 4-level hierarchy")
+	Logger.Info("1. Create grove-topology ClusterTopology with standard 4-level hierarchy")
+	ensureGroveTopology(ctx, t, topologyVerifier)
 
-	expectedLevels := []corev1alpha1.TopologyLevel{
-		{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
-		{Domain: corev1alpha1.TopologyDomainBlock, Key: setup.TopologyLabelBlock},
-		{Domain: corev1alpha1.TopologyDomainRack, Key: setup.TopologyLabelRack},
-		{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
-	}
-
-	if err := topologyVerifier.VerifyClusterTopologyLevels(ctx, corev1alpha1.DefaultClusterTopologyName, expectedLevels); err != nil {
-		t.Fatalf("Failed to verify ClusterTopology levels: %v", err)
-	}
-
-	Logger.Info("2. Verify KAI Topology CR exists with matching levels and owner reference")
+	Logger.Info("2. Verify KAI Topology CR is auto-created with matching levels")
 
 	expectedKeys := []string{
 		setup.TopologyLabelZone,
@@ -102,7 +116,11 @@ func Test_TAS1_TopologyInfrastructure(t *testing.T) {
 		setup.TopologyLabelHostname,
 	}
 
-	if err := topologyVerifier.VerifyKAITopologyLevels(ctx, corev1alpha1.DefaultClusterTopologyName, expectedKeys); err != nil {
+	if err := topologyVerifier.WaitForKAITopology(ctx, "grove-topology", expectedKeys, tc.Timeout, tc.Interval); err != nil {
+		t.Fatalf("Failed to wait for KAI Topology: %v", err)
+	}
+
+	if err := topologyVerifier.VerifyKAITopologyLevels(ctx, "grove-topology", expectedKeys); err != nil {
 		t.Fatalf("Failed to verify KAI Topology levels: %v", err)
 	}
 
@@ -132,7 +150,7 @@ func Test_TAS1_TopologyInfrastructure(t *testing.T) {
 	}
 
 	Logger.Infof("Successfully verified topology labels on %d worker nodes", workerCount)
-	Logger.Info("🎉 Topology Infrastructure test completed successfully!")
+	Logger.Info("Topology Infrastructure test completed successfully!")
 }
 
 // Test_TAS2_MultipleCliquesWithDifferentConstraints tests PCS with multiple cliques having different topology constraints
@@ -161,6 +179,7 @@ func Test_TAS2_MultipleCliquesWithDifferentConstraints(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS2: multiple cliques with different constraints)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -190,7 +209,7 @@ func Test_TAS2_MultipleCliquesWithDifferentConstraints(t *testing.T) {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
-	Logger.Info("🎉 TAS2: Multiple Cliques with Different Constraints test completed successfully!")
+	Logger.Info("TAS2: Multiple Cliques with Different Constraints test completed successfully!")
 }
 
 // Test_TAS3_PCSOnlyConstraint tests constraint only at PCS level with no PCSG/PCLQ constraints
@@ -219,6 +238,7 @@ func Test_TAS3_PCSOnlyConstraint(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS3: PCS-only constraint)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -247,7 +267,7 @@ func Test_TAS3_PCSOnlyConstraint(t *testing.T) {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
-	Logger.Info("🎉 TAS3: PCS-Only Constraint test completed successfully!")
+	Logger.Info("TAS3: PCS-Only Constraint test completed successfully!")
 }
 
 // Test_TAS4_PCSGOnlyConstraint tests constraint only at PCSG level with no PCS/PCLQ constraints
@@ -272,6 +292,7 @@ func Test_TAS4_PCSGOnlyConstraint(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS4: PCSG-only constraint)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -302,7 +323,17 @@ func Test_TAS4_PCSGOnlyConstraint(t *testing.T) {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
-	Logger.Info("🎉 TAS4: PCSG-Only Constraint test completed successfully!")
+	Logger.Info("5. Verify TopologyLevelsUnavailable = False (PCSG constraint only, empty PCS-level packDomain)")
+	tv := topology.NewTopologyVerifier(tc.Client, Logger)
+	if err := tv.WaitForPCSCondition(ctx, "default", tc.Workload.Name,
+		apicommonconstants.ConditionTopologyLevelsUnavailable,
+		string(metav1.ConditionFalse),
+		apicommonconstants.ConditionReasonAllTopologyLevelsAvailable,
+		tc.Timeout, tc.Interval); err != nil {
+		t.Fatalf("Failed to verify TopologyLevelsUnavailable is False: %v", err)
+	}
+
+	Logger.Info("TAS4: PCSG-Only Constraint test completed successfully!")
 }
 
 // Test_TAS5_HostLevelConstraint tests PCLQ-only constraint with host-level packing
@@ -326,6 +357,7 @@ func Test_TAS5_HostLevelConstraint(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS5: PCLQ-only host constraint)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -357,7 +389,7 @@ func Test_TAS5_HostLevelConstraint(t *testing.T) {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
-	Logger.Info("🎉 TAS5: Host-Level Constraint test completed successfully!")
+	Logger.Info("TAS5: Host-Level Constraint test completed successfully!")
 }
 
 // Test_TAS6_StandalonePCLQOnlyPCSZoneConstraint tests standalone PCLQ with only PCS zone constraint (no PCSG layer)
@@ -387,6 +419,7 @@ func Test_TAS6_StandalonePCLQOnlyPCSZoneConstraint(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS6: Standalone PCLQ with only PCS zone constraint)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -410,7 +443,7 @@ func Test_TAS6_StandalonePCLQOnlyPCSZoneConstraint(t *testing.T) {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
-	Logger.Info("🎉 TAS6: Standalone PCLQ with Only PCS Zone Constraint test completed successfully!")
+	Logger.Info("TAS6: Standalone PCLQ with Only PCS Zone Constraint test completed successfully!")
 }
 
 // Test_TAS7_NoTopologyConstraint tests gang scheduling without any topology constraints
@@ -431,6 +464,7 @@ func Test_TAS7_NoTopologyConstraint(t *testing.T) {
 		}),
 	)
 	defer cleanup()
+	// TAS7 YAML has no topologyName — grove-topology not needed.
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
 	Logger.Info("2. Deploy workload (TAS7: No topology constraints)")
@@ -458,7 +492,7 @@ func Test_TAS7_NoTopologyConstraint(t *testing.T) {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
-	Logger.Info("🎉 TAS7: No Topology Constraint test completed successfully!")
+	Logger.Info("TAS7: No Topology Constraint test completed successfully!")
 }
 
 // Test_TAS8_FullHierarchyWithCascadingConstraints tests 3-level topology hierarchy with cascading constraints
@@ -485,6 +519,7 @@ func Test_TAS8_FullHierarchyWithCascadingConstraints(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS8: full 3-level hierarchy with cascading constraints)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -536,7 +571,7 @@ func Test_TAS8_FullHierarchyWithCascadingConstraints(t *testing.T) {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
-	Logger.Info("🎉 TAS8: Full Hierarchy with Cascading Constraints test completed successfully!")
+	Logger.Info("TAS8: Full Hierarchy with Cascading Constraints test completed successfully!")
 }
 
 // Test_TAS9_PCSPlusPCLQConstraint tests PCS block constraint combined with PCLQ host constraint
@@ -561,6 +596,7 @@ func Test_TAS9_PCSPlusPCLQConstraint(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS9: PCS block + PCLQ host constraint)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -583,7 +619,7 @@ func Test_TAS9_PCSPlusPCLQConstraint(t *testing.T) {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
-	Logger.Info("🎉 TAS9: PCS+PCLQ Constraint test completed successfully!")
+	Logger.Info("TAS9: PCS+PCLQ Constraint test completed successfully!")
 }
 
 // Test_TAS10_PCSGScalingWithTopologyConstraints tests PCSG scaling with rack constraints
@@ -610,6 +646,7 @@ func Test_TAS10_PCSGScalingWithTopologyConstraints(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS10: PCSG scaling with topology constraints)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -664,7 +701,7 @@ func Test_TAS10_PCSGScalingWithTopologyConstraints(t *testing.T) {
 		}
 	})
 
-	Logger.Info("🎉 TAS10: PCSG Scaling with Topology Constraints test completed successfully!")
+	Logger.Info("TAS10: PCSG Scaling with Topology Constraints test completed successfully!")
 }
 
 // Test_TAS11_PCSGPlusPCLQNoParentConstraint tests PCSG rack + PCLQ host constraints without PCS constraint
@@ -689,6 +726,7 @@ func Test_TAS11_PCSGPlusPCLQNoParentConstraint(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS11: PCSG rack + PCLQ host, no PCS constraint)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -720,7 +758,7 @@ func Test_TAS11_PCSGPlusPCLQNoParentConstraint(t *testing.T) {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
-	Logger.Info("🎉 TAS11: PCSG+PCLQ Constraint test completed successfully!")
+	Logger.Info("TAS11: PCSG+PCLQ Constraint test completed successfully!")
 }
 
 // Test_TAS12_LargeScalingRatio tests large PCSG scaling ratio with minAvailable
@@ -747,6 +785,7 @@ func Test_TAS12_LargeScalingRatio(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS12: Large scaling ratio, replicas=10/minAvailable=3)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -814,7 +853,7 @@ func Test_TAS12_LargeScalingRatio(t *testing.T) {
 		}
 	}
 
-	Logger.Info("🎉 TAS12: Large Scaling Ratio test completed successfully!")
+	Logger.Info("TAS12: Large Scaling Ratio test completed successfully!")
 }
 
 // Test_TAS13_InsufficientNodesForConstraint tests gang scheduling failure with unsatisfiable topology constraint
@@ -838,6 +877,7 @@ func Test_TAS13_InsufficientNodesForConstraint(t *testing.T) {
 	)
 	defer cleanup()
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
+	ensureGroveTopology(ctx, t, topology.NewTopologyVerifier(tc.Client, Logger))
 
 	Logger.Info("2. Deploy workload (TAS13: insufficient nodes for rack constraint)")
 	_, err := tc.DeployAndVerifyWorkload()
@@ -873,7 +913,7 @@ func Test_TAS13_InsufficientNodesForConstraint(t *testing.T) {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
-	Logger.Info("🎉 TAS13: Insufficient Nodes for Constraint test completed successfully!")
+	Logger.Info("TAS13: Insufficient Nodes for Constraint test completed successfully!")
 }
 
 // Test_TAS14_MultiReplicaWithRackConstraint tests multiple PCS replicas with rack constraints
@@ -898,6 +938,7 @@ func Test_TAS14_MultiReplicaWithRackConstraint(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS14: multi-replica with rack constraint)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -927,7 +968,7 @@ func Test_TAS14_MultiReplicaWithRackConstraint(t *testing.T) {
 		}
 	}
 
-	Logger.Info("🎉 TAS14: Multi-Replica with Rack Constraint test completed successfully!")
+	Logger.Info("TAS14: Multi-Replica with Rack Constraint test completed successfully!")
 }
 
 // Test_TAS15_DisaggregatedInferenceMultiplePCSGs tests disaggregated inference with multiple PCSGs
@@ -955,6 +996,7 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS15: disaggregated inference with multiple PCSGs)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -1042,7 +1084,7 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 		}
 	})
 
-	Logger.Info("🎉 TAS15: Disaggregated Inference with Multiple PCSGs test completed successfully!")
+	Logger.Info("TAS15: Disaggregated Inference with Multiple PCSGs test completed successfully!")
 }
 
 // Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy tests multi-replica PCS with full 3-level topology hierarchy
@@ -1068,6 +1110,7 @@ func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
+	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS16: 2 PCS replicas with 3-level topology hierarchy)")
 	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
 	if err != nil {
@@ -1140,5 +1183,407 @@ func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 		}
 	}
 
-	Logger.Info("🎉 TAS16: Multi-replica PCS with 3-level topology hierarchy test completed successfully!")
+	Logger.Info("TAS16: Multi-replica PCS with 3-level topology hierarchy test completed successfully!")
+}
+
+// Test_TAS17_HeterogeneousGPUCluster tests multi-topology scheduling across H100 and GB200 hardware segments.
+// Same domain name "block" maps to different node label keys in each topology.
+// 1. Prepare 28-node cluster, split into H100 (first 14) and GB200 (last 14) segments
+// 2. Relabel GB200 nodes: remove kubernetes.io/rack, add example.com/nvl-block and example.com/nvlink-domain
+// 3. Create h100-topology (block→kubernetes.io/rack, host→kubernetes.io/hostname)
+// 4. Create gb200-topology (block→example.com/nvl-block, rack→example.com/nvlink-domain, host→kubernetes.io/hostname)
+// 5. Verify KAI Topology CRs auto-created with correct keys
+// 6. Deploy H100 and GB200 workloads, verify pods packed at block level on correct node segments
+func Test_TAS17_HeterogeneousGPUCluster(t *testing.T) {
+	ctx := context.Background()
+
+	Logger.Info("1. Initialize a 28-node Grove cluster for heterogeneous GPU testing")
+	tc, cleanup := testctx.PrepareTest(ctx, t, 28)
+	defer cleanup()
+	tv := topology.NewTopologyVerifier(tc.Client, Logger)
+
+	Logger.Info("2. Get worker node names and split into H100/GB200 segments")
+	workerNodes, err := tv.GetWorkerNodeNames(ctx)
+	if err != nil {
+		t.Fatalf("Failed to get worker node names: %v", err)
+	}
+	if len(workerNodes) < 28 {
+		t.Fatalf("Expected at least 28 worker nodes, got %d", len(workerNodes))
+	}
+	const gb200NodesPerBlock = 7  // 14 GB200 nodes split into 2 blocks of 7
+	h100Nodes := workerNodes[:14] // H100 segment (first 14 nodes keep default labels)
+	gb200Nodes := workerNodes[14:28]
+
+	Logger.Info("3. Relabel GB200 nodes: remove kubernetes.io/rack, add NVLink labels")
+	var labelChanges []topology.NodeLabelChange
+	for idx, nodeName := range gb200Nodes {
+		labelChanges = append(labelChanges, topology.NodeLabelChange{
+			NodeName:     nodeName,
+			RemoveLabels: []string{setup.TopologyLabelRack},
+			AddLabels: map[string]string{
+				"example.com/nvl-block":     fmt.Sprintf("block-%d", idx/gb200NodesPerBlock),
+				"example.com/nvlink-domain": fmt.Sprintf("nvl-domain-%d", idx),
+			},
+		})
+	}
+	labelCleanup, err := tv.MutateNodeLabels(ctx, t, labelChanges)
+	if err != nil {
+		t.Fatalf("Failed to mutate GB200 node labels: %v", err)
+	}
+	defer labelCleanup()
+
+	Logger.Info("4. Create h100-topology (block→kubernetes.io/rack, host→kubernetes.io/hostname)")
+	h100Levels := []corev1alpha1.TopologyLevel{
+		{Domain: corev1alpha1.TopologyDomainBlock, Key: setup.TopologyLabelRack},
+		{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
+	}
+	if err := tv.CreateClusterTopology(ctx, "h100-topology", h100Levels); err != nil {
+		t.Fatalf("Failed to create h100-topology: %v", err)
+	}
+	defer func() {
+		if err := tv.DeleteClusterTopology(ctx, "h100-topology"); err != nil {
+			Logger.Errorf("Failed to delete h100-topology: %v", err)
+		}
+	}()
+
+	Logger.Info("5. Create gb200-topology (block→example.com/nvl-block, rack→example.com/nvlink-domain, host→kubernetes.io/hostname)")
+	gb200Levels := []corev1alpha1.TopologyLevel{
+		{Domain: corev1alpha1.TopologyDomainBlock, Key: "example.com/nvl-block"},
+		{Domain: corev1alpha1.TopologyDomainRack, Key: "example.com/nvlink-domain"},
+		{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
+	}
+	if err := tv.CreateClusterTopology(ctx, "gb200-topology", gb200Levels); err != nil {
+		t.Fatalf("Failed to create gb200-topology: %v", err)
+	}
+	defer func() {
+		if err := tv.DeleteClusterTopology(ctx, "gb200-topology"); err != nil {
+			Logger.Errorf("Failed to delete gb200-topology: %v", err)
+		}
+	}()
+
+	Logger.Info("6. Wait for KAI Topology auto-created for h100-topology (2 keys)")
+	if err := tv.WaitForKAITopology(ctx, "h100-topology",
+		[]string{setup.TopologyLabelRack, setup.TopologyLabelHostname},
+		tc.Timeout, tc.Interval); err != nil {
+		t.Fatalf("Failed to wait for h100-topology KAI Topology: %v", err)
+	}
+
+	Logger.Info("7. Wait for KAI Topology auto-created for gb200-topology (3 keys)")
+	if err := tv.WaitForKAITopology(ctx, "gb200-topology",
+		[]string{"example.com/nvl-block", "example.com/nvlink-domain", setup.TopologyLabelHostname},
+		tc.Timeout, tc.Interval); err != nil {
+		t.Fatalf("Failed to wait for gb200-topology KAI Topology: %v", err)
+	}
+
+	Logger.Info("8. Deploy H100 workload")
+	if _, err := tc.ApplyYAMLFile("../yaml/tas-multi-topology-h100.yaml"); err != nil {
+		t.Fatalf("Failed to apply H100 workload YAML: %v", err)
+	}
+
+	Logger.Info("9. Deploy GB200 workload")
+	if _, err := tc.ApplyYAMLFile("../yaml/tas-multi-topology-gb200.yaml"); err != nil {
+		t.Fatalf("Failed to apply GB200 workload YAML: %v", err)
+	}
+
+	Logger.Info("10. Wait for H100 pods to be ready")
+	h100LabelSelector := "app.kubernetes.io/part-of=tas-h100-workload"
+	allRunning := func(podList *v1.PodList) bool {
+		if len(podList.Items) < 2 {
+			return false
+		}
+		for _, pod := range podList.Items {
+			if pod.Status.Phase != v1.PodRunning {
+				return false
+			}
+		}
+		return true
+	}
+	h100PodList, err := waiter.New[*v1.PodList]().
+		WithTimeout(tc.Timeout).
+		WithInterval(tc.Interval).
+		WithRetryOnError().
+		WaitFor(ctx, func(ctx context.Context) (*v1.PodList, error) {
+			var podList v1.PodList
+			if err := tc.Client.List(ctx, &podList, &client.ListOptions{
+				Namespace: "default",
+				Raw:       &metav1.ListOptions{LabelSelector: h100LabelSelector},
+			}); err != nil {
+				return nil, err
+			}
+			return &podList, nil
+		}, allRunning)
+	if err != nil {
+		t.Fatalf("Failed to wait for H100 pods: %v", err)
+	}
+	h100Pods := h100PodList.Items
+
+	Logger.Info("11. Wait for GB200 pods to be ready")
+	gb200LabelSelector := "app.kubernetes.io/part-of=tas-gb200-workload"
+	gb200PodList, err := waiter.New[*v1.PodList]().
+		WithTimeout(tc.Timeout).
+		WithInterval(tc.Interval).
+		WithRetryOnError().
+		WaitFor(ctx, func(ctx context.Context) (*v1.PodList, error) {
+			var podList v1.PodList
+			if err := tc.Client.List(ctx, &podList, &client.ListOptions{
+				Namespace: "default",
+				Raw:       &metav1.ListOptions{LabelSelector: gb200LabelSelector},
+			}); err != nil {
+				return nil, err
+			}
+			return &podList, nil
+		}, allRunning)
+	if err != nil {
+		t.Fatalf("Failed to wait for GB200 pods: %v", err)
+	}
+	gb200Pods := gb200PodList.Items
+
+	Logger.Info("12. Verify H100 pods packed at block level (kubernetes.io/rack)")
+	if err := tv.VerifyPodsInSameTopologyDomain(ctx, h100Pods, setup.TopologyLabelRack); err != nil {
+		t.Fatalf("Failed to verify H100 pods in same rack (block): %v", err)
+	}
+
+	Logger.Info("13. Verify GB200 pods packed at block level (example.com/nvl-block)")
+	if err := tv.VerifyPodsInSameTopologyDomain(ctx, gb200Pods, "example.com/nvl-block"); err != nil {
+		t.Fatalf("Failed to verify GB200 pods in same nvl-block (block): %v", err)
+	}
+
+	Logger.Info("14. Verify H100 pods are on H100 nodes (not on GB200 nodes)")
+	for _, pod := range h100Pods {
+		if !slices.Contains(h100Nodes, pod.Spec.NodeName) {
+			t.Fatalf("H100 pod %s scheduled on node %s which is not in the H100 segment %v", pod.Name, pod.Spec.NodeName, h100Nodes)
+		}
+	}
+
+	Logger.Info("15. Verify GB200 pods are on GB200 nodes (not on H100 nodes)")
+	for _, pod := range gb200Pods {
+		if !slices.Contains(gb200Nodes, pod.Spec.NodeName) {
+			t.Fatalf("GB200 pod %s scheduled on node %s which is not in the GB200 segment %v", pod.Name, pod.Spec.NodeName, gb200Nodes)
+		}
+	}
+
+	Logger.Info("TAS17: Heterogeneous GPU Cluster test completed successfully!")
+}
+
+// Test_TAS18_ClusterTopologyDriftDetection tests drift detection when a ClusterTopology references
+// a non-existent KAI Topology via schedulerReferences.
+// 1. Create CT with schedulerReferences pointing to a non-existent KAI Topology
+// 2. Verify SchedulerTopologyDrift condition becomes True/Drift
+// 3. Verify SchedulerTopologyStatuses shows InSync=false
+func Test_TAS18_ClusterTopologyDriftDetection(t *testing.T) {
+	const ctName = "drift-detect-topo"
+	const kaiTopoRef = "non-existent-kai-topo"
+	ctx := context.Background()
+
+	Logger.Info("1. Initialize test environment (0 nodes needed)")
+	tc, cleanup := testctx.PrepareTest(ctx, t, 0)
+	defer cleanup()
+	tv := topology.NewTopologyVerifier(tc.Client, Logger)
+
+	Logger.Info("2. Create CT with schedulerReferences pointing to non-existent KAI Topology")
+	levels := []corev1alpha1.TopologyLevel{
+		{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
+		{Domain: corev1alpha1.TopologyDomainRack, Key: setup.TopologyLabelRack},
+		{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
+	}
+	refs := []corev1alpha1.SchedulerReference{
+		{SchedulerName: "kai-scheduler", Reference: kaiTopoRef},
+	}
+	if err := tv.CreateClusterTopologyWithSchedulerReferences(ctx, ctName, levels, refs); err != nil {
+		t.Fatalf("Failed to create ClusterTopology with scheduler references: %v", err)
+	}
+	defer func() {
+		if err := tv.DeleteClusterTopology(ctx, ctName); err != nil {
+			Logger.Errorf("Failed to delete %s: %v", ctName, err)
+		}
+	}()
+
+	Logger.Info("3. Wait for SchedulerTopologyDrift condition to become True/Drift")
+	if err := tv.WaitForClusterTopologyCondition(ctx, ctName,
+		apicommonconstants.ConditionSchedulerTopologyDrift,
+		string(metav1.ConditionTrue),
+		apicommonconstants.ConditionReasonDrift,
+		tc.Timeout, tc.Interval); err != nil {
+		t.Fatalf("Failed to wait for SchedulerTopologyDrift=True/Drift: %v", err)
+	}
+
+	Logger.Info("4. Verify SchedulerTopologyStatuses count and InSync=false")
+	statuses, err := tv.VerifyClusterTopologySchedulerStatuses(ctx, ctName, 1)
+	if err != nil {
+		t.Fatalf("Failed to verify scheduler topology statuses: %v", err)
+	}
+	if statuses[0].InSync {
+		t.Fatalf("Expected SchedulerTopologyStatus InSync=false, got true")
+	}
+	if statuses[0].Reference != kaiTopoRef {
+		t.Fatalf("Expected SchedulerTopologyStatus Reference='%s', got '%s'", kaiTopoRef, statuses[0].Reference)
+	}
+
+	Logger.Info("TAS18: ClusterTopology Drift Detection test completed successfully!")
+}
+
+// Test_TAS19_AutoManagedCTLifecycle tests that auto-managed ClusterTopologies (no schedulerReferences)
+// have their KAI Topology automatically created and updated when levels change.
+// 1. Create CT with 2 levels (zone, host) — no schedulerReferences
+// 2. Verify KAI Topology auto-created with matching keys
+// 3. Verify SchedulerTopologyDrift = False/InSync
+// 4. Update CT to 3 levels (add rack)
+// 5. Verify KAI Topology recreated with 3 keys
+// 6. Verify SchedulerTopologyDrift remains False/InSync
+func Test_TAS19_AutoManagedCTLifecycle(t *testing.T) {
+	const ctName = "lifecycle-topo"
+	ctx := context.Background()
+
+	Logger.Info("1. Initialize test environment (0 nodes needed)")
+	tc, cleanup := testctx.PrepareTest(ctx, t, 0)
+	defer cleanup()
+	tv := topology.NewTopologyVerifier(tc.Client, Logger)
+
+	Logger.Info("2. Create CT with 2 levels (zone, host) — no schedulerReferences")
+	levels2 := []corev1alpha1.TopologyLevel{
+		{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
+		{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
+	}
+	if err := tv.CreateClusterTopology(ctx, ctName, levels2); err != nil {
+		t.Fatalf("Failed to create %s: %v", ctName, err)
+	}
+	defer func() {
+		if err := tv.DeleteClusterTopology(ctx, ctName); err != nil {
+			Logger.Errorf("Failed to delete %s: %v", ctName, err)
+		}
+	}()
+
+	Logger.Info("3. Wait for KAI Topology auto-created with 2 keys")
+	if err := tv.WaitForKAITopology(ctx, ctName,
+		[]string{setup.TopologyLabelZone, setup.TopologyLabelHostname},
+		tc.Timeout, tc.Interval); err != nil {
+		t.Fatalf("Failed to wait for %s KAI Topology with 2 keys: %v", ctName, err)
+	}
+
+	Logger.Info("4. Verify SchedulerTopologyDrift = False/InSync")
+	if err := tv.WaitForClusterTopologyCondition(ctx, ctName,
+		apicommonconstants.ConditionSchedulerTopologyDrift,
+		string(metav1.ConditionFalse),
+		apicommonconstants.ConditionReasonInSync,
+		tc.Timeout, tc.Interval); err != nil {
+		t.Fatalf("Failed to wait for SchedulerTopologyDrift=False/InSync: %v", err)
+	}
+
+	Logger.Info("5. Update CT to 3 levels (add rack)")
+	levels3 := []corev1alpha1.TopologyLevel{
+		{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
+		{Domain: corev1alpha1.TopologyDomainRack, Key: setup.TopologyLabelRack},
+		{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
+	}
+	if err := tv.UpdateClusterTopologyLevels(ctx, ctName, levels3); err != nil {
+		t.Fatalf("Failed to update %s to 3 levels: %v", ctName, err)
+	}
+
+	Logger.Info("6. Wait for KAI Topology recreated with 3 keys")
+	if err := tv.WaitForKAITopology(ctx, ctName,
+		[]string{setup.TopologyLabelZone, setup.TopologyLabelRack, setup.TopologyLabelHostname},
+		tc.Timeout, tc.Interval); err != nil {
+		t.Fatalf("Failed to wait for %s KAI Topology with 3 keys: %v", ctName, err)
+	}
+
+	Logger.Info("7. Verify SchedulerTopologyDrift remains False/InSync")
+	if err := tv.WaitForClusterTopologyCondition(ctx, ctName,
+		apicommonconstants.ConditionSchedulerTopologyDrift,
+		string(metav1.ConditionFalse),
+		apicommonconstants.ConditionReasonInSync,
+		tc.Timeout, tc.Interval); err != nil {
+		t.Fatalf("Failed to wait for SchedulerTopologyDrift=False/InSync after update: %v", err)
+	}
+
+	Logger.Info("TAS19: Auto-Managed CT Lifecycle test completed successfully!")
+}
+
+// Test_TAS20_PCSTopologyLevelsUnavailableCondition tests the PCS TopologyLevelsUnavailable condition lifecycle.
+// The webhook rejects a PCS referencing a non-existent CT, so we simulate the deletion scenario:
+// 1. Create the ClusterTopology (tas20-topology)
+// 2. Deploy the PCS (admitted since CT exists)
+// 3. Delete the ClusterTopology (simulates CT removed after job was created)
+// 4. Verify TopologyLevelsUnavailable = Unknown/ClusterTopologyNotFound on PCS
+// 5. Re-create the ClusterTopology
+// 6. Verify TopologyLevelsUnavailable = False/AllClusterTopologyLevelsAvailable
+// 7. Wait for pods to become ready
+func Test_TAS20_PCSTopologyLevelsUnavailableCondition(t *testing.T) {
+	ctx := context.Background()
+
+	Logger.Info("1. Initialize a 2-node Grove cluster for PCS condition testing")
+	tc, cleanup := testctx.PrepareTest(ctx, t, 2,
+		testctx.WithWorkload(&testctx.WorkloadConfig{
+			Name:         "tas-topology-condition",
+			YAMLPath:     "../yaml/tas-topology-condition.yaml",
+			Namespace:    "default",
+			ExpectedPods: 2,
+		}),
+	)
+	defer cleanup()
+	tv := topology.NewTopologyVerifier(tc.Client, Logger)
+
+	levels := []corev1alpha1.TopologyLevel{
+		{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
+		{Domain: corev1alpha1.TopologyDomainRack, Key: setup.TopologyLabelRack},
+		{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
+	}
+
+	Logger.Info("2. Create tas20-topology ClusterTopology")
+	if err := tv.CreateClusterTopology(ctx, "tas20-topology", levels); err != nil {
+		t.Fatalf("Failed to create tas20-topology: %v", err)
+	}
+	defer func() {
+		if err := tv.DeleteClusterTopology(ctx, "tas20-topology"); err != nil {
+			Logger.Errorf("Failed to delete tas20-topology: %v", err)
+		}
+	}()
+
+	Logger.Info("3. Apply PCS workload YAML (tas20-topology now exists, webhook admits it)")
+	if _, err := tc.ApplyYAMLFile(tc.Workload.YAMLPath); err != nil {
+		t.Fatalf("Failed to apply topology condition workload YAML: %v", err)
+	}
+
+	Logger.Info("3a. Wait for PCS to be reconciled with CT present")
+	if err := tv.WaitForPCSCondition(ctx, "default", "tas-topology-condition",
+		apicommonconstants.ConditionTopologyLevelsUnavailable,
+		string(metav1.ConditionFalse),
+		apicommonconstants.ConditionReasonAllTopologyLevelsAvailable,
+		tc.Timeout, tc.Interval); err != nil {
+		t.Fatalf("Failed to wait for PCS to be reconciled before deleting CT: %v", err)
+	}
+
+	Logger.Info("4. Delete tas20-topology to simulate CT removal after PCS was created")
+	if err := tv.DeleteClusterTopology(ctx, "tas20-topology"); err != nil {
+		t.Fatalf("Failed to delete tas20-topology: %v", err)
+	}
+
+	Logger.Info("5. Wait for TopologyLevelsUnavailable = Unknown/ClusterTopologyNotFound on PCS")
+	if err := tv.WaitForPCSCondition(ctx, "default", "tas-topology-condition",
+		apicommonconstants.ConditionTopologyLevelsUnavailable,
+		string(metav1.ConditionUnknown),
+		apicommonconstants.ConditionReasonClusterTopologyNotFound,
+		tc.Timeout, tc.Interval); err != nil {
+		t.Fatalf("Failed to wait for TopologyLevelsUnavailable=Unknown/ClusterTopologyNotFound: %v", err)
+	}
+
+	Logger.Info("6. Re-create tas20-topology ClusterTopology")
+	if err := tv.CreateClusterTopology(ctx, "tas20-topology", levels); err != nil {
+		t.Fatalf("Failed to re-create tas20-topology: %v", err)
+	}
+
+	Logger.Info("7. Wait for TopologyLevelsUnavailable = False/AllClusterTopologyLevelsAvailable")
+	if err := tv.WaitForPCSCondition(ctx, "default", "tas-topology-condition",
+		apicommonconstants.ConditionTopologyLevelsUnavailable,
+		string(metav1.ConditionFalse),
+		apicommonconstants.ConditionReasonAllTopologyLevelsAvailable,
+		tc.Timeout, tc.Interval); err != nil {
+		t.Fatalf("Failed to wait for TopologyLevelsUnavailable=False/AllClusterTopologyLevelsAvailable: %v", err)
+	}
+
+	Logger.Info("8. Wait for all pods to be ready")
+	if err := tc.WaitForPods(2); err != nil {
+		t.Fatalf("Failed to wait for pods to be ready: %v", err)
+	}
+
+	Logger.Info("TAS20: PCS TopologyLevelsUnavailable Condition test completed successfully!")
 }

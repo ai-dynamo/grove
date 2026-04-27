@@ -70,21 +70,20 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs 
 		)
 	}
 
-	// Implementation NOTE:
-	// In the current version of the code ClusterTopology CR is created by Grove operator and its contents
-	// are based on OperatorConfiguration.TopologyAwareSchedulingConfig. _resource struct already has access
-	// to OperatorConfiguration.TopologyAwareSchedulingConfig so we could have used it directly instead of fetching
-	// ClusterTopology CR again. This is true now, but in future this will change when we introduce support for
-	// externally defined ClusterTopology CR. Hence, fetching ClusterTopology CR here to keep the code future-proof.
 	sc.tasEnabled = r.tasConfig.Enabled
 	if r.tasConfig.Enabled {
-		sc.topologyLevels, err = clustertopology.GetClusterTopologyLevels(ctx, r.client, grovecorev1alpha1.DefaultClusterTopologyName)
-		if err != nil {
-			return nil, groveerr.WrapError(err,
-				errCodeGetClusterTopologyLevels,
-				component.OperationSync,
-				"failed to get cluster topology levels")
+		topologyName, resolveErr := componentutils.ResolveTopologyNameForPodCliqueSet(pcs)
+		if resolveErr == nil && topologyName != "" {
+			sc.topologyLevels, err = clustertopology.GetClusterTopologyLevels(ctx, r.client, topologyName)
+			if err != nil {
+				return nil, groveerr.WrapError(err,
+					errCodeGetClusterTopologyLevels,
+					component.OperationSync,
+					fmt.Sprintf("failed to get cluster topology levels for %q", topologyName))
+			}
 		}
+		// If topologyName is empty, sc.topologyLevels stays nil — the PCS reconciler
+		// handles this via the TopologyNameMissing condition.
 	}
 
 	if err = r.computeExpectedPodGangs(sc); err != nil {

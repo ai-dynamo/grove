@@ -11,6 +11,7 @@ spec:
   replicas: 2
   template:
     topologyConstraint:
+      topologyName: grove-topology
       packDomain: block
     podCliqueScalingGroups:
       - name: decoder
