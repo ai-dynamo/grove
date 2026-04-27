@@ -426,7 +426,7 @@ func requirePodSpecMNNVLClaim(t *testing.T, podSpec *corev1.PodSpec, pcsName str
 	require.NotNil(t, mnnvlClaim.ResourceClaimTemplateName,
 		"GPU clique should reference a ResourceClaimTemplate")
 
-	expectedRCTName := mnnvl.GenerateRCTName(apicommon.ResourceNameReplica{Name: pcsName, Replica: replicaIndex})
+	expectedRCTName := mnnvl.GenerateRCTName(apicommon.ResourceNameReplica{Name: pcsName, Replica: replicaIndex}, "")
 	assert.Equal(t, expectedRCTName, *mnnvlClaim.ResourceClaimTemplateName)
 
 }

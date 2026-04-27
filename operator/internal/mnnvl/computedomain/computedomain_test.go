@@ -81,37 +81,43 @@ func TestNew(t *testing.T) {
 
 func Test_generateComputeDomainName(t *testing.T) {
 	testCases := []struct {
-		description string
-		input       apicommon.ResourceNameReplica
-		groupName   string
-		expected    string
+		description  string
+		pcsName      string
+		replicaIndex int
+		groupName    string
+		expected     string
 	}{
 		{
-			description: "default group replica 0",
-			input:       apicommon.ResourceNameReplica{Name: "mypcs", Replica: 0},
-			expected:    "mypcs-0",
+			description:  "default group replica 0",
+			pcsName:      "mypcs",
+			replicaIndex: 0,
+			expected:     "mypcs-0",
 		},
 		{
-			description: "default group replica 5",
-			input:       apicommon.ResourceNameReplica{Name: "mypcs", Replica: 5},
-			expected:    "mypcs-5",
+			description:  "default group replica 5",
+			pcsName:      "mypcs",
+			replicaIndex: 5,
+			expected:     "mypcs-5",
 		},
 		{
-			description: "default group different pcs name",
-			input:       apicommon.ResourceNameReplica{Name: "other-pcs", Replica: 3},
-			expected:    "other-pcs-3",
+			description:  "default group different pcs name",
+			pcsName:      "other-pcs",
+			replicaIndex: 3,
+			expected:     "other-pcs-3",
 		},
 		{
-			description: "named group",
-			input:       apicommon.ResourceNameReplica{Name: "mypcs", Replica: 0},
-			groupName:   "workers",
-			expected:    "mypcs-0-workers",
+			description:  "named group",
+			pcsName:      "mypcs",
+			replicaIndex: 0,
+			groupName:    "workers",
+			expected:     "mypcs-0-workers",
 		},
 		{
-			description: "named group higher replica",
-			input:       apicommon.ResourceNameReplica{Name: "training", Replica: 2},
-			groupName:   "encoders",
-			expected:    "training-2-encoders",
+			description:  "named group higher replica",
+			pcsName:      "training",
+			replicaIndex: 2,
+			groupName:    "encoders",
+			expected:     "training-2-encoders",
 		},
 	}
 
@@ -119,7 +125,7 @@ func Test_generateComputeDomainName(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
 			t.Parallel()
-			result := generateComputeDomainName(tc.input, tc.groupName)
+			result := generateComputeDomainName(tc.pcsName, tc.replicaIndex, tc.groupName)
 			assert.Equal(t, tc.expected, result)
 		})
 	}
@@ -291,8 +297,8 @@ func TestTriageCDs(t *testing.T) {
 		{
 			description: "exact match — nothing to create or delete",
 			requiredCDs: []cdNameInfo{
-				{name: "pcs-0", replicaIndex: 0},
-				{name: "pcs-1", replicaIndex: 1},
+				{pcsName: "pcs", replicaIndex: 0},
+				{pcsName: "pcs", replicaIndex: 1},
 			},
 			existingCDFQNs:   []string{"pcs-0", "pcs-1"},
 			expectedToCreate: nil,
@@ -301,21 +307,21 @@ func TestTriageCDs(t *testing.T) {
 		{
 			description: "scale out — create missing",
 			requiredCDs: []cdNameInfo{
-				{name: "pcs-0", replicaIndex: 0},
-				{name: "pcs-1", replicaIndex: 1},
-				{name: "pcs-2", replicaIndex: 2},
+				{pcsName: "pcs", replicaIndex: 0},
+				{pcsName: "pcs", replicaIndex: 1},
+				{pcsName: "pcs", replicaIndex: 2},
 			},
 			existingCDFQNs: []string{"pcs-0"},
 			expectedToCreate: []cdNameInfo{
-				{name: "pcs-1", replicaIndex: 1},
-				{name: "pcs-2", replicaIndex: 2},
+				{pcsName: "pcs", replicaIndex: 1},
+				{pcsName: "pcs", replicaIndex: 2},
 			},
 			expectedToDelete: nil,
 		},
 		{
 			description: "scale in — delete excess",
 			requiredCDs: []cdNameInfo{
-				{name: "pcs-0", replicaIndex: 0},
+				{pcsName: "pcs", replicaIndex: 0},
 			},
 			existingCDFQNs:   []string{"pcs-0", "pcs-1", "pcs-2"},
 			expectedToCreate: nil,
@@ -324,24 +330,24 @@ func TestTriageCDs(t *testing.T) {
 		{
 			description: "group rename — delete old, create new",
 			requiredCDs: []cdNameInfo{
-				{name: "pcs-0-encoders", replicaIndex: 0, groupName: "encoders"},
-				{name: "pcs-1-encoders", replicaIndex: 1, groupName: "encoders"},
+				{pcsName: "pcs", replicaIndex: 0, groupName: "encoders"},
+				{pcsName: "pcs", replicaIndex: 1, groupName: "encoders"},
 			},
 			existingCDFQNs: []string{"pcs-0-workers", "pcs-1-workers"},
 			expectedToCreate: []cdNameInfo{
-				{name: "pcs-0-encoders", replicaIndex: 0, groupName: "encoders"},
-				{name: "pcs-1-encoders", replicaIndex: 1, groupName: "encoders"},
+				{pcsName: "pcs", replicaIndex: 0, groupName: "encoders"},
+				{pcsName: "pcs", replicaIndex: 1, groupName: "encoders"},
 			},
 			expectedToDelete: []string{"pcs-0-workers", "pcs-1-workers"},
 		},
 		{
 			description: "all new — nothing existing",
 			requiredCDs: []cdNameInfo{
-				{name: "pcs-0", replicaIndex: 0},
+				{pcsName: "pcs", replicaIndex: 0},
 			},
 			existingCDFQNs: nil,
 			expectedToCreate: []cdNameInfo{
-				{name: "pcs-0", replicaIndex: 0},
+				{pcsName: "pcs", replicaIndex: 0},
 			},
 			expectedToDelete: nil,
 		},

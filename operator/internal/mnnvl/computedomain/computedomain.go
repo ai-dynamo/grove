@@ -133,7 +133,7 @@ func (r _resource) createComputeDomains(ctx context.Context, logger logr.Logger,
 	tasks := make([]utils.Task, 0, len(cds))
 	for _, cd := range cds {
 		cd := cd
-		cdObjKey := client.ObjectKey{Name: cd.name, Namespace: pcs.Namespace}
+		cdObjKey := client.ObjectKey{Name: cd.fullName(), Namespace: pcs.Namespace}
 		task := utils.Task{
 			Name: fmt.Sprintf("CreateComputeDomain-%s", cdObjKey),
 			Fn: func(ctx context.Context) error {
@@ -180,8 +180,7 @@ func (r _resource) doCreate(ctx context.Context, logger logr.Logger, pcs *grovec
 
 // buildResource configures a ComputeDomain with the desired state.
 func (r _resource) buildResource(cd *unstructured.Unstructured, pcs *grovecorev1alpha1.PodCliqueSet, cdInfo cdNameInfo) error {
-	pcsReplica := apicommon.ResourceNameReplica{Name: pcs.Name, Replica: cdInfo.replicaIndex}
-	rctName := mnnvl.GenerateRCTName(pcsReplica, cdInfo.groupName)
+	rctName := mnnvl.GenerateRCTName(apicommon.ResourceNameReplica{Name: cdInfo.pcsName, Replica: cdInfo.replicaIndex}, cdInfo.groupName)
 
 	cdComponentLabels := map[string]string{
 		apicommon.LabelAppNameKey:               cd.GetName(),
@@ -306,24 +305,30 @@ func (r _resource) removeFinalizerFromCD(ctx context.Context, logger logr.Logger
 }
 
 // cdNameInfo holds the resolved identity for a single ComputeDomain resource.
+// The full CD name is computed via fullName() to avoid redundancy with the
+// individual components (pcsName, replicaIndex, groupName).
 type cdNameInfo struct {
-	name         string // full CD name, e.g. "my-pcs-0" or "my-pcs-0-workers"
+	pcsName      string
 	replicaIndex int
 	groupName    string // empty for the default group
+}
+
+func (c cdNameInfo) fullName() string {
+	return generateComputeDomainName(c.pcsName, c.replicaIndex, c.groupName)
 }
 
 // triageCDs computes the set differences between required and existing ComputeDomains,
 // returning which CDs need to be created and which names need to be deleted.
 func triageCDs(requiredCDs []cdNameInfo, existingCDFQNs []string) (toCreate []cdNameInfo, toDelete []string) {
 	requiredByName := lo.SliceToMap(requiredCDs, func(cd cdNameInfo) (string, cdNameInfo) {
-		return cd.name, cd
+		return cd.fullName(), cd
 	})
 	existingSet := lo.SliceToMap(existingCDFQNs, func(name string) (string, struct{}) {
 		return name, struct{}{}
 	})
 
 	toCreate = lo.Filter(requiredCDs, func(cd cdNameInfo, _ int) bool {
-		_, exists := existingSet[cd.name]
+		_, exists := existingSet[cd.fullName()]
 		return !exists
 	})
 	toDelete = lo.Filter(existingCDFQNs, func(name string, _ int) bool {
@@ -344,10 +349,9 @@ func getRequiredCDNames(pcs *grovecorev1alpha1.PodCliqueSet) []cdNameInfo {
 
 	var result []cdNameInfo
 	for replicaIndex := range int(pcs.Spec.Replicas) {
-		pcsReplica := apicommon.ResourceNameReplica{Name: pcs.Name, Replica: replicaIndex}
 		for group := range groups {
 			result = append(result, cdNameInfo{
-				name:         generateComputeDomainName(pcsReplica, group),
+				pcsName:      pcs.Name,
 				replicaIndex: replicaIndex,
 				groupName:    group,
 			})
@@ -401,11 +405,11 @@ func resolveGroupName(annotations map[string]string) (string, bool) {
 // generateComputeDomainName creates the CD name for a replica.
 // Without a group: {pcs-name}-{replica-index} (e.g., "my-pcs-0").
 // With a group: {pcs-name}-{replica-index}-{group-name} (e.g., "my-pcs-0-workers").
-func generateComputeDomainName(pcsNameReplica apicommon.ResourceNameReplica, groupName string) string {
+func generateComputeDomainName(pcsName string, replicaIndex int, groupName string) string {
 	if groupName == "" {
-		return fmt.Sprintf("%s-%d", pcsNameReplica.Name, pcsNameReplica.Replica)
+		return fmt.Sprintf("%s-%d", pcsName, replicaIndex)
 	}
-	return fmt.Sprintf("%s-%d-%s", pcsNameReplica.Name, pcsNameReplica.Replica, groupName)
+	return fmt.Sprintf("%s-%d-%s", pcsName, replicaIndex, groupName)
 }
 
 // getSelectorLabels returns labels for selecting ComputeDomains of a PCS.
