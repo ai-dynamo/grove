@@ -332,9 +332,13 @@ func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1alpha1.PodC
 	}
 	pclq.Spec.StartsAfter = dependentPCLQNames
 
-	// Inject MNNVL resourceClaims if enabled on PCSG (propagated from PCS)
-	if mnnvl.IsAutoMNNVLEnabled(pcsg.Annotations) {
-		mnnvl.InjectMNNVLIntoPodSpec(logger, &pclq.Spec.PodSpec, apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex})
+	// Inject MNNVL resourceClaims: clique annotations take priority over PCSG
+	groupName, mnnvlEnabled := mnnvl.ResolveGroupName(pclqTemplateSpec.Annotations)
+	if !mnnvlEnabled {
+		groupName, mnnvlEnabled = mnnvl.ResolveGroupName(pcsg.Annotations)
+	}
+	if mnnvlEnabled {
+		mnnvl.InjectMNNVLIntoPodSpec(logger, &pclq.Spec.PodSpec, apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}, groupName)
 	}
 
 	return nil

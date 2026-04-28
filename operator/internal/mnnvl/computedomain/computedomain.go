@@ -383,23 +383,9 @@ func collectDistinctGroups(pcs *grovecorev1alpha1.PodCliqueSet) map[string]struc
 
 // addGroupFromAnnotation extracts the MNNVL group from annotations and adds it to the set.
 func addGroupFromAnnotation(groups map[string]struct{}, annotations map[string]string) {
-	if group, ok := resolveGroupName(annotations); ok {
+	if group, ok := mnnvl.ResolveGroupName(annotations); ok {
 		groups[group] = struct{}{}
 	}
-}
-
-// resolveGroupName extracts the MNNVL group from a single annotation set.
-// Returns (group, true) when mnnvl-group is set.
-// Returns ("", true) when auto-mnnvl is enabled without a group (default group).
-// Returns ("", false) when MNNVL is not requested.
-func resolveGroupName(annotations map[string]string) (string, bool) {
-	if group, hasGroup := annotations[mnnvl.AnnotationMNNVLGroup]; hasGroup {
-		return group, true
-	}
-	if mnnvl.IsAutoMNNVLEnabled(annotations) {
-		return "", true
-	}
-	return "", false
 }
 
 // generateComputeDomainName creates the CD name for a replica.

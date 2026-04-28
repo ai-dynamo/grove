@@ -66,6 +66,20 @@ func DetectMNNVLConflict(annotations map[string]string) error {
 	return nil
 }
 
+// ResolveGroupName extracts the MNNVL group from a single annotation set.
+// Returns (group, true) when mnnvl-group is set.
+// Returns ("", true) when auto-mnnvl is enabled without a group (default group).
+// Returns ("", false) when MNNVL is not requested.
+func ResolveGroupName(annotations map[string]string) (string, bool) {
+	if group, hasGroup := annotations[AnnotationMNNVLGroup]; hasGroup {
+		return group, true
+	}
+	if IsAutoMNNVLEnabled(annotations) {
+		return "", true
+	}
+	return "", false
+}
+
 // GenerateRCTName creates the ResourceClaimTemplate name for a PCS replica.
 // Without a group: {pcs-name}-{replica-index} (default CD).
 // With a group: {pcs-name}-{replica-index}-{group-name}.

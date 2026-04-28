@@ -83,6 +83,59 @@ func TestIsAutoMNNVLEnabled(t *testing.T) {
 	}
 }
 
+func TestResolveGroupName(t *testing.T) {
+	testCases := []struct {
+		description   string
+		annotations   map[string]string
+		expectedGroup string
+		expectedOk    bool
+	}{
+		{
+			description:   "auto-mnnvl enabled only — default group",
+			annotations:   map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled},
+			expectedGroup: "",
+			expectedOk:    true,
+		},
+		{
+			description:   "mnnvl-group only — named group",
+			annotations:   map[string]string{AnnotationMNNVLGroup: "workers"},
+			expectedGroup: "workers",
+			expectedOk:    true,
+		},
+		{
+			description: "both — group takes precedence",
+			annotations: map[string]string{
+				AnnotationAutoMNNVL:  AnnotationAutoMNNVLEnabled,
+				AnnotationMNNVLGroup: "training",
+			},
+			expectedGroup: "training",
+			expectedOk:    true,
+		},
+		{
+			description: "auto-mnnvl disabled — not enrolled",
+			annotations: map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLDisabled},
+			expectedOk:  false,
+		},
+		{
+			description: "no annotations — not enrolled",
+			annotations: nil,
+			expectedOk:  false,
+		},
+	}
+
+	t.Parallel()
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			t.Parallel()
+			group, ok := ResolveGroupName(tc.annotations)
+			assert.Equal(t, tc.expectedOk, ok)
+			if ok {
+				assert.Equal(t, tc.expectedGroup, group)
+			}
+		})
+	}
+}
+
 func TestGenerateRCTName(t *testing.T) {
 	tests := []struct {
 		description    string

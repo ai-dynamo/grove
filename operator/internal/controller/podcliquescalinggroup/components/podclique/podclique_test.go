@@ -754,6 +754,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 	tests := []struct {
 		description                         string
 		pcsgAnnotations                     map[string]string
+		cliqueAnnotations                   map[string]string
 		containers                          []corev1.Container
 		initContainers                      []corev1.Container
 		expectedContainersWithClaims        []string
@@ -889,6 +890,69 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 			expectedContainersWithoutClaims: []string{"gpu-worker"},
 			expectPodLevelClaim:             false,
 		},
+		{
+			description: "mnnvl-group on PCSG — RCT name includes group",
+			pcsgAnnotations: map[string]string{
+				mnnvl.AnnotationMNNVLGroup: "workers",
+			},
+			containers: []corev1.Container{
+				{
+					Name: "gpu-worker",
+					Resources: corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							constants.GPUResourceName: resource.MustParse("8"),
+						},
+					},
+				},
+			},
+			expectedContainersWithClaims:    []string{"gpu-worker"},
+			expectedContainersWithoutClaims: []string{},
+			expectPodLevelClaim:             true,
+			expectedRCTName:                 "test-pcs-0-workers",
+		},
+		{
+			description: "mnnvl-group on clique overrides PCSG auto-mnnvl",
+			pcsgAnnotations: map[string]string{
+				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+			},
+			cliqueAnnotations: map[string]string{
+				mnnvl.AnnotationMNNVLGroup: "encoders",
+			},
+			containers: []corev1.Container{
+				{
+					Name: "gpu-worker",
+					Resources: corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							constants.GPUResourceName: resource.MustParse("8"),
+						},
+					},
+				},
+			},
+			expectedContainersWithClaims:    []string{"gpu-worker"},
+			expectedContainersWithoutClaims: []string{},
+			expectPodLevelClaim:             true,
+			expectedRCTName:                 "test-pcs-0-encoders",
+		},
+		{
+			description: "mnnvl-group on clique only — no PCSG annotation",
+			cliqueAnnotations: map[string]string{
+				mnnvl.AnnotationMNNVLGroup: "training",
+			},
+			containers: []corev1.Container{
+				{
+					Name: "gpu-worker",
+					Resources: corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							constants.GPUResourceName: resource.MustParse("8"),
+						},
+					},
+				},
+			},
+			expectedContainersWithClaims:    []string{"gpu-worker"},
+			expectedContainersWithoutClaims: []string{},
+			expectPodLevelClaim:             true,
+			expectedRCTName:                 "test-pcs-0-training",
+		},
 	}
 
 	for _, tc := range tests {
@@ -910,7 +974,8 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 						StartupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
 						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
 							{
-								Name: pclqTemplateName,
+								Name:        pclqTemplateName,
+								Annotations: tc.cliqueAnnotations,
 								Spec: grovecorev1alpha1.PodCliqueSpec{
 									Replicas:     1,
 									MinAvailable: ptr.To(int32(1)),

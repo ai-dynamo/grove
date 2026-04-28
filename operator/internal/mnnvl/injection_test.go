@@ -34,6 +34,7 @@ func TestInjectMNNVLIntoPodSpec(t *testing.T) {
 		description                         string
 		podSpec                             *corev1.PodSpec
 		pcsNameReplica                      apicommon.ResourceNameReplica
+		groupName                           string
 		callTwice                           bool     // for idempotency testing
 		expectedContainersWithClaims        []string // container names that should have claims
 		expectedContainersWithoutClaims     []string // container names that should NOT have claims
@@ -64,6 +65,26 @@ func TestInjectMNNVLIntoPodSpec(t *testing.T) {
 			expectedContainersWithClaims:    []string{"gpu-container"},
 			expectedContainersWithoutClaims: []string{},
 			expectedRCTName:                 "my-pcs-0",
+		},
+		{
+			description: "named group — RCT name includes group",
+			podSpec: &corev1.PodSpec{
+				Containers: []corev1.Container{
+					{
+						Name: "gpu-container",
+						Resources: corev1.ResourceRequirements{
+							Limits: corev1.ResourceList{
+								constants.GPUResourceName: resource.MustParse("8"),
+							},
+						},
+					},
+				},
+			},
+			pcsNameReplica:                  apicommon.ResourceNameReplica{Name: "my-pcs", Replica: 1},
+			groupName:                       "workers",
+			expectedContainersWithClaims:    []string{"gpu-container"},
+			expectedContainersWithoutClaims: []string{},
+			expectedRCTName:                 "my-pcs-1-workers",
 		},
 		{
 			description: "injects claims into init container with GPU",
@@ -181,12 +202,10 @@ func TestInjectMNNVLIntoPodSpec(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
-			// Call the function
-			InjectMNNVLIntoPodSpec(logr.Discard(), tc.podSpec, tc.pcsNameReplica)
+			InjectMNNVLIntoPodSpec(logr.Discard(), tc.podSpec, tc.pcsNameReplica, tc.groupName)
 
-			// Call twice for idempotency test
 			if tc.callTwice {
-				InjectMNNVLIntoPodSpec(logr.Discard(), tc.podSpec, tc.pcsNameReplica)
+				InjectMNNVLIntoPodSpec(logr.Discard(), tc.podSpec, tc.pcsNameReplica, tc.groupName)
 			}
 
 			// Skip remaining checks for nil PodSpec
