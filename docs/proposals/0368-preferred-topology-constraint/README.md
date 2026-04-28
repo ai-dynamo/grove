@@ -34,7 +34,7 @@ Grove topology-aware scheduling currently supports required packing through `pac
 
 ## Motivation
 
-Grove is increasingly used as an orchestration layer by higher-level tools (e.g. Dynamo on Run:ai) that submit workloads on behalf of users. These tools often want topology-aware placement to improve workload performance, but the existing workload-facing constraint, `packDomain`, is required: if the requested domain cannot fit the workload, scheduling may remain blocked.
+Grove is increasingly used as an orchestration layer by higher-level tools that submit workloads on behalf of users. These tools often want topology-aware placement to improve workload performance, but the existing workload-facing constraint, `packDomain`, is required: if the requested domain cannot fit the workload, scheduling may remain blocked.
 
 Preferred topology placement addresses this gap by letting the scheduler try for a more optimized placement while still allowing the workload to run when the preference cannot be satisfied. This is useful for platforms that want to apply topology-aware optimization transparently, and for workloads that benefit from locality but should not fail or remain pending solely because the most optimized placement is unavailable.
 
@@ -135,7 +135,7 @@ As a cluster administrator, I want to configure the preferred packing domain on 
 
 #### Story 4: External orchestration platform
 
-As an orchestration platform, such as Dynamo on Run:ai, I want to set `topologyName` when submitting Grove workloads so that topology-aware placement is attempted transparently for users while preserving scheduling fallback behavior.
+As an orchestration platform, I want to set `topologyName` when submitting Grove workloads so that topology-aware placement is attempted transparently for users while preserving scheduling fallback behavior.
 
 ### Limitations/Risks & Mitigations
 
@@ -233,7 +233,7 @@ Existing topology health signals remain relevant:
 - Unit and e2e tests pass
 
 #### Beta
-- Validated in at least one production workload or platform integration, such as Dynamo on Run:ai
+- Validated in at least one production workload or platform integration
 - No breaking API changes since alpha
 - No significant scheduler performance regressions observed from opted-in workloads
 
