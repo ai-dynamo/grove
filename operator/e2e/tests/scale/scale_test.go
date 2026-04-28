@@ -250,10 +250,11 @@ func Test_ScaleTest_1000(t *testing.T) {
 			Milestones: []measurement.MilestoneDefinition{
 				{
 					Name: "pcs-deleted",
-					Condition: &condition.PCSDeletedCondition{
-						Client:    tc.Client.Client,
-						Name:      tc.Workload.Name,
-						Namespace: tc.Namespace,
+					Condition: &condition.PCSFullyDeletedCondition{
+						Client:        tc.Client.Client,
+						Name:          tc.Workload.Name,
+						Namespace:     tc.Namespace,
+						LabelSelector: tc.GetLabelSelector(),
 					},
 				},
 			},
@@ -305,10 +306,11 @@ func Test_ScaleTest_5000_Deletion(t *testing.T) {
 			Milestones: []measurement.MilestoneDefinition{
 				{
 					Name: "pcs-deleted",
-					Condition: &condition.PCSDeletedCondition{
-						Client:    tc.Client.Client,
-						Name:      tc.Workload.Name,
-						Namespace: tc.Namespace,
+					Condition: &condition.PCSFullyDeletedCondition{
+						Client:        tc.Client.Client,
+						Name:          tc.Workload.Name,
+						Namespace:     tc.Namespace,
+						LabelSelector: tc.GetLabelSelector(),
 					},
 				},
 			},
