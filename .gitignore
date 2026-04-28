@@ -53,5 +53,8 @@ scheduler/bin/*
 # generated/copied chart resources
 operator/charts/crds/*
 
+# scale-test result/profile output (per-run)
+operator/e2e/tests/scale/ScaleTest_*/
+
 # Python bytecode cache
 __pycache__/
