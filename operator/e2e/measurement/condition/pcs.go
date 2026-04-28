@@ -54,12 +54,12 @@ func (c *PCSDeletedCondition) Progress(_ context.Context) string {
 	return "Not deleted"
 }
 
-// PCSFullyDeletedCondition checks that the PodCliqueSet and every resource it
+// PCSAndSubresourcesDeletedCondition checks that the PodCliqueSet and every resource it
 // owns transitively (PodCliqueScalingGroups, PodCliques, and Pods carrying the
 // part-of label) are gone from the API. Use this in delete-phase milestones
 // when you want the timeline to reflect actual cascade-cleanup latency, not
 // just finalizer removal on the parent PCS.
-type PCSFullyDeletedCondition struct {
+type PCSAndSubresourcesDeletedCondition struct {
 	Client        client.Client
 	Name          string
 	Namespace     string
@@ -74,7 +74,7 @@ type PCSFullyDeletedCondition struct {
 
 // Met returns true when the PCS, all owned PCSGs, all owned PodCliques, and
 // all owned Pods (matched by LabelSelector) are absent from the API.
-func (c *PCSFullyDeletedCondition) Met(ctx context.Context) (bool, error) {
+func (c *PCSAndSubresourcesDeletedCondition) Met(ctx context.Context) (bool, error) {
 	c.sel.init(c.LabelSelector)
 	s, err := c.sel.get()
 	if err != nil {
@@ -118,7 +118,7 @@ func (c *PCSFullyDeletedCondition) Met(ctx context.Context) (bool, error) {
 }
 
 // Progress returns a human-readable progress string.
-func (c *PCSFullyDeletedCondition) Progress(_ context.Context) string {
+func (c *PCSAndSubresourcesDeletedCondition) Progress(_ context.Context) string {
 	return fmt.Sprintf("PCS=%d PCSG=%d PCLQ=%d Pod=%d remaining", c.lastPCS, c.lastPCSG, c.lastPCLQ, c.lastPod)
 }
 
