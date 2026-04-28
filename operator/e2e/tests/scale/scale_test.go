@@ -174,7 +174,7 @@ func Test_ScaleTest_1000(t *testing.T) {
 		expectedPods: expectedPods,
 		pcsCount:     defaultScalePCSCount,
 		workerNodes:  defaultScaleWorkerNodes,
-		timeout:      15 * time.Minute,
+		timeout:      10 * time.Minute,
 		pollInterval: defaultScalePollInterval,
 	}, func(tracker *measurement.TimelineTracker, tc *testctx.TestContext, runID string) {
 		tracker.AddPhase(measurement.PhaseDefinition{
@@ -276,7 +276,7 @@ func Test_ScaleTest_5000_Deletion(t *testing.T) {
 		expectedPods: expectedPods,
 		pcsCount:     defaultScalePCSCount,
 		workerNodes:  defaultScaleWorkerNodes,
-		timeout:      30 * time.Minute,
+		timeout:      20 * time.Minute,
 		pollInterval: defaultScalePollInterval,
 	}, func(tracker *measurement.TimelineTracker, tc *testctx.TestContext, _ string) {
 		tracker.AddPhase(measurement.PhaseDefinition{
