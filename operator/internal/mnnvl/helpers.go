@@ -80,6 +80,21 @@ func ResolveGroupName(annotations map[string]string) (string, bool) {
 	return "", false
 }
 
+// ResolveGroupNameHierarchically resolves the MNNVL group from multiple
+// annotation layers, ordered from most specific to least specific
+// (e.g., PCLQ → PCSG/PCS). The first layer that requests MNNVL wins —
+// this lets a child layer intentionally override its parent's group,
+// including escaping a named group back to the default group by setting
+// only auto-mnnvl: enabled without mnnvl-group.
+func ResolveGroupNameHierarchically(annotationLayers ...map[string]string) (string, bool) {
+	for _, annotations := range annotationLayers {
+		if group, ok := ResolveGroupName(annotations); ok {
+			return group, true
+		}
+	}
+	return "", false
+}
+
 // GenerateRCTName creates the ResourceClaimTemplate name for a PCS replica.
 // Without a group: {pcs-name}-{replica-index} (default CD).
 // With a group: {pcs-name}-{replica-index}-{group-name}.
