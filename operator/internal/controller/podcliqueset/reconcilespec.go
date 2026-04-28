@@ -19,6 +19,7 @@ package podcliqueset
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
@@ -26,6 +27,7 @@ import (
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
+	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
@@ -149,35 +151,96 @@ func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1alp
 	return nil
 }
 
-// syncPodCliqueSetResources synchronizes all managed child resources in order.
+// syncPodCliqueSetResources synchronizes all managed child resources. Components are
+// sync'd in dependency-ordered groups; within each group sync runs concurrently.
 func (r *Reconciler) syncPodCliqueSetResources(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	continueReconcileAndRequeueKinds := make([]component.Kind, 0)
-	for _, kind := range getOrderedKindsForSync() {
-		operator, err := r.operatorRegistry.GetOperator(kind)
-		if err != nil {
-			// Skip operators that aren't registered (e.g., ComputeDomain when MNNVL is disabled)
-			logger.V(1).Info("Skipping unregistered operator", "kind", kind)
-			continue
-		}
-		logger.Info("Syncing PodCliqueSet resource", "kind", kind)
-		if err = operator.Sync(ctx, logger, pcs); err != nil {
-			if ctrlutils.ShouldContinueReconcileAndRequeue(err) {
-				logger.Info("components has registered a request to requeue post completion of all components syncs", "kind", kind, "message", err.Error())
-				continueReconcileAndRequeueKinds = append(continueReconcileAndRequeueKinds, kind)
-				continue
-			}
-			if shouldRequeue := ctrlutils.ShouldRequeueAfter(err); shouldRequeue {
-				logger.Info("retrying sync due to components", "kind", kind, "syncRetryInterval", constants.ComponentSyncRetryInterval, "message", err.Error())
-				return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, err.Error())
-			}
-			logger.Error(err, "failed to sync PodCliqueSet resources", "kind", kind)
-			return ctrlcommon.ReconcileWithErrors("error syncing managed resources", fmt.Errorf("failed to sync %s: %w", kind, err))
+	for groupIdx, group := range getKindSyncGroups() {
+		result, requeuedKinds := r.syncKindGroup(ctx, logger, pcs, group, groupIdx)
+		continueReconcileAndRequeueKinds = append(continueReconcileAndRequeueKinds, requeuedKinds...)
+		if result != nil {
+			return *result
 		}
 	}
 	if len(continueReconcileAndRequeueKinds) > 0 {
 		return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, fmt.Sprintf("requeueing sync due to components(s) %v after %s", continueReconcileAndRequeueKinds, constants.ComponentSyncRetryInterval))
 	}
 	return ctrlcommon.ContinueReconcile()
+}
+
+// syncKindGroup runs the Sync operation for each kind in the group concurrently.
+// Returns a non-nil ReconcileStepResult if reconciliation should stop for this group,
+// plus the list of kinds that returned "continue and requeue" errors.
+func (r *Reconciler) syncKindGroup(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, group []component.Kind, groupIdx int) (*ctrlcommon.ReconcileStepResult, []component.Kind) {
+	var (
+		mu              sync.Mutex
+		requeuedKinds   []component.Kind
+		requeueAfterMsg string
+		hasRequeueAfter bool
+		errsByKind      []error
+	)
+	tasks := make([]utils.Task, 0, len(group))
+	for _, kind := range group {
+		operator, err := r.operatorRegistry.GetOperator(kind)
+		if err != nil {
+			// MNNVL-only components (ComputeDomain) aren't registered when the feature is
+			// off. Not an error; just nothing to sync.
+			logger.V(1).Info("Skipping unregistered operator", "kind", kind)
+			continue
+		}
+		tasks = append(tasks, utils.Task{
+			Name: fmt.Sprintf("SyncKind-%s", kind),
+			Fn: func(ctx context.Context) error {
+				logger.Info("Syncing PodCliqueSet resource", "kind", kind, "group", groupIdx)
+				err := operator.Sync(ctx, logger, pcs)
+
+				// One lock + defer covers all branches below; requeuedKinds /
+				// hasRequeueAfter / errsByKind are read by the aggregator after
+				// RunConcurrently joins, so writes must be serialised here.
+				mu.Lock()
+				defer mu.Unlock()
+
+				if err == nil {
+					return nil
+				}
+				if ctrlutils.ShouldContinueReconcileAndRequeue(err) {
+					// Component is asking the parent to come back later — that signal is
+					// not a sync failure, so we record the kind and return nil. The
+					// caller bubbles requeuedKinds up and schedules one follow-up
+					// reconcile after the whole sync sweep completes.
+					requeuedKinds = append(requeuedKinds, kind)
+					logger.Info("component requested post-sync requeue", "kind", kind, "message", err.Error())
+					return nil
+				}
+				if ctrlutils.ShouldRequeueAfter(err) {
+					// Timed retry — caller will return ReconcileAfter for the whole
+					// group. First setter wins; runs are deterministic enough that the
+					// chosen message is fine.
+					hasRequeueAfter = true
+					requeueAfterMsg = err.Error()
+					return err
+				}
+				// Real failure: surface it as a reconcile error.
+				logger.Error(err, "failed to sync PodCliqueSet resource", "kind", kind)
+				errsByKind = append(errsByKind, fmt.Errorf("failed to sync %s: %w", kind, err))
+				return err
+			},
+		})
+	}
+	if len(tasks) == 0 {
+		return nil, nil
+	}
+	_ = utils.RunConcurrently(ctx, logger, tasks)
+
+	if hasRequeueAfter {
+		result := ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, requeueAfterMsg)
+		return &result, requeuedKinds
+	}
+	if len(errsByKind) > 0 {
+		result := ctrlcommon.ReconcileWithErrors("error syncing managed resources", errsByKind...)
+		return &result, requeuedKinds
+	}
+	return nil, requeuedKinds
 }
 
 // updateObservedGeneration updates the status to reflect the current observed generation.
@@ -207,20 +270,33 @@ func (r *Reconciler) recordIncompleteReconcile(ctx context.Context, logger logr.
 	return *errResult
 }
 
-// getOrderedKindsForSync returns the ordered list of component kinds to synchronize.
-func getOrderedKindsForSync() []component.Kind {
-	return []component.Kind{
-		component.KindServiceAccount,
-		component.KindRole,
-		component.KindRoleBinding,
-		component.KindServiceAccountTokenSecret,
-		component.KindHeadlessService,
-		component.KindHorizontalPodAutoscaler,
-		component.KindPodCliqueSetReplica,
-		component.KindComputeDomain,
-		component.KindResourceClaim,
-		component.KindPodClique,
-		component.KindPodCliqueScalingGroup,
-		component.KindPodGang,
+// getKindSyncGroups returns the component kinds grouped by dependency. Kinds within the
+// same group have no dependencies on one another and can be sync'd concurrently; groups
+// are processed in order to respect cross-group dependencies.
+func getKindSyncGroups() [][]component.Kind {
+	return [][]component.Kind{
+		// G1: RBAC + static per-PCS infra (Service, HPA targets by name so no ordering
+		// vs PodClique/PCSG needed, ComputeDomain/ResourceClaim are independent add-ons).
+		{
+			component.KindServiceAccount,
+			component.KindRole,
+			component.KindRoleBinding,
+			component.KindServiceAccountTokenSecret,
+			component.KindHeadlessService,
+			component.KindHorizontalPodAutoscaler,
+			component.KindPodCliqueSetReplica,
+			component.KindComputeDomain,
+			component.KindResourceClaim,
+		},
+		// G2: PodClique must exist before PodGang can reference their pods.
+		{
+			component.KindPodClique,
+		},
+		// G3: PCSG and PodGang run concurrently — PCSG creates its own PodCliques via a
+		// separate reconciler, and PodGang reads existing PodClique/Pod state.
+		{
+			component.KindPodCliqueScalingGroup,
+			component.KindPodGang,
+		},
 	}
 }

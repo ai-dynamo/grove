@@ -140,6 +140,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Pull registry image from GHCR to avoid Docker Hub rate limits
+        run: |
+          docker pull ghcr.io/distribution/distribution:3.1.0
+          docker tag ghcr.io/distribution/distribution:3.1.0 registry:2
+
       - name: E2E Setup
         uses: ./.github/actions/e2e-setup
 

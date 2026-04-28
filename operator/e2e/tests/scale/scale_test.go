@@ -72,8 +72,12 @@ const (
 	scaleTestYAMLPath  = "../../yaml/scale-test-1000.yaml"
 	scaleTestNamespace = "default"
 
-	runIDTimeFormat    = "20060102-150405"
+	runIDTimeFormat   = "20060102-150405"
 	outputResultsFile = "scale-test-results.json"
+
+	// steadyStateWindow keeps the pprof/measurement window open after a no-op reconcile
+	// trigger so the full ~500-PodClique spec-hash-short-circuit burst has time to run.
+	steadyStateWindow = 30 * time.Second
 )
 
 func Test_ScaleTest_1000(t *testing.T) {
@@ -164,6 +168,34 @@ func Test_ScaleTest_1000(t *testing.T) {
 					Namespace:     tc.Namespace,
 					ExpectedCount: scaleTestExpectedReplicas,
 				},
+			},
+		},
+	})
+
+	// steady-state-reconcile: patch a metadata annotation to force one reconcile cycle
+	// without touching spec. With the spec-hash short-circuit in place, the PCS→PodClique
+	// update path should fire cache hits for every PodClique. pprof captured during this
+	// window isolates the no-op reconcile cost.
+	steadyStateTriggerID := fmt.Sprintf("steady-%s", runID)
+	tracker.AddPhase(measurement.PhaseDefinition{
+		Name: "steady-state-reconcile",
+		ActionFn: func(ctx context.Context) error {
+			Logger.Info("triggering no-op PCS reconcile")
+			return workload.NewWorkloadManager(tc.Client, Logger).TriggerPCSReconcile(ctx, tc.Namespace, tc.Workload.Name, steadyStateTriggerID)
+		},
+		Milestones: []measurement.MilestoneDefinition{
+			{
+				Name: "pcs-still-available",
+				Condition: &condition.PCSAvailableCondition{
+					Client:        tc.Client.Client,
+					Name:          tc.Workload.Name,
+					Namespace:     tc.Namespace,
+					ExpectedCount: scaleTestExpectedReplicas,
+				},
+			},
+			{
+				Name:      "steady-state-window",
+				Condition: &condition.TimerCondition{Duration: steadyStateWindow},
 			},
 		},
 	})

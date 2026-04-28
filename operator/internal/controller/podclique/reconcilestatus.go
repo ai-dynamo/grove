@@ -30,6 +30,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -40,6 +41,10 @@ import (
 func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
 	pcsName := componentutils.GetPodCliqueSetName(pclq.ObjectMeta)
 	pclqObjectKey := client.ObjectKeyFromObject(pclq)
+	// Snapshot status for both the merge-patch base AND a change check below. When the
+	// status is unchanged — common during steady-state reconciles — we skip the API call
+	// entirely.
+	originalStatus := pclq.Status.DeepCopy()
 	patch := client.MergeFrom(pclq.DeepCopy())
 
 	pcs, err := componentutils.GetPodCliqueSet(ctx, r.client, pclq.ObjectMeta)
@@ -82,6 +87,17 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 
 	// mirror UpdateProgress to the deprecated RollingUpdateProgress field for backward compatibility.
 	mirrorUpdateProgressToRollingUpdateProgress(pclq)
+
+	// Skip the status patch when every mutate* above left status byte-identical to what the
+	// previous reconcile already persisted. The mutators above are the only code that writes
+	// pclq.Status in this path, so equality means there is nothing for the apiserver to
+	// store. Issuing the Patch anyway is not just wasted RPC; it bumps resourceVersion and
+	// fires a watch event that wakes every controller observing PodCliques, which on a quiet
+	// cluster cascades into N spurious reconciles. equality.Semantic is needed (not plain
+	// ==) because the status mixes counters, pointers, conditions, and a label-selector map.
+	if equality.Semantic.DeepEqual(*originalStatus, pclq.Status) {
+		return ctrlcommon.ContinueReconcile()
+	}
 
 	// update the PodClique status.
 	if err := r.client.Status().Patch(ctx, pclq, patch); err != nil {

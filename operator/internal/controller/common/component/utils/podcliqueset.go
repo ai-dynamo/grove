@@ -61,17 +61,47 @@ func isStandalonePCLQ(pcs *grovecorev1alpha1.PodCliqueSet, pclqName string) bool
 	}, false)
 }
 
-// GetPodCliqueSet gets the owner PodCliqueSet object.
+// pcsCacheKey is a context key for per-reconcile memoization of GetPodCliqueSet results.
+// In the PodClique reconcile flow alone we Get the same PCS up to 4 times (reconcileSpec,
+// reconcileStatus, pod.prepareSyncFlow, resourceclaim) — each DeepCopying the full template.
+type pcsCacheKey struct{}
+
+// pcsCache holds one slot keyed by "namespace/name".
+type pcsCache struct {
+	byKey map[string]*grovecorev1alpha1.PodCliqueSet
+}
+
+// WithPodCliqueSetCache returns a context that memoizes GetPodCliqueSet results for the
+// lifetime of one reconcile. Call this once at the top of Reconcile and propagate the ctx.
+func WithPodCliqueSetCache(ctx context.Context) context.Context {
+	return context.WithValue(ctx, pcsCacheKey{}, &pcsCache{byKey: make(map[string]*grovecorev1alpha1.PodCliqueSet, 1)})
+}
+
+// GetPodCliqueSet gets the owner PodCliqueSet object. When the context carries a cache from
+// WithPodCliqueSetCache, the first lookup populates it and subsequent calls skip the Get.
+// The returned pointer is the cached instance — callers must not mutate it in place.
 func GetPodCliqueSet(ctx context.Context, cl client.Client, objectMeta metav1.ObjectMeta) (*grovecorev1alpha1.PodCliqueSet, error) {
 	pcsName := GetPodCliqueSetName(objectMeta)
+	key := objectMeta.Namespace + "/" + pcsName
+	cache, _ := ctx.Value(pcsCacheKey{}).(*pcsCache)
+	if cache != nil {
+		if pcs, ok := cache.byKey[key]; ok {
+			return pcs, nil
+		}
+	}
 	pcs := &grovecorev1alpha1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      pcsName,
 			Namespace: objectMeta.Namespace,
 		},
 	}
-	err := cl.Get(ctx, client.ObjectKeyFromObject(pcs), pcs)
-	return pcs, err
+	if err := cl.Get(ctx, client.ObjectKeyFromObject(pcs), pcs); err != nil {
+		return pcs, err
+	}
+	if cache != nil {
+		cache.byKey[key] = pcs
+	}
+	return pcs, nil
 }
 
 // GetPodCliqueSetName retrieves the PodCliqueSet name from the labels of the given ObjectMeta.

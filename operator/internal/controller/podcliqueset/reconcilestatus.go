@@ -30,6 +30,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,6 +40,9 @@ import (
 
 // reconcileStatus updates the PodCliqueSet status with current replica counts and rolling update progress
 func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
+	// Snapshot status before mutations so we can skip the Update call when nothing changes.
+	originalStatus := pcs.Status.DeepCopy()
+
 	// Calculate available replicas using PCSG-inspired approach
 	err := r.mutateReplicas(ctx, logger, pcs)
 	if err != nil {
@@ -52,6 +56,16 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 
 	// mirror UpdateProgress to the deprecated RollingUpdateProgress field for backward compatibility.
 	mirrorUpdateProgressToRollingUpdateProgress(pcs)
+
+	// Skip the status update when every mutate* above left status byte-identical to what
+	// the previous reconcile already persisted. The mutators are the only code writing
+	// pcs.Status here, so equality means there is nothing for the apiserver to store.
+	// Issuing the Update anyway bumps resourceVersion and fires a watch event that wakes
+	// every PCS observer and cascades into spurious reconciles. equality.Semantic is
+	// required because the status mixes counters, pointers, and conditions.
+	if equality.Semantic.DeepEqual(*originalStatus, pcs.Status) {
+		return ctrlcommon.ContinueReconcile()
+	}
 
 	// Update the PodCliqueSet status
 	if err = r.client.Status().Update(ctx, pcs); err != nil {
