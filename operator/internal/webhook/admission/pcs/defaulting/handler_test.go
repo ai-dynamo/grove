@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -47,7 +46,7 @@ func TestNewHandler(t *testing.T) {
 		Logger: logr.Discard(),
 	}
 
-	handler := NewHandler(mgr, configv1alpha1.NetworkAcceleration{})
+	handler := NewHandler(mgr)
 	require.NotNil(t, handler)
 	assert.NotNil(t, handler.logger)
 }
@@ -198,7 +197,7 @@ func TestDefault(t *testing.T) {
 				Logger: logr.Discard(),
 			}
 
-			handler := NewHandler(mgr, configv1alpha1.NetworkAcceleration{})
+			handler := NewHandler(mgr)
 
 			ctx := context.Background()
 			if tt.setupContext != nil {

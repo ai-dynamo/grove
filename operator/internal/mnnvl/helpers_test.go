@@ -121,6 +121,11 @@ func TestResolveGroupName(t *testing.T) {
 			annotations: nil,
 			expectedOk:  false,
 		},
+		{
+			description: "unrelated annotations only — not enrolled",
+			annotations: map[string]string{"other": "value"},
+			expectedOk:  false,
+		},
 	}
 
 	t.Parallel()
@@ -570,6 +575,32 @@ func createPCSWithoutGPU(annotations map[string]string) *grovecorev1alpha1.PodCl
 		WithPodCliqueTemplateSpec(
 			testutils.NewPodCliqueTemplateSpecBuilder("worker").
 				WithContainer(testutils.NewContainer("app", "nginx:latest")).
+				Build(),
+		).
+		Build()
+}
+
+// createPCSWithNonGPUCliqueAnnotations creates a PCS with a single non-GPU clique
+// carrying the given annotations.
+func createPCSWithNonGPUCliqueAnnotations(cliqueAnnotations map[string]string) *grovecorev1alpha1.PodCliqueSet {
+	return testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder("cpu-worker").
+				WithAnnotations(cliqueAnnotations).
+				WithContainer(testutils.NewContainer("app", "nginx:latest")).
+				Build(),
+		).
+		Build()
+}
+
+// createPCSWithGPUCliqueAnnotations creates a PCS with a single GPU clique
+// carrying the given annotations.
+func createPCSWithGPUCliqueAnnotations(cliqueAnnotations map[string]string) *grovecorev1alpha1.PodCliqueSet {
+	return testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder("gpu-worker").
+				WithAnnotations(cliqueAnnotations).
+				WithContainer(testutils.NewGPUContainer("train", "nvidia/cuda:latest", 8)).
 				Build(),
 		).
 		Build()

@@ -231,8 +231,8 @@ const (
 )
 
 
-// buildGPUPCS builds a PCS with GPU requirements
-func buildGPUPCS(name string, replicas int) *grovecorev1alpha1.PodCliqueSet {
+// buildGPUPCS builds a PCS with GPU requirements and optional PCS-level annotations.
+func buildGPUPCS(name string, replicas int, annotations ...map[string]string) *grovecorev1alpha1.PodCliqueSet {
 	gpuClique := testutils.NewPodCliqueTemplateSpecBuilder("gpu-worker").
 		WithRoleName("gpu-worker").
 		WithReplicas(1).
@@ -240,11 +240,23 @@ func buildGPUPCS(name string, replicas int) *grovecorev1alpha1.PodCliqueSet {
 		WithContainer(testutils.NewGPUContainer("gpu-container", "busybox:latest", 1, "sleep", "infinity")).
 		Build()
 
-	return testutils.NewPodCliqueSetBuilder(name, "default", types.UID("")).
+	builder := testutils.NewPodCliqueSetBuilder(name, "default", types.UID("")).
 		WithReplicas(int32(replicas)).
 		WithTerminationDelay(time.Second).
-		WithPodCliqueTemplateSpec(gpuClique).
-		Build()
+		WithPodCliqueTemplateSpec(gpuClique)
+
+	if len(annotations) > 0 && annotations[0] != nil {
+		builder.WithAnnotations(annotations[0])
+	}
+
+	return builder.Build()
+}
+
+// buildGPUPCSWithMNNVL builds a GPU PCS with auto-mnnvl: enabled annotation.
+func buildGPUPCSWithMNNVL(name string, replicas int) *grovecorev1alpha1.PodCliqueSet {
+	return buildGPUPCS(name, replicas, map[string]string{
+		mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+	})
 }
 
 // buildCPUOnlyPCS builds a PCS with CPU-only containers (no GPU)
@@ -274,7 +286,7 @@ func buildCPUOnlyPCS(name string, replicas int) *grovecorev1alpha1.PodCliqueSet 
 //     4. "cpu2": 1 container (no GPU)
 //   - PCSG "sg2" contains:
 //     5. "cpu3": 1 container (no GPU)
-func buildComprehensivePCS(name string, replicas int) *grovecorev1alpha1.PodCliqueSet {
+func buildComprehensivePCS(name string, replicas int, annotations ...map[string]string) *grovecorev1alpha1.PodCliqueSet {
 	// Standalone cliques
 	standaloneGPUMixed := testutils.NewPodCliqueTemplateSpecBuilder("gpu1").
 		WithRoleName("gpu1").
@@ -315,7 +327,7 @@ func buildComprehensivePCS(name string, replicas int) *grovecorev1alpha1.PodCliq
 		WithContainer(testutils.NewContainer("cpu", "busybox:latest", "sleep", "infinity")).
 		Build()
 
-	return testutils.NewPodCliqueSetBuilder(name, "default", types.UID("")).
+	builder := testutils.NewPodCliqueSetBuilder(name, "default", types.UID("")).
 		WithReplicas(int32(replicas)).
 		WithTerminationDelay(time.Second).
 		WithPodCliqueTemplateSpec(standaloneGPUMixed).
@@ -332,8 +344,13 @@ func buildComprehensivePCS(name string, replicas int) *grovecorev1alpha1.PodCliq
 			Name:         "sg2",
 			CliqueNames:  []string{"cpu3"},
 			MinAvailable: ptr.To(int32(1)),
-		}).
-		Build()
+		})
+
+	if len(annotations) > 0 && annotations[0] != nil {
+		builder.WithAnnotations(annotations[0])
+	}
+
+	return builder.Build()
 }
 
 // deletePCS deletes a PCS by name

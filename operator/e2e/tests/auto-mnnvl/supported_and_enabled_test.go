@@ -72,39 +72,45 @@ func Test_AutoMNNVL_SupportedAndEnabled(t *testing.T) {
 	}
 }
 
-// testPCSGetsAutoAnnotation verifies that the mutating webhook adds
-// grove.io/auto-mnnvl: enabled annotation to PCS with GPU requirements,
-// and does NOT add it to PCS without GPU requirements.
+// testPCSGetsAutoAnnotation verifies opt-in semantics: a GPU PCS without an
+// explicit MNNVL annotation does NOT receive MNNVL behaviour (no ComputeDomain),
+// while a CPU-only PCS also doesn't get the annotation.
 func testPCSGetsAutoAnnotation(t *testing.T, tc *testctx.TestContext) {
-	t.Run("GPU PCS gets annotation", func(t *testing.T) {
-		pcsName := "test-gpu-annotation"
+	t.Run("GPU PCS without annotation does not get MNNVL", func(t *testing.T) {
+		pcsName := "test-gpu-no-mnnvl"
 
-		// Create a PCS with GPU requirement (no annotation)
 		pcs := buildGPUPCS(pcsName, 1)
 		err := tc.Client.Create(tc.Ctx, pcs)
 		require.NoError(t, err, "Failed to create PCS")
 		defer deletePCS(tc, pcsName)
 
-		// Verify the PCS has the auto-mnnvl annotation
 		var createdPCS grovecorev1alpha1.PodCliqueSet
 		err = tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: pcsName}, &createdPCS)
 		require.NoError(t, err, "Failed to get created PCS")
 
 		annotations := createdPCS.GetAnnotations()
-		assert.Equal(t, mnnvl.AnnotationAutoMNNVLEnabled, annotations[mnnvl.AnnotationAutoMNNVL],
-			"GPU PCS should have auto-mnnvl annotation set to 'enabled'")
+		_, hasAnnotation := annotations[mnnvl.AnnotationAutoMNNVL]
+		assert.False(t, hasAnnotation, "GPU PCS should NOT receive auto-mnnvl annotation automatically")
+
+		// Wait for PCLQ so the reconciler has processed the PCS,
+		// then verify no ComputeDomain was created.
+		pclqName := fmt.Sprintf("%s-0-gpu-worker", pcsName)
+		_, err = waitForPCLQ(tc, pclqName)
+		require.NoError(t, err, "Failed to wait for PCLQ")
+
+		cdName := fmt.Sprintf("%s-0", pcsName)
+		err = getComputeDomain(tc, cdName)
+		assert.Error(t, err, "No ComputeDomain should exist for a PCS without MNNVL opt-in")
 	})
 
 	t.Run("CPU-only PCS does not get annotation", func(t *testing.T) {
 		pcsName := "test-cpu-annotation"
 
-		// Create a PCS without GPU requirement
 		pcs := buildCPUOnlyPCS(pcsName, 1)
 		err := tc.Client.Create(tc.Ctx, pcs)
 		require.NoError(t, err, "Failed to create PCS")
 		defer deletePCS(tc, pcsName)
 
-		// Verify the PCS does NOT have the auto-mnnvl annotation
 		var createdPCS grovecorev1alpha1.PodCliqueSet
 		err = tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: pcsName}, &createdPCS)
 		require.NoError(t, err, "Failed to get created PCS")
@@ -122,18 +128,15 @@ func testComputeDomainCreatedPerReplica(t *testing.T, tc *testctx.TestContext) {
 	pcsName := "test-cd-per-replica"
 	replicas := 2
 
-	// Create a PCS with GPU requirement
-	pcs := buildGPUPCS(pcsName, replicas)
+	pcs := buildGPUPCSWithMNNVL(pcsName, replicas)
 	err := tc.Client.Create(tc.Ctx, pcs)
 	require.NoError(t, err, "Failed to create PCS")
 	defer deletePCS(tc, pcsName)
 
-	// Re-fetch to get server-assigned UID
 	var createdPCS grovecorev1alpha1.PodCliqueSet
 	err = tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: pcsName}, &createdPCS)
 	require.NoError(t, err, "Failed to get created PCS")
 
-	// Wait for ComputeDomains to be created
 	err = waitForComputeDomainCount(tc, pcsName, replicas)
 	require.NoError(t, err, "Failed to wait for ComputeDomains")
 
@@ -165,8 +168,9 @@ func testComputeDomainCreatedPerReplica(t *testing.T, tc *testctx.TestContext) {
 func testResourceClaimInjection(t *testing.T, tc *testctx.TestContext) {
 	pcsName := "inj-test"
 
-	// Create the comprehensive PCS
-	pcs := buildComprehensivePCS(pcsName, 1)
+	pcs := buildComprehensivePCS(pcsName, 1, map[string]string{
+		mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+	})
 	err := tc.Client.Create(tc.Ctx, pcs)
 	require.NoError(t, err, "Failed to create PCS")
 	defer deletePCS(tc, pcsName)
@@ -278,8 +282,7 @@ func testResourceClaimInjection(t *testing.T, tc *testctx.TestContext) {
 func testScaleOutAndIn(t *testing.T, tc *testctx.TestContext) {
 	pcsName := "test-scale-cd"
 
-	// Create a PCS with 1 replica
-	pcs := buildGPUPCS(pcsName, 1)
+	pcs := buildGPUPCSWithMNNVL(pcsName, 1)
 	err := tc.Client.Create(tc.Ctx, pcs)
 	require.NoError(t, err, "Failed to create PCS")
 	defer deletePCS(tc, pcsName)
@@ -330,8 +333,7 @@ func testScaleOutAndIn(t *testing.T, tc *testctx.TestContext) {
 func testPCSDeletionCascadesToCD(t *testing.T, tc *testctx.TestContext) {
 	pcsName := "test-pcs-deletion-cascade"
 
-	// Create a PCS with GPU requirement
-	pcs := buildGPUPCS(pcsName, 2)
+	pcs := buildGPUPCSWithMNNVL(pcsName, 2)
 	err := tc.Client.Create(tc.Ctx, pcs)
 	require.NoError(t, err, "Failed to create PCS")
 
@@ -406,8 +408,7 @@ func testInvalidAnnotationRejected(t *testing.T, tc *testctx.TestContext) {
 func testAnnotationImmutability(t *testing.T, tc *testctx.TestContext) {
 	pcsName := "test-annotation-immutable"
 
-	// Create a GPU PCS (will get auto-annotated with "enabled")
-	pcs := buildGPUPCS(pcsName, 1)
+	pcs := buildGPUPCSWithMNNVL(pcsName, 1)
 	err := tc.Client.Create(tc.Ctx, pcs)
 	require.NoError(t, err, "Failed to create PCS")
 	defer deletePCS(tc, pcsName)

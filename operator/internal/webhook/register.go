@@ -36,7 +36,7 @@ func Register(mgr manager.Manager, operatorCfg *configv1alpha1.OperatorConfigura
 	if operatorCfg == nil {
 		return fmt.Errorf("operator configuration must not be nil")
 	}
-	defaultingWebhook := defaulting.NewHandler(mgr, operatorCfg.Network)
+	defaultingWebhook := defaulting.NewHandler(mgr)
 	slog.Info("Registering webhook with manager", "handler", defaulting.Name)
 	if err := defaultingWebhook.RegisterWithManager(mgr); err != nil {
 		return fmt.Errorf("failed adding %s webhook handler: %v", defaulting.Name, err)
