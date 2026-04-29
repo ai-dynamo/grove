@@ -295,12 +295,20 @@ func TestComputeGenerationHash_AnyOrderEqualsExplicit_WhenPodSpecsMatch(t *testi
 	startupAnyOrder := grovecorev1alpha1.CliqueStartupTypeAnyOrder
 	startupExplicit := grovecorev1alpha1.CliqueStartupTypeExplicit
 
+	// Distinct WithLabels per clique is load-bearing: the clique Name itself is
+	// not in the per-clique hash input (only Labels, Annotations, and PodSpec
+	// are), so without distinguishing labels the three per-clique pod templates
+	// would be byte-identical and the slice-order-invariance assertion below
+	// would pass trivially even against the bugged pre-canonicalization code.
 	build := func(st *grovecorev1alpha1.CliqueStartupType) *grovecorev1alpha1.PodCliqueSet {
 		return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
 			WithCliqueStartupType(st).
-			WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("frontend").Build()).
-			WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("planner").Build()).
-			WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("prefill").Build()).
+			WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("frontend").
+				WithLabels(map[string]string{"role": "frontend"}).Build()).
+			WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("planner").
+				WithLabels(map[string]string{"role": "planner"}).Build()).
+			WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("prefill").
+				WithLabels(map[string]string{"role": "prefill"}).Build()).
 			Build()
 	}
 	hashAnyOrder := computeGenerationHash(build(&startupAnyOrder))
