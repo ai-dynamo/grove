@@ -692,17 +692,27 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigsUpdate(oldConfigs []g
 }
 
 func (v *pcsValidator) validateTopologyConstraintsUpdate(oldPCS *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
-	// Allow invalid legacy objects to be repaired under the current rules by validating
-	// the new object as if it were a create.
+	immutabilityValidator := newTopologyConstraintsValidator(v.pcs, v.tasEnabled, nil)
+
+	// Allow invalid legacy objects with missing PCS topologyName to be repaired under the
+	// current rules, while still enforcing immutability on all existing topology constraints.
 	if componentutils.HasAnyTopologyConstraint(oldPCS) {
 		if _, err := componentutils.ResolveTopologyNameForPodCliqueSet(oldPCS); err != nil {
-			return v.validateTopologyConstraintsOnCreate(context.Background())
+			if errors.Is(err, componentutils.ErrTopologyNameMissing) {
+				if allErrs := immutabilityValidator.validateTopologyConstraintImmutability(oldPCS, field.NewPath("spec").Child("template"), true); len(allErrs) > 0 {
+					return allErrs
+				}
+				return v.validateTopologyConstraintsOnCreate(context.Background())
+			}
+			// Surface any other resolution failure as an internal error rather than
+			// assuming it is a repairable legacy state.
+			return field.ErrorList{field.InternalError(field.NewPath("spec", "template", "topologyConstraint", "topologyName"), err)}
 		}
 	}
 
 	// Domain/hierarchy validation is not needed on update because topology constraints are immutable.
 	// Only topologyName and packDomain immutability are checked here for already valid objects.
-	return newTopologyConstraintsValidator(v.pcs, v.tasEnabled, nil).validateUpdate(oldPCS)
+	return immutabilityValidator.validateUpdate(oldPCS)
 }
 
 // resolveTopologyDomains resolves the ordered list of topology domains from the ClusterTopology

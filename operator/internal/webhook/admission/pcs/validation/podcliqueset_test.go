@@ -1721,7 +1721,6 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 				pcs := createTestPodCliqueSet("pcs-repair-missing")
 				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
 					TopologyName: "topo-a",
-					PackDomain:   grovecorev1alpha1.TopologyDomainZone,
 				}
 				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
 					PackDomain: grovecorev1alpha1.TopologyDomainHost,
@@ -1745,6 +1744,54 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 				pcs := createTestPodCliqueSet("pcs-repair-child")
 				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
 					TopologyName: "topo-a",
+				}
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					TopologyName: "topo-a",
+					PackDomain:   grovecorev1alpha1.TopologyDomainHost,
+				}
+				return pcs
+			},
+			clusterObjs: []client.Object{createTestClusterTopology()},
+		},
+		{
+			name:      "update repair does not allow changing child packDomain",
+			operation: admissionv1.Update,
+			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createTestPodCliqueSet("pcs-repair-packdomain")
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					PackDomain: grovecorev1alpha1.TopologyDomainHost,
+				}
+				return pcs
+			},
+			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createTestPodCliqueSet("pcs-repair-packdomain")
+				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					TopologyName: "topo-a",
+				}
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					PackDomain: grovecorev1alpha1.TopologyDomainRack,
+				}
+				return pcs
+			},
+			clusterObjs: []client.Object{createTestClusterTopology()},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.cliques[0].topologyConstraint"},
+			},
+		},
+		{
+			name:      "update repair does not allow adding PCS packDomain while adding topologyName",
+			operation: admissionv1.Update,
+			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createTestPodCliqueSet("pcs-repair-pcs-packdomain")
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					PackDomain: grovecorev1alpha1.TopologyDomainHost,
+				}
+				return pcs
+			},
+			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createTestPodCliqueSet("pcs-repair-pcs-packdomain")
+				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					TopologyName: "topo-a",
 					PackDomain:   grovecorev1alpha1.TopologyDomainZone,
 				}
 				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
@@ -1753,6 +1800,9 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 				return pcs
 			},
 			clusterObjs: []client.Object{createTestClusterTopology()},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint.topologyName"},
+			},
 		},
 	}
 
@@ -1772,6 +1822,7 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 				errs = append(errs, validator.validateTopologyConstraintsOnCreate(context.Background())...)
 				err = errs.ToAggregate()
 			case admissionv1.Update:
+				errs = validator.validatePodCliqueSetTemplateSpecUpdate(tc.setupOldPCS(), field.NewPath("spec").Child("template"))
 				err = validator.validateUpdate(tc.setupOldPCS())
 			default:
 				t.Fatalf("unsupported operation %s", tc.operation)
