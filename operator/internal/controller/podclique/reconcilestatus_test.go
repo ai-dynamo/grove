@@ -195,29 +195,26 @@ func createPodWithHash(name string, templateHash string) *corev1.Pod {
 	}
 }
 
-// TestComputeMinAvailableBreachedCondition_Issue277 covers the gang-termination
-// regression fix from https://github.com/ai-dynamo/grove/issues/277.
-//
-// Before the fix, the early-return at scheduledReplicas < minAvailable suppressed
-// the breach in two distinct situations: (a) genuine initial startup where no pods
-// had been admitted yet, and (b) regression after a healthy state where a node was
-// cordoned/failed and the replacement pods couldn't be scheduled. Suppressing (b)
-// meant gang termination never fired and the workload was stuck.
+// TestComputeMinAvailableBreachedConditionPartialScheduleRegression covers the
+// behaviour where MinAvailableBreached must flip True when scheduled replicas
+// regress below MinAvailable from a previously healthy state.
 //
 // Under gang scheduling, 0 < scheduledReplicas < minAvailable is structurally
 // unreachable from a fresh start (the gang scheduler admits MinAvailable atomically),
-// so observing it implies regression. The fix breaches in that case while still
-// suppressing scheduledReplicas == 0 (no useful work for gang termination — recreating
-// the PodGang would just produce the same Pending pods).
-func TestComputeMinAvailableBreachedCondition_Issue277(t *testing.T) {
+// so observing it implies regression — for example a node hosting running pods is
+// cordoned or fails and the replacement pods cannot be scheduled. Breaching in
+// that case lets gang termination recreate the PodGang. scheduledReplicas == 0
+// stays suppressed: gang termination would only recreate the same Pending pods
+// against the same cluster state.
+func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testing.T) {
 	pastTransition := metav1.NewTime(time.Now().Add(-10 * time.Minute))
 
 	tests := []struct {
-		name                                                 string
-		pclq                                                 *grovecorev1alpha1.PodClique
-		numPodsHavingAtleastOneContainerWithNonZeroExitCode  int
-		numPodsStartedButNotReady                            int
-		wantStatus                                           metav1.ConditionStatus
+		name                                                string
+		pclq                                                *grovecorev1alpha1.PodClique
+		numPodsHavingAtleastOneContainerWithNonZeroExitCode int
+		numPodsStartedButNotReady                           int
+		wantStatus                                          metav1.ConditionStatus
 	}{
 		{
 			name: "healthy then node cordoned: scheduled replicas drop below minAvailable",
