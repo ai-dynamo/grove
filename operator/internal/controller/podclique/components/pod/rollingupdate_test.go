@@ -244,8 +244,8 @@ func TestComputeUpdateWorkPCSHashFlipDoesNotProduceOldHashWork(t *testing.T) {
 // If pods get deleted here, the "slice reorder alone causes the gang roll"
 // hypothesis from the alternate RCA is correct. If they survive, that
 // hypothesis is refuted and the actual gang roll requires a separate
-// per-PCLQ template change (see
-// TestComputePCLQPodTemplateHashSensitivityToSliceOrder).
+// per-PCLQ template change (see TestComputePCLQPodTemplateHash_PodSpecSliceOrderInvariants
+// in operator/internal/controller/common/component/utils/podclique_test.go).
 func TestProcessPendingUpdatesPCSHashFlipDoesNotDeletePods(t *testing.T) {
 	const sharedHash = "per-pclq-hash-stable"
 	const pcsHashAfterReorder = "pcs-generation-hash-after-clique-reorder"

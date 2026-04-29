@@ -245,6 +245,8 @@ func TestProcessGenerationHashChange_CliqueReorderIsNoOp(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, updatedPCS.Status.UpdateProgress,
 		"clique reorder must not start a rolling update — Cliques is name-keyed and slice order is not part of the desired state")
+	assert.Equal(t, ptr.To(originalHash), updatedPCS.Status.CurrentGenerationHash,
+		"clique reorder must not change the recorded generation hash")
 }
 
 // TestComputeGenerationHash_InOrderStartupIsSensitiveToCliqueOrder pins the
@@ -285,6 +287,10 @@ func TestComputeGenerationHash_InOrderStartupIsSensitiveToCliqueOrder(t *testing
 // hash. Their slice order is not part of the template hash input, and
 // StartupType itself is immutable after creation, so including it would only
 // broaden upgrade-time hash churn.
+//
+// Also pins the corollary that under Explicit, reordering the clique slice is
+// a no-op — the property most at risk of regressing if someone later "fixes"
+// the marker logic to also engage on Explicit.
 func TestComputeGenerationHash_AnyOrderEqualsExplicit_WhenPodSpecsMatch(t *testing.T) {
 	startupAnyOrder := grovecorev1alpha1.CliqueStartupTypeAnyOrder
 	startupExplicit := grovecorev1alpha1.CliqueStartupTypeExplicit
@@ -302,6 +308,16 @@ func TestComputeGenerationHash_AnyOrderEqualsExplicit_WhenPodSpecsMatch(t *testi
 
 	assert.Equal(t, hashAnyOrder, hashExplicit,
 		"AnyOrder and Explicit must not add startup markers that change hashes for otherwise identical templates")
+
+	explicit := build(&startupExplicit)
+	explicitReordered := explicit.DeepCopy()
+	explicitReordered.Spec.Template.Cliques = []*grovecorev1alpha1.PodCliqueTemplateSpec{
+		explicit.Spec.Template.Cliques[2].DeepCopy(),
+		explicit.Spec.Template.Cliques[0].DeepCopy(),
+		explicit.Spec.Template.Cliques[1].DeepCopy(),
+	}
+	assert.Equal(t, computeGenerationHash(explicit), computeGenerationHash(explicitReordered),
+		"under CliqueStartupTypeExplicit, clique slice order must not affect the generation hash")
 }
 
 // TestComputeGenerationHash_InOrderToAnyOrderFlipsHash pins that switching
