@@ -140,7 +140,11 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGa
 				pg.Annotations = make(map[string]string)
 			}
 			pg.Annotations[apicommonconstants.AnnotationTopologyName] = topologyName
+		} else if pg.Annotations != nil {
+			delete(pg.Annotations, apicommonconstants.AnnotationTopologyName)
 		}
+	} else if pg.Annotations != nil {
+		delete(pg.Annotations, apicommonconstants.AnnotationTopologyName)
 	}
 	if err := controllerutil.SetControllerReference(pcs, pg, r.scheme); err != nil {
 		return groveerr.WrapError(
