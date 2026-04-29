@@ -21,6 +21,7 @@ import (
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	"github.com/stretchr/testify/assert"
@@ -191,6 +192,122 @@ func createPodWithHash(name string, templateHash string) *corev1.Pod {
 				apicommon.LabelPodTemplateHash: templateHash,
 			},
 		},
+	}
+}
+
+// TestComputeMinAvailableBreachedCondition_Issue277 covers the gang-termination
+// regression fix from https://github.com/ai-dynamo/grove/issues/277.
+//
+// Before the fix, the early-return at scheduledReplicas < minAvailable suppressed
+// the breach in two distinct situations: (a) genuine initial startup where no pods
+// had been admitted yet, and (b) regression after a healthy state where a node was
+// cordoned/failed and the replacement pods couldn't be scheduled. Suppressing (b)
+// meant gang termination never fired and the workload was stuck.
+//
+// Under gang scheduling, 0 < scheduledReplicas < minAvailable is structurally
+// unreachable from a fresh start (the gang scheduler admits MinAvailable atomically),
+// so observing it implies regression. The fix breaches in that case while still
+// suppressing scheduledReplicas == 0 (no useful work for gang termination — recreating
+// the PodGang would just produce the same Pending pods).
+func TestComputeMinAvailableBreachedCondition_Issue277(t *testing.T) {
+	pastTransition := metav1.NewTime(time.Now().Add(-10 * time.Minute))
+
+	tests := []struct {
+		name                                                 string
+		pclq                                                 *grovecorev1alpha1.PodClique
+		numPodsHavingAtleastOneContainerWithNonZeroExitCode  int
+		numPodsStartedButNotReady                            int
+		wantStatus                                           metav1.ConditionStatus
+	}{
+		{
+			name: "healthy then node cordoned: scheduled replicas drop below minAvailable",
+			pclq: &grovecorev1alpha1.PodClique{
+				Spec: grovecorev1alpha1.PodCliqueSpec{
+					Replicas:     3,
+					MinAvailable: ptr.To(int32(3)),
+				},
+				Status: grovecorev1alpha1.PodCliqueStatus{
+					ObservedGeneration: ptr.To(int64(1)),
+					Replicas:           3,
+					ScheduledReplicas:  1,
+					ReadyReplicas:      1,
+					Conditions: []metav1.Condition{
+						{
+							// PCLQ was healthy before the regression.
+							Type:               constants.ConditionTypePodCliqueScheduled,
+							Status:             metav1.ConditionTrue,
+							Reason:             constants.ConditionReasonSufficientScheduledPods,
+							LastTransitionTime: pastTransition,
+						},
+						{
+							Type:               constants.ConditionTypeMinAvailableBreached,
+							Status:             metav1.ConditionFalse,
+							Reason:             constants.ConditionReasonSufficientReadyPods,
+							LastTransitionTime: pastTransition,
+						},
+					},
+				},
+			},
+			wantStatus: metav1.ConditionTrue,
+		},
+		{
+			// Even after a full regression to zero scheduled, gang termination has
+			// no useful action — recreating the PodGang would just produce the same
+			// Pending pods. The fix should keep this case suppressed to avoid a
+			// churn loop. (Captured as a sanity-pin so a fix doesn't over-correct.)
+			name: "previously-healthy PCLQ loses all scheduled pods — must NOT breach",
+			pclq: &grovecorev1alpha1.PodClique{
+				Spec: grovecorev1alpha1.PodCliqueSpec{
+					Replicas:     2,
+					MinAvailable: ptr.To(int32(2)),
+				},
+				Status: grovecorev1alpha1.PodCliqueStatus{
+					ObservedGeneration: ptr.To(int64(1)),
+					Replicas:           2,
+					ScheduledReplicas:  0,
+					ReadyReplicas:      0,
+					Conditions: []metav1.Condition{
+						{
+							Type:               constants.ConditionTypePodCliqueScheduled,
+							Status:             metav1.ConditionTrue,
+							Reason:             constants.ConditionReasonSufficientScheduledPods,
+							LastTransitionTime: pastTransition,
+						},
+					},
+				},
+			},
+			wantStatus: metav1.ConditionFalse,
+		},
+		{
+			// Sanity case that the fix must preserve: a freshly-created PCLQ that has
+			// not yet scheduled any pods MUST NOT be considered breached.
+			name: "fresh PCLQ never scheduled — must not breach",
+			pclq: &grovecorev1alpha1.PodClique{
+				Spec: grovecorev1alpha1.PodCliqueSpec{
+					Replicas:     3,
+					MinAvailable: ptr.To(int32(3)),
+				},
+				Status: grovecorev1alpha1.PodCliqueStatus{
+					ObservedGeneration: ptr.To(int64(1)),
+					Replicas:           3,
+					ScheduledReplicas:  0,
+					ReadyReplicas:      0,
+					// No prior PodCliqueScheduled=True history.
+				},
+			},
+			wantStatus: metav1.ConditionFalse,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			condition := computeMinAvailableBreachedCondition(tt.pclq,
+				tt.numPodsHavingAtleastOneContainerWithNonZeroExitCode,
+				tt.numPodsStartedButNotReady)
+			assert.Equal(t, constants.ConditionTypeMinAvailableBreached, condition.Type)
+			assert.Equal(t, tt.wantStatus, condition.Status,
+				"MinAvailableBreached status should match expected post-fix behaviour")
+		})
 	}
 }
 

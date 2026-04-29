@@ -209,14 +209,36 @@ func computeMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, num
 	scheduledReplicas := int(pclq.Status.ScheduledReplicas)
 	now := metav1.Now()
 
-	// If the number of scheduled pods is less than the minimum available, then minAvailable is not considered as breached.
-	// Consider a case where none of the PodCliques have been scheduled yet, then it should not cause the PodGang to be recreated all the time.
+	// Handle the under-scheduled cases:
+	//   - scheduledReplicas == 0: either initial startup (no pods admitted yet) or a full
+	//     regression where every running pod has been lost. In both cases, gang termination
+	//     would only recreate the same Pending pods against the same cluster state and would
+	//     produce a churn loop, so we suppress the breach. If the cluster state actually
+	//     changes the next reconcile picks it up.
+	//   - 0 < scheduledReplicas < minAvailable: under gang scheduling this state is
+	//     structurally unreachable from initial startup — the gang scheduler admits
+	//     MinAvailable pods atomically. So observing it implies pods were healthy and
+	//     have since regressed (e.g. node cordon/failure with replacements pending).
+	//     Treat as a breach. The downstream gang-termination flow still waits the full
+	//     TerminationDelay before acting, and the pod-creation path is unaffected, so
+	//     the controller keeps trying to schedule replacements throughout the wait.
+	//     On non-gang schedulers a brief partial-scheduled flicker can occur during
+	//     staged startup; TerminationDelay (default 4h) absorbs it.
 	if scheduledReplicas < minAvailable {
+		if scheduledReplicas == 0 {
+			return metav1.Condition{
+				Type:               constants.ConditionTypeMinAvailableBreached,
+				Status:             metav1.ConditionFalse,
+				Reason:             constants.ConditionReasonInsufficientScheduledPods,
+				Message:            fmt.Sprintf("Insufficient scheduled pods. expected at least: %d, found: %d", minAvailable, scheduledReplicas),
+				LastTransitionTime: now,
+			}
+		}
 		return metav1.Condition{
 			Type:               constants.ConditionTypeMinAvailableBreached,
-			Status:             metav1.ConditionFalse,
-			Reason:             constants.ConditionReasonInsufficientScheduledPods,
-			Message:            fmt.Sprintf("Insufficient scheduled pods. expected at least: %d, found: %d", minAvailable, scheduledReplicas),
+			Status:             metav1.ConditionTrue,
+			Reason:             constants.ConditionReasonScheduledReplicasRegressed,
+			Message:            fmt.Sprintf("Scheduled replicas regressed below MinAvailable. expected at least: %d, found: %d", minAvailable, scheduledReplicas),
 			LastTransitionTime: now,
 		}
 	}
