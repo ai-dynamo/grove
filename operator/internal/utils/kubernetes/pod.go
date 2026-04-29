@@ -168,12 +168,16 @@ func HasAnyContainerNotStarted(pod *corev1.Pod) bool {
 //   - Container.EnvFrom — +listType=atomic; the API treats the slice as a
 //     single value and its order is part of that value.
 //   - PodSpec.Tolerations — +listType=atomic.
+//   - PodSpec.ReadinessGates — +listType=atomic.
 //   - Container.Args / Container.Command — ordered argument lists.
 //   - Container.ResizePolicy — +listType=atomic.
+//   - Container.RestartPolicyRules — +listType=atomic.
 //
 // Anything not listed is left untouched: either it is a scalar/struct field
 // (no slice reorder possible), it is +listType=set (already a set, no key),
-// or it does not appear in the PodSpec types we hash here.
+// it is +listType=atomic and not enumerated above (treated as opaque, like
+// the listed atomic fields), or it does not appear in the PodSpec types we
+// hash here.
 func ComputeHash(podTemplateSpecs ...*corev1.PodTemplateSpec) string {
 	podTemplateSpecHasher := fnv.New64a()
 	podTemplateSpecHasher.Reset()

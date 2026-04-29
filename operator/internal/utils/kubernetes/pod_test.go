@@ -834,12 +834,21 @@ func TestComputeHash_CanonicalizesListTypeMapSlices(t *testing.T) {
 		"ComputeHash must canonicalize +listType=map PodSpec slices so that the same desired state always produces the same hash, regardless of upstream serialization order")
 }
 
-// TestComputeHash_DoesNotCanonicalizeAtomicSlices documents the boundary of
-// the canonicalization: slices declared +listType=atomic in the Kubernetes
-// API have order semantics (e.g. Env participates in $(VAR) substitution,
-// InitContainers run in slice order). Reordering them is a real spec change
-// and ComputeHash must continue to reflect it.
-func TestComputeHash_DoesNotCanonicalizeAtomicSlices(t *testing.T) {
+// TestComputeHash_DoesNotCanonicalizeOrderSensitiveSlices documents the
+// boundary of the canonicalization: slices whose runtime behavior depends
+// on their order must remain order-sensitive in the hash, regardless of
+// listType.
+//   - Container.Env is +listType=map by name, but order participates in
+//     $(VAR) substitution; reordering can change runtime values.
+//   - PodSpec.InitContainers is +listType=map by name, but the API doc
+//     states init containers "are run in the order they appear in this
+//     list"; reordering changes startup semantics.
+//   - Container.ResizePolicy is +listType=atomic; order is part of the
+//     atomic value the API treats as opaque.
+//
+// Reordering any of these is a real spec change and ComputeHash must
+// continue to reflect it.
+func TestComputeHash_DoesNotCanonicalizeOrderSensitiveSlices(t *testing.T) {
 	mkSpec := func(envs []corev1.EnvVar, initContainers []corev1.Container) *corev1.PodTemplateSpec {
 		return &corev1.PodTemplateSpec{
 			Spec: corev1.PodSpec{
@@ -861,7 +870,7 @@ func TestComputeHash_DoesNotCanonicalizeAtomicSlices(t *testing.T) {
 			{Name: "FOO", Value: "1"},
 		}
 		assert.NotEqual(t, ComputeHash(mkSpec(envsA, nil)), ComputeHash(mkSpec(envsB, nil)),
-			"Env is +listType=atomic and order participates in $(VAR) substitution")
+			"Container.Env is +listType=map by name but order participates in $(VAR) substitution")
 	})
 
 	t.Run("init_container_reorder_changes_hash", func(t *testing.T) {
