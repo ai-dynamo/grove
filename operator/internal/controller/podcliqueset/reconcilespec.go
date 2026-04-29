@@ -144,41 +144,41 @@ func computeGenerationHash(pcs *grovecorev1alpha1.PodCliqueSet) string {
 		return podTemplateSpec
 	})
 
-	// Mix in startup-ordering metadata so that semantically-meaningful order
-	// (CliqueStartupTypeInOrder) still influences the hash.
-	startupTypeMarker := startupOrderingMarker(pcs)
-	startupSentinel := &corev1.PodTemplateSpec{
-		ObjectMeta: metav1.ObjectMeta{
-			Annotations: map[string]string{"grove.io/startup-ordering": startupTypeMarker},
-		},
+	// Mix in startup-ordering metadata only when clique slice order has
+	// runtime meaning. For AnyOrder and Explicit, leaving the marker out
+	// preserves existing generation hashes when no canonicalized field order
+	// actually changes.
+	if startupTypeMarker, ok := startupOrderingMarker(pcs); ok {
+		startupSentinel := &corev1.PodTemplateSpec{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{"grove.io/startup-ordering": startupTypeMarker},
+			},
+		}
+		podTemplateSpecs = append(podTemplateSpecs, startupSentinel)
 	}
-	podTemplateSpecs = append(podTemplateSpecs, startupSentinel)
 
 	return k8sutils.ComputeHash(podTemplateSpecs...)
 }
 
 // startupOrderingMarker produces a deterministic representation of the
 // startup-ordering aspects of the PodCliqueSet template that DO depend on
-// clique slice order:
-//   - For CliqueStartupTypeInOrder, the slice order encodes the startup
-//     chain, so we encode the ordered list of clique names.
-//   - For CliqueStartupTypeAnyOrder and CliqueStartupTypeExplicit, the slice
-//     order is purely cosmetic (Explicit uses per-clique StartsAfter, which
-//     is part of each clique's own template spec and already hashed), so
-//     only the startup type itself is recorded.
-func startupOrderingMarker(pcs *grovecorev1alpha1.PodCliqueSet) string {
+// clique slice order. Only CliqueStartupTypeInOrder needs a marker: its
+// slice order encodes the startup chain, so we encode the ordered list of
+// clique names. For AnyOrder and Explicit, slice order is not part of the
+// hash input.
+func startupOrderingMarker(pcs *grovecorev1alpha1.PodCliqueSet) (string, bool) {
 	st := grovecorev1alpha1.CliqueStartupTypeAnyOrder
 	if pcs.Spec.Template.StartupType != nil {
 		st = *pcs.Spec.Template.StartupType
 	}
 	if st != grovecorev1alpha1.CliqueStartupTypeInOrder {
-		return string(st)
+		return "", false
 	}
 	names := make([]string, 0, len(pcs.Spec.Template.Cliques))
 	for _, c := range pcs.Spec.Template.Cliques {
 		names = append(names, c.Name)
 	}
-	return string(st) + ":" + strings.Join(names, ",")
+	return string(st) + ":" + strings.Join(names, ","), true
 }
 
 // setGenerationHashAndUpdateStatus updates the PodCliqueSet status with the new generation hash, stores the expectation, and updates the status subresource.

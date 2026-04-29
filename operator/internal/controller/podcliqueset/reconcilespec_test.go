@@ -280,13 +280,12 @@ func TestComputeGenerationHash_InOrderStartupIsSensitiveToCliqueOrder(t *testing
 		"under CliqueStartupTypeInOrder, slice order encodes the startup chain — a different order is a real spec change")
 }
 
-// TestComputeGenerationHash_AnyOrderEqualsExplicit_WhenPodSpecsMatch is a
-// sanity check: with the slice-order canonicalization, two PCSes whose
-// cliques have identical templates but differ only in StartupType
-// (AnyOrder vs Explicit, neither of which encodes order in slice index)
-// should still produce different hashes because StartupType is itself part
-// of the desired state.
-func TestComputeGenerationHash_StartupTypeChangeFlipsHash(t *testing.T) {
+// TestComputeGenerationHash_AnyOrderEqualsExplicit_WhenPodSpecsMatch pins that
+// AnyOrder and Explicit do not add synthetic startup metadata to the generation
+// hash. Their slice order is not part of the template hash input, and
+// StartupType itself is immutable after creation, so including it would only
+// broaden upgrade-time hash churn.
+func TestComputeGenerationHash_AnyOrderEqualsExplicit_WhenPodSpecsMatch(t *testing.T) {
 	startupAnyOrder := grovecorev1alpha1.CliqueStartupTypeAnyOrder
 	startupExplicit := grovecorev1alpha1.CliqueStartupTypeExplicit
 
@@ -301,8 +300,8 @@ func TestComputeGenerationHash_StartupTypeChangeFlipsHash(t *testing.T) {
 	hashAnyOrder := computeGenerationHash(build(&startupAnyOrder))
 	hashExplicit := computeGenerationHash(build(&startupExplicit))
 
-	assert.NotEqual(t, hashAnyOrder, hashExplicit,
-		"changing StartupType must change the hash — it changes how cliques start up")
+	assert.Equal(t, hashAnyOrder, hashExplicit,
+		"AnyOrder and Explicit must not add startup markers that change hashes for otherwise identical templates")
 }
 
 // TestComputeGenerationHash_InOrderToAnyOrderFlipsHash pins that switching

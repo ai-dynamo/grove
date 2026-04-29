@@ -152,11 +152,12 @@ func HasAnyContainerNotStarted(pod *corev1.Pod) bool {
 //   - PodSpec.TopologySpreadConstraints (key: topologyKey, whenUnsatisfiable)
 //   - PodSpec.ResourceClaims (key: name)
 //   - PodSpec.EphemeralContainers (key: name)
+//   - PodSpec.SchedulingGates (key: name)
 //   - Container.Ports (key: containerPort, protocol) — for regular, init,
 //     and ephemeral containers
 //   - Container.VolumeMounts (key: mountPath) — same scope
 //   - Container.VolumeDevices (key: devicePath) — same scope
-//   - Container.ResizePolicy (key: resourceName) — same scope
+//   - Container.Resources.Claims (key: name) — same scope
 //
 // Intentionally NOT sorted (slice order is part of the desired state):
 //   - PodSpec.InitContainers — +listType=map but the field doc states init
@@ -168,6 +169,7 @@ func HasAnyContainerNotStarted(pod *corev1.Pod) bool {
 //     single value and its order is part of that value.
 //   - PodSpec.Tolerations — +listType=atomic.
 //   - Container.Args / Container.Command — ordered argument lists.
+//   - Container.ResizePolicy — +listType=atomic.
 //
 // Anything not listed is left untouched: either it is a scalar/struct field
 // (no slice reorder possible), it is +listType=set (already a set, no key),
@@ -200,7 +202,7 @@ func canonicalizePodSpecForHashing(spec *corev1.PodSpec) {
 	// Containers run in parallel and are +listType=map keyed by name —
 	// safe to sort. After sorting the slice, also canonicalize the
 	// per-container map-list fields (ports, volumeMounts, volumeDevices,
-	// resizePolicy).
+	// resources.claims).
 	sort.SliceStable(spec.Containers, func(i, j int) bool {
 		return spec.Containers[i].Name < spec.Containers[j].Name
 	})
@@ -244,17 +246,20 @@ func canonicalizePodSpecForHashing(spec *corev1.PodSpec) {
 	sort.SliceStable(spec.ResourceClaims, func(i, j int) bool {
 		return spec.ResourceClaims[i].Name < spec.ResourceClaims[j].Name
 	})
+	sort.SliceStable(spec.SchedulingGates, func(i, j int) bool {
+		return spec.SchedulingGates[i].Name < spec.SchedulingGates[j].Name
+	})
 }
 
 // canonicalizeContainerForHashing sorts the order-independent +listType=map
 // slices inside a single Container in place: Ports, VolumeMounts,
-// VolumeDevices, ResizePolicy. Order-significant slices (Env, EnvFrom,
+// VolumeDevices, Resources.Claims. Order-significant slices (Env, EnvFrom,
 // Args, Command) are intentionally left untouched.
 func canonicalizeContainerForHashing(c *corev1.Container) {
 	canonicalizePortsForHashing(c.Ports)
 	canonicalizeVolumeMountsForHashing(c.VolumeMounts)
 	canonicalizeVolumeDevicesForHashing(c.VolumeDevices)
-	canonicalizeResizePolicyForHashing(c.ResizePolicy)
+	canonicalizeResourceClaimsForHashing(c.Resources.Claims)
 }
 
 // canonicalizeEphemeralContainerForHashing applies the same canonicalization
@@ -264,7 +269,7 @@ func canonicalizeEphemeralContainerForHashing(ec *corev1.EphemeralContainer) {
 	canonicalizePortsForHashing(ec.Ports)
 	canonicalizeVolumeMountsForHashing(ec.VolumeMounts)
 	canonicalizeVolumeDevicesForHashing(ec.VolumeDevices)
-	canonicalizeResizePolicyForHashing(ec.ResizePolicy)
+	canonicalizeResourceClaimsForHashing(ec.Resources.Claims)
 }
 
 // canonicalizePortsForHashing sorts ContainerPort entries by their composite
@@ -296,11 +301,11 @@ func canonicalizeVolumeDevicesForHashing(devices []corev1.VolumeDevice) {
 	})
 }
 
-// canonicalizeResizePolicyForHashing sorts ContainerResizePolicy entries by
-// resourceName. Container.ResizePolicy is +listType=map +listMapKey=resourceName.
-func canonicalizeResizePolicyForHashing(rp []corev1.ContainerResizePolicy) {
-	sort.SliceStable(rp, func(i, j int) bool {
-		return string(rp[i].ResourceName) < string(rp[j].ResourceName)
+// canonicalizeResourceClaimsForHashing sorts ResourceClaim entries by name.
+// Container.Resources.Claims is +listType=map +listMapKey=name.
+func canonicalizeResourceClaimsForHashing(claims []corev1.ResourceClaim) {
+	sort.SliceStable(claims, func(i, j int) bool {
+		return claims[i].Name < claims[j].Name
 	})
 }
 
