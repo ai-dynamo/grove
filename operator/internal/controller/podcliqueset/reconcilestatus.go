@@ -228,10 +228,11 @@ func (r *Reconciler) mutateTopologyLevelUnavailableConditions(ctx context.Contex
 }
 
 // computeTopologyLevelsUnavailableCondition computes the TopologyLevelsUnavailable condition for the PodCliqueSet.
-// It checks the PodCliqueSet's topology constraints against the available topology levels defined in the ClusterTopology.
-// If any topology levels used by the PodCliqueSet are not available in the ClusterTopology, it sets the condition to True.
-// If all topology levels are available, it sets the condition to False.
-// If the ClusterTopology resource is not found, it sets the condition to Unknown.
+// It checks the PodCliqueSet's topology constraints against the topology levels defined in the ClusterTopology
+// selected by spec.template.topologyConstraint.topologyName.
+// If any topology domains used by the PodCliqueSet are not available in that ClusterTopology, it sets the condition to True.
+// If all referenced topology domains are available, it sets the condition to False.
+// If the ClusterTopology resource is not found, or topologyName is missing while constraints are set, it sets the condition to Unknown.
 func (r *Reconciler) computeTopologyLevelsUnavailableCondition(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (metav1.Condition, error) {
 	if !componentutils.HasAnyTopologyConstraint(pcs) {
 		return metav1.Condition{

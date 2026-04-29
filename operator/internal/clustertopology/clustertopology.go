@@ -45,8 +45,8 @@ func SynchronizeTopology(ctx context.Context, cl client.Client, logger logr.Logg
 				logger.V(1).Info("Scheduler backend does not implement TopologyAwareSchedBackend, skipping topology sync", "backend", b.Name())
 				continue
 			}
-			// Only sync auto-managed backends (not listed in schedulerTopologyReferences).
-			// Externally-managed backends are handled by the CT controller via CheckTopologyDrift.
+			// Only sync grove-managed scheduler topology resources (not listed in schedulerTopologyReferences).
+			// Externally-managed scheduler topology resources are handled by the ClusterTopology controller via CheckTopologyDrift.
 			if _, isExternallyManaged := schedulerRefMap[b.Name()]; isExternallyManaged {
 				continue
 			}
@@ -68,7 +68,7 @@ func GetClusterTopologyLevels(ctx context.Context, cl client.Client, name string
 	return clusterTopology.Spec.Levels, nil
 }
 
-// BuildSchedulerReferenceMap builds a map from scheduler name to SchedulerReference pointer.
+// BuildSchedulerReferenceMap builds a map from scheduler name to SchedulerTopologyReference pointer.
 func BuildSchedulerReferenceMap(refs []grovecorev1alpha1.SchedulerTopologyReference) map[string]*grovecorev1alpha1.SchedulerTopologyReference {
 	m := make(map[string]*grovecorev1alpha1.SchedulerTopologyReference, len(refs))
 	for i := range refs {
