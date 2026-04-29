@@ -179,10 +179,36 @@ func HasAnyContainerNotStarted(pod *corev1.Pod) bool {
 // the listed atomic fields), or it does not appear in the PodSpec types we
 // hash here.
 func ComputeHash(podTemplateSpecs ...*corev1.PodTemplateSpec) string {
+	return computeHash(nil, podTemplateSpecs...)
+}
+
+// ComputeHashWithOrderKeys computes a hash for pod templates whose caller-level
+// identity/order matters in addition to the canonicalized PodTemplateSpec
+// content. orderKeys must be aligned with podTemplateSpecs by index.
+func ComputeHashWithOrderKeys(orderKeys []string, podTemplateSpecs ...*corev1.PodTemplateSpec) string {
+	if len(orderKeys) != len(podTemplateSpecs) {
+		panic("ComputeHashWithOrderKeys: orderKeys length must match podTemplateSpecs length")
+	}
+	return computeHash(orderKeys, podTemplateSpecs...)
+}
+
+type podTemplateSpecHashInput struct {
+	OrderKey        string
+	PodTemplateSpec *corev1.PodTemplateSpec
+}
+
+func computeHash(orderKeys []string, podTemplateSpecs ...*corev1.PodTemplateSpec) string {
 	podTemplateSpecHasher := fnv.New64a()
 	podTemplateSpecHasher.Reset()
-	for _, podTemplateSpec := range podTemplateSpecs {
+	for i, podTemplateSpec := range podTemplateSpecs {
 		canonical := canonicalizePodTemplateSpecForHashing(podTemplateSpec)
+		if orderKeys != nil {
+			_, _ = fmt.Fprintf(podTemplateSpecHasher, "%v", dump.ForHash(podTemplateSpecHashInput{
+				OrderKey:        orderKeys[i],
+				PodTemplateSpec: canonical,
+			}))
+			continue
+		}
 		_, _ = fmt.Fprintf(podTemplateSpecHasher, "%v", dump.ForHash(canonical))
 	}
 	return rand.SafeEncodeString(fmt.Sprint(podTemplateSpecHasher.Sum64()))

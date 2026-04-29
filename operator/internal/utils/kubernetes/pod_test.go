@@ -834,6 +834,76 @@ func TestComputeHash_CanonicalizesListTypeMapSlices(t *testing.T) {
 		"ComputeHash must canonicalize +listType=map PodSpec slices so that the same desired state always produces the same hash, regardless of upstream serialization order")
 }
 
+func TestComputeHashWithOrderKeys(t *testing.T) {
+	t.Run("same_templates_with_different_order_keys_change_hash", func(t *testing.T) {
+		podTemplateSpec := &corev1.PodTemplateSpec{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "main", Image: "runtime:v1"}},
+			},
+		}
+
+		assert.NotEqual(t,
+			ComputeHashWithOrderKeys([]string{"database", "app"}, podTemplateSpec, podTemplateSpec),
+			ComputeHashWithOrderKeys([]string{"app", "database"}, podTemplateSpec, podTemplateSpec),
+			"order keys must participate in the hash when caller-level order carries semantics")
+	})
+
+	t.Run("canonicalizes_templates_before_hashing_order_key_inputs", func(t *testing.T) {
+		mainContainer := corev1.Container{
+			Name:  "main",
+			Image: "runtime:v1",
+			Ports: []corev1.ContainerPort{
+				{Name: "http", ContainerPort: 8000, Protocol: corev1.ProtocolTCP},
+				{Name: "metrics", ContainerPort: 9090, Protocol: corev1.ProtocolTCP},
+			},
+		}
+		sidecar := corev1.Container{Name: "sidecar", Image: "sidecar:v1"}
+
+		canonical := &corev1.PodTemplateSpec{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{mainContainer, sidecar},
+				Volumes: []corev1.Volume{
+					{Name: "cache"},
+					{Name: "scratch"},
+				},
+			},
+		}
+
+		mainContainerWithSwappedPorts := mainContainer
+		mainContainerWithSwappedPorts.Ports = []corev1.ContainerPort{
+			{Name: "metrics", ContainerPort: 9090, Protocol: corev1.ProtocolTCP},
+			{Name: "http", ContainerPort: 8000, Protocol: corev1.ProtocolTCP},
+		}
+
+		shuffled := &corev1.PodTemplateSpec{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{sidecar, mainContainerWithSwappedPorts},
+				Volumes: []corev1.Volume{
+					{Name: "scratch"},
+					{Name: "cache"},
+				},
+			},
+		}
+
+		assert.Equal(t,
+			ComputeHashWithOrderKeys([]string{"database"}, canonical),
+			ComputeHashWithOrderKeys([]string{"database"}, shuffled),
+			"order-key hashing must still canonicalize order-independent PodSpec slices")
+	})
+
+	t.Run("order_key_count_must_match_template_count", func(t *testing.T) {
+		podTemplateSpec := &corev1.PodTemplateSpec{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "main", Image: "runtime:v1"}},
+			},
+		}
+
+		assert.Panics(t, func() {
+			_ = ComputeHashWithOrderKeys([]string{"database"}, podTemplateSpec, podTemplateSpec)
+		}, "order-key hashing must reject misaligned inputs")
+	})
+}
+
 // TestComputeHash_DoesNotCanonicalizeOrderSensitiveSlices documents the
 // boundary of the canonicalization: slices whose runtime behavior depends
 // on their order must remain order-sensitive in the hash, regardless of
