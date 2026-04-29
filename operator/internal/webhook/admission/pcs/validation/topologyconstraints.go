@@ -104,7 +104,7 @@ func (v *topologyConstraintsValidator) disallowConstraintsForCreateWhenTASIsDisa
 	for i, pcsg := range v.pcs.Spec.Template.PodCliqueScalingGroupConfigs {
 		if pcsg.TopologyConstraint != nil {
 			allErrs = append(allErrs, field.Invalid(
-				fldPath.Child("podCliqueScalingGroupConfigs").Index(i).Child("topologyConstraint"),
+				fldPath.Child("podCliqueScalingGroups").Index(i).Child("topologyConstraint"),
 				pcsg.TopologyConstraint.PackDomain,
 				"topology constraints are not allowed when Topology Aware Scheduling is disabled"))
 		}
@@ -149,7 +149,7 @@ func (v *topologyConstraintsValidator) validateTopologyDomainsExistInClusterTopo
 	// Validate PCSG level
 	for i, pcsg := range v.pcs.Spec.Template.PodCliqueScalingGroupConfigs {
 		if tc := pcsg.TopologyConstraint; tc != nil {
-			validateDomain(tc.PackDomain, fldPath.Child("podCliqueScalingGroupConfigs").Index(i).Child("topologyConstraint"))
+			validateDomain(tc.PackDomain, fldPath.Child("podCliqueScalingGroups").Index(i).Child("topologyConstraint"))
 		}
 	}
 
@@ -230,7 +230,7 @@ func (v *topologyConstraintsValidator) validateHierarchicalTopologyConstraints(f
 			if matchingPCLQTemplate != nil && matchingPCLQTemplate.TopologyConstraint != nil {
 				if hasHierarchyViolation(pcsgDomain, matchingPCLQTemplate.TopologyConstraint.PackDomain, v.clusterTopologyDomains) {
 					allErrs = append(allErrs, field.Invalid(
-						fldPath.Child("podCliqueScalingGroupConfigs").Index(i).Child("topologyConstraint"),
+						fldPath.Child("podCliqueScalingGroups").Index(i).Child("topologyConstraint"),
 						pcsgDomain,
 						buildHierarchyViolationMsg(pcsgDomain, apicommonconstants.KindPodCliqueScalingGroup, pcsg.Name,
 							matchingPCLQTemplate.TopologyConstraint.PackDomain, apicommonconstants.KindPodClique, matchingPCLQTemplate.Name)))
@@ -298,7 +298,7 @@ func (v *topologyConstraintsValidator) disallowChangesToTopologyConstraintsWhenP
 		oldConstraint := oldPCSGConstraints[pcsg.Name]
 		if constraintChanged(oldConstraint, pcsg.TopologyConstraint) {
 			allErrs = append(allErrs, field.Forbidden(
-				fldPath.Child("podCliqueScalingGroupConfigs").Index(i).Child("topologyConstraint"),
+				fldPath.Child("podCliqueScalingGroups").Index(i).Child("topologyConstraint"),
 				constraintChangeMsg(apicommonconstants.KindPodCliqueScalingGroup, pcsg.Name, oldConstraint, pcsg.TopologyConstraint)))
 		}
 	}

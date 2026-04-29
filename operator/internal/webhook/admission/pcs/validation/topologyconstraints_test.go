@@ -68,7 +68,7 @@ func TestValidateTASDisabledWithConstraints(t *testing.T) {
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroupConfigs[0].topologyConstraint"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].topologyConstraint"},
 			},
 		},
 		{
@@ -97,7 +97,7 @@ func TestValidateTASDisabledWithConstraints(t *testing.T) {
 				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.topologyConstraint"},
 				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].topologyConstraint"},
 				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[1].topologyConstraint"},
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroupConfigs[0].topologyConstraint"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].topologyConstraint"},
 			},
 		},
 		{
@@ -160,7 +160,7 @@ func TestValidateTASEnabledWhenDomainNotInClusterTopology(t *testing.T) {
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroupConfigs[0].topologyConstraint"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].topologyConstraint"},
 			},
 		},
 		{
@@ -296,7 +296,7 @@ func TestValidateHierarchyViolations(t *testing.T) {
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroupConfigs[0].topologyConstraint"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].topologyConstraint"},
 			},
 		},
 		{
@@ -335,7 +335,7 @@ func TestValidateHierarchyViolations(t *testing.T) {
 			},
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.topologyConstraint"},
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroupConfigs[0].topologyConstraint"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].topologyConstraint"},
 			},
 		},
 	}
@@ -543,7 +543,7 @@ func TestValidateUpdateTopologyConstraintImmutability(t *testing.T) {
 				{Name: "sg1", CliqueNames: []string{"worker"}, TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: rack}},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.podCliqueScalingGroupConfigs[0].topologyConstraint"},
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.podCliqueScalingGroups[0].topologyConstraint"},
 			},
 		},
 		{
@@ -555,7 +555,7 @@ func TestValidateUpdateTopologyConstraintImmutability(t *testing.T) {
 				{Name: "sg1", CliqueNames: []string{"worker"}, TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: zone}},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.podCliqueScalingGroupConfigs[0].topologyConstraint"},
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.podCliqueScalingGroups[0].topologyConstraint"},
 			},
 		},
 		{
@@ -567,7 +567,7 @@ func TestValidateUpdateTopologyConstraintImmutability(t *testing.T) {
 				{Name: "sg1", CliqueNames: []string{"worker"}},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.podCliqueScalingGroupConfigs[0].topologyConstraint"},
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.podCliqueScalingGroups[0].topologyConstraint"},
 			},
 		},
 		{
