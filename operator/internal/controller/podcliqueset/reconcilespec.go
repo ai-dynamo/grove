@@ -19,6 +19,8 @@ package podcliqueset
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -108,9 +110,29 @@ func (r *Reconciler) isGenerationHashExpectationSatisfied(pcsObjectName string, 
 	return !ok || (pcsGenerationHash != nil && expectedGenerationHash.(string) == *pcsGenerationHash)
 }
 
-// computeGenerationHash calculates a hash of the PodCliqueSet pod template specifications.
+// computeGenerationHash calculates a hash of the PodCliqueSet pod template
+// specifications.
+//
+// The hash is order-stable across reorderings of pcs.Spec.Template.Cliques.
+// Cliques is declared +listType=map +listMapKey=name, so the slice represents
+// a name-keyed set with no inherent order; an upstream operator that emits
+// the same cliques in a different sequence (e.g. from non-deterministic Go
+// map iteration) must produce the same generation hash here, otherwise we
+// would falsely trigger a rolling recreate against pods whose desired state
+// is unchanged.
+//
+// Slice ORDER does carry semantic meaning when StartupType is
+// CliqueStartupTypeInOrder — a different clique sequence means a different
+// startup chain. That ordering is captured in the hash separately, after the
+// per-clique pod-template hashes, so the InOrder semantics still flow into
+// the generation hash.
 func computeGenerationHash(pcs *grovecorev1alpha1.PodCliqueSet) string {
-	podTemplateSpecs := lo.Map(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec, _ int) *corev1.PodTemplateSpec {
+	cliquesByName := append([]*grovecorev1alpha1.PodCliqueTemplateSpec(nil), pcs.Spec.Template.Cliques...)
+	sort.SliceStable(cliquesByName, func(i, j int) bool {
+		return cliquesByName[i].Name < cliquesByName[j].Name
+	})
+
+	podTemplateSpecs := lo.Map(cliquesByName, func(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec, _ int) *corev1.PodTemplateSpec {
 		podTemplateSpec := &corev1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{
 				Labels:      pclqTemplateSpec.Labels,
@@ -121,7 +143,42 @@ func computeGenerationHash(pcs *grovecorev1alpha1.PodCliqueSet) string {
 		podTemplateSpec.Spec.PriorityClassName = pcs.Spec.Template.PriorityClassName
 		return podTemplateSpec
 	})
+
+	// Mix in startup-ordering metadata so that semantically-meaningful order
+	// (CliqueStartupTypeInOrder) still influences the hash.
+	startupTypeMarker := startupOrderingMarker(pcs)
+	startupSentinel := &corev1.PodTemplateSpec{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{"grove.io/startup-ordering": startupTypeMarker},
+		},
+	}
+	podTemplateSpecs = append(podTemplateSpecs, startupSentinel)
+
 	return k8sutils.ComputeHash(podTemplateSpecs...)
+}
+
+// startupOrderingMarker produces a deterministic representation of the
+// startup-ordering aspects of the PodCliqueSet template that DO depend on
+// clique slice order:
+//   - For CliqueStartupTypeInOrder, the slice order encodes the startup
+//     chain, so we encode the ordered list of clique names.
+//   - For CliqueStartupTypeAnyOrder and CliqueStartupTypeExplicit, the slice
+//     order is purely cosmetic (Explicit uses per-clique StartsAfter, which
+//     is part of each clique's own template spec and already hashed), so
+//     only the startup type itself is recorded.
+func startupOrderingMarker(pcs *grovecorev1alpha1.PodCliqueSet) string {
+	st := grovecorev1alpha1.CliqueStartupTypeAnyOrder
+	if pcs.Spec.Template.StartupType != nil {
+		st = *pcs.Spec.Template.StartupType
+	}
+	if st != grovecorev1alpha1.CliqueStartupTypeInOrder {
+		return string(st)
+	}
+	names := make([]string, 0, len(pcs.Spec.Template.Cliques))
+	for _, c := range pcs.Spec.Template.Cliques {
+		names = append(names, c.Name)
+	}
+	return string(st) + ":" + strings.Join(names, ",")
 }
 
 // setGenerationHashAndUpdateStatus updates the PodCliqueSet status with the new generation hash, stores the expectation, and updates the status subresource.

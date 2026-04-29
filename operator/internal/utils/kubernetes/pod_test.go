@@ -776,3 +776,376 @@ func TestCategorizePodsByConditionType(t *testing.T) {
 	assert.Len(t, categories[PodStartedButNotReady], 1)
 	assert.Equal(t, "started-not-ready-pod", categories[PodStartedButNotReady][0].Name)
 }
+
+// TestComputeHash_CanonicalizesListTypeMapSlices verifies the foundational
+// behavior that ComputeHash canonicalizes Kubernetes API +listType=map
+// slices in PodSpec before hashing, so two PodTemplateSpecs that represent
+// the same desired state hash to the same value regardless of the order in
+// which an upstream serializer emitted the slices.
+func TestComputeHash_CanonicalizesListTypeMapSlices(t *testing.T) {
+	mainContainer := corev1.Container{
+		Name:  "main",
+		Image: "nvcr.io/example/runtime:v1",
+		Ports: []corev1.ContainerPort{
+			{Name: "http", ContainerPort: 8000, Protocol: corev1.ProtocolTCP},
+			{Name: "metrics", ContainerPort: 9090, Protocol: corev1.ProtocolTCP},
+		},
+	}
+	sidecar := corev1.Container{Name: "sidecar", Image: "sidecar:latest"}
+
+	canonical := &corev1.PodTemplateSpec{
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{mainContainer, sidecar},
+			Volumes: []corev1.Volume{
+				{Name: "model-cache"},
+				{Name: "shared-memory"},
+			},
+			ImagePullSecrets: []corev1.LocalObjectReference{
+				{Name: "docker-imagepullsecret"},
+				{Name: "nvcr-imagepullsecret"},
+			},
+		},
+	}
+
+	mainContainerWithSwappedPorts := mainContainer
+	mainContainerWithSwappedPorts.Ports = []corev1.ContainerPort{
+		{Name: "metrics", ContainerPort: 9090, Protocol: corev1.ProtocolTCP},
+		{Name: "http", ContainerPort: 8000, Protocol: corev1.ProtocolTCP},
+	}
+
+	shuffled := &corev1.PodTemplateSpec{
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{sidecar, mainContainerWithSwappedPorts},
+			Volumes: []corev1.Volume{
+				{Name: "shared-memory"},
+				{Name: "model-cache"},
+			},
+			ImagePullSecrets: []corev1.LocalObjectReference{
+				{Name: "nvcr-imagepullsecret"},
+				{Name: "docker-imagepullsecret"},
+			},
+		},
+	}
+
+	canonicalHash := ComputeHash(canonical)
+	shuffledHash := ComputeHash(shuffled)
+
+	assert.Equal(t, canonicalHash, shuffledHash,
+		"ComputeHash must canonicalize +listType=map PodSpec slices so that the same desired state always produces the same hash, regardless of upstream serialization order")
+}
+
+// TestComputeHash_DoesNotCanonicalizeAtomicSlices documents the boundary of
+// the canonicalization: slices declared +listType=atomic in the Kubernetes
+// API have order semantics (e.g. Env participates in $(VAR) substitution,
+// InitContainers run in slice order). Reordering them is a real spec change
+// and ComputeHash must continue to reflect it.
+func TestComputeHash_DoesNotCanonicalizeAtomicSlices(t *testing.T) {
+	mkSpec := func(envs []corev1.EnvVar, initContainers []corev1.Container) *corev1.PodTemplateSpec {
+		return &corev1.PodTemplateSpec{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{
+					{Name: "main", Image: "main:v1", Env: envs},
+				},
+				InitContainers: initContainers,
+			},
+		}
+	}
+
+	t.Run("env_var_reorder_changes_hash", func(t *testing.T) {
+		envsA := []corev1.EnvVar{
+			{Name: "FOO", Value: "1"},
+			{Name: "BAR", Value: "$(FOO)"},
+		}
+		envsB := []corev1.EnvVar{
+			{Name: "BAR", Value: "$(FOO)"},
+			{Name: "FOO", Value: "1"},
+		}
+		assert.NotEqual(t, ComputeHash(mkSpec(envsA, nil)), ComputeHash(mkSpec(envsB, nil)),
+			"Env is +listType=atomic and order participates in $(VAR) substitution")
+	})
+
+	t.Run("init_container_reorder_changes_hash", func(t *testing.T) {
+		initA := corev1.Container{Name: "init-a", Image: "init-a:v1"}
+		initB := corev1.Container{Name: "init-b", Image: "init-b:v1"}
+		assert.NotEqual(t,
+			ComputeHash(mkSpec(nil, []corev1.Container{initA, initB})),
+			ComputeHash(mkSpec(nil, []corev1.Container{initB, initA})),
+			"InitContainers run in slice order — reorder changes runtime behavior and must change the hash")
+	})
+}
+
+// TestComputeHash_DoesNotMutateInput is a regression test for the
+// canonicalization implementation: ComputeHash must operate on a deep copy
+// and leave caller-owned PodTemplateSpec slices untouched.
+func TestComputeHash_DoesNotMutateInput(t *testing.T) {
+	in := &corev1.PodTemplateSpec{
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "z-main"},
+				{Name: "a-sidecar"},
+			},
+			Volumes: []corev1.Volume{
+				{Name: "z-vol"},
+				{Name: "a-vol"},
+			},
+		},
+	}
+
+	containerNamesBefore := []string{in.Spec.Containers[0].Name, in.Spec.Containers[1].Name}
+	volumeNamesBefore := []string{in.Spec.Volumes[0].Name, in.Spec.Volumes[1].Name}
+
+	_ = ComputeHash(in)
+
+	assert.Equal(t, containerNamesBefore, []string{in.Spec.Containers[0].Name, in.Spec.Containers[1].Name},
+		"ComputeHash must not reorder the caller's Containers slice")
+	assert.Equal(t, volumeNamesBefore, []string{in.Spec.Volumes[0].Name, in.Spec.Volumes[1].Name},
+		"ComputeHash must not reorder the caller's Volumes slice")
+}
+
+// TestComputeHash_AdditionalListTypeMapSlices pins the sort-invariance for
+// every +listType=map slice the canonicalizer touches that isn't covered by
+// TestComputeHash_CanonicalizesListTypeMapSlices: VolumeMounts, VolumeDevices,
+// HostAliases, TopologySpreadConstraints, ResourceClaims, EphemeralContainers,
+// and Container.ResizePolicy.
+//
+// The original bug report explicitly listed VolumeMounts as one of the
+// slices that flipped the hash on every Dynamo-operator-driven PCS update;
+// this is the regression test for that case.
+func TestComputeHash_AdditionalListTypeMapSlices(t *testing.T) {
+	withSpec := func(mut func(*corev1.PodSpec)) *corev1.PodTemplateSpec {
+		s := &corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "main:v1"}}}}
+		mut(&s.Spec)
+		return s
+	}
+
+	t.Run("volume_mount_reorder_does_not_change_hash", func(t *testing.T) {
+		mountA := corev1.VolumeMount{Name: "model-cache", MountPath: "/opt/model-cache"}
+		mountB := corev1.VolumeMount{Name: "shared-memory", MountPath: "/dev/shm"}
+		mountC := corev1.VolumeMount{Name: "scratch", MountPath: "/var/scratch"}
+
+		hashA := ComputeHash(withSpec(func(s *corev1.PodSpec) {
+			s.Containers[0].VolumeMounts = []corev1.VolumeMount{mountA, mountB, mountC}
+		}))
+		hashB := ComputeHash(withSpec(func(s *corev1.PodSpec) {
+			s.Containers[0].VolumeMounts = []corev1.VolumeMount{mountC, mountA, mountB}
+		}))
+		assert.Equal(t, hashA, hashB,
+			"Container.VolumeMounts is +listType=map keyed by mountPath — order must not affect the hash")
+	})
+
+	t.Run("volume_device_reorder_does_not_change_hash", func(t *testing.T) {
+		devA := corev1.VolumeDevice{Name: "raw-a", DevicePath: "/dev/xvda"}
+		devB := corev1.VolumeDevice{Name: "raw-b", DevicePath: "/dev/xvdb"}
+
+		hashA := ComputeHash(withSpec(func(s *corev1.PodSpec) {
+			s.Containers[0].VolumeDevices = []corev1.VolumeDevice{devA, devB}
+		}))
+		hashB := ComputeHash(withSpec(func(s *corev1.PodSpec) {
+			s.Containers[0].VolumeDevices = []corev1.VolumeDevice{devB, devA}
+		}))
+		assert.Equal(t, hashA, hashB,
+			"Container.VolumeDevices is +listType=map keyed by devicePath — order must not affect the hash")
+	})
+
+	t.Run("resize_policy_reorder_does_not_change_hash", func(t *testing.T) {
+		rpCPU := corev1.ContainerResizePolicy{ResourceName: corev1.ResourceCPU, RestartPolicy: corev1.NotRequired}
+		rpMem := corev1.ContainerResizePolicy{ResourceName: corev1.ResourceMemory, RestartPolicy: corev1.RestartContainer}
+
+		hashA := ComputeHash(withSpec(func(s *corev1.PodSpec) {
+			s.Containers[0].ResizePolicy = []corev1.ContainerResizePolicy{rpCPU, rpMem}
+		}))
+		hashB := ComputeHash(withSpec(func(s *corev1.PodSpec) {
+			s.Containers[0].ResizePolicy = []corev1.ContainerResizePolicy{rpMem, rpCPU}
+		}))
+		assert.Equal(t, hashA, hashB,
+			"Container.ResizePolicy is +listType=map keyed by resourceName — order must not affect the hash")
+	})
+
+	t.Run("host_alias_reorder_does_not_change_hash", func(t *testing.T) {
+		hashA := ComputeHash(withSpec(func(s *corev1.PodSpec) {
+			s.HostAliases = []corev1.HostAlias{
+				{IP: "10.0.0.1", Hostnames: []string{"a.example"}},
+				{IP: "10.0.0.2", Hostnames: []string{"b.example"}},
+			}
+		}))
+		hashB := ComputeHash(withSpec(func(s *corev1.PodSpec) {
+			s.HostAliases = []corev1.HostAlias{
+				{IP: "10.0.0.2", Hostnames: []string{"b.example"}},
+				{IP: "10.0.0.1", Hostnames: []string{"a.example"}},
+			}
+		}))
+		assert.Equal(t, hashA, hashB,
+			"PodSpec.HostAliases is +listType=map keyed by ip — order must not affect the hash")
+	})
+
+	t.Run("topology_spread_constraint_reorder_does_not_change_hash", func(t *testing.T) {
+		c1 := corev1.TopologySpreadConstraint{
+			MaxSkew:           1,
+			TopologyKey:       "topology.kubernetes.io/zone",
+			WhenUnsatisfiable: corev1.DoNotSchedule,
+			LabelSelector:     &metav1.LabelSelector{MatchLabels: map[string]string{"role": "worker"}},
+		}
+		c2 := corev1.TopologySpreadConstraint{
+			MaxSkew:           1,
+			TopologyKey:       "kubernetes.io/hostname",
+			WhenUnsatisfiable: corev1.ScheduleAnyway,
+			LabelSelector:     &metav1.LabelSelector{MatchLabels: map[string]string{"role": "worker"}},
+		}
+		hashA := ComputeHash(withSpec(func(s *corev1.PodSpec) {
+			s.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{c1, c2}
+		}))
+		hashB := ComputeHash(withSpec(func(s *corev1.PodSpec) {
+			s.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{c2, c1}
+		}))
+		assert.Equal(t, hashA, hashB,
+			"PodSpec.TopologySpreadConstraints is +listType=map keyed by (topologyKey, whenUnsatisfiable) — order must not affect the hash")
+	})
+
+	t.Run("resource_claim_reorder_does_not_change_hash", func(t *testing.T) {
+		hashA := ComputeHash(withSpec(func(s *corev1.PodSpec) {
+			s.ResourceClaims = []corev1.PodResourceClaim{
+				{Name: "claim-a"},
+				{Name: "claim-b"},
+			}
+		}))
+		hashB := ComputeHash(withSpec(func(s *corev1.PodSpec) {
+			s.ResourceClaims = []corev1.PodResourceClaim{
+				{Name: "claim-b"},
+				{Name: "claim-a"},
+			}
+		}))
+		assert.Equal(t, hashA, hashB,
+			"PodSpec.ResourceClaims is +listType=map keyed by name — order must not affect the hash")
+	})
+
+	t.Run("ephemeral_container_reorder_does_not_change_hash", func(t *testing.T) {
+		ecA := corev1.EphemeralContainer{
+			EphemeralContainerCommon: corev1.EphemeralContainerCommon{Name: "debug-a", Image: "busybox"},
+		}
+		ecB := corev1.EphemeralContainer{
+			EphemeralContainerCommon: corev1.EphemeralContainerCommon{Name: "debug-b", Image: "busybox"},
+		}
+		hashA := ComputeHash(withSpec(func(s *corev1.PodSpec) {
+			s.EphemeralContainers = []corev1.EphemeralContainer{ecA, ecB}
+		}))
+		hashB := ComputeHash(withSpec(func(s *corev1.PodSpec) {
+			s.EphemeralContainers = []corev1.EphemeralContainer{ecB, ecA}
+		}))
+		assert.Equal(t, hashA, hashB,
+			"PodSpec.EphemeralContainers is +listType=map keyed by name — order must not affect the hash")
+	})
+
+	t.Run("ephemeral_container_inner_slices_canonicalized", func(t *testing.T) {
+		// EphemeralContainerCommon has the same shape as Container. Reorder
+		// its VolumeMounts and Ports — the hash must still be stable.
+		ec := func(mounts []corev1.VolumeMount, ports []corev1.ContainerPort) corev1.EphemeralContainer {
+			return corev1.EphemeralContainer{EphemeralContainerCommon: corev1.EphemeralContainerCommon{
+				Name: "debug", Image: "busybox", VolumeMounts: mounts, Ports: ports,
+			}}
+		}
+		mountA := corev1.VolumeMount{Name: "a", MountPath: "/a"}
+		mountB := corev1.VolumeMount{Name: "b", MountPath: "/b"}
+		portA := corev1.ContainerPort{Name: "p1", ContainerPort: 8000, Protocol: corev1.ProtocolTCP}
+		portB := corev1.ContainerPort{Name: "p2", ContainerPort: 9090, Protocol: corev1.ProtocolTCP}
+
+		hashA := ComputeHash(withSpec(func(s *corev1.PodSpec) {
+			s.EphemeralContainers = []corev1.EphemeralContainer{ec([]corev1.VolumeMount{mountA, mountB}, []corev1.ContainerPort{portA, portB})}
+		}))
+		hashB := ComputeHash(withSpec(func(s *corev1.PodSpec) {
+			s.EphemeralContainers = []corev1.EphemeralContainer{ec([]corev1.VolumeMount{mountB, mountA}, []corev1.ContainerPort{portB, portA})}
+		}))
+		assert.Equal(t, hashA, hashB,
+			"EphemeralContainer's inner +listType=map slices must also be canonicalized")
+	})
+
+	t.Run("init_container_inner_slices_canonicalized", func(t *testing.T) {
+		// InitContainers slice ORDER is significant (execution sequence),
+		// but the +listType=map slices INSIDE each init container are not.
+		mountA := corev1.VolumeMount{Name: "a", MountPath: "/a"}
+		mountB := corev1.VolumeMount{Name: "b", MountPath: "/b"}
+		makeInit := func(mounts []corev1.VolumeMount) corev1.Container {
+			return corev1.Container{Name: "init-1", Image: "busybox", VolumeMounts: mounts}
+		}
+		hashA := ComputeHash(withSpec(func(s *corev1.PodSpec) {
+			s.InitContainers = []corev1.Container{makeInit([]corev1.VolumeMount{mountA, mountB})}
+		}))
+		hashB := ComputeHash(withSpec(func(s *corev1.PodSpec) {
+			s.InitContainers = []corev1.Container{makeInit([]corev1.VolumeMount{mountB, mountA})}
+		}))
+		assert.Equal(t, hashA, hashB,
+			"InitContainer.VolumeMounts is order-independent even though InitContainers slice itself is order-significant")
+	})
+}
+
+// TestComputeHash_RealSpecChangesStillFlipHash is a regression test in the
+// other direction: canonicalization must NOT mask actual desired-state
+// changes. If a future contributor accidentally over-canonicalizes — e.g.
+// sorts Env, or normalizes a value into its zero — rolling updates would
+// silently stop working, and that would be invisible without this kind of
+// test.
+func TestComputeHash_RealSpecChangesStillFlipHash(t *testing.T) {
+	base := &corev1.PodTemplateSpec{
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "main", Image: "main:v1", Env: []corev1.EnvVar{{Name: "FOO", Value: "1"}}},
+			},
+			Volumes: []corev1.Volume{{Name: "cache"}},
+		},
+	}
+	baseHash := ComputeHash(base)
+
+	t.Run("image_change_flips_hash", func(t *testing.T) {
+		mut := base.DeepCopy()
+		mut.Spec.Containers[0].Image = "main:v2"
+		assert.NotEqual(t, baseHash, ComputeHash(mut), "container image change must flip the hash")
+	})
+
+	t.Run("env_value_change_flips_hash", func(t *testing.T) {
+		mut := base.DeepCopy()
+		mut.Spec.Containers[0].Env[0].Value = "2"
+		assert.NotEqual(t, baseHash, ComputeHash(mut), "env var value change must flip the hash")
+	})
+
+	t.Run("new_env_var_flips_hash", func(t *testing.T) {
+		mut := base.DeepCopy()
+		mut.Spec.Containers[0].Env = append(mut.Spec.Containers[0].Env, corev1.EnvVar{Name: "BAR", Value: "1"})
+		assert.NotEqual(t, baseHash, ComputeHash(mut), "adding an env var must flip the hash")
+	})
+
+	t.Run("new_volume_flips_hash", func(t *testing.T) {
+		mut := base.DeepCopy()
+		mut.Spec.Volumes = append(mut.Spec.Volumes, corev1.Volume{Name: "scratch"})
+		assert.NotEqual(t, baseHash, ComputeHash(mut), "adding a volume must flip the hash")
+	})
+
+	t.Run("new_container_flips_hash", func(t *testing.T) {
+		mut := base.DeepCopy()
+		mut.Spec.Containers = append(mut.Spec.Containers, corev1.Container{Name: "sidecar", Image: "sidecar:v1"})
+		assert.NotEqual(t, baseHash, ComputeHash(mut), "adding a container must flip the hash")
+	})
+
+	t.Run("volume_mount_path_change_flips_hash", func(t *testing.T) {
+		mut := base.DeepCopy()
+		mut.Spec.Containers[0].VolumeMounts = []corev1.VolumeMount{{Name: "cache", MountPath: "/old"}}
+		mutHash := ComputeHash(mut)
+
+		mut2 := base.DeepCopy()
+		mut2.Spec.Containers[0].VolumeMounts = []corev1.VolumeMount{{Name: "cache", MountPath: "/new"}}
+		assert.NotEqual(t, mutHash, ComputeHash(mut2), "changing a volumeMount's mountPath must flip the hash")
+	})
+}
+
+// TestComputeHash_NilSafety pins that ComputeHash and the canonicalizer
+// helpers tolerate a nil PodTemplateSpec without panicking.
+func TestComputeHash_NilSafety(t *testing.T) {
+	assert.NotPanics(t, func() { _ = ComputeHash(nil) },
+		"ComputeHash(nil) must not panic")
+
+	assert.NotPanics(t, func() {
+		_ = ComputeHash(nil, &corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "x"}}}})
+	}, "ComputeHash with a nil entry mixed in must not panic")
+
+	assert.NotPanics(t, func() {
+		canonicalizePodSpecForHashing(&corev1.PodSpec{}) // empty / zero-valued
+	}, "canonicalizing an empty PodSpec must not panic")
+}
