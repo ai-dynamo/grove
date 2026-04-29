@@ -1600,6 +1600,7 @@ func TestPrepareSyncFlowTopologyResolution(t *testing.T) {
 	tests := []struct {
 		name                  string
 		topologyName          string
+		mutatePCS             func(*grovecorev1alpha1.PodCliqueSet)
 		clusterTopologyExists bool
 		tasEnabled            bool
 		wantTopologyLevels    []grovecorev1alpha1.TopologyLevel
@@ -1615,6 +1616,18 @@ func TestPrepareSyncFlowTopologyResolution(t *testing.T) {
 		{
 			name:                  "TAS enabled, no TopologyConstraint on PCS - topologyLevels stay nil",
 			topologyName:          "",
+			clusterTopologyExists: false,
+			tasEnabled:            true,
+			wantTopologyLevels:    nil,
+		},
+		{
+			name:         "TAS enabled, only child topology constraints without PCS topologyName - topologyLevels stay nil",
+			topologyName: "",
+			mutatePCS: func(pcs *grovecorev1alpha1.PodCliqueSet) {
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					PackDomain: "rack",
+				}
+			},
 			clusterTopologyExists: false,
 			tasEnabled:            true,
 			wantTopologyLevels:    nil,
@@ -1639,6 +1652,9 @@ func TestPrepareSyncFlowTopologyResolution(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := t.Context()
 			pcs := makePCSWithTopology(ns, "test-pcs", tc.topologyName)
+			if tc.mutatePCS != nil {
+				tc.mutatePCS(pcs)
+			}
 
 			var objs []client.Object
 			objs = append(objs, pcs)
@@ -1665,6 +1681,137 @@ func TestPrepareSyncFlowTopologyResolution(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, sc)
 			assert.Equal(t, tc.wantTopologyLevels, sc.topologyLevels)
+		})
+	}
+}
+
+func TestCreateOrUpdatePodGangs_ClearsStaleTopologyStateOnExistingPodGang(t *testing.T) {
+	ns := "default"
+	pcsName := "test-pcs"
+	pgName := "test-pcs-0"
+	pclqName := "test-pcs-0-worker"
+	pcsLabels := apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcsName)
+
+	makePCLQ := func() *grovecorev1alpha1.PodClique {
+		return &grovecorev1alpha1.PodClique{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:            pclqName,
+				Namespace:       ns,
+				UID:             "pclq-uid",
+				Labels:          pcsLabels,
+				OwnerReferences: []metav1.OwnerReference{{Name: pcsName, UID: "pcs-uid", Controller: ptr.To(true)}},
+			},
+			Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))},
+		}
+	}
+
+	makePod := func() *v1.Pod {
+		return &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "worker-0",
+				Namespace: ns,
+				Labels: lo.Assign(pcsLabels, map[string]string{
+					apicommon.LabelPodGang: pgName,
+				}),
+				OwnerReferences: []metav1.OwnerReference{{Name: pclqName, UID: "pclq-uid", Controller: ptr.To(true)}},
+			},
+		}
+	}
+
+	makeExistingPodGang := func(withAnnotation bool, withTopologyConstraint bool) *groveschedulerv1alpha1.PodGang {
+		pg := &groveschedulerv1alpha1.PodGang{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      pgName,
+				Namespace: ns,
+				Labels:    getLabels(pcsName),
+			},
+			Spec: groveschedulerv1alpha1.PodGangSpec{
+				PodGroups: []groveschedulerv1alpha1.PodGroup{{Name: pclqName, MinReplicas: 1}},
+			},
+		}
+		if withAnnotation {
+			pg.Annotations = map[string]string{apicommonconstants.AnnotationTopologyName: "my-topology"}
+		}
+		if withTopologyConstraint {
+			pg.Spec.TopologyConstraint = &groveschedulerv1alpha1.TopologyConstraint{
+				PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{Required: ptr.To("topology.kubernetes.io/rack")},
+			}
+		}
+		return pg
+	}
+
+	tests := []struct {
+		name                   string
+		setupPCS               func() *grovecorev1alpha1.PodCliqueSet
+		clusterTopologyObjects []client.Object
+		existingPodGang        *groveschedulerv1alpha1.PodGang
+		wantAnnotationPresent  bool
+		wantTopologyConstraint bool
+	}{
+		{
+			name: "stale ClusterTopology domain removes existing PodGang topology constraint",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return makePCSWithTopology(ns, pcsName, "my-topology")
+			},
+			clusterTopologyObjects: []client.Object{
+				makeClusterTopologyWithLevels("my-topology", []grovecorev1alpha1.TopologyLevel{
+					{Domain: "zone", Key: "topology.kubernetes.io/zone"},
+				}),
+			},
+			existingPodGang:        makeExistingPodGang(true, true),
+			wantAnnotationPresent:  true,
+			wantTopologyConstraint: false,
+		},
+		{
+			name: "invalid current topology state removes stale topology annotation from existing PodGang",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := makePCSWithTopology(ns, pcsName, "")
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					PackDomain: "rack",
+				}
+				return pcs
+			},
+			clusterTopologyObjects: nil,
+			existingPodGang:        makeExistingPodGang(true, true),
+			wantAnnotationPresent:  false,
+			wantTopologyConstraint: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			pcs := tc.setupPCS()
+			objs := []client.Object{pcs, makePCLQ(), makePod(), tc.existingPodGang}
+			objs = append(objs, tc.clusterTopologyObjects...)
+
+			fakeClient := testutils.NewTestClientBuilder().
+				WithObjects(objs...).
+				WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
+				Build()
+
+			r := &_resource{
+				client:        fakeClient,
+				scheme:        groveclientscheme.Scheme,
+				eventRecorder: record.NewFakeRecorder(10),
+				tasConfig:     configv1alpha1.TopologyAwareSchedulingConfiguration{Enabled: true},
+			}
+
+			sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
+			require.NoError(t, err)
+
+			result := r.createOrUpdatePodGangs(ctx, sc)
+			require.False(t, result.hasErrors(), "unexpected sync errors: %v", result.errs)
+
+			pgAfter := &groveschedulerv1alpha1.PodGang{}
+			require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: pgName}, pgAfter))
+
+			_, hasAnnotation := pgAfter.Annotations[apicommonconstants.AnnotationTopologyName]
+			assert.Equal(t, tc.wantAnnotationPresent, hasAnnotation)
+			if tc.wantAnnotationPresent {
+				assert.Equal(t, "my-topology", pgAfter.Annotations[apicommonconstants.AnnotationTopologyName])
+			}
+			assert.Equal(t, tc.wantTopologyConstraint, pgAfter.Spec.TopologyConstraint != nil)
 		})
 	}
 }

@@ -111,6 +111,7 @@ func TestValidateTASDisabledWithConstraints(t *testing.T) {
 			pcs := buildTestPCS(tc.pcsTopologyConstraint, tc.cliques, tc.pcsgConfigs)
 			validator := newTopologyConstraintsValidator(pcs, false, []string{})
 			errs := validator.validate()
+			assert.Len(t, errs, len(tc.errorMatchers), "unexpected number of errors")
 			testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
 		})
 	}
@@ -218,6 +219,7 @@ func TestValidateTASEnabledWhenDomainNotInClusterTopology(t *testing.T) {
 			pcs := buildTestPCS(tc.pcsTopologyConstraint, tc.cliques, tc.pcsgConfigs)
 			validator := newTopologyConstraintsValidator(pcs, true, clusterDomains)
 			errs := validator.validate()
+			assert.Len(t, errs, len(tc.errorMatchers), "unexpected number of errors")
 			testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
 		})
 	}
@@ -335,6 +337,9 @@ func TestValidateHierarchyViolations(t *testing.T) {
 			},
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.topologyConstraint"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.topologyConstraint"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.topologyConstraint"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].topologyConstraint"},
 				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].topologyConstraint"},
 			},
 		},
@@ -345,6 +350,7 @@ func TestValidateHierarchyViolations(t *testing.T) {
 			pcs := buildTestPCS(tc.pcsTopologyConstraint, tc.cliques, tc.pcsgConfigs)
 			validator := newTopologyConstraintsValidator(pcs, true, clusterDomains)
 			errs := validator.validate()
+			assert.Len(t, errs, len(tc.errorMatchers), "unexpected number of errors")
 			testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
 		})
 	}
@@ -444,6 +450,7 @@ func TestValidateHierarchyWithCustomDomains(t *testing.T) {
 			pcs := buildTestPCS(tc.pcsTopologyConstraint, tc.cliques, nil)
 			validator := newTopologyConstraintsValidator(pcs, true, clusterDomains)
 			errs := validator.validate()
+			assert.Len(t, errs, len(tc.errorMatchers), "unexpected number of errors")
 			testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
 		})
 	}
@@ -596,6 +603,7 @@ func TestValidateUpdateTopologyConstraintImmutability(t *testing.T) {
 			newPCS := buildTestPCS(tc.newPCSConstraint, tc.newCliques, tc.newPCSGConfigs)
 			validator := newTopologyConstraintsValidator(newPCS, true, clusterDomains)
 			errs := validator.validateUpdate(oldPCS)
+			assert.Len(t, errs, len(tc.errorMatchers), "unexpected number of errors")
 			testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
 		})
 	}
@@ -631,6 +639,8 @@ func TestResolveTopologyDomains(t *testing.T) {
 	tests := []struct {
 		name                   string
 		pcsConstraint          *grovecorev1alpha1.TopologyConstraint
+		cliques                []*grovecorev1alpha1.PodCliqueTemplateSpec
+		pcsgConfigs            []grovecorev1alpha1.PodCliqueScalingGroupConfig
 		clusterTopologyObjects []client.Object
 		expectedDomains        []string
 		expectedErrorMatchers  []testutils.ErrorMatcher
@@ -658,6 +668,34 @@ func TestResolveTopologyDomains(t *testing.T) {
 			setupClient:           nil,
 		},
 		{
+			name:          "Child topologyName matching PCS is allowed",
+			pcsConstraint: &grovecorev1alpha1.TopologyConstraint{TopologyName: "my-topo", PackDomain: "zone"},
+			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{
+					Name: "worker",
+					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+						TopologyName: "my-topo",
+						PackDomain:   "host",
+					},
+					Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
+				},
+			},
+			clusterTopologyObjects: []client.Object{
+				&grovecorev1alpha1.ClusterTopology{
+					ObjectMeta: v1.ObjectMeta{Name: "my-topo"},
+					Spec: grovecorev1alpha1.ClusterTopologySpec{
+						Levels: []grovecorev1alpha1.TopologyLevel{
+							{Domain: "zone", Key: "topology.kubernetes.io/zone"},
+							{Domain: "host", Key: "kubernetes.io/hostname"},
+						},
+					},
+				},
+			},
+			expectedDomains:       []string{"zone", "host"},
+			expectedErrorMatchers: []testutils.ErrorMatcher{},
+			setupClient:           nil,
+		},
+		{
 			name: "TopologyName missing: constraint has PackDomain but no TopologyName",
 			pcsConstraint: &grovecorev1alpha1.TopologyConstraint{
 				PackDomain: "zone",
@@ -668,6 +706,51 @@ func TestResolveTopologyDomains(t *testing.T) {
 				{
 					ErrorType: field.ErrorTypeRequired,
 					Field:     "spec.template.topologyConstraint.topologyName",
+				},
+			},
+			setupClient: nil,
+		},
+		{
+			name:          "Child-only topology constraint without PCS topologyName is rejected",
+			pcsConstraint: nil,
+			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{
+					Name: "worker",
+					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+						PackDomain: "host",
+					},
+					Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
+				},
+			},
+			clusterTopologyObjects: []client.Object{},
+			expectedDomains:        nil,
+			expectedErrorMatchers: []testutils.ErrorMatcher{
+				{
+					ErrorType: field.ErrorTypeRequired,
+					Field:     "spec.template.topologyConstraint.topologyName",
+				},
+			},
+			setupClient: nil,
+		},
+		{
+			name:          "Child topologyName mismatch is rejected",
+			pcsConstraint: &grovecorev1alpha1.TopologyConstraint{TopologyName: "my-topo", PackDomain: "zone"},
+			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{
+					Name: "worker",
+					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+						TopologyName: "other-topo",
+						PackDomain:   "host",
+					},
+					Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
+				},
+			},
+			clusterTopologyObjects: []client.Object{},
+			expectedDomains:        nil,
+			expectedErrorMatchers: []testutils.ErrorMatcher{
+				{
+					ErrorType: field.ErrorTypeInvalid,
+					Field:     "spec.template.cliques[0].topologyConstraint.topologyName",
 				},
 			},
 			setupClient: nil,
@@ -721,7 +804,7 @@ func TestResolveTopologyDomains(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			pcs := buildTestPCS(tc.pcsConstraint, nil, nil)
+			pcs := buildTestPCS(tc.pcsConstraint, tc.cliques, tc.pcsgConfigs)
 			var fakeClient client.Client
 			if tc.setupClient != nil {
 				fakeClient = tc.setupClient()
@@ -752,6 +835,7 @@ func TestResolveTopologyDomains(t *testing.T) {
 				}
 			}
 
+			assert.Len(t, errs, len(tc.expectedErrorMatchers), "unexpected number of errors")
 			testutils.AssertErrorMatches(t, errs, tc.expectedErrorMatchers)
 		})
 	}

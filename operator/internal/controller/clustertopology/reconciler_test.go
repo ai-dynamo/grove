@@ -466,6 +466,88 @@ func TestReconcile_EmitsDriftEvents(t *testing.T) {
 	assert.Contains(t, syncEvent[0], internalconstants.ReasonTopologyInSync)
 }
 
+func TestReconcile_DoesNotEmitEventWhenDriftStatusIsStable(t *testing.T) {
+	ct := createTestCT("my-topology")
+	ct.Spec.SchedulerTopologyReferences = []grovecorev1alpha1.SchedulerTopologyReference{
+		{SchedulerName: "kai-scheduler", TopologyReference: "external-topology"},
+	}
+	cl := testutils.NewTestClientBuilder().
+		WithObjects(ct).
+		WithStatusSubresource(ct).
+		Build()
+
+	backend := &fakeBackend{name: "kai-scheduler", driftInSync: true}
+	fakeRecorder := record.NewFakeRecorder(10)
+	r := &Reconciler{
+		Client:   cl,
+		backends: map[string]scheduler.Backend{"kai-scheduler": backend},
+		recorder: fakeRecorder,
+	}
+
+	_, err := doReconcile(r, "my-topology")
+	require.NoError(t, err)
+	require.Len(t, drainEvents(fakeRecorder.Events), 1, "expected an event for the initial Unknown -> InSync transition")
+
+	_, err = doReconcile(r, "my-topology")
+	require.NoError(t, err)
+	assert.Empty(t, drainEvents(fakeRecorder.Events), "expected no event when the drift status remains InSync")
+}
+
+func TestReconcile_MixedBackendOutcomes(t *testing.T) {
+	ct := createTestCT("my-topology")
+	ct.Spec.SchedulerTopologyReferences = []grovecorev1alpha1.SchedulerTopologyReference{
+		{SchedulerName: "beta-scheduler", TopologyReference: "external-beta-topology"},
+	}
+	cl := testutils.NewTestClientBuilder().
+		WithObjects(ct).
+		WithStatusSubresource(ct).
+		Build()
+
+	alphaBackend := &fakeBackend{name: "alpha-scheduler"}
+	betaBackend := &fakeBackend{
+		name:     "beta-scheduler",
+		driftErr: fmt.Errorf("drift check failed"),
+	}
+	r := &Reconciler{
+		Client: cl,
+		backends: map[string]scheduler.Backend{
+			"alpha-scheduler": alphaBackend,
+			"beta-scheduler":  betaBackend,
+		},
+		recorder: record.NewFakeRecorder(10),
+	}
+
+	_, err := doReconcile(r, "my-topology")
+	require.Error(t, err)
+	assert.True(t, alphaBackend.syncCalled)
+	assert.True(t, betaBackend.driftCalled)
+
+	fetched := &grovecorev1alpha1.ClusterTopology{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Name: "my-topology"}, fetched))
+	require.Len(t, fetched.Status.SchedulerTopologyStatuses, 2)
+
+	statusByScheduler := make(map[string]grovecorev1alpha1.SchedulerTopologyStatus, len(fetched.Status.SchedulerTopologyStatuses))
+	for _, status := range fetched.Status.SchedulerTopologyStatuses {
+		statusByScheduler[status.SchedulerName] = status
+	}
+
+	alphaStatus, ok := statusByScheduler["alpha-scheduler"]
+	require.True(t, ok)
+	assert.True(t, alphaStatus.InSync)
+	assert.Equal(t, "my-topology", alphaStatus.TopologyReference)
+
+	betaStatus, ok := statusByScheduler["beta-scheduler"]
+	require.True(t, ok)
+	assert.False(t, betaStatus.InSync)
+	assert.Equal(t, "external-beta-topology", betaStatus.TopologyReference)
+	assert.Contains(t, betaStatus.Message, "drift check failed")
+
+	cond := getDriftCondition(fetched)
+	require.NotNil(t, cond)
+	assert.Equal(t, metav1.ConditionTrue, cond.Status)
+	assert.Equal(t, apicommonconstants.ConditionReasonDrift, cond.Reason)
+}
+
 // -- Unit tests for helper functions --
 
 func TestSetSchedulerTopologyDriftCondition_AllInSync(t *testing.T) {

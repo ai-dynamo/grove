@@ -483,6 +483,20 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 			wantMsgContain: "available",
 		},
 		{
+			name:       "TAS enabled, named ClusterTopology is used instead of another available topology",
+			tasEnabled: true,
+			setupPCS:   func() *grovecorev1alpha1.PodCliqueSet { return basePCS("selected-topology") },
+			extraObjects: []client.Object{
+				clusterTopology("selected-topology", standardLevels),
+				clusterTopology("other-topology", []grovecorev1alpha1.TopologyLevel{
+					{Domain: grovecorev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
+				}),
+			},
+			wantStatus:     metav1.ConditionFalse,
+			wantReason:     apicommonconstants.ConditionReasonAllTopologyLevelsAvailable,
+			wantMsgContain: "available",
+		},
+		{
 			name:       "TAS enabled, topologyName set, CT exists, some domains unavailable — True/ClusterTopologyLevelsUnavailable",
 			tasEnabled: true,
 			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
