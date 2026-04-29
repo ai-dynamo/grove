@@ -694,8 +694,10 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigsUpdate(oldConfigs []g
 func (v *pcsValidator) validateTopologyConstraintsUpdate(oldPCS *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
 	// Allow invalid legacy objects to be repaired under the current rules by validating
 	// the new object as if it were a create.
-	if _, err := componentutils.ResolveTopologyNameForPodCliqueSet(oldPCS); err != nil {
-		return v.validateTopologyConstraintsOnCreate(context.Background())
+	if componentutils.HasAnyTopologyConstraint(oldPCS) {
+		if _, err := componentutils.ResolveTopologyNameForPodCliqueSet(oldPCS); err != nil {
+			return v.validateTopologyConstraintsOnCreate(context.Background())
+		}
 	}
 
 	// Domain/hierarchy validation is not needed on update because topology constraints are immutable.

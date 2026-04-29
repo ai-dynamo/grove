@@ -47,11 +47,11 @@ func HasAnyTopologyConstraint(pcs *grovecorev1alpha1.PodCliqueSet) bool {
 	return false
 }
 
-// ResolveTopologyNameForPodCliqueSet resolves the PCS-level topology name for topology-aware scheduling.
+// ResolveTopologyNameForPodCliqueSet resolves the PCS-level topologyName.
+// Callers that need to distinguish "no topology constraints at all" from
+// "topology constraints exist but topologyName is missing" must first call
+// HasAnyTopologyConstraint.
 func ResolveTopologyNameForPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) (string, error) {
-	if !HasAnyTopologyConstraint(pcs) {
-		return "", nil
-	}
 	if pcs.Spec.Template.TopologyConstraint == nil || pcs.Spec.Template.TopologyConstraint.TopologyName == "" {
 		return "", ErrTopologyNameMissing
 	}

@@ -233,6 +233,17 @@ func (r *Reconciler) mutateTopologyLevelUnavailableConditions(ctx context.Contex
 // If all topology levels are available, it sets the condition to False.
 // If the ClusterTopology resource is not found, it sets the condition to Unknown.
 func (r *Reconciler) computeTopologyLevelsUnavailableCondition(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (metav1.Condition, error) {
+	if !componentutils.HasAnyTopologyConstraint(pcs) {
+		return metav1.Condition{
+			Type:               apicommonconstants.ConditionTopologyLevelsUnavailable,
+			Status:             metav1.ConditionFalse,
+			Reason:             apicommonconstants.ConditionReasonAllTopologyLevelsAvailable,
+			Message:            "No topology constraints defined",
+			ObservedGeneration: pcs.Generation,
+			LastTransitionTime: metav1.Now(),
+		}, nil
+	}
+
 	topologyName, err := componentutils.ResolveTopologyNameForPodCliqueSet(pcs)
 	if err != nil {
 		switch err {
@@ -248,19 +259,6 @@ func (r *Reconciler) computeTopologyLevelsUnavailableCondition(ctx context.Conte
 		default:
 			return metav1.Condition{}, fmt.Errorf("failed to resolve topologyName: %w", err)
 		}
-	}
-
-	// If topologyName is missing but topology constraints exist, report as unknown.
-	// If no topology constraints at all, report all available.
-	if topologyName == "" {
-		return metav1.Condition{
-			Type:               apicommonconstants.ConditionTopologyLevelsUnavailable,
-			Status:             metav1.ConditionFalse,
-			Reason:             apicommonconstants.ConditionReasonAllTopologyLevelsAvailable,
-			Message:            "No topology constraints defined",
-			ObservedGeneration: pcs.Generation,
-			LastTransitionTime: metav1.Now(),
-		}, nil
 	}
 
 	topologyLevels, err := clustertopology.GetClusterTopologyLevels(ctx, r.client, topologyName)

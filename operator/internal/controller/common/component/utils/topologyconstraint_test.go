@@ -47,11 +47,14 @@ func TestResolveTopologyNameForPodCliqueSet(t *testing.T) {
 		setupPCS     func() *grovecorev1alpha1.PodCliqueSet
 		wantTopology string
 		wantErr      error
+		wantHasAny   bool
 	}{
 		{
 			name:         "no constraints",
 			setupPCS:     func() *grovecorev1alpha1.PodCliqueSet { return makePCS(nil) },
 			wantTopology: "",
+			wantErr:      ErrTopologyNameMissing,
+			wantHasAny:   false,
 		},
 		{
 			name: "pcs topology only",
@@ -64,6 +67,7 @@ func TestResolveTopologyNameForPodCliqueSet(t *testing.T) {
 				})
 			},
 			wantTopology: "topo-a",
+			wantHasAny:   true,
 		},
 		{
 			name: "matching child topology name is allowed",
@@ -80,6 +84,7 @@ func TestResolveTopologyNameForPodCliqueSet(t *testing.T) {
 				})
 			},
 			wantTopology: "topo-a",
+			wantHasAny:   true,
 		},
 		{
 			name: "missing pcs topology name with child constraint",
@@ -90,7 +95,8 @@ func TestResolveTopologyNameForPodCliqueSet(t *testing.T) {
 					}
 				})
 			},
-			wantErr: ErrTopologyNameMissing,
+			wantErr:    ErrTopologyNameMissing,
+			wantHasAny: true,
 		},
 		{
 			name: "child topology name does not affect resolved pcs topology name",
@@ -107,12 +113,14 @@ func TestResolveTopologyNameForPodCliqueSet(t *testing.T) {
 				})
 			},
 			wantTopology: "topo-a",
+			wantHasAny:   true,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			pcs := tc.setupPCS()
+			assert.Equal(t, tc.wantHasAny, HasAnyTopologyConstraint(pcs))
 			topologyName, err := ResolveTopologyNameForPodCliqueSet(pcs)
 			if tc.wantErr != nil {
 				assert.True(t, errors.Is(err, tc.wantErr))
