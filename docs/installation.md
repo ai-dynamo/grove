@@ -150,6 +150,18 @@ make deploy
 kubectl logs -l app.kubernetes.io/name=grove-operator
 ```
 
+#### `kubectl edit cm grove-operator-cm-*` fails with `field is immutable`
+
+**Cause:** The operator ConfigMap is rendered with `immutable: true` by design and cannot be edited in place.
+
+**Solution:** Change configuration via `helm upgrade`; a new ConfigMap is created and the operator rolls automatically.
+
+```bash
+helm upgrade grove oci://ghcr.io/ai-dynamo/grove/grove-charts \
+  --version <version> \
+  --set config.network.autoMNNVLEnabled=false
+```
+
 ### Runtime Issues
 
 #### Pods stuck in `Pending` state
