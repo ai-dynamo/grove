@@ -282,6 +282,29 @@ func TestComputeGenerationHash_InOrderStartupIsSensitiveToCliqueOrder(t *testing
 		"under CliqueStartupTypeInOrder, slice order encodes the startup chain — a different order is a real spec change")
 }
 
+// TestComputeGenerationHash_InOrderStartupOrderUsesCliqueNames verifies that
+// the InOrder startup chain is represented by clique names, not merely by the
+// sequence of pod template hashes. A "do not sort InOrder cliques" implementation
+// would miss this case when the reordered cliques have identical pod templates.
+func TestComputeGenerationHash_InOrderStartupOrderUsesCliqueNames(t *testing.T) {
+	startupInOrder := grovecorev1alpha1.CliqueStartupTypeInOrder
+
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+		WithCliqueStartupType(&startupInOrder).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("database").Build()).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("app").Build()).
+		Build()
+	originalHash := computeGenerationHash(pcs)
+
+	reordered := pcs.DeepCopy()
+	reordered.Spec.Template.Cliques = []*grovecorev1alpha1.PodCliqueTemplateSpec{
+		pcs.Spec.Template.Cliques[1].DeepCopy(),
+		pcs.Spec.Template.Cliques[0].DeepCopy(),
+	}
+	assert.NotEqual(t, originalHash, computeGenerationHash(reordered),
+		"under CliqueStartupTypeInOrder, changing only the ordered clique names changes the startup chain")
+}
+
 // TestComputeGenerationHash_AnyOrderEqualsExplicit_WhenPodSpecsMatch pins that
 // AnyOrder and Explicit do not add synthetic startup metadata to the generation
 // hash. Their slice order is not part of the template hash input, and
@@ -289,8 +312,8 @@ func TestComputeGenerationHash_InOrderStartupIsSensitiveToCliqueOrder(t *testing
 // broaden upgrade-time hash churn.
 //
 // Also pins the corollary that under Explicit, reordering the clique slice is
-// a no-op — the property most at risk of regressing if someone later "fixes"
-// the marker logic to also engage on Explicit.
+// a no-op — the property most at risk of regressing if someone later extends
+// the InOrder-only startup hash input to also engage on Explicit.
 func TestComputeGenerationHash_AnyOrderEqualsExplicit_WhenPodSpecsMatch(t *testing.T) {
 	startupAnyOrder := grovecorev1alpha1.CliqueStartupTypeAnyOrder
 	startupExplicit := grovecorev1alpha1.CliqueStartupTypeExplicit
@@ -315,7 +338,7 @@ func TestComputeGenerationHash_AnyOrderEqualsExplicit_WhenPodSpecsMatch(t *testi
 	hashExplicit := computeGenerationHash(build(&startupExplicit))
 
 	assert.Equal(t, hashAnyOrder, hashExplicit,
-		"AnyOrder and Explicit must not add startup markers that change hashes for otherwise identical templates")
+		"AnyOrder and Explicit must not add startup-order hash inputs for otherwise identical templates")
 
 	explicit := build(&startupExplicit)
 	explicitReordered := explicit.DeepCopy()
