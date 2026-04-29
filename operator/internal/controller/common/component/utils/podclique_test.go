@@ -423,10 +423,12 @@ func TestIsLastPCLQUpdateCompleted(t *testing.T) {
 // the same desired state always produce the same hash, regardless of how
 // the upstream controller happened to serialize the slices.
 //
-// Slices that are +listType=atomic (Env, VolumeMounts, ...) and whose order
-// has runtime semantic meaning (Env participates in $(VAR) substitution)
-// remain order-sensitive. Reordering them is a real spec change and must
-// continue to flip the hash.
+// Slices whose order has runtime semantic meaning remain order-sensitive
+// regardless of their listType: Container.Env (+listType=map by name, but
+// order participates in $(VAR) substitution); InitContainers
+// (+listType=map by name, but executed in slice order); EnvFrom and
+// Tolerations (+listType=atomic). Reordering any of these is a real spec
+// change and must continue to flip the hash.
 func TestComputePCLQPodTemplateHash_PodSpecSliceOrderInvariants(t *testing.T) {
 	envByName := map[string]corev1.EnvVar{
 		"FOO":   {Name: "FOO", Value: "foo-value"},
@@ -525,7 +527,7 @@ func TestComputePCLQPodTemplateHash_PodSpecSliceOrderInvariants(t *testing.T) {
 			"Container.Ports is +listType=map keyed by (containerPort, protocol) — order must not affect the hash")
 	})
 
-	t.Run("env_var_reorder_changes_hash_atomic_listtype", func(t *testing.T) {
+	t.Run("env_var_reorder_changes_hash", func(t *testing.T) {
 		envAlpha := []string{"BAR", "BAZ", "CORGE", "FOO", "QUUX", "QUX"}
 		envShuffled := []string{"FOO", "CORGE", "BAR", "QUUX", "BAZ", "QUX"}
 
@@ -537,7 +539,7 @@ func TestComputePCLQPodTemplateHash_PodSpecSliceOrderInvariants(t *testing.T) {
 		}), "")
 
 		assert.NotEqual(t, hashAlpha, hashShuffled,
-			"Container.Env is +listType=atomic and order participates in $(VAR) substitution — reorder is a real spec change and must change the hash")
+			"Container.Env is +listType=map by name but order participates in $(VAR) substitution — reorder is a real spec change and must change the hash")
 	})
 
 	t.Run("init_container_reorder_changes_hash", func(t *testing.T) {
@@ -557,7 +559,12 @@ func TestComputePCLQPodTemplateHash_PodSpecSliceOrderInvariants(t *testing.T) {
 			"InitContainers run in slice order — reorder is a real spec change and must change the hash")
 	})
 
-	t.Run("resize_policy_reorder_changes_hash_atomic_listtype", func(t *testing.T) {
+	// Container.ResizePolicy is +listType=atomic in the API. Each entry is
+	// keyed by resourceName at runtime, so order has no semantic effect, but
+	// pod.go intentionally treats the whole slice as opaque (atomic). If
+	// canonicalization is ever extended to ResizePolicy, this assertion will
+	// need to flip to assert.Equal.
+	t.Run("resize_policy_reorder_changes_hash", func(t *testing.T) {
 		rpCPU := corev1.ContainerResizePolicy{ResourceName: corev1.ResourceCPU, RestartPolicy: corev1.NotRequired}
 		rpMem := corev1.ContainerResizePolicy{ResourceName: corev1.ResourceMemory, RestartPolicy: corev1.RestartContainer}
 
@@ -569,7 +576,7 @@ func TestComputePCLQPodTemplateHash_PodSpecSliceOrderInvariants(t *testing.T) {
 		}), "")
 
 		assert.NotEqual(t, hashA, hashB,
-			"Container.ResizePolicy is +listType=atomic — reorder is a real spec change and must change the hash")
+			"Container.ResizePolicy is +listType=atomic — reorder is treated as a real spec change and must change the hash")
 	})
 
 	t.Run("identical_input_produces_identical_hash", func(t *testing.T) {

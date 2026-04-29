@@ -166,6 +166,15 @@ func computeGenerationHash(pcs *grovecorev1alpha1.PodCliqueSet) string {
 // slice order encodes the startup chain, so we encode the ordered list of
 // clique names. For AnyOrder and Explicit, slice order is not part of the
 // hash input.
+//
+// Known limitation for CliqueStartupTypeExplicit: the dependency graph is
+// encoded by PodCliqueSpec.StartsAfter, which lives at
+// pclqTemplateSpec.Spec.StartsAfter — not Spec.PodSpec. computeGenerationHash
+// only feeds Spec.PodSpec into the per-clique hash, so today neither slice
+// order nor StartsAfter mutations participate in the generation hash for
+// Explicit. A real Explicit-mode dependency-graph change is therefore
+// invisible to the rolling-update path; tracked separately as a follow-up to
+// canonicalize StartsAfter into the Explicit-mode hash.
 func startupOrderingMarker(pcs *grovecorev1alpha1.PodCliqueSet) (string, bool) {
 	st := grovecorev1alpha1.CliqueStartupTypeAnyOrder
 	if pcs.Spec.Template.StartupType != nil {
