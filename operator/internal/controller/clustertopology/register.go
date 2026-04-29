@@ -75,7 +75,7 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 // to the ClusterTopology that should be reconciled.
 //
 // For auto-managed topologies: the backend topology has an OwnerReference to the CT.
-// For externally-managed topologies: the CT's schedulerReferences names the backend topology.
+// For externally-managed topologies: the CT's schedulerTopologyReferences names the backend topology.
 func (r *Reconciler) mapBackendTopologyToCT(backendName string) handler.MapFunc {
 	return func(ctx context.Context, obj client.Object) []ctrl.Request {
 		for _, ref := range obj.GetOwnerReferences() {
@@ -93,8 +93,8 @@ func (r *Reconciler) mapBackendTopologyToCT(backendName string) handler.MapFunc 
 		}
 		var requests []ctrl.Request
 		for _, ct := range ctList.Items {
-			for _, ref := range ct.Spec.SchedulerReferences {
-				if ref.SchedulerName == backendName && ref.Reference == obj.GetName() {
+			for _, ref := range ct.Spec.SchedulerTopologyReferences {
+				if ref.SchedulerName == backendName && ref.TopologyReference == obj.GetName() {
 					requests = append(requests, ctrl.Request{
 						NamespacedName: client.ObjectKey{Name: ct.Name},
 					})

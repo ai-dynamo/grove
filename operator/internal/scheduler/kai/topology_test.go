@@ -296,9 +296,9 @@ func TestCheckTopologyDrift_InSync(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient([]client.Object{ct, existingKAITopology})
 	b := newTASBackend(cl)
 
-	ref := grovecorev1alpha1.SchedulerReference{
-		SchedulerName: "kai-scheduler",
-		Reference:     topologyName,
+	ref := grovecorev1alpha1.SchedulerTopologyReference{
+		SchedulerName:     "kai-scheduler",
+		TopologyReference: topologyName,
 	}
 	inSync, message, gen, err := b.CheckTopologyDrift(ctx, ct, ref)
 	require.NoError(t, err)
@@ -320,9 +320,9 @@ func TestCheckTopologyDrift_Drift(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient([]client.Object{ct, existingKAITopology})
 	b := newTASBackend(cl)
 
-	ref := grovecorev1alpha1.SchedulerReference{
-		SchedulerName: "kai-scheduler",
-		Reference:     topologyName,
+	ref := grovecorev1alpha1.SchedulerTopologyReference{
+		SchedulerName:     "kai-scheduler",
+		TopologyReference: topologyName,
 	}
 	inSync, message, gen, err := b.CheckTopologyDrift(ctx, ct, ref)
 	require.NoError(t, err)
@@ -339,9 +339,9 @@ func TestCheckTopologyDrift_NotFound(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient([]client.Object{ct})
 	b := newTASBackend(cl)
 
-	ref := grovecorev1alpha1.SchedulerReference{
-		SchedulerName: "kai-scheduler",
-		Reference:     topologyName,
+	ref := grovecorev1alpha1.SchedulerTopologyReference{
+		SchedulerName:     "kai-scheduler",
+		TopologyReference: topologyName,
 	}
 	inSync, message, _, err := b.CheckTopologyDrift(ctx, ct, ref)
 	require.NoError(t, err)
@@ -378,9 +378,9 @@ func TestCheckTopologyDriftErrors(t *testing.T) {
 				Build()
 			b := newTASBackend(cl)
 
-			ref := grovecorev1alpha1.SchedulerReference{
-				SchedulerName: "kai-scheduler",
-				Reference:     topologyName,
+			ref := grovecorev1alpha1.SchedulerTopologyReference{
+				SchedulerName:     "kai-scheduler",
+				TopologyReference: topologyName,
 			}
 			_, _, _, err := b.CheckTopologyDrift(context.Background(), ct, ref)
 			assert.Error(t, err)

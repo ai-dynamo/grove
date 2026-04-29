@@ -1366,8 +1366,8 @@ func Test_TAS17_HeterogeneousGPUCluster(t *testing.T) {
 }
 
 // Test_TAS18_ClusterTopologyDriftDetection tests drift detection when a ClusterTopology references
-// a non-existent KAI Topology via schedulerReferences.
-// 1. Create CT with schedulerReferences pointing to a non-existent KAI Topology
+// a non-existent KAI Topology via schedulerTopologyReferences.
+// 1. Create CT with schedulerTopologyReferences pointing to a non-existent KAI Topology
 // 2. Verify SchedulerTopologyDrift condition becomes True/Drift
 // 3. Verify SchedulerTopologyStatuses shows InSync=false
 func Test_TAS18_ClusterTopologyDriftDetection(t *testing.T) {
@@ -1380,14 +1380,14 @@ func Test_TAS18_ClusterTopologyDriftDetection(t *testing.T) {
 	defer cleanup()
 	tv := topology.NewTopologyVerifier(tc.Client, Logger)
 
-	Logger.Info("2. Create CT with schedulerReferences pointing to non-existent KAI Topology")
+	Logger.Info("2. Create CT with schedulerTopologyReferences pointing to non-existent KAI Topology")
 	levels := []corev1alpha1.TopologyLevel{
 		{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
 		{Domain: corev1alpha1.TopologyDomainRack, Key: setup.TopologyLabelRack},
 		{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
 	}
-	refs := []corev1alpha1.SchedulerReference{
-		{SchedulerName: "kai-scheduler", Reference: kaiTopoRef},
+	refs := []corev1alpha1.SchedulerTopologyReference{
+		{SchedulerName: "kai-scheduler", TopologyReference: kaiTopoRef},
 	}
 	if err := tv.CreateClusterTopologyWithSchedulerReferences(ctx, ctName, levels, refs); err != nil {
 		t.Fatalf("Failed to create ClusterTopology with scheduler references: %v", err)
@@ -1415,16 +1415,16 @@ func Test_TAS18_ClusterTopologyDriftDetection(t *testing.T) {
 	if statuses[0].InSync {
 		t.Fatalf("Expected SchedulerTopologyStatus InSync=false, got true")
 	}
-	if statuses[0].Reference != kaiTopoRef {
-		t.Fatalf("Expected SchedulerTopologyStatus Reference='%s', got '%s'", kaiTopoRef, statuses[0].Reference)
+	if statuses[0].TopologyReference != kaiTopoRef {
+		t.Fatalf("Expected SchedulerTopologyStatus TopologyReference='%s', got '%s'", kaiTopoRef, statuses[0].TopologyReference)
 	}
 
 	Logger.Info("TAS18: ClusterTopology Drift Detection test completed successfully!")
 }
 
-// Test_TAS19_AutoManagedCTLifecycle tests that auto-managed ClusterTopologies (no schedulerReferences)
+// Test_TAS19_AutoManagedCTLifecycle tests that auto-managed ClusterTopologies (no schedulerTopologyReferences)
 // have their KAI Topology automatically created and updated when levels change.
-// 1. Create CT with 2 levels (zone, host) — no schedulerReferences
+// 1. Create CT with 2 levels (zone, host) — no schedulerTopologyReferences
 // 2. Verify KAI Topology auto-created with matching keys
 // 3. Verify SchedulerTopologyDrift = False/InSync
 // 4. Update CT to 3 levels (add rack)
@@ -1439,7 +1439,7 @@ func Test_TAS19_AutoManagedCTLifecycle(t *testing.T) {
 	defer cleanup()
 	tv := topology.NewTopologyVerifier(tc.Client, Logger)
 
-	Logger.Info("2. Create CT with 2 levels (zone, host) — no schedulerReferences")
+	Logger.Info("2. Create CT with 2 levels (zone, host) — no schedulerTopologyReferences")
 	levels2 := []corev1alpha1.TopologyLevel{
 		{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
 		{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},

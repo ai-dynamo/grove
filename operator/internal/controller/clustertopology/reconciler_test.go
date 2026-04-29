@@ -73,7 +73,7 @@ func (f *fakeBackend) TopologyResourceName(ct *grovecorev1alpha1.ClusterTopology
 	return ct.Name
 }
 
-func (f *fakeBackend) CheckTopologyDrift(_ context.Context, _ *grovecorev1alpha1.ClusterTopology, _ grovecorev1alpha1.SchedulerReference) (bool, string, int64, error) {
+func (f *fakeBackend) CheckTopologyDrift(_ context.Context, _ *grovecorev1alpha1.ClusterTopology, _ grovecorev1alpha1.SchedulerTopologyReference) (bool, string, int64, error) {
 	f.driftCalled = true
 	return f.driftInSync, f.driftMessage, f.driftGen, f.driftErr
 }
@@ -193,7 +193,7 @@ func TestReconcile_AutoManaged_SyncsTopology(t *testing.T) {
 	require.Len(t, fetched.Status.SchedulerTopologyStatuses, 1)
 	assert.True(t, fetched.Status.SchedulerTopologyStatuses[0].InSync)
 	assert.Equal(t, "kai-scheduler", fetched.Status.SchedulerTopologyStatuses[0].SchedulerName)
-	assert.Equal(t, "my-topology", fetched.Status.SchedulerTopologyStatuses[0].Reference)
+	assert.Equal(t, "my-topology", fetched.Status.SchedulerTopologyStatuses[0].TopologyReference)
 
 	cond := getDriftCondition(fetched)
 	require.NotNil(t, cond)
@@ -203,8 +203,8 @@ func TestReconcile_AutoManaged_SyncsTopology(t *testing.T) {
 
 func TestReconcile_ExternallyManaged_InSync(t *testing.T) {
 	ct := createTestCT("my-topology")
-	ct.Spec.SchedulerReferences = []grovecorev1alpha1.SchedulerReference{
-		{SchedulerName: "kai-scheduler", Reference: "external-topology"},
+	ct.Spec.SchedulerTopologyReferences = []grovecorev1alpha1.SchedulerTopologyReference{
+		{SchedulerName: "kai-scheduler", TopologyReference: "external-topology"},
 	}
 	cl := testutils.NewTestClientBuilder().
 		WithObjects(ct).
@@ -233,7 +233,7 @@ func TestReconcile_ExternallyManaged_InSync(t *testing.T) {
 	require.Len(t, fetched.Status.SchedulerTopologyStatuses, 1)
 	status := fetched.Status.SchedulerTopologyStatuses[0]
 	assert.True(t, status.InSync)
-	assert.Equal(t, "external-topology", status.Reference)
+	assert.Equal(t, "external-topology", status.TopologyReference)
 	assert.Equal(t, int64(5), status.SchedulerBackendTopologyObservedGeneration)
 
 	cond := getDriftCondition(fetched)
@@ -243,8 +243,8 @@ func TestReconcile_ExternallyManaged_InSync(t *testing.T) {
 
 func TestReconcile_ExternallyManaged_Drift(t *testing.T) {
 	ct := createTestCT("my-topology")
-	ct.Spec.SchedulerReferences = []grovecorev1alpha1.SchedulerReference{
-		{SchedulerName: "kai-scheduler", Reference: "external-topology"},
+	ct.Spec.SchedulerTopologyReferences = []grovecorev1alpha1.SchedulerTopologyReference{
+		{SchedulerName: "kai-scheduler", TopologyReference: "external-topology"},
 	}
 	cl := testutils.NewTestClientBuilder().
 		WithObjects(ct).
@@ -304,7 +304,7 @@ func TestReconcile_SyncTopologyError(t *testing.T) {
 	require.Len(t, fetched.Status.SchedulerTopologyStatuses, 1)
 	assert.False(t, fetched.Status.SchedulerTopologyStatuses[0].InSync)
 	assert.Contains(t, fetched.Status.SchedulerTopologyStatuses[0].Message, "sync failed")
-	assert.Equal(t, "my-topology", fetched.Status.SchedulerTopologyStatuses[0].Reference)
+	assert.Equal(t, "my-topology", fetched.Status.SchedulerTopologyStatuses[0].TopologyReference)
 
 	cond := getDriftCondition(fetched)
 	require.NotNil(t, cond)
@@ -313,8 +313,8 @@ func TestReconcile_SyncTopologyError(t *testing.T) {
 
 func TestReconcile_CheckDriftError(t *testing.T) {
 	ct := createTestCT("my-topology")
-	ct.Spec.SchedulerReferences = []grovecorev1alpha1.SchedulerReference{
-		{SchedulerName: "kai-scheduler", Reference: "ext-topo"},
+	ct.Spec.SchedulerTopologyReferences = []grovecorev1alpha1.SchedulerTopologyReference{
+		{SchedulerName: "kai-scheduler", TopologyReference: "ext-topo"},
 	}
 	cl := testutils.NewTestClientBuilder().
 		WithObjects(ct).
@@ -411,8 +411,8 @@ func TestReconcile_NoTASBackends_RemovesCondition(t *testing.T) {
 
 func TestReconcile_EmitsDriftEvents(t *testing.T) {
 	ct := createTestCT("my-topology")
-	ct.Spec.SchedulerReferences = []grovecorev1alpha1.SchedulerReference{
-		{SchedulerName: "kai-scheduler", Reference: "external-topology"},
+	ct.Spec.SchedulerTopologyReferences = []grovecorev1alpha1.SchedulerTopologyReference{
+		{SchedulerName: "kai-scheduler", TopologyReference: "external-topology"},
 	}
 	cl := testutils.NewTestClientBuilder().
 		WithObjects(ct).
@@ -471,8 +471,8 @@ func TestReconcile_EmitsDriftEvents(t *testing.T) {
 func TestSetSchedulerTopologyDriftCondition_AllInSync(t *testing.T) {
 	ct := createTestCT("test")
 	statuses := []grovecorev1alpha1.SchedulerTopologyStatus{
-		{SchedulerName: "a", InSync: true},
-		{SchedulerName: "b", InSync: true},
+		{SchedulerTopologyReference: grovecorev1alpha1.SchedulerTopologyReference{SchedulerName: "a"}, InSync: true},
+		{SchedulerTopologyReference: grovecorev1alpha1.SchedulerTopologyReference{SchedulerName: "b"}, InSync: true},
 	}
 	setSchedulerTopologyDriftCondition(ct, statuses)
 	cond := getDriftCondition(ct)
@@ -484,8 +484,8 @@ func TestSetSchedulerTopologyDriftCondition_AllInSync(t *testing.T) {
 func TestSetSchedulerTopologyDriftCondition_SomeDrift(t *testing.T) {
 	ct := createTestCT("test")
 	statuses := []grovecorev1alpha1.SchedulerTopologyStatus{
-		{SchedulerName: "a", InSync: true},
-		{SchedulerName: "b", InSync: false},
+		{SchedulerTopologyReference: grovecorev1alpha1.SchedulerTopologyReference{SchedulerName: "a"}, InSync: true},
+		{SchedulerTopologyReference: grovecorev1alpha1.SchedulerTopologyReference{SchedulerName: "b"}, InSync: false},
 	}
 	setSchedulerTopologyDriftCondition(ct, statuses)
 	cond := getDriftCondition(ct)
@@ -536,8 +536,8 @@ func TestMapBackendTopologyToCT_AutoManaged(t *testing.T) {
 
 func TestMapBackendTopologyToCT_ExternallyManaged(t *testing.T) {
 	ct := createTestCT("my-topology")
-	ct.Spec.SchedulerReferences = []grovecorev1alpha1.SchedulerReference{
-		{SchedulerName: "kai-scheduler", Reference: "external-kai-topo"},
+	ct.Spec.SchedulerTopologyReferences = []grovecorev1alpha1.SchedulerTopologyReference{
+		{SchedulerName: "kai-scheduler", TopologyReference: "external-kai-topo"},
 	}
 	cl := testutils.NewTestClientBuilder().WithObjects(ct).Build()
 	r := &Reconciler{Client: cl}
@@ -558,7 +558,7 @@ func TestMapBackendTopologyToCT_UnrelatedTopology(t *testing.T) {
 	cl := testutils.NewTestClientBuilder().WithObjects(ct).Build()
 	r := &Reconciler{Client: cl}
 
-	// Object with no OwnerReference and no matching schedulerReference.
+	// Object with no OwnerReference and no matching schedulerTopologyReference.
 	backendObj := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: "unrelated-topology"},
 	}
@@ -570,14 +570,14 @@ func TestMapBackendTopologyToCT_UnrelatedTopology(t *testing.T) {
 
 func TestMapBackendTopologyToCT_WrongOwnerKind(t *testing.T) {
 	ct := createTestCT("my-topology")
-	ct.Spec.SchedulerReferences = []grovecorev1alpha1.SchedulerReference{
-		{SchedulerName: "kai-scheduler", Reference: "some-topology"},
+	ct.Spec.SchedulerTopologyReferences = []grovecorev1alpha1.SchedulerTopologyReference{
+		{SchedulerName: "kai-scheduler", TopologyReference: "some-topology"},
 	}
 	cl := testutils.NewTestClientBuilder().WithObjects(ct).Build()
 	r := &Reconciler{Client: cl}
 
 	// Object with an OwnerReference that is NOT a ClusterTopology — should fall
-	// through to the schedulerReferences path.
+	// through to the schedulerTopologyReferences path.
 	backendObj := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "some-topology",

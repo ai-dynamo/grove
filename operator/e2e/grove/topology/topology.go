@@ -251,14 +251,14 @@ func (tv *TopologyVerifier) EnsureClusterTopology(ctx context.Context, name stri
 	return nil
 }
 
-// CreateClusterTopologyWithSchedulerReferences creates a ClusterTopology CR with levels and schedulerReferences.
-func (tv *TopologyVerifier) CreateClusterTopologyWithSchedulerReferences(ctx context.Context, name string, levels []corev1alpha1.TopologyLevel, refs []corev1alpha1.SchedulerReference) error {
+// CreateClusterTopologyWithSchedulerReferences creates a ClusterTopology CR with levels and schedulerTopologyReferences.
+func (tv *TopologyVerifier) CreateClusterTopologyWithSchedulerReferences(ctx context.Context, name string, levels []corev1alpha1.TopologyLevel, refs []corev1alpha1.SchedulerTopologyReference) error {
 	ct := &corev1alpha1.ClusterTopology{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "grove.io/v1alpha1", Kind: "ClusterTopology"},
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: corev1alpha1.ClusterTopologySpec{
-			Levels:               levels,
-			SchedulerReferences: refs,
+			Levels:                      levels,
+			SchedulerTopologyReferences: refs,
 		},
 	}
 	if err := tv.cl.Create(ctx, ct); err != nil {

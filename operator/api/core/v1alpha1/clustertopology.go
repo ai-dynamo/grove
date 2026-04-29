@@ -55,14 +55,14 @@ type ClusterTopologySpec struct {
 	// +kubebuilder:validation:MinItems=1
 	Levels []TopologyLevel `json:"levels"`
 
-	// SchedulerReferences controls per-backend topology resource management.
+	// SchedulerTopologyReferences controls per-backend topology resource management.
 	// For each enabled TopologyAwareSchedBackend, the operator checks whether an entry
 	// for that backend exists in this list:
 	// - If absent: the operator auto-creates and manages the backend's topology resource.
 	// - If present: the named resource is assumed to be externally managed; the operator
 	//   compares its levels and reports any mismatch via the SchedulerTopologyDrift condition.
 	// +optional
-	SchedulerReferences []SchedulerReference `json:"schedulerReferences,omitempty"`
+	SchedulerTopologyReferences []SchedulerTopologyReference `json:"schedulerTopologyReferences,omitempty"`
 }
 
 // ClusterTopologyStatus defines the observed state of ClusterTopology.
@@ -79,22 +79,21 @@ type ClusterTopologyStatus struct {
 	SchedulerTopologyStatuses []SchedulerTopologyStatus `json:"schedulerTopologyStatuses,omitempty"`
 }
 
-// SchedulerReference maps a ClusterTopology to a scheduler backend's topology resource.
-type SchedulerReference struct {
+// SchedulerTopologyReference maps a ClusterTopology to a scheduler backend's topology resource.
+type SchedulerTopologyReference struct {
 	// SchedulerName is the name of the scheduler backend (e.g., "kai-scheduler").
 	// +kubebuilder:validation:Required
 	SchedulerName string `json:"schedulerName"`
-	// Reference is the name of the scheduler backend's topology resource.
+	// TopologyReference is the name of the scheduler backend's topology resource.
 	// +kubebuilder:validation:Required
-	Reference string `json:"reference"`
+	TopologyReference string `json:"topologyReference"`
 }
 
 // SchedulerTopologyStatus reports the sync state of a scheduler backend's topology resource.
 type SchedulerTopologyStatus struct {
-	// SchedulerName is the name of the scheduler backend.
-	SchedulerName string `json:"schedulerName"`
-	// Reference is the name of the scheduler backend's topology resource.
-	Reference string `json:"reference"`
+	// SchedulerTopologyReference identifies the scheduler backend topology resource
+	// this status entry describes.
+	SchedulerTopologyReference `json:",inline"`
 	// InSync is true when the scheduler backend topology levels match the ClusterTopology levels.
 	InSync bool `json:"inSync"`
 	// SchedulerBackendTopologyObservedGeneration is the generation of the backend topology

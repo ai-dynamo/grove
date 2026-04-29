@@ -87,7 +87,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `levels` _[TopologyLevel](#topologylevel) array_ | Levels is an ordered list of topology levels from broadest to narrowest scope.<br />The order in this list defines the hierarchy (index 0 = broadest level).<br />Uniqueness of domain and key is enforced by the ClusterTopology validating webhook. |  | MinItems: 1 <br /> |
-| `schedulerReferences` _[SchedulerReference](#schedulerreference) array_ | SchedulerReferences controls per-backend topology resource management.<br />For each enabled TopologyAwareSchedBackend, the operator checks whether an entry<br />for that backend exists in this list:<br />- If absent: the operator auto-creates and manages the backend's topology resource.<br />- If present: the named resource is assumed to be externally managed; the operator<br />  compares its levels and reports any mismatch via the SchedulerTopologyDrift condition. |  |  |
+| `schedulerTopologyReferences` _[SchedulerTopologyReference](#schedulertopologyreference) array_ | SchedulerTopologyReferences controls per-backend topology resource management.<br />For each enabled TopologyAwareSchedBackend, the operator checks whether an entry<br />for that backend exists in this list:<br />- If absent: the operator auto-creates and manages the backend's topology resource.<br />- If present: the named resource is assumed to be externally managed; the operator<br />  compares its levels and reports any mismatch via the SchedulerTopologyDrift condition. |  |  |
 
 
 #### ClusterTopologyStatus
@@ -623,8 +623,6 @@ _Appears in:_
 | `podCliqueScalingGroups` _[PodCliqueScalingGroupConfig](#podcliquescalinggroupconfig) array_ | PodCliqueScalingGroupConfigs is a list of scaling groups for the PodCliqueSet. |  |  |
 
 
-
-
 #### PodCliqueSetUpdateProgress
 
 
@@ -870,21 +868,22 @@ _Appears in:_
 | `scope` _[ResourceSharingScope](#resourcesharingscope)_ | Scope determines the sharing granularity for the ResourceClaims created from<br />this template. |  | Enum: [AllReplicas PerReplica] <br /> |
 
 
-#### SchedulerReference
+#### SchedulerTopologyReference
 
 
 
-SchedulerReference maps a ClusterTopology to a scheduler backend's topology resource.
+SchedulerTopologyReference maps a ClusterTopology to a scheduler backend's topology resource.
 
 
 
 _Appears in:_
 - [ClusterTopologySpec](#clustertopologyspec)
+- [SchedulerTopologyStatus](#schedulertopologystatus)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `schedulerName` _string_ | SchedulerName is the name of the scheduler backend (e.g., "kai-scheduler"). |  | Required: \{\} <br /> |
-| `reference` _string_ | Reference is the name of the scheduler backend's topology resource. |  | Required: \{\} <br /> |
+| `topologyReference` _string_ | TopologyReference is the name of the scheduler backend's topology resource. |  | Required: \{\} <br /> |
 
 
 #### SchedulerTopologyStatus
@@ -900,8 +899,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `schedulerName` _string_ | SchedulerName is the name of the scheduler backend. |  |  |
-| `reference` _string_ | Reference is the name of the scheduler backend's topology resource. |  |  |
+| `schedulerName` _string_ | SchedulerName is the name of the scheduler backend (e.g., "kai-scheduler"). |  | Required: \{\} <br /> |
+| `topologyReference` _string_ | TopologyReference is the name of the scheduler backend's topology resource. |  | Required: \{\} <br /> |
 | `inSync` _boolean_ | InSync is true when the scheduler backend topology levels match the ClusterTopology levels. |  |  |
 | `schedulerBackendTopologyObservedGeneration` _integer_ | SchedulerBackendTopologyObservedGeneration is the generation of the backend topology<br />resource that was last compared. Zero if the resource was not found. |  |  |
 | `message` _string_ | Message provides detail when InSync is false. |  |  |

@@ -73,29 +73,29 @@ spec:
                   type: object
                 minItems: 1
                 type: array
-              schedulerReferences:
+              schedulerTopologyReferences:
                 description: |-
-                  SchedulerReferences controls per-backend topology resource management.
+                  SchedulerTopologyReferences controls per-backend topology resource management.
                   For each enabled TopologyAwareSchedBackend, the operator checks whether an entry
                   for that backend exists in this list:
                   - If absent: the operator auto-creates and manages the backend's topology resource.
                   - If present: the named resource is assumed to be externally managed; the operator
                     compares its levels and reports any mismatch via the SchedulerTopologyDrift condition.
                 items:
-                  description: SchedulerReference maps a ClusterTopology to a scheduler
-                    backend's topology resource.
+                  description: SchedulerTopologyReference maps a ClusterTopology to
+                    a scheduler backend's topology resource.
                   properties:
-                    reference:
-                      description: Reference is the name of the scheduler backend's
-                        topology resource.
-                      type: string
                     schedulerName:
                       description: SchedulerName is the name of the scheduler backend
                         (e.g., "kai-scheduler").
                       type: string
+                    topologyReference:
+                      description: TopologyReference is the name of the scheduler
+                        backend's topology resource.
+                      type: string
                   required:
-                  - reference
                   - schedulerName
+                  - topologyReference
                   type: object
                 type: array
             required:
@@ -182,10 +182,6 @@ spec:
                     message:
                       description: Message provides detail when InSync is false.
                       type: string
-                    reference:
-                      description: Reference is the name of the scheduler backend's
-                        topology resource.
-                      type: string
                     schedulerBackendTopologyObservedGeneration:
                       description: |-
                         SchedulerBackendTopologyObservedGeneration is the generation of the backend topology
@@ -193,12 +189,17 @@ spec:
                       format: int64
                       type: integer
                     schedulerName:
-                      description: SchedulerName is the name of the scheduler backend.
+                      description: SchedulerName is the name of the scheduler backend
+                        (e.g., "kai-scheduler").
+                      type: string
+                    topologyReference:
+                      description: TopologyReference is the name of the scheduler
+                        backend's topology resource.
                       type: string
                   required:
                   - inSync
-                  - reference
                   - schedulerName
+                  - topologyReference
                   type: object
                 type: array
             type: object

@@ -135,13 +135,13 @@ func desiredKAITopologyLevels(ct *grovecorev1alpha1.ClusterTopology) []kaitopolo
 }
 
 // CheckTopologyDrift compares the named KAI Topology resource against the ClusterTopology levels.
-func (b *schedulerBackend) CheckTopologyDrift(ctx context.Context, ct *grovecorev1alpha1.ClusterTopology, ref grovecorev1alpha1.SchedulerReference) (bool, string, int64, error) {
+func (b *schedulerBackend) CheckTopologyDrift(ctx context.Context, ct *grovecorev1alpha1.ClusterTopology, ref grovecorev1alpha1.SchedulerTopologyReference) (bool, string, int64, error) {
 	existingTopology := &kaitopologyv1alpha1.Topology{}
-	if err := b.client.Get(ctx, client.ObjectKey{Name: ref.Reference}, existingTopology); err != nil {
+	if err := b.client.Get(ctx, client.ObjectKey{Name: ref.TopologyReference}, existingTopology); err != nil {
 		if apierrors.IsNotFound(err) {
-			return false, fmt.Sprintf("KAI Topology %q not found", ref.Reference), 0, nil
+			return false, fmt.Sprintf("KAI Topology %q not found", ref.TopologyReference), 0, nil
 		}
-		return false, "", 0, fmt.Errorf("failed to get KAI Topology %s: %w", ref.Reference, err)
+		return false, "", 0, fmt.Errorf("failed to get KAI Topology %s: %w", ref.TopologyReference, err)
 	}
 	desired := desiredKAITopologyLevels(ct)
 	if !reflect.DeepEqual(existingTopology.Spec.Levels, desired) {

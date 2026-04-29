@@ -126,14 +126,14 @@ func TestSynchronizeTopologySkipsExternallyManaged(t *testing.T) {
 		{Domain: grovecorev1alpha1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
 	}
 	ct := createTestClusterTopology(topologyName, topologyLevels)
-	ct.Spec.SchedulerReferences = []grovecorev1alpha1.SchedulerReference{
-		{SchedulerName: "kai-scheduler", Reference: "external-kai-topology"},
+	ct.Spec.SchedulerTopologyReferences = []grovecorev1alpha1.SchedulerTopologyReference{
+		{SchedulerName: "kai-scheduler", TopologyReference: "external-kai-topology"},
 	}
 
 	cl := testutils.CreateDefaultFakeClient([]client.Object{ct})
 	logger := logr.Discard()
 
-	// KAI backend is listed in schedulerReferences — SyncTopology should NOT be called.
+	// KAI backend is listed in schedulerTopologyReferences — SyncTopology should NOT be called.
 	// If it were called, it would try to create a KAI Topology and succeed, so we verify
 	// that no KAI Topology was created.
 	err := SynchronizeTopology(ctx, cl, logger, newKaiBackends(cl))
@@ -304,13 +304,13 @@ func createTestClusterTopology(name string, levels []grovecorev1alpha1.TopologyL
 }
 
 func TestBuildSchedulerReferenceMap(t *testing.T) {
-	refs := []grovecorev1alpha1.SchedulerReference{
-		{SchedulerName: "kai-scheduler", Reference: "kai-topo"},
-		{SchedulerName: "other-scheduler", Reference: "other-topo"},
+	refs := []grovecorev1alpha1.SchedulerTopologyReference{
+		{SchedulerName: "kai-scheduler", TopologyReference: "kai-topo"},
+		{SchedulerName: "other-scheduler", TopologyReference: "other-topo"},
 	}
 	m := BuildSchedulerReferenceMap(refs)
 	assert.NotNil(t, m["kai-scheduler"])
-	assert.Equal(t, "kai-topo", m["kai-scheduler"].Reference)
+	assert.Equal(t, "kai-topo", m["kai-scheduler"].TopologyReference)
 	assert.Nil(t, m["nonexistent"])
 	assert.Empty(t, BuildSchedulerReferenceMap(nil))
 }

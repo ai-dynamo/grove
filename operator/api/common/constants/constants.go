@@ -95,7 +95,7 @@ const (
 	ConditionReasonDrift = "Drift"
 
 	// ConditionReasonTopologyNotFound is the reason when a scheduler backend referenced
-	// in schedulerReferences is not enabled or does not support topology management.
+	// in schedulerTopologyReferences is not enabled or does not support topology management.
 	ConditionReasonTopologyNotFound = "TopologyNotFound"
 
 	// ConditionReasonTopologyNameMissing is the reason when a PodCliqueSet has topology

@@ -57,7 +57,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	var statuses []grovecorev1alpha1.SchedulerTopologyStatus
 	var reconcileErr error
 
-	schedulerRefMap := ctutils.BuildSchedulerReferenceMap(ct.Spec.SchedulerReferences)
+	schedulerRefMap := ctutils.BuildSchedulerReferenceMap(ct.Spec.SchedulerTopologyReferences)
 
 	for _, backendName := range sortedBackendNames(r.backends) {
 		b := r.backends[backendName]
@@ -72,17 +72,21 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			if err := tasBackend.SyncTopology(ctx, nil, ct); err != nil {
 				reconcileErr = errors.Join(reconcileErr, err)
 				statuses = append(statuses, grovecorev1alpha1.SchedulerTopologyStatus{
-					SchedulerName: b.Name(),
-					Reference:     tasBackend.TopologyResourceName(ct),
-					InSync:        false,
-					Message:       err.Error(),
+					SchedulerTopologyReference: grovecorev1alpha1.SchedulerTopologyReference{
+						SchedulerName:     b.Name(),
+						TopologyReference: tasBackend.TopologyResourceName(ct),
+					},
+					InSync:  false,
+					Message: err.Error(),
 				})
 				logger.Error(err, "Failed to sync topology for backend", "backend", b.Name())
 			} else {
 				statuses = append(statuses, grovecorev1alpha1.SchedulerTopologyStatus{
-					SchedulerName: b.Name(),
-					Reference:     tasBackend.TopologyResourceName(ct),
-					InSync:        true,
+					SchedulerTopologyReference: grovecorev1alpha1.SchedulerTopologyReference{
+						SchedulerName:     b.Name(),
+						TopologyReference: tasBackend.TopologyResourceName(ct),
+					},
+					InSync: true,
 				})
 			}
 		} else {
@@ -94,9 +98,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 				logger.Error(err, "Failed to check topology drift for backend", "backend", b.Name())
 			}
 			statuses = append(statuses, grovecorev1alpha1.SchedulerTopologyStatus{
-				SchedulerName: b.Name(),
-				Reference:     ref.Reference,
-				InSync:        inSync,
+				SchedulerTopologyReference: grovecorev1alpha1.SchedulerTopologyReference{
+					SchedulerName:     b.Name(),
+					TopologyReference: ref.TopologyReference,
+				},
+				InSync: inSync,
 				SchedulerBackendTopologyObservedGeneration: gen,
 				Message: msg,
 			})

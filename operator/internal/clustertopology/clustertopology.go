@@ -37,7 +37,7 @@ func SynchronizeTopology(ctx context.Context, cl client.Client, logger logr.Logg
 	}
 	for i := range ctList.Items {
 		ct := &ctList.Items[i]
-		schedulerRefMap := BuildSchedulerReferenceMap(ct.Spec.SchedulerReferences)
+		schedulerRefMap := BuildSchedulerReferenceMap(ct.Spec.SchedulerTopologyReferences)
 
 		for _, b := range backends {
 			tasBackend, ok := b.(scheduler.TopologyAwareSchedBackend)
@@ -45,7 +45,7 @@ func SynchronizeTopology(ctx context.Context, cl client.Client, logger logr.Logg
 				logger.V(1).Info("Scheduler backend does not implement TopologyAwareSchedBackend, skipping topology sync", "backend", b.Name())
 				continue
 			}
-			// Only sync auto-managed backends (not listed in schedulerReferences).
+			// Only sync auto-managed backends (not listed in schedulerTopologyReferences).
 			// Externally-managed backends are handled by the CT controller via CheckTopologyDrift.
 			if _, isExternallyManaged := schedulerRefMap[b.Name()]; isExternallyManaged {
 				continue
@@ -69,8 +69,8 @@ func GetClusterTopologyLevels(ctx context.Context, cl client.Client, name string
 }
 
 // BuildSchedulerReferenceMap builds a map from scheduler name to SchedulerReference pointer.
-func BuildSchedulerReferenceMap(refs []grovecorev1alpha1.SchedulerReference) map[string]*grovecorev1alpha1.SchedulerReference {
-	m := make(map[string]*grovecorev1alpha1.SchedulerReference, len(refs))
+func BuildSchedulerReferenceMap(refs []grovecorev1alpha1.SchedulerTopologyReference) map[string]*grovecorev1alpha1.SchedulerTopologyReference {
+	m := make(map[string]*grovecorev1alpha1.SchedulerTopologyReference, len(refs))
 	for i := range refs {
 		m[refs[i].SchedulerName] = &refs[i]
 	}
