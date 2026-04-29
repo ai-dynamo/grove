@@ -39,16 +39,24 @@ type NodeLabelChange struct {
 	RemoveLabels []string          // Label keys to remove
 }
 
+type originalLabelState struct {
+	Exists bool
+	Value  string
+}
+
+type touchedLabelSnapshot map[string]map[string]originalLabelState
+
 // MutateNodeLabels applies label changes to nodes. Returns a cleanup function that
-// reverses all changes (removes added labels, restores removed labels to their original values).
+// restores each touched label to its original state.
 // The cleanup function is safe to call multiple times. It reports rollback failures via t.Errorf.
 func (tv *TopologyVerifier) MutateNodeLabels(ctx context.Context, t testing.TB, changes []NodeLabelChange) (cleanup func(), err error) {
-	// Track original label state for each node to support rollback.
-	originalLabels := make(map[string]map[string]string) // nodeName -> labelKey -> originalValue (for RemoveLabels)
-	addedLabels := make(map[string][]string)             // nodeName -> list of keys added (for AddLabels)
+	// Snapshot the original state of each touched label key before any mutation,
+	// so rollback can restore exactly what this helper changed.
+	originalTouchedLabels := make(touchedLabelSnapshot) // nodeName -> labelKey -> original state
 
 	// Track which nodes were successfully mutated for partial rollback on error.
 	var mutatedNodes []string
+	mutatedNodeSet := make(map[string]struct{})
 
 	// Apply all mutations and capture original state.
 	for _, change := range changes {
@@ -56,25 +64,14 @@ func (tv *TopologyVerifier) MutateNodeLabels(ctx context.Context, t testing.TB, 
 		var node v1.Node
 		if err := tv.cl.Get(ctx, types.NamespacedName{Name: change.NodeName}, &node); err != nil {
 			// Rollback any already-mutated nodes.
-			cleanupErr := rollbackNodeLabels(ctx, tv, mutatedNodes, originalLabels, addedLabels)
+			cleanupErr := rollbackNodeLabels(ctx, tv, mutatedNodes, originalTouchedLabels)
 			if cleanupErr != nil {
 				return nil, fmt.Errorf("failed to get node %s: %w; additionally failed to rollback: %v", change.NodeName, err, cleanupErr)
 			}
 			return nil, fmt.Errorf("failed to get node %s: %w", change.NodeName, err)
 		}
 
-		// Capture original state of labels we're about to remove.
-		originalLabels[change.NodeName] = make(map[string]string)
-		for _, labelKey := range change.RemoveLabels {
-			if val, exists := node.Labels[labelKey]; exists {
-				originalLabels[change.NodeName][labelKey] = val
-			}
-		}
-
-		// Track labels we're about to add (so rollback can remove them).
-		for key := range change.AddLabels {
-			addedLabels[change.NodeName] = append(addedLabels[change.NodeName], key)
-		}
+		captureTouchedLabelSnapshot(originalTouchedLabels, change, node.Labels)
 
 		// Build the strategic merge patch.
 		labels := make(map[string]interface{})
@@ -97,7 +94,7 @@ func (tv *TopologyVerifier) MutateNodeLabels(ctx context.Context, t testing.TB, 
 
 		patchBytes, err := json.Marshal(patchData)
 		if err != nil {
-			cleanupErr := rollbackNodeLabels(ctx, tv, mutatedNodes, originalLabels, addedLabels)
+			cleanupErr := rollbackNodeLabels(ctx, tv, mutatedNodes, originalTouchedLabels)
 			if cleanupErr != nil {
 				return nil, fmt.Errorf("failed to marshal patch for node %s: %w; additionally failed to rollback: %v", change.NodeName, err, cleanupErr)
 			}
@@ -106,14 +103,17 @@ func (tv *TopologyVerifier) MutateNodeLabels(ctx context.Context, t testing.TB, 
 
 		// Apply the patch.
 		if err := tv.cl.Patch(ctx, &node, client.RawPatch(types.StrategicMergePatchType, patchBytes)); err != nil {
-			cleanupErr := rollbackNodeLabels(ctx, tv, mutatedNodes, originalLabels, addedLabels)
+			cleanupErr := rollbackNodeLabels(ctx, tv, mutatedNodes, originalTouchedLabels)
 			if cleanupErr != nil {
 				return nil, fmt.Errorf("failed to patch node %s: %w; additionally failed to rollback: %v", change.NodeName, err, cleanupErr)
 			}
 			return nil, fmt.Errorf("failed to patch node %s: %w", change.NodeName, err)
 		}
 
-		mutatedNodes = append(mutatedNodes, change.NodeName)
+		if _, seen := mutatedNodeSet[change.NodeName]; !seen {
+			mutatedNodes = append(mutatedNodes, change.NodeName)
+			mutatedNodeSet[change.NodeName] = struct{}{}
+		}
 
 		tv.logger.Debugf("Mutated labels on node %s: added %d labels, removed %d labels", change.NodeName, len(change.AddLabels), len(change.RemoveLabels))
 	}
@@ -125,7 +125,7 @@ func (tv *TopologyVerifier) MutateNodeLabels(ctx context.Context, t testing.TB, 
 			return
 		}
 		cleanedUp = true
-		cleanupErr := rollbackNodeLabels(ctx, tv, mutatedNodes, originalLabels, addedLabels)
+		cleanupErr := rollbackNodeLabels(ctx, tv, mutatedNodes, originalTouchedLabels)
 		if cleanupErr != nil {
 			t.Errorf("Failed to cleanup node labels: %v", cleanupErr)
 		}
@@ -134,21 +134,43 @@ func (tv *TopologyVerifier) MutateNodeLabels(ctx context.Context, t testing.TB, 
 	return cleanup, nil
 }
 
+func captureTouchedLabelSnapshot(snapshot touchedLabelSnapshot, change NodeLabelChange, labels map[string]string) {
+	if _, ok := snapshot[change.NodeName]; !ok {
+		snapshot[change.NodeName] = make(map[string]originalLabelState)
+	}
+
+	capture := func(labelKey string) {
+		if _, tracked := snapshot[change.NodeName][labelKey]; tracked {
+			return
+		}
+		if val, exists := labels[labelKey]; exists {
+			snapshot[change.NodeName][labelKey] = originalLabelState{Exists: true, Value: val}
+		} else {
+			snapshot[change.NodeName][labelKey] = originalLabelState{}
+		}
+	}
+
+	for labelKey := range change.AddLabels {
+		capture(labelKey)
+	}
+	for _, labelKey := range change.RemoveLabels {
+		capture(labelKey)
+	}
+}
+
 // rollbackNodeLabels reverses label mutations on the specified nodes:
-// - Restores labels that were removed back to their original values.
-// - Removes labels that were added by setting them to null.
-func rollbackNodeLabels(ctx context.Context, tv *TopologyVerifier, mutatedNodes []string, originalLabels map[string]map[string]string, addedLabels map[string][]string) error {
+// - Restores original values for labels that existed before mutation.
+// - Removes labels that did not exist before mutation.
+func rollbackNodeLabels(ctx context.Context, tv *TopologyVerifier, mutatedNodes []string, originalTouchedLabels touchedLabelSnapshot) error {
 	for _, nodeName := range mutatedNodes {
 		labels := make(map[string]interface{})
 
-		// Restore original labels that were removed.
-		for labelKey, labelValue := range originalLabels[nodeName] {
-			labels[labelKey] = labelValue
-		}
-
-		// Remove labels that were added.
-		for _, labelKey := range addedLabels[nodeName] {
-			labels[labelKey] = nil
+		for labelKey, originalState := range originalTouchedLabels[nodeName] {
+			if originalState.Exists {
+				labels[labelKey] = originalState.Value
+			} else {
+				labels[labelKey] = nil
+			}
 		}
 
 		if len(labels) == 0 {
