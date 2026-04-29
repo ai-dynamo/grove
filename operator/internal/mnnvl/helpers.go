@@ -111,15 +111,15 @@ func hasGPURequirement(pcs *grovecorev1alpha1.PodCliqueSet) bool {
 		if clique == nil {
 			continue
 		}
-		if hasGPUInPodSpec(&clique.Spec.PodSpec) {
+		if HasGPUInPodSpec(&clique.Spec.PodSpec) {
 			return true
 		}
 	}
 	return false
 }
 
-// hasGPUInPodSpec checks if any container in the PodSpec requests GPU resources.
-func hasGPUInPodSpec(podSpec *corev1.PodSpec) bool {
+// HasGPUInPodSpec checks if any container in the PodSpec requests GPU resources.
+func HasGPUInPodSpec(podSpec *corev1.PodSpec) bool {
 	if podSpec == nil {
 		return false
 	}

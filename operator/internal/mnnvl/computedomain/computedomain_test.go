@@ -156,12 +156,23 @@ func TestGetRequiredCDNames(t *testing.T) {
 			},
 		},
 		{
-			description: "clique-level groups — two distinct groups",
+			description: "clique-level groups — two distinct GPU groups",
 			pcs: func() *grovecorev1alpha1.PodCliqueSet {
 				pcs := createPCSWithGPU(1)
 				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, &grovecorev1alpha1.PodCliqueTemplateSpec{
 					Name:        "clique2",
 					Annotations: map[string]string{mnnvl.AnnotationMNNVLGroup: "encoders"},
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						PodSpec: corev1.PodSpec{
+							Containers: []corev1.Container{{
+								Name:  "encoder",
+								Image: "alpine",
+								Resources: corev1.ResourceRequirements{
+									Requests: corev1.ResourceList{constants.GPUResourceName: resource.MustParse("1")},
+								},
+							}},
+						},
+					},
 				})
 				pcs.Spec.Template.Cliques[0].Annotations = map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}
 				return pcs
@@ -193,6 +204,20 @@ func TestGetRequiredCDNames(t *testing.T) {
 			pcs: func() *grovecorev1alpha1.PodCliqueSet {
 				pcs := createPCSWithMNNVLEnabled(2)
 				pcs.Spec.Template.Cliques[0].Annotations = map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}
+				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, &grovecorev1alpha1.PodCliqueTemplateSpec{
+					Name: "clique2",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						PodSpec: corev1.PodSpec{
+							Containers: []corev1.Container{{
+								Name:  "gpu2",
+								Image: "alpine",
+								Resources: corev1.ResourceRequirements{
+									Requests: corev1.ResourceList{constants.GPUResourceName: resource.MustParse("1")},
+								},
+							}},
+						},
+					},
+				})
 				return pcs
 			}(),
 			expectedGroups: map[string]struct{}{
@@ -208,6 +233,15 @@ func TestGetRequiredCDNames(t *testing.T) {
 		{
 			description:    "auto-mnnvl disabled — empty list",
 			pcs:            createPCSWithMNNVLDisabled(),
+			expectedGroups: nil,
+		},
+		{
+			description: "PCS auto-mnnvl enabled but only CPU cliques — no orphaned CD",
+			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createPCSWithoutGPU()
+				pcs.Annotations = map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled}
+				return pcs
+			}(),
 			expectedGroups: nil,
 		},
 	}

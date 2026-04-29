@@ -360,32 +360,41 @@ func getRequiredCDNames(pcs *grovecorev1alpha1.PodCliqueSet) []cdNameInfo {
 	return result
 }
 
-// collectDistinctGroups collects MNNVL group names from all annotation layers
-// in the PCS (PCS-level, PCSG configs, clique templates) and returns the
-// deduplicated set.
+// collectDistinctGroups determines which MNNVL groups need ComputeDomains by
+// resolving the effective group for each GPU clique using hierarchical
+// annotation resolution (clique → PCSG → PCS). Non-GPU cliques are skipped
+// so that a PCS-level annotation doesn't create orphaned CDs when no GPU
+// cliques exist.
 func collectDistinctGroups(pcs *grovecorev1alpha1.PodCliqueSet) map[string]struct{} {
 	groups := make(map[string]struct{})
 
-	addGroupFromAnnotation(groups, pcs.Annotations)
-
-	for _, pcsg := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-		addGroupFromAnnotation(groups, pcsg.Annotations)
-	}
+	pcsgByClique := buildPCSGLookup(pcs)
 
 	for _, clique := range pcs.Spec.Template.Cliques {
-		if clique != nil {
-			addGroupFromAnnotation(groups, clique.Annotations)
+		if clique == nil || !mnnvl.HasGPUInPodSpec(&clique.Spec.PodSpec) {
+			continue
+		}
+		var parentAnnotations map[string]string
+		if pcsgCfg, ok := pcsgByClique[clique.Name]; ok {
+			parentAnnotations = pcsgCfg.Annotations
+		}
+		if group, ok := mnnvl.ResolveGroupNameHierarchically(clique.Annotations, parentAnnotations, pcs.Annotations); ok {
+			groups[group] = struct{}{}
 		}
 	}
 
 	return groups
 }
 
-// addGroupFromAnnotation extracts the MNNVL group from annotations and adds it to the set.
-func addGroupFromAnnotation(groups map[string]struct{}, annotations map[string]string) {
-	if group, ok := mnnvl.ResolveGroupName(annotations); ok {
-		groups[group] = struct{}{}
+// buildPCSGLookup builds a map from clique name to the PCSG config that contains it.
+func buildPCSGLookup(pcs *grovecorev1alpha1.PodCliqueSet) map[string]grovecorev1alpha1.PodCliqueScalingGroupConfig {
+	lookup := make(map[string]grovecorev1alpha1.PodCliqueScalingGroupConfig)
+	for _, pcsg := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		for _, cliqueName := range pcsg.CliqueNames {
+			lookup[cliqueName] = pcsg
+		}
 	}
+	return lookup
 }
 
 // generateComputeDomainName creates the CD name for a replica.

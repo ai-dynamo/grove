@@ -606,7 +606,7 @@ func createPCSWithGPUCliqueAnnotations(cliqueAnnotations map[string]string) *gro
 		Build()
 }
 
-func Test_hasGPUInPodSpec(t *testing.T) {
+func TestHasGPUInPodSpec(t *testing.T) {
 	tests := []struct {
 		description string
 		podSpec     *corev1.PodSpec
@@ -706,7 +706,7 @@ func Test_hasGPUInPodSpec(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
-			result := hasGPUInPodSpec(tc.podSpec)
+			result := HasGPUInPodSpec(tc.podSpec)
 			assert.Equal(t, tc.expected, result)
 		})
 	}

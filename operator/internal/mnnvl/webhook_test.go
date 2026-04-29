@@ -595,58 +595,45 @@ func TestValidatePCSOnUpdate_Spec(t *testing.T) {
 	}
 }
 
+// TestValidatePCSOnCreate_NonGPUCliqueWithMNNVL verifies that MNNVL annotations
+// on non-GPU cliques are accepted (silently ignored at injection time).
 func TestValidatePCSOnCreate_NonGPUCliqueWithMNNVL(t *testing.T) {
 	tests := []struct {
 		description      string
 		pcs              *grovecorev1alpha1.PodCliqueSet
 		autoMNNVLEnabled bool
-		expectError      bool
-		errorContains    string
 	}{
 		{
-			description:      "non-GPU clique with auto-mnnvl enabled -> rejected",
+			description:      "non-GPU clique with auto-mnnvl enabled -> accepted (silently skipped at injection)",
 			pcs:              createPCSWithNonGPUCliqueAnnotations(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled}),
 			autoMNNVLEnabled: true,
-			expectError:      true,
-			errorContains:    "without GPU resources",
 		},
 		{
-			description:      "non-GPU clique with mnnvl-group -> rejected",
+			description:      "non-GPU clique with mnnvl-group -> accepted (silently skipped at injection)",
 			pcs:              createPCSWithNonGPUCliqueAnnotations(map[string]string{AnnotationMNNVLGroup: "workers"}),
 			autoMNNVLEnabled: true,
-			expectError:      true,
-			errorContains:    "without GPU resources",
 		},
 		{
 			description:      "GPU clique with auto-mnnvl enabled -> accepted",
 			pcs:              createPCSWithGPUCliqueAnnotations(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled}),
 			autoMNNVLEnabled: true,
-			expectError:      false,
 		},
 		{
 			description:      "GPU clique with mnnvl-group -> accepted",
 			pcs:              createPCSWithGPUCliqueAnnotations(map[string]string{AnnotationMNNVLGroup: "workers"}),
 			autoMNNVLEnabled: true,
-			expectError:      false,
 		},
 		{
 			description:      "non-GPU clique without MNNVL annotations -> accepted",
 			pcs:              createPCSWithNonGPUCliqueAnnotations(nil),
 			autoMNNVLEnabled: true,
-			expectError:      false,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.description, func(t *testing.T) {
 			errs := ValidatePCSOnCreate(test.pcs, test.autoMNNVLEnabled)
-
-			if test.expectError {
-				assert.NotEmpty(t, errs, "expected validation errors")
-				assert.Contains(t, errs.ToAggregate().Error(), test.errorContains)
-			} else {
-				assert.Empty(t, errs, "expected no validation errors")
-			}
+			assert.Empty(t, errs, "MNNVL annotations on non-GPU cliques should be accepted")
 		})
 	}
 }

@@ -72,9 +72,10 @@ func Test_AutoMNNVL_SupportedAndEnabled(t *testing.T) {
 	}
 }
 
-// testPCSGetsAutoAnnotation verifies opt-in semantics: a GPU PCS without an
-// explicit MNNVL annotation does NOT receive MNNVL behaviour (no ComputeDomain),
-// while a CPU-only PCS also doesn't get the annotation.
+// testPCSGetsAutoAnnotation verifies opt-in semantics: the webhook no longer
+// auto-injects the grove.io/auto-mnnvl annotation, so a GPU PCS without an
+// explicit annotation does not get MNNVL behaviour (no ComputeDomain).
+// The CPU-only sub-test confirms CPU PCSes are likewise unaffected.
 func testPCSGetsAutoAnnotation(t *testing.T, tc *testctx.TestContext) {
 	t.Run("GPU PCS without annotation does not get MNNVL", func(t *testing.T) {
 		pcsName := "test-gpu-no-mnnvl"

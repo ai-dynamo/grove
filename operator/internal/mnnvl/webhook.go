@@ -114,16 +114,7 @@ func validatePodCliqueSetTemplateSpecOnCreate(templateSpec *grovecorev1alpha1.Po
 }
 
 func validatePodCliqueTemplateSpecOnCreate(clique *grovecorev1alpha1.PodCliqueTemplateSpec, autoMNNVLEnabled bool, fldPath *field.Path) field.ErrorList {
-	allErrs := validateMNNVLAnnotationsOnCreate(clique.Annotations, autoMNNVLEnabled, fldPath.Child("annotations"))
-
-	// Reject explicit MNNVL annotations on non-GPU PodCliques.
-	_, mnnvlRequested := ResolveGroupName(clique.Annotations)
-	if mnnvlRequested && !hasGPUInPodSpec(&clique.Spec.PodSpec) {
-		allErrs = append(allErrs, field.Forbidden(fldPath,
-			"MNNVL annotation on a PodClique without GPU resources is not allowed"))
-	}
-
-	return allErrs
+	return validateMNNVLAnnotationsOnCreate(clique.Annotations, autoMNNVLEnabled, fldPath.Child("annotations"))
 }
 
 // validatePodCliqueSetTemplateSpecOnUpdate checks MNNVL annotation immutability for each clique
