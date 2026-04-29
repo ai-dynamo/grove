@@ -135,7 +135,7 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 		{
 			// 0 < scheduled < MinAvailable is structurally unreachable from initial
 			// startup under gang scheduling, so it is treated as a regression and
-			// breaches MinAvailable. See issue #277.
+			// breaches MinAvailable.
 			name:         "partially scheduled regression breaches",
 			replicas:     3,
 			minAvailable: ptr.To(int32(2)),
@@ -208,10 +208,10 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 	}
 }
 
-// TestComputeMinAvailableBreachedCondition_Issue277 covers the gang-termination
-// regression fix from https://github.com/ai-dynamo/grove/issues/277 at the
-// PodCliqueScalingGroup level. See the PodClique-level test for the full rationale.
-func TestComputeMinAvailableBreachedCondition_Issue277(t *testing.T) {
+// TestComputeMinAvailableBreachedConditionPartialScheduleRegression covers the
+// regression-after-healthy-state behaviour at the PodCliqueScalingGroup level.
+// See the PodClique-level test for the full rationale.
+func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testing.T) {
 	pastTransition := metav1.NewTime(time.Now().Add(-10 * time.Minute))
 
 	tests := []struct {
