@@ -557,6 +557,21 @@ func TestComputePCLQPodTemplateHash_PodSpecSliceOrderInvariants(t *testing.T) {
 			"InitContainers run in slice order — reorder is a real spec change and must change the hash")
 	})
 
+	t.Run("resize_policy_reorder_changes_hash_atomic_listtype", func(t *testing.T) {
+		rpCPU := corev1.ContainerResizePolicy{ResourceName: corev1.ResourceCPU, RestartPolicy: corev1.NotRequired}
+		rpMem := corev1.ContainerResizePolicy{ResourceName: corev1.ResourceMemory, RestartPolicy: corev1.RestartContainer}
+
+		hashA := ComputePCLQPodTemplateHash(makeTemplate(corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "main", Image: "main:v1", ResizePolicy: []corev1.ContainerResizePolicy{rpCPU, rpMem}}},
+		}), "")
+		hashB := ComputePCLQPodTemplateHash(makeTemplate(corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "main", Image: "main:v1", ResizePolicy: []corev1.ContainerResizePolicy{rpMem, rpCPU}}},
+		}), "")
+
+		assert.NotEqual(t, hashA, hashB,
+			"Container.ResizePolicy is +listType=atomic — reorder is a real spec change and must change the hash")
+	})
+
 	t.Run("identical_input_produces_identical_hash", func(t *testing.T) {
 		envs := []string{"BAR", "BAZ", "CORGE", "FOO", "QUUX", "QUX"}
 		containers := []corev1.Container{makeContainerWithEnv("main", envs), {Name: "sidecar", Image: "sidecar:latest"}}
@@ -658,9 +673,10 @@ func TestComputePCLQPodTemplateHash_RealisticDynamoLikePodSpec(t *testing.T) {
 // TestComputePCLQPodTemplateHash_AdditionalListTypeMapSlices covers the
 // +listType=map slices that aren't exercised by the older invariants test:
 // VolumeMounts, VolumeDevices, HostAliases, TopologySpreadConstraints,
-// ResourceClaims, EphemeralContainers, and Container.ResizePolicy. These
-// were called out in the bug-report analysis as additional places where
-// non-deterministic upstream serialization could flip the per-PCLQ hash.
+// ResourceClaims, SchedulingGates, Container.Resources.Claims, and
+// EphemeralContainers. These were called out in the bug-report analysis as
+// additional places where non-deterministic upstream serialization could flip
+// the per-PCLQ hash.
 func TestComputePCLQPodTemplateHash_AdditionalListTypeMapSlices(t *testing.T) {
 	makeTemplate := func(spec corev1.PodSpec) *grovecorev1alpha1.PodCliqueTemplateSpec {
 		return &grovecorev1alpha1.PodCliqueTemplateSpec{
@@ -697,20 +713,6 @@ func TestComputePCLQPodTemplateHash_AdditionalListTypeMapSlices(t *testing.T) {
 			Containers: []corev1.Container{{Name: "main", Image: "main:v1", VolumeDevices: []corev1.VolumeDevice{devs[1], devs[0]}}},
 		}), "")
 		assert.Equal(t, hashA, hashB, "Container.VolumeDevices order must not affect the per-PCLQ hash")
-	})
-
-	t.Run("resize_policy_reorder_does_not_change_hash", func(t *testing.T) {
-		rp := []corev1.ContainerResizePolicy{
-			{ResourceName: corev1.ResourceCPU, RestartPolicy: corev1.NotRequired},
-			{ResourceName: corev1.ResourceMemory, RestartPolicy: corev1.RestartContainer},
-		}
-		hashA := ComputePCLQPodTemplateHash(makeTemplate(corev1.PodSpec{
-			Containers: []corev1.Container{{Name: "main", Image: "main:v1", ResizePolicy: rp}},
-		}), "")
-		hashB := ComputePCLQPodTemplateHash(makeTemplate(corev1.PodSpec{
-			Containers: []corev1.Container{{Name: "main", Image: "main:v1", ResizePolicy: []corev1.ContainerResizePolicy{rp[1], rp[0]}}},
-		}), "")
-		assert.Equal(t, hashA, hashB, "Container.ResizePolicy order must not affect the per-PCLQ hash")
 	})
 
 	t.Run("host_alias_reorder_does_not_change_hash", func(t *testing.T) {
@@ -758,6 +760,30 @@ func TestComputePCLQPodTemplateHash_AdditionalListTypeMapSlices(t *testing.T) {
 		assert.Equal(t, hashA, hashB, "PodSpec.ResourceClaims order must not affect the per-PCLQ hash")
 	})
 
+	t.Run("scheduling_gate_reorder_does_not_change_hash", func(t *testing.T) {
+		gates := []corev1.PodSchedulingGate{{Name: "gate-a"}, {Name: "gate-b"}}
+		hashA := ComputePCLQPodTemplateHash(makeTemplate(corev1.PodSpec{
+			Containers:      []corev1.Container{{Name: "main"}},
+			SchedulingGates: gates,
+		}), "")
+		hashB := ComputePCLQPodTemplateHash(makeTemplate(corev1.PodSpec{
+			Containers:      []corev1.Container{{Name: "main"}},
+			SchedulingGates: []corev1.PodSchedulingGate{gates[1], gates[0]},
+		}), "")
+		assert.Equal(t, hashA, hashB, "PodSpec.SchedulingGates order must not affect the per-PCLQ hash")
+	})
+
+	t.Run("container_resource_claim_reorder_does_not_change_hash", func(t *testing.T) {
+		claims := []corev1.ResourceClaim{{Name: "claim-a"}, {Name: "claim-b"}}
+		hashA := ComputePCLQPodTemplateHash(makeTemplate(corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "main", Image: "main:v1", Resources: corev1.ResourceRequirements{Claims: claims}}},
+		}), "")
+		hashB := ComputePCLQPodTemplateHash(makeTemplate(corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "main", Image: "main:v1", Resources: corev1.ResourceRequirements{Claims: []corev1.ResourceClaim{claims[1], claims[0]}}}},
+		}), "")
+		assert.Equal(t, hashA, hashB, "Container.Resources.Claims order must not affect the per-PCLQ hash")
+	})
+
 	t.Run("ephemeral_container_reorder_does_not_change_hash", func(t *testing.T) {
 		ec := []corev1.EphemeralContainer{
 			{EphemeralContainerCommon: corev1.EphemeralContainerCommon{Name: "debug-a", Image: "busybox"}},
@@ -791,6 +817,20 @@ func TestComputePCLQPodTemplateHash_AdditionalListTypeMapSlices(t *testing.T) {
 		}), "")
 		assert.Equal(t, hashA, hashB,
 			"InitContainer.VolumeMounts order must not affect the per-PCLQ hash even though InitContainers slice order does")
+	})
+
+	t.Run("init_container_inner_resource_claims_canonicalized", func(t *testing.T) {
+		claims := []corev1.ResourceClaim{{Name: "claim-a"}, {Name: "claim-b"}}
+		hashA := ComputePCLQPodTemplateHash(makeTemplate(corev1.PodSpec{
+			Containers:     []corev1.Container{{Name: "main"}},
+			InitContainers: []corev1.Container{{Name: "init", Image: "init:v1", Resources: corev1.ResourceRequirements{Claims: claims}}},
+		}), "")
+		hashB := ComputePCLQPodTemplateHash(makeTemplate(corev1.PodSpec{
+			Containers:     []corev1.Container{{Name: "main"}},
+			InitContainers: []corev1.Container{{Name: "init", Image: "init:v1", Resources: corev1.ResourceRequirements{Claims: []corev1.ResourceClaim{claims[1], claims[0]}}}},
+		}), "")
+		assert.Equal(t, hashA, hashB,
+			"InitContainer.Resources.Claims order must not affect the per-PCLQ hash even though InitContainers slice order does")
 	})
 }
 

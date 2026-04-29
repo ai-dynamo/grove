@@ -872,6 +872,19 @@ func TestComputeHash_DoesNotCanonicalizeAtomicSlices(t *testing.T) {
 			ComputeHash(mkSpec(nil, []corev1.Container{initB, initA})),
 			"InitContainers run in slice order — reorder changes runtime behavior and must change the hash")
 	})
+
+	t.Run("resize_policy_reorder_changes_hash", func(t *testing.T) {
+		rpCPU := corev1.ContainerResizePolicy{ResourceName: corev1.ResourceCPU, RestartPolicy: corev1.NotRequired}
+		rpMem := corev1.ContainerResizePolicy{ResourceName: corev1.ResourceMemory, RestartPolicy: corev1.RestartContainer}
+		assert.NotEqual(t,
+			ComputeHash(&corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "main", Image: "main:v1", ResizePolicy: []corev1.ContainerResizePolicy{rpCPU, rpMem}}},
+			}}),
+			ComputeHash(&corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "main", Image: "main:v1", ResizePolicy: []corev1.ContainerResizePolicy{rpMem, rpCPU}}},
+			}}),
+			"Container.ResizePolicy is +listType=atomic and must remain order-sensitive")
+	})
 }
 
 // TestComputeHash_DoesNotMutateInput is a regression test for the
@@ -905,8 +918,8 @@ func TestComputeHash_DoesNotMutateInput(t *testing.T) {
 // TestComputeHash_AdditionalListTypeMapSlices pins the sort-invariance for
 // every +listType=map slice the canonicalizer touches that isn't covered by
 // TestComputeHash_CanonicalizesListTypeMapSlices: VolumeMounts, VolumeDevices,
-// HostAliases, TopologySpreadConstraints, ResourceClaims, EphemeralContainers,
-// and Container.ResizePolicy.
+// HostAliases, TopologySpreadConstraints, ResourceClaims, SchedulingGates,
+// Container.Resources.Claims, and EphemeralContainers.
 //
 // The original bug report explicitly listed VolumeMounts as one of the
 // slices that flipped the hash on every Dynamo-operator-driven PCS update;
@@ -945,20 +958,6 @@ func TestComputeHash_AdditionalListTypeMapSlices(t *testing.T) {
 		}))
 		assert.Equal(t, hashA, hashB,
 			"Container.VolumeDevices is +listType=map keyed by devicePath — order must not affect the hash")
-	})
-
-	t.Run("resize_policy_reorder_does_not_change_hash", func(t *testing.T) {
-		rpCPU := corev1.ContainerResizePolicy{ResourceName: corev1.ResourceCPU, RestartPolicy: corev1.NotRequired}
-		rpMem := corev1.ContainerResizePolicy{ResourceName: corev1.ResourceMemory, RestartPolicy: corev1.RestartContainer}
-
-		hashA := ComputeHash(withSpec(func(s *corev1.PodSpec) {
-			s.Containers[0].ResizePolicy = []corev1.ContainerResizePolicy{rpCPU, rpMem}
-		}))
-		hashB := ComputeHash(withSpec(func(s *corev1.PodSpec) {
-			s.Containers[0].ResizePolicy = []corev1.ContainerResizePolicy{rpMem, rpCPU}
-		}))
-		assert.Equal(t, hashA, hashB,
-			"Container.ResizePolicy is +listType=map keyed by resourceName — order must not affect the hash")
 	})
 
 	t.Run("host_alias_reorder_does_not_change_hash", func(t *testing.T) {
@@ -1018,6 +1017,36 @@ func TestComputeHash_AdditionalListTypeMapSlices(t *testing.T) {
 			"PodSpec.ResourceClaims is +listType=map keyed by name — order must not affect the hash")
 	})
 
+	t.Run("scheduling_gate_reorder_does_not_change_hash", func(t *testing.T) {
+		hashA := ComputeHash(withSpec(func(s *corev1.PodSpec) {
+			s.SchedulingGates = []corev1.PodSchedulingGate{
+				{Name: "gate-a"},
+				{Name: "gate-b"},
+			}
+		}))
+		hashB := ComputeHash(withSpec(func(s *corev1.PodSpec) {
+			s.SchedulingGates = []corev1.PodSchedulingGate{
+				{Name: "gate-b"},
+				{Name: "gate-a"},
+			}
+		}))
+		assert.Equal(t, hashA, hashB,
+			"PodSpec.SchedulingGates is +listType=map keyed by name — order must not affect the hash")
+	})
+
+	t.Run("container_resource_claim_reorder_does_not_change_hash", func(t *testing.T) {
+		claimA := corev1.ResourceClaim{Name: "claim-a"}
+		claimB := corev1.ResourceClaim{Name: "claim-b"}
+		hashA := ComputeHash(withSpec(func(s *corev1.PodSpec) {
+			s.Containers[0].Resources.Claims = []corev1.ResourceClaim{claimA, claimB}
+		}))
+		hashB := ComputeHash(withSpec(func(s *corev1.PodSpec) {
+			s.Containers[0].Resources.Claims = []corev1.ResourceClaim{claimB, claimA}
+		}))
+		assert.Equal(t, hashA, hashB,
+			"Container.Resources.Claims is +listType=map keyed by name — order must not affect the hash")
+	})
+
 	t.Run("ephemeral_container_reorder_does_not_change_hash", func(t *testing.T) {
 		ecA := corev1.EphemeralContainer{
 			EphemeralContainerCommon: corev1.EphemeralContainerCommon{Name: "debug-a", Image: "busybox"},
@@ -1074,6 +1103,22 @@ func TestComputeHash_AdditionalListTypeMapSlices(t *testing.T) {
 		}))
 		assert.Equal(t, hashA, hashB,
 			"InitContainer.VolumeMounts is order-independent even though InitContainers slice itself is order-significant")
+	})
+
+	t.Run("init_container_inner_resource_claims_canonicalized", func(t *testing.T) {
+		claimA := corev1.ResourceClaim{Name: "claim-a"}
+		claimB := corev1.ResourceClaim{Name: "claim-b"}
+		makeInit := func(claims []corev1.ResourceClaim) corev1.Container {
+			return corev1.Container{Name: "init-1", Image: "busybox", Resources: corev1.ResourceRequirements{Claims: claims}}
+		}
+		hashA := ComputeHash(withSpec(func(s *corev1.PodSpec) {
+			s.InitContainers = []corev1.Container{makeInit([]corev1.ResourceClaim{claimA, claimB})}
+		}))
+		hashB := ComputeHash(withSpec(func(s *corev1.PodSpec) {
+			s.InitContainers = []corev1.Container{makeInit([]corev1.ResourceClaim{claimB, claimA})}
+		}))
+		assert.Equal(t, hashA, hashB,
+			"InitContainer.Resources.Claims is order-independent even though InitContainers slice itself is order-significant")
 	})
 }
 
