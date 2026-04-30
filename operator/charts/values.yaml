@@ -181,6 +181,12 @@ webhooks:
       app.kubernetes.io/name: pcs-defaulting-webhook
       app.kubernetes.io/part-of: grove
     annotations: {}
+  clusterTopologyValidationWebhook:
+    labels:
+      app.kubernetes.io/component: operator-clustertopology-validating-webhook
+      app.kubernetes.io/name: clustertopology-validating-webhook
+      app.kubernetes.io/part-of: grove
+    annotations: {}
   authorizerWebhook:
     labels:
       app.kubernetes.io/component: operator-authorizer-webhook
@@ -217,4 +223,3 @@ crdInstaller:
     # Overrides the image tag whose default is the chart appVersion.
     tag: v0.1.0-dev
     pullPolicy: IfNotPresent
-

@@ -22,6 +22,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	nameutils "github.com/ai-dynamo/grove/operator/api/common"
@@ -1581,4 +1582,35 @@ func Test_TAS20_PCSTopologyLevelsUnavailableCondition(t *testing.T) {
 	}
 
 	Logger.Info("TAS20: PCS TopologyLevelsUnavailable Condition test completed successfully!")
+}
+
+// Test_TAS21_ClusterTopologyValidationWebhook verifies that the ClusterTopology validating webhook
+// rejects structurally invalid topology definitions.
+func Test_TAS21_ClusterTopologyValidationWebhook(t *testing.T) {
+	ctx := context.Background()
+
+	Logger.Info("1. Initialize a Grove cluster for ClusterTopology webhook validation testing")
+	tc, cleanup := testctx.PrepareTest(ctx, t, 0)
+	defer cleanup()
+
+	invalidCT := &corev1alpha1.ClusterTopology{
+		ObjectMeta: metav1.ObjectMeta{Name: "tas21-invalid-topology"},
+		Spec: corev1alpha1.ClusterTopologySpec{
+			Levels: []corev1alpha1.TopologyLevel{
+				{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
+				{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelRack},
+			},
+		},
+	}
+
+	Logger.Info("2. Verify webhook rejects ClusterTopology with duplicate domains")
+	err := tc.Client.Create(ctx, invalidCT)
+	if err == nil {
+		t.Fatal("Expected ClusterTopology validating webhook rejection, but create succeeded")
+	}
+	if !strings.Contains(err.Error(), "spec.levels[1].domain") || !strings.Contains(err.Error(), "Duplicate value") {
+		t.Fatalf("Expected duplicate domain validation error, got: %v", err)
+	}
+
+	Logger.Info("TAS21: ClusterTopology validating webhook test completed successfully!")
 }
