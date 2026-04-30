@@ -1181,7 +1181,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `profiles` _[SchedulerProfile](#schedulerprofile) array_ | Profiles is the list of scheduler profiles. Each profile has a backend name and an optional config.<br />The default-scheduler backend is always enabled to ensure that the kubernetes default scheduler is always enabled and supported.<br />Use profile name "default-scheduler" to configure or set it as default.<br />Valid profile names: "default-scheduler", "kai-scheduler". Use defaultProfileName to designate the default backend. |  |  |
+| `profiles` _[SchedulerProfile](#schedulerprofile) array_ | Profiles is the list of scheduler profiles. Each profile has a backend name and an optional config.<br />The default-scheduler backend is always enabled to ensure that the kubernetes default scheduler is always enabled and supported.<br />Use profile name "default-scheduler" to configure or set it as default.<br />Valid profile names: "default-scheduler", "kai-scheduler", "volcano". Use defaultProfileName to designate the default backend.<br />The Volcano backend supports gang scheduling via Volcano PodGroup and currently rejects topology-aware scheduling constraints. |  |  |
 | `defaultProfileName` _string_ | DefaultProfileName is the name of the default scheduler profile. If unset, defaulting sets it to "default-scheduler"<br />which is the kubernetes default scheduler. |  |  |
 
 
@@ -1200,6 +1200,7 @@ _Appears in:_
 | --- | --- |
 | `kai-scheduler` | SchedulerNameKai is the KAI scheduler backend.<br /> |
 | `default-scheduler` | SchedulerNameKube is the profile name for the Kubernetes default scheduler in OperatorConfiguration.<br /> |
+| `volcano` | SchedulerNameVolcano is the Volcano scheduler backend. It supports gang scheduling via Volcano PodGroup.<br /> |
 
 
 #### SchedulerProfile
@@ -1215,7 +1216,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `name` _[SchedulerName](#schedulername)_ | Name is the scheduler profile name.<br />For the Kubernetes default scheduler use the standard "default-scheduler".<br />Ensure that the name chosen is a valid scheduler name. The name will also be directly set in `Pod.Spec.SchedulerName`. |  | Enum: [kai-scheduler default-scheduler] <br />Required: \{\} <br /> |
+| `name` _[SchedulerName](#schedulername)_ | Name is the scheduler profile name.<br />For the Kubernetes default scheduler use the standard "default-scheduler".<br />Ensure that the name chosen is a valid scheduler name. The name will also be directly set in `Pod.Spec.SchedulerName`. |  | Enum: [kai-scheduler default-scheduler volcano] <br />Required: \{\} <br /> |
 | `config` _[RawExtension](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#rawextension-runtime-pkg)_ | Config holds backend-specific options. The operator unmarshals it into the config type for this backend (see backend config types). |  |  |
 
 
