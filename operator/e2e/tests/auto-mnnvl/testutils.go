@@ -232,6 +232,7 @@ const (
 
 
 // buildGPUPCS builds a PCS with GPU requirements and optional PCS-level annotations.
+// The variadic parameter is used as an optional argument — at most one map is expected.
 func buildGPUPCS(name string, replicas int, annotations ...map[string]string) *grovecorev1alpha1.PodCliqueSet {
 	gpuClique := testutils.NewPodCliqueTemplateSpecBuilder("gpu-worker").
 		WithRoleName("gpu-worker").
@@ -286,6 +287,7 @@ func buildCPUOnlyPCS(name string, replicas int) *grovecorev1alpha1.PodCliqueSet 
 //     4. "cpu2": 1 container (no GPU)
 //   - PCSG "sg2" contains:
 //     5. "cpu3": 1 container (no GPU)
+// The variadic parameter is used as an optional argument — at most one map is expected.
 func buildComprehensivePCS(name string, replicas int, annotations ...map[string]string) *grovecorev1alpha1.PodCliqueSet {
 	// Standalone cliques
 	standaloneGPUMixed := testutils.NewPodCliqueTemplateSpecBuilder("gpu1").

@@ -374,11 +374,11 @@ func collectDistinctGroups(pcs *grovecorev1alpha1.PodCliqueSet) map[string]struc
 		if clique == nil || !mnnvl.HasGPUInPodSpec(&clique.Spec.PodSpec) {
 			continue
 		}
-		var parentAnnotations map[string]string
+		var pcsgAnnotations map[string]string
 		if pcsgCfg, ok := pcsgByClique[clique.Name]; ok {
-			parentAnnotations = pcsgCfg.Annotations
+			pcsgAnnotations = pcsgCfg.Annotations
 		}
-		if group, ok := mnnvl.ResolveGroupNameHierarchically(clique.Annotations, parentAnnotations, pcs.Annotations); ok {
+		if group, ok := mnnvl.ResolveGroupNameHierarchically(clique.Annotations, pcsgAnnotations, pcs.Annotations); ok {
 			groups[group] = struct{}{}
 		}
 	}
