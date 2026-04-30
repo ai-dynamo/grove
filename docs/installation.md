@@ -11,7 +11,7 @@ Locate the [release tag](https://github.com/ai-dynamo/grove/releases) to install
 Set the `KUBECONFIG` in your shell session, and run the following:
 
 ```bash
-helm upgrade -i grove oci://ghcr.io/ai-dynamo/grove/grove-charts:<tag>
+helm upgrade -i grove oci://ghcr.io/ai-dynamo/grove/grove-charts --version <version>
 ```
 
 ## Build and install Grove from source (*for developers*)
