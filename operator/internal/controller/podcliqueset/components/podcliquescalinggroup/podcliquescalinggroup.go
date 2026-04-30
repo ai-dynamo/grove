@@ -23,6 +23,7 @@ import (
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
@@ -208,6 +209,8 @@ func (r _resource) buildResource(pcsg *grovecorev1alpha1.PodCliqueScalingGroup, 
 			fmt.Sprintf("Error setting controller reference for PodCliqueScalingGroup: %v", client.ObjectKeyFromObject(pcsg)),
 		)
 	}
+	// Add finalizer at creation so PCSG controller does not need a separate PATCH on first reconcile.
+	controllerutil.AddFinalizer(pcsg, apiconstants.FinalizerPodCliqueScalingGroup)
 	// Only set replicas when creating the PCSG to allow external scaling (HPA, direct patching)
 	// Post-creation scaling must be done directly on the PCSG resource, not via PCS template
 	if !pcsgExists {
