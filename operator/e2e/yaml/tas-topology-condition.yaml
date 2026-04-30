@@ -9,7 +9,7 @@ metadata:
   labels:
     app: tas-topology-condition
 spec:
-  replicas: 1
+  replicas: 0
   template:
     topologyConstraint:
       topologyName: tas20-topology

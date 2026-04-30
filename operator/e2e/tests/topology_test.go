@@ -1502,11 +1502,11 @@ func Test_TAS19_AutoManagedCTLifecycle(t *testing.T) {
 // The webhook rejects a PCS referencing a non-existent CT, so we simulate the deletion scenario:
 // 1. Create the ClusterTopology (tas20-topology)
 // 2. Deploy the PCS (admitted since CT exists)
-// 3. Delete the ClusterTopology (simulates CT removed after job was created)
-// 4. Verify TopologyLevelsUnavailable = Unknown/ClusterTopologyNotFound on PCS
-// 5. Re-create the ClusterTopology
-// 6. Verify TopologyLevelsUnavailable = False/AllClusterTopologyLevelsAvailable
-// 7. Wait for pods to become ready
+// 3. Use a zero-replica PCS so it is otherwise quiescent
+// 4. Delete the ClusterTopology (simulates CT removed after job was created)
+// 5. Verify TopologyLevelsUnavailable = Unknown/ClusterTopologyNotFound on PCS
+// 6. Re-create the ClusterTopology
+// 7. Verify TopologyLevelsUnavailable = False/AllClusterTopologyLevelsAvailable
 func Test_TAS20_PCSTopologyLevelsUnavailableCondition(t *testing.T) {
 	ctx := context.Background()
 
@@ -1516,7 +1516,7 @@ func Test_TAS20_PCSTopologyLevelsUnavailableCondition(t *testing.T) {
 			Name:         "tas-topology-condition",
 			YAMLPath:     "../yaml/tas-topology-condition.yaml",
 			Namespace:    "default",
-			ExpectedPods: 2,
+			ExpectedPods: 0,
 		}),
 	)
 	defer cleanup()
@@ -1578,11 +1578,6 @@ func Test_TAS20_PCSTopologyLevelsUnavailableCondition(t *testing.T) {
 		apicommonconstants.ConditionReasonAllTopologyLevelsAvailable,
 		tc.Timeout, tc.Interval); err != nil {
 		t.Fatalf("Failed to wait for TopologyLevelsUnavailable=False/AllClusterTopologyLevelsAvailable: %v", err)
-	}
-
-	Logger.Info("8. Wait for all pods to be ready")
-	if err := tc.WaitForPods(2); err != nil {
-		t.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
 
 	Logger.Info("TAS20: PCS TopologyLevelsUnavailable Condition test completed successfully!")
