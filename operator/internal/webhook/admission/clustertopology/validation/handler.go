@@ -21,23 +21,36 @@ import (
 	"fmt"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	schedmanager "github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
 
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 // Handler validates ClusterTopology resources.
 type Handler struct {
-	logger logr.Logger
+	logger                logr.Logger
+	enabledBackends       map[string]struct{}
+	topologyAwareBackends map[string]struct{}
 }
 
 // NewHandler creates a new ClusterTopology validation handler.
 func NewHandler(mgr manager.Manager) *Handler {
+	enabledBackends := make(map[string]struct{})
+	topologyAwareBackends := make(map[string]struct{})
+	for name, backend := range schedmanager.All() {
+		enabledBackends[name] = struct{}{}
+		if _, ok := backend.(scheduler.TopologyAwareSchedBackend); ok {
+			topologyAwareBackends[name] = struct{}{}
+		}
+	}
 	return &Handler{
-		logger: mgr.GetLogger().WithName("webhook").WithName(Name),
+		logger:                mgr.GetLogger().WithName("webhook").WithName(Name),
+		enabledBackends:       enabledBackends,
+		topologyAwareBackends: topologyAwareBackends,
 	}
 }
 
@@ -48,21 +61,21 @@ func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admis
 	if err != nil {
 		return nil, err
 	}
-	allErrs := validateClusterTopologyLevels(ct.Spec.Levels, field.NewPath("spec", "levels"))
+	allErrs := validateClusterTopology(ct, h.enabledBackends, h.topologyAwareBackends)
 	return nil, allErrs.ToAggregate()
 }
 
 // ValidateUpdate validates a ClusterTopology update request.
-// Only the new object's levels are validated for structural correctness (domain/key uniqueness).
-// Transition validation (e.g., detecting removed levels referenced by PodCliqueSets) is handled
-// by the PCS reconciler via the TopologyLevelsUnavailable condition, not by this webhook.
+// Only the new object's structural validity is checked here. Transition validation
+// (e.g., detecting removed levels referenced by PodCliqueSets) is handled by the
+// PCS reconciler via the TopologyLevelsUnavailable condition, not by this webhook.
 func (h *Handler) ValidateUpdate(ctx context.Context, _, newObj runtime.Object) (admission.Warnings, error) {
 	h.logValidation(ctx)
 	ct, err := castToClusterTopology(newObj)
 	if err != nil {
 		return nil, err
 	}
-	allErrs := validateClusterTopologyLevels(ct.Spec.Levels, field.NewPath("spec", "levels"))
+	allErrs := validateClusterTopology(ct, h.enabledBackends, h.topologyAwareBackends)
 	return nil, allErrs.ToAggregate()
 }
 

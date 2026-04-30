@@ -27,6 +27,7 @@ import (
 
 	nameutils "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
+	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/podgroup"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/topology"
@@ -1585,7 +1586,7 @@ func Test_TAS20_PCSTopologyLevelsUnavailableCondition(t *testing.T) {
 }
 
 // Test_TAS21_ClusterTopologyValidationWebhook verifies that the ClusterTopology validating webhook
-// rejects structurally invalid topology definitions.
+// rejects invalid topology definitions and invalid schedulerTopologyReferences.
 func Test_TAS21_ClusterTopologyValidationWebhook(t *testing.T) {
 	ctx := context.Background()
 
@@ -1593,23 +1594,81 @@ func Test_TAS21_ClusterTopologyValidationWebhook(t *testing.T) {
 	tc, cleanup := testctx.PrepareTest(ctx, t, 0)
 	defer cleanup()
 
-	invalidCT := &corev1alpha1.ClusterTopology{
-		ObjectMeta: metav1.ObjectMeta{Name: "tas21-invalid-topology"},
-		Spec: corev1alpha1.ClusterTopologySpec{
-			Levels: []corev1alpha1.TopologyLevel{
+	tests := []struct {
+		name        string
+		ctName      string
+		levels      []corev1alpha1.TopologyLevel
+		refs        []corev1alpha1.SchedulerTopologyReference
+		errContains []string
+	}{
+		{
+			name:   "duplicate topology domains",
+			ctName: "tas21-invalid-topology",
+			levels: []corev1alpha1.TopologyLevel{
 				{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
 				{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelRack},
 			},
+			errContains: []string{"spec.levels[1].domain", "Duplicate value"},
+		},
+		{
+			name:   "duplicate scheduler backend references",
+			ctName: "tas22-duplicate-backend",
+			levels: []corev1alpha1.TopologyLevel{
+				{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
+				{Domain: corev1alpha1.TopologyDomainRack, Key: setup.TopologyLabelRack},
+			},
+			refs: []corev1alpha1.SchedulerTopologyReference{
+				{SchedulerName: string(configv1alpha1.SchedulerNameKai), TopologyReference: "kai-topology-a"},
+				{SchedulerName: string(configv1alpha1.SchedulerNameKai), TopologyReference: "kai-topology-b"},
+			},
+			errContains: []string{"spec.schedulerTopologyReferences[1].schedulerName", "Duplicate value"},
+		},
+		{
+			name:   "unknown scheduler backend reference",
+			ctName: "tas22-unknown-backend",
+			levels: []corev1alpha1.TopologyLevel{
+				{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
+				{Domain: corev1alpha1.TopologyDomainRack, Key: setup.TopologyLabelRack},
+			},
+			refs: []corev1alpha1.SchedulerTopologyReference{
+				{SchedulerName: "unknown-scheduler", TopologyReference: "topology"},
+			},
+			errContains: []string{"spec.schedulerTopologyReferences[0].schedulerName", "scheduler backend is not enabled in Grove"},
+		},
+		{
+			name:   "non topology aware scheduler backend reference",
+			ctName: "tas22-non-tas-backend",
+			levels: []corev1alpha1.TopologyLevel{
+				{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
+				{Domain: corev1alpha1.TopologyDomainRack, Key: setup.TopologyLabelRack},
+			},
+			refs: []corev1alpha1.SchedulerTopologyReference{
+				{SchedulerName: string(configv1alpha1.SchedulerNameKube), TopologyReference: "default-topology"},
+			},
+			errContains: []string{"spec.schedulerTopologyReferences[0].schedulerName", "scheduler backend does not implement topology-aware scheduling"},
 		},
 	}
 
-	Logger.Info("2. Verify webhook rejects ClusterTopology with duplicate domains")
-	err := tc.Client.Create(ctx, invalidCT)
-	if err == nil {
-		t.Fatal("Expected ClusterTopology validating webhook rejection, but create succeeded")
-	}
-	if !strings.Contains(err.Error(), "spec.levels[1].domain") || !strings.Contains(err.Error(), "Duplicate value") {
-		t.Fatalf("Expected duplicate domain validation error, got: %v", err)
+	for _, tcData := range tests {
+		t.Run(tcData.name, func(t *testing.T) {
+			invalidCT := &corev1alpha1.ClusterTopology{
+				ObjectMeta: metav1.ObjectMeta{Name: tcData.ctName},
+				Spec: corev1alpha1.ClusterTopologySpec{
+					Levels:                      tcData.levels,
+					SchedulerTopologyReferences: tcData.refs,
+				},
+			}
+
+			err := tc.Client.Create(ctx, invalidCT)
+			if err == nil {
+				t.Fatalf("Expected ClusterTopology validating webhook rejection for %s, but create succeeded", tcData.name)
+			}
+			for _, want := range tcData.errContains {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("Expected validation error containing %q, got: %v", want, err)
+				}
+			}
+		})
 	}
 
 	Logger.Info("TAS21: ClusterTopology validating webhook test completed successfully!")

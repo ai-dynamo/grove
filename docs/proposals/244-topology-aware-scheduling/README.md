@@ -360,6 +360,9 @@ Validation of ClusterTopology resources is split between CRD-level structural co
 
 **ClusterTopology validating webhook:**
 * Within each ClusterTopology, each `TopologyLevel` must be unique — neither the domain nor the key should be duplicated.
+* Within each ClusterTopology, each `schedulerTopologyReferences[*].schedulerName` must be unique — a scheduler backend can only be referenced once.
+* Each `schedulerTopologyReferences[*].schedulerName` must refer to a scheduler backend that is enabled in Grove.
+* Each `schedulerTopologyReferences[*].schedulerName` must refer to a backend that implements topology management (`TopologyAwareSchedBackend`).
 * `spec.levels` can be updated in-place. When domains are removed, affected PodCliqueSets are surfaced via the `TopologyLevelsUnavailable` condition.
 
 > **Why a webhook instead of CEL?** CEL uniqueness rules on `spec.levels` use `self.all(x, self.filter(...))` which has O(n²) cost estimation. The Kubernetes API server rejects CRDs whose estimated rule cost exceeds the validation budget, which forced an artificial `MaxItems=16` cap on the number of topology levels. Moving these checks to a validating webhook eliminates the cost constraint and removes the level limit entirely. Since a ClusterTopology controller is already required, hosting validation in the same webhook adds no operational overhead.
@@ -381,6 +384,7 @@ When the controller detects a new ClusterTopology:
   * Set the `SchedulerTopologyDrift` condition to `False` after the auto-created resource is confirmed to exist and its topology levels match the ClusterTopology.
 * For each ClusterTopology that **does** have `schedulerTopologyReferences` entries:
   * The named scheduler backend topology resource is assumed to be externally managed. The controller does not create it. Drift detection is handled via the `SchedulerTopologyDrift` status condition (see [Scheduler Backend Topology](#scheduler-backend-topology)).
+  * If a referenced scheduler backend later becomes unavailable to Grove because the operator is reconfigured without that backend, or because the backend no longer implements topology management, the controller sets `SchedulerTopologyDrift` to `Unknown` with reason `TopologyNotFound` and records the affected backend in `schedulerTopologyStatuses`.
 
 The `SchedulerTopologyDrift` condition is reconciled on every sync — if the scheduler backend topology resource is updated externally (levels changed, resource deleted), the controller detects this and updates the condition and `schedulerTopologyStatuses` accordingly.
 
@@ -645,7 +649,11 @@ The CT controller iterates all registered backends at startup. For each one that
 
 **Reconciliation per ClusterTopology**
 
-On every reconcile, the CT controller iterates all registered `TopologyAwareSchedBackend`s and handles each according to whether it appears in the ClusterTopology's `schedulerTopologyReferences`:
+On every reconcile, the CT controller handles both:
+* all referenced scheduler backends named in `schedulerTopologyReferences`, and
+* all registered `TopologyAwareSchedBackend`s.
+
+Referenced backends are processed first so that the controller can surface `Unknown / TopologyNotFound` when a referenced backend is no longer enabled in Grove or no longer implements topology management.
 
 *Auto-managed (`schedulerTopologyReferences` does not contain an entry for this backend):* The operator automatically creates and manages the scheduler backend topology CR with an `OwnerReference` to the ClusterTopology, by calling `SyncTopology()` on the backend. For the KAI scheduler, this means creating a `Topology` CR with the same name as the ClusterTopology. When the ClusterTopology's levels are updated, the backend deletes and recreates the downstream resource if it has immutable levels (e.g. KAI `Topology`). When the ClusterTopology is deleted, the scheduler backend topology is cascade-deleted via the `OwnerReference`.
 

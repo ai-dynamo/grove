@@ -372,6 +372,78 @@ func TestReconcile_NonTASBackendIgnored(t *testing.T) {
 	assert.Equal(t, "kai-scheduler", fetched.Status.SchedulerTopologyStatuses[0].SchedulerName)
 }
 
+func TestReconcile_ReferencedBackendDisabled_SetsTopologyNotFound(t *testing.T) {
+	ct := createTestCT("my-topology")
+	ct.Spec.SchedulerTopologyReferences = []grovecorev1alpha1.SchedulerTopologyReference{
+		{SchedulerName: "kai-scheduler", TopologyReference: "external-topology"},
+	}
+	cl := testutils.NewTestClientBuilder().
+		WithObjects(ct).
+		WithStatusSubresource(ct).
+		Build()
+
+	r := &Reconciler{
+		Client:   cl,
+		backends: map[string]scheduler.Backend{},
+		recorder: record.NewFakeRecorder(10),
+	}
+
+	result, err := doReconcile(r, "my-topology")
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	fetched := &grovecorev1alpha1.ClusterTopology{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Name: "my-topology"}, fetched))
+	require.Len(t, fetched.Status.SchedulerTopologyStatuses, 1)
+	status := fetched.Status.SchedulerTopologyStatuses[0]
+	assert.False(t, status.InSync)
+	assert.Equal(t, "kai-scheduler", status.SchedulerName)
+	assert.Equal(t, "external-topology", status.TopologyReference)
+	assert.Contains(t, status.Message, `scheduler backend "kai-scheduler" is not enabled`)
+
+	cond := getDriftCondition(fetched)
+	require.NotNil(t, cond)
+	assert.Equal(t, metav1.ConditionUnknown, cond.Status)
+	assert.Equal(t, apicommonconstants.ConditionReasonTopologyNotFound, cond.Reason)
+}
+
+func TestReconcile_ReferencedBackendNotTopologyAware_SetsTopologyNotFound(t *testing.T) {
+	ct := createTestCT("my-topology")
+	ct.Spec.SchedulerTopologyReferences = []grovecorev1alpha1.SchedulerTopologyReference{
+		{SchedulerName: "default-scheduler", TopologyReference: "external-topology"},
+	}
+	cl := testutils.NewTestClientBuilder().
+		WithObjects(ct).
+		WithStatusSubresource(ct).
+		Build()
+
+	r := &Reconciler{
+		Client: cl,
+		backends: map[string]scheduler.Backend{
+			"default-scheduler": &fakeNonTASBackend{name: "default-scheduler"},
+		},
+		recorder: record.NewFakeRecorder(10),
+	}
+
+	result, err := doReconcile(r, "my-topology")
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	fetched := &grovecorev1alpha1.ClusterTopology{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Name: "my-topology"}, fetched))
+	require.Len(t, fetched.Status.SchedulerTopologyStatuses, 1)
+	status := fetched.Status.SchedulerTopologyStatuses[0]
+	assert.False(t, status.InSync)
+	assert.Equal(t, "default-scheduler", status.SchedulerName)
+	assert.Equal(t, "external-topology", status.TopologyReference)
+	assert.Contains(t, status.Message, `scheduler backend "default-scheduler" does not support topology management`)
+
+	cond := getDriftCondition(fetched)
+	require.NotNil(t, cond)
+	assert.Equal(t, metav1.ConditionUnknown, cond.Status)
+	assert.Equal(t, apicommonconstants.ConditionReasonTopologyNotFound, cond.Reason)
+}
+
 func TestReconcile_NotFound(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	r := &Reconciler{
@@ -556,7 +628,7 @@ func TestSetSchedulerTopologyDriftCondition_AllInSync(t *testing.T) {
 		{SchedulerTopologyReference: grovecorev1alpha1.SchedulerTopologyReference{SchedulerName: "a"}, InSync: true},
 		{SchedulerTopologyReference: grovecorev1alpha1.SchedulerTopologyReference{SchedulerName: "b"}, InSync: true},
 	}
-	setSchedulerTopologyDriftCondition(ct, statuses)
+	setSchedulerTopologyDriftCondition(ct, statuses, false)
 	cond := getDriftCondition(ct)
 	require.NotNil(t, cond)
 	assert.Equal(t, metav1.ConditionFalse, cond.Status)
@@ -569,7 +641,7 @@ func TestSetSchedulerTopologyDriftCondition_SomeDrift(t *testing.T) {
 		{SchedulerTopologyReference: grovecorev1alpha1.SchedulerTopologyReference{SchedulerName: "a"}, InSync: true},
 		{SchedulerTopologyReference: grovecorev1alpha1.SchedulerTopologyReference{SchedulerName: "b"}, InSync: false},
 	}
-	setSchedulerTopologyDriftCondition(ct, statuses)
+	setSchedulerTopologyDriftCondition(ct, statuses, false)
 	cond := getDriftCondition(ct)
 	require.NotNil(t, cond)
 	assert.Equal(t, metav1.ConditionTrue, cond.Status)
@@ -584,9 +656,21 @@ func TestSetSchedulerTopologyDriftCondition_Empty(t *testing.T) {
 		Status: metav1.ConditionTrue,
 		Reason: apicommonconstants.ConditionReasonDrift,
 	})
-	setSchedulerTopologyDriftCondition(ct, nil)
+	setSchedulerTopologyDriftCondition(ct, nil, false)
 	cond := getDriftCondition(ct)
 	assert.Nil(t, cond, "condition should be removed when no statuses exist")
+}
+
+func TestSetSchedulerTopologyDriftCondition_TopologyNotFound(t *testing.T) {
+	ct := createTestCT("test")
+	statuses := []grovecorev1alpha1.SchedulerTopologyStatus{
+		{SchedulerTopologyReference: grovecorev1alpha1.SchedulerTopologyReference{SchedulerName: "kai-scheduler"}, InSync: false},
+	}
+	setSchedulerTopologyDriftCondition(ct, statuses, true)
+	cond := getDriftCondition(ct)
+	require.NotNil(t, cond)
+	assert.Equal(t, metav1.ConditionUnknown, cond.Status)
+	assert.Equal(t, apicommonconstants.ConditionReasonTopologyNotFound, cond.Reason)
 }
 
 // -- Unit tests for mapBackendTopologyToCT --

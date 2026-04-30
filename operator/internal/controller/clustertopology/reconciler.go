@@ -56,6 +56,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 
 	var statuses []grovecorev1alpha1.SchedulerTopologyStatus
 	var reconcileErr error
+	var topologyNotFound bool
 
 	schedulerRefMap := ctutils.BuildSchedulerReferenceMap(ct.Spec.SchedulerTopologyReferences)
 
@@ -109,6 +110,28 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 	}
 
+	for _, ref := range ct.Spec.SchedulerTopologyReferences {
+		backend, exists := r.backends[ref.SchedulerName]
+		if !exists {
+			topologyNotFound = true
+			statuses = append(statuses, grovecorev1alpha1.SchedulerTopologyStatus{
+				SchedulerTopologyReference: ref,
+				InSync:                     false,
+				Message:                    fmt.Sprintf("scheduler backend %q is not enabled", ref.SchedulerName),
+			})
+			continue
+		}
+
+		if _, ok := backend.(scheduler.TopologyAwareSchedBackend); !ok {
+			topologyNotFound = true
+			statuses = append(statuses, grovecorev1alpha1.SchedulerTopologyStatus{
+				SchedulerTopologyReference: ref,
+				InSync:                     false,
+				Message:                    fmt.Sprintf("scheduler backend %q does not support topology management", ref.SchedulerName),
+			})
+		}
+	}
+
 	if reconcileErr == nil {
 		ct.Status.ObservedGeneration = ct.Generation
 	}
@@ -117,7 +140,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if c := meta.FindStatusCondition(ct.Status.Conditions, apicommonconstants.ConditionSchedulerTopologyDrift); c != nil {
 		prevStatus = c.Status
 	}
-	setSchedulerTopologyDriftCondition(ct, statuses)
+	setSchedulerTopologyDriftCondition(ct, statuses, topologyNotFound)
 	newCondition := meta.FindStatusCondition(ct.Status.Conditions, apicommonconstants.ConditionSchedulerTopologyDrift)
 	r.emitDriftTransitionEvent(ct, prevStatus, newCondition)
 
@@ -129,9 +152,20 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 
 // setSchedulerTopologyDriftCondition sets the SchedulerTopologyDrift condition on the ClusterTopology
 // based on the aggregated scheduler topology statuses.
-func setSchedulerTopologyDriftCondition(ct *grovecorev1alpha1.ClusterTopology, statuses []grovecorev1alpha1.SchedulerTopologyStatus) {
+func setSchedulerTopologyDriftCondition(ct *grovecorev1alpha1.ClusterTopology, statuses []grovecorev1alpha1.SchedulerTopologyStatus, topologyNotFound bool) {
 	if len(statuses) == 0 {
 		meta.RemoveStatusCondition(&ct.Status.Conditions, apicommonconstants.ConditionSchedulerTopologyDrift)
+		return
+	}
+
+	if topologyNotFound {
+		meta.SetStatusCondition(&ct.Status.Conditions, metav1.Condition{
+			Type:               apicommonconstants.ConditionSchedulerTopologyDrift,
+			Status:             metav1.ConditionUnknown,
+			Reason:             apicommonconstants.ConditionReasonTopologyNotFound,
+			Message:            "One or more referenced scheduler backends are unavailable for topology management",
+			ObservedGeneration: ct.Generation,
+		})
 		return
 	}
 
