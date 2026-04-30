@@ -17,8 +17,7 @@
     - [Limitation: No ComputeDomain customization](#limitation-no-computedomain-customization)
 - [Design Details](#design-details)
   - [Annotation Semantics](#annotation-semantics)
-    - [<code>grove.io/auto-mnnvl</code> — MNNVL on/off](#groveioauto-mnnvl--mnnvl-onoff)
-    - [<code>grove.io/mnnvl-group</code> — group assignment (optional)](#groveiomnnvl-group--group-assignment-optional)
+    - [<code>grove.io/mnnvl-group</code> — MNNVL group assignment](#groveiomnnvl-group--mnnvl-group-assignment)
   - [Operator Behavior](#operator-behavior)
     - [ComputeDomain Lifecycle](#computedomain-lifecycle)
     - [CD Naming Convention](#cd-naming-convention)
@@ -27,7 +26,6 @@
   - [Configuration](#configuration)
     - [Impact on Existing Workloads When Configuration Changes](#impact-on-existing-workloads-when-configuration-changes)
   - [Decision Flow](#decision-flow)
-  - [Behavior Matrix](#behavior-matrix)
   - [Webhook Behavior](#webhook-behavior)
     - [Mutating Webhook (on Create)](#mutating-webhook-on-create)
     - [Validating Webhook (on Create)](#validating-webhook-on-create)
@@ -57,26 +55,25 @@
 
 ## Summary
 
-Grove's auto-MNNVL feature allows users to leverage NVIDIA Multi-Node NVLink acceleration through simple annotations — without manually authoring `ComputeDomain` resources or wiring `resourceClaims` in their pod specs. The operator automatically creates and manages ComputeDomains, injects RCT references, and handles scaling as PCS replicas scale up or down.
+Grove's auto-MNNVL feature allows users to leverage NVIDIA Multi-Node NVLink acceleration through a simple annotation — without manually authoring `ComputeDomain` resources or wiring `resourceClaims` in their pod specs. The operator automatically creates and manages ComputeDomains, injects RCT references, and handles scaling as PCS replicas scale up or down.
 
-The feature is controlled by two annotations with cleanly separated responsibilities:
+The feature is controlled by a single annotation:
 
-- `grove.io/auto-mnnvl`: `"enabled"` or `"disabled"` — controls whether MNNVL is active for a PCS or PCLQ.
-- `grove.io/mnnvl-group`: a string name — controls which MNNVL group (ComputeDomain) the PCLQ belongs to. Optional — when absent, all enrolled PCLQs share a single default ComputeDomain per replica.
+- `grove.io/mnnvl-group`: a string name — assigns the PodClique to a named MNNVL group (ComputeDomain). The special value `"none"` explicitly opts out of MNNVL, overriding any parent-level setting.
 
-Both annotations can be placed on a **PodCliqueSet**, **PodCliqueScalingGroup**, or **PodClique**, and propagate downward (PCS → PCSG → PCLQ) with lower layers overriding higher ones. Either annotation can exist independently.
+The annotation can be placed on a **PodCliqueSet**, **PodCliqueScalingGroup**, or **PodClique**, and propagates downward (PCS → PCSG → PCLQ) with lower layers overriding higher ones.
 
-The feature uses an **opt-in model**: no PCS receives MNNVL unless it or its sub-resources carry the `auto-mnnvl` or `mnnvl-group` annotation. The cluster-level configuration (`autoMNNVLEnabled`) controls whether the feature is available — not whether individual workloads use it.
+The feature uses an **opt-in model**: no PCS receives MNNVL unless it or its sub-resources carry the `mnnvl-group` annotation. The cluster-level configuration (`autoMNNVLEnabled`) controls whether the feature is available — not whether individual workloads use it.
 
 ## Motivation
 
 Managing MNNVL manually in Kubernetes requires significant effort: users must create `ComputeDomain` custom resources, and wire `resourceClaims` references into pod specs. This is error-prone, repetitive, and difficult to scale — when a PCS scales up or down, users must manually create or delete the corresponding ComputeDomains and keep the references in sync.
 
-Grove's auto-MNNVL feature eliminates this overhead by letting users express MNNVL intent through simple annotations. The operator handles the rest — creating ComputeDomains, injecting RCT references, managing the full lifecycle, and automatically scaling ComputeDomains as PCS replicas change.
+Grove's auto-MNNVL feature eliminates this overhead by letting users express MNNVL intent through a simple annotation. The operator handles the rest — creating ComputeDomains, injecting RCT references, managing the full lifecycle, and automatically scaling ComputeDomains as PCS replicas change.
 
 Key motivations:
 
-- **Simplicity:** One or two annotations replace multiple manual resources and spec changes.
+- **Simplicity:** A single annotation replaces multiple manual resources and spec changes.
 - **Automatic scaling:** ComputeDomains are created and deleted automatically as PCS replicas scale up or down — no manual intervention required.
 - **Granularity:** Users can control MNNVL at the PodClique level — only the pods that need NVLink are enrolled, others are unaffected.
 - **Heterogeneous cluster support:** In clusters where only some nodes have NVIDIA IMEX driver support and some nodes don't, users can scope MNNVL to specific PodCliques, avoiding failures on unsupported nodes.
@@ -84,14 +81,13 @@ Key motivations:
 
 ### Goals
 
-- Provide **two annotations** with cleanly separated concerns: `grove.io/auto-mnnvl` for MNNVL on/off and `grove.io/mnnvl-group` for group assignment.
-- Maintain **full backward compatibility** with Phase 1 — existing `auto-mnnvl: enabled` manifests work unchanged.
-- Support **multi-layer propagation** — both annotations can be placed on PCS, PCSG, or PCLQ, with lower layers overriding higher ones.
+- Provide a **single annotation** (`grove.io/mnnvl-group`) that controls both MNNVL enrollment and group assignment — zero conflict states, one annotation to manage.
+- Support **multi-layer propagation** — the annotation can be placed on PCS, PCSG, or PCLQ, with lower layers overriding higher ones.
 - Use an **opt-in model** — no MNNVL is applied unless the annotation is present.
 - Have the operator **automatically manage ComputeDomain lifecycle** (create, scale, delete, protect) per group per PCS replica.
 - Support **heterogeneous clusters** — only annotated PodCliques need NVIDIA DRA-capable nodes.
 - Support **multiple MNNVL groups** within a single PCS replica.
-- Provide a **clear upgrade path** for Phase 1 users who want group-based MNNVL.
+- Remove/Deprecate the Phase 1 `grove.io/auto-mnnvl` annotation — not backward compatible (acceptable in alpha).
 
 ### Non-Goals
 
@@ -100,7 +96,7 @@ Key motivations:
 
 ## Proposal
 
-Users opt into MNNVL using two annotations with cleanly separated responsibilities:
+Users opt into MNNVL using a single annotation: `grove.io/mnnvl-group`.
 
 **Simple opt-in (all PCLQs in one ComputeDomain):**
 
@@ -110,10 +106,8 @@ kind: PodCliqueSet
 metadata:
   name: training-job
   annotations:
-    grove.io/auto-mnnvl: "enabled"    # all GPU PCLQs share a single CD per replica
+    grove.io/mnnvl-group: "default"    # all GPU PCLQs share a single CD per replica
 ```
-
-This is fully backward compatible with Phase 1 — existing manifests with `auto-mnnvl: enabled` work unchanged.
 
 **Grouped opt-in (multiple ComputeDomains):**
 
@@ -133,8 +127,6 @@ spec:
         spec: ...
 ```
 
-When `grove.io/mnnvl-group` is present, MNNVL is implicitly enabled — `auto-mnnvl: enabled` is not required.
-
 **PCS-level default with opt-out:**
 
 ```yaml
@@ -143,39 +135,39 @@ kind: PodCliqueSet
 metadata:
   name: training-job
   annotations:
-    grove.io/auto-mnnvl: "enabled"    # default: MNNVL for all GPU PCLQs
+    grove.io/mnnvl-group: "default"    # default: MNNVL for all GPU PCLQs
 spec:
   template:
     cliques:
-      - name: workers              # inherits enabled from PCS
+      - name: workers              # inherits "default" from PCS
         spec: ...
       - name: param-servers
         annotations:
-          grove.io/auto-mnnvl: "disabled"  # override: no MNNVL for this PCLQ
+          grove.io/mnnvl-group: "none"  # override: no MNNVL for this PCLQ
         spec: ...
 ```
 
-The operator discovers these annotations, determines the set of ComputeDomains required per replica, and:
+The operator discovers this annotation, determines the set of ComputeDomains required per replica, and:
 - manages their full lifecycle — creation, deletion, scaling, and protection via finalizers.
 - injects RCT references into the pod's spec of enrolled PodCliques.
 
 **Key behavioral rules:**
-- **Opt-in:** No MNNVL is applied unless `auto-mnnvl: enabled` or `mnnvl-group` is present. Absence of both at all layers means no MNNVL.
-- **Propagation:** Both annotations propagate downward (PCS → PCSG → PCLQ). A lower layer overrides a higher layer.
-- **Conflict:** `auto-mnnvl: disabled` combined with `mnnvl-group` on the same resource is contradictory and is rejected by the validating webhook.
-- **Non-GPU PCLQs:** If a non-GPU PCLQ has an explicit `grove.io/mnnvl-group` annotation, the PCS is rejected. If it inherits enrollment from a parent layer (PCS/PCSG), it is silently skipped — no RCT injection, no error.
-- **Immutability:** Both annotations are immutable after PCS creation.
+- **Opt-in:** No MNNVL is applied unless `mnnvl-group` is present at some layer. Absence of the annotation at all layers means no MNNVL.
+- **Propagation:** The annotation propagates downward (PCS → PCSG → PCLQ). A lower layer overrides a higher layer.
+- **Opt-out:** Setting `mnnvl-group: "none"` explicitly opts out of MNNVL, overriding any parent-level setting. The `"none"` value is reserved and cannot be used as a group name.
+- **Non-GPU PCLQs:** Non-GPU PCLQs that resolve to MNNVL enrollment (whether explicit or inherited) are silently skipped — no RCT injection, no error. This allows PCS-level defaults without requiring `"none"` overrides on every non-GPU PCLQ.
+- **Immutability:** The annotation is immutable after PCS creation.
 
 ### User Stories
 
 #### Story 1: Simple Opt-In for a GPU Workload
 
-As a user, I want to enable MNNVL for my entire PodCliqueSet by adding a single annotation at the PCS level (`auto-mnnvl: enabled`). All GPU PodCliques should share one ComputeDomain per replica — just like Phase 1.
+As a user, I want to enable MNNVL for my entire PodCliqueSet by adding a single annotation at the PCS level (`mnnvl-group: "default"`). All GPU PodCliques should share one ComputeDomain per replica.
 
 ```yaml
 metadata:
   annotations:
-    grove.io/auto-mnnvl: "enabled"
+    grove.io/mnnvl-group: "default"
 ```
 
 #### Story 2: Partial MNNVL Within a PCS Replica
@@ -215,17 +207,17 @@ As a user, I want most of my PodCliques to use MNNVL, but one PodClique should b
 ```yaml
 metadata:
   annotations:
-    grove.io/auto-mnnvl: "enabled"    # default for all PCLQs
+    grove.io/mnnvl-group: "default"    # default for all PCLQs
 spec:
   template:
     cliques:
-      - name: workers              # inherits enabled
+      - name: workers              # inherits "default"
         spec: ...
-      - name: encoders             # inherits enabled
+      - name: encoders             # inherits "default"
         spec: ...
       - name: monitoring
         annotations:
-          grove.io/auto-mnnvl: "disabled"  # override: no MNNVL
+          grove.io/mnnvl-group: "none"  # override: no MNNVL
         spec: ...
 ```
 
@@ -251,21 +243,9 @@ ComputeDomain and ResourceClaimTemplate configurations are automatically generat
 
 ### Annotation Semantics
 
-MNNVL participation is controlled by two annotations:
+MNNVL participation is controlled by a single annotation:
 
-#### `grove.io/auto-mnnvl` — MNNVL on/off
-
-```yaml
-grove.io/auto-mnnvl: "<value>"
-```
-
-| Value | Meaning |
-|---|---|
-| `"enabled"` | Opt-in to MNNVL. All GPU PCLQs share a single default ComputeDomain per replica (unless `mnnvl-group` overrides). |
-| `"disabled"` | Explicit opt-out. Used to override a parent layer's `enabled`. |
-| Absent | Inherit from parent layer. If no parent has it, no MNNVL (unless `mnnvl-group` is present). |
-
-#### `grove.io/mnnvl-group` — group assignment (optional)
+#### `grove.io/mnnvl-group` — MNNVL group assignment
 
 ```yaml
 grove.io/mnnvl-group: "<value>"
@@ -273,27 +253,15 @@ grove.io/mnnvl-group: "<value>"
 
 | Value | Meaning |
 |---|---|
-| String name (`"training"`, `"workers"`, ...) | Assign the PCLQ to a named MNNVL group. PodCliques with the same group name share a ComputeDomain per replica. Implicitly enables MNNVL. |
-| Absent | Inherit from parent layer. If no parent has it, no group assignment. |
+| String name (`"default"`, `"training"`, `"workers"`, ...) | Assign the PCLQ to a named MNNVL group. PodCliques with the same group name share a ComputeDomain per replica. |
+| `"none"` | Explicit opt-out. Used to override a parent layer's group assignment. Reserved — cannot be used as a group name. |
+| Absent | Inherit from parent layer. If no parent has it, no MNNVL. |
 
-**Group name validation:** The value must be a valid Kubernetes name component: lowercase alphanumeric characters or dashes, must start and end with an alphanumeric character, max 63 characters. This is required because the group name becomes part of the ComputeDomain resource name. Empty strings and values containing invalid characters are rejected.
+**Group name validation:** The value must be either `"none"` (opt-out) or a valid Kubernetes name component: lowercase alphanumeric characters or dashes, must start and end with an alphanumeric character, max 63 characters. This is required because the group name becomes part of the ComputeDomain resource name. Empty strings and values containing invalid characters are rejected.
 
-**Interaction between the two annotations:**
+**Non-GPU PCLQs:** Non-GPU PCLQs that resolve to MNNVL enrollment (whether explicit or inherited) are silently skipped — no RCT injection, no error. This allows PCS-level defaults without requiring `"none"` overrides on every non-GPU PCLQ.
 
-| `auto-mnnvl` | `mnnvl-group` | Result |
-|---|---|---|
-| absent | absent | No MNNVL |
-| `enabled` | absent | MNNVL with default CD (`{pcs}-{replica}`) |
-| `disabled` | absent | No MNNVL (explicit opt-out) |
-| absent | `"training"` | MNNVL with group CD (`{pcs}-{replica}-training`) — group implies enabled |
-| `enabled` | `"training"` | MNNVL with group CD (`{pcs}-{replica}-training`) |
-| `disabled` | `"training"` | **Reject** — contradictory (disabled + group assignment) |
-
-**GPU validation:** The behavior when a non-GPU PCLQ resolves to MNNVL enrollment depends on where the annotation comes from:
-- **Explicit annotation on the PCLQ:** If a non-GPU PCLQ carries its own `grove.io/mnnvl-group` or `grove.io/auto-mnnvl: "enabled"` annotation, the validating webhook **rejects** the PCS. Explicitly requesting MNNVL for a PodClique that has no GPUs is a user error.
-- **Inherited from PCS or PCSG:** If a non-GPU PCLQ inherits MNNVL enrollment from a parent layer (PCS or PCSG), it is **silently skipped** — no RCT injection, no error. This allows PCS-level defaults without requiring `disabled` overrides on every non-GPU PCLQ.
-
-**Immutability:** Both `grove.io/auto-mnnvl` and `grove.io/mnnvl-group` are **immutable** after PCS creation. The validating webhook rejects any update that attempts to add, modify, or remove either annotation at any level (PCS, PCSG, PCLQ). To change MNNVL assignment, the PCS must be deleted and recreated. The rationale is that modifying MNNVL assignment on a live workload would require tearing down existing ComputeDomains, re-wiring RCT references in already-running pods, and coordinating rescheduling — all while the workload is active. The complexity and risk of mid-flight changes far outweigh the benefit, especially since delete-and-recreate achieves the same result cleanly.
+**Immutability:** `grove.io/mnnvl-group` is **immutable** after PCS creation. The validating webhook rejects any update that attempts to add, modify, or remove the annotation at any level (PCS, PCSG, PCLQ). To change MNNVL assignment, the PCS must be deleted and recreated. The rationale is that modifying MNNVL assignment on a live workload would require tearing down existing ComputeDomains, re-wiring RCT references in already-running pods, and coordinating rescheduling — all while the workload is active. The complexity and risk of mid-flight changes far outweigh the benefit, especially since delete-and-recreate achieves the same result cleanly.
 
 **Example — multiple groups with a non-enrolled PCLQ:**
 
@@ -348,9 +316,9 @@ Result per replica:
 
 #### ComputeDomain Lifecycle
 
-When the operator reconciles a PodCliqueSet, it resolves the effective MNNVL enrollment for each PCLQ (from `auto-mnnvl` and `mnnvl-group` annotations) and performs the following per replica:
+When the operator reconciles a PodCliqueSet, it resolves the effective MNNVL enrollment for each PCLQ (from the `mnnvl-group` annotation) and performs the following per replica:
 
-1. **Discovery:** Determine which PCLQs are enrolled in MNNVL and collect the set of distinct group names (ignoring non-GPU PCLQs). PCLQs with `auto-mnnvl: enabled` but no `mnnvl-group` are enrolled in the default group. PCLQs with `auto-mnnvl: disabled` or no MNNVL annotation are not enrolled.
+1. **Discovery:** Determine which PCLQs are enrolled in MNNVL and collect the set of distinct group names (ignoring non-GPU PCLQs). PCLQs with `mnnvl-group: "none"` or no annotation are not enrolled.
 
 2. **ComputeDomain management:**
    - **Create:** For each unique group name, create a `ComputeDomain` resource per replica (if it does not already exist).
@@ -359,25 +327,21 @@ When the operator reconciles a PodCliqueSet, it resolves the effective MNNVL enr
    - **Finalizer:** Add `grove.io/computedomain-finalizer` to prevent accidental deletion while workloads are using it. The finalizer is removed during PCS deletion or scale-in.
 
 3. **RCT reference injection:** Injected into the PCLQ's pod spec template at **PCLQ creation time** (not at pod creation time). This early-binding approach ensures the decision is made once and baked into the PCLQ spec. The injection flow depends on whether the PCLQ is standalone or managed by a PCSG:
-   - **PCS → standalone PCLQ:** For PCLQs defined directly in the PCS template (not managed by a PCSG), the PCS controller resolves the effective MNNVL state (from `auto-mnnvl` and `mnnvl-group` annotations at PCS vs. PCLQ level) and injects `resourceClaims` if enrolled.
-   - **PCS → PCSG:** The PCS controller propagates both `grove.io/auto-mnnvl` and `grove.io/mnnvl-group` annotations to the PCSG (if the PCSG doesn't already have its own values defined in the PCS template).
-   - **PCSG → PCLQ:** For PCLQs managed by a PCSG, the PCSG controller resolves the effective MNNVL state (PCSG annotations vs. PCLQ template annotations) and injects the RCT reference.
+   - **PCS → standalone PCLQ:** For PCLQs defined directly in the PCS template (not managed by a PCSG), the PCS controller resolves the effective MNNVL state (from `mnnvl-group` annotations at PCS vs. PCLQ level) and injects `resourceClaims` if enrolled.
+   - **PCS → PCSG:** The PCS controller propagates the `grove.io/mnnvl-group` annotation to the PCSG (if the PCSG doesn't already have its own value defined in the PCS template).
+   - **PCSG → PCLQ:** For PCLQs managed by a PCSG, the PCSG controller resolves the effective MNNVL state (PCSG annotation vs. PCLQ template annotation) and injects the RCT reference.
    - **Pod creation:** No special logic — pods use the PCLQ's pod spec as-is.
 
 4. **Non-enrolled PodCliques:** Left untouched — no CD reference injected.
 
 #### CD Naming Convention
 
-The CD naming depends on whether a group name is specified:
-
-**Without group** (`auto-mnnvl: enabled` only): `{pcs-name}-{replica-index}` — same as Phase 1.
-
-**With group** (`mnnvl-group` present): `{pcs-name}-{replica-index}-{group-name}`.
+CD names are included at group name: `{pcs-name}-{replica-index}-{group-name}`.
 
 | Example PCS | Annotation | Replica | CD Name |
 |---|---|---|---|
-| `training-job` | `auto-mnnvl: enabled` (no group) | 0 | `training-job-0` |
-| `training-job` | `auto-mnnvl: enabled` (no group) | 1 | `training-job-1` |
+| `training-job` | `mnnvl-group: "default"` | 0 | `training-job-0-default` |
+| `training-job` | `mnnvl-group: "default"` | 1 | `training-job-1-default` |
 | `training-job` | `mnnvl-group: "workers"` | 0 | `training-job-0-workers` |
 | `training-job` | `mnnvl-group: "workers"` | 1 | `training-job-1-workers` |
 | `training-job` | `mnnvl-group: "encoders"` | 0 | `training-job-0-encoders` |
@@ -423,7 +387,7 @@ The auto-MNNVL feature is controlled via the existing `network.autoMNNVLEnabled`
 | Value | Default | Behavior |
 |---|---|---|
 | `true` | No | Feature is active. The operator validates that the `ComputeDomain` CRD is installed at startup and **fails to start** if missing. |
-| `false` | **Yes** | Feature is off. Any PCS with `grove.io/auto-mnnvl` or `grove.io/mnnvl-group` annotations is rejected at admission time. |
+| `false` | **Yes** | Feature is off. Any PCS with `grove.io/mnnvl-group` annotations is rejected at admission time. |
 
 ```yaml
 # OperatorConfiguration example
@@ -443,10 +407,12 @@ spec:
 Changing `autoMNNVLEnabled` must **not** affect currently running workloads:
 
 - Switching `autoMNNVLEnabled` from `true` to `false` does **not** delete existing ComputeDomains or modify existing PCS resources.
-- New PCS submissions with `grove.io/auto-mnnvl` or `grove.io/mnnvl-group` annotations will be rejected after the change.
+- New PCS submissions with `grove.io/mnnvl-group` annotations will be rejected after the change.
 - To remove MNNVL from an existing workload, the PCS must be deleted and recreated.
 
 ### Decision Flow
+
+Feature state is ON when `autoMNNVLEnabled: true` and OFF when `autoMNNVLEnabled: false`. When `autoMNNVLEnabled: true`, the CRD must be present — otherwise the operator fails to start (not a per-PCS decision).
 
 The following flowchart shows the complete decision logic from operator startup through PCS admission:
 
@@ -463,83 +429,48 @@ flowchart TD
     FeatureOff --> PCSSubmitOff["PCS Submitted"]
     FeatureOn --> PCSSubmitOn["PCS Submitted"]
 
-    PCSSubmitOff --> HasAnnotationOff{"Has auto-mnnvl or\nmnnvl-group annotation?"}
+    PCSSubmitOff --> HasAnnotationOff{"Has mnnvl-group\nannotation?"}
     HasAnnotationOff -->|No| AcceptNoMNNVL1["Accept: no MNNVL"]
     HasAnnotationOff -->|Yes| RejectDisabled["Reject: feature disabled"]
 
-    PCSSubmitOn --> CheckConflict{"Any disabled +\nmnnvl-group conflict?"}
-    CheckConflict -->|Yes| RejectConflict["Reject: contradictory\nannotations"]
-    CheckConflict -->|No| ResolveGroups["Resolve MNNVL enrollment\nfor each PCLQ"]
+    PCSSubmitOn --> ValidateValues{"Valid mnnvl-group\nvalues?"}
+    ValidateValues -->|No| RejectInvalid["Reject: invalid\nannotation value"]
+    ValidateValues -->|Yes| ResolveGroups["Resolve MNNVL enrollment\nfor each PCLQ"]
     ResolveGroups --> AnyEnrolled{"Any PCLQ enrolled?"}
 
     AnyEnrolled -->|No| AcceptNoMNNVL2["Accept: no MNNVL"]
-    AnyEnrolled -->|Yes| ExplicitNonGPU{"Any non-GPU PCLQ\nwith explicit annotation?"}
-
-    ExplicitNonGPU -->|Yes| RejectNonGPU["Reject: MNNVL annotation\non non-GPU PCLQ"]
-    ExplicitNonGPU -->|No| HasGPU{"Any enrolled GPU PCLQs?"}
-
-    HasGPU -->|No| AcceptNoMNNVL3["Accept: no MNNVL\ninherited annotations silently skipped"]
-    HasGPU -->|Yes| CreateCDs["Create CDs per group\nInject RCT for GPU PCLQs"]
+    AnyEnrolled -->|Yes| CreateCDs["Create CDs per group\nInject RCT for GPU PCLQs\nNon-GPU PCLQs silently skipped"]
 ```
-
-### Behavior Matrix
-
-Feature state is ON when `autoMNNVLEnabled: true` and OFF when `autoMNNVLEnabled: false`. When `autoMNNVLEnabled: true`, the CRD must be present — otherwise the operator fails to start (not a per-PCS decision).
-
-| # | Feature state | `auto-mnnvl` | `mnnvl-group` | Result |
-|---|---|---|---|---|
-| 1 | OFF | absent | absent | No MNNVL |
-| 2 | OFF | `enabled` | absent | **Reject:** feature disabled |
-| 3 | OFF | absent | `"workers"` | **Reject:** feature disabled |
-| 4 | ON | absent | absent | No MNNVL |
-| 5 | ON | `enabled` | absent | Default CD per replica (`{pcs}-{replica}`) |
-| 6 | ON | PCS `enabled` | absent, non-GPU inherits | Default CD for GPU PCLQs; non-GPU silently skipped |
-| 7 | ON | `enabled` | `"workers"` on some | Per-group CDs for group PCLQs; default CD for remaining GPU PCLQs |
-| 8 | ON | `disabled` | `"workers"` | **Reject:** contradictory annotations |
-| 9 | ON | `enabled` | explicit on non-GPU | **Reject:** explicit MNNVL on non-GPU PCLQ |
-| 10 | ON | PCS `enabled`, PCLQ `disabled` | absent | No MNNVL |
 
 ### Webhook Behavior
 
 #### Mutating Webhook (on Create)
 
-In the opt-in model, the mutating webhook **does not** add any MNNVL-related annotations automatically. The user is responsible for providing `grove.io/auto-mnnvl` and/or `grove.io/mnnvl-group`.
+In the opt-in model, the mutating webhook **does not** add any MNNVL-related annotations automatically. The user is responsible for providing `grove.io/mnnvl-group`.
 
 #### Validating Webhook (on Create)
 
 The validating webhook enforces:
 
-- **Value validation (`auto-mnnvl`):** Must be `"enabled"` or `"disabled"` (case-insensitive). Invalid values are rejected.
-- **Value validation (`mnnvl-group`):** Must be a valid Kubernetes name component (lowercase alphanumeric or dashes, starting and ending with alphanumeric, max 63 chars). Invalid values are rejected.
-- **Conflict detection:** If `auto-mnnvl: disabled` and `mnnvl-group` are both present on the same resource (PCS, PCSG, or PCLQ), reject — these are contradictory.
-- **Feature disabled:** If the feature is off (`autoMNNVLEnabled: false`), reject any PCS that has `grove.io/auto-mnnvl` or `grove.io/mnnvl-group` at any level.
-- **Non-GPU PCLQ with explicit annotation:** If a non-GPU PCLQ carries an explicit `grove.io/mnnvl-group` or `grove.io/auto-mnnvl: "enabled"` annotation, reject the PCS. Inherited annotations from PCS/PCSG level are not subject to this check.
+- **Value validation (`mnnvl-group`):** Must be `"none"` (opt-out) or a valid Kubernetes name component (lowercase alphanumeric or dashes, starting and ending with alphanumeric, max 63 chars). Invalid values are rejected.
+- **Feature disabled:** If the feature is off (`autoMNNVLEnabled: false`), reject any PCS that has `grove.io/mnnvl-group` at any level.
 
 #### Validating Webhook (on Update)
 
-Both `grove.io/auto-mnnvl` and `grove.io/mnnvl-group` are **immutable** after PCS creation at all levels (PCS, PCSG, PCLQ). Any attempt to add, modify, or remove either annotation is rejected.
+`grove.io/mnnvl-group` is **immutable** after PCS creation at all levels (PCS, PCSG, PCLQ). Any attempt to add, modify, or remove the annotation is rejected.
 
 ### Backward Compatibility
 
-The two-annotation design provides **full backward compatibility** with Phase 1:
+This GREP is **not backward compatible** with Phase 1. The `grove.io/auto-mnnvl` annotation is removed and no longer recognized by the operator. Existing manifests that use `auto-mnnvl: enabled` will have no effect — MNNVL will not be applied unless the new `grove.io/mnnvl-group` annotation is used.
 
-- Existing manifests with `grove.io/auto-mnnvl: "enabled"` continue to work unchanged — all GPU PCLQs share a single default CD per replica.
-- No annotations are deprecated. `grove.io/auto-mnnvl` remains the primary on/off switch.
-- The `grove.io/mnnvl-group` annotation is a purely additive extension for grouping — existing workloads that don't use it are unaffected.
-
-**Upgrade path for Phase 1 users who want group-based MNNVL:**
-
-| Before (Phase 1) | After (Phase 2) |
-|---|---|
-| `grove.io/auto-mnnvl: "enabled"` (on PCS) | Keep as-is, or add `mnnvl-group` per PCLQ for fine-grained control |
-| `grove.io/auto-mnnvl: "disabled"` (on PCS) | Keep as-is (explicit opt-out) |
+Since the feature is still in **alpha**, this is an acceptable breaking change. Users must update their manifests to use `grove.io/mnnvl-group` instead of `grove.io/auto-mnnvl`. To convert an existing PCS, replace `grove.io/auto-mnnvl: "enabled"` with `grove.io/mnnvl-group: "default"` and delete/recreate the PCS (the annotation is immutable on update).
 
 ### Monitoring
 
 ComputeDomain observability follows the same pattern as previous iterations: **Kubernetes Events** on the PodCliqueSet resource. The operator emits events when:
 
 - A ComputeDomain is created or deleted.
-- A PCS is rejected due to annotation validation errors, conflicts, or feature being disabled.
+- A PCS is rejected due to annotation validation errors or feature being disabled.
 - ComputeDomain creation fails (sync stops and requeues for retry).
 
 ### Dependencies (*Optional*)
@@ -549,34 +480,31 @@ ComputeDomain observability follows the same pattern as previous iterations: **K
 
 ### Test Plan
 
-- **Unit tests:** Cover annotation resolution (propagation, override, `auto-mnnvl` + `mnnvl-group` interaction), group name validation (valid K8s name component), `auto-mnnvl` value validation, conflict detection (`disabled` + group), ComputeDomain lifecycle management (create/delete/scale), RCT injection logic, dual CD naming (default vs. per-group), and configuration parsing.
+- **Unit tests:** Cover annotation resolution (propagation, override, `"none"` opt-out), group name validation (valid K8s name component + `"none"` reserved), ComputeDomain lifecycle management (create/delete/scale), RCT injection logic, CD naming (`{pcs}-{replica}-{group}`), and configuration parsing.
 - **E2E tests:**
-  - PCS with `auto-mnnvl: enabled` only → single default CD per replica, all GPU PCLQs enrolled.
+  - PCS with `mnnvl-group: "default"` → single CD per replica, all GPU PCLQs enrolled.
   - PCS with `mnnvl-group` on some PCLQs → per-group CDs, only enrolled GPU PCLQs get RCT.
-  - PCS with `auto-mnnvl: enabled` + `mnnvl-group` on some PCLQs → default CD for non-grouped GPU PCLQs, per-group CD for grouped PCLQs.
-  - PCS with PCS-level `auto-mnnvl: enabled` + PCLQ `auto-mnnvl: disabled` → PCLQ excluded.
-  - PCS with `auto-mnnvl: disabled` + `mnnvl-group` on same resource → rejected (conflict).
+  - PCS with PCS-level `mnnvl-group: "default"` + PCLQ `mnnvl-group: "none"` → PCLQ excluded.
   - PCS with multiple group names → separate CDs per group per replica.
-  - PCS with explicit MNNVL annotation on non-GPU PCLQ → rejected.
-  - PCS with PCS-level `auto-mnnvl: enabled`, non-GPU PCLQ inherits → silently skipped, no RCT for that PCLQ.
+  - PCS with `mnnvl-group` on non-GPU PCLQ → silently skipped, no RCT for that PCLQ.
   - PCS scale-up/scale-down → CDs created/deleted accordingly.
   - `autoMNNVLEnabled: false` + annotations → rejected.
   - `autoMNNVLEnabled: true` + CRD absent → operator fails to start.
-  - Annotation immutability: update attempts on both annotations rejected.
+  - Annotation immutability: update attempts rejected.
 
 ### Graduation Criteria
 
 #### Alpha
-- Both `grove.io/auto-mnnvl` and `grove.io/mnnvl-group` annotations implemented and functional.
-- Annotation propagation (PCS → PCSG → standalone PCLQ) working for both annotations.
-- Dual CD naming (`{pcs}-{replica}` default, `{pcs}-{replica}-{group}` per-group) working.
-- Conflict detection (`disabled` + `mnnvl-group`) enforced.
+- `grove.io/mnnvl-group` annotation implemented and functional.
+- Annotation propagation (PCS → PCSG → standalone PCLQ) working.
+- CD naming (`{pcs}-{replica}-{group}`) working.
+- `"none"` opt-out enforced.
 - Boolean configuration (`autoMNNVLEnabled`) unchanged from Phase 1 — no migration required.
 - Unit and basic integration tests passing.
 
 #### Beta
 - E2E tests covering all key scenarios from the behavior matrix.
-- Documentation for the two-annotation model and group-based MNNVL.
+- Documentation for the single-annotation model and group-based MNNVL.
 - Events fully implemented.
 
 #### GA
@@ -587,7 +515,7 @@ ComputeDomain observability follows the same pattern as previous iterations: **K
 ## Implementation History
 
 - **Phase 1 (completed):** Cluster-wide auto-MNNVL feature using `grove.io/auto-mnnvl` annotation and boolean `autoMNNVLEnabled` config. Single ComputeDomain per PCS replica, all GPU PCLQs enrolled. See [MNNVL Design Doc](../../designs/mnnvl-design.md).
-- **This GREP (Phase 2):** Extends the feature with a second annotation `grove.io/mnnvl-group` for group-based ComputeDomains, multi-layer propagation (PCS → PCSG → PCLQ), and opt-in model. Fully backward compatible with Phase 1 — no configuration changes required.
+- **This GREP (Phase 2):** Replaces `grove.io/auto-mnnvl` with a single `grove.io/mnnvl-group` annotation for group-based ComputeDomains, multi-layer propagation (PCS → PCSG → PCLQ), and opt-in model. Not backward compatible with Phase 1 — the `auto-mnnvl` annotation is removed.
 
 ## Open Questions
 
@@ -595,7 +523,7 @@ The following items require discussion with the broader team before finalizing t
 
 ### 1. Annotation vs. label for group declaration
 
-This GREP proposes using **annotations** (`grove.io/auto-mnnvl` and `grove.io/mnnvl-group`). An alternative is to use **labels** for one or both.
+This GREP proposes using an **annotation** (`grove.io/mnnvl-group`). An alternative is to use a **label**.
 
 **Arguments for annotations (current proposal):**
 - These are configuration directives that trigger operator behavior — the standard Kubernetes use case for annotations.
@@ -608,36 +536,40 @@ This GREP proposes using **annotations** (`grove.io/auto-mnnvl` and `grove.io/mn
 
 ### 2. Reject vs. silently ignore annotations when the feature is disabled
 
-When the feature is disabled and a user submits a PCS with `grove.io/auto-mnnvl` or `grove.io/mnnvl-group` annotations, the current proposal rejects the PCS. An alternative is to silently ignore the annotations. The benefit is **portability** — the same manifest works everywhere. The risk is **silent performance degradation** — the user requested MNNVL but the workload runs without it.
+When the feature is disabled and a user submits a PCS with `grove.io/mnnvl-group` annotations, the current proposal rejects the PCS. An alternative is to silently ignore the annotations. The benefit is **portability** — the same manifest works everywhere. The risk is **silent performance degradation** — the user requested MNNVL but the workload runs without it.
 
 ## Alternatives (*Optional*)
 
-**Alternative 1: Single annotation (`mnnvl-group` only).**
+**Alternative 1: Two annotations (`auto-mnnvl` + `mnnvl-group`).**
 
-Instead of two annotations, use a single `grove.io/mnnvl-group` annotation that controls both MNNVL on/off and group assignment:
+Instead of a single annotation, use two annotations with cleanly separated responsibilities:
 
-| Value | Meaning |
-|---|---|
-| String name (`"training"`, `"workers"`, ...) | Opt-in to MNNVL group |
-| `"none"` | Explicit opt-out (override parent) |
-| Absent | Inherit from parent layer. If no parent has it, no MNNVL |
+- `grove.io/auto-mnnvl`: `"enabled"` or `"disabled"` — controls whether MNNVL is active.
+- `grove.io/mnnvl-group`: a string name — controls which MNNVL group the PCLQ belongs to. When present, implicitly enables MNNVL.
 
-The `grove.io/auto-mnnvl` annotation would be **deprecated**. Existing `auto-mnnvl: enabled` manifests must be migrated to `mnnvl-group: "default"`.
-
-**Trade-offs vs. two annotations (current proposal):**
-
-| Aspect | Two annotations (`auto-mnnvl` + `mnnvl-group`) | Single annotation (`mnnvl-group`) |
+| `auto-mnnvl` | `mnnvl-group` | Result |
 |---|---|---|
-| Phase 1 backward compat | Zero changes — existing manifests work as-is | User must change `auto-mnnvl: enabled` → `mnnvl-group: "default"` |
-| Simple opt-in (one CD) | `auto-mnnvl: enabled` | `mnnvl-group: "default"` |
-| Group assignment | `mnnvl-group: "training"` | `mnnvl-group: "training"` |
-| Opt-out override | `auto-mnnvl: disabled` | `mnnvl-group: "none"` |
-| Reserved values | 0 | 1 (`"none"`) |
-| Conflict states | 1 (disabled + group → reject) | 0 |
-| CD naming schemes | 2 (`{pcs}-{replica}` without group, `{pcs}-{replica}-{group}` with group) | 1 (always `{pcs}-{replica}-{group}`) |
-| Annotations to manage | 2 | 1 |
+| absent | absent | No MNNVL |
+| `enabled` | absent | MNNVL with default CD (`{pcs}-{replica}`) |
+| `disabled` | absent | No MNNVL (explicit opt-out) |
+| absent | `"training"` | MNNVL with group CD (`{pcs}-{replica}-training`) — group implies enabled |
+| `enabled` | `"training"` | MNNVL with group CD (`{pcs}-{replica}-training`) |
+| `disabled` | `"training"` | **Reject** — contradictory (disabled + group assignment) |
 
-The single-annotation approach is more compact and has zero conflict states, but it requires deprecating `auto-mnnvl`, introduces the `"none"` reserved keyword, and forces Phase 1 users to update their manifests.
+**Trade-offs vs. single annotation (current proposal):**
+
+| Aspect | Single annotation (`mnnvl-group`) | Two annotations (`auto-mnnvl` + `mnnvl-group`) |
+|---|---|---|
+| Phase 1 backward compat | Not backward compatible — `auto-mnnvl` is removed | Zero changes — existing manifests work as-is |
+| Simple opt-in (one CD) | `mnnvl-group: "default"` | `auto-mnnvl: enabled` |
+| Group assignment | `mnnvl-group: "training"` | `mnnvl-group: "training"` |
+| Opt-out override | `mnnvl-group: "none"` | `auto-mnnvl: disabled` |
+| Reserved values | 1 (`"none"`) | 0 |
+| Conflict states | 0 | 1 (disabled + group → reject) |
+| CD naming schemes | 1 (always `{pcs}-{replica}-{group}`) | 2 (`{pcs}-{replica}` without group, `{pcs}-{replica}-{group}` with group) |
+| Annotations to manage | 1 | 2 |
+
+The two-annotation approach provides full Phase 1 backward compatibility but introduces a conflict state, dual CD naming schemes, and requires managing two annotations. Since the feature is still in alpha, the single-annotation approach was chosen for its simplicity.
 
 **Alternative 2: Three-value configuration with `auto` mode.**
 Instead of a boolean `autoMNNVLEnabled`, introduce a three-value `mnnvl.mode` field (`auto`, `enabled`, `disabled`):
