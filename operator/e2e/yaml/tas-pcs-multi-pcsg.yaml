@@ -18,6 +18,7 @@ spec:
         replicas: 2
         minAvailable: 1
         topologyConstraint:
+          topologyName: grove-topology
           packDomain: rack
         cliqueNames:
           - dworker
@@ -26,6 +27,7 @@ spec:
         replicas: 2
         minAvailable: 1
         topologyConstraint:
+          topologyName: grove-topology
           packDomain: rack
         cliqueNames:
           - pworker

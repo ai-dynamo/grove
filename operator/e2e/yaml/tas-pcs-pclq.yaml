@@ -18,6 +18,7 @@ spec:
         labels:
           kai.scheduler/queue: test
         topologyConstraint:
+          topologyName: grove-topology
           packDomain: host
         spec:
           roleName: worker

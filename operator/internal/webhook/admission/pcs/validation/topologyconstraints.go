@@ -56,6 +56,10 @@ func (v *topologyConstraintsValidator) validate() field.ErrorList {
 		return v.disallowConstraintsForCreateWhenTASIsDisabled(pcsTemplateFLDPath)
 	}
 
+	if errs := v.validateTopologyConstraintCompleteness(pcsTemplateFLDPath); len(errs) > 0 {
+		return errs
+	}
+
 	errs := v.validateTopologyDomainsExistInClusterTopology(pcsTemplateFLDPath)
 	if len(errs) > 0 {
 		return errs
@@ -108,6 +112,36 @@ func (v *topologyConstraintsValidator) disallowConstraintsForCreateWhenTASIsDisa
 				pcsg.TopologyConstraint.PackDomain,
 				"topology constraints are not allowed when Topology Aware Scheduling is disabled"))
 		}
+	}
+
+	return allErrs
+}
+
+// validateTopologyConstraintCompleteness ensures that a topology constraint never specifies only one of
+// topologyName or packDomain. If the constraint is present, both fields are required.
+func (v *topologyConstraintsValidator) validateTopologyConstraintCompleteness(fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+
+	validateConstraint := func(tc *grovecorev1alpha1.TopologyConstraint, tcPath *field.Path) {
+		if tc == nil {
+			return
+		}
+		if tc.TopologyName == "" {
+			allErrs = append(allErrs, field.Required(tcPath.Child("topologyName"),
+				"topologyName is required when topologyConstraint is set"))
+		}
+		if tc.PackDomain == "" {
+			allErrs = append(allErrs, field.Required(tcPath.Child("packDomain"),
+				"packDomain is required when topologyConstraint is set"))
+		}
+	}
+
+	validateConstraint(v.pcs.Spec.Template.TopologyConstraint, fldPath.Child("topologyConstraint"))
+	for i, clique := range v.pcs.Spec.Template.Cliques {
+		validateConstraint(clique.TopologyConstraint, fldPath.Child("cliques").Index(i).Child("topologyConstraint"))
+	}
+	for i, pcsg := range v.pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		validateConstraint(pcsg.TopologyConstraint, fldPath.Child("podCliqueScalingGroups").Index(i).Child("topologyConstraint"))
 	}
 
 	return allErrs
@@ -243,9 +277,9 @@ func (v *topologyConstraintsValidator) validateHierarchicalTopologyConstraints(f
 }
 
 // validateTopologyConstraintImmutability ensures that topology constraints are not modified during updates.
-// When allowMissingTopologyNameRepair is true, the validator permits the minimal repair required
-// to add a missing PCS-level topologyName without changing any existing packDomain values or child constraints.
-func (v *topologyConstraintsValidator) validateTopologyConstraintImmutability(oldPCS *grovecorev1alpha1.PodCliqueSet, fldPath *field.Path, allowMissingTopologyNameRepair bool) field.ErrorList {
+// When allowInvalidConstraintRepair is true, the validator permits the legacy upgrade repair path:
+// adding a missing topologyName to an existing constraint that already had a packDomain.
+func (v *topologyConstraintsValidator) validateTopologyConstraintImmutability(oldPCS *grovecorev1alpha1.PodCliqueSet, fldPath *field.Path, allowInvalidConstraintRepair bool) field.ErrorList {
 	var allErrs field.ErrorList
 
 	oldPCSConstraint := oldPCS.Spec.Template.TopologyConstraint
@@ -259,7 +293,7 @@ func (v *topologyConstraintsValidator) validateTopologyConstraintImmutability(ol
 	if newPCSConstraint != nil {
 		newTopologyName = newPCSConstraint.TopologyName
 	}
-	allowedPCSRepair := allowMissingTopologyNameRepair && isAllowedMissingPCSTopologyNameRepair(oldPCSConstraint, newPCSConstraint)
+	allowedPCSRepair := allowInvalidConstraintRepair && isAllowedInvalidTopologyConstraintRepair(oldPCSConstraint, newPCSConstraint)
 
 	if oldTopologyName != newTopologyName && !allowedPCSRepair {
 		allErrs = append(allErrs, field.Forbidden(
@@ -269,7 +303,7 @@ func (v *topologyConstraintsValidator) validateTopologyConstraintImmutability(ol
 
 	// Validate PCS level packDomain only when topologyName is unchanged; adding or removing
 	// the whole topologyConstraint (which changes topologyName) is already reported above.
-	if oldTopologyName == newTopologyName && constraintChanged(oldPCSConstraint, newPCSConstraint) {
+	if oldTopologyName == newTopologyName && constraintChanged(oldPCSConstraint, newPCSConstraint) && !allowedPCSRepair {
 		allErrs = append(allErrs, field.Forbidden(
 			fldPath.Child("topologyConstraint"),
 			constraintChangeMsg(apicommonconstants.KindPodCliqueSet, "", oldPCSConstraint, newPCSConstraint)))
@@ -284,7 +318,8 @@ func (v *topologyConstraintsValidator) validateTopologyConstraintImmutability(ol
 
 	for i, clique := range v.pcs.Spec.Template.Cliques {
 		oldConstraint := oldCliqueConstraints[clique.Name]
-		if constraintChanged(oldConstraint, clique.TopologyConstraint) {
+		if constraintChanged(oldConstraint, clique.TopologyConstraint) &&
+			(!allowInvalidConstraintRepair || !isAllowedInvalidTopologyConstraintRepair(oldConstraint, clique.TopologyConstraint)) {
 			allErrs = append(allErrs, field.Forbidden(
 				fldPath.Child("cliques").Index(i).Child("topologyConstraint"),
 				constraintChangeMsg(apicommonconstants.KindPodClique, clique.Name, oldConstraint, clique.TopologyConstraint)))
@@ -300,7 +335,8 @@ func (v *topologyConstraintsValidator) validateTopologyConstraintImmutability(ol
 
 	for i, pcsg := range v.pcs.Spec.Template.PodCliqueScalingGroupConfigs {
 		oldConstraint := oldPCSGConstraints[pcsg.Name]
-		if constraintChanged(oldConstraint, pcsg.TopologyConstraint) {
+		if constraintChanged(oldConstraint, pcsg.TopologyConstraint) &&
+			(!allowInvalidConstraintRepair || !isAllowedInvalidTopologyConstraintRepair(oldConstraint, pcsg.TopologyConstraint)) {
 			allErrs = append(allErrs, field.Forbidden(
 				fldPath.Child("podCliqueScalingGroups").Index(i).Child("topologyConstraint"),
 				constraintChangeMsg(apicommonconstants.KindPodCliqueScalingGroup, pcsg.Name, oldConstraint, pcsg.TopologyConstraint)))
@@ -310,15 +346,39 @@ func (v *topologyConstraintsValidator) validateTopologyConstraintImmutability(ol
 	return allErrs
 }
 
-func isAllowedMissingPCSTopologyNameRepair(old, new *grovecorev1alpha1.TopologyConstraint) bool {
-	switch {
-	case old == nil:
-		return new != nil && new.TopologyName != "" && new.PackDomain == ""
-	case new == nil:
+func isAllowedInvalidTopologyConstraintRepair(old, new *grovecorev1alpha1.TopologyConstraint) bool {
+	if old == nil || new == nil {
 		return false
-	default:
-		return old.TopologyName == "" && new.TopologyName != "" && old.PackDomain == new.PackDomain
 	}
+	// Legacy objects can only be missing topologyName, because older API versions exposed packDomain
+	// but not topologyName. topologyName-without-packDomain is not considered a repairable legacy shape.
+	return old.TopologyName == "" &&
+		old.PackDomain != "" &&
+		new.TopologyName != "" &&
+		new.PackDomain == old.PackDomain
+}
+
+func hasRepairableLegacyTopologyConstraint(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+	if pcs.Spec.Template.TopologyConstraint != nil && pcs.Spec.Template.TopologyConstraint.TopologyName == "" &&
+		pcs.Spec.Template.TopologyConstraint.PackDomain != "" {
+		return true
+	}
+
+	for _, clique := range pcs.Spec.Template.Cliques {
+		if clique.TopologyConstraint != nil && clique.TopologyConstraint.TopologyName == "" &&
+			clique.TopologyConstraint.PackDomain != "" {
+			return true
+		}
+	}
+
+	for _, pcsg := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		if pcsg.TopologyConstraint != nil && pcsg.TopologyConstraint.TopologyName == "" &&
+			pcsg.TopologyConstraint.PackDomain != "" {
+			return true
+		}
+	}
+
+	return false
 }
 
 // constraintChanged checks if two topology constraints are different, considering nil values.

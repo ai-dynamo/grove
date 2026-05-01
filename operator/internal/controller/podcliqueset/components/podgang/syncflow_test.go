@@ -26,6 +26,7 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -1621,16 +1622,17 @@ func TestPrepareSyncFlowTopologyResolution(t *testing.T) {
 			wantTopologyLevels:    nil,
 		},
 		{
-			name:         "TAS enabled, only child topology constraints without PCS topologyName - topologyLevels stay nil",
+			name:         "TAS enabled, only child explicit topology constraint - topologyLevels resolved from child",
 			topologyName: "",
 			mutatePCS: func(pcs *grovecorev1alpha1.PodCliqueSet) {
 				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
-					PackDomain: "rack",
+					TopologyName: "my-topology",
+					PackDomain:   "rack",
 				}
 			},
-			clusterTopologyExists: false,
+			clusterTopologyExists: true,
 			tasEnabled:            true,
-			wantTopologyLevels:    nil,
+			wantTopologyLevels:    ctLevels,
 		},
 		{
 			name:                  "TAS enabled, topologyName set, CT not found - topologyLevels stay nil",
@@ -1658,8 +1660,10 @@ func TestPrepareSyncFlowTopologyResolution(t *testing.T) {
 
 			var objs []client.Object
 			objs = append(objs, pcs)
-			if tc.clusterTopologyExists && tc.topologyName != "" {
-				objs = append(objs, makeClusterTopologyWithLevels(tc.topologyName, ctLevels))
+			if tc.clusterTopologyExists {
+				topologyName, err := componentutils.ResolveTopologyNameForPodCliqueSet(pcs)
+				require.NoError(t, err)
+				objs = append(objs, makeClusterTopologyWithLevels(topologyName, ctLevels))
 			}
 
 			fakeClient := testutils.NewTestClientBuilder().WithObjects(objs...).Build()

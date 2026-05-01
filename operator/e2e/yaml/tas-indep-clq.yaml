@@ -10,14 +10,13 @@ metadata:
 spec:
   replicas: 1
   template:
-    topologyConstraint:
-      topologyName: grove-topology
     # NO topology constraint at PCS level
     cliques:
       - name: worker-rack
         labels:
           kai.scheduler/queue: test
         topologyConstraint:
+          topologyName: grove-topology
           packDomain: rack  # Rack-level packing
         spec:
           roleName: worker-rack
@@ -60,6 +59,7 @@ spec:
         labels:
           kai.scheduler/queue: test
         topologyConstraint:
+          topologyName: grove-topology
           packDomain: block  # Block-level packing (stricter)
         spec:
           roleName: worker-block

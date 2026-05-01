@@ -694,9 +694,10 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigsUpdate(oldConfigs []g
 func (v *pcsValidator) validateTopologyConstraintsUpdate(oldPCS *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
 	immutabilityValidator := newTopologyConstraintsValidator(v.pcs, v.tasEnabled, nil)
 
-	// Allow invalid legacy objects with missing PCS topologyName to be repaired under the
-	// current rules, while still enforcing immutability on all existing topology constraints.
-	if componentutils.HasAnyTopologyConstraint(oldPCS) {
+	// Allow only the legacy upgrade case to be repaired under the current rules: older objects could carry
+	// packDomain without topologyName, because topologyName did not exist in the API yet. Other invalid shapes
+	// are not treated as repairable legacy state here.
+	if componentutils.HasAnyTopologyConstraint(oldPCS) && hasRepairableLegacyTopologyConstraint(oldPCS) {
 		if _, err := componentutils.ResolveTopologyNameForPodCliqueSet(oldPCS); err != nil {
 			if errors.Is(err, componentutils.ErrTopologyNameMissing) {
 				if allErrs := immutabilityValidator.validateTopologyConstraintImmutability(oldPCS, field.NewPath("spec").Child("template"), true); len(allErrs) > 0 {
@@ -722,16 +723,23 @@ func (v *pcsValidator) resolveTopologyDomains(ctx context.Context) ([]string, fi
 	if !componentutils.HasAnyTopologyConstraint(v.pcs) {
 		return nil, nil
 	}
-	if mismatchErrs := childTopologyNameMismatchFieldErrors(v.pcs); len(mismatchErrs) > 0 {
+	if completenessErrs := topologyConstraintCompletenessFieldErrors(v.pcs); len(completenessErrs) > 0 {
+		return nil, completenessErrs
+	}
+	if mismatchErrs := multipleTopologyNamesFieldErrors(v.pcs); len(mismatchErrs) > 0 {
 		return nil, mismatchErrs
 	}
 
 	topologyName, err := componentutils.ResolveTopologyNameForPodCliqueSet(v.pcs)
 	if err != nil {
-		fldPath := field.NewPath("spec", "template", "topologyConstraint", "topologyName")
+		fldPath := field.NewPath("spec", "template", "topologyConstraint")
 		if errors.Is(err, componentutils.ErrTopologyNameMissing) {
 			return nil, field.ErrorList{field.Required(fldPath,
-				"spec.template.topologyConstraint.topologyName must be set when topology constraints are defined")}
+				"topologyConstraint must specify both topologyName and packDomain")}
+		}
+		if errors.Is(err, componentutils.ErrMultipleTopologyNamesUnsupported) {
+			return nil, field.ErrorList{field.Invalid(fldPath, nil,
+				"all topologyConstraint.topologyName values within a PodCliqueSet must match in the current implementation")}
 		}
 		return nil, field.ErrorList{field.InternalError(fldPath, err)}
 	}
@@ -756,33 +764,77 @@ func (v *pcsValidator) resolveTopologyDomains(ctx context.Context) ([]string, fi
 	return domains, nil
 }
 
-func childTopologyNameMismatchFieldErrors(pcs *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
+func topologyConstraintCompletenessFieldErrors(pcs *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
 	var allErrs field.ErrorList
-	if pcs.Spec.Template.TopologyConstraint == nil || pcs.Spec.Template.TopologyConstraint.TopologyName == "" {
-		return allErrs
+
+	validateConstraint := func(tc *grovecorev1alpha1.TopologyConstraint, tcPath *field.Path) {
+		if tc == nil {
+			return
+		}
+		if tc.TopologyName == "" {
+			allErrs = append(allErrs, field.Required(tcPath.Child("topologyName"),
+				"topologyName is required when topologyConstraint is set"))
+		}
+		if tc.PackDomain == "" {
+			allErrs = append(allErrs, field.Required(tcPath.Child("packDomain"),
+				"packDomain is required when topologyConstraint is set"))
+		}
 	}
-	pcsTopologyName := pcs.Spec.Template.TopologyConstraint.TopologyName
+
+	validateConstraint(pcs.Spec.Template.TopologyConstraint, field.NewPath("spec", "template", "topologyConstraint"))
+	for i, clique := range pcs.Spec.Template.Cliques {
+		validateConstraint(clique.TopologyConstraint, field.NewPath("spec", "template", "cliques").Index(i).Child("topologyConstraint"))
+	}
+	for i, pcsg := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		validateConstraint(pcsg.TopologyConstraint, field.NewPath("spec", "template", "podCliqueScalingGroups").Index(i).Child("topologyConstraint"))
+	}
+
+	return allErrs
+}
+
+func multipleTopologyNamesFieldErrors(pcs *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
+	var allErrs field.ErrorList
+	topologyNames := map[string]struct{}{}
+
+	recordTopologyName := func(name string) {
+		if name != "" {
+			topologyNames[name] = struct{}{}
+		}
+	}
+
+	if pcs.Spec.Template.TopologyConstraint != nil {
+		recordTopologyName(pcs.Spec.Template.TopologyConstraint.TopologyName)
+	}
 
 	for i, clique := range pcs.Spec.Template.Cliques {
-		if clique.TopologyConstraint != nil &&
-			clique.TopologyConstraint.TopologyName != "" &&
-			clique.TopologyConstraint.TopologyName != pcsTopologyName {
+		if clique.TopologyConstraint != nil {
+			recordTopologyName(clique.TopologyConstraint.TopologyName)
+		}
+		if clique.TopologyConstraint != nil && len(topologyNames) > 1 {
 			allErrs = append(allErrs, field.Invalid(
 				field.NewPath("spec", "template", "cliques").Index(i).Child("topologyConstraint", "topologyName"),
 				clique.TopologyConstraint.TopologyName,
-				fmt.Sprintf("topologyName must match spec.template.topologyConstraint.topologyName (%q)", pcsTopologyName)))
+				"all topologyConstraint.topologyName values within a PodCliqueSet must match in the current implementation"))
 		}
 	}
 
 	for i, pcsg := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-		if pcsg.TopologyConstraint != nil &&
-			pcsg.TopologyConstraint.TopologyName != "" &&
-			pcsg.TopologyConstraint.TopologyName != pcsTopologyName {
+		if pcsg.TopologyConstraint != nil {
+			recordTopologyName(pcsg.TopologyConstraint.TopologyName)
+		}
+		if pcsg.TopologyConstraint != nil && len(topologyNames) > 1 {
 			allErrs = append(allErrs, field.Invalid(
 				field.NewPath("spec", "template", "podCliqueScalingGroups").Index(i).Child("topologyConstraint", "topologyName"),
 				pcsg.TopologyConstraint.TopologyName,
-				fmt.Sprintf("topologyName must match spec.template.topologyConstraint.topologyName (%q)", pcsTopologyName)))
+				"all topologyConstraint.topologyName values within a PodCliqueSet must match in the current implementation"))
 		}
+	}
+
+	if len(topologyNames) > 1 && pcs.Spec.Template.TopologyConstraint != nil {
+		allErrs = append(allErrs, field.Invalid(
+			field.NewPath("spec", "template", "topologyConstraint", "topologyName"),
+			pcs.Spec.Template.TopologyConstraint.TopologyName,
+			"all topologyConstraint.topologyName values within a PodCliqueSet must match in the current implementation"))
 	}
 
 	return allErrs

@@ -509,14 +509,14 @@ func TestValidateUpdateTopologyConstraintImmutability(t *testing.T) {
 			name:             "Should disallow when PCS constraint are added",
 			newPCSConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: zone},
 			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint"},
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint.topologyName"},
 			},
 		},
 		{
 			name:             "Should disallow when PCS constraint are removed",
 			oldPCSConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: zone},
 			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint"},
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint.topologyName"},
 			},
 		},
 		{
@@ -616,19 +616,35 @@ func TestValidateUpdateTopologyConstraintImmutability(t *testing.T) {
 func buildTestPCS(pcsConstraint *grovecorev1alpha1.TopologyConstraint,
 	cliques []*grovecorev1alpha1.PodCliqueTemplateSpec,
 	pcsgConfigs []grovecorev1alpha1.PodCliqueScalingGroupConfig) *grovecorev1alpha1.PodCliqueSet {
+	const defaultTopologyName = "test-topology"
+	normalizeConstraint := func(tc *grovecorev1alpha1.TopologyConstraint) *grovecorev1alpha1.TopologyConstraint {
+		if tc == nil {
+			return nil
+		}
+		normalized := tc.DeepCopy()
+		if normalized.TopologyName == "" {
+			normalized.TopologyName = defaultTopologyName
+		}
+		return normalized
+	}
+
 	builder := testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
 		WithReplicas(1).
-		WithTopologyConstraint(pcsConstraint)
+		WithTopologyConstraint(normalizeConstraint(pcsConstraint))
 
 	if len(cliques) == 0 {
 		builder = builder.WithPodCliqueTemplateSpec(testutils.NewBasicPodCliqueTemplateSpec("worker"))
 	} else {
 		for _, clique := range cliques {
+			clique = clique.DeepCopy()
+			clique.TopologyConstraint = normalizeConstraint(clique.TopologyConstraint)
 			builder = builder.WithPodCliqueTemplateSpec(clique)
 		}
 	}
 
 	for _, pcsg := range pcsgConfigs {
+		pcsg = *pcsg.DeepCopy()
+		pcsg.TopologyConstraint = normalizeConstraint(pcsg.TopologyConstraint)
 		builder = builder.WithPodCliqueScalingGroupConfig(pcsg)
 	}
 
@@ -638,6 +654,7 @@ func buildTestPCS(pcsConstraint *grovecorev1alpha1.TopologyConstraint,
 func TestResolveTopologyDomains(t *testing.T) {
 	tests := []struct {
 		name                   string
+		setupPCS               func() *grovecorev1alpha1.PodCliqueSet
 		pcsConstraint          *grovecorev1alpha1.TopologyConstraint
 		cliques                []*grovecorev1alpha1.PodCliqueTemplateSpec
 		pcsgConfigs            []grovecorev1alpha1.PodCliqueScalingGroupConfig
@@ -696,9 +713,14 @@ func TestResolveTopologyDomains(t *testing.T) {
 			setupClient:           nil,
 		},
 		{
-			name: "TopologyName missing: constraint has PackDomain but no TopologyName",
-			pcsConstraint: &grovecorev1alpha1.TopologyConstraint{
-				PackDomain: "zone",
+			name: "Incomplete PCS topology constraint is rejected",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
+					WithReplicas(1).
+					WithTopologyConstraint(&grovecorev1alpha1.TopologyConstraint{PackDomain: "zone"}).
+					WithPodCliqueTemplateSpec(testutils.NewBasicPodCliqueTemplateSpec("worker")).
+					Build()
+				return pcs
 			},
 			clusterTopologyObjects: []client.Object{},
 			expectedDomains:        nil,
@@ -711,26 +733,32 @@ func TestResolveTopologyDomains(t *testing.T) {
 			setupClient: nil,
 		},
 		{
-			name:          "Child-only topology constraint without PCS topologyName is rejected",
+			name:          "Child-only explicit topology constraint is allowed",
 			pcsConstraint: nil,
 			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
 				{
 					Name: "worker",
 					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
-						PackDomain: "host",
+						TopologyName: "my-topo",
+						PackDomain:   "host",
 					},
 					Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
 				},
 			},
-			clusterTopologyObjects: []client.Object{},
-			expectedDomains:        nil,
-			expectedErrorMatchers: []testutils.ErrorMatcher{
-				{
-					ErrorType: field.ErrorTypeRequired,
-					Field:     "spec.template.topologyConstraint.topologyName",
+			clusterTopologyObjects: []client.Object{
+				&grovecorev1alpha1.ClusterTopology{
+					ObjectMeta: v1.ObjectMeta{Name: "my-topo"},
+					Spec: grovecorev1alpha1.ClusterTopologySpec{
+						Levels: []grovecorev1alpha1.TopologyLevel{
+							{Domain: "zone", Key: "topology.kubernetes.io/zone"},
+							{Domain: "host", Key: "kubernetes.io/hostname"},
+						},
+					},
 				},
 			},
-			setupClient: nil,
+			expectedDomains:       []string{"zone", "host"},
+			expectedErrorMatchers: []testutils.ErrorMatcher{},
+			setupClient:           nil,
 		},
 		{
 			name:          "Child topologyName mismatch is rejected",
@@ -751,6 +779,10 @@ func TestResolveTopologyDomains(t *testing.T) {
 				{
 					ErrorType: field.ErrorTypeInvalid,
 					Field:     "spec.template.cliques[0].topologyConstraint.topologyName",
+				},
+				{
+					ErrorType: field.ErrorTypeInvalid,
+					Field:     "spec.template.topologyConstraint.topologyName",
 				},
 			},
 			setupClient: nil,
@@ -804,7 +836,12 @@ func TestResolveTopologyDomains(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			pcs := buildTestPCS(tc.pcsConstraint, tc.cliques, tc.pcsgConfigs)
+			var pcs *grovecorev1alpha1.PodCliqueSet
+			if tc.setupPCS != nil {
+				pcs = tc.setupPCS()
+			} else {
+				pcs = buildTestPCS(tc.pcsConstraint, tc.cliques, tc.pcsgConfigs)
+			}
 			var fakeClient client.Client
 			if tc.setupClient != nil {
 				fakeClient = tc.setupClient()

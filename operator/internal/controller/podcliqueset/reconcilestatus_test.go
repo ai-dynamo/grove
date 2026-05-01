@@ -503,7 +503,8 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 				pcs := basePCS("my-topology")
 				// Add a clique-level constraint with a domain not present in the CT levels.
 				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
-					PackDomain: grovecorev1alpha1.TopologyDomainHost, // "host" is not in standardLevels
+					TopologyName: "my-topology",
+					PackDomain:   grovecorev1alpha1.TopologyDomainHost, // "host" is not in standardLevels
 				}
 				return pcs
 			},
@@ -528,7 +529,7 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 			tasEnabled: true,
 			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
 				pcs := basePCS("") // PCS-level TopologyConstraint is nil
-				// Only a clique-level constraint is present, without a PCS-level topologyName.
+				// Only a clique-level constraint is present, but it is incomplete.
 				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
 					PackDomain: grovecorev1alpha1.TopologyDomainRack,
 				}
@@ -536,7 +537,7 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 			},
 			wantStatus:     metav1.ConditionUnknown,
 			wantReason:     apicommonconstants.ConditionReasonTopologyNameMissing,
-			wantMsgContain: "topologyName is required",
+			wantMsgContain: "both topologyName and packDomain",
 		},
 		{
 			name:           "TAS enabled, no constraints at all — False/AllClusterTopologyLevelsAvailable with no-constraints message",
@@ -548,20 +549,20 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 			wantMsgContain: "No topology constraints defined",
 		},
 		{
-			name:       "TAS enabled, PCS topologyName set with empty packDomain, PCSG has valid packDomain — False/AllClusterTopologyLevelsAvailable",
+			name:       "TAS enabled, incomplete PCS topology constraint with valid PCSG constraint — Unknown/TopologyNameMissing",
 			tasEnabled: true,
 			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
 				pcs := basePCS("")
 				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
 					TopologyName: "my-topology",
-					// PackDomain intentionally empty: only topologyName is set at PCS level
 				}
 				pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1alpha1.PodCliqueScalingGroupConfig{
 					{
 						Name:        "workers",
 						CliqueNames: []string{"worker"},
 						TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
-							PackDomain: grovecorev1alpha1.TopologyDomainRack,
+							TopologyName: "my-topology",
+							PackDomain:   grovecorev1alpha1.TopologyDomainRack,
 						},
 					},
 				}
@@ -570,9 +571,9 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 			extraObjects: []client.Object{
 				clusterTopology("my-topology", standardLevels),
 			},
-			wantStatus:     metav1.ConditionFalse,
-			wantReason:     apicommonconstants.ConditionReasonAllTopologyLevelsAvailable,
-			wantMsgContain: "available",
+			wantStatus:     metav1.ConditionUnknown,
+			wantReason:     apicommonconstants.ConditionReasonTopologyNameMissing,
+			wantMsgContain: "both topologyName and packDomain",
 		},
 	}
 

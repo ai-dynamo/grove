@@ -93,7 +93,7 @@ func mapPodCliqueScaleGroupToPodCliqueSet() handler.MapFunc {
 }
 
 // mapClusterTopologyToPodCliqueSets returns a function that maps ClusterTopology events to PodCliqueSets
-// that reference the ClusterTopology from spec.template.topologyConstraint.topologyName.
+// whose explicit topology constraints resolve to this ClusterTopology.
 func mapClusterTopologyToPodCliqueSets(cl client.Client) handler.MapFunc {
 	return func(ctx context.Context, obj client.Object) []reconcile.Request {
 		ct, ok := obj.(*grovecorev1alpha1.ClusterTopology)
@@ -109,7 +109,8 @@ func mapClusterTopologyToPodCliqueSets(cl client.Client) handler.MapFunc {
 		requests := make([]reconcile.Request, 0, len(pcsList.Items))
 		for i := range pcsList.Items {
 			pcs := &pcsList.Items[i]
-			if pcs.Spec.Template.TopologyConstraint == nil || pcs.Spec.Template.TopologyConstraint.TopologyName != ct.Name {
+			topologyName, err := componentutils.ResolveTopologyNameForPodCliqueSet(pcs)
+			if err != nil || topologyName != ct.Name {
 				continue
 			}
 			requests = append(requests, reconcile.Request{

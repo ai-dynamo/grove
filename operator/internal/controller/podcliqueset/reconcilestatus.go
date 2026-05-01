@@ -228,11 +228,11 @@ func (r *Reconciler) mutateTopologyLevelUnavailableConditions(ctx context.Contex
 }
 
 // computeTopologyLevelsUnavailableCondition computes the TopologyLevelsUnavailable condition for the PodCliqueSet.
-// It checks the PodCliqueSet's topology constraints against the topology levels defined in the ClusterTopology
-// selected by spec.template.topologyConstraint.topologyName.
+// It checks the PodCliqueSet's topology constraints against the topology levels defined in the single
+// ClusterTopology referenced by the explicit topology constraints in the PodCliqueSet.
 // If any topology domains used by the PodCliqueSet are not available in that ClusterTopology, it sets the condition to True.
 // If all referenced topology domains are available, it sets the condition to False.
-// If the ClusterTopology resource is not found, or topologyName is missing while constraints are set, it sets the condition to Unknown.
+// If the ClusterTopology resource is not found, or an explicit topology constraint is incomplete, it sets the condition to Unknown.
 func (r *Reconciler) computeTopologyLevelsUnavailableCondition(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (metav1.Condition, error) {
 	if !componentutils.HasAnyTopologyConstraint(pcs) {
 		return metav1.Condition{
@@ -253,7 +253,16 @@ func (r *Reconciler) computeTopologyLevelsUnavailableCondition(ctx context.Conte
 				Type:               apicommonconstants.ConditionTopologyLevelsUnavailable,
 				Status:             metav1.ConditionUnknown,
 				Reason:             apicommonconstants.ConditionReasonTopologyNameMissing,
-				Message:            "topologyName is required on spec.template.topologyConstraint when topology constraints are set",
+				Message:            "topology constraints must specify both topologyName and packDomain",
+				ObservedGeneration: pcs.Generation,
+				LastTransitionTime: metav1.Now(),
+			}, nil
+		case componentutils.ErrMultipleTopologyNamesUnsupported:
+			return metav1.Condition{
+				Type:               apicommonconstants.ConditionTopologyLevelsUnavailable,
+				Status:             metav1.ConditionUnknown,
+				Reason:             apicommonconstants.ConditionReasonTopologyNameMissing,
+				Message:            "all topologyConstraint.topologyName values within a PodCliqueSet must match in the current implementation",
 				ObservedGeneration: pcs.Generation,
 				LastTransitionTime: metav1.Now(),
 			}, nil

@@ -220,7 +220,7 @@ func Test_TAS2_MultipleCliquesWithDifferentConstraints(t *testing.T) {
 //   - PCSG: NO explicit constraint (nil)
 //   - PCLQs: NO explicit constraints
 //
-// 2. Verify all 4 pods are in same rack (inherited from PCS)
+// 2. Verify all 4 pods are in same rack (explicit PCS constraint)
 // 3. Verify PCSG worker pods (2 total, 1 per replica)
 // 4. Verify router pods (2 standalone)
 // 5. Verify KAI PodGroup SubGroups: NO PCSG parent groups (because PCSG constraint is nil, per PR #357)
@@ -248,7 +248,7 @@ func Test_TAS3_PCSOnlyConstraint(t *testing.T) {
 		t.Fatalf("Setup failed: %v", err)
 	}
 
-	Logger.Info("3. Verify all 4 pods in same rack (inherited from PCS)")
+	Logger.Info("3. Verify all 4 pods in same rack (explicit PCS constraint)")
 	if err := topologyVerifier.VerifyPodsInSameTopologyDomain(tc.Ctx, allPods, setup.TopologyLabelRack); err != nil {
 		t.Fatalf("Failed to verify all pods in same rack: %v", err)
 	}
@@ -326,7 +326,7 @@ func Test_TAS4_PCSGOnlyConstraint(t *testing.T) {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
-	Logger.Info("5. Verify TopologyLevelsUnavailable = False (PCSG constraint only, empty PCS-level packDomain)")
+	Logger.Info("5. Verify TopologyLevelsUnavailable = False (PCSG-only explicit topology constraint)")
 	tv := topology.NewTopologyVerifier(tc.Client, Logger)
 	if err := tv.WaitForPCSCondition(ctx, "default", tc.Workload.Name,
 		apicommonconstants.ConditionTopologyLevelsUnavailable,
@@ -467,7 +467,7 @@ func Test_TAS7_NoTopologyConstraint(t *testing.T) {
 		}),
 	)
 	defer cleanup()
-	// TAS7 YAML has no topologyName — grove-topology not needed.
+	// TAS7 YAML has no topology constraints at all, so grove-topology is not needed.
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
 	Logger.Info("2. Deploy workload (TAS7: No topology constraints)")

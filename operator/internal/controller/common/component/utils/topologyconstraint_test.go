@@ -87,7 +87,20 @@ func TestResolveTopologyNameForPodCliqueSet(t *testing.T) {
 			wantHasAny:   true,
 		},
 		{
-			name: "missing pcs topology name with child constraint",
+			name: "child-only explicit topology name resolves",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return makePCS(func(pcs *grovecorev1alpha1.PodCliqueSet) {
+					pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+						TopologyName: "topo-a",
+						PackDomain:   grovecorev1alpha1.TopologyDomainHost,
+					}
+				})
+			},
+			wantTopology: "topo-a",
+			wantHasAny:   true,
+		},
+		{
+			name: "incomplete child topology constraint is rejected",
 			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
 				return makePCS(func(pcs *grovecorev1alpha1.PodCliqueSet) {
 					pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
@@ -99,7 +112,7 @@ func TestResolveTopologyNameForPodCliqueSet(t *testing.T) {
 			wantHasAny: true,
 		},
 		{
-			name: "child topology name does not affect resolved pcs topology name",
+			name: "multiple topology names are rejected",
 			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
 				return makePCS(func(pcs *grovecorev1alpha1.PodCliqueSet) {
 					pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
@@ -112,8 +125,8 @@ func TestResolveTopologyNameForPodCliqueSet(t *testing.T) {
 					}
 				})
 			},
-			wantTopology: "topo-a",
-			wantHasAny:   true,
+			wantErr:    ErrMultipleTopologyNamesUnsupported,
+			wantHasAny: true,
 		},
 	}
 

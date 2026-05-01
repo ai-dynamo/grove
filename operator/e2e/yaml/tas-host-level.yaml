@@ -10,13 +10,12 @@ metadata:
 spec:
   replicas: 1
   template:
-    topologyConstraint:
-      topologyName: grove-topology
     cliques:
       - name: worker
         labels:
           kai.scheduler/queue: test
         topologyConstraint:
+          topologyName: grove-topology
           packDomain: host
         spec:
           roleName: worker
@@ -46,4 +45,3 @@ spec:
                 resources:
                   requests:
                     memory: 40Mi
-

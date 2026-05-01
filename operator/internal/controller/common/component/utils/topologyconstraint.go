@@ -25,8 +25,10 @@ import (
 )
 
 var (
-	// ErrTopologyNameMissing indicates that topology constraints are present but the PCS-level topologyName is absent.
-	ErrTopologyNameMissing = errors.New("topology constraints require pcs-level topologyName")
+	// ErrTopologyNameMissing indicates that a topology constraint is incomplete and does not specify both topologyName and packDomain.
+	ErrTopologyNameMissing = errors.New("topology constraints require both topologyName and packDomain")
+	// ErrMultipleTopologyNamesUnsupported indicates that topology constraints within a single PCS reference different topology names.
+	ErrMultipleTopologyNamesUnsupported = errors.New("multiple topology names within a single PodCliqueSet are not supported")
 )
 
 // HasAnyTopologyConstraint reports whether the PCS contains a topology constraint at any supported level.
@@ -47,32 +49,52 @@ func HasAnyTopologyConstraint(pcs *grovecorev1alpha1.PodCliqueSet) bool {
 	return false
 }
 
-// ResolveTopologyNameForPodCliqueSet resolves the PCS-level topologyName.
-// Callers that need to distinguish "no topology constraints at all" from
-// "topology constraints exist but topologyName is missing" must first call
-// HasAnyTopologyConstraint.
+// ResolveTopologyNameForPodCliqueSet resolves the single topologyName used by all explicit topology constraints in the PCS.
+// Callers that need to distinguish "no topology constraints at all" from invalid topology constraints
+// must first call HasAnyTopologyConstraint.
 func ResolveTopologyNameForPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) (string, error) {
-	if pcs.Spec.Template.TopologyConstraint == nil || pcs.Spec.Template.TopologyConstraint.TopologyName == "" {
-		return "", ErrTopologyNameMissing
+	topologyNames := sets.New[string]()
+	for _, tc := range getAllTopologyConstraintsInPodCliqueSet(pcs) {
+		if tc.TopologyName == "" || tc.PackDomain == "" {
+			return "", ErrTopologyNameMissing
+		}
+		topologyNames.Insert(tc.TopologyName)
 	}
-	return pcs.Spec.Template.TopologyConstraint.TopologyName, nil
+	switch topologyNames.Len() {
+	case 0:
+		return "", ErrTopologyNameMissing
+	case 1:
+		return sets.List(topologyNames)[0], nil
+	default:
+		return "", ErrMultipleTopologyNamesUnsupported
+	}
 }
 
 // GetUniqueTopologyDomainsInPodCliqueSet returns all unique, non-empty pack domains referenced by the PCS.
 func GetUniqueTopologyDomainsInPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) []grovecorev1alpha1.TopologyDomain {
 	topologyDomains := sets.New[grovecorev1alpha1.TopologyDomain]()
-	if pcs.Spec.Template.TopologyConstraint != nil && pcs.Spec.Template.TopologyConstraint.PackDomain != "" {
-		topologyDomains.Insert(pcs.Spec.Template.TopologyConstraint.PackDomain)
-	}
-	for _, pclqTemplateSpec := range pcs.Spec.Template.Cliques {
-		if pclqTemplateSpec.TopologyConstraint != nil && pclqTemplateSpec.TopologyConstraint.PackDomain != "" {
-			topologyDomains.Insert(pclqTemplateSpec.TopologyConstraint.PackDomain)
-		}
-	}
-	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-		if pcsgConfig.TopologyConstraint != nil && pcsgConfig.TopologyConstraint.PackDomain != "" {
-			topologyDomains.Insert(pcsgConfig.TopologyConstraint.PackDomain)
+	for _, tc := range getAllTopologyConstraintsInPodCliqueSet(pcs) {
+		if tc.PackDomain != "" {
+			topologyDomains.Insert(tc.PackDomain)
 		}
 	}
 	return topologyDomains.UnsortedList()
+}
+
+func getAllTopologyConstraintsInPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) []*grovecorev1alpha1.TopologyConstraint {
+	constraints := make([]*grovecorev1alpha1.TopologyConstraint, 0, 1+len(pcs.Spec.Template.Cliques)+len(pcs.Spec.Template.PodCliqueScalingGroupConfigs))
+	if pcs.Spec.Template.TopologyConstraint != nil {
+		constraints = append(constraints, pcs.Spec.Template.TopologyConstraint)
+	}
+	for _, pclqTemplateSpec := range pcs.Spec.Template.Cliques {
+		if pclqTemplateSpec.TopologyConstraint != nil {
+			constraints = append(constraints, pclqTemplateSpec.TopologyConstraint)
+		}
+	}
+	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		if pcsgConfig.TopologyConstraint != nil {
+			constraints = append(constraints, pcsgConfig.TopologyConstraint)
+		}
+	}
+	return constraints
 }

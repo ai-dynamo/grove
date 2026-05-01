@@ -30,7 +30,7 @@ import (
 )
 
 func TestMapClusterTopologyToPodCliqueSets(t *testing.T) {
-	makePCS := func(namespace, name, topologyName string) *grovecorev1alpha1.PodCliqueSet {
+	makePCS := func(namespace, name string, mutate func(*grovecorev1alpha1.PodCliqueSet)) *grovecorev1alpha1.PodCliqueSet {
 		pcs := &grovecorev1alpha1.PodCliqueSet{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
 			Spec: grovecorev1alpha1.PodCliqueSetSpec{
@@ -38,20 +38,38 @@ func TestMapClusterTopologyToPodCliqueSets(t *testing.T) {
 				Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{},
 			},
 		}
-		if topologyName != "" {
-			pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
-				TopologyName: topologyName,
-				PackDomain:   grovecorev1alpha1.TopologyDomainRack,
-			}
+		if mutate != nil {
+			mutate(pcs)
 		}
 		return pcs
 	}
 
 	ct := &grovecorev1alpha1.ClusterTopology{ObjectMeta: metav1.ObjectMeta{Name: "selected-topology"}}
-	pcsA := makePCS("default", "pcs-a", "selected-topology")
-	pcsB := makePCS("team-b", "pcs-b", "selected-topology")
-	pcsOther := makePCS("default", "pcs-other", "other-topology")
-	pcsWithoutTopology := makePCS("default", "pcs-no-topology", "")
+	pcsA := makePCS("default", "pcs-a", func(pcs *grovecorev1alpha1.PodCliqueSet) {
+		pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+			TopologyName: "selected-topology",
+			PackDomain:   grovecorev1alpha1.TopologyDomainRack,
+		}
+	})
+	pcsB := makePCS("team-b", "pcs-b", func(pcs *grovecorev1alpha1.PodCliqueSet) {
+		pcs.Spec.Template.Cliques = []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			{
+				Name: "worker",
+				TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+					TopologyName: "selected-topology",
+					PackDomain:   grovecorev1alpha1.TopologyDomainHost,
+				},
+				Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1},
+			},
+		}
+	})
+	pcsOther := makePCS("default", "pcs-other", func(pcs *grovecorev1alpha1.PodCliqueSet) {
+		pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+			TopologyName: "other-topology",
+			PackDomain:   grovecorev1alpha1.TopologyDomainRack,
+		}
+	})
+	pcsWithoutTopology := makePCS("default", "pcs-no-topology", nil)
 
 	fakeClient := testutils.NewTestClientBuilder().
 		WithObjects(ct, pcsA, pcsB, pcsOther, pcsWithoutTopology).
