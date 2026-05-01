@@ -35,6 +35,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
@@ -76,10 +77,18 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs 
 		if resolveErr == nil && topologyName != "" {
 			sc.topologyLevels, err = clustertopology.GetClusterTopologyLevels(ctx, r.client, topologyName)
 			if err != nil {
-				return nil, groveerr.WrapError(err,
-					errCodeGetClusterTopologyLevels,
-					component.OperationSync,
-					fmt.Sprintf("failed to get cluster topology levels for %q", topologyName))
+				if !apierrors.IsNotFound(err) {
+					return nil, groveerr.WrapError(err,
+						errCodeGetClusterTopologyLevels,
+						component.OperationSync,
+						fmt.Sprintf("failed to get cluster topology levels for %q", topologyName))
+				}
+				sc.logger.Info(
+					"ClusterTopology not found while preparing PodGang sync; continuing without translated topology constraints",
+					"pcs", pcsObjectKey,
+					"topologyName", topologyName,
+				)
+				sc.topologyLevels = nil
 			}
 		}
 		// If topologyName resolution fails, sc.topologyLevels stays nil — the PCS reconciler

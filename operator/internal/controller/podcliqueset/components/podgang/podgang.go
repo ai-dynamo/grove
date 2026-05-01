@@ -134,7 +134,7 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGa
 		}
 		pg.Labels[apicommon.LabelSchedulerName] = schedName
 	}
-	if r.tasConfig.Enabled && componentutils.HasAnyTopologyConstraint(pcs) {
+	if r.tasConfig.Enabled && podGangHasTranslatedTopologyConstraints(pgi) {
 		if topologyName, err := componentutils.ResolveTopologyNameForPodCliqueSet(pcs); err == nil && topologyName != "" {
 			if pg.Annotations == nil {
 				pg.Annotations = make(map[string]string)
@@ -211,6 +211,23 @@ func getLabels(pcsName string) map[string]string {
 		map[string]string{
 			apicommon.LabelComponentKey: apicommon.LabelComponentNamePodGang,
 		})
+}
+
+func podGangHasTranslatedTopologyConstraints(pgi *podGangInfo) bool {
+	if pgi.topologyConstraint != nil {
+		return true
+	}
+	for _, tc := range pgi.pcsgTopologyConstraints {
+		if tc.TopologyConstraint != nil {
+			return true
+		}
+	}
+	for _, pclq := range pgi.pclqs {
+		if pclq.topologyConstraint != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // getSchedulerNameForPCS returns the scheduler backend name for the PodCliqueSet:

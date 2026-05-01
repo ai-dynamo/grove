@@ -1633,11 +1633,11 @@ func TestPrepareSyncFlowTopologyResolution(t *testing.T) {
 			wantTopologyLevels:    nil,
 		},
 		{
-			name:                  "TAS enabled, topologyName set, CT not found - returns error",
+			name:                  "TAS enabled, topologyName set, CT not found - topologyLevels stay nil",
 			topologyName:          "missing-topology",
 			clusterTopologyExists: false,
 			tasEnabled:            true,
-			wantErr:               true,
+			wantTopologyLevels:    nil,
 		},
 		{
 			name:                  "TAS disabled, topologyName set, CT exists - topologyLevels stay nil",
@@ -1749,7 +1749,7 @@ func TestCreateOrUpdatePodGangs_ClearsStaleTopologyStateOnExistingPodGang(t *tes
 		wantTopologyConstraint bool
 	}{
 		{
-			name: "stale ClusterTopology domain removes existing PodGang topology constraint",
+			name: "stale ClusterTopology domain removes existing PodGang topology metadata",
 			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
 				return makePCSWithTopology(ns, pcsName, "my-topology")
 			},
@@ -1759,7 +1759,7 @@ func TestCreateOrUpdatePodGangs_ClearsStaleTopologyStateOnExistingPodGang(t *tes
 				}),
 			},
 			existingPodGang:        makeExistingPodGang(true, true),
-			wantAnnotationPresent:  true,
+			wantAnnotationPresent:  false,
 			wantTopologyConstraint: false,
 		},
 		{
@@ -1770,6 +1770,16 @@ func TestCreateOrUpdatePodGangs_ClearsStaleTopologyStateOnExistingPodGang(t *tes
 					PackDomain: "rack",
 				}
 				return pcs
+			},
+			clusterTopologyObjects: nil,
+			existingPodGang:        makeExistingPodGang(true, true),
+			wantAnnotationPresent:  false,
+			wantTopologyConstraint: false,
+		},
+		{
+			name: "missing ClusterTopology removes stale topology metadata from existing PodGang",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return makePCSWithTopology(ns, pcsName, "missing-topology")
 			},
 			clusterTopologyObjects: nil,
 			existingPodGang:        makeExistingPodGang(true, true),

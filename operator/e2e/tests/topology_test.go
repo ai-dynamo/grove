@@ -34,6 +34,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	"github.com/samber/lo"
 	v1 "k8s.io/api/core/v1"
@@ -1507,8 +1508,11 @@ func Test_TAS19_AutoManagedCTLifecycle(t *testing.T) {
 // 3. Use a zero-replica PCS so it is otherwise quiescent
 // 4. Delete the ClusterTopology (simulates CT removed after job was created)
 // 5. Verify TopologyLevelsUnavailable = Unknown/ClusterTopologyNotFound on PCS
-// 6. Re-create the ClusterTopology
-// 7. Verify TopologyLevelsUnavailable = False/AllClusterTopologyLevelsAvailable
+// 6. Scale the PCS up while the topology is unavailable
+// 7. Verify new pods are created and their PodGroup has no topology constraints
+// 8. Scale the PCS back down and wait for pods to be removed
+// 9. Re-create the ClusterTopology
+// 10. Verify TopologyLevelsUnavailable = False/AllClusterTopologyLevelsAvailable
 func Test_TAS20_PCSTopologyLevelsUnavailableCondition(t *testing.T) {
 	ctx := context.Background()
 
@@ -1523,6 +1527,7 @@ func Test_TAS20_PCSTopologyLevelsUnavailableCondition(t *testing.T) {
 	)
 	defer cleanup()
 	tv := topology.NewTopologyVerifier(tc.Client, Logger)
+	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
 	levels := []corev1alpha1.TopologyLevel{
 		{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
@@ -1568,12 +1573,58 @@ func Test_TAS20_PCSTopologyLevelsUnavailableCondition(t *testing.T) {
 		t.Fatalf("Failed to wait for TopologyLevelsUnavailable=Unknown/ClusterTopologyNotFound: %v", err)
 	}
 
-	Logger.Info("6. Re-create tas20-topology ClusterTopology")
+	Logger.Info("6. Scale PCS to 1 while topology is unavailable")
+	if err := tc.ScalePCS("tas-topology-condition", 1); err != nil {
+		t.Fatalf("Failed to scale tas-topology-condition PCS: %v", err)
+	}
+
+	Logger.Info("7. Wait for new pods and verify PodGroup topology constraints were removed")
+	if err := tc.WaitForPods(2); err != nil {
+		t.Fatalf("Failed to wait for new pods after scaling PCS without topology: %v", err)
+	}
+
+	basePodGangName := nameutils.GenerateBasePodGangName(nameutils.ResourceNameReplica{Name: tc.Workload.Name, Replica: 0})
+	basePodGang := &groveschedulerv1alpha1.PodGang{}
+	if err := tc.Client.Get(ctx, client.ObjectKey{Namespace: tc.Namespace, Name: basePodGangName}, basePodGang); err != nil {
+		t.Fatalf("Failed to get base PodGang after scaling PCS without topology: %v", err)
+	}
+	_, hasPodGangTopologyAnnotation := basePodGang.Annotations[apicommonconstants.AnnotationTopologyName]
+	if hasPodGangTopologyAnnotation {
+		t.Fatalf("Expected base PodGang %s to have no %q annotation when topology is unavailable", basePodGangName, apicommonconstants.AnnotationTopologyName)
+	}
+
+	workerPCLQName := nameutils.GeneratePodCliqueName(nameutils.ResourceNameReplica{Name: tc.Workload.Name, Replica: 0}, "worker")
+	workerPCLQ := &corev1alpha1.PodClique{}
+	if err := tc.Client.Get(ctx, client.ObjectKey{Namespace: tc.Namespace, Name: workerPCLQName}, workerPCLQ); err != nil {
+		t.Fatalf("Failed to get PodClique after scaling PCS without topology: %v", err)
+	}
+	_, hasPCLQTopologyAnnotation := workerPCLQ.Annotations[apicommonconstants.AnnotationTopologyName]
+	if hasPCLQTopologyAnnotation {
+		t.Fatalf("Expected PodClique %s to have no %q annotation when topology is unavailable", workerPCLQName, apicommonconstants.AnnotationTopologyName)
+	}
+
+	podGroup := GetPodGroupOrFail(t, tc, podGroupVerifier, 0)
+	expectedSubGroups := []podgroup.ExpectedSubGroup{
+		podgroup.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, 0, "worker", 2, ""),
+	}
+	if err := podGroupVerifier.VerifyPodGroupTopology(podGroup, "", "", expectedSubGroups); err != nil {
+		t.Fatalf("Failed to verify topology constraints were removed from new PodGroup: %v", err)
+	}
+
+	Logger.Info("8. Scale PCS back to 0 and wait for pods to be removed")
+	if err := tc.ScalePCS("tas-topology-condition", 0); err != nil {
+		t.Fatalf("Failed to scale tas-topology-condition PCS back to 0: %v", err)
+	}
+	if _, err := tc.WaitForPodCount(0); err != nil {
+		t.Fatalf("Failed to wait for all pods to be removed after scaling PCS back to 0: %v", err)
+	}
+
+	Logger.Info("9. Re-create tas20-topology ClusterTopology")
 	if err := tv.CreateClusterTopology(ctx, "tas20-topology", levels); err != nil {
 		t.Fatalf("Failed to re-create tas20-topology: %v", err)
 	}
 
-	Logger.Info("7. Wait for TopologyLevelsUnavailable = False/AllClusterTopologyLevelsAvailable")
+	Logger.Info("10. Wait for TopologyLevelsUnavailable = False/AllClusterTopologyLevelsAvailable")
 	if err := tv.WaitForPCSCondition(ctx, "default", "tas-topology-condition",
 		apicommonconstants.ConditionTopologyLevelsUnavailable,
 		string(metav1.ConditionFalse),
