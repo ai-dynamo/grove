@@ -249,6 +249,62 @@ func TestProcessGenerationHashChange_CliqueReorderIsNoOp(t *testing.T) {
 		"clique reorder must not change the recorded generation hash")
 }
 
+func TestProcessGenerationHashChange_LegacyCurrentMigratesWithoutUpdateProgress(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("planner").
+			WithLabels(map[string]string{"role": "planner"}).
+			Build()).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("frontend").
+			WithLabels(map[string]string{"role": "frontend"}).
+			Build()).
+		Build()
+
+	canonicalHash := computeGenerationHash(pcs)
+	legacyHash := computeGenerationHashLegacy(pcs)
+	require.NotEqual(t, canonicalHash, legacyHash, "test must exercise the transition hash window")
+	pcs.Status.CurrentGenerationHash = ptr.To(legacyHash)
+
+	fakeClient := testutils.SetupFakeClient(pcs)
+	reconciler := &Reconciler{
+		client:                        fakeClient,
+		pcsGenerationHashExpectations: sync.Map{},
+	}
+
+	result := reconciler.processGenerationHashChange(context.Background(), logr.Discard(), pcs)
+	require.False(t, result.HasErrors())
+
+	updatedPCS := &grovecorev1alpha1.PodCliqueSet{}
+	err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pcs), updatedPCS)
+	require.NoError(t, err)
+	require.NotNil(t, updatedPCS.Status.CurrentGenerationHash)
+	assert.Equal(t, canonicalHash, *updatedPCS.Status.CurrentGenerationHash)
+	assert.Nil(t, updatedPCS.Status.UpdateProgress, "legacy-current hash migration must not start a rolling update")
+}
+
+func TestProcessGenerationHashChange_StaleHashStillTriggersUpdateProgress(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("frontend").Build()).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("planner").Build()).
+		Build()
+	pcs.Status.CurrentGenerationHash = ptr.To("stale-generation-hash")
+
+	fakeClient := testutils.SetupFakeClient(pcs)
+	reconciler := &Reconciler{
+		client:                        fakeClient,
+		pcsGenerationHashExpectations: sync.Map{},
+	}
+
+	result := reconciler.processGenerationHashChange(context.Background(), logr.Discard(), pcs)
+	require.False(t, result.HasErrors())
+
+	updatedPCS := &grovecorev1alpha1.PodCliqueSet{}
+	err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pcs), updatedPCS)
+	require.NoError(t, err)
+	require.NotNil(t, updatedPCS.Status.UpdateProgress)
+	require.NotNil(t, updatedPCS.Status.CurrentGenerationHash)
+	assert.Equal(t, computeGenerationHash(pcs), *updatedPCS.Status.CurrentGenerationHash)
+}
+
 // TestComputeGenerationHash_InOrderStartupIsSensitiveToCliqueOrder pins the
 // counterpart to the AnyOrder/Explicit invariant: when the PCS uses
 // CliqueStartupTypeInOrder, the slice order DOES carry semantic meaning (it

@@ -23,9 +23,11 @@ import (
 
 	"github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 
 	"github.com/go-logr/logr"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -98,6 +100,38 @@ func TestComputeUpdateWork(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestComputeUpdateWorkTreatsLegacyCurrentHashAsNew(t *testing.T) {
+	r := _resource{expectationsStore: expect.NewExpectationsStore()}
+	sc := &syncContext{
+		existingPCLQPods: []*corev1.Pod{
+			newTestPod("canonical-ready", "canonical-hash", withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)),
+			newTestPod("legacy-ready", "legacy-hash", withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)),
+			newTestPod("stale-ready", "stale-hash", withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)),
+		},
+		expectedPodTemplateHash: "canonical-hash",
+		expectedPodTemplateHashes: componentutils.HashCandidates{
+			Canonical: "canonical-hash",
+			Legacy:    "legacy-hash",
+		},
+		pclqExpectationsStoreKey: "test-key",
+	}
+
+	work := r.computeUpdateWork(logr.Discard(), sc)
+
+	assert.ElementsMatch(t, []string{"canonical-ready", "legacy-ready"}, podNames(work.newTemplateHashReadyPods))
+	assert.ElementsMatch(t, []string{"stale-ready"}, podNames(work.oldTemplateHashReadyPods))
+	assert.Empty(t, work.oldTemplateHashPendingPods)
+	assert.Empty(t, work.oldTemplateHashUnhealthyPods)
+	assert.Empty(t, work.oldTemplateHashStartingPods)
+	assert.Empty(t, work.oldTemplateHashUncategorizedPods)
+}
+
+func podNames(pods []*corev1.Pod) []string {
+	return lo.Map(pods, func(pod *corev1.Pod, _ int) string {
+		return pod.Name
+	})
 }
 
 // newTestPod creates a pod with the given name, template hash label, and options applied.

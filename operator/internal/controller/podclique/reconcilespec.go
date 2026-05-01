@@ -76,6 +76,10 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pclq
 		return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("could not get owner PodCliqueSet for PodClique: %v", pclqObjectKey), err)
 	}
 
+	if err = r.migrateLegacyCurrentPodCliqueLabel(ctx, pcs, pclq); err != nil {
+		return ctrlcommon.ReconcileWithErrors("could not migrate legacy PodClique template hash label", err)
+	}
+
 	// Handle OnDelete strategy first
 	if !componentutils.IsAutoUpdateStrategy(pcs) {
 		if shouldResetOrTriggerUpdate(pcs, pclq) {
@@ -135,25 +139,51 @@ func shouldCheckPendingUpdatesForPCLQ(logger logr.Logger, pcs *grovecorev1alpha1
 	return true, nil
 }
 
+func (r *Reconciler) migrateLegacyCurrentPodCliqueLabel(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) error {
+	templateHashCandidates, err := componentutils.GetExpectedPCLQPodTemplateHashCandidates(pcs, pclq.ObjectMeta)
+	if err != nil {
+		return err
+	}
+	if !templateHashCandidates.IsLegacy(pclq.Labels[apicommon.LabelPodTemplateHash]) {
+		return nil
+	}
+	patch := client.MergeFrom(pclq.DeepCopy())
+	if pclq.Labels == nil {
+		pclq.Labels = make(map[string]string, 1)
+	}
+	pclq.Labels[apicommon.LabelPodTemplateHash] = templateHashCandidates.Canonical
+	if err := r.client.Patch(ctx, pclq, patch); err != nil {
+		return fmt.Errorf("failed to migrate PodClique %s pod template hash label: %w", client.ObjectKeyFromObject(pclq), err)
+	}
+	return nil
+}
+
 // shouldResetOrTriggerUpdate determines if an update should be started or reset based on generation hash comparison
 func shouldResetOrTriggerUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) bool {
-	// PCLQ has never been updated yet and PCS has a new generation hash.
-	firstEverUpdateRequired := pclq.Status.UpdateProgress == nil && pclq.Status.CurrentPodCliqueSetGenerationHash != nil && *pcs.Status.CurrentGenerationHash != *pclq.Status.CurrentPodCliqueSetGenerationHash
-	if firstEverUpdateRequired {
-		return true
-	}
-
-	// Wait for the first reconciliation of the PodCliqueSet
 	if pcs.Status.CurrentGenerationHash == nil {
 		return false
+	}
+	pcsGenerationHashCandidates := componentutils.ComputePCSGenerationHashCandidates(pcs)
+	matchesCurrentPCSGeneration := func(hash string) bool {
+		return hash == *pcs.Status.CurrentGenerationHash || pcsGenerationHashCandidates.Matches(hash)
+	}
+
+	// PCLQ has never been updated yet and PCS has a new generation hash.
+	firstEverUpdateRequired := pclq.Status.UpdateProgress == nil &&
+		pclq.Status.CurrentPodCliqueSetGenerationHash != nil &&
+		!matchesCurrentPCSGeneration(*pclq.Status.CurrentPodCliqueSetGenerationHash)
+	if firstEverUpdateRequired {
+		return true
 	}
 
 	// PCLQ is undergoing an update for a different PCS generation hash
 	// Irrespective of whether the pod template hash has changed or not, the in-progress update is stale and needs to be
 	// reset in order to set the correct updateProgress.PodCliqueSetGenerationHash
-	inProgressPCLQUpdateNotStale := componentutils.IsPCLQAutoUpdateInProgress(pclq) && pclq.Status.UpdateProgress.PodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash
+	inProgressPCLQUpdateNotStale := componentutils.IsPCLQAutoUpdateInProgress(pclq) &&
+		matchesCurrentPCSGeneration(pclq.Status.UpdateProgress.PodCliqueSetGenerationHash)
 	// PCLQ had an update in the past but that was for an older PCS generation hash.
-	lastCompletedUpdateIsNotStale := componentutils.IsLastPCLQUpdateCompleted(pclq) && pclq.Status.UpdateProgress.PodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash
+	lastCompletedUpdateIsNotStale := componentutils.IsLastPCLQUpdateCompleted(pclq) &&
+		matchesCurrentPCSGeneration(pclq.Status.UpdateProgress.PodCliqueSetGenerationHash)
 	if inProgressPCLQUpdateNotStale || lastCompletedUpdateIsNotStale {
 		return false
 	}

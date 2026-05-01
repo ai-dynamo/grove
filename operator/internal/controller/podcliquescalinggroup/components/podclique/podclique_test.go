@@ -26,6 +26,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 
 	"github.com/go-logr/logr"
@@ -233,6 +234,38 @@ func TestGetPCSReplicaFromPCSG(t *testing.T) {
 				assert.Equal(t, tc.expected, result)
 			}
 		})
+	}
+}
+
+func TestIsReplicaUpdatedAcceptsLegacyCurrentHashesAndRejectsStale(t *testing.T) {
+	expectedHashes := map[string]componentutils.HashCandidates{
+		"pcsg-0-frontend": {Canonical: "frontend-canonical", Legacy: "frontend-legacy"},
+		"pcsg-0-worker":   {Canonical: "worker-canonical", Legacy: "worker-legacy"},
+	}
+
+	current, err := isReplicaUpdated(expectedHashes, []grovecorev1alpha1.PodClique{
+		podCliqueWithTemplateHash("pcsg-0-frontend", "frontend-legacy"),
+		podCliqueWithTemplateHash("pcsg-0-worker", "worker-canonical"),
+	})
+	require.NoError(t, err)
+	assert.True(t, current, "legacy-current PCLQ labels should not make a PCSG replica look stale")
+
+	stale, err := isReplicaUpdated(expectedHashes, []grovecorev1alpha1.PodClique{
+		podCliqueWithTemplateHash("pcsg-0-frontend", "frontend-legacy"),
+		podCliqueWithTemplateHash("pcsg-0-worker", "worker-stale"),
+	})
+	require.NoError(t, err)
+	assert.False(t, stale, "hashes matching neither current canonical nor current legacy must remain stale")
+}
+
+func podCliqueWithTemplateHash(name, hash string) grovecorev1alpha1.PodClique {
+	return grovecorev1alpha1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+			Labels: map[string]string{
+				apicommon.LabelPodTemplateHash: hash,
+			},
+		},
 	}
 }
 

@@ -148,6 +148,7 @@ func (r *Reconciler) computeAvailableAndUpdatedReplicas(ctx context.Context, log
 	// Group both resources by PCS replica index
 	standalonePCLQsByReplica := componentutils.GroupPCLQsByPCSReplicaIndex(standalonePCLQs)
 	pcsgsByReplica := componentutils.GroupPCSGsByPCSReplicaIndex(pcsgs)
+	pcsGenerationHashCandidates := componentutils.ComputePCSGenerationHashCandidates(pcs)
 
 	for replicaIndex := 0; replicaIndex < int(pcs.Spec.Replicas); replicaIndex++ {
 		replicaIndexStr := strconv.Itoa(replicaIndex)
@@ -158,10 +159,10 @@ func (r *Reconciler) computeAvailableAndUpdatedReplicas(ctx context.Context, log
 
 		stats.totalPCLQs += int32(expectedPCLQCount)
 		stats.totalPCSGs += int32(expectedPCSGCount)
-		stats.updatedPCLQs += countUpdatedPCLQs(pcs.Status.CurrentGenerationHash, replicaStandalonePCLQs)
-		stats.updatedPCSGs += countUpdatedPCSGs(pcs.Status.CurrentGenerationHash, replicaPCSGs)
+		stats.updatedPCLQs += countUpdatedPCLQs(pcs.Status.CurrentGenerationHash, replicaStandalonePCLQs, pcsGenerationHashCandidates.Canonical, pcsGenerationHashCandidates.Legacy)
+		stats.updatedPCSGs += countUpdatedPCSGs(pcs.Status.CurrentGenerationHash, replicaPCSGs, pcsGenerationHashCandidates.Canonical, pcsGenerationHashCandidates.Legacy)
 
-		isReplicaAvailable, isReplicaUpdated := r.computeReplicaStatus(pcs.Status.CurrentGenerationHash, replicaPCSGs,
+		isReplicaAvailable, isReplicaUpdated := r.computeReplicaStatus(pcs, replicaPCSGs,
 			replicaStandalonePCLQs, expectedPCSGCount, expectedPCLQCount)
 		if isReplicaAvailable {
 			stats.availableReplicas++
@@ -179,7 +180,7 @@ func (r *Reconciler) computeAvailableAndUpdatedReplicas(ctx context.Context, log
 }
 
 // countUpdatedPCLQs counts non-terminating PCLQs whose generation hash matches the PCS hash.
-func countUpdatedPCLQs(pcsGenerationHash *string, pclqs []grovecorev1alpha1.PodClique) int32 {
+func countUpdatedPCLQs(pcsGenerationHash *string, pclqs []grovecorev1alpha1.PodClique, compatiblePCSGenerationHashes ...string) int32 {
 	if pcsGenerationHash == nil {
 		return 0
 	}
@@ -190,7 +191,7 @@ func countUpdatedPCLQs(pcsGenerationHash *string, pclqs []grovecorev1alpha1.PodC
 			continue
 		}
 		if pclq.Status.CurrentPodCliqueSetGenerationHash != nil &&
-			*pclq.Status.CurrentPodCliqueSetGenerationHash == *pcsGenerationHash {
+			pcsGenerationHashMatches(pcsGenerationHash, *pclq.Status.CurrentPodCliqueSetGenerationHash, compatiblePCSGenerationHashes...) {
 			n++
 		}
 	}
@@ -198,7 +199,7 @@ func countUpdatedPCLQs(pcsGenerationHash *string, pclqs []grovecorev1alpha1.PodC
 }
 
 // countUpdatedPCSGs counts non-terminating PCSGs whose update completed at the PCS hash.
-func countUpdatedPCSGs(pcsGenerationHash *string, pcsgs []grovecorev1alpha1.PodCliqueScalingGroup) int32 {
+func countUpdatedPCSGs(pcsGenerationHash *string, pcsgs []grovecorev1alpha1.PodCliqueScalingGroup, compatiblePCSGenerationHashes ...string) int32 {
 	if pcsGenerationHash == nil {
 		return 0
 	}
@@ -208,17 +209,22 @@ func countUpdatedPCSGs(pcsGenerationHash *string, pcsgs []grovecorev1alpha1.PodC
 		if k8sutils.IsResourceTerminating(pcsg.ObjectMeta) {
 			continue
 		}
-		if componentutils.IsPCSGUpdateComplete(pcsg, *pcsGenerationHash) {
+		if componentutils.IsPCSGUpdateComplete(pcsg, *pcsGenerationHash, compatiblePCSGenerationHashes...) {
 			n++
 		}
 	}
 	return n
 }
 
+func pcsGenerationHashMatches(currentGenerationHash *string, storedGenerationHash string, compatiblePCSGenerationHashes ...string) bool {
+	return currentGenerationHash != nil &&
+		(*currentGenerationHash == storedGenerationHash || slices.Contains(compatiblePCSGenerationHashes, storedGenerationHash))
+}
+
 // computeReplicaStatus determines if a replica is available and updated based on its components.
-func (r *Reconciler) computeReplicaStatus(pcsGenerationHash *string, replicaPCSGs []grovecorev1alpha1.PodCliqueScalingGroup, standalonePCLQs []grovecorev1alpha1.PodClique, expectedPCSGs int, expectedStandalonePCLQs int) (bool, bool) {
+func (r *Reconciler) computeReplicaStatus(pcs *grovecorev1alpha1.PodCliqueSet, replicaPCSGs []grovecorev1alpha1.PodCliqueScalingGroup, standalonePCLQs []grovecorev1alpha1.PodClique, expectedPCSGs int, expectedStandalonePCLQs int) (bool, bool) {
 	pclqsAvailable, pclqsUpdated := r.computePCLQsStatus(expectedStandalonePCLQs, standalonePCLQs)
-	pcsgsAvailable, pcsgsUpdated := r.computePCSGsStatus(pcsGenerationHash, expectedPCSGs, replicaPCSGs)
+	pcsgsAvailable, pcsgsUpdated := r.computePCSGsStatus(pcs, expectedPCSGs, replicaPCSGs)
 	return pclqsAvailable && pcsgsAvailable, pclqsUpdated && pcsgsUpdated
 }
 
@@ -241,7 +247,7 @@ func (r *Reconciler) computePCLQsStatus(expectedStandalonePCLQs int, existingPCL
 }
 
 // computePCSGsStatus checks if PodCliqueScalingGroups are available and updated.
-func (r *Reconciler) computePCSGsStatus(pcsGenerationHash *string, expectedPCSGs int, pcsgs []grovecorev1alpha1.PodCliqueScalingGroup) (isAvailable, isUpdated bool) {
+func (r *Reconciler) computePCSGsStatus(pcs *grovecorev1alpha1.PodCliqueSet, expectedPCSGs int, pcsgs []grovecorev1alpha1.PodCliqueScalingGroup) (isAvailable, isUpdated bool) {
 	nonTerminatedPCSGs := lo.Filter(pcsgs, func(pcsg grovecorev1alpha1.PodCliqueScalingGroup, _ int) bool {
 		return !k8sutils.IsResourceTerminating(pcsg.ObjectMeta)
 	})
@@ -251,8 +257,10 @@ func (r *Reconciler) computePCSGsStatus(pcsGenerationHash *string, expectedPCSGs
 			return pcsg.Status.AvailableReplicas >= *pcsg.Spec.MinAvailable
 		})
 
+	pcsGenerationHashCandidates := componentutils.ComputePCSGenerationHashCandidates(pcs)
 	isUpdated = isAvailable && lo.EveryBy(nonTerminatedPCSGs, func(pcsg grovecorev1alpha1.PodCliqueScalingGroup) bool {
-		return pcsGenerationHash != nil && componentutils.IsPCSGUpdateComplete(&pcsg, *pcsGenerationHash)
+		return pcs.Status.CurrentGenerationHash != nil &&
+			componentutils.IsPCSGUpdateComplete(&pcsg, pcsGenerationHashCandidates.Canonical, pcsGenerationHashCandidates.Legacy)
 	})
 
 	return

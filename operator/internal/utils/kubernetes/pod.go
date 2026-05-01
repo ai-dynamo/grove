@@ -179,7 +179,7 @@ func HasAnyContainerNotStarted(pod *corev1.Pod) bool {
 // the listed atomic fields), or it does not appear in the PodSpec types we
 // hash here.
 func ComputeHash(podTemplateSpecs ...*corev1.PodTemplateSpec) string {
-	return computeHash(nil, podTemplateSpecs...)
+	return computeHash(canonicalizePodTemplateSpecForHashing, nil, podTemplateSpecs...)
 }
 
 // ComputeHashWithOrderKeys computes a hash for pod templates whose caller-level
@@ -189,7 +189,7 @@ func ComputeHashWithOrderKeys(orderKeys []string, podTemplateSpecs ...*corev1.Po
 	if len(orderKeys) != len(podTemplateSpecs) {
 		panic("ComputeHashWithOrderKeys: orderKeys length must match podTemplateSpecs length")
 	}
-	return computeHash(orderKeys, podTemplateSpecs...)
+	return computeHash(canonicalizePodTemplateSpecForHashing, orderKeys, podTemplateSpecs...)
 }
 
 type podTemplateSpecHashInput struct {
@@ -197,19 +197,31 @@ type podTemplateSpecHashInput struct {
 	PodTemplateSpec *corev1.PodTemplateSpec
 }
 
-func computeHash(orderKeys []string, podTemplateSpecs ...*corev1.PodTemplateSpec) string {
+// ComputeHashLegacy computes a hash using the pre-canonicalization byte stream.
+//
+// This is intentionally the v0.1.0-alpha.8 behavior: each PodTemplateSpec is
+// passed directly to dump.ForHash without sorting order-independent API lists.
+// It exists only for the one-release compatibility window while persisted
+// legacy hashes are migrated to ComputeHash.
+func ComputeHashLegacy(podTemplateSpecs ...*corev1.PodTemplateSpec) string {
+	return computeHash(func(podTemplateSpec *corev1.PodTemplateSpec) *corev1.PodTemplateSpec {
+		return podTemplateSpec
+	}, nil, podTemplateSpecs...)
+}
+
+func computeHash(prepare func(*corev1.PodTemplateSpec) *corev1.PodTemplateSpec, orderKeys []string, podTemplateSpecs ...*corev1.PodTemplateSpec) string {
 	podTemplateSpecHasher := fnv.New64a()
 	podTemplateSpecHasher.Reset()
 	for i, podTemplateSpec := range podTemplateSpecs {
-		canonical := canonicalizePodTemplateSpecForHashing(podTemplateSpec)
+		prepared := prepare(podTemplateSpec)
 		if orderKeys != nil {
 			_, _ = fmt.Fprintf(podTemplateSpecHasher, "%v", dump.ForHash(podTemplateSpecHashInput{
 				OrderKey:        orderKeys[i],
-				PodTemplateSpec: canonical,
+				PodTemplateSpec: prepared,
 			}))
 			continue
 		}
-		_, _ = fmt.Fprintf(podTemplateSpecHasher, "%v", dump.ForHash(canonical))
+		_, _ = fmt.Fprintf(podTemplateSpecHasher, "%v", dump.ForHash(prepared))
 	}
 	return rand.SafeEncodeString(fmt.Sprint(podTemplateSpecHasher.Sum64()))
 }

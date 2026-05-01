@@ -24,8 +24,10 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
@@ -176,13 +178,60 @@ func TestMutateUpdatedReplica(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Call the function
-			mutateUpdatedReplica(tt.pclq, tt.existingPods)
+			err := mutateUpdatedReplica(nil, tt.pclq, tt.existingPods)
+			assert.NoError(t, err)
 
 			// Assert the result
 			assert.Equal(t, tt.expectedUpdatedReplicas, tt.pclq.Status.UpdatedReplicas,
 				"UpdatedReplicas should match expected value")
 		})
 	}
+}
+
+func TestMutateUpdatedReplicaCountsCanonicalAndLegacyCurrentPodLabels(t *testing.T) {
+	template := &grovecorev1alpha1.PodCliqueTemplateSpec{
+		Name: "worker",
+		Spec: grovecorev1alpha1.PodCliqueSpec{
+			PodSpec: corev1.PodSpec{
+				Containers: []corev1.Container{
+					{Name: "sidecar", Image: "sidecar:v1"},
+					{Name: "main", Image: "main:v1"},
+				},
+			},
+		},
+	}
+	hashes := componentutils.ComputePCLQPodTemplateHashCandidates(template, "")
+	require.NotEqual(t, hashes.Canonical, hashes.Legacy, "test must exercise canonical/legacy divergence")
+
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "pcs", Namespace: "default"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{template},
+			},
+		},
+	}
+	pclq := &grovecorev1alpha1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pcs-0-worker",
+			Namespace: "default",
+			Labels: map[string]string{
+				apicommon.LabelPartOfKey:                "pcs",
+				apicommon.LabelPodCliqueSetReplicaIndex: "0",
+			},
+		},
+		Status: grovecorev1alpha1.PodCliqueStatus{
+			CurrentPodTemplateHash: ptr.To(hashes.Canonical),
+		},
+	}
+
+	err := mutateUpdatedReplica(pcs, pclq, []*corev1.Pod{
+		createPodWithHash("pod-canonical", hashes.Canonical),
+		createPodWithHash("pod-legacy", hashes.Legacy),
+		createPodWithHash("pod-stale", "stale-hash"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), pclq.Status.UpdatedReplicas)
 }
 
 // createPodWithHash creates a test pod with the specified template hash label
