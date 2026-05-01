@@ -116,6 +116,31 @@ On clusters with NVIDIA MNNVL support, you can enable automatic Multi-Node NVLin
 
 Follow the instructions in the [quickstart guide](quickstart.md) to deploy a PodCliqueSet and validate your installation.
 
+## Advanced: `helm template` and GitOps
+
+`helm template` does not render the chart's `crds/` directory unless
+`--include-crds` is passed, so installs via `helm template | kubectl apply`,
+ArgoCD, Flux, or Kustomize fail with missing CRDs by default. Set
+`crdInstaller.enabled=true` to install and upgrade CRDs from an init
+container instead.
+
+In the same workflows you should also set `webhookServerSecret.enabled=false`:
+the chart otherwise renders an empty `grove-webhook-server-cert` Secret that
+overwrites the auto-generated TLS material on every re-apply or GitOps sync,
+breaking the webhook. With it disabled, the operator creates and manages the
+Secret itself.
+
+```bash
+helm template grove oci://ghcr.io/ai-dynamo/grove/grove-charts \
+  --version <version> \
+  --set crdInstaller.enabled=true \
+  --set webhookServerSecret.enabled=false \
+  | kubectl apply -f -
+```
+
+See [GREP-436](proposals/436-crd-upgrader/README.md#note-for-helm-template--gitops-users)
+for the CRD design details and the alternative `--include-crds` workflow.
+
 ## Troubleshooting
 
 ### Deployment Issues
