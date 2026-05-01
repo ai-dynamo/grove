@@ -279,7 +279,7 @@ type TopologyConstraint struct {
 	TopologyName string `json:"topologyName,omitempty"`
 	// PackDomain specifies the topology domain for grouping replicas.
 	// Controls placement constraint for EACH individual replica instance.
-	// Must reference a domain defined in the ClusterTopology's levels.
+	// Must reference a domain in the topology levels defined in the ClusterTopology CR name as set in TopologyName
 	// Example: "rack" means each replica independently placed within one rack.
 	// Note: Does NOT constrain all replicas to the same rack together.
 	// Different replicas can be in different topology domains.
