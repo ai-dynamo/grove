@@ -38,6 +38,7 @@
   - [Monitoring](#monitoring)
     - [PodCliqueSet Status Conditions](#podcliqueset-status-conditions)
   - [Dependencies](#dependencies)
+  - [Implementation Phases](#implementation-phases)
   - [Test Plan](#test-plan)
 - [Alternatives](#alternatives)
   - [Fully Operator-Managed Topologies from Configuration Profiles](#fully-operator-managed-topologies-from-configuration-profiles)
@@ -1056,6 +1057,28 @@ Follow [instructions](https://github.com/kai-scheduler/KAI-Scheduler?tab=readme-
 **Nodes labeled with Topology specific labels**
 
 To enable the scheduler to select/filter nodes that satisfy the topology constraints defined for a `PodCliqueSet` it is essential that the topology specific labels are set on kubernetes `Node` objects.
+
+### Implementation Phases
+
+The topology model described in this GREP is intended to land in multiple phases rather than all at once.
+
+**Phase 0: Single ClusterTopology per cluster**
+
+This was the original topology-aware scheduling model prior to the changes in this branch. A cluster had a single effective topology definition, and workloads could use topology constraints without selecting between multiple `ClusterTopology` resources. That model is simpler, but it cannot accurately represent clusters that contain distinct hardware partitions with different interconnect hierarchies.
+
+**Phase 1: Multiple ClusterTopology resources, single effective topology per PodCliqueSet**
+
+Phase 1 adds support for multiple admin-created `ClusterTopology` resources and allows the shared `TopologyConstraint` API type to carry `topologyName` at all hierarchy levels. However, the effective topology for a workload is still selected by `spec.template.topologyConstraint.topologyName` on the `PodCliqueSet`. Child constraints may omit `topologyName`, or repeat the same value, but they may not select a different topology. This keeps the runtime model compatible with the current `PodGang` API and with current scheduler backend capabilities, both of which assume a single resolved topology for the entire `PodCliqueSet`.
+
+**Phase 2: Different topologies for different parts of a workload**
+
+Full support for assigning different topologies to different `PodCliqueScalingGroup`s or `PodClique`s is intentionally out of scope for Phase 1. That capability requires more than webhook relaxation:
+
+* The `PodGang` API must evolve so that topology identity can be carried independently for different scheduling units within the same workload, rather than only through a single PCS-level resolved topology.
+* The Grove operator must translate and reconcile those per-unit topology references when building `PodGang`, `TopologyConstraintGroupConfig`, and `PodGroup` resources.
+* Scheduler backends must support consuming those richer `PodGang` semantics and enforcing multiple topology contexts within one `PodCliqueSet`. Phase 2 therefore depends on having a scheduler backend that can actually honor different topologies for different parts of the same workload.
+
+Until those changes exist end-to-end, the implementation remains intentionally incomplete with respect to “true” multi-topology workloads: the API shape is in place, but runtime behavior still enforces a single effective topology per `PodCliqueSet`.
 
 ### Test Plan
 
