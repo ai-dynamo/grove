@@ -34,7 +34,7 @@ DEFAULT_BRANCH = "scale-test-history"
 SCRIPT_DIR = Path(__file__).resolve().parent
 DASHBOARD_DIR = SCRIPT_DIR / "scale-dashboard"
 RUN_ID_RE = re.compile(r"^run-(\d{8})-(\d{6})$")
-# CI smoke trigger marker: fake-scale-test 5
+# CI smoke trigger marker: run-scale-test 6
 
 
 def main() -> int:
