@@ -1,23 +1,69 @@
-name: Scale Test CI Smoke
+name: Scale Test CI
 
 on:
-  push:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
     branches:
-      - scale-test-ci
+      - main
 
 permissions:
   contents: write
+  pull-requests: read
+
+env:
+  HISTORY_BRANCH: scale-test-history-test
 
 jobs:
-  smoke:
+  select-scale-test-mode:
     runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.select.outputs.mode }}
+    steps:
+      - name: Select scale test mode
+        id: select
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          title="$(printf '%s' "${PR_TITLE}" | tr '[:upper:]' '[:lower:]')"
+          wants_fake=false
+          wants_real=false
+
+          if [[ "${title}" == *fake-scale-test* ]]; then
+            wants_fake=true
+          fi
+          if [[ "${title}" == *run-scale-test* ]]; then
+            wants_real=true
+          fi
+
+          if [[ "${wants_fake}" == "true" && "${wants_real}" == "true" ]]; then
+            echo "::error::PR title must contain only one scale-test mode: fake-scale-test or run-scale-test"
+            exit 1
+          fi
+
+          mode=none
+          if [[ "${wants_fake}" == "true" ]]; then
+            mode=fake
+          elif [[ "${wants_real}" == "true" ]]; then
+            mode=real
+          fi
+
+          echo "Selected scale-test mode: ${mode}"
+          echo "mode=${mode}" >> "${GITHUB_OUTPUT}"
+
+  fake-scale-test:
+    needs: select-scale-test-mode
+    if: needs.select-scale-test-mode.outputs.mode == 'fake'
+    runs-on: ubuntu-latest
+    env:
+      SCALE_RESULTS_DIR: ${{ runner.temp }}/grove-scale
+      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Generate fake scale result
         env:
-          OUT_DIR: ${{ runner.temp }}/grove-scale
+          OUT_DIR: ${{ env.SCALE_RESULTS_DIR }}
         run: |
           python3 - <<'PY'
           import json
@@ -141,9 +187,62 @@ jobs:
           HISTORY_REPO: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
         run: |
           ./operator/hack/scale-history.py branch \
-            --input "${RUNNER_TEMP}/grove-scale" \
+            --input "${SCALE_RESULTS_DIR}" \
             --repo "${HISTORY_REPO}" \
             --workdir "${RUNNER_TEMP}/grove-scale-history" \
-            --branch scale-test-history-test \
-            --commit "${GITHUB_SHA}" \
+            --branch "${HISTORY_BRANCH}" \
+            --commit "${PR_HEAD_SHA}" \
             --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+  run-scale-test:
+    needs: select-scale-test-mode
+    if: needs.select-scale-test-mode.outputs.mode == 'real'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SCALE_RESULTS_DIR: ${{ runner.temp }}/grove-scale
+      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Print runner specs
+        run: |
+          echo "CPUs: $(nproc)"
+          echo "RAM: $(free -h | awk '/^Mem:/ {print $2}')"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: E2E setup
+        uses: ./.github/actions/e2e-setup
+        with:
+          go-version: "1.26.1"
+
+      - name: Create scale cluster
+        working-directory: operator
+        run: |
+          make scale-cluster-up E2E_CREATE_FLAGS='--dind-memory-mode'
+
+      - name: Run scale test
+        working-directory: operator
+        env:
+          GROVE_E2E_PYROSCOPE_DISABLED: "true"
+        run: |
+          make run-scale-test DIAG_DIR="${SCALE_RESULTS_DIR}" DIAG_MODE=file
+
+      - name: Store scale result
+        if: success()
+        env:
+          HISTORY_REPO: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
+        run: |
+          ./operator/hack/scale-history.py branch \
+            --input "${SCALE_RESULTS_DIR}" \
+            --repo "${HISTORY_REPO}" \
+            --workdir "${RUNNER_TEMP}/grove-scale-history" \
+            --branch "${HISTORY_BRANCH}" \
+            --commit "${PR_HEAD_SHA}" \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+      - name: Cleanup scale cluster
+        if: always()
+        working-directory: operator
+        run: |
+          make scale-cluster-down || true
