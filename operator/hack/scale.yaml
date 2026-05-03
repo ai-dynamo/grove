@@ -17,7 +17,7 @@ grove:
   pclq_syncs: 20
 
 kwok:
-  nodes: 10
+  nodes: 100
 
 pyroscope:
   enabled: true
