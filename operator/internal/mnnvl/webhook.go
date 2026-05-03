@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	kubeutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
@@ -60,22 +61,10 @@ func validateSpecOnUpdate(oldPCS, newPCS *grovecorev1alpha1.PodCliqueSet) field.
 	return validatePodCliqueSetTemplateSpecOnUpdate(&oldPCS.Spec.Template, &newPCS.Spec.Template, field.NewPath("spec", "template"))
 }
 
-// validateMNNVLAnnotationsOnCreate validates both MNNVL annotations on a single
-// annotation map: value correctness, feature enablement, and conflict detection.
+// validateMNNVLAnnotationsOnCreate validates the mnnvl-group annotation on a single
+// annotation map: value correctness and feature enablement.
 func validateMNNVLAnnotationsOnCreate(annotations map[string]string, autoMNNVLEnabled bool, basePath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-
-	if value, exists := annotations[AnnotationAutoMNNVL]; exists {
-		path := basePath.Child(AnnotationAutoMNNVL)
-		if value != AnnotationAutoMNNVLEnabled && value != AnnotationAutoMNNVLDisabled {
-			allErrs = append(allErrs, field.Invalid(path, value,
-				fmt.Sprintf("must be %q or %q", AnnotationAutoMNNVLEnabled, AnnotationAutoMNNVLDisabled)))
-		}
-		if value == AnnotationAutoMNNVLEnabled && !autoMNNVLEnabled {
-			allErrs = append(allErrs, field.Invalid(path, value,
-				fmt.Sprintf(mnnvlNotEnabledMsgFormat, AnnotationAutoMNNVL)))
-		}
-	}
 
 	if value, exists := annotations[AnnotationMNNVLGroup]; exists {
 		path := basePath.Child(AnnotationMNNVLGroup)
@@ -86,10 +75,6 @@ func validateMNNVLAnnotationsOnCreate(annotations map[string]string, autoMNNVLEn
 			allErrs = append(allErrs, field.Invalid(path, value,
 				fmt.Sprintf(mnnvlNotEnabledMsgFormat, AnnotationMNNVLGroup)))
 		}
-	}
-
-	if err := DetectMNNVLConflict(annotations); err != nil {
-		allErrs = append(allErrs, field.Forbidden(basePath, err.Error()))
 	}
 
 	return allErrs
@@ -171,45 +156,8 @@ func validatePodCliqueTemplateSpecOnUpdate(oldClique, newClique *grovecorev1alph
 	return validateMNNVLAnnotationsImmutability(oldClique.Annotations, newClique.Annotations, fldPath.Child("annotations"))
 }
 
-// validateMNNVLAnnotationsImmutability checks both MNNVL annotations are
-// unchanged between old and new annotation maps.
+var mnnvlImmutableKeys = []string{AnnotationMNNVLGroup}
+
 func validateMNNVLAnnotationsImmutability(oldAnnotations, newAnnotations map[string]string, basePath *field.Path) field.ErrorList {
-	allErrs := field.ErrorList{}
-	for _, key := range []string{AnnotationAutoMNNVL, AnnotationMNNVLGroup} {
-		path := basePath.Child(key)
-		oldValue, oldExists := oldAnnotations[key]
-		newValue, newExists := newAnnotations[key]
-		allErrs = append(allErrs, validateAnnotationNotAdded(oldExists, newExists, key, path)...)
-		allErrs = append(allErrs, validateAnnotationNotRemoved(oldExists, newExists, key, path)...)
-		allErrs = append(allErrs, validateAnnotationNotChanged(oldValue, newValue, oldExists, newExists, key, path)...)
-	}
-	return allErrs
-}
-
-func validateAnnotationNotAdded(oldExists, newExists bool, annotationKey string, path *field.Path) field.ErrorList {
-	if !oldExists && newExists {
-		return field.ErrorList{
-			field.Forbidden(path, fmt.Sprintf("annotation %s cannot be added after PodCliqueSet creation", annotationKey)),
-		}
-	}
-	return nil
-}
-
-func validateAnnotationNotRemoved(oldExists, newExists bool, annotationKey string, path *field.Path) field.ErrorList {
-	if oldExists && !newExists {
-		return field.ErrorList{
-			field.Forbidden(path, fmt.Sprintf("annotation %s cannot be removed after PodCliqueSet creation", annotationKey)),
-		}
-	}
-	return nil
-}
-
-func validateAnnotationNotChanged(oldValue, newValue string, oldExists, newExists bool, annotationKey string, path *field.Path) field.ErrorList {
-	if newExists && oldExists && oldValue != newValue {
-		return field.ErrorList{
-			field.Invalid(path, newValue, fmt.Sprintf("annotation %s is immutable and cannot be changed from %q to %q",
-				annotationKey, oldValue, newValue)),
-		}
-	}
-	return nil
+	return kubeutils.ValidateAnnotationsImmutability(oldAnnotations, newAnnotations, mnnvlImmutableKeys, basePath)
 }

@@ -62,9 +62,10 @@ func TestInjectMNNVLIntoPodSpec(t *testing.T) {
 				},
 			},
 			pcsNameReplica:                  apicommon.ResourceNameReplica{Name: "my-pcs", Replica: 0},
+			groupName:                       "default",
 			expectedContainersWithClaims:    []string{"gpu-container"},
 			expectedContainersWithoutClaims: []string{},
-			expectedRCTName:                 "my-pcs-0",
+			expectedRCTName:                 "my-pcs-0-default",
 		},
 		{
 			description: "named group — RCT name includes group",

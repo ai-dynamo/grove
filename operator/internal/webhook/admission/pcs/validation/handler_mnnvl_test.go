@@ -46,25 +46,6 @@ func TestValidateCreate_MNNVL(t *testing.T) {
 		errorContains    string
 	}{
 		{
-			description:      "annotation enabled + feature enabled -> no error",
-			pcs:              createValidPCSWithGPU(map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled}),
-			autoMNNVLEnabled: true,
-			expectError:      false,
-		},
-		{
-			description:      "annotation enabled + feature disabled -> error",
-			pcs:              createValidPCSWithGPU(map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled}),
-			autoMNNVLEnabled: false,
-			expectError:      true,
-			errorContains:    "MNNVL is not enabled",
-		},
-		{
-			description:      "annotation disabled + feature disabled -> no error",
-			pcs:              createValidPCSWithGPU(map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled}),
-			autoMNNVLEnabled: false,
-			expectError:      false,
-		},
-		{
 			description:      "no annotation + feature disabled -> no error",
 			pcs:              createValidPCSWithGPU(nil),
 			autoMNNVLEnabled: false,
@@ -73,6 +54,12 @@ func TestValidateCreate_MNNVL(t *testing.T) {
 		{
 			description:      "mnnvl-group on PCS + feature enabled -> no error",
 			pcs:              createValidPCSWithGPU(map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}),
+			autoMNNVLEnabled: true,
+			expectError:      false,
+		},
+		{
+			description:      "mnnvl-group=none on PCS + feature enabled -> no error",
+			pcs:              createValidPCSWithGPU(map[string]string{mnnvl.AnnotationMNNVLGroup: mnnvl.AnnotationMNNVLGroupOptOut}),
 			autoMNNVLEnabled: true,
 			expectError:      false,
 		},
@@ -90,13 +77,6 @@ func TestValidateCreate_MNNVL(t *testing.T) {
 			expectError:      true,
 			errorContains:    "not a valid DNS-1123 label",
 		},
-		{
-			description:      "conflict: auto-mnnvl disabled + mnnvl-group on PCS -> error",
-			pcs:              createValidPCSWithGPU(map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled, mnnvl.AnnotationMNNVLGroup: "training"}),
-			autoMNNVLEnabled: true,
-			expectError:      true,
-			errorContains:    "contradictory",
-		},
 		// mnnvl-group on clique template
 		{
 			description:      "mnnvl-group on clique + feature enabled -> no error",
@@ -112,13 +92,6 @@ func TestValidateCreate_MNNVL(t *testing.T) {
 			errorContains:    "not a valid DNS-1123 label",
 		},
 		{
-			description:      "conflict on clique: disabled + group -> error",
-			pcs:              createValidPCSWithCliqueAnnotations(map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled, mnnvl.AnnotationMNNVLGroup: "training"}),
-			autoMNNVLEnabled: true,
-			expectError:      true,
-			errorContains:    "contradictory",
-		},
-		{
 			description:      "mnnvl-group on PCSG config + feature enabled -> no error",
 			pcs:              createValidPCSWithPCSGConfigAnnotations(map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}),
 			autoMNNVLEnabled: true,
@@ -130,13 +103,6 @@ func TestValidateCreate_MNNVL(t *testing.T) {
 			autoMNNVLEnabled: true,
 			expectError:      true,
 			errorContains:    "not a valid DNS-1123 label",
-		},
-		{
-			description:      "conflict on PCSG config: disabled + group -> error",
-			pcs:              createValidPCSWithPCSGConfigAnnotations(map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled, mnnvl.AnnotationMNNVLGroup: "training"}),
-			autoMNNVLEnabled: true,
-			expectError:      true,
-			errorContains:    "contradictory",
 		},
 	}
 
@@ -185,40 +151,6 @@ func TestValidateUpdate_MNNVL(t *testing.T) {
 		errorContains string
 	}{
 		{
-			description: "annotation unchanged -> no error",
-			oldPCS:      createValidPCSWithGPU(map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled}),
-			newPCS:      createValidPCSWithGPU(map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled}),
-			expectError: false,
-		},
-		{
-			description:   "annotation added -> error",
-			oldPCS:        createValidPCSWithGPU(nil),
-			newPCS:        createValidPCSWithGPU(map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled}),
-			expectError:   true,
-			errorContains: "cannot be added",
-		},
-		{
-			description:   "annotation removed -> error",
-			oldPCS:        createValidPCSWithGPU(map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled}),
-			newPCS:        createValidPCSWithGPU(nil),
-			expectError:   true,
-			errorContains: "cannot be removed",
-		},
-		{
-			description:   "annotation changed enabled to disabled -> error",
-			oldPCS:        createValidPCSWithGPU(map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled}),
-			newPCS:        createValidPCSWithGPU(map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled}),
-			expectError:   true,
-			errorContains: "immutable",
-		},
-		{
-			description:   "annotation changed disabled to enabled -> error",
-			oldPCS:        createValidPCSWithGPU(map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled}),
-			newPCS:        createValidPCSWithGPU(map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled}),
-			expectError:   true,
-			errorContains: "immutable",
-		},
-		{
 			description: "no annotation on both -> no error",
 			oldPCS:      createValidPCSWithGPU(nil),
 			newPCS:      createValidPCSWithGPU(nil),
@@ -236,6 +168,13 @@ func TestValidateUpdate_MNNVL(t *testing.T) {
 			newPCS:        createValidPCSWithGPU(map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}),
 			expectError:   true,
 			errorContains: "cannot be added",
+		},
+		{
+			description:   "mnnvl-group removed -> error",
+			oldPCS:        createValidPCSWithGPU(map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}),
+			newPCS:        createValidPCSWithGPU(nil),
+			expectError:   true,
+			errorContains: "cannot be removed",
 		},
 		{
 			description:   "mnnvl-group changed -> error",
@@ -318,11 +257,6 @@ func TestValidateUpdate_MNNVL(t *testing.T) {
 // (defaulting webhook -> validating webhook) for the migration scenario where a PCS was created
 // before the MNNVL feature existed. This test verifies that legacy resources can be updated
 // without the webhooks creating a deadlock.
-//
-// Before the fix, this scenario caused a deadlock:
-//  1. Defaulting webhook ran on UPDATE and injected the auto-mnnvl annotation
-//  2. Validating webhook saw the annotation was "added" (old=absent, new=present) and rejected it
-//  3. The resource could not be modified at all (e.g., finalizer removal was blocked)
 func TestMNNVL_WebhookPipeline_LegacyPCSUpdate(t *testing.T) {
 	t.Run("legacy PCS updated -> no deadlock", func(t *testing.T) {
 		cl := testutils.NewTestClientBuilder().Build()
@@ -336,8 +270,6 @@ func TestMNNVL_WebhookPipeline_LegacyPCSUpdate(t *testing.T) {
 		newPCS := createValidPCSWithGPU(nil)
 
 		// Step 1: Simulate the defaulting webhook running on the new object during an UPDATE.
-		// The defaulting webhook no longer mutates MNNVL annotations, but we still verify
-		// the full pipeline (defaulting -> validation) doesn't break.
 		defaultingHandler := defaulting.NewHandler(mgr)
 		updateCtx := admission.NewContextWithRequest(context.Background(), admission.Request{
 			AdmissionRequest: admissionv1.AdmissionRequest{
@@ -367,8 +299,8 @@ func TestMNNVL_WebhookPipeline_LegacyPCSUpdate(t *testing.T) {
 		_ = warnings
 
 		if newPCS.Annotations != nil {
-			_, exists := newPCS.Annotations[mnnvl.AnnotationAutoMNNVL]
-			assert.False(t, exists, "defaulting webhook should not inject auto-mnnvl annotation during update")
+			_, exists := newPCS.Annotations[mnnvl.AnnotationMNNVLGroup]
+			assert.False(t, exists, "defaulting webhook should not inject mnnvl-group annotation during update")
 		}
 	})
 }
