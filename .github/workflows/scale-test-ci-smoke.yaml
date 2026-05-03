@@ -6,15 +6,103 @@ on:
       - scale-test-ci
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
-      - name: Print context
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate fake scale result
+        env:
+          OUT_DIR: ${{ runner.temp }}/grove-scale
         run: |
-          echo "Scale test CI smoke workflow"
-          echo "repository=${GITHUB_REPOSITORY}"
-          echo "ref=${GITHUB_REF}"
-          echo "sha=${GITHUB_SHA}"
+          python3 - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timedelta, timezone
+          from pathlib import Path
+
+          tz = timezone.utc
+          start = datetime.now(tz).replace(microsecond=0)
+          run_id = start.strftime("run-%Y%m%d-%H%M%S")
+          out_dir = Path(os.environ["OUT_DIR"]) / "ScaleTest_1000" / run_id
+          out_dir.mkdir(parents=True, exist_ok=True)
+
+          deploy_start = start
+          pods_created = deploy_start + timedelta(milliseconds=360)
+          pods_ready = deploy_start + timedelta(milliseconds=590)
+          pcs_available = deploy_start + timedelta(milliseconds=610)
+          deploy_end = deploy_start + timedelta(milliseconds=620)
+          delete_start = deploy_end
+          pcs_deleted = delete_start + timedelta(milliseconds=340)
+          delete_end = delete_start + timedelta(milliseconds=350)
+
+          result = {
+              "testName": "ScaleTest_1000",
+              "runID": run_id,
+              "namespace": "default",
+              "pcsCount": 1,
+              "groveImage": "fake-ci/grove-operator:scale-test-smoke",
+              "phases": [
+                  {
+                      "name": "deploy",
+                      "startTime": deploy_start.isoformat(),
+                      "endTime": deploy_end.isoformat(),
+                      "durationFromTestStartSeconds": 0.0,
+                      "milestones": [
+                          {
+                              "name": "pods-created",
+                              "timestamp": pods_created.isoformat(),
+                              "durationFromPhaseStartSeconds": (pods_created - deploy_start).total_seconds(),
+                          },
+                          {
+                              "name": "pods-ready",
+                              "timestamp": pods_ready.isoformat(),
+                              "durationFromPhaseStartSeconds": (pods_ready - deploy_start).total_seconds(),
+                          },
+                          {
+                              "name": "pcs-available",
+                              "timestamp": pcs_available.isoformat(),
+                              "durationFromPhaseStartSeconds": (pcs_available - deploy_start).total_seconds(),
+                          },
+                      ],
+                  },
+                  {
+                      "name": "delete",
+                      "startTime": delete_start.isoformat(),
+                      "endTime": delete_end.isoformat(),
+                      "durationFromTestStartSeconds": (delete_start - start).total_seconds(),
+                      "milestones": [
+                          {
+                              "name": "pcs-deleted",
+                              "timestamp": pcs_deleted.isoformat(),
+                              "durationFromPhaseStartSeconds": (pcs_deleted - delete_start).total_seconds(),
+                          }
+                      ],
+                  },
+              ],
+              "testDurationSeconds": (delete_end - start).total_seconds(),
+              "k8sClient": {"qps": 100, "burst": 150},
+              "controllerMaxReconcile": {
+                  "podCliqueSet": 20,
+                  "podCliqueScalingGroup": 20,
+                  "podClique": 20,
+              },
+          }
+
+          result_path = out_dir / "scale-test-results.json"
+          result_path.write_text(json.dumps(result, indent=2) + "\n")
+          print(f"wrote {result_path}")
+          PY
+
+      - name: Store fake scale result
+        run: |
+          ./operator/hack/scale-history.py branch \
+            --input "${RUNNER_TEMP}/grove-scale" \
+            --workdir "${RUNNER_TEMP}/grove-scale-history" \
+            --branch scale-test-history-test \
+            --commit "${GITHUB_SHA}" \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
