@@ -55,7 +55,6 @@ jobs:
     if: needs.select-scale-test-mode.outputs.mode == 'fake'
     runs-on: ubuntu-latest
     env:
-      SCALE_RESULTS_DIR: ${{ runner.temp }}/grove-scale
       PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       - name: Checkout
@@ -63,7 +62,7 @@ jobs:
 
       - name: Generate fake scale result
         env:
-          OUT_DIR: ${{ env.SCALE_RESULTS_DIR }}
+          OUT_DIR: ${{ runner.temp }}/grove-scale
         run: |
           python3 - <<'PY'
           import json
@@ -187,7 +186,7 @@ jobs:
           HISTORY_REPO: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
         run: |
           ./operator/hack/scale-history.py branch \
-            --input "${SCALE_RESULTS_DIR}" \
+            --input "${RUNNER_TEMP}/grove-scale" \
             --repo "${HISTORY_REPO}" \
             --workdir "${RUNNER_TEMP}/grove-scale-history" \
             --branch "${HISTORY_BRANCH}" \
@@ -200,7 +199,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      SCALE_RESULTS_DIR: ${{ runner.temp }}/grove-scale
       PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       - name: Print runner specs
@@ -226,7 +224,7 @@ jobs:
         env:
           GROVE_E2E_PYROSCOPE_DISABLED: "true"
         run: |
-          make run-scale-test DIAG_DIR="${SCALE_RESULTS_DIR}" DIAG_MODE=file
+          make run-scale-test DIAG_DIR="${RUNNER_TEMP}/grove-scale" DIAG_MODE=file
 
       - name: Store scale result
         if: success()
@@ -234,7 +232,7 @@ jobs:
           HISTORY_REPO: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
         run: |
           ./operator/hack/scale-history.py branch \
-            --input "${SCALE_RESULTS_DIR}" \
+            --input "${RUNNER_TEMP}/grove-scale" \
             --repo "${HISTORY_REPO}" \
             --workdir "${RUNNER_TEMP}/grove-scale-history" \
             --branch "${HISTORY_BRANCH}" \
