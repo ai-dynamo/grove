@@ -59,9 +59,9 @@ Grove's auto-MNNVL feature allows users to leverage NVIDIA Multi-Node NVLink acc
 
 The feature is controlled by a single annotation:
 
-- `grove.io/mnnvl-group`: a string name — assigns the PodClique to a named MNNVL group (ComputeDomain). The special value `"none"` explicitly opts out of MNNVL, overriding any parent-level setting.
+- `grove.io/mnnvl-group`: a string name — assigns the PodClique to a named MNNVL group (ComputeDomain). The special value `"none"` (case-sensitive) explicitly opts out of MNNVL, overriding any parent-level setting.
 
-The annotation can be placed on a **PodCliqueSet**, **PodCliqueScalingGroup**, or **PodClique**, and propagates downward (PCS → PCSG → PCLQ) with lower layers overriding higher ones.
+The annotation can be placed on a **PodCliqueSet**, **PodCliqueScalingGroup**, or **PodClique**, and propagates downward (PCS → PCSG → PCLQ) with values on lower layers overriding higher ones.
 
 The feature uses an **opt-in model**: no PCS receives MNNVL unless it or its sub-resources carry the `mnnvl-group` annotation. The cluster-level configuration (`autoMNNVLEnabled`) controls whether the feature is available — not whether individual workloads use it.
 
@@ -87,7 +87,7 @@ Key motivations:
 - Have the operator **automatically manage ComputeDomain lifecycle** (create, scale, delete, protect) per group per PCS replica.
 - Support **heterogeneous clusters** — only annotated PodCliques need NVIDIA DRA-capable nodes.
 - Support **multiple MNNVL groups** within a single PCS replica.
-- Remove/Deprecate the Phase 1 `grove.io/auto-mnnvl` annotation — not backward compatible (acceptable in alpha).
+- Remove the Phase 1 `grove.io/auto-mnnvl` annotation — not backward compatible (acceptable in alpha).
 
 ### Non-Goals
 
@@ -257,7 +257,7 @@ grove.io/mnnvl-group: "<value>"
 | `"none"` | Explicit opt-out. Used to override a parent layer's group assignment. Reserved — cannot be used as a group name. |
 | Absent | Inherit from parent layer. If no parent has it, no MNNVL. |
 
-**Group name validation:** The value must be either `"none"` (opt-out) or a valid Kubernetes name component: lowercase alphanumeric characters or dashes, must start and end with an alphanumeric character, max 63 characters. This is required because the group name becomes part of the ComputeDomain resource name. Empty strings and values containing invalid characters are rejected.
+**Group name validation:** Values are **case-sensitive**, following the Kubernetes convention for annotation values. The value must be either `"none"` (opt-out) or a valid Kubernetes name component: lowercase alphanumeric characters or dashes, must start and end with an alphanumeric character, max 63 characters. This is required because the group name becomes part of the ComputeDomain resource name. Empty strings and values containing invalid characters are rejected.
 
 **Non-GPU PCLQs:** Non-GPU PCLQs that resolve to MNNVL enrollment (whether explicit or inherited) are silently skipped — no RCT injection, no error. This allows PCS-level defaults without requiring `"none"` overrides on every non-GPU PCLQ.
 
