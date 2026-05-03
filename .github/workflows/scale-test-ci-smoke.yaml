@@ -1,14 +1,12 @@
 name: Scale Test CI
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, edited, ready_for_review]
+  push:
     branches:
-      - main
+      - scale-test-ci
 
 permissions:
   contents: write
-  pull-requests: read
 
 env:
   HISTORY_BRANCH: scale-test-history-test
@@ -22,21 +20,21 @@ jobs:
       - name: Select scale test mode
         id: select
         env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
-          title="$(printf '%s' "${PR_TITLE}" | tr '[:upper:]' '[:lower:]')"
+          message="$(printf '%s' "${COMMIT_MESSAGE}" | tr '[:upper:]' '[:lower:]')"
           wants_fake=false
           wants_real=false
 
-          if [[ "${title}" == *fake-scale-test* ]]; then
+          if [[ "${message}" == *fake-scale-test* ]]; then
             wants_fake=true
           fi
-          if [[ "${title}" == *run-scale-test* ]]; then
+          if [[ "${message}" == *run-scale-test* ]]; then
             wants_real=true
           fi
 
           if [[ "${wants_fake}" == "true" && "${wants_real}" == "true" ]]; then
-            echo "::error::PR title must contain only one scale-test mode: fake-scale-test or run-scale-test"
+            echo "::error::Commit message must contain only one scale-test mode: fake-scale-test or run-scale-test"
             exit 1
           fi
 
@@ -54,8 +52,6 @@ jobs:
     needs: select-scale-test-mode
     if: needs.select-scale-test-mode.outputs.mode == 'fake'
     runs-on: ubuntu-latest
-    env:
-      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -190,7 +186,7 @@ jobs:
             --repo "${HISTORY_REPO}" \
             --workdir "${RUNNER_TEMP}/grove-scale-history" \
             --branch "${HISTORY_BRANCH}" \
-            --commit "${PR_HEAD_SHA}" \
+            --commit "${GITHUB_SHA}" \
             --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
   run-scale-test:
@@ -198,8 +194,6 @@ jobs:
     if: needs.select-scale-test-mode.outputs.mode == 'real'
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    env:
-      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       - name: Print runner specs
         run: |
@@ -236,7 +230,7 @@ jobs:
             --repo "${HISTORY_REPO}" \
             --workdir "${RUNNER_TEMP}/grove-scale-history" \
             --branch "${HISTORY_BRANCH}" \
-            --commit "${PR_HEAD_SHA}" \
+            --commit "${GITHUB_SHA}" \
             --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
       - name: Cleanup scale cluster
