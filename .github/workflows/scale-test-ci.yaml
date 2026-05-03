@@ -3,7 +3,7 @@ name: Scale Test CI
 on:
   workflow_dispatch:
   schedule:
-    # Sunday 04:00 UTC is 07:00 Israel time during IDT.
+    # Sunday 04:00 UTC.
     - cron: "0 4 * * 0"
 
 permissions:
@@ -65,50 +65,29 @@ jobs:
             --commit "${GITHUB_SHA}" \
             --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
-      - name: Collect scale cluster diagnostics
+      - name: Print scale cluster diagnostics
         if: failure()
-        env:
-          DEBUG_DIR: ${{ runner.temp }}/scale-cluster-debug
         run: |
-          mkdir -p "${DEBUG_DIR}"
-
-          {
-            echo "## docker ps"
-            docker ps -a || true
-            echo
-            echo "## k3d clusters"
-            k3d cluster list || true
-            echo
-            echo "## helm releases"
-            helm list -A || true
-            echo
-            echo "## nodes"
-            kubectl get nodes -o wide || true
-            echo
-            echo "## pods"
-            kubectl get pods -A -o wide || true
-            echo
-            echo "## events"
-            kubectl get events -A --sort-by=.lastTimestamp || true
-          } > "${DEBUG_DIR}/summary.txt" 2>&1
-
-          kubectl describe nodes > "${DEBUG_DIR}/nodes-describe.txt" 2>&1 || true
-          kubectl describe pods -A > "${DEBUG_DIR}/pods-describe.txt" 2>&1 || true
-          kubectl get all -A -o yaml > "${DEBUG_DIR}/all-resources.yaml" 2>&1 || true
-          kubectl get validatingwebhookconfiguration,mutatingwebhookconfiguration -o yaml > "${DEBUG_DIR}/webhooks.yaml" 2>&1 || true
-          helm status grove-operator -n grove-system > "${DEBUG_DIR}/helm-grove-operator.txt" 2>&1 || true
-          helm status kai-scheduler -n kai-scheduler > "${DEBUG_DIR}/helm-kai-scheduler.txt" 2>&1 || true
-          helm status pyroscope -n pyroscope > "${DEBUG_DIR}/helm-pyroscope.txt" 2>&1 || true
-          kubectl logs -n grove-system -l app.kubernetes.io/name=grove-operator --all-containers=true --tail=-1 > "${DEBUG_DIR}/grove-operator.log" 2>&1 || true
-
-      - name: Upload scale cluster diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: scale-cluster-debug-${{ github.run_id }}
-          path: ${{ runner.temp }}/scale-cluster-debug/
-          if-no-files-found: warn
-          retention-days: 7
+          echo "## docker ps"
+          docker ps -a || true
+          echo
+          echo "## k3d clusters"
+          k3d cluster list || true
+          echo
+          echo "## helm releases"
+          helm list -A || true
+          echo
+          echo "## nodes"
+          kubectl get nodes -o wide || true
+          echo
+          echo "## pods"
+          kubectl get pods -A -o wide || true
+          echo
+          echo "## events"
+          kubectl get events -A --sort-by=.lastTimestamp || true
+          echo
+          echo "## grove operator logs"
+          kubectl logs -n grove-system -l app.kubernetes.io/name=grove-operator --all-containers=true --tail=-1 || true
 
       - name: Cleanup scale cluster
         if: always()
