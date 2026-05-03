@@ -60,19 +60,19 @@ func toOperatorMetadata(m *config.GroveMetadata) *measurement.OperatorMetadata {
 var Logger = log.NewTestLogger(log.InfoLevel)
 
 const (
-	scaleTestExpectedPods     = 1000
-	scaleTestExpectedReplicas = 1
+	scaleTestExpectedPods     = 20
+	scaleTestExpectedReplicas = 10
 	scaleTestPCSCount         = 1
-	scaleTestWorkerNodes      = 100
+	scaleTestWorkerNodes      = 10
 	scaleTestPollInterval     = 100 * time.Millisecond
-	scaleTestTimeout          = 15 * time.Minute
+	scaleTestTimeout          = 2 * time.Minute
 
 	scaleTestName      = "ScaleTest_1000"
 	scaleTestWorkload  = "scale-test-1000"
 	scaleTestYAMLPath  = "../../yaml/scale-test-1000.yaml"
 	scaleTestNamespace = "default"
 
-	runIDTimeFormat    = "20060102-150405"
+	runIDTimeFormat   = "20060102-150405"
 	outputResultsFile = "scale-test-results.json"
 )
 

@@ -62,6 +62,37 @@ pip3 install -r hack/requirements.txt
 ./hack/infra-manager.py setup --config scale.yaml --set kwok.nodes=1000
 ```
 
+### scale-history.py
+
+Stores a scale-test result in Grove's benchmark history format and copies the
+static dashboard files into the history root.
+
+```bash
+# Local testing; writes history under /tmp/grove-scale-history by default.
+./hack/scale-history.py local \
+  --input e2e/tests/scale/ScaleTest_1000
+
+# CI/history branch mode; fetches, commits, and pushes scale-test-history.
+./hack/scale-history.py branch \
+  --input "$RUNNER_TEMP/grove-scale" \
+  --commit "$GITHUB_SHA" \
+  --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+```
+
+The history contains full `scale-test-results.json` files and
+`index/metrics.ndjson`. Profiling artifacts are not copied.
+
+### scale-dashboard
+
+Minimal static dashboard for validating local scale-test history. `scale-history.py`
+copies these files into the history root automatically.
+
+```bash
+python3 -m http.server 8765 --directory /tmp/grove-scale-history
+```
+
+Open http://localhost:8765 to chart `index/metrics.ndjson`.
+
 ### config-cluster.py
 
 Declarative configuration for an existing E2E cluster. Supports fake GPU operator

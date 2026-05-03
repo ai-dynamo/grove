@@ -1,0 +1,20 @@
+name: Scale Test CI Smoke
+
+on:
+  push:
+    branches:
+      - scale-test-ci
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print context
+        run: |
+          echo "Scale test CI smoke workflow"
+          echo "repository=${GITHUB_REPOSITORY}"
+          echo "ref=${GITHUB_REF}"
+          echo "sha=${GITHUB_SHA}"
