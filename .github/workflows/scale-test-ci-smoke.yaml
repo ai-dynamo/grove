@@ -31,14 +31,51 @@ jobs:
           out_dir = Path(os.environ["OUT_DIR"]) / "ScaleTest_1000" / run_id
           out_dir.mkdir(parents=True, exist_ok=True)
 
+          run_number = int(os.environ.get("GITHUB_RUN_NUMBER", "0"))
+          profiles = [
+              {
+                  "deploy": 0.62,
+                  "pods_created": 0.36,
+                  "pods_ready": 0.59,
+                  "pcs_available": 0.61,
+                  "delete": 0.35,
+                  "pcs_deleted": 0.34,
+              },
+              {
+                  "deploy": 0.74,
+                  "pods_created": 0.44,
+                  "pods_ready": 0.70,
+                  "pcs_available": 0.73,
+                  "delete": 0.42,
+                  "pcs_deleted": 0.39,
+              },
+              {
+                  "deploy": 0.55,
+                  "pods_created": 0.31,
+                  "pods_ready": 0.52,
+                  "pcs_available": 0.54,
+                  "delete": 0.31,
+                  "pcs_deleted": 0.29,
+              },
+              {
+                  "deploy": 0.88,
+                  "pods_created": 0.49,
+                  "pods_ready": 0.82,
+                  "pcs_available": 0.87,
+                  "delete": 0.47,
+                  "pcs_deleted": 0.44,
+              },
+          ]
+          profile = profiles[run_number % len(profiles)]
+
           deploy_start = start
-          pods_created = deploy_start + timedelta(milliseconds=360)
-          pods_ready = deploy_start + timedelta(milliseconds=590)
-          pcs_available = deploy_start + timedelta(milliseconds=610)
-          deploy_end = deploy_start + timedelta(milliseconds=620)
+          pods_created = deploy_start + timedelta(seconds=profile["pods_created"])
+          pods_ready = deploy_start + timedelta(seconds=profile["pods_ready"])
+          pcs_available = deploy_start + timedelta(seconds=profile["pcs_available"])
+          deploy_end = deploy_start + timedelta(seconds=profile["deploy"])
           delete_start = deploy_end
-          pcs_deleted = delete_start + timedelta(milliseconds=340)
-          delete_end = delete_start + timedelta(milliseconds=350)
+          pcs_deleted = delete_start + timedelta(seconds=profile["pcs_deleted"])
+          delete_end = delete_start + timedelta(seconds=profile["delete"])
 
           result = {
               "testName": "ScaleTest_1000",
@@ -96,6 +133,7 @@ jobs:
           result_path = out_dir / "scale-test-results.json"
           result_path.write_text(json.dumps(result, indent=2) + "\n")
           print(f"wrote {result_path}")
+          print(f"using fake timing profile {run_number % len(profiles)}")
           PY
 
       - name: Store fake scale result
