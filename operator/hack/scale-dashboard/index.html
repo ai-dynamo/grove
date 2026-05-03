@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Grove Scale Test</title>
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <main class="page">
+      <header class="topbar">
+        <div>
+          <h1>Grove Scale Test</h1>
+          <p id="status">Loading metrics...</p>
+        </div>
+        <a class="button" href="index/metrics.ndjson" download>Download NDJSON</a>
+      </header>
+
+      <section class="controls" aria-label="Chart controls">
+        <label>
+          Test
+          <select id="test-select"></select>
+        </label>
+        <label>
+          Metric
+          <select id="metric-select"></select>
+        </label>
+      </section>
+
+      <section class="chart-wrap" aria-label="Runtime chart">
+        <svg id="chart" role="img" aria-label="Selected scale-test metric over time"></svg>
+        <div id="tooltip" class="tooltip" hidden></div>
+      </section>
+
+      <section class="latest">
+        <h2>Latest Values</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th>Seconds</th>
+              <th>Run</th>
+            </tr>
+          </thead>
+          <tbody id="latest-body"></tbody>
+        </table>
+      </section>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>
