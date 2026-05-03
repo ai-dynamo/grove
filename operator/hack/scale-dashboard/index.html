@@ -1,0 +1,103 @@
+<!doctype html>
+<!--
+ /*
+ Copyright 2026 The Grove Authors.
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+ */
+-->
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Grove Scale Test</title>
+    <link rel="stylesheet" href="style.css?v=charts-v2">
+  </head>
+  <body>
+    <main class="page">
+      <header class="topbar">
+        <div>
+          <h1>Grove Scale Test</h1>
+          <p id="status">Loading metrics...</p>
+        </div>
+        <a class="button" href="index/metrics.ndjson" download>Download Metrics as JSON</a>
+      </header>
+
+      <section class="controls" aria-label="Chart controls">
+        <label>
+          Test
+          <select id="test-select"></select>
+        </label>
+      </section>
+
+      <section class="charts" aria-label="Runtime charts">
+        <article class="chart-panel">
+          <header class="chart-panel-header">
+            <h2>Total Runtime</h2>
+            <div id="total-summary" class="summary"></div>
+          </header>
+          <div class="chart-frame">
+            <svg id="total-chart" class="chart" role="img" aria-label="Total scale-test runtime over time"></svg>
+          </div>
+        </article>
+
+        <article class="chart-panel">
+          <header class="chart-panel-header">
+            <h2>Phases</h2>
+            <div id="phase-legend" class="legend"></div>
+          </header>
+          <div class="chart-frame">
+            <svg id="phase-chart" class="chart" role="img" aria-label="Scale-test phase runtime by run"></svg>
+          </div>
+        </article>
+
+        <article class="chart-panel">
+          <header class="chart-panel-header">
+            <h2>Deploy Milestones</h2>
+            <div id="deploy-legend" class="legend"></div>
+          </header>
+          <div class="chart-frame">
+            <svg id="deploy-chart" class="chart" role="img" aria-label="Deploy milestone runtime by run"></svg>
+          </div>
+        </article>
+
+        <article class="chart-panel">
+          <header class="chart-panel-header">
+            <h2>Delete Milestones</h2>
+            <div id="delete-legend" class="legend"></div>
+          </header>
+          <div class="chart-frame">
+            <svg id="delete-chart" class="chart" role="img" aria-label="Delete milestone runtime by run"></svg>
+          </div>
+        </article>
+      </section>
+
+      <section class="latest">
+        <h2>Latest Values</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th>Seconds</th>
+              <th>Run</th>
+            </tr>
+          </thead>
+          <tbody id="latest-body"></tbody>
+        </table>
+      </section>
+    </main>
+    <div id="tooltip" class="tooltip" hidden></div>
+    <script src="app.js?v=charts-v2"></script>
+  </body>
+</html>
