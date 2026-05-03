@@ -99,9 +99,12 @@ jobs:
           PY
 
       - name: Store fake scale result
+        env:
+          HISTORY_REPO: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
         run: |
           ./operator/hack/scale-history.py branch \
             --input "${RUNNER_TEMP}/grove-scale" \
+            --repo "${HISTORY_REPO}" \
             --workdir "${RUNNER_TEMP}/grove-scale-history" \
             --branch scale-test-history-test \
             --commit "${GITHUB_SHA}" \
