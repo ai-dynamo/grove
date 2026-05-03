@@ -29,6 +29,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/utils/ptr"
@@ -147,6 +148,282 @@ func TestGetKindSyncGroups(t *testing.T) {
 	for _, k := range expectedKinds {
 		assert.True(t, seen[k], "kind %s should appear in some group", k)
 	}
+}
+
+// TestComputeGenerationHash_ReplicaOnlyAndCliqueReorderAreNoOps documents the
+// invariants of computeGenerationHash that protect against false rolling
+// updates:
+//
+//  1. replica-only changes do not change the hash (HPA-style scale events
+//     must not trigger a gang roll); and
+//  2. reordering pcs.Spec.Template.Cliques does not change the hash, because
+//     Cliques is +listType=map +listMapKey=name and represents a name-keyed
+//     set with no inherent order. An upstream operator that emits the same
+//     cliques in a different sequence (e.g. from non-deterministic Go map
+//     iteration) must not cause Grove to roll the gang.
+//
+// This was previously TestComputeGenerationHashCurrentSensitivity and
+// asserted the bugged behavior. After fixing computeGenerationHash to sort
+// the cliques map-list before hashing, the assertion is flipped: the
+// reordered hash must be IDENTICAL to the original.
+func TestComputeGenerationHash_ReplicaOnlyAndCliqueReorderAreNoOps(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("frontend").
+			WithLabels(map[string]string{"role": "frontend"}).
+			WithReplicas(1).
+			Build()).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("planner").
+			WithLabels(map[string]string{"role": "planner"}).
+			WithReplicas(1).
+			Build()).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("prefill").
+			WithLabels(map[string]string{"role": "prefill"}).
+			WithReplicas(1).
+			Build()).
+		Build()
+
+	originalHash := computeGenerationHash(pcs)
+
+	replicaOnlyChange := pcs.DeepCopy()
+	replicaOnlyChange.Spec.Template.Cliques[2].Spec.Replicas = 3
+	assert.Equal(t, originalHash, computeGenerationHash(replicaOnlyChange),
+		"replica-only changes are intentionally excluded from the generation hash")
+
+	reordered := pcs.DeepCopy()
+	reordered.Spec.Template.Cliques = []*grovecorev1alpha1.PodCliqueTemplateSpec{
+		pcs.Spec.Template.Cliques[2].DeepCopy(),
+		pcs.Spec.Template.Cliques[0].DeepCopy(),
+		pcs.Spec.Template.Cliques[1].DeepCopy(),
+	}
+	assert.Equal(t, originalHash, computeGenerationHash(reordered),
+		"clique slice order must not affect the generation hash — Cliques is +listType=map keyed by name")
+}
+
+// TestProcessGenerationHashChange_CliqueReorderIsNoOp asserts the
+// fixed-behavior end-to-end: when an existing PCS already has its current
+// generation hash recorded and only the cliques map-list is reordered,
+// processGenerationHashChange must NOT initialize a new UpdateProgress
+// (which would cascade into a full gang rolling recreate via the
+// PodCliqueSetReplica orchestrator and the per-PodClique controllers).
+//
+// This was previously TestProcessGenerationHashChangeTreatsCliqueReorderAsUpdate
+// asserting the bugged behavior. After fixing computeGenerationHash, the
+// assertion is flipped: UpdateProgress must remain nil.
+func TestProcessGenerationHashChange_CliqueReorderIsNoOp(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("frontend").
+			WithLabels(map[string]string{"role": "frontend"}).
+			Build()).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("planner").
+			WithLabels(map[string]string{"role": "planner"}).
+			Build()).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("prefill").
+			WithLabels(map[string]string{"role": "prefill"}).
+			Build()).
+		Build()
+	originalHash := computeGenerationHash(pcs)
+
+	reordered := pcs.DeepCopy()
+	reordered.Spec.Template.Cliques = []*grovecorev1alpha1.PodCliqueTemplateSpec{
+		pcs.Spec.Template.Cliques[2].DeepCopy(),
+		pcs.Spec.Template.Cliques[0].DeepCopy(),
+		pcs.Spec.Template.Cliques[1].DeepCopy(),
+	}
+	reordered.Status.CurrentGenerationHash = ptr.To(originalHash)
+
+	fakeClient := testutils.SetupFakeClient(reordered)
+	reconciler := &Reconciler{
+		client:                        fakeClient,
+		pcsGenerationHashExpectations: sync.Map{},
+	}
+
+	result := reconciler.processGenerationHashChange(context.Background(), logr.Discard(), reordered)
+	require.False(t, result.HasErrors())
+
+	updatedPCS := &grovecorev1alpha1.PodCliqueSet{}
+	err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(reordered), updatedPCS)
+	require.NoError(t, err)
+	assert.Nil(t, updatedPCS.Status.UpdateProgress,
+		"clique reorder must not start a rolling update — Cliques is name-keyed and slice order is not part of the desired state")
+	assert.Equal(t, ptr.To(originalHash), updatedPCS.Status.CurrentGenerationHash,
+		"clique reorder must not change the recorded generation hash")
+}
+
+// TestComputeGenerationHash_InOrderStartupIsSensitiveToCliqueOrder pins the
+// counterpart to the AnyOrder/Explicit invariant: when the PCS uses
+// CliqueStartupTypeInOrder, the slice order DOES carry semantic meaning (it
+// defines the startup chain), so the generation hash must change if the
+// slice is reordered. Otherwise a real change to the startup ordering would
+// silently be ignored.
+func TestComputeGenerationHash_InOrderStartupIsSensitiveToCliqueOrder(t *testing.T) {
+	startupInOrder := grovecorev1alpha1.CliqueStartupTypeInOrder
+
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+		WithCliqueStartupType(&startupInOrder).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("frontend").
+			WithLabels(map[string]string{"role": "frontend"}).
+			Build()).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("planner").
+			WithLabels(map[string]string{"role": "planner"}).
+			Build()).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("prefill").
+			WithLabels(map[string]string{"role": "prefill"}).
+			Build()).
+		Build()
+	originalHash := computeGenerationHash(pcs)
+
+	reordered := pcs.DeepCopy()
+	reordered.Spec.Template.Cliques = []*grovecorev1alpha1.PodCliqueTemplateSpec{
+		pcs.Spec.Template.Cliques[2].DeepCopy(),
+		pcs.Spec.Template.Cliques[0].DeepCopy(),
+		pcs.Spec.Template.Cliques[1].DeepCopy(),
+	}
+	assert.NotEqual(t, originalHash, computeGenerationHash(reordered),
+		"under CliqueStartupTypeInOrder, slice order encodes the startup chain — a different order is a real spec change")
+}
+
+// TestComputeGenerationHash_InOrderStartupOrderUsesCliqueNames verifies that
+// the InOrder startup chain is represented by clique names, not merely by the
+// sequence of pod template hashes. A "do not sort InOrder cliques" implementation
+// would miss this case when the reordered cliques have identical pod templates.
+func TestComputeGenerationHash_InOrderStartupOrderUsesCliqueNames(t *testing.T) {
+	startupInOrder := grovecorev1alpha1.CliqueStartupTypeInOrder
+
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+		WithCliqueStartupType(&startupInOrder).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("database").Build()).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("app").Build()).
+		Build()
+	originalHash := computeGenerationHash(pcs)
+
+	reordered := pcs.DeepCopy()
+	reordered.Spec.Template.Cliques = []*grovecorev1alpha1.PodCliqueTemplateSpec{
+		pcs.Spec.Template.Cliques[1].DeepCopy(),
+		pcs.Spec.Template.Cliques[0].DeepCopy(),
+	}
+	assert.NotEqual(t, originalHash, computeGenerationHash(reordered),
+		"under CliqueStartupTypeInOrder, changing only the ordered clique names changes the startup chain")
+}
+
+// TestComputeGenerationHash_AnyOrderEqualsExplicit_WhenPodSpecsMatch pins that
+// AnyOrder and Explicit do not add synthetic startup metadata to the generation
+// hash. Their slice order is not part of the template hash input, and
+// StartupType itself is immutable after creation, so including it would only
+// broaden upgrade-time hash churn.
+//
+// Also pins the corollary that under Explicit, reordering the clique slice is
+// a no-op — the property most at risk of regressing if someone later extends
+// the InOrder-only startup hash input to also engage on Explicit.
+func TestComputeGenerationHash_AnyOrderEqualsExplicit_WhenPodSpecsMatch(t *testing.T) {
+	startupAnyOrder := grovecorev1alpha1.CliqueStartupTypeAnyOrder
+	startupExplicit := grovecorev1alpha1.CliqueStartupTypeExplicit
+
+	// Distinct WithLabels per clique is load-bearing: the clique Name itself is
+	// not in the per-clique hash input (only Labels, Annotations, and PodSpec
+	// are), so without distinguishing labels the three per-clique pod templates
+	// would be byte-identical and the slice-order-invariance assertion below
+	// would pass trivially even against the bugged pre-canonicalization code.
+	build := func(st *grovecorev1alpha1.CliqueStartupType) *grovecorev1alpha1.PodCliqueSet {
+		return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+			WithCliqueStartupType(st).
+			WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("frontend").
+				WithLabels(map[string]string{"role": "frontend"}).Build()).
+			WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("planner").
+				WithLabels(map[string]string{"role": "planner"}).Build()).
+			WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("prefill").
+				WithLabels(map[string]string{"role": "prefill"}).Build()).
+			Build()
+	}
+	hashAnyOrder := computeGenerationHash(build(&startupAnyOrder))
+	hashExplicit := computeGenerationHash(build(&startupExplicit))
+
+	assert.Equal(t, hashAnyOrder, hashExplicit,
+		"AnyOrder and Explicit must not add startup-order hash inputs for otherwise identical templates")
+
+	explicit := build(&startupExplicit)
+	explicitReordered := explicit.DeepCopy()
+	explicitReordered.Spec.Template.Cliques = []*grovecorev1alpha1.PodCliqueTemplateSpec{
+		explicit.Spec.Template.Cliques[2].DeepCopy(),
+		explicit.Spec.Template.Cliques[0].DeepCopy(),
+		explicit.Spec.Template.Cliques[1].DeepCopy(),
+	}
+	assert.Equal(t, computeGenerationHash(explicit), computeGenerationHash(explicitReordered),
+		"under CliqueStartupTypeExplicit, clique slice order must not affect the generation hash")
+}
+
+// TestComputeGenerationHash_InOrderToAnyOrderFlipsHash pins that switching
+// the StartupType from InOrder to AnyOrder is captured by the hash. Under
+// InOrder the slice order encodes the startup chain; under AnyOrder it
+// doesn't. This is the boundary case for the canonicalization split — a
+// regression here would mean a real semantic change in startup behavior
+// goes silently undetected by the rolling-update path.
+func TestComputeGenerationHash_InOrderToAnyOrderFlipsHash(t *testing.T) {
+	startupInOrder := grovecorev1alpha1.CliqueStartupTypeInOrder
+	startupAnyOrder := grovecorev1alpha1.CliqueStartupTypeAnyOrder
+
+	build := func(st *grovecorev1alpha1.CliqueStartupType) *grovecorev1alpha1.PodCliqueSet {
+		return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+			WithCliqueStartupType(st).
+			WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("frontend").Build()).
+			WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("planner").Build()).
+			WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("prefill").Build()).
+			Build()
+	}
+	assert.NotEqual(t, computeGenerationHash(build(&startupInOrder)), computeGenerationHash(build(&startupAnyOrder)),
+		"InOrder ↔ AnyOrder changes startup semantics and must flip the hash")
+}
+
+// TestComputeGenerationHash_CombinedReplicaChangeAndCliqueReorderIsNoOp
+// covers the realistic Dynamo-operator scenario where a single PCS write
+// both bumps replicas (because the Planner asked for a scale-up) AND happens
+// to emit cliques in a different order (because the upstream operator
+// constructed them from a Go map). Both axes are individually no-ops; they
+// must remain a no-op when combined.
+func TestComputeGenerationHash_CombinedReplicaChangeAndCliqueReorderIsNoOp(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("frontend").
+			WithLabels(map[string]string{"role": "frontend"}).WithReplicas(1).Build()).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("planner").
+			WithLabels(map[string]string{"role": "planner"}).WithReplicas(1).Build()).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("prefill").
+			WithLabels(map[string]string{"role": "prefill"}).WithReplicas(1).Build()).
+		Build()
+	originalHash := computeGenerationHash(pcs)
+
+	combined := pcs.DeepCopy()
+	// Reorder cliques (Cliques is +listType=map keyed by name, no semantic
+	// order under default AnyOrder StartupType).
+	combined.Spec.Template.Cliques = []*grovecorev1alpha1.PodCliqueTemplateSpec{
+		pcs.Spec.Template.Cliques[2].DeepCopy(),
+		pcs.Spec.Template.Cliques[0].DeepCopy(),
+		pcs.Spec.Template.Cliques[1].DeepCopy(),
+	}
+	// Bump replicas on one of the cliques (replica-only changes are
+	// intentionally excluded from the generation hash).
+	combined.Spec.Template.Cliques[0].Spec.Replicas = 5
+
+	assert.Equal(t, originalHash, computeGenerationHash(combined),
+		"replica bump + clique reorder is the realistic latency-mode scale-up patch shape — neither axis must flip the generation hash")
+}
+
+// TestComputeGenerationHash_RealCliqueTemplateChangeFlipsHash is the
+// regression test in the other direction: if a real per-clique PodSpec
+// change happens (e.g. an image bump rolled out via the DGD) the
+// generation hash must change. Otherwise the rolling update would never
+// kick off.
+func TestComputeGenerationHash_RealCliqueTemplateChangeFlipsHash(t *testing.T) {
+	build := func(image string) *grovecorev1alpha1.PodCliqueSet {
+		pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+			WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("frontend").Build()).
+			WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").Build()).
+			Build()
+		pcs.Spec.Template.Cliques[1].Spec.PodSpec = corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "main", Image: image}},
+		}
+		return pcs
+	}
+	assert.NotEqual(t, computeGenerationHash(build("worker:v1")), computeGenerationHash(build("worker:v2")),
+		"a real per-clique image change must flip the generation hash; otherwise rolling updates would never start")
 }
 
 // TestInitUpdateProgress tests the initUpdateProgress function for both OnDelete and RollingRecreate strategies
