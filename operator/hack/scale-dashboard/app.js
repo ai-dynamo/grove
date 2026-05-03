@@ -532,13 +532,31 @@ function clamp(value, min, max) {
 }
 
 function metricSort(a, b) {
-  const rank = (name) => {
-    if (name === "total") return 0;
-    if (name.startsWith("phase.")) return 1;
-    if (name.startsWith("milestone.")) return 2;
-    return 3;
-  };
-  return rank(a) - rank(b) || a.localeCompare(b);
+  const left = metricSortKey(a);
+  const right = metricSortKey(b);
+  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+    if (left[i] === right[i]) continue;
+    if (typeof left[i] === "number" && typeof right[i] === "number") {
+      return left[i] - right[i];
+    }
+    return String(left[i]).localeCompare(String(right[i]));
+  }
+  return 0;
+}
+
+function metricSortKey(name) {
+  if (name === "total") return [0, 0, name];
+  if (name.startsWith("phase.")) return [1, metricFirstIndex(name), name];
+  if (name.startsWith("milestone.")) {
+    const phase = name.split(".")[1] || "";
+    return [2, metricFirstIndex(`phase.${phase}`), metricFirstIndex(name), name];
+  }
+  return [3, metricFirstIndex(name), name];
+}
+
+function metricFirstIndex(name) {
+  const index = state.rows.findIndex((row) => row.metric === name);
+  return index === -1 ? Number.MAX_SAFE_INTEGER : index;
 }
 
 function formatSeconds(value) {
