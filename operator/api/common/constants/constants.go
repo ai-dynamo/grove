@@ -23,6 +23,10 @@ const (
 	OperatorConfigGroupName = "operator.config.grove.io"
 	// OperatorGroupName is the name of the group for all Grove custom resources.
 	OperatorGroupName = "grove.io"
+	// GroveDomainPrefix is the qualifying prefix for grove.io-owned labels and annotations.
+	// Labels and annotations with this prefix are managed by the Grove operator and have a
+	// lifecycle independent of any user-supplied PodCliqueSet metadata.
+	GroveDomainPrefix = OperatorGroupName + "/"
 )
 
 // Constants for finalizers.
