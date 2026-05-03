@@ -266,11 +266,10 @@ function drawMilestoneChart(runs, phaseName, svg, legend) {
     }
 
     if (Number.isFinite(phaseTotal) && phaseTotal > previous + 0.001) {
-      const name = metricNames.length > 0 ? `after ${milestoneLabel(metricNames[metricNames.length - 1])}` : phaseName;
       segments.push({
-        name,
+        name: "phase tail",
         value: phaseTotal - previous,
-        color: colors.get(name) || STACK_COLORS[segments.length % STACK_COLORS.length],
+        color: colors.get("phase tail") || STACK_COLORS[segments.length % STACK_COLORS.length],
       });
     }
 
