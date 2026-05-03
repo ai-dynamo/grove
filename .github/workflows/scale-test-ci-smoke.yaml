@@ -210,15 +210,23 @@ jobs:
         with:
           go-version: "1.26.1"
 
+      - name: Compile scale test
+        working-directory: operator
+        run: |
+          go test -c -tags=e2e ./e2e/tests/scale -o "${RUNNER_TEMP}/scale.test"
+
       - name: Create scale cluster
         working-directory: operator
         run: |
           make scale-cluster-up E2E_CREATE_FLAGS='--dind-memory-mode --set pyroscope.enabled=false --set grove.profiling=false'
 
       - name: Run scale test
-        working-directory: operator
+        working-directory: operator/e2e/tests/scale
+        env:
+          GROVE_E2E_DIAG_DIR: ${{ runner.temp }}/grove-scale
+          GROVE_E2E_DIAG_MODE: file
         run: |
-          make run-scale-test DIAG_DIR="${RUNNER_TEMP}/grove-scale" DIAG_MODE=file
+          "${RUNNER_TEMP}/scale.test" -test.v -test.timeout=30m
 
       - name: Store scale result
         if: success()
