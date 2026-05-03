@@ -23,19 +23,29 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
-	"github.com/ai-dynamo/grove/operator/internal/utils"
 
 	"github.com/go-logr/logr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
-// triggerDeletionFlow handles the deletion of a PodCliqueSet and its managed resources
+// triggerDeletionFlow handles the deletion of a PodCliqueSet.
+// Owned resources (PodCliqueScalingGroup, PodClique, Service, ServiceAccount, Role,
+// RoleBinding, HPA, PodGang, ResourceClaim, etc.) carry a controller owner reference
+// to the PodCliqueSet, so removing the finalizer hands cleanup to the Kubernetes
+// garbage collector — which cascades the entire subtree without per-resource
+// reconcile work in this controller.
+//
+// One exception: ComputeDomain objects carry a Grove-owned finalizer
+// (`grove.io/computedomain-finalizer`) that the K8s garbage collector cannot
+// strip on its own. We invoke the ComputeDomain operator's Delete (which removes
+// the finalizer and issues Delete) before dropping the PCS finalizer, so the
+// CDs aren't left dangling once GC starts cascading.
 func (r *Reconciler) triggerDeletionFlow(ctx context.Context, logger logr.Logger, pcs *v1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	deleteStepFns := []ctrlcommon.ReconcileStepFn[v1alpha1.PodCliqueSet]{
-		r.deletePodCliqueSetResources,
-		r.verifyNoResourcesAwaitsCleanup,
+		r.releaseComputeDomainFinalizers,
 		r.removeFinalizer,
 	}
 	for _, fn := range deleteStepFns {
@@ -43,34 +53,25 @@ func (r *Reconciler) triggerDeletionFlow(ctx context.Context, logger logr.Logger
 			return r.recordIncompleteDeletion(ctx, logger, pcs, &stepResult)
 		}
 	}
-	logger.Info("PodCliqueSet deleted successfully")
+	logger.Info("PodCliqueSet finalizer removed; Kubernetes garbage collector will cascade-delete owned resources")
 	return ctrlcommon.DoNotRequeue()
 }
 
-// deletePodCliqueSetResources triggers concurrent deletion of all managed resources for the PodCliqueSet.
-func (r *Reconciler) deletePodCliqueSetResources(ctx context.Context, logger logr.Logger, pcs *v1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
-	operators := r.operatorRegistry.GetAllOperators()
-	deleteTasks := make([]utils.Task, 0, len(operators))
-	for kind, operator := range operators {
-		deleteTasks = append(deleteTasks, utils.Task{
-			Name: fmt.Sprintf("delete-%s", kind),
-			Fn: func(ctx context.Context) error {
-				return operator.Delete(ctx, logger, pcs.ObjectMeta)
-			},
-		})
+// releaseComputeDomainFinalizers strips the Grove finalizer from every
+// ComputeDomain owned by this PCS. ComputeDomains are the only PCS-owned
+// resource that carry a Grove-managed finalizer; without this step the K8s
+// garbage collector would orphan them in a `deleting` state forever once the
+// PCS goes away.
+func (r *Reconciler) releaseComputeDomainFinalizers(ctx context.Context, logger logr.Logger, pcs *v1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
+	op, err := r.operatorRegistry.GetOperator(component.KindComputeDomain)
+	if err != nil {
+		// ComputeDomain operator not registered (test scaffolding, etc.). Nothing to release.
+		return ctrlcommon.ContinueReconcile()
 	}
-	logger.Info("Triggering delete of PodCliqueSet resources")
-	if runResult := utils.RunConcurrently(ctx, logger, deleteTasks); runResult.HasErrors() {
-		deletionErr := runResult.GetAggregatedError()
-		logger.Error(deletionErr, "Error deleting managed resources", "summary", runResult.GetSummary())
-		return ctrlcommon.ReconcileWithErrors("error deleting managed resources", deletionErr)
+	if err := op.Delete(ctx, logger, pcs.ObjectMeta); err != nil {
+		return ctrlcommon.ReconcileWithErrors("error releasing ComputeDomain finalizers", fmt.Errorf("failed to release ComputeDomain finalizers for PodCliqueSet %v: %w", client.ObjectKeyFromObject(pcs), err))
 	}
 	return ctrlcommon.ContinueReconcile()
-}
-
-// verifyNoResourcesAwaitsCleanup ensures all managed resources have been cleaned up before finalizer removal.
-func (r *Reconciler) verifyNoResourcesAwaitsCleanup(ctx context.Context, logger logr.Logger, pcs *v1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
-	return ctrlutils.VerifyNoResourceAwaitsCleanup(ctx, logger, r.operatorRegistry, pcs.ObjectMeta)
 }
 
 // removeFinalizer removes the PodCliqueSet finalizer if present.

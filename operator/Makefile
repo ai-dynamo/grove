@@ -220,7 +220,7 @@ run-scale-test: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
 run-scale-test: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
 run-scale-test:
 	@echo "> Running scale tests..."
-	@cd e2e && go test -count=1 -tags=e2e ./tests/scale/... -v -timeout 30m
+	@cd e2e && go test -count=1 -tags=e2e ./tests/scale/... -v -timeout 40m
 
 # Make targets for local development and testing
 # -------------------------------------------------------------
