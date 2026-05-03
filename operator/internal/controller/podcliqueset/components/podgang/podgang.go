@@ -126,7 +126,7 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjectMeta
 
 // buildResource configures a PodGang with pod groups and priority.
 func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGangInfo, pg *groveschedulerv1alpha1.PodGang) error {
-	pg.Labels = getLabels(pcs.Name)
+	pg.Labels = lo.Assign(pg.Labels, getLabels(pcs.Name))
 	// Set scheduler name so the podgang controller can resolve the correct backend
 	if schedName := getSchedulerNameForPCS(pcs); schedName != "" {
 		if pg.Labels == nil {
@@ -134,6 +134,10 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGa
 		}
 		pg.Labels[apicommon.LabelSchedulerName] = schedName
 	}
+	// Merge existing PodGang annotations (preserved on the update path, e.g. from
+	// admission webhooks) with PCS annotations so scheduler-queue annotations
+	// such as nvidia.com/kai-scheduler-queue are propagated to the PodGang.
+	pg.Annotations = lo.Assign(pg.Annotations, pcs.Annotations)
 	if r.tasConfig.Enabled && podGangHasTranslatedTopologyConstraints(pgi) {
 		if topologyName, err := componentutils.ResolveTopologyNameForPodCliqueSet(pcs); err == nil && topologyName != "" {
 			if pg.Annotations == nil {
