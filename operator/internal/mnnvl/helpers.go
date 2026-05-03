@@ -21,28 +21,31 @@ import (
 	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
-// IsAutoMNNVLEnabled checks if MNNVL is enabled via the grove.io/auto-mnnvl annotation.
-func IsAutoMNNVLEnabled(annotations map[string]string) bool {
-	if annotations == nil {
-		return false
-	}
-	return annotations[AnnotationAutoMNNVL] == AnnotationAutoMNNVLEnabled
-}
+// groupStatus describes the MNNVL enrollment state derived from annotations.
+type groupStatus int
 
-// ValidateMNNVLGroupName validates that the given string is a valid DNS-1123
-// label, suitable for use as an mnnvl-group annotation value. The group name
-// becomes part of the ComputeDomain resource name, so it must conform to
-// Kubernetes naming rules.
+const (
+	groupAbsent    groupStatus = iota // annotation not present — inherit from parent
+	groupWithdrawn                    // annotation set to "none" — explicitly not enrolled
+	groupEnrolled                     // annotation set to a group name — enrolled
+)
+
+// ValidateMNNVLGroupName validates that the given string is a valid mnnvl-group
+// annotation value. The value must be either "none" (opt-out) or a valid
+// DNS-1123 label, since the group name becomes part of the ComputeDomain
+// resource name.
 func ValidateMNNVLGroupName(name string) error {
 	if name == "" {
 		return fmt.Errorf("mnnvl-group value must not be empty")
+	}
+	if name == AnnotationMNNVLGroupOptOut {
+		return nil
 	}
 	if errs := validation.IsDNS1123Label(name); len(errs) > 0 {
 		return fmt.Errorf("mnnvl-group value %q is not a valid DNS-1123 label: %s", name, strings.Join(errs, "; "))
@@ -50,72 +53,39 @@ func ValidateMNNVLGroupName(name string) error {
 	return nil
 }
 
-// DetectMNNVLConflict returns an error if the annotations contain contradictory
-// MNNVL settings: auto-mnnvl: disabled combined with a mnnvl-group value.
-func DetectMNNVLConflict(annotations map[string]string) error {
-	if annotations == nil {
-		return nil
+// resolveGroupName extracts the MNNVL group status from a single annotation set.
+//   - groupEnrolled:  mnnvl-group is set to a group name; group contains the name.
+//   - groupWithdrawn: mnnvl-group is "none" — explicit opt-out; group is "".
+//   - groupAbsent:    mnnvl-group is not present — inherit from parent; group is "".
+func resolveGroupName(annotations map[string]string) (group string, status groupStatus) {
+	val, exists := annotations[AnnotationMNNVLGroup]
+	if !exists {
+		return "", groupAbsent
 	}
-	autoVal, hasAuto := annotations[AnnotationAutoMNNVL]
-	_, hasGroup := annotations[AnnotationMNNVLGroup]
-	if hasAuto && strings.EqualFold(autoVal, AnnotationAutoMNNVLDisabled) && hasGroup {
-		return fmt.Errorf("contradictory MNNVL annotations: %s is %q but %s is also set; "+
-			"cannot disable MNNVL and assign a group simultaneously",
-			AnnotationAutoMNNVL, autoVal, AnnotationMNNVLGroup)
+	if val == AnnotationMNNVLGroupOptOut {
+		return "", groupWithdrawn
 	}
-	return nil
-}
-
-// ResolveGroupName extracts the MNNVL group from a single annotation set.
-// Returns (group, true) when mnnvl-group is set.
-// Returns ("", true) when auto-mnnvl is enabled without a group (default group).
-// Returns ("", false) when MNNVL is not requested.
-func ResolveGroupName(annotations map[string]string) (string, bool) {
-	if group, hasGroup := annotations[AnnotationMNNVLGroup]; hasGroup {
-		return group, true
-	}
-	if IsAutoMNNVLEnabled(annotations) {
-		return "", true
-	}
-	return "", false
+	return val, groupEnrolled
 }
 
 // ResolveGroupNameHierarchically resolves the MNNVL group from multiple
 // annotation layers, ordered from most specific to least specific
-// (e.g., PCLQ → PCSG/PCS). The first layer that requests MNNVL wins —
-// this lets a child layer intentionally override its parent's group,
-// including escaping a named group back to the default group by setting
-// only auto-mnnvl: enabled without mnnvl-group.
+// (e.g., PCLQ → PCSG → PCS). The first layer where the annotation is
+// present wins — even if it's "none" (withdrawn), which stops the walk.
 func ResolveGroupNameHierarchically(annotationLayers ...map[string]string) (string, bool) {
 	for _, annotations := range annotationLayers {
-		if group, ok := ResolveGroupName(annotations); ok {
-			return group, true
+		group, status := resolveGroupName(annotations)
+		if status != groupAbsent {
+			return group, status == groupEnrolled
 		}
 	}
 	return "", false
 }
 
 // GenerateRCTName creates the ResourceClaimTemplate name for a PCS replica.
-// Without a group: {pcs-name}-{replica-index} (default CD).
-// With a group: {pcs-name}-{replica-index}-{group-name}.
+// Format: {pcs-name}-{replica-index}-{group-name}.
 func GenerateRCTName(pcsNameReplica apicommon.ResourceNameReplica, groupName string) string {
-	if groupName == "" {
-		return fmt.Sprintf("%s-%d", pcsNameReplica.Name, pcsNameReplica.Replica)
-	}
 	return fmt.Sprintf("%s-%d-%s", pcsNameReplica.Name, pcsNameReplica.Replica, groupName)
-}
-
-// hasGPURequirement checks if any container in any clique of the PCS requests nvidia.com/gpu.
-func hasGPURequirement(pcs *grovecorev1alpha1.PodCliqueSet) bool {
-	for _, clique := range pcs.Spec.Template.Cliques {
-		if clique == nil {
-			continue
-		}
-		if HasGPUInPodSpec(&clique.Spec.PodSpec) {
-			return true
-		}
-	}
-	return false
 }
 
 // HasGPUInPodSpec checks if any container in the PodSpec requests GPU resources.
@@ -144,13 +114,11 @@ func containerHasGPU(container *corev1.Container) bool {
 	if container == nil {
 		return false
 	}
-	// Check limits
 	if quantity, exists := container.Resources.Limits[constants.GPUResourceName]; exists {
 		if !quantity.IsZero() {
 			return true
 		}
 	}
-	// Check requests
 	if quantity, exists := container.Resources.Requests[constants.GPUResourceName]; exists {
 		if !quantity.IsZero() {
 			return true

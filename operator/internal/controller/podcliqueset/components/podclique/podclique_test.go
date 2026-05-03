@@ -232,7 +232,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 		{
 			description: "MNNVL enabled with GPU container injects claims",
 			pcsAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "default",
 			},
 			containers: []corev1.Container{
 				{
@@ -247,7 +247,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 			expectedContainersWithClaims:    []string{"gpu-worker"},
 			expectedContainersWithoutClaims: []string{},
 			expectPodLevelClaim:             true,
-			expectedRCTName:                 "coyote-0",
+			expectedRCTName:                 "coyote-0-default",
 		},
 		{
 			description:    "MNNVL not enabled does not inject claims",
@@ -269,7 +269,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 		{
 			description: "MNNVL enabled but no GPU containers does not inject claims",
 			pcsAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "default",
 			},
 			containers: []corev1.Container{
 				{
@@ -288,7 +288,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 		{
 			description: "MNNVL enabled with mixed GPU and non-GPU containers",
 			pcsAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "default",
 			},
 			containers: []corev1.Container{
 				{
@@ -315,7 +315,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 		{
 			description: "MNNVL enabled with GPU in init container",
 			pcsAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "default",
 			},
 			initContainers: []corev1.Container{
 				{
@@ -339,7 +339,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 		{
 			description: "MNNVL disabled explicitly does not inject claims",
 			pcsAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled,
+				mnnvl.AnnotationMNNVLGroup: mnnvl.AnnotationMNNVLGroupOptOut,
 			},
 			containers: []corev1.Container{
 				{
@@ -378,7 +378,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 		{
 			description: "mnnvl-group on clique overrides PCS auto-mnnvl",
 			pcsAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "default",
 			},
 			cliqueAnnotations: map[string]string{
 				mnnvl.AnnotationMNNVLGroup: "encoders",

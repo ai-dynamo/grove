@@ -33,27 +33,21 @@ func TestValidatePCSOnCreate_Metadata(t *testing.T) {
 		errorContains    string
 	}{
 		{
-			description:      "annotation enabled + feature enabled -> no error",
-			pcs:              createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled}),
+			description:      "valid mnnvl-group + feature enabled -> no error",
+			pcs:              createPCSWithGPU(map[string]string{AnnotationMNNVLGroup: "workers"}),
 			autoMNNVLEnabled: true,
 			expectError:      false,
 		},
 		{
-			description:      "annotation enabled + feature disabled -> error",
-			pcs:              createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled}),
+			description:      "valid mnnvl-group + feature disabled -> error",
+			pcs:              createPCSWithGPU(map[string]string{AnnotationMNNVLGroup: "workers"}),
 			autoMNNVLEnabled: false,
 			expectError:      true,
 			errorContains:    "MNNVL is not enabled",
 		},
 		{
-			description:      "annotation disabled + feature disabled -> no error",
-			pcs:              createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLDisabled}),
-			autoMNNVLEnabled: false,
-			expectError:      false,
-		},
-		{
-			description:      "annotation disabled + feature enabled -> no error",
-			pcs:              createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLDisabled}),
+			description:      "mnnvl-group 'none' + feature enabled -> no error",
+			pcs:              createPCSWithGPU(map[string]string{AnnotationMNNVLGroup: AnnotationMNNVLGroupOptOut}),
 			autoMNNVLEnabled: true,
 			expectError:      false,
 		},
@@ -75,62 +69,6 @@ func TestValidatePCSOnCreate_Metadata(t *testing.T) {
 			autoMNNVLEnabled: false,
 			expectError:      false,
 		},
-		// Invalid annotation value tests
-		{
-			description:      "invalid annotation value 'true' -> error",
-			pcs:              createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: "true"}),
-			autoMNNVLEnabled: true,
-			expectError:      true,
-			errorContains:    "must be",
-		},
-		{
-			description:      "invalid annotation value 'false' -> error",
-			pcs:              createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: "false"}),
-			autoMNNVLEnabled: true,
-			expectError:      true,
-			errorContains:    "must be",
-		},
-		{
-			description:      "invalid annotation value empty string -> error",
-			pcs:              createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: ""}),
-			autoMNNVLEnabled: true,
-			expectError:      true,
-			errorContains:    "must be",
-		},
-		{
-			description:      "invalid annotation value 'yes' -> error",
-			pcs:              createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: "yes"}),
-			autoMNNVLEnabled: true,
-			expectError:      true,
-			errorContains:    "must be",
-		},
-		{
-			description:      "invalid annotation value 'ENABLED' (wrong case) -> error",
-			pcs:              createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: "ENABLED"}),
-			autoMNNVLEnabled: true,
-			expectError:      true,
-			errorContains:    "must be",
-		},
-		{
-			description:      "invalid annotation value with feature disabled -> error (value validation first)",
-			pcs:              createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: "invalid"}),
-			autoMNNVLEnabled: false,
-			expectError:      true,
-			errorContains:    "must be",
-		},
-		{
-			description:      "valid mnnvl-group + feature enabled -> no error",
-			pcs:              createPCSWithGPU(map[string]string{AnnotationMNNVLGroup: "workers"}),
-			autoMNNVLEnabled: true,
-			expectError:      false,
-		},
-		{
-			description:      "valid mnnvl-group + feature disabled -> error",
-			pcs:              createPCSWithGPU(map[string]string{AnnotationMNNVLGroup: "workers"}),
-			autoMNNVLEnabled: false,
-			expectError:      true,
-			errorContains:    "MNNVL is not enabled",
-		},
 		{
 			description:      "invalid mnnvl-group value (uppercase) -> error",
 			pcs:              createPCSWithGPU(map[string]string{AnnotationMNNVLGroup: "Workers"}),
@@ -144,19 +82,6 @@ func TestValidatePCSOnCreate_Metadata(t *testing.T) {
 			autoMNNVLEnabled: true,
 			expectError:      true,
 			errorContains:    "must not be empty",
-		},
-		{
-			description:      "enabled + mnnvl-group -> no error (compatible)",
-			pcs:              createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled, AnnotationMNNVLGroup: "training"}),
-			autoMNNVLEnabled: true,
-			expectError:      false,
-		},
-		{
-			description:      "disabled + mnnvl-group -> error (conflict)",
-			pcs:              createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLDisabled, AnnotationMNNVLGroup: "training"}),
-			autoMNNVLEnabled: true,
-			expectError:      true,
-			errorContains:    "contradictory",
 		},
 	}
 
@@ -189,52 +114,6 @@ func TestValidatePCSOnUpdate_Metadata(t *testing.T) {
 			expectError: false,
 		},
 		{
-			description: "annotation unchanged enabled -> no error",
-			oldPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled}),
-			newPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled}),
-			expectError: false,
-		},
-		{
-			description: "annotation unchanged disabled -> no error",
-			oldPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLDisabled}),
-			newPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLDisabled}),
-			expectError: false,
-		},
-		{
-			description: "annotation added -> error",
-			oldPCS:      createPCSWithGPU(nil),
-			newPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled}),
-			expectError: true,
-			errorMsg:    "cannot be added",
-		},
-		{
-			description: "annotation removed -> error",
-			oldPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled}),
-			newPCS:      createPCSWithGPU(nil),
-			expectError: true,
-			errorMsg:    "cannot be removed",
-		},
-		{
-			description: "annotation changed enabled to disabled -> error",
-			oldPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled}),
-			newPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLDisabled}),
-			expectError: true,
-			errorMsg:    "immutable",
-		},
-		{
-			description: "annotation changed disabled to enabled -> error",
-			oldPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLDisabled}),
-			newPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled}),
-			expectError: true,
-			errorMsg:    "immutable",
-		},
-		{
-			description: "other annotations changed but mnnvl unchanged -> no error",
-			oldPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled, "other": "old"}),
-			newPCS:      createPCSWithGPU(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled, "other": "new"}),
-			expectError: false,
-		},
-		{
 			description: "mnnvl-group unchanged -> no error",
 			oldPCS:      createPCSWithGPU(map[string]string{AnnotationMNNVLGroup: "workers"}),
 			newPCS:      createPCSWithGPU(map[string]string{AnnotationMNNVLGroup: "workers"}),
@@ -260,6 +139,12 @@ func TestValidatePCSOnUpdate_Metadata(t *testing.T) {
 			newPCS:      createPCSWithGPU(map[string]string{AnnotationMNNVLGroup: "training"}),
 			expectError: true,
 			errorMsg:    "immutable",
+		},
+		{
+			description: "other annotations changed but mnnvl-group unchanged -> no error",
+			oldPCS:      createPCSWithGPU(map[string]string{AnnotationMNNVLGroup: "workers", "other": "old"}),
+			newPCS:      createPCSWithGPU(map[string]string{AnnotationMNNVLGroup: "workers", "other": "new"}),
+			expectError: false,
 		},
 	}
 
@@ -303,13 +188,12 @@ func TestValidatePCSOnCreate_Spec(t *testing.T) {
 			errorContains:    "not a valid DNS-1123 label",
 		},
 		{
-			description: "conflict on clique template (disabled + group) -> error",
+			description: "mnnvl-group 'none' on clique template -> no error",
 			pcs: createPCSWithCliques([]cliqueAnnotation{
-				{name: "workers", annotations: map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLDisabled, AnnotationMNNVLGroup: "training"}},
+				{name: "workers", annotations: map[string]string{AnnotationMNNVLGroup: AnnotationMNNVLGroupOptOut}},
 			}),
 			autoMNNVLEnabled: true,
-			expectError:      true,
-			errorContains:    "contradictory",
+			expectError:      false,
 		},
 		{
 			description: "mnnvl-group on clique template + feature disabled -> error",
@@ -394,13 +278,6 @@ func TestValidatePCSOnCreate_PCSGConfig(t *testing.T) {
 			errorContains:    "not a valid DNS-1123 label",
 		},
 		{
-			description:      "conflict on PCSG config (disabled + group) -> error",
-			pcs:              createPCSWithPCSGConfigAnnotations(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLDisabled, AnnotationMNNVLGroup: "training"}),
-			autoMNNVLEnabled: true,
-			expectError:      true,
-			errorContains:    "contradictory",
-		},
-		{
 			description:      "mnnvl-group on PCSG config + feature disabled -> error",
 			pcs:              createPCSWithPCSGConfigAnnotations(map[string]string{AnnotationMNNVLGroup: "workers"}),
 			autoMNNVLEnabled: false,
@@ -408,11 +285,10 @@ func TestValidatePCSOnCreate_PCSGConfig(t *testing.T) {
 			errorContains:    "not enabled",
 		},
 		{
-			description:      "auto-mnnvl enabled on PCSG config + feature disabled -> error",
-			pcs:              createPCSWithPCSGConfigAnnotations(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled}),
-			autoMNNVLEnabled: false,
-			expectError:      true,
-			errorContains:    "not enabled",
+			description:      "mnnvl-group 'none' on PCSG config + feature enabled -> no error",
+			pcs:              createPCSWithPCSGConfigAnnotations(map[string]string{AnnotationMNNVLGroup: AnnotationMNNVLGroupOptOut}),
+			autoMNNVLEnabled: true,
+			expectError:      false,
 		},
 		{
 			description:      "PCSG config without annotations -> no error",
@@ -604,18 +480,8 @@ func TestValidatePCSOnCreate_NonGPUCliqueWithMNNVL(t *testing.T) {
 		autoMNNVLEnabled bool
 	}{
 		{
-			description:      "non-GPU clique with auto-mnnvl enabled -> accepted (silently skipped at injection)",
-			pcs:              createPCSWithNonGPUCliqueAnnotations(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled}),
-			autoMNNVLEnabled: true,
-		},
-		{
 			description:      "non-GPU clique with mnnvl-group -> accepted (silently skipped at injection)",
 			pcs:              createPCSWithNonGPUCliqueAnnotations(map[string]string{AnnotationMNNVLGroup: "workers"}),
-			autoMNNVLEnabled: true,
-		},
-		{
-			description:      "GPU clique with auto-mnnvl enabled -> accepted",
-			pcs:              createPCSWithGPUCliqueAnnotations(map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled}),
 			autoMNNVLEnabled: true,
 		},
 		{
@@ -626,6 +492,11 @@ func TestValidatePCSOnCreate_NonGPUCliqueWithMNNVL(t *testing.T) {
 		{
 			description:      "non-GPU clique without MNNVL annotations -> accepted",
 			pcs:              createPCSWithNonGPUCliqueAnnotations(nil),
+			autoMNNVLEnabled: true,
+		},
+		{
+			description:      "non-GPU clique with mnnvl-group 'none' -> accepted",
+			pcs:              createPCSWithNonGPUCliqueAnnotations(map[string]string{AnnotationMNNVLGroup: AnnotationMNNVLGroupOptOut}),
 			autoMNNVLEnabled: true,
 		},
 	}

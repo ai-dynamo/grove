@@ -29,102 +29,48 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
-func TestIsAutoMNNVLEnabled(t *testing.T) {
-	tests := []struct {
-		description string
-		annotations map[string]string
-		expected    bool
-	}{
-		{
-			description: "nil annotations returns false",
-			annotations: nil,
-			expected:    false,
-		},
-		{
-			description: "empty annotations returns false",
-			annotations: map[string]string{},
-			expected:    false,
-		},
-		{
-			description: "annotation set to enabled returns true",
-			annotations: map[string]string{
-				AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled,
-			},
-			expected: true,
-		},
-		{
-			description: "annotation set to disabled returns false",
-			annotations: map[string]string{
-				AnnotationAutoMNNVL: AnnotationAutoMNNVLDisabled,
-			},
-			expected: false,
-		},
-		{
-			description: "annotation set to invalid value returns false",
-			annotations: map[string]string{
-				AnnotationAutoMNNVL: "invalid",
-			},
-			expected: false,
-		},
-		{
-			description: "other annotations without MNNVL returns false",
-			annotations: map[string]string{
-				"some-other-annotation": "value",
-			},
-			expected: false,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.description, func(t *testing.T) {
-			result := IsAutoMNNVLEnabled(tc.annotations)
-			assert.Equal(t, tc.expected, result)
-		})
-	}
-}
-
 func TestResolveGroupName(t *testing.T) {
 	testCases := []struct {
-		description   string
-		annotations   map[string]string
-		expectedGroup string
-		expectedOk    bool
+		description    string
+		annotations    map[string]string
+		expectedGroup  string
+		expectedStatus groupStatus
 	}{
 		{
-			description:   "auto-mnnvl enabled only — default group",
-			annotations:   map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled},
-			expectedGroup: "",
-			expectedOk:    true,
+			description:    "absent annotation — inherit from parent",
+			annotations:    nil,
+			expectedGroup:  "",
+			expectedStatus: groupAbsent,
 		},
 		{
-			description:   "mnnvl-group only — named group",
-			annotations:   map[string]string{AnnotationMNNVLGroup: "workers"},
-			expectedGroup: "workers",
-			expectedOk:    true,
+			description:    "empty annotations — inherit from parent",
+			annotations:    map[string]string{},
+			expectedGroup:  "",
+			expectedStatus: groupAbsent,
 		},
 		{
-			description: "both — group takes precedence",
-			annotations: map[string]string{
-				AnnotationAutoMNNVL:  AnnotationAutoMNNVLEnabled,
-				AnnotationMNNVLGroup: "training",
-			},
-			expectedGroup: "training",
-			expectedOk:    true,
+			description:    "unrelated annotations only — inherit from parent",
+			annotations:    map[string]string{"other": "value"},
+			expectedGroup:  "",
+			expectedStatus: groupAbsent,
 		},
 		{
-			description: "auto-mnnvl disabled — not enrolled",
-			annotations: map[string]string{AnnotationAutoMNNVL: AnnotationAutoMNNVLDisabled},
-			expectedOk:  false,
+			description:    "mnnvl-group set to training — enrolled",
+			annotations:    map[string]string{AnnotationMNNVLGroup: "training"},
+			expectedGroup:  "training",
+			expectedStatus: groupEnrolled,
 		},
 		{
-			description: "no annotations — not enrolled",
-			annotations: nil,
-			expectedOk:  false,
+			description:    "mnnvl-group set to default — enrolled",
+			annotations:    map[string]string{AnnotationMNNVLGroup: "default"},
+			expectedGroup:  "default",
+			expectedStatus: groupEnrolled,
 		},
 		{
-			description: "unrelated annotations only — not enrolled",
-			annotations: map[string]string{"other": "value"},
-			expectedOk:  false,
+			description:    "mnnvl-group set to none — withdrawn",
+			annotations:    map[string]string{AnnotationMNNVLGroup: AnnotationMNNVLGroupOptOut},
+			expectedGroup:  "",
+			expectedStatus: groupWithdrawn,
 		},
 	}
 
@@ -132,11 +78,9 @@ func TestResolveGroupName(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
 			t.Parallel()
-			group, ok := ResolveGroupName(tc.annotations)
-			assert.Equal(t, tc.expectedOk, ok)
-			if ok {
-				assert.Equal(t, tc.expectedGroup, group)
-			}
+			group, status := resolveGroupName(tc.annotations)
+			assert.Equal(t, tc.expectedGroup, group)
+			assert.Equal(t, tc.expectedStatus, status)
 		})
 	}
 }
@@ -155,22 +99,25 @@ func TestResolveGroupNameHierarchically(t *testing.T) {
 			expectedOk:    true,
 		},
 		{
-			description:   "PCLQ has auto-mnnvl enabled — parent group ignored (escape to default)",
-			layers:        []map[string]string{{AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled}, {AnnotationMNNVLGroup: "parent-group"}},
-			expectedGroup: "",
-			expectedOk:    true,
-		},
-		{
-			description:   "PCLQ has nothing — falls back to parent group",
+			description:   "PCLQ absent — falls back to parent group",
 			layers:        []map[string]string{{}, {AnnotationMNNVLGroup: "parent-group"}},
 			expectedGroup: "parent-group",
 			expectedOk:    true,
 		},
 		{
-			description:   "PCLQ has nothing — falls back to parent auto-mnnvl",
-			layers:        []map[string]string{nil, {AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled}},
-			expectedGroup: "",
-			expectedOk:    true,
+			description: "PCLQ has none — parent group overridden, opt-out",
+			layers:      []map[string]string{{AnnotationMNNVLGroup: AnnotationMNNVLGroupOptOut}, {AnnotationMNNVLGroup: "parent-group"}},
+			expectedOk:  false,
+		},
+		{
+			description: "both absent — not enrolled",
+			layers:      []map[string]string{{}, {}},
+			expectedOk:  false,
+		},
+		{
+			description: "nil layers — not enrolled",
+			layers:      nil,
+			expectedOk:  false,
 		},
 		{
 			description:   "PCLQ has group — nil parent is safe",
@@ -181,16 +128,6 @@ func TestResolveGroupNameHierarchically(t *testing.T) {
 		{
 			description: "PCLQ empty — nil parent is safe",
 			layers:      []map[string]string{{}, nil},
-			expectedOk:  false,
-		},
-		{
-			description: "no layers have MNNVL — not enrolled",
-			layers:      []map[string]string{{}, {}},
-			expectedOk:  false,
-		},
-		{
-			description: "no layers at all — not enrolled",
-			layers:      nil,
 			expectedOk:  false,
 		},
 	}
@@ -218,20 +155,20 @@ func TestGenerateRCTName(t *testing.T) {
 		{
 			description:    "default group index 0",
 			pcsNameReplica: apicommon.ResourceNameReplica{Name: "my-pcs", Replica: 0},
-			groupName:      "",
-			expected:       "my-pcs-0",
+			groupName:      "default",
+			expected:       "my-pcs-0-default",
 		},
 		{
 			description:    "default group index 5",
 			pcsNameReplica: apicommon.ResourceNameReplica{Name: "workload", Replica: 5},
-			groupName:      "",
-			expected:       "workload-5",
+			groupName:      "default",
+			expected:       "workload-5-default",
 		},
 		{
 			description:    "default group with dashes",
 			pcsNameReplica: apicommon.ResourceNameReplica{Name: "my-long-pcs-name", Replica: 10},
-			groupName:      "",
-			expected:       "my-long-pcs-name-10",
+			groupName:      "default",
+			expected:       "my-long-pcs-name-10-default",
 		},
 		{
 			description:    "named group",
@@ -261,6 +198,11 @@ func TestValidateMNNVLGroupName(t *testing.T) {
 		name        string
 		expectErr   bool
 	}{
+		{
+			description: "none is accepted (opt-out)",
+			name:        "none",
+			expectErr:   false,
+		},
 		{
 			description: "simple lowercase name",
 			name:        "training",
@@ -341,182 +283,6 @@ func TestValidateMNNVLGroupName(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 			}
-		})
-	}
-}
-
-func TestDetectMNNVLConflict(t *testing.T) {
-	tests := []struct {
-		description string
-		annotations map[string]string
-		expectErr   bool
-	}{
-		{
-			description: "nil annotations — no conflict",
-			annotations: nil,
-			expectErr:   false,
-		},
-		{
-			description: "empty annotations — no conflict",
-			annotations: map[string]string{},
-			expectErr:   false,
-		},
-		{
-			description: "auto-mnnvl enabled only — no conflict",
-			annotations: map[string]string{
-				AnnotationAutoMNNVL: AnnotationAutoMNNVLEnabled,
-			},
-			expectErr: false,
-		},
-		{
-			description: "auto-mnnvl disabled only — no conflict",
-			annotations: map[string]string{
-				AnnotationAutoMNNVL: AnnotationAutoMNNVLDisabled,
-			},
-			expectErr: false,
-		},
-		{
-			description: "mnnvl-group only — no conflict",
-			annotations: map[string]string{
-				AnnotationMNNVLGroup: "workers",
-			},
-			expectErr: false,
-		},
-		{
-			description: "enabled + group — no conflict",
-			annotations: map[string]string{
-				AnnotationAutoMNNVL:  AnnotationAutoMNNVLEnabled,
-				AnnotationMNNVLGroup: "workers",
-			},
-			expectErr: false,
-		},
-		{
-			description: "disabled + group — conflict",
-			annotations: map[string]string{
-				AnnotationAutoMNNVL:  AnnotationAutoMNNVLDisabled,
-				AnnotationMNNVLGroup: "workers",
-			},
-			expectErr: true,
-		},
-		{
-			description: "disabled (uppercase) + group — conflict (case-insensitive)",
-			annotations: map[string]string{
-				AnnotationAutoMNNVL:  "Disabled",
-				AnnotationMNNVLGroup: "training",
-			},
-			expectErr: true,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.description, func(t *testing.T) {
-			err := DetectMNNVLConflict(tc.annotations)
-			if tc.expectErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func Test_hasGPURequirement(t *testing.T) {
-	tests := []struct {
-		name     string
-		pcs      *grovecorev1alpha1.PodCliqueSet
-		expected bool
-	}{
-		{
-			name:     "container with GPU limits",
-			pcs:      createPCSWithGPU(nil),
-			expected: true,
-		},
-		{
-			name:     "container without GPU",
-			pcs:      createPCSWithoutGPU(nil),
-			expected: false,
-		},
-		{
-			name:     "empty cliques",
-			pcs:      &grovecorev1alpha1.PodCliqueSet{},
-			expected: false,
-		},
-		{
-			name: "GPU in init container",
-			pcs: testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
-				WithPodCliqueTemplateSpec(
-					testutils.NewPodCliqueTemplateSpecBuilder("worker").
-						WithInitContainer(corev1.Container{
-							Name: "init",
-							Resources: corev1.ResourceRequirements{
-								Limits: corev1.ResourceList{
-									constants.GPUResourceName: resource.MustParse("1"),
-								},
-							},
-						}).
-						Build(),
-				).
-				Build(),
-			expected: true,
-		},
-		{
-			name: "GPU in requests not limits",
-			pcs: testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
-				WithPodCliqueTemplateSpec(
-					testutils.NewPodCliqueTemplateSpecBuilder("worker").
-						WithContainer(corev1.Container{
-							Name: "train",
-							Resources: corev1.ResourceRequirements{
-								Requests: corev1.ResourceList{
-									constants.GPUResourceName: resource.MustParse("2"),
-								},
-							},
-						}).
-						Build(),
-				).
-				Build(),
-			expected: true,
-		},
-		{
-			name: "GPU with zero quantity",
-			pcs: testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
-				WithPodCliqueTemplateSpec(
-					testutils.NewPodCliqueTemplateSpecBuilder("worker").
-						WithContainer(corev1.Container{
-							Name: "train",
-							Resources: corev1.ResourceRequirements{
-								Limits: corev1.ResourceList{
-									constants.GPUResourceName: resource.MustParse("0"),
-								},
-							},
-						}).
-						Build(),
-				).
-				Build(),
-			expected: false,
-		},
-		{
-			name: "multiple cliques - one with GPU",
-			pcs: testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
-				WithPodCliqueTemplateSpec(
-					testutils.NewPodCliqueTemplateSpecBuilder("controller").
-						WithContainer(testutils.NewContainer("ctrl", "busybox")).
-						Build(),
-				).
-				WithPodCliqueTemplateSpec(
-					testutils.NewPodCliqueTemplateSpecBuilder("worker").
-						WithContainer(testutils.NewGPUContainer("train", "nvidia/cuda:latest", 8)).
-						Build(),
-				).
-				Build(),
-			expected: true,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			result := hasGPURequirement(test.pcs)
-			assert.Equal(t, test.expected, result)
 		})
 	}
 }
