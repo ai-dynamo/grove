@@ -8,7 +8,7 @@ metadata:
   labels:
     app: scale-test-1000
 spec:
-  replicas: 10
+  replicas: 500
   template:
     cliques:
       - name: expert-worker
