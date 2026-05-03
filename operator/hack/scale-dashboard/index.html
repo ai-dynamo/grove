@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Grove Scale Test</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=charts-v2">
   </head>
   <body>
     <main class="page">
@@ -21,15 +21,48 @@
           Test
           <select id="test-select"></select>
         </label>
-        <label>
-          Metric
-          <select id="metric-select"></select>
-        </label>
       </section>
 
-      <section class="chart-wrap" aria-label="Runtime chart">
-        <svg id="chart" role="img" aria-label="Selected scale-test metric over time"></svg>
-        <div id="tooltip" class="tooltip" hidden></div>
+      <section class="charts" aria-label="Runtime charts">
+        <article class="chart-panel">
+          <header class="chart-panel-header">
+            <h2>Total Runtime</h2>
+            <div id="total-summary" class="summary"></div>
+          </header>
+          <div class="chart-frame">
+            <svg id="total-chart" class="chart" role="img" aria-label="Total scale-test runtime over time"></svg>
+          </div>
+        </article>
+
+        <article class="chart-panel">
+          <header class="chart-panel-header">
+            <h2>Phases</h2>
+            <div id="phase-legend" class="legend"></div>
+          </header>
+          <div class="chart-frame">
+            <svg id="phase-chart" class="chart" role="img" aria-label="Scale-test phase runtime by run"></svg>
+          </div>
+        </article>
+
+        <article class="chart-panel">
+          <header class="chart-panel-header">
+            <h2>Deploy Milestones</h2>
+            <div id="deploy-legend" class="legend"></div>
+          </header>
+          <div class="chart-frame">
+            <svg id="deploy-chart" class="chart" role="img" aria-label="Deploy milestone runtime by run"></svg>
+          </div>
+        </article>
+
+        <article class="chart-panel">
+          <header class="chart-panel-header">
+            <h2>Delete Milestones</h2>
+            <div id="delete-legend" class="legend"></div>
+          </header>
+          <div class="chart-frame">
+            <svg id="delete-chart" class="chart" role="img" aria-label="Delete milestone runtime by run"></svg>
+          </div>
+        </article>
       </section>
 
       <section class="latest">
@@ -46,6 +79,7 @@
         </table>
       </section>
     </main>
-    <script src="app.js"></script>
+    <div id="tooltip" class="tooltip" hidden></div>
+    <script src="app.js?v=charts-v2"></script>
   </body>
 </html>
