@@ -19,6 +19,7 @@ package podcliqueset
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -53,7 +54,9 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 		return ctrlcommon.ReconcileWithErrors("failed to mutate TopologyLevelsUnavailable condition", err)
 	}
 
-	// mirror UpdateProgress to the deprecated RollingUpdateProgress field for backward compatibility.
+	// Mirror UpdateProgress to the deprecated RollingUpdateProgress field for backward compatibility.
+	// The previous slice-shaped UpdatedPodCliques/UpdatedPodCliqueScalingGroups fields on the
+	// deprecated mirror are gone; only bounded counts and timestamps are mirrored now.
 	mirrorUpdateProgressToRollingUpdateProgress(pcs)
 
 	// Skip the status update when every mutate* above left status byte-identical to what
@@ -73,52 +76,77 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	return ctrlcommon.ContinueReconcile()
 }
 
-// mutateReplicas updates the PodCliqueSet status replica counts.
+// mutateReplicas updates the PodCliqueSet status replica counts and update-progress counts.
 func (r *Reconciler) mutateReplicas(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
 	// Set basic replica count
 	pcs.Status.Replicas = pcs.Spec.Replicas
-	availableReplicas, updatedReplicas, err := r.computeAvailableAndUpdatedReplicas(ctx, logger, pcs)
+	stats, err := r.computeAvailableAndUpdatedReplicas(ctx, logger, pcs)
 	if err != nil {
 		return fmt.Errorf("could not compute available replicas: %w", err)
 	}
-	pcs.Status.AvailableReplicas = availableReplicas
-	pcs.Status.UpdatedReplicas = updatedReplicas
+	pcs.Status.AvailableReplicas = stats.availableReplicas
+	pcs.Status.UpdatedReplicas = stats.updatedReplicas
+	if pcs.Status.UpdateProgress != nil {
+		pcs.Status.UpdateProgress.UpdatedPodCliquesCount = stats.updatedPCLQs
+		pcs.Status.UpdateProgress.TotalPodCliquesCount = stats.totalPCLQs
+		pcs.Status.UpdateProgress.UpdatedPodCliqueScalingGroupsCount = stats.updatedPCSGs
+		pcs.Status.UpdateProgress.TotalPodCliqueScalingGroupsCount = stats.totalPCSGs
+	}
 	return nil
 }
 
-// computeAvailableAndUpdatedReplicas calculates the number of available replicas for a PodCliqueSet.
-// It checks both standalone PodCliques and PodCliqueScalingGroups to determine availability.
-// A replica is considered available if it has all its required components (PCSGs and standalone PCLQs) available.
-func (r *Reconciler) computeAvailableAndUpdatedReplicas(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) (int32, int32, error) {
+// pcsReplicaStats aggregates replica- and child-level update progress derived from a single
+// pass over the informer cache.
+type pcsReplicaStats struct {
+	availableReplicas int32
+	updatedReplicas   int32
+	// updatedPCLQs counts standalone PCLQs (not in a PCSG) whose CurrentPodCliqueSetGenerationHash
+	// matches pcs.Status.CurrentGenerationHash. PCSG-owned PCLQs are tracked on their owning PCSG.
+	updatedPCLQs int32
+	totalPCLQs   int32
+	updatedPCSGs int32
+	totalPCSGs   int32
+}
+
+// computeAvailableAndUpdatedReplicas walks the PCS's standalone PCLQs and PCSGs once and
+// returns aggregate availability and update counts. Replaces the prior O(N²) accumulator that
+// stored fully-qualified child names in status.
+func (r *Reconciler) computeAvailableAndUpdatedReplicas(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) (pcsReplicaStats, error) {
 	var (
-		availableReplicas int32
-		updatedReplicas   int32
-		pcsObjectKey      = client.ObjectKeyFromObject(pcs)
+		stats        pcsReplicaStats
+		pcsObjectKey = client.ObjectKeyFromObject(pcs)
 	)
 
 	expectedPCSGFQNsPerPCSReplica := componentutils.GetExpectedPCSGFQNsPerPCSReplica(pcs)
 	expectedStandAlonePCLQFQNsPerPCSReplica := componentutils.GetExpectedStandAlonePCLQFQNsPerPCSReplica(pcs)
 
-	// Fetch all PCSGs for this PCS
+	// Hoist the expected-name lookups out of the filter callbacks. Built once each (O(E) work and
+	// space); each filter pass is then O(M) with a single map lookup per element, where M is the
+	// number of live children fetched and E is the number of expected names. Replaces an earlier
+	// O(M*E) pattern that re-flattened the per-replica name map on every element.
+	expectedPCSGNameSet := flattenNamesToSet(expectedPCSGFQNsPerPCSReplica)
+	expectedStandalonePCLQNameSet := flattenNamesToSet(expectedStandAlonePCLQFQNsPerPCSReplica)
+
+	// Fetch all PCSGs for this PCS, then drop any stray PCSGs (not part of the spec) using O(1)
+	// set lookup. slices.DeleteFunc compacts in-place; safe here because the slice came from a
+	// fresh fetch and isn't aliased.
 	pcsgs, err := componentutils.GetPCSGsForPCS(ctx, r.client, pcsObjectKey)
 	if err != nil {
-		return availableReplicas, updatedReplicas, err
+		return stats, err
 	}
-	// Filter the PCSGs that belong to the expected set of PCSGs for PCS, this ensures that we do not
-	// consider any stray PCSGs that might have been created externally.
-	pcsgs = lo.Filter(pcsgs, func(pcsg grovecorev1alpha1.PodCliqueScalingGroup, _ int) bool {
-		return lo.Contains(lo.Flatten(lo.Values(expectedPCSGFQNsPerPCSReplica)), pcsg.Name)
+	pcsgs = slices.DeleteFunc(pcsgs, func(pcsg grovecorev1alpha1.PodCliqueScalingGroup) bool {
+		_, expected := expectedPCSGNameSet[pcsg.Name]
+		return !expected
 	})
 
-	// Fetch all standalone PodCliques for this PCS
+	// Fetch all standalone PodCliques for this PCS and drop strays the same way.
 	standalonePCLQs, err := componentutils.GetPodCliquesWithParentPCS(ctx, r.client, pcsObjectKey)
 	if err != nil {
-		return availableReplicas, updatedReplicas, err
+		return stats, err
 	}
-	// Filter the PCLQs that belong to the expected set of standalone PCLQs for PCS, this ensures that we do not
-	// consider any stray PCLQs that might have been created externally.
-	standalonePCLQs = lo.Filter(standalonePCLQs, func(pclq grovecorev1alpha1.PodClique, _ int) bool {
-		return lo.Contains(lo.Flatten(lo.Values(expectedStandAlonePCLQFQNsPerPCSReplica)), pclq.Name)
+	standalonePCLQs = slices.DeleteFunc(standalonePCLQs, func(pclq grovecorev1alpha1.PodClique) bool {
+		_, expected := expectedStandalonePCLQNameSet[pclq.Name]
+		return !expected
 	})
 
 	// Group both resources by PCS replica index
@@ -129,19 +157,68 @@ func (r *Reconciler) computeAvailableAndUpdatedReplicas(ctx context.Context, log
 		replicaIndexStr := strconv.Itoa(replicaIndex)
 		replicaStandalonePCLQs := standalonePCLQsByReplica[replicaIndexStr]
 		replicaPCSGs := pcsgsByReplica[replicaIndexStr]
-		// Check if this PCS replica is available based on all its components
+		expectedPCSGCount := len(expectedPCSGFQNsPerPCSReplica[replicaIndex])
+		expectedPCLQCount := len(expectedStandAlonePCLQFQNsPerPCSReplica[replicaIndex])
+
+		stats.totalPCLQs += int32(expectedPCLQCount)
+		stats.totalPCSGs += int32(expectedPCSGCount)
+		stats.updatedPCLQs += countUpdatedPCLQs(pcs.Status.CurrentGenerationHash, replicaStandalonePCLQs)
+		stats.updatedPCSGs += countUpdatedPCSGs(pcs.Status.CurrentGenerationHash, replicaPCSGs)
+
 		isReplicaAvailable, isReplicaUpdated := r.computeReplicaStatus(pcs.Status.CurrentGenerationHash, replicaPCSGs,
-			replicaStandalonePCLQs, len(expectedPCSGFQNsPerPCSReplica[replicaIndex]), len(expectedStandAlonePCLQFQNsPerPCSReplica[replicaIndex]))
+			replicaStandalonePCLQs, expectedPCSGCount, expectedPCLQCount)
 		if isReplicaAvailable {
-			availableReplicas++
+			stats.availableReplicas++
 		}
 		if isReplicaUpdated {
-			updatedReplicas++
+			stats.updatedReplicas++
 		}
 	}
 
-	logger.Info("Calculated available and updated replicas for PCS", "pcs", pcsObjectKey, "availableReplicas", availableReplicas, "updatedReplicas", updatedReplicas, "totalReplicas", pcs.Spec.Replicas)
-	return availableReplicas, updatedReplicas, nil
+	logger.Info("Calculated PCS replica and update progress stats",
+		"pcs", pcsObjectKey,
+		"availableReplicas", stats.availableReplicas,
+		"updatedReplicas", stats.updatedReplicas,
+		"updatedPCLQs", stats.updatedPCLQs, "totalPCLQs", stats.totalPCLQs,
+		"updatedPCSGs", stats.updatedPCSGs, "totalPCSGs", stats.totalPCSGs)
+	return stats, nil
+}
+
+// countUpdatedPCLQs counts non-terminating PCLQs whose generation hash matches the PCS hash.
+func countUpdatedPCLQs(pcsGenerationHash *string, pclqs []grovecorev1alpha1.PodClique) int32 {
+	if pcsGenerationHash == nil {
+		return 0
+	}
+	var n int32
+	for i := range pclqs {
+		pclq := &pclqs[i]
+		if k8sutils.IsResourceTerminating(pclq.ObjectMeta) {
+			continue
+		}
+		if pclq.Status.CurrentPodCliqueSetGenerationHash != nil &&
+			*pclq.Status.CurrentPodCliqueSetGenerationHash == *pcsGenerationHash {
+			n++
+		}
+	}
+	return n
+}
+
+// countUpdatedPCSGs counts non-terminating PCSGs whose update completed at the PCS hash.
+func countUpdatedPCSGs(pcsGenerationHash *string, pcsgs []grovecorev1alpha1.PodCliqueScalingGroup) int32 {
+	if pcsGenerationHash == nil {
+		return 0
+	}
+	var n int32
+	for i := range pcsgs {
+		pcsg := &pcsgs[i]
+		if k8sutils.IsResourceTerminating(pcsg.ObjectMeta) {
+			continue
+		}
+		if componentutils.IsPCSGUpdateComplete(pcsg, *pcsGenerationHash) {
+			n++
+		}
+	}
+	return n
 }
 
 // computeReplicaStatus determines if a replica is available and updated based on its components.
@@ -308,25 +385,45 @@ func (r *Reconciler) computeTopologyLevelsUnavailableCondition(ctx context.Conte
 	}, nil
 }
 
-// mirrorUpdateProgressToRollingUpdateProgress mirrors the UpdateProgress field to the deprecated RollingUpdateProgress field
-// for backward compatibility with consumers that still use the old field name.
+// mirrorUpdateProgressToRollingUpdateProgress mirrors the canonical UpdateProgress to the deprecated
+// RollingUpdateProgress field so consumers still reading the deprecated path keep working. Only
+// bounded count fields (and timestamps + currently-updating index) are mirrored — the previous
+// unbounded slice fields have been removed (see issue #567).
 func mirrorUpdateProgressToRollingUpdateProgress(pcs *grovecorev1alpha1.PodCliqueSet) {
 	if pcs.Status.UpdateProgress == nil {
 		pcs.Status.RollingUpdateProgress = nil
 		return
 	}
-
+	up := pcs.Status.UpdateProgress
 	pcs.Status.RollingUpdateProgress = &grovecorev1alpha1.PodCliqueSetRollingUpdateProgress{
-		UpdateStartedAt:               pcs.Status.UpdateProgress.UpdateStartedAt,
-		UpdateEndedAt:                 pcs.Status.UpdateProgress.UpdateEndedAt,
-		UpdatedPodCliqueScalingGroups: pcs.Status.UpdateProgress.UpdatedPodCliqueScalingGroups,
-		UpdatedPodCliques:             pcs.Status.UpdateProgress.UpdatedPodCliques,
+		UpdateStartedAt:                    up.UpdateStartedAt,
+		UpdateEndedAt:                      up.UpdateEndedAt,
+		UpdatedPodCliquesCount:             up.UpdatedPodCliquesCount,
+		TotalPodCliquesCount:               up.TotalPodCliquesCount,
+		UpdatedPodCliqueScalingGroupsCount: up.UpdatedPodCliqueScalingGroupsCount,
+		TotalPodCliqueScalingGroupsCount:   up.TotalPodCliqueScalingGroupsCount,
 	}
-
-	if len(pcs.Status.UpdateProgress.CurrentlyUpdating) > 0 {
+	if len(up.CurrentlyUpdating) > 0 {
 		pcs.Status.RollingUpdateProgress.CurrentlyUpdating = &grovecorev1alpha1.PodCliqueSetReplicaRollingUpdateProgress{
-			ReplicaIndex:    pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex,
-			UpdateStartedAt: pcs.Status.UpdateProgress.CurrentlyUpdating[0].UpdateStartedAt,
+			ReplicaIndex:    up.CurrentlyUpdating[0].ReplicaIndex,
+			UpdateStartedAt: up.CurrentlyUpdating[0].UpdateStartedAt,
 		}
 	}
 }
+
+// flattenNamesToSet flattens a per-replica expected-name map into a set for O(1) membership tests.
+// Used to prune stray children that aren't part of the spec without paying O(M*E) per filter pass.
+func flattenNamesToSet(perReplica map[int][]string) map[string]struct{} {
+	total := 0
+	for _, names := range perReplica {
+		total += len(names)
+	}
+	set := make(map[string]struct{}, total)
+	for _, names := range perReplica {
+		for _, n := range names {
+			set[n] = struct{}{}
+		}
+	}
+	return set
+}
+

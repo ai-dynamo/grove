@@ -24,6 +24,11 @@ import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 // +kubebuilder:subresource:status
 // +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.selector
 // +kubebuilder:resource:shortName={pcsg}
+// +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.status.replicas`
+// +kubebuilder:printcolumn:name="Available",type=integer,JSONPath=`.status.availableReplicas`
+// +kubebuilder:printcolumn:name="Updated",type=integer,JSONPath=`.status.updatedReplicas`
+// +kubebuilder:printcolumn:name="PCLQS-Updated",type=integer,JSONPath=`.status.updateProgress.updatedPodCliquesCount`
+// +kubebuilder:printcolumn:name="PCLQS-Total",type=integer,JSONPath=`.status.updateProgress.totalPodCliquesCount`
 
 // PodCliqueScalingGroup is the schema to define scaling groups that is used to scale a group of PodClique's.
 // An instance of this custom resource will be created for every pod clique scaling group defined as part of PodCliqueSet.
@@ -100,29 +105,41 @@ type PodCliqueScalingGroupStatus struct {
 	CurrentPodCliqueSetGenerationHash *string `json:"currentPodCliqueSetGenerationHash,omitempty"`
 	// RollingUpdateProgress provides details about the ongoing update of the PodCliqueScalingGroup.
 	// Deprecated: Use UpdateProgress instead. This field is maintained for backward compatibility and will be removed in a future release.
+	// +optional
 	RollingUpdateProgress *PodCliqueScalingGroupRollingUpdateProgress `json:"rollingUpdateProgress,omitempty"`
 	// UpdateProgress provides details about the ongoing update of the PodCliqueScalingGroup.
 	UpdateProgress *PodCliqueScalingGroupUpdateProgress `json:"updateProgress,omitempty"`
 }
 
 // PodCliqueScalingGroupRollingUpdateProgress provides details about the ongoing update of the PodCliqueScalingGroup.
-// Deprecated: Use PodCliqueScalingGroupUpdateProgress instead. This struct is maintained for backward compatibility.
+// Deprecated: Use PodCliqueScalingGroupUpdateProgress instead. Maintained for backward compatibility.
+// The slice-shaped UpdatedPodCliques field that previously existed on this struct has been replaced
+// by bounded count fields on PodCliqueScalingGroupUpdateProgress (see issue #567 — that slice grew
+// unboundedly with the number of PodCliques).
 type PodCliqueScalingGroupRollingUpdateProgress struct {
-	//UpdateStartedAt is the time at which the rolling update started.
+	// UpdateStartedAt is the time at which the rolling update started.
 	UpdateStartedAt metav1.Time `json:"updateStartedAt"`
 	// UpdateEndedAt is the time at which the rolling update ended.
+	// +optional
 	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
 	// PodCliqueSetGenerationHash is the PodCliqueSet generation hash corresponding to the PodCliqueSet spec that is
 	// being rolled out. While the update is in progress PodCliqueScalingGroupStatus.CurrentPodCliqueSetGenerationHash will
 	// not match this hash. Once the update is complete the value of this field will be copied to
 	// PodCliqueScalingGroupStatus.CurrentPodCliqueSetGenerationHash.
 	PodCliqueSetGenerationHash string `json:"podCliqueSetGenerationHash"`
-	// UpdatedPodCliques is the list of PodClique names that have been updated to the latest PodCliqueSet spec.
-	UpdatedPodCliques []string `json:"updatedPodCliques,omitempty"`
+	// UpdatedPodCliquesCount mirrors PodCliqueScalingGroupUpdateProgress.UpdatedPodCliquesCount.
+	// +optional
+	// +kubebuilder:default=0
+	UpdatedPodCliquesCount int32 `json:"updatedPodCliquesCount,omitempty"`
+	// TotalPodCliquesCount mirrors PodCliqueScalingGroupUpdateProgress.TotalPodCliquesCount.
+	// +optional
+	// +kubebuilder:default=0
+	TotalPodCliquesCount int32 `json:"totalPodCliquesCount,omitempty"`
 	// ReadyReplicaIndicesSelectedToUpdate provides the rolling update progress of ready replicas of PodCliqueScalingGroup
 	// that have been selected for update. PodCliqueScalingGroup replicas that are either pending or unhealthy will be
 	// force updated and the update will not wait for these replicas to become ready. For all ready replicas, one replica
 	// is chosen at a time to update, once it is updated and becomes ready, the next ready replica is chosen for update.
+	// +optional
 	ReadyReplicaIndicesSelectedToUpdate *PodCliqueScalingGroupReplicaRollingUpdateProgress `json:"readyReplicaIndicesSelectedToUpdate,omitempty"`
 }
 
@@ -150,11 +167,16 @@ type PodCliqueScalingGroupUpdateProgress struct {
 	// PodCliqueScalingGroup should converge to. PodCliqueScalingGroupStatus.CurrentPodCliqueSetGenerationHash is set to
 	// this hash once UpdateEndedAt is set, which marks the end of the update.
 	PodCliqueSetGenerationHash string `json:"podCliqueSetGenerationHash"`
-	// UpdatedPodCliques is the list of PodClique names that have been updated to the latest PodCliqueSet spec.
-	// For auto update strategies, this list is updated as and when a PodClique has been fully updated.
-	// For the OnDelete strategy this list is populated as PodCliques are updated after user-driven Pod deletions and
-	// the Pods are running with the latest specification.
-	UpdatedPodCliques []string `json:"updatedPodCliques,omitempty"`
+	// UpdatedPodCliquesCount is the number of PodCliques that have been updated to the desired
+	// PodCliqueSet generation hash. Recomputed each reconcile from child generation-hash labels.
+	// +optional
+	// +kubebuilder:default=0
+	UpdatedPodCliquesCount int32 `json:"updatedPodCliquesCount,omitempty"`
+	// TotalPodCliquesCount is the total number of PodCliques expected to exist for the PodCliqueScalingGroup
+	// at the current spec.
+	// +optional
+	// +kubebuilder:default=0
+	TotalPodCliquesCount int32 `json:"totalPodCliquesCount,omitempty"`
 	// ReadyReplicaIndicesSelectedToUpdate provides the update progress of ready replicas of PodCliqueScalingGroup that
 	// have been selected for update. PodCliqueScalingGroup replicas that are either pending or unhealthy will be force
 	// updated and the update will not wait for these replicas to become ready. For all ready replicas, one replica is

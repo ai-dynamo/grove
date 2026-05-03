@@ -394,7 +394,10 @@ _Appears in:_
 
 
 PodCliqueScalingGroupRollingUpdateProgress provides details about the ongoing update of the PodCliqueScalingGroup.
-Deprecated: Use PodCliqueScalingGroupUpdateProgress instead. This struct is maintained for backward compatibility.
+Deprecated: Use PodCliqueScalingGroupUpdateProgress instead. Maintained for backward compatibility.
+The slice-shaped UpdatedPodCliques field that previously existed on this struct has been replaced
+by bounded count fields on PodCliqueScalingGroupUpdateProgress (see issue #567 — that slice grew
+unboundedly with the number of PodCliques).
 
 
 
@@ -406,7 +409,8 @@ _Appears in:_
 | `updateStartedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateStartedAt is the time at which the rolling update started. |  |  |
 | `updateEndedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateEndedAt is the time at which the rolling update ended. |  |  |
 | `podCliqueSetGenerationHash` _string_ | PodCliqueSetGenerationHash is the PodCliqueSet generation hash corresponding to the PodCliqueSet spec that is<br />being rolled out. While the update is in progress PodCliqueScalingGroupStatus.CurrentPodCliqueSetGenerationHash will<br />not match this hash. Once the update is complete the value of this field will be copied to<br />PodCliqueScalingGroupStatus.CurrentPodCliqueSetGenerationHash. |  |  |
-| `updatedPodCliques` _string array_ | UpdatedPodCliques is the list of PodClique names that have been updated to the latest PodCliqueSet spec. |  |  |
+| `updatedPodCliquesCount` _integer_ | UpdatedPodCliquesCount mirrors PodCliqueScalingGroupUpdateProgress.UpdatedPodCliquesCount. | 0 |  |
+| `totalPodCliquesCount` _integer_ | TotalPodCliquesCount mirrors PodCliqueScalingGroupUpdateProgress.TotalPodCliquesCount. | 0 |  |
 | `readyReplicaIndicesSelectedToUpdate` _[PodCliqueScalingGroupReplicaRollingUpdateProgress](#podcliquescalinggroupreplicarollingupdateprogress)_ | ReadyReplicaIndicesSelectedToUpdate provides the rolling update progress of ready replicas of PodCliqueScalingGroup<br />that have been selected for update. PodCliqueScalingGroup replicas that are either pending or unhealthy will be<br />force updated and the update will not wait for these replicas to become ready. For all ready replicas, one replica<br />is chosen at a time to update, once it is updated and becomes ready, the next ready replica is chosen for update. |  |  |
 
 
@@ -470,7 +474,8 @@ _Appears in:_
 | `updateStartedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateStartedAt is the time at which the update started. |  |  |
 | `updateEndedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the<br />configured update strategy. For auto update strategies where Grove handles the orchestration, while the update is<br />still in progress it will be nil, and will be set once the update finishes where all PodCliques are replaced by<br />Grove with the latest specification. For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which<br />implies that there is no work pending on Grove. |  |  |
 | `podCliqueSetGenerationHash` _string_ | PodCliqueSetGenerationHash is the generation hash corresponding to the latest PodCliqueSet spec that this<br />PodCliqueScalingGroup should converge to. PodCliqueScalingGroupStatus.CurrentPodCliqueSetGenerationHash is set to<br />this hash once UpdateEndedAt is set, which marks the end of the update. |  |  |
-| `updatedPodCliques` _string array_ | UpdatedPodCliques is the list of PodClique names that have been updated to the latest PodCliqueSet spec.<br />For auto update strategies, this list is updated as and when a PodClique has been fully updated.<br />For the OnDelete strategy this list is populated as PodCliques are updated after user-driven Pod deletions and<br />the Pods are running with the latest specification. |  |  |
+| `updatedPodCliquesCount` _integer_ | UpdatedPodCliquesCount is the number of PodCliques that have been updated to the desired<br />PodCliqueSet generation hash. Recomputed each reconcile from child generation-hash labels. | 0 |  |
+| `totalPodCliquesCount` _integer_ | TotalPodCliquesCount is the total number of PodCliques expected to exist for the PodCliqueScalingGroup<br />at the current spec. | 0 |  |
 | `readyReplicaIndicesSelectedToUpdate` _[PodCliqueScalingGroupReplicaUpdateProgress](#podcliquescalinggroupreplicaupdateprogress)_ | ReadyReplicaIndicesSelectedToUpdate provides the update progress of ready replicas of PodCliqueScalingGroup that<br />have been selected for update. PodCliqueScalingGroup replicas that are either pending or unhealthy will be force<br />updated and the update will not wait for these replicas to become ready. For all ready replicas, one replica is<br />chosen at a time to update, once it is updated and becomes ready, the next ready replica is chosen for update.<br />This field is only set for auto update strategies where Grove orchestrates Pod deletions.<br />For OnDelete strategy this field is not set, because Pod replacement is initiated by user-driven Pod deletions. |  |  |
 
 
@@ -534,7 +539,10 @@ _Appears in:_
 
 
 PodCliqueSetRollingUpdateProgress captures the progress of a rolling update of the PodCliqueSet.
-Deprecated: Use PodCliqueSetUpdateProgress instead. This struct is maintained for backward compatibility.
+Deprecated: Use PodCliqueSetUpdateProgress instead. Maintained for backward compatibility.
+The slice-shaped UpdatedPodCliques and UpdatedPodCliqueScalingGroups fields that previously
+existed on this struct have been replaced by bounded count fields on PodCliqueSetUpdateProgress
+(see issue #567 — those slices grew unboundedly with the number of PodCliques/PodCliqueScalingGroups).
 
 
 
@@ -545,8 +553,10 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `updateStartedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateStartedAt is the time at which the rolling update started for the PodCliqueSet. |  |  |
 | `updateEndedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateEndedAt is the time at which the rolling update ended for the PodCliqueSet. |  |  |
-| `updatedPodCliqueScalingGroups` _string array_ | UpdatedPodCliqueScalingGroups is a list of PodCliqueScalingGroup names that have been updated to the desired PodCliqueSet generation hash. |  |  |
-| `updatedPodCliques` _string array_ | UpdatedPodCliques is a list of PodClique names that have been updated to the desired PodCliqueSet generation hash. |  |  |
+| `updatedPodCliquesCount` _integer_ | UpdatedPodCliquesCount mirrors PodCliqueSetUpdateProgress.UpdatedPodCliquesCount. | 0 |  |
+| `totalPodCliquesCount` _integer_ | TotalPodCliquesCount mirrors PodCliqueSetUpdateProgress.TotalPodCliquesCount. | 0 |  |
+| `updatedPodCliqueScalingGroupsCount` _integer_ | UpdatedPodCliqueScalingGroupsCount mirrors PodCliqueSetUpdateProgress.UpdatedPodCliqueScalingGroupsCount. | 0 |  |
+| `totalPodCliqueScalingGroupsCount` _integer_ | TotalPodCliqueScalingGroupsCount mirrors PodCliqueSetUpdateProgress.TotalPodCliqueScalingGroupsCount. | 0 |  |
 | `currentlyUpdating` _[PodCliqueSetReplicaRollingUpdateProgress](#podcliquesetreplicarollingupdateprogress)_ | CurrentlyUpdating captures the progress of the PodCliqueSet replica that is currently being updated. |  |  |
 
 
@@ -638,8 +648,10 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `updateStartedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateStartedAt is the time at which the update started for the PodCliqueSet. |  |  |
 | `updateEndedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the<br />configured update strategy.<br />For auto update strategies where Grove handles the orchestration, while the update is still in progress it will be<br />nil, and will be set once the update finishes where all child resources are updated by Grove with the latest<br />specification.<br />For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which implies that there is no work<br />pending on Grove. |  |  |
-| `updatedPodCliqueScalingGroups` _string array_ | UpdatedPodCliqueScalingGroups is a list of PodCliqueScalingGroup names that have been updated to the desired<br />PodCliqueSet generation hash. |  |  |
-| `updatedPodCliques` _string array_ | UpdatedPodCliques is a list of PodClique names that have been updated to the desired PodCliqueSet generation hash. |  |  |
+| `updatedPodCliquesCount` _integer_ | UpdatedPodCliquesCount is the number of PodCliques that have been updated to the desired PodCliqueSet<br />generation hash. Recomputed each reconcile from child generation-hash labels. | 0 |  |
+| `totalPodCliquesCount` _integer_ | TotalPodCliquesCount is the total number of PodCliques expected to exist for the PodCliqueSet at the<br />current spec. | 0 |  |
+| `updatedPodCliqueScalingGroupsCount` _integer_ | UpdatedPodCliqueScalingGroupsCount is the number of PodCliqueScalingGroups that have been updated to the<br />desired PodCliqueSet generation hash. | 0 |  |
+| `totalPodCliqueScalingGroupsCount` _integer_ | TotalPodCliqueScalingGroupsCount is the total number of PodCliqueScalingGroups expected to exist for the<br />PodCliqueSet at the current spec. | 0 |  |
 | `currentlyUpdating` _[PodCliqueSetReplicaUpdateProgress](#podcliquesetreplicaupdateprogress) array_ | CurrentlyUpdating captures the progress of the PodCliqueSet replicas that are currently being updated.<br />This field is only set for auto update strategies where Grove handles the orchestration. It is not set for the<br />OnDelete update strategy. |  |  |
 
 
