@@ -215,9 +215,11 @@ func TestInitUpdateProgress(t *testing.T) {
 					}).
 					WithPodCliqueSetGenerationHash(ptr.To("old-hash")).
 					WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
-						UpdateStartedAt:               updateStartedAt,
-						UpdatedPodCliqueScalingGroups: []string{"pcsg-1", "pcsg-2"},
-						UpdatedPodCliques:             []string{"pclq-1", "pclq-2", "pclq-3"},
+						UpdateStartedAt:                    updateStartedAt,
+						UpdatedPodCliqueScalingGroupsCount: 2,
+						TotalPodCliqueScalingGroupsCount:   2,
+						UpdatedPodCliquesCount:             3,
+						TotalPodCliquesCount:               3,
 						CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{
 							{
 								ReplicaIndex:    1,
@@ -244,10 +246,12 @@ func TestInitUpdateProgress(t *testing.T) {
 					}).
 					WithPodCliqueSetGenerationHash(ptr.To("old-hash")).
 					WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
-						UpdateStartedAt:               updateStartedAt,
-						UpdateEndedAt:                 ptr.To(updateStartedAt),
-						UpdatedPodCliqueScalingGroups: []string{"pcsg-1"},
-						UpdatedPodCliques:             []string{"pclq-1", "pclq-2"},
+						UpdateStartedAt:                    updateStartedAt,
+						UpdateEndedAt:                      ptr.To(updateStartedAt),
+						UpdatedPodCliqueScalingGroupsCount: 1,
+						TotalPodCliqueScalingGroupsCount:   1,
+						UpdatedPodCliquesCount:             2,
+						TotalPodCliquesCount:               2,
 					}).
 					Build()
 				pcs.Status.UpdatedReplicas = 1
@@ -289,8 +293,8 @@ func TestInitUpdateProgress(t *testing.T) {
 				assert.Nil(t, updatedPCS.Status.UpdateProgress.UpdateEndedAt, "UpdateEndedAt should be nil for non-OnDelete strategy")
 			}
 
-			assert.Nil(t, updatedPCS.Status.UpdateProgress.UpdatedPodCliqueScalingGroups, "UpdatedPodCliqueScalingGroups should be nil")
-			assert.Nil(t, updatedPCS.Status.UpdateProgress.UpdatedPodCliques, "UpdatedPodCliques should be nil")
+			assert.Equal(t, int32(0), updatedPCS.Status.UpdateProgress.UpdatedPodCliqueScalingGroupsCount, "UpdatedPodCliqueScalingGroupsCount should be reset to 0")
+			assert.Equal(t, int32(0), updatedPCS.Status.UpdateProgress.UpdatedPodCliquesCount, "UpdatedPodCliquesCount should be reset to 0")
 			// Currently updating is not set by the initUpdateProgress function
 			assert.Nil(t, updatedPCS.Status.UpdateProgress.CurrentlyUpdating, "CurrentlyUpdating should be nil")
 			assert.Equal(t, int32(0), updatedPCS.Status.UpdatedReplicas, "UpdatedReplicas should be reset to 0")

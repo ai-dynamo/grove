@@ -73,7 +73,9 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 
 	mutateCurrentPodCliqueSetGenerationHash(logger, pcs, pcsg, lo.Flatten(lo.Values(pclqsPerPCSGReplica)))
 
-	// mirror UpdateProgress to the deprecated RollingUpdateProgress field for backward compatibility.
+	// Mirror UpdateProgress to the deprecated RollingUpdateProgress field for backward compatibility.
+	// The slice-shaped UpdatedPodCliques field on the deprecated mirror is gone; only bounded counts
+	// and timestamps are mirrored now (see issue #567).
 	mirrorUpdateProgressToRollingUpdateProgress(pcsg)
 
 	// Skip the status patch when every mutate* above left status byte-identical to what the
@@ -95,10 +97,12 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	return ctrlcommon.ContinueReconcile()
 }
 
-// mutateReplicas updates the PodCliqueScalingGroup status with replica counts based on constituent PodClique states
+// mutateReplicas updates the PodCliqueScalingGroup status with replica counts based on constituent PodClique states.
+// It also derives child-PCLQ update progress counts when an update is in flight.
 func mutateReplicas(logger logr.Logger, currentPCSGenerationHash *string, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) {
 	pcsg.Status.Replicas = pcsg.Spec.Replicas
-	var scheduledReplicas, availableReplicas, updatedReplicas int32
+	var scheduledReplicas, availableReplicas, updatedReplicas, updatedPCLQs, totalPCLQs int32
+	cliqueNamesPerReplica := int32(len(pcsg.Spec.CliqueNames))
 	for pcsgReplicaIndex, pclqs := range pclqsPerPCSGReplica {
 		isScheduled, isAvailable, isUpdated := computeReplicaStatus(logger, currentPCSGenerationHash, pcsgReplicaIndex, len(pcsg.Spec.CliqueNames), pclqs)
 		if isScheduled {
@@ -110,13 +114,40 @@ func mutateReplicas(logger logr.Logger, currentPCSGenerationHash *string, pcsg *
 		if isUpdated {
 			updatedReplicas++
 		}
+		updatedPCLQs += countPCSGReplicaUpdatedPCLQs(currentPCSGenerationHash, pclqs)
 	}
+	totalPCLQs = pcsg.Spec.Replicas * cliqueNamesPerReplica
 	logger.Info("Mutating PodCliqueScalingGroup replicas",
 		"pcsg", client.ObjectKeyFromObject(pcsg),
-		"scheduledReplicas", scheduledReplicas, "availableReplicas", availableReplicas, "updatedReplicas", updatedReplicas)
+		"scheduledReplicas", scheduledReplicas, "availableReplicas", availableReplicas, "updatedReplicas", updatedReplicas,
+		"updatedPCLQs", updatedPCLQs, "totalPCLQs", totalPCLQs)
 	pcsg.Status.ScheduledReplicas = scheduledReplicas
 	pcsg.Status.AvailableReplicas = availableReplicas
 	pcsg.Status.UpdatedReplicas = updatedReplicas
+	if pcsg.Status.UpdateProgress != nil {
+		pcsg.Status.UpdateProgress.UpdatedPodCliquesCount = updatedPCLQs
+		pcsg.Status.UpdateProgress.TotalPodCliquesCount = totalPCLQs
+	}
+}
+
+// countPCSGReplicaUpdatedPCLQs counts non-terminating PCLQs in a PCSG replica whose generation
+// hash matches the parent PCS hash.
+func countPCSGReplicaUpdatedPCLQs(pcsGenerationHash *string, pclqs []grovecorev1alpha1.PodClique) int32 {
+	if pcsGenerationHash == nil {
+		return 0
+	}
+	var n int32
+	for i := range pclqs {
+		pclq := &pclqs[i]
+		if k8sutils.IsResourceTerminating(pclq.ObjectMeta) {
+			continue
+		}
+		if pclq.Status.CurrentPodCliqueSetGenerationHash != nil &&
+			*pclq.Status.CurrentPodCliqueSetGenerationHash == *pcsGenerationHash {
+			n++
+		}
+	}
+	return n
 }
 
 // computeReplicaStatus processes a single PodCliqueScalingGroup replica and returns whether it is scheduled and available.
@@ -289,25 +320,28 @@ func mutateCurrentPodCliqueSetGenerationHash(logger logr.Logger, pcs *grovecorev
 	pcsg.Status.CurrentPodCliqueSetGenerationHash = pcs.Status.CurrentGenerationHash
 }
 
-// mirrorUpdateProgressToRollingUpdateProgress mirrors the UpdateProgress field to the deprecated RollingUpdateProgress field
-// for backward compatibility with consumers that still use the old field name.
+// mirrorUpdateProgressToRollingUpdateProgress mirrors the canonical UpdateProgress to the deprecated
+// RollingUpdateProgress field so consumers still reading the deprecated path keep working. Only
+// bounded count fields (and timestamps + currently-updating index) are mirrored — the previous
+// unbounded UpdatedPodCliques slice has been removed (see issue #567).
 func mirrorUpdateProgressToRollingUpdateProgress(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) {
 	if pcsg.Status.UpdateProgress == nil {
 		pcsg.Status.RollingUpdateProgress = nil
 		return
 	}
-
+	up := pcsg.Status.UpdateProgress
 	pcsg.Status.RollingUpdateProgress = &grovecorev1alpha1.PodCliqueScalingGroupRollingUpdateProgress{
-		UpdateStartedAt:            pcsg.Status.UpdateProgress.UpdateStartedAt,
-		UpdateEndedAt:              pcsg.Status.UpdateProgress.UpdateEndedAt,
-		PodCliqueSetGenerationHash: pcsg.Status.UpdateProgress.PodCliqueSetGenerationHash,
-		UpdatedPodCliques:          pcsg.Status.UpdateProgress.UpdatedPodCliques,
+		UpdateStartedAt:            up.UpdateStartedAt,
+		UpdateEndedAt:              up.UpdateEndedAt,
+		PodCliqueSetGenerationHash: up.PodCliqueSetGenerationHash,
+		UpdatedPodCliquesCount:     up.UpdatedPodCliquesCount,
+		TotalPodCliquesCount:       up.TotalPodCliquesCount,
 	}
-
-	if pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate != nil {
+	if up.ReadyReplicaIndicesSelectedToUpdate != nil {
 		pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate = &grovecorev1alpha1.PodCliqueScalingGroupReplicaRollingUpdateProgress{
-			Current:   pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current,
-			Completed: pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Completed,
+			Current:   up.ReadyReplicaIndicesSelectedToUpdate.Current,
+			Completed: up.ReadyReplicaIndicesSelectedToUpdate.Completed,
 		}
 	}
 }
+

@@ -564,11 +564,6 @@ func (in *PodCliqueScalingGroupRollingUpdateProgress) DeepCopyInto(out *PodCliqu
 		in, out := &in.UpdateEndedAt, &out.UpdateEndedAt
 		*out = (*in).DeepCopy()
 	}
-	if in.UpdatedPodCliques != nil {
-		in, out := &in.UpdatedPodCliques, &out.UpdatedPodCliques
-		*out = make([]string, len(*in))
-		copy(*out, *in)
-	}
 	if in.ReadyReplicaIndicesSelectedToUpdate != nil {
 		in, out := &in.ReadyReplicaIndicesSelectedToUpdate, &out.ReadyReplicaIndicesSelectedToUpdate
 		*out = new(PodCliqueScalingGroupReplicaRollingUpdateProgress)
@@ -675,11 +670,6 @@ func (in *PodCliqueScalingGroupUpdateProgress) DeepCopyInto(out *PodCliqueScalin
 	if in.UpdateEndedAt != nil {
 		in, out := &in.UpdateEndedAt, &out.UpdateEndedAt
 		*out = (*in).DeepCopy()
-	}
-	if in.UpdatedPodCliques != nil {
-		in, out := &in.UpdatedPodCliques, &out.UpdatedPodCliques
-		*out = make([]string, len(*in))
-		copy(*out, *in)
 	}
 	if in.ReadyReplicaIndicesSelectedToUpdate != nil {
 		in, out := &in.ReadyReplicaIndicesSelectedToUpdate, &out.ReadyReplicaIndicesSelectedToUpdate
@@ -805,16 +795,6 @@ func (in *PodCliqueSetRollingUpdateProgress) DeepCopyInto(out *PodCliqueSetRolli
 	if in.UpdateEndedAt != nil {
 		in, out := &in.UpdateEndedAt, &out.UpdateEndedAt
 		*out = (*in).DeepCopy()
-	}
-	if in.UpdatedPodCliqueScalingGroups != nil {
-		in, out := &in.UpdatedPodCliqueScalingGroups, &out.UpdatedPodCliqueScalingGroups
-		*out = make([]string, len(*in))
-		copy(*out, *in)
-	}
-	if in.UpdatedPodCliques != nil {
-		in, out := &in.UpdatedPodCliques, &out.UpdatedPodCliques
-		*out = make([]string, len(*in))
-		copy(*out, *in)
 	}
 	if in.CurrentlyUpdating != nil {
 		in, out := &in.CurrentlyUpdating, &out.CurrentlyUpdating
@@ -993,16 +973,6 @@ func (in *PodCliqueSetUpdateProgress) DeepCopyInto(out *PodCliqueSetUpdateProgre
 	if in.UpdateEndedAt != nil {
 		in, out := &in.UpdateEndedAt, &out.UpdateEndedAt
 		*out = (*in).DeepCopy()
-	}
-	if in.UpdatedPodCliqueScalingGroups != nil {
-		in, out := &in.UpdatedPodCliqueScalingGroups, &out.UpdatedPodCliqueScalingGroups
-		*out = make([]string, len(*in))
-		copy(*out, *in)
-	}
-	if in.UpdatedPodCliques != nil {
-		in, out := &in.UpdatedPodCliques, &out.UpdatedPodCliques
-		*out = make([]string, len(*in))
-		copy(*out, *in)
 	}
 	if in.CurrentlyUpdating != nil {
 		in, out := &in.CurrentlyUpdating, &out.CurrentlyUpdating

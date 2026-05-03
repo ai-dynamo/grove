@@ -19,6 +19,7 @@ package podcliqueset
 import (
 	"context"
 	"testing"
+	"time"
 
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
@@ -28,6 +29,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
@@ -271,116 +273,9 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 			cl := testutils.CreateDefaultFakeClient(existingObjects)
 			reconciler := &Reconciler{client: cl}
 			// Compute available replicas
-			available, _, err := reconciler.computeAvailableAndUpdatedReplicas(context.Background(), logr.Discard(), pcs)
+			stats, err := reconciler.computeAvailableAndUpdatedReplicas(context.Background(), logr.Discard(), pcs)
 			assert.NoError(t, err)
-			assert.Equal(t, tt.expectedAvailable, available, "Available replicas mismatch")
-		})
-	}
-}
-
-// TestMirrorUpdateProgressToRollingUpdateProgressPCS tests the mirrorUpdateProgressToRollingUpdateProgress function for PodCliqueSet
-func TestMirrorUpdateProgressToRollingUpdateProgressPCS(t *testing.T) {
-	updateStartedAt := metav1.Now()
-	updateEndedAt := metav1.NewTime(updateStartedAt.Add(1))
-	replicaUpdateStartedAt := metav1.NewTime(updateStartedAt.Add(2))
-	tests := []struct {
-		name                          string
-		pcs                           *grovecorev1alpha1.PodCliqueSet
-		expectedRollingUpdateProgress *grovecorev1alpha1.PodCliqueSetRollingUpdateProgress
-	}{
-		{
-			name: "nil UpdateProgress results in nil RollingUpdateProgress",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				Status: grovecorev1alpha1.PodCliqueSetStatus{
-					UpdateProgress: nil,
-				},
-			},
-			expectedRollingUpdateProgress: nil,
-		},
-		{
-			name: "UpdateProgress with CurrentlyUpdating",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				Status: grovecorev1alpha1.PodCliqueSetStatus{
-					UpdateProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
-						UpdateStartedAt:               updateStartedAt,
-						UpdatedPodCliqueScalingGroups: []string{"pcsg-1"},
-						UpdatedPodCliques:             []string{"pclq-1", "pclq-2"},
-						CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{
-							{
-								ReplicaIndex:    2,
-								UpdateStartedAt: replicaUpdateStartedAt,
-							},
-						},
-					},
-				},
-			},
-			expectedRollingUpdateProgress: &grovecorev1alpha1.PodCliqueSetRollingUpdateProgress{
-				UpdateStartedAt:               updateStartedAt,
-				UpdatedPodCliqueScalingGroups: []string{"pcsg-1"},
-				UpdatedPodCliques:             []string{"pclq-1", "pclq-2"},
-				CurrentlyUpdating: &grovecorev1alpha1.PodCliqueSetReplicaRollingUpdateProgress{
-					ReplicaIndex:    2,
-					UpdateStartedAt: replicaUpdateStartedAt,
-				},
-			},
-		},
-		{
-			name: "clears existing RollingUpdateProgress when UpdateProgress is nil",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				Status: grovecorev1alpha1.PodCliqueSetStatus{
-					UpdateProgress: nil,
-					RollingUpdateProgress: &grovecorev1alpha1.PodCliqueSetRollingUpdateProgress{
-						UpdateStartedAt:               updateStartedAt,
-						UpdateEndedAt:                 ptr.To(updateEndedAt),
-						UpdatedPodCliqueScalingGroups: []string{"old-pcsg"},
-						UpdatedPodCliques:             []string{"old-pclq"},
-					},
-				},
-			},
-			expectedRollingUpdateProgress: nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Call the function
-			mirrorUpdateProgressToRollingUpdateProgress(tt.pcs)
-
-			// Assert the result
-			if tt.expectedRollingUpdateProgress == nil {
-				assert.Nil(t, tt.pcs.Status.RollingUpdateProgress,
-					"RollingUpdateProgress should be nil")
-			} else {
-				assert.NotNil(t, tt.pcs.Status.RollingUpdateProgress,
-					"RollingUpdateProgress should not be nil")
-				assert.Equal(t, tt.expectedRollingUpdateProgress.UpdateStartedAt,
-					tt.pcs.Status.RollingUpdateProgress.UpdateStartedAt,
-					"UpdateStartedAt should match")
-				assert.Equal(t, tt.expectedRollingUpdateProgress.UpdateEndedAt,
-					tt.pcs.Status.RollingUpdateProgress.UpdateEndedAt,
-					"UpdateEndedAt should match")
-				assert.Equal(t, tt.expectedRollingUpdateProgress.UpdatedPodCliqueScalingGroups,
-					tt.pcs.Status.RollingUpdateProgress.UpdatedPodCliqueScalingGroups,
-					"UpdatedPodCliqueScalingGroups should match")
-				assert.Equal(t, tt.expectedRollingUpdateProgress.UpdatedPodCliques,
-					tt.pcs.Status.RollingUpdateProgress.UpdatedPodCliques,
-					"UpdatedPodCliques should match")
-
-				// Check CurrentlyUpdating
-				if tt.expectedRollingUpdateProgress.CurrentlyUpdating == nil {
-					assert.Nil(t, tt.pcs.Status.RollingUpdateProgress.CurrentlyUpdating,
-						"CurrentlyUpdating should be nil")
-				} else {
-					assert.NotNil(t, tt.pcs.Status.RollingUpdateProgress.CurrentlyUpdating,
-						"CurrentlyUpdating should not be nil")
-					assert.Equal(t, tt.expectedRollingUpdateProgress.CurrentlyUpdating.ReplicaIndex,
-						tt.pcs.Status.RollingUpdateProgress.CurrentlyUpdating.ReplicaIndex,
-						"ReplicaIndex should match")
-					assert.Equal(t, tt.expectedRollingUpdateProgress.CurrentlyUpdating.UpdateStartedAt,
-						tt.pcs.Status.RollingUpdateProgress.CurrentlyUpdating.UpdateStartedAt,
-						"CurrentlyUpdating.UpdateStartedAt should match")
-				}
-			}
+			assert.Equal(t, tt.expectedAvailable, stats.availableReplicas, "Available replicas mismatch")
 		})
 	}
 }
@@ -694,5 +589,296 @@ func TestGetUniqueTopologyDomainsInPodCliqueSet(t *testing.T) {
 			got := componentutils.GetUniqueTopologyDomainsInPodCliqueSet(tt.setupPCS())
 			assert.ElementsMatch(t, tt.wantDomains, got)
 		})
+	}
+}
+
+// TestComputePCSUpdateProgressCounts exercises the new bounded-count outputs of
+// computeAvailableAndUpdatedReplicas. Standalone PCLQs and PCSGs are tallied separately;
+// PCSG-owned PCLQs are tracked on their owning PCSG, not here. Terminating children and
+// children whose names aren't in the expected set must be excluded from the counts.
+func TestComputePCSUpdateProgressCounts(t *testing.T) {
+	pcsHash := "gen-hash-current"
+	oldHash := "gen-hash-old"
+	pcsUID := uuid.NewUUID()
+
+	standalonePCLQ := func(replicaIndex int32, hash string) *grovecorev1alpha1.PodClique {
+		return testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, replicaIndex).
+			WithOptions(testutils.WithPCLQCurrentPCSGenerationHash(hash)).Build()
+	}
+	standalonePCLQNoHash := func(replicaIndex int32) *grovecorev1alpha1.PodClique {
+		return testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, replicaIndex).Build()
+	}
+	standaloneTerminatingPCLQ := func(replicaIndex int32, hash string) *grovecorev1alpha1.PodClique {
+		return testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, replicaIndex).
+			WithOptions(testutils.WithPCLQCurrentPCSGenerationHash(hash), testutils.WithPCLQTerminating()).Build()
+	}
+	// makePCSG builds a PCSG whose CurrentPodCliqueSetGenerationHash equals `hash` (i.e. updated).
+	makePCSG := func(replicaIndex int, hash string) *grovecorev1alpha1.PodCliqueScalingGroup {
+		return testutils.NewPodCliqueScalingGroupBuilder(
+			pcsgName(replicaIndex), testNamespace, testPCSName, replicaIndex,
+		).WithOptions(testutils.WithPCSGCurrentPCSGenerationHash(hash)).Build()
+	}
+	// makePCSGNoHash builds a PCSG with no CurrentPodCliqueSetGenerationHash (not yet updated).
+	makePCSGNoHash := func(replicaIndex int) *grovecorev1alpha1.PodCliqueScalingGroup {
+		return testutils.NewPodCliqueScalingGroupBuilder(
+			pcsgName(replicaIndex), testNamespace, testPCSName, replicaIndex,
+		).Build()
+	}
+
+	testCases := []struct {
+		name             string
+		setupPCS         func() *grovecorev1alpha1.PodCliqueSet
+		childResources   func() []client.Object
+		wantUpdatedPCLQs int32
+		wantTotalPCLQs   int32
+		wantUpdatedPCSGs int32
+		wantTotalPCSGs   int32
+	}{
+		{
+			name: "all standalone PCLQs and PCSGs at current hash",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+					WithReplicas(2).
+					WithStandaloneClique("worker").
+					WithScalingGroup("compute", []string{"frontend"}).
+					WithPodCliqueSetGenerationHash(&pcsHash).Build()
+			},
+			childResources: func() []client.Object {
+				return []client.Object{
+					makePCSG(0, pcsHash), makePCSG(1, pcsHash),
+					standalonePCLQ(0, pcsHash), standalonePCLQ(1, pcsHash),
+				}
+			},
+			wantUpdatedPCLQs: 2, wantTotalPCLQs: 2,
+			wantUpdatedPCSGs: 2, wantTotalPCSGs: 2,
+		},
+		{
+			name: "one PCLQ at old hash, one PCSG missing hash",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+					WithReplicas(2).
+					WithStandaloneClique("worker").
+					WithScalingGroup("compute", []string{"frontend"}).
+					WithPodCliqueSetGenerationHash(&pcsHash).Build()
+			},
+			childResources: func() []client.Object {
+				return []client.Object{
+					makePCSG(0, pcsHash),         // updated
+					makePCSGNoHash(1),            // not updated — no current hash
+					standalonePCLQ(0, pcsHash),   // updated
+					standalonePCLQ(1, oldHash),   // not updated — old hash
+				}
+			},
+			wantUpdatedPCLQs: 1, wantTotalPCLQs: 2,
+			wantUpdatedPCSGs: 1, wantTotalPCSGs: 2,
+		},
+		{
+			name: "terminating standalone PCLQ excluded from updated count",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+					WithReplicas(2).
+					WithStandaloneClique("worker").
+					WithPodCliqueSetGenerationHash(&pcsHash).Build()
+			},
+			childResources: func() []client.Object {
+				return []client.Object{
+					standalonePCLQ(0, pcsHash),            // counted
+					standaloneTerminatingPCLQ(1, pcsHash), // skipped — terminating
+				}
+			},
+			wantUpdatedPCLQs: 1, wantTotalPCLQs: 2,
+			wantUpdatedPCSGs: 0, wantTotalPCSGs: 0,
+		},
+		{
+			name: "PCLQ with no generation hash is not counted as updated",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+					WithReplicas(1).
+					WithStandaloneClique("worker").
+					WithPodCliqueSetGenerationHash(&pcsHash).Build()
+			},
+			childResources: func() []client.Object {
+				return []client.Object{standalonePCLQNoHash(0)}
+			},
+			wantUpdatedPCLQs: 0, wantTotalPCLQs: 1,
+			wantUpdatedPCSGs: 0, wantTotalPCSGs: 0,
+		},
+	}
+
+	for _, tt := range testCases {
+		t.Run(tt.name, func(t *testing.T) {
+			pcs := tt.setupPCS()
+			objects := append([]client.Object{pcs}, tt.childResources()...)
+			cl := testutils.CreateDefaultFakeClient(objects)
+			r := &Reconciler{client: cl}
+
+			stats, err := r.computeAvailableAndUpdatedReplicas(context.Background(), logr.Discard(), pcs)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantUpdatedPCLQs, stats.updatedPCLQs, "updatedPCLQs")
+			assert.Equal(t, tt.wantTotalPCLQs, stats.totalPCLQs, "totalPCLQs")
+			assert.Equal(t, tt.wantUpdatedPCSGs, stats.updatedPCSGs, "updatedPCSGs")
+			assert.Equal(t, tt.wantTotalPCSGs, stats.totalPCSGs, "totalPCSGs")
+		})
+	}
+}
+
+// TestPCSMutateReplicasWritesUpdateProgressCounts asserts that mutateReplicas only writes
+// the new bounded count fields when UpdateProgress is non-nil. When UpdateProgress is nil,
+// the counts must not be allocated/written (no spurious status churn).
+func TestPCSMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
+	pcsHash := "gen-hash-current"
+	pcsUID := uuid.NewUUID()
+
+	build := func(withProgress bool) (*grovecorev1alpha1.PodCliqueSet, []client.Object) {
+		b := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+			WithReplicas(2).
+			WithStandaloneClique("worker").
+			WithScalingGroup("compute", []string{"frontend"}).
+			WithPodCliqueSetGenerationHash(&pcsHash)
+		if withProgress {
+			b = b.WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
+				UpdateStartedAt: metav1.Now(),
+			})
+		}
+		pcs := b.Build()
+		children := []client.Object{
+			testutils.NewPodCliqueScalingGroupBuilder(pcsgName(0), testNamespace, testPCSName, 0).
+				WithOptions(testutils.WithPCSGCurrentPCSGenerationHash(pcsHash)).Build(),
+			testutils.NewPodCliqueScalingGroupBuilder(pcsgName(1), testNamespace, testPCSName, 1).
+				WithOptions(testutils.WithPCSGCurrentPCSGenerationHash(pcsHash)).Build(),
+			testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).
+				WithOptions(testutils.WithPCLQCurrentPCSGenerationHash(pcsHash)).Build(),
+			testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 1).
+				WithOptions(testutils.WithPCLQCurrentPCSGenerationHash(pcsHash)).Build(),
+		}
+		return pcs, children
+	}
+
+	t.Run("UpdateProgress nil — counts not written", func(t *testing.T) {
+		pcs, children := build(false)
+		cl := testutils.CreateDefaultFakeClient(append([]client.Object{pcs}, children...))
+		r := &Reconciler{client: cl}
+		require.NoError(t, r.mutateReplicas(context.Background(), logr.Discard(), pcs))
+		assert.Nil(t, pcs.Status.UpdateProgress, "UpdateProgress must remain nil when not initialized")
+	})
+	t.Run("UpdateProgress non-nil — counts populated from informer cache", func(t *testing.T) {
+		pcs, children := build(true)
+		cl := testutils.CreateDefaultFakeClient(append([]client.Object{pcs}, children...))
+		r := &Reconciler{client: cl}
+		require.NoError(t, r.mutateReplicas(context.Background(), logr.Discard(), pcs))
+		require.NotNil(t, pcs.Status.UpdateProgress)
+		assert.Equal(t, int32(2), pcs.Status.UpdateProgress.UpdatedPodCliquesCount)
+		assert.Equal(t, int32(2), pcs.Status.UpdateProgress.TotalPodCliquesCount)
+		assert.Equal(t, int32(2), pcs.Status.UpdateProgress.UpdatedPodCliqueScalingGroupsCount)
+		assert.Equal(t, int32(2), pcs.Status.UpdateProgress.TotalPodCliqueScalingGroupsCount)
+	})
+}
+
+func TestCountUpdatedPCLQs(t *testing.T) {
+	hash := "h"
+	otherHash := "old"
+	matching := grovecorev1alpha1.PodClique{}
+	matching.Name = "matching"
+	matching.Status.CurrentPodCliqueSetGenerationHash = &hash
+
+	nonMatching := grovecorev1alpha1.PodClique{}
+	nonMatching.Name = "non-matching"
+	nonMatching.Status.CurrentPodCliqueSetGenerationHash = &otherHash
+
+	noHash := grovecorev1alpha1.PodClique{}
+	noHash.Name = "no-hash"
+
+	terminatingMatching := grovecorev1alpha1.PodClique{}
+	terminatingMatching.Name = "terminating"
+	terminatingMatching.Status.CurrentPodCliqueSetGenerationHash = &hash
+	now := metav1.NewTime(time.Now())
+	terminatingMatching.DeletionTimestamp = &now
+	terminatingMatching.Finalizers = []string{"f"}
+
+	tests := []struct {
+		name string
+		hash *string
+		in   []grovecorev1alpha1.PodClique
+		want int32
+	}{
+		{"nil hash → 0 (early return guards against unintialized PCS)", nil, []grovecorev1alpha1.PodClique{matching}, 0},
+		{"empty input → 0", &hash, nil, 0},
+		{"all matching", &hash, []grovecorev1alpha1.PodClique{matching, matching}, 2},
+		{"none matching", &hash, []grovecorev1alpha1.PodClique{nonMatching, noHash}, 0},
+		{"mixed", &hash, []grovecorev1alpha1.PodClique{matching, nonMatching, matching, noHash}, 2},
+		{"terminating excluded even if hash matches", &hash, []grovecorev1alpha1.PodClique{matching, terminatingMatching}, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, countUpdatedPCLQs(tt.hash, tt.in))
+		})
+	}
+}
+
+func TestCountUpdatedPCSGs(t *testing.T) {
+	hash := "h"
+	otherHash := "old"
+
+	matching := grovecorev1alpha1.PodCliqueScalingGroup{}
+	matching.Name = "m"
+	matching.Status.CurrentPodCliqueSetGenerationHash = &hash
+
+	nonMatching := grovecorev1alpha1.PodCliqueScalingGroup{}
+	nonMatching.Name = "n"
+	nonMatching.Status.CurrentPodCliqueSetGenerationHash = &otherHash
+
+	terminatingMatching := grovecorev1alpha1.PodCliqueScalingGroup{}
+	terminatingMatching.Name = "t"
+	terminatingMatching.Status.CurrentPodCliqueSetGenerationHash = &hash
+	now := metav1.NewTime(time.Now())
+	terminatingMatching.DeletionTimestamp = &now
+	terminatingMatching.Finalizers = []string{"f"}
+
+	tests := []struct {
+		name string
+		hash *string
+		in   []grovecorev1alpha1.PodCliqueScalingGroup
+		want int32
+	}{
+		{"nil hash → 0", nil, []grovecorev1alpha1.PodCliqueScalingGroup{matching}, 0},
+		{"all matching", &hash, []grovecorev1alpha1.PodCliqueScalingGroup{matching, matching}, 2},
+		{"mixed", &hash, []grovecorev1alpha1.PodCliqueScalingGroup{matching, nonMatching}, 1},
+		{"terminating excluded", &hash, []grovecorev1alpha1.PodCliqueScalingGroup{matching, terminatingMatching}, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, countUpdatedPCSGs(tt.hash, tt.in))
+		})
+	}
+}
+
+func TestFlattenNamesToSet(t *testing.T) {
+	tests := []struct {
+		name string
+		in   map[int][]string
+		want map[string]struct{}
+	}{
+		{"empty", map[int][]string{}, map[string]struct{}{}},
+		{"single replica", map[int][]string{0: {"a", "b"}}, map[string]struct{}{"a": {}, "b": {}}},
+		{"multi replica", map[int][]string{0: {"a", "b"}, 1: {"c"}}, map[string]struct{}{"a": {}, "b": {}, "c": {}}},
+		{"duplicates collapse to single entry", map[int][]string{0: {"a"}, 1: {"a"}}, map[string]struct{}{"a": {}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, flattenNamesToSet(tt.in))
+		})
+	}
+}
+
+// pcsgName returns the FQN for a PCSG owned by `testPCSName` at the given replica index, using
+// the same scheme that componentutils.GetExpectedPCSGFQNsPerPCSReplica produces.
+func pcsgName(replicaIndex int) string {
+	switch replicaIndex {
+	case 0:
+		return "test-pcs-0-compute"
+	case 1:
+		return "test-pcs-1-compute"
+	default:
+		return ""
 	}
 }
