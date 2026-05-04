@@ -344,4 +344,3 @@ func mirrorUpdateProgressToRollingUpdateProgress(pcsg *grovecorev1alpha1.PodCliq
 		}
 	}
 }
-
