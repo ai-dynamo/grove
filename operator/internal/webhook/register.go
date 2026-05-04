@@ -48,7 +48,7 @@ func Register(mgr manager.Manager, operatorCfg *configv1alpha1.OperatorConfigura
 	if err := pcsValidatingWebhook.RegisterWithManager(mgr); err != nil {
 		return fmt.Errorf("failed adding %s webhook handler: %v", pcsvalidation.Name, err)
 	}
-	ctValidatingWebhook := ctvalidation.NewHandler(mgr)
+	ctValidatingWebhook := ctvalidation.NewHandler(mgr, schedRegistry)
 	slog.Info("Registering webhook with manager", "handler", ctvalidation.Name)
 	if err := ctValidatingWebhook.RegisterWithManager(mgr); err != nil {
 		return fmt.Errorf("failed adding %s webhook handler: %v", ctvalidation.Name, err)

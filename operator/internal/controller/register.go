@@ -53,7 +53,7 @@ func RegisterControllers(mgr ctrl.Manager, config *configv1alpha1.OperatorConfig
 		return err
 	}
 
-	clusterTopologyReconciler := clustertopology.NewReconciler(mgr)
+	clusterTopologyReconciler := clustertopology.NewReconciler(mgr, schedRegistry)
 	if err := clusterTopologyReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}

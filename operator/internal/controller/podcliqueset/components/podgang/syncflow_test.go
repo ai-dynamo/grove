@@ -1680,6 +1680,7 @@ func TestPrepareSyncFlowTopologyResolution(t *testing.T) {
 				scheme:        groveclientscheme.Scheme,
 				eventRecorder: record.NewFakeRecorder(10),
 				tasConfig:     configv1alpha1.TopologyAwareSchedulingConfiguration{Enabled: tc.tasEnabled},
+				schedRegistry: defaultFakeSchedulerRegistry,
 			}
 
 			sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
@@ -1817,6 +1818,7 @@ func TestCreateOrUpdatePodGangs_ClearsStaleTopologyStateOnExistingPodGang(t *tes
 				scheme:        groveclientscheme.Scheme,
 				eventRecorder: record.NewFakeRecorder(10),
 				tasConfig:     configv1alpha1.TopologyAwareSchedulingConfiguration{Enabled: true},
+				schedRegistry: defaultFakeSchedulerRegistry,
 			}
 
 			sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
@@ -1926,6 +1928,7 @@ func TestBuildResourceTopologyAnnotation(t *testing.T) {
 				scheme:        groveclientscheme.Scheme,
 				eventRecorder: record.NewFakeRecorder(10),
 				tasConfig:     configv1alpha1.TopologyAwareSchedulingConfiguration{Enabled: tc.tasEnabled},
+				schedRegistry: defaultFakeSchedulerRegistry,
 			}
 
 			sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
