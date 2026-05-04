@@ -94,3 +94,20 @@ type TopologyAwareSchedBackend interface {
 		ref grovecorev1alpha1.SchedulerTopologyReference,
 	) (bool, string, int64, error)
 }
+
+// Registry provides access to initialized scheduler backends.
+// Use Get to look up a backend by its registered name; use GetDefault
+// for the backend designated as default in OperatorConfiguration.
+type Registry interface {
+	// Get returns the backend registered under name, or nil if not found.
+	// Empty name returns nil; callers that want the default backend
+	// should call GetDefault explicitly.
+	Get(name string) Backend
+
+	// GetDefault returns the backend marked as default in
+	// OperatorConfiguration (scheduler.defaultProfileName).
+	GetDefault() Backend
+
+	// All returns all registered scheduler backends keyed by name.
+	All() map[string]Backend
+}

@@ -24,7 +24,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
-	schedmanager "github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	"github.com/go-logr/logr"
 	admissionv1 "k8s.io/api/admission/v1"
@@ -49,18 +49,20 @@ type Handler struct {
 	tasConfig       configv1alpha1.TopologyAwareSchedulingConfiguration
 	networkConfig   configv1alpha1.NetworkAcceleration
 	schedulerConfig configv1alpha1.SchedulerConfiguration
+	schedRegistry   scheduler.Registry
 }
 
 // NewHandler creates a new handler for PodCliqueSet Webhook.
 // It reads TopologyAwareScheduling, Network, and Scheduler from the operator configuration.
 // operatorCfg must not be nil.
-func NewHandler(mgr manager.Manager, operatorCfg *configv1alpha1.OperatorConfiguration) *Handler {
+func NewHandler(mgr manager.Manager, operatorCfg *configv1alpha1.OperatorConfiguration, schedRegistry scheduler.Registry) *Handler {
 	return &Handler{
 		logger:          mgr.GetLogger().WithName("webhook").WithName(Name),
 		client:          mgr.GetClient(),
 		tasConfig:       operatorCfg.TopologyAwareScheduling,
 		networkConfig:   operatorCfg.Network,
 		schedulerConfig: operatorCfg.Scheduler,
+		schedRegistry:   schedRegistry,
 	}
 }
 
@@ -72,7 +74,7 @@ func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admis
 		return nil, errors.WrapError(err, ErrValidateCreatePodCliqueSet, string(admissionv1.Create), "failed to cast object to PodCliqueSet")
 	}
 
-	v := newPCSValidator(pcs, admissionv1.Create, h.tasConfig, h.schedulerConfig, h.client)
+	v := newPCSValidator(pcs, admissionv1.Create, h.tasConfig, h.schedulerConfig, h.client, h.schedRegistry)
 	var allErrs field.ErrorList
 	allErrs = append(allErrs, v.validateTopologyConstraintsOnCreate(ctx)...)
 	warnings, errs := v.validate()
@@ -82,7 +84,7 @@ func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admis
 	allErrs = append(allErrs, mnnvl.ValidatePCSOnCreate(pcs, h.networkConfig.AutoMNNVLEnabled)...)
 
 	// Scheduler-backend-specific validation
-	if err := validatePodCliqueSetWithBackend(ctx, pcs); err != nil {
+	if err := h.validatePodCliqueSetWithBackend(ctx, pcs); err != nil {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("spec"), pcs.Spec, err.Error()))
 	}
 
@@ -101,14 +103,14 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 		return nil, errors.WrapError(err, ErrValidateUpdatePodCliqueSet, string(admissionv1.Update), "failed to cast old object to PodCliqueSet")
 	}
 
-	v := newPCSValidator(newPCS, admissionv1.Update, h.tasConfig, h.schedulerConfig, h.client)
+	v := newPCSValidator(newPCS, admissionv1.Update, h.tasConfig, h.schedulerConfig, h.client, h.schedRegistry)
 	warnings, errs := v.validate()
 
 	// Validate MNNVL annotation immutability on PCS metadata and spec (clique templates)
 	errs = append(errs, mnnvl.ValidatePCSOnUpdate(oldPCS, newPCS)...)
 
 	// Scheduler-backend-specific validation
-	if err := validatePodCliqueSetWithBackend(ctx, newPCS); err != nil {
+	if err := h.validatePodCliqueSetWithBackend(ctx, newPCS); err != nil {
 		errs = append(errs, field.Invalid(field.NewPath("spec"), newPCS.Spec, err.Error()))
 	}
 
@@ -124,16 +126,14 @@ func (h *Handler) ValidateDelete(_ context.Context, _ runtime.Object) (admission
 }
 
 // validatePodCliqueSetWithBackend resolves the scheduler backend for the PCS and runs backend-specific validation.
-// All cliques share the same (resolved) schedulerName after validateSchedulerNames, so we use the first clique; empty is resolved by Get("").
-func validatePodCliqueSetWithBackend(ctx context.Context, pcs *v1alpha1.PodCliqueSet) error {
+// All cliques share the same (resolved) schedulerName after validateSchedulerNames, so we use the first clique.
+func (h *Handler) validatePodCliqueSetWithBackend(ctx context.Context, pcs *v1alpha1.PodCliqueSet) error {
 	schedulerName := ""
 	if len(pcs.Spec.Template.Cliques) > 0 && pcs.Spec.Template.Cliques[0] != nil {
 		schedulerName = pcs.Spec.Template.Cliques[0].Spec.PodSpec.SchedulerName
 	}
-	backend := schedmanager.Get(schedulerName)
-	if backend == nil {
-		return nil
-	}
+
+	backend := h.schedRegistry.Get(schedulerName)
 	return backend.ValidatePodCliqueSet(ctx, pcs)
 }
 

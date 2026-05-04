@@ -27,7 +27,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/clustertopology"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
-	schedmanager "github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 
 	"github.com/samber/lo"
@@ -55,18 +55,20 @@ type pcsValidator struct {
 	tasEnabled      bool
 	schedulerConfig groveconfigv1alpha1.SchedulerConfiguration
 	client          client.Client
+	schedRegistry   scheduler.Registry
 }
 
 // newPCSValidator creates a new PodCliqueSet validator for the given operation.
 // schedulerConfig is the full scheduler configuration; the validator uses it for
 // scheduler-name matching and may use per-scheduler config for future validations.
-func newPCSValidator(pcs *grovecorev1alpha1.PodCliqueSet, operation admissionv1.Operation, tasConfig groveconfigv1alpha1.TopologyAwareSchedulingConfiguration, schedulerConfig groveconfigv1alpha1.SchedulerConfiguration, cl client.Client) *pcsValidator {
+func newPCSValidator(pcs *grovecorev1alpha1.PodCliqueSet, operation admissionv1.Operation, tasConfig groveconfigv1alpha1.TopologyAwareSchedulingConfiguration, schedulerConfig groveconfigv1alpha1.SchedulerConfiguration, cl client.Client, schedRegistry scheduler.Registry) *pcsValidator {
 	return &pcsValidator{
 		operation:       operation,
 		pcs:             pcs,
 		tasEnabled:      tasConfig.Enabled,
 		schedulerConfig: schedulerConfig,
 		client:          cl,
+		schedRegistry:   schedRegistry,
 	}
 }
 
@@ -273,16 +275,14 @@ func (v *pcsValidator) validatePodCliqueTemplates(fldPath *field.Path) ([]string
 }
 
 // validateSchedulerNames ensures all pod scheduler names resolve to the same scheduler and that scheduler is enabled.
-// Empty schedulerName is resolved to the default backend name from schedmanager.GetDefault().
+// Empty schedulerName is resolved to the default backend name from the injected registry.
 func (v *pcsValidator) validateSchedulerNames(schedulerNames []string, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	specPath := fldPath.Child("spec").Child("podSpec").Child("schedulerName")
 
-	defaultSchedulerName := string(groveconfigv1alpha1.SchedulerNameKube)
-	if def := schedmanager.GetDefault(); def != nil {
-		defaultSchedulerName = def.Name()
-	}
+	defaultSchedulerName := v.schedRegistry.GetDefault().Name()
 
+	// Check-1: Check if the scheduler names are unique
 	// Resolve empty to default backend name; then require all resolved names to be the same.
 	uniqueSchedulerNames := lo.Uniq(lo.Map(schedulerNames, func(item string, _ int) string {
 		if item == "" {
@@ -294,12 +294,10 @@ func (v *pcsValidator) validateSchedulerNames(schedulerNames []string, fldPath *
 		allErrs = append(allErrs, field.Invalid(specPath, strings.Join(uniqueSchedulerNames, ", "), "the schedulerName for all pods have to be the same"))
 	}
 
-	// Validate that the resolved scheduler is enabled.
-	pcsSchedulerName := ""
-	if len(uniqueSchedulerNames) > 0 && uniqueSchedulerNames[0] != "" {
-		pcsSchedulerName = uniqueSchedulerNames[0]
-	}
-	if pcsSchedulerName != string(groveconfigv1alpha1.SchedulerNameKube) && schedmanager.Get(pcsSchedulerName) == nil {
+	// Check-2: Validate that the resolved scheduler is enabled.
+	pcsSchedulerName := uniqueSchedulerNames[0]
+	// default-scheduler is always valid; any other name must appear in the registry of enabled OperatorConfiguration backends.
+	if v.schedRegistry.Get(pcsSchedulerName) == nil {
 		allErrs = append(allErrs, field.Invalid(
 			specPath,
 			pcsSchedulerName,
