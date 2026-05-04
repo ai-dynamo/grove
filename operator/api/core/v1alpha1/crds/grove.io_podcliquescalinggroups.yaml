@@ -16,7 +16,23 @@ spec:
     singular: podcliquescalinggroup
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .status.replicas
+      name: Replicas
+      type: integer
+    - jsonPath: .status.availableReplicas
+      name: Available
+      type: integer
+    - jsonPath: .status.updatedReplicas
+      name: Updated
+      type: integer
+    - jsonPath: .status.updateProgress.updatedPodCliquesCount
+      name: PCLQS-Updated
+      type: integer
+    - jsonPath: .status.updateProgress.totalPodCliquesCount
+      name: PCLQS-Total
+      type: integer
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: |-
@@ -218,6 +234,11 @@ spec:
                     required:
                     - current
                     type: object
+                  totalPodCliquesCount:
+                    default: 0
+                    description: TotalPodCliquesCount mirrors PodCliqueScalingGroupUpdateProgress.TotalPodCliquesCount.
+                    format: int32
+                    type: integer
                   updateEndedAt:
                     description: UpdateEndedAt is the time at which the rolling update
                       ended.
@@ -228,12 +249,11 @@ spec:
                       update started.
                     format: date-time
                     type: string
-                  updatedPodCliques:
-                    description: UpdatedPodCliques is the list of PodClique names
-                      that have been updated to the latest PodCliqueSet spec.
-                    items:
-                      type: string
-                    type: array
+                  updatedPodCliquesCount:
+                    default: 0
+                    description: UpdatedPodCliquesCount mirrors PodCliqueScalingGroupUpdateProgress.UpdatedPodCliquesCount.
+                    format: int32
+                    type: integer
                 required:
                 - podCliqueSetGenerationHash
                 - updateStartedAt
@@ -285,6 +305,13 @@ spec:
                     required:
                     - current
                     type: object
+                  totalPodCliquesCount:
+                    default: 0
+                    description: |-
+                      TotalPodCliquesCount is the total number of PodCliques expected to exist for the PodCliqueScalingGroup
+                      at the current spec.
+                    format: int32
+                    type: integer
                   updateEndedAt:
                     description: |-
                       UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the
@@ -298,15 +325,13 @@ spec:
                     description: UpdateStartedAt is the time at which the update started.
                     format: date-time
                     type: string
-                  updatedPodCliques:
+                  updatedPodCliquesCount:
+                    default: 0
                     description: |-
-                      UpdatedPodCliques is the list of PodClique names that have been updated to the latest PodCliqueSet spec.
-                      For auto update strategies, this list is updated as and when a PodClique has been fully updated.
-                      For the OnDelete strategy this list is populated as PodCliques are updated after user-driven Pod deletions and
-                      the Pods are running with the latest specification.
-                    items:
-                      type: string
-                    type: array
+                      UpdatedPodCliquesCount is the number of PodCliques that have been updated to the desired
+                      PodCliqueSet generation hash. Recomputed each reconcile from child generation-hash labels.
+                    format: int32
+                    type: integer
                 required:
                 - podCliqueSetGenerationHash
                 - updateStartedAt

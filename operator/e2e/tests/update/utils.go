@@ -356,22 +356,22 @@ func waitForRollingUpdateComplete(tc *testctx.TestContext, expectedReplicas int3
 
 		// Log status every few polls for debugging
 		if pollCount%3 == 1 {
-			tests.Logger.Debugf("[waitForRollingUpdateComplete] Poll #%d: UpdatedReplicas=%d, expectedReplicas=%d, RollingUpdateProgress=%v",
-				pollCount, pcs.Status.UpdatedReplicas, expectedReplicas, pcs.Status.RollingUpdateProgress != nil)
-			if pcs.Status.RollingUpdateProgress != nil {
+			tests.Logger.Debugf("[waitForRollingUpdateComplete] Poll #%d: UpdatedReplicas=%d, expectedReplicas=%d, UpdateProgress=%v",
+				pollCount, pcs.Status.UpdatedReplicas, expectedReplicas, pcs.Status.UpdateProgress != nil)
+			if pcs.Status.UpdateProgress != nil {
 				tests.Logger.Debugf("  UpdateStartedAt=%v, UpdateEndedAt=%v, CurrentlyUpdating=%v",
-					pcs.Status.RollingUpdateProgress.UpdateStartedAt,
-					pcs.Status.RollingUpdateProgress.UpdateEndedAt,
-					pcs.Status.RollingUpdateProgress.CurrentlyUpdating)
+					pcs.Status.UpdateProgress.UpdateStartedAt,
+					pcs.Status.UpdateProgress.UpdateEndedAt,
+					pcs.Status.UpdateProgress.CurrentlyUpdating)
 			}
 		}
 
 		// Check if rolling update is complete:
 		// - UpdatedReplicas should match expected
-		// - RollingUpdateProgress should exist with UpdateEndedAt set (not nil)
+		// - UpdateProgress should exist with UpdateEndedAt set (not nil)
 		if pcs.Status.UpdatedReplicas == expectedReplicas &&
-			pcs.Status.RollingUpdateProgress != nil &&
-			pcs.Status.RollingUpdateProgress.UpdateEndedAt != nil {
+			pcs.Status.UpdateProgress != nil &&
+			pcs.Status.UpdateProgress.UpdateEndedAt != nil {
 			tests.Logger.Debugf("[waitForRollingUpdateComplete] Rolling update completed after %d polls", pollCount)
 			return true
 		}
@@ -518,17 +518,17 @@ func waitForOrdinalUpdating(tc *testctx.TestContext, ordinal int32) error {
 		// Log status every few polls for debugging
 		if pollCount%3 == 1 {
 			currentOrdinal := int32(-1)
-			if pcs.Status.RollingUpdateProgress != nil && pcs.Status.RollingUpdateProgress.CurrentlyUpdating != nil {
-				currentOrdinal = pcs.Status.RollingUpdateProgress.CurrentlyUpdating.ReplicaIndex
+			if pcs.Status.UpdateProgress != nil && len(pcs.Status.UpdateProgress.CurrentlyUpdating) > 0 {
+				currentOrdinal = pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex
 			}
 			tests.Logger.Debugf("[waitForOrdinalUpdating] Poll #%d: waiting for ordinal %d, currently updating ordinal: %d",
 				pollCount, ordinal, currentOrdinal)
 		}
 
 		// Check if the target ordinal is currently being updated
-		if pcs.Status.RollingUpdateProgress != nil &&
-			pcs.Status.RollingUpdateProgress.CurrentlyUpdating != nil &&
-			pcs.Status.RollingUpdateProgress.CurrentlyUpdating.ReplicaIndex == ordinal {
+		if pcs.Status.UpdateProgress != nil &&
+			len(pcs.Status.UpdateProgress.CurrentlyUpdating) > 0 &&
+			pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex == ordinal {
 			tests.Logger.Debugf("[waitForOrdinalUpdating] Ordinal %d started updating after %d polls", ordinal, pollCount)
 			return true
 		}
@@ -1188,7 +1188,7 @@ func verifyUpdateProgressFields(tc *testctx.TestContext) {
 	if err != nil {
 		tc.T.Fatalf("Failed to get PCS for UpdateProgress: %v", err)
 	}
-	updateProgress := pcs.Status.RollingUpdateProgress
+	updateProgress := pcs.Status.UpdateProgress
 
 	if updateProgress == nil {
 		tc.T.Fatalf("UpdateProgress should not be nil after OnDelete update")
@@ -1202,16 +1202,25 @@ func verifyUpdateProgressFields(tc *testctx.TestContext) {
 		tc.T.Fatalf("UpdateProgress.UpdateEndedAt should be set for OnDelete strategy")
 	}
 
-	if updateProgress.UpdatedPodCliques != nil {
-		tc.T.Fatalf("UpdateProgress.UpdatedPodCliques should be nil for OnDelete strategy, got %v", updateProgress.UpdatedPodCliques)
-	}
-
-	if updateProgress.UpdatedPodCliqueScalingGroups != nil {
-		tc.T.Fatalf("UpdateProgress.UpdatedPodCliqueScalingGroups should be nil for OnDelete strategy, got %v", updateProgress.UpdatedPodCliqueScalingGroups)
-	}
-
 	if updateProgress.CurrentlyUpdating != nil {
 		tc.T.Fatalf("UpdateProgress.CurrentlyUpdating should be nil for OnDelete strategy, got %v", updateProgress.CurrentlyUpdating)
+	}
+
+	// For OnDelete, UpdateEndedAt is set immediately when the update is initiated — it does not
+	// imply that PCLQs have converged to the new generation hash. Pods are replaced only after
+	// the user manually deletes them, so UpdatedPodCliquesCount may legitimately be 0 (no manual
+	// deletes) or partial (some manual deletes). The assertions below check sanity (counts
+	// derived, non-negative, updated <= total), not convergence.
+	if updateProgress.TotalPodCliquesCount == 0 && updateProgress.TotalPodCliqueScalingGroupsCount == 0 {
+		tc.T.Fatalf("UpdateProgress totals are 0/0 — count derivation did not run on a non-empty PCS")
+	}
+	if updateProgress.UpdatedPodCliquesCount > updateProgress.TotalPodCliquesCount {
+		tc.T.Fatalf("UpdateProgress.UpdatedPodCliquesCount = %d > TotalPodCliquesCount = %d (counts cannot exceed totals)",
+			updateProgress.UpdatedPodCliquesCount, updateProgress.TotalPodCliquesCount)
+	}
+	if updateProgress.UpdatedPodCliqueScalingGroupsCount > updateProgress.TotalPodCliqueScalingGroupsCount {
+		tc.T.Fatalf("UpdateProgress.UpdatedPodCliqueScalingGroupsCount = %d > TotalPodCliqueScalingGroupsCount = %d (counts cannot exceed totals)",
+			updateProgress.UpdatedPodCliqueScalingGroupsCount, updateProgress.TotalPodCliqueScalingGroupsCount)
 	}
 }
 
