@@ -106,12 +106,8 @@ const (
 	ConditionReasonSufficientScheduledPods = "SufficientScheduledPods"
 	// ConditionReasonInsufficientScheduledPCSGReplicas indicates that the number of scheduled replicas in the PodCliqueScalingGroup is below the PodCliqueScalingGroupSpec.MinAvailable.
 	ConditionReasonInsufficientScheduledPCSGReplicas = "InsufficientScheduledPodCliqueScalingGroupReplicas"
-	// ConditionReasonScheduledReplicasRegressed indicates that the number of scheduled replicas dropped
-	// below MinAvailable after previously meeting it (e.g. a node was cordoned or failed and the
-	// replacement pods could not be scheduled). Under gang scheduling, a partial scheduled state
-	// (0 < scheduled < MinAvailable) is structurally unreachable from initial startup and so is treated
-	// as a regression and a MinAvailableBreach.
-	ConditionReasonScheduledReplicasRegressed = "ScheduledReplicasRegressed"
+	// ConditionReasonScheduledReplicasBelowMinAvailable indicates that scheduledReplicas is below MinAvailable but greater than zero.
+	ConditionReasonScheduledReplicasBelowMinAvailable = "ScheduledReplicasBelowMinAvailable"
 	// ConditionReasonInsufficientAvailablePCSGReplicas indicates that the number of ready replicas in the PodCliqueScalingGroup is below the PodCliqueScalingGroupSpec.MinAvailable.
 	ConditionReasonInsufficientAvailablePCSGReplicas = "InsufficientAvailablePodCliqueScalingGroupReplicas"
 	// ConditionReasonSufficientAvailablePCSGReplicas indicates that the number of ready replicas in the PodCliqueScalingGroup is greater than or equal to the PodCliqueScalingGroupSpec.MinAvailable.

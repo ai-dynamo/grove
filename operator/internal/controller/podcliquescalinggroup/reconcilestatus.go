@@ -23,6 +23,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
@@ -30,6 +31,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -65,6 +67,15 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	}
 	mutateReplicas(logger, pcs.Status.CurrentGenerationHash, pcsg, pclqsPerPCSGReplica)
 	mutateMinAvailableBreachedCondition(logger, pcsg, pclqsPerPCSGReplica)
+
+	// Emit a Warning when scheduledReplicas drops from non-zero to zero. Gang termination is
+	// suppressed in this state to avoid a churn loop, so this event is the only signal that a
+	// previously-running workload is fully down.
+	if originalStatus.ScheduledReplicas > 0 && pcsg.Status.ScheduledReplicas == 0 {
+		r.eventRecorder.Eventf(pcsg, corev1.EventTypeWarning, internalconstants.ReasonAllScheduledReplicasLost,
+			"All scheduled replicas lost (was %d). Gang termination is suppressed to avoid recreating Pending pods against the same cluster state; investigate node availability or capacity.",
+			originalStatus.ScheduledReplicas)
+	}
 
 	if err = mutateSelector(pcs, pcsg); err != nil {
 		logger.Error(err, "failed to update selector for PodCliqueScalingGroup")
@@ -163,20 +174,14 @@ func mutateMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1al
 }
 
 // computeMinAvailableBreachedCondition computes the MinAvailableBreached condition for the PodCliqueScalingGroup.
-// If rolling update is under progress, then gang termination for this PCSG is disabled. This is achieved by marking the status to `Unknown`. This PCSG will not influence
-// the gang termination of PCS replica till its update has completed.
-// Under-scheduled cases:
-//   - scheduledReplicas == 0: either initial startup (no replicas admitted yet) or a full regression where
-//     every scheduled replica has been lost. In both cases gang termination would only recreate the same
-//     Pending replicas against the same cluster state, so we suppress the breach to avoid a churn loop.
-//   - 0 < scheduledReplicas < MinAvailable: under gang scheduling this is structurally unreachable from
-//     initial startup, so it implies regression after a healthy state. Treat as a breach. The downstream
-//     gang-termination flow still waits the full TerminationDelay before acting and the controller keeps
-//     trying to schedule replacements throughout the wait. On non-gang schedulers a brief flicker can
-//     occur during staged startup; TerminationDelay (default 4h) absorbs it.
+// If rolling update is under progress, then gang termination for this PCSG is disabled. This is achieved by marking
+// the status to `Unknown`. This PCSG will not influence the gang termination of PCS replica till its update has completed.
 //
-// If there are sufficient scheduled replicas (i.e. scheduledReplicas >= minAvailable), then we can compute
-// the MinAvailableBreached condition based on the number of ready replicas.
+// scheduledReplicas == 0: either initial startup or every scheduled replica has been lost. Recreating the PodGang
+// would just produce the same Pending replicas, so suppress to avoid a churn loop.
+// 0 < scheduledReplicas < MinAvailable: with a gang scheduler this implies regression after a healthy state and
+// breaches. On non-gang schedulers it can flicker briefly during staged startup; TerminationDelay (default 4h)
+// absorbs the flicker.
 func computeMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) metav1.Condition {
 	if componentutils.IsPCSGUpdateInProgress(pcsg) {
 		return metav1.Condition{
@@ -195,14 +200,14 @@ func computeMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1a
 				Type:    constants.ConditionTypeMinAvailableBreached,
 				Status:  metav1.ConditionFalse,
 				Reason:  constants.ConditionReasonInsufficientScheduledPCSGReplicas,
-				Message: fmt.Sprintf("Insufficient scheduled replicas. expected at least: %d, found: %d", minAvailable, scheduledReplicas),
+				Message: fmt.Sprintf("Scheduled replicas (%d) below MinAvailable (%d)", scheduledReplicas, minAvailable),
 			}
 		}
 		return metav1.Condition{
 			Type:    constants.ConditionTypeMinAvailableBreached,
 			Status:  metav1.ConditionTrue,
-			Reason:  constants.ConditionReasonScheduledReplicasRegressed,
-			Message: fmt.Sprintf("Scheduled replicas regressed below MinAvailable. expected at least: %d, found: %d", minAvailable, scheduledReplicas),
+			Reason:  constants.ConditionReasonScheduledReplicasBelowMinAvailable,
+			Message: fmt.Sprintf("Scheduled replicas (%d) below MinAvailable (%d)", scheduledReplicas, minAvailable),
 		}
 	}
 	minAvailableBreachedReplicas := computeMinAvailableBreachedReplicas(logger, pclqsPerPCSGReplica)

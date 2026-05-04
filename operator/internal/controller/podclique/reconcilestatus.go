@@ -23,6 +23,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
@@ -77,6 +78,14 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 		mutateMinAvailableBreachedCondition(pclq,
 			len(podCategories[k8sutils.PodHasAtleastOneContainerWithNonZeroExitCode]),
 			len(podCategories[k8sutils.PodStartedButNotReady]))
+		// Emit a Warning when scheduledReplicas drops from non-zero to zero. Gang termination is
+		// suppressed in this state to avoid a churn loop, so this event is the only signal that a
+		// previously-running workload is fully down.
+		if originalStatus.ScheduledReplicas > 0 && pclq.Status.ScheduledReplicas == 0 {
+			r.eventRecorder.Eventf(pclq, corev1.EventTypeWarning, internalconstants.ReasonAllScheduledReplicasLost,
+				"All scheduled pods lost (was %d). Gang termination is suppressed to avoid recreating Pending pods against the same cluster state; investigate node availability or capacity.",
+				originalStatus.ScheduledReplicas)
+		}
 	}
 
 	// mutate the selector that will be used by an autoscaler.
@@ -209,36 +218,27 @@ func computeMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, num
 	scheduledReplicas := int(pclq.Status.ScheduledReplicas)
 	now := metav1.Now()
 
-	// Handle the under-scheduled cases:
-	//   - scheduledReplicas == 0: either initial startup (no pods admitted yet) or a full
-	//     regression where every running pod has been lost. In both cases, gang termination
-	//     would only recreate the same Pending pods against the same cluster state and would
-	//     produce a churn loop, so we suppress the breach. If the cluster state actually
-	//     changes the next reconcile picks it up.
-	//   - 0 < scheduledReplicas < minAvailable: under gang scheduling this state is
-	//     structurally unreachable from initial startup — the gang scheduler admits
-	//     MinAvailable pods atomically. So observing it implies pods were healthy and
-	//     have since regressed (e.g. node cordon/failure with replacements pending).
-	//     Treat as a breach. The downstream gang-termination flow still waits the full
-	//     TerminationDelay before acting, and the pod-creation path is unaffected, so
-	//     the controller keeps trying to schedule replacements throughout the wait.
-	//     On non-gang schedulers a brief partial-scheduled flicker can occur during
-	//     staged startup; TerminationDelay (default 4h) absorbs it.
+	// scheduledReplicas == 0: either initial startup or every running pod has been lost.
+	// Recreating the PodGang would just produce the same Pending pods, so suppress to avoid
+	// a churn loop.
+	// 0 < scheduledReplicas < MinAvailable: with a gang scheduler this implies regression
+	// after a healthy state and breaches. On non-gang schedulers it can flicker briefly
+	// during staged startup; TerminationDelay (default 4h) absorbs the flicker.
 	if scheduledReplicas < minAvailable {
 		if scheduledReplicas == 0 {
 			return metav1.Condition{
 				Type:               constants.ConditionTypeMinAvailableBreached,
 				Status:             metav1.ConditionFalse,
 				Reason:             constants.ConditionReasonInsufficientScheduledPods,
-				Message:            fmt.Sprintf("Insufficient scheduled pods. expected at least: %d, found: %d", minAvailable, scheduledReplicas),
+				Message:            fmt.Sprintf("Scheduled replicas (%d) below MinAvailable (%d)", scheduledReplicas, minAvailable),
 				LastTransitionTime: now,
 			}
 		}
 		return metav1.Condition{
 			Type:               constants.ConditionTypeMinAvailableBreached,
 			Status:             metav1.ConditionTrue,
-			Reason:             constants.ConditionReasonScheduledReplicasRegressed,
-			Message:            fmt.Sprintf("Scheduled replicas regressed below MinAvailable. expected at least: %d, found: %d", minAvailable, scheduledReplicas),
+			Reason:             constants.ConditionReasonScheduledReplicasBelowMinAvailable,
+			Message:            fmt.Sprintf("Scheduled replicas (%d) below MinAvailable (%d)", scheduledReplicas, minAvailable),
 			LastTransitionTime: now,
 		}
 	}

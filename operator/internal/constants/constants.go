@@ -59,6 +59,9 @@ const (
 	ReasonPodCliqueDeleteSuccessful = "PodCliqueDeleteSuccessful"
 	// ReasonPodCliqueDeleteFailed is an event reason which represents that the deletion of a PodClique failed.
 	ReasonPodCliqueDeleteFailed = "PodCliqueDeleteFailed"
+	// ReasonAllScheduledReplicasLost is an event reason emitted when scheduled replicas drop from non-zero to zero.
+	// Gang termination is suppressed in this state to avoid a churn loop, so the event is the only signal that the workload is fully down.
+	ReasonAllScheduledReplicasLost = "AllScheduledReplicasLost"
 )
 
 // constants for PodCliqueScalingGroup lifecycle events

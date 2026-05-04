@@ -197,15 +197,10 @@ func createPodWithHash(name string, templateHash string) *corev1.Pod {
 
 // TestComputeMinAvailableBreachedConditionPartialScheduleRegression covers the
 // behaviour where MinAvailableBreached must flip True when scheduled replicas
-// regress below MinAvailable from a previously healthy state.
-//
-// Under gang scheduling, 0 < scheduledReplicas < minAvailable is structurally
-// unreachable from a fresh start (the gang scheduler admits MinAvailable atomically),
-// so observing it implies regression — for example a node hosting running pods is
-// cordoned or fails and the replacement pods cannot be scheduled. Breaching in
-// that case lets gang termination recreate the PodGang. scheduledReplicas == 0
-// stays suppressed: gang termination would only recreate the same Pending pods
-// against the same cluster state.
+// drop below MinAvailable but stay above zero. With a gang scheduler this can
+// only happen by regression after a healthy state. scheduledReplicas == 0 stays
+// suppressed regardless of history: recreating the PodGang would just produce
+// the same Pending pods against the same cluster state (churn loop).
 func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testing.T) {
 	pastTransition := metav1.NewTime(time.Now().Add(-10 * time.Minute))
 
@@ -215,9 +210,10 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 		numPodsHavingAtleastOneContainerWithNonZeroExitCode int
 		numPodsStartedButNotReady                           int
 		wantStatus                                          metav1.ConditionStatus
+		wantReason                                          string
 	}{
 		{
-			name: "healthy then node cordoned: scheduled replicas drop below minAvailable",
+			name: "0 < scheduled < MinAvailable breaches",
 			pclq: &grovecorev1alpha1.PodClique{
 				Spec: grovecorev1alpha1.PodCliqueSpec{
 					Replicas:     3,
@@ -230,7 +226,6 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 					ReadyReplicas:      1,
 					Conditions: []metav1.Condition{
 						{
-							// PCLQ was healthy before the regression.
 							Type:               constants.ConditionTypePodCliqueScheduled,
 							Status:             metav1.ConditionTrue,
 							Reason:             constants.ConditionReasonSufficientScheduledPods,
@@ -246,12 +241,13 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 				},
 			},
 			wantStatus: metav1.ConditionTrue,
+			wantReason: constants.ConditionReasonScheduledReplicasBelowMinAvailable,
 		},
 		{
-			// Even after a full regression to zero scheduled, gang termination has
-			// no useful action — recreating the PodGang would just produce the same
-			// Pending pods. The fix should keep this case suppressed to avoid a
-			// churn loop. (Captured as a sanity-pin so a fix doesn't over-correct.)
+			// Sanity-pin: scheduled == 0 must NOT breach even when the PCLQ was
+			// previously healthy. Gang termination has no useful action here
+			// (would re-create the same Pending pods) and the suppression has
+			// to win to avoid a churn loop.
 			name: "previously-healthy PCLQ loses all scheduled pods — must NOT breach",
 			pclq: &grovecorev1alpha1.PodClique{
 				Spec: grovecorev1alpha1.PodCliqueSpec{
@@ -274,10 +270,11 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 				},
 			},
 			wantStatus: metav1.ConditionFalse,
+			wantReason: constants.ConditionReasonInsufficientScheduledPods,
 		},
 		{
-			// Sanity case that the fix must preserve: a freshly-created PCLQ that has
-			// not yet scheduled any pods MUST NOT be considered breached.
+			// Sanity case that the fix must preserve: a freshly-created PCLQ
+			// that has not yet scheduled any pods MUST NOT be considered breached.
 			name: "fresh PCLQ never scheduled — must not breach",
 			pclq: &grovecorev1alpha1.PodClique{
 				Spec: grovecorev1alpha1.PodCliqueSpec{
@@ -289,10 +286,10 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 					Replicas:           3,
 					ScheduledReplicas:  0,
 					ReadyReplicas:      0,
-					// No prior PodCliqueScheduled=True history.
 				},
 			},
 			wantStatus: metav1.ConditionFalse,
+			wantReason: constants.ConditionReasonInsufficientScheduledPods,
 		},
 	}
 
@@ -302,8 +299,8 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 				tt.numPodsHavingAtleastOneContainerWithNonZeroExitCode,
 				tt.numPodsStartedButNotReady)
 			assert.Equal(t, constants.ConditionTypeMinAvailableBreached, condition.Type)
-			assert.Equal(t, tt.wantStatus, condition.Status,
-				"MinAvailableBreached status should match expected post-fix behaviour")
+			assert.Equal(t, tt.wantStatus, condition.Status, "MinAvailableBreached status mismatch")
+			assert.Equal(t, tt.wantReason, condition.Reason, "MinAvailableBreached reason mismatch")
 		})
 	}
 }
