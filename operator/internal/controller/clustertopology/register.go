@@ -22,7 +22,6 @@ import (
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
-	schedmanager "github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -34,10 +33,11 @@ import (
 )
 
 // NewReconciler creates a new ClusterTopology reconciler.
-func NewReconciler(mgr ctrl.Manager) *Reconciler {
+// The backends are taken from schedRegistry, populated at operator startup.
+func NewReconciler(mgr ctrl.Manager, schedRegistry scheduler.Registry) *Reconciler {
 	return &Reconciler{
 		Client:   mgr.GetClient(),
-		backends: schedmanager.All(),
+		backends: schedRegistry.All(),
 		recorder: mgr.GetEventRecorderFor("clustertopology-controller"),
 	}
 }

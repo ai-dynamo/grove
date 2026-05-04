@@ -26,6 +26,7 @@ import (
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler/kai"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/samber/lo"
@@ -306,7 +307,14 @@ func TestValidateSchedulerNames(t *testing.T) {
 				pcsBuilder = pcsBuilder.WithPodCliqueTemplateSpec(clique)
 			}
 			pcs := pcsBuilder.Build()
-			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), tt.schedulerConfig, nil, fakeSchedRegistry)
+			// Sync podCliqueSetSchedRegistry with tt.schedulerConfig so the validator's
+			// "is enabled?" check resolves consistently with the test's intent.
+			podCliqueSetSchedRegistry.Backends = map[string]scheduler.Backend{}
+			for _, p := range tt.schedulerConfig.Profiles {
+				podCliqueSetSchedRegistry.Backends[string(p.Name)] = testutils.NewFakeSchedulerBackend(string(p.Name))
+			}
+			podCliqueSetSchedRegistry.DefaultBackend = tt.schedulerConfig.DefaultProfileName
+			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), tt.schedulerConfig, nil, podCliqueSetSchedRegistry)
 			fldPath := field.NewPath("cliques")
 			errs := validator.validateSchedulerNames(tt.schedulerNames, fldPath)
 
@@ -1802,7 +1810,8 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fakeClient := testutils.CreateDefaultFakeClient(tc.clusterObjs)
 			newPCS := tc.setupNewPCS()
-			validator := newPCSValidator(newPCS, tc.operation, tasConfig, schedulerConfig, fakeClient, nil)
+			podCliqueSetSchedRegistry.Backends[string(groveconfigv1alpha1.SchedulerNameKai)] = kai.New(fakeClient, fakeClient.Scheme(), nil, groveconfigv1alpha1.SchedulerProfile{Name: groveconfigv1alpha1.SchedulerNameKai})
+			validator := newPCSValidator(newPCS, tc.operation, tasConfig, schedulerConfig, fakeClient, podCliqueSetSchedRegistry)
 
 			var (
 				err  error

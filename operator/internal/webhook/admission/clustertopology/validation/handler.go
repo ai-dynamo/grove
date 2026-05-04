@@ -22,7 +22,6 @@ import (
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
-	schedmanager "github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
 
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -38,10 +37,12 @@ type Handler struct {
 }
 
 // NewHandler creates a new ClusterTopology validation handler.
-func NewHandler(mgr manager.Manager) *Handler {
+// The set of enabled / topology-aware backends is captured from schedRegistry at construction time,
+// matching the operator's startup-time backend initialization.
+func NewHandler(mgr manager.Manager, schedRegistry scheduler.Registry) *Handler {
 	enabledBackends := make(map[string]struct{})
 	topologyAwareBackends := make(map[string]struct{})
-	for name, backend := range schedmanager.All() {
+	for name, backend := range schedRegistry.All() {
 		enabledBackends[name] = struct{}{}
 		if _, ok := backend.(scheduler.TopologyAwareSchedBackend); ok {
 			topologyAwareBackends[name] = struct{}{}
