@@ -1205,6 +1205,21 @@ func verifyUpdateProgressFields(tc *testctx.TestContext) {
 	if updateProgress.CurrentlyUpdating != nil {
 		tc.T.Fatalf("UpdateProgress.CurrentlyUpdating should be nil for OnDelete strategy, got %v", updateProgress.CurrentlyUpdating)
 	}
+
+	// After an OnDelete update completes, every standalone PCLQ and every PCSG must be at the
+	// current generation hash, so updated counts must equal totals. Totals must be non-zero on
+	// a non-empty PCS — a 0/0 result means the count derivation didn't run.
+	if updateProgress.TotalPodCliquesCount == 0 && updateProgress.TotalPodCliqueScalingGroupsCount == 0 {
+		tc.T.Fatalf("UpdateProgress totals are 0/0 — counts not derived for a non-empty PCS")
+	}
+	if updateProgress.UpdatedPodCliquesCount != updateProgress.TotalPodCliquesCount {
+		tc.T.Fatalf("UpdateProgress.UpdatedPodCliquesCount = %d != TotalPodCliquesCount = %d after OnDelete completion",
+			updateProgress.UpdatedPodCliquesCount, updateProgress.TotalPodCliquesCount)
+	}
+	if updateProgress.UpdatedPodCliqueScalingGroupsCount != updateProgress.TotalPodCliqueScalingGroupsCount {
+		tc.T.Fatalf("UpdateProgress.UpdatedPodCliqueScalingGroupsCount = %d != TotalPodCliqueScalingGroupsCount = %d after OnDelete completion",
+			updateProgress.UpdatedPodCliqueScalingGroupsCount, updateProgress.TotalPodCliqueScalingGroupsCount)
+	}
 }
 
 func verifyNoPodsDeleted(tc *testctx.TestContext, events []podEvent, existingPodNames map[string]bool) {
