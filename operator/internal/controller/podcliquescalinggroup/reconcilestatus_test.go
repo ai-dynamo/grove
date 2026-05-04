@@ -19,6 +19,7 @@ package podcliquescalinggroup
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
@@ -132,11 +133,26 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 			wantReason:   "SufficientAvailablePodCliqueScalingGroupReplicas",
 		},
 		{
-			name:         "insufficient scheduled",
+			// 0 < scheduled < MinAvailable is structurally unreachable from initial
+			// startup under gang scheduling, so it is treated as a regression and
+			// breaches MinAvailable.
+			name:         "partially scheduled regression breaches",
 			replicas:     3,
 			minAvailable: ptr.To(int32(2)),
 			scheduled:    1,
 			available:    1,
+			pclqsMap:     make(map[string][]grovecorev1alpha1.PodClique),
+			wantStatus:   metav1.ConditionTrue,
+			wantReason:   "ScheduledReplicasBelowMinAvailable",
+		},
+		{
+			// scheduled == 0 stays suppressed: gang termination would only recreate
+			// the same Pending replicas against the same cluster state.
+			name:         "zero scheduled does not breach",
+			replicas:     3,
+			minAvailable: ptr.To(int32(2)),
+			scheduled:    0,
+			available:    0,
 			pclqsMap:     make(map[string][]grovecorev1alpha1.PodClique),
 			wantStatus:   metav1.ConditionFalse,
 			wantReason:   "InsufficientScheduledPodCliqueScalingGroupReplicas",
@@ -188,6 +204,133 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 			assert.Equal(t, "MinAvailableBreached", condition.Type)
 			assert.Equal(t, tt.wantStatus, condition.Status)
 			assert.Equal(t, tt.wantReason, condition.Reason)
+		})
+	}
+}
+
+// TestComputeMinAvailableBreachedConditionPartialScheduleRegression covers the
+// regression-after-healthy-state behaviour at the PodCliqueScalingGroup level.
+// See the PodClique-level test for the full rationale.
+//
+// Several cases populate pclqsMap with breached PCLQs. That input is unread by
+// the under-scheduled branches today, but we keep it populated so that any
+// future refactor that drops the short-circuit and starts consulting pclqsMap
+// must continue to satisfy the assertions.
+func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testing.T) {
+	pastTransition := metav1.NewTime(time.Now().Add(-10 * time.Minute))
+
+	// breachedPCLQReplica is a single PCSG replica whose constituent PodCliques
+	// already report MinAvailableBreached=True. If a refactor accidentally
+	// consulted pclqsMap on the under-scheduled paths, these would inflate the
+	// breached count and could flip the answer — the assertions below must
+	// remain correct in that hypothetical world.
+	breachedPCLQReplica := map[string][]grovecorev1alpha1.PodClique{
+		"0": {{Status: grovecorev1alpha1.PodCliqueStatus{
+			Conditions: []metav1.Condition{{Type: constants.ConditionTypeMinAvailableBreached, Status: metav1.ConditionTrue}},
+		}}},
+	}
+
+	tests := []struct {
+		name           string
+		replicas       int32
+		minAvailable   *int32
+		scheduled      int32
+		available      int32
+		updateProgress *grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress
+		conditions     []metav1.Condition
+		pclqsMap       map[string][]grovecorev1alpha1.PodClique
+		wantStatus     metav1.ConditionStatus
+		wantReason     string
+	}{
+		{
+			name:         "0 < scheduled < MinAvailable breaches",
+			replicas:     3,
+			minAvailable: ptr.To(int32(3)),
+			scheduled:    1,
+			available:    1,
+			conditions: []metav1.Condition{{
+				Type:               constants.ConditionTypeMinAvailableBreached,
+				Status:             metav1.ConditionFalse,
+				Reason:             constants.ConditionReasonSufficientAvailablePCSGReplicas,
+				LastTransitionTime: pastTransition,
+			}},
+			pclqsMap:   breachedPCLQReplica,
+			wantStatus: metav1.ConditionTrue,
+			wantReason: constants.ConditionReasonScheduledReplicasBelowMinAvailable,
+		},
+		{
+			// Sanity-pin: scheduled == 0 must NOT breach, even with PCLQs in the
+			// map already breached. The short-circuit on scheduled==0 has to
+			// take precedence over PCLQ-level breach signal — otherwise a stale
+			// PCLQ condition would push us into a churn loop.
+			name:         "scheduled == 0 with breached PCLQs in map — must NOT breach",
+			replicas:     2,
+			minAvailable: ptr.To(int32(2)),
+			scheduled:    0,
+			available:    0,
+			conditions: []metav1.Condition{{
+				Type:               constants.ConditionTypeMinAvailableBreached,
+				Status:             metav1.ConditionFalse,
+				Reason:             constants.ConditionReasonSufficientAvailablePCSGReplicas,
+				LastTransitionTime: pastTransition,
+			}},
+			pclqsMap:   breachedPCLQReplica,
+			wantStatus: metav1.ConditionFalse,
+			wantReason: constants.ConditionReasonInsufficientScheduledPCSGReplicas,
+		},
+		{
+			// A fresh PCSG that has never scheduled any replica must NOT be
+			// reported as breached.
+			name:         "fresh PCSG never scheduled — must not breach",
+			replicas:     3,
+			minAvailable: ptr.To(int32(3)),
+			scheduled:    0,
+			available:    0,
+			pclqsMap:     map[string][]grovecorev1alpha1.PodClique{},
+			wantStatus:   metav1.ConditionFalse,
+			wantReason:   constants.ConditionReasonInsufficientScheduledPCSGReplicas,
+		},
+		{
+			// Pin branch ordering: when an update is in progress, the
+			// IsPCSGUpdateInProgress short-circuit must win over the regression
+			// breach branch. Otherwise a rolling update across a node cordon
+			// would falsely flip the breach to True and risk silent churn.
+			name:         "update in progress overrides partial-schedule breach",
+			replicas:     3,
+			minAvailable: ptr.To(int32(3)),
+			scheduled:    1,
+			available:    1,
+			updateProgress: &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+				UpdateStartedAt:            pastTransition,
+				UpdateEndedAt:              nil, // active update
+				PodCliqueSetGenerationHash: "gen-hash-1",
+			},
+			pclqsMap:   breachedPCLQReplica,
+			wantStatus: metav1.ConditionUnknown,
+			wantReason: constants.ConditionReasonUpdateInProgress,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+				Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
+					Replicas:     tt.replicas,
+					MinAvailable: tt.minAvailable,
+				},
+				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+					ScheduledReplicas: tt.scheduled,
+					AvailableReplicas: tt.available,
+					Conditions:        tt.conditions,
+					UpdateProgress:    tt.updateProgress,
+				},
+			}
+
+			condition := computeMinAvailableBreachedCondition(logr.Discard(), pcsg, tt.pclqsMap)
+
+			assert.Equal(t, constants.ConditionTypeMinAvailableBreached, condition.Type)
+			assert.Equal(t, tt.wantStatus, condition.Status, "MinAvailableBreached status mismatch")
+			assert.Equal(t, tt.wantReason, condition.Reason, "MinAvailableBreached reason mismatch")
 		})
 	}
 }
