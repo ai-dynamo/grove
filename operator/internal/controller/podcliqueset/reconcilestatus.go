@@ -175,12 +175,10 @@ func (r *Reconciler) computeAvailableAndUpdatedReplicas(ctx context.Context, log
 		}
 	}
 
-	logger.Info("Calculated PCS replica and update progress stats",
-		"pcs", pcsObjectKey,
-		"availableReplicas", stats.availableReplicas,
-		"updatedReplicas", stats.updatedReplicas,
-		"updatedPCLQs", stats.updatedPCLQs, "totalPCLQs", stats.totalPCLQs,
-		"updatedPCSGs", stats.updatedPCSGs, "totalPCSGs", stats.totalPCSGs)
+	logger.Info(fmt.Sprintf("Calculated PCS replica and update progress stats for %s: available=%d updated=%d PCLQs=%d/%d PCSGs=%d/%d",
+		pcsObjectKey, stats.availableReplicas, stats.updatedReplicas,
+		stats.updatedPCLQs, stats.totalPCLQs,
+		stats.updatedPCSGs, stats.totalPCSGs))
 	return stats, nil
 }
 
