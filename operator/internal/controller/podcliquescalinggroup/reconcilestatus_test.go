@@ -574,4 +574,3 @@ func assertCondition(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup
 	isBreached := condition.Status == metav1.ConditionTrue
 	assert.Equal(t, expectBreached, isBreached, "condition breach status mismatch")
 }
-

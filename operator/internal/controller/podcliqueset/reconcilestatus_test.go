@@ -663,10 +663,10 @@ func TestComputePCSUpdateProgressCounts(t *testing.T) {
 			},
 			childResources: func() []client.Object {
 				return []client.Object{
-					makePCSG(0, pcsHash),         // updated
-					makePCSGNoHash(1),            // not updated — no current hash
-					standalonePCLQ(0, pcsHash),   // updated
-					standalonePCLQ(1, oldHash),   // not updated — old hash
+					makePCSG(0, pcsHash),       // updated
+					makePCSGNoHash(1),          // not updated — no current hash
+					standalonePCLQ(0, pcsHash), // updated
+					standalonePCLQ(1, oldHash), // not updated — old hash
 				}
 			},
 			wantUpdatedPCLQs: 1, wantTotalPCLQs: 2,

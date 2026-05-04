@@ -426,4 +426,3 @@ func flattenNamesToSet(perReplica map[int][]string) map[string]struct{} {
 	}
 	return set
 }
-
