@@ -278,9 +278,10 @@ func TestVerifyAllPodsCreated(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sc := &syncContext{
-				logger:           ctrllogger.FromContext(t.Context()).WithName("test"),
-				existingPCLQPods: tt.existingPods,
-				existingPCLQs:    tt.existingPCLQs,
+				logger:             ctrllogger.FromContext(t.Context()).WithName("test"),
+				existingPCLQPods:   tt.existingPods,
+				existingPCLQs:      tt.existingPCLQs,
+				existingPCLQByName: componentutils.PodCliqueByName(tt.existingPCLQs),
 			}
 			r := &_resource{}
 			err := r.verifyAllPodsCreated(sc, tt.podGang)
@@ -1548,7 +1549,8 @@ func TestDeterminePCSGReplicas(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			sc := &syncContext{
-				existingPCSGs: test.existingPCSGs,
+				existingPCSGs:      test.existingPCSGs,
+				existingPCSGByName: componentutils.PCSGByName(test.existingPCSGs),
 			}
 
 			actualReplicas := sc.determinePCSGReplicas(test.pcsgFQN, test.pcsgConfig)

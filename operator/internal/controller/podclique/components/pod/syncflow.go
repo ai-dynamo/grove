@@ -89,6 +89,7 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pclq
 
 	// initialize the Pod names that are updated in the PodGang resource for this PCLQ.
 	sc.podNamesUpdatedInPCLQPodGangs = r.getPodNamesUpdatedInAssociatedPodGang(existingPodGang, pclq.Name)
+	sc.podNamesUpdatedInPCLQPodGangSet = componentutils.NewSet(sc.podNamesUpdatedInPCLQPodGangs)
 
 	// Get all existing pods for this PCLQ.
 	sc.existingPCLQPods, err = componentutils.GetPCLQPods(ctx, r.client, sc.pcs.Name, pclq)
@@ -268,10 +269,13 @@ func (r _resource) checkAndRemovePodSchedulingGates(sc *syncContext, logger logr
 		)
 	}
 
+	if sc.podNamesUpdatedInPCLQPodGangSet == nil {
+		sc.podNamesUpdatedInPCLQPodGangSet = componentutils.NewSet(sc.podNamesUpdatedInPCLQPodGangs)
+	}
 	for i, p := range sc.existingPCLQPods {
 		if hasPodGangSchedulingGate(p) {
 			podObjectKey := client.ObjectKeyFromObject(p)
-			if !slices.Contains(sc.podNamesUpdatedInPCLQPodGangs, p.Name) {
+			if !sc.podNamesUpdatedInPCLQPodGangSet.Has(p.Name) {
 				logger.Info("Pod has scheduling gate but it has not yet been updated in PodGang", "podObjectKey", podObjectKey)
 				skippedScheduleGatedPods = append(skippedScheduleGatedPods, p.Name)
 				continue
@@ -438,14 +442,15 @@ func (r _resource) createPods(ctx context.Context, logger logr.Logger, sc *syncC
 
 // syncContext holds the relevant state required during the sync flow run.
 type syncContext struct {
-	ctx                           context.Context
-	pcs                           *grovecorev1alpha1.PodCliqueSet
-	pclq                          *grovecorev1alpha1.PodClique
-	associatedPodGangName         string
-	existingPCLQPods              []*corev1.Pod
-	podNamesUpdatedInPCLQPodGangs []string
-	pclqExpectationsStoreKey      string
-	expectedPodTemplateHash       string
+	ctx                             context.Context
+	pcs                             *grovecorev1alpha1.PodCliqueSet
+	pclq                            *grovecorev1alpha1.PodClique
+	associatedPodGangName           string
+	existingPCLQPods                []*corev1.Pod
+	podNamesUpdatedInPCLQPodGangs   []string
+	podNamesUpdatedInPCLQPodGangSet componentutils.Set[string]
+	pclqExpectationsStoreKey        string
+	expectedPodTemplateHash         string
 }
 
 // syncFlowResult captures the result of a sync flow run.
