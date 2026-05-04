@@ -1206,18 +1206,20 @@ func verifyUpdateProgressFields(tc *testctx.TestContext) {
 		tc.T.Fatalf("UpdateProgress.CurrentlyUpdating should be nil for OnDelete strategy, got %v", updateProgress.CurrentlyUpdating)
 	}
 
-	// After an OnDelete update completes, every standalone PCLQ and every PCSG must be at the
-	// current generation hash, so updated counts must equal totals. Totals must be non-zero on
-	// a non-empty PCS — a 0/0 result means the count derivation didn't run.
+	// For OnDelete, UpdateEndedAt is set immediately when the update is initiated — it does not
+	// imply that PCLQs have converged to the new generation hash. Pods are replaced only after
+	// the user manually deletes them, so UpdatedPodCliquesCount may legitimately be 0 (no manual
+	// deletes) or partial (some manual deletes). The assertions below check sanity (counts
+	// derived, non-negative, updated <= total), not convergence.
 	if updateProgress.TotalPodCliquesCount == 0 && updateProgress.TotalPodCliqueScalingGroupsCount == 0 {
-		tc.T.Fatalf("UpdateProgress totals are 0/0 — counts not derived for a non-empty PCS")
+		tc.T.Fatalf("UpdateProgress totals are 0/0 — count derivation did not run on a non-empty PCS")
 	}
-	if updateProgress.UpdatedPodCliquesCount != updateProgress.TotalPodCliquesCount {
-		tc.T.Fatalf("UpdateProgress.UpdatedPodCliquesCount = %d != TotalPodCliquesCount = %d after OnDelete completion",
+	if updateProgress.UpdatedPodCliquesCount > updateProgress.TotalPodCliquesCount {
+		tc.T.Fatalf("UpdateProgress.UpdatedPodCliquesCount = %d > TotalPodCliquesCount = %d (counts cannot exceed totals)",
 			updateProgress.UpdatedPodCliquesCount, updateProgress.TotalPodCliquesCount)
 	}
-	if updateProgress.UpdatedPodCliqueScalingGroupsCount != updateProgress.TotalPodCliqueScalingGroupsCount {
-		tc.T.Fatalf("UpdateProgress.UpdatedPodCliqueScalingGroupsCount = %d != TotalPodCliqueScalingGroupsCount = %d after OnDelete completion",
+	if updateProgress.UpdatedPodCliqueScalingGroupsCount > updateProgress.TotalPodCliqueScalingGroupsCount {
+		tc.T.Fatalf("UpdateProgress.UpdatedPodCliqueScalingGroupsCount = %d > TotalPodCliqueScalingGroupsCount = %d (counts cannot exceed totals)",
 			updateProgress.UpdatedPodCliqueScalingGroupsCount, updateProgress.TotalPodCliqueScalingGroupsCount)
 	}
 }
