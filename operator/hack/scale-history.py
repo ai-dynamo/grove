@@ -59,16 +59,23 @@ def main() -> int:
     commit = args.commit or best_effort_git(["rev-parse", "HEAD"])
     run_url = args.run_url or ""
 
-    metrics = flatten_metrics(result)
+    timestamp = run_timestamp(result)
+    test_name = required_str(result, "testName")
+    run_id = required_str(result, "runID")
 
     if args.command == "local":
         changed = append_history(
             history_dir=Path(args.history_dir),
             result_path=result_path,
             result=result,
-            commit=commit,
-            run_url=run_url,
-            metrics=metrics,
+            run_record=build_run_record(
+                result=result,
+                timestamp=timestamp,
+                test_name=test_name,
+                run_id=run_id,
+                commit=commit,
+                run_url=run_url,
+            ),
         )
         copy_dashboard_files(Path(args.history_dir))
         return 0 if changed is not None else 1
@@ -82,9 +89,14 @@ def main() -> int:
         history_dir=history_dir,
         result_path=result_path,
         result=result,
-        commit=commit,
-        run_url=run_url,
-        metrics=metrics,
+        run_record=build_run_record(
+            result=result,
+            timestamp=timestamp,
+            test_name=test_name,
+            run_id=run_id,
+            commit=commit,
+            run_url=run_url,
+        ),
     )
     copy_dashboard_files(history_dir)
     commit_and_push(history_dir, args.branch, result, changed)
@@ -174,52 +186,33 @@ def append_history(
     history_dir: Path,
     result_path: Path,
     result: dict[str, Any],
-    commit: str,
-    run_url: str,
-    metrics: list[dict[str, Any]],
+    run_record: dict[str, Any],
 ) -> bool | None:
     history_dir.mkdir(parents=True, exist_ok=True)
     index_dir = history_dir / "index"
     index_dir.mkdir(parents=True, exist_ok=True)
 
-    timestamp = run_timestamp(result)
-    test_name = required_str(result, "testName")
-    if is_duplicate(index_dir / "metrics.ndjson", test_name, timestamp):
+    timestamp = required_str(run_record, "runTimestamp")
+    test_name = required_str(run_record, "testName")
+    if is_duplicate(index_dir / "runs.ndjson", test_name, timestamp):
         print(f"skip: {test_name} at {timestamp} already exists")
         return False
 
-    run_id = required_str(result, "runID")
     result_relpath = result_history_path(result, timestamp)
     result_dir = history_dir / result_relpath.parent
     result_dir.mkdir(parents=True, exist_ok=True)
 
     shutil.copy2(result_path, history_dir / result_relpath)
-
-    metric_records = []
-    for metric in metrics:
-        metric_records.append(
-            {
-                "testName": test_name,
-                "runID": run_id,
-                "runTimestamp": timestamp,
-                "commit": commit,
-                "runURL": run_url,
-                "metric": metric["name"],
-                "valueSeconds": metric["valueSeconds"],
-                "unit": "s",
-                "resultPath": str(result_relpath),
-                "storedAt": now_utc(),
-            }
-        )
-    append_ndjson(index_dir / "metrics.ndjson", metric_records)
-    print(f"stored: {test_name} {run_id}")
+    run_record["resultPath"] = str(result_relpath)
+    run_record["storedAt"] = now_utc()
+    append_ndjson(index_dir / "runs.ndjson", [run_record])
+    print(f"stored: {test_name} {run_record['runID']}")
     return True
 
-
-def is_duplicate(runs_path: Path, test_name: str, timestamp: str) -> bool:
-    if not runs_path.exists():
+def is_duplicate(index_path: Path, test_name: str, timestamp: str) -> bool:
+    if not index_path.exists():
         return False
-    with runs_path.open() as f:
+    with index_path.open() as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -228,7 +221,6 @@ def is_duplicate(runs_path: Path, test_name: str, timestamp: str) -> bool:
             if (
                 record.get("testName") == test_name
                 and record.get("runTimestamp") == timestamp
-                and record.get("metric") == "total"
             ):
                 return True
     return False
@@ -274,31 +266,45 @@ def iso_seconds(value: str) -> str:
     return datetime.fromisoformat(value).isoformat(timespec="seconds")
 
 
-def flatten_metrics(result: dict[str, Any]) -> list[dict[str, Any]]:
-    metrics = [
-        {
-            "name": "total",
-            "valueSeconds": float(result["testDurationSeconds"]),
-        }
-    ]
+def build_run_record(
+    result: dict[str, Any],
+    timestamp: str,
+    test_name: str,
+    run_id: str,
+    commit: str,
+    run_url: str,
+) -> dict[str, Any]:
+    phases = []
     for phase in result.get("phases", []):
         phase_name = required_str(phase, "name")
-        phase_duration = duration_seconds(phase["startTime"], phase["endTime"])
-        metrics.append(
-            {
-                "name": f"phase.{phase_name}",
-                "valueSeconds": phase_duration,
-            }
-        )
+        milestones = []
         for milestone in phase.get("milestones", []):
             milestone_name = required_str(milestone, "name")
-            metrics.append(
+            milestones.append(
                 {
-                    "name": f"milestone.{phase_name}.{milestone_name}",
+                    "name": milestone_name,
                     "valueSeconds": float(milestone["durationFromPhaseStartSeconds"]),
                 }
             )
-    return metrics
+        phases.append(
+            {
+                "name": phase_name,
+                "valueSeconds": duration_seconds(phase["startTime"], phase["endTime"]),
+                "milestones": milestones,
+            }
+        )
+
+    return {
+        "testName": test_name,
+        "runID": run_id,
+        "runTimestamp": timestamp,
+        "commit": commit,
+        "runURL": run_url,
+        "resultPath": "",
+        "storedAt": "",
+        "totalSeconds": float(result["testDurationSeconds"]),
+        "phases": phases,
+    }
 
 
 def duration_seconds(start: str, end: str) -> float:

@@ -79,8 +79,8 @@ static dashboard files into the history root.
   --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 ```
 
-The history contains full `scale-test-results.json` files and
-`index/metrics.ndjson`. Profiling artifacts are not copied.
+The history contains full `scale-test-results.json` files and one run record per
+line in `index/runs.ndjson`. Profiling artifacts are not copied.
 
 ### scale-dashboard
 
@@ -91,7 +91,7 @@ copies these files into the history root automatically.
 python3 -m http.server 8765 --directory /tmp/grove-scale-history
 ```
 
-Open http://localhost:8765 to chart `index/metrics.ndjson`.
+Open http://localhost:8765 to chart `index/runs.ndjson`.
 
 ### config-cluster.py
 

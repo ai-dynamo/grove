@@ -1,5 +1,4 @@
-/**
- * /*
+/*
  * Copyright 2026 The Grove Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,15 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- * */
  */
 
-const METRICS_URL = "index/metrics.ndjson";
-
-const PHASES = [
-  { name: "deploy", label: "Deploy", color: "#16736f" },
-  { name: "delete", label: "Delete", color: "#c85a32" },
-];
+const RUNS_URL = "index/runs.ndjson";
 
 const STACK_COLORS = [
   "#16736f",
@@ -35,7 +28,7 @@ const STACK_COLORS = [
 ];
 
 const state = {
-  rows: [],
+  runs: [],
   testName: "",
 };
 
@@ -44,12 +37,9 @@ const els = {
   testSelect: document.getElementById("test-select"),
   totalChart: document.getElementById("total-chart"),
   phaseChart: document.getElementById("phase-chart"),
-  deployChart: document.getElementById("deploy-chart"),
-  deleteChart: document.getElementById("delete-chart"),
   totalSummary: document.getElementById("total-summary"),
   phaseLegend: document.getElementById("phase-legend"),
-  deployLegend: document.getElementById("deploy-legend"),
-  deleteLegend: document.getElementById("delete-legend"),
+  milestoneCharts: document.getElementById("milestone-charts"),
   latestBody: document.getElementById("latest-body"),
   tooltip: document.getElementById("tooltip"),
 };
@@ -58,11 +48,11 @@ init();
 
 async function init() {
   try {
-    const text = await fetchText(METRICS_URL);
-    state.rows = parseNdjson(text);
-    if (state.rows.length === 0) {
-      setStatus("No metrics found.");
-      drawEmpty(els.totalChart, "No metrics found");
+    const text = await fetchText(RUNS_URL);
+    state.runs = parseNdjson(text);
+    if (state.runs.length === 0) {
+      setStatus("No runs found.");
+      drawEmpty(els.totalChart, "No runs found");
       return;
     }
 
@@ -74,8 +64,8 @@ async function init() {
     window.addEventListener("resize", render);
     render();
   } catch (err) {
-    setStatus(`Failed to load ${METRICS_URL}: ${err.message}`);
-    drawEmpty(els.totalChart, "Failed to load metrics");
+    setStatus(`Failed to load ${RUNS_URL}: ${err.message}`);
+    drawEmpty(els.totalChart, "Failed to load runs");
   }
 }
 
@@ -94,21 +84,47 @@ function parseNdjson(text) {
     .filter(Boolean)
     .map((line, index) => {
       try {
-        const row = JSON.parse(line);
-        row.valueSeconds = Number(row.valueSeconds);
-        row.date = new Date(row.runTimestamp);
-        if (!row.testName || !row.metric || !Number.isFinite(row.valueSeconds) || Number.isNaN(row.date.getTime())) {
-          throw new Error("missing required metric fields");
-        }
-        return row;
+        return normalizeRun(JSON.parse(line));
       } catch (err) {
         throw new Error(`line ${index + 1}: ${err.message}`);
       }
     });
 }
 
+function normalizeRun(run) {
+  run.totalSeconds = Number(run.totalSeconds);
+  run.date = new Date(run.runTimestamp);
+  run.phases = Array.isArray(run.phases) ? run.phases.map(normalizePhase) : [];
+
+  if (!run.testName || !run.runID || !Number.isFinite(run.totalSeconds) || Number.isNaN(run.date.getTime())) {
+    throw new Error("missing required run fields");
+  }
+
+  run.commit = run.commit || "";
+  run.runURL = run.runURL || "";
+  run.resultPath = run.resultPath || "";
+  return run;
+}
+
+function normalizePhase(phase) {
+  phase.valueSeconds = Number(phase.valueSeconds);
+  phase.milestones = Array.isArray(phase.milestones) ? phase.milestones.map(normalizeMilestone) : [];
+  if (!phase.name || !Number.isFinite(phase.valueSeconds)) {
+    throw new Error("missing required phase fields");
+  }
+  return phase;
+}
+
+function normalizeMilestone(milestone) {
+  milestone.valueSeconds = Number(milestone.valueSeconds);
+  if (!milestone.name || !Number.isFinite(milestone.valueSeconds)) {
+    throw new Error("missing required milestone fields");
+  }
+  return milestone;
+}
+
 function populateSelectors() {
-  const tests = unique(state.rows.map((row) => row.testName)).sort();
+  const tests = unique(state.runs.map((run) => run.testName)).sort();
   state.testName = tests[0] || "";
   setOptions(els.testSelect, tests);
 }
@@ -126,45 +142,24 @@ function setOptions(select, values) {
 }
 
 function render() {
-  const runs = buildRuns(state.testName);
-  setStatus(`${runs.length} runs, ${state.rows.length} metric points loaded`);
+  const runs = selectedRuns();
+  setStatus(`${runs.length} runs loaded`);
 
   drawTotalChart(runs);
   drawPhaseChart(runs);
-  drawMilestoneChart(runs, "deploy", els.deployChart, els.deployLegend);
-  drawMilestoneChart(runs, "delete", els.deleteChart, els.deleteLegend);
-  renderLatestTable();
+  renderMilestoneCharts(runs);
+  renderLatestTable(runs);
 }
 
-function buildRuns(testName) {
-  const runs = new Map();
-  for (const row of state.rows.filter((item) => item.testName === testName)) {
-    if (!runs.has(row.runID)) {
-      runs.set(row.runID, {
-        testName: row.testName,
-        runID: row.runID,
-        date: row.date,
-        commit: row.commit || "",
-        runURL: row.runURL || "",
-        resultPath: row.resultPath || "",
-        metrics: new Map(),
-      });
-    }
-    const run = runs.get(row.runID);
-    run.metrics.set(row.metric, row);
-    if (row.metric === "total") {
-      run.date = row.date;
-      run.commit = row.commit || run.commit;
-      run.runURL = row.runURL || run.runURL;
-      run.resultPath = row.resultPath || run.resultPath;
-    }
-  }
-  return [...runs.values()].sort((a, b) => a.date - b.date);
+function selectedRuns() {
+  return state.runs
+    .filter((run) => run.testName === state.testName)
+    .sort((a, b) => a.date - b.date);
 }
 
 function drawTotalChart(runs) {
   const rows = runs
-    .map((run) => ({ run, value: metricValue(run, "total") }))
+    .map((run) => ({ run, value: run.totalSeconds }))
     .filter((item) => Number.isFinite(item.value));
 
   const svg = els.totalChart;
@@ -250,44 +245,82 @@ function drawTotalChart(runs) {
 }
 
 function drawPhaseChart(runs) {
+  const phaseNames = orderedPhaseNames(runs);
+  const colors = colorMap(phaseNames);
   const stacks = runs.map((run) => ({
     run,
-    segments: PHASES.map((phase) => ({
-      name: phase.label,
-      value: metricValue(run, `phase.${phase.name}`),
-      color: phase.color,
+    segments: run.phases.map((phase) => ({
+      name: phaseLabel(phase.name),
+      value: phase.valueSeconds,
+      color: colors.get(phase.name),
     })).filter((segment) => Number.isFinite(segment.value)),
   })).filter((stack) => stack.segments.length > 0);
 
-  renderLegend(els.phaseLegend, PHASES.map((phase) => ({ name: phase.label, color: phase.color })));
+  renderLegend(els.phaseLegend, phaseNames.map((name) => ({ name: phaseLabel(name), color: colors.get(name) })));
   drawStackedBars(els.phaseChart, stacks);
 }
 
+function renderMilestoneCharts(runs) {
+  els.milestoneCharts.replaceChildren();
+  const phaseNames = orderedPhaseNames(runs)
+    .filter((phaseName) => runs.some((run) => (phaseByName(run, phaseName)?.milestones || []).length > 0));
+
+  for (const phaseName of phaseNames) {
+    const article = document.createElement("article");
+    article.className = "chart-panel";
+
+    const header = document.createElement("header");
+    header.className = "chart-panel-header";
+
+    const title = document.createElement("h2");
+    title.textContent = `${phaseLabel(phaseName)} Milestones`;
+
+    const legend = document.createElement("div");
+    legend.className = "legend";
+
+    const frame = document.createElement("div");
+    frame.className = "chart-frame";
+
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.classList.add("chart");
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", `${phaseLabel(phaseName)} milestone runtime by run`);
+
+    header.append(title, legend);
+    frame.append(svg);
+    article.append(header, frame);
+    els.milestoneCharts.append(article);
+
+    drawMilestoneChart(runs, phaseName, svg, legend);
+  }
+}
+
 function drawMilestoneChart(runs, phaseName, svg, legend) {
-  const metricNames = milestoneMetricsForPhase(runs, phaseName);
-  const colors = colorMap(metricNames.map(milestoneLabel));
+  const milestoneNames = orderedMilestoneNames(runs, phaseName);
+  const colors = colorMap([...milestoneNames, "phase tail"]);
   const stacks = runs.map((run) => {
-    const phaseTotal = metricValue(run, `phase.${phaseName}`);
+    const phase = phaseByName(run, phaseName);
+    if (!phase) return { run, segments: [] };
+
     let previous = 0;
     const segments = [];
 
-    for (const metric of metricNames) {
-      const cumulative = metricValue(run, metric);
-      if (!Number.isFinite(cumulative)) continue;
-      const value = Math.max(0, cumulative - previous);
+    for (const milestone of phase.milestones) {
+      if (!Number.isFinite(milestone.valueSeconds)) continue;
+      const value = Math.max(0, milestone.valueSeconds - previous);
       segments.push({
-        name: milestoneLabel(metric),
+        name: milestone.name,
         value,
-        color: colors.get(milestoneLabel(metric)),
+        color: colors.get(milestone.name),
       });
-      previous = cumulative;
+      previous = milestone.valueSeconds;
     }
 
-    if (Number.isFinite(phaseTotal) && phaseTotal > previous + 0.001) {
+    if (phase.valueSeconds > previous + 0.001) {
       segments.push({
         name: "phase tail",
-        value: phaseTotal - previous,
-        color: colors.get("phase tail") || STACK_COLORS[segments.length % STACK_COLORS.length],
+        value: phase.valueSeconds - previous,
+        color: colors.get("phase tail"),
       });
     }
 
@@ -295,7 +328,7 @@ function drawMilestoneChart(runs, phaseName, svg, legend) {
   }).filter((stack) => stack.segments.length > 0);
 
   const legendItems = unique(stacks.flatMap((stack) => stack.segments.map((segment) => segment.name)))
-    .map((name, index) => ({ name, color: colors.get(name) || STACK_COLORS[index % STACK_COLORS.length] }));
+    .map((name) => ({ name, color: colors.get(name) }));
   renderLegend(legend, legendItems);
   drawStackedBars(svg, stacks);
 }
@@ -357,6 +390,55 @@ function drawStackedBars(svg, stacks) {
   drawDateLabels(svg, dims, stacks.map((stack) => stack.run));
 }
 
+function orderedPhaseNames(runs) {
+  const names = [];
+  const latest = runs[runs.length - 1];
+  if (latest) {
+    addPhaseNames(names, latest);
+  }
+  for (const run of runs) {
+    addPhaseNames(names, run);
+  }
+  return names;
+}
+
+function addPhaseNames(names, run) {
+  for (const phase of run.phases) {
+    if (!names.includes(phase.name)) {
+      names.push(phase.name);
+    }
+  }
+}
+
+function orderedMilestoneNames(runs, phaseName) {
+  const names = [];
+  const latestPhase = [...runs].reverse()
+    .map((run) => phaseByName(run, phaseName))
+    .find((phase) => phase && phase.milestones.length > 0);
+  if (latestPhase) {
+    addMilestoneNames(names, latestPhase);
+  }
+  for (const run of runs) {
+    const phase = phaseByName(run, phaseName);
+    if (phase) {
+      addMilestoneNames(names, phase);
+    }
+  }
+  return names;
+}
+
+function addMilestoneNames(names, phase) {
+  for (const milestone of phase.milestones) {
+    if (!names.includes(milestone.name)) {
+      names.push(milestone.name);
+    }
+  }
+}
+
+function phaseByName(run, name) {
+  return run.phases.find((phase) => phase.name === name);
+}
+
 function prepareChart(svg, margin) {
   const width = Math.max(640, svg.clientWidth || 640);
   const height = Math.max(260, svg.clientHeight || 320);
@@ -408,16 +490,29 @@ function drawEmpty(svg, message) {
   addText(svg, dims.width / 2, dims.height / 2, message, "empty-label", "middle");
 }
 
-function renderLatestTable() {
-  const latestByMetric = new Map();
-  for (const row of state.rows.filter((item) => item.testName === state.testName)) {
-    const current = latestByMetric.get(row.metric);
-    if (!current || row.date > current.date) {
-      latestByMetric.set(row.metric, row);
+function renderLatestTable(runs) {
+  const latest = runs[runs.length - 1];
+  if (!latest) {
+    els.latestBody.replaceChildren();
+    return;
+  }
+
+  const rows = [{ metric: "total", valueSeconds: latest.totalSeconds, runID: latest.runID }];
+  for (const phase of latest.phases) {
+    rows.push({
+      metric: `phase.${phase.name}`,
+      valueSeconds: phase.valueSeconds,
+      runID: latest.runID,
+    });
+    for (const milestone of phase.milestones) {
+      rows.push({
+        metric: `milestone.${phase.name}.${milestone.name}`,
+        valueSeconds: milestone.valueSeconds,
+        runID: latest.runID,
+      });
     }
   }
 
-  const rows = [...latestByMetric.values()].sort((a, b) => metricSort(a.metric, b.metric));
   els.latestBody.replaceChildren(
     ...rows.map((row) => {
       const tr = document.createElement("tr");
@@ -484,26 +579,6 @@ function tooltipRows(run, rows) {
   ];
 }
 
-function milestoneMetricsForPhase(runs, phaseName) {
-  return unique(
-    runs.flatMap((run) => [...run.metrics.keys()].filter((metric) => metric.startsWith(`milestone.${phaseName}.`))),
-  ).sort((a, b) => averageMetric(runs, a) - averageMetric(runs, b) || a.localeCompare(b));
-}
-
-function averageMetric(runs, metric) {
-  const values = runs.map((run) => metricValue(run, metric)).filter(Number.isFinite);
-  if (values.length === 0) return Number.POSITIVE_INFINITY;
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
-function metricValue(run, metric) {
-  return run.metrics.get(metric)?.valueSeconds ?? Number.NaN;
-}
-
-function milestoneLabel(metric) {
-  return metric.split(".").slice(2).join(".");
-}
-
 function colorMap(names) {
   const map = new Map();
   unique(names).forEach((name, index) => {
@@ -549,32 +624,12 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
-function metricSort(a, b) {
-  const left = metricSortKey(a);
-  const right = metricSortKey(b);
-  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
-    if (left[i] === right[i]) continue;
-    if (typeof left[i] === "number" && typeof right[i] === "number") {
-      return left[i] - right[i];
-    }
-    return String(left[i]).localeCompare(String(right[i]));
-  }
-  return 0;
-}
-
-function metricSortKey(name) {
-  if (name === "total") return [0, 0, name];
-  if (name.startsWith("phase.")) return [1, metricFirstIndex(name), name];
-  if (name.startsWith("milestone.")) {
-    const phase = name.split(".")[1] || "";
-    return [2, metricFirstIndex(`phase.${phase}`), metricFirstIndex(name), name];
-  }
-  return [3, metricFirstIndex(name), name];
-}
-
-function metricFirstIndex(name) {
-  const index = state.rows.findIndex((row) => row.metric === name);
-  return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+function phaseLabel(name) {
+  return name
+    .split(/[-_.\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function formatSeconds(value) {
