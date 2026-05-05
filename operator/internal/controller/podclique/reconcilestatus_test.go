@@ -26,6 +26,7 @@ import (
 	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 
+	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -232,6 +233,99 @@ func TestMutateUpdatedReplicaCountsCanonicalAndLegacyCurrentPodLabels(t *testing
 	})
 	require.NoError(t, err)
 	assert.Equal(t, int32(2), pclq.Status.UpdatedReplicas)
+}
+
+func TestMutateCurrentHashesAdvancesGenerationWhenTemplateHashIsCurrent(t *testing.T) {
+	pcs, pclq, templateHashes, generationHashes := newPodCliqueHashConvergenceFixture()
+	oldGenerationHash := "old-generation-hash"
+	pclq.Status.CurrentPodTemplateHash = ptr.To(templateHashes.Legacy)
+	pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(oldGenerationHash)
+	pclq.Status.Replicas = 2
+	pclq.Status.UpdatedReplicas = 2
+
+	err := mutateCurrentHashes(logr.Discard(), pcs, pclq)
+
+	require.NoError(t, err)
+	assert.Equal(t, templateHashes.Canonical, *pclq.Status.CurrentPodTemplateHash)
+	assert.Equal(t, generationHashes.Canonical, *pclq.Status.CurrentPodCliqueSetGenerationHash)
+}
+
+func TestMutateCurrentHashesDoesNotAdvanceWhenTemplateHashIsStale(t *testing.T) {
+	tests := []struct {
+		name                    string
+		labelPodTemplateHash    string
+		currentPodTemplateHash  string
+		wantPCSGenerationHash   string
+		wantCurrentTemplateHash string
+	}{
+		{
+			name:                    "stale label",
+			labelPodTemplateHash:    "stale-template-hash",
+			currentPodTemplateHash:  "",
+			wantPCSGenerationHash:   "old-generation-hash",
+			wantCurrentTemplateHash: "",
+		},
+		{
+			name:                    "stale current template hash",
+			labelPodTemplateHash:    "",
+			currentPodTemplateHash:  "stale-template-hash",
+			wantPCSGenerationHash:   "old-generation-hash",
+			wantCurrentTemplateHash: "stale-template-hash",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pcs, pclq, templateHashes, _ := newPodCliqueHashConvergenceFixture()
+			if tt.labelPodTemplateHash == "" {
+				tt.labelPodTemplateHash = templateHashes.Canonical
+			}
+			pclq.Labels[apicommon.LabelPodTemplateHash] = tt.labelPodTemplateHash
+			pclq.Status.CurrentPodTemplateHash = ptr.To(tt.currentPodTemplateHash)
+			pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(tt.wantPCSGenerationHash)
+			pclq.Status.Replicas = 2
+			pclq.Status.UpdatedReplicas = 2
+
+			err := mutateCurrentHashes(logr.Discard(), pcs, pclq)
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantCurrentTemplateHash, *pclq.Status.CurrentPodTemplateHash)
+			assert.Equal(t, tt.wantPCSGenerationHash, *pclq.Status.CurrentPodCliqueSetGenerationHash)
+		})
+	}
+}
+
+func newPodCliqueHashConvergenceFixture() (*grovecorev1alpha1.PodCliqueSet, *grovecorev1alpha1.PodClique, componentutils.HashCandidates, componentutils.HashCandidates) {
+	template := &grovecorev1alpha1.PodCliqueTemplateSpec{
+		Name: "worker",
+		Spec: grovecorev1alpha1.PodCliqueSpec{
+			PodSpec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "main", Image: "main:v1"}},
+			},
+		},
+	}
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "pcs", Namespace: "default"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{template},
+			},
+		},
+	}
+	templateHashes := componentutils.ComputePCLQPodTemplateHashCandidates(template, "")
+	generationHashes := componentutils.ComputePCSGenerationHashCandidates(pcs)
+	pcs.Status.CurrentGenerationHash = ptr.To(generationHashes.Canonical)
+	pclq := &grovecorev1alpha1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pcs-0-worker",
+			Namespace: "default",
+			Labels: map[string]string{
+				apicommon.LabelPartOfKey:                "pcs",
+				apicommon.LabelPodCliqueSetReplicaIndex: "0",
+				apicommon.LabelPodTemplateHash:          templateHashes.Canonical,
+			},
+		},
+	}
+	return pcs, pclq, templateHashes, generationHashes
 }
 
 // createPodWithHash creates a test pod with the specified template hash label

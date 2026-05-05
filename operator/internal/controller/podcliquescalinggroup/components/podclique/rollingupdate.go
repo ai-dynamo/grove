@@ -150,8 +150,12 @@ func (r _resource) markRollingUpdateEnd(ctx context.Context, logger logr.Logger,
 			fmt.Sprintf("failed to mark end of rolling update in status of PodCliqueScalingGroup: %v", client.ObjectKeyFromObject(pcsg)),
 		)
 	}
-	logger.Info("Marked the end of rolling update for PodCliqueScalingGroup")
-	return nil
+	logger.Info("Marked the end of rolling update of PodCliqueScalingGroup")
+	return groveerr.New(
+		groveerr.ErrCodeContinueReconcileAndRequeue,
+		component.OperationSync,
+		fmt.Sprintf("rolling update of PodCliqueScalingGroup %v has ended, requeuing for status convergence", client.ObjectKeyFromObject(pcsg)),
+	)
 }
 
 // computePendingUpdateWork analyzes existing replicas and categorizes them by update status and availability state
@@ -216,9 +220,7 @@ func isCurrentReplicaUpdateComplete(sc *syncContext) bool {
 	}
 	return lo.EveryBy(existingPCSGReplicaPCLQs, func(pclq grovecorev1alpha1.PodClique) bool {
 		expectedPodTemplateHashes := sc.expectedPCLQPodTemplateHashes[pclq.Name]
-		expectedPCSGenerationHashes := componentutils.ComputePCSGenerationHashCandidates(sc.pcs)
 		return pclq.Status.CurrentPodTemplateHash != nil && expectedPodTemplateHashes.Matches(*pclq.Status.CurrentPodTemplateHash) &&
-			pclq.Status.CurrentPodCliqueSetGenerationHash != nil && expectedPCSGenerationHashes.Matches(*pclq.Status.CurrentPodCliqueSetGenerationHash) &&
 			pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable
 	})
 }

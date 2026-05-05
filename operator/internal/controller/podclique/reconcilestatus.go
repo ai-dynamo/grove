@@ -125,11 +125,7 @@ func mutateCurrentHashes(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet
 	pcsGenerationHashes := componentutils.ComputePCSGenerationHashCandidates(pcs)
 
 	if pclq.Status.UpdateProgress == nil {
-		templateHashCurrent := pclq.Status.CurrentPodTemplateHash == nil ||
-			expectedPodTemplateHashes.Matches(*pclq.Status.CurrentPodTemplateHash)
-		generationHashCurrent := pclq.Status.CurrentPodCliqueSetGenerationHash == nil ||
-			pcsGenerationHashes.Matches(*pclq.Status.CurrentPodCliqueSetGenerationHash)
-		if templateHashCurrent && generationHashCurrent {
+		if isPodCliqueTemplateHashCurrent(pclq, expectedPodTemplateHashes) {
 			pclq.Status.CurrentPodTemplateHash = ptr.To(expectedPodTemplateHashes.Canonical)
 			pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(pcsGenerationHashes.Canonical)
 		}
@@ -144,6 +140,15 @@ func mutateCurrentHashes(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet
 		pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(pclq.Status.UpdateProgress.PodCliqueSetGenerationHash)
 	}
 	return nil
+}
+
+func isPodCliqueTemplateHashCurrent(pclq *grovecorev1alpha1.PodClique, expectedPodTemplateHashes componentutils.HashCandidates) bool {
+	labelPodTemplateHash, ok := pclq.Labels[apicommon.LabelPodTemplateHash]
+	if !ok || !expectedPodTemplateHashes.Matches(labelPodTemplateHash) {
+		return false
+	}
+	return pclq.Status.CurrentPodTemplateHash == nil ||
+		expectedPodTemplateHashes.Matches(*pclq.Status.CurrentPodTemplateHash)
 }
 
 // mutateReplicas updates the PodClique status with current replica counts based on pod categorization

@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
@@ -589,6 +590,54 @@ func TestReconcileStatus_EdgeCases(t *testing.T) {
 			assert.False(t, result.HasErrors())
 		})
 	}
+}
+
+func TestMutateCurrentPodCliqueSetGenerationHashWaitsForPodCliqueGenerationConvergence(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
+		WithScalingGroupConfig("compute", []string{"worker"}, 2, 1).
+		Build()
+	pcsGenerationHashes := componentutils.ComputePCSGenerationHashCandidates(pcs)
+	pcs.Status.CurrentGenerationHash = ptr.To(pcsGenerationHashes.Canonical)
+
+	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcs-0-compute", "test-ns", "test-pcs", 0).
+		WithReplicas(2).
+		WithCliqueNames([]string{"worker"}).
+		WithOptions(testutils.WithPCSGCurrentPCSGenerationHash("old-generation-hash")).
+		Build()
+	expectedTemplateHashes := componentutils.GetPCLQTemplateHashCandidates(pcs, pcsg)
+	pclqs := []grovecorev1alpha1.PodClique{
+		buildConvergedPCSGPodClique(t, pcsg, "worker", 0, expectedTemplateHashes, pcsGenerationHashes.Canonical),
+		buildConvergedPCSGPodClique(t, pcsg, "worker", 1, expectedTemplateHashes, "old-generation-hash"),
+	}
+
+	mutateCurrentPodCliqueSetGenerationHash(logr.Discard(), pcs, pcsg, pclqs)
+	require.NotNil(t, pcsg.Status.CurrentPodCliqueSetGenerationHash)
+	assert.Equal(t, "old-generation-hash", *pcsg.Status.CurrentPodCliqueSetGenerationHash)
+
+	pclqs[1].Status.CurrentPodCliqueSetGenerationHash = ptr.To(pcsGenerationHashes.Canonical)
+	mutateCurrentPodCliqueSetGenerationHash(logr.Discard(), pcs, pcsg, pclqs)
+	require.NotNil(t, pcsg.Status.CurrentPodCliqueSetGenerationHash)
+	assert.Equal(t, pcsGenerationHashes.Canonical, *pcsg.Status.CurrentPodCliqueSetGenerationHash)
+}
+
+func buildConvergedPCSGPodClique(
+	t *testing.T,
+	pcsg *grovecorev1alpha1.PodCliqueScalingGroup,
+	cliqueName string,
+	pcsgReplicaIndex int,
+	expectedTemplateHashes map[string]componentutils.HashCandidates,
+	pcsGenerationHash string,
+) grovecorev1alpha1.PodClique {
+	t.Helper()
+	pclqName := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsg.Name, Replica: pcsgReplicaIndex}, cliqueName)
+	templateHashes, ok := expectedTemplateHashes[pclqName]
+	require.True(t, ok, "expected template hash for %s", pclqName)
+	pclq := testutils.NewPCSGPodCliqueBuilder(pclqName, pcsg.Namespace, "test-pcs", pcsg.Name, 0, pcsgReplicaIndex).
+		WithLabels(map[string]string{apicommon.LabelPodTemplateHash: templateHashes.Canonical}).
+		Build()
+	pclq.Status.CurrentPodTemplateHash = ptr.To(templateHashes.Canonical)
+	pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(pcsGenerationHash)
+	return *pclq
 }
 
 // Test helpers

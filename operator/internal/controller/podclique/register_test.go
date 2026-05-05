@@ -77,6 +77,116 @@ func TestPodPredicate_Delete(t *testing.T) {
 	})
 }
 
+func TestPodCliqueSetPredicateCurrentlyUpdatingReplicaChanges(t *testing.T) {
+	pred, ok := podCliqueSetPredicate().(predicate.Funcs)
+	require.True(t, ok, "predicate must be predicate.Funcs")
+
+	tests := []struct {
+		name        string
+		oldProgress *grovecorev1alpha1.PodCliqueSetUpdateProgress
+		newProgress *grovecorev1alpha1.PodCliqueSetUpdateProgress
+		want        bool
+	}{
+		{
+			name: "currently updating starts",
+			newProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
+			},
+			want: true,
+		},
+		{
+			name: "currently updating clears",
+			oldProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
+			},
+			newProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{},
+			want:        true,
+		},
+		{
+			name: "currently updating moves",
+			oldProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
+			},
+			newProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 1}},
+			},
+			want: true,
+		},
+		{
+			name: "currently updating unchanged",
+			oldProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
+			},
+			newProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := pred.UpdateFunc(event.UpdateEvent{
+				ObjectOld: &grovecorev1alpha1.PodCliqueSet{Status: grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("generation"), UpdateProgress: tt.oldProgress}},
+				ObjectNew: &grovecorev1alpha1.PodCliqueSet{Status: grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("generation"), UpdateProgress: tt.newProgress}},
+			})
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestPodCliqueScalingGroupPredicateGenerationStatusChanges(t *testing.T) {
+	pred, ok := podCliqueScalingGroupPredicate().(predicate.Funcs)
+	require.True(t, ok, "predicate must be predicate.Funcs")
+
+	tests := []struct {
+		name    string
+		oldPCSG *grovecorev1alpha1.PodCliqueScalingGroup
+		newPCSG *grovecorev1alpha1.PodCliqueScalingGroup
+		want    bool
+	}{
+		{
+			name: "current generation changes",
+			oldPCSG: &grovecorev1alpha1.PodCliqueScalingGroup{Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+				CurrentPodCliqueSetGenerationHash: ptr.To("old-generation"),
+			}},
+			newPCSG: &grovecorev1alpha1.PodCliqueScalingGroup{Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+				CurrentPodCliqueSetGenerationHash: ptr.To("new-generation"),
+			}},
+			want: true,
+		},
+		{
+			name: "update target generation changes",
+			oldPCSG: &grovecorev1alpha1.PodCliqueScalingGroup{Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+				UpdateProgress: &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{PodCliqueSetGenerationHash: "old-generation"},
+			}},
+			newPCSG: &grovecorev1alpha1.PodCliqueScalingGroup{Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+				UpdateProgress: &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{PodCliqueSetGenerationHash: "new-generation"},
+			}},
+			want: true,
+		},
+		{
+			name: "generation status unchanged",
+			oldPCSG: &grovecorev1alpha1.PodCliqueScalingGroup{Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+				CurrentPodCliqueSetGenerationHash: ptr.To("generation"),
+				UpdateProgress:                    &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{PodCliqueSetGenerationHash: "generation"},
+			}},
+			newPCSG: &grovecorev1alpha1.PodCliqueScalingGroup{Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+				CurrentPodCliqueSetGenerationHash: ptr.To("generation"),
+				UpdateProgress:                    &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{PodCliqueSetGenerationHash: "generation"},
+			}},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := pred.UpdateFunc(event.UpdateEvent{ObjectOld: tt.oldPCSG, ObjectNew: tt.newPCSG})
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 // Test_isMarkedForDeletion tests if a deletion timestamp is set on the pod
 func Test_isMarkedForDeletion(t *testing.T) {
 	now := ptr.To(metav1.Now())

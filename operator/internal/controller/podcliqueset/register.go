@@ -147,7 +147,8 @@ func podCliqueScalingGroupPredicate() predicate.Predicate {
 			if !okOld || !okNew {
 				return false
 			}
-			return hasMinAvailableBreachedConditionChanged(oldPCSG.Status.Conditions, newPCSG.Status.Conditions) || hasUpdateStatusChanged(&oldPCSG.Status, &newPCSG.Status)
+			return hasMinAvailableBreachedConditionChanged(oldPCSG.Status.Conditions, newPCSG.Status.Conditions) ||
+				hasPodCliqueScalingGroupStatusChanged(&oldPCSG.Status, &newPCSG.Status)
 		},
 		GenericFunc: func(_ event.TypedGenericEvent[client.Object]) bool { return false },
 	}
@@ -166,6 +167,8 @@ func hasStatusChanged(updateEvent event.UpdateEvent) bool {
 		return false
 	}
 	return hasAnyStatusReplicasChanged(oldPCLQ.Status, newPCLQ.Status) ||
+		hasPodCliqueHashStatusChanged(oldPCLQ.Status, newPCLQ.Status) ||
+		hasUpdateStatusChanged(oldPCLQ.Status.UpdateProgress, newPCLQ.Status.UpdateProgress) ||
 		hasMinAvailableBreachedConditionChanged(oldPCLQ.Status.Conditions, newPCLQ.Status.Conditions)
 }
 
@@ -173,7 +176,13 @@ func hasStatusChanged(updateEvent event.UpdateEvent) bool {
 func hasAnyStatusReplicasChanged(oldPCLQStatus, newPCLQStatus grovecorev1alpha1.PodCliqueStatus) bool {
 	return oldPCLQStatus.Replicas != newPCLQStatus.Replicas ||
 		oldPCLQStatus.ReadyReplicas != newPCLQStatus.ReadyReplicas ||
-		oldPCLQStatus.ScheduleGatedReplicas != newPCLQStatus.ScheduleGatedReplicas
+		oldPCLQStatus.ScheduleGatedReplicas != newPCLQStatus.ScheduleGatedReplicas ||
+		oldPCLQStatus.UpdatedReplicas != newPCLQStatus.UpdatedReplicas
+}
+
+func hasPodCliqueHashStatusChanged(oldPCLQStatus, newPCLQStatus grovecorev1alpha1.PodCliqueStatus) bool {
+	return !stringPointersEqual(oldPCLQStatus.CurrentPodTemplateHash, newPCLQStatus.CurrentPodTemplateHash) ||
+		!stringPointersEqual(oldPCLQStatus.CurrentPodCliqueSetGenerationHash, newPCLQStatus.CurrentPodCliqueSetGenerationHash)
 }
 
 // hasMinAvailableBreachedConditionChanged checks if the MinAvailableBreached condition has changed.
@@ -189,7 +198,20 @@ func hasMinAvailableBreachedConditionChanged(oldConditions, newConditions []meta
 	return false
 }
 
-// hasUpdateStatusChanged checks if PCSG update progress has changed.
-func hasUpdateStatusChanged(oldPCSGStatus, newPCSGStatus *grovecorev1alpha1.PodCliqueScalingGroupStatus) bool {
-	return !reflect.DeepEqual(oldPCSGStatus.UpdateProgress, newPCSGStatus.UpdateProgress)
+func hasPodCliqueScalingGroupStatusChanged(oldPCSGStatus, newPCSGStatus *grovecorev1alpha1.PodCliqueScalingGroupStatus) bool {
+	return oldPCSGStatus.AvailableReplicas != newPCSGStatus.AvailableReplicas ||
+		oldPCSGStatus.UpdatedReplicas != newPCSGStatus.UpdatedReplicas ||
+		!stringPointersEqual(oldPCSGStatus.CurrentPodCliqueSetGenerationHash, newPCSGStatus.CurrentPodCliqueSetGenerationHash) ||
+		hasUpdateStatusChanged(oldPCSGStatus.UpdateProgress, newPCSGStatus.UpdateProgress)
+}
+
+func hasUpdateStatusChanged(oldProgress, newProgress any) bool {
+	return !reflect.DeepEqual(oldProgress, newProgress)
+}
+
+func stringPointersEqual(oldValue, newValue *string) bool {
+	if oldValue == nil || newValue == nil {
+		return oldValue == newValue
+	}
+	return *oldValue == *newValue
 }

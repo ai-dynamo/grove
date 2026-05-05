@@ -355,23 +355,50 @@ func mutateSelector(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1
 
 // mutateCurrentPodCliqueSetGenerationHash updates the current generation hash when all PodCliques are updated and no rolling update is in progress
 func mutateCurrentPodCliqueSetGenerationHash(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, existingPCLQs []grovecorev1alpha1.PodClique) {
+	pcsGenerationHashes := componentutils.ComputePCSGenerationHashCandidates(pcs)
 	pclqFQNsPendingUpdate := componentutils.GetPCLQsInPCSGPendingUpdate(pcs, pcsg, existingPCLQs)
 	if len(pclqFQNsPendingUpdate) > 0 {
-		logger.Info("Found PodCliques associated to PodCliqueScalingGroup pending update", "pclqFQNsPendingUpdate", pclqFQNsPendingUpdate)
+		logger.V(1).Info("PodCliqueScalingGroup has PodCliques pending update", "pcsg", client.ObjectKeyFromObject(pcsg), "pclqFQNsPendingUpdate", pclqFQNsPendingUpdate)
 		return
 	}
 	if componentutils.IsPCSGUpdateInProgress(pcsg) {
-		logger.Info("PodCliqueScalingGroup is currently updating, cannot set PodCliqueSet CurrentGenerationHash yet")
 		return
 	}
 	if pcs.Status.CurrentGenerationHash == nil {
 		return
 	}
-	pcsGenerationHashes := componentutils.ComputePCSGenerationHashCandidates(pcs)
+	if !havePCSGPodCliquesConverged(pcs, pcsg, existingPCLQs) {
+		return
+	}
 	if pcsg.Status.UpdateProgress != nil && pcsGenerationHashes.Matches(pcsg.Status.UpdateProgress.PodCliqueSetGenerationHash) {
 		pcsg.Status.UpdateProgress.PodCliqueSetGenerationHash = pcsGenerationHashes.Canonical
 	}
 	pcsg.Status.CurrentPodCliqueSetGenerationHash = &pcsGenerationHashes.Canonical
+}
+
+func havePCSGPodCliquesConverged(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, existingPCLQs []grovecorev1alpha1.PodClique) bool {
+	expectedPCLQPodTemplateHashes := componentutils.GetPCLQTemplateHashCandidates(pcs, pcsg)
+	existingPCLQsByName := lo.SliceToMap(existingPCLQs, func(pclq grovecorev1alpha1.PodClique) (string, grovecorev1alpha1.PodClique) {
+		return pclq.Name, pclq
+	})
+	pcsGenerationHashes := componentutils.ComputePCSGenerationHashCandidates(pcs)
+	for pclqName, expectedPodTemplateHashes := range expectedPCLQPodTemplateHashes {
+		pclq, ok := existingPCLQsByName[pclqName]
+		if !ok || k8sutils.IsResourceTerminating(pclq.ObjectMeta) {
+			return false
+		}
+		if !expectedPodTemplateHashes.Matches(pclq.Labels[apicommon.LabelPodTemplateHash]) {
+			return false
+		}
+		if pclq.Status.CurrentPodTemplateHash == nil || !expectedPodTemplateHashes.Matches(*pclq.Status.CurrentPodTemplateHash) {
+			return false
+		}
+		if pclq.Status.CurrentPodCliqueSetGenerationHash == nil ||
+			!pclqGenerationHashMatchesCurrent(pcsGenerationHashes, pcs.Status.CurrentGenerationHash, *pclq.Status.CurrentPodCliqueSetGenerationHash) {
+			return false
+		}
+	}
+	return true
 }
 
 // pruneStrayPCSGPCLQs drops children whose replica index is outside [0, Spec.Replicas) or whose FQN
