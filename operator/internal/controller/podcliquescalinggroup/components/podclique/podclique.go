@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -315,7 +316,8 @@ func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1alpha1.PodC
 	podGangName := apicommon.GeneratePodGangNameForPodCliqueOwnedByPCSG(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex)
 
 	pclq.Labels = getLabels(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex, pclqObjectKey, pclqTemplateSpec, podGangName)
-	pclq.Annotations = pclqTemplateSpec.Annotations
+	pclq.Annotations = maps.Clone(pclqTemplateSpec.Annotations)
+	delete(pclq.Annotations, apiconstants.AnnotationTopologyName)
 	// set PodCliqueSpec
 	// ------------------------------------
 	if pclqExists {

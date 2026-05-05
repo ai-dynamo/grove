@@ -17,16 +17,7 @@
 package v1alpha1
 
 import (
-	"slices"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-)
-
-const (
-	// DefaultClusterTopologyName is the name of the default ClusterTopology resource managed by the operator.
-	// Currently, Grove operator generates and maintains a single ClusterTopology resource per cluster. There is no support
-	// for externally created ClusterTopology resources. However, this may change in the future to allow more flexibility.
-	DefaultClusterTopologyName = "grove-topology"
 )
 
 // +genclient
@@ -34,14 +25,16 @@ const (
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Cluster,shortName=ct
+// +kubebuilder:subresource:status
 
 // ClusterTopology defines the topology hierarchy for the cluster.
-// This resource is immutable after creation.
 type ClusterTopology struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 	// Spec defines the topology hierarchy specification.
 	Spec ClusterTopologySpec `json:"spec"`
+	// Status defines the observed state of the ClusterTopology.
+	Status ClusterTopologyStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -58,12 +51,58 @@ type ClusterTopologyList struct {
 type ClusterTopologySpec struct {
 	// Levels is an ordered list of topology levels from broadest to narrowest scope.
 	// The order in this list defines the hierarchy (index 0 = broadest level).
-	// This field is immutable after creation.
+	// Uniqueness of domain and key is enforced by the ClusterTopology validating webhook.
 	// +kubebuilder:validation:MinItems=1
-	// +kubebuilder:validation:MaxItems=7
-	// +kubebuilder:validation:XValidation:rule="self.all(x, self.filter(y, y.domain == x.domain).size() == 1)",message="domain must be unique across all levels"
-	// +kubebuilder:validation:XValidation:rule="self.all(x, self.filter(y, y.key == x.key).size() == 1)",message="key must be unique across all levels"
 	Levels []TopologyLevel `json:"levels"`
+
+	// SchedulerTopologyReferences controls per-backend topology resource management.
+	// For each enabled TopologyAwareSchedBackend, the operator checks whether an entry
+	// for that backend exists in this list:
+	// - If absent: the operator auto-creates and manages the backend's topology resource.
+	// - If present: the named resource is assumed to be externally managed; the operator
+	//   compares its levels and reports any mismatch via the SchedulerTopologyDrift condition.
+	// +optional
+	SchedulerTopologyReferences []SchedulerTopologyReference `json:"schedulerTopologyReferences,omitempty"`
+}
+
+// ClusterTopologyStatus defines the observed state of ClusterTopology.
+type ClusterTopologyStatus struct {
+	// ObservedGeneration is the most recent generation observed by the controller.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+	// Conditions represents the latest available observations of the ClusterTopology.
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	// SchedulerTopologyStatuses reports the sync state between this ClusterTopology
+	// and each topology-aware scheduler backend's topology resource.
+	// +optional
+	SchedulerTopologyStatuses []SchedulerTopologyStatus `json:"schedulerTopologyStatuses,omitempty"`
+}
+
+// SchedulerTopologyReference maps a ClusterTopology to a scheduler backend's topology resource.
+type SchedulerTopologyReference struct {
+	// SchedulerName is the name of the scheduler backend (e.g., "kai-scheduler").
+	// +kubebuilder:validation:Required
+	SchedulerName string `json:"schedulerName"`
+	// TopologyReference is the name of the scheduler backend's topology resource.
+	// +kubebuilder:validation:Required
+	TopologyReference string `json:"topologyReference"`
+}
+
+// SchedulerTopologyStatus reports the sync state of a scheduler backend's topology resource.
+type SchedulerTopologyStatus struct {
+	// SchedulerTopologyReference identifies the scheduler backend topology resource
+	// this status entry describes.
+	SchedulerTopologyReference `json:",inline"`
+	// InSync is true when the scheduler backend topology levels match the ClusterTopology levels.
+	InSync bool `json:"inSync"`
+	// SchedulerBackendTopologyObservedGeneration is the generation of the backend topology
+	// resource that was last compared. Zero if the resource was not found.
+	// +optional
+	SchedulerBackendTopologyObservedGeneration int64 `json:"schedulerBackendTopologyObservedGeneration,omitempty"`
+	// Message provides detail when InSync is false.
+	// +optional
+	Message string `json:"message,omitempty"`
 }
 
 // TopologyLevel defines a single level in the topology hierarchy.
@@ -71,9 +110,7 @@ type ClusterTopologySpec struct {
 // allowing workload operators a consistent way to reference topology levels when defining TopologyConstraint's.
 type TopologyLevel struct {
 	// Domain is a platform provider-agnostic level identifier.
-	// Must be one of: region, zone, datacenter, block, rack, host, numa
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=region;zone;datacenter;block;rack;host;numa
 	Domain TopologyDomain `json:"domain"`
 
 	// Key is the node label key that identifies this topology domain.
@@ -87,6 +124,9 @@ type TopologyLevel struct {
 }
 
 // TopologyDomain represents a level in the cluster topology hierarchy.
+// +kubebuilder:validation:MinLength=1
+// +kubebuilder:validation:MaxLength=63
+// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9-]*$`
 type TopologyDomain string
 
 const (
@@ -105,39 +145,3 @@ const (
 	// TopologyDomainNuma represents the numa level in the topology hierarchy.
 	TopologyDomainNuma TopologyDomain = "numa"
 )
-
-// IsTopologyDomainNarrower returns true if the current TopologyDomain is narrower in scope than the other TopologyDomain.
-func (d TopologyDomain) IsTopologyDomainNarrower(other TopologyDomain) bool {
-	return topologyDomainOrder[d] > topologyDomainOrder[other]
-}
-
-// SupportedTopologyDomains returns all supported topology domain values.
-func SupportedTopologyDomains() []TopologyDomain {
-	topologyDomains := make([]TopologyDomain, 0, len(topologyDomainOrder))
-	for domain := range topologyDomainOrder {
-		topologyDomains = append(topologyDomains, domain)
-	}
-	return topologyDomains
-}
-
-// topologyDomainOrder defines the hierarchical order of topology domains from broadest to narrowest.
-// Lower value = broader scope (e.g., Region is broader than Zone).
-// Context: TopologyDomain is used when defining TopologyConstraint in workload specifications. TopologyConstraint at different
-// levels (PodClique, PodCliqueScalingGroup and PodCliqueSet) captures required packing guarantees that a scheduler backend
-// must provide.
-var topologyDomainOrder = map[TopologyDomain]int{
-	TopologyDomainRegion:     0,
-	TopologyDomainZone:       1,
-	TopologyDomainDataCenter: 2,
-	TopologyDomainBlock:      3,
-	TopologyDomainRack:       4,
-	TopologyDomainHost:       5,
-	TopologyDomainNuma:       6,
-}
-
-// SortTopologyLevels sorts a slice of TopologyLevel from broadest to narrowest scope, sorting by their Domain.
-func SortTopologyLevels(levels []TopologyLevel) {
-	slices.SortFunc(levels, func(a, b TopologyLevel) int {
-		return topologyDomainOrder[a.Domain] - topologyDomainOrder[b.Domain]
-	})
-}

@@ -23,10 +23,11 @@ import (
 	"fmt"
 	"reflect"
 
-	kaitopologyv1alpha1 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/kai/v1alpha1"
-	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
+	kaitopologyv1alpha1 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/kai/v1alpha1"
+	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -54,6 +55,7 @@ type Client struct {
 var schemeBuilder = runtime.SchemeBuilder{
 	clientgoscheme.AddToScheme,
 	corev1alpha1.AddToScheme,
+	groveschedulerv1alpha1.AddToScheme,
 	kaischedulingv2alpha2.AddToScheme,
 	kaitopologyv1alpha1.AddToScheme,
 }

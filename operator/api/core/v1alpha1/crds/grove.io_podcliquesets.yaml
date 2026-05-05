@@ -9295,21 +9295,23 @@ spec:
                               description: |-
                                 PackDomain specifies the topology domain for grouping replicas.
                                 Controls placement constraint for EACH individual replica instance.
-                                Must be one of: region, zone, datacenter, block, rack, host, numa
+                                Must reference a domain in the topology levels defined in the ClusterTopology CR name as set in TopologyName
                                 Example: "rack" means each replica independently placed within one rack.
                                 Note: Does NOT constrain all replicas to the same rack together.
                                 Different replicas can be in different topology domains.
-                              enum:
-                              - region
-                              - zone
-                              - datacenter
-                              - block
-                              - rack
-                              - host
-                              - numa
+                              maxLength: 63
+                              minLength: 1
+                              pattern: ^[a-z][a-z0-9-]*$
+                              type: string
+                            topologyName:
+                              description: |-
+                                TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.
+                                If topologyConstraint is set, topologyName and packDomain must both be specified.
+                                Immutable after creation.
                               type: string
                           required:
                           - packDomain
+                          - topologyName
                           type: object
                       required:
                       - name
@@ -9951,21 +9953,23 @@ spec:
                               description: |-
                                 PackDomain specifies the topology domain for grouping replicas.
                                 Controls placement constraint for EACH individual replica instance.
-                                Must be one of: region, zone, datacenter, block, rack, host, numa
+                                Must reference a domain in the topology levels defined in the ClusterTopology CR name as set in TopologyName
                                 Example: "rack" means each replica independently placed within one rack.
                                 Note: Does NOT constrain all replicas to the same rack together.
                                 Different replicas can be in different topology domains.
-                              enum:
-                              - region
-                              - zone
-                              - datacenter
-                              - block
-                              - rack
-                              - host
-                              - numa
+                              maxLength: 63
+                              minLength: 1
+                              pattern: ^[a-z][a-z0-9-]*$
+                              type: string
+                            topologyName:
+                              description: |-
+                                TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.
+                                If topologyConstraint is set, topologyName and packDomain must both be specified.
+                                Immutable after creation.
                               type: string
                           required:
                           - packDomain
+                          - topologyName
                           type: object
                       required:
                       - cliqueNames
@@ -10745,21 +10749,23 @@ spec:
                         description: |-
                           PackDomain specifies the topology domain for grouping replicas.
                           Controls placement constraint for EACH individual replica instance.
-                          Must be one of: region, zone, datacenter, block, rack, host, numa
+                          Must reference a domain in the topology levels defined in the ClusterTopology CR name as set in TopologyName
                           Example: "rack" means each replica independently placed within one rack.
                           Note: Does NOT constrain all replicas to the same rack together.
                           Different replicas can be in different topology domains.
-                        enum:
-                        - region
-                        - zone
-                        - datacenter
-                        - block
-                        - rack
-                        - host
-                        - numa
+                        maxLength: 63
+                        minLength: 1
+                        pattern: ^[a-z][a-z0-9-]*$
+                        type: string
+                      topologyName:
+                        description: |-
+                          TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.
+                          If topologyConstraint is set, topologyName and packDomain must both be specified.
+                          Immutable after creation.
                         type: string
                     required:
                     - packDomain
+                    - topologyName
                     type: object
                 required:
                 - cliques

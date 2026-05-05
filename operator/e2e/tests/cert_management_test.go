@@ -33,7 +33,6 @@ import (
 	"testing"
 	"time"
 
-
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
@@ -426,6 +425,7 @@ const (
 var webhookConfigNames = []string{
 	"podcliqueset-validating-webhook",
 	"podcliqueset-defaulting-webhook",
+	"clustertopology-validating-webhook",
 }
 
 // verifyCertManagerMode verifies that Grove is using cert-manager for certificate management.

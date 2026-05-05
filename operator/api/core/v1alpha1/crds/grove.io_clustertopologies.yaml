@@ -19,9 +19,7 @@ spec:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: |-
-          ClusterTopology defines the topology hierarchy for the cluster.
-          This resource is immutable after creation.
+        description: ClusterTopology defines the topology hierarchy for the cluster.
         properties:
           apiVersion:
             description: |-
@@ -47,7 +45,7 @@ spec:
                 description: |-
                   Levels is an ordered list of topology levels from broadest to narrowest scope.
                   The order in this list defines the hierarchy (index 0 = broadest level).
-                  This field is immutable after creation.
+                  Uniqueness of domain and key is enforced by the ClusterTopology validating webhook.
                 items:
                   description: |-
                     TopologyLevel defines a single level in the topology hierarchy.
@@ -55,17 +53,10 @@ spec:
                     allowing workload operators a consistent way to reference topology levels when defining TopologyConstraint's.
                   properties:
                     domain:
-                      description: |-
-                        Domain is a platform provider-agnostic level identifier.
-                        Must be one of: region, zone, datacenter, block, rack, host, numa
-                      enum:
-                      - region
-                      - zone
-                      - datacenter
-                      - block
-                      - rack
-                      - host
-                      - numa
+                      description: Domain is a platform provider-agnostic level identifier.
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-z][a-z0-9-]*$
                       type: string
                     key:
                       description: |-
@@ -80,20 +71,142 @@ spec:
                   - domain
                   - key
                   type: object
-                maxItems: 7
                 minItems: 1
                 type: array
-                x-kubernetes-validations:
-                - message: domain must be unique across all levels
-                  rule: self.all(x, self.filter(y, y.domain == x.domain).size() ==
-                    1)
-                - message: key must be unique across all levels
-                  rule: self.all(x, self.filter(y, y.key == x.key).size() == 1)
+              schedulerTopologyReferences:
+                description: |-
+                  SchedulerTopologyReferences controls per-backend topology resource management.
+                  For each enabled TopologyAwareSchedBackend, the operator checks whether an entry
+                  for that backend exists in this list:
+                  - If absent: the operator auto-creates and manages the backend's topology resource.
+                  - If present: the named resource is assumed to be externally managed; the operator
+                    compares its levels and reports any mismatch via the SchedulerTopologyDrift condition.
+                items:
+                  description: SchedulerTopologyReference maps a ClusterTopology to
+                    a scheduler backend's topology resource.
+                  properties:
+                    schedulerName:
+                      description: SchedulerName is the name of the scheduler backend
+                        (e.g., "kai-scheduler").
+                      type: string
+                    topologyReference:
+                      description: TopologyReference is the name of the scheduler
+                        backend's topology resource.
+                      type: string
+                  required:
+                  - schedulerName
+                  - topologyReference
+                  type: object
+                type: array
             required:
             - levels
+            type: object
+          status:
+            description: Status defines the observed state of the ClusterTopology.
+            properties:
+              conditions:
+                description: Conditions represents the latest available observations
+                  of the ClusterTopology.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              observedGeneration:
+                description: ObservedGeneration is the most recent generation observed
+                  by the controller.
+                format: int64
+                type: integer
+              schedulerTopologyStatuses:
+                description: |-
+                  SchedulerTopologyStatuses reports the sync state between this ClusterTopology
+                  and each topology-aware scheduler backend's topology resource.
+                items:
+                  description: SchedulerTopologyStatus reports the sync state of a
+                    scheduler backend's topology resource.
+                  properties:
+                    inSync:
+                      description: InSync is true when the scheduler backend topology
+                        levels match the ClusterTopology levels.
+                      type: boolean
+                    message:
+                      description: Message provides detail when InSync is false.
+                      type: string
+                    schedulerBackendTopologyObservedGeneration:
+                      description: |-
+                        SchedulerBackendTopologyObservedGeneration is the generation of the backend topology
+                        resource that was last compared. Zero if the resource was not found.
+                      format: int64
+                      type: integer
+                    schedulerName:
+                      description: SchedulerName is the name of the scheduler backend
+                        (e.g., "kai-scheduler").
+                      type: string
+                    topologyReference:
+                      description: TopologyReference is the name of the scheduler
+                        backend's topology resource.
+                      type: string
+                  required:
+                  - inSync
+                  - schedulerName
+                  - topologyReference
+                  type: object
+                type: array
             type: object
         required:
         - spec
         type: object
     served: true
     storage: true
+    subresources:
+      status: {}

@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/controller/clustertopology"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset"
@@ -48,6 +49,11 @@ func RegisterControllers(mgr ctrl.Manager, config *configv1alpha1.OperatorConfig
 
 	podgangReconciler := podgang.NewReconciler(mgr, config.Controllers.PodGang)
 	if err := podgangReconciler.RegisterWithManager(mgr); err != nil {
+		return err
+	}
+
+	clusterTopologyReconciler := clustertopology.NewReconciler(mgr)
+	if err := clusterTopologyReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
 

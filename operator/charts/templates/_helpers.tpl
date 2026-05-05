@@ -58,13 +58,6 @@ config.yaml: |
   {{- if .Values.config.topologyAwareScheduling }}
   topologyAwareScheduling:
     enabled: {{ .Values.config.topologyAwareScheduling.enabled }}
-    {{- if .Values.config.topologyAwareScheduling.levels }}
-    levels:
-    {{- range .Values.config.topologyAwareScheduling.levels }}
-      - domain: {{ .domain }}
-        key: {{ .key }}
-    {{- end }}
-    {{- end }}
   {{- end }}
   {{- if .Values.config.authorizer.enabled }}
   authorizer:

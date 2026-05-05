@@ -24,6 +24,7 @@ import (
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
+	ctvalidation "github.com/ai-dynamo/grove/operator/internal/webhook/admission/clustertopology/validation"
 	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/authorization"
 	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/defaulting"
 	pcsvalidation "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/validation"
@@ -45,6 +46,11 @@ func Register(mgr manager.Manager, operatorCfg *configv1alpha1.OperatorConfigura
 	slog.Info("Registering webhook with manager", "handler", pcsvalidation.Name)
 	if err := pcsValidatingWebhook.RegisterWithManager(mgr); err != nil {
 		return fmt.Errorf("failed adding %s webhook handler: %v", pcsvalidation.Name, err)
+	}
+	ctValidatingWebhook := ctvalidation.NewHandler(mgr)
+	slog.Info("Registering webhook with manager", "handler", ctvalidation.Name)
+	if err := ctValidatingWebhook.RegisterWithManager(mgr); err != nil {
+		return fmt.Errorf("failed adding %s webhook handler: %v", ctvalidation.Name, err)
 	}
 	if operatorCfg.Authorizer.Enabled {
 		serviceAccountName, ok := os.LookupEnv(constants.EnvVarServiceAccountName)

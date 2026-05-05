@@ -11,6 +11,7 @@ spec:
   replicas: 1
   template:
     topologyConstraint:
+      topologyName: grove-topology
       packDomain: block
     podCliqueScalingGroups:
       - name: workers
@@ -24,6 +25,7 @@ spec:
         labels:
           kai.scheduler/queue: test
         topologyConstraint:
+          topologyName: grove-topology
           packDomain: host
         spec:
           roleName: worker

@@ -67,9 +67,14 @@ type TopologyAwareSchedBackend interface {
 	// The CT controller uses this to register dynamic watches at startup.
 	TopologyGVR() schema.GroupVersionResource
 
+	// TopologyResourceName returns the name of the backend-specific topology resource
+	// that corresponds to the given ClusterTopology. Called for auto-managed backends
+	// to populate SchedulerTopologyStatus.TopologyReference.
+	TopologyResourceName(ct *grovecorev1alpha1.ClusterTopology) string
+
 	// SyncTopology creates or updates the scheduler-specific topology resource
 	// for the given ClusterTopology. Called for backends not listed in
-	// the ClusterTopology's schedulerReferences (auto-managed path).
+	// the ClusterTopology's schedulerTopologyReferences (auto-managed path).
 	// k8sClient may be a non-cached client for use before the manager cache
 	// is started. If nil, the backend falls back to its own client.
 	SyncTopology(ctx context.Context, k8sClient client.Client, ct *grovecorev1alpha1.ClusterTopology) error
@@ -78,4 +83,14 @@ type TopologyAwareSchedBackend interface {
 	// the given ClusterTopology. Called on CT deletion (auto-managed path only).
 	// k8sClient may be nil; if so, the backend falls back to its own client.
 	OnTopologyDelete(ctx context.Context, k8sClient client.Client, ct *grovecorev1alpha1.ClusterTopology) error
+
+	// CheckTopologyDrift compares the scheduler-specific topology resource named by
+	// ref.TopologyReference against the ClusterTopology's levels.
+	// Returns (inSync bool, message string, observedGeneration int64, error).
+	// Called for backends listed in schedulerTopologyReferences (externally-managed path).
+	CheckTopologyDrift(
+		ctx context.Context,
+		ct *grovecorev1alpha1.ClusterTopology,
+		ref grovecorev1alpha1.SchedulerTopologyReference,
+	) (bool, string, int64, error)
 }
