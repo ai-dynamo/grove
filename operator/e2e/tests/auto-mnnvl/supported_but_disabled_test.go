@@ -79,25 +79,20 @@ func testNoAutoAnnotationAdded(t *testing.T, tc *testctx.TestContext) {
 	require.NoError(t, err, "Failed to get created PCS")
 
 	annotations := createdPCS.GetAnnotations()
-	_, hasAnnotation := annotations[mnnvl.AnnotationAutoMNNVL]
+	_, hasAnnotation := annotations[mnnvl.AnnotationMNNVLGroup]
 	assert.False(t, hasAnnotation,
-		"PCS should NOT have auto-mnnvl annotation when feature is disabled")
+		"PCS should NOT have mnnvl-group annotation when feature is disabled")
 }
 
 // testExplicitEnabledAnnotationRejected verifies that explicitly setting
-// auto-mnnvl: enabled is rejected when the feature is disabled globally.
+// mnnvl-group is rejected when the feature is disabled globally.
 func testExplicitEnabledAnnotationRejected(t *testing.T, tc *testctx.TestContext) {
 	pcsName := "test-explicit-enabled-rejected"
 
-	// Create a PCS with explicit enabled annotation
-	pcs := buildGPUPCS(pcsName, 1)
-	annotations := pcs.GetAnnotations()
-	if annotations == nil {
-		annotations = make(map[string]string)
-	}
-	annotations[mnnvl.AnnotationAutoMNNVL] = mnnvl.AnnotationAutoMNNVLEnabled
-	pcs.SetAnnotations(annotations)
+	pcs := buildGPUPCS(pcsName, 1, map[string]string{
+		mnnvl.AnnotationMNNVLGroup: "default",
+	})
 
 	err := tc.Client.Create(tc.Ctx, pcs)
-	assert.Error(t, err, "PCS with auto-mnnvl: enabled should be rejected when feature is disabled")
+	assert.Error(t, err, "PCS with mnnvl-group should be rejected when feature is disabled")
 }

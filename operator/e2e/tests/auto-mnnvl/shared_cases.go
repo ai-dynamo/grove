@@ -56,8 +56,8 @@ func testNoMNNVLArtifactsWhenDisabled(t *testing.T, tc *testctx.TestContext) {
 	for _, pcsgName := range pcsgNames {
 		pcsg, waitErr := waitForPCSG(tc, pcsgName)
 		require.NoError(t, waitErr, "Failed to wait for PCSG %s", pcsgName)
-		_, hasAnnotation := pcsg.GetAnnotations()[mnnvl.AnnotationAutoMNNVL]
-		assert.False(t, hasAnnotation, "PCSG %s should not have auto-mnnvl annotation", pcsgName)
+		_, hasAnnotation := pcsg.GetAnnotations()[mnnvl.AnnotationMNNVLGroup]
+		assert.False(t, hasAnnotation, "PCSG %s should not have mnnvl-group annotation", pcsgName)
 	}
 
 	// Verify no ComputeDomain exists.

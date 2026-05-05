@@ -71,7 +71,8 @@ func validateMNNVLAnnotationsOnCreate(annotations map[string]string, autoMNNVLEn
 		if err := ValidateMNNVLGroupName(value); err != nil {
 			allErrs = append(allErrs, field.Invalid(path, value, err.Error()))
 		}
-		if !autoMNNVLEnabled {
+		// Opt-out ("none") is always allowed, even when the feature is disabled.
+		if !autoMNNVLEnabled && value != AnnotationMNNVLGroupOptOut {
 			allErrs = append(allErrs, field.Invalid(path, value,
 				fmt.Sprintf(mnnvlNotEnabledMsgFormat, AnnotationMNNVLGroup)))
 		}

@@ -253,10 +253,10 @@ func buildGPUPCS(name string, replicas int, annotations ...map[string]string) *g
 	return builder.Build()
 }
 
-// buildGPUPCSWithMNNVL builds a GPU PCS with auto-mnnvl: enabled annotation.
+// buildGPUPCSWithMNNVL builds a GPU PCS with mnnvl-group: default annotation.
 func buildGPUPCSWithMNNVL(name string, replicas int) *grovecorev1alpha1.PodCliqueSet {
 	return buildGPUPCS(name, replicas, map[string]string{
-		mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+		mnnvl.AnnotationMNNVLGroup: "default",
 	})
 }
 

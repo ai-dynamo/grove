@@ -52,6 +52,12 @@ func TestValidatePCSOnCreate_Metadata(t *testing.T) {
 			expectError:      false,
 		},
 		{
+			description:      "mnnvl-group 'none' + feature disabled -> no error",
+			pcs:              createPCSWithGPU(map[string]string{AnnotationMNNVLGroup: AnnotationMNNVLGroupOptOut}),
+			autoMNNVLEnabled: false,
+			expectError:      false,
+		},
+		{
 			description:      "no annotation + feature disabled -> no error",
 			pcs:              createPCSWithGPU(nil),
 			autoMNNVLEnabled: false,

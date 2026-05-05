@@ -334,18 +334,6 @@ func createPCSWithPCSGConfigAnnotations(annotations map[string]string) *grovecor
 	return builder.Build()
 }
 
-// createPCSWithoutGPU creates a PCS without GPU using the builder for tests in this package.
-func createPCSWithoutGPU(annotations map[string]string) *grovecorev1alpha1.PodCliqueSet {
-	return testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
-		WithAnnotations(annotations).
-		WithPodCliqueTemplateSpec(
-			testutils.NewPodCliqueTemplateSpecBuilder("worker").
-				WithContainer(testutils.NewContainer("app", "nginx:latest")).
-				Build(),
-		).
-		Build()
-}
-
 // createPCSWithNonGPUCliqueAnnotations creates a PCS with a single non-GPU clique
 // carrying the given annotations.
 func createPCSWithNonGPUCliqueAnnotations(cliqueAnnotations map[string]string) *grovecorev1alpha1.PodCliqueSet {
