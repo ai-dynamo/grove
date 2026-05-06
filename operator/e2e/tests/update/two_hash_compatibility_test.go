@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -402,15 +403,20 @@ type hashState struct {
 }
 
 func waitForHashState(tc *testctx.TestContext, assertion hashAssertion) error {
+	var lastAssertionErr error
+	var lastState *hashState
 	fetch := waiter.FetchFunc[*hashState](func(ctx context.Context) (*hashState, error) {
 		state, err := fetchHashState(ctx, tc)
 		if err != nil {
 			return nil, err
 		}
+		lastState = state
 		if err := assertion(state); err != nil {
+			lastAssertionErr = err
 			tests.Logger.Debugf("[two-hash-compat] hash state not ready: %v", err)
 			return nil, nil
 		}
+		lastAssertionErr = nil
 		return state, nil
 	})
 	w := waiter.New[*hashState]().
@@ -419,6 +425,14 @@ func waitForHashState(tc *testctx.TestContext, assertion hashAssertion) error {
 		WithRetryOnError().
 		WithLogger(tests.Logger)
 	_, err := w.WaitFor(tc.Ctx, fetch, func(state *hashState) bool { return state != nil })
+	if err != nil {
+		if lastAssertionErr != nil {
+			return fmt.Errorf("%w; last assertion mismatch: %v; last observed hash state:\n%s", err, lastAssertionErr, formatHashStateSnapshot(lastState))
+		}
+		if lastState != nil {
+			return fmt.Errorf("%w; last observed hash state:\n%s", err, formatHashStateSnapshot(lastState))
+		}
+	}
 	return err
 }
 
@@ -436,7 +450,7 @@ func fetchHashState(ctx context.Context, tc *testctx.TestContext) (*hashState, e
 	if err := tc.Client.List(ctx, &pcsgList, client.InNamespace(tc.Namespace), client.MatchingLabels(apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(tc.Workload.Name))); err != nil {
 		return nil, err
 	}
-	podList, err := tc.ListPods()
+	podList, err := tc.ListPodsWithContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -458,6 +472,96 @@ func fetchHashState(ctx context.Context, tc *testctx.TestContext) (*hashState, e
 		pcsHash:    componentutils.ComputePCSGenerationHashCandidates(pcs),
 		pclqHashes: pclqHashes,
 	}, nil
+}
+
+func formatHashStateSnapshot(state *hashState) string {
+	if state == nil {
+		return "hash state was not fetched successfully"
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "PCS %s currentGenerationHash=%s expectedPCS={canonical:%s legacy:%s} updateProgress=%t replicas=%d updated=%d available=%d\n",
+		state.pcs.Name,
+		stringValue(state.pcs.Status.CurrentGenerationHash),
+		state.pcsHash.Canonical,
+		state.pcsHash.Legacy,
+		state.pcs.Status.UpdateProgress != nil,
+		state.pcs.Status.Replicas,
+		state.pcs.Status.UpdatedReplicas,
+		state.pcs.Status.AvailableReplicas)
+
+	pclqs := append([]grovev1alpha1.PodClique(nil), state.pclqs...)
+	sort.Slice(pclqs, func(i, j int) bool { return pclqs[i].Name < pclqs[j].Name })
+	for _, pclq := range pclqs {
+		candidates := state.pclqHashes[pclq.Name]
+		fmt.Fprintf(&b, "PCLQ %s labelHash=%s currentPodTemplateHash=%s currentPCSGenerationHash=%s expectedTemplate={canonical:%s legacy:%s} updateProgress=%t replicas=%d ready=%d updated=%d\n",
+			pclq.Name,
+			labelValue(pclq.Labels, apicommon.LabelPodTemplateHash),
+			stringValue(pclq.Status.CurrentPodTemplateHash),
+			stringValue(pclq.Status.CurrentPodCliqueSetGenerationHash),
+			candidates.Canonical,
+			candidates.Legacy,
+			pclq.Status.UpdateProgress != nil,
+			pclq.Status.Replicas,
+			pclq.Status.ReadyReplicas,
+			pclq.Status.UpdatedReplicas)
+	}
+
+	pcsgs := append([]grovev1alpha1.PodCliqueScalingGroup(nil), state.pcsgs...)
+	sort.Slice(pcsgs, func(i, j int) bool { return pcsgs[i].Name < pcsgs[j].Name })
+	for _, pcsg := range pcsgs {
+		fmt.Fprintf(&b, "PCSG %s currentPCSGenerationHash=%s expectedPCS={canonical:%s legacy:%s} updateProgress=%t replicas=%d scheduled=%d available=%d updated=%d\n",
+			pcsg.Name,
+			stringValue(pcsg.Status.CurrentPodCliqueSetGenerationHash),
+			state.pcsHash.Canonical,
+			state.pcsHash.Legacy,
+			pcsg.Status.UpdateProgress != nil,
+			pcsg.Status.Replicas,
+			pcsg.Status.ScheduledReplicas,
+			pcsg.Status.AvailableReplicas,
+			pcsg.Status.UpdatedReplicas)
+	}
+
+	pods := append([]corev1.Pod(nil), state.pods...)
+	sort.Slice(pods, func(i, j int) bool { return pods[i].Name < pods[j].Name })
+	for _, pod := range pods {
+		fmt.Fprintf(&b, "Pod %s pclq=%s labelHash=%s phase=%s ready=%t node=%s\n",
+			pod.Name,
+			labelValue(pod.Labels, apicommon.LabelPodClique),
+			labelValue(pod.Labels, apicommon.LabelPodTemplateHash),
+			pod.Status.Phase,
+			isPodReady(pod),
+			pod.Spec.NodeName)
+	}
+
+	return strings.TrimSpace(b.String())
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return "<nil>"
+	}
+	return *value
+}
+
+func labelValue(labels map[string]string, key string) string {
+	if labels == nil {
+		return "<nil>"
+	}
+	value, ok := labels[key]
+	if !ok {
+		return "<missing>"
+	}
+	return value
+}
+
+func isPodReady(pod corev1.Pod) bool {
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
 }
 
 func assertLegacyHashState(state *hashState) error {
