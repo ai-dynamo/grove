@@ -20,7 +20,6 @@ spec:
           minAvailable: 2
           podSpec:
             terminationGracePeriodSeconds: 5
-            schedulerName: kai-scheduler
             affinity:
               nodeAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:
@@ -53,7 +52,6 @@ spec:
             - pc-c
           podSpec:
             terminationGracePeriodSeconds: 5
-            schedulerName: kai-scheduler
             affinity:
               nodeAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:
@@ -86,7 +84,6 @@ spec:
             - pc-a
           podSpec:
             terminationGracePeriodSeconds: 5
-            schedulerName: kai-scheduler
             affinity:
               nodeAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:
