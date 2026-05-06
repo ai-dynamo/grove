@@ -19,6 +19,8 @@ package podcliquescalinggroup
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -63,6 +65,11 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 		logger.Error(err, "failed to list PodCliques for PodCliqueScalingGroup")
 		return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("failed to list PodCliques for PodCliqueScalingGroup: %q", client.ObjectKeyFromObject(pcsg)), err)
 	}
+	// Prune children that no longer belong to the spec (replica index >= Spec.Replicas during
+	// scale-down, or PCLQ name not in Spec.CliqueNames after a clique-name change). Without this
+	// step, downstream counters can briefly publish UpdatedPodCliquesCount > TotalPodCliquesCount
+	// or ScheduledReplicas > Replicas while the cascade delete is in flight.
+	pclqsPerPCSGReplica = pruneStrayPCSGPCLQs(pcsg, pclqsPerPCSGReplica)
 	mutateReplicas(logger, pcs.Status.CurrentGenerationHash, pcsg, pclqsPerPCSGReplica)
 	mutateMinAvailableBreachedCondition(logger, pcsg, pclqsPerPCSGReplica)
 
@@ -98,12 +105,16 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 }
 
 // mutateReplicas updates the PodCliqueScalingGroup status with replica counts based on constituent PodClique states.
-// It also derives child-PCLQ update progress counts when an update is in flight.
+// It also derives child-PCLQ update progress counts when an update is in flight. The iteration is bounded to
+// expected replica indexes [0, Spec.Replicas) — the caller has already pruned stray children — so counters stay
+// consistent with the spec-derived totals during scale-down.
 func mutateReplicas(logger logr.Logger, currentPCSGenerationHash *string, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) {
 	pcsg.Status.Replicas = pcsg.Spec.Replicas
 	var scheduledReplicas, availableReplicas, updatedReplicas, updatedPCLQs, totalPCLQs int32
 	cliqueNamesPerReplica := int32(len(pcsg.Spec.CliqueNames))
-	for pcsgReplicaIndex, pclqs := range pclqsPerPCSGReplica {
+	for replicaIndex := 0; replicaIndex < int(pcsg.Spec.Replicas); replicaIndex++ {
+		pcsgReplicaIndex := strconv.Itoa(replicaIndex)
+		pclqs := pclqsPerPCSGReplica[pcsgReplicaIndex]
 		isScheduled, isAvailable, isUpdated := computeReplicaStatus(logger, currentPCSGenerationHash, pcsgReplicaIndex, len(pcsg.Spec.CliqueNames), pclqs)
 		if isScheduled {
 			scheduledReplicas++
@@ -219,7 +230,7 @@ func computeMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1a
 			Message: fmt.Sprintf("Insufficient scheduled replicas. expected at least: %d, found: %d", minAvailable, scheduledReplicas),
 		}
 	}
-	minAvailableBreachedReplicas := computeMinAvailableBreachedReplicas(logger, pclqsPerPCSGReplica)
+	minAvailableBreachedReplicas := computeMinAvailableBreachedReplicas(logger, pcsg, pclqsPerPCSGReplica)
 	availableReplicas := scheduledReplicas - minAvailableBreachedReplicas
 	if availableReplicas < minAvailable {
 		return metav1.Condition{
@@ -237,10 +248,14 @@ func computeMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1a
 	}
 }
 
-// computeMinAvailableBreachedReplicas counts PCSG replicas that have at least one PodClique with MinAvailable breached
-func computeMinAvailableBreachedReplicas(logger logr.Logger, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) int {
+// computeMinAvailableBreachedReplicas counts PCSG replicas that have at least one PodClique with MinAvailable breached.
+// Bounded to expected replica indexes [0, Spec.Replicas) so stale-index children left behind during scale-down do not
+// inflate the breach count and drive availableReplicas below minAvailable spuriously.
+func computeMinAvailableBreachedReplicas(logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) int {
 	var breachedReplicas int
-	for pcsgReplicaIndex, pclqs := range pclqsPerPCSGReplica {
+	for replicaIndex := 0; replicaIndex < int(pcsg.Spec.Replicas); replicaIndex++ {
+		pcsgReplicaIndex := strconv.Itoa(replicaIndex)
+		pclqs := pclqsPerPCSGReplica[pcsgReplicaIndex]
 		isMinAvailableBreached := lo.Reduce(pclqs, func(agg bool, pclq grovecorev1alpha1.PodClique, _ int) bool {
 			return agg || k8sutils.IsConditionTrue(pclq.Status.Conditions, constants.ConditionTypeMinAvailableBreached)
 		}, false)
@@ -343,4 +358,35 @@ func mirrorUpdateProgressToRollingUpdateProgress(pcsg *grovecorev1alpha1.PodCliq
 			Completed: up.ReadyReplicaIndicesSelectedToUpdate.Completed,
 		}
 	}
+}
+
+// pruneStrayPCSGPCLQs drops children whose replica index is outside [0, Spec.Replicas) or whose FQN
+// is not produced by Spec.CliqueNames at the kept indexes — strays left behind by scale-down or a
+// clique-name change that would otherwise inflate replica/progress counters past the spec-derived
+// totals. Mutates the input map in place (caller holds the only reference, fresh from grouping).
+func pruneStrayPCSGPCLQs(pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) map[string][]grovecorev1alpha1.PodClique {
+	expectedReplicas := int(pcsg.Spec.Replicas)
+	expectedFQNs := make(map[string]struct{}, expectedReplicas*len(pcsg.Spec.CliqueNames))
+	for replicaIndex := 0; replicaIndex < expectedReplicas; replicaIndex++ {
+		for _, cliqueName := range pcsg.Spec.CliqueNames {
+			expectedFQNs[apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsg.Name, Replica: replicaIndex}, cliqueName)] = struct{}{}
+		}
+	}
+	for key, pclqs := range pclqsPerPCSGReplica {
+		idx, err := strconv.Atoi(key)
+		if err != nil || idx < 0 || idx >= expectedReplicas {
+			delete(pclqsPerPCSGReplica, key)
+			continue
+		}
+		kept := slices.DeleteFunc(pclqs, func(p grovecorev1alpha1.PodClique) bool {
+			_, ok := expectedFQNs[p.Name]
+			return !ok
+		})
+		if len(kept) == 0 {
+			delete(pclqsPerPCSGReplica, key)
+			continue
+		}
+		pclqsPerPCSGReplica[key] = kept
+	}
+	return pclqsPerPCSGReplica
 }

@@ -27,8 +27,8 @@ import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 // +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.status.replicas`
 // +kubebuilder:printcolumn:name="Available",type=integer,JSONPath=`.status.availableReplicas`
 // +kubebuilder:printcolumn:name="Updated",type=integer,JSONPath=`.status.updatedReplicas`
-// +kubebuilder:printcolumn:name="PCLQS-Updated",type=integer,JSONPath=`.status.updateProgress.updatedPodCliquesCount`
-// +kubebuilder:printcolumn:name="PCLQS-Total",type=integer,JSONPath=`.status.updateProgress.totalPodCliquesCount`
+// +kubebuilder:printcolumn:name="PCLQs-Updated",type=integer,JSONPath=`.status.updateProgress.updatedPodCliquesCount`
+// +kubebuilder:printcolumn:name="PCLQs-Total",type=integer,JSONPath=`.status.updateProgress.totalPodCliquesCount`
 
 // PodCliqueScalingGroup is the schema to define scaling groups that is used to scale a group of PodClique's.
 // An instance of this custom resource will be created for every pod clique scaling group defined as part of PodCliqueSet.

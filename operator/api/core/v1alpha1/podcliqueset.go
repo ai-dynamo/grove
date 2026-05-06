@@ -30,10 +30,10 @@ import (
 // +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.status.replicas`
 // +kubebuilder:printcolumn:name="Available",type=integer,JSONPath=`.status.availableReplicas`
 // +kubebuilder:printcolumn:name="Updated",type=integer,JSONPath=`.status.updatedReplicas`
-// +kubebuilder:printcolumn:name="PCLQS-Updated",type=integer,JSONPath=`.status.updateProgress.updatedPodCliquesCount`
-// +kubebuilder:printcolumn:name="PCLQS-Total",type=integer,JSONPath=`.status.updateProgress.totalPodCliquesCount`
-// +kubebuilder:printcolumn:name="PCSGS-Updated",type=integer,JSONPath=`.status.updateProgress.updatedPodCliqueScalingGroupsCount`
-// +kubebuilder:printcolumn:name="PCSGS-Total",type=integer,JSONPath=`.status.updateProgress.totalPodCliqueScalingGroupsCount`
+// +kubebuilder:printcolumn:name="PCLQs-Updated",type=integer,JSONPath=`.status.updateProgress.updatedPodCliquesCount`
+// +kubebuilder:printcolumn:name="PCLQs-Total",type=integer,JSONPath=`.status.updateProgress.totalPodCliquesCount`
+// +kubebuilder:printcolumn:name="PCSGs-Updated",type=integer,JSONPath=`.status.updateProgress.updatedPodCliqueScalingGroupsCount`
+// +kubebuilder:printcolumn:name="PCSGs-Total",type=integer,JSONPath=`.status.updateProgress.totalPodCliqueScalingGroupsCount`
 
 // PodCliqueSet is a set of PodGangs defining specification on how to spread and manage a gang of pods and monitoring their status.
 type PodCliqueSet struct {

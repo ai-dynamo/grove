@@ -255,19 +255,19 @@ func TestReconcileStatus(t *testing.T) {
 					WithOptions(testutils.WithPCSGObservedGeneration(1)).Build()
 				pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).WithPodCliqueSetGenerationHash(&pcsGenerationHash).Build()
 				cliques := []client.Object{
-					testutils.NewPCSGPodCliqueBuilder("test-pcs-0-frontend-0", "test-ns", "test-pcs", "test-pcsg", 0, 0).
+					testutils.NewPCSGPodCliqueBuilder("test-pcsg-0-frontend", "test-ns", "test-pcs", "test-pcsg", 0, 0).
 						WithOwnerReference("PodCliqueScalingGroup", "test-pcsg", "").
 						WithReplicas(2).
 						WithOptions(testutils.WithPCLQScheduledAndAvailable(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
-					testutils.NewPCSGPodCliqueBuilder("test-pcs-0-backend-0", "test-ns", "test-pcs", "test-pcsg", 0, 0).
+					testutils.NewPCSGPodCliqueBuilder("test-pcsg-0-backend", "test-ns", "test-pcs", "test-pcsg", 0, 0).
 						WithOwnerReference("PodCliqueScalingGroup", "test-pcsg", "").
 						WithReplicas(2).
 						WithOptions(testutils.WithPCLQScheduledAndAvailable(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
-					testutils.NewPCSGPodCliqueBuilder("test-pcs-0-frontend-1", "test-ns", "test-pcs", "test-pcsg", 0, 1).
+					testutils.NewPCSGPodCliqueBuilder("test-pcsg-1-frontend", "test-ns", "test-pcs", "test-pcsg", 0, 1).
 						WithOwnerReference("PodCliqueScalingGroup", "test-pcsg", "").
 						WithReplicas(2).
 						WithOptions(testutils.WithPCLQScheduledAndAvailable(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
-					testutils.NewPCSGPodCliqueBuilder("test-pcs-0-backend-1", "test-ns", "test-pcs", "test-pcsg", 0, 1).
+					testutils.NewPCSGPodCliqueBuilder("test-pcsg-1-backend", "test-ns", "test-pcs", "test-pcsg", 0, 1).
 						WithOwnerReference("PodCliqueScalingGroup", "test-pcsg", "").
 						WithReplicas(2).
 						WithOptions(testutils.WithPCLQScheduledAndAvailable(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
@@ -289,15 +289,15 @@ func TestReconcileStatus(t *testing.T) {
 					WithOptions(testutils.WithPCSGObservedGeneration(1)).Build()
 				pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).WithPodCliqueSetGenerationHash(&pcsGenerationHash).Build()
 				cliques := []client.Object{
-					testutils.NewPCSGPodCliqueBuilder("test-pcs-0-worker-0", "test-ns", "test-pcs", "test-pcsg", 0, 0).
+					testutils.NewPCSGPodCliqueBuilder("test-pcsg-0-worker", "test-ns", "test-pcs", "test-pcsg", 0, 0).
 						WithOwnerReference("PodCliqueScalingGroup", "test-pcsg", "").
 						WithReplicas(2).
 						WithOptions(testutils.WithPCLQScheduledAndAvailable(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
-					testutils.NewPCSGPodCliqueBuilder("test-pcs-0-worker-1", "test-ns", "test-pcs", "test-pcsg", 0, 1).
+					testutils.NewPCSGPodCliqueBuilder("test-pcsg-1-worker", "test-ns", "test-pcs", "test-pcsg", 0, 1).
 						WithOwnerReference("PodCliqueScalingGroup", "test-pcsg", "").
 						WithReplicas(2).
 						WithOptions(testutils.WithPCLQScheduledButBreached(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
-					testutils.NewPCSGPodCliqueBuilder("test-pcs-0-worker-2", "test-ns", "test-pcs", "test-pcsg", 0, 2).
+					testutils.NewPCSGPodCliqueBuilder("test-pcsg-2-worker", "test-ns", "test-pcs", "test-pcsg", 0, 2).
 						WithOwnerReference("PodCliqueScalingGroup", "test-pcsg", "").
 						WithReplicas(2).
 						WithOptions(testutils.WithPCLQNotScheduled(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
@@ -319,20 +319,20 @@ func TestReconcileStatus(t *testing.T) {
 				pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).WithPodCliqueSetGenerationHash(&pcsGenerationHash).Build()
 				cliques := []client.Object{
 					// Replica 0: healthy
-					testutils.NewPCSGPodCliqueBuilder("test-pcs-0-frontend-0", "test-ns", "test-pcs", "test-pcsg", 0, 0).
+					testutils.NewPCSGPodCliqueBuilder("test-pcsg-0-frontend", "test-ns", "test-pcs", "test-pcsg", 0, 0).
 						WithOwnerReference("PodCliqueScalingGroup", "test-pcsg", "").
 						WithReplicas(2).
 						WithOptions(testutils.WithPCLQScheduledAndAvailable(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
-					testutils.NewPCSGPodCliqueBuilder("test-pcs-0-backend-0", "test-ns", "test-pcs", "test-pcsg", 0, 0).
+					testutils.NewPCSGPodCliqueBuilder("test-pcsg-0-backend", "test-ns", "test-pcs", "test-pcsg", 0, 0).
 						WithOwnerReference("PodCliqueScalingGroup", "test-pcsg", "").
 						WithReplicas(2).
 						WithOptions(testutils.WithPCLQScheduledAndAvailable(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
 					// Replica 1: has one terminating clique
-					testutils.NewPCSGPodCliqueBuilder("test-pcs-0-frontend-1", "test-ns", "test-pcs", "test-pcsg", 0, 1).
+					testutils.NewPCSGPodCliqueBuilder("test-pcsg-1-frontend", "test-ns", "test-pcs", "test-pcsg", 0, 1).
 						WithOwnerReference("PodCliqueScalingGroup", "test-pcsg", "").
 						WithReplicas(2).
 						WithOptions(testutils.WithPCLQScheduledAndAvailable(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
-					testutils.NewPCSGPodCliqueBuilder("test-pcs-0-backend-1", "test-ns", "test-pcs", "test-pcsg", 0, 1).
+					testutils.NewPCSGPodCliqueBuilder("test-pcsg-1-backend", "test-ns", "test-pcs", "test-pcsg", 0, 1).
 						WithOwnerReference("PodCliqueScalingGroup", "test-pcsg", "").
 						WithReplicas(2).
 						WithOptions(testutils.WithPCLQTerminating(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
@@ -559,6 +559,103 @@ func TestCountPCSGReplicaUpdatedPCLQs(t *testing.T) {
 			assert.Equal(t, tt.want, countPCSGReplicaUpdatedPCLQs(tt.hash, tt.in))
 		})
 	}
+}
+
+// TestPruneStrayPCSGPCLQs covers the two stray-child cases that would otherwise inflate
+// downstream counters: replica indexes outside [0, Spec.Replicas) (scale-down leftovers) and
+// PCLQ FQNs that are not produced by Spec.CliqueNames at the kept indexes (post clique-name change).
+func TestPruneStrayPCSGPCLQs(t *testing.T) {
+	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).
+		WithReplicas(2).
+		WithCliqueNames([]string{"frontend", "backend"}).Build()
+
+	mkPCLQ := func(name string) grovecorev1alpha1.PodClique {
+		return grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: name}}
+	}
+
+	in := map[string][]grovecorev1alpha1.PodClique{
+		// expected children for replicas 0 and 1
+		"0": {mkPCLQ("test-pcsg-0-frontend"), mkPCLQ("test-pcsg-0-backend")},
+		"1": {mkPCLQ("test-pcsg-1-frontend"), mkPCLQ("test-pcsg-1-backend")},
+		// stale-index leftover from a prior Spec.Replicas=3 (scale-down case)
+		"2": {mkPCLQ("test-pcsg-2-frontend"), mkPCLQ("test-pcsg-2-backend")},
+	}
+	// stray name within an expected index (post clique-name change)
+	in["1"] = append(in["1"], mkPCLQ("test-pcsg-1-removed-clique"))
+
+	out := pruneStrayPCSGPCLQs(pcsg, in)
+
+	// Stale-index bucket must be dropped entirely.
+	_, hasStaleIdx := out["2"]
+	assert.False(t, hasStaleIdx, "replica index 2 is outside Spec.Replicas and must be dropped")
+
+	// Expected indexes retain only spec-derived FQNs.
+	require.Len(t, out["0"], 2)
+	require.Len(t, out["1"], 2, "stray-named PCLQ at expected index must be filtered out")
+
+	for _, pclq := range append(out["0"], out["1"]...) {
+		assert.Contains(t, []string{
+			"test-pcsg-0-frontend", "test-pcsg-0-backend",
+			"test-pcsg-1-frontend", "test-pcsg-1-backend",
+		}, pclq.Name)
+	}
+}
+
+// TestReconcileStatusBoundedDuringScaleDown is the integration-level guard for the same fix:
+// stale-index children that still live in the cache after a scale-down must not push
+// UpdatedPodCliquesCount past the spec-derived TotalPodCliquesCount, nor inflate replica counters.
+func TestReconcileStatusBoundedDuringScaleDown(t *testing.T) {
+	ctx := context.Background()
+	pcsHash := string(uuid.NewUUID())
+
+	// PCSG was scaled 3 → 2; replica index 2 children have not yet been GC'd by the cascade.
+	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).
+		WithReplicas(2).
+		WithCliqueNames([]string{"frontend", "backend"}).
+		WithOptions(testutils.WithPCSGObservedGeneration(1)).Build()
+	pcsg.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+		UpdateStartedAt:            metav1.Now(),
+		PodCliqueSetGenerationHash: pcsHash,
+	}
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
+		WithPodCliqueSetGenerationHash(&pcsHash).Build()
+
+	mkChild := func(name string, replicaIdx int) client.Object {
+		return testutils.NewPCSGPodCliqueBuilder(name, "test-ns", "test-pcs", "test-pcsg", 0, replicaIdx).
+			WithOwnerReference("PodCliqueScalingGroup", "test-pcsg", "").
+			WithReplicas(2).
+			WithOptions(testutils.WithPCLQScheduledAndAvailable(), testutils.WithPCLQCurrentPCSGenerationHash(pcsHash)).Build()
+	}
+
+	objs := []client.Object{
+		pcsg, pcs,
+		mkChild("test-pcsg-0-frontend", 0),
+		mkChild("test-pcsg-0-backend", 0),
+		mkChild("test-pcsg-1-frontend", 1),
+		mkChild("test-pcsg-1-backend", 1),
+		// stale-index children from the pre-scale-down generation
+		mkChild("test-pcsg-2-frontend", 2),
+		mkChild("test-pcsg-2-backend", 2),
+	}
+
+	fakeClient := testutils.SetupFakeClient(objs...)
+	reconciler := &Reconciler{client: fakeClient}
+	result := reconciler.reconcileStatus(ctx, logr.Discard(), client.ObjectKeyFromObject(pcsg))
+	require.False(t, result.HasErrors())
+
+	require.NoError(t, fakeClient.Get(ctx, client.ObjectKeyFromObject(pcsg), pcsg))
+	assert.Equal(t, int32(2), pcsg.Status.Replicas)
+	assert.Equal(t, int32(2), pcsg.Status.ScheduledReplicas, "must not count stale-index replicas")
+	assert.Equal(t, int32(2), pcsg.Status.AvailableReplicas, "must not count stale-index replicas")
+	assert.Equal(t, int32(2), pcsg.Status.UpdatedReplicas, "must not count stale-index replicas")
+
+	require.NotNil(t, pcsg.Status.UpdateProgress)
+	assert.Equal(t, int32(4), pcsg.Status.UpdateProgress.TotalPodCliquesCount)
+	assert.Equal(t, int32(4), pcsg.Status.UpdateProgress.UpdatedPodCliquesCount,
+		"updated count must be bounded by total — stale-index PCLQs must not contribute")
+	assert.LessOrEqual(t, pcsg.Status.UpdateProgress.UpdatedPodCliquesCount,
+		pcsg.Status.UpdateProgress.TotalPodCliquesCount,
+		"UpdatedPodCliquesCount must never exceed TotalPodCliquesCount")
 }
 
 func assertCondition(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, expectBreached bool) {

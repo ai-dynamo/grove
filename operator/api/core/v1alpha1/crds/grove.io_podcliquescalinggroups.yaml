@@ -27,10 +27,10 @@ spec:
       name: Updated
       type: integer
     - jsonPath: .status.updateProgress.updatedPodCliquesCount
-      name: PCLQS-Updated
+      name: PCLQs-Updated
       type: integer
     - jsonPath: .status.updateProgress.totalPodCliquesCount
-      name: PCLQS-Total
+      name: PCLQs-Total
       type: integer
     name: v1alpha1
     schema:
