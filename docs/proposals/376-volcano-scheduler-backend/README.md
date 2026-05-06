@@ -14,6 +14,7 @@
 - [Configuration](#configuration)
   - [Version Requirement](#version-requirement)
   - [Scheduler Profile](#scheduler-profile)
+  - [Operator Config Validation](#operator-config-validation)
   - [Examples](#examples)
 - [Design](#design)
   - [Scheduling Flow](#scheduling-flow)
@@ -139,6 +140,7 @@ Grove writes this annotation during Pod preparation.
 ### Supported
 
 - Volcano scheduler profile registration in operator config
+- operator config validation for the Volcano scheduler profile
 - PodGang to PodGroup synchronization
 - role-level PodGang semantics through Volcano `subGroupPolicy`
 - Pod `schedulerName` preparation
@@ -185,8 +187,23 @@ The operator adds a new scheduler profile name:
 ```yaml
 scheduler:
   profiles:
+  - name: default-scheduler
   - name: volcano
 ```
+
+The `default-scheduler` profile remains supported and present in the scheduler configuration. Operators can enable Volcano alongside `default-scheduler`, and workloads can select Volcano by setting `spec.schedulerName: volcano`.
+
+### Operator Config Validation
+
+The operator configuration validation must include `volcano` in the supported scheduler profile names. A valid scheduler configuration may use `volcano` in `scheduler.profiles[].name`.
+
+Validation should reject:
+
+- `scheduler.profiles[].name: volcano` if the Volcano scheduler name is not registered as supported
+- duplicate `volcano` profiles
+- an empty `scheduler.profiles` list or an empty `scheduler.defaultProfileName`
+
+Defaulting continues to ensure that `default-scheduler` is available in the profile list when the user omits it, preserving the existing operator configuration behavior while allowing `volcano` to be enabled explicitly.
 
 Queue selection is workload-scoped through the annotation:
 
