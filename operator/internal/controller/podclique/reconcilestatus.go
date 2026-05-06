@@ -227,7 +227,7 @@ func computeMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, num
 				Type:               constants.ConditionTypeMinAvailableBreached,
 				Status:             metav1.ConditionFalse,
 				Reason:             constants.ConditionReasonInsufficientScheduledPods,
-				Message:            fmt.Sprintf("Scheduled replicas (%d) below MinAvailable (%d)", scheduledReplicas, minAvailable),
+				Message:            fmt.Sprintf("Scheduled replicas 0 (MinAvailable %d); gang termination suppressed to avoid recreating Pending pods against the same cluster state", minAvailable),
 				LastTransitionTime: now,
 			}
 		}
