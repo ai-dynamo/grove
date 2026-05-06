@@ -93,5 +93,5 @@ make e2e-cluster-down
 - **Cluster name:** `shared-e2e-test-cluster` (same as standard e2e)
 - **Nodes:** 1 server + 2 agents (lightweight — standard e2e uses 30)
 - **Registry:** local registry on port 5001
-- **Skaffold profile:** `topology-test` (same as standard e2e; Kai and topology are installed, only worker count and prepull are reduced)
+- **Skaffold profile:** `e2e-kai` (same as standard e2e; Kai and topology are installed, only worker count and prepull are reduced)
 - **Fake GPU:** [fake-gpu-operator](https://github.com/run-ai/fake-gpu-operator) v0.0.72 (provides ComputeDomain CRD)

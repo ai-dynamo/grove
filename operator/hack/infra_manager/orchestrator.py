@@ -126,16 +126,21 @@ def _run_parallel(tasks: dict[str, Callable[[], None]]) -> None:
             console.print(outputs[name], end="")
 
 
-def _run_prepull(registry_port: int) -> None:
+def _run_prepull(registry_port: int, kai_enabled: bool) -> None:
     """Pre-pull images to local registry in a single batch.
 
     Args:
         registry_port: Port for the local container registry.
+        kai_enabled: Whether the KAI scheduler is enabled. When false, the KAI
+            image group is skipped because no workload will reference it.
     """
     groups: list[tuple[list[str], str]] = [
-        (DEPENDENCIES["kai_scheduler"]["images"], DEPENDENCIES["kai_scheduler"]["version"]),
         (DEPENDENCIES["cert_manager"]["images"], DEPENDENCIES["cert_manager"]["version"]),
     ]
+    if kai_enabled:
+        groups.insert(
+            0, (DEPENDENCIES["kai_scheduler"]["images"], DEPENDENCIES["kai_scheduler"]["version"])
+        )
     busybox_images = dep_value("test_images", "busybox")
     if busybox_images:
         groups.append((busybox_images, "latest"))
@@ -211,7 +216,9 @@ def run_setup(cfg: SetupConfig) -> None:
     if cfg.cluster.create:
         parallel_tasks["topology"] = apply_topology_labels
     if do_prepull:
-        parallel_tasks["prepull"] = lambda: _run_prepull(cfg.cluster.registry_port)
+        parallel_tasks["prepull"] = lambda: _run_prepull(
+            cfg.cluster.registry_port, cfg.scheduler.kai.enabled
+        )
     if cfg.scheduler.kai.enabled:
         parallel_tasks["kai"] = lambda: install_kai_scheduler(cfg.scheduler.kai)
     if cfg.grove.enabled:
