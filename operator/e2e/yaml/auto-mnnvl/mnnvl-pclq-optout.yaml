@@ -1,0 +1,43 @@
+# MNNVL E2E: PCS "default" with one inheriting PCLQ and one opting out
+# g1 inherits PCS "default", g2 opts out with "none"
+# Used by: testPCLQOptOutOverridesParent
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: mnnvl-pclq-optout
+  annotations:
+    grove.io/mnnvl-group: "default"
+spec:
+  replicas: 1
+  template:
+    terminationDelay: 1s
+    cliques:
+      - name: g1
+        spec:
+          roleName: g1
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: gpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  limits:
+                    nvidia.com/gpu: "1"
+      - name: g2
+        annotations:
+          grove.io/mnnvl-group: "none"
+        spec:
+          roleName: g2
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: gpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  limits:
+                    nvidia.com/gpu: "1"

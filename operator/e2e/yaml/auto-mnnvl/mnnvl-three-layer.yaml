@@ -1,0 +1,63 @@
+# MNNVL E2E: Three-layer hierarchy with all different groups
+# PCS "default", PCSG "sg" sets "train", PCLQ "go" overrides to "infer"
+# Standalone "sa" inherits PCS "default", "gi" inherits PCSG "train"
+# Used by: testThreeLayerPCSPCSGPCLQAllDifferent
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: mnnvl-three-layer
+  annotations:
+    grove.io/mnnvl-group: "default"
+spec:
+  replicas: 1
+  template:
+    terminationDelay: 1s
+    podCliqueScalingGroups:
+      - name: sg
+        cliqueNames: [gi, go]
+        annotations:
+          grove.io/mnnvl-group: "train"
+        minAvailable: 1
+    cliques:
+      - name: sa
+        spec:
+          roleName: sa
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: gpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  limits:
+                    nvidia.com/gpu: "1"
+      - name: gi
+        spec:
+          roleName: gi
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: gpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  limits:
+                    nvidia.com/gpu: "1"
+      - name: go
+        annotations:
+          grove.io/mnnvl-group: "infer"
+        spec:
+          roleName: go
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: gpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  limits:
+                    nvidia.com/gpu: "1"

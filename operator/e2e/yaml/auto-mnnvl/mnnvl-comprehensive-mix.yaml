@@ -1,0 +1,209 @@
+# MNNVL E2E: Comprehensive mix — all inherit/override/none combinations
+# PCS-level: mnnvl-group: "default"
+# Standalone: sa1 (inherit), sa2 (override "train"), sa3 (opt-out "none")
+# PCSG g1 (inherit): p1 (inherit), p2 (override "infer"), p3 (opt-out)
+# PCSG g2 (override "train"): p4 (inherit), p5 (override "batch"), p6 (opt-out)
+# PCSG g3 (opt-out "none"): p7 (inherit), p8 (override "solo"), p9 (opt-out)
+# Used by: testComprehensiveMNNVLMix
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: mnnvl-mix
+  annotations:
+    grove.io/mnnvl-group: "default"
+spec:
+  replicas: 1
+  template:
+    terminationDelay: 1s
+    podCliqueScalingGroups:
+      - name: g1
+        cliqueNames: [p1, p2, p3]
+        minAvailable: 1
+      - name: g2
+        cliqueNames: [p4, p5, p6]
+        annotations:
+          grove.io/mnnvl-group: "train"
+        minAvailable: 1
+      - name: g3
+        cliqueNames: [p7, p8, p9]
+        annotations:
+          grove.io/mnnvl-group: "none"
+        minAvailable: 1
+    cliques:
+      # Standalone cliques
+      - name: sa1
+        spec:
+          roleName: sa1
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: gpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  limits:
+                    nvidia.com/gpu: "1"
+      - name: sa2
+        annotations:
+          grove.io/mnnvl-group: "train"
+        spec:
+          roleName: sa2
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: gpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  limits:
+                    nvidia.com/gpu: "1"
+      - name: sa3
+        annotations:
+          grove.io/mnnvl-group: "none"
+        spec:
+          roleName: sa3
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: gpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  limits:
+                    nvidia.com/gpu: "1"
+      # PCSG g1 members
+      - name: p1
+        spec:
+          roleName: p1
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: gpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  limits:
+                    nvidia.com/gpu: "1"
+      - name: p2
+        annotations:
+          grove.io/mnnvl-group: "infer"
+        spec:
+          roleName: p2
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: gpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  limits:
+                    nvidia.com/gpu: "1"
+      - name: p3
+        annotations:
+          grove.io/mnnvl-group: "none"
+        spec:
+          roleName: p3
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: gpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  limits:
+                    nvidia.com/gpu: "1"
+      # PCSG g2 members
+      - name: p4
+        spec:
+          roleName: p4
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: gpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  limits:
+                    nvidia.com/gpu: "1"
+      - name: p5
+        annotations:
+          grove.io/mnnvl-group: "batch"
+        spec:
+          roleName: p5
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: gpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  limits:
+                    nvidia.com/gpu: "1"
+      - name: p6
+        annotations:
+          grove.io/mnnvl-group: "none"
+        spec:
+          roleName: p6
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: gpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  limits:
+                    nvidia.com/gpu: "1"
+      # PCSG g3 members
+      - name: p7
+        spec:
+          roleName: p7
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: gpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  limits:
+                    nvidia.com/gpu: "1"
+      - name: p8
+        annotations:
+          grove.io/mnnvl-group: "solo"
+        spec:
+          roleName: p8
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: gpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  limits:
+                    nvidia.com/gpu: "1"
+      - name: p9
+        annotations:
+          grove.io/mnnvl-group: "none"
+        spec:
+          roleName: p9
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: gpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  limits:
+                    nvidia.com/gpu: "1"

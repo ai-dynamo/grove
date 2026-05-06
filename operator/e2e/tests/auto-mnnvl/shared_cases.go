@@ -24,7 +24,6 @@ import (
 
 	"github.com/ai-dynamo/grove/operator/e2e/grove/gvk"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
-	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -33,17 +32,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// testNoMNNVLArtifactsWhenDisabled verifies that no ComputeDomains, auto-mnnvl
-// annotations, or resourceClaims are produced for a GPU-capable PCS. It is shared
-// across test suites because the expected behavior is identical regardless of why
-// the feature is inactive.
+// testNoMNNVLArtifactsWhenDisabled verifies that no ComputeDomains or
+// resourceClaims are produced for a GPU-capable PCS when the feature is
+// disabled. It is shared across test suites because the expected behavior
+// is identical regardless of why the feature is inactive.
 func testNoMNNVLArtifactsWhenDisabled(t *testing.T, tc *testctx.TestContext) {
-	pcsName := "test-no-cd-created"
+	pcsName := "test-no-artifacts"
 
-	// Create a PCS with GPU requirement
-	pcs := buildComprehensivePCS(pcsName, 1)
-	err := tc.Client.Create(tc.Ctx, pcs)
-	require.NoError(t, err, "Failed to create PCS")
+	err := applyMNNVLYAML(tc, "mnnvl-comprehensive-bare.yaml", pcsName)
+	require.NoError(t, err, "Failed to apply YAML")
 	defer deletePCS(tc, pcsName)
 
 	// Wait for PCSGs to appear — this proves the reconciler has processed the
@@ -54,10 +51,8 @@ func testNoMNNVLArtifactsWhenDisabled(t *testing.T, tc *testctx.TestContext) {
 		fmt.Sprintf("%s-0-sg2", pcsName),
 	}
 	for _, pcsgName := range pcsgNames {
-		pcsg, waitErr := waitForPCSG(tc, pcsgName)
+		_, waitErr := waitForPCSG(tc, pcsgName)
 		require.NoError(t, waitErr, "Failed to wait for PCSG %s", pcsgName)
-		_, hasAnnotation := pcsg.GetAnnotations()[mnnvl.AnnotationMNNVLGroup]
-		assert.False(t, hasAnnotation, "PCSG %s should not have mnnvl-group annotation", pcsgName)
 	}
 
 	// Verify no ComputeDomain exists.

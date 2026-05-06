@@ -1,0 +1,85 @@
+# MNNVL E2E: Comprehensive PCS with mixed GPU/CPU cliques and PCSGs, NO annotations
+# Structure:
+#   Standalone: gpu1 (GPU+CPU), cpu1 (CPU only)
+#   PCSG sg1:   gpu2 (GPU+CPU), cpu2 (CPU only)
+#   PCSG sg2:   cpu3 (CPU only)
+# Used by: testNoMNNVLArtifactsWhenDisabled (shared_cases.go)
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: mnnvl-comprehensive-bare
+spec:
+  replicas: 1
+  template:
+    terminationDelay: 1s
+    podCliqueScalingGroups:
+      - name: sg1
+        cliqueNames: [gpu2, cpu2]
+        minAvailable: 1
+      - name: sg2
+        cliqueNames: [cpu3]
+        minAvailable: 1
+    cliques:
+      - name: gpu1
+        spec:
+          roleName: gpu1
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: gpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  limits:
+                    nvidia.com/gpu: "1"
+              - name: cpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+      - name: cpu1
+        spec:
+          roleName: cpu1
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: cpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+      - name: gpu2
+        spec:
+          roleName: gpu2
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: gpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  limits:
+                    nvidia.com/gpu: "1"
+              - name: cpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+      - name: cpu2
+        spec:
+          roleName: cpu2
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: cpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+      - name: cpu3
+        spec:
+          roleName: cpu3
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: cpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
