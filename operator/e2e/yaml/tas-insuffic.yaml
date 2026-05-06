@@ -23,7 +23,6 @@ spec:
           minAvailable: 10  # All-or-nothing gang scheduling
           podSpec:
             terminationGracePeriodSeconds: 5
-            schedulerName: kai-scheduler
             affinity:
               nodeAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:

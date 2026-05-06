@@ -45,6 +45,17 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	// Discover scheduler capabilities from the live OperatorConfiguration
+	// before any test runs. RequireCapability uses the result to auto-skip
+	// tests whose required capability is not provided by the active backend.
+	caps, err := DiscoverCapabilities(ctx, sharedCluster.GetClient())
+	if err != nil {
+		Logger.Errorf("failed to discover scheduler capabilities: %s", err)
+		sharedCluster.Teardown()
+		os.Exit(1)
+	}
+	Logger.Infof("Active backend: %s", caps.ActiveBackend)
+
 	// Run tests
 	code := m.Run()
 

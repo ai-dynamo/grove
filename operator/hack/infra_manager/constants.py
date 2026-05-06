@@ -186,7 +186,7 @@ DEFAULT_K3S_IMAGE = "rancher/k3s:v1.34.2-k3s1"
 DEFAULT_CLUSTER_CREATE_MAX_RETRIES = 3
 
 # -- Component defaults --
-DEFAULT_SKAFFOLD_PROFILE = "topology-test"
+DEFAULT_SKAFFOLD_PROFILE = "e2e-kai"
 DEFAULT_GROVE_NAMESPACE = "grove-system"
 
 # -- KWOK defaults --
