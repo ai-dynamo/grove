@@ -106,7 +106,7 @@ kind: PodCliqueSet
 metadata:
   name: training-job
   annotations:
-    grove.io/mnnvl-group: "default"    # all GPU PCLQs share a single CD per replica
+    grove.io/mnnvl-group: "my-group"    # all GPU PCLQs share a single CD per replica
 ```
 
 **Grouped opt-in (multiple ComputeDomains):**
@@ -135,11 +135,11 @@ kind: PodCliqueSet
 metadata:
   name: training-job
   annotations:
-    grove.io/mnnvl-group: "default"    # default: MNNVL for all GPU PCLQs
+    grove.io/mnnvl-group: "my-group"    # MNNVL for all GPU PCLQs
 spec:
   template:
     cliques:
-      - name: workers              # inherits "default" from PCS
+      - name: workers              # inherits "my-group" from PCS
         spec: ...
       - name: param-servers
         annotations:
@@ -162,12 +162,12 @@ The operator discovers this annotation, determines the set of ComputeDomains req
 
 #### Story 1: Simple Opt-In for a GPU Workload
 
-As a user, I want to enable MNNVL for my entire PodCliqueSet by adding a single annotation at the PCS level (`mnnvl-group: "default"`). All GPU PodCliques should share one ComputeDomain per replica.
+As a user, I want to enable MNNVL for my entire PodCliqueSet by adding a single annotation at the PCS level (`mnnvl-group: "my-group"`). All GPU PodCliques should share one ComputeDomain per replica.
 
 ```yaml
 metadata:
   annotations:
-    grove.io/mnnvl-group: "default"
+    grove.io/mnnvl-group: "my-group"
 ```
 
 #### Story 2: Partial MNNVL Within a PCS Replica
@@ -207,13 +207,13 @@ As a user, I want most of my PodCliques to use MNNVL, but one PodClique should b
 ```yaml
 metadata:
   annotations:
-    grove.io/mnnvl-group: "default"    # default for all PCLQs
+    grove.io/mnnvl-group: "my-group"    # applies to all PCLQs
 spec:
   template:
     cliques:
-      - name: workers              # inherits "default"
+      - name: workers              # inherits "my-group"
         spec: ...
-      - name: encoders             # inherits "default"
+      - name: encoders             # inherits "my-group"
         spec: ...
       - name: monitoring
         annotations:
@@ -253,7 +253,7 @@ grove.io/mnnvl-group: "<value>"
 
 | Value | Meaning |
 |---|---|
-| String name (`"default"`, `"training"`, `"workers"`, ...) | Assign the PCLQ to a named MNNVL group. PodCliques with the same group name share a ComputeDomain per replica. |
+| String name (`"my-group"`, `"training"`, `"workers"`, ...) | Assign the PCLQ to a named MNNVL group. PodCliques with the same group name share a ComputeDomain per replica. |
 | `"none"` | Explicit opt-out. Used to override a parent layer's group assignment. Reserved — cannot be used as a group name. |
 | Absent | Inherit from parent layer. If no parent has it, no MNNVL. |
 
@@ -340,8 +340,8 @@ CD names are included at group name: `{pcs-name}-{replica-index}-{group-name}`.
 
 | Example PCS | Annotation | Replica | CD Name |
 |---|---|---|---|
-| `training-job` | `mnnvl-group: "default"` | 0 | `training-job-0-default` |
-| `training-job` | `mnnvl-group: "default"` | 1 | `training-job-1-default` |
+| `training-job` | `mnnvl-group: "my-group"` | 0 | `training-job-0-my-group` |
+| `training-job` | `mnnvl-group: "my-group"` | 1 | `training-job-1-my-group` |
 | `training-job` | `mnnvl-group: "workers"` | 0 | `training-job-0-workers` |
 | `training-job` | `mnnvl-group: "workers"` | 1 | `training-job-1-workers` |
 | `training-job` | `mnnvl-group: "encoders"` | 0 | `training-job-0-encoders` |
@@ -463,7 +463,7 @@ The validating webhook enforces:
 
 This GREP is **not backward compatible** with Phase 1. The `grove.io/auto-mnnvl` annotation is removed and no longer recognized by the operator. Existing manifests that use `auto-mnnvl: enabled` will have no effect — MNNVL will not be applied unless the new `grove.io/mnnvl-group` annotation is used.
 
-Since the feature is still in **alpha**, this is an acceptable breaking change. Users must update their manifests to use `grove.io/mnnvl-group` instead of `grove.io/auto-mnnvl`. To convert an existing PCS, replace `grove.io/auto-mnnvl: "enabled"` with `grove.io/mnnvl-group: "default"` and delete/recreate the PCS (the annotation is immutable on update).
+Since the feature is still in **alpha**, this is an acceptable breaking change. Users must update their manifests to use `grove.io/mnnvl-group` instead of `grove.io/auto-mnnvl`. To convert an existing PCS, replace `grove.io/auto-mnnvl: "enabled"` with `grove.io/mnnvl-group: "<group-name>"` (e.g. `"my-group"`) and delete/recreate the PCS (the annotation is immutable on update).
 
 ### Monitoring
 
@@ -482,9 +482,9 @@ ComputeDomain observability follows the same pattern as previous iterations: **K
 
 - **Unit tests:** Cover annotation resolution (propagation, override, `"none"` opt-out), group name validation (valid K8s name component + `"none"` reserved), ComputeDomain lifecycle management (create/delete/scale), RCT injection logic, CD naming (`{pcs}-{replica}-{group}`), and configuration parsing.
 - **E2E tests:**
-  - PCS with `mnnvl-group: "default"` → single CD per replica, all GPU PCLQs enrolled.
+  - PCS with `mnnvl-group: "my-group"` → single CD per replica, all GPU PCLQs enrolled.
   - PCS with `mnnvl-group` on some PCLQs → per-group CDs, only enrolled GPU PCLQs get RCT.
-  - PCS with PCS-level `mnnvl-group: "default"` + PCLQ `mnnvl-group: "none"` → PCLQ excluded.
+  - PCS with PCS-level `mnnvl-group: "my-group"` + PCLQ `mnnvl-group: "none"` → PCLQ excluded.
   - PCS with multiple group names → separate CDs per group per replica.
   - PCS with `mnnvl-group` on non-GPU PCLQ → silently skipped, no RCT for that PCLQ.
   - PCS scale-up/scale-down → CDs created/deleted accordingly.
@@ -561,7 +561,7 @@ Instead of a single annotation, use two annotations with cleanly separated respo
 | Aspect | Single annotation (`mnnvl-group`) | Two annotations (`auto-mnnvl` + `mnnvl-group`) |
 |---|---|---|
 | Phase 1 backward compat | Not backward compatible — `auto-mnnvl` is removed | Zero changes — existing manifests work as-is |
-| Simple opt-in (one CD) | `mnnvl-group: "default"` | `auto-mnnvl: enabled` |
+| Simple opt-in (one CD) | `mnnvl-group: "my-group"` | `auto-mnnvl: enabled` |
 | Group assignment | `mnnvl-group: "training"` | `mnnvl-group: "training"` |
 | Opt-out override | `mnnvl-group: "none"` | `auto-mnnvl: disabled` |
 | Reserved values | 1 (`"none"`) | 0 |
