@@ -67,11 +67,11 @@ kind: OperatorConfiguration
 				assert.InDelta(t, float32(100), cfg.ClientConnection.QPS, 0.01)
 				assert.Equal(t, 120, cfg.ClientConnection.Burst)
 				require.NotNil(t, cfg.Controllers.PodCliqueSet.ConcurrentSyncs)
-				assert.Equal(t, 1, *cfg.Controllers.PodCliqueSet.ConcurrentSyncs)
+				assert.Equal(t, 10, *cfg.Controllers.PodCliqueSet.ConcurrentSyncs)
 				require.NotNil(t, cfg.Controllers.PodCliqueScalingGroup.ConcurrentSyncs)
-				assert.Equal(t, 1, *cfg.Controllers.PodCliqueScalingGroup.ConcurrentSyncs)
+				assert.Equal(t, 5, *cfg.Controllers.PodCliqueScalingGroup.ConcurrentSyncs)
 				require.NotNil(t, cfg.Controllers.PodClique.ConcurrentSyncs)
-				assert.Equal(t, 1, *cfg.Controllers.PodClique.ConcurrentSyncs)
+				assert.Equal(t, 10, *cfg.Controllers.PodClique.ConcurrentSyncs)
 			},
 		},
 		{
