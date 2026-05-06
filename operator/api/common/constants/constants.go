@@ -47,6 +47,8 @@ const (
 	// AnnotationDisableManagedResourceProtection is an annotation set by an operator on a PodCliqueSet to explicitly
 	// disable protection of managed resources for a PodCliqueSet.
 	AnnotationDisableManagedResourceProtection = "grove.io/disable-managed-resource-protection"
+	// AnnotationReconcileTrigger is an annotation set on a PodCliqueSet to explicitly trigger a reconcile without changing its spec.
+	AnnotationReconcileTrigger = "grove.io/reconcile-trigger"
 	// AnnotationTopologyName is an annotation set on PodGang to allow KAI scheduler to discover which topology to use.
 	AnnotationTopologyName = "grove.io/topology-name"
 )

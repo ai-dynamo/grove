@@ -12,6 +12,7 @@ spec:
     cliques:
       - name: z-standalone
         labels:
+          compat.grove.io/hash-role: standalone
           kai.scheduler/queue: test
         spec:
           roleName: standalone
@@ -49,6 +50,7 @@ spec:
                 emptyDir: {}
       - name: a-grouped
         labels:
+          compat.grove.io/hash-role: grouped
           kai.scheduler/queue: test
         spec:
           roleName: grouped

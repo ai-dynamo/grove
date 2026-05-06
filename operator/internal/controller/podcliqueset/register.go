@@ -50,7 +50,7 @@ func (r *Reconciler) RegisterWithManager(mgr manager.Manager) error {
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: *r.config.ConcurrentSyncs,
 		}).
-		For(&grovecorev1alpha1.PodCliqueSet{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		For(&grovecorev1alpha1.PodCliqueSet{}, builder.WithPredicates(podCliqueSetPredicate())).
 		Watches(
 			&grovecorev1alpha1.ClusterTopologyBinding{},
 			handler.EnqueueRequestsFromMapFunc(mapClusterTopologyToPodCliqueSets(r.client)),
@@ -66,6 +66,22 @@ func (r *Reconciler) RegisterWithManager(mgr manager.Manager) error {
 			builder.WithPredicates(podCliqueScalingGroupPredicate()),
 		).
 		Complete(r)
+}
+
+// podCliqueSetPredicate returns a predicate that allows spec changes and explicit no-op reconcile triggers.
+func podCliqueSetPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc: func(_ event.CreateEvent) bool { return true },
+		DeleteFunc: func(_ event.DeleteEvent) bool { return true },
+		UpdateFunc: func(updateEvent event.UpdateEvent) bool {
+			if updateEvent.ObjectOld == nil || updateEvent.ObjectNew == nil {
+				return false
+			}
+			return hasSpecChanged(updateEvent) ||
+				hasAnnotationChanged(updateEvent.ObjectOld.GetAnnotations(), updateEvent.ObjectNew.GetAnnotations(), constants.AnnotationReconcileTrigger)
+		},
+		GenericFunc: func(_ event.GenericEvent) bool { return true },
+	}
 }
 
 // mapPodCliqueToPodCliqueSet returns a function that maps PodClique events to their parent PodCliqueSet.
@@ -157,6 +173,12 @@ func podCliqueScalingGroupPredicate() predicate.Predicate {
 // hasSpecChanged checks if the resource generation has changed.
 func hasSpecChanged(updateEvent event.UpdateEvent) bool {
 	return updateEvent.ObjectOld.GetGeneration() != updateEvent.ObjectNew.GetGeneration()
+}
+
+func hasAnnotationChanged(oldAnnotations, newAnnotations map[string]string, key string) bool {
+	oldValue, oldOK := oldAnnotations[key]
+	newValue, newOK := newAnnotations[key]
+	return oldOK != newOK || oldValue != newValue
 }
 
 // hasStatusChanged checks if PodClique status fields have changed.

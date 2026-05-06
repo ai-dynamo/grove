@@ -19,6 +19,7 @@ package podcliqueset
 import (
 	"testing"
 
+	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -87,6 +88,70 @@ func TestMapClusterTopologyToPodCliqueSets(t *testing.T) {
 		{NamespacedName: types.NamespacedName{Namespace: "default", Name: "pcs-a"}},
 		{NamespacedName: types.NamespacedName{Namespace: "team-b", Name: "pcs-b"}},
 	}, requests)
+}
+
+func TestPodCliqueSetPredicateUpdate(t *testing.T) {
+	pred, ok := podCliqueSetPredicate().(predicate.Funcs)
+	require.True(t, ok, "predicate must be predicate.Funcs")
+
+	tests := []struct {
+		name string
+		old  *grovecorev1alpha1.PodCliqueSet
+		new  *grovecorev1alpha1.PodCliqueSet
+		want bool
+	}{
+		{
+			name: "generation change enqueues",
+			old:  podCliqueSetWithGenerationAndAnnotations(1, nil),
+			new:  podCliqueSetWithGenerationAndAnnotations(2, nil),
+			want: true,
+		},
+		{
+			name: "reconcile trigger annotation change enqueues",
+			old: podCliqueSetWithGenerationAndAnnotations(1, map[string]string{
+				constants.AnnotationReconcileTrigger: "old",
+			}),
+			new: podCliqueSetWithGenerationAndAnnotations(1, map[string]string{
+				constants.AnnotationReconcileTrigger: "new",
+			}),
+			want: true,
+		},
+		{
+			name: "unrelated annotation change does not enqueue",
+			old: podCliqueSetWithGenerationAndAnnotations(1, map[string]string{
+				"example.com/other": "old",
+			}),
+			new: podCliqueSetWithGenerationAndAnnotations(1, map[string]string{
+				"example.com/other": "new",
+			}),
+			want: false,
+		},
+		{
+			name: "same generation and same trigger value does not enqueue",
+			old: podCliqueSetWithGenerationAndAnnotations(1, map[string]string{
+				constants.AnnotationReconcileTrigger: "same",
+			}),
+			new: podCliqueSetWithGenerationAndAnnotations(1, map[string]string{
+				constants.AnnotationReconcileTrigger: "same",
+			}),
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, pred.UpdateFunc(event.UpdateEvent{ObjectOld: tt.old, ObjectNew: tt.new}))
+		})
+	}
+}
+
+func podCliqueSetWithGenerationAndAnnotations(generation int64, annotations map[string]string) *grovecorev1alpha1.PodCliqueSet {
+	return &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Generation:  generation,
+			Annotations: annotations,
+		},
+	}
 }
 
 func TestPodCliquePredicateStatusChangesAffectingUpdatedAccounting(t *testing.T) {
