@@ -547,21 +547,21 @@ func TestBuildResource_MNNVLAnnotationPropagation(t *testing.T) {
 		expectedAnnotations map[string]string // nil means no MNNVL annotations expected
 	}{
 		{
-			description: "PCS auto-mnnvl enabled, no config annotations — PCS propagates",
+			description: "PCS mnnvl-group set, no config annotations — PCS propagates",
 			pcsAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "default",
 			},
 			expectedAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "default",
 			},
 		},
 		{
-			description: "PCS auto-mnnvl disabled — propagates disabled",
+			description: "PCS mnnvl-group=none — propagates none",
 			pcsAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled,
+				mnnvl.AnnotationMNNVLGroup: mnnvl.AnnotationMNNVLGroupOptOut,
 			},
 			expectedAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled,
+				mnnvl.AnnotationMNNVLGroup: mnnvl.AnnotationMNNVLGroupOptOut,
 			},
 		},
 		{
@@ -575,52 +575,37 @@ func TestBuildResource_MNNVLAnnotationPropagation(t *testing.T) {
 			expectedAnnotations: nil,
 		},
 		{
-			description: "PCSG config has mnnvl-group + PCS has auto-mnnvl — both present",
+			description: "PCSG config has mnnvl-group + PCS has mnnvl-group — config takes priority",
 			pcsAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "default",
 			},
 			pcsgConfigAnnotions: map[string]string{
 				mnnvl.AnnotationMNNVLGroup: "training",
 			},
 			expectedAnnotations: map[string]string{
 				mnnvl.AnnotationMNNVLGroup: "training",
-				mnnvl.AnnotationAutoMNNVL:  mnnvl.AnnotationAutoMNNVLEnabled,
 			},
 		},
 		{
-			description:    "PCSG config has auto-mnnvl — config takes priority over PCS",
+			description:    "PCSG config has mnnvl-group, PCS has none — config value used",
 			pcsAnnotations: nil,
 			pcsgConfigAnnotions: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
-			},
-			expectedAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
-			},
-		},
-		{
-			description: "PCSG config has both annotations — both propagated",
-			pcsAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
-			},
-			pcsgConfigAnnotions: map[string]string{
-				mnnvl.AnnotationAutoMNNVL:  mnnvl.AnnotationAutoMNNVLEnabled,
 				mnnvl.AnnotationMNNVLGroup: "workers",
 			},
 			expectedAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL:  mnnvl.AnnotationAutoMNNVLEnabled,
 				mnnvl.AnnotationMNNVLGroup: "workers",
 			},
 		},
 		{
-			description: "PCSG config has disabled — overrides PCS enabled",
+			description: "PCSG config has mnnvl-group=none — overrides PCS group",
 			pcsAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "default",
 			},
 			pcsgConfigAnnotions: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled,
+				mnnvl.AnnotationMNNVLGroup: mnnvl.AnnotationMNNVLGroupOptOut,
 			},
 			expectedAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled,
+				mnnvl.AnnotationMNNVLGroup: mnnvl.AnnotationMNNVLGroupOptOut,
 			},
 		},
 	}
@@ -667,17 +652,13 @@ func TestBuildResource_MNNVLAnnotationPropagation(t *testing.T) {
 					assert.Equal(t, expectedVal, pcsg.Annotations[key],
 						"annotation %s should have expected value", key)
 				}
-				for _, key := range []string{mnnvl.AnnotationAutoMNNVL, mnnvl.AnnotationMNNVLGroup} {
-					if _, expected := tc.expectedAnnotations[key]; !expected {
-						_, exists := pcsg.Annotations[key]
-						assert.False(t, exists, "annotation %s should not be present", key)
-					}
+				if _, expected := tc.expectedAnnotations[mnnvl.AnnotationMNNVLGroup]; !expected {
+					_, exists := pcsg.Annotations[mnnvl.AnnotationMNNVLGroup]
+					assert.False(t, exists, "annotation %s should not be present", mnnvl.AnnotationMNNVLGroup)
 				}
 			} else {
 				if pcsg.Annotations != nil {
-					_, hasAuto := pcsg.Annotations[mnnvl.AnnotationAutoMNNVL]
 					_, hasGroup := pcsg.Annotations[mnnvl.AnnotationMNNVLGroup]
-					assert.False(t, hasAuto, "auto-mnnvl annotation should not be present on PCSG")
 					assert.False(t, hasGroup, "mnnvl-group annotation should not be present on PCSG")
 				}
 			}

@@ -74,7 +74,7 @@ spec:
       key: example.com/nvlink-domain
     - domain: host
       key: kubernetes.io/hostname
-  schedulerReferences:
+  schedulerTopologyReferences:
     - schedulerName: kai-scheduler
       reference: gb200-kai-topology
 ```

@@ -398,12 +398,8 @@ func buildPCSGLookup(pcs *grovecorev1alpha1.PodCliqueSet) map[string]grovecorev1
 }
 
 // generateComputeDomainName creates the CD name for a replica.
-// Without a group: {pcs-name}-{replica-index} (e.g., "my-pcs-0").
-// With a group: {pcs-name}-{replica-index}-{group-name} (e.g., "my-pcs-0-workers").
+// Format: {pcs-name}-{replica-index}-{group-name} (e.g., "my-pcs-0-workers").
 func generateComputeDomainName(pcsName string, replicaIndex int, groupName string) string {
-	if groupName == "" {
-		return fmt.Sprintf("%s-%d", pcsName, replicaIndex)
-	}
 	return fmt.Sprintf("%s-%d-%s", pcsName, replicaIndex, groupName)
 }
 

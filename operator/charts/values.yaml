@@ -98,21 +98,6 @@ config:
   logFormat: json
   topologyAwareScheduling:
     enabled: false
-    #    levels:
-    #      - domain: zone
-    #        key: topology.kubernetes.io/zone
-    #      - domain: datacenter
-    #        key: <provider-specific-datacenter-node-label-key>
-    #      - domain: block
-    #        key: <provider-specific-block-node-label-key>
-    #      - domain: rack
-    #        key: <provider-specific-rack-node-label-key>
-    #      - domain: host
-    #        key: kubernetes.io/hostname
-    #      - domain: region
-    #        key: topology.kubernetes.io/region
-    #      - domain: numa
-    #        key: <provider-specific-numa-node-label-key>
   authorizer:
     enabled: false
     exemptServiceAccountUserNames:
@@ -196,6 +181,12 @@ webhooks:
       app.kubernetes.io/name: pcs-defaulting-webhook
       app.kubernetes.io/part-of: grove
     annotations: {}
+  clusterTopologyValidationWebhook:
+    labels:
+      app.kubernetes.io/component: operator-clustertopology-validating-webhook
+      app.kubernetes.io/name: clustertopology-validating-webhook
+      app.kubernetes.io/part-of: grove
+    annotations: {}
   authorizerWebhook:
     labels:
       app.kubernetes.io/component: operator-authorizer-webhook
@@ -232,4 +223,3 @@ crdInstaller:
     # Overrides the image tag whose default is the chart appVersion.
     tag: v0.1.0-dev
     pullPolicy: IfNotPresent
-

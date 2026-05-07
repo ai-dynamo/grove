@@ -24,6 +24,8 @@ package automnnvl
 import (
 	"context"
 	"fmt"
+	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -34,24 +36,25 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/grove/gvk"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/resources"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
-	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
+	// yamlDir is the relative path from the test directory to the YAML fixtures.
+	yamlDir = "../../yaml/auto-mnnvl/"
+
 	// groveOperatorNamespace is the namespace where the Grove operator is deployed
 	groveOperatorNamespace = setup.OperatorNamespace
 
@@ -230,129 +233,22 @@ const (
 	defaultPollInterval = 2 * time.Second
 )
 
+// metadataNameRegexp matches the PCS metadata.name line (exactly 2 leading spaces).
+var metadataNameRegexp = regexp.MustCompile(`(?m)^  name: \S+`)
 
-// buildGPUPCS builds a PCS with GPU requirements and optional PCS-level annotations.
-// The variadic parameter is used as an optional argument — at most one map is expected.
-func buildGPUPCS(name string, replicas int, annotations ...map[string]string) *grovecorev1alpha1.PodCliqueSet {
-	gpuClique := testutils.NewPodCliqueTemplateSpecBuilder("gpu-worker").
-		WithRoleName("gpu-worker").
-		WithReplicas(1).
-		WithMinAvailable(1).
-		WithContainer(testutils.NewGPUContainer("gpu-container", "busybox:latest", 1, "sleep", "infinity")).
-		Build()
-
-	builder := testutils.NewPodCliqueSetBuilder(name, "default", types.UID("")).
-		WithReplicas(int32(replicas)).
-		WithTerminationDelay(time.Second).
-		WithPodCliqueTemplateSpec(gpuClique)
-
-	if len(annotations) > 0 && annotations[0] != nil {
-		builder.WithAnnotations(annotations[0])
+// applyMNNVLYAML reads a YAML fixture, overrides the PCS metadata.name to
+// the given pcsName (so every test gets a unique resource), and applies it.
+func applyMNNVLYAML(tc *testctx.TestContext, yamlFile, pcsName string) error {
+	data, err := os.ReadFile(yamlDir + yamlFile)
+	if err != nil {
+		return fmt.Errorf("read YAML: %w", err)
 	}
-
-	return builder.Build()
-}
-
-// buildGPUPCSWithMNNVL builds a GPU PCS with auto-mnnvl: enabled annotation.
-func buildGPUPCSWithMNNVL(name string, replicas int) *grovecorev1alpha1.PodCliqueSet {
-	return buildGPUPCS(name, replicas, map[string]string{
-		mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+	patched := metadataNameRegexp.ReplaceAllStringFunc(string(data), func(_ string) string {
+		return "  name: " + pcsName
 	})
-}
-
-// buildCPUOnlyPCS builds a PCS with CPU-only containers (no GPU)
-func buildCPUOnlyPCS(name string, replicas int) *grovecorev1alpha1.PodCliqueSet {
-	cpuClique := testutils.NewPodCliqueTemplateSpecBuilder("cpu-worker").
-		WithRoleName("cpu-worker").
-		WithReplicas(1).
-		WithMinAvailable(1).
-		WithContainer(testutils.NewContainer("cpu-container", "busybox:latest", "sleep", "infinity")).
-		Build()
-
-	return testutils.NewPodCliqueSetBuilder(name, "default", types.UID("")).
-		WithReplicas(int32(replicas)).
-		WithTerminationDelay(time.Second).
-		WithPodCliqueTemplateSpec(cpuClique).
-		Build()
-}
-
-// buildComprehensivePCS builds a PCS with multiple cliques and scaling groups for comprehensive testing.
-// Names are kept short to satisfy the 45-character resource name limit.
-// Structure:
-//   - Standalone cliques (not in any PCSG):
-//     1. "gpu1": 2 containers (1 GPU, 1 non-GPU)
-//     2. "cpu1": 1 container (no GPU)
-//   - PCSG "sg1" contains:
-//     3. "gpu2": 2 containers (1 GPU, 1 non-GPU)
-//     4. "cpu2": 1 container (no GPU)
-//   - PCSG "sg2" contains:
-//     5. "cpu3": 1 container (no GPU)
-// The variadic parameter is used as an optional argument — at most one map is expected.
-func buildComprehensivePCS(name string, replicas int, annotations ...map[string]string) *grovecorev1alpha1.PodCliqueSet {
-	// Standalone cliques
-	standaloneGPUMixed := testutils.NewPodCliqueTemplateSpecBuilder("gpu1").
-		WithRoleName("gpu1").
-		WithReplicas(1).
-		WithMinAvailable(1).
-		WithContainer(testutils.NewGPUContainer("gpu", "busybox:latest", 1, "sleep", "infinity")).
-		WithContainer(testutils.NewContainer("cpu", "busybox:latest", "sleep", "infinity")).
-		Build()
-
-	standaloneCPUOnly := testutils.NewPodCliqueTemplateSpecBuilder("cpu1").
-		WithRoleName("cpu1").
-		WithReplicas(1).
-		WithMinAvailable(1).
-		WithContainer(testutils.NewContainer("cpu", "busybox:latest", "sleep", "infinity")).
-		Build()
-
-	// PCSG sg1 cliques
-	pcsg1GPUMixed := testutils.NewPodCliqueTemplateSpecBuilder("gpu2").
-		WithRoleName("gpu2").
-		WithReplicas(1).
-		WithMinAvailable(1).
-		WithContainer(testutils.NewGPUContainer("gpu", "busybox:latest", 1, "sleep", "infinity")).
-		WithContainer(testutils.NewContainer("cpu", "busybox:latest", "sleep", "infinity")).
-		Build()
-
-	pcsg1CPUOnly := testutils.NewPodCliqueTemplateSpecBuilder("cpu2").
-		WithRoleName("cpu2").
-		WithReplicas(1).
-		WithMinAvailable(1).
-		WithContainer(testutils.NewContainer("cpu", "busybox:latest", "sleep", "infinity")).
-		Build()
-
-	// PCSG sg2 clique
-	pcsg2CPUOnly := testutils.NewPodCliqueTemplateSpecBuilder("cpu3").
-		WithRoleName("cpu3").
-		WithReplicas(1).
-		WithMinAvailable(1).
-		WithContainer(testutils.NewContainer("cpu", "busybox:latest", "sleep", "infinity")).
-		Build()
-
-	builder := testutils.NewPodCliqueSetBuilder(name, "default", types.UID("")).
-		WithReplicas(int32(replicas)).
-		WithTerminationDelay(time.Second).
-		WithPodCliqueTemplateSpec(standaloneGPUMixed).
-		WithPodCliqueTemplateSpec(standaloneCPUOnly).
-		WithPodCliqueTemplateSpec(pcsg1GPUMixed).
-		WithPodCliqueTemplateSpec(pcsg1CPUOnly).
-		WithPodCliqueTemplateSpec(pcsg2CPUOnly).
-		WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
-			Name:         "sg1",
-			CliqueNames:  []string{"gpu2", "cpu2"},
-			MinAvailable: ptr.To(int32(1)),
-		}).
-		WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
-			Name:         "sg2",
-			CliqueNames:  []string{"cpu3"},
-			MinAvailable: ptr.To(int32(1)),
-		})
-
-	if len(annotations) > 0 && annotations[0] != nil {
-		builder.WithAnnotations(annotations[0])
-	}
-
-	return builder.Build()
+	rm := resources.NewResourceManager(tc.Client.Client, logger)
+	_, err = rm.ApplyYAMLData(tc.Ctx, []byte(patched), tc.Namespace)
+	return err
 }
 
 // deletePCS deletes a PCS by name

@@ -59,7 +59,6 @@ _Appears in:_
 
 
 ClusterTopology defines the topology hierarchy for the cluster.
-This resource is immutable after creation.
 
 
 
@@ -71,6 +70,7 @@ This resource is immutable after creation.
 | `kind` _string_ | `ClusterTopology` | | |
 | `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `spec` _[ClusterTopologySpec](#clustertopologyspec)_ | Spec defines the topology hierarchy specification. |  |  |
+| `status` _[ClusterTopologyStatus](#clustertopologystatus)_ | Status defines the observed state of the ClusterTopology. |  |  |
 
 
 #### ClusterTopologySpec
@@ -86,7 +86,26 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `levels` _[TopologyLevel](#topologylevel) array_ | Levels is an ordered list of topology levels from broadest to narrowest scope.<br />The order in this list defines the hierarchy (index 0 = broadest level).<br />This field is immutable after creation. |  | MaxItems: 7 <br />MinItems: 1 <br /> |
+| `levels` _[TopologyLevel](#topologylevel) array_ | Levels is an ordered list of topology levels from broadest to narrowest scope.<br />The order in this list defines the hierarchy (index 0 = broadest level).<br />Uniqueness of domain and key is enforced by the ClusterTopology validating webhook. |  | MinItems: 1 <br /> |
+| `schedulerTopologyReferences` _[SchedulerTopologyReference](#schedulertopologyreference) array_ | SchedulerTopologyReferences controls per-backend topology resource management.<br />For each enabled TopologyAwareSchedBackend, the operator checks whether an entry<br />for that backend exists in this list:<br />- If absent: the operator auto-creates and manages the backend's topology resource.<br />- If present: the named resource is assumed to be externally managed; the operator<br />  compares its levels and reports any mismatch via the SchedulerTopologyDrift condition. |  |  |
+
+
+#### ClusterTopologyStatus
+
+
+
+ClusterTopologyStatus defines the observed state of ClusterTopology.
+
+
+
+_Appears in:_
+- [ClusterTopology](#clustertopology)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `observedGeneration` _integer_ | ObservedGeneration is the most recent generation observed by the controller. |  |  |
+| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#condition-v1-meta) array_ | Conditions represents the latest available observations of the ClusterTopology. |  |  |
+| `schedulerTopologyStatuses` _[SchedulerTopologyStatus](#schedulertopologystatus) array_ | SchedulerTopologyStatuses reports the sync state between this ClusterTopology<br />and each topology-aware scheduler backend's topology resource. |  |  |
 
 
 #### ErrorCode
@@ -849,6 +868,44 @@ _Appears in:_
 | `scope` _[ResourceSharingScope](#resourcesharingscope)_ | Scope determines the sharing granularity for the ResourceClaims created from<br />this template. |  | Enum: [AllReplicas PerReplica] <br /> |
 
 
+#### SchedulerTopologyReference
+
+
+
+SchedulerTopologyReference maps a ClusterTopology to a scheduler backend's topology resource.
+
+
+
+_Appears in:_
+- [ClusterTopologySpec](#clustertopologyspec)
+- [SchedulerTopologyStatus](#schedulertopologystatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `schedulerName` _string_ | SchedulerName is the name of the scheduler backend (e.g., "kai-scheduler"). |  | Required: \{\} <br /> |
+| `topologyReference` _string_ | TopologyReference is the name of the scheduler backend's topology resource. |  | Required: \{\} <br /> |
+
+
+#### SchedulerTopologyStatus
+
+
+
+SchedulerTopologyStatus reports the sync state of a scheduler backend's topology resource.
+
+
+
+_Appears in:_
+- [ClusterTopologyStatus](#clustertopologystatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `schedulerName` _string_ | SchedulerName is the name of the scheduler backend (e.g., "kai-scheduler"). |  | Required: \{\} <br /> |
+| `topologyReference` _string_ | TopologyReference is the name of the scheduler backend's topology resource. |  | Required: \{\} <br /> |
+| `inSync` _boolean_ | InSync is true when the scheduler backend topology levels match the ClusterTopology levels. |  |  |
+| `schedulerBackendTopologyObservedGeneration` _integer_ | SchedulerBackendTopologyObservedGeneration is the generation of the backend topology<br />resource that was last compared. Zero if the resource was not found. |  |  |
+| `message` _string_ | Message provides detail when InSync is false. |  |  |
+
+
 #### TopologyConstraint
 
 
@@ -864,7 +921,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `packDomain` _[TopologyDomain](#topologydomain)_ | PackDomain specifies the topology domain for grouping replicas.<br />Controls placement constraint for EACH individual replica instance.<br />Must be one of: region, zone, datacenter, block, rack, host, numa<br />Example: "rack" means each replica independently placed within one rack.<br />Note: Does NOT constrain all replicas to the same rack together.<br />Different replicas can be in different topology domains. |  | Enum: [region zone datacenter block rack host numa] <br /> |
+| `topologyName` _string_ | TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.<br />If topologyConstraint is set, topologyName and packDomain must both be specified.<br />Immutable after creation. |  |  |
+| `packDomain` _[TopologyDomain](#topologydomain)_ | PackDomain specifies the topology domain for grouping replicas.<br />Controls placement constraint for EACH individual replica instance.<br />Must reference a domain in the topology levels defined in the ClusterTopology CR name as set in TopologyName<br />Example: "rack" means each replica independently placed within one rack.<br />Note: Does NOT constrain all replicas to the same rack together.<br />Different replicas can be in different topology domains. |  | MaxLength: 63 <br />MinLength: 1 <br />Pattern: `^[a-z][a-z0-9-]*$` <br /> |
 
 
 #### TopologyDomain
@@ -873,7 +931,10 @@ _Underlying type:_ _string_
 
 TopologyDomain represents a level in the cluster topology hierarchy.
 
-
+_Validation:_
+- MaxLength: 63
+- MinLength: 1
+- Pattern: `^[a-z][a-z0-9-]*$`
 
 _Appears in:_
 - [TopologyConstraint](#topologyconstraint)
@@ -902,11 +963,10 @@ allowing workload operators a consistent way to reference topology levels when d
 
 _Appears in:_
 - [ClusterTopologySpec](#clustertopologyspec)
-- [TopologyAwareSchedulingConfiguration](#topologyawareschedulingconfiguration)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `domain` _[TopologyDomain](#topologydomain)_ | Domain is a platform provider-agnostic level identifier.<br />Must be one of: region, zone, datacenter, block, rack, host, numa |  | Enum: [region zone datacenter block rack host numa] <br />Required: \{\} <br /> |
+| `domain` _[TopologyDomain](#topologydomain)_ | Domain is a platform provider-agnostic level identifier. |  | MaxLength: 63 <br />MinLength: 1 <br />Pattern: `^[a-z][a-z0-9-]*$` <br />Required: \{\} <br /> |
 | `key` _string_ | Key is the node label key that identifies this topology domain.<br />Must be a valid Kubernetes label key (qualified name).<br />Examples: "topology.kubernetes.io/zone", "kubernetes.io/hostname" |  | MaxLength: 63 <br />MinLength: 1 <br />Pattern: `^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]/)?([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$` <br />Required: \{\} <br /> |
 
 
@@ -1269,7 +1329,6 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `enabled` _boolean_ | Enabled indicates whether topology-aware scheduling is enabled. |  |  |
-| `levels` _[TopologyLevel](#topologylevel) array_ | Levels is an ordered list of topology levels from broadest to narrowest scope.<br />Used to create/update the TopologyAwareScheduling CR at operator startup. |  |  |
 
 
 #### WebhookServer

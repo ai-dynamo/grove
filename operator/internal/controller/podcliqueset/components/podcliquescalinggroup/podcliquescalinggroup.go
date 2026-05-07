@@ -225,10 +225,9 @@ func (r _resource) buildResource(pcsg *grovecorev1alpha1.PodCliqueScalingGroup, 
 	return nil
 }
 
-// propagateMNNVLAnnotations inherits MNNVL annotations from the parent PCS
-// onto the target annotations when they are not already present.
+// propagateMNNVLAnnotations inherits the MNNVL group annotation from the parent PCS
+// onto the target annotations when it is not already present.
 func propagateMNNVLAnnotations(annotations map[string]string, pcsAnnotations map[string]string) map[string]string {
-	annotations = propagateAnnotation(annotations, pcsAnnotations, mnnvl.AnnotationAutoMNNVL)
 	annotations = propagateAnnotation(annotations, pcsAnnotations, mnnvl.AnnotationMNNVLGroup)
 	return annotations
 }

@@ -88,15 +88,6 @@ profiles:
               enabled: false
             topologyAwareScheduling:
               enabled: true
-              levels:
-                - domain: zone
-                  key: "kubernetes.io/zone"
-                - domain: block
-                  key: "kubernetes.io/block"
-                - domain: rack
-                  key: "kubernetes.io/rack"
-                - domain: host
-                  key: "kubernetes.io/hostname"
   - name: mnnvl-test
     patches:
       - op: add

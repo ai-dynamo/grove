@@ -22,8 +22,11 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
+	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -1551,6 +1554,387 @@ func TestDeterminePCSGReplicas(t *testing.T) {
 			actualReplicas := sc.determinePCSGReplicas(test.pcsgFQN, test.pcsgConfig)
 			assert.Equal(t, test.expectedReplicas, actualReplicas,
 				"determinePCSGReplicas should return expected replica count")
+		})
+	}
+}
+
+// makePCSWithTopology creates a minimal PCS with an optional topology constraint.
+func makePCSWithTopology(ns, name string, topologyName string) *grovecorev1alpha1.PodCliqueSet {
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, UID: "pcs-uid"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Replicas: 1,
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
+				},
+			},
+		},
+	}
+	if topologyName != "" {
+		pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+			TopologyName: topologyName,
+			PackDomain:   "rack",
+		}
+	}
+	return pcs
+}
+
+// makeClusterTopologyWithLevels creates a ClusterTopology with the given levels.
+func makeClusterTopologyWithLevels(name string, levels []grovecorev1alpha1.TopologyLevel) *grovecorev1alpha1.ClusterTopology {
+	return &grovecorev1alpha1.ClusterTopology{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec:       grovecorev1alpha1.ClusterTopologySpec{Levels: levels},
+	}
+}
+
+// TestPrepareSyncFlowTopologyResolution verifies that prepareSyncFlow resolves topology levels from the
+// PCS topologyName field, not from a hardcoded name.
+func TestPrepareSyncFlowTopologyResolution(t *testing.T) {
+	ns := "default"
+	ctLevels := []grovecorev1alpha1.TopologyLevel{
+		{Domain: "zone", Key: "topology.kubernetes.io/zone"},
+		{Domain: "rack", Key: "topology.kubernetes.io/rack"},
+		{Domain: "host", Key: "kubernetes.io/hostname"},
+	}
+
+	tests := []struct {
+		name                  string
+		topologyName          string
+		mutatePCS             func(*grovecorev1alpha1.PodCliqueSet)
+		clusterTopologyExists bool
+		tasEnabled            bool
+		wantTopologyLevels    []grovecorev1alpha1.TopologyLevel
+		wantErr               bool
+	}{
+		{
+			name:                  "TAS enabled, topologyName set, CT exists - levels populated from CT",
+			topologyName:          "my-topology",
+			clusterTopologyExists: true,
+			tasEnabled:            true,
+			wantTopologyLevels:    ctLevels,
+		},
+		{
+			name:                  "TAS enabled, no TopologyConstraint on PCS - topologyLevels stay nil",
+			topologyName:          "",
+			clusterTopologyExists: false,
+			tasEnabled:            true,
+			wantTopologyLevels:    nil,
+		},
+		{
+			name:         "TAS enabled, only child explicit topology constraint - topologyLevels resolved from child",
+			topologyName: "",
+			mutatePCS: func(pcs *grovecorev1alpha1.PodCliqueSet) {
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					TopologyName: "my-topology",
+					PackDomain:   "rack",
+				}
+			},
+			clusterTopologyExists: true,
+			tasEnabled:            true,
+			wantTopologyLevels:    ctLevels,
+		},
+		{
+			name:                  "TAS enabled, topologyName set, CT not found - topologyLevels stay nil",
+			topologyName:          "missing-topology",
+			clusterTopologyExists: false,
+			tasEnabled:            true,
+			wantTopologyLevels:    nil,
+		},
+		{
+			name:                  "TAS disabled, topologyName set, CT exists - topologyLevels stay nil",
+			topologyName:          "my-topology",
+			clusterTopologyExists: true,
+			tasEnabled:            false,
+			wantTopologyLevels:    nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			pcs := makePCSWithTopology(ns, "test-pcs", tc.topologyName)
+			if tc.mutatePCS != nil {
+				tc.mutatePCS(pcs)
+			}
+
+			var objs []client.Object
+			objs = append(objs, pcs)
+			if tc.clusterTopologyExists {
+				topologyName, err := componentutils.ResolveTopologyNameForPodCliqueSet(pcs)
+				require.NoError(t, err)
+				objs = append(objs, makeClusterTopologyWithLevels(topologyName, ctLevels))
+			}
+
+			fakeClient := testutils.NewTestClientBuilder().WithObjects(objs...).Build()
+			r := &_resource{
+				client:        fakeClient,
+				scheme:        groveclientscheme.Scheme,
+				eventRecorder: record.NewFakeRecorder(10),
+				tasConfig:     configv1alpha1.TopologyAwareSchedulingConfiguration{Enabled: tc.tasEnabled},
+			}
+
+			sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
+
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, sc)
+				return
+			}
+
+			require.NoError(t, err)
+			require.NotNil(t, sc)
+			assert.Equal(t, tc.wantTopologyLevels, sc.topologyLevels)
+		})
+	}
+}
+
+func TestCreateOrUpdatePodGangs_ClearsStaleTopologyStateOnExistingPodGang(t *testing.T) {
+	ns := "default"
+	pcsName := "test-pcs"
+	pgName := "test-pcs-0"
+	pclqName := "test-pcs-0-worker"
+	pcsLabels := apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcsName)
+
+	makePCLQ := func() *grovecorev1alpha1.PodClique {
+		return &grovecorev1alpha1.PodClique{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:            pclqName,
+				Namespace:       ns,
+				UID:             "pclq-uid",
+				Labels:          pcsLabels,
+				OwnerReferences: []metav1.OwnerReference{{Name: pcsName, UID: "pcs-uid", Controller: ptr.To(true)}},
+			},
+			Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))},
+		}
+	}
+
+	makePod := func() *v1.Pod {
+		return &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "worker-0",
+				Namespace: ns,
+				Labels: lo.Assign(pcsLabels, map[string]string{
+					apicommon.LabelPodGang: pgName,
+				}),
+				OwnerReferences: []metav1.OwnerReference{{Name: pclqName, UID: "pclq-uid", Controller: ptr.To(true)}},
+			},
+		}
+	}
+
+	makeExistingPodGang := func(withAnnotation bool, withTopologyConstraint bool) *groveschedulerv1alpha1.PodGang {
+		pg := &groveschedulerv1alpha1.PodGang{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      pgName,
+				Namespace: ns,
+				Labels:    getLabels(pcsName),
+			},
+			Spec: groveschedulerv1alpha1.PodGangSpec{
+				PodGroups: []groveschedulerv1alpha1.PodGroup{{Name: pclqName, MinReplicas: 1}},
+			},
+		}
+		if withAnnotation {
+			pg.Annotations = map[string]string{apicommonconstants.AnnotationTopologyName: "my-topology"}
+		}
+		if withTopologyConstraint {
+			pg.Spec.TopologyConstraint = &groveschedulerv1alpha1.TopologyConstraint{
+				PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{Required: ptr.To("topology.kubernetes.io/rack")},
+			}
+		}
+		return pg
+	}
+
+	tests := []struct {
+		name                   string
+		setupPCS               func() *grovecorev1alpha1.PodCliqueSet
+		clusterTopologyObjects []client.Object
+		existingPodGang        *groveschedulerv1alpha1.PodGang
+		wantAnnotationPresent  bool
+		wantTopologyConstraint bool
+	}{
+		{
+			name: "stale ClusterTopology domain removes existing PodGang topology metadata",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return makePCSWithTopology(ns, pcsName, "my-topology")
+			},
+			clusterTopologyObjects: []client.Object{
+				makeClusterTopologyWithLevels("my-topology", []grovecorev1alpha1.TopologyLevel{
+					{Domain: "zone", Key: "topology.kubernetes.io/zone"},
+				}),
+			},
+			existingPodGang:        makeExistingPodGang(true, true),
+			wantAnnotationPresent:  false,
+			wantTopologyConstraint: false,
+		},
+		{
+			name: "invalid current topology state removes stale topology annotation from existing PodGang",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := makePCSWithTopology(ns, pcsName, "")
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					PackDomain: "rack",
+				}
+				return pcs
+			},
+			clusterTopologyObjects: nil,
+			existingPodGang:        makeExistingPodGang(true, true),
+			wantAnnotationPresent:  false,
+			wantTopologyConstraint: false,
+		},
+		{
+			name: "missing ClusterTopology removes stale topology metadata from existing PodGang",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return makePCSWithTopology(ns, pcsName, "missing-topology")
+			},
+			clusterTopologyObjects: nil,
+			existingPodGang:        makeExistingPodGang(true, true),
+			wantAnnotationPresent:  false,
+			wantTopologyConstraint: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			pcs := tc.setupPCS()
+			objs := []client.Object{pcs, makePCLQ(), makePod(), tc.existingPodGang}
+			objs = append(objs, tc.clusterTopologyObjects...)
+
+			fakeClient := testutils.NewTestClientBuilder().
+				WithObjects(objs...).
+				WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
+				Build()
+
+			r := &_resource{
+				client:        fakeClient,
+				scheme:        groveclientscheme.Scheme,
+				eventRecorder: record.NewFakeRecorder(10),
+				tasConfig:     configv1alpha1.TopologyAwareSchedulingConfiguration{Enabled: true},
+			}
+
+			sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
+			require.NoError(t, err)
+
+			result := r.createOrUpdatePodGangs(ctx, sc)
+			require.False(t, result.hasErrors(), "unexpected sync errors: %v", result.errs)
+
+			pgAfter := &groveschedulerv1alpha1.PodGang{}
+			require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: pgName}, pgAfter))
+
+			_, hasAnnotation := pgAfter.Annotations[apicommonconstants.AnnotationTopologyName]
+			assert.Equal(t, tc.wantAnnotationPresent, hasAnnotation)
+			if tc.wantAnnotationPresent {
+				assert.Equal(t, "my-topology", pgAfter.Annotations[apicommonconstants.AnnotationTopologyName])
+			}
+			assert.Equal(t, tc.wantTopologyConstraint, pgAfter.Spec.TopologyConstraint != nil)
+		})
+	}
+}
+
+// TestBuildResourceTopologyAnnotation verifies that PodGangs created by createOrUpdatePodGangs carry the
+// grove.io/topology-name annotation when TAS is enabled and a topologyName is set on the PCS, and that
+// the annotation is absent otherwise.
+func TestBuildResourceTopologyAnnotation(t *testing.T) {
+	ns := "default"
+	pcsName := "test-pcs"
+	pcsLabels := apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcsName)
+	pgName := "test-pcs-0"
+	pclqName := "test-pcs-0-worker"
+	topologyName := "my-topology"
+
+	makePCLQ := func() *grovecorev1alpha1.PodClique {
+		return &grovecorev1alpha1.PodClique{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: pclqName, Namespace: ns, UID: "pclq-uid",
+				Labels:          pcsLabels,
+				OwnerReferences: []metav1.OwnerReference{{Name: pcsName, UID: "pcs-uid", Controller: ptr.To(true)}},
+			},
+			Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))},
+		}
+	}
+
+	makePod := func(podGangLabel string) *v1.Pod {
+		labels := lo.Assign(pcsLabels)
+		if podGangLabel != "" {
+			labels[apicommon.LabelPodGang] = podGangLabel
+		}
+		return &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-0", Namespace: ns,
+				Labels:          labels,
+				OwnerReferences: []metav1.OwnerReference{{Name: pclqName, UID: "pclq-uid", Controller: ptr.To(true)}},
+			},
+		}
+	}
+
+	tests := []struct {
+		name           string
+		topologyName   string
+		tasEnabled     bool
+		wantAnnotation bool
+	}{
+		{
+			name:           "TAS enabled, topologyName set - PodGang has topology-name annotation",
+			topologyName:   topologyName,
+			tasEnabled:     true,
+			wantAnnotation: true,
+		},
+		{
+			name:           "TAS enabled, topologyName empty - PodGang has no topology-name annotation",
+			topologyName:   "",
+			tasEnabled:     true,
+			wantAnnotation: false,
+		},
+		{
+			name:           "TAS disabled, topologyName set - PodGang has no topology-name annotation",
+			topologyName:   topologyName,
+			tasEnabled:     false,
+			wantAnnotation: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			pcs := makePCSWithTopology(ns, pcsName, tc.topologyName)
+			pclq := makePCLQ()
+			pod := makePod(pgName)
+
+			ctLevels := []grovecorev1alpha1.TopologyLevel{
+				{Domain: "rack", Key: "topology.kubernetes.io/rack"},
+			}
+			var objs []client.Object
+			objs = append(objs, pcs, pclq, pod)
+			if tc.topologyName != "" {
+				objs = append(objs, makeClusterTopologyWithLevels(tc.topologyName, ctLevels))
+			}
+
+			fakeClient := testutils.NewTestClientBuilder().
+				WithObjects(objs...).
+				WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
+				Build()
+
+			r := &_resource{
+				client:        fakeClient,
+				scheme:        groveclientscheme.Scheme,
+				eventRecorder: record.NewFakeRecorder(10),
+				tasConfig:     configv1alpha1.TopologyAwareSchedulingConfiguration{Enabled: tc.tasEnabled},
+			}
+
+			sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
+			require.NoError(t, err)
+
+			r.createOrUpdatePodGangs(ctx, sc)
+
+			pgAfter := &groveschedulerv1alpha1.PodGang{}
+			require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: pgName}, pgAfter))
+
+			if tc.wantAnnotation {
+				assert.Equal(t, tc.topologyName, pgAfter.Annotations[apicommonconstants.AnnotationTopologyName],
+					"PodGang should have the topology-name annotation set to the PCS topologyName")
+			} else {
+				_, hasAnnotation := pgAfter.Annotations[apicommonconstants.AnnotationTopologyName]
+				assert.False(t, hasAnnotation, "PodGang should not have the topology-name annotation")
+			}
 		})
 	}
 }

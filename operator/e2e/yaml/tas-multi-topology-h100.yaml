@@ -1,0 +1,49 @@
+# Workload: H100 segment of heterogeneous GPU cluster (Story 4)
+# Test scenario: PCS references h100-topology, packs at block level.
+# The h100-topology maps domain "block" to "kubernetes.io/rack".
+# GB200 nodes have kubernetes.io/rack removed, so this workload only schedules on H100 nodes.
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: tas-h100-workload
+  labels:
+    app: tas-h100-workload
+spec:
+  replicas: 1
+  template:
+    topologyConstraint:
+      topologyName: h100-topology
+      packDomain: block
+    cliques:
+      - name: worker
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: worker
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 10Mi

@@ -284,6 +284,111 @@ func TestSyncTopologyErrors(t *testing.T) {
 	}
 }
 
+// -- CheckTopologyDrift tests --
+
+func TestCheckTopologyDrift_InSync(t *testing.T) {
+	ctx := context.Background()
+	topologyLevels := defaultTopologyLevels()
+	ct := createTestClusterTopology(topologyName, topologyLevels)
+
+	existingKAITopology := createTestKAITopology(convertToKAITopologyLevels(topologyLevels), ct)
+
+	cl := testutils.CreateDefaultFakeClient([]client.Object{ct, existingKAITopology})
+	b := newTASBackend(cl)
+
+	ref := grovecorev1alpha1.SchedulerTopologyReference{
+		SchedulerName:     "kai-scheduler",
+		TopologyReference: topologyName,
+	}
+	inSync, message, gen, err := b.CheckTopologyDrift(ctx, ct, ref)
+	require.NoError(t, err)
+	assert.True(t, inSync)
+	assert.Empty(t, message)
+	assert.Equal(t, existingKAITopology.Generation, gen)
+}
+
+func TestCheckTopologyDrift_Drift(t *testing.T) {
+	ctx := context.Background()
+	topologyLevels := defaultTopologyLevels()
+	ct := createTestClusterTopology(topologyName, topologyLevels)
+
+	// KAI topology with different levels
+	existingKAITopology := createTestKAITopology([]kaitopologyv1alpha1.TopologyLevel{
+		{NodeLabel: "kubernetes.io/hostname"},
+	}, ct)
+
+	cl := testutils.CreateDefaultFakeClient([]client.Object{ct, existingKAITopology})
+	b := newTASBackend(cl)
+
+	ref := grovecorev1alpha1.SchedulerTopologyReference{
+		SchedulerName:     "kai-scheduler",
+		TopologyReference: topologyName,
+	}
+	inSync, message, gen, err := b.CheckTopologyDrift(ctx, ct, ref)
+	require.NoError(t, err)
+	assert.False(t, inSync)
+	assert.Contains(t, message, "levels differ")
+	assert.Equal(t, existingKAITopology.Generation, gen)
+}
+
+func TestCheckTopologyDrift_NotFound(t *testing.T) {
+	ctx := context.Background()
+	topologyLevels := defaultTopologyLevels()
+	ct := createTestClusterTopology(topologyName, topologyLevels)
+
+	cl := testutils.CreateDefaultFakeClient([]client.Object{ct})
+	b := newTASBackend(cl)
+
+	ref := grovecorev1alpha1.SchedulerTopologyReference{
+		SchedulerName:     "kai-scheduler",
+		TopologyReference: topologyName,
+	}
+	inSync, message, _, err := b.CheckTopologyDrift(ctx, ct, ref)
+	require.NoError(t, err)
+	assert.False(t, inSync)
+	assert.Contains(t, message, "not found")
+}
+
+func TestCheckTopologyDriftErrors(t *testing.T) {
+	topologyLevels := defaultTopologyLevels()
+
+	tests := []struct {
+		name            string
+		method          testutils.ClientMethod
+		existingObjects func(ct *grovecorev1alpha1.ClusterTopology) []client.Object
+	}{
+		{
+			name:   "GetError",
+			method: testutils.ClientMethodGet,
+			existingObjects: func(ct *grovecorev1alpha1.ClusterTopology) []client.Object {
+				return []client.Object{ct}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ct := createTestClusterTopology(topologyName, topologyLevels)
+			injectedErr := apierrors.NewInternalError(assert.AnError)
+			objects := tc.existingObjects(ct)
+
+			cl := testutils.NewTestClientBuilder().
+				WithObjects(objects...).
+				RecordErrorForObjects(tc.method, injectedErr, client.ObjectKey{Name: topologyName}).
+				Build()
+			b := newTASBackend(cl)
+
+			ref := grovecorev1alpha1.SchedulerTopologyReference{
+				SchedulerName:     "kai-scheduler",
+				TopologyReference: topologyName,
+			}
+			_, _, _, err := b.CheckTopologyDrift(context.Background(), ct, ref)
+			assert.Error(t, err)
+			assert.True(t, errors.Is(err, injectedErr))
+		})
+	}
+}
+
 // -- buildKAITopology and isKAITopologyChanged tests --
 
 func TestBuildKAITopology(t *testing.T) {

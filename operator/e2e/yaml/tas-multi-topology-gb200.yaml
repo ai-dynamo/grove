@@ -1,0 +1,49 @@
+# Workload: GB200 segment of heterogeneous GPU cluster (Story 4)
+# Test scenario: PCS references gb200-topology, packs at block level.
+# The gb200-topology maps domain "block" to "example.com/nvl-block",
+# which only exists on nodes relabeled as GB200 by the test.
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: tas-gb200-workload
+  labels:
+    app: tas-gb200-workload
+spec:
+  replicas: 1
+  template:
+    topologyConstraint:
+      topologyName: gb200-topology
+      packDomain: block
+    cliques:
+      - name: worker
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: worker
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 10Mi

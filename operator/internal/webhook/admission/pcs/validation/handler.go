@@ -30,6 +30,7 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
@@ -44,6 +45,7 @@ const (
 // Handler is a handler for validating PodCliqueSet resources.
 type Handler struct {
 	logger          logr.Logger
+	client          client.Client
 	tasConfig       configv1alpha1.TopologyAwareSchedulingConfiguration
 	networkConfig   configv1alpha1.NetworkAcceleration
 	schedulerConfig configv1alpha1.SchedulerConfiguration
@@ -55,6 +57,7 @@ type Handler struct {
 func NewHandler(mgr manager.Manager, operatorCfg *configv1alpha1.OperatorConfiguration) *Handler {
 	return &Handler{
 		logger:          mgr.GetLogger().WithName("webhook").WithName(Name),
+		client:          mgr.GetClient(),
 		tasConfig:       operatorCfg.TopologyAwareScheduling,
 		networkConfig:   operatorCfg.Network,
 		schedulerConfig: operatorCfg.Scheduler,
@@ -69,9 +72,9 @@ func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admis
 		return nil, errors.WrapError(err, ErrValidateCreatePodCliqueSet, string(admissionv1.Create), "failed to cast object to PodCliqueSet")
 	}
 
-	v := newPCSValidator(pcs, admissionv1.Create, h.tasConfig, h.schedulerConfig)
+	v := newPCSValidator(pcs, admissionv1.Create, h.tasConfig, h.schedulerConfig, h.client)
 	var allErrs field.ErrorList
-	allErrs = append(allErrs, v.validateTopologyConstraintsOnCreate()...)
+	allErrs = append(allErrs, v.validateTopologyConstraintsOnCreate(ctx)...)
 	warnings, errs := v.validate()
 	allErrs = append(allErrs, errs...)
 
@@ -98,7 +101,7 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 		return nil, errors.WrapError(err, ErrValidateUpdatePodCliqueSet, string(admissionv1.Update), "failed to cast old object to PodCliqueSet")
 	}
 
-	v := newPCSValidator(newPCS, admissionv1.Update, h.tasConfig, h.schedulerConfig)
+	v := newPCSValidator(newPCS, admissionv1.Update, h.tasConfig, h.schedulerConfig, h.client)
 	warnings, errs := v.validate()
 
 	// Validate MNNVL annotation immutability on PCS metadata and spec (clique templates)
