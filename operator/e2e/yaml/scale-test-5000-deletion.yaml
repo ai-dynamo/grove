@@ -1,0 +1,169 @@
+# Scale Test: 5000-pod deletion workload (covers Issue #423).
+# Mix of a standalone PodClique (frontend) and two PodCliqueScalingGroups
+# (prefill, decode) to exercise cascade deletion through both code paths.
+#
+# Composition:
+#   frontend (standalone PCLQ)               :    8 pods
+#   prefill PCSG  × 624 replicas × (1+3 pods): 2496 pods
+#   decode  PCSG  × 624 replicas × (1+3 pods): 2496 pods
+#   ----------------------------------------- ----------
+#   total                                    : 5000 pods
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: scale-test-5000-deletion
+  labels:
+    app: scale-test-5000-deletion
+spec:
+  replicas: 1
+  template:
+    podCliqueScalingGroups:
+      - name: prefill
+        replicas: 624
+        minAvailable: 1
+        cliqueNames:
+          - pleader
+          - pworker
+      - name: decode
+        replicas: 624
+        minAvailable: 1
+        cliqueNames:
+          - dleader
+          - dworker
+    cliques:
+      - name: frontend
+        spec:
+          roleName: frontend
+          replicas: 8
+          minAvailable: 8
+          podSpec:
+            schedulerName: default-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: type
+                          operator: In
+                          values:
+                            - kwok
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: app
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 10Mi
+      - name: pleader
+        spec:
+          roleName: pleader
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            schedulerName: default-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: type
+                          operator: In
+                          values:
+                            - kwok
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: app
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 10Mi
+      - name: pworker
+        spec:
+          roleName: pworker
+          replicas: 3
+          minAvailable: 3
+          podSpec:
+            schedulerName: default-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: type
+                          operator: In
+                          values:
+                            - kwok
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: app
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 10Mi
+      - name: dleader
+        spec:
+          roleName: dleader
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            schedulerName: default-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: type
+                          operator: In
+                          values:
+                            - kwok
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: app
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 10Mi
+      - name: dworker
+        spec:
+          roleName: dworker
+          replicas: 3
+          minAvailable: 3
+          podSpec:
+            schedulerName: default-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: type
+                          operator: In
+                          values:
+                            - kwok
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: app
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 10Mi
