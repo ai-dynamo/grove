@@ -27,7 +27,7 @@ import (
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -35,6 +35,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	volcanov1beta1 "volcano.sh/apis/pkg/apis/scheduling/v1beta1"
 )
+
+const volcanoPodGroupCRDName = "podgroups.scheduling.volcano.sh"
 
 type schedulerBackend struct {
 	client        client.Client
@@ -61,7 +63,20 @@ func (b *schedulerBackend) Name() string {
 	return b.name
 }
 
-func (b *schedulerBackend) Init() error {
+func (b *schedulerBackend) Init(directClient client.Client) error {
+	crd := &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{Name: volcanoPodGroupCRDName},
+	}
+	if err := directClient.Get(context.Background(), client.ObjectKey{Name: volcanoPodGroupCRDName}, crd); err != nil {
+		err = fmt.Errorf("volcano scheduler backend requires Volcano 1.14 or newer with PodGroup.spec.subGroupPolicy: failed to get CRD %q: %w", volcanoPodGroupCRDName, err)
+		recordCapabilityEvent(b.eventRecorder, crd, err)
+		return err
+	}
+	if !podGroupCRDHasSubGroupPolicy(crd) {
+		err := fmt.Errorf("volcano scheduler backend requires Volcano 1.14 or newer with PodGroup.spec.subGroupPolicy on scheduling.volcano.sh/v1beta1 PodGroup")
+		recordCapabilityEvent(b.eventRecorder, crd, err)
+		return err
+	}
 	return nil
 }
 
@@ -85,13 +100,11 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 			return err
 		}
 
-		queue, err := b.resolveQueueForPodGang(ctx, podGang)
-		if err != nil {
-			return err
+		if shouldSyncSchedulingConstraints(podGang, podGroup) {
+			podGroup.Spec.MinMember = minMemberForPodGang(podGang)
+			podGroup.Spec.SubGroupPolicy = subGroupPoliciesForPodGang(podGang)
 		}
-
-		podGroup.Spec.MinMember = minMemberForPodGang(podGang)
-		podGroup.Spec.Queue = queue
+		podGroup.Spec.Queue = effectiveQueueFromAnnotations(podGang.Annotations)
 		podGroup.Spec.PriorityClassName = podGang.Spec.PriorityClassName
 		return nil
 	})
@@ -102,29 +115,40 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 	return nil
 }
 
-func (b *schedulerBackend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
-	return nil
+func recordCapabilityEvent(eventRecorder record.EventRecorder, obj runtime.Object, err error) {
+	if obj == nil {
+		return
+	}
+	eventRecorder.Eventf(obj, corev1.EventTypeWarning, "VolcanoCapabilityUnavailable", "%v", err)
 }
 
-func (b *schedulerBackend) PreparePod(pod *corev1.Pod) {
+func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 	pod.Spec.SchedulerName = b.Name()
 	podGangName := pod.Labels[apicommon.LabelPodGang]
 	if podGangName == "" {
-		return
+		return fmt.Errorf("volcano scheduler requires pod label %q", apicommon.LabelPodGang)
 	}
 	if pod.Annotations == nil {
 		pod.Annotations = map[string]string{}
 	}
 	pod.Annotations[volcanov1beta1.VolcanoGroupNameAnnotationKey] = podGangName
 	pod.Annotations[volcanov1beta1.KubeGroupNameAnnotationKey] = podGangName
+	return nil
 }
 
-func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecorev1alpha1.PodCliqueSet) error {
+func (b *schedulerBackend) ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) error {
+	if err := validateTopologyConstraints(pcs); err != nil {
+		return err
+	}
+	return validateQueueAnnotations(ctx, b.client, pcs)
+}
+
+func validateTopologyConstraints(pcs *grovecorev1alpha1.PodCliqueSet) error {
 	if pcs.Spec.Template.TopologyConstraint != nil {
 		return fmt.Errorf("volcano scheduler backend does not support topologyConstraint on PodCliqueSet")
 	}
 	for _, clique := range pcs.Spec.Template.Cliques {
-		if clique != nil && clique.TopologyConstraint != nil {
+		if clique.TopologyConstraint != nil {
 			return fmt.Errorf("volcano scheduler backend does not support topologyConstraint on PodClique %q", clique.Name)
 		}
 	}
@@ -134,6 +158,17 @@ func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecor
 		}
 	}
 	return nil
+}
+
+func shouldSyncSchedulingConstraints(podGang *groveschedulerv1alpha1.PodGang, podGroup *volcanov1beta1.PodGroup) bool {
+	for _, group := range podGang.Spec.PodGroups {
+		if group.MinReplicas > 0 {
+			return true
+		}
+	}
+	// Coherent updates release Grove scheduling constraints by setting all
+	// MinReplicas to 0. Keep existing Volcano gang constraints in that phase.
+	return podGroup.Spec.MinMember == 0 && len(podGroup.Spec.SubGroupPolicy) == 0
 }
 
 func minMemberForPodGang(podGang *groveschedulerv1alpha1.PodGang) int32 {
@@ -147,29 +182,42 @@ func minMemberForPodGang(podGang *groveschedulerv1alpha1.PodGang) int32 {
 	return total
 }
 
-func (b *schedulerBackend) resolveQueueForPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) (string, error) {
-	resolvedQueue := ""
+func subGroupPoliciesForPodGang(podGang *groveschedulerv1alpha1.PodGang) []volcanov1beta1.SubGroupPolicySpec {
+	subGroups := make([]volcanov1beta1.SubGroupPolicySpec, 0, len(podGang.Spec.PodGroups))
 	for _, group := range podGang.Spec.PodGroups {
-		pclq := &grovecorev1alpha1.PodClique{}
-		if err := b.client.Get(ctx, client.ObjectKey{Name: group.Name, Namespace: podGang.Namespace}, pclq); err != nil {
-			if apierrors.IsNotFound(err) {
-				return "", fmt.Errorf("failed to resolve volcano queue for PodGang %s/%s: PodClique %q not found", podGang.Namespace, podGang.Name, group.Name)
-			}
-			return "", fmt.Errorf("failed to get PodClique %q for PodGang %s/%s: %w", group.Name, podGang.Namespace, podGang.Name, err)
+		size := group.MinReplicas
+		if size == 0 {
+			size = 1
 		}
+		minSubGroups := int32(1)
+		subGroups = append(subGroups, volcanov1beta1.SubGroupPolicySpec{
+			Name: group.Name,
+			LabelSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					apicommon.LabelPodClique: group.Name,
+				},
+			},
+			MatchLabelKeys: []string{apicommon.LabelPodClique},
+			SubGroupSize:   &size,
+			// Each Grove PodGroup in a PodGang maps to one Volcano subgroup
+			// policy, so at least one matching subgroup must satisfy subGroupSize.
+			MinSubGroups: &minSubGroups,
+		})
+	}
+	return subGroups
+}
 
-		queue := EffectiveQueueFromAnnotations(pclq.Annotations)
-		if resolvedQueue == "" {
-			resolvedQueue = queue
+func podGroupCRDHasSubGroupPolicy(crd *apiextensionsv1.CustomResourceDefinition) bool {
+	for _, version := range crd.Spec.Versions {
+		if version.Name != volcanov1beta1.SchemeGroupVersion.Version || !version.Served || version.Schema == nil || version.Schema.OpenAPIV3Schema == nil {
 			continue
 		}
-		if resolvedQueue != queue {
-			return "", fmt.Errorf("failed to resolve volcano queue for PodGang %s/%s: found multiple queues", podGang.Namespace, podGang.Name)
+		specSchema, ok := version.Schema.OpenAPIV3Schema.Properties["spec"]
+		if !ok {
+			return false
 		}
+		_, ok = specSchema.Properties["subGroupPolicy"]
+		return ok
 	}
-
-	if resolvedQueue == "" {
-		return DefaultQueue, nil
-	}
-	return resolvedQueue, nil
+	return false
 }

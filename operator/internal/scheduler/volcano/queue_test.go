@@ -30,56 +30,52 @@ import (
 )
 
 func TestEffectiveQueueFromAnnotations(t *testing.T) {
-	assert.Equal(t, DefaultQueue, EffectiveQueueFromAnnotations(nil))
-	assert.Equal(t, DefaultQueue, EffectiveQueueFromAnnotations(map[string]string{}))
-	assert.Equal(t, DefaultQueue, EffectiveQueueFromAnnotations(map[string]string{QueueAnnotationKey: ""}))
-	assert.Equal(t, DefaultQueue, EffectiveQueueFromAnnotations(map[string]string{QueueAnnotationKey: "   "}))
-	assert.Equal(t, "gpu-training", EffectiveQueueFromAnnotations(map[string]string{QueueAnnotationKey: "gpu-training"}))
+	assert.Equal(t, DefaultQueue, effectiveQueueFromAnnotations(nil))
+	assert.Equal(t, DefaultQueue, effectiveQueueFromAnnotations(map[string]string{}))
+	assert.Equal(t, DefaultQueue, effectiveQueueFromAnnotations(map[string]string{QueueAnnotationKey: ""}))
+	assert.Equal(t, DefaultQueue, effectiveQueueFromAnnotations(map[string]string{QueueAnnotationKey: "   "}))
+	assert.Equal(t, "gpu-training", effectiveQueueFromAnnotations(map[string]string{QueueAnnotationKey: "gpu-training"}))
 }
 
 func TestResolvePodCliqueQueue(t *testing.T) {
 	tests := []struct {
-		name              string
-		globalAnnotations map[string]string
-		cliqueAnnotations map[string]string
-		expectedQueue     string
-		expectErr         error
+		name          string
+		globalQueue   string
+		cliqueQueue   string
+		expectedQueue string
+		expectErr     error
 	}{
 		{
-			name:              "both unset defaults to default",
-			globalAnnotations: nil,
-			cliqueAnnotations: nil,
-			expectedQueue:     DefaultQueue,
+			name:          "both unset defaults to default",
+			expectedQueue: DefaultQueue,
 		},
 		{
-			name:              "global only",
-			globalAnnotations: map[string]string{QueueAnnotationKey: "gpu-training"},
-			cliqueAnnotations: nil,
-			expectedQueue:     "gpu-training",
+			name:          "global only",
+			globalQueue:   "gpu-training",
+			expectedQueue: "gpu-training",
 		},
 		{
-			name:              "clique only",
-			globalAnnotations: nil,
-			cliqueAnnotations: map[string]string{QueueAnnotationKey: "gpu-training"},
-			expectedQueue:     "gpu-training",
+			name:          "clique only",
+			cliqueQueue:   "gpu-training",
+			expectedQueue: "gpu-training",
 		},
 		{
-			name:              "both same",
-			globalAnnotations: map[string]string{QueueAnnotationKey: "gpu-training"},
-			cliqueAnnotations: map[string]string{QueueAnnotationKey: "gpu-training"},
-			expectedQueue:     "gpu-training",
+			name:          "both same",
+			globalQueue:   "gpu-training",
+			cliqueQueue:   "gpu-training",
+			expectedQueue: "gpu-training",
 		},
 		{
-			name:              "conflict",
-			globalAnnotations: map[string]string{QueueAnnotationKey: "gpu-training"},
-			cliqueAnnotations: map[string]string{QueueAnnotationKey: "high-priority"},
-			expectErr:         ErrConflictingQueueAnnotations,
+			name:        "conflict",
+			globalQueue: "gpu-training",
+			cliqueQueue: "high-priority",
+			expectErr:   errConflictingQueueAnnotations,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			queue, err := ResolvePodCliqueQueue(tt.globalAnnotations, tt.cliqueAnnotations)
+			queue, err := resolvePodCliqueQueue(tt.globalQueue, tt.cliqueQueue)
 			if tt.expectErr != nil {
 				require.ErrorIs(t, err, tt.expectErr)
 				return
@@ -100,19 +96,19 @@ func TestValidateQueueExistsAndIsOpen(t *testing.T) {
 
 	t.Run("existing open queue", func(t *testing.T) {
 		cl := testutils.CreateDefaultFakeClient([]client.Object{makeQueue("gpu-training", volcanov1beta1.QueueStateOpen)})
-		require.NoError(t, ValidateQueueExistsAndIsOpen(context.Background(), cl, "gpu-training"))
+		require.NoError(t, validateQueueExistsAndIsOpen(context.Background(), cl, "gpu-training"))
 	})
 
 	t.Run("missing queue", func(t *testing.T) {
 		cl := testutils.CreateDefaultFakeClient(nil)
-		err := ValidateQueueExistsAndIsOpen(context.Background(), cl, "gpu-training")
+		err := validateQueueExistsAndIsOpen(context.Background(), cl, "gpu-training")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "does not exist")
 	})
 
 	t.Run("queue not open", func(t *testing.T) {
 		cl := testutils.CreateDefaultFakeClient([]client.Object{makeQueue("gpu-training", "Closed")})
-		err := ValidateQueueExistsAndIsOpen(context.Background(), cl, "gpu-training")
+		err := validateQueueExistsAndIsOpen(context.Background(), cl, "gpu-training")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "is not Open")
 	})
