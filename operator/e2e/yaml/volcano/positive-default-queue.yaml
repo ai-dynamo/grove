@@ -1,0 +1,42 @@
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: volcano-gang-qa-default
+spec:
+  replicas: 1
+  template:
+    cliques:
+      - name: driver
+        spec:
+          roleName: driver
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            schedulerName: volcano
+            terminationGracePeriodSeconds: 1
+            containers:
+              - name: driver
+                image: alpine
+                imagePullPolicy: IfNotPresent
+                command: ["sh", "-c", "sleep 3600"]
+                resources:
+                  requests:
+                    cpu: 5m
+                    memory: 16Mi
+      - name: worker
+        spec:
+          roleName: worker
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            schedulerName: volcano
+            terminationGracePeriodSeconds: 1
+            containers:
+              - name: worker
+                image: alpine
+                imagePullPolicy: IfNotPresent
+                command: ["sh", "-c", "sleep 3600"]
+                resources:
+                  requests:
+                    cpu: 5m
+                    memory: 16Mi
