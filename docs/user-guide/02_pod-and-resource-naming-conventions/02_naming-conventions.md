@@ -158,6 +158,43 @@ To deploy a PodCliqueSet with this structure and explore the naming hierarchy th
 **You control:** PodCliqueSet name, PodClique template names, PCSG template names  
 **Grove generates:** All resource instances with hierarchical naming
 
+### Using Generated Names in User-Managed HPAs
+
+Grove can create HPAs for PodCliques and PodCliqueScalingGroups when the target has autoscaling configured. If you prefer to create an HPA yourself, leave autoscaling unset for that target and use the resource name in `scaleTargetRef`.
+
+List the PodCliqueSet and generated targets:
+
+```bash
+kubectl get pcs <pcs-name>
+kubectl get pcsg -l app.kubernetes.io/part-of=<pcs-name>
+kubectl get pclq -l app.kubernetes.io/part-of=<pcs-name>
+```
+
+Then use the selected target name in the HPA:
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: example-pcsg-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: grove.io/v1alpha1
+    kind: PodCliqueScalingGroup
+    name: <pcsg-name>
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+```
+
+For the whole workload, use `kind: PodCliqueSet` and the PodCliqueSet name. For standalone PodCliques, use `kind: PodClique` and the selected PodClique name. PodCliques that belong to a PodCliqueScalingGroup should be scaled through the PodCliqueScalingGroup instead.
+
 ## Key Takeaways
 
 1. **Self-Documenting Hierarchy**: Pod names encode the complete hierarchy from PodCliqueSet → PCSG (if applicable) → PodClique → Pod, making `kubectl get pods` output immediately understandable.
@@ -177,4 +214,3 @@ Now that you understand Grove's naming scheme and best practices:
 - **See it in action**: Continue to the [Hands-On Example](./03_hands-on-example.md) to deploy an example system and observe the naming hierarchy firsthand.
 
 - **Learn programmatic discovery**: Head to the [Environment Variables guide](../03_environment-variables-for-pod-discovery/01_overview.md) to learn how to use these names programmatically for pod discovery, including how Grove injects environment variables and how to construct FQDNs for pod-to-pod communication.
-
