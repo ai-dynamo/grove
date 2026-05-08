@@ -922,3 +922,62 @@ func assertCondition(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup
 	isBreached := condition.Status == metav1.ConditionTrue
 	assert.Equal(t, expectBreached, isBreached, "condition breach status mismatch")
 }
+
+// TestMutateSelector verifies the /scale selector is published for PCSGs regardless of whether
+// ScaleConfig is set in the parent PodCliqueSet template, and is suppressed for PCSGs whose name
+// does not match any config in the PodCliqueSet template.
+func TestMutateSelector(t *testing.T) {
+	const (
+		pcsName        = "test-pcs"
+		pcsgConfigName = "prefill"
+	)
+	pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: pcsName, Replica: 0}, pcsgConfigName)
+	withScale := &grovecorev1alpha1.AutoScalingConfig{MaxReplicas: 5}
+
+	tests := []struct {
+		name                    string
+		pcsgName                string // FQN to put on the PCSG; defaults to pcsgFQN
+		pcsgConfigScaleConfig   *grovecorev1alpha1.AutoScalingConfig
+		expectSelectorPopulated bool
+	}{
+		{name: "no ScaleConfig still publishes selector", expectSelectorPopulated: true},
+		{name: "ScaleConfig present publishes selector", pcsgConfigScaleConfig: withScale, expectSelectorPopulated: true},
+		// PCSG whose name does not match any config in the PCS template (e.g. stale object
+		// during a rename) must not publish a selector.
+		{name: "unknown PCSG name does not publish selector", pcsgName: "test-pcs-0-stale", expectSelectorPopulated: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pcs := &grovecorev1alpha1.PodCliqueSet{
+				ObjectMeta: metav1.ObjectMeta{Name: pcsName},
+				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+						PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+							{Name: pcsgConfigName, ScaleConfig: tt.pcsgConfigScaleConfig},
+						},
+					},
+				},
+			}
+			name := tt.pcsgName
+			if name == "" {
+				name = pcsgFQN
+			}
+			pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   name,
+					Labels: map[string]string{apicommon.LabelPodCliqueSetReplicaIndex: "0"},
+				},
+			}
+
+			err := mutateSelector(pcs, pcsg)
+			require.NoError(t, err)
+			if tt.expectSelectorPopulated {
+				require.NotNil(t, pcsg.Status.Selector)
+				assert.Contains(t, *pcsg.Status.Selector, apicommon.LabelPodCliqueScalingGroup+"="+pcsg.Name)
+			} else {
+				assert.Nil(t, pcsg.Status.Selector)
+			}
+		})
+	}
+}

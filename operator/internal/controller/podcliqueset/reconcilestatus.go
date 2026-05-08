@@ -37,6 +37,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -54,6 +55,10 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	// Update TopologyLevelsUnavailable condition based on TAS config and ClusterTopologyBinding
 	if err = r.mutateTopologyLevelUnavailableConditions(ctx, logger, pcs); err != nil {
 		return ctrlcommon.ReconcileWithErrors("failed to mutate TopologyLevelsUnavailable condition", err)
+	}
+
+	if err = mutateSelector(pcs); err != nil {
+		return ctrlcommon.ReconcileWithErrors("failed to update selector for PodCliqueSet", err)
 	}
 
 	// Skip the status update when every mutate* above left status byte-identical to what
@@ -89,6 +94,21 @@ func (r *Reconciler) mutateReplicas(ctx context.Context, logger logr.Logger, pcs
 		pcs.Status.UpdateProgress.UpdatedPodCliqueScalingGroupsCount = stats.updatedPCSGs
 		pcs.Status.UpdateProgress.TotalPodCliqueScalingGroupsCount = stats.totalPCSGs
 	}
+	return nil
+}
+
+// mutateSelector publishes the label selector on the PodCliqueSet /scale subresource so HPAs can
+// target the whole PodCliqueSet. PCS is the top-level scope, so the default labels are already
+// the complete selector; no per-resource narrowing label like PodClique/PodCliqueScalingGroup is
+// needed.
+func mutateSelector(pcs *grovecorev1alpha1.PodCliqueSet) error {
+	selector, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
+		MatchLabels: apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name),
+	})
+	if err != nil {
+		return fmt.Errorf("%w: failed to create label selector for PodCliqueSet %v", err, client.ObjectKeyFromObject(pcs))
+	}
+	pcs.Status.Selector = ptr.To(selector.String())
 	return nil
 }
 

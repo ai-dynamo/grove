@@ -33,6 +33,7 @@ import (
 	"github.com/stretchr/testify/require"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -1024,5 +1025,45 @@ func pcsgName(replicaIndex int) string {
 		return "test-pcs-1-compute"
 	default:
 		return ""
+	}
+}
+
+// TestMutateSelector verifies the /scale selector is always published for PodCliqueSet, scoped to
+// resources managed by Grove for this PodCliqueSet (matched by `app.kubernetes.io/managed-by` and
+// `app.kubernetes.io/part-of`). It also asserts the rendered selector parses back into a usable
+// label selector that matches a Pod carrying the PCS-managed default labels.
+func TestMutateSelector(t *testing.T) {
+	tests := []struct {
+		name             string
+		existingSelector *string
+	}{
+		{name: "publishes selector for fresh PodCliqueSet"},
+		// PCS always rewrites Status.Selector, so a stale value from a previous reconcile must
+		// not survive into the new status.
+		{name: "overwrites a stale selector", existingSelector: ptr.To("app.kubernetes.io/part-of=stale-pcs")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pcs := &grovecorev1alpha1.PodCliqueSet{
+				ObjectMeta: metav1.ObjectMeta{Name: testPCSName},
+				Status:     grovecorev1alpha1.PodCliqueSetStatus{Selector: tt.existingSelector},
+			}
+
+			err := mutateSelector(pcs)
+			require.NoError(t, err)
+			require.NotNil(t, pcs.Status.Selector)
+
+			assert.Contains(t, *pcs.Status.Selector, apicommon.LabelManagedByKey+"="+apicommon.LabelManagedByValue)
+			assert.Contains(t, *pcs.Status.Selector, apicommon.LabelPartOfKey+"="+testPCSName)
+
+			parsed, err := labels.Parse(*pcs.Status.Selector)
+			require.NoError(t, err, "rendered selector must parse as a valid label selector")
+			podLabels := labels.Set{
+				apicommon.LabelManagedByKey: apicommon.LabelManagedByValue,
+				apicommon.LabelPartOfKey:    testPCSName,
+			}
+			assert.True(t, parsed.Matches(podLabels), "selector should match a Pod carrying the PCS-managed default labels")
+		})
 	}
 }
