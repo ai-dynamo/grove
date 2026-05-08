@@ -220,6 +220,7 @@ func hasMinAvailableBreachedConditionChanged(oldConditions, newConditions []meta
 	return false
 }
 
+// hasPodCliqueScalingGroupStatusChanged reports whether any reconcile-relevant fields of the PodCliqueScalingGroup status have changed.
 func hasPodCliqueScalingGroupStatusChanged(oldPCSGStatus, newPCSGStatus *grovecorev1alpha1.PodCliqueScalingGroupStatus) bool {
 	return oldPCSGStatus.AvailableReplicas != newPCSGStatus.AvailableReplicas ||
 		oldPCSGStatus.UpdatedReplicas != newPCSGStatus.UpdatedReplicas ||
@@ -227,10 +228,12 @@ func hasPodCliqueScalingGroupStatusChanged(oldPCSGStatus, newPCSGStatus *groveco
 		hasUpdateStatusChanged(oldPCSGStatus.UpdateProgress, newPCSGStatus.UpdateProgress)
 }
 
+// hasUpdateStatusChanged reports whether the update progress has changed between the old and new states.
 func hasUpdateStatusChanged(oldProgress, newProgress any) bool {
 	return !reflect.DeepEqual(oldProgress, newProgress)
 }
 
+// stringPointersEqual reports whether two *string values are equal, treating nil pointers as equal only to other nil pointers.
 func stringPointersEqual(oldValue, newValue *string) bool {
 	if oldValue == nil || newValue == nil {
 		return oldValue == newValue

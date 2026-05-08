@@ -46,23 +46,23 @@ import (
 )
 
 const (
-	twoHashCompatWorkloadName = "two-hash-compat"
-	alpha8Version             = "v0.1.0-alpha.8"
-	alpha8ChartRef            = "oci://ghcr.io/ai-dynamo/grove/grove-charts"
-	alpha8ImageRepository     = "ghcr.io/ai-dynamo/grove/grove-operator"
-	alpha8CRDImageRepository  = "ghcr.io/ai-dynamo/grove/grove-install-crds"
-	alpha8InitImageRepository = "ghcr.io/ai-dynamo/grove/grove-initc"
+	legacyHashMigrationWorkloadName = "legacy-hash-migration"
+	alpha8Version                   = "v0.1.0-alpha.8"
+	alpha8ChartRef                  = "oci://ghcr.io/ai-dynamo/grove/grove-charts"
+	alpha8ImageRepository           = "ghcr.io/ai-dynamo/grove/grove-operator"
+	alpha8CRDImageRepository        = "ghcr.io/ai-dynamo/grove/grove-install-crds"
+	alpha8InitImageRepository       = "ghcr.io/ai-dynamo/grove/grove-initc"
 )
 
-// Test_RU13_TwoHashCompatibilityWindow performs a literal operator upgrade from
-// v0.1.0-alpha.8 to this branch. Existing pods/resources with legacy hashes must
-// be migrated in place to canonical hashes without workload pod recreation.
-func Test_RU13_TwoHashCompatibilityWindow(t *testing.T) {
+// Test_LegacyHashMigration_UpgradesAlpha8HashesWithoutPodRecreation verifies
+// that resources created by v0.1.0-alpha.8 with legacy hashes are migrated to
+// canonical hashes by this branch without recreating workload pods.
+func Test_LegacyHashMigration_UpgradesAlpha8HashesWithoutPodRecreation(t *testing.T) {
 	ctx := context.Background()
 	tc, clusterCleanup := testctx.PrepareTest(ctx, t, 2,
 		testctx.WithWorkload(&testctx.WorkloadConfig{
-			Name:         twoHashCompatWorkloadName,
-			YAMLPath:     "../../yaml/workload-two-hash-compat.yaml",
+			Name:         legacyHashMigrationWorkloadName,
+			YAMLPath:     "../../yaml/workload-legacy-hash-migration.yaml",
 			Namespace:    "default",
 			ExpectedPods: 2,
 		}),
@@ -132,7 +132,7 @@ func Test_RU13_TwoHashCompatibilityWindow(t *testing.T) {
 
 	tests.Logger.Info("4. Trigger a no-op PodCliqueSet reconcile and wait for canonical hash migration")
 	workloadManager := workload.NewWorkloadManager(tc.Client, tests.Logger)
-	if err := workloadManager.TriggerPCSReconcile(tc.Ctx, tc.Namespace, tc.Workload.Name, fmt.Sprintf("two-hash-%d", time.Now().UnixNano())); err != nil {
+	if err := workloadManager.TriggerPCSReconcile(tc.Ctx, tc.Namespace, tc.Workload.Name, fmt.Sprintf("legacy-hash-migration-%d", time.Now().UnixNano())); err != nil {
 		t.Fatalf("failed to trigger no-op PCS reconcile: %v", err)
 	}
 	if err := waitForHashState(tc, assertCanonicalHashState); err != nil {
@@ -149,13 +149,15 @@ func Test_RU13_TwoHashCompatibilityWindow(t *testing.T) {
 		t.Fatalf("pod identities changed during hash migration: %v", err)
 	}
 
-	tests.Logger.Info("Two-hash compatibility window upgrade test completed successfully!")
+	tests.Logger.Info("Legacy hash migration upgrade test completed successfully!")
 }
 
+// chartYAML captures the Chart.yaml fields needed to restore the local operator.
 type chartYAML struct {
 	Version string `yaml:"version"`
 }
 
+// readChartVersion returns the Helm chart version from the local chart directory.
 func readChartVersion(chartDir string) (string, error) {
 	data, err := os.ReadFile(filepath.Join(chartDir, "Chart.yaml"))
 	if err != nil {
@@ -171,6 +173,8 @@ func readChartVersion(chartDir string) (string, error) {
 	return chart.Version, nil
 }
 
+// alpha8HelmValues pins every image that alpha.8 expects so the downgrade uses
+// the released operator, CRD installer, and init container together.
 func alpha8HelmValues() map[string]interface{} {
 	return map[string]interface{}{
 		"image": map[string]interface{}{
@@ -196,6 +200,8 @@ func alpha8HelmValues() map[string]interface{} {
 	}
 }
 
+// upgradeOperator installs the requested chart version and waits until the
+// operator deployment is ready to reconcile workloads.
 func upgradeOperator(ctx context.Context, tc *testctx.TestContext, chartRef, chartVersion string, reuseValues bool, values map[string]interface{}) error {
 	_, err := setup.UpgradeHelmChart(&setup.HelmInstallConfig{
 		RestConfig:     tc.Client.RestConfig,
@@ -216,11 +222,14 @@ func upgradeOperator(ctx context.Context, tc *testctx.TestContext, chartRef, cha
 	return waitForOperatorReady(ctx, tc)
 }
 
+// waitForOperatorReady blocks until the Grove operator pod is ready after a Helm upgrade.
 func waitForOperatorReady(ctx context.Context, tc *testctx.TestContext) error {
 	podManager := pods.NewPodManager(tc.Client, tests.Logger)
 	return podManager.WaitForReady(ctx, []string{setup.OperatorNamespace}, setup.OperatorPodLabelSelector, 1, 3*time.Minute, 5*time.Second)
 }
 
+// captureCurrentOperatorImageValues records the locally built operator images so
+// the test can restore this branch after downgrading to alpha.8.
 func captureCurrentOperatorImageValues(ctx context.Context, cl client.Client) (map[string]interface{}, error) {
 	var deployment appsv1.Deployment
 	if err := cl.Get(ctx, types.NamespacedName{Namespace: setup.OperatorNamespace, Name: setup.OperatorDeploymentName}, &deployment); err != nil {
@@ -265,6 +274,7 @@ func captureCurrentOperatorImageValues(ctx context.Context, cl client.Client) (m
 	return values, nil
 }
 
+// findContainer returns the named container from a Kubernetes container slice.
 func findContainer(containers []corev1.Container, name string) (corev1.Container, bool) {
 	for _, container := range containers {
 		if container.Name == name {
@@ -274,6 +284,7 @@ func findContainer(containers []corev1.Container, name string) (corev1.Container
 	return corev1.Container{}, false
 }
 
+// findEnvValue returns an environment variable value from a container env slice.
 func findEnvValue(env []corev1.EnvVar, name string) (string, bool) {
 	for _, item := range env {
 		if item.Name == name {
@@ -283,6 +294,8 @@ func findEnvValue(env []corev1.EnvVar, name string) (string, bool) {
 	return "", false
 }
 
+// imageValueMap converts a deployed image reference into the Helm values schema
+// used by the Grove operator chart.
 func imageValueMap(image string, pullPolicy corev1.PullPolicy) (map[string]interface{}, error) {
 	repository, tag, err := splitImageForHelm(image)
 	if err != nil {
@@ -295,6 +308,8 @@ func imageValueMap(image string, pullPolicy corev1.PullPolicy) (map[string]inter
 	}, nil
 }
 
+// splitImageForHelm separates an image reference into repository and tag values
+// while preserving digest-qualified tags when present.
 func splitImageForHelm(image string) (string, string, error) {
 	base, digest, hasDigest := strings.Cut(image, "@")
 	tagSeparator := strings.LastIndex(base, ":")
@@ -312,11 +327,13 @@ func splitImageForHelm(image string) (string, string, error) {
 	return "", "", fmt.Errorf("image has no tag or digest")
 }
 
+// podIdentity captures the stable pod fields that must survive hash migration.
 type podIdentity struct {
 	uid           types.UID
 	restartCounts map[string]int32
 }
 
+// capturePodIdentities records pod UIDs and container restart counts before migration.
 func capturePodIdentities(tc *testctx.TestContext) (map[string]podIdentity, error) {
 	podList, err := tc.ListPods()
 	if err != nil {
@@ -332,6 +349,7 @@ func capturePodIdentities(tc *testctx.TestContext) (map[string]podIdentity, erro
 	return identities, nil
 }
 
+// restartCountsByContainer returns restart counts keyed by container name.
 func restartCountsByContainer(pod corev1.Pod) map[string]int32 {
 	counts := make(map[string]int32, len(pod.Status.ContainerStatuses))
 	for _, status := range pod.Status.ContainerStatuses {
@@ -340,6 +358,8 @@ func restartCountsByContainer(pod corev1.Pod) map[string]int32 {
 	return counts
 }
 
+// verifyNoPodReplacementsDuringHashMigration fails if migration deletes existing
+// workload pods or adds replacement pods.
 func verifyNoPodReplacementsDuringHashMigration(t *testing.T, events []podEvent, before map[string]podIdentity) {
 	t.Helper()
 
@@ -362,6 +382,8 @@ func verifyNoPodReplacementsDuringHashMigration(t *testing.T, events []podEvent,
 	}
 }
 
+// verifyPodIdentitiesUnchanged verifies that no pod UID or container restart
+// count changed while legacy hashes were migrated.
 func verifyPodIdentitiesUnchanged(tc *testctx.TestContext, before map[string]podIdentity) error {
 	after, err := capturePodIdentities(tc)
 	if err != nil {
@@ -391,8 +413,11 @@ func verifyPodIdentitiesUnchanged(tc *testctx.TestContext, before map[string]pod
 	return nil
 }
 
+// hashAssertion validates a fetched hash state while the waiter polls.
 type hashAssertion func(*hashState) error
 
+// hashState is a point-in-time snapshot of resources whose stored hashes must
+// transition from legacy to canonical values.
 type hashState struct {
 	pcs        *grovev1alpha1.PodCliqueSet
 	pclqs      []grovev1alpha1.PodClique
@@ -402,6 +427,8 @@ type hashState struct {
 	pclqHashes map[string]componentutils.HashCandidates
 }
 
+// waitForHashState polls until the supplied assertion accepts the observed
+// resource hashes, returning the last snapshot when timing out.
 func waitForHashState(tc *testctx.TestContext, assertion hashAssertion) error {
 	var lastAssertionErr error
 	var lastState *hashState
@@ -413,7 +440,7 @@ func waitForHashState(tc *testctx.TestContext, assertion hashAssertion) error {
 		lastState = state
 		if err := assertion(state); err != nil {
 			lastAssertionErr = err
-			tests.Logger.Debugf("[two-hash-compat] hash state not ready: %v", err)
+			tests.Logger.Debugf("[legacy-hash-migration] hash state not ready: %v", err)
 			return nil, nil
 		}
 		lastAssertionErr = nil
@@ -436,6 +463,8 @@ func waitForHashState(tc *testctx.TestContext, assertion hashAssertion) error {
 	return err
 }
 
+// fetchHashState reads the PodCliqueSet and managed resources, then computes the
+// canonical and legacy hash candidates expected for the current desired spec.
 func fetchHashState(ctx context.Context, tc *testctx.TestContext) (*hashState, error) {
 	pcs := &grovev1alpha1.PodCliqueSet{}
 	if err := tc.Client.Get(ctx, types.NamespacedName{Namespace: tc.Namespace, Name: tc.Workload.Name}, pcs); err != nil {
@@ -474,6 +503,7 @@ func fetchHashState(ctx context.Context, tc *testctx.TestContext) (*hashState, e
 	}, nil
 }
 
+// formatHashStateSnapshot renders the last observed hash state for timeout errors.
 func formatHashStateSnapshot(state *hashState) string {
 	if state == nil {
 		return "hash state was not fetched successfully"
@@ -537,6 +567,7 @@ func formatHashStateSnapshot(state *hashState) string {
 	return strings.TrimSpace(b.String())
 }
 
+// stringValue formats optional status hash fields in diagnostic output.
 func stringValue(value *string) string {
 	if value == nil {
 		return "<nil>"
@@ -544,6 +575,7 @@ func stringValue(value *string) string {
 	return *value
 }
 
+// labelValue formats optional label values in diagnostic output.
 func labelValue(labels map[string]string, key string) string {
 	if labels == nil {
 		return "<nil>"
@@ -555,6 +587,7 @@ func labelValue(labels map[string]string, key string) string {
 	return value
 }
 
+// isPodReady reports whether the pod Ready condition is true.
 func isPodReady(pod corev1.Pod) bool {
 	for _, condition := range pod.Status.Conditions {
 		if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
@@ -564,6 +597,8 @@ func isPodReady(pod corev1.Pod) bool {
 	return false
 }
 
+// assertLegacyHashState verifies that alpha.8 populated every stored hash with
+// the legacy value for the desired spec.
 func assertLegacyHashState(state *hashState) error {
 	if err := requireLegacyHash("PCS status currentGenerationHash", state.pcs.Status.CurrentGenerationHash, state.pcsHash); err != nil {
 		return err
@@ -607,6 +642,8 @@ func assertLegacyHashState(state *hashState) error {
 	return nil
 }
 
+// assertCanonicalHashState verifies that this branch migrated every stored hash
+// to the canonical value without starting a rolling update.
 func assertCanonicalHashState(state *hashState) error {
 	if err := requireCanonicalHash("PCS status currentGenerationHash", state.pcs.Status.CurrentGenerationHash, state.pcsHash); err != nil {
 		return err
@@ -653,6 +690,8 @@ func assertCanonicalHashState(state *hashState) error {
 	return nil
 }
 
+// requireLegacyHash asserts that a stored hash equals the legacy candidate and
+// not the canonical candidate.
 func requireLegacyHash(name string, value *string, candidates componentutils.HashCandidates) error {
 	if candidates.Canonical == candidates.Legacy {
 		return fmt.Errorf("%s canonical and legacy hashes unexpectedly match: %s", name, candidates.Canonical)
@@ -666,6 +705,7 @@ func requireLegacyHash(name string, value *string, candidates componentutils.Has
 	return nil
 }
 
+// requireCanonicalHash asserts that a stored hash equals the canonical candidate.
 func requireCanonicalHash(name string, value *string, candidates componentutils.HashCandidates) error {
 	if candidates.Canonical == candidates.Legacy {
 		return fmt.Errorf("%s canonical and legacy hashes unexpectedly match: %s", name, candidates.Canonical)
@@ -679,6 +719,8 @@ func requireCanonicalHash(name string, value *string, candidates componentutils.
 	return nil
 }
 
+// stringPtrFromMap returns a pointer to a map value so hash assertion helpers can
+// distinguish missing labels from present empty labels.
 func stringPtrFromMap(values map[string]string, key string) *string {
 	value, ok := values[key]
 	if !ok {

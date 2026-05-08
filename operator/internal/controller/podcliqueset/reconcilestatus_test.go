@@ -281,6 +281,13 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 	}
 }
 
+// TestComputePCSUpdatedReplicasRequiresStandaloneHashConvergence verifies that
+// a standalone-PodClique-backed replica only counts toward updatedReplicas once
+// all three rollout hashes tracked by isStandalonePCLQUpdated have converged on
+// the values derived from the current PCS spec: the PCLQ's pod-template-hash
+// label, status.CurrentPodTemplateHash, and status.CurrentPodCliqueSetGenerationHash.
+// Each can lag the others mid-reconcile, so the cases pin one stale at a time
+// plus a happy-path case where everything converges.
 func TestComputePCSUpdatedReplicasRequiresStandaloneHashConvergence(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
 		WithReplicas(1).

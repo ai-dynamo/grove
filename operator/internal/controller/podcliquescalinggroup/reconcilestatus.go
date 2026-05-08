@@ -376,6 +376,10 @@ func mutateCurrentPodCliqueSetGenerationHash(logger logr.Logger, pcs *grovecorev
 	pcsg.Status.CurrentPodCliqueSetGenerationHash = &pcsGenerationHashes.Canonical
 }
 
+// havePCSGPodCliquesConverged reports whether every expected PodClique in the
+// PodCliqueScalingGroup has fully reconciled to the current PodCliqueSet spec.
+// It gates advancing the PCSG's CurrentPodCliqueSetGenerationHash so the group
+// is only marked up-to-date once all child PodCliques have converged.
 func havePCSGPodCliquesConverged(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, existingPCLQs []grovecorev1alpha1.PodClique) bool {
 	expectedPCLQPodTemplateHashes := componentutils.GetPCLQTemplateHashCandidates(pcs, pcsg)
 	existingPCLQsByName := lo.SliceToMap(existingPCLQs, func(pclq grovecorev1alpha1.PodClique) (string, grovecorev1alpha1.PodClique) {

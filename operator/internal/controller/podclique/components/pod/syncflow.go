@@ -257,6 +257,10 @@ func (sc *syncContext) getExpectedPodTemplateHash() string {
 	return sc.pclq.Labels[apicommon.LabelPodTemplateHash]
 }
 
+// Pods carry the PodClique pod-template hash in a label so the controller can
+// tell which desired template created each live pod. Older controllers hashed
+// the same template before canonicalizing Kubernetes map-list fields, so those
+// pods may have a legacy hash that should converge without a rollout.
 func (r _resource) migrateLegacyCurrentPodLabels(ctx context.Context, logger logr.Logger, sc *syncContext) error {
 	for _, pod := range sc.existingPCLQPods {
 		if !sc.expectedPodTemplateHashes.IsLegacy(pod.Labels[apicommon.LabelPodTemplateHash]) {

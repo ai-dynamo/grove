@@ -102,9 +102,15 @@ func TestComputeUpdateWork(t *testing.T) {
 	}
 }
 
+// TestComputeUpdateWorkTreatsLegacyCurrentHashAsNew verifies that a ready pod
+// stamped with the legacy form of the current template hash is not considered
+// old work during the hash migration. Only pods whose hash matches neither the
+// canonical nor legacy candidate should be queued for rolling replacement.
 func TestComputeUpdateWorkTreatsLegacyCurrentHashAsNew(t *testing.T) {
 	r := _resource{expectationsStore: expect.NewExpectationsStore()}
 	sc := &syncContext{
+		// The canonical and legacy pods both represent the desired template.
+		// The stale pod simulates an actually outdated template hash.
 		existingPCLQPods: []*corev1.Pod{
 			newTestPod("canonical-ready", "canonical-hash", withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)),
 			newTestPod("legacy-ready", "legacy-hash", withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)),
@@ -190,26 +196,13 @@ func withDeletionTimestamp() func(*corev1.Pod) {
 	}
 }
 
-// TestComputeUpdateWorkPCSHashFlipDoesNotProduceOldHashWork pins the rolling-update
-// invariant that "PCS-level generation hash flipped, but per-PCLQ pod-template hash
-// did NOT" produces no deletion work.
+// TestComputeUpdateWorkPCSHashFlipDoesNotProduceOldHashWork verifies that a
+// PCS-level hash change does not schedule pod deletion when each pod's per-PCLQ
+// template hash is unchanged.
 //
-// Concretely: when the upstream operator reorders the cliques map-list (a
-// +listType=map +listMapKey=name field) but does not modify any individual
-// clique's content, the per-PCLQ ComputePCLQPodTemplateHash output is unchanged
-// from what is already stamped on existing pod labels. The PCLQ controller's
-// initOrResetUpdate then records that same (unchanged) hash in
-// pclq.Status.UpdateProgress.PodTemplateHash. When pod-level processPendingUpdates
-// runs, prepareSyncFlow recomputes sc.expectedPodTemplateHash via the same
-// function, so it matches every pod's LabelPodTemplateHash. computeUpdateWork
-// must therefore put every pod in newTemplateHashReadyPods and leave every
-// "old" bucket empty.
-//
-// This is the precondition that lets processPendingUpdates fall through to
-// markRollingUpdateEnd without deleting any pods. If this test fails, the
-// "slice reorder alone causes pod deletion" hypothesis is correct. If it
-// passes, that hypothesis is refuted: a separate per-PCLQ template change is
-// required to drive the actual gang roll.
+// This is the narrow classification test: it calls computeUpdateWork directly
+// and asserts that the stable-hash pods land in the new-template bucket, with
+// every old-template bucket empty.
 func TestComputeUpdateWorkPCSHashFlipDoesNotProduceOldHashWork(t *testing.T) {
 	const sharedHash = "per-pclq-hash-stable"
 
@@ -261,25 +254,13 @@ func TestComputeUpdateWorkPCSHashFlipDoesNotProduceOldHashWork(t *testing.T) {
 		"sanity: union of all old-hash buckets must be empty — this is the precondition that prevents pod deletion in the rolling-update path")
 }
 
-// TestProcessPendingUpdatesPCSHashFlipDoesNotDeletePods runs the full
-// processPendingUpdates flow against a fake client to settle the question:
-// "If the PCS-level generation hash flipped purely from clique slice reorder,
-// will the PCLQ pod-level rolling update delete pods?"
+// TestProcessPendingUpdatesPCSHashFlipDoesNotDeletePods verifies that
+// processPendingUpdates finishes a rolling update without deleting pods when
+// the PCS-level hash changed but the per-PCLQ pod-template hash did not.
 //
-// Setup mirrors the failing scenario from the latency-mode bug:
-//   - a PodClique with an in-progress rolling update whose target
-//     PodTemplateHash equals what is already on every existing pod (the
-//     per-PCLQ template content has not changed)
-//   - 4 ready pods, all healthy, all carrying that hash
-//
-// Expected outcome: processPendingUpdates calls markRollingUpdateEnd
-// (UpdateEndedAt set, ReadyPodsSelectedToUpdate cleared) and deletes nothing.
-//
-// If pods get deleted here, the "slice reorder alone causes the gang roll"
-// hypothesis from the alternate RCA is correct. If they survive, that
-// hypothesis is refuted and the actual gang roll requires a separate
-// per-PCLQ template change (see TestComputePCLQPodTemplateHash_PodSpecSliceOrderInvariants
-// in operator/internal/controller/common/component/utils/podclique_test.go).
+// This is the full-flow regression test: it runs processPendingUpdates with a
+// fake client and asserts both externally visible effects - no pods are deleted
+// and the rolling update is marked complete.
 func TestProcessPendingUpdatesPCSHashFlipDoesNotDeletePods(t *testing.T) {
 	const sharedHash = "per-pclq-hash-stable"
 	const pcsHashAfterReorder = "pcs-generation-hash-after-clique-reorder"

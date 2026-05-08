@@ -342,6 +342,7 @@ func (r _resource) getExistingPCLQs(ctx context.Context, pcsg *grovecorev1alpha1
 	return existingPCLQs, nil
 }
 
+// migrateLegacyCurrentPodCliqueLabels patches existing PodCliques whose pod-template-hash label matches a legacy hash, updating it in place to the current canonical hash.
 func (r _resource) migrateLegacyCurrentPodCliqueLabels(ctx context.Context, sc *syncContext) error {
 	for i := range sc.existingPCLQs {
 		pclq := &sc.existingPCLQs[i]
@@ -365,13 +366,7 @@ func (r _resource) migrateLegacyCurrentPodCliqueLabels(ctx context.Context, sc *
 	return nil
 }
 
-// getExpectedPCLQPodTemplateHashMap computes the expected pod template hash for each PodClique in the PCSG
-func getExpectedPCLQPodTemplateHashMap(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[string]string {
-	return lo.MapValues(getExpectedPCLQPodTemplateHashCandidatesMap(pcs, pcsg), func(candidates componentutils.HashCandidates, _ string) string {
-		return candidates.Canonical
-	})
-}
-
+// getExpectedPCLQPodTemplateHashCandidatesMap returns a map keyed by the fully-qualified PodClique name to the expected pod-template hash candidates (canonical and legacy) for every replica of the given PodCliqueScalingGroup.
 func getExpectedPCLQPodTemplateHashCandidatesMap(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[string]componentutils.HashCandidates {
 	pclqFQNToHash := make(map[string]componentutils.HashCandidates)
 	pcsgPCLQNames := pcsg.Spec.CliqueNames

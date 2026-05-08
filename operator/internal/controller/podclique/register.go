@@ -227,6 +227,7 @@ func podCliqueSetPredicate() predicate.Predicate {
 	}
 }
 
+// pcsCurrentlyUpdatingReplicaChanged reports whether the replica currently being updated has changed between the old and new PodCliqueSet update progress.
 func pcsCurrentlyUpdatingReplicaChanged(oldProgress, newProgress *grovecorev1alpha1.PodCliqueSetUpdateProgress) bool {
 	oldReplicaIndex, oldOK := currentPCSReplicaInUpdate(oldProgress)
 	newReplicaIndex, newOK := currentPCSReplicaInUpdate(newProgress)
@@ -236,6 +237,7 @@ func pcsCurrentlyUpdatingReplicaChanged(oldProgress, newProgress *grovecorev1alp
 	return oldOK && oldReplicaIndex != newReplicaIndex
 }
 
+// currentPCSReplicaInUpdate returns the replica index of the PodCliqueSet replica currently being updated, if any.
 func currentPCSReplicaInUpdate(progress *grovecorev1alpha1.PodCliqueSetUpdateProgress) (int32, bool) {
 	if progress == nil || len(progress.CurrentlyUpdating) == 0 {
 		return 0, false
@@ -278,6 +280,7 @@ func podCliqueScalingGroupPredicate() predicate.Predicate {
 	}
 }
 
+// pcsgUpdateTargetGenerationChanged reports whether the PodCliqueScalingGroup update's target PodCliqueSet generation hash has changed between the old and new update progress.
 func pcsgUpdateTargetGenerationChanged(oldProgress, newProgress *grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress) bool {
 	oldTarget, oldOK := pcsgUpdateTargetGeneration(oldProgress)
 	newTarget, newOK := pcsgUpdateTargetGeneration(newProgress)
@@ -287,6 +290,7 @@ func pcsgUpdateTargetGenerationChanged(oldProgress, newProgress *grovecorev1alph
 	return oldOK && oldTarget != newTarget
 }
 
+// pcsgUpdateTargetGeneration returns the target PodCliqueSet generation hash for an in-progress PodCliqueScalingGroup update, if any.
 func pcsgUpdateTargetGeneration(progress *grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress) (string, bool) {
 	if progress == nil {
 		return "", false

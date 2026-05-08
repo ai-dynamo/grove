@@ -252,6 +252,7 @@ func (r *Reconciler) computePCLQsStatus(pcs *grovecorev1alpha1.PodCliqueSet, exp
 	return
 }
 
+// isStandalonePCLQUpdated checks if a standalone PodClique is fully updated to the expected pod template and PodCliqueSet generation hashes.
 func isStandalonePCLQUpdated(pclq *grovecorev1alpha1.PodClique, expectedPodTemplateHashes, pcsGenerationHashCandidates componentutils.HashCandidates) bool {
 	return expectedPodTemplateHashes.Matches(pclq.Labels[apicommon.LabelPodTemplateHash]) &&
 		pclq.Status.CurrentPodTemplateHash != nil &&

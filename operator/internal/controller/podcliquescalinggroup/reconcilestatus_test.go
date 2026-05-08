@@ -592,6 +592,11 @@ func TestReconcileStatus_EdgeCases(t *testing.T) {
 	}
 }
 
+// TestMutateCurrentPodCliqueSetGenerationHashWaitsForPodCliqueGenerationConvergence verifies that
+// the PCSG's CurrentPodCliqueSetGenerationHash is only advanced to the canonical PCS hash once all
+// of its PodCliques report having converged to that hash. While any child PodClique still reports
+// the old generation hash, the PCSG must continue to surface the old hash to avoid prematurely
+// signaling that a rollout has completed.
 func TestMutateCurrentPodCliqueSetGenerationHashWaitsForPodCliqueGenerationConvergence(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
 		WithScalingGroupConfig("compute", []string{"worker"}, 2, 1).
@@ -620,6 +625,9 @@ func TestMutateCurrentPodCliqueSetGenerationHashWaitsForPodCliqueGenerationConve
 	assert.Equal(t, pcsGenerationHashes.Canonical, *pcsg.Status.CurrentPodCliqueSetGenerationHash)
 }
 
+// buildConvergedPCSGPodClique constructs a PodClique that is fully converged on the given
+// template hash, with its CurrentPodCliqueSetGenerationHash set to pcsGenerationHash so callers
+// can simulate cliques at a specific PCS generation.
 func buildConvergedPCSGPodClique(
 	t *testing.T,
 	pcsg *grovecorev1alpha1.PodCliqueScalingGroup,

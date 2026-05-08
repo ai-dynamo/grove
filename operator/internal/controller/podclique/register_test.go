@@ -77,6 +77,11 @@ func TestPodPredicate_Delete(t *testing.T) {
 	})
 }
 
+// TestPodCliqueSetPredicateCurrentlyUpdatingReplicaChanges verifies that the PodCliqueSet
+// watch predicate enqueues PodClique reconciles when the replica currently being rolled out
+// changes. The predicate intentionally ignores most PodCliqueSet updates to avoid reconcile
+// storms, so it must still fire when CurrentlyUpdating starts, stops, or shifts to a different
+// replica index, and must stay quiet when the in-progress replica is unchanged.
 func TestPodCliqueSetPredicateCurrentlyUpdatingReplicaChanges(t *testing.T) {
 	pred, ok := podCliqueSetPredicate().(predicate.Funcs)
 	require.True(t, ok, "predicate must be predicate.Funcs")
@@ -135,6 +140,12 @@ func TestPodCliqueSetPredicateCurrentlyUpdatingReplicaChanges(t *testing.T) {
 	}
 }
 
+// TestPodCliqueScalingGroupPredicateGenerationStatusChanges verifies that the
+// PodCliqueScalingGroup watch predicate triggers PodClique reconciles when the PCSG's view
+// of the PodCliqueSet generation changes during a rolling update. PodCliques rely on this
+// signal to keep Status.CurrentPodCliqueSetGenerationHash in sync, so the predicate must
+// fire on changes to either the current generation hash or the in-progress update target,
+// and must stay quiet when both are unchanged.
 func TestPodCliqueScalingGroupPredicateGenerationStatusChanges(t *testing.T) {
 	pred, ok := podCliqueScalingGroupPredicate().(predicate.Funcs)
 	require.True(t, ok, "predicate must be predicate.Funcs")

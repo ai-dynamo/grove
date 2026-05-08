@@ -237,6 +237,11 @@ func TestGetPCSReplicaFromPCSG(t *testing.T) {
 	}
 }
 
+// TestIsReplicaUpdatedAcceptsLegacyCurrentHashesAndRejectsStale verifies that isReplicaUpdated
+// treats a PCSG replica as up-to-date when its PodCliques carry either the canonical or the legacy
+// pod-template hash form for the current spec, and still flags the replica as stale when any
+// PodClique's hash matches neither candidate. This guards the legacy hash migration path so that
+// PCLQs labeled with the pre-migration hash are not needlessly rolled.
 func TestIsReplicaUpdatedAcceptsLegacyCurrentHashesAndRejectsStale(t *testing.T) {
 	expectedHashes := map[string]componentutils.HashCandidates{
 		"pcsg-0-frontend": {Canonical: "frontend-canonical", Legacy: "frontend-legacy"},
@@ -258,6 +263,10 @@ func TestIsReplicaUpdatedAcceptsLegacyCurrentHashesAndRejectsStale(t *testing.T)
 	assert.False(t, stale, "hashes matching neither current canonical nor current legacy must remain stale")
 }
 
+// podCliqueWithTemplateHash builds a minimal PodClique fixture identified by name and stamped with
+// the given value on the apicommon.LabelPodTemplateHash label. It is intended for tests of
+// hash-comparison logic (e.g. isReplicaUpdated) where only the pclq name and template-hash label
+// are relevant.
 func podCliqueWithTemplateHash(name, hash string) grovecorev1alpha1.PodClique {
 	return grovecorev1alpha1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{

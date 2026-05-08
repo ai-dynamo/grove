@@ -189,6 +189,12 @@ func TestMutateUpdatedReplica(t *testing.T) {
 	}
 }
 
+// TestMutateUpdatedReplicaCountsCanonicalAndLegacyCurrentPodLabels verifies that
+// mutateUpdatedReplica treats both the canonical and legacy pod-template-hash
+// values as "current" when counting UpdatedReplicas. This protects in-flight
+// rollouts during a hash-format migration: pods labeled with either hash variant
+// of the current template are counted as updated, while pods with an unrelated
+// (stale) hash are not.
 func TestMutateUpdatedReplicaCountsCanonicalAndLegacyCurrentPodLabels(t *testing.T) {
 	template := &grovecorev1alpha1.PodCliqueTemplateSpec{
 		Name: "worker",
@@ -235,6 +241,12 @@ func TestMutateUpdatedReplicaCountsCanonicalAndLegacyCurrentPodLabels(t *testing
 	assert.Equal(t, int32(2), pclq.Status.UpdatedReplicas)
 }
 
+// TestMutateCurrentHashesAdvancesGenerationWhenTemplateHashIsCurrent verifies that
+// once a PodClique has fully converged on the current template (Replicas ==
+// UpdatedReplicas) and its CurrentPodTemplateHash matches the template — even
+// via the legacy hash — mutateCurrentHashes advances both the
+// CurrentPodTemplateHash and the CurrentPodCliqueSetGenerationHash to their
+// canonical values, completing the migration off of legacy hashes.
 func TestMutateCurrentHashesAdvancesGenerationWhenTemplateHashIsCurrent(t *testing.T) {
 	pcs, pclq, templateHashes, generationHashes := newPodCliqueHashConvergenceFixture()
 	oldGenerationHash := "old-generation-hash"
@@ -250,6 +262,30 @@ func TestMutateCurrentHashesAdvancesGenerationWhenTemplateHashIsCurrent(t *testi
 	assert.Equal(t, generationHashes.Canonical, *pclq.Status.CurrentPodCliqueSetGenerationHash)
 }
 
+// TestMutateCurrentHashesDoesNotAdvanceWhenTemplateHashIsStale verifies that
+// mutateCurrentHashes refuses to advance CurrentPodTemplateHash or
+// CurrentPodCliqueSetGenerationHash when the PodClique has not actually
+// converged on the current PodCliqueSet template, even though the replica
+// counts (Replicas == UpdatedReplicas) would superficially suggest it has.
+//
+// "Stale" here means a hash value that matches neither the canonical nor the
+// legacy form of the expected pod-template hash for the current PCS template
+// (i.e. it is left over from some prior, no-longer-current template). Because
+// convergence is established by checking both the pod-template-hash label on
+// the PodClique and Status.CurrentPodTemplateHash against those expected
+// canonical/legacy hashes, a stale value in either field must block the
+// advance. The two table cases exercise exactly those inputs:
+//
+//   - "stale label": the PodClique's pod-template-hash label is a stale value
+//     while Status.CurrentPodTemplateHash is unset. Convergence must fail on
+//     the label check, so neither the template hash nor the generation hash
+//     may move to canonical.
+//   - "stale current template hash": the label is the current canonical hash
+//     (so the label check passes), but Status.CurrentPodTemplateHash already
+//     holds a stale value from a prior template. Convergence must fail on the
+//     status check, the stale Status.CurrentPodTemplateHash must be preserved
+//     as-is (not overwritten with the canonical hash), and the generation
+//     hash must not advance.
 func TestMutateCurrentHashesDoesNotAdvanceWhenTemplateHashIsStale(t *testing.T) {
 	tests := []struct {
 		name                    string

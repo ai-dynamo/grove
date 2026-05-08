@@ -1029,7 +1029,7 @@ func TestComputeHash_DoesNotMutateInput(t *testing.T) {
 // HostAliases, TopologySpreadConstraints, ResourceClaims, SchedulingGates,
 // Container.Resources.Claims, and EphemeralContainers.
 //
-// The original bug report explicitly listed VolumeMounts as one of the
+// Note: There was a bug report where VolumeMounts was one of the
 // slices that flipped the hash on every Dynamo-operator-driven PCS update;
 // this is the regression test for that case.
 func TestComputeHash_AdditionalListTypeMapSlices(t *testing.T) {

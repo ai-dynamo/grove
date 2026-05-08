@@ -90,6 +90,9 @@ func TestMapClusterTopologyToPodCliqueSets(t *testing.T) {
 	}, requests)
 }
 
+// TestPodCliqueSetPredicateUpdate verifies that the PodCliqueSet update predicate
+// enqueues on generation bumps and reconcile-trigger annotation changes, and
+// ignores unrelated annotation edits or no-op updates.
 func TestPodCliqueSetPredicateUpdate(t *testing.T) {
 	pred, ok := podCliqueSetPredicate().(predicate.Funcs)
 	require.True(t, ok, "predicate must be predicate.Funcs")
@@ -154,6 +157,9 @@ func podCliqueSetWithGenerationAndAnnotations(generation int64, annotations map[
 	}
 }
 
+// TestPodCliquePredicateStatusChangesAffectingUpdatedAccounting asserts that the
+// PodClique predicate enqueues when status fields feeding rolling-update
+// accounting (current hashes, updated replica count, update progress) change.
 func TestPodCliquePredicateStatusChangesAffectingUpdatedAccounting(t *testing.T) {
 	pred, ok := podCliquePredicate().(predicate.Funcs)
 	require.True(t, ok, "predicate must be predicate.Funcs")
@@ -202,6 +208,9 @@ func TestPodCliquePredicateStatusChangesAffectingUpdatedAccounting(t *testing.T)
 	}
 }
 
+// TestPodCliqueScalingGroupPredicateStatusChangesAffectingUpdatedAccounting asserts
+// that the PodCliqueScalingGroup predicate enqueues on status changes relevant to
+// rolling-update accounting (generation hash, updated replicas, update progress).
 func TestPodCliqueScalingGroupPredicateStatusChangesAffectingUpdatedAccounting(t *testing.T) {
 	pred, ok := podCliqueScalingGroupPredicate().(predicate.Funcs)
 	require.True(t, ok, "predicate must be predicate.Funcs")

@@ -135,49 +135,14 @@ func HasAnyContainerNotStarted(pod *corev1.Pod) bool {
 	return false
 }
 
-// ComputeHash computes a hash given one or more corev1.PodTemplateSpec.
+// ComputeHash returns a stable hash for one or more corev1.PodTemplateSpec.
 //
-// Each template is canonicalized before being fed into the underlying fnv
-// hash. Canonicalization sorts every Kubernetes API slice that is declared
-// +listType=map AND whose order does not influence runtime behavior, so
-// that two PodTemplateSpecs which represent the same desired state but were
-// serialized in different orders by an upstream controller (e.g. emitted
-// from non-deterministic Go map iteration) hash to the same value.
-//
-// Sorted (+listType=map, order-independent at runtime):
-//   - PodSpec.Containers (key: name)
-//   - PodSpec.Volumes (key: name)
-//   - PodSpec.ImagePullSecrets (key: name)
-//   - PodSpec.HostAliases (key: ip)
-//   - PodSpec.TopologySpreadConstraints (key: topologyKey, whenUnsatisfiable)
-//   - PodSpec.ResourceClaims (key: name)
-//   - PodSpec.EphemeralContainers (key: name)
-//   - PodSpec.SchedulingGates (key: name)
-//   - Container.Ports (key: containerPort, protocol) — for regular, init,
-//     and ephemeral containers
-//   - Container.VolumeMounts (key: mountPath) — same scope
-//   - Container.VolumeDevices (key: devicePath) — same scope
-//   - Container.Resources.Claims (key: name) — same scope
-//
-// Intentionally NOT sorted (slice order is part of the desired state):
-//   - PodSpec.InitContainers — +listType=map but the field doc states init
-//     containers "are run in the order they appear in this list", so a
-//     reorder is a real spec change.
-//   - Container.Env — +listType=map but order participates in $(VAR)
-//     substitution; reordering can change runtime values.
-//   - Container.EnvFrom — +listType=atomic; the API treats the slice as a
-//     single value and its order is part of that value.
-//   - PodSpec.Tolerations — +listType=atomic.
-//   - PodSpec.ReadinessGates — +listType=atomic.
-//   - Container.Args / Container.Command — ordered argument lists.
-//   - Container.ResizePolicy — +listType=atomic.
-//   - Container.RestartPolicyRules — +listType=atomic.
-//
-// Anything not listed is left untouched: either it is a scalar/struct field
-// (no slice reorder possible), it is +listType=set (already a set, no key),
-// it is +listType=atomic and not enumerated above (treated as opaque, like
-// the listed atomic fields), or it does not appear in the PodSpec types we
-// hash here.
+// Each template is canonicalized before hashing so that specs representing
+// the same desired state hash to the same value, even when an upstream
+// controller serialized order-independent +listType=map slices (e.g.
+// Containers, Volumes) in a different order. See canonicalizePodSpecForHashing
+// for the field-level rules, including the slices intentionally left
+// untouched because their order is part of the spec.
 func ComputeHash(podTemplateSpecs ...*corev1.PodTemplateSpec) string {
 	return computeHash(canonicalizePodTemplateSpecForHashing, nil, podTemplateSpecs...)
 }
@@ -227,10 +192,7 @@ func computeHash(prepare func(*corev1.PodTemplateSpec) *corev1.PodTemplateSpec, 
 }
 
 // canonicalizePodTemplateSpecForHashing returns a deep-copied PodTemplateSpec
-// with every order-independent +listType=map slice sorted by its API key,
-// so that two specs representing the same desired state always produce the
-// same byte-for-byte serialization. See the doc on ComputeHash for the full
-// list of slices canonicalized and the rationale for the slices left alone.
+// with its PodSpec canonicalized via canonicalizePodSpecForHashing.
 func canonicalizePodTemplateSpecForHashing(in *corev1.PodTemplateSpec) *corev1.PodTemplateSpec {
 	if in == nil {
 		return nil
@@ -240,6 +202,21 @@ func canonicalizePodTemplateSpecForHashing(in *corev1.PodTemplateSpec) *corev1.P
 	return out
 }
 
+// canonicalizePodSpecForHashing sorts the order-independent +listType=map
+// slices in spec in place so that two PodSpecs representing the same desired
+// state serialize identically. Each per-helper function below documents its
+// own sort key.
+//
+// The following slices are intentionally left in their original order —
+// sorting them would mis-represent a real spec change as equivalent:
+//   - InitContainers: +listType=map, but the field doc states init containers
+//     "are run in the order they appear in this list".
+//   - Container.Env: +listType=map, but order participates in $(VAR)
+//     substitution and so can change runtime values.
+//   - Container.Args, Container.Command: ordered argument lists.
+//   - Container.EnvFrom, PodSpec.Tolerations, PodSpec.ReadinessGates,
+//     Container.ResizePolicy, Container.RestartPolicyRules: +listType=atomic;
+//     the API treats the slice as a single opaque value.
 func canonicalizePodSpecForHashing(spec *corev1.PodSpec) {
 	// Containers run in parallel and are +listType=map keyed by name —
 	// safe to sort. After sorting the slice, also canonicalize the

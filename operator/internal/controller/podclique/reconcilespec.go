@@ -76,6 +76,9 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pclq
 		return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("could not get owner PodCliqueSet for PodClique: %v", pclqObjectKey), err)
 	}
 
+	// Older controllers may have labeled this same desired PodClique template
+	// with the pre-canonical pod-template hash. Rewrite it before comparing
+	// update state.
 	if err = r.migrateLegacyCurrentPodCliqueLabel(ctx, pcs, pclq); err != nil {
 		return ctrlcommon.ReconcileWithErrors("could not migrate legacy PodClique template hash label", err)
 	}
@@ -139,6 +142,10 @@ func shouldCheckPendingUpdatesForPCLQ(logger logr.Logger, pcs *grovecorev1alpha1
 	return true, nil
 }
 
+// migrateLegacyCurrentPodCliqueLabel rewrites the pod-template hash label to
+// its canonical value when the PodClique still carries the legacy hash from
+// v0.1.0-alpha.8. Without this, an unchanged template would look drifted and
+// trigger a spurious rolling update. No-op if the label is already canonical.
 func (r *Reconciler) migrateLegacyCurrentPodCliqueLabel(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) error {
 	templateHashCandidates, err := componentutils.GetExpectedPCLQPodTemplateHashCandidates(pcs, pclq.ObjectMeta)
 	if err != nil {

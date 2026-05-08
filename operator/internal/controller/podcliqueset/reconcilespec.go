@@ -117,18 +117,14 @@ func (r *Reconciler) isGenerationHashExpectationSatisfied(pcsObjectName string, 
 // computeGenerationHash calculates a hash of the PodCliqueSet pod template
 // specifications.
 //
-// The hash is order-stable across reorderings of pcs.Spec.Template.Cliques.
-// Cliques is declared +listType=map +listMapKey=name, so the slice represents
-// a name-keyed set with no inherent order; an upstream operator that emits
-// the same cliques in a different sequence (e.g. from non-deterministic Go
-// map iteration) must produce the same generation hash here, otherwise we
-// would falsely trigger a rolling recreate against pods whose desired state
-// is unchanged.
+// pcs.Spec.Template.Cliques is +listType=map +listMapKey=name, so it is an
+// unordered set; the hash must be stable across reorderings to avoid falsely
+// triggering rolling recreates when an upstream operator emits the same
+// cliques in a different sequence.
 //
-// Slice order does carry semantic meaning when StartupType is
-// CliqueStartupTypeInOrder: a different clique sequence means a different
-// startup chain. For that mode, the generation hash preserves the original
-// clique order and passes clique names as order keys to the shared hash helper.
+// Order is semantically meaningful when StartupType is CliqueStartupTypeInOrder,
+// so in that mode the original clique order is preserved and clique names are
+// passed as order keys to the shared hash helper.
 func computeGenerationHash(pcs *grovecorev1alpha1.PodCliqueSet) string {
 	return componentutils.ComputePCSGenerationHash(pcs)
 }

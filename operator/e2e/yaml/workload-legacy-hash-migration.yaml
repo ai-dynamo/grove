@@ -1,11 +1,11 @@
-# Workload for the canonical/legacy hash compatibility upgrade test.
+# Workload for the legacy-to-canonical hash migration upgrade test.
 ---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
-  name: two-hash-compat
+  name: legacy-hash-migration
   labels:
-    app: two-hash-compat
+    app: legacy-hash-migration
 spec:
   replicas: 1
   template:
