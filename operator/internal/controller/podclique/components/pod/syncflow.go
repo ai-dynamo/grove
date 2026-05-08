@@ -151,6 +151,12 @@ func (r _resource) runSyncFlow(logger logr.Logger, sc *syncContext) syncFlowResu
 		}
 	}
 
+	if componentutils.IsInPlaceUpdateStrategy(sc.pcs) {
+		if err := r.syncIdleInPlaceReadinessGates(logger, sc); err != nil {
+			result.recordError(err)
+		}
+	}
+
 	if componentutils.IsAutoUpdateStrategy(sc.pcs) && componentutils.IsPCLQAutoUpdateInProgress(sc.pclq) {
 		if err := r.processPendingUpdates(logger, sc); err != nil {
 			result.recordError(err)
@@ -163,6 +169,24 @@ func (r _resource) runSyncFlow(logger logr.Logger, sc *syncContext) syncFlowResu
 	}
 	result.recordPendingScheduleGatedPods(skippedScheduleGatedPods)
 	return result
+}
+
+func (r _resource) syncIdleInPlaceReadinessGates(logger logr.Logger, sc *syncContext) error {
+	for _, pod := range sc.existingPCLQPods {
+		original := pod.DeepCopy()
+		changed, err := markInPlaceUpdateReadyIfIdle(pod)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			continue
+		}
+		if err := r.client.Status().Patch(sc.ctx, pod, client.MergeFrom(original)); err != nil {
+			return err
+		}
+		logger.Info("Marked idle Pod in-place readiness gate ready", "pod", client.ObjectKeyFromObject(pod))
+	}
+	return nil
 }
 
 // syncExpectationsAndComputeDifference reconciles create/delete expectations with actual pod state and computes the replica difference

@@ -175,6 +175,7 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 		)
 	}
 	backend.PreparePod(pod)
+	injectInPlaceReadinessGate(pcs, pod)
 
 	// Add GROVE specific Pod environment variables
 	addEnvironmentVariables(pod, pclq, pcsName, pcsReplicaIndex)

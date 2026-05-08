@@ -301,11 +301,74 @@ func TestIsAutoUpdateStrategy(t *testing.T) {
 			},
 			expected: false,
 		},
+		{
+			name: "in_place_if_possible_is_auto",
+			pcs: &grovecorev1alpha1.PodCliqueSet{
+				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+					UpdateStrategy: &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.InPlaceIfPossibleStrategy},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "in_place_only_is_auto",
+			pcs: &grovecorev1alpha1.PodCliqueSet{
+				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+					UpdateStrategy: &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.InPlaceOnlyStrategy},
+				},
+			},
+			expected: true,
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.expected, IsAutoUpdateStrategy(tc.pcs))
+		})
+	}
+}
+
+func TestIsInPlaceUpdateStrategy(t *testing.T) {
+	tests := []struct {
+		name     string
+		pcs      *grovecorev1alpha1.PodCliqueSet
+		expected bool
+	}{
+		{name: "nil_pcs", pcs: nil, expected: false},
+		{name: "nil_strategy", pcs: &grovecorev1alpha1.PodCliqueSet{}, expected: false},
+		{
+			name: "rolling_recreate",
+			pcs: &grovecorev1alpha1.PodCliqueSet{Spec: grovecorev1alpha1.PodCliqueSetSpec{
+				UpdateStrategy: &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.RollingRecreateStrategy},
+			}},
+			expected: false,
+		},
+		{
+			name: "on_delete",
+			pcs: &grovecorev1alpha1.PodCliqueSet{Spec: grovecorev1alpha1.PodCliqueSetSpec{
+				UpdateStrategy: &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.OnDeleteStrategy},
+			}},
+			expected: false,
+		},
+		{
+			name: "in_place_if_possible",
+			pcs: &grovecorev1alpha1.PodCliqueSet{Spec: grovecorev1alpha1.PodCliqueSetSpec{
+				UpdateStrategy: &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.InPlaceIfPossibleStrategy},
+			}},
+			expected: true,
+		},
+		{
+			name: "in_place_only",
+			pcs: &grovecorev1alpha1.PodCliqueSet{Spec: grovecorev1alpha1.PodCliqueSetSpec{
+				UpdateStrategy: &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.InPlaceOnlyStrategy},
+			}},
+			expected: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, IsInPlaceUpdateStrategy(tc.pcs))
 		})
 	}
 }

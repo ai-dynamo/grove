@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 
 	"github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
@@ -73,6 +74,13 @@ func (w *updateWork) getNextPodToUpdate() *corev1.Pod {
 // processPendingUpdates processes pending updates for the PodClique.
 // This is the main entry point for handling rolling updates of pods in the PodClique.
 func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) error {
+	if componentutils.IsInPlaceUpdateStrategy(sc.pcs) {
+		handled, err := r.processPendingInPlaceUpdates(logger, sc)
+		if handled || err != nil {
+			return err
+		}
+	}
+
 	updateWork := r.computeUpdateWork(logger, sc)
 	pclq := sc.pclq
 	// Always delete old-hash pods that are not Ready (pending, unhealthy, starting, or uncategorized).
@@ -132,6 +140,126 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 
 	// If the control comes here, then mark the end of update.
 	return r.markRollingUpdateEnd(sc.ctx, logger, pclq)
+}
+
+func (r _resource) processPendingInPlaceUpdates(logger logr.Logger, sc *syncContext) (bool, error) {
+	for _, pod := range sc.existingPCLQPods {
+		if _, ok, err := getInPlaceUpdateState(pod); err != nil {
+			return true, err
+		} else if ok {
+			original := pod.DeepCopy()
+			completed, err := markInPlaceUpdateCompleteIfReady(pod)
+			if err != nil {
+				return true, err
+			}
+			if !completed {
+				return true, groveerr.New(
+					groveerr.ErrCodeContinueReconcileAndRequeue,
+					component.OperationSync,
+					fmt.Sprintf("in-place update of pod %s is not complete, requeuing", pod.Name),
+				)
+			}
+			if err := r.client.Status().Patch(sc.ctx, pod, client.MergeFrom(original)); err != nil {
+				return true, err
+			}
+			if err := r.client.Patch(sc.ctx, pod, client.MergeFrom(original)); err != nil {
+				return true, err
+			}
+			logger.Info("Marked Pod in-place update complete", "pod", client.ObjectKeyFromObject(pod))
+			return true, groveerr.New(
+				groveerr.ErrCodeContinueReconcileAndRequeue,
+				component.OperationSync,
+				fmt.Sprintf("marked in-place update complete for pod %s, requeuing", pod.Name),
+			)
+		}
+	}
+
+	updateWork := r.computeUpdateWork(logger, sc)
+	if hasOldNonReadyPods(updateWork) {
+		if componentutils.IsInPlaceOnlyStrategy(sc.pcs) {
+			return true, groveerr.New(
+				groveerr.ErrCodeContinueReconcileAndRequeue,
+				component.OperationSync,
+				"in-place only update is waiting for old non-ready pods to become eligible",
+			)
+		}
+		return false, nil
+	}
+
+	podNamesPendingUpdate := updateWork.getPodNamesPendingUpdate(r.expectationsStore.GetDeleteExpectations(sc.pclqExpectationsStoreKey))
+	if len(podNamesPendingUpdate) == 0 {
+		return true, r.markRollingUpdateEnd(sc.ctx, logger, sc.pclq)
+	}
+	if sc.pclq.Status.ReadyReplicas < *sc.pclq.Spec.MinAvailable {
+		return true, groveerr.New(
+			groveerr.ErrCodeContinueReconcileAndRequeue,
+			component.OperationSync,
+			fmt.Sprintf("ready replicas %d lesser than minAvailable %d, requeuing", sc.pclq.Status.ReadyReplicas, *sc.pclq.Spec.MinAvailable),
+		)
+	}
+
+	nextPodToUpdate := updateWork.getNextPodToUpdate()
+	if nextPodToUpdate == nil {
+		return true, groveerr.New(
+			groveerr.ErrCodeContinueReconcileAndRequeue,
+			component.OperationSync,
+			"in-place update is waiting for a ready old-hash pod",
+		)
+	}
+	desiredPod, err := r.buildDesiredPodForInPlaceUpdate(sc, nextPodToUpdate)
+	if err != nil {
+		return true, err
+	}
+	spec, reason := computeInPlaceUpdateSpec(nextPodToUpdate, desiredPod, sc.expectedPodTemplateHash, sc.pclq.Status.UpdateProgress.PodCliqueSetGenerationHash)
+	if spec == nil {
+		if componentutils.IsInPlaceOnlyStrategy(sc.pcs) {
+			return true, groveerr.New(
+				groveerr.ErrCodeContinueReconcileAndRequeue,
+				component.OperationSync,
+				fmt.Sprintf("in-place only update is blocked for pod %s: %s", nextPodToUpdate.Name, reason),
+			)
+		}
+		logger.Info("Pod is not eligible for in-place update, falling back to rolling recreate", "pod", client.ObjectKeyFromObject(nextPodToUpdate), "reason", reason)
+		return false, nil
+	}
+
+	originalStatus := nextPodToUpdate.DeepCopy()
+	setInPlaceUpdateCondition(nextPodToUpdate, corev1.ConditionFalse, "StartInPlaceUpdate")
+	if err := r.client.Status().Patch(sc.ctx, nextPodToUpdate, client.MergeFrom(originalStatus)); err != nil {
+		return true, err
+	}
+
+	original := nextPodToUpdate.DeepCopy()
+	applyInPlaceUpdateSpec(nextPodToUpdate, spec)
+	if err := r.client.Patch(sc.ctx, nextPodToUpdate, client.MergeFrom(original)); err != nil {
+		return true, err
+	}
+	logger.Info("Started Pod in-place update", "pod", client.ObjectKeyFromObject(nextPodToUpdate), "targetPodTemplateHash", sc.expectedPodTemplateHash)
+	return true, groveerr.New(
+		groveerr.ErrCodeContinueReconcileAndRequeue,
+		component.OperationSync,
+		fmt.Sprintf("started in-place update for pod %s, requeuing", nextPodToUpdate.Name),
+	)
+}
+
+func (r _resource) buildDesiredPodForInPlaceUpdate(sc *syncContext, existingPod *corev1.Pod) (*corev1.Pod, error) {
+	podIndexStr := existingPod.Labels[common.LabelPodCliquePodIndex]
+	podIndex, err := strconv.Atoi(podIndexStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid pod index label %q on pod %s: %w", podIndexStr, existingPod.Name, err)
+	}
+	desiredPod := &corev1.Pod{}
+	if err := r.buildResource(sc.pcs, sc.pclq, sc.associatedPodGangName, desiredPod, podIndex); err != nil {
+		return nil, err
+	}
+	return desiredPod, nil
+}
+
+func hasOldNonReadyPods(work *updateWork) bool {
+	return len(work.oldTemplateHashPendingPods) > 0 ||
+		len(work.oldTemplateHashUnhealthyPods) > 0 ||
+		len(work.oldTemplateHashStartingPods) > 0 ||
+		len(work.oldTemplateHashUncategorizedPods) > 0
 }
 
 // computeUpdateWork categorizes pods by template hash and state.
