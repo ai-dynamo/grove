@@ -150,13 +150,13 @@ jobs:
 
           # --- default-scheduler (sensitive tests only; agnostic skipped by policy,
           #     capability-gated skipped by RequireCapability at runtime) ---
-          - test_name: rolling_updates_default
+          - test_name: rolling_updates_default-scheduler
             test_pattern: "^Test_RU"
             create_flags: "-f hack/e2e-default-scheduler.yaml"
-          - test_name: ondelete_updates_default
+          - test_name: ondelete_updates_default-scheduler
             test_pattern: "^Test_OD"
             create_flags: "-f hack/e2e-default-scheduler.yaml"
-          - test_name: startup_ordering_default
+          - test_name: startup_ordering_default-scheduler
             test_pattern: "^Test_SO"
             create_flags: "-f hack/e2e-default-scheduler.yaml"
             make_target: "run-e2e-real-full"
@@ -230,9 +230,9 @@ jobs:
           - test_name: auto_mnnvl
           - test_name: crd_installer
           - test_name: resource_sharing
-          - test_name: rolling_updates_default
-          - test_name: ondelete_updates_default
-          - test_name: startup_ordering_default
+          - test_name: rolling_updates_default-scheduler
+          - test_name: ondelete_updates_default-scheduler
+          - test_name: startup_ordering_default-scheduler
     name: E2E - ${{ matrix.test_name }}
     steps:
       - name: Skip E2E (no relevant changes)
