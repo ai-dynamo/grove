@@ -19,7 +19,6 @@ package registry
 import (
 	"fmt"
 	"maps"
-	"strings"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
@@ -61,14 +60,18 @@ func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRec
 }
 
 func (r *registry) Get(name string) scheduler.Backend {
-	if len(strings.TrimSpace(name)) == 0 {
-		return r.defaultBackend
-	}
 	return r.backends[name]
 }
 
 func (r *registry) GetDefault() scheduler.Backend {
 	return r.defaultBackend
+}
+
+func (r *registry) GetOrDefault(name string) scheduler.Backend {
+	if name == "" {
+		return r.defaultBackend
+	}
+	return r.backends[name]
 }
 
 // newSchedulerBackend creates and initializes a Backend for the given profile.
@@ -94,7 +97,18 @@ func newSchedulerBackend(cl client.Client, scheme *runtime.Scheme, rec record.Ev
 
 // All returns all registered scheduler backends keyed by name.
 func (r *registry) All() map[string]scheduler.Backend {
-	result := make(map[string]scheduler.Backend)
+	result := make(map[string]scheduler.Backend, len(r.backends))
 	maps.Copy(result, r.backends)
+	return result
+}
+
+// AllTopologyAware returns the subset of registered backends that implement TopologyAwareBackend, keyed by name.
+func (r *registry) AllTopologyAware() map[string]scheduler.TopologyAwareBackend {
+	result := make(map[string]scheduler.TopologyAwareBackend)
+	for name, b := range r.backends {
+		if tas, ok := b.(scheduler.TopologyAwareBackend); ok {
+			result[name] = tas
+		}
+	}
 	return result
 }

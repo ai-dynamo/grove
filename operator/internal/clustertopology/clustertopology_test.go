@@ -40,10 +40,10 @@ import (
 
 const topologyName = "test-topology"
 
-func newKaiBackends(cl client.Client) map[string]scheduler.Backend {
+func newKaiBackends(cl client.Client) map[string]scheduler.TopologyAwareBackend {
 	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai}
 	b := kai.New(cl, cl.Scheme(), nil, profile)
-	return map[string]scheduler.Backend{b.Name(): b}
+	return map[string]scheduler.TopologyAwareBackend{b.Name(): b.(scheduler.TopologyAwareBackend)}
 }
 
 func TestSynchronizeTopologyListsAndSyncs(t *testing.T) {

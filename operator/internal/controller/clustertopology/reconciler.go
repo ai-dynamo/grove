@@ -41,8 +41,18 @@ import (
 // scheduler backend topology resources and reporting drift status.
 type Reconciler struct {
 	client.Client
-	backends map[string]scheduler.Backend
-	recorder record.EventRecorder
+	tasBackends map[string]scheduler.TopologyAwareBackend
+	recorder    record.EventRecorder
+}
+
+// NewReconciler creates a new ClusterTopology reconciler.
+// The backends are taken from schedRegistry, populated at operator startup.
+func NewReconciler(mgr ctrl.Manager, schedRegistry scheduler.Registry) *Reconciler {
+	return &Reconciler{
+		Client:      mgr.GetClient(),
+		tasBackends: schedRegistry.AllTopologyAware(),
+		recorder:    mgr.GetEventRecorderFor(controllerName),
+	}
 }
 
 // Reconcile reconciles a ClusterTopology resource.
@@ -60,31 +70,27 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 
 	schedulerRefMap := ctutils.BuildSchedulerReferenceMap(ct.Spec.SchedulerTopologyReferences)
 
-	for _, backendName := range sortedBackendNames(r.backends) {
-		b := r.backends[backendName]
-		tasBackend, ok := b.(scheduler.TopologyAwareSchedBackend)
-		if !ok {
-			continue
-		}
+	for _, backendName := range sortedTASBackendNames(r.tasBackends) {
+		tasBackend := r.tasBackends[backendName]
 
-		ref := schedulerRefMap[b.Name()]
+		ref := schedulerRefMap[backendName]
 		if ref == nil {
 			// Auto-managed: create/update via SyncTopology
 			if err := tasBackend.SyncTopology(ctx, nil, ct); err != nil {
 				reconcileErr = errors.Join(reconcileErr, err)
 				statuses = append(statuses, grovecorev1alpha1.SchedulerTopologyStatus{
 					SchedulerTopologyReference: grovecorev1alpha1.SchedulerTopologyReference{
-						SchedulerName:     b.Name(),
+						SchedulerName:     backendName,
 						TopologyReference: tasBackend.TopologyResourceName(ct),
 					},
 					InSync:  false,
 					Message: err.Error(),
 				})
-				logger.Error(err, "Failed to sync topology for backend", "backend", b.Name())
+				logger.Error(err, "Failed to sync topology for backend", "backend", backendName)
 			} else {
 				statuses = append(statuses, grovecorev1alpha1.SchedulerTopologyStatus{
 					SchedulerTopologyReference: grovecorev1alpha1.SchedulerTopologyReference{
-						SchedulerName:     b.Name(),
+						SchedulerName:     backendName,
 						TopologyReference: tasBackend.TopologyResourceName(ct),
 					},
 					InSync: true,
@@ -96,11 +102,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			if err != nil {
 				reconcileErr = errors.Join(reconcileErr, err)
 				msg = err.Error()
-				logger.Error(err, "Failed to check topology drift for backend", "backend", b.Name())
+				logger.Error(err, "Failed to check topology drift for backend", "backend", backendName)
 			}
 			statuses = append(statuses, grovecorev1alpha1.SchedulerTopologyStatus{
 				SchedulerTopologyReference: grovecorev1alpha1.SchedulerTopologyReference{
-					SchedulerName:     b.Name(),
+					SchedulerName:     backendName,
 					TopologyReference: ref.TopologyReference,
 				},
 				InSync: inSync,
@@ -111,23 +117,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 
 	for _, ref := range ct.Spec.SchedulerTopologyReferences {
-		backend, exists := r.backends[ref.SchedulerName]
-		if !exists {
+		if _, ok := r.tasBackends[ref.SchedulerName]; !ok {
 			topologyNotFound = true
 			statuses = append(statuses, grovecorev1alpha1.SchedulerTopologyStatus{
 				SchedulerTopologyReference: ref,
 				InSync:                     false,
-				Message:                    fmt.Sprintf("scheduler backend %q is not enabled", ref.SchedulerName),
-			})
-			continue
-		}
-
-		if _, ok := backend.(scheduler.TopologyAwareSchedBackend); !ok {
-			topologyNotFound = true
-			statuses = append(statuses, grovecorev1alpha1.SchedulerTopologyStatus{
-				SchedulerTopologyReference: ref,
-				InSync:                     false,
-				Message:                    fmt.Sprintf("scheduler backend %q does not support topology management", ref.SchedulerName),
+				Message:                    fmt.Sprintf("scheduler backend %q is not available for topology management", ref.SchedulerName),
 			})
 		}
 	}
@@ -212,8 +207,8 @@ func (r *Reconciler) emitDriftTransitionEvent(ct *grovecorev1alpha1.ClusterTopol
 	}
 }
 
-// sortedBackendNames returns backend names in sorted order for deterministic reconciliation.
-func sortedBackendNames(backends map[string]scheduler.Backend) []string {
+// sortedTASBackendNames returns TAS backend names in sorted order for deterministic reconciliation.
+func sortedTASBackendNames(backends map[string]scheduler.TopologyAwareBackend) []string {
 	names := make([]string, 0, len(backends))
 	for name := range backends {
 		names = append(names, name)

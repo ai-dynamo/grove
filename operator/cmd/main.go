@@ -90,7 +90,7 @@ func main() {
 
 	// Initialize scheduler backends with the configured schedulers.
 	schedRegistry, err := schedulerregistry.New(
-		mgr.GetClient(),
+		cl,
 		mgr.GetScheme(),
 		mgr.GetEventRecorderFor("scheduler-backend"),
 		operatorConfig.Scheduler,
@@ -102,8 +102,7 @@ func main() {
 
 	// Synchronize backend topologies for all existing ClusterTopology resources.
 	// This must be done before starting the controllers that may depend on the ClusterTopology resource.
-
-	if err = clustertopology.SynchronizeTopology(ctx, cl, logger, schedRegistry.All()); err != nil {
+	if err = clustertopology.SynchronizeTopology(ctx, cl, logger, schedRegistry.AllTopologyAware()); err != nil {
 		logger.Error(err, "failed to synchronize cluster topology")
 		handleErrorAndExit(err, cli.ExitErrSynchronizeTopology)
 	}

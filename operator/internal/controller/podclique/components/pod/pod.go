@@ -167,7 +167,7 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 
 	// Resolve scheduler: from template or default backend; then prepare pod (schedulerName, annotations, etc.)
 	schedulerName := pclq.Spec.PodSpec.SchedulerName
-	backend := r.schedRegistry.Get(schedulerName)
+	backend := r.schedRegistry.GetOrDefault(schedulerName)
 	if backend == nil {
 		// Ideally this should never happen.
 		return groveerr.WrapError(

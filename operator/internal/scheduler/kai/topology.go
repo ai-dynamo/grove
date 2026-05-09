@@ -35,7 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-var _ scheduler.TopologyAwareSchedBackend = (*schedulerBackend)(nil)
+var _ scheduler.TopologyAwareBackend = (*schedulerBackend)(nil)
 
 // TopologyGVR returns the GroupVersionResource of the KAI Topology CRD.
 func (b *schedulerBackend) TopologyGVR() schema.GroupVersionResource {

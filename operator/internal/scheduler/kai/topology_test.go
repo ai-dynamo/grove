@@ -43,11 +43,11 @@ const topologyName = "test-topology"
 
 // -- Shared helpers --
 
-func newTASBackend(cl client.Client) scheduler.TopologyAwareSchedBackend {
+func newTASBackend(cl client.Client) scheduler.TopologyAwareBackend {
 	recorder := record.NewFakeRecorder(10)
 	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai}
 	b := New(cl, cl.Scheme(), recorder, profile)
-	return b.(scheduler.TopologyAwareSchedBackend)
+	return b.(scheduler.TopologyAwareBackend)
 }
 
 func defaultTopologyLevels() []grovecorev1alpha1.TopologyLevel {

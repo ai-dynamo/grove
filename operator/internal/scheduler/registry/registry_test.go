@@ -80,7 +80,8 @@ func TestNewRegistry(t *testing.T) {
 				name := reg.GetDefault().Name()
 				assert.Equal(t, tt.expectedName, name)
 				assert.Equal(t, reg.GetDefault(), reg.Get(name))
-				assert.Equal(t, reg.GetDefault(), reg.Get(""), "Get with empty string should return the default backend")
+				assert.Nil(t, reg.Get(""), "Get with empty string returns nil; use GetOrDefault for fallback")
+				assert.Equal(t, reg.GetDefault(), reg.GetOrDefault(""), "GetOrDefault with empty string returns the default backend")
 			}
 		})
 	}
@@ -136,14 +137,14 @@ func TestGet(t *testing.T) {
 			expected: nil,
 		},
 		{
-			name:     "empty string returns default backend",
+			name:     "empty string returns nil",
 			input:    "",
-			expected: kubeBackend,
+			expected: nil,
 		},
 		{
-			name:     "whitespace-only string returns default backend",
+			name:     "whitespace-only string returns nil",
 			input:    "   ",
-			expected: kubeBackend,
+			expected: nil,
 		},
 	}
 
@@ -195,7 +196,7 @@ func TestGetDefault(t *testing.T) {
 	})
 }
 
-// TestAll tests the All method of registry in isolation using stub backends.
+// TestAll tests All method of registry in isolation using stub backends.
 func TestAll(t *testing.T) {
 	kubeBackend := testutils.NewFakeSchedulerBackend("kube")
 	kaiBackend := testutils.NewFakeSchedulerBackend("kai")
@@ -209,5 +210,74 @@ func TestAll(t *testing.T) {
 	assert.Equal(t, reg.All(), map[string]scheduler.Backend{
 		"kube": kubeBackend,
 		"kai":  kaiBackend,
+	})
+}
+
+// TestGetOrDefault tests that empty name falls back to default and non-empty does a direct lookup.
+func TestGetOrDefault(t *testing.T) {
+	kubeBackend := testutils.NewFakeSchedulerBackend("kube")
+	kaiBackend := testutils.NewFakeSchedulerBackend("kai")
+	reg := &registry{
+		backends: map[string]scheduler.Backend{
+			"kube": kubeBackend,
+			"kai":  kaiBackend,
+		},
+		defaultBackend: kubeBackend,
+	}
+
+	assert.Equal(t, kubeBackend, reg.GetOrDefault(""), "empty string returns default backend")
+	assert.Equal(t, kubeBackend, reg.GetOrDefault("kube"), "known name returns that backend")
+	assert.Equal(t, kaiBackend, reg.GetOrDefault("kai"), "known name returns that backend")
+	assert.Nil(t, reg.GetOrDefault("volcano"), "unknown name returns nil")
+}
+
+// TestAllTopologyAware tests that only backends implementing TopologyAwareBackend are returned.
+func TestAllTopologyAware(t *testing.T) {
+	t.Run("mixed backends returns only topology-aware ones", func(t *testing.T) {
+		tasBackend := testutils.NewFakeTopologyAwareBackend("kai")
+		plainBackend := testutils.NewFakeSchedulerBackend("kube")
+		reg := &registry{
+			backends: map[string]scheduler.Backend{
+				"kai":  tasBackend,
+				"kube": plainBackend,
+			},
+		}
+		result := reg.AllTopologyAware()
+		assert.Len(t, result, 1)
+		assert.Equal(t, tasBackend, result["kai"])
+		assert.NotContains(t, result, "kube")
+	})
+
+	t.Run("no topology-aware backends returns empty map", func(t *testing.T) {
+		reg := &registry{
+			backends: map[string]scheduler.Backend{
+				"kube": testutils.NewFakeSchedulerBackend("kube"),
+			},
+		}
+		result := reg.AllTopologyAware()
+		assert.NotNil(t, result)
+		assert.Empty(t, result)
+	})
+
+	t.Run("all backends topology-aware returns all", func(t *testing.T) {
+		tas1 := testutils.NewFakeTopologyAwareBackend("kai")
+		tas2 := testutils.NewFakeTopologyAwareBackend("volcano")
+		reg := &registry{
+			backends: map[string]scheduler.Backend{
+				"kai":     tas1,
+				"volcano": tas2,
+			},
+		}
+		result := reg.AllTopologyAware()
+		assert.Len(t, result, 2)
+		assert.Equal(t, tas1, result["kai"])
+		assert.Equal(t, tas2, result["volcano"])
+	})
+
+	t.Run("empty registry returns empty map", func(t *testing.T) {
+		reg := &registry{backends: make(map[string]scheduler.Backend)}
+		result := reg.AllTopologyAware()
+		assert.NotNil(t, result)
+		assert.Empty(t, result)
 	})
 }

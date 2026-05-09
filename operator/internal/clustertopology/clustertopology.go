@@ -30,7 +30,7 @@ import (
 // SynchronizeTopology synchronizes scheduler-specific topology resources at operator startup.
 // Lists all existing ClusterTopology resources and ensures backend topologies exist for each.
 // Called before controllers start to avoid races with PCS reconciliation.
-func SynchronizeTopology(ctx context.Context, cl client.Client, logger logr.Logger, backends map[string]scheduler.Backend) error {
+func SynchronizeTopology(ctx context.Context, cl client.Client, logger logr.Logger, backends map[string]scheduler.TopologyAwareBackend) error {
 	ctList := &grovecorev1alpha1.ClusterTopologyList{}
 	if err := cl.List(ctx, ctList); err != nil {
 		return fmt.Errorf("failed to list ClusterTopology resources: %w", err)
@@ -39,19 +39,14 @@ func SynchronizeTopology(ctx context.Context, cl client.Client, logger logr.Logg
 		ct := &ctList.Items[i]
 		schedulerRefMap := BuildSchedulerReferenceMap(ct.Spec.SchedulerTopologyReferences)
 
-		for _, b := range backends {
-			tasBackend, ok := b.(scheduler.TopologyAwareSchedBackend)
-			if !ok {
-				logger.V(1).Info("Scheduler backend does not implement TopologyAwareSchedBackend, skipping topology sync", "backend", b.Name())
-				continue
-			}
+		for backendName, tasBackend := range backends {
 			// Only sync grove-managed scheduler topology resources (not listed in schedulerTopologyReferences).
 			// Externally-managed scheduler topology resources are handled by the ClusterTopology controller via CheckTopologyDrift.
-			if _, isExternallyManaged := schedulerRefMap[b.Name()]; isExternallyManaged {
+			if _, isExternallyManaged := schedulerRefMap[backendName]; isExternallyManaged {
 				continue
 			}
 			if err := tasBackend.SyncTopology(ctx, cl, ct); err != nil {
-				return fmt.Errorf("failed to sync topology %s for backend %s: %w", ct.Name, b.Name(), err)
+				return fmt.Errorf("failed to sync topology %s for backend %s: %w", ct.Name, backendName, err)
 			}
 		}
 		logger.Info("Synchronized backend topologies for ClusterTopology", "name", ct.Name)

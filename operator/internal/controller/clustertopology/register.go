@@ -21,7 +21,6 @@ import (
 
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -32,40 +31,30 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
-// NewReconciler creates a new ClusterTopology reconciler.
-// The backends are taken from schedRegistry, populated at operator startup.
-func NewReconciler(mgr ctrl.Manager, schedRegistry scheduler.Registry) *Reconciler {
-	return &Reconciler{
-		Client:   mgr.GetClient(),
-		backends: schedRegistry.All(),
-		recorder: mgr.GetEventRecorderFor("clustertopology-controller"),
-	}
-}
+const (
+	controllerName = "clustertopology-controller"
+)
 
 // RegisterWithManager registers the ClusterTopology controller with the manager.
 func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 	b := ctrl.NewControllerManagedBy(mgr).
-		Named("clustertopology").
+		Named(controllerName).
 		For(&grovecorev1alpha1.ClusterTopology{}, builder.WithPredicates(predicate.GenerationChangedPredicate{}))
 
 	// Register a dynamic watch on each TAS backend's topology CRD.
 	// When a backend topology resource is created/updated/deleted, map the event
 	// back to its owning ClusterTopology and enqueue a reconciliation.
-	for _, backend := range r.backends {
-		tasBackend, ok := backend.(scheduler.TopologyAwareSchedBackend)
-		if !ok {
-			continue
-		}
+	for backendName, tasBackend := range r.tasBackends {
 		gvr := tasBackend.TopologyGVR()
 		gvk, err := mgr.GetRESTMapper().KindFor(gvr)
 		if err != nil {
 			// CRD not installed — skip watch; the controller still reconciles on CT spec changes.
-			log.Log.Info("Skipping watch for backend topology CRD (not installed)", "gvr", gvr, "backend", backend.Name())
+			log.Log.Info("Skipping watch for backend topology CRD (not installed)", "gvr", gvr, "backend", backendName)
 			continue
 		}
 		u := &unstructured.Unstructured{}
 		u.SetGroupVersionKind(gvk)
-		b = b.Watches(u, handler.EnqueueRequestsFromMapFunc(r.mapBackendTopologyToCT(backend.Name())))
+		b = b.Watches(u, handler.EnqueueRequestsFromMapFunc(r.mapBackendTopologyToCT(backendName)))
 	}
 
 	return b.Complete(r)

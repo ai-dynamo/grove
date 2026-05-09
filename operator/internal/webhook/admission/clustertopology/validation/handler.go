@@ -41,12 +41,12 @@ type Handler struct {
 // matching the operator's startup-time backend initialization.
 func NewHandler(mgr manager.Manager, schedRegistry scheduler.Registry) *Handler {
 	enabledBackends := make(map[string]struct{})
-	topologyAwareBackends := make(map[string]struct{})
-	for name, backend := range schedRegistry.All() {
+	for name := range schedRegistry.All() {
 		enabledBackends[name] = struct{}{}
-		if _, ok := backend.(scheduler.TopologyAwareSchedBackend); ok {
-			topologyAwareBackends[name] = struct{}{}
-		}
+	}
+	topologyAwareBackends := make(map[string]struct{})
+	for name := range schedRegistry.AllTopologyAware() {
+		topologyAwareBackends[name] = struct{}{}
 	}
 	return &Handler{
 		logger:                mgr.GetLogger().WithName("webhook").WithName(Name),

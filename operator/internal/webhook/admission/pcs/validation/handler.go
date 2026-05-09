@@ -133,7 +133,7 @@ func (h *Handler) validatePodCliqueSetWithBackend(ctx context.Context, pcs *v1al
 		schedulerName = pcs.Spec.Template.Cliques[0].Spec.PodSpec.SchedulerName
 	}
 
-	backend := h.schedRegistry.Get(schedulerName)
+	backend := h.schedRegistry.GetOrDefault(schedulerName)
 	return backend.ValidatePodCliqueSet(ctx, pcs)
 }
 

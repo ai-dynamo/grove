@@ -95,33 +95,8 @@ func (f *fakeBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alph
 	return nil
 }
 
-// fakeNonTASBackend is a backend that does not implement TopologyAwareSchedBackend.
-type fakeNonTASBackend struct {
-	name string
-}
-
-func (f *fakeNonTASBackend) Name() string { return f.name }
-
-func (f *fakeNonTASBackend) Init() error { return nil }
-
-func (f *fakeNonTASBackend) SyncPodGang(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
-	return nil
-}
-
-func (f *fakeNonTASBackend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
-	return nil
-}
-
-func (f *fakeNonTASBackend) PreparePod(_ *corev1.Pod) {}
-
-func (f *fakeNonTASBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet) error {
-	return nil
-}
-
 // Verify interface compliance at compile time.
-var _ scheduler.TopologyAwareSchedBackend = (*fakeBackend)(nil)
-
-var _ scheduler.Backend = (*fakeNonTASBackend)(nil)
+var _ scheduler.TopologyAwareBackend = (*fakeBackend)(nil)
 
 // -- Helpers --
 
@@ -175,9 +150,9 @@ func TestReconcile_AutoManaged_SyncsTopology(t *testing.T) {
 
 	backend := &fakeBackend{name: "kai-scheduler"}
 	r := &Reconciler{
-		Client:   cl,
-		backends: map[string]scheduler.Backend{"kai-scheduler": backend},
-		recorder: record.NewFakeRecorder(10),
+		Client:      cl,
+		tasBackends: map[string]scheduler.TopologyAwareBackend{"kai-scheduler": backend},
+		recorder:    record.NewFakeRecorder(10),
 	}
 
 	result, err := doReconcile(r, "my-topology")
@@ -217,9 +192,9 @@ func TestReconcile_ExternallyManaged_InSync(t *testing.T) {
 		driftGen:    5,
 	}
 	r := &Reconciler{
-		Client:   cl,
-		backends: map[string]scheduler.Backend{"kai-scheduler": backend},
-		recorder: record.NewFakeRecorder(10),
+		Client:      cl,
+		tasBackends: map[string]scheduler.TopologyAwareBackend{"kai-scheduler": backend},
+		recorder:    record.NewFakeRecorder(10),
 	}
 
 	result, err := doReconcile(r, "my-topology")
@@ -258,9 +233,9 @@ func TestReconcile_ExternallyManaged_Drift(t *testing.T) {
 		driftGen:     3,
 	}
 	r := &Reconciler{
-		Client:   cl,
-		backends: map[string]scheduler.Backend{"kai-scheduler": backend},
-		recorder: record.NewFakeRecorder(10),
+		Client:      cl,
+		tasBackends: map[string]scheduler.TopologyAwareBackend{"kai-scheduler": backend},
+		recorder:    record.NewFakeRecorder(10),
 	}
 
 	result, err := doReconcile(r, "my-topology")
@@ -291,9 +266,9 @@ func TestReconcile_SyncTopologyError(t *testing.T) {
 		syncErr: fmt.Errorf("sync failed"),
 	}
 	r := &Reconciler{
-		Client:   cl,
-		backends: map[string]scheduler.Backend{"kai-scheduler": backend},
-		recorder: record.NewFakeRecorder(10),
+		Client:      cl,
+		tasBackends: map[string]scheduler.TopologyAwareBackend{"kai-scheduler": backend},
+		recorder:    record.NewFakeRecorder(10),
 	}
 
 	_, err := doReconcile(r, "my-topology")
@@ -326,9 +301,9 @@ func TestReconcile_CheckDriftError(t *testing.T) {
 		driftErr: fmt.Errorf("drift check failed"),
 	}
 	r := &Reconciler{
-		Client:   cl,
-		backends: map[string]scheduler.Backend{"kai-scheduler": backend},
-		recorder: record.NewFakeRecorder(10),
+		Client:      cl,
+		tasBackends: map[string]scheduler.TopologyAwareBackend{"kai-scheduler": backend},
+		recorder:    record.NewFakeRecorder(10),
 	}
 
 	_, err := doReconcile(r, "my-topology")
@@ -349,16 +324,12 @@ func TestReconcile_NonTASBackendIgnored(t *testing.T) {
 		WithStatusSubresource(ct).
 		Build()
 
-	// Non-TAS backend — only implements Backend (not TopologyAwareSchedBackend)
-	nonTAS := &fakeNonTASBackend{name: "kube-scheduler"}
+	// Only the TAS backend is registered; a non-TAS backend simply has no entry in tasBackends.
 	tasBackend := &fakeBackend{name: "kai-scheduler"}
 	r := &Reconciler{
-		Client: cl,
-		backends: map[string]scheduler.Backend{
-			"kube-scheduler": nonTAS,
-			"kai-scheduler":  tasBackend,
-		},
-		recorder: record.NewFakeRecorder(10),
+		Client:      cl,
+		tasBackends: map[string]scheduler.TopologyAwareBackend{"kai-scheduler": tasBackend},
+		recorder:    record.NewFakeRecorder(10),
 	}
 
 	result, err := doReconcile(r, "my-topology")
@@ -372,7 +343,7 @@ func TestReconcile_NonTASBackendIgnored(t *testing.T) {
 	assert.Equal(t, "kai-scheduler", fetched.Status.SchedulerTopologyStatuses[0].SchedulerName)
 }
 
-func TestReconcile_ReferencedBackendDisabled_SetsTopologyNotFound(t *testing.T) {
+func TestReconcile_ReferencedBackendNotAvailable_SetsTopologyNotFound(t *testing.T) {
 	ct := createTestCT("my-topology")
 	ct.Spec.SchedulerTopologyReferences = []grovecorev1alpha1.SchedulerTopologyReference{
 		{SchedulerName: "kai-scheduler", TopologyReference: "external-topology"},
@@ -383,9 +354,9 @@ func TestReconcile_ReferencedBackendDisabled_SetsTopologyNotFound(t *testing.T) 
 		Build()
 
 	r := &Reconciler{
-		Client:   cl,
-		backends: map[string]scheduler.Backend{},
-		recorder: record.NewFakeRecorder(10),
+		Client:      cl,
+		tasBackends: map[string]scheduler.TopologyAwareBackend{},
+		recorder:    record.NewFakeRecorder(10),
 	}
 
 	result, err := doReconcile(r, "my-topology")
@@ -399,44 +370,7 @@ func TestReconcile_ReferencedBackendDisabled_SetsTopologyNotFound(t *testing.T) 
 	assert.False(t, status.InSync)
 	assert.Equal(t, "kai-scheduler", status.SchedulerName)
 	assert.Equal(t, "external-topology", status.TopologyReference)
-	assert.Contains(t, status.Message, `scheduler backend "kai-scheduler" is not enabled`)
-
-	cond := getDriftCondition(fetched)
-	require.NotNil(t, cond)
-	assert.Equal(t, metav1.ConditionUnknown, cond.Status)
-	assert.Equal(t, apicommonconstants.ConditionReasonTopologyNotFound, cond.Reason)
-}
-
-func TestReconcile_ReferencedBackendNotTopologyAware_SetsTopologyNotFound(t *testing.T) {
-	ct := createTestCT("my-topology")
-	ct.Spec.SchedulerTopologyReferences = []grovecorev1alpha1.SchedulerTopologyReference{
-		{SchedulerName: "default-scheduler", TopologyReference: "external-topology"},
-	}
-	cl := testutils.NewTestClientBuilder().
-		WithObjects(ct).
-		WithStatusSubresource(ct).
-		Build()
-
-	r := &Reconciler{
-		Client: cl,
-		backends: map[string]scheduler.Backend{
-			"default-scheduler": &fakeNonTASBackend{name: "default-scheduler"},
-		},
-		recorder: record.NewFakeRecorder(10),
-	}
-
-	result, err := doReconcile(r, "my-topology")
-	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{}, result)
-
-	fetched := &grovecorev1alpha1.ClusterTopology{}
-	require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Name: "my-topology"}, fetched))
-	require.Len(t, fetched.Status.SchedulerTopologyStatuses, 1)
-	status := fetched.Status.SchedulerTopologyStatuses[0]
-	assert.False(t, status.InSync)
-	assert.Equal(t, "default-scheduler", status.SchedulerName)
-	assert.Equal(t, "external-topology", status.TopologyReference)
-	assert.Contains(t, status.Message, `scheduler backend "default-scheduler" does not support topology management`)
+	assert.Contains(t, status.Message, `scheduler backend "kai-scheduler" is not available for topology management`)
 
 	cond := getDriftCondition(fetched)
 	require.NotNil(t, cond)
@@ -447,9 +381,9 @@ func TestReconcile_ReferencedBackendNotTopologyAware_SetsTopologyNotFound(t *tes
 func TestReconcile_NotFound(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	r := &Reconciler{
-		Client:   cl,
-		backends: map[string]scheduler.Backend{},
-		recorder: record.NewFakeRecorder(10),
+		Client:      cl,
+		tasBackends: map[string]scheduler.TopologyAwareBackend{},
+		recorder:    record.NewFakeRecorder(10),
 	}
 
 	result, err := doReconcile(r, "deleted-topology")
@@ -465,9 +399,9 @@ func TestReconcile_NoTASBackends_RemovesCondition(t *testing.T) {
 		Build()
 
 	r := &Reconciler{
-		Client:   cl,
-		backends: map[string]scheduler.Backend{},
-		recorder: record.NewFakeRecorder(10),
+		Client:      cl,
+		tasBackends: map[string]scheduler.TopologyAwareBackend{},
+		recorder:    record.NewFakeRecorder(10),
 	}
 
 	result, err := doReconcile(r, "my-topology")
@@ -494,9 +428,9 @@ func TestReconcile_EmitsDriftEvents(t *testing.T) {
 	backend := &fakeBackend{name: "kai-scheduler"}
 	fakeRecorder := record.NewFakeRecorder(10)
 	r := &Reconciler{
-		Client:   cl,
-		backends: map[string]scheduler.Backend{"kai-scheduler": backend},
-		recorder: fakeRecorder,
+		Client:      cl,
+		tasBackends: map[string]scheduler.TopologyAwareBackend{"kai-scheduler": backend},
+		recorder:    fakeRecorder,
 	}
 
 	// First reconcile: Unknown -> InSync (transition occurs) -> Normal event
@@ -551,9 +485,9 @@ func TestReconcile_DoesNotEmitEventWhenDriftStatusIsStable(t *testing.T) {
 	backend := &fakeBackend{name: "kai-scheduler", driftInSync: true}
 	fakeRecorder := record.NewFakeRecorder(10)
 	r := &Reconciler{
-		Client:   cl,
-		backends: map[string]scheduler.Backend{"kai-scheduler": backend},
-		recorder: fakeRecorder,
+		Client:      cl,
+		tasBackends: map[string]scheduler.TopologyAwareBackend{"kai-scheduler": backend},
+		recorder:    fakeRecorder,
 	}
 
 	_, err := doReconcile(r, "my-topology")
@@ -582,7 +516,7 @@ func TestReconcile_MixedBackendOutcomes(t *testing.T) {
 	}
 	r := &Reconciler{
 		Client: cl,
-		backends: map[string]scheduler.Backend{
+		tasBackends: map[string]scheduler.TopologyAwareBackend{
 			"alpha-scheduler": alphaBackend,
 			"beta-scheduler":  betaBackend,
 		},

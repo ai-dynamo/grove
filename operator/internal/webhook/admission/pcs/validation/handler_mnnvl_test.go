@@ -24,7 +24,6 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
-	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/defaulting"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -35,15 +34,6 @@ import (
 	authenticationv1 "k8s.io/api/authentication/v1"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
-)
-
-var (
-	schedRegistry = &testutils.FakeSchedulerRegistry{
-		Backends: map[string]scheduler.Backend{
-			"default-scheduler": testutils.NewFakeSchedulerBackend("default-scheduler"),
-		},
-		DefaultBackend: "default-scheduler",
-	}
 )
 
 // TestValidateCreate_MNNVL tests the MNNVL annotation validation on create.
@@ -138,7 +128,7 @@ func TestValidateCreate_MNNVL(t *testing.T) {
 					DefaultProfileName: string(configv1alpha1.SchedulerNameKube),
 				},
 			}
-			handler := NewHandler(mgr, &cfg, schedRegistry)
+			handler := NewHandler(mgr, &cfg, testutils.NewDefaultFakeRegistry())
 
 			warnings, err := handler.ValidateCreate(t.Context(), tt.pcs)
 
@@ -249,7 +239,7 @@ func TestValidateUpdate_MNNVL(t *testing.T) {
 				Network:                 getDefaultNetworkConfig(),
 				Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
 			}
-			handler := NewHandler(mgr, &cfg, schedRegistry)
+			handler := NewHandler(mgr, &cfg, testutils.NewDefaultFakeRegistry())
 
 			warnings, err := handler.ValidateUpdate(t.Context(), tt.oldPCS, tt.newPCS)
 
@@ -303,7 +293,7 @@ func TestMNNVL_WebhookPipeline_LegacyPCSUpdate(t *testing.T) {
 			Network:                 getDefaultNetworkConfig(),
 			Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
 		}
-		validationHandler := NewHandler(mgr, &validationCfg, schedRegistry)
+		validationHandler := NewHandler(mgr, &validationCfg, testutils.NewDefaultFakeRegistry())
 
 		ctx := context.Background()
 		warnings, err := validationHandler.ValidateUpdate(ctx, oldPCS, newPCS)
