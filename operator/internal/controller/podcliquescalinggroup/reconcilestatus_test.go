@@ -761,7 +761,12 @@ func TestPCSGMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mutateReplicas(logr.Discard(), &pcsHash, tt.pcsg, tt.pclqsPerReplica)
+			pcs := &grovecorev1alpha1.PodCliqueSet{
+				Status: grovecorev1alpha1.PodCliqueSetStatus{
+					CurrentGenerationHash: &pcsHash,
+				},
+			}
+			mutateReplicas(logr.Discard(), pcs, tt.pcsg, tt.pclqsPerReplica)
 
 			if !tt.wantWritten {
 				require.Nil(t, tt.pcsg.Status.UpdateProgress, "UpdateProgress must remain nil")
@@ -802,7 +807,7 @@ func TestCountPCSGReplicaUpdatedPCLQs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, countPCSGReplicaUpdatedPCLQs(tt.hash, tt.in))
+			assert.Equal(t, tt.want, countPCSGReplicaUpdatedPCLQs(componentutils.HashCandidates{}, tt.hash, tt.in))
 		})
 	}
 }
