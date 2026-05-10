@@ -65,10 +65,12 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 		logger.Error(err, "failed to list PodCliques for PodCliqueScalingGroup")
 		return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("failed to list PodCliques for PodCliqueScalingGroup: %q", client.ObjectKeyFromObject(pcsg)), err)
 	}
-	// Prune children that no longer belong to the spec (replica index >= Spec.Replicas during
-	// scale-down, or PCLQ name not in Spec.CliqueNames after a clique-name change). Without this
-	// step, downstream counters can briefly publish UpdatedPodCliquesCount > TotalPodCliquesCount
-	// or ScheduledReplicas > Replicas while the cascade delete is in flight.
+	// Prune children that no longer belong to the spec — primarily PCLQs whose name is not in
+	// Spec.CliqueNames after a clique-name change. Without this, lingering old-named PCLQs at
+	// valid replica indexes would inflate UpdatedPodCliquesCount past TotalPodCliquesCount
+	// (which is derived purely from the new spec) while the cascade delete is in flight.
+	// Replica-index strays (idx >= Spec.Replicas) are also dropped for hygiene, though
+	// mutateReplicas already ignores them via its [0, Spec.Replicas) loop bounds.
 	pclqsPerPCSGReplica = pruneStrayPCSGPCLQs(pcsg, pclqsPerPCSGReplica)
 	mutateReplicas(logger, pcs.Status.CurrentGenerationHash, pcsg, pclqsPerPCSGReplica)
 	mutateMinAvailableBreachedCondition(logger, pcsg, pclqsPerPCSGReplica)
