@@ -11015,60 +11015,6 @@ spec:
                   created.
                 format: int32
                 type: integer
-              rollingUpdateProgress:
-                description: |-
-                  RollingUpdateProgress represents the progress of a rolling update.
-                  Deprecated: Use UpdateProgress instead. This field is maintained for backward compatibility and will be
-                  removed in a future release.
-                properties:
-                  currentlyUpdating:
-                    description: CurrentlyUpdating captures the progress of the PodCliqueSet
-                      replica that is currently being updated.
-                    properties:
-                      replicaIndex:
-                        description: ReplicaIndex is the replica index of the PodCliqueSet
-                          that is being updated.
-                        format: int32
-                        type: integer
-                      updateStartedAt:
-                        description: UpdateStartedAt is the time at which the rolling
-                          update started for this PodCliqueSet replica index.
-                        format: date-time
-                        type: string
-                    required:
-                    - replicaIndex
-                    type: object
-                  totalPodCliqueScalingGroupsCount:
-                    default: 0
-                    description: TotalPodCliqueScalingGroupsCount mirrors PodCliqueSetUpdateProgress.TotalPodCliqueScalingGroupsCount.
-                    format: int32
-                    type: integer
-                  totalPodCliquesCount:
-                    default: 0
-                    description: TotalPodCliquesCount mirrors PodCliqueSetUpdateProgress.TotalPodCliquesCount.
-                    format: int32
-                    type: integer
-                  updateEndedAt:
-                    description: UpdateEndedAt is the time at which the rolling update
-                      ended for the PodCliqueSet.
-                    format: date-time
-                    type: string
-                  updateStartedAt:
-                    description: UpdateStartedAt is the time at which the rolling
-                      update started for the PodCliqueSet.
-                    format: date-time
-                    type: string
-                  updatedPodCliqueScalingGroupsCount:
-                    default: 0
-                    description: UpdatedPodCliqueScalingGroupsCount mirrors PodCliqueSetUpdateProgress.UpdatedPodCliqueScalingGroupsCount.
-                    format: int32
-                    type: integer
-                  updatedPodCliquesCount:
-                    default: 0
-                    description: UpdatedPodCliquesCount mirrors PodCliqueSetUpdateProgress.UpdatedPodCliquesCount.
-                    format: int32
-                    type: integer
-                type: object
               updateProgress:
                 description: UpdateProgress represents the progress of an update.
                 properties:

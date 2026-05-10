@@ -103,11 +103,6 @@ type PodCliqueSetStatus struct {
 	// Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value
 	// then an update needs to be triggered.
 	CurrentGenerationHash *string `json:"currentGenerationHash,omitempty"`
-	// RollingUpdateProgress represents the progress of a rolling update.
-	// Deprecated: Use UpdateProgress instead. This field is maintained for backward compatibility and will be
-	// removed in a future release.
-	// +optional
-	RollingUpdateProgress *PodCliqueSetRollingUpdateProgress `json:"rollingUpdateProgress,omitempty"`
 	// UpdateProgress represents the progress of an update.
 	UpdateProgress *PodCliqueSetUpdateProgress `json:"updateProgress,omitempty"`
 }
@@ -120,47 +115,6 @@ type PodCliqueSetUpdateStrategy struct {
 	// Default is RollingRecreate.
 	// +kubebuilder:default=RollingRecreate
 	Type UpdateStrategyType `json:"type,omitempty"`
-}
-
-// PodCliqueSetRollingUpdateProgress captures the progress of a rolling update of the PodCliqueSet.
-// Deprecated: Use PodCliqueSetUpdateProgress instead. Maintained for backward compatibility.
-// The slice-shaped UpdatedPodCliques and UpdatedPodCliqueScalingGroups fields that previously
-// existed on this struct have been replaced by bounded count fields on PodCliqueSetUpdateProgress
-// (see issue #567 — those slices grew unboundedly with the number of PodCliques/PodCliqueScalingGroups).
-type PodCliqueSetRollingUpdateProgress struct {
-	// UpdateStartedAt is the time at which the rolling update started for the PodCliqueSet.
-	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
-	// UpdateEndedAt is the time at which the rolling update ended for the PodCliqueSet.
-	// +optional
-	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
-	// UpdatedPodCliquesCount mirrors PodCliqueSetUpdateProgress.UpdatedPodCliquesCount.
-	// +optional
-	// +kubebuilder:default=0
-	UpdatedPodCliquesCount int32 `json:"updatedPodCliquesCount,omitempty"`
-	// TotalPodCliquesCount mirrors PodCliqueSetUpdateProgress.TotalPodCliquesCount.
-	// +optional
-	// +kubebuilder:default=0
-	TotalPodCliquesCount int32 `json:"totalPodCliquesCount,omitempty"`
-	// UpdatedPodCliqueScalingGroupsCount mirrors PodCliqueSetUpdateProgress.UpdatedPodCliqueScalingGroupsCount.
-	// +optional
-	// +kubebuilder:default=0
-	UpdatedPodCliqueScalingGroupsCount int32 `json:"updatedPodCliqueScalingGroupsCount,omitempty"`
-	// TotalPodCliqueScalingGroupsCount mirrors PodCliqueSetUpdateProgress.TotalPodCliqueScalingGroupsCount.
-	// +optional
-	// +kubebuilder:default=0
-	TotalPodCliqueScalingGroupsCount int32 `json:"totalPodCliqueScalingGroupsCount,omitempty"`
-	// CurrentlyUpdating captures the progress of the PodCliqueSet replica that is currently being updated.
-	// +optional
-	CurrentlyUpdating *PodCliqueSetReplicaRollingUpdateProgress `json:"currentlyUpdating,omitempty"`
-}
-
-// PodCliqueSetReplicaRollingUpdateProgress captures the progress of a rolling update for a specific PodCliqueSet replica.
-// Deprecated: Use PodCliqueSetReplicaUpdateProgress instead. This struct is maintained for backward compatibility.
-type PodCliqueSetReplicaRollingUpdateProgress struct {
-	// ReplicaIndex is the replica index of the PodCliqueSet that is being updated.
-	ReplicaIndex int32 `json:"replicaIndex"`
-	// UpdateStartedAt is the time at which the rolling update started for this PodCliqueSet replica index.
-	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
 }
 
 // PodCliqueSetUpdateProgress captures the progress of an update of the PodCliqueSet.

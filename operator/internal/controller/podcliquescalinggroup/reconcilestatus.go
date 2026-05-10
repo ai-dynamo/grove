@@ -80,11 +80,6 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 
 	mutateCurrentPodCliqueSetGenerationHash(logger, pcs, pcsg, lo.Flatten(lo.Values(pclqsPerPCSGReplica)))
 
-	// Mirror UpdateProgress to the deprecated RollingUpdateProgress field for backward compatibility.
-	// The slice-shaped UpdatedPodCliques field on the deprecated mirror is gone; only bounded counts
-	// and timestamps are mirrored now (see issue #567).
-	mirrorUpdateProgressToRollingUpdateProgress(pcsg)
-
 	// Skip the status patch when every mutate* above left status byte-identical to what the
 	// previous reconcile already persisted. The mutators are the only code writing
 	// pcsg.Status here, so equality means there is nothing for the apiserver to store.
@@ -333,31 +328,6 @@ func mutateCurrentPodCliqueSetGenerationHash(logger logr.Logger, pcs *grovecorev
 		return
 	}
 	pcsg.Status.CurrentPodCliqueSetGenerationHash = pcs.Status.CurrentGenerationHash
-}
-
-// mirrorUpdateProgressToRollingUpdateProgress mirrors the canonical UpdateProgress to the deprecated
-// RollingUpdateProgress field so consumers still reading the deprecated path keep working. Only
-// bounded count fields (and timestamps + currently-updating index) are mirrored — the previous
-// unbounded UpdatedPodCliques slice has been removed (see issue #567).
-func mirrorUpdateProgressToRollingUpdateProgress(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) {
-	if pcsg.Status.UpdateProgress == nil {
-		pcsg.Status.RollingUpdateProgress = nil
-		return
-	}
-	up := pcsg.Status.UpdateProgress
-	pcsg.Status.RollingUpdateProgress = &grovecorev1alpha1.PodCliqueScalingGroupRollingUpdateProgress{
-		UpdateStartedAt:            up.UpdateStartedAt,
-		UpdateEndedAt:              up.UpdateEndedAt,
-		PodCliqueSetGenerationHash: up.PodCliqueSetGenerationHash,
-		UpdatedPodCliquesCount:     up.UpdatedPodCliquesCount,
-		TotalPodCliquesCount:       up.TotalPodCliquesCount,
-	}
-	if up.ReadyReplicaIndicesSelectedToUpdate != nil {
-		pcsg.Status.RollingUpdateProgress.ReadyReplicaIndicesSelectedToUpdate = &grovecorev1alpha1.PodCliqueScalingGroupReplicaRollingUpdateProgress{
-			Current:   up.ReadyReplicaIndicesSelectedToUpdate.Current,
-			Completed: up.ReadyReplicaIndicesSelectedToUpdate.Completed,
-		}
-	}
 }
 
 // pruneStrayPCSGPCLQs drops children whose replica index is outside [0, Spec.Replicas) or whose FQN

@@ -18,6 +18,7 @@ package podcliqueset
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -53,11 +54,6 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	if err = r.mutateTopologyLevelUnavailableConditions(ctx, logger, pcs); err != nil {
 		return ctrlcommon.ReconcileWithErrors("failed to mutate TopologyLevelsUnavailable condition", err)
 	}
-
-	// Mirror UpdateProgress to the deprecated RollingUpdateProgress field for backward compatibility.
-	// The previous slice-shaped UpdatedPodCliques/UpdatedPodCliqueScalingGroups fields on the
-	// deprecated mirror are gone; only bounded counts and timestamps are mirrored now.
-	mirrorUpdateProgressToRollingUpdateProgress(pcs)
 
 	// Skip the status update when every mutate* above left status byte-identical to what
 	// the previous reconcile already persisted. The mutators are the only code writing
@@ -322,8 +318,8 @@ func (r *Reconciler) computeTopologyLevelsUnavailableCondition(ctx context.Conte
 
 	topologyName, err := componentutils.ResolveTopologyNameForPodCliqueSet(pcs)
 	if err != nil {
-		switch err {
-		case componentutils.ErrTopologyNameMissing:
+		switch {
+		case errors.Is(err, componentutils.ErrTopologyNameMissing):
 			return metav1.Condition{
 				Type:               apicommonconstants.ConditionTopologyLevelsUnavailable,
 				Status:             metav1.ConditionUnknown,
@@ -332,7 +328,7 @@ func (r *Reconciler) computeTopologyLevelsUnavailableCondition(ctx context.Conte
 				ObservedGeneration: pcs.Generation,
 				LastTransitionTime: metav1.Now(),
 			}, nil
-		case componentutils.ErrMultipleTopologyNamesUnsupported:
+		case errors.Is(err, componentutils.ErrMultipleTopologyNamesUnsupported):
 			return metav1.Condition{
 				Type:               apicommonconstants.ConditionTopologyLevelsUnavailable,
 				Status:             metav1.ConditionUnknown,
@@ -381,32 +377,6 @@ func (r *Reconciler) computeTopologyLevelsUnavailableCondition(ctx context.Conte
 		ObservedGeneration: pcs.Generation,
 		LastTransitionTime: metav1.Now(),
 	}, nil
-}
-
-// mirrorUpdateProgressToRollingUpdateProgress mirrors the canonical UpdateProgress to the deprecated
-// RollingUpdateProgress field so consumers still reading the deprecated path keep working. Only
-// bounded count fields (and timestamps + currently-updating index) are mirrored — the previous
-// unbounded slice fields have been removed (see issue #567).
-func mirrorUpdateProgressToRollingUpdateProgress(pcs *grovecorev1alpha1.PodCliqueSet) {
-	if pcs.Status.UpdateProgress == nil {
-		pcs.Status.RollingUpdateProgress = nil
-		return
-	}
-	up := pcs.Status.UpdateProgress
-	pcs.Status.RollingUpdateProgress = &grovecorev1alpha1.PodCliqueSetRollingUpdateProgress{
-		UpdateStartedAt:                    up.UpdateStartedAt,
-		UpdateEndedAt:                      up.UpdateEndedAt,
-		UpdatedPodCliquesCount:             up.UpdatedPodCliquesCount,
-		TotalPodCliquesCount:               up.TotalPodCliquesCount,
-		UpdatedPodCliqueScalingGroupsCount: up.UpdatedPodCliqueScalingGroupsCount,
-		TotalPodCliqueScalingGroupsCount:   up.TotalPodCliqueScalingGroupsCount,
-	}
-	if len(up.CurrentlyUpdating) > 0 {
-		pcs.Status.RollingUpdateProgress.CurrentlyUpdating = &grovecorev1alpha1.PodCliqueSetReplicaRollingUpdateProgress{
-			ReplicaIndex:    up.CurrentlyUpdating[0].ReplicaIndex,
-			UpdateStartedAt: up.CurrentlyUpdating[0].UpdateStartedAt,
-		}
-	}
 }
 
 // flattenNamesToSet flattens a per-replica expected-name map into a set for O(1) membership tests.

@@ -139,8 +139,8 @@ func (r _resource) updatePCSWithReplicaUpdateProgress(ctx context.Context, logge
 	}
 	original := pcs.DeepCopy()
 	pcs.Status.UpdateProgress.CurrentlyUpdating[0].UpdateEndedAt = ptr.To(metav1.Now())
-	if err := r.patchRollingUpdateProgressStatus(ctx, logger, pcs, original); err != nil {
-		logger.Error(err, "failed to update rolling update progress", "replicaIndex", pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex)
+	if err := r.patchUpdateProgressStatus(ctx, logger, pcs, original); err != nil {
+		logger.Error(err, "failed to patch update progress", "replicaIndex", pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex)
 		return err
 	}
 	return nil
@@ -163,20 +163,20 @@ func (r _resource) updatePCSWithNextSelectedReplica(ctx context.Context, logger 
 			},
 		}
 	}
-	return r.patchRollingUpdateProgressStatus(ctx, logger, pcs, original)
+	return r.patchUpdateProgressStatus(ctx, logger, pcs, original)
 }
 
-// patchRollingUpdateProgressStatus persists rolling update progress to the PCS status using a merge patch.
-func (r _resource) patchRollingUpdateProgressStatus(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, original *grovecorev1alpha1.PodCliqueSet) error {
+// patchUpdateProgressStatus persists update progress to the PCS status using a merge patch.
+func (r _resource) patchUpdateProgressStatus(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, original *grovecorev1alpha1.PodCliqueSet) error {
 	if err := r.client.Status().Patch(ctx, pcs, client.MergeFrom(original)); err != nil {
 		return groveerr.WrapError(
 			err,
 			errCodeUpdatePCSStatus,
 			component.OperationSync,
-			"could not update rolling update progress",
+			"could not patch update progress",
 		)
 	}
-	logger.Info("Updated the PodCliqueSet status with rolling update progress")
+	logger.Info("Updated the PodCliqueSet status with update progress")
 	return nil
 }
 

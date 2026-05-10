@@ -85,9 +85,6 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 		return ctrlcommon.ReconcileWithErrors("failed to set selector for PodClique", err)
 	}
 
-	// mirror UpdateProgress to the deprecated RollingUpdateProgress field for backward compatibility.
-	mirrorUpdateProgressToRollingUpdateProgress(pclq)
-
 	// Skip the status patch when every mutate* above left status byte-identical to what the
 	// previous reconcile already persisted. The mutators above are the only code that writes
 	// pclq.Status in this path, so equality means there is nothing for the apiserver to
@@ -270,28 +267,5 @@ func computePodCliqueScheduledCondition(pclq *grovecorev1alpha1.PodClique) metav
 		Reason:             constants.ConditionReasonSufficientScheduledPods,
 		Message:            fmt.Sprintf("Sufficient scheduled pods found. expected at least: %d, found: %d", *pclq.Spec.MinAvailable, pclq.Status.ScheduledReplicas),
 		LastTransitionTime: now,
-	}
-}
-
-// mirrorUpdateProgressToRollingUpdateProgress mirrors the UpdateProgress field to the deprecated RollingUpdateProgress field
-// for backward compatibility with consumers that still use the old field name.
-func mirrorUpdateProgressToRollingUpdateProgress(pclq *grovecorev1alpha1.PodClique) {
-	if pclq.Status.UpdateProgress == nil {
-		pclq.Status.RollingUpdateProgress = nil
-		return
-	}
-
-	pclq.Status.RollingUpdateProgress = &grovecorev1alpha1.PodCliqueRollingUpdateProgress{
-		UpdateStartedAt:            pclq.Status.UpdateProgress.UpdateStartedAt,
-		UpdateEndedAt:              pclq.Status.UpdateProgress.UpdateEndedAt,
-		PodCliqueSetGenerationHash: pclq.Status.UpdateProgress.PodCliqueSetGenerationHash,
-		PodTemplateHash:            pclq.Status.UpdateProgress.PodTemplateHash,
-	}
-
-	if pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate != nil {
-		pclq.Status.RollingUpdateProgress.ReadyPodsSelectedToUpdate = &grovecorev1alpha1.PodsSelectedToUpdate{
-			Current:   pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate.Current,
-			Completed: pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate.Completed,
-		}
 	}
 }
