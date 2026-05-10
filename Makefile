@@ -29,7 +29,7 @@ tidy:
 
 # Checks the entire codebase by linting and formatting the code base, and checking for uncommitted changes
 .PHONY: check
-check: generate add-license-headers format generate-api-docs lint verify-toc
+check: validate
 	@echo "> Checking for uncommitted changes"
 	@if [ -n "$$(git status --porcelain)" ]; then \
 		echo "ERROR: Git tree is dirty after running validation steps."; \
@@ -39,6 +39,10 @@ check: generate add-license-headers format generate-api-docs lint verify-toc
 		exit 1; \
 	fi
 	@echo "> Check complete"
+
+.PHONY: validate
+validate: generate add-license-headers format generate-api-docs lint verify-toc
+	@echo "> Validation complete"
 
 .PHONY: build
 build:
@@ -110,6 +114,18 @@ run-e2e:
 .PHONY: test
 test: test-unit
 	@echo "> All tests passed"
+
+.PHONY: install-hooks
+install-hooks:
+	@echo "> Configuring local git hooks from .githooks"
+	@git config --local core.hooksPath .githooks
+	@echo "> Git hooks installed"
+
+.PHONY: uninstall-hooks
+uninstall-hooks:
+	@echo "> Removing local git hooks configuration"
+	@git config --local --unset core.hooksPath || true
+	@echo "> Git hooks removed"
 
 # Updates the docs/proposals table of contents
 .PHONY: update-toc
