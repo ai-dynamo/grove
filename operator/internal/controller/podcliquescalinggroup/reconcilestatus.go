@@ -76,15 +76,7 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	pclqsPerPCSGReplica = pruneStrayPCSGPCLQs(pcsg, pclqsPerPCSGReplica)
 	mutateReplicas(logger, pcs.Status.CurrentGenerationHash, pcsg, pclqsPerPCSGReplica)
 	mutateMinAvailableBreachedCondition(logger, pcsg, pclqsPerPCSGReplica)
-
-	// Emit a Warning when scheduledReplicas drops from non-zero to zero. Gang termination is
-	// suppressed in this state to avoid a churn loop, so this event is the only signal that a
-	// previously-running workload is fully down.
-	if originalStatus.ScheduledReplicas > 0 && pcsg.Status.ScheduledReplicas == 0 {
-		r.eventRecorder.Eventf(pcsg, corev1.EventTypeWarning, internalconstants.ReasonAllScheduledReplicasLost,
-			"All scheduled replicas lost (was %d). Gang termination is suppressed to avoid recreating Pending pods against the same cluster state; investigate node availability or capacity.",
-			originalStatus.ScheduledReplicas)
-	}
+	r.emitAllScheduledReplicasLostIfNeeded(pcsg, originalStatus.ScheduledReplicas)
 
 	if err = mutateSelector(pcs, pcsg); err != nil {
 		logger.Error(err, "failed to update selector for PodCliqueScalingGroup")
@@ -197,6 +189,18 @@ func computeReplicaStatus(logger logr.Logger, currentPCSGenerationHash *string, 
 			})
 	}
 	return
+}
+
+// emitAllScheduledReplicasLostIfNeeded emits a Warning event when ScheduledReplicas drops from
+// non-zero to zero. Gang termination is suppressed in this state (recreating the PodGang would
+// just produce the same Pending pods) so this event is the only explicit signal that a
+// previously-running workload is now fully down.
+func (r *Reconciler) emitAllScheduledReplicasLostIfNeeded(pcsg *grovecorev1alpha1.PodCliqueScalingGroup, originalScheduled int32) {
+	if originalScheduled > 0 && pcsg.Status.ScheduledReplicas == 0 {
+		r.eventRecorder.Eventf(pcsg, corev1.EventTypeWarning, internalconstants.ReasonAllScheduledReplicasLost,
+			"All scheduled replicas lost (was %d). Gang termination is suppressed to avoid recreating Pending pods against the same cluster state; investigate node availability or capacity.",
+			originalScheduled)
+	}
 }
 
 // mutateMinAvailableBreachedCondition updates the MinAvailableBreached condition based on replica availability

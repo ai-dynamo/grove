@@ -78,14 +78,7 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 		mutateMinAvailableBreachedCondition(pclq,
 			len(podCategories[k8sutils.PodHasAtleastOneContainerWithNonZeroExitCode]),
 			len(podCategories[k8sutils.PodStartedButNotReady]))
-		// Emit a Warning when scheduledReplicas drops from non-zero to zero. Gang termination is
-		// suppressed in this state to avoid a churn loop, so this event is the only signal that a
-		// previously-running workload is fully down.
-		if originalStatus.ScheduledReplicas > 0 && pclq.Status.ScheduledReplicas == 0 {
-			r.eventRecorder.Eventf(pclq, corev1.EventTypeWarning, internalconstants.ReasonAllScheduledReplicasLost,
-				"All scheduled pods lost (was %d). Gang termination is suppressed to avoid recreating Pending pods against the same cluster state; investigate node availability or capacity.",
-				originalStatus.ScheduledReplicas)
-		}
+		r.emitAllScheduledReplicasLostIfNeeded(pclq, originalStatus.ScheduledReplicas)
 	}
 
 	// mutate the selector that will be used by an autoscaler.
@@ -189,6 +182,18 @@ func mutateSelector(pcsName string, pclq *grovecorev1alpha1.PodClique) error {
 	}
 	pclq.Status.Selector = ptr.To(selector.String())
 	return nil
+}
+
+// emitAllScheduledReplicasLostIfNeeded emits a Warning event when ScheduledReplicas drops from
+// non-zero to zero. Gang termination is suppressed in this state (recreating the PodGang would
+// just produce the same Pending pods) so this event is the only explicit signal that a
+// previously-running workload is now fully down.
+func (r *Reconciler) emitAllScheduledReplicasLostIfNeeded(pclq *grovecorev1alpha1.PodClique, originalScheduled int32) {
+	if originalScheduled > 0 && pclq.Status.ScheduledReplicas == 0 {
+		r.eventRecorder.Eventf(pclq, corev1.EventTypeWarning, internalconstants.ReasonAllScheduledReplicasLost,
+			"All scheduled pods lost (was %d). Gang termination is suppressed to avoid recreating Pending pods against the same cluster state; investigate node availability or capacity.",
+			originalScheduled)
+	}
 }
 
 // mutateMinAvailableBreachedCondition updates the MinAvailableBreached condition based on pod availability

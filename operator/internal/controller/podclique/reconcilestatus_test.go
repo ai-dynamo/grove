@@ -23,10 +23,12 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
 
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 )
 
@@ -195,6 +197,50 @@ func createPodWithHash(name string, templateHash string) *corev1.Pod {
 	}
 }
 
+// TestEmitAllScheduledReplicasLostIfNeeded covers the only explicit signal users have when a
+// previously-running PodClique loses every scheduled pod. Gang termination is suppressed in
+// that state, so this event must fire on the non-zero → zero transition (and only on that
+// transition) for the regression to remain observable.
+func TestEmitAllScheduledReplicasLostIfNeeded(t *testing.T) {
+	tests := []struct {
+		name              string
+		originalScheduled int32
+		nowScheduled      int32
+		wantEvent         bool
+	}{
+		{name: "non-zero to zero emits event", originalScheduled: 3, nowScheduled: 0, wantEvent: true},
+		{name: "zero to zero stays silent (initial startup)", originalScheduled: 0, nowScheduled: 0, wantEvent: false},
+		{name: "non-zero to non-zero stays silent (partial regression handled by breach)", originalScheduled: 3, nowScheduled: 2, wantEvent: false},
+		{name: "zero to non-zero stays silent (recovery)", originalScheduled: 0, nowScheduled: 3, wantEvent: false},
+		{name: "stable non-zero stays silent (steady state)", originalScheduled: 3, nowScheduled: 3, wantEvent: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := record.NewFakeRecorder(2)
+			r := &Reconciler{eventRecorder: recorder}
+			pclq := &grovecorev1alpha1.PodClique{
+				Status: grovecorev1alpha1.PodCliqueStatus{ScheduledReplicas: tt.nowScheduled},
+			}
+
+			r.emitAllScheduledReplicasLostIfNeeded(pclq, tt.originalScheduled)
+
+			select {
+			case ev := <-recorder.Events:
+				if !tt.wantEvent {
+					t.Fatalf("unexpected event: %s", ev)
+				}
+				assert.Contains(t, ev, "Warning", "event type should be Warning")
+				assert.Contains(t, ev, internalconstants.ReasonAllScheduledReplicasLost, "event reason mismatch")
+			default:
+				if tt.wantEvent {
+					t.Fatal("expected an event, got none")
+				}
+			}
+		})
+	}
+}
+
 // TestComputeMinAvailableBreachedConditionPartialScheduleRegression covers the
 // behaviour where MinAvailableBreached must flip True when scheduled replicas
 // drop below MinAvailable but stay above zero. With a gang scheduler this can
@@ -304,4 +350,3 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 		})
 	}
 }
-

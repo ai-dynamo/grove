@@ -23,6 +23,7 @@ import (
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -30,6 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -204,6 +206,50 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 			assert.Equal(t, "MinAvailableBreached", condition.Type)
 			assert.Equal(t, tt.wantStatus, condition.Status)
 			assert.Equal(t, tt.wantReason, condition.Reason)
+		})
+	}
+}
+
+// TestEmitAllScheduledReplicasLostIfNeeded covers the only explicit signal users have when a
+// previously-running PodCliqueScalingGroup loses every scheduled replica. Gang termination is
+// suppressed in that state, so this event must fire on the non-zero → zero transition (and
+// only on that transition) for the regression to remain observable.
+func TestEmitAllScheduledReplicasLostIfNeeded(t *testing.T) {
+	tests := []struct {
+		name              string
+		originalScheduled int32
+		nowScheduled      int32
+		wantEvent         bool
+	}{
+		{name: "non-zero to zero emits event", originalScheduled: 3, nowScheduled: 0, wantEvent: true},
+		{name: "zero to zero stays silent (initial startup)", originalScheduled: 0, nowScheduled: 0, wantEvent: false},
+		{name: "non-zero to non-zero stays silent (partial regression handled by breach)", originalScheduled: 3, nowScheduled: 2, wantEvent: false},
+		{name: "zero to non-zero stays silent (recovery)", originalScheduled: 0, nowScheduled: 3, wantEvent: false},
+		{name: "stable non-zero stays silent (steady state)", originalScheduled: 3, nowScheduled: 3, wantEvent: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := record.NewFakeRecorder(2)
+			r := &Reconciler{eventRecorder: recorder}
+			pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{ScheduledReplicas: tt.nowScheduled},
+			}
+
+			r.emitAllScheduledReplicasLostIfNeeded(pcsg, tt.originalScheduled)
+
+			select {
+			case ev := <-recorder.Events:
+				if !tt.wantEvent {
+					t.Fatalf("unexpected event: %s", ev)
+				}
+				assert.Contains(t, ev, "Warning", "event type should be Warning")
+				assert.Contains(t, ev, internalconstants.ReasonAllScheduledReplicasLost, "event reason mismatch")
+			default:
+				if tt.wantEvent {
+					t.Fatal("expected an event, got none")
+				}
+			}
 		})
 	}
 }
