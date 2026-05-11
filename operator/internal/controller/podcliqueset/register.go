@@ -109,7 +109,7 @@ func mapClusterTopologyToPodCliqueSets(cl client.Client) handler.MapFunc {
 		requests := make([]reconcile.Request, 0, len(pcsList.Items))
 		for i := range pcsList.Items {
 			pcs := &pcsList.Items[i]
-			topologyName, err := componentutils.ResolveTopologyNameForPodCliqueSet(pcs)
+			topologyName, err := componentutils.FindExplicitTopologyNameForPodCliqueSet(pcs)
 			if err != nil || topologyName != ct.Name {
 				continue
 			}

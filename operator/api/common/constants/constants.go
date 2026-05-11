@@ -103,7 +103,7 @@ const (
 	ConditionReasonTopologyNotFound = "TopologyNotFound"
 
 	// ConditionReasonTopologyNameMissing is the reason when a PodCliqueSet has incomplete
-	// topology constraints or otherwise cannot resolve an explicit topology reference.
+	// topology constraints or otherwise cannot resolve one effective topology reference.
 	ConditionReasonTopologyNameMissing = "TopologyNameMissing"
 
 	// ConditionReasonTopologyAwareSchedulingDisabled is the reason when a PodCliqueSet has topology

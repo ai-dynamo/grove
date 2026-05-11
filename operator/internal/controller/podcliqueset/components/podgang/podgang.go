@@ -144,7 +144,10 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGa
 	}
 	pg.Annotations = mirrorPCSMetadata(pg.Annotations, pcs.Annotations, nil)
 	if r.tasConfig.Enabled && podGangHasTranslatedTopologyConstraints(pgi) {
-		if topologyName, err := componentutils.ResolveTopologyNameForPodCliqueSet(pcs); err == nil && topologyName != "" {
+		if topologyName, err := componentutils.FindExplicitTopologyNameForPodCliqueSet(pcs); err == nil && topologyName != "" {
+			if pg.Annotations == nil {
+				pg.Annotations = make(map[string]string)
+			}
 			pg.Annotations[apicommonconstants.AnnotationTopologyName] = topologyName
 		} else {
 			delete(pg.Annotations, apicommonconstants.AnnotationTopologyName)

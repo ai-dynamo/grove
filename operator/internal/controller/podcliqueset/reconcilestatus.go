@@ -316,30 +316,19 @@ func (r *Reconciler) computeTopologyLevelsUnavailableCondition(ctx context.Conte
 		}, nil
 	}
 
-	topologyName, err := componentutils.ResolveTopologyNameForPodCliqueSet(pcs)
+	topologyName, err := componentutils.FindExplicitTopologyNameForPodCliqueSet(pcs)
 	if err != nil {
-		switch {
-		case errors.Is(err, componentutils.ErrTopologyNameMissing):
+		if errors.Is(err, componentutils.ErrTopologyNameMissing) {
 			return metav1.Condition{
 				Type:               apicommonconstants.ConditionTopologyLevelsUnavailable,
 				Status:             metav1.ConditionUnknown,
 				Reason:             apicommonconstants.ConditionReasonTopologyNameMissing,
-				Message:            "topology constraints must specify both topologyName and packDomain",
+				Message:            "topology constraints must include at least one explicit topologyName",
 				ObservedGeneration: pcs.Generation,
 				LastTransitionTime: metav1.Now(),
 			}, nil
-		case errors.Is(err, componentutils.ErrMultipleTopologyNamesUnsupported):
-			return metav1.Condition{
-				Type:               apicommonconstants.ConditionTopologyLevelsUnavailable,
-				Status:             metav1.ConditionUnknown,
-				Reason:             apicommonconstants.ConditionReasonTopologyNameMissing,
-				Message:            "all topologyConstraint.topologyName values within a PodCliqueSet must match in the current implementation",
-				ObservedGeneration: pcs.Generation,
-				LastTransitionTime: metav1.Now(),
-			}, nil
-		default:
-			return metav1.Condition{}, fmt.Errorf("failed to resolve topologyName: %w", err)
 		}
+		return metav1.Condition{}, fmt.Errorf("failed to find explicit topologyName: %w", err)
 	}
 
 	topologyLevels, err := clustertopology.GetClusterTopologyLevels(ctx, r.client, topologyName)

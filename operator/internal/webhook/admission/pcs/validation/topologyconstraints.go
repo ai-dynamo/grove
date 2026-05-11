@@ -56,7 +56,7 @@ func (v *topologyConstraintsValidator) validate() field.ErrorList {
 		return v.disallowConstraintsForCreateWhenTASIsDisabled(pcsTemplateFLDPath)
 	}
 
-	if errs := v.validateTopologyConstraintCompleteness(pcsTemplateFLDPath); len(errs) > 0 {
+	if errs := v.validateTopologyConstraintPackDomains(pcsTemplateFLDPath); len(errs) > 0 {
 		return errs
 	}
 
@@ -117,18 +117,14 @@ func (v *topologyConstraintsValidator) disallowConstraintsForCreateWhenTASIsDisa
 	return allErrs
 }
 
-// validateTopologyConstraintCompleteness ensures that a topology constraint never specifies only one of
-// topologyName or packDomain. If the constraint is present, both fields are required.
-func (v *topologyConstraintsValidator) validateTopologyConstraintCompleteness(fldPath *field.Path) field.ErrorList {
+// validateTopologyConstraintPackDomains ensures that any declared topology constraint specifies packDomain.
+// topologyName resolution, inheritance, and single-topology validation are handled earlier by pcsValidator.
+func (v *topologyConstraintsValidator) validateTopologyConstraintPackDomains(fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 
 	validateConstraint := func(tc *grovecorev1alpha1.TopologyConstraint, tcPath *field.Path) {
 		if tc == nil {
 			return
-		}
-		if tc.TopologyName == "" {
-			allErrs = append(allErrs, field.Required(tcPath.Child("topologyName"),
-				"topologyName is required when topologyConstraint is set"))
 		}
 		if tc.PackDomain == "" {
 			allErrs = append(allErrs, field.Required(tcPath.Child("packDomain"),

@@ -264,13 +264,18 @@ type PodCliqueTemplateSpec struct {
 // TopologyConstraint defines topology placement requirements.
 type TopologyConstraint struct {
 	// TopologyName is the name of the ClusterTopologyBinding resource to use for topology-aware scheduling.
-	// If topologyConstraint is set, topologyName and packDomain must both be specified.
+	// Setting TopologyName may be optional if the name can be inherited from a higher level scope.
+	// When TopologyName is specified at a PCS/PCSG/PCLQ resource constraint, it will also be inherited
+	// as the default ClusterTopologyBinding name on all sub-resources, unless overridden by another TopologyName
+	// at a sub-resource.
+	// For example, setting TopologyName at a PCS level makes it optional for child PCSG or PCLQ levels
+	// when the sub-resources reuse the same ClusterTopologyBinding.
 	// Immutable after creation.
-	// +required
-	TopologyName string `json:"topologyName"`
+	// +optional
+	TopologyName string `json:"topologyName,omitempty"`
 	// PackDomain specifies the topology domain for grouping replicas.
 	// Controls placement constraint for EACH individual replica instance.
-	// Must reference a domain in the topology levels defined in the ClusterTopologyBinding CR name as set in TopologyName
+	// Must reference a domain in the topology levels defined in the ClusterTopologyBinding named by TopologyName.
 	// Example: "rack" means each replica independently placed within one rack.
 	// Note: Does NOT constrain all replicas to the same rack together.
 	// Different replicas can be in different topology domains.

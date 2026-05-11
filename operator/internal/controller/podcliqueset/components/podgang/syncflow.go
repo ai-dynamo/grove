@@ -74,7 +74,7 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs 
 
 	sc.tasEnabled = r.tasConfig.Enabled
 	if r.tasConfig.Enabled && componentutils.HasAnyTopologyConstraint(pcs) {
-		topologyName, resolveErr := componentutils.ResolveTopologyNameForPodCliqueSet(pcs)
+		topologyName, resolveErr := componentutils.FindExplicitTopologyNameForPodCliqueSet(pcs)
 		if resolveErr == nil && topologyName != "" {
 			sc.topologyLevels, err = clustertopology.GetClusterTopologyLevels(ctx, r.client, topologyName)
 			if err != nil {
@@ -92,7 +92,7 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs 
 				sc.topologyLevels = nil
 			}
 		}
-		// If topologyName resolution fails, sc.topologyLevels stays nil — the PCS reconciler
+		// If explicit topologyName lookup fails, sc.topologyLevels stays nil — the PCS reconciler
 		// handles this via the TopologyNameMissing condition.
 	}
 

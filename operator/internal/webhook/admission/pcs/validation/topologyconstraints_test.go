@@ -713,6 +713,78 @@ func TestResolveTopologyDomains(t *testing.T) {
 			setupClient:           nil,
 		},
 		{
+			name: "Child inherits topologyName from PCS",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
+					WithReplicas(1).
+					WithTopologyConstraint(&grovecorev1alpha1.TopologyConstraint{
+						TopologyName: "my-topo",
+						PackDomain:   "zone",
+					}).
+					WithPodCliqueTemplateSpec(&grovecorev1alpha1.PodCliqueTemplateSpec{
+						Name: "worker",
+						TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+							PackDomain: "host",
+						},
+						Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
+					}).
+					Build()
+			},
+			clusterTopologyObjects: []client.Object{
+				&grovecorev1alpha1.ClusterTopology{
+					ObjectMeta: v1.ObjectMeta{Name: "my-topo"},
+					Spec: grovecorev1alpha1.ClusterTopologySpec{
+						Levels: []grovecorev1alpha1.TopologyLevel{
+							{Domain: "zone", Key: "topology.kubernetes.io/zone"},
+							{Domain: "host", Key: "kubernetes.io/hostname"},
+						},
+					},
+				},
+			},
+			expectedDomains:       []string{"zone", "host"},
+			expectedErrorMatchers: []testutils.ErrorMatcher{},
+			setupClient:           nil,
+		},
+		{
+			name: "Standalone clique does not inherit topologyName from unrelated PCSG",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
+					WithReplicas(1).
+					WithPodCliqueTemplateSpec(&grovecorev1alpha1.PodCliqueTemplateSpec{
+						Name: "standalone",
+						TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+							PackDomain: "host",
+						},
+						Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, RoleName: "standalone-role"},
+					}).
+					WithPodCliqueTemplateSpec(&grovecorev1alpha1.PodCliqueTemplateSpec{
+						Name: "grouped",
+						TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+							PackDomain: "host",
+						},
+						Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, RoleName: "grouped-role"},
+					}).
+					WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
+						Name:        "workers",
+						CliqueNames: []string{"grouped"},
+						TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+							TopologyName: "my-topo",
+							PackDomain:   "zone",
+						},
+					}).
+					Build()
+			},
+			clusterTopologyObjects: []client.Object{},
+			expectedDomains:        nil,
+			expectedErrorMatchers: []testutils.ErrorMatcher{
+				{
+					ErrorType: field.ErrorTypeRequired,
+					Field:     "spec.template.cliques[0].topologyConstraint.topologyName",
+				},
+			},
+			setupClient: nil,
+		},
+		{
 			name: "Incomplete PCS topology constraint is rejected",
 			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
 				pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
@@ -779,10 +851,6 @@ func TestResolveTopologyDomains(t *testing.T) {
 				{
 					ErrorType: field.ErrorTypeInvalid,
 					Field:     "spec.template.cliques[0].topologyConstraint.topologyName",
-				},
-				{
-					ErrorType: field.ErrorTypeInvalid,
-					Field:     "spec.template.topologyConstraint.topologyName",
 				},
 			},
 			setupClient: nil,

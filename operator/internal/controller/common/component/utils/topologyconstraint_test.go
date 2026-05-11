@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestResolveTopologyNameForPodCliqueSet(t *testing.T) {
+func TestResolveEffectiveTopologyNameForPodCliqueSet(t *testing.T) {
 	makePCS := func(mutate func(*grovecorev1alpha1.PodCliqueSet)) *grovecorev1alpha1.PodCliqueSet {
 		pcs := &grovecorev1alpha1.PodCliqueSet{
 			Spec: grovecorev1alpha1.PodCliqueSetSpec{
@@ -87,6 +87,79 @@ func TestResolveTopologyNameForPodCliqueSet(t *testing.T) {
 			wantHasAny:   true,
 		},
 		{
+			name: "child inherits topology name from pcs",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return makePCS(func(pcs *grovecorev1alpha1.PodCliqueSet) {
+					pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+						TopologyName: "topo-a",
+						PackDomain:   grovecorev1alpha1.TopologyDomainRack,
+					}
+					pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+						PackDomain: grovecorev1alpha1.TopologyDomainHost,
+					}
+				})
+			},
+			wantTopology: "topo-a",
+			wantHasAny:   true,
+		},
+		{
+			name: "pclq inherits topology name from constrained pcsg",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return makePCS(func(pcs *grovecorev1alpha1.PodCliqueSet) {
+					pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+						PackDomain: grovecorev1alpha1.TopologyDomainHost,
+					}
+					pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+						{
+							Name:        "sg1",
+							CliqueNames: []string{"worker"},
+							TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+								TopologyName: "topo-a",
+								PackDomain:   grovecorev1alpha1.TopologyDomainRack,
+							},
+						},
+					}
+				})
+			},
+			wantTopology: "topo-a",
+			wantHasAny:   true,
+		},
+		{
+			name: "standalone clique does not inherit topology from unrelated pcsg",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return makePCS(func(pcs *grovecorev1alpha1.PodCliqueSet) {
+					pcs.Spec.Template.Cliques = []*grovecorev1alpha1.PodCliqueTemplateSpec{
+						{
+							Name: "standalone",
+							TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+								PackDomain: grovecorev1alpha1.TopologyDomainHost,
+							},
+							Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1},
+						},
+						{
+							Name: "grouped",
+							TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+								PackDomain: grovecorev1alpha1.TopologyDomainHost,
+							},
+							Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1},
+						},
+					}
+					pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+						{
+							Name:        "sg1",
+							CliqueNames: []string{"grouped"},
+							TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+								TopologyName: "topo-a",
+								PackDomain:   grovecorev1alpha1.TopologyDomainRack,
+							},
+						},
+					}
+				})
+			},
+			wantErr:    ErrTopologyNameMissing,
+			wantHasAny: true,
+		},
+		{
 			name: "child-only explicit topology name resolves",
 			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
 				return makePCS(func(pcs *grovecorev1alpha1.PodCliqueSet) {
@@ -134,7 +207,105 @@ func TestResolveTopologyNameForPodCliqueSet(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			pcs := tc.setupPCS()
 			assert.Equal(t, tc.wantHasAny, HasAnyTopologyConstraint(pcs))
-			topologyName, err := ResolveTopologyNameForPodCliqueSet(pcs)
+			topologyName, err := ResolveEffectiveTopologyNameForPodCliqueSet(pcs)
+			if tc.wantErr != nil {
+				assert.True(t, errors.Is(err, tc.wantErr))
+			} else {
+				assert.NoError(t, err)
+			}
+			assert.Equal(t, tc.wantTopology, topologyName)
+		})
+	}
+}
+
+func TestFindExplicitTopologyNameForPodCliqueSet(t *testing.T) {
+	makePCS := func(mutate func(*grovecorev1alpha1.PodCliqueSet)) *grovecorev1alpha1.PodCliqueSet {
+		pcs := &grovecorev1alpha1.PodCliqueSet{
+			Spec: grovecorev1alpha1.PodCliqueSetSpec{
+				Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+					Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+						{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+					},
+				},
+			},
+		}
+		if mutate != nil {
+			mutate(pcs)
+		}
+		return pcs
+	}
+
+	tests := []struct {
+		name         string
+		setupPCS     func() *grovecorev1alpha1.PodCliqueSet
+		wantTopology string
+		wantErr      error
+	}{
+		{
+			name:         "no constraints",
+			setupPCS:     func() *grovecorev1alpha1.PodCliqueSet { return makePCS(nil) },
+			wantTopology: "",
+			wantErr:      ErrTopologyNameMissing,
+		},
+		{
+			name: "pcs topology name is returned first",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return makePCS(func(pcs *grovecorev1alpha1.PodCliqueSet) {
+					pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+						TopologyName: "topo-a",
+					}
+					pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+						TopologyName: "topo-a",
+						PackDomain:   grovecorev1alpha1.TopologyDomainHost,
+					}
+				})
+			},
+			wantTopology: "topo-a",
+		},
+		{
+			name: "pcsg topology name is returned when pcs topology name is absent",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return makePCS(func(pcs *grovecorev1alpha1.PodCliqueSet) {
+					pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+						{
+							Name:        "sg1",
+							CliqueNames: []string{"worker"},
+							TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+								TopologyName: "topo-a",
+							},
+						},
+					}
+				})
+			},
+			wantTopology: "topo-a",
+		},
+		{
+			name: "clique topology name is returned when it is the first explicit topology name",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return makePCS(func(pcs *grovecorev1alpha1.PodCliqueSet) {
+					pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+						TopologyName: "topo-a",
+					}
+				})
+			},
+			wantTopology: "topo-a",
+		},
+		{
+			name: "constraints without any explicit topology name are rejected",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return makePCS(func(pcs *grovecorev1alpha1.PodCliqueSet) {
+					pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+						PackDomain: grovecorev1alpha1.TopologyDomainHost,
+					}
+				})
+			},
+			wantErr: ErrTopologyNameMissing,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			topologyName, err := FindExplicitTopologyNameForPodCliqueSet(tc.setupPCS())
 			if tc.wantErr != nil {
 				assert.True(t, errors.Is(err, tc.wantErr))
 			} else {

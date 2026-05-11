@@ -1671,7 +1671,7 @@ func TestPrepareSyncFlowTopologyResolution(t *testing.T) {
 			var objs []client.Object
 			objs = append(objs, pcs)
 			if tc.clusterTopologyExists {
-				topologyName, err := componentutils.ResolveTopologyNameForPodCliqueSet(pcs)
+				topologyName, err := componentutils.FindExplicitTopologyNameForPodCliqueSet(pcs)
 				require.NoError(t, err)
 				objs = append(objs, makeClusterTopologyWithLevels(topologyName, ctLevels))
 			}
