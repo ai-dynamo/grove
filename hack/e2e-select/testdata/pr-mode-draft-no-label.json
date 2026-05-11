@@ -1,0 +1,95 @@
+{
+  "run": {
+    "include": []
+  },
+  "skip": {
+    "include": [
+      {
+        "test_name": "gang_scheduling",
+        "test_pattern": "^Test_GS",
+        "backend": "kai-scheduler",
+        "create_flags": "",
+        "make_target": "run-e2e-full"
+      },
+      {
+        "test_name": "rolling_updates",
+        "test_pattern": "^Test_RU",
+        "backend": "kai-scheduler",
+        "create_flags": "",
+        "make_target": "run-e2e-full"
+      },
+      {
+        "test_name": "ondelete_updates",
+        "test_pattern": "^Test_OD",
+        "backend": "kai-scheduler",
+        "create_flags": "",
+        "make_target": "run-e2e-full"
+      },
+      {
+        "test_name": "startup_ordering",
+        "test_pattern": "^Test_SO",
+        "backend": "kai-scheduler",
+        "create_flags": "",
+        "make_target": "run-e2e-real-full"
+      },
+      {
+        "test_name": "Topology_Aware_Scheduling",
+        "test_pattern": "^Test_TAS",
+        "backend": "kai-scheduler",
+        "create_flags": "",
+        "make_target": "run-e2e-full"
+      },
+      {
+        "test_name": "cert_management",
+        "test_pattern": "^Test_CM",
+        "backend": "kai-scheduler",
+        "create_flags": "",
+        "make_target": "run-e2e-full"
+      },
+      {
+        "test_name": "auto_mnnvl",
+        "test_pattern": "^Test_AutoMNNVL",
+        "backend": "kai-scheduler",
+        "create_flags": "",
+        "make_target": "run-e2e-mnnvl-full"
+      },
+      {
+        "test_name": "crd_installer",
+        "test_pattern": "^Test_CRD_Installer",
+        "backend": "kai-scheduler",
+        "create_flags": "",
+        "make_target": "run-e2e-full"
+      },
+      {
+        "test_name": "resource_sharing",
+        "test_pattern": "^Test_RS",
+        "backend": "kai-scheduler",
+        "create_flags": "",
+        "make_target": "run-e2e-full"
+      },
+      {
+        "test_name": "rolling_updates_default-scheduler",
+        "test_pattern": "^Test_RU",
+        "backend": "default-scheduler",
+        "create_flags": "-f hack/e2e-default-scheduler.yaml",
+        "make_target": "run-e2e-full"
+      },
+      {
+        "test_name": "ondelete_updates_default-scheduler",
+        "test_pattern": "^Test_OD",
+        "backend": "default-scheduler",
+        "create_flags": "-f hack/e2e-default-scheduler.yaml",
+        "make_target": "run-e2e-full"
+      },
+      {
+        "test_name": "startup_ordering_default-scheduler",
+        "test_pattern": "^Test_SO",
+        "backend": "default-scheduler",
+        "create_flags": "-f hack/e2e-default-scheduler.yaml",
+        "make_target": "run-e2e-real-full"
+      }
+    ]
+  },
+  "has_run": false,
+  "has_skip": true
+}
