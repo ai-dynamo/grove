@@ -62,29 +62,7 @@ def main() -> int:
     timestamp = run_timestamp(result)
     test_name = required_str(result, "testName")
     run_id = required_str(result, "runID")
-
-    if args.command == "local":
-        changed = append_history(
-            history_dir=Path(args.history_dir),
-            result_path=result_path,
-            result=result,
-            run_record=build_run_record(
-                result=result,
-                timestamp=timestamp,
-                test_name=test_name,
-                run_id=run_id,
-                commit=commit,
-                run_url=run_url,
-            ),
-        )
-        copy_dashboard_files(Path(args.history_dir))
-        return 0 if changed is not None else 1
-
-    history_dir = prepare_branch_workdir(
-        workdir=Path(args.workdir),
-        branch=args.branch,
-        repo=args.repo,
-    )
+    history_dir = history_dir_for_args(args)
     changed = append_history(
         history_dir=history_dir,
         result_path=result_path,
@@ -99,8 +77,20 @@ def main() -> int:
         ),
     )
     copy_dashboard_files(history_dir)
-    commit_and_push(history_dir, args.branch, result, changed)
-    return 0 if changed is not None else 1
+    if args.command == "branch":
+        commit_and_push(history_dir, args.branch, result, changed)
+    return 0
+
+
+def history_dir_for_args(args: argparse.Namespace) -> Path:
+    if args.command == "local":
+        return Path(args.history_dir)
+
+    return prepare_branch_workdir(
+        workdir=Path(args.workdir),
+        branch=args.branch,
+        repo=args.repo,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -187,7 +177,7 @@ def append_history(
     result_path: Path,
     result: dict[str, Any],
     run_record: dict[str, Any],
-) -> bool | None:
+) -> bool:
     history_dir.mkdir(parents=True, exist_ok=True)
     index_dir = history_dir / "index"
     index_dir.mkdir(parents=True, exist_ok=True)
@@ -343,6 +333,7 @@ def prepare_branch_workdir(workdir: Path, branch: str, repo: str | None) -> Path
         git(["checkout", "-B", branch, f"origin/{branch}"], cwd=workdir)
     else:
         git(["checkout", "--orphan", branch], cwd=workdir)
+        git(["read-tree", "--empty"], cwd=workdir)
         clear_worktree(workdir)
     return workdir
 
@@ -450,7 +441,9 @@ def required_str(obj: dict[str, Any], key: str) -> str:
 
 def safe_path_part(value: str) -> str:
     value = value.strip().replace("/", "-")
-    return re.sub(r"[^A-Za-z0-9._-]+", "-", value) or "unknown"
+    value = re.sub(r"[^A-Za-z0-9._-]+", "-", value)
+    value = value.lstrip(".")
+    return value or "unknown"
 
 
 def now_utc() -> str:
