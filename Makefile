@@ -90,8 +90,22 @@ generate-api-docs: $(CRD_REF_DOCS)
 # Runs unit tests for the entire codebase (all modules)
 .PHONY: test-unit
 test-unit:
+	@echo "> Running tests for operator/api"
+	@cd operator/api && go test ./...
 	@echo "> Running tests for operator"
 	@make --directory=operator test-unit
+	@echo "> Running tests for operator/client"
+	@cd operator/client && go test ./...
+	@echo "> Running tests for scheduler/api"
+	@cd scheduler/api && go test ./...
+	@echo "> Running tests for scheduler/client"
+	@cd scheduler/client && go test ./...
+	@echo "> Running tests for cli-plugin"
+	@if [ -n "$$(cd cli-plugin && go list ./... 2>/dev/null)" ]; then \
+		cd cli-plugin && go test ./...; \
+	else \
+		echo "> Skipping cli-plugin (no Go packages)"; \
+	fi
 
 .PHONY: test-cover
 test-cover:
