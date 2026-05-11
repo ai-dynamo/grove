@@ -33,12 +33,14 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/grove/topology"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	"github.com/samber/lo"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -1636,12 +1638,14 @@ func Test_TAS20_PCSTopologyLevelsUnavailableCondition(t *testing.T) {
 	Logger.Info("TAS20: PCS TopologyLevelsUnavailable Condition test completed successfully!")
 }
 
-// Test_TAS21_ClusterTopologyValidationWebhook verifies that the ClusterTopologyBinding validating webhook
-// rejects invalid topology definitions and invalid schedulerTopologyReferences.
-func Test_TAS21_ClusterTopologyValidationWebhook(t *testing.T) {
+// Test_TAS21_TopologyValidationWebhooks verifies validation behavior for topology-related resources:
+// 1. The ClusterTopologyBinding validating webhook rejects invalid topology definitions and scheduler references.
+// 2. The PodCliqueSet validating webhook allows a child topologyConstraint without topologyName when it
+//    can inherit from the PCS topologyConstraint and the referenced ClusterTopologyBinding exists.
+func Test_TAS21_TopologyValidationWebhooks(t *testing.T) {
 	ctx := context.Background()
 
-	Logger.Info("1. Initialize a Grove cluster for ClusterTopologyBinding webhook validation testing")
+	Logger.Info("1. Initialize a Grove cluster for topology webhook validation testing")
 	tc, cleanup := testctx.PrepareTest(ctx, t, 0)
 	defer cleanup()
 
@@ -1722,5 +1726,33 @@ func Test_TAS21_ClusterTopologyValidationWebhook(t *testing.T) {
 		})
 	}
 
-	Logger.Info("TAS21: ClusterTopologyBinding validating webhook test completed successfully!")
+	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
+
+	Logger.Info("2. Ensure grove-topology ClusterTopologyBinding exists for PodCliqueSet validation")
+	ensureGroveTopology(ctx, t, topologyVerifier)
+
+	Logger.Info("3. Create PodCliqueSet with PCS topologyName and child inherited topology constraint")
+	pcs := testutils.NewPodCliqueSetBuilder("tas21-pcs-optional-topology-name", "default", uuid.NewUUID()).
+		WithReplicas(1).
+		WithTopologyConstraint(&corev1alpha1.TopologyConstraint{
+			TopologyName: "grove-topology",
+			PackDomain:   corev1alpha1.TopologyDomainZone,
+		}).
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder("worker").
+				WithReplicas(1).
+				WithRoleName("worker-role").
+				WithMinAvailable(1).
+				WithTopologyConstraint(&corev1alpha1.TopologyConstraint{
+					PackDomain: corev1alpha1.TopologyDomainHost,
+				}).
+				Build(),
+		).
+		Build()
+
+	if err := tc.Client.Create(ctx, pcs); err != nil {
+		t.Fatalf("Expected PodCliqueSet create to succeed with inherited optional topologyName, got: %v", err)
+	}
+
+	Logger.Info("TAS21: Topology validation webhook test completed successfully!")
 }
