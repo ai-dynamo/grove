@@ -23,6 +23,7 @@ import (
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/samber/lo"
@@ -57,8 +58,17 @@ func TestSetInitializedCondition(t *testing.T) {
 // (additions and removals on the PCS propagate); grove.io/-prefixed keys are
 // operator-managed and persist independent of PCS state.
 func TestBuildResource(t *testing.T) {
-	const pcsName = "test-pcs"
-	expectedDefaultLabels := getLabels(pcsName)
+	const (
+		pcsName              = "test-pcs"
+		defaultSchedulerName = "default-scheduler"
+	)
+	// expectedDefaultLabels reflects what every PodGang carries after buildResource:
+	// the operator-managed label set from getLabels plus the scheduler name resolved
+	// from the fake registry (testutils.NewDefaultFakeRegistry returns "default-scheduler").
+	expectedDefaultLabels := lo.Assign(
+		getLabels(pcsName),
+		map[string]string{apicommon.LabelSchedulerName: defaultSchedulerName},
+	)
 
 	tests := []struct {
 		name                      string
@@ -176,7 +186,7 @@ func TestBuildResource(t *testing.T) {
 			},
 		},
 		{
-			name: "stale grove.io/scheduler-name label is dropped when no scheduler resolves for the PCS",
+			name: "stale grove.io/scheduler-name label is overwritten by the resolved scheduler",
 			initialPodGangLabels: map[string]string{
 				apicommon.LabelSchedulerName: "stale-scheduler",
 			},
@@ -248,6 +258,7 @@ func TestBuildResource(t *testing.T) {
 				tasConfig: configv1alpha1.TopologyAwareSchedulingConfiguration{
 					Enabled: test.tasEnabled,
 				},
+				schedRegistry: testutils.NewDefaultFakeRegistry(),
 			}
 
 			pg := &groveschedulerv1alpha1.PodGang{
