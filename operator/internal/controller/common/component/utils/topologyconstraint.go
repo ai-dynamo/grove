@@ -51,19 +51,16 @@ func HasAnyTopologyConstraint(pcs *grovecorev1alpha1.PodCliqueSet) bool {
 
 // ResolveEffectiveTopologyNameForConstraint resolves the topologyName for a single constrained level.
 func ResolveEffectiveTopologyNameForConstraint(explicitTopologyName, inheritedTopologyName string) (string, error) {
-	switch {
-	case explicitTopologyName != "" && inheritedTopologyName == "":
-		return explicitTopologyName, nil
-	case explicitTopologyName == "" && inheritedTopologyName != "":
-		return inheritedTopologyName, nil
-	case explicitTopologyName != "" && inheritedTopologyName != "":
-		if explicitTopologyName != inheritedTopologyName {
+	if explicitTopologyName != "" {
+		if inheritedTopologyName != "" && explicitTopologyName != inheritedTopologyName {
 			return "", ErrMultipleTopologyNamesUnsupported
 		}
 		return explicitTopologyName, nil
-	default:
-		return "", ErrTopologyNameMissing
 	}
+	if inheritedTopologyName != "" {
+		return inheritedTopologyName, nil
+	}
+	return "", ErrTopologyNameMissing
 }
 
 // ResolveEffectiveTopologyNameForPodCliqueSet resolves the single effective topologyName for the PCS after inheritance is applied.

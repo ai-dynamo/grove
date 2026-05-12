@@ -323,7 +323,7 @@ func (r *Reconciler) computeTopologyLevelsUnavailableCondition(ctx context.Conte
 				Type:               apicommonconstants.ConditionTopologyLevelsUnavailable,
 				Status:             metav1.ConditionUnknown,
 				Reason:             apicommonconstants.ConditionReasonTopologyNameMissing,
-				Message:            "topology constraints must include at least one explicit topologyName",
+				Message:            "PodCliqueSet topology constraints must include at least one explicit topologyName",
 				ObservedGeneration: pcs.Generation,
 				LastTransitionTime: metav1.Now(),
 			}, nil
