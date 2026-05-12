@@ -214,13 +214,19 @@ scale-cluster-down:
 	@$(MODULE_HACK_DIR)/infra-manager.py delete k3d-cluster
 
 # Run scale tests against an existing cluster
-# Usage: make run-scale-test [DIAG_DIR=<path>] [DIAG_MODE=<mode>]
+# Usage: make run-scale-test [TEST_PATTERN=<pattern>] [DIAG_DIR=<path>] [DIAG_MODE=<mode>]
+# Examples:
+#   make run-scale-test                                       # Run all scale tests
+#   make run-scale-test TEST_PATTERN=Test_ScaleUp             # Run all scale-up variants
+#   make run-scale-test TEST_PATTERN=Test_ScaleDown           # Run all scale-down variants
+#   make run-scale-test TEST_PATTERN='Test_Scale(Up|Down)'    # Run both directions
+#   make run-scale-test TEST_PATTERN=Test_ScaleUp_Tiny        # Run the sanity test only
 .PHONY: run-scale-test
 run-scale-test: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
 run-scale-test: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
 run-scale-test:
 	@echo "> Running scale tests..."
-	@cd e2e && go test -count=1 -tags=e2e ./tests/scale/... -v -timeout 40m
+	@cd e2e && go test -count=1 -tags=e2e ./tests/scale/... -v -timeout 40m $(if $(TEST_PATTERN),-run $(TEST_PATTERN))
 
 # Run the soak / churn benchmark against an existing cluster.
 # Gated behind the `soak` build tag so it does NOT run as part of
