@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -50,6 +51,12 @@ from infra_manager.constants import (
     dep_value,
 )
 from infra_manager.utils import kwok_release_url, run_kubectl
+
+KWOK_MANIFEST = "kwok.yaml"
+KWOK_STAGE_FAST_MANIFEST = "stage-fast.yaml"
+KWOK_STAGE_CRD = "stages.kwok.x-k8s.io"
+KWOK_API_GROUP = "kwok.x-k8s.io"
+KWOK_STAGE_RESOURCE = "stages"
 
 
 def topology_labels(node_id: int) -> dict[str, str]:
@@ -117,6 +124,45 @@ def node_manifest(node_id: int, kwok_cfg: KwokConfig) -> dict:
     }
 
 
+def _apply_kwok_manifest(base_url: str, manifest: str) -> None:
+    """Apply a KWOK release manifest and fail if Kubernetes rejects it."""
+    ok, _, stderr = run_kubectl(["apply", "-f", f"{base_url}/{manifest}"], timeout=60)
+    if not ok:
+        raise RuntimeError(f"Failed to apply KWOK manifest {manifest}: {stderr[:500]}")
+
+
+def _wait_for_stage_crd(timeout: int) -> None:
+    """Wait until the KWOK Stage CRD is established and visible via discovery."""
+    console.print("[yellow]\u2139\ufe0f  Waiting for KWOK Stage CRD to be established...[/yellow]")
+    ok, _, stderr = run_kubectl(
+        [
+            "wait",
+            "--for=condition=Established",
+            f"crd/{KWOK_STAGE_CRD}",
+            f"--timeout={timeout}s",
+        ],
+        timeout=timeout + 10,
+    )
+    if not ok:
+        raise RuntimeError(f"KWOK Stage CRD not established after {timeout}s: {stderr[:500]}")
+
+    deadline = time.monotonic() + timeout
+    last_error = ""
+    while time.monotonic() < deadline:
+        ok, stdout, stderr = run_kubectl(
+            ["api-resources", "--api-group", KWOK_API_GROUP, "--no-headers"],
+            timeout=10,
+        )
+        resources = [line.split()[0] for line in stdout.splitlines() if line.split()]
+        if ok and KWOK_STAGE_RESOURCE in resources:
+            console.print("[green]\u2705 KWOK Stage CRD is ready[/green]")
+            return
+        last_error = stderr or stdout
+        time.sleep(2)
+
+    raise RuntimeError(f"KWOK Stage API was not discoverable after {timeout}s: {last_error[:500]}")
+
+
 def install_kwok_controller(version: str, timeout: int = 120) -> None:
     """Install KWOK controller and wait for it to be available.
 
@@ -129,11 +175,10 @@ def install_kwok_controller(version: str, timeout: int = 120) -> None:
     """
     console.print(Panel.fit(f"Installing KWOK controller ({version})", style="bold blue"))
     base_url = kwok_release_url(version)
-    for manifest in KWOK_MANIFESTS:
-        ok, _, stderr = run_kubectl(["apply", "-f", f"{base_url}/{manifest}"], timeout=60)
-        if not ok:
-            console.print(f"[yellow]\u26a0\ufe0f  Partial failure applying {manifest}: {stderr[:200]}[/yellow]")
-            console.print("[yellow]   (This is usually safe if KWOK is already installed)[/yellow]")
+
+    _apply_kwok_manifest(base_url, KWOK_MANIFEST)
+    _wait_for_stage_crd(timeout)
+    _apply_kwok_manifest(base_url, KWOK_STAGE_FAST_MANIFEST)
 
     console.print("[yellow]\u2139\ufe0f  Waiting for KWOK controller to be available...[/yellow]")
     ok, _, stderr = run_kubectl(
