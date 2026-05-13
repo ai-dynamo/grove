@@ -134,17 +134,25 @@ def _apply_kwok_manifest(base_url: str, manifest: str) -> None:
 def _wait_for_stage_crd(timeout: int) -> None:
     """Wait until the KWOK Stage CRD is established and visible via discovery."""
     console.print("[yellow]\u2139\ufe0f  Waiting for KWOK Stage CRD to be established...[/yellow]")
-    ok, _, stderr = run_kubectl(
-        [
-            "wait",
-            "--for=condition=Established",
-            f"crd/{KWOK_STAGE_CRD}",
-            f"--timeout={timeout}s",
-        ],
-        timeout=timeout + 10,
-    )
-    if not ok:
-        raise RuntimeError(f"KWOK Stage CRD not established after {timeout}s: {stderr[:500]}")
+    deadline = time.monotonic() + timeout
+    last_error = ""
+    while time.monotonic() < deadline:
+        wait_timeout = max(1, min(10, int(deadline - time.monotonic())))
+        ok, _, stderr = run_kubectl(
+            [
+                "wait",
+                "--for=condition=Established",
+                f"crd/{KWOK_STAGE_CRD}",
+                f"--timeout={wait_timeout}s",
+            ],
+            timeout=wait_timeout + 5,
+        )
+        if ok:
+            break
+        last_error = stderr
+        time.sleep(2)
+    else:
+        raise RuntimeError(f"KWOK Stage CRD not established after {timeout}s: {last_error[:500]}")
 
     deadline = time.monotonic() + timeout
     last_error = ""
