@@ -69,7 +69,10 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	}
 	// mutate PodClique Status Replicas, ReadyReplicas, ScheduleGatedReplicas and UpdatedReplicas.
 	mutateReplicas(pclq, podCategories, len(existingPods))
-	mutateUpdatedReplica(pcs, pclq, existingPods)
+	if err = mutateUpdatedReplica(pcs, pclq, existingPods); err != nil {
+		logger.Error(err, "failed to compute PodClique updated replicas")
+		return ctrlcommon.ReconcileWithErrors("failed to compute PodClique updated replicas", err)
+	}
 
 	// mutate the conditions only if the PodClique has been successfully reconciled at least once.
 	// This prevents prematurely setting incorrect conditions.
@@ -159,7 +162,7 @@ func mutateReplicas(pclq *grovecorev1alpha1.PodClique, podCategories map[corev1.
 }
 
 // mutateUpdatedReplica calculates and sets the number of pods with the expected template hash
-func mutateUpdatedReplica(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, existingPods []*corev1.Pod) {
+func mutateUpdatedReplica(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, existingPods []*corev1.Pod) error {
 	var expectedPodTemplateHashes componentutils.HashCandidates
 	// If UpdateProgress exists (update in progress or recently completed), use the target hash from it.
 	// This covers both the active update phase and the window after completion before CurrentPodTemplateHash is synced.
@@ -194,6 +197,7 @@ func mutateUpdatedReplica(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1
 		}, 0)
 		pclq.Status.UpdatedReplicas = int32(updatedReplicas)
 	}
+	return nil
 }
 
 // mutateSelector creates and sets the label selector for autoscaler use when scaling is configured

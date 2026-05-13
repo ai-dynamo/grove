@@ -179,7 +179,8 @@ func TestMutateUpdatedReplica(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Call the function
-			mutateUpdatedReplica(nil, tt.pclq, tt.existingPods)
+			err := mutateUpdatedReplica(nil, tt.pclq, tt.existingPods)
+			assert.NoError(t, err)
 
 			// Assert the result
 			assert.Equal(t, tt.expectedUpdatedReplicas, tt.pclq.Status.UpdatedReplicas,
@@ -231,11 +232,12 @@ func TestMutateUpdatedReplicaCountsCanonicalAndLegacyCurrentPodLabels(t *testing
 		},
 	}
 
-	mutateUpdatedReplica(pcs, pclq, []*corev1.Pod{
+	err := mutateUpdatedReplica(pcs, pclq, []*corev1.Pod{
 		createPodWithHash("pod-canonical", hashes.Canonical),
 		createPodWithHash("pod-legacy", hashes.Legacy),
 		createPodWithHash("pod-stale", "stale-hash"),
 	})
+	require.NoError(t, err)
 	assert.Equal(t, int32(2), pclq.Status.UpdatedReplicas)
 }
 
