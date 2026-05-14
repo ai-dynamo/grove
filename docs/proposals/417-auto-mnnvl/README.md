@@ -59,7 +59,7 @@ Grove's auto-MNNVL feature allows users to leverage NVIDIA Multi-Node NVLink acc
 
 The feature is controlled by a single annotation:
 
-- `grove.io/mnnvl-group`: a string name — assigns the PodClique to a named MNNVL group (ComputeDomain). The special value `"none"` (case-sensitive) explicitly opts out of MNNVL, overriding any parent-level setting.
+- `grove.io/mnnvl-group`: `<group name>` — assigns a Grove primitive to a named MNNVL group (ComputeDomain). The user may choose any group name as the annotation value except the reserved string `"none"`. This reserved value explicitly opts out of MNNVL, overriding any parent-level setting.
 
 The annotation can be placed on a **PodCliqueSet**, **PodCliqueScalingGroup**, or **PodClique**, and propagates downward (PCS → PCSG → PCLQ) with values on lower layers overriding higher ones.
 
@@ -257,7 +257,7 @@ grove.io/mnnvl-group: "<value>"
 | `"none"` | Explicit opt-out. Used to override a parent layer's group assignment. Reserved — cannot be used as a group name. |
 | Absent | Inherit from parent layer. If no parent has it, no MNNVL. |
 
-**Group name validation:** Values are **case-sensitive**, following the Kubernetes convention for annotation values. The value must be either `"none"` (opt-out) or a valid Kubernetes name component: lowercase alphanumeric characters or dashes, must start and end with an alphanumeric character, max 63 characters. This is required because the group name becomes part of the ComputeDomain resource name. Empty strings and values containing invalid characters are rejected.
+**Group name validation:** Values are **case-sensitive**, following the Kubernetes convention for annotation values. The value must be a valid Kubernetes name component: lowercase alphanumeric characters or dashes, must start and end with an alphanumeric character, max 63 characters. This is required because the group name becomes part of the ComputeDomain resource name. The reserved string `"none"` is used to opt out of MNNVL and cannot be used as a group name. Empty strings and values containing invalid characters are rejected.
 
 **Non-GPU PCLQs:** Non-GPU PCLQs that resolve to MNNVL enrollment (whether explicit or inherited) are silently skipped — no RCT injection, no error. This allows PCS-level defaults without requiring `"none"` overrides on every non-GPU PCLQ.
 
@@ -336,7 +336,7 @@ When the operator reconciles a PodCliqueSet, it resolves the effective MNNVL enr
 
 #### CD Naming Convention
 
-CD names are included at group name: `{pcs-name}-{replica-index}-{group-name}`.
+CD names include the group name and use the form `{pcs-name}-{replica-index}-{group-name}`.
 
 | Example PCS | Annotation | Replica | CD Name |
 |---|---|---|---|
@@ -503,7 +503,7 @@ ComputeDomain observability follows the same pattern as previous iterations: **K
 - Unit and basic integration tests passing.
 
 #### Beta
-- E2E tests covering all key scenarios from the behavior matrix.
+- E2E tests covering all key scenarios from the test plan.
 - Documentation for the single-annotation model and group-based MNNVL.
 - Events fully implemented.
 
