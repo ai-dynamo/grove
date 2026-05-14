@@ -195,13 +195,13 @@ func mutateSelector(pcsName string, pclq *grovecorev1alpha1.PodClique) error {
 }
 
 // emitAllScheduledReplicasLostIfNeeded emits a Warning event when ScheduledReplicas drops from
-// non-zero to zero. Gang termination is suppressed in this state (recreating the PodGang would
-// just produce the same Pending pods) so this event is the only explicit signal that a
-// previously-running workload is now fully down.
+// non-zero to zero. The MinAvailableBreached condition also flips on this transition, but the
+// event gives operators a discrete, log-visible signal that a previously-running workload is
+// fully down (and that gang termination is now armed and will fire after TerminationDelay).
 func (r *Reconciler) emitAllScheduledReplicasLostIfNeeded(pclq *grovecorev1alpha1.PodClique, originalScheduled int32) {
 	if originalScheduled > 0 && pclq.Status.ScheduledReplicas == 0 {
 		r.eventRecorder.Eventf(pclq, corev1.EventTypeWarning, internalconstants.ReasonAllScheduledReplicasLost,
-			"All scheduled pods lost (was %d). Gang termination is suppressed to avoid recreating Pending pods against the same cluster state; investigate node availability or capacity.",
+			"All scheduled pods lost (was %d). Gang termination will fire after TerminationDelay if the PodClique stays below MinAvailable; investigate node availability or capacity.",
 			originalScheduled)
 	}
 }
@@ -230,22 +230,14 @@ func computeMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, num
 	scheduledReplicas := int(pclq.Status.ScheduledReplicas)
 	now := metav1.Now()
 
-	// scheduledReplicas == 0: either initial startup or every running pod has been lost.
-	// Recreating the PodGang would just produce the same Pending pods, so suppress to avoid
-	// a churn loop.
-	// 0 < scheduledReplicas < MinAvailable: with a gang scheduler this implies regression
-	// after a healthy state and breaches. On non-gang schedulers it can flicker briefly
-	// during staged startup; TerminationDelay (default 4h) absorbs the flicker.
+	// scheduledReplicas < MinAvailable always breaches. TerminationDelay (default 4h) is
+	// the natural grace window: during a normal startup the breach flickers True briefly
+	// and resolves before TerminationDelay; a workload that stays below MinAvailable past
+	// TerminationDelay is genuinely stuck and gang-terminating gives the scheduler a fresh
+	// PodGang to retry against the current cluster state. This covers both the partial-
+	// regression case (0 < scheduled < MinAvailable) and the full-regression case
+	// (scheduled == 0 after the workload was once healthy).
 	if scheduledReplicas < minAvailable {
-		if scheduledReplicas == 0 {
-			return metav1.Condition{
-				Type:               constants.ConditionTypeMinAvailableBreached,
-				Status:             metav1.ConditionFalse,
-				Reason:             constants.ConditionReasonInsufficientScheduledPods,
-				Message:            fmt.Sprintf("Scheduled replicas 0 (MinAvailable %d); gang termination suppressed to avoid recreating Pending pods against the same cluster state", minAvailable),
-				LastTransitionTime: now,
-			}
-		}
 		return metav1.Condition{
 			Type:               constants.ConditionTypeMinAvailableBreached,
 			Status:             metav1.ConditionTrue,

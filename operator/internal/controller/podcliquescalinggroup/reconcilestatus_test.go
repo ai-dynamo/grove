@@ -107,83 +107,113 @@ func TestComputeReplicaStatus(t *testing.T) {
 	}
 }
 
+// healthyPCSGReplica returns a PCSG replica entry with no breached PCLQs (an empty PCLQ
+// list is sufficient because computeMinAvailableBreachedReplicas only counts a replica as
+// breached when at least one of its PCLQs has MinAvailableBreached=True).
+func healthyPCSGReplica() []grovecorev1alpha1.PodClique {
+	return []grovecorev1alpha1.PodClique{{}}
+}
+
+// breachedPCSGReplica returns a PCSG replica entry with one breached PCLQ.
+func breachedPCSGReplica() []grovecorev1alpha1.PodClique {
+	return []grovecorev1alpha1.PodClique{{
+		Status: grovecorev1alpha1.PodCliqueStatus{
+			Conditions: []metav1.Condition{{
+				Type:   constants.ConditionTypeMinAvailableBreached,
+				Status: metav1.ConditionTrue,
+			}},
+		},
+	}}
+}
+
+// TestComputeMinAvailableBreachedCondition exercises the PCSG-level breach formula:
+// the PCSG is in breach when (existing replicas) - (breached replicas) < MinAvailable.
+// A replica is "breached" if at least one of its constituent PodCliques is breached;
+// the pclqsMap drives both counts.
 func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 	tests := []struct {
 		name         string
 		replicas     int32
 		minAvailable *int32
-		scheduled    int32
-		available    int32
 		pclqsMap     map[string][]grovecorev1alpha1.PodClique
 		wantStatus   metav1.ConditionStatus
 		wantReason   string
 	}{
 		{
-			name:       "sufficient replicas",
-			replicas:   3,
-			scheduled:  3,
-			available:  3,
-			pclqsMap:   make(map[string][]grovecorev1alpha1.PodClique),
+			name:     "all replicas healthy, none breached",
+			replicas: 3,
+			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
+				"0": healthyPCSGReplica(),
+				"1": healthyPCSGReplica(),
+				"2": healthyPCSGReplica(),
+			},
 			wantStatus: metav1.ConditionFalse,
 			wantReason: "SufficientAvailablePodCliqueScalingGroupReplicas",
 		},
 		{
-			name:         "custom minAvailable met",
+			name:         "1 of 5 replicas breached, MinAvailable=2 — not in breach",
 			replicas:     5,
 			minAvailable: ptr.To(int32(2)),
-			scheduled:    3,
-			available:    3,
-			pclqsMap:     make(map[string][]grovecorev1alpha1.PodClique),
-			wantStatus:   metav1.ConditionFalse,
-			wantReason:   "SufficientAvailablePodCliqueScalingGroupReplicas",
-		},
-		{
-			// 0 < scheduled < MinAvailable is structurally unreachable from initial
-			// startup under gang scheduling, so it is treated as a regression and
-			// breaches MinAvailable.
-			name:         "partially scheduled regression breaches",
-			replicas:     3,
-			minAvailable: ptr.To(int32(2)),
-			scheduled:    1,
-			available:    1,
-			pclqsMap:     make(map[string][]grovecorev1alpha1.PodClique),
-			wantStatus:   metav1.ConditionTrue,
-			wantReason:   "ScheduledReplicasBelowMinAvailable",
-		},
-		{
-			// scheduled == 0 stays suppressed: gang termination would only recreate
-			// the same Pending replicas against the same cluster state.
-			name:         "zero scheduled does not breach",
-			replicas:     3,
-			minAvailable: ptr.To(int32(2)),
-			scheduled:    0,
-			available:    0,
-			pclqsMap:     make(map[string][]grovecorev1alpha1.PodClique),
-			wantStatus:   metav1.ConditionFalse,
-			wantReason:   "InsufficientScheduledPodCliqueScalingGroupReplicas",
-		},
-		{
-			name:         "insufficient available",
-			replicas:     3,
-			minAvailable: ptr.To(int32(2)),
-			scheduled:    2,
-			available:    1,
 			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
-				"0": {
-					{
-						Status: grovecorev1alpha1.PodCliqueStatus{
-							Conditions: []metav1.Condition{
-								{
-									Type:   constants.ConditionTypeMinAvailableBreached,
-									Status: metav1.ConditionTrue,
-								},
-							},
-						},
-					},
-				},
+				"0": breachedPCSGReplica(),
+				"1": healthyPCSGReplica(),
+				"2": healthyPCSGReplica(),
+				"3": healthyPCSGReplica(),
+				"4": healthyPCSGReplica(),
+			},
+			wantStatus: metav1.ConditionFalse,
+			wantReason: "SufficientAvailablePodCliqueScalingGroupReplicas",
+		},
+		{
+			// GT-4 step 4 scenario: WL2 sg-x has 2 replicas, MinAvailable=1.
+			// Killing all pc-c pods of replica 0 breaches that replica; replica 1
+			// stays healthy. notInBreach=1 == MinAvailable=1 → PCSG NOT in breach.
+			// PCS-level handler must NOT delete the whole PCS replica here; only
+			// the PCSG-level scoped restart should fire.
+			name:         "1 of 2 replicas breached, MinAvailable=1 — not in breach (PCSG-scoped restart only)",
+			replicas:     2,
+			minAvailable: ptr.To(int32(1)),
+			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
+				"0": breachedPCSGReplica(),
+				"1": healthyPCSGReplica(),
+			},
+			wantStatus: metav1.ConditionFalse,
+			wantReason: "SufficientAvailablePodCliqueScalingGroupReplicas",
+		},
+		{
+			// GT-4 step 6: both PCSG replicas breached. notInBreach=0 < 1 → PCSG
+			// in breach. PCS-level handler should restart the whole PCS replica.
+			name:         "both replicas breached, MinAvailable=1 — in breach (escalates to PCS-level)",
+			replicas:     2,
+			minAvailable: ptr.To(int32(1)),
+			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
+				"0": breachedPCSGReplica(),
+				"1": breachedPCSGReplica(),
 			},
 			wantStatus: metav1.ConditionTrue,
 			wantReason: "InsufficientAvailablePodCliqueScalingGroupReplicas",
+		},
+		{
+			name:         "2 of 3 replicas breached, MinAvailable=2 — in breach",
+			replicas:     3,
+			minAvailable: ptr.To(int32(2)),
+			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
+				"0": breachedPCSGReplica(),
+				"1": breachedPCSGReplica(),
+				"2": healthyPCSGReplica(),
+			},
+			wantStatus: metav1.ConditionTrue,
+			wantReason: "InsufficientAvailablePodCliqueScalingGroupReplicas",
+		},
+		{
+			// No replicas exist yet (mid-creation / scale-up). notInBreach=0 < min → breach.
+			// TerminationDelay (default 4h) absorbs the startup window before any action fires.
+			name:         "no replicas exist yet — in breach (startup)",
+			replicas:     3,
+			minAvailable: ptr.To(int32(2)),
+			pclqsMap:     map[string][]grovecorev1alpha1.PodClique{},
+			wantStatus:   metav1.ConditionTrue,
+			wantReason:   "InsufficientAvailablePodCliqueScalingGroupReplicas",
 		},
 	}
 
@@ -197,10 +227,6 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 				Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
 					Replicas:     tt.replicas,
 					MinAvailable: minAvailable,
-				},
-				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
-					ScheduledReplicas: tt.scheduled,
-					AvailableReplicas: tt.available,
 				},
 			}
 
@@ -257,104 +283,35 @@ func TestEmitAllScheduledReplicasLostIfNeeded(t *testing.T) {
 	}
 }
 
-// TestComputeMinAvailableBreachedConditionPartialScheduleRegression covers the
-// regression-after-healthy-state behaviour at the PodCliqueScalingGroup level.
-// See the PodClique-level test for the full rationale.
-//
-// Several cases populate pclqsMap with breached PCLQs. That input is unread by
-// the under-scheduled branches today, but we keep it populated so that any
-// future refactor that drops the short-circuit and starts consulting pclqsMap
-// must continue to satisfy the assertions.
-func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testing.T) {
+// TestComputeMinAvailableBreachedConditionUpdateInProgress pins the precedence of the
+// IsPCSGUpdateInProgress short-circuit over the breach formula: while a rolling update is
+// running, the condition must be Unknown so gang termination does not fire mid-update even
+// if the breach formula would otherwise flip True.
+func TestComputeMinAvailableBreachedConditionUpdateInProgress(t *testing.T) {
 	pastTransition := metav1.NewTime(time.Now().Add(-10 * time.Minute))
-
-	// breachedPCLQReplica is a single PCSG replica whose constituent PodCliques
-	// already report MinAvailableBreached=True. If a refactor accidentally
-	// consulted pclqsMap on the under-scheduled paths, these would inflate the
-	// breached count and could flip the answer — the assertions below must
-	// remain correct in that hypothetical world.
-	breachedPCLQReplica := map[string][]grovecorev1alpha1.PodClique{
-		"0": {{Status: grovecorev1alpha1.PodCliqueStatus{
-			Conditions: []metav1.Condition{{Type: constants.ConditionTypeMinAvailableBreached, Status: metav1.ConditionTrue}},
-		}}},
-	}
 
 	tests := []struct {
 		name           string
 		replicas       int32
 		minAvailable   *int32
-		scheduled      int32
-		available      int32
 		updateProgress *grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress
-		conditions     []metav1.Condition
 		pclqsMap       map[string][]grovecorev1alpha1.PodClique
 		wantStatus     metav1.ConditionStatus
 		wantReason     string
 	}{
 		{
-			name:         "0 < scheduled < MinAvailable breaches",
-			replicas:     3,
-			minAvailable: ptr.To(int32(3)),
-			scheduled:    1,
-			available:    1,
-			conditions: []metav1.Condition{{
-				Type:               constants.ConditionTypeMinAvailableBreached,
-				Status:             metav1.ConditionFalse,
-				Reason:             constants.ConditionReasonSufficientAvailablePCSGReplicas,
-				LastTransitionTime: pastTransition,
-			}},
-			pclqsMap:   breachedPCLQReplica,
-			wantStatus: metav1.ConditionTrue,
-			wantReason: constants.ConditionReasonScheduledReplicasBelowMinAvailable,
-		},
-		{
-			// Sanity-pin: scheduled == 0 must NOT breach, even with PCLQs in the
-			// map already breached. The short-circuit on scheduled==0 has to
-			// take precedence over PCLQ-level breach signal — otherwise a stale
-			// PCLQ condition would push us into a churn loop.
-			name:         "scheduled == 0 with breached PCLQs in map — must NOT breach",
+			name:         "update in progress overrides every-replica-breached",
 			replicas:     2,
-			minAvailable: ptr.To(int32(2)),
-			scheduled:    0,
-			available:    0,
-			conditions: []metav1.Condition{{
-				Type:               constants.ConditionTypeMinAvailableBreached,
-				Status:             metav1.ConditionFalse,
-				Reason:             constants.ConditionReasonSufficientAvailablePCSGReplicas,
-				LastTransitionTime: pastTransition,
-			}},
-			pclqsMap:   breachedPCLQReplica,
-			wantStatus: metav1.ConditionFalse,
-			wantReason: constants.ConditionReasonInsufficientScheduledPCSGReplicas,
-		},
-		{
-			// A fresh PCSG that has never scheduled any replica must NOT be
-			// reported as breached.
-			name:         "fresh PCSG never scheduled — must not breach",
-			replicas:     3,
-			minAvailable: ptr.To(int32(3)),
-			scheduled:    0,
-			available:    0,
-			pclqsMap:     map[string][]grovecorev1alpha1.PodClique{},
-			wantStatus:   metav1.ConditionFalse,
-			wantReason:   constants.ConditionReasonInsufficientScheduledPCSGReplicas,
-		},
-		{
-			// Pin branch ordering: when an update is in progress, the
-			// IsPCSGUpdateInProgress short-circuit must win over the regression
-			// breach branch. Otherwise a rolling update across a node cordon
-			// would falsely flip the breach to True and risk silent churn.
-			name:         "update in progress overrides partial-schedule breach",
-			replicas:     3,
-			minAvailable: ptr.To(int32(3)),
-			scheduled:    1,
-			available:    1,
+			minAvailable: ptr.To(int32(1)),
 			updateProgress: &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
 				UpdateStartedAt:            pastTransition,
 				UpdateEndedAt:              nil, // active update
 				PodCliqueSetGenerationHash: "gen-hash-1",
 			},
-			pclqsMap:   breachedPCLQReplica,
+			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
+				"0": breachedPCSGReplica(),
+				"1": breachedPCSGReplica(),
+			},
 			wantStatus: metav1.ConditionUnknown,
 			wantReason: constants.ConditionReasonUpdateInProgress,
 		},
@@ -368,10 +325,7 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 					MinAvailable: tt.minAvailable,
 				},
 				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
-					ScheduledReplicas: tt.scheduled,
-					AvailableReplicas: tt.available,
-					Conditions:        tt.conditions,
-					UpdateProgress:    tt.updateProgress,
+					UpdateProgress: tt.updateProgress,
 				},
 			}
 

@@ -386,11 +386,10 @@ func TestEmitAllScheduledReplicasLostIfNeeded(t *testing.T) {
 }
 
 // TestComputeMinAvailableBreachedConditionPartialScheduleRegression covers the
-// behaviour where MinAvailableBreached must flip True when scheduled replicas
-// drop below MinAvailable but stay above zero. With a gang scheduler this can
-// only happen by regression after a healthy state. scheduledReplicas == 0 stays
-// suppressed regardless of history: recreating the PodGang would just produce
-// the same Pending pods against the same cluster state (churn loop).
+// behaviour where MinAvailableBreached must flip True whenever scheduledReplicas
+// drops below MinAvailable. Both partial regression (0 < scheduled < min) and
+// full regression to zero produce a breach; TerminationDelay is the natural
+// debounce against transient startup flicker.
 func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testing.T) {
 	pastTransition := metav1.NewTime(time.Now().Add(-10 * time.Minute))
 
@@ -434,11 +433,10 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 			wantReason: constants.ConditionReasonScheduledReplicasBelowMinAvailable,
 		},
 		{
-			// Sanity-pin: scheduled == 0 must NOT breach even when the PCLQ was
-			// previously healthy. Gang termination has no useful action here
-			// (would re-create the same Pending pods) and the suppression has
-			// to win to avoid a churn loop.
-			name: "previously-healthy PCLQ loses all scheduled pods - must NOT breach",
+			// scheduled == 0 also breaches now. Gang termination is armed; the
+			// downstream TerminationDelay (default 4h) gives the cluster a
+			// window to schedule before the workload is recycled.
+			name: "previously-healthy PCLQ loses all scheduled pods — breaches",
 			pclq: &grovecorev1alpha1.PodClique{
 				Spec: grovecorev1alpha1.PodCliqueSpec{
 					Replicas:     2,
@@ -459,13 +457,15 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 					},
 				},
 			},
-			wantStatus: metav1.ConditionFalse,
-			wantReason: constants.ConditionReasonInsufficientScheduledPods,
+			wantStatus: metav1.ConditionTrue,
+			wantReason: constants.ConditionReasonScheduledReplicasBelowMinAvailable,
 		},
 		{
-			// Sanity case that the fix must preserve: a freshly-created PCLQ
-			// that has not yet scheduled any pods MUST NOT be considered breached.
-			name: "fresh PCLQ never scheduled - must not breach",
+			// A fresh PCLQ that has not yet scheduled any pods still breaches
+			// under the always-breach rule. TerminationDelay (4h) is the grace
+			// window: if pods schedule in time the breach resolves before any
+			// termination action.
+			name: "fresh PCLQ never scheduled — also breaches (TerminationDelay is the grace)",
 			pclq: &grovecorev1alpha1.PodClique{
 				Spec: grovecorev1alpha1.PodCliqueSpec{
 					Replicas:     3,
@@ -478,8 +478,8 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 					ReadyReplicas:      0,
 				},
 			},
-			wantStatus: metav1.ConditionFalse,
-			wantReason: constants.ConditionReasonInsufficientScheduledPods,
+			wantStatus: metav1.ConditionTrue,
+			wantReason: constants.ConditionReasonScheduledReplicasBelowMinAvailable,
 		},
 	}
 

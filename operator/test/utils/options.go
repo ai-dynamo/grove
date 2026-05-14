@@ -130,7 +130,9 @@ func WithPCLQMinAvailableBreached() PCLQOption {
 	}
 }
 
-// WithPCLQNotScheduled sets the PodClique to be not scheduled.
+// WithPCLQNotScheduled sets the PodClique to be not scheduled. A PodClique that is not
+// scheduled also has scheduledReplicas < minAvailable, so under the always-breach rule the
+// MinAvailableBreached condition is True as well — this helper sets both.
 func WithPCLQNotScheduled() PCLQOption {
 	return func(pclq *grovecorev1alpha1.PodClique) {
 		pclq.Status.Conditions = []metav1.Condition{
@@ -138,6 +140,11 @@ func WithPCLQNotScheduled() PCLQOption {
 				Type:   constants.ConditionTypePodCliqueScheduled,
 				Status: metav1.ConditionFalse,
 				Reason: "SchedulingFailed",
+			},
+			{
+				Type:   constants.ConditionTypeMinAvailableBreached,
+				Status: metav1.ConditionTrue,
+				Reason: constants.ConditionReasonScheduledReplicasBelowMinAvailable,
 			},
 		}
 	}
