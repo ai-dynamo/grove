@@ -7,7 +7,8 @@
   - [Non-Goals](#non-goals)
 - [Proposal](#proposal)
   - [User Stories](#user-stories)
-    - [Story 1: Automated preferred topology for externally managed workloads](#story-1-automated-preferred-topology-for-externally-managed-workloads)
+    - [Story 1: Preferred host-level locality for a workload](#story-1-preferred-host-level-locality-for-a-workload)
+    - [Story 2: Automated preferred topology for externally managed workloads](#story-2-automated-preferred-topology-for-externally-managed-workloads)
   - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
 - [Design Details](#design-details)
   - [API Change](#api-change)
@@ -56,7 +57,11 @@ The existing `packDomain` field is deprecated. It remains in the API only for co
 
 ### User Stories
 
-#### Story 1: Automated preferred topology for externally managed workloads
+#### Story 1: Preferred host-level locality for a workload
+
+As an ML engineer submitting a workload with Grove, I want to set `preferredPackDomain: host` to signal that my pods benefit from being placed close together, so that Grove and the scheduler attempt host-level locality without blocking the workload when that placement is unavailable.
+
+#### Story 2: Automated preferred topology for externally managed workloads
 
 As a platform operator managing workloads over Grove, I want to automatically apply a preferred topology constraint to submitted workloads — without requiring end users to configure scheduling parameters — so that topology-aware placement is attempted as a best-effort optimization while ensuring no workload is ever blocked due to an unsatisfiable constraint.
 
@@ -75,9 +80,20 @@ The existing `TopologyConstraint` struct in the operator API (`operator/api/core
 ```go
 // TopologyConstraint defines topology placement requirements.
 type TopologyConstraint struct {
+    // TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.
+    // If topologyConstraint is set, topologyName must be specified.
+    // Immutable after creation.
+    // +required
+    TopologyName string `json:"topologyName"`
+
     // RequiredPackDomain specifies the required topology domain for grouping replicas.
+    // Controls placement constraint for EACH individual replica instance.
     // The workload will not be scheduled if this constraint cannot be satisfied.
-    // +kubebuilder:validation:Enum=region;zone;datacenter;block;rack;host;numa
+    // Must reference a domain in the topology levels defined in the ClusterTopology
+    // CR named by TopologyName.
+    // Example: "rack" means each replica is independently placed within one rack.
+    // Note: Does NOT constrain all replicas to the same rack together.
+    // Different replicas can be in different topology domains.
     // +optional
     RequiredPackDomain *TopologyDomain `json:"requiredPackDomain,omitempty"`
 
@@ -85,20 +101,21 @@ type TopologyConstraint struct {
     // If the constraint cannot be satisfied, the workload is scheduled anyway.
     // When set alongside RequiredPackDomain, it is recommended that
     // PreferredPackDomain be stricter than or equal to RequiredPackDomain.
-    // +kubebuilder:validation:Enum=region;zone;datacenter;block;rack;host;numa
     // +optional
     PreferredPackDomain *TopologyDomain `json:"preferredPackDomain,omitempty"`
 
     // PackDomain specifies the required topology domain using the legacy field name.
-    // Deprecated: use RequiredPackDomain. This field is honored for existing
-    // workloads, rejected on new workload creation, and warned on update when still in use.
-    // +kubebuilder:validation:Enum=region;zone;datacenter;block;rack;host;numa
+    // Deprecated: use RequiredPackDomain.
+    // This field is honored for existing workloads, rejected on new workload
+    // creation, and warned on update when still in use.
     // +optional
     PackDomain *TopologyDomain `json:"packDomain,omitempty"`
 }
 ```
 
-`RequiredPackDomain` preserves the required placement behavior of the legacy `PackDomain` field. `PreferredPackDomain` is optional and can be used alone for preferred-only topology placement. The legacy `PackDomain` field changes from a value type to an optional pointer so new workloads can omit it while existing workloads that already use it remain readable. Controller code must resolve the effective required domain from `RequiredPackDomain` first, then fall back to deprecated `PackDomain` for existing workloads.
+`TopologyName` remains part of `TopologyConstraint` and continues to select the `ClusterTopology` used for domain-to-key resolution. `RequiredPackDomain` preserves the required placement behavior of the legacy `PackDomain` field, but is optional so a workload can use `PreferredPackDomain` without a hard topology requirement. `PreferredPackDomain` is optional and can be used alone for preferred-only topology placement. Admission requires a `TopologyConstraint` to include `topologyName` and at least one packing domain field.
+
+The legacy `PackDomain` field changes from a required value to an optional pointer and remains in the API only for compatibility with existing workloads. New workloads must use `RequiredPackDomain` for hard placement requirements; `PackDomain` is honored for existing workloads, rejected on new workload creation, and warned on update when still in use. Controller code must resolve the effective required domain from `RequiredPackDomain` first, then fall back to deprecated `PackDomain` for existing workloads.
 
 ### PodGang Propagation
 
@@ -181,4 +198,4 @@ The scheduler could automatically apply a preferred constraint at the finest ava
 A single boolean field on `PodCliqueSet` (e.g. `preferredTopologyEnabled`) would enable preferred placement at the lowest topology level for all cliques, without allowing per-resource or per-level control.
 
 - **Pro:** Simpler API surface.
-- **Con:** Provides no control over which topology level is preferred, and cannot express different preferences across `PodCliqueSet`, `PodCliqueScalingGroup`, and `PodClique`. Higher-level tools can trivially implement this coarser interface on top of `preferredPackDomain`, but the reverse is not true.
+- **Con:** Provides no control over which topology level is preferred, and cannot express different preferences across `PodCliqueSet`, `PodCliqueScalingGroup`, and `PodClique`. A literal boolean is also technically insufficient because the workload must still select a `ClusterTopology` through `topologyName`; this alternative would need a topology reference plus the boolean opt-in. Higher-level tools can trivially implement this coarser interface on top of `preferredPackDomain`, but the reverse is not true.
