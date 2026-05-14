@@ -210,13 +210,13 @@ func isPCSGChildPCLQUpdated(pclq *grovecorev1alpha1.PodClique, expectedPCLQPodTe
 }
 
 // emitAllScheduledReplicasLostIfNeeded emits a Warning event when ScheduledReplicas drops from
-// non-zero to zero. Gang termination is suppressed in this state (recreating the PodGang would
-// just produce the same Pending pods) so this event is the only explicit signal that a
-// previously-running workload is now fully down.
+// non-zero to zero. The MinAvailableBreached condition also flips on this transition, but the
+// event gives operators a discrete, log-visible signal that a previously-running workload is
+// fully down (and that gang termination is now armed and will fire after TerminationDelay).
 func (r *Reconciler) emitAllScheduledReplicasLostIfNeeded(pcsg *grovecorev1alpha1.PodCliqueScalingGroup, originalScheduled int32) {
 	if originalScheduled > 0 && pcsg.Status.ScheduledReplicas == 0 {
 		r.eventRecorder.Eventf(pcsg, corev1.EventTypeWarning, internalconstants.ReasonAllScheduledReplicasLost,
-			"All scheduled replicas lost (was %d). Gang termination is suppressed to avoid recreating Pending pods against the same cluster state; investigate node availability or capacity.",
+			"All scheduled replicas lost (was %d). Gang termination will fire after TerminationDelay if the PCSG stays below MinAvailable; investigate node availability or capacity.",
 			originalScheduled)
 	}
 }
@@ -234,15 +234,17 @@ func mutateMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1al
 	}
 }
 
-// computeMinAvailableBreachedCondition computes the MinAvailableBreached condition for the PodCliqueScalingGroup.
-// If rolling update is under progress, then gang termination for this PCSG is disabled. This is achieved by marking
-// the status to `Unknown`. This PCSG will not influence the gang termination of PCS replica till its update has completed.
+// computeMinAvailableBreachedCondition computes the MinAvailableBreached condition for the
+// PodCliqueScalingGroup. Definition:
 //
-// scheduledReplicas == 0: either initial startup or every scheduled replica has been lost. Recreating the PodGang
-// would just produce the same Pending replicas, so suppress to avoid a churn loop.
-// 0 < scheduledReplicas < MinAvailable: with a gang scheduler this implies regression after a healthy state and
-// breaches. On non-gang schedulers it can flicker briefly during staged startup; TerminationDelay (default 4h)
-// absorbs the flicker.
+//   - A PCSG replica is in breach if at least one of its PodCliques is in breach
+//     (MinAvailableBreached=True on the PCLQ).
+//   - The PCSG itself is in breach when the number of replicas NOT in breach is less than
+//     pcsg.Spec.MinAvailable. Per-replica restart is handled separately by the PCSG sync
+//     flow; the condition computed here is the signal the PCS-level gang-termination
+//     handler reads to decide whether to restart the whole PCS replica.
+//
+// Rolling update short-circuits this to Unknown so gang termination doesn't fire mid-update.
 func computeMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) metav1.Condition {
 	if componentutils.IsPCSGUpdateInProgress(pcsg) {
 		return metav1.Condition{
@@ -254,38 +256,22 @@ func computeMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1a
 	}
 
 	minAvailable := int(*pcsg.Spec.MinAvailable)
-	scheduledReplicas := int(pcsg.Status.ScheduledReplicas)
-	if scheduledReplicas < minAvailable {
-		if scheduledReplicas == 0 {
-			return metav1.Condition{
-				Type:    constants.ConditionTypeMinAvailableBreached,
-				Status:  metav1.ConditionFalse,
-				Reason:  constants.ConditionReasonInsufficientScheduledPCSGReplicas,
-				Message: fmt.Sprintf("Scheduled replicas 0 (MinAvailable %d); gang termination suppressed to avoid recreating Pending pods against the same cluster state", minAvailable),
-			}
-		}
-		return metav1.Condition{
-			Type:    constants.ConditionTypeMinAvailableBreached,
-			Status:  metav1.ConditionTrue,
-			Reason:  constants.ConditionReasonScheduledReplicasBelowMinAvailable,
-			Message: fmt.Sprintf("Scheduled replicas (%d) below MinAvailable (%d)", scheduledReplicas, minAvailable),
-		}
-	}
-	minAvailableBreachedReplicas := computeMinAvailableBreachedReplicas(logger, pcsg, pclqsPerPCSGReplica)
-	availableReplicas := scheduledReplicas - minAvailableBreachedReplicas
-	if availableReplicas < minAvailable {
+	breachedReplicas := computeMinAvailableBreachedReplicas(logger, pcsg, pclqsPerPCSGReplica)
+	existingReplicas := len(pclqsPerPCSGReplica)
+	notInBreachReplicas := existingReplicas - breachedReplicas
+	if notInBreachReplicas < minAvailable {
 		return metav1.Condition{
 			Type:    constants.ConditionTypeMinAvailableBreached,
 			Status:  metav1.ConditionTrue,
 			Reason:  constants.ConditionReasonInsufficientAvailablePCSGReplicas,
-			Message: fmt.Sprintf("Insufficient PodCliqueScalingGroup ready replicas, expected at least: %d, found: %d", minAvailable, availableReplicas),
+			Message: fmt.Sprintf("PCSG replicas not in breach (%d) below MinAvailable (%d)", notInBreachReplicas, minAvailable),
 		}
 	}
 	return metav1.Condition{
 		Type:    constants.ConditionTypeMinAvailableBreached,
 		Status:  metav1.ConditionFalse,
 		Reason:  constants.ConditionReasonSufficientAvailablePCSGReplicas,
-		Message: fmt.Sprintf("Sufficient PodCliqueScalingGroup ready replicas, expected at least: %d, found: %d", minAvailable, availableReplicas),
+		Message: fmt.Sprintf("PCSG replicas not in breach (%d) meets MinAvailable (%d)", notInBreachReplicas, minAvailable),
 	}
 }
 
