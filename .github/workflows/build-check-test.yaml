@@ -117,6 +117,8 @@ jobs:
         include:
           - test_name: gang_scheduling
             test_pattern: "^Test_GS"
+          - test_name: gang_termination
+            test_pattern: "^Test_GT"
           - test_name: rolling_updates
             test_pattern: "^Test_RU"
           - test_name: ondelete_updates
@@ -194,6 +196,7 @@ jobs:
       matrix:
         include:
           - test_name: gang_scheduling
+          - test_name: gang_termination
           - test_name: rolling_updates
           - test_name: startup_ordering
           - test_name: Topology_Aware_Scheduling
