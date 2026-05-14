@@ -232,6 +232,110 @@ func Test_GT4_GangTerminationMinReplicasPCSGOwned(t *testing.T) {
 	verifyAllPodsRecreated(t, tc, finalOriginalUIDs, totalWLPods)
 }
 
+// Test_GT5_IndividualPCSGReplicaTermination: WL5 (PCS pc-a min=1 r=2;
+// sg-x min=1 r=2 of pc-b min=1 r=1, pc-c min=3 r=3). Kill all 3 pods of one
+// PCSG replica's pc-c, breaching that replica's MinAvailable. Only that PCSG
+// replica's PCLQs should be recreated; the other PCSG replica + pc-a survive.
+//
+// Differs from GT-4 step 4 in that pc-c here has min=3 (no tolerance), so
+// killing even one pod breaches pc-c immediately — we kill all 3 at once.
+func Test_GT5_IndividualPCSGReplicaTermination(t *testing.T) {
+	ctx := context.Background()
+	workloadName := "workload5-gt"
+	pcsg0Target := "workload5-gt-0-sg-x-0-pc-c"
+
+	Logger.Infof("1. Initialize a %d-node Grove cluster for WL5 scenario", totalWLPods)
+	tc, cleanup := testctx.PrepareTest(ctx, t, totalWLPods,
+		testctx.WithWorkload(&testctx.WorkloadConfig{
+			Name:         workloadName,
+			YAMLPath:     "../yaml/workload5-gt.yaml",
+			Namespace:    "default",
+			ExpectedPods: totalWLPods,
+		}),
+	)
+	defer cleanup()
+
+	Logger.Info("2. Deploy WL5 and wait for all pods to become ready")
+	if _, err := tc.DeployAndVerifyWorkload(); err != nil {
+		t.Fatalf("Failed to deploy workload: %v", err)
+	}
+	if err := tc.WaitForReadyPods(totalWLPods); err != nil {
+		t.Fatalf("Failed to wait for pods to be ready: %v", err)
+	}
+
+	Logger.Info("3. Snapshot UIDs by section before kill")
+	pods, err := tc.ListPods()
+	if err != nil {
+		t.Fatalf("Failed to list pods: %v", err)
+	}
+	pcsg0OriginalUIDs := capturePodUIDsForPCSGReplica(pods, "0")
+	pcsg1OriginalUIDs := capturePodUIDsForPCSGReplica(pods, "1")
+	pcAOriginalUIDs := capturePodUIDsForClique(pods, "workload5-gt-0-pc-a")
+
+	Logger.Infof("4. Kill all 3 pods from %s — should breach only that PCSG replica", pcsg0Target)
+	cordonAndKillPodsFromClique(ctx, t, tc, pcsg0Target, 3)
+	time.Sleep(terminationDelayInWorkloadYAML + gangTerminationGrace)
+
+	Logger.Info("5. Verify only PCSG-0 was recreated; PCSG-1 and pc-a kept their UIDs")
+	verifyPCSGReplicaRecreatedOnly(t, tc, "0", pcsg0OriginalUIDs, pcsg1OriginalUIDs, pcAOriginalUIDs)
+}
+
+// Test_GT6_ScaledPodGangPodDeletion: WL2 (pc-c min=1 r=3 tolerates 2 pod
+// losses). Find a pod in a "scaled" PodGang (one labeled with
+// grove.io/base-podgang pointing back at the PCS replica's base PodGang),
+// delete it. MinAvailable is still satisfied so no breach fires — the
+// controller recreates the pod and the workload keeps running.
+func Test_GT6_ScaledPodGangPodDeletion(t *testing.T) {
+	ctx := context.Background()
+	workloadName := "workload2-gt"
+
+	Logger.Infof("1. Initialize a %d-node Grove cluster for WL2 scaled-pod scenario", totalWLPods)
+	tc, cleanup := testctx.PrepareTest(ctx, t, totalWLPods,
+		testctx.WithWorkload(&testctx.WorkloadConfig{
+			Name:         workloadName,
+			YAMLPath:     "../yaml/workload2-gt.yaml",
+			Namespace:    "default",
+			ExpectedPods: totalWLPods,
+		}),
+	)
+	defer cleanup()
+
+	Logger.Info("2. Deploy WL2 and wait for all pods to become ready")
+	if _, err := tc.DeployAndVerifyWorkload(); err != nil {
+		t.Fatalf("Failed to deploy workload: %v", err)
+	}
+	if err := tc.WaitForReadyPods(totalWLPods); err != nil {
+		t.Fatalf("Failed to wait for pods to be ready: %v", err)
+	}
+
+	Logger.Info("3. Find a scaled pc-c pod (one with grove.io/base-podgang and clique=pc-c so killing it stays within pc-c's min=1 tolerance)")
+	pods, err := tc.ListPods()
+	if err != nil {
+		t.Fatalf("Failed to list pods: %v", err)
+	}
+	scaled := findReadyScaledPCCPod(pods, "workload2-gt")
+	if scaled == nil {
+		dumpPodsByClique(t, pods)
+		t.Fatalf("no ready pc-c pod with the %s label (scaled PodGang) found", apicommon.LabelBasePodGang)
+	}
+	pcAUIDs := capturePodUIDsForClique(pods, "workload2-gt-0-pc-a")
+
+	Logger.Infof("4. Cordon node %s and delete pod %s (clique=%s, base-podgang=%s)",
+		scaled.Spec.NodeName, scaled.Name, scaled.Labels[apicommon.LabelPodClique], scaled.Labels[apicommon.LabelBasePodGang])
+	if err := tc.CordonNode(scaled.Spec.NodeName); err != nil {
+		t.Fatalf("Failed to cordon node: %v", err)
+	}
+	if err := tc.Client.Delete(ctx, scaled); err != nil {
+		t.Fatalf("Failed to delete pod: %v", err)
+	}
+
+	Logger.Infof("5. Wait %s — base PodGang min still met, no PCS-level gang term should fire", terminationDelayInWorkloadYAML+gangTerminationGrace)
+	time.Sleep(terminationDelayInWorkloadYAML + gangTerminationGrace)
+
+	Logger.Info("6. Verify pc-a (standalone PCLQ) kept its UIDs — only PCS-level gang term would delete pc-a")
+	verifyNoGangTermination(t, tc, pcAUIDs, 0)
+}
+
 // ---------- helpers ----------
 
 // findReadyPodFromPodClique returns the first ready pod whose grove.io/podclique
@@ -240,6 +344,31 @@ func findReadyPodFromPodClique(pods *corev1.PodList, cliqueFQN string) *corev1.P
 	for i := range pods.Items {
 		p := &pods.Items[i]
 		if p.Labels[apicommon.LabelPodClique] != cliqueFQN {
+			continue
+		}
+		if !isPodReady(p) {
+			continue
+		}
+		return p
+	}
+	return nil
+}
+
+// findReadyScaledPCCPod returns the first ready pc-c pod that has a base-podgang
+// label set (i.e. lives in a scaled PodGang). Used by GT-6: pc-c has min=1
+// replicas=3 so killing one of these doesn't breach the PCLQ, which lets us
+// observe the "scaled pod recreated, no full-workload gang term" behaviour
+// without triggering a PCSG-scoped restart as a side effect.
+func findReadyScaledPCCPod(pods *corev1.PodList, workloadName string) *corev1.Pod {
+	for i := range pods.Items {
+		p := &pods.Items[i]
+		if v, ok := p.Labels[apicommon.LabelBasePodGang]; !ok || v == "" {
+			continue
+		}
+		clique := p.Labels[apicommon.LabelPodClique]
+		// pc-c PCLQs in either sg-x replica end with "-pc-c"; this avoids
+		// pc-a-1 (scaled standalone PCLQ pod) which has no min-tolerance.
+		if clique != workloadName+"-0-sg-x-0-pc-c" && clique != workloadName+"-0-sg-x-1-pc-c" {
 			continue
 		}
 		if !isPodReady(p) {
