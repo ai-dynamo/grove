@@ -116,6 +116,43 @@ On clusters with NVIDIA MNNVL support, you can enable automatic Multi-Node NVLin
 
 Follow the instructions in the [quickstart guide](quickstart.md) to deploy a PodCliqueSet and validate your installation.
 
+## Upgrade Notes
+
+### ClusterTopology renamed to ClusterTopologyBinding
+
+Grove does not provide automatic migration for existing `ClusterTopology`
+resources.
+
+If `ClusterTopology` resources already exist in the cluster:
+
+1. Re-create them manually as `ClusterTopologyBinding` resources.
+2. Delete the old `ClusterTopology` instances.
+3. Delete the old `ClusterTopology` CRD.
+
+Example:
+
+```bash
+# 1. Verify any old ClusterTopology instances that still exist
+kubectl get clustertopologies.grove.io
+
+# 2. Delete the old ClusterTopology instances
+kubectl delete clustertopologies.grove.io --all
+
+# 3. Delete the old ClusterTopology CRD
+kubectl delete crd clustertopologies.grove.io
+```
+
+If no `ClusterTopology` instances exist in the cluster, delete the old CRD
+before upgrading:
+
+```bash
+kubectl delete crd clustertopologies.grove.io
+```
+
+This is expected to be a low-impact change because Grove has not yet had a
+release containing the update that allowed administrators to create
+`ClusterTopology` resources freely.
+
 ## Advanced: `helm template` and GitOps
 
 `helm template` does not render the chart's `crds/` directory unless
