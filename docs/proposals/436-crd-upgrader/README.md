@@ -172,7 +172,7 @@ The CRD management rules in `clusterrole.yaml` are only rendered when `crdInstal
   - podcliquesets.grove.io
   - podcliques.grove.io
   - podcliquescalinggroups.grove.io
-  - clustertopologies.grove.io
+  - clustertopologybindings.grove.io
   - podgangs.scheduler.grove.io
   verbs:
   - get

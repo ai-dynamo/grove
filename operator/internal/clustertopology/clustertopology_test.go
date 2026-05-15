@@ -224,7 +224,7 @@ func TestGetClusterTopologyLevels(t *testing.T) {
 			},
 			topologyName: "non-existent-topology",
 			getError: apierrors.NewNotFound(
-				schema.GroupResource{Group: apicommonconstants.OperatorGroupName, Resource: "clustertopologies"},
+				schema.GroupResource{Group: apicommonconstants.OperatorGroupName, Resource: "clustertopologybindings"},
 				"non-existent-topology",
 			),
 			expectError:       true,

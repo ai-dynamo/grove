@@ -363,7 +363,7 @@ Validation of ClusterTopologyBinding resources is split between CRD-level struct
 * Within each ClusterTopologyBinding, each `TopologyLevel` must be unique — neither the domain nor the key should be duplicated.
 * Within each ClusterTopologyBinding, each `schedulerTopologyReferences[*].schedulerName` must be unique — a scheduler backend can only be referenced once.
 * Each `schedulerTopologyReferences[*].schedulerName` must refer to a scheduler backend that is enabled in Grove.
-* Each `schedulerTopologyReferences[*].schedulerName` must refer to a backend that implements topology management (`TopologyAwareSchedBackend`).
+* Each `schedulerTopologyReferences[*].schedulerName` must refer to a backend that implements topology management (`TopologyAwareBackend`).
 * `spec.levels` can be updated in-place. When domains are removed, affected PodCliqueSets are surfaced via the `TopologyLevelsUnavailable` condition.
 
 > **Why a webhook instead of CEL?** CEL uniqueness rules on `spec.levels` use `self.all(x, self.filter(...))` which has O(n²) cost estimation. The Kubernetes API server rejects CRDs whose estimated rule cost exceeds the validation budget, which forced an artificial `MaxItems=16` cap on the number of topology levels. Moving these checks to a validating webhook eliminates the cost constraint and removes the level limit entirely. Since a ClusterTopologyBinding controller is already required, hosting validation in the same webhook adds no operational overhead.
@@ -442,7 +442,7 @@ type ClusterTopologySpec struct {
     // Uniqueness of domain and key is enforced by the ClusterTopologyBinding validating webhook.
     Levels []TopologyLevel `json:"levels"`
     // SchedulerTopologyReferences controls per-backend topology resource management.
-    // For each enabled TopologyAwareSchedBackend, the operator checks whether an entry
+    // For each enabled TopologyAwareBackend, the operator checks whether an entry
     // for that backend exists in this list:
     // - If absent: the operator auto-creates and manages the backend's topology resource
     //   (OwnerReference set for cascade deletion).
@@ -610,14 +610,14 @@ sequenceDiagram
 
 **Scheduler Backend Topology**
 
-The operator manages the relationship between each ClusterTopologyBinding and its corresponding scheduler backend topology resources via the Scheduler Backend Framework (see [GREP-375](../375-scheduler-backend-framework/README.md)). Each registered backend that supports topology management implements the `TopologyAwareSchedBackend` optional interface:
+The operator manages the relationship between each ClusterTopologyBinding and its corresponding scheduler backend topology resources via the Scheduler Backend Framework (see [GREP-375](../375-scheduler-backend-framework/README.md)). Each registered backend that supports topology management implements the `TopologyAwareBackend` optional interface:
 
 ```go
-// TopologyAwareSchedBackend is an optional interface that SchedBackend
+// TopologyAwareBackend is an optional interface that SchedBackend
 // implementations may satisfy if they manage a scheduler-specific topology CRD.
 // The ClusterTopologyBinding controller type-asserts each registered backend to this
 // interface at startup and calls these methods during reconciliation.
-type TopologyAwareSchedBackend interface {
+type TopologyAwareBackend interface {
     // TopologyGVR returns the GroupVersionResource of the topology CRD
     // managed by this backend (e.g. KAI's "topologies.scheduling.run.ai").
     // The CT controller uses this to register dynamic watches at startup.
@@ -646,13 +646,13 @@ type TopologyAwareSchedBackend interface {
 
 **Watch registration at startup**
 
-The CT controller iterates all registered backends at startup. For each one that implements `TopologyAwareSchedBackend`, it registers a dynamic watch on the backend's `TopologyGVR()`. Events on those CRDs (external edits, deletions) are mapped back to their owning ClusterTopologyBinding — via `OwnerReference` for auto-managed resources, or via an index on `schedulerTopologyReferences[*].topologyReference` for externally-managed ones — and enqueue a reconciliation.
+The CT controller iterates all registered backends at startup. For each one that implements `TopologyAwareBackend`, it registers a dynamic watch on the backend's `TopologyGVR()`. Events on those CRDs (external edits, deletions) are mapped back to their owning ClusterTopologyBinding — via `OwnerReference` for auto-managed resources, or via an index on `schedulerTopologyReferences[*].topologyReference` for externally-managed ones — and enqueue a reconciliation.
 
 **Reconciliation per ClusterTopologyBinding**
 
 On every reconcile, the CT controller handles both:
 * all referenced scheduler backends named in `schedulerTopologyReferences`, and
-* all registered `TopologyAwareSchedBackend`s.
+* all registered `TopologyAwareBackend`s.
 
 Referenced backends are processed first so that the controller can surface `Unknown / TopologyNotFound` when a referenced backend is no longer enabled in Grove or no longer implements topology management.
 
@@ -667,10 +667,10 @@ In both cases the `SchedulerTopologyDrift` condition and `schedulerTopologyStatu
 | Situation | `schedulerTopologyStatuses[*]` | Aggregate `SchedulerTopologyDrift` |
 |-----------|-------------------------------|-------------------------------------|
 | `schedulerName` in `schedulerTopologyReferences` does not match any enabled backend in `OperatorConfiguration` | `inSync: false`, message: "scheduler backend `<name>` is not enabled" | `Unknown / TopologyNotFound` |
-| Backend is enabled but does not implement `TopologyAwareSchedBackend` | `inSync: false`, message: "scheduler backend `<name>` does not support topology management" | `Unknown / TopologyNotFound` |
+| Backend is enabled but does not implement `TopologyAwareBackend` | `inSync: false`, message: "scheduler backend `<name>` does not support topology management" | `Unknown / TopologyNotFound` |
 | Backend's topology CRD is not installed in the cluster | `inSync: false`, message: "topology CRD for scheduler backend `<name>` not found in cluster" | `True / Drift` |
 
-Adding a new `TopologyAwareSchedBackend` to the operator configuration automatically extends topology management to that backend for all ClusterTopologyBinding resources — no changes to existing ClusterTopologyBinding resources are required.
+Adding a new `TopologyAwareBackend` to the operator configuration automatically extends topology management to that backend for all ClusterTopologyBinding resources — no changes to existing ClusterTopologyBinding resources are required.
 
 ### Topology Constraints in PodCliqueSet
 
@@ -1051,7 +1051,7 @@ Condition States:
 Currently the only scheduler backend that supports hierarchical TAS is [KAI Scheduler](https://github.com/kai-scheduler/KAI-Scheduler). See [here](https://github.com/kai-scheduler/KAI-Scheduler/tree/main/docs/topology) for more information.
 Follow [instructions](https://github.com/kai-scheduler/KAI-Scheduler?tab=readme-ov-file#installation) to install KAI scheduler. By default, the operator automatically creates and manages a KAI `Topology` CR for each ClusterTopologyBinding that does not have `schedulerTopologyReferences` entries for the KAI scheduler. Administrators who manage their own KAI `Topology` resources can reference them via the ClusterTopologyBinding's `schedulerTopologyReferences` field — the operator will then verify drift instead of creating the resource (see [Scheduler Backend Topology](#scheduler-backend-topology)). KAI Scheduler supports multiple `Topology` resources within a single cluster.
 
-> NOTE: The scheduling backend determines what resources it requires. Grove Operator is not limited to one scheduler backend, and any other scheduler providing TAS functionality can be plugged in via the Scheduler Backend Framework (see [GREP-375](../375-scheduler-backend-framework/README.md)) by implementing the `TopologyAwareSchedBackend` interface described in [Scheduler Backend Topology](#scheduler-backend-topology). The `schedulerTopologyReferences` mechanism in each ClusterTopologyBinding controls whether a backend's topology resource is auto-managed by Grove or externally managed.
+> NOTE: The scheduling backend determines what resources it requires. Grove Operator is not limited to one scheduler backend, and any other scheduler providing TAS functionality can be plugged in via the Scheduler Backend Framework (see [GREP-375](../375-scheduler-backend-framework/README.md)) by implementing the `TopologyAwareBackend` interface described in [Scheduler Backend Topology](#scheduler-backend-topology). The `schedulerTopologyReferences` mechanism in each ClusterTopologyBinding controls whether a backend's topology resource is auto-managed by Grove or externally managed.
 
 **Nodes labeled with Topology specific labels**
 
