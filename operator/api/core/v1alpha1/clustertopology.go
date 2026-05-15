@@ -59,7 +59,7 @@ type ClusterTopologyBindingSpec struct {
 
 	// SchedulerTopologyBindings declares how this ClusterTopologyBinding maps to
 	// each scheduler backend's topology resource.
-	// For each enabled TopologyAwareSchedBackend, the operator checks whether an
+	// For each enabled TopologyAwareBackend, the operator checks whether an
 	// entry for that backend exists in this list:
 	// - If absent: the operator creates and manages the backend topology resource from Levels.
 	// - If present: the named backend topology resource is treated as externally

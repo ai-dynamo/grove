@@ -88,7 +88,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `levels` _[TopologyLevel](#topologylevel) array_ | Levels is the source-of-truth ordered topology hierarchy, from broadest to<br />narrowest scope, that Grove exposes to workloads and uses when reconciling<br />backend-specific topology resources.<br />Uniqueness of domain and key is enforced by the ClusterTopologyBinding validating webhook. |  | MinItems: 1 <br /> |
-| `schedulerTopologyBindings` _[SchedulerTopologyBinding](#schedulertopologybinding) array_ | SchedulerTopologyBindings declares how this ClusterTopologyBinding maps to<br />each scheduler backend's topology resource.<br />For each enabled TopologyAwareSchedBackend, the operator checks whether an<br />entry for that backend exists in this list:<br />- If absent: the operator creates and manages the backend topology resource from Levels.<br />- If present: the named backend topology resource is treated as externally<br />  managed, and the operator only checks it for drift against Levels. |  |  |
+| `schedulerTopologyBindings` _[SchedulerTopologyBinding](#schedulertopologybinding) array_ | SchedulerTopologyBindings declares how this ClusterTopologyBinding maps to<br />each scheduler backend's topology resource.<br />For each enabled TopologyAwareBackend, the operator checks whether an<br />entry for that backend exists in this list:<br />- If absent: the operator creates and manages the backend topology resource from Levels.<br />- If present: the named backend topology resource is treated as externally<br />  managed, and the operator only checks it for drift against Levels. |  |  |
 
 
 #### ClusterTopologyBindingStatus

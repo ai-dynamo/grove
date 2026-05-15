@@ -41,7 +41,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// -- Fake TopologyAwareSchedBackend for testing --
+// -- Fake TopologyAwareBackend for testing --
 
 type fakeBackend struct {
 	name         string
