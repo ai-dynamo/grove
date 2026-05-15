@@ -1876,10 +1876,10 @@ func createScalingGroupConfig(name string, cliqueNames []string) grovecorev1alph
 	}
 }
 
-func createTestClusterTopology() *grovecorev1alpha1.ClusterTopology {
-	return &grovecorev1alpha1.ClusterTopology{
+func createTestClusterTopology() *grovecorev1alpha1.ClusterTopologyBinding {
+	return &grovecorev1alpha1.ClusterTopologyBinding{
 		ObjectMeta: metav1.ObjectMeta{Name: "topo-a"},
-		Spec: grovecorev1alpha1.ClusterTopologySpec{
+		Spec: grovecorev1alpha1.ClusterTopologyBindingSpec{
 			Levels: []grovecorev1alpha1.TopologyLevel{
 				{Domain: grovecorev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
 				{Domain: grovecorev1alpha1.TopologyDomainRack, Key: "topology.grove.io/rack"},

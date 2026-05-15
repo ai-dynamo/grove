@@ -9,7 +9,7 @@
 
 
 ### Resource Types
-- [ClusterTopology](#clustertopology)
+- [ClusterTopologyBinding](#clustertopologybinding)
 - [PodClique](#podclique)
 - [PodCliqueScalingGroup](#podcliquescalinggroup)
 - [PodCliqueSet](#podcliqueset)
@@ -54,11 +54,11 @@ _Appears in:_
 | `CliqueStartupTypeExplicit` | CliqueStartupTypeExplicit defines that the cliques should be started after the cliques defined in PodClique.StartsAfter have started.<br /> |
 
 
-#### ClusterTopology
+#### ClusterTopologyBinding
 
 
 
-ClusterTopology defines the topology hierarchy for the cluster.
+ClusterTopologyBinding defines the topology hierarchy for the cluster.
 
 
 
@@ -67,45 +67,45 @@ ClusterTopology defines the topology hierarchy for the cluster.
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `apiVersion` _string_ | `grove.io/v1alpha1` | | |
-| `kind` _string_ | `ClusterTopology` | | |
+| `kind` _string_ | `ClusterTopologyBinding` | | |
 | `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
-| `spec` _[ClusterTopologySpec](#clustertopologyspec)_ | Spec defines the topology hierarchy specification. |  |  |
-| `status` _[ClusterTopologyStatus](#clustertopologystatus)_ | Status defines the observed state of the ClusterTopology. |  |  |
+| `spec` _[ClusterTopologyBindingSpec](#clustertopologybindingspec)_ | Spec defines the topology hierarchy specification. |  |  |
+| `status` _[ClusterTopologyBindingStatus](#clustertopologybindingstatus)_ | Status defines the observed state of the ClusterTopologyBinding. |  |  |
 
 
-#### ClusterTopologySpec
+#### ClusterTopologyBindingSpec
 
 
 
-ClusterTopologySpec defines the topology hierarchy specification.
+ClusterTopologyBindingSpec defines the topology hierarchy specification.
 
 
 
 _Appears in:_
-- [ClusterTopology](#clustertopology)
+- [ClusterTopologyBinding](#clustertopologybinding)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `levels` _[TopologyLevel](#topologylevel) array_ | Levels is an ordered list of topology levels from broadest to narrowest scope.<br />The order in this list defines the hierarchy (index 0 = broadest level).<br />Uniqueness of domain and key is enforced by the ClusterTopology validating webhook. |  | MinItems: 1 <br /> |
-| `schedulerTopologyReferences` _[SchedulerTopologyReference](#schedulertopologyreference) array_ | SchedulerTopologyReferences controls per-backend topology resource management.<br />For each enabled TopologyAwareSchedBackend, the operator checks whether an entry<br />for that backend exists in this list:<br />- If absent: the operator auto-creates and manages the backend's topology resource.<br />- If present: the named resource is assumed to be externally managed; the operator<br />  compares its levels and reports any mismatch via the SchedulerTopologyDrift condition. |  |  |
+| `levels` _[TopologyLevel](#topologylevel) array_ | Levels is an ordered list of topology levels from broadest to narrowest scope.<br />The order in this list defines the hierarchy (index 0 = broadest level).<br />Uniqueness of domain and key is enforced by the ClusterTopologyBinding validating webhook. |  | MinItems: 1 <br /> |
+| `schedulerTopologyBindings` _[SchedulerTopologyBinding](#schedulertopologybinding) array_ | SchedulerTopologyBindings controls per-backend topology resource management.<br />For each enabled TopologyAwareSchedBackend, the operator checks whether an entry<br />for that backend exists in this list:<br />- If absent: the operator auto-creates and manages the backend's topology resource.<br />- If present: the named resource is assumed to be externally managed; the operator<br />  compares its levels and reports any mismatch via the SchedulerTopologyDrift condition. |  |  |
 
 
-#### ClusterTopologyStatus
+#### ClusterTopologyBindingStatus
 
 
 
-ClusterTopologyStatus defines the observed state of ClusterTopology.
+ClusterTopologyBindingStatus defines the observed state of ClusterTopologyBinding.
 
 
 
 _Appears in:_
-- [ClusterTopology](#clustertopology)
+- [ClusterTopologyBinding](#clustertopologybinding)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `observedGeneration` _integer_ | ObservedGeneration is the most recent generation observed by the controller. |  |  |
-| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#condition-v1-meta) array_ | Conditions represents the latest available observations of the ClusterTopology. |  |  |
-| `schedulerTopologyStatuses` _[SchedulerTopologyStatus](#schedulertopologystatus) array_ | SchedulerTopologyStatuses reports the sync state between this ClusterTopology<br />and each topology-aware scheduler backend's topology resource. |  |  |
+| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#condition-v1-meta) array_ | Conditions represents the latest available observations of the ClusterTopologyBinding. |  |  |
+| `schedulerTopologyStatuses` _[SchedulerTopologyStatus](#schedulertopologystatus) array_ | SchedulerTopologyStatuses reports the sync state between this ClusterTopologyBinding<br />and each topology-aware scheduler backend's topology resource. |  |  |
 
 
 #### ErrorCode
@@ -767,16 +767,16 @@ _Appears in:_
 | `scope` _[ResourceSharingScope](#resourcesharingscope)_ | Scope determines the sharing granularity for the ResourceClaims created from<br />this template. |  | Enum: [AllReplicas PerReplica] <br /> |
 
 
-#### SchedulerTopologyReference
+#### SchedulerTopologyBinding
 
 
 
-SchedulerTopologyReference maps a ClusterTopology to a scheduler backend's topology resource.
+SchedulerTopologyBinding maps a ClusterTopologyBinding to a scheduler backend's topology resource.
 
 
 
 _Appears in:_
-- [ClusterTopologySpec](#clustertopologyspec)
+- [ClusterTopologyBindingSpec](#clustertopologybindingspec)
 - [SchedulerTopologyStatus](#schedulertopologystatus)
 
 | Field | Description | Default | Validation |
@@ -794,13 +794,13 @@ SchedulerTopologyStatus reports the sync state of a scheduler backend's topology
 
 
 _Appears in:_
-- [ClusterTopologyStatus](#clustertopologystatus)
+- [ClusterTopologyBindingStatus](#clustertopologybindingstatus)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `schedulerName` _string_ | SchedulerName is the name of the scheduler backend (e.g., "kai-scheduler"). |  | Required: \{\} <br /> |
 | `topologyReference` _string_ | TopologyReference is the name of the scheduler backend's topology resource. |  | Required: \{\} <br /> |
-| `inSync` _boolean_ | InSync is true when the scheduler backend topology levels match the ClusterTopology levels. |  |  |
+| `inSync` _boolean_ | InSync is true when the scheduler backend topology levels match the ClusterTopologyBinding levels. |  |  |
 | `schedulerBackendTopologyObservedGeneration` _integer_ | SchedulerBackendTopologyObservedGeneration is the generation of the backend topology<br />resource that was last compared. Zero if the resource was not found. |  |  |
 | `message` _string_ | Message provides detail when InSync is false. |  |  |
 
@@ -820,8 +820,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `topologyName` _string_ | TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.<br />If topologyConstraint is set, topologyName and packDomain must both be specified.<br />Immutable after creation. |  |  |
-| `packDomain` _[TopologyDomain](#topologydomain)_ | PackDomain specifies the topology domain for grouping replicas.<br />Controls placement constraint for EACH individual replica instance.<br />Must reference a domain in the topology levels defined in the ClusterTopology CR name as set in TopologyName<br />Example: "rack" means each replica independently placed within one rack.<br />Note: Does NOT constrain all replicas to the same rack together.<br />Different replicas can be in different topology domains. |  | MaxLength: 63 <br />MinLength: 1 <br />Pattern: `^[a-z][a-z0-9-]*$` <br /> |
+| `topologyName` _string_ | TopologyName is the name of the ClusterTopologyBinding resource to use for topology-aware scheduling.<br />If topologyConstraint is set, topologyName and packDomain must both be specified.<br />Immutable after creation. |  |  |
+| `packDomain` _[TopologyDomain](#topologydomain)_ | PackDomain specifies the topology domain for grouping replicas.<br />Controls placement constraint for EACH individual replica instance.<br />Must reference a domain in the topology levels defined in the ClusterTopologyBinding CR name as set in TopologyName<br />Example: "rack" means each replica independently placed within one rack.<br />Note: Does NOT constrain all replicas to the same rack together.<br />Different replicas can be in different topology domains. |  | MaxLength: 63 <br />MinLength: 1 <br />Pattern: `^[a-z][a-z0-9-]*$` <br /> |
 
 
 #### TopologyDomain
@@ -861,7 +861,7 @@ allowing workload operators a consistent way to reference topology levels when d
 
 
 _Appears in:_
-- [ClusterTopologySpec](#clustertopologyspec)
+- [ClusterTopologyBindingSpec](#clustertopologybindingspec)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |

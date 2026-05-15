@@ -25,24 +25,24 @@ import (
 	cache "k8s.io/client-go/tools/cache"
 )
 
-// ClusterTopologyLister helps list ClusterTopologies.
+// ClusterTopologyBindingLister helps list ClusterTopologyBindings.
 // All objects returned here must be treated as read-only.
-type ClusterTopologyLister interface {
-	// List lists all ClusterTopologies in the indexer.
+type ClusterTopologyBindingLister interface {
+	// List lists all ClusterTopologyBindings in the indexer.
 	// Objects returned here must be treated as read-only.
-	List(selector labels.Selector) (ret []*corev1alpha1.ClusterTopology, err error)
-	// Get retrieves the ClusterTopology from the index for a given name.
+	List(selector labels.Selector) (ret []*corev1alpha1.ClusterTopologyBinding, err error)
+	// Get retrieves the ClusterTopologyBinding from the index for a given name.
 	// Objects returned here must be treated as read-only.
-	Get(name string) (*corev1alpha1.ClusterTopology, error)
-	ClusterTopologyListerExpansion
+	Get(name string) (*corev1alpha1.ClusterTopologyBinding, error)
+	ClusterTopologyBindingListerExpansion
 }
 
-// clusterTopologyLister implements the ClusterTopologyLister interface.
-type clusterTopologyLister struct {
-	listers.ResourceIndexer[*corev1alpha1.ClusterTopology]
+// clusterTopologyBindingLister implements the ClusterTopologyBindingLister interface.
+type clusterTopologyBindingLister struct {
+	listers.ResourceIndexer[*corev1alpha1.ClusterTopologyBinding]
 }
 
-// NewClusterTopologyLister returns a new ClusterTopologyLister.
-func NewClusterTopologyLister(indexer cache.Indexer) ClusterTopologyLister {
-	return &clusterTopologyLister{listers.New[*corev1alpha1.ClusterTopology](indexer, corev1alpha1.Resource("clustertopology"))}
+// NewClusterTopologyBindingLister returns a new ClusterTopologyBindingLister.
+func NewClusterTopologyBindingLister(indexer cache.Indexer) ClusterTopologyBindingLister {
+	return &clusterTopologyBindingLister{listers.New[*corev1alpha1.ClusterTopologyBinding](indexer, corev1alpha1.Resource("clustertopologybinding"))}
 }

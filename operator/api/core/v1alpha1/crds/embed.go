@@ -39,7 +39,7 @@ func PodCliqueSetCRD() string {
 	return podCliqueSetCRD
 }
 
-// ClusterTopologyCRD returns the ClusterTopology CRD
+// ClusterTopologyCRD returns the ClusterTopologyBinding CRD
 func ClusterTopologyCRD() string {
 	return clusterTopologyCRD
 }

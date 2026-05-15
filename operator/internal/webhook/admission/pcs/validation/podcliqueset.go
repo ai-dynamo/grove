@@ -714,7 +714,7 @@ func (v *pcsValidator) validateTopologyConstraintsUpdate(oldPCS *grovecorev1alph
 	return immutabilityValidator.validateUpdate(oldPCS)
 }
 
-// resolveTopologyDomains resolves the ordered list of topology domains from the ClusterTopology
+// resolveTopologyDomains resolves the ordered list of topology domains from the ClusterTopologyBinding
 // referenced by the PCS's topologyName. Returns nil domains (no validation) if no topology constraints exist.
 func (v *pcsValidator) resolveTopologyDomains(ctx context.Context) ([]string, field.ErrorList) {
 	// No constraints at all — nothing to validate.
@@ -744,15 +744,15 @@ func (v *pcsValidator) resolveTopologyDomains(ctx context.Context) ([]string, fi
 
 	fldPath := field.NewPath("spec", "template", "topologyConstraint", "topologyName")
 
-	// Fetch the referenced ClusterTopology.
+	// Fetch the referenced ClusterTopologyBinding.
 	levels, err := clustertopology.GetClusterTopologyLevels(ctx, v.client, topologyName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, field.ErrorList{field.Invalid(fldPath, topologyName,
-				fmt.Sprintf("ClusterTopology %q not found", topologyName))}
+				fmt.Sprintf("ClusterTopologyBinding %q not found", topologyName))}
 		}
 		return nil, field.ErrorList{field.InternalError(fldPath,
-			fmt.Errorf("failed to fetch ClusterTopology %q: %w", topologyName, err))}
+			fmt.Errorf("failed to fetch ClusterTopologyBinding %q: %w", topologyName, err))}
 	}
 
 	domains := make([]string, len(levels))

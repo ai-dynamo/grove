@@ -46,14 +46,14 @@ func (b *schedulerBackend) TopologyGVR() schema.GroupVersionResource {
 	}
 }
 
-// TopologyResourceName returns the name of the KAI Topology resource for the given ClusterTopology.
-// KAI topology resources are always named after their ClusterTopology.
-func (b *schedulerBackend) TopologyResourceName(ct *grovecorev1alpha1.ClusterTopology) string {
+// TopologyResourceName returns the name of the KAI Topology resource for the given ClusterTopologyBinding.
+// KAI topology resources are always named after their ClusterTopologyBinding.
+func (b *schedulerBackend) TopologyResourceName(ct *grovecorev1alpha1.ClusterTopologyBinding) string {
 	return ct.Name
 }
 
-// SyncTopology creates or updates the KAI Topology resource for the given ClusterTopology.
-func (b *schedulerBackend) SyncTopology(ctx context.Context, k8sClient client.Client, ct *grovecorev1alpha1.ClusterTopology) error {
+// SyncTopology creates or updates the KAI Topology resource for the given ClusterTopologyBinding.
+func (b *schedulerBackend) SyncTopology(ctx context.Context, k8sClient client.Client, ct *grovecorev1alpha1.ClusterTopologyBinding) error {
 	if k8sClient == nil {
 		k8sClient = b.client
 	}
@@ -76,9 +76,9 @@ func (b *schedulerBackend) SyncTopology(ctx context.Context, k8sClient client.Cl
 		return fmt.Errorf("failed to get KAI Topology %s: %w", ct.Name, err)
 	}
 
-	// If the existing KAI topology does not have passed in ClusterTopology as owner, then error out.
+	// If the existing KAI topology does not have passed in ClusterTopologyBinding as owner, then error out.
 	if !metav1.IsControlledBy(existingTopology, ct) {
-		return fmt.Errorf("KAI Topology %s is not owned by ClusterTopology %s. It is required that KAI Topology by this name is created by Grove operator and has ClusterTopology set as its owner", ct.Name, ct.Name)
+		return fmt.Errorf("KAI Topology %s is not owned by ClusterTopologyBinding %s. It is required that KAI Topology by this name is created by Grove operator and has ClusterTopologyBinding set as its owner", ct.Name, ct.Name)
 	}
 
 	if isKAITopologyChanged(existingTopology, desiredTopology) {
@@ -96,11 +96,11 @@ func (b *schedulerBackend) SyncTopology(ctx context.Context, k8sClient client.Cl
 }
 
 // OnTopologyDelete is a no-op for KAI; the OwnerReference cascade handles deletion.
-func (b *schedulerBackend) OnTopologyDelete(_ context.Context, _ client.Client, _ *grovecorev1alpha1.ClusterTopology) error {
+func (b *schedulerBackend) OnTopologyDelete(_ context.Context, _ client.Client, _ *grovecorev1alpha1.ClusterTopologyBinding) error {
 	return nil
 }
 
-func buildKAITopology(name string, clusterTopology *grovecorev1alpha1.ClusterTopology, scheme *runtime.Scheme) (*kaitopologyv1alpha1.Topology, error) {
+func buildKAITopology(name string, clusterTopology *grovecorev1alpha1.ClusterTopologyBinding, scheme *runtime.Scheme) (*kaitopologyv1alpha1.Topology, error) {
 	kaiTopologyLevels := lo.Map(clusterTopology.Spec.Levels, func(clusterTopologyLevel grovecorev1alpha1.TopologyLevel, _ int) kaitopologyv1alpha1.TopologyLevel {
 		return kaitopologyv1alpha1.TopologyLevel{
 			NodeLabel: clusterTopologyLevel.Key,
@@ -124,9 +124,9 @@ func isKAITopologyChanged(oldTopology, newTopology *kaitopologyv1alpha1.Topology
 	return !reflect.DeepEqual(oldTopology.Spec.Levels, newTopology.Spec.Levels)
 }
 
-// desiredKAITopologyLevels converts ClusterTopology levels to KAI topology levels.
+// desiredKAITopologyLevels converts ClusterTopologyBinding levels to KAI topology levels.
 // Used for drift comparison without constructing a full KAI Topology object with owner references.
-func desiredKAITopologyLevels(ct *grovecorev1alpha1.ClusterTopology) []kaitopologyv1alpha1.TopologyLevel {
+func desiredKAITopologyLevels(ct *grovecorev1alpha1.ClusterTopologyBinding) []kaitopologyv1alpha1.TopologyLevel {
 	return lo.Map(ct.Spec.Levels, func(level grovecorev1alpha1.TopologyLevel, _ int) kaitopologyv1alpha1.TopologyLevel {
 		return kaitopologyv1alpha1.TopologyLevel{
 			NodeLabel: level.Key,
@@ -134,8 +134,8 @@ func desiredKAITopologyLevels(ct *grovecorev1alpha1.ClusterTopology) []kaitopolo
 	})
 }
 
-// CheckTopologyDrift compares the named KAI Topology resource against the ClusterTopology levels.
-func (b *schedulerBackend) CheckTopologyDrift(ctx context.Context, ct *grovecorev1alpha1.ClusterTopology, ref grovecorev1alpha1.SchedulerTopologyReference) (bool, string, int64, error) {
+// CheckTopologyDrift compares the named KAI Topology resource against the ClusterTopologyBinding levels.
+func (b *schedulerBackend) CheckTopologyDrift(ctx context.Context, ct *grovecorev1alpha1.ClusterTopologyBinding, ref grovecorev1alpha1.SchedulerTopologyBinding) (bool, string, int64, error) {
 	existingTopology := &kaitopologyv1alpha1.Topology{}
 	if err := b.client.Get(ctx, client.ObjectKey{Name: ref.TopologyReference}, existingTopology); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -145,7 +145,7 @@ func (b *schedulerBackend) CheckTopologyDrift(ctx context.Context, ct *grovecore
 	}
 	desired := desiredKAITopologyLevels(ct)
 	if !reflect.DeepEqual(existingTopology.Spec.Levels, desired) {
-		return false, "KAI Topology levels differ from ClusterTopology levels", existingTopology.Generation, nil
+		return false, "KAI Topology levels differ from ClusterTopologyBinding levels", existingTopology.Generation, nil
 	}
 	return true, "", existingTopology.Generation, nil
 }

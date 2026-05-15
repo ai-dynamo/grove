@@ -52,7 +52,7 @@ func (r *Reconciler) RegisterWithManager(mgr manager.Manager) error {
 		}).
 		For(&grovecorev1alpha1.PodCliqueSet{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Watches(
-			&grovecorev1alpha1.ClusterTopology{},
+			&grovecorev1alpha1.ClusterTopologyBinding{},
 			handler.EnqueueRequestsFromMapFunc(mapClusterTopologyToPodCliqueSets(r.client)),
 		).
 		Watches(
@@ -92,11 +92,11 @@ func mapPodCliqueScaleGroupToPodCliqueSet() handler.MapFunc {
 	}
 }
 
-// mapClusterTopologyToPodCliqueSets returns a function that maps ClusterTopology events to PodCliqueSets
-// whose explicit topology constraints resolve to this ClusterTopology.
+// mapClusterTopologyToPodCliqueSets returns a function that maps ClusterTopologyBinding events to PodCliqueSets
+// whose explicit topology constraints resolve to this ClusterTopologyBinding.
 func mapClusterTopologyToPodCliqueSets(cl client.Client) handler.MapFunc {
 	return func(ctx context.Context, obj client.Object) []reconcile.Request {
-		ct, ok := obj.(*grovecorev1alpha1.ClusterTopology)
+		ct, ok := obj.(*grovecorev1alpha1.ClusterTopologyBinding)
 		if !ok {
 			return nil
 		}

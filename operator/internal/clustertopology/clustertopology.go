@@ -28,20 +28,20 @@ import (
 )
 
 // SynchronizeTopology synchronizes scheduler-specific topology resources at operator startup.
-// Lists all existing ClusterTopology resources and ensures backend topologies exist for each.
+// Lists all existing ClusterTopologyBinding resources and ensures backend topologies exist for each.
 // Called before controllers start to avoid races with PCS reconciliation.
 func SynchronizeTopology(ctx context.Context, cl client.Client, logger logr.Logger, backends map[string]scheduler.TopologyAwareBackend) error {
-	ctList := &grovecorev1alpha1.ClusterTopologyList{}
+	ctList := &grovecorev1alpha1.ClusterTopologyBindingList{}
 	if err := cl.List(ctx, ctList); err != nil {
-		return fmt.Errorf("failed to list ClusterTopology resources: %w", err)
+		return fmt.Errorf("failed to list ClusterTopologyBinding resources: %w", err)
 	}
 	for i := range ctList.Items {
 		ct := &ctList.Items[i]
-		schedulerRefMap := BuildSchedulerReferenceMap(ct.Spec.SchedulerTopologyReferences)
+		schedulerRefMap := BuildSchedulerReferenceMap(ct.Spec.SchedulerTopologyBindings)
 
 		for backendName, tasBackend := range backends {
 			// Only sync grove-managed scheduler topology resources (not listed in schedulerTopologyReferences).
-			// Externally-managed scheduler topology resources are handled by the ClusterTopology controller via CheckTopologyDrift.
+			// Externally-managed scheduler topology resources are handled by the ClusterTopologyBinding controller via CheckTopologyDrift.
 			if _, isExternallyManaged := schedulerRefMap[backendName]; isExternallyManaged {
 				continue
 			}
@@ -49,14 +49,14 @@ func SynchronizeTopology(ctx context.Context, cl client.Client, logger logr.Logg
 				return fmt.Errorf("failed to sync topology %s for backend %s: %w", ct.Name, backendName, err)
 			}
 		}
-		logger.Info("Synchronized backend topologies for ClusterTopology", "name", ct.Name)
+		logger.Info("Synchronized backend topologies for ClusterTopologyBinding", "name", ct.Name)
 	}
 	return nil
 }
 
-// GetClusterTopologyLevels retrieves the TopologyLevels from the specified ClusterTopology resource.
+// GetClusterTopologyLevels retrieves the TopologyLevels from the specified ClusterTopologyBinding resource.
 func GetClusterTopologyLevels(ctx context.Context, cl client.Client, name string) ([]grovecorev1alpha1.TopologyLevel, error) {
-	clusterTopology := &grovecorev1alpha1.ClusterTopology{}
+	clusterTopology := &grovecorev1alpha1.ClusterTopologyBinding{}
 	if err := cl.Get(ctx, client.ObjectKey{Name: name}, clusterTopology); err != nil {
 		return nil, err
 	}
@@ -64,8 +64,8 @@ func GetClusterTopologyLevels(ctx context.Context, cl client.Client, name string
 }
 
 // BuildSchedulerReferenceMap builds a map from scheduler name to SchedulerTopologyReference pointer.
-func BuildSchedulerReferenceMap(refs []grovecorev1alpha1.SchedulerTopologyReference) map[string]*grovecorev1alpha1.SchedulerTopologyReference {
-	m := make(map[string]*grovecorev1alpha1.SchedulerTopologyReference, len(refs))
+func BuildSchedulerReferenceMap(refs []grovecorev1alpha1.SchedulerTopologyBinding) map[string]*grovecorev1alpha1.SchedulerTopologyBinding {
+	m := make(map[string]*grovecorev1alpha1.SchedulerTopologyBinding, len(refs))
 	for i := range refs {
 		m[refs[i].SchedulerName] = &refs[i]
 	}

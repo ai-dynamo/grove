@@ -34,7 +34,7 @@ type topologyConstraintsValidator struct {
 	// tasEnabled indicates whether Topology Aware Scheduling is enabled for the cluster.
 	tasEnabled bool
 	// clusterTopologyDomains is a list of topology domains configured for the cluster.
-	// This is taken from the ClusterTopology resource which is assumed to have a sorted list of levels.
+	// This is taken from the ClusterTopologyBinding resource which is assumed to have a sorted list of levels.
 	clusterTopologyDomains []string
 }
 

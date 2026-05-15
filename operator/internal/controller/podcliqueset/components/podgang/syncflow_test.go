@@ -1590,11 +1590,11 @@ func makePCSWithTopology(ns, name string, topologyName string) *grovecorev1alpha
 	return pcs
 }
 
-// makeClusterTopologyWithLevels creates a ClusterTopology with the given levels.
-func makeClusterTopologyWithLevels(name string, levels []grovecorev1alpha1.TopologyLevel) *grovecorev1alpha1.ClusterTopology {
-	return &grovecorev1alpha1.ClusterTopology{
+// makeClusterTopologyWithLevels creates a ClusterTopologyBinding with the given levels.
+func makeClusterTopologyWithLevels(name string, levels []grovecorev1alpha1.TopologyLevel) *grovecorev1alpha1.ClusterTopologyBinding {
+	return &grovecorev1alpha1.ClusterTopologyBinding{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec:       grovecorev1alpha1.ClusterTopologySpec{Levels: levels},
+		Spec:       grovecorev1alpha1.ClusterTopologyBindingSpec{Levels: levels},
 	}
 }
 
@@ -1764,7 +1764,7 @@ func TestCreateOrUpdatePodGangs_ClearsStaleTopologyStateOnExistingPodGang(t *tes
 		wantTopologyConstraint bool
 	}{
 		{
-			name: "stale ClusterTopology domain removes existing PodGang topology metadata",
+			name: "stale ClusterTopologyBinding domain removes existing PodGang topology metadata",
 			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
 				return makePCSWithTopology(ns, pcsName, "my-topology")
 			},
@@ -1792,7 +1792,7 @@ func TestCreateOrUpdatePodGangs_ClearsStaleTopologyStateOnExistingPodGang(t *tes
 			wantTopologyConstraint: false,
 		},
 		{
-			name: "missing ClusterTopology removes stale topology metadata from existing PodGang",
+			name: "missing ClusterTopologyBinding removes stale topology metadata from existing PodGang",
 			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
 				return makePCSWithTopology(ns, pcsName, "missing-topology")
 			},

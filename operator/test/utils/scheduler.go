@@ -130,21 +130,21 @@ func (s *FakeTopologyAwareBackend) TopologyGVR() schema.GroupVersionResource {
 }
 
 // TopologyResourceName returns an empty string for the fake topology-aware backend.
-func (s *FakeTopologyAwareBackend) TopologyResourceName(_ *grovecorev1alpha1.ClusterTopology) string {
+func (s *FakeTopologyAwareBackend) TopologyResourceName(_ *grovecorev1alpha1.ClusterTopologyBinding) string {
 	return ""
 }
 
 // SyncTopology is a no-op for the fake topology-aware backend.
-func (s *FakeTopologyAwareBackend) SyncTopology(_ context.Context, _ client.Client, _ *grovecorev1alpha1.ClusterTopology) error {
+func (s *FakeTopologyAwareBackend) SyncTopology(_ context.Context, _ client.Client, _ *grovecorev1alpha1.ClusterTopologyBinding) error {
 	return nil
 }
 
 // OnTopologyDelete is a no-op for the fake topology-aware backend.
-func (s *FakeTopologyAwareBackend) OnTopologyDelete(_ context.Context, _ client.Client, _ *grovecorev1alpha1.ClusterTopology) error {
+func (s *FakeTopologyAwareBackend) OnTopologyDelete(_ context.Context, _ client.Client, _ *grovecorev1alpha1.ClusterTopologyBinding) error {
 	return nil
 }
 
 // CheckTopologyDrift is a no-op for the fake topology-aware backend.
-func (s *FakeTopologyAwareBackend) CheckTopologyDrift(_ context.Context, _ *grovecorev1alpha1.ClusterTopology, _ grovecorev1alpha1.SchedulerTopologyReference) (bool, string, int64, error) {
+func (s *FakeTopologyAwareBackend) CheckTopologyDrift(_ context.Context, _ *grovecorev1alpha1.ClusterTopologyBinding, _ grovecorev1alpha1.SchedulerTopologyBinding) (bool, string, int64, error) {
 	return true, "", 0, nil
 }

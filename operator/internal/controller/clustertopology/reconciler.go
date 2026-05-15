@@ -37,7 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// Reconciler reconciles ClusterTopology resources by synchronizing
+// Reconciler reconciles ClusterTopologyBinding resources by synchronizing
 // scheduler backend topology resources and reporting drift status.
 type Reconciler struct {
 	client.Client
@@ -45,7 +45,7 @@ type Reconciler struct {
 	recorder    record.EventRecorder
 }
 
-// NewReconciler creates a new ClusterTopology reconciler.
+// NewReconciler creates a new ClusterTopologyBinding reconciler.
 // The backends are taken from schedRegistry, populated at operator startup.
 func NewReconciler(mgr ctrl.Manager, schedRegistry scheduler.Registry) *Reconciler {
 	return &Reconciler{
@@ -55,11 +55,11 @@ func NewReconciler(mgr ctrl.Manager, schedRegistry scheduler.Registry) *Reconcil
 	}
 }
 
-// Reconcile reconciles a ClusterTopology resource.
+// Reconcile reconciles a ClusterTopologyBinding resource.
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("clusterTopology", req.Name)
 
-	ct := &grovecorev1alpha1.ClusterTopology{}
+	ct := &grovecorev1alpha1.ClusterTopologyBinding{}
 	if err := r.Get(ctx, req.NamespacedName, ct); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -68,7 +68,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	var reconcileErr error
 	var topologyNotFound bool
 
-	schedulerRefMap := ctutils.BuildSchedulerReferenceMap(ct.Spec.SchedulerTopologyReferences)
+	schedulerRefMap := ctutils.BuildSchedulerReferenceMap(ct.Spec.SchedulerTopologyBindings)
 
 	for _, backendName := range sortedTASBackendNames(r.tasBackends) {
 		tasBackend := r.tasBackends[backendName]
@@ -79,7 +79,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			if err := tasBackend.SyncTopology(ctx, nil, ct); err != nil {
 				reconcileErr = errors.Join(reconcileErr, err)
 				statuses = append(statuses, grovecorev1alpha1.SchedulerTopologyStatus{
-					SchedulerTopologyReference: grovecorev1alpha1.SchedulerTopologyReference{
+					SchedulerTopologyBinding: grovecorev1alpha1.SchedulerTopologyBinding{
 						SchedulerName:     backendName,
 						TopologyReference: tasBackend.TopologyResourceName(ct),
 					},
@@ -89,7 +89,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 				logger.Error(err, "Failed to sync topology for backend", "backend", backendName)
 			} else {
 				statuses = append(statuses, grovecorev1alpha1.SchedulerTopologyStatus{
-					SchedulerTopologyReference: grovecorev1alpha1.SchedulerTopologyReference{
+					SchedulerTopologyBinding: grovecorev1alpha1.SchedulerTopologyBinding{
 						SchedulerName:     backendName,
 						TopologyReference: tasBackend.TopologyResourceName(ct),
 					},
@@ -105,7 +105,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 				logger.Error(err, "Failed to check topology drift for backend", "backend", backendName)
 			}
 			statuses = append(statuses, grovecorev1alpha1.SchedulerTopologyStatus{
-				SchedulerTopologyReference: grovecorev1alpha1.SchedulerTopologyReference{
+				SchedulerTopologyBinding: grovecorev1alpha1.SchedulerTopologyBinding{
 					SchedulerName:     backendName,
 					TopologyReference: ref.TopologyReference,
 				},
@@ -116,13 +116,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 	}
 
-	for _, ref := range ct.Spec.SchedulerTopologyReferences {
+	for _, ref := range ct.Spec.SchedulerTopologyBindings {
 		if _, ok := r.tasBackends[ref.SchedulerName]; !ok {
 			topologyNotFound = true
 			statuses = append(statuses, grovecorev1alpha1.SchedulerTopologyStatus{
-				SchedulerTopologyReference: ref,
-				InSync:                     false,
-				Message:                    fmt.Sprintf("scheduler backend %q is not available for topology management", ref.SchedulerName),
+				SchedulerTopologyBinding: ref,
+				InSync:                   false,
+				Message:                  fmt.Sprintf("scheduler backend %q is not available for topology management", ref.SchedulerName),
 			})
 		}
 	}
@@ -140,14 +140,14 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	r.emitDriftTransitionEvent(ct, prevStatus, newCondition)
 
 	if err := r.Status().Update(ctx, ct); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to update ClusterTopology status: %w", err)
+		return ctrl.Result{}, fmt.Errorf("failed to update ClusterTopologyBinding status: %w", err)
 	}
 	return ctrl.Result{}, reconcileErr
 }
 
-// setSchedulerTopologyDriftCondition sets the SchedulerTopologyDrift condition on the ClusterTopology
+// setSchedulerTopologyDriftCondition sets the SchedulerTopologyDrift condition on the ClusterTopologyBinding
 // based on the aggregated scheduler topology statuses.
-func setSchedulerTopologyDriftCondition(ct *grovecorev1alpha1.ClusterTopology, statuses []grovecorev1alpha1.SchedulerTopologyStatus, topologyNotFound bool) {
+func setSchedulerTopologyDriftCondition(ct *grovecorev1alpha1.ClusterTopologyBinding, statuses []grovecorev1alpha1.SchedulerTopologyStatus, topologyNotFound bool) {
 	if len(statuses) == 0 {
 		meta.RemoveStatusCondition(&ct.Status.Conditions, apicommonconstants.ConditionSchedulerTopologyDrift)
 		return
@@ -193,7 +193,7 @@ func setSchedulerTopologyDriftCondition(ct *grovecorev1alpha1.ClusterTopology, s
 
 // emitDriftTransitionEvent emits a Kubernetes event when the SchedulerTopologyDrift
 // condition transitions between statuses.
-func (r *Reconciler) emitDriftTransitionEvent(ct *grovecorev1alpha1.ClusterTopology, prevStatus metav1.ConditionStatus, next *metav1.Condition) {
+func (r *Reconciler) emitDriftTransitionEvent(ct *grovecorev1alpha1.ClusterTopologyBinding, prevStatus metav1.ConditionStatus, next *metav1.Condition) {
 	if next == nil || prevStatus == next.Status {
 		return
 	}

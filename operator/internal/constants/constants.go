@@ -102,7 +102,7 @@ const (
 	ReasonPodCliqueSetReplicaDeleteFailed = "PodCliqueSetReplicaDeleteFailed"
 )
 
-// constants for ClusterTopology lifecycle events
+// constants for ClusterTopologyBinding lifecycle events
 const (
 	// ReasonTopologyInSync is an event reason when all scheduler backend topologies return to in-sync.
 	ReasonTopologyInSync = "TopologyInSync"

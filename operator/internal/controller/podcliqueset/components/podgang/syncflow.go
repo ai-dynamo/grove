@@ -85,7 +85,7 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs 
 						fmt.Sprintf("failed to get cluster topology levels for %q", topologyName))
 				}
 				sc.logger.Info(
-					"ClusterTopology not found while preparing PodGang sync; continuing without translated topology constraints",
+					"ClusterTopologyBinding not found while preparing PodGang sync; continuing without translated topology constraints",
 					"pcs", pcsObjectKey,
 					"topologyName", topologyName,
 				)
@@ -361,7 +361,7 @@ func createTopologyPackConstraint(sc *syncContext, nsName types.NamespacedName, 
 		return topologyLevel.Domain == requiredTopologyConstraint.PackDomain
 	})
 	if !found {
-		// This can only happen if the ClusterTopology CR has been updated and no longer contains a topology level
+		// This can only happen if the ClusterTopologyBinding CR has been updated and no longer contains a topology level
 		// that is being referenced by the resource's TopologyConstraint.
 		// In the current version it's been decided to log this occurrence and skip setting the required constraint which is equivalent
 		// to nullifying the required constraint.

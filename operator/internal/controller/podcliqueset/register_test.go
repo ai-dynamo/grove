@@ -44,7 +44,7 @@ func TestMapClusterTopologyToPodCliqueSets(t *testing.T) {
 		return pcs
 	}
 
-	ct := &grovecorev1alpha1.ClusterTopology{ObjectMeta: metav1.ObjectMeta{Name: "selected-topology"}}
+	ct := &grovecorev1alpha1.ClusterTopologyBinding{ObjectMeta: metav1.ObjectMeta{Name: "selected-topology"}}
 	pcsA := makePCS("default", "pcs-a", func(pcs *grovecorev1alpha1.PodCliqueSet) {
 		pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
 			TopologyName: "selected-topology",

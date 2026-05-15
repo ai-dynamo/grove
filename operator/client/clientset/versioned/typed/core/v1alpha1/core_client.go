@@ -28,7 +28,7 @@ import (
 
 type GroveV1alpha1Interface interface {
 	RESTClient() rest.Interface
-	ClusterTopologiesGetter
+	ClusterTopologyBindingsGetter
 	PodCliquesGetter
 	PodCliqueScalingGroupsGetter
 	PodCliqueSetsGetter
@@ -39,8 +39,8 @@ type GroveV1alpha1Client struct {
 	restClient rest.Interface
 }
 
-func (c *GroveV1alpha1Client) ClusterTopologies() ClusterTopologyInterface {
-	return newClusterTopologies(c)
+func (c *GroveV1alpha1Client) ClusterTopologyBindings() ClusterTopologyBindingInterface {
+	return newClusterTopologyBindings(c)
 }
 
 func (c *GroveV1alpha1Client) PodCliques(namespace string) PodCliqueInterface {

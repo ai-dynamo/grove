@@ -4,22 +4,23 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.17.3
-  name: clustertopologies.grove.io
+  name: clustertopologybindings.grove.io
 spec:
   group: grove.io
   names:
     kind: ClusterTopologyBinding
-    listKind: ClusterTopologyList
-    plural: clustertopologies
+    listKind: ClusterTopologyBindingList
+    plural: clustertopologybindings
     shortNames:
     - ct
-    singular: clustertopology
+    singular: clustertopologybinding
   scope: Cluster
   versions:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: ClusterTopologyBinding defines the topology hierarchy for the cluster.
+        description: ClusterTopologyBinding defines the topology hierarchy for the
+          cluster.
         properties:
           apiVersion:
             description: |-
@@ -73,17 +74,17 @@ spec:
                   type: object
                 minItems: 1
                 type: array
-              schedulerTopologyReferences:
+              schedulerTopologyBindings:
                 description: |-
-                  SchedulerTopologyReferences controls per-backend topology resource management.
+                  SchedulerTopologyBindings controls per-backend topology resource management.
                   For each enabled TopologyAwareSchedBackend, the operator checks whether an entry
                   for that backend exists in this list:
                   - If absent: the operator auto-creates and manages the backend's topology resource.
                   - If present: the named resource is assumed to be externally managed; the operator
                     compares its levels and reports any mismatch via the SchedulerTopologyDrift condition.
                 items:
-                  description: SchedulerTopologyReference maps a ClusterTopologyBinding to
-                    a scheduler backend's topology resource.
+                  description: SchedulerTopologyBinding maps a ClusterTopologyBinding
+                    to a scheduler backend's topology resource.
                   properties:
                     schedulerName:
                       description: SchedulerName is the name of the scheduler backend

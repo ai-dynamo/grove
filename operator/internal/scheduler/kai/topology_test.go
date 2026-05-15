@@ -57,19 +57,19 @@ func defaultTopologyLevels() []grovecorev1alpha1.TopologyLevel {
 	}
 }
 
-func createTestClusterTopology(name string, levels []grovecorev1alpha1.TopologyLevel) *grovecorev1alpha1.ClusterTopology {
-	return &grovecorev1alpha1.ClusterTopology{
+func createTestClusterTopology(name string, levels []grovecorev1alpha1.TopologyLevel) *grovecorev1alpha1.ClusterTopologyBinding {
+	return &grovecorev1alpha1.ClusterTopologyBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 			UID:  uuid.NewUUID(),
 		},
-		Spec: grovecorev1alpha1.ClusterTopologySpec{
+		Spec: grovecorev1alpha1.ClusterTopologyBindingSpec{
 			Levels: levels,
 		},
 	}
 }
 
-func createTestKAITopology(levels []kaitopologyv1alpha1.TopologyLevel, owner *grovecorev1alpha1.ClusterTopology) *kaitopologyv1alpha1.Topology {
+func createTestKAITopology(levels []kaitopologyv1alpha1.TopologyLevel, owner *grovecorev1alpha1.ClusterTopologyBinding) *kaitopologyv1alpha1.Topology {
 	topology := &kaitopologyv1alpha1.Topology{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: topologyName,
@@ -225,26 +225,26 @@ func TestSyncTopologyErrors(t *testing.T) {
 	tests := []struct {
 		name            string
 		method          testutils.ClientMethod
-		existingObjects func(ct *grovecorev1alpha1.ClusterTopology) []client.Object
+		existingObjects func(ct *grovecorev1alpha1.ClusterTopologyBinding) []client.Object
 	}{
 		{
 			name:   "GetError",
 			method: testutils.ClientMethodGet,
-			existingObjects: func(ct *grovecorev1alpha1.ClusterTopology) []client.Object {
+			existingObjects: func(ct *grovecorev1alpha1.ClusterTopologyBinding) []client.Object {
 				return []client.Object{ct}
 			},
 		},
 		{
 			name:   "CreateError",
 			method: testutils.ClientMethodCreate,
-			existingObjects: func(ct *grovecorev1alpha1.ClusterTopology) []client.Object {
+			existingObjects: func(ct *grovecorev1alpha1.ClusterTopologyBinding) []client.Object {
 				return []client.Object{ct}
 			},
 		},
 		{
 			name:   "DeleteError",
 			method: testutils.ClientMethodDelete,
-			existingObjects: func(ct *grovecorev1alpha1.ClusterTopology) []client.Object {
+			existingObjects: func(ct *grovecorev1alpha1.ClusterTopologyBinding) []client.Object {
 				// Need existing KAI topology with different levels to trigger update path
 				existingKAI := createTestKAITopology([]kaitopologyv1alpha1.TopologyLevel{
 					{NodeLabel: "old-label"},
@@ -255,7 +255,7 @@ func TestSyncTopologyErrors(t *testing.T) {
 		{
 			name:   "CreateFailsDuringRecreate",
 			method: testutils.ClientMethodCreate,
-			existingObjects: func(ct *grovecorev1alpha1.ClusterTopology) []client.Object {
+			existingObjects: func(ct *grovecorev1alpha1.ClusterTopologyBinding) []client.Object {
 				// Need existing KAI topology with different levels to trigger update path
 				existingKAI := createTestKAITopology([]kaitopologyv1alpha1.TopologyLevel{
 					{NodeLabel: "kubernetes.io/hostname"},
@@ -296,7 +296,7 @@ func TestCheckTopologyDrift_InSync(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient([]client.Object{ct, existingKAITopology})
 	b := newTASBackend(cl)
 
-	ref := grovecorev1alpha1.SchedulerTopologyReference{
+	ref := grovecorev1alpha1.SchedulerTopologyBinding{
 		SchedulerName:     "kai-scheduler",
 		TopologyReference: topologyName,
 	}
@@ -320,7 +320,7 @@ func TestCheckTopologyDrift_Drift(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient([]client.Object{ct, existingKAITopology})
 	b := newTASBackend(cl)
 
-	ref := grovecorev1alpha1.SchedulerTopologyReference{
+	ref := grovecorev1alpha1.SchedulerTopologyBinding{
 		SchedulerName:     "kai-scheduler",
 		TopologyReference: topologyName,
 	}
@@ -339,7 +339,7 @@ func TestCheckTopologyDrift_NotFound(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient([]client.Object{ct})
 	b := newTASBackend(cl)
 
-	ref := grovecorev1alpha1.SchedulerTopologyReference{
+	ref := grovecorev1alpha1.SchedulerTopologyBinding{
 		SchedulerName:     "kai-scheduler",
 		TopologyReference: topologyName,
 	}
@@ -355,12 +355,12 @@ func TestCheckTopologyDriftErrors(t *testing.T) {
 	tests := []struct {
 		name            string
 		method          testutils.ClientMethod
-		existingObjects func(ct *grovecorev1alpha1.ClusterTopology) []client.Object
+		existingObjects func(ct *grovecorev1alpha1.ClusterTopologyBinding) []client.Object
 	}{
 		{
 			name:   "GetError",
 			method: testutils.ClientMethodGet,
-			existingObjects: func(ct *grovecorev1alpha1.ClusterTopology) []client.Object {
+			existingObjects: func(ct *grovecorev1alpha1.ClusterTopologyBinding) []client.Object {
 				return []client.Object{ct}
 			},
 		},
@@ -378,7 +378,7 @@ func TestCheckTopologyDriftErrors(t *testing.T) {
 				Build()
 			b := newTASBackend(cl)
 
-			ref := grovecorev1alpha1.SchedulerTopologyReference{
+			ref := grovecorev1alpha1.SchedulerTopologyBinding{
 				SchedulerName:     "kai-scheduler",
 				TopologyReference: topologyName,
 			}
@@ -394,12 +394,12 @@ func TestCheckTopologyDriftErrors(t *testing.T) {
 func TestBuildKAITopology(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	topologyLevels := defaultTopologyLevels()
-	ct := &grovecorev1alpha1.ClusterTopology{
+	ct := &grovecorev1alpha1.ClusterTopologyBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: topologyName,
 			UID:  uuid.NewUUID(),
 		},
-		Spec: grovecorev1alpha1.ClusterTopologySpec{
+		Spec: grovecorev1alpha1.ClusterTopologyBindingSpec{
 			Levels: topologyLevels,
 		},
 	}

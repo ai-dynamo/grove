@@ -59,7 +59,7 @@ type Backend interface {
 
 // TopologyAwareBackend is an optional interface that Backend
 // implementations may satisfy if they manage a scheduler-specific topology CRD.
-// The ClusterTopology controller type-asserts each registered backend to this
+// The ClusterTopologyBinding controller type-asserts each registered backend to this
 // interface at startup and calls these methods during reconciliation.
 type TopologyAwareBackend interface {
 	// TopologyGVR returns the GroupVersionResource of the topology CRD
@@ -68,30 +68,30 @@ type TopologyAwareBackend interface {
 	TopologyGVR() schema.GroupVersionResource
 
 	// TopologyResourceName returns the name of the backend-specific topology resource
-	// that corresponds to the given ClusterTopology. Called for auto-managed backends
+	// that corresponds to the given ClusterTopologyBinding. Called for auto-managed backends
 	// to populate SchedulerTopologyStatus.TopologyReference.
-	TopologyResourceName(ct *grovecorev1alpha1.ClusterTopology) string
+	TopologyResourceName(ct *grovecorev1alpha1.ClusterTopologyBinding) string
 
 	// SyncTopology creates or updates the scheduler-specific topology resource
-	// for the given ClusterTopology. Called for backends not listed in
-	// the ClusterTopology's schedulerTopologyReferences (auto-managed path).
+	// for the given ClusterTopologyBinding. Called for backends not listed in
+	// the ClusterTopologyBinding's schedulerTopologyReferences (auto-managed path).
 	// k8sClient may be a non-cached client for use before the manager cache
 	// is started. If nil, the backend falls back to its own client.
-	SyncTopology(ctx context.Context, k8sClient client.Client, ct *grovecorev1alpha1.ClusterTopology) error
+	SyncTopology(ctx context.Context, k8sClient client.Client, ct *grovecorev1alpha1.ClusterTopologyBinding) error
 
 	// OnTopologyDelete removes the scheduler-specific topology resource for
-	// the given ClusterTopology. Called on CT deletion (auto-managed path only).
+	// the given ClusterTopologyBinding. Called on CT deletion (auto-managed path only).
 	// k8sClient may be nil; if so, the backend falls back to its own client.
-	OnTopologyDelete(ctx context.Context, k8sClient client.Client, ct *grovecorev1alpha1.ClusterTopology) error
+	OnTopologyDelete(ctx context.Context, k8sClient client.Client, ct *grovecorev1alpha1.ClusterTopologyBinding) error
 
 	// CheckTopologyDrift compares the scheduler-specific topology resource named by
-	// ref.TopologyReference against the ClusterTopology's levels.
+	// ref.TopologyReference against the ClusterTopologyBinding's levels.
 	// Returns (inSync bool, message string, observedGeneration int64, error).
 	// Called for backends listed in schedulerTopologyReferences (externally-managed path).
 	CheckTopologyDrift(
 		ctx context.Context,
-		ct *grovecorev1alpha1.ClusterTopology,
-		ref grovecorev1alpha1.SchedulerTopologyReference,
+		ct *grovecorev1alpha1.ClusterTopologyBinding,
+		ref grovecorev1alpha1.SchedulerTopologyBinding,
 	) (bool, string, int64, error)
 }
 

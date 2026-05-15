@@ -408,7 +408,7 @@ func TestValidateUpdateTopologyNameImmutability(t *testing.T) {
 }
 
 func TestValidateHierarchyWithCustomDomains(t *testing.T) {
-	// Custom domains ordered broadest to narrowest in the ClusterTopology.
+	// Custom domains ordered broadest to narrowest in the ClusterTopologyBinding.
 	clusterDomains := []string{"datacenter", "rack", "gpu-module", "host"}
 
 	tests := []struct {
@@ -664,15 +664,15 @@ func TestResolveTopologyDomains(t *testing.T) {
 		setupClient            func() client.Client
 	}{
 		{
-			name: "Happy path: PCS has constraint and ClusterTopology exists",
+			name: "Happy path: PCS has constraint and ClusterTopologyBinding exists",
 			pcsConstraint: &grovecorev1alpha1.TopologyConstraint{
 				TopologyName: "my-topo",
 				PackDomain:   "zone",
 			},
 			clusterTopologyObjects: []client.Object{
-				&grovecorev1alpha1.ClusterTopology{
+				&grovecorev1alpha1.ClusterTopologyBinding{
 					ObjectMeta: v1.ObjectMeta{Name: "my-topo"},
-					Spec: grovecorev1alpha1.ClusterTopologySpec{
+					Spec: grovecorev1alpha1.ClusterTopologyBindingSpec{
 						Levels: []grovecorev1alpha1.TopologyLevel{
 							{Domain: "zone", Key: "topology.kubernetes.io/zone"},
 							{Domain: "host", Key: "kubernetes.io/hostname"},
@@ -698,9 +698,9 @@ func TestResolveTopologyDomains(t *testing.T) {
 				},
 			},
 			clusterTopologyObjects: []client.Object{
-				&grovecorev1alpha1.ClusterTopology{
+				&grovecorev1alpha1.ClusterTopologyBinding{
 					ObjectMeta: v1.ObjectMeta{Name: "my-topo"},
-					Spec: grovecorev1alpha1.ClusterTopologySpec{
+					Spec: grovecorev1alpha1.ClusterTopologyBindingSpec{
 						Levels: []grovecorev1alpha1.TopologyLevel{
 							{Domain: "zone", Key: "topology.kubernetes.io/zone"},
 							{Domain: "host", Key: "kubernetes.io/hostname"},
@@ -746,9 +746,9 @@ func TestResolveTopologyDomains(t *testing.T) {
 				},
 			},
 			clusterTopologyObjects: []client.Object{
-				&grovecorev1alpha1.ClusterTopology{
+				&grovecorev1alpha1.ClusterTopologyBinding{
 					ObjectMeta: v1.ObjectMeta{Name: "my-topo"},
-					Spec: grovecorev1alpha1.ClusterTopologySpec{
+					Spec: grovecorev1alpha1.ClusterTopologyBindingSpec{
 						Levels: []grovecorev1alpha1.TopologyLevel{
 							{Domain: "zone", Key: "topology.kubernetes.io/zone"},
 							{Domain: "host", Key: "kubernetes.io/hostname"},
@@ -796,7 +796,7 @@ func TestResolveTopologyDomains(t *testing.T) {
 			setupClient:            nil,
 		},
 		{
-			name: "CT not found: ClusterTopology referenced by topologyName does not exist",
+			name: "CT not found: ClusterTopologyBinding referenced by topologyName does not exist",
 			pcsConstraint: &grovecorev1alpha1.TopologyConstraint{
 				TopologyName: "missing-topo",
 				PackDomain:   "zone",
