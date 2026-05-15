@@ -19,8 +19,9 @@ spec:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: ClusterTopologyBinding defines the topology hierarchy for the
-          cluster.
+        description: |-
+          ClusterTopologyBinding defines Grove's source-of-truth topology hierarchy and how it
+          binds to topology resources used by topology-aware scheduler backends.
         properties:
           apiVersion:
             description: |-
@@ -40,18 +41,20 @@ spec:
           metadata:
             type: object
           spec:
-            description: Spec defines the topology hierarchy specification.
+            description: Spec defines the source-of-truth topology hierarchy and backend
+              binding configuration.
             properties:
               levels:
                 description: |-
-                  Levels is an ordered list of topology levels from broadest to narrowest scope.
-                  The order in this list defines the hierarchy (index 0 = broadest level).
+                  Levels is the source-of-truth ordered topology hierarchy, from broadest to
+                  narrowest scope, that Grove exposes to workloads and uses when reconciling
+                  backend-specific topology resources.
                   Uniqueness of domain and key is enforced by the ClusterTopologyBinding validating webhook.
                 items:
                   description: |-
-                    TopologyLevel defines a single level in the topology hierarchy.
-                    Maps a platform-agnostic domain to a platform-specific node label key,
-                    allowing workload operators a consistent way to reference topology levels when defining TopologyConstraint's.
+                    TopologyLevel defines one level in Grove's source-of-truth topology hierarchy.
+                    Each level maps a Grove topology domain to the node label key that a backend
+                    topology representation should use for that level.
                   properties:
                     domain:
                       description: Domain is a platform provider-agnostic level identifier.
@@ -76,23 +79,26 @@ spec:
                 type: array
               schedulerTopologyBindings:
                 description: |-
-                  SchedulerTopologyBindings controls per-backend topology resource management.
-                  For each enabled TopologyAwareSchedBackend, the operator checks whether an entry
-                  for that backend exists in this list:
-                  - If absent: the operator auto-creates and manages the backend's topology resource.
-                  - If present: the named resource is assumed to be externally managed; the operator
-                    compares its levels and reports any mismatch via the SchedulerTopologyDrift condition.
+                  SchedulerTopologyBindings declares how this ClusterTopologyBinding maps to
+                  each scheduler backend's topology resource.
+                  For each enabled TopologyAwareSchedBackend, the operator checks whether an
+                  entry for that backend exists in this list:
+                  - If absent: the operator creates and manages the backend topology resource from Levels.
+                  - If present: the named backend topology resource is treated as externally
+                    managed, and the operator only checks it for drift against Levels.
                 items:
-                  description: SchedulerTopologyBinding maps a ClusterTopologyBinding
-                    to a scheduler backend's topology resource.
+                  description: |-
+                    SchedulerTopologyBinding identifies the topology resource through which a
+                    scheduler backend is bound to this ClusterTopologyBinding.
                   properties:
                     schedulerName:
                       description: SchedulerName is the name of the scheduler backend
                         (e.g., "kai-scheduler").
                       type: string
                     topologyReference:
-                      description: TopologyReference is the name of the scheduler
-                        backend's topology resource.
+                      description: |-
+                        TopologyReference is the name of the backend-specific topology resource
+                        bound to this ClusterTopologyBinding.
                       type: string
                   required:
                   - schedulerName
@@ -103,7 +109,8 @@ spec:
             - levels
             type: object
           status:
-            description: Status defines the observed state of the ClusterTopologyBinding.
+            description: Status reports the observed state of backend topology bindings
+              derived from this resource.
             properties:
               conditions:
                 description: Conditions represents the latest available observations
@@ -170,11 +177,12 @@ spec:
                 type: integer
               schedulerTopologyStatuses:
                 description: |-
-                  SchedulerTopologyStatuses reports the sync state between this ClusterTopologyBinding
-                  and each topology-aware scheduler backend's topology resource.
+                  SchedulerTopologyStatuses reports whether each scheduler backend's topology
+                  resource is in sync with this ClusterTopologyBinding.
                 items:
-                  description: SchedulerTopologyStatus reports the sync state of a
-                    scheduler backend's topology resource.
+                  description: |-
+                    SchedulerTopologyStatus reports whether a scheduler backend's bound topology
+                    resource matches this ClusterTopologyBinding.
                   properties:
                     inSync:
                       description: InSync is true when the scheduler backend topology
@@ -194,8 +202,9 @@ spec:
                         (e.g., "kai-scheduler").
                       type: string
                     topologyReference:
-                      description: TopologyReference is the name of the scheduler
-                        backend's topology resource.
+                      description: |-
+                        TopologyReference is the name of the backend-specific topology resource
+                        bound to this ClusterTopologyBinding.
                       type: string
                   required:
                   - inSync

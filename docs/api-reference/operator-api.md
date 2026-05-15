@@ -58,7 +58,8 @@ _Appears in:_
 
 
 
-ClusterTopologyBinding defines the topology hierarchy for the cluster.
+ClusterTopologyBinding defines Grove's source-of-truth topology hierarchy and how it
+binds to topology resources used by topology-aware scheduler backends.
 
 
 
@@ -69,15 +70,15 @@ ClusterTopologyBinding defines the topology hierarchy for the cluster.
 | `apiVersion` _string_ | `grove.io/v1alpha1` | | |
 | `kind` _string_ | `ClusterTopologyBinding` | | |
 | `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
-| `spec` _[ClusterTopologyBindingSpec](#clustertopologybindingspec)_ | Spec defines the topology hierarchy specification. |  |  |
-| `status` _[ClusterTopologyBindingStatus](#clustertopologybindingstatus)_ | Status defines the observed state of the ClusterTopologyBinding. |  |  |
+| `spec` _[ClusterTopologyBindingSpec](#clustertopologybindingspec)_ | Spec defines the source-of-truth topology hierarchy and backend binding configuration. |  |  |
+| `status` _[ClusterTopologyBindingStatus](#clustertopologybindingstatus)_ | Status reports the observed state of backend topology bindings derived from this resource. |  |  |
 
 
 #### ClusterTopologyBindingSpec
 
 
 
-ClusterTopologyBindingSpec defines the topology hierarchy specification.
+ClusterTopologyBindingSpec defines the desired topology hierarchy and backend binding behavior.
 
 
 
@@ -86,15 +87,16 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `levels` _[TopologyLevel](#topologylevel) array_ | Levels is an ordered list of topology levels from broadest to narrowest scope.<br />The order in this list defines the hierarchy (index 0 = broadest level).<br />Uniqueness of domain and key is enforced by the ClusterTopologyBinding validating webhook. |  | MinItems: 1 <br /> |
-| `schedulerTopologyBindings` _[SchedulerTopologyBinding](#schedulertopologybinding) array_ | SchedulerTopologyBindings controls per-backend topology resource management.<br />For each enabled TopologyAwareSchedBackend, the operator checks whether an entry<br />for that backend exists in this list:<br />- If absent: the operator auto-creates and manages the backend's topology resource.<br />- If present: the named resource is assumed to be externally managed; the operator<br />  compares its levels and reports any mismatch via the SchedulerTopologyDrift condition. |  |  |
+| `levels` _[TopologyLevel](#topologylevel) array_ | Levels is the source-of-truth ordered topology hierarchy, from broadest to<br />narrowest scope, that Grove exposes to workloads and uses when reconciling<br />backend-specific topology resources.<br />Uniqueness of domain and key is enforced by the ClusterTopologyBinding validating webhook. |  | MinItems: 1 <br /> |
+| `schedulerTopologyBindings` _[SchedulerTopologyBinding](#schedulertopologybinding) array_ | SchedulerTopologyBindings declares how this ClusterTopologyBinding maps to<br />each scheduler backend's topology resource.<br />For each enabled TopologyAwareSchedBackend, the operator checks whether an<br />entry for that backend exists in this list:<br />- If absent: the operator creates and manages the backend topology resource from Levels.<br />- If present: the named backend topology resource is treated as externally<br />  managed, and the operator only checks it for drift against Levels. |  |  |
 
 
 #### ClusterTopologyBindingStatus
 
 
 
-ClusterTopologyBindingStatus defines the observed state of ClusterTopologyBinding.
+ClusterTopologyBindingStatus defines the observed state of backend topology bindings
+for this ClusterTopologyBinding.
 
 
 
@@ -105,7 +107,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `observedGeneration` _integer_ | ObservedGeneration is the most recent generation observed by the controller. |  |  |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#condition-v1-meta) array_ | Conditions represents the latest available observations of the ClusterTopologyBinding. |  |  |
-| `schedulerTopologyStatuses` _[SchedulerTopologyStatus](#schedulertopologystatus) array_ | SchedulerTopologyStatuses reports the sync state between this ClusterTopologyBinding<br />and each topology-aware scheduler backend's topology resource. |  |  |
+| `schedulerTopologyStatuses` _[SchedulerTopologyStatus](#schedulertopologystatus) array_ | SchedulerTopologyStatuses reports whether each scheduler backend's topology<br />resource is in sync with this ClusterTopologyBinding. |  |  |
 
 
 #### ErrorCode
@@ -771,7 +773,8 @@ _Appears in:_
 
 
 
-SchedulerTopologyBinding maps a ClusterTopologyBinding to a scheduler backend's topology resource.
+SchedulerTopologyBinding identifies the topology resource through which a
+scheduler backend is bound to this ClusterTopologyBinding.
 
 
 
@@ -782,14 +785,15 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `schedulerName` _string_ | SchedulerName is the name of the scheduler backend (e.g., "kai-scheduler"). |  | Required: \{\} <br /> |
-| `topologyReference` _string_ | TopologyReference is the name of the scheduler backend's topology resource. |  | Required: \{\} <br /> |
+| `topologyReference` _string_ | TopologyReference is the name of the backend-specific topology resource<br />bound to this ClusterTopologyBinding. |  | Required: \{\} <br /> |
 
 
 #### SchedulerTopologyStatus
 
 
 
-SchedulerTopologyStatus reports the sync state of a scheduler backend's topology resource.
+SchedulerTopologyStatus reports whether a scheduler backend's bound topology
+resource matches this ClusterTopologyBinding.
 
 
 
@@ -799,7 +803,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `schedulerName` _string_ | SchedulerName is the name of the scheduler backend (e.g., "kai-scheduler"). |  | Required: \{\} <br /> |
-| `topologyReference` _string_ | TopologyReference is the name of the scheduler backend's topology resource. |  | Required: \{\} <br /> |
+| `topologyReference` _string_ | TopologyReference is the name of the backend-specific topology resource<br />bound to this ClusterTopologyBinding. |  | Required: \{\} <br /> |
 | `inSync` _boolean_ | InSync is true when the scheduler backend topology levels match the ClusterTopologyBinding levels. |  |  |
 | `schedulerBackendTopologyObservedGeneration` _integer_ | SchedulerBackendTopologyObservedGeneration is the generation of the backend topology<br />resource that was last compared. Zero if the resource was not found. |  |  |
 | `message` _string_ | Message provides detail when InSync is false. |  |  |
@@ -828,7 +832,8 @@ _Appears in:_
 
 _Underlying type:_ _string_
 
-TopologyDomain represents a level in the cluster topology hierarchy.
+TopologyDomain is the Grove-facing identifier for a topology level in the
+source-of-truth hierarchy.
 
 _Validation:_
 - MaxLength: 63
@@ -854,9 +859,9 @@ _Appears in:_
 
 
 
-TopologyLevel defines a single level in the topology hierarchy.
-Maps a platform-agnostic domain to a platform-specific node label key,
-allowing workload operators a consistent way to reference topology levels when defining TopologyConstraint's.
+TopologyLevel defines one level in Grove's source-of-truth topology hierarchy.
+Each level maps a Grove topology domain to the node label key that a backend
+topology representation should use for that level.
 
 
 
