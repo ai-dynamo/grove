@@ -20,6 +20,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
+	"github.com/samber/lo"
 )
 
 // Reusable name-keyed views over the common Grove resource slices. Each function builds a
@@ -28,7 +29,7 @@ import (
 
 // PodCliqueByName builds a name-keyed map for O(1) PodClique lookups.
 func PodCliqueByName(pclqs []grovecorev1alpha1.PodClique) map[string]grovecorev1alpha1.PodClique {
-	return MapBy(pclqs, func(pclq grovecorev1alpha1.PodClique) (string, grovecorev1alpha1.PodClique) {
+	return lo.SliceToMap(pclqs, func(pclq grovecorev1alpha1.PodClique) (string, grovecorev1alpha1.PodClique) {
 		return pclq.Name, pclq
 	})
 }
@@ -42,14 +43,14 @@ func PodCliqueNameSet(pclqs []grovecorev1alpha1.PodClique) Set[string] {
 
 // PCSGByName builds a name-keyed map for O(1) PodCliqueScalingGroup lookups.
 func PCSGByName(pcsgs []grovecorev1alpha1.PodCliqueScalingGroup) map[string]grovecorev1alpha1.PodCliqueScalingGroup {
-	return MapBy(pcsgs, func(pcsg grovecorev1alpha1.PodCliqueScalingGroup) (string, grovecorev1alpha1.PodCliqueScalingGroup) {
+	return lo.SliceToMap(pcsgs, func(pcsg grovecorev1alpha1.PodCliqueScalingGroup) (string, grovecorev1alpha1.PodCliqueScalingGroup) {
 		return pcsg.Name, pcsg
 	})
 }
 
 // PodGangByName builds a name-keyed map for O(1) PodGang lookups.
 func PodGangByName(podGangs []groveschedulerv1alpha1.PodGang) map[string]groveschedulerv1alpha1.PodGang {
-	return MapBy(podGangs, func(podGang groveschedulerv1alpha1.PodGang) (string, groveschedulerv1alpha1.PodGang) {
+	return lo.SliceToMap(podGangs, func(podGang groveschedulerv1alpha1.PodGang) (string, groveschedulerv1alpha1.PodGang) {
 		return podGang.Name, podGang
 	})
 }
