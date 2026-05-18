@@ -135,17 +135,13 @@ Example:
 # 1. Verify any old ClusterTopology instances that still exist
 kubectl get clustertopologies.grove.io
 
-# 2. Delete the old ClusterTopology instances
+# 2. Re-create any ClusterTopology resources you want to keep as
+#    ClusterTopologyBinding resources
+
+# 3. Delete the old ClusterTopology instances
 kubectl delete clustertopologies.grove.io --all
 
-# 3. Delete the old ClusterTopology CRD
-kubectl delete crd clustertopologies.grove.io
-```
-
-If no `ClusterTopology` instances exist in the cluster, delete the old CRD
-before upgrading:
-
-```bash
+# 4. Delete the old ClusterTopology CRD
 kubectl delete crd clustertopologies.grove.io
 ```
 
