@@ -70,4 +70,3 @@ func TestSetHas(t *testing.T) {
 		assert.False(t, zeroSet.Has(1))
 	})
 }
-
