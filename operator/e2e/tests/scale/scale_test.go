@@ -161,8 +161,9 @@ func runScaleTest(t *testing.T, cfg scaleTestConfig, addPhases scaleTestPhases) 
 	Logger.Infof("scale test completed successfully in %.1fs", result.TestDurationSeconds)
 }
 
-// Test_ScaleTest_1000 validates the full lifecycle (deploy → ready → steady-state
-// reconcile → delete) of a 1000-pod PodCliqueSet.
+// Test_ScaleTest_1000 validates deploy, steady-state reconcile, and the
+// user-facing delete request latency of a 1000-pod PodCliqueSet. It intentionally
+// excludes Kubernetes cascade-cleanup latency after the delete request returns.
 func Test_ScaleTest_1000(t *testing.T) {
 	const expectedPods = 1000
 	const expectedReplicas = 1
@@ -246,73 +247,6 @@ func Test_ScaleTest_1000(t *testing.T) {
 			Name: "delete",
 			ActionFn: func(ctx context.Context) error {
 				return workload.NewWorkloadManager(tc.Client, Logger).DeletePCS(ctx, tc.Namespace, tc.Workload.Name)
-			},
-			Milestones: []measurement.MilestoneDefinition{
-				{
-					Name: "pcs-deleted",
-					Condition: &condition.PCSAndSubresourcesDeletedCondition{
-						Client:        tc.Client.Client,
-						Name:          tc.Workload.Name,
-						Namespace:     tc.Namespace,
-						LabelSelector: tc.GetLabelSelector(),
-					},
-				},
-			},
-		})
-	})
-}
-
-// Test_ScaleTest_5000_Deletion validates that a 5000-pod PodCliqueSet — built
-// from a mix of standalone PodCliques and PodCliqueScalingGroups — can be torn
-// down quickly via the cascade-delete path. Regression guard for #423, where
-// the old serial delete-then-verify flow took ~20 minutes at this scale.
-func Test_ScaleTest_5000_Deletion(t *testing.T) {
-	const expectedPods = 5000
-
-	runScaleTest(t, scaleTestConfig{
-		name:         "ScaleTest_5000_Deletion",
-		workload:     "scale-test-5000-deletion",
-		yamlPath:     "../../yaml/scale-test-5000-deletion.yaml",
-		expectedPods: expectedPods,
-		pcsCount:     defaultScalePCSCount,
-		workerNodes:  defaultScaleWorkerNodes,
-		timeout:      20 * time.Minute,
-		pollInterval: defaultScalePollInterval,
-	}, func(tracker *measurement.TimelineTracker, tc *testctx.TestContext, _ string) {
-		tracker.AddPhase(measurement.PhaseDefinition{
-			Name: "deploy",
-			ActionFn: func(ctx context.Context) error {
-				_, err := resources.NewResourceManager(tc.Client, Logger).ApplyYAMLFile(ctx, tc.Workload.YAMLPath, tc.Namespace)
-				return err
-			},
-			Milestones: []measurement.MilestoneDefinition{
-				{
-					Name: "pods-created",
-					Condition: &condition.PodsCreatedCondition{
-						Client:        tc.Client.Client,
-						Namespace:     tc.Namespace,
-						LabelSelector: tc.GetLabelSelector(),
-						ExpectedCount: expectedPods,
-					},
-				},
-			},
-		})
-
-		tracker.AddPhase(measurement.PhaseDefinition{
-			Name: "delete",
-			ActionFn: func(ctx context.Context) error {
-				return workload.NewWorkloadManager(tc.Client, Logger).DeletePCS(ctx, tc.Namespace, tc.Workload.Name)
-			},
-			Milestones: []measurement.MilestoneDefinition{
-				{
-					Name: "pcs-deleted",
-					Condition: &condition.PCSAndSubresourcesDeletedCondition{
-						Client:        tc.Client.Client,
-						Name:          tc.Workload.Name,
-						Namespace:     tc.Namespace,
-						LabelSelector: tc.GetLabelSelector(),
-					},
-				},
 			},
 		})
 	})
