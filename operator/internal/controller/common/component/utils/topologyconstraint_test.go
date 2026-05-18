@@ -177,11 +177,29 @@ func TestResolveEffectiveTopologyNameForPodCliqueSet(t *testing.T) {
 			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
 				return makePCS(func(pcs *grovecorev1alpha1.PodCliqueSet) {
 					pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
-						PackDomain: grovecorev1alpha1.TopologyDomainHost,
+						TopologyName: "topo-a",
 					}
 				})
 			},
-			wantErr:    ErrTopologyNameMissing,
+			wantErr:    ErrPackDomainMissing,
+			wantHasAny: true,
+		},
+		{
+			name: "pcsg topology constraint without packDomain is rejected",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return makePCS(func(pcs *grovecorev1alpha1.PodCliqueSet) {
+					pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+						{
+							Name:        "sg1",
+							CliqueNames: []string{"worker"},
+							TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+								TopologyName: "topo-a",
+							},
+						},
+					}
+				})
+			},
+			wantErr:    ErrPackDomainMissing,
 			wantHasAny: true,
 		},
 		{

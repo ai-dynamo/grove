@@ -26,7 +26,9 @@ import (
 
 var (
 	// ErrTopologyNameMissing indicates that a constrained level has no effective topologyName after inheritance is applied.
-	ErrTopologyNameMissing = errors.New("topology constraints require packDomain and an explicit or inherited topologyName")
+	ErrTopologyNameMissing = errors.New("topology constraints require an explicit or inherited topologyName")
+	// ErrPackDomainMissing indicates that a topologyConstraint exists but does not specify packDomain.
+	ErrPackDomainMissing = errors.New("topology constraints require packDomain")
 	// ErrMultipleTopologyNamesUnsupported indicates that topology constraints within a single PCS reference different topology names.
 	ErrMultipleTopologyNamesUnsupported = errors.New("multiple topology names within a single PodCliqueSet are not supported")
 )
@@ -82,7 +84,7 @@ func ResolveEffectiveTopologyNameForPodCliqueSet(pcs *grovecorev1alpha1.PodCliqu
 	pcsEffectiveTopologyName := ""
 	if tc := pcs.Spec.Template.TopologyConstraint; tc != nil {
 		if tc.PackDomain == "" {
-			return "", ErrTopologyNameMissing
+			return "", ErrPackDomainMissing
 		}
 		effectiveTopologyName, err := ResolveEffectiveTopologyNameForConstraint(tc.TopologyName, "")
 		if err != nil {
@@ -100,7 +102,7 @@ func ResolveEffectiveTopologyNameForPodCliqueSet(pcs *grovecorev1alpha1.PodCliqu
 			continue
 		}
 		if pcsgConfig.TopologyConstraint.PackDomain == "" {
-			return "", ErrTopologyNameMissing
+			return "", ErrPackDomainMissing
 		}
 		effectiveTopologyName, err := ResolveEffectiveTopologyNameForConstraint(pcsgConfig.TopologyConstraint.TopologyName, pcsEffectiveTopologyName)
 		if err != nil {
@@ -121,7 +123,7 @@ func ResolveEffectiveTopologyNameForPodCliqueSet(pcs *grovecorev1alpha1.PodCliqu
 			continue
 		}
 		if pclqTemplateSpec.TopologyConstraint.PackDomain == "" {
-			return "", ErrTopologyNameMissing
+			return "", ErrPackDomainMissing
 		}
 
 		inheritedTopologyName := pcsEffectiveTopologyName

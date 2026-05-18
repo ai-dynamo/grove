@@ -432,7 +432,7 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 			},
 			wantStatus:     metav1.ConditionUnknown,
 			wantReason:     apicommonconstants.ConditionReasonTopologyNameMissing,
-			wantMsgContain: "explicit topologyName",
+			wantMsgContain: "include topologyName",
 		},
 		{
 			name:           "TAS enabled, no constraints at all — False/AllClusterTopologyLevelsAvailable with no-constraints message",
