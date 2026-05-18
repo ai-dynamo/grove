@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"slices"
 	"strconv"
 	"time"
 
@@ -47,6 +46,7 @@ type syncContext struct {
 	pcsgConfig                     *grovecorev1alpha1.PodCliqueScalingGroupConfig
 	pcsReplicaIndex                int
 	existingPCLQs                  []grovecorev1alpha1.PodClique
+	existingPCLQNameSet            componentutils.Set[string]
 	pcsgIndicesToTerminate         []string
 	pcsgIndicesToRequeue           []string
 	expectedPCLQFQNsPerPCSGReplica map[int][]string
@@ -86,6 +86,7 @@ func (r _resource) prepareSyncContext(ctx context.Context, logger logr.Logger, p
 	if err != nil {
 		return nil, err
 	}
+	syncCtx.existingPCLQNameSet = componentutils.PodCliqueNameSet(syncCtx.existingPCLQs)
 
 	// compute the PCSG indices that have their MinAvailableBreached condition set to true. Segregated these into two
 	// pcsgIndicesToTerminate will have the indices for which the TerminationDelay has expired.
@@ -200,10 +201,9 @@ func computePCSGReplicasToDelete(existingReplicas, expectedReplicas int) []strin
 // createExpectedPCLQs creates any missing PodCliques needed to satisfy the desired PCSG replica configuration
 func (r _resource) createExpectedPCLQs(logger logr.Logger, sc *syncContext) error {
 	var tasks []utils.Task
-	existingPCLQFQNs := lo.Map(sc.existingPCLQs, func(pclq grovecorev1alpha1.PodClique, _ int) string { return pclq.Name })
 	for pcsgReplicaIndex, expectedPCLQNames := range sc.expectedPCLQFQNsPerPCSGReplica {
 		for _, pclqFQN := range expectedPCLQNames {
-			if slices.Contains(existingPCLQFQNs, pclqFQN) {
+			if sc.existingPCLQNameSet.Has(pclqFQN) {
 				continue
 			}
 			pclqObjectKey := client.ObjectKey{
@@ -233,14 +233,13 @@ func (r _resource) createExpectedPCLQs(logger logr.Logger, sc *syncContext) erro
 // This is used for the OnDelete update strategy where changes are applied in place rather than through recreation.
 func (r _resource) createOrUpdatePCLQs(logger logr.Logger, sc *syncContext) error {
 	var tasks []utils.Task
-	existingPCLQFQNs := lo.Map(sc.existingPCLQs, func(pclq grovecorev1alpha1.PodClique, _ int) string { return pclq.Name })
 	for pcsgReplicaIndex, expectedPCLQNames := range sc.expectedPCLQFQNsPerPCSGReplica {
 		for _, pclqFQN := range expectedPCLQNames {
 			pclqObjectKey := client.ObjectKey{
 				Name:      pclqFQN,
 				Namespace: sc.pcsg.Namespace,
 			}
-			pclqExists := slices.Contains(existingPCLQFQNs, pclqFQN)
+			pclqExists := sc.existingPCLQNameSet.Has(pclqFQN)
 			createOrUpdateTask := utils.Task{
 				Name: fmt.Sprintf("CreateOrUpdatePodClique-%s", pclqObjectKey),
 				Fn: func(ctx context.Context) error {
@@ -383,6 +382,7 @@ func (sc *syncContext) refreshExistingPCLQs(pcsg *grovecorev1alpha1.PodCliqueSca
 		}
 	}
 	sc.existingPCLQs = revisedExistingPCLQs
+	sc.existingPCLQNameSet = componentutils.PodCliqueNameSet(revisedExistingPCLQs)
 	return nil
 }
 

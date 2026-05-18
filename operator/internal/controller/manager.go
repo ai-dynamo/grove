@@ -28,6 +28,7 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	"github.com/ai-dynamo/grove/operator/internal/controller/cert"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/webhook"
 
 	"github.com/go-logr/logr"
@@ -58,14 +59,12 @@ func CreateManager(operatorCfg *configv1alpha1.OperatorConfiguration) (ctrl.Mana
 }
 
 // RegisterControllersAndWebhooks adds all the controllers and webhooks to the controller-manager using the passed in Config.
-func RegisterControllersAndWebhooks(mgr ctrl.Manager, logger logr.Logger, operatorCfg *configv1alpha1.OperatorConfiguration, certsReady chan struct{}) error {
-	// Controllers will not work unless the webhooks are fully configured and operational.
-	// For webhooks to work cert-controller should finish its work of generating and injecting certificates.
+func RegisterControllersAndWebhooks(mgr ctrl.Manager, logger logr.Logger, operatorCfg *configv1alpha1.OperatorConfiguration, certsReady chan struct{}, schedRegistry scheduler.Registry) error {
 	waitTillWebhookCertsReady(logger, certsReady)
-	if err := registerControllersWithMgr(mgr, operatorCfg); err != nil {
+	if err := registerControllersWithMgr(mgr, operatorCfg, schedRegistry); err != nil {
 		return err
 	}
-	if err := registerWebhooksWithMgr(mgr, operatorCfg); err != nil {
+	if err := registerWebhooksWithMgr(mgr, operatorCfg, schedRegistry); err != nil {
 		return err
 	}
 	return nil

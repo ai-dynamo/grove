@@ -23,6 +23,10 @@ const (
 	OperatorConfigGroupName = "operator.config.grove.io"
 	// OperatorGroupName is the name of the group for all Grove custom resources.
 	OperatorGroupName = "grove.io"
+	// GroveDomainPrefix is the qualifying prefix for grove.io-owned labels and annotations.
+	// Labels and annotations with this prefix are managed by the Grove operator and have a
+	// lifecycle independent of any user-supplied PodCliqueSet metadata.
+	GroveDomainPrefix = OperatorGroupName + "/"
 )
 
 // Constants for finalizers.
@@ -82,6 +86,31 @@ const (
 	EventDeleteError = "DeleteError"
 )
 
+// Constants for ClusterTopology Condition Types and Reasons.
+const (
+	// ConditionSchedulerTopologyDrift is a condition on ClusterTopology indicating whether
+	// any scheduler backend topology resource has drifted from the ClusterTopology levels.
+	ConditionSchedulerTopologyDrift = "SchedulerTopologyDrift"
+
+	// ConditionReasonInSync is the reason when all scheduler backend topologies match the ClusterTopology levels.
+	ConditionReasonInSync = "InSync"
+
+	// ConditionReasonDrift is the reason when a scheduler backend topology has drifted.
+	ConditionReasonDrift = "Drift"
+
+	// ConditionReasonTopologyNotFound is the reason when a scheduler backend referenced
+	// in schedulerTopologyReferences is not enabled or does not support topology management.
+	ConditionReasonTopologyNotFound = "TopologyNotFound"
+
+	// ConditionReasonTopologyNameMissing is the reason when a PodCliqueSet has incomplete
+	// topology constraints or otherwise cannot resolve an explicit topology reference.
+	ConditionReasonTopologyNameMissing = "TopologyNameMissing"
+
+	// ConditionReasonTopologyAwareSchedulingDisabled is the reason when a PodCliqueSet has topology
+	// constraints but Topology Aware Scheduling is disabled in the operator configuration.
+	ConditionReasonTopologyAwareSchedulingDisabled = "TopologyAwareSchedulingDisabled"
+)
+
 // Constants for Condition Types
 const (
 	// ConditionTypeMinAvailableBreached indicates that the minimum number of ready pods in the PodClique are below the threshold defined in the PodCliqueSpec.MinAvailable threshold.
@@ -106,6 +135,8 @@ const (
 	ConditionReasonSufficientScheduledPods = "SufficientScheduledPods"
 	// ConditionReasonInsufficientScheduledPCSGReplicas indicates that the number of scheduled replicas in the PodCliqueScalingGroup is below the PodCliqueScalingGroupSpec.MinAvailable.
 	ConditionReasonInsufficientScheduledPCSGReplicas = "InsufficientScheduledPodCliqueScalingGroupReplicas"
+	// ConditionReasonScheduledReplicasBelowMinAvailable indicates that scheduledReplicas is below MinAvailable but greater than zero.
+	ConditionReasonScheduledReplicasBelowMinAvailable = "ScheduledReplicasBelowMinAvailable"
 	// ConditionReasonInsufficientAvailablePCSGReplicas indicates that the number of ready replicas in the PodCliqueScalingGroup is below the PodCliqueScalingGroupSpec.MinAvailable.
 	ConditionReasonInsufficientAvailablePCSGReplicas = "InsufficientAvailablePodCliqueScalingGroupReplicas"
 	// ConditionReasonSufficientAvailablePCSGReplicas indicates that the number of ready replicas in the PodCliqueScalingGroup is greater than or equal to the PodCliqueScalingGroupSpec.MinAvailable.

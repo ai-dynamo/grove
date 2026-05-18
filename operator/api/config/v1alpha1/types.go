@@ -17,8 +17,6 @@
 package v1alpha1
 
 import (
-	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -300,10 +298,6 @@ type AuthorizerConfig struct {
 type TopologyAwareSchedulingConfiguration struct {
 	// Enabled indicates whether topology-aware scheduling is enabled.
 	Enabled bool `json:"enabled"`
-	// Levels is an ordered list of topology levels from broadest to narrowest scope.
-	// Used to create/update the TopologyAwareScheduling CR at operator startup.
-	// +optional
-	Levels []corev1alpha1.TopologyLevel `json:"levels,omitempty"`
 }
 
 // NetworkAcceleration defines the configuration for network acceleration features.

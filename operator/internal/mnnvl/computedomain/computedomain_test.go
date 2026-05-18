@@ -88,36 +88,18 @@ func Test_generateComputeDomainName(t *testing.T) {
 		expected     string
 	}{
 		{
-			description:  "default group replica 0",
+			description:  "default group",
 			pcsName:      "mypcs",
 			replicaIndex: 0,
-			expected:     "mypcs-0",
+			groupName:    "default",
+			expected:     "mypcs-0-default",
 		},
 		{
-			description:  "default group replica 5",
-			pcsName:      "mypcs",
-			replicaIndex: 5,
-			expected:     "mypcs-5",
-		},
-		{
-			description:  "default group different pcs name",
-			pcsName:      "other-pcs",
-			replicaIndex: 3,
-			expected:     "other-pcs-3",
-		},
-		{
-			description:  "named group",
-			pcsName:      "mypcs",
-			replicaIndex: 0,
-			groupName:    "workers",
-			expected:     "mypcs-0-workers",
-		},
-		{
-			description:  "named group higher replica",
+			description:  "named group with higher replica index",
 			pcsName:      "training",
-			replicaIndex: 2,
+			replicaIndex: 5,
 			groupName:    "encoders",
-			expected:     "training-2-encoders",
+			expected:     "training-5-encoders",
 		},
 	}
 
@@ -138,10 +120,10 @@ func TestGetRequiredCDNames(t *testing.T) {
 		expectedGroups map[string]struct{}
 	}{
 		{
-			description: "auto-mnnvl enabled, 2 replicas — default group",
+			description: "mnnvl-group default, 2 replicas — default group",
 			pcs:         createPCSWithMNNVLEnabled(2),
 			expectedGroups: map[string]struct{}{
-				"": {},
+				"default": {},
 			},
 		},
 		{
@@ -156,12 +138,23 @@ func TestGetRequiredCDNames(t *testing.T) {
 			},
 		},
 		{
-			description: "clique-level groups — two distinct groups",
+			description: "clique-level groups — two distinct GPU groups",
 			pcs: func() *grovecorev1alpha1.PodCliqueSet {
 				pcs := createPCSWithGPU(1)
 				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, &grovecorev1alpha1.PodCliqueTemplateSpec{
 					Name:        "clique2",
 					Annotations: map[string]string{mnnvl.AnnotationMNNVLGroup: "encoders"},
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						PodSpec: corev1.PodSpec{
+							Containers: []corev1.Container{{
+								Name:  "encoder",
+								Image: "alpine",
+								Resources: corev1.ResourceRequirements{
+									Requests: corev1.ResourceList{constants.GPUResourceName: resource.MustParse("1")},
+								},
+							}},
+						},
+					},
 				})
 				pcs.Spec.Template.Cliques[0].Annotations = map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}
 				return pcs
@@ -193,10 +186,24 @@ func TestGetRequiredCDNames(t *testing.T) {
 			pcs: func() *grovecorev1alpha1.PodCliqueSet {
 				pcs := createPCSWithMNNVLEnabled(2)
 				pcs.Spec.Template.Cliques[0].Annotations = map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}
+				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, &grovecorev1alpha1.PodCliqueTemplateSpec{
+					Name: "clique2",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						PodSpec: corev1.PodSpec{
+							Containers: []corev1.Container{{
+								Name:  "gpu2",
+								Image: "alpine",
+								Resources: corev1.ResourceRequirements{
+									Requests: corev1.ResourceList{constants.GPUResourceName: resource.MustParse("1")},
+								},
+							}},
+						},
+					},
+				})
 				return pcs
 			}(),
 			expectedGroups: map[string]struct{}{
-				"":        {},
+				"default": {},
 				"workers": {},
 			},
 		},
@@ -206,8 +213,17 @@ func TestGetRequiredCDNames(t *testing.T) {
 			expectedGroups: nil,
 		},
 		{
-			description:    "auto-mnnvl disabled — empty list",
+			description:    "mnnvl-group none — empty list",
 			pcs:            createPCSWithMNNVLDisabled(),
+			expectedGroups: nil,
+		},
+		{
+			description: "PCS mnnvl-group set but only CPU cliques — no orphaned CD",
+			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createPCSWithoutGPU()
+				pcs.Annotations = map[string]string{mnnvl.AnnotationMNNVLGroup: "default"}
+				return pcs
+			}(),
 			expectedGroups: nil,
 		},
 	}
@@ -244,35 +260,35 @@ func TestTriageCDs(t *testing.T) {
 		{
 			description: "exact match — nothing to create or delete",
 			requiredCDs: []cdNameInfo{
-				{pcsName: "pcs", replicaIndex: 0},
-				{pcsName: "pcs", replicaIndex: 1},
+				{pcsName: "pcs", replicaIndex: 0, groupName: "default"},
+				{pcsName: "pcs", replicaIndex: 1, groupName: "default"},
 			},
-			existingCDFQNs:   []string{"pcs-0", "pcs-1"},
+			existingCDFQNs:   []string{"pcs-0-default", "pcs-1-default"},
 			expectedToCreate: nil,
 			expectedToDelete: nil,
 		},
 		{
 			description: "scale out — create missing",
 			requiredCDs: []cdNameInfo{
-				{pcsName: "pcs", replicaIndex: 0},
-				{pcsName: "pcs", replicaIndex: 1},
-				{pcsName: "pcs", replicaIndex: 2},
+				{pcsName: "pcs", replicaIndex: 0, groupName: "default"},
+				{pcsName: "pcs", replicaIndex: 1, groupName: "default"},
+				{pcsName: "pcs", replicaIndex: 2, groupName: "default"},
 			},
-			existingCDFQNs: []string{"pcs-0"},
+			existingCDFQNs: []string{"pcs-0-default"},
 			expectedToCreate: []cdNameInfo{
-				{pcsName: "pcs", replicaIndex: 1},
-				{pcsName: "pcs", replicaIndex: 2},
+				{pcsName: "pcs", replicaIndex: 1, groupName: "default"},
+				{pcsName: "pcs", replicaIndex: 2, groupName: "default"},
 			},
 			expectedToDelete: nil,
 		},
 		{
 			description: "scale in — delete excess",
 			requiredCDs: []cdNameInfo{
-				{pcsName: "pcs", replicaIndex: 0},
+				{pcsName: "pcs", replicaIndex: 0, groupName: "default"},
 			},
-			existingCDFQNs:   []string{"pcs-0", "pcs-1", "pcs-2"},
+			existingCDFQNs:   []string{"pcs-0-default", "pcs-1-default", "pcs-2-default"},
 			expectedToCreate: nil,
-			expectedToDelete: []string{"pcs-1", "pcs-2"},
+			expectedToDelete: []string{"pcs-1-default", "pcs-2-default"},
 		},
 		{
 			description: "group rename — delete old, create new",
@@ -290,20 +306,20 @@ func TestTriageCDs(t *testing.T) {
 		{
 			description: "all new — nothing existing",
 			requiredCDs: []cdNameInfo{
-				{pcsName: "pcs", replicaIndex: 0},
+				{pcsName: "pcs", replicaIndex: 0, groupName: "default"},
 			},
 			existingCDFQNs: nil,
 			expectedToCreate: []cdNameInfo{
-				{pcsName: "pcs", replicaIndex: 0},
+				{pcsName: "pcs", replicaIndex: 0, groupName: "default"},
 			},
 			expectedToDelete: nil,
 		},
 		{
 			description:      "all excess — nothing required",
 			requiredCDs:      nil,
-			existingCDFQNs:   []string{"pcs-0", "pcs-1"},
+			existingCDFQNs:   []string{"pcs-0-default", "pcs-1-default"},
 			expectedToCreate: nil,
-			expectedToDelete: []string{"pcs-0", "pcs-1"},
+			expectedToDelete: []string{"pcs-0-default", "pcs-1-default"},
 		},
 	}
 
@@ -357,7 +373,7 @@ func TestSyncSkipsWhenMNNVLNotEnabled(t *testing.T) {
 			pcs:         createPCSWithGPU(1),
 		},
 		{
-			description: "annotation set to false",
+			description: "mnnvl-group set to none",
 			pcs:         createPCSWithMNNVLDisabled(),
 		},
 		{
@@ -390,12 +406,12 @@ func TestSyncCreatesComputeDomains(t *testing.T) {
 		{
 			description:     "single replica",
 			replicas:        1,
-			expectedCDNames: []string{"test-pcs-0"},
+			expectedCDNames: []string{"test-pcs-0-default"},
 		},
 		{
 			description:     "multiple replicas",
 			replicas:        3,
-			expectedCDNames: []string{"test-pcs-0", "test-pcs-1", "test-pcs-2"},
+			expectedCDNames: []string{"test-pcs-0-default", "test-pcs-1-default", "test-pcs-2-default"},
 		},
 	}
 
@@ -419,8 +435,7 @@ func TestSyncCreatesComputeDomains(t *testing.T) {
 				assert.Equal(t, apicommon.LabelManagedByValue, cd.GetLabels()[apicommon.LabelManagedByKey])
 				assert.Equal(t, testPCSName, cd.GetLabels()[apicommon.LabelPartOfKey])
 				assert.Equal(t, labelComponentNameComputeDomain, cd.GetLabels()[apicommon.LabelComponentKey])
-				_, hasGroupLabel := cd.GetLabels()[mnnvl.LabelMNNVLGroup]
-				assert.False(t, hasGroupLabel, "default group CD should not have mnnvl-group label")
+				assert.Equal(t, "default", cd.GetLabels()[mnnvl.LabelMNNVLGroup], "default group CD should have mnnvl-group label")
 
 				// Verify CD has finalizer
 				assert.Contains(t, cd.GetFinalizers(), mnnvl.FinalizerComputeDomain)
@@ -445,7 +460,7 @@ func TestSyncCreatesComputeDomains(t *testing.T) {
 func TestSyncScaleIn(t *testing.T) {
 	// Setup: 4 existing CDs, scale down to 2 replicas
 	pcs := createPCSWithMNNVLEnabled(2)
-	existingCDs := createTestCDs(testPCSName, testPCSNamespace, 4)
+	existingCDs := createTestCDs("default", 4)
 	cl := createTestClientWithCDs(existingCDs)
 	operator := New(cl, testScheme, record.NewFakeRecorder(10))
 
@@ -455,7 +470,7 @@ func TestSyncScaleIn(t *testing.T) {
 
 	// Verify CDs 0 and 1 still exist
 	for i := 0; i < 2; i++ {
-		cdName := testPCSName + "-" + strconv.Itoa(i)
+		cdName := testPCSName + "-" + strconv.Itoa(i) + "-default"
 		cd := emptyComputeDomain(client.ObjectKey{Name: cdName, Namespace: testPCSNamespace})
 		err := cl.Get(context.Background(), client.ObjectKeyFromObject(cd), cd)
 		assert.NoError(t, err, "CD %s should still exist", cdName)
@@ -463,7 +478,7 @@ func TestSyncScaleIn(t *testing.T) {
 
 	// Verify CDs 2 and 3 were deleted
 	for i := 2; i < 4; i++ {
-		cdName := testPCSName + "-" + strconv.Itoa(i)
+		cdName := testPCSName + "-" + strconv.Itoa(i) + "-default"
 		cd := emptyComputeDomain(client.ObjectKey{Name: cdName, Namespace: testPCSNamespace})
 		err := cl.Get(context.Background(), client.ObjectKeyFromObject(cd), cd)
 		assert.True(t, apierrors.IsNotFound(err), "CD %s should be deleted", cdName)
@@ -474,7 +489,7 @@ func TestSyncScaleIn(t *testing.T) {
 func TestSyncScaleOut(t *testing.T) {
 	// Setup: 2 existing CDs, scale up to 4 replicas
 	pcs := createPCSWithMNNVLEnabled(4)
-	existingCDs := createTestCDs(testPCSName, testPCSNamespace, 2)
+	existingCDs := createTestCDs("default", 2)
 	cl := createTestClientWithCDs(existingCDs)
 	operator := New(cl, testScheme, record.NewFakeRecorder(10))
 
@@ -484,7 +499,7 @@ func TestSyncScaleOut(t *testing.T) {
 
 	// Verify all 4 CDs exist
 	for i := 0; i < 4; i++ {
-		cdName := testPCSName + "-" + strconv.Itoa(i)
+		cdName := testPCSName + "-" + strconv.Itoa(i) + "-default"
 		cd := emptyComputeDomain(client.ObjectKey{Name: cdName, Namespace: testPCSNamespace})
 		err := cl.Get(context.Background(), client.ObjectKeyFromObject(cd), cd)
 		assert.NoError(t, err, "CD %s should exist", cdName)
@@ -507,7 +522,7 @@ func TestSyncIdempotent(t *testing.T) {
 
 	// Verify exactly 3 CDs exist
 	for i := 0; i < 3; i++ {
-		cdName := testPCSName + "-" + strconv.Itoa(i)
+		cdName := testPCSName + "-" + strconv.Itoa(i) + "-default"
 		cd := emptyComputeDomain(client.ObjectKey{Name: cdName, Namespace: testPCSNamespace})
 		err := cl.Get(context.Background(), client.ObjectKeyFromObject(cd), cd)
 		assert.NoError(t, err, "CD %s should exist", cdName)
@@ -540,6 +555,89 @@ func TestSyncWithGroupAnnotation(t *testing.T) {
 	}
 }
 
+// TestSyncMultipleGroups tests that Sync creates CDs for multiple distinct MNNVL groups.
+func TestSyncMultipleGroups(t *testing.T) {
+	pcs := createPCSWithGPU(2)
+	pcs.Annotations = map[string]string{mnnvl.AnnotationMNNVLGroup: "default"}
+	pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, &grovecorev1alpha1.PodCliqueTemplateSpec{
+		Name:        "clique2",
+		Annotations: map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"},
+		Spec: grovecorev1alpha1.PodCliqueSpec{
+			PodSpec: corev1.PodSpec{
+				Containers: []corev1.Container{{
+					Name:  "gpu2",
+					Image: "alpine",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{constants.GPUResourceName: resource.MustParse("1")},
+					},
+				}},
+			},
+		},
+	})
+
+	cl := createTestClient()
+	operator := New(cl, testScheme, record.NewFakeRecorder(10))
+
+	err := operator.Sync(context.Background(), logr.Discard(), pcs)
+	require.NoError(t, err)
+
+	for _, group := range []string{"default", "workers"} {
+		for i := 0; i < 2; i++ {
+			cdName := testPCSName + "-" + strconv.Itoa(i) + "-" + group
+			cd := emptyComputeDomain(client.ObjectKey{Name: cdName, Namespace: testPCSNamespace})
+			err := cl.Get(context.Background(), client.ObjectKeyFromObject(cd), cd)
+			assert.NoError(t, err, "CD %s should exist", cdName)
+			assert.Equal(t, group, cd.GetLabels()[mnnvl.LabelMNNVLGroup], "CD should have correct mnnvl-group label")
+		}
+	}
+}
+
+// TestSyncMultipleGroupsScaleDown tests that Sync removes excess CDs for multiple groups.
+func TestSyncMultipleGroupsScaleDown(t *testing.T) {
+	pcs := createPCSWithGPU(1)
+	pcs.Annotations = map[string]string{mnnvl.AnnotationMNNVLGroup: "default"}
+	pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, &grovecorev1alpha1.PodCliqueTemplateSpec{
+		Name:        "clique2",
+		Annotations: map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"},
+		Spec: grovecorev1alpha1.PodCliqueSpec{
+			PodSpec: corev1.PodSpec{
+				Containers: []corev1.Container{{
+					Name:  "gpu2",
+					Image: "alpine",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{constants.GPUResourceName: resource.MustParse("1")},
+					},
+				}},
+			},
+		},
+	})
+
+	defaultCDs := createTestCDs("default", 3)
+	workerCDs := createTestCDs("workers", 3)
+	allCDs := append(defaultCDs, workerCDs...)
+	cl := createTestClientWithCDs(allCDs)
+	operator := New(cl, testScheme, record.NewFakeRecorder(10))
+
+	err := operator.Sync(context.Background(), logr.Discard(), pcs)
+	require.NoError(t, err)
+
+	for _, group := range []string{"default", "workers"} {
+		// Replica 0 should still exist
+		cdName := testPCSName + "-0-" + group
+		cd := emptyComputeDomain(client.ObjectKey{Name: cdName, Namespace: testPCSNamespace})
+		err := cl.Get(context.Background(), client.ObjectKeyFromObject(cd), cd)
+		assert.NoError(t, err, "CD %s should still exist", cdName)
+
+		// Replicas 1 and 2 should be deleted
+		for i := 1; i < 3; i++ {
+			cdName := testPCSName + "-" + strconv.Itoa(i) + "-" + group
+			cd := emptyComputeDomain(client.ObjectKey{Name: cdName, Namespace: testPCSNamespace})
+			err := cl.Get(context.Background(), client.ObjectKeyFromObject(cd), cd)
+			assert.True(t, apierrors.IsNotFound(err), "CD %s should be deleted", cdName)
+		}
+	}
+}
+
 // ================================
 // Delete Tests
 // ================================
@@ -548,7 +646,7 @@ func TestSyncWithGroupAnnotation(t *testing.T) {
 func TestDeleteRemovesAllComputeDomains(t *testing.T) {
 	// Create PCS with MNNVL enabled
 	pcs := createPCSWithMNNVLEnabled(3)
-	existingCDs := createTestCDs(testPCSName, testPCSNamespace, 3)
+	existingCDs := createTestCDs("default", 3)
 
 	// Create client with both PCS and CDs
 	builder := fake.NewClientBuilder().WithScheme(testScheme).WithObjects(pcs)
@@ -570,7 +668,7 @@ func TestDeleteRemovesAllComputeDomains(t *testing.T) {
 
 	// Verify all CDs were deleted
 	for i := 0; i < 3; i++ {
-		cdName := testPCSName + "-" + strconv.Itoa(i)
+		cdName := testPCSName + "-" + strconv.Itoa(i) + "-default"
 		cd := emptyComputeDomain(client.ObjectKey{Name: cdName, Namespace: testPCSNamespace})
 		err := cl.Get(context.Background(), client.ObjectKeyFromObject(cd), cd)
 		assert.True(t, apierrors.IsNotFound(err), "CD %s should be deleted", cdName)
@@ -616,17 +714,17 @@ func createPCSWithResources(requests, limits corev1.ResourceList) *grovecorev1al
 	}
 }
 
-// createPCSWithMNNVLEnabled creates a PCS with MNNVL enabled annotation
+// createPCSWithMNNVLEnabled creates a PCS with MNNVL enabled via mnnvl-group annotation
 func createPCSWithMNNVLEnabled(replicas int32) *grovecorev1alpha1.PodCliqueSet {
 	pcs := createPCSWithGPU(replicas)
-	pcs.Annotations = map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled}
+	pcs.Annotations = map[string]string{mnnvl.AnnotationMNNVLGroup: "default"}
 	return pcs
 }
 
-// createPCSWithMNNVLDisabled creates a PCS with MNNVL disabled annotation (opt-out)
+// createPCSWithMNNVLDisabled creates a PCS with MNNVL explicitly opted out via mnnvl-group=none
 func createPCSWithMNNVLDisabled() *grovecorev1alpha1.PodCliqueSet {
 	pcs := createPCSWithGPU(1)
-	pcs.Annotations = map[string]string{mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled}
+	pcs.Annotations = map[string]string{mnnvl.AnnotationMNNVLGroup: mnnvl.AnnotationMNNVLGroupOptOut}
 	return pcs
 }
 
@@ -674,11 +772,11 @@ func createClientThatFailsOnList() client.Client {
 }
 
 // createTestCDs creates a slice of test ComputeDomains with proper labels and finalizers.
-func createTestCDs(pcsName, namespace string, count int) []*unstructured.Unstructured {
+func createTestCDs(groupName string, count int) []*unstructured.Unstructured {
 	cds := make([]*unstructured.Unstructured, count)
 	for i := 0; i < count; i++ {
-		cdName := pcsName + "-" + strconv.Itoa(i)
-		cd := createTestCD(cdName, namespace, pcsName, i)
+		cdName := testPCSName + "-" + strconv.Itoa(i) + "-" + groupName
+		cd := createTestCD(cdName, testPCSNamespace, testPCSName, i)
 		cds[i] = cd
 	}
 	return cds

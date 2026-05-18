@@ -41,7 +41,7 @@ config:
 Deploy or upgrade Grove with this configuration:
 
 ```bash
-helm upgrade -i grove oci://ghcr.io/ai-dynamo/grove/grove-charts:<tag> \
+helm upgrade -i grove oci://ghcr.io/ai-dynamo/grove/grove-charts --version <version> \
   --set config.network.autoMNNVLEnabled=true
 ```
 

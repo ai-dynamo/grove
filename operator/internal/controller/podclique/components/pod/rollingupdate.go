@@ -51,8 +51,9 @@ type updateWork struct {
 // getPodNamesPendingUpdate returns names of pods with old template hash that are not already being deleted
 func (w *updateWork) getPodNamesPendingUpdate(deletionExpectedPodUIDs []types.UID) []string {
 	allOldPods := lo.Union(w.oldTemplateHashPendingPods, w.oldTemplateHashUnhealthyPods, w.oldTemplateHashStartingPods, w.oldTemplateHashUncategorizedPods, w.oldTemplateHashReadyPods)
+	deletionExpectedPodUIDSet := componentutils.NewSet(deletionExpectedPodUIDs)
 	return lo.FilterMap(allOldPods, func(pod *corev1.Pod, _ int) (string, bool) {
-		if slices.Contains(deletionExpectedPodUIDs, pod.UID) {
+		if deletionExpectedPodUIDSet.Has(pod.UID) {
 			return "", false
 		}
 		return pod.Name, true

@@ -57,19 +57,24 @@ type Backend interface {
 	ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) error
 }
 
-// TopologyAwareSchedBackend is an optional interface that Backend
+// TopologyAwareBackend is an optional interface that Backend
 // implementations may satisfy if they manage a scheduler-specific topology CRD.
 // The ClusterTopology controller type-asserts each registered backend to this
 // interface at startup and calls these methods during reconciliation.
-type TopologyAwareSchedBackend interface {
+type TopologyAwareBackend interface {
 	// TopologyGVR returns the GroupVersionResource of the topology CRD
 	// managed by this backend (e.g. KAI's "topologies.kai.scheduler").
 	// The CT controller uses this to register dynamic watches at startup.
 	TopologyGVR() schema.GroupVersionResource
 
+	// TopologyResourceName returns the name of the backend-specific topology resource
+	// that corresponds to the given ClusterTopology. Called for auto-managed backends
+	// to populate SchedulerTopologyStatus.TopologyReference.
+	TopologyResourceName(ct *grovecorev1alpha1.ClusterTopology) string
+
 	// SyncTopology creates or updates the scheduler-specific topology resource
 	// for the given ClusterTopology. Called for backends not listed in
-	// the ClusterTopology's schedulerReferences (auto-managed path).
+	// the ClusterTopology's schedulerTopologyReferences (auto-managed path).
 	// k8sClient may be a non-cached client for use before the manager cache
 	// is started. If nil, the backend falls back to its own client.
 	SyncTopology(ctx context.Context, k8sClient client.Client, ct *grovecorev1alpha1.ClusterTopology) error
@@ -78,4 +83,37 @@ type TopologyAwareSchedBackend interface {
 	// the given ClusterTopology. Called on CT deletion (auto-managed path only).
 	// k8sClient may be nil; if so, the backend falls back to its own client.
 	OnTopologyDelete(ctx context.Context, k8sClient client.Client, ct *grovecorev1alpha1.ClusterTopology) error
+
+	// CheckTopologyDrift compares the scheduler-specific topology resource named by
+	// ref.TopologyReference against the ClusterTopology's levels.
+	// Returns (inSync bool, message string, observedGeneration int64, error).
+	// Called for backends listed in schedulerTopologyReferences (externally-managed path).
+	CheckTopologyDrift(
+		ctx context.Context,
+		ct *grovecorev1alpha1.ClusterTopology,
+		ref grovecorev1alpha1.SchedulerTopologyReference,
+	) (bool, string, int64, error)
+}
+
+// Registry provides access to initialized scheduler backends.
+// Use Get to look up a backend by its registered name; use GetDefault
+// for the backend designated as default in OperatorConfiguration.
+type Registry interface {
+	// Get returns the backend registered under name, or nil if not found.
+	// An empty name returns nil; use GetOrDefault for empty-falls-back-to-default behaviour.
+	Get(name string) Backend
+
+	// GetDefault returns the backend marked as default in
+	// OperatorConfiguration (scheduler.defaultProfileName).
+	GetDefault() Backend
+
+	// GetOrDefault returns the backend registered under name, or the default
+	// backend if name is empty.
+	GetOrDefault(name string) Backend
+
+	// All returns all registered scheduler backends keyed by name.
+	All() map[string]Backend
+
+	// AllTopologyAware returns the subset of registered backends that implement TopologyAwareBackend, keyed by name.
+	AllTopologyAware() map[string]TopologyAwareBackend
 }

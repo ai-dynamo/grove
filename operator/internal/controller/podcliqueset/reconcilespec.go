@@ -71,7 +71,7 @@ func (r *Reconciler) ensureFinalizer(ctx context.Context, logger logr.Logger, pc
 }
 
 // processGenerationHashChange computes the generation hash given a PodCliqueSet resource and if the generation has
-// changed from the previously persisted pcs.status.generationHash then it resets the pcs.status.rollingUpdateProgress
+// changed from the previously persisted pcs.status.generationHash then it resets the pcs.status.updateProgress
 func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	pcsObjectKey := client.ObjectKeyFromObject(pcs)
 	pcsObjectName := cache.NamespacedNameAsObjectName(pcsObjectKey).String()

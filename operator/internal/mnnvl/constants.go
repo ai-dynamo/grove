@@ -42,27 +42,16 @@ var ComputeDomainGVK = schema.GroupVersionKind{
 
 // MNNVL annotation, finalizer, and resource claim constants
 const (
-	// AnnotationAutoMNNVL is the annotation key used to indicate whether automatic MNNVL
-	// support should be enabled for a PodCliqueSet. Valid values are AnnotationAutoMNNVLEnabled
-	// and AnnotationAutoMNNVLDisabled.
-	AnnotationAutoMNNVL = "grove.io/auto-mnnvl"
-
-	// AnnotationAutoMNNVLEnabled is the value for AnnotationAutoMNNVL indicating that
-	// automatic MNNVL support should be enabled. The operator will automatically create
-	// and manage ComputeDomain resources for the workload.
-	AnnotationAutoMNNVLEnabled = "enabled"
-
-	// AnnotationAutoMNNVLDisabled is the value for AnnotationAutoMNNVL indicating that
-	// automatic MNNVL support should be disabled.
-	AnnotationAutoMNNVLDisabled = "disabled"
-
 	// AnnotationMNNVLGroup is the annotation key used to assign a PodClique to a named
 	// MNNVL group. PodCliques with the same group name share a ComputeDomain per replica.
-	// The presence of this annotation implicitly enables MNNVL — auto-mnnvl: enabled is
-	// not required when mnnvl-group is set.
 	// The value must be a valid Kubernetes name component (lowercase alphanumeric or dashes,
-	// starting and ending with alphanumeric, max 63 characters).
+	// starting and ending with alphanumeric, max 63 characters), or the reserved value "none"
+	// to explicitly opt out of MNNVL (overriding a parent layer's setting).
 	AnnotationMNNVLGroup = "grove.io/mnnvl-group"
+
+	// AnnotationMNNVLGroupOptOut is the reserved value for AnnotationMNNVLGroup that
+	// explicitly opts out of MNNVL, overriding any parent layer's group assignment.
+	AnnotationMNNVLGroupOptOut = "none"
 
 	// LabelMNNVLGroup is a label applied to ComputeDomain resources to identify which
 	// MNNVL group they belong to. This enables filtering and selection of CDs by group.

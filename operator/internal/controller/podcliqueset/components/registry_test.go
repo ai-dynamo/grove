@@ -22,6 +22,7 @@ import (
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	"github.com/ai-dynamo/grove/operator/test/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/stretchr/testify/assert"
@@ -44,6 +45,7 @@ func TestCreateOperatorRegistry(t *testing.T) {
 	_ = corev1.AddToScheme(scheme)
 	_ = rbacv1.AddToScheme(scheme)
 	_ = autoscalingv2.AddToScheme(scheme)
+	schedRegistry := &utils.FakeSchedulerRegistry{}
 
 	// Test registry creation with MNNVL disabled (default)
 	t.Run("creates registry without ComputeDomain when MNNVL is disabled", func(t *testing.T) {
@@ -53,7 +55,7 @@ func TestCreateOperatorRegistry(t *testing.T) {
 
 		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{}, groveconfigv1alpha1.NetworkAcceleration{
 			AutoMNNVLEnabled: false,
-		})
+		}, schedRegistry)
 
 		require.NotNil(t, registry)
 
@@ -94,7 +96,7 @@ func TestCreateOperatorRegistry(t *testing.T) {
 
 		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{}, groveconfigv1alpha1.NetworkAcceleration{
 			AutoMNNVLEnabled: true,
-		})
+		}, schedRegistry)
 
 		require.NotNil(t, registry)
 
@@ -132,7 +134,7 @@ func TestCreateOperatorRegistry(t *testing.T) {
 
 		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{}, groveconfigv1alpha1.NetworkAcceleration{
 			AutoMNNVLEnabled: false,
-		})
+		}, schedRegistry)
 
 		// Verify PodClique operator
 		pclqOp, err := registry.GetOperator(component.KindPodClique)

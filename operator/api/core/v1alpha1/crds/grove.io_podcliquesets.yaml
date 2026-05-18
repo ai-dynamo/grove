@@ -16,7 +16,29 @@ spec:
     singular: podcliqueset
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .status.replicas
+      name: Replicas
+      type: integer
+    - jsonPath: .status.availableReplicas
+      name: Available
+      type: integer
+    - jsonPath: .status.updatedReplicas
+      name: Updated
+      type: integer
+    - jsonPath: .status.updateProgress.updatedPodCliquesCount
+      name: PCLQs-Updated
+      type: integer
+    - jsonPath: .status.updateProgress.totalPodCliquesCount
+      name: PCLQs-Total
+      type: integer
+    - jsonPath: .status.updateProgress.updatedPodCliqueScalingGroupsCount
+      name: PCSGs-Updated
+      type: integer
+    - jsonPath: .status.updateProgress.totalPodCliqueScalingGroupsCount
+      name: PCSGs-Total
+      type: integer
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: PodCliqueSet is a set of PodGangs defining specification on how
@@ -9295,21 +9317,23 @@ spec:
                               description: |-
                                 PackDomain specifies the topology domain for grouping replicas.
                                 Controls placement constraint for EACH individual replica instance.
-                                Must be one of: region, zone, datacenter, block, rack, host, numa
+                                Must reference a domain in the topology levels defined in the ClusterTopology CR name as set in TopologyName
                                 Example: "rack" means each replica independently placed within one rack.
                                 Note: Does NOT constrain all replicas to the same rack together.
                                 Different replicas can be in different topology domains.
-                              enum:
-                              - region
-                              - zone
-                              - datacenter
-                              - block
-                              - rack
-                              - host
-                              - numa
+                              maxLength: 63
+                              minLength: 1
+                              pattern: ^[a-z][a-z0-9-]*$
+                              type: string
+                            topologyName:
+                              description: |-
+                                TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.
+                                If topologyConstraint is set, topologyName and packDomain must both be specified.
+                                Immutable after creation.
                               type: string
                           required:
                           - packDomain
+                          - topologyName
                           type: object
                       required:
                       - name
@@ -9951,21 +9975,23 @@ spec:
                               description: |-
                                 PackDomain specifies the topology domain for grouping replicas.
                                 Controls placement constraint for EACH individual replica instance.
-                                Must be one of: region, zone, datacenter, block, rack, host, numa
+                                Must reference a domain in the topology levels defined in the ClusterTopology CR name as set in TopologyName
                                 Example: "rack" means each replica independently placed within one rack.
                                 Note: Does NOT constrain all replicas to the same rack together.
                                 Different replicas can be in different topology domains.
-                              enum:
-                              - region
-                              - zone
-                              - datacenter
-                              - block
-                              - rack
-                              - host
-                              - numa
+                              maxLength: 63
+                              minLength: 1
+                              pattern: ^[a-z][a-z0-9-]*$
+                              type: string
+                            topologyName:
+                              description: |-
+                                TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.
+                                If topologyConstraint is set, topologyName and packDomain must both be specified.
+                                Immutable after creation.
                               type: string
                           required:
                           - packDomain
+                          - topologyName
                           type: object
                       required:
                       - cliqueNames
@@ -10745,21 +10771,23 @@ spec:
                         description: |-
                           PackDomain specifies the topology domain for grouping replicas.
                           Controls placement constraint for EACH individual replica instance.
-                          Must be one of: region, zone, datacenter, block, rack, host, numa
+                          Must reference a domain in the topology levels defined in the ClusterTopology CR name as set in TopologyName
                           Example: "rack" means each replica independently placed within one rack.
                           Note: Does NOT constrain all replicas to the same rack together.
                           Different replicas can be in different topology domains.
-                        enum:
-                        - region
-                        - zone
-                        - datacenter
-                        - block
-                        - rack
-                        - host
-                        - numa
+                        maxLength: 63
+                        minLength: 1
+                        pattern: ^[a-z][a-z0-9-]*$
+                        type: string
+                      topologyName:
+                        description: |-
+                          TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.
+                          If topologyConstraint is set, topologyName and packDomain must both be specified.
+                          Immutable after creation.
                         type: string
                     required:
                     - packDomain
+                    - topologyName
                     type: object
                 required:
                 - cliques
@@ -10987,53 +11015,6 @@ spec:
                   created.
                 format: int32
                 type: integer
-              rollingUpdateProgress:
-                description: |-
-                  RollingUpdateProgress represents the progress of a rolling update.
-                  Deprecated: Use UpdateProgress instead. This field is maintained for backward compatibility and will be
-                  removed in a future release.
-                properties:
-                  currentlyUpdating:
-                    description: CurrentlyUpdating captures the progress of the PodCliqueSet
-                      replica that is currently being updated.
-                    properties:
-                      replicaIndex:
-                        description: ReplicaIndex is the replica index of the PodCliqueSet
-                          that is being updated.
-                        format: int32
-                        type: integer
-                      updateStartedAt:
-                        description: UpdateStartedAt is the time at which the rolling
-                          update started for this PodCliqueSet replica index.
-                        format: date-time
-                        type: string
-                    required:
-                    - replicaIndex
-                    type: object
-                  updateEndedAt:
-                    description: UpdateEndedAt is the time at which the rolling update
-                      ended for the PodCliqueSet.
-                    format: date-time
-                    type: string
-                  updateStartedAt:
-                    description: UpdateStartedAt is the time at which the rolling
-                      update started for the PodCliqueSet.
-                    format: date-time
-                    type: string
-                  updatedPodCliqueScalingGroups:
-                    description: UpdatedPodCliqueScalingGroups is a list of PodCliqueScalingGroup
-                      names that have been updated to the desired PodCliqueSet generation
-                      hash.
-                    items:
-                      type: string
-                    type: array
-                  updatedPodCliques:
-                    description: UpdatedPodCliques is a list of PodClique names that
-                      have been updated to the desired PodCliqueSet generation hash.
-                    items:
-                      type: string
-                    type: array
-                type: object
               updateProgress:
                 description: UpdateProgress represents the progress of an update.
                 properties:
@@ -11067,6 +11048,20 @@ spec:
                       - replicaIndex
                       type: object
                     type: array
+                  totalPodCliqueScalingGroupsCount:
+                    default: 0
+                    description: |-
+                      TotalPodCliqueScalingGroupsCount is the total number of PodCliqueScalingGroups expected to exist for the
+                      PodCliqueSet at the current spec.
+                    format: int32
+                    type: integer
+                  totalPodCliquesCount:
+                    default: 0
+                    description: |-
+                      TotalPodCliquesCount is the total number of PodCliques expected to exist for the PodCliqueSet at the
+                      current spec.
+                    format: int32
+                    type: integer
                   updateEndedAt:
                     description: |-
                       UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the
@@ -11083,19 +11078,20 @@ spec:
                       for the PodCliqueSet.
                     format: date-time
                     type: string
-                  updatedPodCliqueScalingGroups:
+                  updatedPodCliqueScalingGroupsCount:
+                    default: 0
                     description: |-
-                      UpdatedPodCliqueScalingGroups is a list of PodCliqueScalingGroup names that have been updated to the desired
-                      PodCliqueSet generation hash.
-                    items:
-                      type: string
-                    type: array
-                  updatedPodCliques:
-                    description: UpdatedPodCliques is a list of PodClique names that
-                      have been updated to the desired PodCliqueSet generation hash.
-                    items:
-                      type: string
-                    type: array
+                      UpdatedPodCliqueScalingGroupsCount is the number of PodCliqueScalingGroups that have been updated to the
+                      desired PodCliqueSet generation hash.
+                    format: int32
+                    type: integer
+                  updatedPodCliquesCount:
+                    default: 0
+                    description: |-
+                      UpdatedPodCliquesCount is the number of PodCliques that have been updated to the desired PodCliqueSet
+                      generation hash. Recomputed each reconcile from child generation-hash labels.
+                    format: int32
+                    type: integer
                 type: object
               updatedReplicas:
                 default: 0

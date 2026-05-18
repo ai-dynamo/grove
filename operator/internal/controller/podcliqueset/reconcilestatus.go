@@ -18,7 +18,9 @@ package podcliqueset
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -34,7 +36,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -54,9 +55,6 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 		return ctrlcommon.ReconcileWithErrors("failed to mutate TopologyLevelsUnavailable condition", err)
 	}
 
-	// mirror UpdateProgress to the deprecated RollingUpdateProgress field for backward compatibility.
-	mirrorUpdateProgressToRollingUpdateProgress(pcs)
-
 	// Skip the status update when every mutate* above left status byte-identical to what
 	// the previous reconcile already persisted. The mutators are the only code writing
 	// pcs.Status here, so equality means there is nothing for the apiserver to store.
@@ -74,52 +72,77 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	return ctrlcommon.ContinueReconcile()
 }
 
-// mutateReplicas updates the PodCliqueSet status replica counts.
+// mutateReplicas updates the PodCliqueSet status replica counts and update-progress counts.
 func (r *Reconciler) mutateReplicas(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
 	// Set basic replica count
 	pcs.Status.Replicas = pcs.Spec.Replicas
-	availableReplicas, updatedReplicas, err := r.computeAvailableAndUpdatedReplicas(ctx, logger, pcs)
+	stats, err := r.computeAvailableAndUpdatedReplicas(ctx, logger, pcs)
 	if err != nil {
 		return fmt.Errorf("could not compute available replicas: %w", err)
 	}
-	pcs.Status.AvailableReplicas = availableReplicas
-	pcs.Status.UpdatedReplicas = updatedReplicas
+	pcs.Status.AvailableReplicas = stats.availableReplicas
+	pcs.Status.UpdatedReplicas = stats.updatedReplicas
+	if pcs.Status.UpdateProgress != nil {
+		pcs.Status.UpdateProgress.UpdatedPodCliquesCount = stats.updatedPCLQs
+		pcs.Status.UpdateProgress.TotalPodCliquesCount = stats.totalPCLQs
+		pcs.Status.UpdateProgress.UpdatedPodCliqueScalingGroupsCount = stats.updatedPCSGs
+		pcs.Status.UpdateProgress.TotalPodCliqueScalingGroupsCount = stats.totalPCSGs
+	}
 	return nil
 }
 
-// computeAvailableAndUpdatedReplicas calculates the number of available replicas for a PodCliqueSet.
-// It checks both standalone PodCliques and PodCliqueScalingGroups to determine availability.
-// A replica is considered available if it has all its required components (PCSGs and standalone PCLQs) available.
-func (r *Reconciler) computeAvailableAndUpdatedReplicas(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) (int32, int32, error) {
+// pcsReplicaStats aggregates replica- and child-level update progress derived from a single
+// pass over the informer cache.
+type pcsReplicaStats struct {
+	availableReplicas int32
+	updatedReplicas   int32
+	// updatedPCLQs counts standalone PCLQs (not in a PCSG) whose CurrentPodCliqueSetGenerationHash
+	// matches pcs.Status.CurrentGenerationHash. PCSG-owned PCLQs are tracked on their owning PCSG.
+	updatedPCLQs int32
+	totalPCLQs   int32
+	updatedPCSGs int32
+	totalPCSGs   int32
+}
+
+// computeAvailableAndUpdatedReplicas walks the PCS's standalone PCLQs and PCSGs once and
+// returns aggregate availability and update counts. Replaces the prior O(N²) accumulator that
+// stored fully-qualified child names in status.
+func (r *Reconciler) computeAvailableAndUpdatedReplicas(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) (pcsReplicaStats, error) {
 	var (
-		availableReplicas int32
-		updatedReplicas   int32
-		pcsObjectKey      = client.ObjectKeyFromObject(pcs)
+		stats        pcsReplicaStats
+		pcsObjectKey = client.ObjectKeyFromObject(pcs)
 	)
 
 	expectedPCSGFQNsPerPCSReplica := componentutils.GetExpectedPCSGFQNsPerPCSReplica(pcs)
 	expectedStandAlonePCLQFQNsPerPCSReplica := componentutils.GetExpectedStandAlonePCLQFQNsPerPCSReplica(pcs)
 
-	// Fetch all PCSGs for this PCS
+	// Hoist the expected-name lookups out of the filter callbacks. Built once each (O(E) work and
+	// space); each filter pass is then O(M) with a single map lookup per element, where M is the
+	// number of live children fetched and E is the number of expected names. Replaces an earlier
+	// O(M*E) pattern that re-flattened the per-replica name map on every element.
+	expectedPCSGNameSet := flattenNamesToSet(expectedPCSGFQNsPerPCSReplica)
+	expectedStandalonePCLQNameSet := flattenNamesToSet(expectedStandAlonePCLQFQNsPerPCSReplica)
+
+	// Fetch all PCSGs for this PCS, then drop any stray PCSGs (not part of the spec) using O(1)
+	// set lookup. slices.DeleteFunc compacts in-place; safe here because the slice came from a
+	// fresh fetch and isn't aliased.
 	pcsgs, err := componentutils.GetPCSGsForPCS(ctx, r.client, pcsObjectKey)
 	if err != nil {
-		return availableReplicas, updatedReplicas, err
+		return stats, err
 	}
-	// Filter the PCSGs that belong to the expected set of PCSGs for PCS, this ensures that we do not
-	// consider any stray PCSGs that might have been created externally.
-	pcsgs = lo.Filter(pcsgs, func(pcsg grovecorev1alpha1.PodCliqueScalingGroup, _ int) bool {
-		return lo.Contains(lo.Flatten(lo.Values(expectedPCSGFQNsPerPCSReplica)), pcsg.Name)
+	pcsgs = slices.DeleteFunc(pcsgs, func(pcsg grovecorev1alpha1.PodCliqueScalingGroup) bool {
+		_, expected := expectedPCSGNameSet[pcsg.Name]
+		return !expected
 	})
 
-	// Fetch all standalone PodCliques for this PCS
+	// Fetch all standalone PodCliques for this PCS and drop strays the same way.
 	standalonePCLQs, err := componentutils.GetPodCliquesWithParentPCS(ctx, r.client, pcsObjectKey)
 	if err != nil {
-		return availableReplicas, updatedReplicas, err
+		return stats, err
 	}
-	// Filter the PCLQs that belong to the expected set of standalone PCLQs for PCS, this ensures that we do not
-	// consider any stray PCLQs that might have been created externally.
-	standalonePCLQs = lo.Filter(standalonePCLQs, func(pclq grovecorev1alpha1.PodClique, _ int) bool {
-		return lo.Contains(lo.Flatten(lo.Values(expectedStandAlonePCLQFQNsPerPCSReplica)), pclq.Name)
+	standalonePCLQs = slices.DeleteFunc(standalonePCLQs, func(pclq grovecorev1alpha1.PodClique) bool {
+		_, expected := expectedStandalonePCLQNameSet[pclq.Name]
+		return !expected
 	})
 
 	// Group both resources by PCS replica index
@@ -130,19 +153,66 @@ func (r *Reconciler) computeAvailableAndUpdatedReplicas(ctx context.Context, log
 		replicaIndexStr := strconv.Itoa(replicaIndex)
 		replicaStandalonePCLQs := standalonePCLQsByReplica[replicaIndexStr]
 		replicaPCSGs := pcsgsByReplica[replicaIndexStr]
-		// Check if this PCS replica is available based on all its components
+		expectedPCSGCount := len(expectedPCSGFQNsPerPCSReplica[replicaIndex])
+		expectedPCLQCount := len(expectedStandAlonePCLQFQNsPerPCSReplica[replicaIndex])
+
+		stats.totalPCLQs += int32(expectedPCLQCount)
+		stats.totalPCSGs += int32(expectedPCSGCount)
+		stats.updatedPCLQs += countUpdatedPCLQs(pcs.Status.CurrentGenerationHash, replicaStandalonePCLQs)
+		stats.updatedPCSGs += countUpdatedPCSGs(pcs.Status.CurrentGenerationHash, replicaPCSGs)
+
 		isReplicaAvailable, isReplicaUpdated := r.computeReplicaStatus(pcs.Status.CurrentGenerationHash, replicaPCSGs,
-			replicaStandalonePCLQs, len(expectedPCSGFQNsPerPCSReplica[replicaIndex]), len(expectedStandAlonePCLQFQNsPerPCSReplica[replicaIndex]))
+			replicaStandalonePCLQs, expectedPCSGCount, expectedPCLQCount)
 		if isReplicaAvailable {
-			availableReplicas++
+			stats.availableReplicas++
 		}
 		if isReplicaUpdated {
-			updatedReplicas++
+			stats.updatedReplicas++
 		}
 	}
 
-	logger.Info("Calculated available and updated replicas for PCS", "pcs", pcsObjectKey, "availableReplicas", availableReplicas, "updatedReplicas", updatedReplicas, "totalReplicas", pcs.Spec.Replicas)
-	return availableReplicas, updatedReplicas, nil
+	logger.Info(fmt.Sprintf("Calculated PCS replica and update progress stats for %s: available=%d updated=%d PCLQs=%d/%d PCSGs=%d/%d",
+		pcsObjectKey, stats.availableReplicas, stats.updatedReplicas,
+		stats.updatedPCLQs, stats.totalPCLQs,
+		stats.updatedPCSGs, stats.totalPCSGs))
+	return stats, nil
+}
+
+// countUpdatedPCLQs counts non-terminating PCLQs whose generation hash matches the PCS hash.
+func countUpdatedPCLQs(pcsGenerationHash *string, pclqs []grovecorev1alpha1.PodClique) int32 {
+	if pcsGenerationHash == nil {
+		return 0
+	}
+	var n int32
+	for i := range pclqs {
+		pclq := &pclqs[i]
+		if k8sutils.IsResourceTerminating(pclq.ObjectMeta) {
+			continue
+		}
+		if pclq.Status.CurrentPodCliqueSetGenerationHash != nil &&
+			*pclq.Status.CurrentPodCliqueSetGenerationHash == *pcsGenerationHash {
+			n++
+		}
+	}
+	return n
+}
+
+// countUpdatedPCSGs counts non-terminating PCSGs whose update completed at the PCS hash.
+func countUpdatedPCSGs(pcsGenerationHash *string, pcsgs []grovecorev1alpha1.PodCliqueScalingGroup) int32 {
+	if pcsGenerationHash == nil {
+		return 0
+	}
+	var n int32
+	for i := range pcsgs {
+		pcsg := &pcsgs[i]
+		if k8sutils.IsResourceTerminating(pcsg.ObjectMeta) {
+			continue
+		}
+		if componentutils.IsPCSGUpdateComplete(pcsg, *pcsGenerationHash) {
+			n++
+		}
+	}
+	return n
 }
 
 // computeReplicaStatus determines if a replica is available and updated based on its components.
@@ -190,6 +260,24 @@ func (r *Reconciler) computePCSGsStatus(pcsGenerationHash *string, expectedPCSGs
 
 func (r *Reconciler) mutateTopologyLevelUnavailableConditions(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
 	if !r.tasConfig.Enabled {
+		// If TAS is disabled but PCS has topology constraints, surface a warning condition.
+		if len(componentutils.GetUniqueTopologyDomainsInPodCliqueSet(pcs)) > 0 {
+			cond := metav1.Condition{
+				Type:               apicommonconstants.ConditionTopologyLevelsUnavailable,
+				Status:             metav1.ConditionUnknown,
+				Reason:             apicommonconstants.ConditionReasonTopologyAwareSchedulingDisabled,
+				Message:            "Topology constraints are defined but Topology Aware Scheduling is disabled",
+				ObservedGeneration: pcs.Generation,
+				LastTransitionTime: metav1.Now(),
+			}
+			if k8sutils.HasConditionChanged(pcs.Status.Conditions, cond) {
+				logger.Info("Updating TopologyLevelsUnavailable condition for PodCliqueSet",
+					"pcs", client.ObjectKeyFromObject(pcs),
+					"reason", cond.Reason)
+				meta.SetStatusCondition(&pcs.Status.Conditions, cond)
+			}
+			return nil
+		}
 		// Clear any existing topology level unavailable conditions if TAS is disabled
 		meta.RemoveStatusCondition(&pcs.Status.Conditions, apicommonconstants.ConditionTopologyLevelsUnavailable)
 		return nil
@@ -199,111 +287,110 @@ func (r *Reconciler) mutateTopologyLevelUnavailableConditions(ctx context.Contex
 	if err != nil {
 		return err
 	}
-	if k8sutils.HasConditionChanged(pcs.Status.Conditions, *newCond) {
+	if k8sutils.HasConditionChanged(pcs.Status.Conditions, newCond) {
 		logger.Info("Updating TopologyLevelsUnavailable condition for PodCliqueSet",
 			"pcs", client.ObjectKeyFromObject(pcs),
 			"type", newCond.Type,
 			"status", newCond.Status,
 			"reason", newCond.Reason)
-		meta.SetStatusCondition(&pcs.Status.Conditions, *newCond)
+		meta.SetStatusCondition(&pcs.Status.Conditions, newCond)
 	}
 	return nil
 }
 
 // computeTopologyLevelsUnavailableCondition computes the TopologyLevelsUnavailable condition for the PodCliqueSet.
-// It checks the PodCliqueSet's topology constraints against the available topology levels defined in the ClusterTopology.
-// If any topology levels used by the PodCliqueSet are not available in the ClusterTopology, it sets the condition to True.
-// If all topology levels are available, it sets the condition to False.
-// If the ClusterTopology resource is not found, it sets the condition to Unknown.
-func (r *Reconciler) computeTopologyLevelsUnavailableCondition(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (*metav1.Condition, error) {
-	var cond *metav1.Condition
-	// Get the TopologyLevel's from ClusterTopology custom resource.
-	topologyLevels, err := clustertopology.GetClusterTopologyLevels(ctx, r.client, grovecorev1alpha1.DefaultClusterTopologyName)
+// It checks the PodCliqueSet's topology constraints against the topology levels defined in the single
+// ClusterTopology referenced by the explicit topology constraints in the PodCliqueSet.
+// If any topology domains used by the PodCliqueSet are not available in that ClusterTopology, it sets the condition to True.
+// If all referenced topology domains are available, it sets the condition to False.
+// If the ClusterTopology resource is not found, or an explicit topology constraint is incomplete, it sets the condition to Unknown.
+func (r *Reconciler) computeTopologyLevelsUnavailableCondition(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (metav1.Condition, error) {
+	if !componentutils.HasAnyTopologyConstraint(pcs) {
+		return metav1.Condition{
+			Type:               apicommonconstants.ConditionTopologyLevelsUnavailable,
+			Status:             metav1.ConditionFalse,
+			Reason:             apicommonconstants.ConditionReasonAllTopologyLevelsAvailable,
+			Message:            "No topology constraints defined",
+			ObservedGeneration: pcs.Generation,
+			LastTransitionTime: metav1.Now(),
+		}, nil
+	}
+
+	topologyName, err := componentutils.ResolveTopologyNameForPodCliqueSet(pcs)
+	if err != nil {
+		switch {
+		case errors.Is(err, componentutils.ErrTopologyNameMissing):
+			return metav1.Condition{
+				Type:               apicommonconstants.ConditionTopologyLevelsUnavailable,
+				Status:             metav1.ConditionUnknown,
+				Reason:             apicommonconstants.ConditionReasonTopologyNameMissing,
+				Message:            "topology constraints must specify both topologyName and packDomain",
+				ObservedGeneration: pcs.Generation,
+				LastTransitionTime: metav1.Now(),
+			}, nil
+		case errors.Is(err, componentutils.ErrMultipleTopologyNamesUnsupported):
+			return metav1.Condition{
+				Type:               apicommonconstants.ConditionTopologyLevelsUnavailable,
+				Status:             metav1.ConditionUnknown,
+				Reason:             apicommonconstants.ConditionReasonTopologyNameMissing,
+				Message:            "all topologyConstraint.topologyName values within a PodCliqueSet must match in the current implementation",
+				ObservedGeneration: pcs.Generation,
+				LastTransitionTime: metav1.Now(),
+			}, nil
+		default:
+			return metav1.Condition{}, fmt.Errorf("failed to resolve topologyName: %w", err)
+		}
+	}
+
+	topologyLevels, err := clustertopology.GetClusterTopologyLevels(ctx, r.client, topologyName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			// ClusterTopology resource not found, set condition to Unknown
-			cond = &metav1.Condition{
+			return metav1.Condition{
 				Type:               apicommonconstants.ConditionTopologyLevelsUnavailable,
 				Status:             metav1.ConditionUnknown,
 				Reason:             apicommonconstants.ConditionReasonClusterTopologyNotFound,
 				Message:            "ClusterTopology resource not found",
 				ObservedGeneration: pcs.Generation,
 				LastTransitionTime: metav1.Now(),
-			}
-			return cond, nil
+			}, nil
 		}
-		return nil, fmt.Errorf("failed to get topology levels: %w", err)
+		return metav1.Condition{}, fmt.Errorf("failed to get topology levels: %w", err)
 	}
 	availableTopologyDomains := lo.Map(topologyLevels, func(tl grovecorev1alpha1.TopologyLevel, _ int) grovecorev1alpha1.TopologyDomain { return tl.Domain })
-	// Check PodCliqueSet for unavailable topology levels
-	pcsTopologyDomains := getUniqueTopologyDomainsInPodCliqueSet(pcs)
+	pcsTopologyDomains := componentutils.GetUniqueTopologyDomainsInPodCliqueSet(pcs)
 	unavailableTopologyDomains, _ := lo.Difference(pcsTopologyDomains, availableTopologyDomains)
 	if len(unavailableTopologyDomains) > 0 {
-		// Some topology levels are unavailable
-		cond = &metav1.Condition{
+		return metav1.Condition{
 			Type:               apicommonconstants.ConditionTopologyLevelsUnavailable,
 			Status:             metav1.ConditionTrue,
 			Reason:             apicommonconstants.ConditionReasonTopologyLevelsUnavailable,
 			Message:            fmt.Sprintf("Unavailable topology domains: %v", unavailableTopologyDomains),
 			ObservedGeneration: pcs.Generation,
 			LastTransitionTime: metav1.Now(),
-		}
-	} else {
-		// All topology levels are available
-		cond = &metav1.Condition{
-			Type:               apicommonconstants.ConditionTopologyLevelsUnavailable,
-			Status:             metav1.ConditionFalse,
-			Reason:             apicommonconstants.ConditionReasonAllTopologyLevelsAvailable,
-			Message:            "All topology levels are available",
-			ObservedGeneration: pcs.Generation,
-			LastTransitionTime: metav1.Now(),
-		}
+		}, nil
 	}
-	return cond, nil
+	return metav1.Condition{
+		Type:               apicommonconstants.ConditionTopologyLevelsUnavailable,
+		Status:             metav1.ConditionFalse,
+		Reason:             apicommonconstants.ConditionReasonAllTopologyLevelsAvailable,
+		Message:            "All topology levels are available",
+		ObservedGeneration: pcs.Generation,
+		LastTransitionTime: metav1.Now(),
+	}, nil
 }
 
-// getUniqueTopologyDomainsInPodCliqueSet extracts unique topology domains from the PodCliqueSet's topology constraints.
-// It inspects the PodCliqueSet template, all PodClique templates, and all PodCliqueScalingGroup configs
-// to gather the topology domains specified in their topology constraints and returns a list of unique domains.
-func getUniqueTopologyDomainsInPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) []grovecorev1alpha1.TopologyDomain {
-	topologyDomains := sets.New[grovecorev1alpha1.TopologyDomain]()
-	if pcs.Spec.Template.TopologyConstraint != nil {
-		topologyDomains.Insert(pcs.Spec.Template.TopologyConstraint.PackDomain)
+// flattenNamesToSet flattens a per-replica expected-name map into a set for O(1) membership tests.
+// Used to prune stray children that aren't part of the spec without paying O(M*E) per filter pass.
+func flattenNamesToSet(perReplica map[int][]string) map[string]struct{} {
+	total := 0
+	for _, names := range perReplica {
+		total += len(names)
 	}
-	// iterate over all PCLQs to get their topology constraints
-	for _, pclqTemplateSpec := range pcs.Spec.Template.Cliques {
-		if pclqTemplateSpec.TopologyConstraint != nil {
-			topologyDomains.Insert(pclqTemplateSpec.TopologyConstraint.PackDomain)
+	set := make(map[string]struct{}, total)
+	for _, names := range perReplica {
+		for _, n := range names {
+			set[n] = struct{}{}
 		}
 	}
-	// iterate over all PCSGs to get their topology constraints
-	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-		if pcsgConfig.TopologyConstraint != nil {
-			topologyDomains.Insert(pcsgConfig.TopologyConstraint.PackDomain)
-		}
-	}
-	return topologyDomains.UnsortedList()
-}
-
-// mirrorUpdateProgressToRollingUpdateProgress mirrors the UpdateProgress field to the deprecated RollingUpdateProgress field
-// for backward compatibility with consumers that still use the old field name.
-func mirrorUpdateProgressToRollingUpdateProgress(pcs *grovecorev1alpha1.PodCliqueSet) {
-	if pcs.Status.UpdateProgress == nil {
-		pcs.Status.RollingUpdateProgress = nil
-		return
-	}
-
-	pcs.Status.RollingUpdateProgress = &grovecorev1alpha1.PodCliqueSetRollingUpdateProgress{
-		UpdateStartedAt:               pcs.Status.UpdateProgress.UpdateStartedAt,
-		UpdateEndedAt:                 pcs.Status.UpdateProgress.UpdateEndedAt,
-		UpdatedPodCliqueScalingGroups: pcs.Status.UpdateProgress.UpdatedPodCliqueScalingGroups,
-		UpdatedPodCliques:             pcs.Status.UpdateProgress.UpdatedPodCliques,
-	}
-
-	if len(pcs.Status.UpdateProgress.CurrentlyUpdating) > 0 {
-		pcs.Status.RollingUpdateProgress.CurrentlyUpdating = &grovecorev1alpha1.PodCliqueSetReplicaRollingUpdateProgress{
-			ReplicaIndex:    pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex,
-			UpdateStartedAt: pcs.Status.UpdateProgress.CurrentlyUpdating[0].UpdateStartedAt,
-		}
-	}
+	return set
 }

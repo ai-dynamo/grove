@@ -35,7 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-var _ scheduler.TopologyAwareSchedBackend = (*schedulerBackend)(nil)
+var _ scheduler.TopologyAwareBackend = (*schedulerBackend)(nil)
 
 // TopologyGVR returns the GroupVersionResource of the KAI Topology CRD.
 func (b *schedulerBackend) TopologyGVR() schema.GroupVersionResource {
@@ -44,6 +44,12 @@ func (b *schedulerBackend) TopologyGVR() schema.GroupVersionResource {
 		Version:  "v1alpha1",
 		Resource: "topologies",
 	}
+}
+
+// TopologyResourceName returns the name of the KAI Topology resource for the given ClusterTopology.
+// KAI topology resources are always named after their ClusterTopology.
+func (b *schedulerBackend) TopologyResourceName(ct *grovecorev1alpha1.ClusterTopology) string {
+	return ct.Name
 }
 
 // SyncTopology creates or updates the KAI Topology resource for the given ClusterTopology.
@@ -116,4 +122,30 @@ func buildKAITopology(name string, clusterTopology *grovecorev1alpha1.ClusterTop
 
 func isKAITopologyChanged(oldTopology, newTopology *kaitopologyv1alpha1.Topology) bool {
 	return !reflect.DeepEqual(oldTopology.Spec.Levels, newTopology.Spec.Levels)
+}
+
+// desiredKAITopologyLevels converts ClusterTopology levels to KAI topology levels.
+// Used for drift comparison without constructing a full KAI Topology object with owner references.
+func desiredKAITopologyLevels(ct *grovecorev1alpha1.ClusterTopology) []kaitopologyv1alpha1.TopologyLevel {
+	return lo.Map(ct.Spec.Levels, func(level grovecorev1alpha1.TopologyLevel, _ int) kaitopologyv1alpha1.TopologyLevel {
+		return kaitopologyv1alpha1.TopologyLevel{
+			NodeLabel: level.Key,
+		}
+	})
+}
+
+// CheckTopologyDrift compares the named KAI Topology resource against the ClusterTopology levels.
+func (b *schedulerBackend) CheckTopologyDrift(ctx context.Context, ct *grovecorev1alpha1.ClusterTopology, ref grovecorev1alpha1.SchedulerTopologyReference) (bool, string, int64, error) {
+	existingTopology := &kaitopologyv1alpha1.Topology{}
+	if err := b.client.Get(ctx, client.ObjectKey{Name: ref.TopologyReference}, existingTopology); err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, fmt.Sprintf("KAI Topology %q not found", ref.TopologyReference), 0, nil
+		}
+		return false, "", 0, fmt.Errorf("failed to get KAI Topology %s: %w", ref.TopologyReference, err)
+	}
+	desired := desiredKAITopologyLevels(ct)
+	if !reflect.DeepEqual(existingTopology.Spec.Levels, desired) {
+		return false, "KAI Topology levels differ from ClusterTopology levels", existingTopology.Generation, nil
+	}
+	return true, "", existingTopology.Generation, nil
 }

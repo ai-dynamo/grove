@@ -52,6 +52,10 @@ func (r *Reconciler) RegisterWithManager(mgr manager.Manager) error {
 		}).
 		For(&grovecorev1alpha1.PodCliqueSet{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Watches(
+			&grovecorev1alpha1.ClusterTopology{},
+			handler.EnqueueRequestsFromMapFunc(mapClusterTopologyToPodCliqueSets(r.client)),
+		).
+		Watches(
 			&grovecorev1alpha1.PodClique{},
 			handler.EnqueueRequestsFromMapFunc(mapPodCliqueToPodCliqueSet()),
 			builder.WithPredicates(podCliquePredicate()),
@@ -85,6 +89,35 @@ func mapPodCliqueScaleGroupToPodCliqueSet() handler.MapFunc {
 		}
 		pcsName := componentutils.GetPodCliqueSetName(pcsg.ObjectMeta)
 		return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: pcsName, Namespace: pcsg.Namespace}}}
+	}
+}
+
+// mapClusterTopologyToPodCliqueSets returns a function that maps ClusterTopology events to PodCliqueSets
+// whose explicit topology constraints resolve to this ClusterTopology.
+func mapClusterTopologyToPodCliqueSets(cl client.Client) handler.MapFunc {
+	return func(ctx context.Context, obj client.Object) []reconcile.Request {
+		ct, ok := obj.(*grovecorev1alpha1.ClusterTopology)
+		if !ok {
+			return nil
+		}
+
+		pcsList := &grovecorev1alpha1.PodCliqueSetList{}
+		if err := cl.List(ctx, pcsList); err != nil {
+			return nil
+		}
+
+		requests := make([]reconcile.Request, 0, len(pcsList.Items))
+		for i := range pcsList.Items {
+			pcs := &pcsList.Items[i]
+			topologyName, err := componentutils.ResolveTopologyNameForPodCliqueSet(pcs)
+			if err != nil || topologyName != ct.Name {
+				continue
+			}
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pcs.Name, Namespace: pcs.Namespace},
+			})
+		}
+		return requests
 	}
 }
 

@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"testing"
 
+	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
@@ -232,7 +233,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 		{
 			description: "MNNVL enabled with GPU container injects claims",
 			pcsAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "default",
 			},
 			containers: []corev1.Container{
 				{
@@ -247,7 +248,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 			expectedContainersWithClaims:    []string{"gpu-worker"},
 			expectedContainersWithoutClaims: []string{},
 			expectPodLevelClaim:             true,
-			expectedRCTName:                 "coyote-0",
+			expectedRCTName:                 "coyote-0-default",
 		},
 		{
 			description:    "MNNVL not enabled does not inject claims",
@@ -269,7 +270,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 		{
 			description: "MNNVL enabled but no GPU containers does not inject claims",
 			pcsAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "default",
 			},
 			containers: []corev1.Container{
 				{
@@ -288,7 +289,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 		{
 			description: "MNNVL enabled with mixed GPU and non-GPU containers",
 			pcsAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "default",
 			},
 			containers: []corev1.Container{
 				{
@@ -315,7 +316,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 		{
 			description: "MNNVL enabled with GPU in init container",
 			pcsAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "default",
 			},
 			initContainers: []corev1.Container{
 				{
@@ -339,7 +340,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 		{
 			description: "MNNVL disabled explicitly does not inject claims",
 			pcsAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled,
+				mnnvl.AnnotationMNNVLGroup: mnnvl.AnnotationMNNVLGroupOptOut,
 			},
 			containers: []corev1.Container{
 				{
@@ -378,7 +379,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 		{
 			description: "mnnvl-group on clique overrides PCS auto-mnnvl",
 			pcsAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "default",
 			},
 			cliqueAnnotations: map[string]string{
 				mnnvl.AnnotationMNNVLGroup: "encoders",
@@ -487,6 +488,36 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 				"init containers without MNNVL claims should match expected")
 		})
 	}
+}
+
+func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testPCSNamespace, uuid.NewUUID()).
+		WithReplicas(1).
+		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder("worker").
+				WithAnnotations(map[string]string{
+					apiconstants.AnnotationTopologyName: "my-topology",
+					"example.com/keep":                  "yes",
+				}).
+				Build(),
+		).
+		Build()
+
+	pclq := &grovecorev1alpha1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-0-worker", testPCSName),
+			Namespace: testPCSNamespace,
+		},
+	}
+
+	operator := &_resource{scheme: groveclientscheme.Scheme}
+	err := operator.buildResource(logr.Discard(), pclq, pcs, 0, false)
+	require.NoError(t, err)
+	require.NotNil(t, pclq.Annotations)
+	assert.Equal(t, "yes", pclq.Annotations["example.com/keep"])
+	_, hasTopologyAnnotation := pclq.Annotations[apiconstants.AnnotationTopologyName]
+	assert.False(t, hasTopologyAnnotation)
 }
 
 // triageContainersByMNNVLClaim separates containers into those with MNNVL claim and those without.

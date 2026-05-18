@@ -23,6 +23,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
@@ -77,6 +78,7 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 		mutateMinAvailableBreachedCondition(pclq,
 			len(podCategories[k8sutils.PodHasAtleastOneContainerWithNonZeroExitCode]),
 			len(podCategories[k8sutils.PodStartedButNotReady]))
+		r.emitAllScheduledReplicasLostIfNeeded(pclq, originalStatus.ScheduledReplicas)
 	}
 
 	// mutate the selector that will be used by an autoscaler.
@@ -84,9 +86,6 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 		logger.Error(err, "failed to update selector for PodClique")
 		return ctrlcommon.ReconcileWithErrors("failed to set selector for PodClique", err)
 	}
-
-	// mirror UpdateProgress to the deprecated RollingUpdateProgress field for backward compatibility.
-	mirrorUpdateProgressToRollingUpdateProgress(pclq)
 
 	// Skip the status patch when every mutate* above left status byte-identical to what the
 	// previous reconcile already persisted. The mutators above are the only code that writes
@@ -185,6 +184,18 @@ func mutateSelector(pcsName string, pclq *grovecorev1alpha1.PodClique) error {
 	return nil
 }
 
+// emitAllScheduledReplicasLostIfNeeded emits a Warning event when ScheduledReplicas drops from
+// non-zero to zero. Gang termination is suppressed in this state (recreating the PodGang would
+// just produce the same Pending pods) so this event is the only explicit signal that a
+// previously-running workload is now fully down.
+func (r *Reconciler) emitAllScheduledReplicasLostIfNeeded(pclq *grovecorev1alpha1.PodClique, originalScheduled int32) {
+	if originalScheduled > 0 && pclq.Status.ScheduledReplicas == 0 {
+		r.eventRecorder.Eventf(pclq, corev1.EventTypeWarning, internalconstants.ReasonAllScheduledReplicasLost,
+			"All scheduled pods lost (was %d). Gang termination is suppressed to avoid recreating Pending pods against the same cluster state; investigate node availability or capacity.",
+			originalScheduled)
+	}
+}
+
 // mutateMinAvailableBreachedCondition updates the MinAvailableBreached condition based on pod availability
 func mutateMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, numNotReadyPodsWithContainersInError, numPodsStartedButNotReady int) {
 	newCondition := computeMinAvailableBreachedCondition(pclq, numNotReadyPodsWithContainersInError, numPodsStartedButNotReady)
@@ -209,14 +220,27 @@ func computeMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, num
 	scheduledReplicas := int(pclq.Status.ScheduledReplicas)
 	now := metav1.Now()
 
-	// If the number of scheduled pods is less than the minimum available, then minAvailable is not considered as breached.
-	// Consider a case where none of the PodCliques have been scheduled yet, then it should not cause the PodGang to be recreated all the time.
+	// scheduledReplicas == 0: either initial startup or every running pod has been lost.
+	// Recreating the PodGang would just produce the same Pending pods, so suppress to avoid
+	// a churn loop.
+	// 0 < scheduledReplicas < MinAvailable: with a gang scheduler this implies regression
+	// after a healthy state and breaches. On non-gang schedulers it can flicker briefly
+	// during staged startup; TerminationDelay (default 4h) absorbs the flicker.
 	if scheduledReplicas < minAvailable {
+		if scheduledReplicas == 0 {
+			return metav1.Condition{
+				Type:               constants.ConditionTypeMinAvailableBreached,
+				Status:             metav1.ConditionFalse,
+				Reason:             constants.ConditionReasonInsufficientScheduledPods,
+				Message:            fmt.Sprintf("Scheduled replicas 0 (MinAvailable %d); gang termination suppressed to avoid recreating Pending pods against the same cluster state", minAvailable),
+				LastTransitionTime: now,
+			}
+		}
 		return metav1.Condition{
 			Type:               constants.ConditionTypeMinAvailableBreached,
-			Status:             metav1.ConditionFalse,
-			Reason:             constants.ConditionReasonInsufficientScheduledPods,
-			Message:            fmt.Sprintf("Insufficient scheduled pods. expected at least: %d, found: %d", minAvailable, scheduledReplicas),
+			Status:             metav1.ConditionTrue,
+			Reason:             constants.ConditionReasonScheduledReplicasBelowMinAvailable,
+			Message:            fmt.Sprintf("Scheduled replicas (%d) below MinAvailable (%d)", scheduledReplicas, minAvailable),
 			LastTransitionTime: now,
 		}
 	}
@@ -270,28 +294,5 @@ func computePodCliqueScheduledCondition(pclq *grovecorev1alpha1.PodClique) metav
 		Reason:             constants.ConditionReasonSufficientScheduledPods,
 		Message:            fmt.Sprintf("Sufficient scheduled pods found. expected at least: %d, found: %d", *pclq.Spec.MinAvailable, pclq.Status.ScheduledReplicas),
 		LastTransitionTime: now,
-	}
-}
-
-// mirrorUpdateProgressToRollingUpdateProgress mirrors the UpdateProgress field to the deprecated RollingUpdateProgress field
-// for backward compatibility with consumers that still use the old field name.
-func mirrorUpdateProgressToRollingUpdateProgress(pclq *grovecorev1alpha1.PodClique) {
-	if pclq.Status.UpdateProgress == nil {
-		pclq.Status.RollingUpdateProgress = nil
-		return
-	}
-
-	pclq.Status.RollingUpdateProgress = &grovecorev1alpha1.PodCliqueRollingUpdateProgress{
-		UpdateStartedAt:            pclq.Status.UpdateProgress.UpdateStartedAt,
-		UpdateEndedAt:              pclq.Status.UpdateProgress.UpdateEndedAt,
-		PodCliqueSetGenerationHash: pclq.Status.UpdateProgress.PodCliqueSetGenerationHash,
-		PodTemplateHash:            pclq.Status.UpdateProgress.PodTemplateHash,
-	}
-
-	if pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate != nil {
-		pclq.Status.RollingUpdateProgress.ReadyPodsSelectedToUpdate = &grovecorev1alpha1.PodsSelectedToUpdate{
-			Current:   pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate.Current,
-			Completed: pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate.Completed,
-		}
 	}
 }
