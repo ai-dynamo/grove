@@ -249,6 +249,16 @@ func Test_ScaleTest_1000(t *testing.T) {
 			ActionFn: func(ctx context.Context) error {
 				return workload.NewWorkloadManager(tc.Client, Logger).DeletePCS(ctx, tc.Namespace, tc.Workload.Name)
 			},
+			Milestones: []measurement.MilestoneDefinition{
+				{
+					Name: "pcs-deleted",
+					Condition: &condition.PCSDeletedCondition{
+						Client:    tc.Client.Client,
+						Name:      tc.Workload.Name,
+						Namespace: tc.Namespace,
+					},
+				},
+			},
 		})
 	})
 }
