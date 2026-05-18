@@ -109,6 +109,7 @@ func runScaleTest(t *testing.T, cfg scaleTestConfig, addPhases scaleTestPhases) 
 			Namespace:    defaultScaleNamespace,
 			ExpectedPods: cfg.expectedPods,
 		}),
+		testctx.WithSkipCleanupWait(),
 	)
 	defer cleanup()
 

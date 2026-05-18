@@ -75,6 +75,8 @@ type TestContext struct {
 	Timeout   time.Duration
 	Interval  time.Duration
 	Workload  *WorkloadConfig
+
+	SkipCleanupWait bool
 }
 
 // TestOption configures a TestContext.
@@ -98,6 +100,12 @@ func WithInterval(d time.Duration) TestOption {
 // WithWorkload sets the workload configuration.
 func WithWorkload(wc *WorkloadConfig) TestOption {
 	return func(tc *TestContext) { tc.Workload = wc }
+}
+
+// WithSkipCleanupWait skips the post-test wait for Kubernetes cascade cleanup.
+// Use this only for tests that run in a disposable cluster.
+func WithSkipCleanupWait() TestOption {
+	return func(tc *TestContext) { tc.SkipCleanupWait = true }
 }
 
 // NewTestContext creates a TestContext from a K8s client with optional configuration.
@@ -143,7 +151,7 @@ func PrepareTest(ctx context.Context, t *testing.T, requiredWorkerNodes int, opt
 			diag.CollectAll(ctx, t.Name())
 		}
 
-		if err := sharedCluster.CleanupWorkloads(ctx); err != nil {
+		if err := sharedCluster.CleanupWorkloads(ctx, !tc.SkipCleanupWait); err != nil {
 			if Logger != nil {
 				Logger.Error("================================================================================")
 				Logger.Error("=== CLEANUP FAILURE - COLLECTING DIAGNOSTICS ===")
