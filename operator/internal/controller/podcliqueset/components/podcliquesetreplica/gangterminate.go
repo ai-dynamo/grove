@@ -165,6 +165,11 @@ func (r _resource) getExistingPCLQsByNames(ctx context.Context, namespace string
 
 // getMinAvailableBreachedPCSGInfo filters PodCliqueScalingGroups that have grovecorev1alpha1.ConditionTypeMinAvailableBreached set to true.
 // It returns the names of all such PodCliqueScalingGroups and minimum of all the waitDurations.
+//
+// PodCliqueScalingGroups that have never been healthy (per WasPCSGEverHealthy) are excluded —
+// the MinAvailableBreached condition stays True for observability, but recycling a workload
+// that has never been admitted by the scheduler would only churn-loop Pending pods. Action
+// fires only after a workload has been healthy and then regressed.
 func getMinAvailableBreachedPCSGInfo(pcsgs []grovecorev1alpha1.PodCliqueScalingGroup, terminationDelay time.Duration, since time.Time) ([]string, time.Duration) {
 	pcsgCandidateNames := make([]string, 0, len(pcsgs))
 	waitForDurations := make([]time.Duration, 0, len(pcsgs))
@@ -173,11 +178,15 @@ func getMinAvailableBreachedPCSGInfo(pcsgs []grovecorev1alpha1.PodCliqueScalingG
 		if cond == nil {
 			continue
 		}
-		if cond.Status == metav1.ConditionTrue {
-			pcsgCandidateNames = append(pcsgCandidateNames, pcsg.Name)
-			waitFor := terminationDelay - since.Sub(cond.LastTransitionTime.Time)
-			waitForDurations = append(waitForDurations, waitFor)
+		if cond.Status != metav1.ConditionTrue {
+			continue
 		}
+		if !componentutils.WasPCSGEverHealthy(&pcsg) {
+			continue
+		}
+		pcsgCandidateNames = append(pcsgCandidateNames, pcsg.Name)
+		waitFor := terminationDelay - since.Sub(cond.LastTransitionTime.Time)
+		waitForDurations = append(waitForDurations, waitFor)
 	}
 	if len(waitForDurations) == 0 {
 		return pcsgCandidateNames, 0
