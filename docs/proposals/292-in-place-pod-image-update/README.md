@@ -9,14 +9,15 @@
   - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
     - [Unsupported Pod Template Changes](#unsupported-pod-template-changes)
     - [Premature Update Completion](#premature-update-completion)
-    - [Readiness and Traffic Impact](#readiness-and-traffic-impact)
+    - [Traffic and Connection Impact](#traffic-and-connection-impact)
     - [Image Pull or Startup Failures](#image-pull-or-startup-failures)
 - [Design Details](#design-details)
   - [API Changes](#api-changes)
   - [High-Level Architecture](#high-level-architecture)
   - [Eligibility Detection](#eligibility-detection)
-  - [Pod In-Place Update State](#pod-in-place-update-state)
+  - [In-Place Update Progress](#in-place-update-progress)
   - [Completion Detection](#completion-detection)
+  - [Policy Changes During Active Updates](#policy-changes-during-active-updates)
   - [Standalone PodClique Flow](#standalone-podclique-flow)
   - [PodCliqueScalingGroup Flow](#podcliquescalinggroup-flow)
   - [Status and Conditions](#status-and-conditions)
@@ -30,7 +31,7 @@
 
 ## Summary
 
-This GREP extends `PodCliqueSet` updates with opt-in in-place Pod image updates. When a workload update only changes regular container images, Grove can patch existing Pods by updating `spec.containers[*].image` and wait for kubelet to restart the affected containers, instead of deleting Pods and forcing rescheduling. Existing `RollingRecreate` and `OnDelete` behavior remain unchanged unless users explicitly select one of the new in-place strategies.
+This GREP extends `PodCliqueSet` rolling updates with opt-in in-place Pod image updates. When a workload update only changes regular container images, Grove can patch existing Pods by updating `spec.containers[*].image` and wait for kubelet to restart the affected containers, instead of deleting Pods and forcing rescheduling. Existing `RollingRecreate` and `OnDelete` behavior remain unchanged unless users explicitly enable in-place image updates under the rolling update settings.
 
 ## Motivation
 
@@ -43,14 +44,16 @@ Grove currently applies PodCliqueSet template changes through either automatic r
 
 Kubernetes allows updating regular container images on an existing Pod. Grove should use this capability for image-only changes while preserving recreate semantics for unsupported changes.
 
+A common target use case is a platform-managed CD workflow. The platform or CD system owner configures the workload update policy during Day 0 setup. After that, Day 1 changes are usually submitted by an application owner or CD pipeline that only changes workload fields, such as container images. Those Day 1 users should not need to choose the low-level Pod update mechanism on every rollout. `rollingUpdate.inPlaceUpdate` provides a platform-level optimization knob: prefer in-place image updates whenever the Pod change is eligible, in order to reduce resource preemption, rescheduling, and gang scheduling overhead; fall back to recreate when the change cannot be safely applied in place.
+
 ### Goals
 
-- Add explicit `PodCliqueSet` update strategy types for in-place image updates.
+- Add an opt-in rolling update setting for in-place image updates.
 - Apply in-place updates when the effective Pod template change is limited to regular container image changes.
 - Preserve `RollingRecreate` as the default update strategy.
 - Reuse Grove's existing update progress and template hash model.
-- Keep PodCliqueScalingGroup updates gang-aware by updating one selected replica at a time.
-- Surface in-place update progress, completion, blocked state, and fallback behavior through status and events.
+- Bound parallel in-place updates through a Deployment-style `maxUnavailable` setting.
+- Surface in-place update progress, completion, fallback behavior, and failures through status and events.
 
 ### Non-Goals
 
@@ -58,19 +61,27 @@ Kubernetes allows updating regular container images on an existing Pod. Grove sh
 - Supporting in-place updates for `initContainers`, ephemeral containers, resources, commands, args, env, probes, volumes, scheduling fields, resource claims, topology constraints, startup order, or service discovery fields.
 - Changing the default `RollingRecreate` behavior.
 - Providing application-level compatibility checks between old and new images.
-- Guaranteeing zero traffic impact while kubelet restarts updated containers.
+- Providing a zero-impact traffic guarantee during updates. Grove can reduce rescheduling disruption, but service availability still depends on sufficient replicas, `minAvailable`, application graceful shutdown behavior, connection handling, and `terminationGracePeriodSeconds`.
+- Introducing `maxSurge` behavior. In-place image update does not create extra Pods; surge semantics for recreate-based updates can be considered separately.
 - Introducing a new history resource for PodCliqueSet revisions.
 
 ## Proposal
 
-Introduce two new `PodCliqueSet` update strategy types:
+Keep `RollingRecreate` and `OnDelete` as the only top-level `PodCliqueSet` update strategy types. Add an opt-in `rollingUpdate.inPlaceUpdate` setting under `RollingRecreate`:
 
-- `InPlaceIfPossible`: Grove attempts eligible image-only updates in place. If the change is not eligible, Grove falls back to the existing `RollingRecreate` behavior.
-- `InPlaceOnly`: Grove only attempts in-place updates. If the change is not eligible, Grove blocks the update and does not delete Pods.
+```yaml
+updateStrategy:
+  type: RollingRecreate
+  rollingUpdate:
+    inPlaceUpdate: true
+    maxUnavailable: 1
+```
 
-The new strategies are opt-in. Existing users continue to get the current `RollingRecreate` behavior when `spec.updateStrategy` is omitted or explicitly set to `RollingRecreate`. The existing `OnDelete` strategy remains manual and does not automatically patch or delete existing Pods.
+When `rollingUpdate.inPlaceUpdate` is enabled, Grove treats in-place image update as a per-Pod update mechanism within the existing automatic rolling update flow. For each outdated Pod, Grove decides whether the effective Pod change is eligible for an in-place image patch. If the change is eligible, Grove patches `spec.containers[*].image` on the existing Pod. If the change is not eligible, Grove falls back to the existing recreate path.
 
-In-place update is evaluated per Pod. For each Pod with an outdated template hash, Grove builds the desired Pod from the current PodCliqueSet template and compares it with the existing Pod. If the only Pod spec differences are regular container image changes, Grove patches the existing Pod. After kubelet restarts the updated containers and reports new container status, Grove marks the Pod as updated by changing its Grove template hash label to the target hash.
+The setting is opt-in. Existing users continue to get the current `RollingRecreate` behavior when `spec.updateStrategy` is omitted, when it is explicitly set to `RollingRecreate` without `rollingUpdate.inPlaceUpdate`, or when `rollingUpdate.inPlaceUpdate` is false. The existing `OnDelete` strategy remains manual and does not automatically patch or delete existing Pods.
+
+`rollingUpdate.maxUnavailable` bounds how many Pods may be unavailable or in an active in-place update at the same time. It follows Deployment-style integer-or-percentage syntax. The default is `1`, percentages are rounded up, and the effective value must be at least `1` when `rollingUpdate.inPlaceUpdate` is enabled. This proposal does not introduce `maxSurge` because in-place image update does not create extra Pods.
 
 ### Limitations/Risks & Mitigations
 
@@ -78,19 +89,19 @@ In-place update is evaluated per Pod. For each Pod with an outdated template has
 
 Only regular container image changes are eligible for in-place update. Any other Pod spec change requires recreate semantics.
 
-*Mitigation*: `InPlaceIfPossible` falls back to `RollingRecreate`; `InPlaceOnly` blocks the update with status and events that describe why the Pod is not eligible.
+*Mitigation*: When `rollingUpdate.inPlaceUpdate` is enabled, Grove falls back to the existing recreate path for Pods whose effective change is not eligible for in-place image patching. Grove records a structured eligibility reason in status and events.
 
 #### Premature Update Completion
 
 If Grove updates the Pod template hash label before kubelet actually restarts containers, `status.updatedReplicas` could incorrectly report success.
 
-*Mitigation*: Grove records in-place update state separately and updates the Pod template hash label only after kubelet reports changed `status.containerStatuses[*].imageID` for updated containers and those containers are ready.
+*Mitigation*: Grove updates the Pod template hash label only after kubelet reports that every updated container is running the desired image and is ready. Grove should not rely only on a previous `imageID` snapshot because mutable tags, unchanged digests, or unrelated container restarts can make `imageID` comparisons misleading.
 
-#### Readiness and Traffic Impact
+#### Traffic and Connection Impact
 
-Patching an image causes kubelet to restart the container. The Pod should not stay ready from Grove's perspective during the update.
+Patching an image causes kubelet to restart the affected container. Grove does not provide a zero-impact traffic guarantee for this restart. In-flight requests, already established connections, and long-lived streams are outside the scope of the Grove controller.
 
-*Mitigation*: Grove injects a Grove-managed readiness gate into newly created Pods when in-place update is enabled. Before patching images, Grove sets the condition to `False`; after completion, Grove sets it back to `True`. Existing Pods without the readiness gate are not patched in place.
+*Mitigation*: Grove keeps the update orchestration limited to eligible image-only Pod patches and completion detection. Workloads that need graceful request completion must handle container termination at the application or inference framework layer and configure `terminationGracePeriodSeconds` accordingly.
 
 #### Image Pull or Startup Failures
 
@@ -102,31 +113,35 @@ If the new image cannot be pulled or fails to become ready, the Pod remains in a
 
 ### API Changes
 
-Extend `UpdateStrategyType` with two new values:
+Extend `PodCliqueSetUpdateStrategy` with a `rollingUpdate` configuration block:
 
 ```go
-// UpdateStrategyType defines the type of update strategy for PodCliqueSet.
-// +kubebuilder:validation:Enum={RollingRecreate,OnDelete,InPlaceIfPossible,InPlaceOnly}
-type UpdateStrategyType string
+type PodCliqueSetUpdateStrategy struct {
+    // Type indicates the type of update strategy.
+    // Default is RollingRecreate.
+    // +kubebuilder:default=RollingRecreate
+    Type UpdateStrategyType `json:"type,omitempty"`
 
-const (
-    // RollingRecreateStrategy indicates that replicas will be progressively
-    // deleted and recreated when templates change. This remains the default.
-    RollingRecreateStrategy UpdateStrategyType = "RollingRecreate"
+    // RollingUpdate configures automatic rolling updates when Type is
+    // RollingRecreate. It is ignored when Type is OnDelete.
+    // +optional
+    RollingUpdate *PodCliqueSetRollingUpdateStrategy `json:"rollingUpdate,omitempty"`
+}
 
-    // OnDeleteStrategy indicates that replicas will only be updated when users
-    // manually delete Pods or PodCliqueScalingGroup replicas.
-    OnDeleteStrategy UpdateStrategyType = "OnDelete"
+type PodCliqueSetRollingUpdateStrategy struct {
+    // InPlaceUpdate allows Grove to patch eligible regular container image
+    // changes in place. When the effective Pod change is not eligible, Grove
+    // falls back to the existing recreate path.
+    // +optional
+    InPlaceUpdate bool `json:"inPlaceUpdate,omitempty"`
 
-    // InPlaceIfPossibleStrategy indicates that Grove should update Pods in place
-    // when the template change is eligible, and fall back to RollingRecreate when
-    // it is not.
-    InPlaceIfPossibleStrategy UpdateStrategyType = "InPlaceIfPossible"
-
-    // InPlaceOnlyStrategy indicates that Grove should only update Pods in place.
-    // Unsupported changes block the update instead of deleting Pods.
-    InPlaceOnlyStrategy UpdateStrategyType = "InPlaceOnly"
-)
+    // MaxUnavailable bounds how many Pods may be unavailable or actively
+    // updating in place at the same time when InPlaceUpdate is enabled.
+    // Percentages are evaluated against the current rolling update scope.
+    // Defaults to 1.
+    // +optional
+    MaxUnavailable *intstr.IntOrString `json:"maxUnavailable,omitempty"`
+}
 ```
 
 Example usage:
@@ -139,7 +154,10 @@ metadata:
 spec:
   replicas: 2
   updateStrategy:
-    type: InPlaceIfPossible
+    type: RollingRecreate
+    rollingUpdate:
+      inPlaceUpdate: true
+      maxUnavailable: 1
   template:
     cliques:
       - name: decode
@@ -160,19 +178,19 @@ flowchart TD
     Hash --> Strategy{"updateStrategy.type"}
     Strategy -->|RollingRecreate| ExistingRR["Existing rolling recreate flow"]
     Strategy -->|OnDelete| ExistingOD["Existing OnDelete flow"]
-    Strategy -->|InPlaceIfPossible or InPlaceOnly| Select["Select next PCS replica to update"]
+    ExistingRR --> InPlaceEnabled{"rollingUpdate.inPlaceUpdate?"}
+    InPlaceEnabled -->|false| ExistingRecreate["Existing recreate mechanism"]
+    InPlaceEnabled -->|true| Select["Select Pods within maxUnavailable"]
     Select --> Child["PodClique / PodCliqueScalingGroup controllers"]
     Child --> PodCtl["Pod component sync"]
     PodCtl --> Diff{"Pod eligible for in-place update?"}
-    Diff -->|yes| NotReady["Set in-place readiness gate False"]
-    NotReady --> Patch["Patch spec.containers[*].image"]
+    Diff -->|yes| Patch["Patch spec.containers[*].image"]
     Patch --> Kubelet["Kubelet pulls image and restarts container"]
     Kubelet --> Complete{"Container status shows new image running and ready?"}
     Complete -->|no| Wait["Requeue and keep update in progress"]
-    Complete -->|yes| Mark["Patch Grove template hash label and readiness gate True"]
+    Complete -->|yes| Mark["Patch Grove template hash label"]
     Mark --> Status["Update updatedReplicas and updateProgress"]
-    Diff -->|no, InPlaceIfPossible| ExistingRR
-    Diff -->|no, InPlaceOnly| Blocked["Record blocked reason and emit event"]
+    Diff -->|no| ExistingRecreate
 ```
 
 ### Eligibility Detection
@@ -183,87 +201,100 @@ An update is eligible for in-place patch when all of the following are true:
 
 - The Pod is managed by a PodClique in the current update scope.
 - The Pod is not terminating.
-- The Pod carries the Grove in-place readiness gate.
 - The existing Pod and desired Pod have the same regular container set, matched by container name.
 - The only Pod spec changes are `spec.containers[*].image`.
 - `initContainers`, ephemeral containers, volumes, resource claims, scheduling fields, resources, probes, env, command, args, security context, restart policy, and DNS settings are unchanged.
 
+Examples of changes that are not eligible include container set changes, init container changes, resource changes, env/command/args changes, volume changes, scheduling changes, and workloads that require all containers to restart and re-establish startup order.
+
 When eligibility fails, Grove records a structured reason for status and events.
 
-### Pod In-Place Update State
+### In-Place Update Progress
 
-Grove stores in-place update state on the Pod:
+Grove should reuse the existing `PodCliqueStatus.UpdateProgress` model instead of adding a parallel in-place update state shape. The current progress model already tracks the target PodCliqueSet generation hash, target Pod template hash, update start time, update end time, and selected Pods.
+
+In-place update only needs bounded strategy-specific progress for the currently active update targets. The size of this list is limited by `rollingUpdate.maxUnavailable`:
 
 ```go
-type InPlaceUpdateState struct {
-    // PodTemplateHash is the target Pod template hash.
-    PodTemplateHash string `json:"podTemplateHash"`
-
-    // PodCliqueSetGenerationHash is the target PodCliqueSet generation hash.
-    PodCliqueSetGenerationHash string `json:"podCliqueSetGenerationHash"`
-
-    // UpdateStartedAt is when Grove started this Pod in-place update.
+type PodCliqueUpdateProgress struct {
+    // Existing fields are reused for in-place updates:
     UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
+    UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
+    PodCliqueSetGenerationHash string `json:"podCliqueSetGenerationHash"`
+    PodTemplateHash string `json:"podTemplateHash"`
+    ReadyPodsSelectedToUpdate *PodsSelectedToUpdate `json:"readyPodsSelectedToUpdate,omitempty"`
 
-    // LastContainerStatuses records image IDs before the image patch.
-    LastContainerStatuses map[string]InPlaceUpdateContainerStatus `json:"lastContainerStatuses,omitempty"`
-
-    // ContainerImages records target images by container name.
-    ContainerImages map[string]string `json:"containerImages,omitempty"`
+    // InPlaceUpdates stores progress for Pods currently being patched in place.
+    // The list is bounded by rollingUpdate.maxUnavailable and must not grow with
+    // the full PodClique size.
+    InPlaceUpdates []InPlaceUpdateProgress `json:"inPlaceUpdates,omitempty"`
 }
 
-type InPlaceUpdateContainerStatus struct {
-    ImageID string `json:"imageID,omitempty"`
+type InPlaceUpdateProgress struct {
+    // PodName is the Pod currently being patched in place.
+    PodName string `json:"podName"`
+
+    // Phase describes the current in-place step, for example Patching or
+    // WaitingForCompletion.
+    Phase InPlaceUpdatePhase `json:"phase,omitempty"`
 }
 ```
 
-Grove uses:
+Target container images are derived from the desired Pod during reconciliation. Grove does not need to persist target images or previous container status snapshots for every Pod.
 
-- Pod annotation `grove.io/in-place-update-state`
-- Pod condition `grove.io/InPlaceUpdateReady`
+`rollingUpdate.maxUnavailable` is evaluated before starting another in-place patch. Pods already patched in place and not yet converged count against the budget even if kubelet has not yet reported the Pod as not ready. This prevents Grove from patching too many Pods before readiness changes are observed.
 
-The condition is injected as a Pod readiness gate for new Pods created when the selected update strategy is `InPlaceIfPossible` or `InPlaceOnly`.
+For standalone PodCliques, the percentage denominator is the PodClique replica count. For PodCliqueScalingGroups, the percentage denominator is the number of Pods in the affected child PodCliques for the current PodCliqueSet update scope. Fallback recreate updates continue to use the existing rolling recreate ordering.
 
 ### Completion Detection
 
 An in-place Pod update is complete when:
 
-- The Pod still has the target in-place update state.
-- For each updated container, the current `status.containerStatuses[name].imageID` differs from the image ID recorded before the patch.
+- `PodCliqueStatus.UpdateProgress` still targets the current PodCliqueSet generation hash and Pod template hash.
+- For each updated container, the current `status.containerStatuses[name].image` matches the desired image from the target Pod spec.
 - Each updated container is ready.
 
 After completion, Grove patches the Pod:
 
 - `metadata.labels[grove.io/pod-template-hash]` to the target hash.
-- `grove.io/InPlaceUpdateReady=True`.
-- Removes stale in-place update state.
+- Clears the active in-place update progress.
 
 The existing PodClique status calculation can then count the Pod in `updatedReplicas` because the Pod template hash label matches the target hash.
 
+If kubelet never reports the desired image and readiness, Grove keeps the Pod on the old template hash and surfaces the stalled update through status and events. `imageID` may be recorded for diagnostics, but it is not the primary convergence signal.
+
+### Policy Changes During Active Updates
+
+If users change `updateStrategy` or `rollingUpdate` settings while an in-place update is active, Grove reconciles from the latest desired state:
+
+- Pods already patched in place are not rolled back. Grove waits for them to converge to the desired image and readiness before advancing their template hash label.
+- Pods not yet patched are evaluated using the latest `updateStrategy` and `rollingUpdate` settings on the next reconcile.
+- If `rollingUpdate.inPlaceUpdate` is disabled during an update, no new Pods are patched in place; remaining outdated Pods use the existing recreate path.
+- If `rollingUpdate.maxUnavailable` is reduced below the number of active in-place updates, Grove does not start additional in-place patches until enough active updates complete.
+
 ### Standalone PodClique Flow
 
-For a standalone PodClique under `InPlaceIfPossible` or `InPlaceOnly`:
+For a standalone PodClique under `RollingRecreate` with `rollingUpdate.inPlaceUpdate: true`:
 
 1. `PodCliqueSet` initializes `status.updateProgress` with the target generation hash.
 2. `PodClique` initializes or resets `status.updateProgress` with the target Pod template hash.
 3. The Pod component lists existing Pods and identifies Pods whose `grove.io/pod-template-hash` does not match the target hash.
-4. The Pod component updates one eligible ready Pod at a time.
-5. Old non-ready Pods are not patched in place. `InPlaceIfPossible` recreates them; `InPlaceOnly` blocks until they become suitable or are manually handled.
+4. The Pod component patches eligible Pods in place while respecting `rollingUpdate.maxUnavailable`.
+5. Pods that are not eligible for in-place update use the existing recreate path.
 6. The PodClique update completes when all Pods have the target template hash and the current minAvailable condition is satisfied.
 
 ### PodCliqueScalingGroup Flow
 
-For PodCliqueScalingGroups, Grove continues to select one PodCliqueSet replica for update at a time.
+For PodCliqueScalingGroups, in-place image updates may proceed across multiple eligible Pods while respecting `rollingUpdate.maxUnavailable`. This differs from recreate-based rolling updates: in-place patching keeps Pods scheduled, so the gang-scheduling reason for hard-coded one-replica-at-a-time pacing does not apply in the same way.
 
-1. PCSG records update progress for the selected replica.
+1. PCSG records update progress for the target generation.
 2. Child PodCliques receive updated target template hashes.
 3. Each child PodClique's Pod controller applies the standalone in-place logic to its Pods.
-4. PCSG marks the replica updated when every child PodClique in the replica has reached the target Pod template hash and minAvailable requirements.
+4. PCSG marks the update complete when every child PodClique has reached the target Pod template hash and minAvailable requirements.
 
-If any Pod in the selected PCSG replica is not eligible:
+If any Pod is not eligible:
 
-- `InPlaceIfPossible` falls back to the existing PCSG rolling recreate logic for that replica.
-- `InPlaceOnly` blocks the PCSG update and records the blocked reason.
+- Grove falls back to the existing rolling recreate logic for that Pod or replica scope.
 
 ### Status and Conditions
 
@@ -276,7 +307,7 @@ The existing fields remain authoritative:
 - `PodClique.status.updatedReplicas`
 - `PodClique.status.updateProgress`
 
-When `InPlaceOnly` cannot progress, Grove records an update-blocked condition on the smallest relevant resource: PodClique for standalone updates, PodCliqueScalingGroup for PCSG replica updates, and PodCliqueSet when a child update blocks top-level progress.
+If in-place patching stalls after a Pod has been patched, Grove keeps the old template hash label and surfaces the stalled update through status and events.
 
 ### Monitoring
 
@@ -286,30 +317,31 @@ Grove should emit Kubernetes Events:
 - `SuccessfulPodInPlaceUpdate`: Pod reached the target image and target template hash.
 - `FailedPodInPlaceUpdate`: Pod patch failed or completion check failed with a terminal error.
 - `SkippedPodInPlaceUpdate`: Pod is not eligible and Grove is falling back to recreate.
-- `BlockedInPlaceUpdate`: `InPlaceOnly` cannot apply the update in place.
 
 ### Test Plan
 
 #### Unit Tests
 
-- API validation accepts `InPlaceIfPossible` and `InPlaceOnly`.
+- API validation accepts `rollingUpdate.inPlaceUpdate` and `rollingUpdate.maxUnavailable` when `updateStrategy.type` is `RollingRecreate`.
 - Eligibility detection returns true for image-only changes.
 - Eligibility detection returns false for env, resources, command, args, init container image, volume, scheduler, resource claim, and other non-image changes.
-- Pod patch generation only updates expected container images and Grove-managed annotations/labels.
-- In-place update completion waits for container status changes before updating the Pod template hash label.
-- `InPlaceIfPossible` falls back to recreate when eligibility fails before patching.
-- `InPlaceOnly` records a blocked condition and does not delete Pods when eligibility fails.
+- Eligibility detection returns false for workloads that require all containers to restart and re-establish startup order.
+- Pod patch generation only updates expected container images and Grove-managed labels.
+- In-place update completion waits until each updated container reports the desired image and readiness before updating the Pod template hash label.
+- In-place update completion does not depend only on a previous `imageID` snapshot.
+- In-place update respects `rollingUpdate.maxUnavailable`.
+- Grove falls back to recreate when eligibility fails before patching.
 
 #### Integration Tests
 
 - Standalone PodClique image-only update patches Pods in place and preserves Pod names.
 - PodCliqueScalingGroup image-only update patches Pods in place while preserving PCSG replica PodClique names.
-- Updating a non-image field with `InPlaceIfPossible` recreates the affected Pod or PCSG replica.
-- Updating a non-image field with `InPlaceOnly` blocks without deleting Pods.
+- Updating a non-image field with `rollingUpdate.inPlaceUpdate` enabled recreates the affected Pod or PCSG replica.
+- `rollingUpdate.maxUnavailable` allows bounded parallel in-place updates.
 
 #### E2E Tests
 
-- Deploy a PodCliqueSet with `InPlaceIfPossible`, update an image, and verify Pod names stay unchanged while container image IDs change.
+- Deploy a PodCliqueSet with `rollingUpdate.inPlaceUpdate` enabled, update an image, and verify Pod names stay unchanged while container status reports the desired image.
 - Verify `updatedReplicas` progresses from old value to desired replicas only after kubelet reports the new image.
 - Verify an image pull failure leaves the Pod not updated and surfaces Events/status.
 
@@ -317,11 +349,10 @@ Grove should emit Kubernetes Events:
 
 The implementation is complete when:
 
-- `PodCliqueSet` accepts `InPlaceIfPossible` and `InPlaceOnly`.
+- `PodCliqueSet` accepts `rollingUpdate.inPlaceUpdate` and `rollingUpdate.maxUnavailable` under `RollingRecreate`.
 - Image-only Pod updates are patched in place.
-- In-place updates use a Grove-managed readiness gate.
-- Completion is detected from container status before the Pod template hash label is advanced.
-- `InPlaceIfPossible` falls back to recreate for unsupported changes.
-- `InPlaceOnly` blocks without deleting Pods for unsupported changes.
-- Standalone PodClique and PodCliqueScalingGroup flows preserve existing update ordering.
-- Unit and integration tests cover successful, fallback, blocked, and failed update paths.
+- Parallel in-place updates are bounded by `rollingUpdate.maxUnavailable`.
+- Completion is detected from the desired image and container readiness before the Pod template hash label is advanced.
+- Grove falls back to recreate for unsupported changes.
+- Standalone PodClique and PodCliqueScalingGroup flows preserve existing rolling update behavior when in-place update is disabled.
+- Unit and integration tests cover successful, fallback, bounded parallelism, and failed update paths.
