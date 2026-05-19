@@ -120,7 +120,7 @@ All configuration can be overridden via `E2E_*` environment variables (used by `
 **Components (ComponentConfig):**
 
 - `E2E_KAI_VERSION` - Kai Scheduler version (default: from `dependencies.yaml`)
-- `E2E_SKAFFOLD_PROFILE` - Skaffold profile for Grove (default: `topology-test`)
+- `E2E_SKAFFOLD_PROFILE` - Skaffold profile for Grove (default: `e2e-kai`)
 - `E2E_GROVE_NAMESPACE` - Grove operator namespace (default: `grove-system`)
 - `E2E_REGISTRY` - Container registry override (default: none)
 

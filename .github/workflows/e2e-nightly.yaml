@@ -1,0 +1,130 @@
+# /*
+# Copyright 2026 The Grove Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# */
+
+# Nightly E2E — runs the full (suite × capable backend) matrix on schedule.
+#
+# Rationale: the PR matrix (build-check-test.yaml) is path-filtered to keep
+# per-PR cost bounded as more backends land. That means cross-backend
+# regressions in code paths neither PR touched can slip in. This workflow
+# catches them by running the exhaustive matrix once a day.
+#
+# Failure routing: this initial cut uploads per-row diagnostic artifacts and
+# writes a job-summary report. Issue auto-open / Slack notification is left
+# as a follow-up so the first weeks of nightly runs do not spam the repo
+# while the matrix is stabilising.
+
+name: Nightly E2E
+
+on:
+  schedule:
+    # 07:00 UTC = 15:00 Beijing / 00:00 PST. Adjust to maintainer preference.
+    - cron: "0 7 * * *"
+  # Allow manual trigger for ad-hoc verification (e.g. after a flaky run).
+  workflow_dispatch:
+
+# Don't run multiple nightlies in parallel (matrix already consumes the
+# self-hosted runner pool; concurrent runs would queue and bleed into the
+# next day's window).
+concurrency:
+  group: e2e-nightly
+  cancel-in-progress: false
+
+jobs:
+  # Compute the full matrix via the same selector the PR workflow uses, in
+  # nightly mode (ignores path filter / labels / draft state).
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.select.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run selector (nightly mode)
+        id: select
+        run: |
+          echo "=== Selector result ==="
+          python3 hack/e2e-select/main.py --mode nightly | tee /tmp/select.json
+          echo "======================="
+          echo "run=$(jq -c .run /tmp/select.json)" >> "$GITHUB_OUTPUT"
+
+  e2e:
+    needs: matrix
+    runs-on: prod-grove-e2e-v1
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.matrix.outputs.run) }}
+    name: Nightly E2E - ${{ matrix.test_name }}
+    steps:
+      - name: Print runner specs
+        run: |
+          echo "CPUs: $(nproc)"
+          echo "RAM: $(free -h | awk '/^Mem:/ {print $2}')"
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Pull registry image from GHCR to avoid Docker Hub rate limits
+        run: |
+          docker pull ghcr.io/distribution/distribution:3.1.0
+          docker tag ghcr.io/distribution/distribution:3.1.0 registry:2
+
+      - name: E2E Setup
+        uses: ./.github/actions/e2e-setup
+
+      - name: Run e2e tests - ${{ matrix.test_name }}
+        run: |
+          make ${{ matrix.make_target }} TEST_PATTERN='${{ matrix.test_pattern }}' E2E_CREATE_FLAGS='${{ matrix.create_flags }} --dind-memory-mode'
+        working-directory: operator
+
+      - name: Cleanup k3d cluster
+        if: always()
+        working-directory: operator
+        run: make e2e-cluster-down || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-e2e-logs-${{ matrix.test_name }}
+          path: operator/e2e-diagnostics/
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Aggregate report. Runs unconditionally after the matrix so we always have
+  # a single place to look at the night's results.
+  summary:
+    needs: e2e
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write summary
+        run: |
+          {
+            echo "## Nightly E2E summary"
+            echo ""
+            echo "Run: ${{ github.run_id }}"
+            echo "Trigger: ${{ github.event_name }}"
+            echo "Status: ${{ needs.e2e.result }}"
+            echo ""
+            if [ "${{ needs.e2e.result }}" != "success" ]; then
+              echo "⚠️  One or more matrix rows failed. See the [run page](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) and the per-row \`nightly-e2e-logs-*\` artifacts."
+            else
+              echo "✅ All matrix rows passed."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

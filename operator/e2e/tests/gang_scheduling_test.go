@@ -32,6 +32,7 @@ import (
 // 3. Verify all workload pods are pending due to insufficient resources
 // 4. Uncordon the node and verify all pods get scheduled
 func Test_GS1_GangSchedulingWithFullReplicas(t *testing.T) {
+	RequireCapability(t, GangScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 10-node Grove cluster, then cordon 1 node")
@@ -83,6 +84,7 @@ func Test_GS1_GangSchedulingWithFullReplicas(t *testing.T) {
 // 6. Scale PCSG replicas to 3 and verify 4 new pending pods
 // 7. Uncordon remaining nodes and verify all pods get scheduled
 func Test_GS2_GangSchedulingWithScalingFullReplicas(t *testing.T) {
+	RequireCapability(t, GangScheduling)
 	ctx := context.Background()
 
 	// Setup cluster (shared or individual based on test run mode)
@@ -152,6 +154,7 @@ func Test_GS2_GangSchedulingWithScalingFullReplicas(t *testing.T) {
 // 6. Scale PCS replicas to 2 and verify 10 new pending pods
 // 7. Uncordon remaining nodes and verify all pods get scheduled
 func Test_GS3_GangSchedulingWithPCSScalingFullReplicas(t *testing.T) {
+	RequireCapability(t, GangScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 20-node Grove cluster, then cordon 11 nodes")
@@ -217,6 +220,7 @@ func Test_GS3_GangSchedulingWithPCSScalingFullReplicas(t *testing.T) {
 // 9. Scale PCSG replicas to 3 and verify 4 new pending pods
 // 10. Uncordon remaining nodes and verify all pods get scheduled
 func Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas(t *testing.T) {
+	RequireCapability(t, GangScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 28-node Grove cluster, then cordon 19 nodes")
@@ -283,6 +287,7 @@ func Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas(t *testing.T) {
 // 5. Wait for scheduled pods to become ready
 // 6. Uncordon 7 nodes and verify all remaining workload pods get scheduled
 func Test_GS5_GangSchedulingWithMinReplicas(t *testing.T) {
+	RequireCapability(t, GangScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 10-node Grove cluster, then cordon 8 nodes")
@@ -351,6 +356,7 @@ func Test_GS5_GangSchedulingWithMinReplicas(t *testing.T) {
 // 11. Wait for scheduled pods to become ready
 // 12. Uncordon 2 nodes and verify remaining workload pods get scheduled
 func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
+	RequireCapability(t, GangScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 14-node Grove cluster, then cordon 12 nodes")
@@ -463,6 +469,7 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 // 13. Wait for scheduled pods to become ready
 // 14. Uncordon 2 nodes and verify remaining workload pods get scheduled
 func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
+	RequireCapability(t, GangScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 14-node Grove cluster, then cordon 12 nodes")
@@ -584,6 +591,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 // 9. Wait for scheduled pods to become ready
 // 10. Uncordon 7 nodes and verify the remaining workload pods get scheduled
 func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
+	RequireCapability(t, GangScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 14-node Grove cluster, then cordon 12 nodes")
@@ -679,6 +687,7 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 // 10. Wait for scheduled pods to become ready
 // 11. Uncordon 7 nodes and verify the remaining workload pods get scheduled
 func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
+	RequireCapability(t, GangScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 20-node Grove cluster, then cordon 18 nodes")
@@ -782,6 +791,7 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 // 9. Wait for scheduled pods to become ready
 // 10. Uncordon 10 nodes and verify the remaining workload pods get scheduled
 func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
+	RequireCapability(t, GangScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 20-node Grove cluster, then cordon 18 nodes")
@@ -886,6 +896,7 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 // 19. Wait for 2 more pods to be scheduled (min-available for pcs-1-sg-x-2)
 // 20. Uncordon 2 nodes and verify remaining workload pods get scheduled
 func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
+	RequireCapability(t, GangScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 28-node Grove cluster, then cordon 26 nodes")
@@ -1028,6 +1039,7 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 // 11. Wait for scheduled pods to become ready
 // 12. Uncordon 14 nodes and verify the remaining workload pods get scheduled
 func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
+	RequireCapability(t, GangScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 28-node Grove cluster, then cordon 26 nodes")

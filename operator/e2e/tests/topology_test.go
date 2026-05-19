@@ -101,6 +101,7 @@ func GetPodGroupOrFail(t *testing.T, tc *testctx.TestContext, podGroupVerifier *
 // Note: grove-topology is NOT cleaned up after this test — it is shared cluster infrastructure
 // used by TAS2-TAS16. ensureGroveTopology() in each subsequent test is idempotent.
 func Test_TAS1_TopologyInfrastructure(t *testing.T) {
+	RequireCapability(t, TopologyAwareScheduling)
 	ctx := context.Background()
 
 	tc, cleanup := testctx.PrepareTest(ctx, t, 0)
@@ -166,6 +167,7 @@ func Test_TAS1_TopologyInfrastructure(t *testing.T) {
 // 4. Verify worker-block pods (4) are in the same block
 // 5. Verify different cliques can have independent topology constraints
 func Test_TAS2_MultipleCliquesWithDifferentConstraints(t *testing.T) {
+	RequireCapability(t, TopologyAwareScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
@@ -225,6 +227,7 @@ func Test_TAS2_MultipleCliquesWithDifferentConstraints(t *testing.T) {
 // 4. Verify router pods (2 standalone)
 // 5. Verify KAI PodGroup SubGroups: NO PCSG parent groups (because PCSG constraint is nil, per PR #357)
 func Test_TAS3_PCSOnlyConstraint(t *testing.T) {
+	RequireCapability(t, TopologyAwareScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
@@ -279,6 +282,7 @@ func Test_TAS3_PCSOnlyConstraint(t *testing.T) {
 // 3. Verify PCSG worker pods (2 total) respect rack constraint
 // 4. Router pods (2 standalone) are unconstrained
 func Test_TAS4_PCSGOnlyConstraint(t *testing.T) {
+	RequireCapability(t, TopologyAwareScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
@@ -344,6 +348,7 @@ func Test_TAS4_PCSGOnlyConstraint(t *testing.T) {
 // 2. PCS has NO explicit constraint
 // 3. Verify all 2 pods on same host (strictest constraint)
 func Test_TAS5_HostLevelConstraint(t *testing.T) {
+	RequireCapability(t, TopologyAwareScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
@@ -406,6 +411,7 @@ func Test_TAS5_HostLevelConstraint(t *testing.T) {
 // 3. Verify KAI PodGroup has zone constraint at top level
 // 4. Verify 1 SubGroup (standalone PCLQ) with NO additional constraint
 func Test_TAS6_StandalonePCLQOnlyPCSZoneConstraint(t *testing.T) {
+	RequireCapability(t, TopologyAwareScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
@@ -454,6 +460,7 @@ func Test_TAS6_StandalonePCLQOnlyPCSZoneConstraint(t *testing.T) {
 // 2. Verify all 4 pods scheduled (gang scheduling works)
 // 3. Verify KAI PodGroup has 4 SubGroups with NO topology constraints
 func Test_TAS7_NoTopologyConstraint(t *testing.T) {
+	RequireCapability(t, TopologyAwareScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
@@ -506,6 +513,7 @@ func Test_TAS7_NoTopologyConstraint(t *testing.T) {
 // 5. Verify all pods in same block (PCS constraint)
 // 6. Verify KAI PodGroup hierarchy with correct topology constraints
 func Test_TAS8_FullHierarchyWithCascadingConstraints(t *testing.T) {
+	RequireCapability(t, TopologyAwareScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize an 8-node Grove cluster for topology testing")
@@ -583,6 +591,7 @@ func Test_TAS8_FullHierarchyWithCascadingConstraints(t *testing.T) {
 // 3. Verify pods on same host (PCLQ constraint - strictest)
 // 4. Verify KAI PodGroup has block constraint at top level, host constraint at PCLQ level
 func Test_TAS9_PCSPlusPCLQConstraint(t *testing.T) {
+	RequireCapability(t, TopologyAwareScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
@@ -633,6 +642,7 @@ func Test_TAS9_PCSPlusPCLQConstraint(t *testing.T) {
 // 5. Verify base PodGang KAI PodGroup topology constraints
 // 6. Verify scaled PodGangs' KAI PodGroups (replicas 1-2)
 func Test_TAS10_PCSGScalingWithTopologyConstraints(t *testing.T) {
+	RequireCapability(t, TopologyAwareScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
@@ -713,6 +723,7 @@ func Test_TAS10_PCSGScalingWithTopologyConstraints(t *testing.T) {
 // 3. Verify each PCSG replica's pods on same host
 // 4. Verify KAI PodGroup has PCSG rack + PCLQ host constraints, NO top-level PCS constraint
 func Test_TAS11_PCSGPlusPCLQNoParentConstraint(t *testing.T) {
+	RequireCapability(t, TopologyAwareScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
@@ -772,6 +783,7 @@ func Test_TAS11_PCSGPlusPCLQNoParentConstraint(t *testing.T) {
 // 5. Verify base PodGang KAI PodGroup contains minAvailable=3 replicas
 // 6. Verify 7 scaled PodGangs' KAI PodGroups (replicas 3-9)
 func Test_TAS12_LargeScalingRatio(t *testing.T) {
+	RequireCapability(t, TopologyAwareScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
@@ -866,6 +878,7 @@ func Test_TAS12_LargeScalingRatio(t *testing.T) {
 // 4. Verify pod events show Unschedulable reason
 // 5. Verify KAI PodGroup exists with correct constraints even though pods are pending
 func Test_TAS13_InsufficientNodesForConstraint(t *testing.T) {
+	RequireCapability(t, TopologyAwareScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
@@ -925,6 +938,7 @@ func Test_TAS13_InsufficientNodesForConstraint(t *testing.T) {
 // 3. Verify each PCS replica's pods in same rack
 // 4. Verify KAI PodGroups for both PCS replicas have correct topology constraints
 func Test_TAS14_MultiReplicaWithRackConstraint(t *testing.T) {
+	RequireCapability(t, TopologyAwareScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
@@ -983,6 +997,7 @@ func Test_TAS14_MultiReplicaWithRackConstraint(t *testing.T) {
 // 6. Verify base PodGang KAI PodGroup topology for complex multi-PCSG workload
 // 7. Verify scaled PodGangs' KAI PodGroups (decoder replica 1, prefill replica 1)
 func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
+	RequireCapability(t, TopologyAwareScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
@@ -1097,6 +1112,7 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 // 4. Verify block constraint at PCS level, rack at PCSG, for both PCS replicas
 // 5. Similar to TAS15 but scaled across 2 PCS replicas
 func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
+	RequireCapability(t, TopologyAwareScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 28-node Grove cluster for multi-replica PCS testing")
@@ -1198,6 +1214,7 @@ func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 // 5. Verify KAI Topology CRs auto-created with correct keys
 // 6. Deploy H100 and GB200 workloads, verify pods packed at block level on correct node segments
 func Test_TAS17_HeterogeneousGPUCluster(t *testing.T) {
+	RequireCapability(t, TopologyAwareScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 28-node Grove cluster for heterogeneous GPU testing")
@@ -1374,6 +1391,7 @@ func Test_TAS17_HeterogeneousGPUCluster(t *testing.T) {
 // 2. Verify SchedulerTopologyDrift condition becomes True/Drift
 // 3. Verify SchedulerTopologyStatuses shows InSync=false
 func Test_TAS18_ClusterTopologyDriftDetection(t *testing.T) {
+	RequireCapability(t, TopologyAwareScheduling)
 	const ctName = "drift-detect-topo"
 	const kaiTopoRef = "non-existent-kai-topo"
 	ctx := context.Background()
@@ -1434,6 +1452,7 @@ func Test_TAS18_ClusterTopologyDriftDetection(t *testing.T) {
 // 5. Verify KAI Topology recreated with 3 keys
 // 6. Verify SchedulerTopologyDrift remains False/InSync
 func Test_TAS19_AutoManagedCTLifecycle(t *testing.T) {
+	RequireCapability(t, TopologyAwareScheduling)
 	const ctName = "lifecycle-topo"
 	ctx := context.Background()
 
@@ -1514,6 +1533,7 @@ func Test_TAS19_AutoManagedCTLifecycle(t *testing.T) {
 // 9. Re-create the ClusterTopology
 // 10. Verify TopologyLevelsUnavailable = False/AllClusterTopologyLevelsAvailable
 func Test_TAS20_PCSTopologyLevelsUnavailableCondition(t *testing.T) {
+	RequireCapability(t, TopologyAwareScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 2-node Grove cluster for PCS condition testing")
@@ -1639,6 +1659,7 @@ func Test_TAS20_PCSTopologyLevelsUnavailableCondition(t *testing.T) {
 // Test_TAS21_ClusterTopologyValidationWebhook verifies that the ClusterTopology validating webhook
 // rejects invalid topology definitions and invalid schedulerTopologyReferences.
 func Test_TAS21_ClusterTopologyValidationWebhook(t *testing.T) {
+	RequireCapability(t, TopologyAwareScheduling)
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a Grove cluster for ClusterTopology webhook validation testing")
