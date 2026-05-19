@@ -1253,4 +1253,3 @@ _Appears in:_
 | `serverCertDir` _string_ | ServerCertDir is the directory containing the server certificate and key. |  |  |
 | `secretName` _string_ | SecretName is the name of the Kubernetes Secret containing webhook certificates.<br />The Secret must contain tls.crt, tls.key, and ca.crt. | grove-webhook-server-cert |  |
 | `certProvisionMode` _[CertProvisionMode](#certprovisionmode)_ | CertProvisionMode controls how webhook certificates are provisioned. | auto | Enum: [auto manual] <br /> |
-
