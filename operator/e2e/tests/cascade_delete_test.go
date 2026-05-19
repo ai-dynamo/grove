@@ -104,29 +104,35 @@ func countCascadeResources(ctx context.Context, tc *testctx.TestContext, workloa
 	counts := map[string]int{}
 
 	var pcs grovecorev1alpha1.PodCliqueSet
-	err := tc.Client.Get(ctx, types.NamespacedName{Name: workloadName, Namespace: tc.Namespace}, &pcs)
-	switch {
-	case apierrors.IsNotFound(err):
+	counts["PodCliqueSets"] = 1
+	if err := tc.Client.Get(ctx, types.NamespacedName{Name: workloadName, Namespace: tc.Namespace}, &pcs); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf("get PodCliqueSet: %w", err)
+		}
 		counts["PodCliqueSets"] = 0
-	case err != nil:
-		return nil, fmt.Errorf("get PodCliqueSet: %w", err)
-	default:
-		counts["PodCliqueSets"] = 1
 	}
 
 	for _, resource := range cascadeDeletedResources {
-		list := &unstructured.UnstructuredList{}
-		list.SetGroupVersionKind(resource.gvk.GroupVersion().WithKind(resource.gvk.Kind + "List"))
-		if err := tc.Client.List(ctx, list,
-			client.InNamespace(tc.Namespace),
-			client.MatchingLabels{apicommon.LabelPartOfKey: workloadName},
-		); err != nil {
-			return nil, fmt.Errorf("list %s: %w", resource.name, err)
+		count, err := countCascadeResource(ctx, tc, resource, workloadName)
+		if err != nil {
+			return nil, err
 		}
-		counts[resource.name] = len(list.Items)
+		counts[resource.name] = count
 	}
 
 	return counts, nil
+}
+
+func countCascadeResource(ctx context.Context, tc *testctx.TestContext, resource cascadeResource, workloadName string) (int, error) {
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(resource.gvk.GroupVersion().WithKind(resource.gvk.Kind + "List"))
+	if err := tc.Client.List(ctx, list,
+		client.InNamespace(tc.Namespace),
+		client.MatchingLabels{apicommon.LabelPartOfKey: workloadName},
+	); err != nil {
+		return 0, fmt.Errorf("list %s: %w", resource.name, err)
+	}
+	return len(list.Items), nil
 }
 
 func waitForCascadeResourcesDeleted(tc *testctx.TestContext, workloadName string) error {
