@@ -77,7 +77,26 @@ The topology binding policy is configured per scheduler profile in `OperatorConf
 
 ### Scheduler Backend Interfaces
 
-This GREP distinguishes between a scheduler backend being topology-aware and Grove being able to create and manage that backend’s topology resource. A backend that participates in topology integration implements `TopologyAwareBackend`, which covers topology binding policy and drift detection for explicitly bound topology resources. A backend that Grove can also create and manage topology resources for implements `ManagedTopologyBackend`, which extends `TopologyAwareBackend` with the managed topology lifecycle methods. This allows Grove to support backends that can validate and consume topology bindings without requiring Grove to synthesize their backend-specific topology resources.
+This GREP distinguishes between a scheduler backend being topology-aware and Grove being able to create and manage that backend's topology resource. The interface split is:
+
+```go
+type TopologyAwareBackend interface {
+    TopologyGVR() schema.GroupVersionResource
+    TopologyBindingPolicy() TopologyBindingPolicy
+    CheckTopologyDrift(ctx context.Context, ct *ClusterTopologyBinding, ref SchedulerTopologyBinding) (bool, string, int64, error)
+}
+
+type ManagedTopologyBackend interface {
+    TopologyAwareBackend
+    TopologyResourceName(ct *ClusterTopologyBinding) string
+    SyncTopology(ctx context.Context, k8sClient client.Client, ct *ClusterTopologyBinding) error
+    OnTopologyDelete(ctx context.Context, k8sClient client.Client, ct *ClusterTopologyBinding) error
+}
+```
+
+`TopologyAwareBackend` now represents the minimum contract for a backend that participates in topology integration. It covers discovery of the backend topology resource type, reporting the backend's effective topology binding policy, and checking drift for explicitly bound topology resources. A backend that only supports externally managed topology resources can stop at this interface.
+
+`ManagedTopologyBackend` is for backends that Grove can actively manage. It adds the methods required to name, create/update, and delete backend-specific topology resources derived from a `ClusterTopologyBinding`. This allows Grove to support backends that can validate and consume topology bindings without requiring Grove to synthesize their backend-specific topology resources. It also gives the runtime validation path a concrete contract: `AutoCreate` is only valid for backends that implement `ManagedTopologyBackend`.
 
 ### ClusterTopologyBinding Reconciliation
 
