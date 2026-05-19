@@ -24,6 +24,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
+	grovemetrics "github.com/ai-dynamo/grove/operator/internal/metrics"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 
 	"github.com/samber/lo"
@@ -64,7 +65,7 @@ func (r *Reconciler) RegisterWithManager(mgr manager.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(mapPCLQToPCSG()),
 			builder.WithPredicates(podCliquePredicate()),
 		).
-		Complete(r)
+		Complete(grovemetrics.NewObservedReconciler(controllerName, r))
 }
 
 // podCliqueScalingGroupUpdatePredicate filters PodCliqueScalingGroup events to only process Grove-managed resources owned by PodCliqueSet

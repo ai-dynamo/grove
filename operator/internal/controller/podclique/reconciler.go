@@ -28,6 +28,7 @@ import (
 	pclqcomponent "github.com/ai-dynamo/grove/operator/internal/controller/podclique/components"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
+	grovemetrics "github.com/ai-dynamo/grove/operator/internal/metrics"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	"k8s.io/client-go/tools/record"
@@ -83,8 +84,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return r.triggerDeletionFlow(ctx, logger, pclq).Result()
 	}
 
+	doneSpec := grovemetrics.StartOperation(controllerName, "reconcile_spec")
 	reconcileSpecFlowResult := r.reconcileSpec(ctx, logger, pclq)
-	if statusReconcileResult := r.reconcileStatus(ctx, logger, pclq); ctrlcommon.ShortCircuitReconcileFlow(statusReconcileResult) {
+	doneSpec()
+
+	doneStatus := grovemetrics.StartOperation(controllerName, "reconcile_status")
+	statusReconcileResult := r.reconcileStatus(ctx, logger, pclq)
+	doneStatus()
+
+	if ctrlcommon.ShortCircuitReconcileFlow(statusReconcileResult) {
 		return statusReconcileResult.Result()
 	}
 

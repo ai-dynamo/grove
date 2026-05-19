@@ -25,6 +25,7 @@ import (
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	grovectrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
+	grovemetrics "github.com/ai-dynamo/grove/operator/internal/metrics"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -80,7 +81,7 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(mapPodGangToPCLQs()),
 			builder.WithPredicates(podGangPredicate()),
 		).
-		Complete(r)
+		Complete(grovemetrics.NewObservedReconciler(controllerName, r))
 }
 
 // managedPodCliquePredicate filters PodClique events to only process managed PodCliques owned by expected resources

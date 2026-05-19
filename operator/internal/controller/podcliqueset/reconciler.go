@@ -27,6 +27,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcscomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
+	grovemetrics "github.com/ai-dynamo/grove/operator/internal/metrics"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	"github.com/go-logr/logr"
@@ -73,8 +74,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return result.Result()
 	}
 
+	doneSpec := grovemetrics.StartOperation(controllerName, "reconcile_spec")
 	reconcileSpecFlowResult := r.reconcileSpec(ctx, logger, pcs)
-	if statusReconcileResult := r.reconcileStatus(ctx, logger, pcs); ctrlcommon.ShortCircuitReconcileFlow(statusReconcileResult) {
+	doneSpec()
+
+	doneStatus := grovemetrics.StartOperation(controllerName, "reconcile_status")
+	statusReconcileResult := r.reconcileStatus(ctx, logger, pcs)
+	doneStatus()
+
+	if ctrlcommon.ShortCircuitReconcileFlow(statusReconcileResult) {
 		return statusReconcileResult.Result()
 	}
 

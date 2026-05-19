@@ -4,13 +4,13 @@ go 1.26.1
 
 require (
 	github.com/ai-dynamo/grove/operator/api v0.0.0
-	github.com/ai-dynamo/grove/operator/client v0.0.0-00010101000000-000000000000
 	github.com/ai-dynamo/grove/scheduler/api v0.0.0
 	github.com/docker/docker v28.3.3+incompatible
 	github.com/go-logr/logr v1.4.3
 	github.com/go-logr/zapr v1.3.0
 	github.com/kai-scheduler/KAI-scheduler v0.14.0
 	github.com/open-policy-agent/cert-controller v0.14.0
+	github.com/prometheus/client_golang v1.23.2
 	github.com/samber/lo v1.52.0
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
@@ -87,6 +87,7 @@ require (
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
+	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/lann/builder v0.0.0-20180802200727-47ae307949d0 // indirect
 	github.com/lann/ps v0.0.0-20150810152359-62de8c46ede0 // indirect
 	github.com/lib/pq v1.10.9 // indirect
@@ -113,7 +114,6 @@ require (
 	github.com/peterbourgon/diskv v2.0.1+incompatible // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/prometheus/client_golang v1.23.2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.67.5 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect

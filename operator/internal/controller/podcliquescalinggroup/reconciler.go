@@ -27,6 +27,7 @@ import (
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	pcsgcomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup/components"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
+	grovemetrics "github.com/ai-dynamo/grove/operator/internal/metrics"
 
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -78,11 +79,17 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		dLog := logger.WithValues("operation", "delete")
 		deletionOrSpecReconcileFlowResult = r.triggerDeletionFlow(ctx, dLog, pcsg)
 	} else {
+		doneSpec := grovemetrics.StartOperation(controllerName, "reconcile_spec")
 		specLog := logger.WithValues("operation", "specReconcile")
 		deletionOrSpecReconcileFlowResult = r.reconcileSpec(ctx, specLog, pcsg)
+		doneSpec()
 	}
 
-	if statusReconcileResult := r.reconcileStatus(ctx, logger, ctrlclient.ObjectKeyFromObject(pcsg)); ctrlcommon.ShortCircuitReconcileFlow(statusReconcileResult) {
+	doneStatus := grovemetrics.StartOperation(controllerName, "reconcile_status")
+	statusReconcileResult := r.reconcileStatus(ctx, logger, ctrlclient.ObjectKeyFromObject(pcsg))
+	doneStatus()
+
+	if ctrlcommon.ShortCircuitReconcileFlow(statusReconcileResult) {
 		return statusReconcileResult.Result()
 	}
 
