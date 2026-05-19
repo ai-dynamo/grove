@@ -727,7 +727,7 @@ func (sc *syncContext) determinePCSGReplicas(pcsgFQN string, pcsgConfig grovecor
 // podGangInfo is package-private; the public PodCliqueByName/PCSGByName/PodGangByName helpers
 // in componentutils cover the cross-package equivalents.
 func podGangInfoByName(podGangs []*podGangInfo) map[string]*podGangInfo {
-	return componentutils.MapBy(podGangs, func(podGang *podGangInfo) (string, *podGangInfo) {
+	return lo.SliceToMap(podGangs, func(podGang *podGangInfo) (string, *podGangInfo) {
 		return podGang.fqn, podGang
 	})
 }

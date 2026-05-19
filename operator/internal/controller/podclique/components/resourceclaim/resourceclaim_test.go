@@ -26,11 +26,26 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	resourcev1 "k8s.io/api/resource/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
+
+// noResourceClaimAPIInterceptor simulates a cluster whose apiserver does not
+// serve resource.k8s.io ResourceClaim by returning a NoKindMatchError.
+var noResourceClaimAPIInterceptor = interceptor.Funcs{
+	List: func(_ context.Context, _ client.WithWatch, _ client.ObjectList, _ ...client.ListOption) error {
+		return &meta.NoKindMatchError{GroupKind: schema.GroupKind{Group: resourcev1.GroupName, Kind: "ResourceClaim"}}
+	},
+	DeleteAllOf: func(_ context.Context, _ client.WithWatch, _ client.Object, _ ...client.DeleteAllOfOption) error {
+		return &meta.NoKindMatchError{GroupKind: schema.GroupKind{Group: resourcev1.GroupName, Kind: "ResourceClaim"}}
+	},
+}
 
 func newTestScheme() *runtime.Scheme {
 	scheme := runtime.NewScheme()
@@ -190,6 +205,15 @@ func TestGetExistingResourceNames(t *testing.T) {
 		names, err := r.GetExistingResourceNames(context.Background(), logr.Discard(), pclqMeta)
 		require.NoError(t, err)
 		assert.Equal(t, []string{pclqName + "-all-gpu-mps"}, names)
+	})
+
+	t.Run("returns empty when ResourceClaim API is not served", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(noResourceClaimAPIInterceptor).Build()
+		r := _resource{client: cl, scheme: scheme}
+
+		names, err := r.GetExistingResourceNames(context.Background(), logr.Discard(), pclqMeta)
+		require.NoError(t, err)
+		assert.Empty(t, names)
 	})
 }
 
@@ -382,6 +406,19 @@ func TestDelete(t *testing.T) {
 			Labels:    map[string]string{apicommon.LabelPartOfKey: pcsName},
 		}
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
+		r := _resource{client: cl, scheme: scheme}
+
+		err := r.Delete(context.Background(), logr.Discard(), pclqMeta)
+		require.NoError(t, err)
+	})
+
+	t.Run("no-op when ResourceClaim API is not served", func(t *testing.T) {
+		pclqMeta := metav1.ObjectMeta{
+			Name:      pclqName,
+			Namespace: namespace,
+			Labels:    map[string]string{apicommon.LabelPartOfKey: pcsName},
+		}
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(noResourceClaimAPIInterceptor).Build()
 		r := _resource{client: cl, scheme: scheme}
 
 		err := r.Delete(context.Background(), logr.Discard(), pclqMeta)

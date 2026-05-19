@@ -116,6 +116,41 @@ func TestValidateCreate(t *testing.T) {
 			expectError:   true,
 			errorContains: "failed to cast object to PodCliqueSet",
 		},
+		{
+			name: "unknown scheduler name returns error without panic",
+			obj: &grovecorev1alpha1.PodCliqueSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pcs",
+					Namespace: "default",
+				},
+				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+					Replicas: 1,
+					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+						TerminationDelay: ptr.To(metav1.Duration{Duration: 4 * time.Hour}),
+						StartupType:      ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
+						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+							{
+								Name: "test-pclq",
+								Spec: grovecorev1alpha1.PodCliqueSpec{
+									RoleName:     "test-role",
+									Replicas:     1,
+									MinAvailable: ptr.To(int32(1)),
+									PodSpec: corev1.PodSpec{
+										SchedulerName: "unknown-scheduler",
+										Containers: []corev1.Container{{
+											Name:  "test",
+											Image: "test",
+										}},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectError:   true,
+			errorContains: "schedulerName must be an enabled scheduler backend",
+		},
 	}
 
 	for _, tt := range tests {

@@ -31,6 +31,7 @@ import (
 
 	"github.com/go-logr/logr"
 	resourcev1 "k8s.io/api/resource/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -64,6 +65,9 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 		client.InNamespace(pclqObjMeta.Namespace),
 		client.MatchingLabels(pclqResourceClaimLabels(pclqObjMeta)),
 	); err != nil {
+		if meta.IsNoMatchError(err) {
+			return nil, nil
+		}
 		return nil, groveerr.WrapError(err,
 			errSyncPCLQLevelRC,
 			component.OperationGetExistingResourceNames,
@@ -188,12 +192,16 @@ func pclqResourceClaimLabels(pclqObjMeta metav1.ObjectMeta) map[string]string {
 // This is required because the PCLQ finalizer's verifyNoResourcesAwaitsCleanup
 // blocks finalizer removal until all owned resources are gone; relying solely on
 // GC would create a deadlock since GC only fires after the PCLQ is fully deleted.
-func (r _resource) Delete(ctx context.Context, _ logr.Logger, pclqObjMeta metav1.ObjectMeta) error {
+func (r _resource) Delete(ctx context.Context, logger logr.Logger, pclqObjMeta metav1.ObjectMeta) error {
 	labels := pclqResourceClaimLabels(pclqObjMeta)
 	if err := r.client.DeleteAllOf(ctx, &resourcev1.ResourceClaim{},
 		client.InNamespace(pclqObjMeta.Namespace),
 		client.MatchingLabels(labels),
 	); err != nil {
+		if meta.IsNoMatchError(err) {
+			logger.V(1).Info("ResourceClaim API not served by cluster, skipping delete", "namespace", pclqObjMeta.Namespace, "podClique", pclqObjMeta.Name, "err", err.Error())
+			return nil
+		}
 		return groveerr.WrapError(err,
 			errDeletePCLQLevelRC,
 			component.OperationDelete,

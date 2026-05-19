@@ -17,8 +17,8 @@
 package utils
 
 // Set represents unique values with O(1) membership checks. Use it where callers only need
-// to test whether an element is present; use a plain map[K]V (built via MapBy) where callers
-// also need to retrieve the value associated with the key.
+// to test whether an element is present; use a plain map[K]V (built via lo.SliceToMap) where
+// callers also need to retrieve the value associated with the key.
 type Set[T comparable] map[T]struct{}
 
 // NewSet converts a slice into a set for O(1) membership checks.
@@ -42,16 +42,4 @@ func NewSetBy[T any, K comparable](values []T, keyFunc func(T) K) Set[K] {
 func (s Set[T]) Has(value T) bool {
 	_, exists := s[value]
 	return exists
-}
-
-// MapBy converts a slice into a name-keyed map using mapFunc to derive each key and value.
-// Last-write-wins on duplicate keys: callers should ensure inputs are unique by key, otherwise
-// only the last entry per key survives.
-func MapBy[T any, K comparable, V any](values []T, mapFunc func(T) (K, V)) map[K]V {
-	byKey := make(map[K]V, len(values))
-	for _, value := range values {
-		key, mappedValue := mapFunc(value)
-		byKey[key] = mappedValue
-	}
-	return byKey
 }

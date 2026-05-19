@@ -70,23 +70,3 @@ func TestSetHas(t *testing.T) {
 		assert.False(t, zeroSet.Has(1))
 	})
 }
-
-func TestMapBy(t *testing.T) {
-	type item struct {
-		name  string
-		value int
-	}
-	t.Run("empty input → empty map", func(t *testing.T) {
-		got := MapBy[item, string, int](nil, func(i item) (string, int) { return i.name, i.value })
-		assert.Equal(t, map[string]int{}, got)
-	})
-	t.Run("populated input", func(t *testing.T) {
-		got := MapBy([]item{{"a", 1}, {"b", 2}}, func(i item) (string, int) { return i.name, i.value })
-		assert.Equal(t, map[string]int{"a": 1, "b": 2}, got)
-	})
-	t.Run("duplicate keys: last write wins", func(t *testing.T) {
-		// Documented semantic — callers should pre-dedup if they need stricter behavior.
-		got := MapBy([]item{{"a", 1}, {"a", 99}}, func(i item) (string, int) { return i.name, i.value })
-		assert.Equal(t, map[string]int{"a": 99}, got)
-	})
-}
