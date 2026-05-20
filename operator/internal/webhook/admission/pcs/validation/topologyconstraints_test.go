@@ -731,9 +731,9 @@ func TestResolveTopologyDomains(t *testing.T) {
 					Build()
 			},
 			clusterTopologyObjects: []client.Object{
-				&grovecorev1alpha1.ClusterTopology{
+				&grovecorev1alpha1.ClusterTopologyBinding{
 					ObjectMeta: v1.ObjectMeta{Name: "my-topo"},
-					Spec: grovecorev1alpha1.ClusterTopologySpec{
+					Spec: grovecorev1alpha1.ClusterTopologyBindingSpec{
 						Levels: []grovecorev1alpha1.TopologyLevel{
 							{Domain: "zone", Key: "topology.kubernetes.io/zone"},
 							{Domain: "host", Key: "kubernetes.io/hostname"},
