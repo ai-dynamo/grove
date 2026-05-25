@@ -60,7 +60,7 @@ func (v *topologyConstraintsValidator) validate() field.ErrorList {
 		return errs
 	}
 
-	errs := v.validateTopologyDomainsExistInClusterTopology(pcsTemplateFLDPath)
+	errs := v.validateTopologyDomainsExistInClusterTopology()
 	if len(errs) > 0 {
 		return errs
 	}
@@ -81,7 +81,7 @@ func (v *topologyConstraintsValidator) validateUpdate(oldPCS *grovecorev1alpha1.
 	if errs := v.validateTopologyConstraintPackDomainsForUpdate(fldPath); len(errs) > 0 {
 		return errs
 	}
-	if errs := v.validateDeprecatedPackDomainAmbiguity(fldPath); len(errs) > 0 {
+	if errs := v.validateDeprecatedPackDomainAmbiguity(); len(errs) > 0 {
 		return errs
 	}
 	return v.validateTopologyConstraintImmutability(oldPCS, fldPath, false)
@@ -145,10 +145,10 @@ func (v *topologyConstraintsValidator) validateForLegacyRepair() field.ErrorList
 	if errs := v.validateTopologyConstraintPackDomainsForUpdate(fldPath); len(errs) > 0 {
 		return errs
 	}
-	if errs := v.validateDeprecatedPackDomainAmbiguity(fldPath); len(errs) > 0 {
+	if errs := v.validateDeprecatedPackDomainAmbiguity(); len(errs) > 0 {
 		return errs
 	}
-	errs := v.validateTopologyDomainsExistInClusterTopology(fldPath)
+	errs := v.validateTopologyDomainsExistInClusterTopology()
 	if len(errs) > 0 {
 		return errs
 	}
@@ -215,7 +215,7 @@ func (v *topologyConstraintsValidator) validateTopologyConstraintPackDomainsForU
 	return allErrs
 }
 
-func (v *topologyConstraintsValidator) validateDeprecatedPackDomainAmbiguity(fldPath *field.Path) field.ErrorList {
+func (v *topologyConstraintsValidator) validateDeprecatedPackDomainAmbiguity() field.ErrorList {
 	var allErrs field.ErrorList
 	forEachTopologyConstraint(v.pcs, func(tc *grovecorev1alpha1.TopologyConstraint, tcPath *field.Path) {
 		if tc.PackDomain != "" && tc.Pack != nil && tc.Pack.RequiredDomain != "" {
@@ -228,7 +228,7 @@ func (v *topologyConstraintsValidator) validateDeprecatedPackDomainAmbiguity(fld
 
 // validateTopologyDomainsExistInClusterTopology ensures that all specified topology constraint domains exist in the cluster topology.
 // When clusterTopologyDomains is nil, validation is skipped (no topology constraints or topologyName not set).
-func (v *topologyConstraintsValidator) validateTopologyDomainsExistInClusterTopology(fldPath *field.Path) field.ErrorList {
+func (v *topologyConstraintsValidator) validateTopologyDomainsExistInClusterTopology() field.ErrorList {
 	if v.clusterTopologyDomains == nil {
 		return nil
 	}
