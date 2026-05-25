@@ -1661,7 +1661,9 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 				pcs := createTestPodCliqueSet("pcs-topology-create")
 				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
 					TopologyName: "topo-a",
-					PackDomain:   grovecorev1alpha1.TopologyDomainHost,
+					Pack: &grovecorev1alpha1.TopologyPackConstraint{
+						RequiredDomain: grovecorev1alpha1.TopologyDomainHost,
+					},
 				}
 				return pcs
 			},
@@ -1674,11 +1676,15 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 				pcs := createTestPodCliqueSet("pcs-child-topology-match")
 				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
 					TopologyName: "topo-a",
-					PackDomain:   grovecorev1alpha1.TopologyDomainZone,
+					Pack: &grovecorev1alpha1.TopologyPackConstraint{
+						RequiredDomain: grovecorev1alpha1.TopologyDomainZone,
+					},
 				}
 				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
 					TopologyName: "topo-a",
-					PackDomain:   grovecorev1alpha1.TopologyDomainHost,
+					Pack: &grovecorev1alpha1.TopologyPackConstraint{
+						RequiredDomain: grovecorev1alpha1.TopologyDomainHost,
+					},
 				}
 				return pcs
 			},
@@ -1691,11 +1697,15 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 				pcs := createTestPodCliqueSet("pcs-child-topology-mismatch")
 				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
 					TopologyName: "topo-a",
-					PackDomain:   grovecorev1alpha1.TopologyDomainZone,
+					Pack: &grovecorev1alpha1.TopologyPackConstraint{
+						RequiredDomain: grovecorev1alpha1.TopologyDomainZone,
+					},
 				}
 				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
 					TopologyName: "topo-b",
-					PackDomain:   grovecorev1alpha1.TopologyDomainHost,
+					Pack: &grovecorev1alpha1.TopologyPackConstraint{
+						RequiredDomain: grovecorev1alpha1.TopologyDomainHost,
+					},
 				}
 				return pcs
 			},
@@ -1840,7 +1850,8 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 			switch tc.operation {
 			case admissionv1.Create:
 				_, errs = validator.validate()
-				errs = append(errs, validator.validateTopologyConstraintsOnCreate(context.Background())...)
+				_, topologyErrs := validator.validateTopologyConstraintsOnCreate(context.Background())
+				errs = append(errs, topologyErrs...)
 				err = errs.ToAggregate()
 			case admissionv1.Update:
 				errs = validator.validatePodCliqueSetTemplateSpecUpdate(tc.setupOldPCS(), field.NewPath("spec").Child("template"))

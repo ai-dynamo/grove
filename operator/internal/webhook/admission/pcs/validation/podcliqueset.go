@@ -418,15 +418,16 @@ func (v *pcsValidator) validateTerminationDelay(fldPath *field.Path) field.Error
 	return allErrs
 }
 
-func (v *pcsValidator) validateTopologyConstraintsOnCreate(ctx context.Context) field.ErrorList {
+func (v *pcsValidator) validateTopologyConstraintsOnCreate(ctx context.Context) ([]string, field.ErrorList) {
 	if !v.tasEnabled {
-		return newTopologyConstraintsValidator(v.pcs, v.tasEnabled, nil).validate()
+		return nil, newTopologyConstraintsValidator(v.pcs, v.tasEnabled, nil).validate()
 	}
 	domains, errs := v.resolveTopologyDomains(ctx)
 	if len(errs) > 0 {
-		return errs
+		return nil, errs
 	}
-	return newTopologyConstraintsValidator(v.pcs, v.tasEnabled, domains).validate()
+	topologyValidator := newTopologyConstraintsValidator(v.pcs, v.tasEnabled, domains)
+	return topologyValidator.warnings(), topologyValidator.validate()
 }
 
 // validatePodCliqueTemplateSpec validates a single PodClique template specification including metadata and spec.
@@ -701,7 +702,7 @@ func (v *pcsValidator) validateTopologyConstraintsUpdate(oldPCS *grovecorev1alph
 				if allErrs := immutabilityValidator.validateTopologyConstraintImmutability(oldPCS, field.NewPath("spec").Child("template"), true); len(allErrs) > 0 {
 					return allErrs
 				}
-				return v.validateTopologyConstraintsOnCreate(context.Background())
+				return v.validateTopologyConstraintsForLegacyRepair(context.Background())
 			}
 			// Surface any other resolution failure as an internal error rather than
 			// assuming it is a repairable legacy state.
@@ -712,6 +713,17 @@ func (v *pcsValidator) validateTopologyConstraintsUpdate(oldPCS *grovecorev1alph
 	// Domain/hierarchy validation is not needed on update because topology constraints are immutable.
 	// Only topologyName and packDomain immutability are checked here for already valid objects.
 	return immutabilityValidator.validateUpdate(oldPCS)
+}
+
+func (v *pcsValidator) validateTopologyConstraintsForLegacyRepair(ctx context.Context) field.ErrorList {
+	if !v.tasEnabled {
+		return newTopologyConstraintsValidator(v.pcs, v.tasEnabled, nil).validateForLegacyRepair()
+	}
+	domains, errs := v.resolveTopologyDomains(ctx)
+	if len(errs) > 0 {
+		return errs
+	}
+	return newTopologyConstraintsValidator(v.pcs, v.tasEnabled, domains).validateForLegacyRepair()
 }
 
 // resolveTopologyDomains resolves the ordered list of topology domains from the ClusterTopologyBinding
@@ -757,8 +769,8 @@ func validateResolvableTopologyConstraint(
 	if tc == nil {
 		return "", false, nil
 	}
-	if tc.PackDomain == "" {
-		return "", false, field.ErrorList{field.Required(tcPath.Child("packDomain"), "packDomain is required when topologyConstraint is set")}
+	if !tc.HasAnyPackDomain() {
+		return "", false, field.ErrorList{field.Required(tcPath.Child("pack"), "pack must specify required or preferred when topologyConstraint is set")}
 	}
 	if tc.TopologyName == "" && (!canInherit || inheritedTopologyName == "") {
 		return "", false, field.ErrorList{field.Required(

@@ -14,7 +14,8 @@ spec:
   template:
     topologyConstraint:
       topologyName: h100-topology
-      packDomain: block
+      pack:
+        required: block
     cliques:
       - name: worker
         labels:

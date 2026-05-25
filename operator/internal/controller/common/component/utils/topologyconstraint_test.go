@@ -70,6 +70,21 @@ func TestResolveEffectiveTopologyNameForPodCliqueSet(t *testing.T) {
 			wantHasAny:   true,
 		},
 		{
+			name: "pcs preferred-only topology constraint resolves",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return makePCS(func(pcs *grovecorev1alpha1.PodCliqueSet) {
+					pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+						TopologyName: "topo-a",
+						Pack: &grovecorev1alpha1.TopologyPackConstraint{
+							PreferredDomain: grovecorev1alpha1.TopologyDomainHost,
+						},
+					}
+				})
+			},
+			wantTopology: "topo-a",
+			wantHasAny:   true,
+		},
+		{
 			name: "matching child topology name is allowed",
 			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
 				return makePCS(func(pcs *grovecorev1alpha1.PodCliqueSet) {
@@ -234,6 +249,49 @@ func TestResolveEffectiveTopologyNameForPodCliqueSet(t *testing.T) {
 			assert.Equal(t, tc.wantTopology, topologyName)
 		})
 	}
+}
+
+func TestGetUniqueTopologyDomainsInPodCliqueSet(t *testing.T) {
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+					Pack: &grovecorev1alpha1.TopologyPackConstraint{
+						RequiredDomain:  grovecorev1alpha1.TopologyDomainRack,
+						PreferredDomain: grovecorev1alpha1.TopologyDomainHost,
+					},
+				},
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+					{
+						Name: "worker",
+						TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+							Pack: &grovecorev1alpha1.TopologyPackConstraint{
+								PreferredDomain: grovecorev1alpha1.TopologyDomainNuma,
+							},
+						},
+					},
+				},
+				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+					{
+						Name:        "sg1",
+						CliqueNames: []string{"worker"},
+						TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+							PackDomain: grovecorev1alpha1.TopologyDomainRack,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	assert.ElementsMatch(t,
+		[]grovecorev1alpha1.TopologyDomain{
+			grovecorev1alpha1.TopologyDomainRack,
+			grovecorev1alpha1.TopologyDomainHost,
+			grovecorev1alpha1.TopologyDomainNuma,
+		},
+		GetUniqueTopologyDomainsInPodCliqueSet(pcs),
+	)
 }
 
 func TestFindExplicitTopologyNameForPodCliqueSet(t *testing.T) {

@@ -13,7 +13,8 @@ spec:
   template:
     topologyConstraint:
       topologyName: tas20-topology
-      packDomain: rack
+      pack:
+        required: rack
     cliques:
       - name: worker
         labels:

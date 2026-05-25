@@ -27,8 +27,8 @@ import (
 var (
 	// ErrTopologyNameMissing indicates that a constrained level has no effective topologyName after inheritance is applied.
 	ErrTopologyNameMissing = errors.New("topology constraints require an explicit or inherited topologyName")
-	// ErrPackDomainMissing indicates that a topologyConstraint exists but does not specify packDomain.
-	ErrPackDomainMissing = errors.New("topology constraints require packDomain")
+	// ErrPackDomainMissing indicates that a topologyConstraint exists but does not specify any pack domain.
+	ErrPackDomainMissing = errors.New("topology constraints require at least one pack domain")
 	// ErrMultipleTopologyNamesUnsupported indicates that topology constraints within a single PCS reference different topology names.
 	ErrMultipleTopologyNamesUnsupported = errors.New("multiple topology names within a single PodCliqueSet are not supported")
 )
@@ -83,7 +83,7 @@ func ResolveEffectiveTopologyNameForPodCliqueSet(pcs *grovecorev1alpha1.PodCliqu
 
 	pcsEffectiveTopologyName := ""
 	if tc := pcs.Spec.Template.TopologyConstraint; tc != nil {
-		if tc.PackDomain == "" {
+		if !tc.HasAnyPackDomain() {
 			return "", ErrPackDomainMissing
 		}
 		effectiveTopologyName, err := ResolveEffectiveTopologyNameForConstraint(tc.TopologyName, "")
@@ -101,7 +101,7 @@ func ResolveEffectiveTopologyNameForPodCliqueSet(pcs *grovecorev1alpha1.PodCliqu
 		if pcsgConfig.TopologyConstraint == nil {
 			continue
 		}
-		if pcsgConfig.TopologyConstraint.PackDomain == "" {
+		if !pcsgConfig.TopologyConstraint.HasAnyPackDomain() {
 			return "", ErrPackDomainMissing
 		}
 		effectiveTopologyName, err := ResolveEffectiveTopologyNameForConstraint(pcsgConfig.TopologyConstraint.TopologyName, pcsEffectiveTopologyName)
@@ -122,7 +122,7 @@ func ResolveEffectiveTopologyNameForPodCliqueSet(pcs *grovecorev1alpha1.PodCliqu
 		if pclqTemplateSpec.TopologyConstraint == nil {
 			continue
 		}
-		if pclqTemplateSpec.TopologyConstraint.PackDomain == "" {
+		if !pclqTemplateSpec.TopologyConstraint.HasAnyPackDomain() {
 			return "", ErrPackDomainMissing
 		}
 
@@ -171,9 +171,7 @@ func FindExplicitTopologyNameForPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet
 func GetUniqueTopologyDomainsInPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) []grovecorev1alpha1.TopologyDomain {
 	topologyDomains := sets.New[grovecorev1alpha1.TopologyDomain]()
 	for _, tc := range getAllTopologyConstraintsInPodCliqueSet(pcs) {
-		if tc.PackDomain != "" {
-			topologyDomains.Insert(tc.PackDomain)
-		}
+		topologyDomains.Insert(tc.ReferencedDomains()...)
 	}
 	return topologyDomains.UnsortedList()
 }

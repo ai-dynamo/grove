@@ -9313,14 +9313,37 @@ spec:
                             TopologyConstraint defines topology placement requirements for PodClique.
                             Must be equal to or stricter than parent resource constraints.
                           properties:
+                            pack:
+                              description: Pack specifies topology packing constraints
+                                for each replica of the resource.
+                              properties:
+                                preferred:
+                                  description: |-
+                                    PreferredDomain specifies a preferred best-effort topology domain.
+                                    If the constraint cannot be satisfied, the workload is scheduled anyway.
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z][a-z0-9-]*$
+                                  type: string
+                                required:
+                                  description: |-
+                                    RequiredDomain specifies the required topology packing constraint of each replica of the resource.
+                                    The workload will not be scheduled if this constraint cannot be satisfied.
+                                    Must reference a domain in the topology levels defined in the selected ClusterTopologyBinding.
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z][a-z0-9-]*$
+                                  type: string
+                              type: object
                             packDomain:
                               description: |-
-                                PackDomain specifies the topology domain for grouping replicas.
+                                PackDomain specifies the required topology domain using the legacy field name.
                                 Controls placement constraint for EACH individual replica instance.
                                 Must reference a domain in the topology levels defined in the ClusterTopologyBinding named by TopologyName.
                                 Example: "rack" means each replica independently placed within one rack.
                                 Note: Does NOT constrain all replicas to the same rack together.
                                 Different replicas can be in different topology domains.
+                                Deprecated: use Pack.RequiredDomain.
                               maxLength: 63
                               minLength: 1
                               pattern: ^[a-z][a-z0-9-]*$
@@ -9336,8 +9359,6 @@ spec:
                                 when the sub-resources reuse the same ClusterTopologyBinding.
                                 Immutable after creation.
                               type: string
-                          required:
-                          - packDomain
                           type: object
                       required:
                       - name
@@ -9975,14 +9996,37 @@ spec:
                             TopologyConstraint defines topology placement requirements for PodCliqueScalingGroup.
                             Must be equal to or stricter than parent PodCliqueSet constraints.
                           properties:
+                            pack:
+                              description: Pack specifies topology packing constraints
+                                for each replica of the resource.
+                              properties:
+                                preferred:
+                                  description: |-
+                                    PreferredDomain specifies a preferred best-effort topology domain.
+                                    If the constraint cannot be satisfied, the workload is scheduled anyway.
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z][a-z0-9-]*$
+                                  type: string
+                                required:
+                                  description: |-
+                                    RequiredDomain specifies the required topology packing constraint of each replica of the resource.
+                                    The workload will not be scheduled if this constraint cannot be satisfied.
+                                    Must reference a domain in the topology levels defined in the selected ClusterTopologyBinding.
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z][a-z0-9-]*$
+                                  type: string
+                              type: object
                             packDomain:
                               description: |-
-                                PackDomain specifies the topology domain for grouping replicas.
+                                PackDomain specifies the required topology domain using the legacy field name.
                                 Controls placement constraint for EACH individual replica instance.
                                 Must reference a domain in the topology levels defined in the ClusterTopologyBinding named by TopologyName.
                                 Example: "rack" means each replica independently placed within one rack.
                                 Note: Does NOT constrain all replicas to the same rack together.
                                 Different replicas can be in different topology domains.
+                                Deprecated: use Pack.RequiredDomain.
                               maxLength: 63
                               minLength: 1
                               pattern: ^[a-z][a-z0-9-]*$
@@ -9998,8 +10042,6 @@ spec:
                                 when the sub-resources reuse the same ClusterTopologyBinding.
                                 Immutable after creation.
                               type: string
-                          required:
-                          - packDomain
                           type: object
                       required:
                       - cliqueNames
@@ -10775,14 +10817,37 @@ spec:
                     description: TopologyConstraint defines topology placement requirements
                       for PodCliqueSet.
                     properties:
+                      pack:
+                        description: Pack specifies topology packing constraints for
+                          each replica of the resource.
+                        properties:
+                          preferred:
+                            description: |-
+                              PreferredDomain specifies a preferred best-effort topology domain.
+                              If the constraint cannot be satisfied, the workload is scheduled anyway.
+                            maxLength: 63
+                            minLength: 1
+                            pattern: ^[a-z][a-z0-9-]*$
+                            type: string
+                          required:
+                            description: |-
+                              RequiredDomain specifies the required topology packing constraint of each replica of the resource.
+                              The workload will not be scheduled if this constraint cannot be satisfied.
+                              Must reference a domain in the topology levels defined in the selected ClusterTopologyBinding.
+                            maxLength: 63
+                            minLength: 1
+                            pattern: ^[a-z][a-z0-9-]*$
+                            type: string
+                        type: object
                       packDomain:
                         description: |-
-                          PackDomain specifies the topology domain for grouping replicas.
+                          PackDomain specifies the required topology domain using the legacy field name.
                           Controls placement constraint for EACH individual replica instance.
                           Must reference a domain in the topology levels defined in the ClusterTopologyBinding named by TopologyName.
                           Example: "rack" means each replica independently placed within one rack.
                           Note: Does NOT constrain all replicas to the same rack together.
                           Different replicas can be in different topology domains.
+                          Deprecated: use Pack.RequiredDomain.
                         maxLength: 63
                         minLength: 1
                         pattern: ^[a-z][a-z0-9-]*$
@@ -10798,8 +10863,6 @@ spec:
                           when the sub-resources reuse the same ClusterTopologyBinding.
                           Immutable after creation.
                         type: string
-                    required:
-                    - packDomain
                     type: object
                 required:
                 - cliques

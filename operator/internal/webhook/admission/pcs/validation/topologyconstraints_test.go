@@ -23,6 +23,7 @@ import (
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
@@ -135,7 +136,7 @@ func TestValidateTASEnabledWhenDomainNotInClusterTopology(t *testing.T) {
 			name:                  "Should report error when PCS level domain not in cluster topology",
 			pcsTopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: grovecorev1alpha1.TopologyDomainHost},
 			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.topologyConstraint"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.topologyConstraint.pack.required"},
 			},
 		},
 		{
@@ -148,7 +149,7 @@ func TestValidateTASEnabledWhenDomainNotInClusterTopology(t *testing.T) {
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].topologyConstraint"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].topologyConstraint.pack.required"},
 			},
 		},
 		{
@@ -161,7 +162,7 @@ func TestValidateTASEnabledWhenDomainNotInClusterTopology(t *testing.T) {
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].topologyConstraint"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].topologyConstraint.pack.required"},
 			},
 		},
 		{
@@ -191,7 +192,7 @@ func TestValidateTASEnabledWhenDomainNotInClusterTopology(t *testing.T) {
 			},
 			errorMatchers: []testutils.ErrorMatcher{
 				// Should ONLY get domain validation error, NOT hierarchical violation error
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.topologyConstraint"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.topologyConstraint.pack.required"},
 			},
 		},
 		{
@@ -209,7 +210,7 @@ func TestValidateTASEnabledWhenDomainNotInClusterTopology(t *testing.T) {
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].topologyConstraint"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].topologyConstraint.pack.required"},
 			},
 		},
 	}
@@ -217,6 +218,60 @@ func TestValidateTASEnabledWhenDomainNotInClusterTopology(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			pcs := buildTestPCS(tc.pcsTopologyConstraint, tc.cliques, tc.pcsgConfigs)
+			validator := newTopologyConstraintsValidator(pcs, true, clusterDomains)
+			errs := validator.validate()
+			assert.Len(t, errs, len(tc.errorMatchers), "unexpected number of errors")
+			testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
+		})
+	}
+}
+
+func TestValidateCreateTopologyPackDomains(t *testing.T) {
+	clusterDomains := []string{
+		string(grovecorev1alpha1.TopologyDomainZone),
+		string(grovecorev1alpha1.TopologyDomainRack),
+		string(grovecorev1alpha1.TopologyDomainHost),
+	}
+
+	tests := []struct {
+		name          string
+		constraint    *grovecorev1alpha1.TopologyConstraint
+		errorMatchers []testutils.ErrorMatcher
+	}{
+		{
+			name: "Should reject deprecated packDomain on create",
+			constraint: &grovecorev1alpha1.TopologyConstraint{
+				TopologyName: "test-topology",
+				PackDomain:   grovecorev1alpha1.TopologyDomainHost,
+			},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint.packDomain"},
+			},
+		},
+		{
+			name: "Should allow preferred-only pack domain",
+			constraint: &grovecorev1alpha1.TopologyConstraint{
+				TopologyName: "test-topology",
+				Pack: &grovecorev1alpha1.TopologyPackConstraint{
+					PreferredDomain: grovecorev1alpha1.TopologyDomainHost,
+				},
+			},
+			errorMatchers: []testutils.ErrorMatcher{},
+		},
+		{
+			name: "Should require pack when topologyConstraint is set",
+			constraint: &grovecorev1alpha1.TopologyConstraint{
+				TopologyName: "test-topology",
+			},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeRequired, Field: "spec.template.topologyConstraint.pack"},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pcs := buildRawTestPCS(tc.constraint)
 			validator := newTopologyConstraintsValidator(pcs, true, clusterDomains)
 			errs := validator.validate()
 			assert.Len(t, errs, len(tc.errorMatchers), "unexpected number of errors")
@@ -609,7 +664,115 @@ func TestValidateUpdateTopologyConstraintImmutability(t *testing.T) {
 	}
 }
 
+func TestValidateUpdateDeprecatedPackDomainMigration(t *testing.T) {
+	tests := []struct {
+		name             string
+		oldPCSConstraint *grovecorev1alpha1.TopologyConstraint
+		newPCSConstraint *grovecorev1alpha1.TopologyConstraint
+		errorMatchers    []testutils.ErrorMatcher
+	}{
+		{
+			name: "Should allow moving deprecated packDomain to pack.required when level is unchanged",
+			oldPCSConstraint: &grovecorev1alpha1.TopologyConstraint{
+				TopologyName: "topo-a",
+				PackDomain:   grovecorev1alpha1.TopologyDomainHost,
+			},
+			newPCSConstraint: &grovecorev1alpha1.TopologyConstraint{
+				TopologyName: "topo-a",
+				Pack: &grovecorev1alpha1.TopologyPackConstraint{
+					RequiredDomain: grovecorev1alpha1.TopologyDomainHost,
+				},
+			},
+			errorMatchers: []testutils.ErrorMatcher{},
+		},
+		{
+			name: "Should reject moving deprecated packDomain to a different pack.required level",
+			oldPCSConstraint: &grovecorev1alpha1.TopologyConstraint{
+				TopologyName: "topo-a",
+				PackDomain:   grovecorev1alpha1.TopologyDomainHost,
+			},
+			newPCSConstraint: &grovecorev1alpha1.TopologyConstraint{
+				TopologyName: "topo-a",
+				Pack: &grovecorev1alpha1.TopologyPackConstraint{
+					RequiredDomain: grovecorev1alpha1.TopologyDomainRack,
+				},
+			},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint"},
+			},
+		},
+		{
+			name: "Should reject setting deprecated packDomain and pack.required together",
+			oldPCSConstraint: &grovecorev1alpha1.TopologyConstraint{
+				TopologyName: "topo-a",
+				PackDomain:   grovecorev1alpha1.TopologyDomainHost,
+			},
+			newPCSConstraint: &grovecorev1alpha1.TopologyConstraint{
+				TopologyName: "topo-a",
+				PackDomain:   grovecorev1alpha1.TopologyDomainHost,
+				Pack: &grovecorev1alpha1.TopologyPackConstraint{
+					RequiredDomain: grovecorev1alpha1.TopologyDomainHost,
+				},
+			},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.topologyConstraint.pack.required"},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			oldPCS := buildRawTestPCS(tc.oldPCSConstraint)
+			newPCS := buildRawTestPCS(tc.newPCSConstraint)
+			validator := newTopologyConstraintsValidator(newPCS, true, nil)
+			errs := validator.validateUpdate(oldPCS)
+			assert.Len(t, errs, len(tc.errorMatchers), "unexpected number of errors")
+			testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
+		})
+	}
+}
+
+func TestTopologyConstraintWarnings(t *testing.T) {
+	clusterDomains := []string{
+		string(grovecorev1alpha1.TopologyDomainZone),
+		string(grovecorev1alpha1.TopologyDomainRack),
+		string(grovecorev1alpha1.TopologyDomainHost),
+	}
+
+	t.Run("Should warn when preferred domain is coarser than required domain", func(t *testing.T) {
+		pcs := buildTestPCS(&grovecorev1alpha1.TopologyConstraint{
+			Pack: &grovecorev1alpha1.TopologyPackConstraint{
+				RequiredDomain:  grovecorev1alpha1.TopologyDomainHost,
+				PreferredDomain: grovecorev1alpha1.TopologyDomainZone,
+			},
+		}, nil, nil)
+		warnings := newTopologyConstraintsValidator(pcs, true, clusterDomains).warnings()
+		require.Len(t, warnings, 1)
+		assert.Contains(t, warnings[0], "spec.template.topologyConstraint.pack.preferred")
+		assert.Contains(t, warnings[0], "is coarser than")
+	})
+
+	t.Run("Should warn on update while deprecated packDomain remains in use", func(t *testing.T) {
+		pcs := buildRawTestPCS(&grovecorev1alpha1.TopologyConstraint{
+			TopologyName: "topo-a",
+			PackDomain:   grovecorev1alpha1.TopologyDomainHost,
+		})
+		warnings := newTopologyConstraintsValidator(pcs, true, nil).updateWarnings()
+		require.Len(t, warnings, 1)
+		assert.Contains(t, warnings[0], "spec.template.topologyConstraint.packDomain is deprecated")
+		assert.Contains(t, warnings[0], "spec.template.topologyConstraint.pack.required")
+	})
+}
+
 // Helper functions to reduce test duplication
+
+func buildRawTestPCS(pcsConstraint *grovecorev1alpha1.TopologyConstraint) *grovecorev1alpha1.PodCliqueSet {
+	return testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
+		WithReplicas(1).
+		WithTopologyConstraint(pcsConstraint).
+		WithPodCliqueTemplateSpec(testutils.NewBasicPodCliqueTemplateSpec("worker")).
+		Build()
+}
 
 // buildTestPCS constructs a PodCliqueSet for testing based on provided parameters.
 // If cliques is nil or empty, a default worker clique will be added.
@@ -624,6 +787,10 @@ func buildTestPCS(pcsConstraint *grovecorev1alpha1.TopologyConstraint,
 		normalized := tc.DeepCopy()
 		if normalized.TopologyName == "" {
 			normalized.TopologyName = defaultTopologyName
+		}
+		if normalized.Pack == nil && normalized.PackDomain != "" {
+			normalized.Pack = &grovecorev1alpha1.TopologyPackConstraint{RequiredDomain: normalized.PackDomain}
+			normalized.PackDomain = ""
 		}
 		return normalized
 	}

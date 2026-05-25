@@ -1038,8 +1038,10 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 					},
 				},
 				{
-					Name:               "worker",
-					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: "host"},
+					Name: "worker",
+					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+						Pack: &grovecorev1alpha1.TopologyPackConstraint{RequiredDomain: "host"},
+					},
 					Spec: grovecorev1alpha1.PodCliqueSpec{
 						Replicas:     2,
 						MinAvailable: ptr.To(int32(1)),

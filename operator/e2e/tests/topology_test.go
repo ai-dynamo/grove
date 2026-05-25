@@ -33,8 +33,8 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/grove/topology"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
-	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	"github.com/samber/lo"
@@ -218,7 +218,7 @@ func Test_TAS2_MultipleCliquesWithDifferentConstraints(t *testing.T) {
 }
 
 // Test_TAS3_PCSOnlyConstraint tests constraint only at PCS level with no PCSG/PCLQ constraints
-// 1. Deploy workload with PCS-only constraint (packDomain: rack)
+// 1. Deploy workload with PCS-only constraint (pack.required: rack)
 //   - PCSG: NO explicit constraint (nil)
 //   - PCLQs: NO explicit constraints
 //
@@ -276,7 +276,7 @@ func Test_TAS3_PCSOnlyConstraint(t *testing.T) {
 }
 
 // Test_TAS4_PCSGOnlyConstraint tests constraint only at PCSG level with no PCS/PCLQ constraints
-// 1. Deploy workload with constraint only at PCSG level (packDomain: rack)
+// 1. Deploy workload with constraint only at PCSG level (pack.required: rack)
 // 2. PCS and PCLQs have NO explicit constraints
 // 3. Verify PCSG worker pods (2 total) respect rack constraint
 // 4. Router pods (2 standalone) are unconstrained
@@ -342,7 +342,7 @@ func Test_TAS4_PCSGOnlyConstraint(t *testing.T) {
 }
 
 // Test_TAS5_HostLevelConstraint tests PCLQ-only constraint with host-level packing
-// 1. Deploy workload with constraint only at PCLQ level (packDomain: host)
+// 1. Deploy workload with constraint only at PCLQ level (pack.required: host)
 // 2. PCS has NO explicit constraint
 // 3. Verify all 2 pods on same host (strictest constraint)
 func Test_TAS5_HostLevelConstraint(t *testing.T) {
@@ -1639,9 +1639,9 @@ func Test_TAS20_PCSTopologyLevelsUnavailableCondition(t *testing.T) {
 }
 
 // Test_TAS21_TopologyValidationWebhooks verifies validation behavior for topology-related resources:
-// 1. The ClusterTopologyBinding validating webhook rejects invalid topology definitions and scheduler references.
-// 2. The PodCliqueSet validating webhook allows a child topologyConstraint without topologyName when it
-//    can inherit from the PCS topologyConstraint and the referenced ClusterTopologyBinding exists.
+//  1. The ClusterTopologyBinding validating webhook rejects invalid topology definitions and scheduler references.
+//  2. The PodCliqueSet validating webhook allows a child topologyConstraint without topologyName when it
+//     can inherit from the PCS topologyConstraint and the referenced ClusterTopologyBinding exists.
 func Test_TAS21_TopologyValidationWebhooks(t *testing.T) {
 	ctx := context.Background()
 
@@ -1736,7 +1736,9 @@ func Test_TAS21_TopologyValidationWebhooks(t *testing.T) {
 		WithReplicas(1).
 		WithTopologyConstraint(&corev1alpha1.TopologyConstraint{
 			TopologyName: "grove-topology",
-			PackDomain:   corev1alpha1.TopologyDomainZone,
+			Pack: &corev1alpha1.TopologyPackConstraint{
+				RequiredDomain: corev1alpha1.TopologyDomainZone,
+			},
 		}).
 		WithPodCliqueTemplateSpec(
 			testutils.NewPodCliqueTemplateSpecBuilder("worker").
@@ -1744,7 +1746,9 @@ func Test_TAS21_TopologyValidationWebhooks(t *testing.T) {
 				WithRoleName("worker-role").
 				WithMinAvailable(1).
 				WithTopologyConstraint(&corev1alpha1.TopologyConstraint{
-					PackDomain: corev1alpha1.TopologyDomainHost,
+					Pack: &corev1alpha1.TopologyPackConstraint{
+						RequiredDomain: corev1alpha1.TopologyDomainHost,
+					},
 				}).
 				Build(),
 		).

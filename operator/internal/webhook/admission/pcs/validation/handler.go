@@ -76,8 +76,10 @@ func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admis
 
 	v := newPCSValidator(pcs, admissionv1.Create, h.tasConfig, h.schedulerConfig, h.client, h.schedRegistry)
 	var allErrs field.ErrorList
-	allErrs = append(allErrs, v.validateTopologyConstraintsOnCreate(ctx)...)
+	topologyWarnings, topologyErrs := v.validateTopologyConstraintsOnCreate(ctx)
+	allErrs = append(allErrs, topologyErrs...)
 	warnings, errs := v.validate()
+	warnings = append(warnings, topologyWarnings...)
 	allErrs = append(allErrs, errs...)
 
 	// Validate MNNVL annotations on PCS metadata and spec (clique templates)
@@ -117,6 +119,8 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 	if len(errs) > 0 {
 		return warnings, errs.ToAggregate()
 	}
+	updateWarnings := newTopologyConstraintsValidator(newPCS, h.tasConfig.Enabled, nil).updateWarnings()
+	warnings = append(warnings, updateWarnings...)
 	return warnings, v.validateUpdate(oldPCS)
 }
 

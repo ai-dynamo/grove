@@ -273,14 +273,73 @@ type TopologyConstraint struct {
 	// Immutable after creation.
 	// +optional
 	TopologyName string `json:"topologyName,omitempty"`
-	// PackDomain specifies the topology domain for grouping replicas.
+
+	// Pack specifies topology packing constraints for each replica of the resource.
+	// +optional
+	Pack *TopologyPackConstraint `json:"pack,omitempty"`
+
+	// PackDomain specifies the required topology domain using the legacy field name.
 	// Controls placement constraint for EACH individual replica instance.
 	// Must reference a domain in the topology levels defined in the ClusterTopologyBinding named by TopologyName.
 	// Example: "rack" means each replica independently placed within one rack.
 	// Note: Does NOT constrain all replicas to the same rack together.
 	// Different replicas can be in different topology domains.
-	// +required
-	PackDomain TopologyDomain `json:"packDomain"`
+	// Deprecated: use Pack.RequiredDomain.
+	// +optional
+	PackDomain TopologyDomain `json:"packDomain,omitempty"`
+}
+
+// TopologyPackConstraint defines topology pack placement requirements.
+type TopologyPackConstraint struct {
+	// RequiredDomain specifies the required topology packing constraint of each replica of the resource.
+	// The workload will not be scheduled if this constraint cannot be satisfied.
+	// Must reference a domain in the topology levels defined in the selected ClusterTopologyBinding.
+	// +optional
+	RequiredDomain TopologyDomain `json:"required,omitempty"`
+
+	// PreferredDomain specifies a preferred best-effort topology domain.
+	// If the constraint cannot be satisfied, the workload is scheduled anyway.
+	// +optional
+	PreferredDomain TopologyDomain `json:"preferred,omitempty"`
+}
+
+// HasAnyPackDomain reports whether the constraint has any required or preferred pack domain.
+func (tc *TopologyConstraint) HasAnyPackDomain() bool {
+	return tc != nil && (tc.EffectiveRequiredDomain() != "" || tc.PreferredDomain() != "")
+}
+
+// EffectiveRequiredDomain returns the new required domain, falling back to legacy packDomain.
+func (tc *TopologyConstraint) EffectiveRequiredDomain() TopologyDomain {
+	if tc == nil {
+		return ""
+	}
+	if tc.Pack != nil && tc.Pack.RequiredDomain != "" {
+		return tc.Pack.RequiredDomain
+	}
+	return tc.PackDomain
+}
+
+// PreferredDomain returns the preferred pack domain.
+func (tc *TopologyConstraint) PreferredDomain() TopologyDomain {
+	if tc == nil || tc.Pack == nil {
+		return ""
+	}
+	return tc.Pack.PreferredDomain
+}
+
+// ReferencedDomains returns the unique required and preferred domains referenced by the constraint.
+func (tc *TopologyConstraint) ReferencedDomains() []TopologyDomain {
+	if tc == nil {
+		return nil
+	}
+	var domains []TopologyDomain
+	if required := tc.EffectiveRequiredDomain(); required != "" {
+		domains = append(domains, required)
+	}
+	if preferred := tc.PreferredDomain(); preferred != "" && preferred != tc.EffectiveRequiredDomain() {
+		domains = append(domains, preferred)
+	}
+	return domains
 }
 
 // PodCliqueScalingGroupConfig is a group of PodClique's that are scaled together.

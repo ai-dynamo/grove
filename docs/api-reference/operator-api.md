@@ -825,7 +825,8 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `topologyName` _string_ | TopologyName is the name of the ClusterTopologyBinding resource to use for topology-aware scheduling.<br />Setting TopologyName may be optional if the name can be inherited from a higher level scope.<br />When TopologyName is specified at a PCS/PCSG/PCLQ resource constraint, it will also be inherited<br />as the default ClusterTopologyBinding name on all sub-resources, unless overridden by another TopologyName<br />at a sub-resource.<br />For example, setting TopologyName at a PCS level makes it optional for child PCSG or PCLQ levels<br />when the sub-resources reuse the same ClusterTopologyBinding.<br />Immutable after creation. |  |  |
-| `packDomain` _[TopologyDomain](#topologydomain)_ | PackDomain specifies the topology domain for grouping replicas.<br />Controls placement constraint for EACH individual replica instance.<br />Must reference a domain in the topology levels defined in the ClusterTopologyBinding named by TopologyName.<br />Example: "rack" means each replica independently placed within one rack.<br />Note: Does NOT constrain all replicas to the same rack together.<br />Different replicas can be in different topology domains. |  | MaxLength: 63 <br />MinLength: 1 <br />Pattern: `^[a-z][a-z0-9-]*$` <br /> |
+| `pack` _[TopologyPackConstraint](#topologypackconstraint)_ | Pack specifies topology packing constraints for each replica of the resource. |  |  |
+| `packDomain` _[TopologyDomain](#topologydomain)_ | PackDomain specifies the required topology domain using the legacy field name.<br />Controls placement constraint for EACH individual replica instance.<br />Must reference a domain in the topology levels defined in the ClusterTopologyBinding named by TopologyName.<br />Example: "rack" means each replica independently placed within one rack.<br />Note: Does NOT constrain all replicas to the same rack together.<br />Different replicas can be in different topology domains.<br />Deprecated: use Pack.RequiredDomain. |  | MaxLength: 63 <br />MinLength: 1 <br />Pattern: `^[a-z][a-z0-9-]*$` <br /> |
 
 
 #### TopologyDomain
@@ -843,6 +844,7 @@ _Validation:_
 _Appears in:_
 - [TopologyConstraint](#topologyconstraint)
 - [TopologyLevel](#topologylevel)
+- [TopologyPackConstraint](#topologypackconstraint)
 
 | Field | Description |
 | --- | --- |
@@ -872,6 +874,23 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `domain` _[TopologyDomain](#topologydomain)_ | Domain is a platform provider-agnostic level identifier. |  | MaxLength: 63 <br />MinLength: 1 <br />Pattern: `^[a-z][a-z0-9-]*$` <br />Required: \{\} <br /> |
 | `key` _string_ | Key is the node label key that identifies this topology domain.<br />Must be a valid Kubernetes label key (qualified name).<br />Examples: "topology.kubernetes.io/zone", "kubernetes.io/hostname" |  | MaxLength: 63 <br />MinLength: 1 <br />Pattern: `^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]/)?([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$` <br />Required: \{\} <br /> |
+
+
+#### TopologyPackConstraint
+
+
+
+TopologyPackConstraint defines topology pack placement requirements.
+
+
+
+_Appears in:_
+- [TopologyConstraint](#topologyconstraint)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `required` _[TopologyDomain](#topologydomain)_ | RequiredDomain specifies the required topology packing constraint of each replica of the resource.<br />The workload will not be scheduled if this constraint cannot be satisfied.<br />Must reference a domain in the topology levels defined in the selected ClusterTopologyBinding. |  | MaxLength: 63 <br />MinLength: 1 <br />Pattern: `^[a-z][a-z0-9-]*$` <br /> |
+| `preferred` _[TopologyDomain](#topologydomain)_ | PreferredDomain specifies a preferred best-effort topology domain.<br />If the constraint cannot be satisfied, the workload is scheduled anyway. |  | MaxLength: 63 <br />MinLength: 1 <br />Pattern: `^[a-z][a-z0-9-]*$` <br /> |
 
 
 #### UpdateStrategyType
