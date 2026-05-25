@@ -31,7 +31,7 @@ Grove currently supports topology-aware scheduling through `packDomain`, a requi
 
 ## Motivation
 
-Grove is increasingly used as an orchestration layer by higher-level tools that manage workload submission on behalf of users. These tools often want to apply topology preferences automatically, without exposing scheduling decisions to end users, but cannot do so today because the only available topology constraint is required (`packDomain`).
+Grove is increasingly used as an orchestration layer by higher-level tools that manage workload submission on behalf of users. These tools often want to apply topology preferences as soft hints, without exposing scheduling decisions to end users, but cannot do so today because the only available topology constraint is required (`packDomain`).
 
 Additionally, preferred topology scheduling is a compute-intensive operation for the scheduler. It therefore cannot be enabled by default for all workloads — it must be an explicit opt-in. Exposing a preferred constraint API gives tools and users a way to request best-effort topology placement, decoupled from the all-or-nothing semantics of the current required constraint. Grouping required and preferred packing under `pack` makes the API clearer when both modes are specified side by side.
 
@@ -94,37 +94,37 @@ type TopologyConstraint struct {
     Pack *TopologyPackConstraint `json:"pack,omitempty"`
 
     // PackDomain specifies the required topology domain using the legacy field name.
-    // Deprecated: use Pack.Required.
+    // Deprecated: use Pack.RequiredDomain.
     // This field is honored for existing workloads, rejected on new workload
     // creation, and warned on update when still in use. Existing workloads may
-    // migrate from PackDomain to Pack.Required if the domain value is unchanged.
+    // migrate from PackDomain to Pack.RequiredDomain if the domain value is unchanged.
     // +optional
     PackDomain *TopologyDomain `json:"packDomain,omitempty"`
 }
 
 // TopologyPackConstraint defines topology pack placement requirements.
 type TopologyPackConstraint struct {
-    // Required specifies the required topology packing constraint of each replica of the resource.
+    // RequiredDomain specifies the required topology packing constraint of each replica of the resource.
     // The workload will not be scheduled if this constraint cannot be satisfied.
     // Must reference a domain in the topology levels defined in the selected ClusterTopology.
     // Example: "rack" means each replica is independently placed within one rack.
     // Note: Does NOT constrain all replicas to the same rack together.
     // Different replicas can be in different topology domains.
     // +optional
-    Required *TopologyDomain `json:"required,omitempty"`
+    RequiredDomain  *TopologyDomain `json:"required,omitempty"`
 
-    // Preferred specifies a preferred (best-effort) topology domain.
+    // PreferredDomain specifies a preferred (best-effort) topology domain.
     // If the constraint cannot be satisfied, the workload is scheduled anyway.
-    // When set alongside Required, it is recommended that Preferred be stricter
-    // than or equal to Required.
+    // When set alongside RequiredDomain, it is recommended that PreferredDomain be stricter
+    // than or equal to RequiredDomain.
     // +optional
-    Preferred *TopologyDomain `json:"preferred,omitempty"`
+    PreferredDomain *TopologyDomain `json:"preferred,omitempty"`
 }
 ```
 
-`TopologyName` remains part of `TopologyConstraint` and continues to select the `ClusterTopology` used for domain-to-key resolution, following the existing topology-name inheritance behavior. `Pack.Required` preserves the required placement behavior of the legacy `PackDomain` field, but is optional so a workload can use `Pack.Preferred` without a hard topology requirement. `Pack.Preferred` is optional and can be used alone for preferred-only topology placement.
+`TopologyName` remains part of `TopologyConstraint` and continues to select the `ClusterTopology` used for domain-to-key resolution, following the existing topology-name inheritance behavior. `Pack.RequiredDomain` preserves the required placement behavior of the legacy `PackDomain` field, but is optional so a workload can use `Pack.PreferredDomain` without a hard topology requirement. `Pack.PreferredDomain` is optional and can be used alone for preferred-only topology placement.
 
-The legacy `PackDomain` field changes from a required value to an optional pointer and remains in the API only for compatibility with existing workloads. New workloads must use `Pack.Required` for hard placement requirements; preferred-only workloads can set only `Pack.Preferred`. `PackDomain` is honored for existing workloads, rejected on new workload creation, and warned on update when still in use. Existing workloads may move from `PackDomain` to `Pack.Required` in an update if the domain value is identical; this migration is a field-name repair, not a semantic change. Controller code must resolve the effective required domain from `Pack.Required` first, then fall back to deprecated `PackDomain` for existing workloads.
+The legacy `PackDomain` field changes from a required value to an optional pointer and remains in the API only for compatibility with existing workloads. New workloads must use `Pack.RequiredDomain` for hard placement requirements; preferred-only workloads can set only `Pack.PreferredDomain`. `PackDomain` is honored for existing workloads, rejected on new workload creation, and warned on update when still in use. Existing workloads may move from `PackDomain` to `Pack.RequiredDomain` in an update if the domain value is identical; this migration is a field-name repair, not a semantic change. Controller code must resolve the effective required domain from `Pack.RequiredDomain` first, then fall back to deprecated `PackDomain` for existing workloads.
 
 ### PodGang Propagation
 
