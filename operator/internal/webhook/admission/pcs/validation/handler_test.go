@@ -117,6 +117,25 @@ func TestValidateCreate(t *testing.T) {
 			errorContains: "failed to cast object to PodCliqueSet",
 		},
 		{
+			name: "unsupported schedulerName fails validation without panic",
+			obj: testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
+				WithReplicas(1).
+				WithTerminationDelay(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithPodCliqueTemplateSpec(
+					testutils.NewPodCliqueTemplateSpecBuilder("test").
+						WithReplicas(1).
+						WithRoleName("test-role").
+						WithMinAvailable(1).
+						WithPodSpec(testutils.NewPodWithBuilderWithDefaultSpec("test-pod", "default").
+							WithSchedulerName(string(groveconfigv1alpha1.SchedulerNameVolcano)).
+							Build().Spec).
+						Build()).
+				Build(),
+			expectError:   true,
+			errorContains: "schedulerName must be an enabled scheduler backend",
+		},
+		{
 			name: "unknown scheduler name returns error without panic",
 			obj: &grovecorev1alpha1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
