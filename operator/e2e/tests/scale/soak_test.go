@@ -26,13 +26,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/resources"
 	"github.com/ai-dynamo/grove/operator/e2e/measurement"
 	"github.com/ai-dynamo/grove/operator/e2e/measurement/condition"
+	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -82,6 +87,16 @@ func envInt(key string, def int) int {
 func (c soakConfig) basePods() int { return c.base * soakPodsPerCLQ }
 func (c soakConfig) peakPods() int { return c.peak * soakPodsPerCLQ }
 
+// operatorBaseline captures the pre-test state of grove-operator pods so the
+// final check can detect restarts or new pod replacements that happened during
+// the soak run. Populated by the operator-baseline phase, read by final-check.
+type operatorBaseline struct {
+	// restartsByUID maps a pod UID → container name → RestartCount at baseline.
+	// We key by UID (not name) so a pod replacement is detected as "missing UID",
+	// not as a same-name pod with an unchanged counter.
+	restartsByUID map[types.UID]map[string]int32
+}
+
 // Test_SoakChurn drives repeated scale-up / scale-down cycles against a single
 // small PCS to surface bugs that only appear after many incremental reconciles
 // — leaks, monotonically growing fields, gradually drifting counters,
@@ -93,6 +108,8 @@ func Test_SoakChurn(t *testing.T) {
 		t.Fatalf("SOAK_PEAK (%d) must be > SOAK_BASE (%d)", cfg.peak, cfg.base)
 	}
 
+	baseline := &operatorBaseline{}
+
 	runScaleTest(t, scaleTestConfig{
 		name:         "SoakChurn",
 		workload:     soakWorkloadName,
@@ -103,9 +120,49 @@ func Test_SoakChurn(t *testing.T) {
 		timeout:      soakTimeout,
 		pollInterval: defaultScalePollInterval,
 	}, func(tracker *measurement.TimelineTracker, tc *testctx.TestContext, _ string) {
+		addOperatorBaselinePhase(tracker, tc, baseline)
 		addSoakPhases(tracker, tc, cfg)
-		addFinalCheckPhase(tracker, tc, cfg)
+		addFinalCheckPhase(tracker, tc, cfg, baseline)
 	})
+}
+
+// addOperatorBaselinePhase snapshots grove-operator pod restart counts before
+// any churn begins. The final check compares against this snapshot to detect
+// crashes or OOMKills that happened during the run.
+func addOperatorBaselinePhase(tracker *measurement.TimelineTracker, tc *testctx.TestContext, baseline *operatorBaseline) {
+	tracker.AddPhase(measurement.PhaseDefinition{
+		Name: "operator-baseline",
+		ActionFn: func(ctx context.Context) error {
+			snap, err := snapshotOperatorRestarts(ctx, tc)
+			if err != nil {
+				return fmt.Errorf("snapshot operator pods: %w", err)
+			}
+			baseline.restartsByUID = snap
+			return nil
+		},
+	})
+}
+
+// snapshotOperatorRestarts lists grove-operator pods and returns a map of
+// pod UID → container name → RestartCount. Used both for the pre-test baseline
+// and the post-test comparison.
+func snapshotOperatorRestarts(ctx context.Context, tc *testctx.TestContext) (map[types.UID]map[string]int32, error) {
+	podList := &corev1.PodList{}
+	if err := tc.Client.List(ctx, podList,
+		client.InNamespace(setup.OperatorNamespace),
+		setup.OperatorPodLabels,
+	); err != nil {
+		return nil, err
+	}
+	out := make(map[types.UID]map[string]int32, len(podList.Items))
+	for _, pod := range podList.Items {
+		perContainer := make(map[string]int32, len(pod.Status.ContainerStatuses))
+		for _, cs := range pod.Status.ContainerStatuses {
+			perContainer[cs.Name] = cs.RestartCount
+		}
+		out[pod.UID] = perContainer
+	}
+	return out, nil
 }
 
 // addSoakPhases adds the deploy phase plus N churn cycles to the tracker. Each
@@ -207,35 +264,186 @@ func addCyclePhases(tracker *measurement.TimelineTracker, tc *testctx.TestContex
 // which is why it lives inside the timeline rather than after tracker.Wait().
 // The action runs the end-state assertions and returns an error to fail the
 // phase (and the test) if any invariant is violated.
-func addFinalCheckPhase(tracker *measurement.TimelineTracker, tc *testctx.TestContext, cfg soakConfig) {
+func addFinalCheckPhase(tracker *measurement.TimelineTracker, tc *testctx.TestContext, cfg soakConfig, baseline *operatorBaseline) {
 	tracker.AddPhase(measurement.PhaseDefinition{
 		Name: "final-check",
 		ActionFn: func(ctx context.Context) error {
-			return runSoakFinalChecks(ctx, tc, cfg)
+			return runSoakFinalChecks(ctx, tc, cfg, baseline)
 		},
 	})
 }
 
-// runSoakFinalChecks asserts end-state invariants. Returns an error rather
+// runSoakFinalChecks asserts end-state invariants after N churn cycles. Each
+// helper targets a distinct bug class (leak / drift / stuck deletion / scheduling
+// artifact / status convergence / operator memory). Returns an error rather
 // than calling t.Fatalf so it can be invoked from a phase ActionFn; the
 // tracker propagates the error into a test failure.
-func runSoakFinalChecks(ctx context.Context, tc *testctx.TestContext, cfg soakConfig) error {
-	// 1. Live pod count is back at base.
+func runSoakFinalChecks(ctx context.Context, tc *testctx.TestContext, cfg soakConfig, baseline *operatorBaseline) error {
 	pods, err := tc.ListPods()
 	if err != nil {
 		return fmt.Errorf("list pods: %w", err)
 	}
-	if got, want := len(pods.Items), cfg.basePods(); got != want {
-		return fmt.Errorf("live pod count = %d, want %d (potential leak)", got, want)
+
+	pcqList := &grovecorev1alpha1.PodCliqueList{}
+	if err := tc.Client.List(ctx, pcqList,
+		client.InNamespace(tc.Namespace),
+		client.MatchingLabels{common.LabelPartOfKey: soakWorkloadName},
+	); err != nil {
+		return fmt.Errorf("list PodCliques: %w", err)
 	}
 
-	// 2. Fetch the PCS once for the next two checks.
+	pcsgList := &grovecorev1alpha1.PodCliqueScalingGroupList{}
+	if err := tc.Client.List(ctx, pcsgList,
+		client.InNamespace(tc.Namespace),
+		client.MatchingLabels{common.LabelPartOfKey: soakWorkloadName},
+	); err != nil {
+		return fmt.Errorf("list PodCliqueScalingGroups: %w", err)
+	}
+
+	podGangs := &groveschedulerv1alpha1.PodGangList{}
+	if err := tc.Client.List(ctx, podGangs,
+		client.InNamespace(tc.Namespace),
+		client.MatchingLabels{common.LabelPartOfKey: soakWorkloadName},
+	); err != nil {
+		return fmt.Errorf("list PodGangs: %w", err)
+	}
+
 	pcs := &grovecorev1alpha1.PodCliqueSet{}
-	if err := tc.Client.Client.Get(ctx, client.ObjectKey{Namespace: tc.Namespace, Name: soakWorkloadName}, pcs); err != nil {
+	if err := tc.Client.Get(ctx, client.ObjectKey{Namespace: tc.Namespace, Name: soakWorkloadName}, pcs); err != nil {
 		return fmt.Errorf("get PCS: %w", err)
 	}
 
-	// 3. UpdateProgress counters stay bounded (the regression #567 protects against).
+	if err := checkExpectedObjectGraph(pods, pcqList, pcsgList, cfg); err != nil {
+		return err
+	}
+	if err := checkNoStuckDeletions(pods, pcqList, pcsgList, podGangs); err != nil {
+		return err
+	}
+	if err := checkPodGangCleanup(podGangs, cfg); err != nil {
+		return err
+	}
+	if err := checkPCSStatusConvergence(pcs, cfg); err != nil {
+		return err
+	}
+	if err := checkPodCliqueStatusConvergence(pcqList); err != nil {
+		return err
+	}
+	if err := checkOperatorHealth(ctx, tc, baseline); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkExpectedObjectGraph (check #1) asserts the post-scale-down child object
+// graph: exact live pod / PodClique counts, zero PCSGs (for this fixture), and
+// no managed object carrying a replica index from a scaled-down peak. A residual
+// index >= cfg.base is the canonical leak signal.
+func checkExpectedObjectGraph(pods *corev1.PodList, pcqList *grovecorev1alpha1.PodCliqueList, pcsgList *grovecorev1alpha1.PodCliqueScalingGroupList, cfg soakConfig) error {
+	if got, want := len(pods.Items), cfg.basePods(); got != want {
+		return fmt.Errorf("live pod count = %d, want %d (potential leak)", got, want)
+	}
+	if got, want := len(pcqList.Items), cfg.base; got != want {
+		return fmt.Errorf("PodClique count = %d, want %d (potential leak)", got, want)
+	}
+	if len(pcsgList.Items) != 0 {
+		return fmt.Errorf("PCSG count = %d, want 0 for this fixture", len(pcsgList.Items))
+	}
+	for i := range pcqList.Items {
+		pcq := &pcqList.Items[i]
+		if err := assertReplicaIndexBelow(pcq.Labels, cfg.base, "PodClique", pcq.Name); err != nil {
+			return err
+		}
+	}
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if err := assertReplicaIndexBelow(pod.Labels, cfg.base, "Pod", pod.Name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// assertReplicaIndexBelow fails if an object carries a PCS-replica-index label
+// >= base, which indicates it was created at peak and not cleaned up on
+// scale-down. Objects without the label are skipped (not all managed objects
+// carry it).
+func assertReplicaIndexBelow(labels map[string]string, base int, kind, name string) error {
+	raw, ok := labels[common.LabelPodCliqueSetReplicaIndex]
+	if !ok {
+		return nil
+	}
+	idx, err := strconv.Atoi(raw)
+	if err != nil {
+		return fmt.Errorf("%s %s has non-integer %s label %q: %w", kind, name, common.LabelPodCliqueSetReplicaIndex, raw, err)
+	}
+	if idx >= base {
+		return fmt.Errorf("%s %s has stale replica index %d (>= base %d)", kind, name, idx, base)
+	}
+	return nil
+}
+
+// checkNoStuckDeletions (check #2) asserts that no managed object still has a
+// DeletionTimestamp at the final check. A surviving DeletionTimestamp after
+// the system should have settled indicates a finalizer pile-up — the bug class
+// soak is specifically designed to surface.
+func checkNoStuckDeletions(pods *corev1.PodList, pcqList *grovecorev1alpha1.PodCliqueList, pcsgList *grovecorev1alpha1.PodCliqueScalingGroupList, podGangs *groveschedulerv1alpha1.PodGangList) error {
+	for i := range pods.Items {
+		if ts := pods.Items[i].DeletionTimestamp; ts != nil {
+			return fmt.Errorf("Pod %s still terminating at final check (DeletionTimestamp=%s)", pods.Items[i].Name, ts)
+		}
+	}
+	for i := range pcqList.Items {
+		if ts := pcqList.Items[i].DeletionTimestamp; ts != nil {
+			return fmt.Errorf("PodClique %s still terminating at final check (DeletionTimestamp=%s)", pcqList.Items[i].Name, ts)
+		}
+	}
+	for i := range pcsgList.Items {
+		if ts := pcsgList.Items[i].DeletionTimestamp; ts != nil {
+			return fmt.Errorf("PCSG %s still terminating at final check (DeletionTimestamp=%s)", pcsgList.Items[i].Name, ts)
+		}
+	}
+	for i := range podGangs.Items {
+		if ts := podGangs.Items[i].DeletionTimestamp; ts != nil {
+			return fmt.Errorf("PodGang %s still terminating at final check (DeletionTimestamp=%s)", podGangs.Items[i].Name, ts)
+		}
+	}
+	return nil
+}
+
+// checkPodGangCleanup (check #3) asserts that scheduling artifacts (PodGangs)
+// were cleaned up to match the base set. Churn can leave stale PodGangs even
+// when pod counts look correct — this catches that class of leak.
+//
+// For this fixture (no PCSGs, just standalone cliques in one PCS), each PCS
+// replica produces exactly one base PodGang, so the expected count is cfg.base.
+func checkPodGangCleanup(podGangs *groveschedulerv1alpha1.PodGangList, cfg soakConfig) error {
+	if got, want := len(podGangs.Items), cfg.base; got != want {
+		return fmt.Errorf("PodGang count = %d, want %d (stale scheduling artifacts)", got, want)
+	}
+	return nil
+}
+
+// checkPCSStatusConvergence (check #4) extends the existing UpdateProgress
+// bounds check to full PCS spec/status convergence: replica counters match
+// base, ObservedGeneration is current, and no LastErrors have accumulated
+// across N cycles.
+func checkPCSStatusConvergence(pcs *grovecorev1alpha1.PodCliqueSet, cfg soakConfig) error {
+	base := int32(cfg.base)
+	if pcs.Spec.Replicas != base {
+		return fmt.Errorf("PCS Spec.Replicas = %d, want %d", pcs.Spec.Replicas, base)
+	}
+	if pcs.Status.Replicas != base {
+		return fmt.Errorf("PCS Status.Replicas = %d, want %d", pcs.Status.Replicas, base)
+	}
+	if pcs.Status.AvailableReplicas != base {
+		return fmt.Errorf("PCS Status.AvailableReplicas = %d, want %d", pcs.Status.AvailableReplicas, base)
+	}
+	if pcs.Status.UpdatedReplicas != base {
+		return fmt.Errorf("PCS Status.UpdatedReplicas = %d, want %d", pcs.Status.UpdatedReplicas, base)
+	}
+	if og := pcs.Status.ObservedGeneration; og == nil || *og != pcs.Generation {
+		return fmt.Errorf("PCS ObservedGeneration = %v, want %d", og, pcs.Generation)
+	}
 	if up := pcs.Status.UpdateProgress; up != nil {
 		if up.UpdatedPodCliquesCount > up.TotalPodCliquesCount {
 			return fmt.Errorf("UpdatedPodCliquesCount (%d) > TotalPodCliquesCount (%d)",
@@ -246,12 +454,63 @@ func runSoakFinalChecks(ctx context.Context, tc *testctx.TestContext, cfg soakCo
 				up.UpdatedPodCliqueScalingGroupsCount, up.TotalPodCliqueScalingGroupsCount)
 		}
 	}
-
-	// 4. lastErrors is empty — any error accumulated across N cycles is a real bug.
 	if len(pcs.Status.LastErrors) > 0 {
 		return fmt.Errorf("%d LastErrors on PCS after %d cycles: %+v",
 			len(pcs.Status.LastErrors), cfg.cycles, pcs.Status.LastErrors)
 	}
+	return nil
+}
 
+// checkPodCliqueStatusConvergence (check #5) verifies per-PodClique status
+// fields converged: ObservedGeneration matches, replica counters match Spec,
+// and no LastErrors are recorded. Per-child errors can hide here even when
+// the PCS-level LastErrors slice is empty.
+func checkPodCliqueStatusConvergence(pcqList *grovecorev1alpha1.PodCliqueList) error {
+	for i := range pcqList.Items {
+		pcq := &pcqList.Items[i]
+		if og := pcq.Status.ObservedGeneration; og == nil || *og != pcq.Generation {
+			return fmt.Errorf("PodClique %s ObservedGeneration = %v, want %d", pcq.Name, og, pcq.Generation)
+		}
+		if pcq.Status.ReadyReplicas != pcq.Spec.Replicas {
+			return fmt.Errorf("PodClique %s ReadyReplicas = %d, want %d", pcq.Name, pcq.Status.ReadyReplicas, pcq.Spec.Replicas)
+		}
+		if pcq.Status.UpdatedReplicas != pcq.Spec.Replicas {
+			return fmt.Errorf("PodClique %s UpdatedReplicas = %d, want %d", pcq.Name, pcq.Status.UpdatedReplicas, pcq.Spec.Replicas)
+		}
+		if len(pcq.Status.LastErrors) > 0 {
+			return fmt.Errorf("PodClique %s has %d LastErrors: %+v", pcq.Name, len(pcq.Status.LastErrors), pcq.Status.LastErrors)
+		}
+	}
+	return nil
+}
+
+// checkOperatorHealth (check #6) compares grove-operator pod state against the
+// baseline captured at the start of the test. Any pod replacement (UID
+// disappeared) or container restart increment is treated as a failure — the
+// soak's primary purpose is to surface memory leaks and crashes that would
+// otherwise show up as silent operator restarts.
+func checkOperatorHealth(ctx context.Context, tc *testctx.TestContext, baseline *operatorBaseline) error {
+	if baseline == nil || baseline.restartsByUID == nil {
+		return fmt.Errorf("operator baseline not captured")
+	}
+	current, err := snapshotOperatorRestarts(ctx, tc)
+	if err != nil {
+		return fmt.Errorf("snapshot operator pods at final check: %w", err)
+	}
+	for uid, baseCounts := range baseline.restartsByUID {
+		curCounts, ok := current[uid]
+		if !ok {
+			return fmt.Errorf("operator pod UID %s present at baseline is gone at final check (pod was replaced — likely a crash)", uid)
+		}
+		for container, baseCount := range baseCounts {
+			curCount, ok := curCounts[container]
+			if !ok {
+				return fmt.Errorf("operator pod %s container %s missing at final check", uid, container)
+			}
+			if curCount > baseCount {
+				return fmt.Errorf("operator pod %s container %s restarted: %d → %d", uid, container, baseCount, curCount)
+			}
+		}
+	}
 	return nil
 }
