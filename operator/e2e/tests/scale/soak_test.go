@@ -86,7 +86,7 @@ func (c soakConfig) peakPods() int { return c.peak * soakPodsPerCLQ }
 // small PCS to surface bugs that only appear after many incremental reconciles
 // — leaks, monotonically growing fields, gradually drifting counters,
 // finalizer pile-ups. Gated behind the `soak` build tag so it does not run as
-// part of the default e2e suite. See operator/e2e/tests/scale/soak_churn.md.
+// part of the default e2e suite.
 func Test_SoakChurn(t *testing.T) {
 	cfg := loadSoakConfig()
 	if cfg.peak <= cfg.base {
