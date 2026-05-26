@@ -77,7 +77,7 @@ func TestCapabilityTableCoversAllSupportedBackends(t *testing.T) {
 // TestCapabilityTableMatchesBackends cross-checks the hardcoded capability
 // table against actual Go interface implementation for each backend. Catches
 // the failure mode where a backend's interface set changes (e.g. KAI drops
-// TopologyAwareSchedBackend) but the table is not updated — without this, the
+// TopologyAwareBackend) but the table is not updated — without this, the
 // E2E suite would either skip valid TAS tests or run them against a backend
 // that no longer supports TAS.
 func TestCapabilityTableMatchesBackends(t *testing.T) {
@@ -88,7 +88,7 @@ func TestCapabilityTableMatchesBackends(t *testing.T) {
 
 			// TopologyAwareScheduling: tied to the Go interface assertion
 			// the operator itself uses (clustertopology.go L46–54).
-			_, gotTAS := b.(scheduler.TopologyAwareSchedBackend)
+			_, gotTAS := b.(scheduler.TopologyAwareBackend)
 			wantTAS := table[TopologyAwareScheduling]
 			if gotTAS != wantTAS {
 				t.Errorf("backend %q: TopologyAwareScheduling table=%v but "+
