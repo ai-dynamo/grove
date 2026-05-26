@@ -32,7 +32,7 @@ const (
 	GangScheduling Capability = "GangScheduling"
 
 	// TopologyAwareScheduling indicates the active backend implements the
-	// scheduler.TopologyAwareSchedBackend interface AND the operator has
+	// scheduler.TopologyAwareBackend interface AND the operator has
 	// topologyAwareScheduling.enabled=true.
 	TopologyAwareScheduling Capability = "TopologyAwareScheduling"
 
