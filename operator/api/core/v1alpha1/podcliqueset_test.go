@@ -93,7 +93,7 @@ func TestTopologyConstraintPackDomainHelpers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.hasAnyPackDomain, tt.constraint.HasAnyPackDomain())
-			assert.Equal(t, tt.requiredDomain, tt.constraint.EffectiveRequiredDomain())
+			assert.Equal(t, tt.requiredDomain, tt.constraint.RequiredDomain())
 			assert.Equal(t, tt.preferredDomain, tt.constraint.PreferredDomain())
 			assert.Equal(t, tt.referencedDomains, tt.constraint.ReferencedDomains())
 		})

@@ -300,18 +300,18 @@ func (v *topologyConstraintsValidator) validateHierarchicalTopologyConstraints(f
 
 	// Validate PodCliqueSet level constraints against children (if PodCliqueSet constraint exists)
 	if pcsConstraint != nil {
-		pcsRequiredDomain := pcsConstraint.EffectiveRequiredDomain()
+		pcsRequiredDomain := pcsConstraint.RequiredDomain()
 		pcsPreferredDomain := pcsConstraint.PreferredDomain()
 
 		// Validate: PodCliqueSet must be broader than all PodCliques
 		for _, clique := range v.pcs.Spec.Template.Cliques {
 			if clique.TopologyConstraint != nil {
-				if hasHierarchyViolation(pcsRequiredDomain, clique.TopologyConstraint.EffectiveRequiredDomain(), v.clusterTopologyDomains) {
+				if hasHierarchyViolation(pcsRequiredDomain, clique.TopologyConstraint.RequiredDomain(), v.clusterTopologyDomains) {
 					allErrs = append(allErrs, field.Invalid(
 						fldPath.Child("topologyConstraint"),
 						pcsRequiredDomain,
 						buildHierarchyViolationMsg(pcsRequiredDomain, apicommonconstants.KindPodCliqueSet, "",
-							clique.TopologyConstraint.EffectiveRequiredDomain(), apicommonconstants.KindPodClique, clique.Name)))
+							clique.TopologyConstraint.RequiredDomain(), apicommonconstants.KindPodClique, clique.Name)))
 				}
 				if hasHierarchyViolation(pcsPreferredDomain, clique.TopologyConstraint.PreferredDomain(), v.clusterTopologyDomains) {
 					allErrs = append(allErrs, field.Invalid(
@@ -326,12 +326,12 @@ func (v *topologyConstraintsValidator) validateHierarchicalTopologyConstraints(f
 		// Validate: PodCliqueSet must be broader than all PodCliqueScalingGroups
 		for _, pcsg := range v.pcs.Spec.Template.PodCliqueScalingGroupConfigs {
 			if pcsg.TopologyConstraint != nil {
-				if hasHierarchyViolation(pcsRequiredDomain, pcsg.TopologyConstraint.EffectiveRequiredDomain(), v.clusterTopologyDomains) {
+				if hasHierarchyViolation(pcsRequiredDomain, pcsg.TopologyConstraint.RequiredDomain(), v.clusterTopologyDomains) {
 					allErrs = append(allErrs, field.Invalid(
 						fldPath.Child("topologyConstraint"),
 						pcsRequiredDomain,
 						buildHierarchyViolationMsg(pcsRequiredDomain, apicommonconstants.KindPodCliqueSet, "",
-							pcsg.TopologyConstraint.EffectiveRequiredDomain(), apicommonconstants.KindPodCliqueScalingGroup, pcsg.Name)))
+							pcsg.TopologyConstraint.RequiredDomain(), apicommonconstants.KindPodCliqueScalingGroup, pcsg.Name)))
 				}
 				if hasHierarchyViolation(pcsPreferredDomain, pcsg.TopologyConstraint.PreferredDomain(), v.clusterTopologyDomains) {
 					allErrs = append(allErrs, field.Invalid(
@@ -350,18 +350,18 @@ func (v *topologyConstraintsValidator) validateHierarchicalTopologyConstraints(f
 			continue
 		}
 
-		pcsgRequiredDomain := pcsg.TopologyConstraint.EffectiveRequiredDomain()
+		pcsgRequiredDomain := pcsg.TopologyConstraint.RequiredDomain()
 		pcsgPreferredDomain := pcsg.TopologyConstraint.PreferredDomain()
 		for _, cliqueName := range pcsg.CliqueNames {
 			// Find the clique by name
 			matchingPCLQTemplate := componentutils.FindPodCliqueTemplateSpecByName(v.pcs, cliqueName)
 			if matchingPCLQTemplate != nil && matchingPCLQTemplate.TopologyConstraint != nil {
-				if hasHierarchyViolation(pcsgRequiredDomain, matchingPCLQTemplate.TopologyConstraint.EffectiveRequiredDomain(), v.clusterTopologyDomains) {
+				if hasHierarchyViolation(pcsgRequiredDomain, matchingPCLQTemplate.TopologyConstraint.RequiredDomain(), v.clusterTopologyDomains) {
 					allErrs = append(allErrs, field.Invalid(
 						fldPath.Child("podCliqueScalingGroups").Index(i).Child("topologyConstraint"),
 						pcsgRequiredDomain,
 						buildHierarchyViolationMsg(pcsgRequiredDomain, apicommonconstants.KindPodCliqueScalingGroup, pcsg.Name,
-							matchingPCLQTemplate.TopologyConstraint.EffectiveRequiredDomain(), apicommonconstants.KindPodClique, matchingPCLQTemplate.Name)))
+							matchingPCLQTemplate.TopologyConstraint.RequiredDomain(), apicommonconstants.KindPodClique, matchingPCLQTemplate.Name)))
 				}
 				if hasHierarchyViolation(pcsgPreferredDomain, matchingPCLQTemplate.TopologyConstraint.PreferredDomain(), v.clusterTopologyDomains) {
 					allErrs = append(allErrs, field.Invalid(
@@ -383,7 +383,7 @@ func (v *topologyConstraintsValidator) validateSameResourcePreferredWarnings() [
 		return warnings
 	}
 	forEachTopologyConstraint(v.pcs, func(tc *grovecorev1alpha1.TopologyConstraint, tcPath *field.Path) {
-		requiredDomain := tc.EffectiveRequiredDomain()
+		requiredDomain := tc.RequiredDomain()
 		preferredDomain := tc.PreferredDomain()
 		if requiredDomain != "" && preferredDomain != "" && isCoarserThan(preferredDomain, requiredDomain, v.clusterTopologyDomains) {
 			warnings = append(warnings, fmt.Sprintf("%s is coarser than %s and is redundant",
@@ -413,14 +413,14 @@ func (v *topologyConstraintsValidator) validateTopologyConstraintImmutability(ol
 	allowedPCSRepair := allowInvalidConstraintRepair && isAllowedInvalidTopologyConstraintRepair(oldPCSConstraint, newPCSConstraint)
 	allowedPCSMigration := isAllowedDeprecatedPackDomainMigration(oldPCSConstraint, newPCSConstraint)
 
-	if oldTopologyName != newTopologyName && !allowedPCSRepair && !allowedPCSMigration {
+	if oldTopologyName != newTopologyName && !allowedPCSRepair {
 		allErrs = append(allErrs, field.Forbidden(
 			fldPath.Child("topologyConstraint").Child("topologyName"),
 			fmt.Sprintf("topologyName cannot be changed from %q to %q", oldTopologyName, newTopologyName)))
 	}
 
-	// Validate PCS level packDomain only when topologyName is unchanged; adding or removing
-	// the whole topologyConstraint (which changes topologyName) is already reported above.
+	// Validate PCS level pack changes only when topologyName is unchanged; adding or removing
+	// the whole topologyConstraint or changing topologyName is already reported above.
 	if oldTopologyName == newTopologyName && constraintChanged(oldPCSConstraint, newPCSConstraint) && !allowedPCSRepair && !allowedPCSMigration {
 		allErrs = append(allErrs, field.Forbidden(
 			fldPath.Child("topologyConstraint"),
@@ -479,13 +479,21 @@ func isAllowedInvalidTopologyConstraintRepair(old, new *grovecorev1alpha1.Topolo
 }
 
 func isAllowedDeprecatedPackDomainMigration(old, new *grovecorev1alpha1.TopologyConstraint) bool {
-	if old == nil || new == nil || old.PackDomain == "" || new.Pack == nil {
+	if !isDeprecatedPackDomainMigrationAttempt(old, new) {
 		return false
 	}
 	return old.TopologyName == new.TopologyName &&
+		new.RequiredDomain() == old.PackDomain &&
+		new.PreferredDomain() == old.PreferredDomain()
+}
+
+func isDeprecatedPackDomainMigrationAttempt(old, new *grovecorev1alpha1.TopologyConstraint) bool {
+	return old != nil &&
+		new != nil &&
+		old.PackDomain != "" &&
 		new.PackDomain == "" &&
-		new.Pack.RequiredDomain == old.PackDomain &&
-		new.Pack.PreferredDomain == old.PreferredDomain()
+		new.Pack != nil &&
+		new.Pack.RequiredDomain != ""
 }
 
 func hasRepairableLegacyTopologyConstraint(pcs *grovecorev1alpha1.PodCliqueSet) bool {
@@ -521,7 +529,7 @@ func constraintChanged(old, new *grovecorev1alpha1.TopologyConstraint) bool {
 	}
 	return old.TopologyName != new.TopologyName ||
 		old.PackDomain != new.PackDomain ||
-		old.EffectiveRequiredDomain() != new.EffectiveRequiredDomain() ||
+		old.RequiredDomain() != new.RequiredDomain() ||
 		old.PreferredDomain() != new.PreferredDomain()
 }
 
@@ -542,8 +550,12 @@ func constraintChangeMsg(kind, name string, old, new *grovecorev1alpha1.Topology
 		return fmt.Sprintf("%s%s topology constraint topologyName cannot be changed from '%s' to '%s'",
 			kind, identifier, old.TopologyName, new.TopologyName)
 	}
+	if isDeprecatedPackDomainMigrationAttempt(old, new) {
+		return fmt.Sprintf("%s%s deprecated packDomain migration can only move packDomain to pack.required without changing the required or preferred topology domain (old required=%q preferred=%q, new required=%q preferred=%q)",
+			kind, identifier, old.PackDomain, old.PreferredDomain(), new.RequiredDomain(), new.PreferredDomain())
+	}
 	return fmt.Sprintf("%s%s topology constraint cannot be changed from required=%q preferred=%q to required=%q preferred=%q",
-		kind, identifier, old.EffectiveRequiredDomain(), old.PreferredDomain(), new.EffectiveRequiredDomain(), new.PreferredDomain())
+		kind, identifier, old.RequiredDomain(), old.PreferredDomain(), new.RequiredDomain(), new.PreferredDomain())
 }
 
 func forEachTopologyConstraint(pcs *grovecorev1alpha1.PodCliqueSet, fn func(*grovecorev1alpha1.TopologyConstraint, *field.Path)) {

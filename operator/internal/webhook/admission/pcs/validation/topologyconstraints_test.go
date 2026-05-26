@@ -666,10 +666,11 @@ func TestValidateUpdateTopologyConstraintImmutability(t *testing.T) {
 
 func TestValidateUpdateDeprecatedPackDomainMigration(t *testing.T) {
 	tests := []struct {
-		name             string
-		oldPCSConstraint *grovecorev1alpha1.TopologyConstraint
-		newPCSConstraint *grovecorev1alpha1.TopologyConstraint
-		errorMatchers    []testutils.ErrorMatcher
+		name                string
+		oldPCSConstraint    *grovecorev1alpha1.TopologyConstraint
+		newPCSConstraint    *grovecorev1alpha1.TopologyConstraint
+		errorMatchers       []testutils.ErrorMatcher
+		errorDetailContains string
 	}{
 		{
 			name: "Should allow moving deprecated packDomain to pack.required when level is unchanged",
@@ -700,6 +701,28 @@ func TestValidateUpdateDeprecatedPackDomainMigration(t *testing.T) {
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint"},
 			},
+			errorDetailContains: "deprecated packDomain migration",
+		},
+		{
+			name: "Should reject changing preferred domain while moving deprecated packDomain to pack.required",
+			oldPCSConstraint: &grovecorev1alpha1.TopologyConstraint{
+				TopologyName: "topo-a",
+				PackDomain:   grovecorev1alpha1.TopologyDomainHost,
+				Pack: &grovecorev1alpha1.TopologyPackConstraint{
+					PreferredDomain: grovecorev1alpha1.TopologyDomainRack,
+				},
+			},
+			newPCSConstraint: &grovecorev1alpha1.TopologyConstraint{
+				TopologyName: "topo-a",
+				Pack: &grovecorev1alpha1.TopologyPackConstraint{
+					RequiredDomain:  grovecorev1alpha1.TopologyDomainHost,
+					PreferredDomain: grovecorev1alpha1.TopologyDomainZone,
+				},
+			},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint"},
+			},
+			errorDetailContains: "deprecated packDomain migration",
 		},
 		{
 			name: "Should reject setting deprecated packDomain and pack.required together",
@@ -728,6 +751,9 @@ func TestValidateUpdateDeprecatedPackDomainMigration(t *testing.T) {
 			errs := validator.validateUpdate(oldPCS)
 			assert.Len(t, errs, len(tc.errorMatchers), "unexpected number of errors")
 			testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
+			if tc.errorDetailContains != "" && assert.NotEmpty(t, errs) {
+				assert.Contains(t, errs[0].Detail, tc.errorDetailContains)
+			}
 		})
 	}
 }

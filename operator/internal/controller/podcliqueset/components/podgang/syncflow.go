@@ -357,7 +357,7 @@ func createTopologyPackConstraint(sc *syncContext, nsName types.NamespacedName, 
 	}
 	var pgPackConstraint *groveschedulerv1alpha1.TopologyPackConstraint
 	// If requiredTopologyConstraint is specified, set the required topology key accordingly.
-	requiredDomain := requiredTopologyConstraint.EffectiveRequiredDomain()
+	requiredDomain := requiredTopologyConstraint.RequiredDomain()
 	requiredTopologyLevel, found := lo.Find(sc.topologyLevels, func(topologyLevel grovecorev1alpha1.TopologyLevel) bool {
 		return topologyLevel.Domain == requiredDomain
 	})

@@ -305,11 +305,11 @@ type TopologyPackConstraint struct {
 
 // HasAnyPackDomain reports whether the constraint has any required or preferred pack domain.
 func (tc *TopologyConstraint) HasAnyPackDomain() bool {
-	return tc != nil && (tc.EffectiveRequiredDomain() != "" || tc.PreferredDomain() != "")
+	return tc != nil && (tc.RequiredDomain() != "" || tc.PreferredDomain() != "")
 }
 
-// EffectiveRequiredDomain returns the new required domain, falling back to legacy packDomain.
-func (tc *TopologyConstraint) EffectiveRequiredDomain() TopologyDomain {
+// RequiredDomain returns the required pack domain, falling back to legacy packDomain.
+func (tc *TopologyConstraint) RequiredDomain() TopologyDomain {
 	if tc == nil {
 		return ""
 	}
@@ -333,10 +333,11 @@ func (tc *TopologyConstraint) ReferencedDomains() []TopologyDomain {
 		return nil
 	}
 	var domains []TopologyDomain
-	if required := tc.EffectiveRequiredDomain(); required != "" {
+	required := tc.RequiredDomain()
+	if required != "" {
 		domains = append(domains, required)
 	}
-	if preferred := tc.PreferredDomain(); preferred != "" && preferred != tc.EffectiveRequiredDomain() {
+	if preferred := tc.PreferredDomain(); preferred != "" && preferred != required {
 		domains = append(domains, preferred)
 	}
 	return domains
