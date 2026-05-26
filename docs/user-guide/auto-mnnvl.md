@@ -1,6 +1,6 @@
 # Auto MNNVL (Multi-Node NVLink)
 
-Grove can automatically manage Multi-Node NVLink (MNNVL) acceleration for your GPU workloads. This guide explains how to enable, configure, and manage the auto MNNVL feature using the `grove.io/mnnvl-group` annotation.
+Grove can automatically manage Multi-Node NVLink (MNNVL) setup for your GPU workloads. This guide explains how to enable, configure, and manage the auto MNNVL feature using the `grove.io/mnnvl-group` annotation. It is Grove's intention to keep the core API vendor agnostic which is why MNNVL support is handled via an annotation.
 
 ## Overview
 
@@ -26,7 +26,7 @@ You control MNNVL participation with a single annotation, `grove.io/mnnvl-group`
 
 Before enabling auto MNNVL, ensure your cluster meets the following requirements:
 
-1. **NVIDIA GPUs with MNNVL support** on the nodes that will run MNNVL workloads.
+1. **NVIDIA GPUs with MNNVL support** on the nodes that will run MNNVL workloads e.g. GB200 and GB300 NVL72 systems.
 2. **NVIDIA DRA driver** installed, which provides the ComputeDomain CRD (`computedomains.resource.nvidia.com`). See the [NVIDIA DRA driver installation guide](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-operator-dra.html) for setup instructions.
 3. **Grove operator** deployed via Helm.
 
@@ -66,13 +66,34 @@ The annotation propagates downward through the hierarchy: **PCS → PCSG → PCL
 | `"my-group"` | `"none"` | No MNNVL (opted out) |
 | Absent | `"my-group"` | `"my-group"` (PCLQ-level only) |
 
-### Non-GPU PodCliques
+### Non-NVIDIA-GPU PodCliques
 
-If a non-GPU PodClique inherits `grove.io/mnnvl-group` from a parent PCS or PCSG, it is silently skipped — no resource claims are injected, no error is raised. This allows you to set MNNVL at the PCS level without adding `"none"` overrides on every non-GPU PCLQ.
+If a non-NVIDIA-GPU PodClique inherits `grove.io/mnnvl-group` from a parent PCS or PCSG, it is silently skipped — no resource claims are injected, no error is raised. This allows you to set MNNVL at the PCS level without adding `"none"` overrides on every non-NVIDIA-GPU PCLQ.
 
-If a non-GPU PodClique carries an *explicit* `grove.io/mnnvl-group` annotation (other than `"none"`), the PCS is rejected — requesting MNNVL for a PodClique with no GPUs is a user error.
+If a non-NVIDIA-GPU PodClique carries an *explicit* `grove.io/mnnvl-group` annotation (other than `"none"`), the PCS is rejected — requesting MNNVL for a PodClique with no NVIDIA GPUs is a user error.
+
+> **Mixed GPU clusters:** In clusters that contain both NVIDIA GPUs and GPUs from other vendors, only PodCliques requesting `nvidia.com/gpu` resources participate in MNNVL. PodCliques using other GPU resource types (e.g., `amd.com/gpu`) are treated the same as non-GPU PodCliques — they are silently skipped when inheriting from a parent and rejected if they carry an explicit `grove.io/mnnvl-group` annotation.
 
 > **Note:** The `grove.io/mnnvl-group` annotation is **immutable** after PCS creation. Any attempt to add, modify, or remove it on an existing PCS, PCSG, or PCLQ is rejected. To change MNNVL configuration, delete the PCS and recreate it.
+
+## Group Name Requirements
+
+The `grove.io/mnnvl-group` value must be either `"none"` (opt-out) or a valid DNS-1123 label: lowercase alphanumeric characters or dashes, starting and ending with an alphanumeric character, max 63 characters. The group name becomes part of the ComputeDomain resource name. Invalid values are rejected at admission time.
+
+## ComputeDomain Naming
+
+Grove creates one ComputeDomain per MNNVL group per PCS replica. The name follows the pattern `{pcs-name}-{replica-index}-{group-name}`.
+
+For a PCS named `my-workload` with `replicas: 2` and the annotation `grove.io/mnnvl-group: "my-group"`:
+
+| Replica | ComputeDomain name |
+|---|---|
+| 0 | `my-workload-0-my-group` |
+| 1 | `my-workload-1-my-group` |
+
+If multiple groups exist within the same PCS (e.g., `"workers"` and `"encoders"`), each group produces its own set of ComputeDomains: `my-workload-0-workers`, `my-workload-0-encoders`, etc.
+
+Group names are scoped to the PCS — different PCS resources can reuse the same group names without conflict.
 
 ## Usage Examples
 
@@ -103,17 +124,17 @@ spec:
                     nvidia.com/gpu: "8"
 ```
 
-This creates ComputeDomains `my-workload-0-my-group` and `my-workload-1-my-group`, for all PodCliques.
+In this example, `spec.replicas: 2` produces two PCS replicas, `my-workload-0` and `my-workload-1`. The operator creates one ComputeDomain per PCS replica by appending the MNNVL group name, resulting in `my-workload-0-my-group` and `my-workload-1-my-group`. Because no per-PodClique MNNVL group overrides are specified, all GPU PodCliques within each PCS replica use the PCS-level group and share that replica's ComputeDomain.
 
 ### Multiple MNNVL Groups
 
-Assign different PodCliques to separate groups. Each group gets its own ComputeDomain per replica:
+Assign different PodCliques to separate groups. Each group gets its own ComputeDomain per PodCliqueSet replica:
 
 ```yaml
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
-  name: training-job
+  name: inference-deployment
 spec:
   replicas: 2
   template:
@@ -142,22 +163,22 @@ spec:
                 resources:
                   limits:
                     nvidia.com/gpu: "4"
-      - name: param-servers
+      - name: frontends
         spec:
           replicas: 1
           podSpec:
             containers:
-              - name: ps
-                image: my-ps:latest
+              - name: frontend
+                image: my-frontend:latest
                 resources:
                   limits:
                     cpu: "4"
 ```
 
-Result per replica:
-- `workers` → group `"workers"` → ComputeDomain `training-job-0-workers` / `training-job-1-workers`
-- `encoders` → group `"encoders"` → ComputeDomain `training-job-0-encoders` / `training-job-1-encoders`
-- `param-servers` → no annotation → no MNNVL
+Result per PCS replica:
+- `workers` → group `"workers"` → ComputeDomain `inference-deployment-0-workers` / `inference-deployment-1-workers`
+- `encoders` → group `"encoders"` → ComputeDomain `inference-deployment-0-encoders` / `inference-deployment-1-encoders`
+- `frontends` → non GPU PodClique → no MNNVL
 
 ### PCS-Level Default With PCLQ Opt-Out
 
@@ -277,25 +298,6 @@ Resolution for each PodClique:
 | `gpu-b` | `"my-group"` | `"none"` | `"my-group"` | `"my-group"` — PCLQ overrides PCSG back into the PCS group |
 | `gpu-c` | Absent | Absent | `"my-group"` | `"my-group"` — inherited through PCSG from PCS |
 | `gpu-d` | `"none"` | Absent | `"my-group"` | No MNNVL — PCLQ opts out |
-
-### Group Name Requirements
-
-The `grove.io/mnnvl-group` value must be either `"none"` (opt-out) or a valid DNS-1123 label: lowercase alphanumeric characters or dashes, starting and ending with an alphanumeric character, max 63 characters. The group name becomes part of the ComputeDomain resource name. Invalid values are rejected at admission time.
-
-## ComputeDomain Naming
-
-Grove creates one ComputeDomain per MNNVL group per PCS replica. The name follows the pattern `{pcs-name}-{replica-index}-{group-name}`.
-
-For a PCS named `my-workload` with `replicas: 2` and the annotation `grove.io/mnnvl-group: "my-group"`:
-
-| Replica | ComputeDomain name |
-|---|---|
-| 0 | `my-workload-0-my-group` |
-| 1 | `my-workload-1-my-group` |
-
-If multiple groups exist within the same PCS (e.g., `"workers"` and `"encoders"`), each group produces its own set of ComputeDomains: `my-workload-0-workers`, `my-workload-0-encoders`, etc.
-
-Group names are scoped to the PCS — different PCS resources can reuse the same group names without conflict.
 
 ## Observability
 
