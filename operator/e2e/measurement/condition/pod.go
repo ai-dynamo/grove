@@ -136,12 +136,12 @@ func (c *PodsReadyCondition) Progress(_ context.Context) string {
 	return fmt.Sprintf("%d/%d pods ready", c.lastReady, c.ExpectedCount)
 }
 
-// PodsAtCountCondition fires when the live pod count drops to ExpectedCount or
+// PodsScaledDownToCountCondition fires when the live pod count drops to ExpectedCount or
 // below. Intended for scale-down milestones where PodsCreatedCondition (≥-only)
 // would fire immediately because the starting count already exceeds the target.
 // Using ≤ rather than == makes the condition robust to a transient overshoot
 // during cascade-delete where two consecutive polls might skip the exact target.
-type PodsAtCountCondition struct {
+type PodsScaledDownToCountCondition struct {
 	Client        client.Client
 	Namespace     string
 	LabelSelector string
@@ -151,7 +151,7 @@ type PodsAtCountCondition struct {
 }
 
 // Met returns true once the live pod count is ≤ ExpectedCount.
-func (c *PodsAtCountCondition) Met(ctx context.Context) (bool, error) {
+func (c *PodsScaledDownToCountCondition) Met(ctx context.Context) (bool, error) {
 	if c.ExpectedCount < 0 {
 		return false, errors.New("expected count cannot be negative")
 	}
@@ -167,6 +167,6 @@ func (c *PodsAtCountCondition) Met(ctx context.Context) (bool, error) {
 }
 
 // Progress returns a human-readable progress string.
-func (c *PodsAtCountCondition) Progress(_ context.Context) string {
+func (c *PodsScaledDownToCountCondition) Progress(_ context.Context) string {
 	return fmt.Sprintf("%d pods (target ≤%d)", c.lastCount, c.ExpectedCount)
 }

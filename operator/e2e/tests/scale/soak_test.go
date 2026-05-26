@@ -237,7 +237,7 @@ func addCyclePhases(tracker *measurement.TimelineTracker, tc *testctx.TestContex
 		Milestones: []measurement.MilestoneDefinition{
 			{
 				Name: "base-pods-restored",
-				Condition: &condition.PodsAtCountCondition{
+				Condition: &condition.PodsScaledDownToCountCondition{
 					Client:        tc.Client.Client,
 					Namespace:     tc.Namespace,
 					LabelSelector: tc.GetLabelSelector(),
