@@ -23,7 +23,7 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
-	kaischedulingv2alpha2 "github.com/NVIDIA/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
+	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -42,10 +42,28 @@ func TestBackend_PreparePod(t *testing.T) {
 	pod := testutils.NewPodBuilder("test-pod", "default").
 		WithSchedulerName("default-scheduler").
 		Build()
+	pod.Annotations = map[string]string{"keep": "me"}
 
 	b.PreparePod(pod)
 
 	assert.Equal(t, "kai-scheduler", pod.Spec.SchedulerName)
+	assert.Equal(t, "me", pod.Annotations["keep"])
+	assert.Equal(t, "true", pod.Annotations["kai.scheduler/skip-podgrouper"])
+}
+
+func TestBackend_PreparePod_PreservesExistingSkipAnnotation(t *testing.T) {
+	cl := testutils.CreateDefaultFakeClient(nil)
+	recorder := record.NewFakeRecorder(10)
+	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai}
+	b := New(cl, cl.Scheme(), recorder, profile)
+
+	pod := testutils.NewPodBuilder("test-pod", "default").
+		Build()
+	pod.Annotations = map[string]string{"kai.scheduler/skip-podgrouper": "custom"}
+
+	b.PreparePod(pod)
+
+	assert.Equal(t, "custom", pod.Annotations["kai.scheduler/skip-podgrouper"])
 }
 
 func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
@@ -97,10 +115,6 @@ func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, b.SyncPodGang(ctx, podGang))
 
-	syncedPodGang := &groveschedulerv1alpha1.PodGang{}
-	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), syncedPodGang))
-	assert.Equal(t, "true", syncedPodGang.Annotations["grove.io/ignore"])
-
 	gotPodGroup := &kaischedulingv2alpha2.PodGroup{}
 	require.NoError(t, cl.Get(ctx, client.ObjectKey{Name: podGang.Name, Namespace: podGang.Namespace}, gotPodGroup))
 
@@ -124,7 +138,7 @@ func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
 	assert.Equal(t, int32(3), gotPodGroup.Spec.SubGroups[2].MinMember)
 
 	// Update PodGang: remove queue label and change min replicas.
-	updatedPodGang := syncedPodGang.DeepCopy()
+	updatedPodGang := podGang.DeepCopy()
 	delete(updatedPodGang.Labels, "kai.scheduler/queue")
 	updatedPodGang.Spec.PodGroups[0].MinReplicas = 4
 	require.NoError(t, cl.Update(ctx, updatedPodGang))

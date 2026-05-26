@@ -34,7 +34,7 @@
 
 ## Summary
 
-This proposal adds a dedicated KAI scheduler backend to Grove's Scheduler Backend Framework so Grove can natively create, update, and delete KAI PodGroup resources for Grove PodGang workloads. This proposal is intentionally limited to PodGroup creation and management; it does not include topology-aware scheduling support or KAI Topology synchronization from Grove ClusterTopology. The change improves maintainability, clarifies ownership boundaries, and enables predictable KAI-specific lifecycle handling for PodGang workloads by relying on KAI-Scheduler's externally-created PodGroup support.
+This proposal adds a dedicated KAI scheduler backend to Grove's Scheduler Backend Framework so Grove can natively create, update, and delete KAI PodGroup resources for Grove PodGang workloads. This proposal is intentionally limited to PodGroup creation and management; it does not add new topology-aware scheduling support and does not change existing KAI Topology synchronization behavior from Grove ClusterTopology. The change improves maintainability, clarifies ownership boundaries, and enables predictable KAI-specific lifecycle handling for PodGang workloads by relying on KAI-Scheduler's externally-created PodGroup support.
 
 ## Motivation
 
@@ -59,7 +59,7 @@ GREP-375 introduced a generic Scheduler Backend Framework, but the KAI integrati
 - Replacing or deprecating non-KAI backends.
 - Defining how scheduler backends are enabled, selected, or resolved from operator configuration and workload templates. This proposal assumes the `kai-scheduler` backend is already enabled by the Scheduler Backend Framework.
 - Requiring PodGang status-only updates to trigger backend reconciliation. The current backend controller reacts to create, delete, and generation-changing updates.
-- Creating, updating, or deleting KAI Topology resources from Grove `ClusterTopology`.
+- Extending or refactoring existing KAI Topology resource management from Grove `ClusterTopology`/`ClusterTopologyBinding`.
 - Defining topology-aware scheduling behavior for KAI. That functionality is out of scope for this proposal and should be covered separately.
 
 ## Proposal
@@ -202,7 +202,7 @@ The backend controller only handles PodGang create, delete, and generation-chang
 - Operator RBAC grants read/write/delete access for KAI PodGroup resources.
 - KAI-Scheduler version includes externally-created PodGroup support from [kai-scheduler/KAI-Scheduler PR #1552](https://github.com/kai-scheduler/KAI-Scheduler/pull/1552).
 - Backend initialization should validate required API availability before normal reconciliation where practical.
-- KAI dependency imports should consistently use the same module path and version across backend code, scheme registration, unit tests, and e2e helpers.
+- KAI dependency imports should consistently use the same module path and version across backend code, scheme registration, unit tests, and e2e helpers (canonical module path: `github.com/kai-scheduler/KAI-scheduler`).
 
 ### RBAC Matrix
 

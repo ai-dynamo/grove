@@ -26,7 +26,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
-	kaischedulingv2alpha2 "github.com/NVIDIA/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
+	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -52,8 +52,8 @@ var _ scheduler.Backend = (*schedulerBackend)(nil)
 const (
 	labelKeyQueueName        = "kai.scheduler/queue"
 	labelKeyNodePoolName     = "kai.scheduler/node-pool"
-	annotationKeyIgnoreGrove = "grove.io/ignore"
-	annotationValIgnoreGrove = "true"
+	annotationKeySkipPGR     = "kai.scheduler/skip-podgrouper"
+	annotationValSkipPGR     = "true"
 )
 
 // New creates a new KAI backend instance. profile is the scheduler profile for kai-scheduler;
@@ -82,9 +82,6 @@ func (b *schedulerBackend) Init() error {
 func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
 	if podGang == nil {
 		return fmt.Errorf("podGang is nil")
-	}
-	if err := b.ensurePodGangIgnoredByGrovePlugin(ctx, podGang); err != nil {
-		return err
 	}
 
 	newPodGroup, err := b.buildPodGroupForPodGang(podGang)
@@ -126,24 +123,17 @@ func (b *schedulerBackend) OnPodGangDelete(ctx context.Context, podGang *grovesc
 // Sets Pod.Spec.SchedulerName so the pod is scheduled by KAI.
 func (b *schedulerBackend) PreparePod(pod *corev1.Pod) {
 	pod.Spec.SchedulerName = b.Name()
+	if pod.Annotations == nil {
+		pod.Annotations = map[string]string{}
+	}
+	if _, exists := pod.Annotations[annotationKeySkipPGR]; !exists {
+		pod.Annotations[annotationKeySkipPGR] = annotationValSkipPGR
+	}
 }
 
 // ValidatePodCliqueSet runs KAI-specific validations on the PodCliqueSet.
 func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet) error {
 	return nil
-}
-
-// ensurePodGangIgnoredByGrovePlugin marks PodGang so legacy Grove podgrouper ignores it.
-func (b *schedulerBackend) ensurePodGangIgnoredByGrovePlugin(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
-	if podGang.Annotations != nil && podGang.Annotations[annotationKeyIgnoreGrove] == annotationValIgnoreGrove {
-		return nil
-	}
-	patchBase := podGang.DeepCopy()
-	if podGang.Annotations == nil {
-		podGang.Annotations = map[string]string{}
-	}
-	podGang.Annotations[annotationKeyIgnoreGrove] = annotationValIgnoreGrove
-	return b.client.Patch(ctx, podGang, client.MergeFrom(patchBase))
 }
 
 // buildPodGroupForPodGang translates a Grove PodGang into a KAI PodGroup object.
