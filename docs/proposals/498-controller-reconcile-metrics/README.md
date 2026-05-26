@@ -5,13 +5,12 @@
 - [Motivation](#motivation)
   - [Goals](#goals)
   - [Non-Goals](#non-goals)
+  - [Existing Signals and Gaps](#existing-signals-and-gaps)
 - [Proposal](#proposal)
   - [Overview](#overview)
-  - [Relationship to Built-in Metrics](#relationship-to-built-in-metrics)
   - [User Stories](#user-stories)
-    - [Story 1: Diagnosing Slow Deployment at Scale](#story-1-diagnosing-slow-deployment-at-scale)
-    - [Story 2: Identifying Cross-Controller Resource Contention](#story-2-identifying-cross-controller-resource-contention)
-    - [Story 3: Distinguishing Transient vs Persistent Errors](#story-3-distinguishing-transient-vs-persistent-errors)
+    - [Story 1: Identifying the Cross-Controller Contention Hotspot](#story-1-identifying-the-cross-controller-contention-hotspot)
+    - [Story 2: Triaging Errors as Self-Healing vs Operator-Action-Required](#story-2-triaging-errors-as-self-healing-vs-operator-action-required)
   - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
 - [Design Details](#design-details)
   - [Metric Surface](#metric-surface)
@@ -19,6 +18,7 @@
     - [<code>grove_operator_reconcile_errors_total</code>](#grove_operator_reconcile_errors_total)
   - [Cardinality Bound](#cardinality-bound)
   - [Recording Verbs (Contract Only)](#recording-verbs-contract-only)
+  - [Relationship to Built-in Metrics](#relationship-to-built-in-metrics)
   - [Built-in controller-runtime Metrics Reference](#built-in-controller-runtime-metrics-reference)
   - [Example PromQL Queries](#example-promql-queries)
   - [Monitoring](#monitoring)
@@ -44,8 +44,6 @@ The Grove operator currently has **no custom Prometheus metrics**. While control
 
 This proposal adds two focused custom metrics to all Grove controllers (PodCliqueSet, PodClique, PodCliqueScalingGroup) that complement the existing built-in metrics, filling aggregate, fleet-level observability gaps that cannot be addressed by controller-runtime alone.
 
-Per-request, sub-operation visibility ("which step inside *this* reconcile is slow?") is a distributed-tracing concern and is explicitly out of scope for this proposal; see [Alternatives](#alt-2-opentelemetry-tracing) and [Future Work](#per-reconcile-sub-operation-visibility-via-tracing).
-
 ## Motivation
 
 During large-scale inference graph deployments using Grove (via NVIDIA Dynamo), we observed significant reconciliation performance degradation. Deploying an inference graph with 5 services × 10 replicas produces 50+ PodClique Pods, each transitioning through multiple states (Pending → Running → Ready). This generates a high rate of status changes that cascade through the Grove controller hierarchy (PodClique → PodCliqueScalingGroup → PodCliqueSet).
@@ -56,73 +54,67 @@ The built-in controller-runtime metrics tell us **that** reconciliation is slow 
 
 2. **No error categorization** — Errors are returned with rich type information (`k8serrors.IsConflict`, `IsNotFound`, `IsAlreadyExists`, `IsTimeout`, etc.), but the built-in metrics collapse all errors into a single `result="error"` label. We cannot distinguish transient errors (conflict, timeout) from persistent errors (forbidden, invalid) at the fleet level.
 
-Additionally, sub-operation timing within a single reconcile (i.e., "which step of *this* reconcile is slow?") is a **per-request** question best served by distributed tracing, not by aggregate histograms with function-name labels. This proposal deliberately scopes itself to the aggregate, fleet-level questions where Prometheus metrics are the right tool, and tracks sub-operation visibility as future work under tracing (see [Future Work](#per-reconcile-sub-operation-visibility-via-tracing)).
-
 ### Goals
 
-* Add a custom metric to track 409 Conflict errors by target resource kind, complementing built-in error counters that do not distinguish conflict attribution.
-* Add a custom metric to categorize reconciliation errors by Kubernetes error type, enabling triage of transient vs persistent failures at the fleet level.
-* Document how Grove's built-in controller-runtime metrics answer standard reconciliation questions, so custom metrics remain scoped to what's genuinely missing.
-* Stay within the aggregate, fleet-level scope that Prometheus metrics are designed for; defer per-request sub-operation visibility to distributed tracing.
+* Attribute Status Update 409 Conflicts by Grove controller and target resource kind.
+* Categorize reconciliation errors by Kubernetes API error class (`k8serrors.Is*` predicates).
+* Keep the metric surface bounded (≤ 33 series), aggregate-only, and free of high-cardinality labels.
 
 ### Non-Goals
 
-* This proposal does NOT duplicate built-in controller-runtime metrics (`controller_runtime_reconcile_time_seconds`, `controller_runtime_reconcile_total`, `controller_runtime_active_workers`). These are already exposed by the metrics endpoint and should be used as-is for reconcile-level observability.
-* This proposal does NOT add metrics to Grove's scheduler backends (these are external components Grove supports, not part of Grove itself); it covers only the Grove operator controllers.
-* This proposal does NOT add per-request, sub-operation timing via Prometheus metrics. That question belongs to tracing and is tracked as Future Work.
-* This proposal does NOT modify the Grove CRD API, reconciliation behavior, or any user-facing functionality beyond the `/metrics` endpoint.
-* This proposal does NOT specify alerting rules or dashboard JSON (these are consumer concerns, not operator-side concerns).
+* This proposal does not duplicate built-in controller-runtime metrics (`controller_runtime_reconcile_*`, `workqueue_*`, `rest_client_*`). These are already exposed by the metrics endpoint and should be used as-is for reconcile-level observability (see [Existing Signals and Gaps](#existing-signals-and-gaps)).
+* This proposal does not add per-request, sub-operation visibility. That question belongs to distributed tracing and is tracked in [Future Work](#per-reconcile-sub-operation-visibility-via-tracing).
+* This proposal does not introduce high-cardinality labels (no namespace, no resource name, no function name, no pod UID). Such labels would couple the metric surface to internal code structure and break silently on refactor.
+* This proposal does not add metrics to Grove's scheduler backends (these are external components Grove supports, not part of the Grove operator itself); it covers only the Grove operator controllers.
+* This proposal does not modify the Grove CRD API, reconciliation behavior, or any user-facing functionality beyond the `/metrics` endpoint.
+* This proposal does not specify alerting rules or dashboard JSON (these are consumer concerns, not operator-side concerns).
+
+### Existing Signals and Gaps
+
+Grove's controller-runtime base already covers a large portion of standard observability. This proposal does not duplicate any of it. The remaining gaps below are what motivate the two new metrics.
+
+| Question | Today | Gap |
+|----------|-------|-----|
+| Reconcile latency / queue backlog / active workers (capacity-shaped) | `controller_runtime_reconcile_time_seconds`, `workqueue_depth`, `controller_runtime_active_workers` | None — covered by built-ins. |
+| Total API 409 traffic | `rest_client_requests_total{code="409"}` | The `url` label is the request path, not the Kubernetes Kind being mutated. The metric **cannot attribute** a conflict to a specific Grove controller, nor to the status update target kind. 409s on `Pods` issued by upstream operators are indistinguishable from 409s on `PodCliqueSet` issued by Grove. |
+| Error class breakdown (transient vs persistent) | `controller_runtime_reconcile_total{result="error"}` | All errors are collapsed into a single `error` label; conflict / timeout / rate-limited cannot be distinguished from invalid / forbidden. |
+
+The full list of relevant built-in metrics is reproduced in [Built-in controller-runtime Metrics Reference](#built-in-controller-runtime-metrics-reference) for convenience.
 
 ## Proposal
 
 ### Overview
 
-Introduce two custom Prometheus metrics exposed by all three Grove controllers (PodCliqueSet, PodClique, PodCliqueScalingGroup). Both are **aggregate, fleet-level** signals that complement the built-in controller-runtime metrics without duplicating them.
+Introduce two custom Prometheus metrics exposed by all three Grove controllers (PodCliqueSet, PodClique, PodCliqueScalingGroup):
 
-How controllers record these metrics (recording helpers, context propagation, registration) is an implementation detail of the follow-up PR. This proposal describes only the **metric surface** — names, labels, semantics — and the rationale for each.
+| Metric | Labels | Purpose |
+|--------|--------|---------|
+| `grove_operator_status_update_conflict_total` | `controller`, `target_kind` | Attribute 409 conflicts to the contended resource type |
+| `grove_operator_reconcile_errors_total` | `controller`, `error_type` | Categorize errors by Kubernetes API error class |
 
-### Relationship to Built-in Metrics
-
-controller-runtime automatically registers a rich set of metrics via `sigs.k8s.io/controller-runtime/pkg/metrics`. The following table maps common reconciliation questions to the metric that answers them:
-
-| Question | Metric | Source |
-|----------|--------|--------|
-| How long does reconciliation take? | `controller_runtime_reconcile_time_seconds` (Histogram) | built-in |
-| How many reconciles have occurred? | `controller_runtime_reconcile_total` (Counter, labeled by `result`) | built-in |
-| How many reconciles are in flight? | `controller_runtime_active_workers` (Gauge) | built-in |
-| How deep is the work queue? | `workqueue_depth` (Gauge) | built-in |
-| How long do items wait in queue? | `workqueue_queue_duration_seconds` (Histogram) | built-in |
-| How long before a retry? | `workqueue_unfinished_work_seconds` (Gauge) | built-in |
-| API client performance? | `rest_client_request_duration_seconds` (Histogram) | built-in |
-| **Which resource type is the 409 contention hotspot?** | `grove_operator_status_update_conflict_total` | **new (this proposal)** |
-| **What fraction of errors are transient vs persistent?** | `grove_operator_reconcile_errors_total` | **new (this proposal)** |
+Both are aggregate, fleet-level signals that complement the built-in controller-runtime metrics. Cardinality bound, semantics, and recording verbs are covered in [Design Details](#design-details).
 
 ### User Stories
 
-#### Story 1: Diagnosing Slow Deployment at Scale
+#### Story 1: Identifying the Cross-Controller Contention Hotspot
 
-**As** a Grove operator
-**When** a user reports that deploying a large inference graph (50+ PodCliques) takes significantly longer than expected
-**I want** to query built-in metrics (`controller_runtime_reconcile_time_seconds`, `workqueue_depth`, `workqueue_queue_duration_seconds`) to see whether the bottleneck is reconcile duration, queue backlog, or queue-wait latency
-**So that** I can determine whether to tune `MaxConcurrentReconciles`, optimize the reconcile path, or investigate upstream load.
+**Persona:** Grove operator on call.
 
-For drilling into *which step of a single reconcile* is slow, tracing (not this proposal) is the right tool.
+**Scenario:** During a large inference graph rollout (50+ PodCliques), Pod scheduling latency spikes. I suspect status-write contention between Grove controllers and an upstream operator (e.g., NVIDIA Dynamo's DGD controller managing the same PodClique objects), but I have no way to confirm which Grove resource type is the hotspot.
 
-#### Story 2: Identifying Cross-Controller Resource Contention
+**Today's pain:** I have to grep controller logs across all three Grove controllers for "Conflict", manually correlate them by timestamp, and reason about which Grove resource type is most affected. This does not scale, cannot be alerted on, and produces no historical record I can plot or compare across releases.
 
-**As** a Grove developer
-**When** investigating status update failures during high-load deployments
-**I want** to see which Grove resource types (`PodCliqueSet` vs `PodClique` vs `PodCliqueScalingGroup`) are most affected by 409 Conflicts
-**So that** I can prioritize architectural changes (e.g., migrating to `Status().Patch()` or Server-Side Apply) for the highest-contention resources.
+**What I'm missing:** a fleet-level signal that lets me, in a single Grafana panel, see something like "PodCliqueSet conflicts spiked 10× in the last 5 minutes" without leaving the metrics surface, and that I can wire into alerts when contention crosses a threshold.
 
-This is an aggregate, fleet-level question: "across all instances and all time, which resource type sees the most contention?" It is exactly what Prometheus metrics do well.
+#### Story 2: Triaging Errors as Self-Healing vs Operator-Action-Required
 
-#### Story 3: Distinguishing Transient vs Persistent Errors
+**Persona:** SRE operating Grove in production.
 
-**As** an SRE operating Grove in production
-**When** the `controller_runtime_reconcile_total{result="error"}` rate is elevated
-**I want** to see the breakdown by error type (conflict, timeout, not_found, invalid, etc.)
-**So that** I can distinguish transient issues (retries will succeed) from persistent issues (require intervention) without reading logs.
+**Scenario:** The reconcile error rate alert fires at 03:00. I need to decide in under a minute whether to wake an operator now, or let the system self-heal and triage in the morning.
+
+**Today's pain:** the error counter is a single flat number. The only way to determine if errors are transient (will retry successfully) or persistent (need human intervention) is to read controller logs and the API server audit log. This makes the on-call experience poor and prevents differentiated alert policies (page on persistent errors, warn on transient).
+
+**What I'm missing:** an automatable error classification I can use to build alert rules that page only on persistent errors and treat transient errors as warnings.
 
 ### Limitations/Risks & Mitigations
 
@@ -181,6 +173,22 @@ Recording is intended to be synchronous, O(1), and side-effect-free on the recon
 - `reconcile_errors_total` is incremented in the reconcile-loop error path, after the error is classified by the `k8serrors.Is*` predicates. A single error increments exactly one series.
 
 Exact helper types, function signatures, registration code, and call sites are defined in the implementation PR and are not part of the contract reviewed here.
+
+### Relationship to Built-in Metrics
+
+controller-runtime automatically registers a rich set of metrics via `sigs.k8s.io/controller-runtime/pkg/metrics`. The two custom metrics in this proposal sit alongside those built-ins; they do not replace them. The following table maps common reconciliation questions to the metric that answers them.
+
+| Question | Metric | Source |
+|----------|--------|--------|
+| How long does reconciliation take? | `controller_runtime_reconcile_time_seconds` (Histogram) | built-in |
+| How many reconciles have occurred? | `controller_runtime_reconcile_total` (Counter, labeled by `result`) | built-in |
+| How many reconciles are in flight? | `controller_runtime_active_workers` (Gauge) | built-in |
+| How deep is the work queue? | `workqueue_depth` (Gauge) | built-in |
+| How long do items wait in queue? | `workqueue_queue_duration_seconds` (Histogram) | built-in |
+| How long before a retry? | `workqueue_unfinished_work_seconds` (Gauge) | built-in |
+| API client performance? | `rest_client_request_duration_seconds` (Histogram) | built-in |
+| Which resource type is the 409 contention hotspot? | `grove_operator_status_update_conflict_total` | **new (this proposal)** |
+| What fraction of errors are transient vs persistent? | `grove_operator_reconcile_errors_total` | **new (this proposal)** |
 
 ### Built-in controller-runtime Metrics Reference
 
@@ -293,6 +301,7 @@ No new external dependencies are introduced.
 - 2026-03-24: PR #499 opened.
 - 2026-03-30: Updated based on review feedback — removed 4 duplicate metrics, removed namespace label, refocused on 3 genuinely new metrics.
 - 2026-05-09: Revised per review — scoped to aggregate, fleet-level metrics only (dropped sub-operation histogram in favor of future tracing work); removed embedded Go source per design-doc-scope feedback; fixed scheduler-backend terminology; PC → PCLQ across the document.
+- 2026-05-26: Restructured per second review round — Goals rewritten as positive acceptance criteria; Overview opens with a 2-row metric table; built-in coverage split between an *Existing Signals and Gaps* table in Motivation and the full reference table in Design Details; User Stories trimmed to 2 and reframed around missing user capability; "diagnosing slow deployment" relocated from a user story to the gap table; capitalized `NOT` → `not`.
 
 ## Alternatives
 
