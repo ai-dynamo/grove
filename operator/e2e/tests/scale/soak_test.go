@@ -284,8 +284,8 @@ func runSoakFinalChecks(ctx context.Context, tc *testctx.TestContext, cfg soakCo
 		return fmt.Errorf("list pods: %w", err)
 	}
 
-	pcqList := &grovecorev1alpha1.PodCliqueList{}
-	if err := tc.Client.List(ctx, pcqList,
+	pclqList := &grovecorev1alpha1.PodCliqueList{}
+	if err := tc.Client.List(ctx, pclqList,
 		client.InNamespace(tc.Namespace),
 		client.MatchingLabels{common.LabelPartOfKey: soakWorkloadName},
 	); err != nil {
@@ -313,10 +313,10 @@ func runSoakFinalChecks(ctx context.Context, tc *testctx.TestContext, cfg soakCo
 		return fmt.Errorf("get PCS: %w", err)
 	}
 
-	if err := checkExpectedObjectGraph(pods, pcqList, pcsgList, cfg); err != nil {
+	if err := checkExpectedObjectGraph(pods, pclqList, pcsgList, cfg); err != nil {
 		return err
 	}
-	if err := checkNoStuckDeletions(pods, pcqList, pcsgList, podGangs); err != nil {
+	if err := checkNoStuckDeletions(pods, pclqList, pcsgList, podGangs); err != nil {
 		return err
 	}
 	if err := checkPodGangCleanup(podGangs, cfg); err != nil {
@@ -325,7 +325,7 @@ func runSoakFinalChecks(ctx context.Context, tc *testctx.TestContext, cfg soakCo
 	if err := checkPCSStatusConvergence(pcs, cfg); err != nil {
 		return err
 	}
-	if err := checkPodCliqueStatusConvergence(pcqList); err != nil {
+	if err := checkPodCliqueStatusConvergence(pclqList); err != nil {
 		return err
 	}
 	if err := checkOperatorHealth(ctx, tc, baseline); err != nil {
@@ -338,19 +338,19 @@ func runSoakFinalChecks(ctx context.Context, tc *testctx.TestContext, cfg soakCo
 // graph: exact live pod / PodClique counts, zero PCSGs (for this fixture), and
 // no managed object carrying a replica index from a scaled-down peak. A residual
 // index >= cfg.base is the canonical leak signal.
-func checkExpectedObjectGraph(pods *corev1.PodList, pcqList *grovecorev1alpha1.PodCliqueList, pcsgList *grovecorev1alpha1.PodCliqueScalingGroupList, cfg soakConfig) error {
+func checkExpectedObjectGraph(pods *corev1.PodList, pclqList *grovecorev1alpha1.PodCliqueList, pcsgList *grovecorev1alpha1.PodCliqueScalingGroupList, cfg soakConfig) error {
 	if got, want := len(pods.Items), cfg.basePods(); got != want {
 		return fmt.Errorf("live pod count = %d, want %d (potential leak)", got, want)
 	}
-	if got, want := len(pcqList.Items), cfg.base; got != want {
+	if got, want := len(pclqList.Items), cfg.base; got != want {
 		return fmt.Errorf("PodClique count = %d, want %d (potential leak)", got, want)
 	}
 	if len(pcsgList.Items) != 0 {
 		return fmt.Errorf("PCSG count = %d, want 0 for this fixture", len(pcsgList.Items))
 	}
-	for i := range pcqList.Items {
-		pcq := &pcqList.Items[i]
-		if err := assertReplicaIndexBelow(pcq.Labels, cfg.base, "PodClique", pcq.Name); err != nil {
+	for i := range pclqList.Items {
+		pclq := &pclqList.Items[i]
+		if err := assertReplicaIndexBelow(pclq.Labels, cfg.base, "PodClique", pclq.Name); err != nil {
 			return err
 		}
 	}
@@ -386,15 +386,15 @@ func assertReplicaIndexBelow(labels map[string]string, base int, kind, name stri
 // DeletionTimestamp at the final check. A surviving DeletionTimestamp after
 // the system should have settled indicates a finalizer pile-up — the bug class
 // soak is specifically designed to surface.
-func checkNoStuckDeletions(pods *corev1.PodList, pcqList *grovecorev1alpha1.PodCliqueList, pcsgList *grovecorev1alpha1.PodCliqueScalingGroupList, podGangs *groveschedulerv1alpha1.PodGangList) error {
+func checkNoStuckDeletions(pods *corev1.PodList, pclqList *grovecorev1alpha1.PodCliqueList, pcsgList *grovecorev1alpha1.PodCliqueScalingGroupList, podGangs *groveschedulerv1alpha1.PodGangList) error {
 	for i := range pods.Items {
 		if ts := pods.Items[i].DeletionTimestamp; ts != nil {
 			return fmt.Errorf("Pod %s still terminating at final check (DeletionTimestamp=%s)", pods.Items[i].Name, ts)
 		}
 	}
-	for i := range pcqList.Items {
-		if ts := pcqList.Items[i].DeletionTimestamp; ts != nil {
-			return fmt.Errorf("PodClique %s still terminating at final check (DeletionTimestamp=%s)", pcqList.Items[i].Name, ts)
+	for i := range pclqList.Items {
+		if ts := pclqList.Items[i].DeletionTimestamp; ts != nil {
+			return fmt.Errorf("PodClique %s still terminating at final check (DeletionTimestamp=%s)", pclqList.Items[i].Name, ts)
 		}
 	}
 	for i := range pcsgList.Items {
@@ -465,20 +465,20 @@ func checkPCSStatusConvergence(pcs *grovecorev1alpha1.PodCliqueSet, cfg soakConf
 // fields converged: ObservedGeneration matches, replica counters match Spec,
 // and no LastErrors are recorded. Per-child errors can hide here even when
 // the PCS-level LastErrors slice is empty.
-func checkPodCliqueStatusConvergence(pcqList *grovecorev1alpha1.PodCliqueList) error {
-	for i := range pcqList.Items {
-		pcq := &pcqList.Items[i]
-		if og := pcq.Status.ObservedGeneration; og == nil || *og != pcq.Generation {
-			return fmt.Errorf("PodClique %s ObservedGeneration = %v, want %d", pcq.Name, og, pcq.Generation)
+func checkPodCliqueStatusConvergence(pclqList *grovecorev1alpha1.PodCliqueList) error {
+	for i := range pclqList.Items {
+		pclq := &pclqList.Items[i]
+		if og := pclq.Status.ObservedGeneration; og == nil || *og != pclq.Generation {
+			return fmt.Errorf("PodClique %s ObservedGeneration = %v, want %d", pclq.Name, og, pclq.Generation)
 		}
-		if pcq.Status.ReadyReplicas != pcq.Spec.Replicas {
-			return fmt.Errorf("PodClique %s ReadyReplicas = %d, want %d", pcq.Name, pcq.Status.ReadyReplicas, pcq.Spec.Replicas)
+		if pclq.Status.ReadyReplicas != pclq.Spec.Replicas {
+			return fmt.Errorf("PodClique %s ReadyReplicas = %d, want %d", pclq.Name, pclq.Status.ReadyReplicas, pclq.Spec.Replicas)
 		}
-		if pcq.Status.UpdatedReplicas != pcq.Spec.Replicas {
-			return fmt.Errorf("PodClique %s UpdatedReplicas = %d, want %d", pcq.Name, pcq.Status.UpdatedReplicas, pcq.Spec.Replicas)
+		if pclq.Status.UpdatedReplicas != pclq.Spec.Replicas {
+			return fmt.Errorf("PodClique %s UpdatedReplicas = %d, want %d", pclq.Name, pclq.Status.UpdatedReplicas, pclq.Spec.Replicas)
 		}
-		if len(pcq.Status.LastErrors) > 0 {
-			return fmt.Errorf("PodClique %s has %d LastErrors: %+v", pcq.Name, len(pcq.Status.LastErrors), pcq.Status.LastErrors)
+		if len(pclq.Status.LastErrors) > 0 {
+			return fmt.Errorf("PodClique %s has %d LastErrors: %+v", pclq.Name, len(pclq.Status.LastErrors), pclq.Status.LastErrors)
 		}
 	}
 	return nil
