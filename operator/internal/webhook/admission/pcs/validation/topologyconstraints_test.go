@@ -226,60 +226,6 @@ func TestValidateTASEnabledWhenDomainNotInClusterTopology(t *testing.T) {
 	}
 }
 
-func TestValidateCreateTopologyPackDomains(t *testing.T) {
-	clusterDomains := []string{
-		string(grovecorev1alpha1.TopologyDomainZone),
-		string(grovecorev1alpha1.TopologyDomainRack),
-		string(grovecorev1alpha1.TopologyDomainHost),
-	}
-
-	tests := []struct {
-		name          string
-		constraint    *grovecorev1alpha1.TopologyConstraint
-		errorMatchers []testutils.ErrorMatcher
-	}{
-		{
-			name: "Should reject deprecated packDomain on create",
-			constraint: &grovecorev1alpha1.TopologyConstraint{
-				TopologyName: "test-topology",
-				PackDomain:   grovecorev1alpha1.TopologyDomainHost,
-			},
-			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint.packDomain"},
-			},
-		},
-		{
-			name: "Should allow preferred-only pack domain",
-			constraint: &grovecorev1alpha1.TopologyConstraint{
-				TopologyName: "test-topology",
-				Pack: &grovecorev1alpha1.TopologyPackConstraint{
-					PreferredDomain: grovecorev1alpha1.TopologyDomainHost,
-				},
-			},
-			errorMatchers: []testutils.ErrorMatcher{},
-		},
-		{
-			name: "Should require pack when topologyConstraint is set",
-			constraint: &grovecorev1alpha1.TopologyConstraint{
-				TopologyName: "test-topology",
-			},
-			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeRequired, Field: "spec.template.topologyConstraint.pack"},
-			},
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			pcs := buildRawTestPCS(tc.constraint)
-			validator := newTopologyConstraintsValidator(pcs, true, clusterDomains)
-			errs := validator.validate()
-			assert.Len(t, errs, len(tc.errorMatchers), "unexpected number of errors")
-			testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
-		})
-	}
-}
-
 func TestValidateHierarchyViolations(t *testing.T) {
 	clusterDomains := []string{
 		string(grovecorev1alpha1.TopologyDomainRegion),
@@ -723,23 +669,6 @@ func TestValidateUpdateDeprecatedPackDomainMigration(t *testing.T) {
 				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint"},
 			},
 			errorDetailContains: "deprecated packDomain migration",
-		},
-		{
-			name: "Should reject setting deprecated packDomain and pack.required together",
-			oldPCSConstraint: &grovecorev1alpha1.TopologyConstraint{
-				TopologyName: "topo-a",
-				PackDomain:   grovecorev1alpha1.TopologyDomainHost,
-			},
-			newPCSConstraint: &grovecorev1alpha1.TopologyConstraint{
-				TopologyName: "topo-a",
-				PackDomain:   grovecorev1alpha1.TopologyDomainHost,
-				Pack: &grovecorev1alpha1.TopologyPackConstraint{
-					RequiredDomain: grovecorev1alpha1.TopologyDomainHost,
-				},
-			},
-			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.topologyConstraint.pack.required"},
-			},
 		},
 	}
 

@@ -56,10 +56,6 @@ func (v *topologyConstraintsValidator) validate() field.ErrorList {
 		return v.disallowConstraintsForCreateWhenTASIsDisabled(pcsTemplateFLDPath)
 	}
 
-	if errs := v.validateTopologyConstraintPackDomainsForCreate(pcsTemplateFLDPath); len(errs) > 0 {
-		return errs
-	}
-
 	errs := v.validateTopologyDomainsExistInClusterTopology()
 	if len(errs) > 0 {
 		return errs
@@ -78,12 +74,6 @@ func (v *topologyConstraintsValidator) validate() field.ErrorList {
 // the CRD once this validation is no longer needed.
 func (v *topologyConstraintsValidator) validateUpdate(oldPCS *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
 	fldPath := field.NewPath("spec").Child("template")
-	if errs := v.validateTopologyConstraintPackDomainsForUpdate(fldPath); len(errs) > 0 {
-		return errs
-	}
-	if errs := v.validateDeprecatedPackDomainAmbiguity(); len(errs) > 0 {
-		return errs
-	}
 	return v.validateTopologyConstraintImmutability(oldPCS, fldPath, false)
 }
 
@@ -142,88 +132,11 @@ func (v *topologyConstraintsValidator) validateForLegacyRepair() field.ErrorList
 	if !v.tasEnabled {
 		return v.disallowConstraintsForCreateWhenTASIsDisabled(fldPath)
 	}
-	if errs := v.validateTopologyConstraintPackDomainsForUpdate(fldPath); len(errs) > 0 {
-		return errs
-	}
-	if errs := v.validateDeprecatedPackDomainAmbiguity(); len(errs) > 0 {
-		return errs
-	}
 	errs := v.validateTopologyDomainsExistInClusterTopology()
 	if len(errs) > 0 {
 		return errs
 	}
 	return v.validateHierarchicalTopologyConstraints(fldPath)
-}
-
-// validateTopologyConstraintPackDomainsForCreate ensures that any declared topology constraint specifies new pack fields.
-// topologyName resolution, inheritance, and single-topology validation are handled earlier by pcsValidator.
-func (v *topologyConstraintsValidator) validateTopologyConstraintPackDomainsForCreate(fldPath *field.Path) field.ErrorList {
-	var allErrs field.ErrorList
-
-	validateConstraint := func(tc *grovecorev1alpha1.TopologyConstraint, tcPath *field.Path) {
-		if tc == nil {
-			return
-		}
-		if tc.PackDomain != "" {
-			allErrs = append(allErrs, field.Forbidden(tcPath.Child("packDomain"),
-				"packDomain is deprecated and cannot be used on new workloads; use pack.required"))
-			if tc.Pack == nil {
-				return
-			}
-		}
-		if tc.Pack == nil {
-			allErrs = append(allErrs, field.Required(tcPath.Child("pack"),
-				"pack must specify required or preferred when topologyConstraint is set"))
-			return
-		}
-		if tc.Pack.RequiredDomain == "" && tc.Pack.PreferredDomain == "" {
-			allErrs = append(allErrs, field.Required(tcPath.Child("pack"),
-				"pack must specify at least one of required or preferred"))
-		}
-	}
-
-	validateConstraint(v.pcs.Spec.Template.TopologyConstraint, fldPath.Child("topologyConstraint"))
-	for i, clique := range v.pcs.Spec.Template.Cliques {
-		validateConstraint(clique.TopologyConstraint, fldPath.Child("cliques").Index(i).Child("topologyConstraint"))
-	}
-	for i, pcsg := range v.pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-		validateConstraint(pcsg.TopologyConstraint, fldPath.Child("podCliqueScalingGroups").Index(i).Child("topologyConstraint"))
-	}
-
-	return allErrs
-}
-
-func (v *topologyConstraintsValidator) validateTopologyConstraintPackDomainsForUpdate(fldPath *field.Path) field.ErrorList {
-	var allErrs field.ErrorList
-	validateConstraint := func(tc *grovecorev1alpha1.TopologyConstraint, tcPath *field.Path) {
-		if tc == nil {
-			return
-		}
-		if !tc.HasAnyPackDomain() {
-			allErrs = append(allErrs, field.Required(tcPath.Child("pack"),
-				"pack must specify required or preferred when topologyConstraint is set"))
-		}
-	}
-
-	validateConstraint(v.pcs.Spec.Template.TopologyConstraint, fldPath.Child("topologyConstraint"))
-	for i, clique := range v.pcs.Spec.Template.Cliques {
-		validateConstraint(clique.TopologyConstraint, fldPath.Child("cliques").Index(i).Child("topologyConstraint"))
-	}
-	for i, pcsg := range v.pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-		validateConstraint(pcsg.TopologyConstraint, fldPath.Child("podCliqueScalingGroups").Index(i).Child("topologyConstraint"))
-	}
-	return allErrs
-}
-
-func (v *topologyConstraintsValidator) validateDeprecatedPackDomainAmbiguity() field.ErrorList {
-	var allErrs field.ErrorList
-	forEachTopologyConstraint(v.pcs, func(tc *grovecorev1alpha1.TopologyConstraint, tcPath *field.Path) {
-		if tc.PackDomain != "" && tc.Pack != nil && tc.Pack.RequiredDomain != "" {
-			allErrs = append(allErrs, field.Invalid(tcPath.Child("pack", "required"), tc.Pack.RequiredDomain,
-				"must not set both pack.required and deprecated packDomain"))
-		}
-	})
-	return allErrs
 }
 
 // validateTopologyDomainsExistInClusterTopology ensures that all specified topology constraint domains exist in the cluster topology.

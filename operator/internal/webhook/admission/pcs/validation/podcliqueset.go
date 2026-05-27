@@ -769,9 +769,6 @@ func validateResolvableTopologyConstraint(
 	if tc == nil {
 		return "", false, nil
 	}
-	if !tc.HasAnyPackDomain() {
-		return "", false, field.ErrorList{field.Required(tcPath.Child("pack"), "pack must specify required or preferred when topologyConstraint is set")}
-	}
 	if tc.TopologyName == "" && (!canInherit || inheritedTopologyName == "") {
 		return "", false, field.ErrorList{field.Required(
 			tcPath.Child("topologyName"),
