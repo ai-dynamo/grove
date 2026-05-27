@@ -237,16 +237,17 @@ func (w *pendingUpdateWork) getNextReplicaToUpdate(pcs *grovecorev1alpha1.PodCli
 
 // computeUpdateProgress calculates update completion for a PCS replica.
 func (pri *pcsReplicaInfo) computeUpdateProgress(pcs *grovecorev1alpha1.PodCliqueSet) {
-	currentHash := *pcs.Status.CurrentGenerationHash
+	pcsGenerationHashCandidates := componentutils.ComputePCSGenerationHashCandidates(pcs)
 	updatedPCLQs := 0
 	for _, pclq := range pri.pclqs {
-		if isPCLQUpdateComplete(&pclq, currentHash) {
+		expectedTemplateHashes, err := componentutils.GetExpectedPCLQPodTemplateHashCandidates(pcs, pclq.ObjectMeta)
+		if err == nil && isPCLQUpdateComplete(&pclq, expectedTemplateHashes, pcsGenerationHashCandidates) {
 			updatedPCLQs++
 		}
 	}
 	updatedPCSGs := 0
 	for _, pcsg := range pri.pcsgs {
-		if componentutils.IsPCSGUpdateComplete(&pcsg, currentHash) {
+		if componentutils.IsPCSGUpdateComplete(&pcsg, pcsGenerationHashCandidates.Canonical, pcsGenerationHashCandidates.Legacy) {
 			updatedPCSGs++
 		}
 	}
@@ -273,14 +274,14 @@ func (pri *pcsReplicaInfo) getNumScheduledPods(pcs *grovecorev1alpha1.PodCliqueS
 }
 
 // isPCLQUpdateComplete checks if a PodClique has completed its update to the target generation.
-func isPCLQUpdateComplete(pclq *grovecorev1alpha1.PodClique, currentPCSGenerationHash string) bool {
-	if pclq.Status.CurrentPodCliqueSetGenerationHash != nil &&
-		*pclq.Status.CurrentPodCliqueSetGenerationHash == currentPCSGenerationHash &&
+func isPCLQUpdateComplete(pclq *grovecorev1alpha1.PodClique, expectedPodTemplateHashes, currentPCSGenerationHashes componentutils.HashCandidates) bool {
+	return expectedPodTemplateHashes.Matches(pclq.Labels[apicommon.LabelPodTemplateHash]) &&
+		pclq.Status.CurrentPodTemplateHash != nil &&
+		expectedPodTemplateHashes.Matches(*pclq.Status.CurrentPodTemplateHash) &&
+		pclq.Status.CurrentPodCliqueSetGenerationHash != nil &&
+		currentPCSGenerationHashes.Matches(*pclq.Status.CurrentPodCliqueSetGenerationHash) &&
 		pclq.Status.UpdatedReplicas >= *pclq.Spec.MinAvailable &&
-		pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable {
-		return true
-	}
-	return false
+		pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable
 }
 
 // isAutoUpdateInProgress checks if an update is currently in progress.

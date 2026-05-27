@@ -69,7 +69,7 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	}
 	// mutate PodClique Status Replicas, ReadyReplicas, ScheduleGatedReplicas and UpdatedReplicas.
 	mutateReplicas(pclq, podCategories, len(existingPods))
-	mutateUpdatedReplica(pclq, existingPods)
+	mutateUpdatedReplica(pcs, pclq, existingPods)
 
 	// mutate the conditions only if the PodClique has been successfully reconciled at least once.
 	// This prevents prematurely setting incorrect conditions.
@@ -112,21 +112,40 @@ func mutateCurrentHashes(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet
 		logger.Info("PodClique is currently updating, cannot set PodCliqueSet CurrentGenerationHash yet")
 		return nil
 	}
+	if pcs.Status.CurrentGenerationHash == nil {
+		return nil
+	}
+	expectedPodTemplateHashes, err := componentutils.GetExpectedPCLQPodTemplateHashCandidates(pcs, pclq.ObjectMeta)
+	if err != nil {
+		return err
+	}
+	pcsGenerationHashes := componentutils.ComputePCSGenerationHashCandidates(pcs)
+
 	if pclq.Status.UpdateProgress == nil {
-		expectedPodTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
-		if err != nil {
-			return err
-		}
-		if pclq.Status.CurrentPodTemplateHash == nil || *pclq.Status.CurrentPodTemplateHash == expectedPodTemplateHash {
-			pclq.Status.CurrentPodTemplateHash = ptr.To(expectedPodTemplateHash)
-			pclq.Status.CurrentPodCliqueSetGenerationHash = pcs.Status.CurrentGenerationHash
+		if isPodCliqueTemplateHashCurrent(pclq, expectedPodTemplateHashes) {
+			pclq.Status.CurrentPodTemplateHash = ptr.To(expectedPodTemplateHashes.Canonical)
+			pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(pcsGenerationHashes.Canonical)
 		}
 	} else if componentutils.IsLastPCLQUpdateCompleted(pclq) {
 		logger.Info("PodClique update has completed, setting CurrentPodCliqueSetGenerationHash")
+		if expectedPodTemplateHashes.Matches(pclq.Status.UpdateProgress.PodTemplateHash) &&
+			pcsGenerationHashes.Matches(pclq.Status.UpdateProgress.PodCliqueSetGenerationHash) {
+			pclq.Status.UpdateProgress.PodTemplateHash = expectedPodTemplateHashes.Canonical
+			pclq.Status.UpdateProgress.PodCliqueSetGenerationHash = pcsGenerationHashes.Canonical
+		}
 		pclq.Status.CurrentPodTemplateHash = ptr.To(pclq.Status.UpdateProgress.PodTemplateHash)
 		pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(pclq.Status.UpdateProgress.PodCliqueSetGenerationHash)
 	}
 	return nil
+}
+
+func isPodCliqueTemplateHashCurrent(pclq *grovecorev1alpha1.PodClique, expectedPodTemplateHashes componentutils.HashCandidates) bool {
+	labelPodTemplateHash, ok := pclq.Labels[apicommon.LabelPodTemplateHash]
+	if !ok || !expectedPodTemplateHashes.Matches(labelPodTemplateHash) {
+		return false
+	}
+	return pclq.Status.CurrentPodTemplateHash == nil ||
+		expectedPodTemplateHashes.Matches(*pclq.Status.CurrentPodTemplateHash)
 }
 
 // mutateReplicas updates the PodClique status with current replica counts based on pod categorization
@@ -140,23 +159,35 @@ func mutateReplicas(pclq *grovecorev1alpha1.PodClique, podCategories map[corev1.
 }
 
 // mutateUpdatedReplica calculates and sets the number of pods with the expected template hash
-func mutateUpdatedReplica(pclq *grovecorev1alpha1.PodClique, existingPods []*corev1.Pod) {
-	var expectedPodTemplateHash string
+func mutateUpdatedReplica(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, existingPods []*corev1.Pod) {
+	var expectedPodTemplateHashes componentutils.HashCandidates
 	// If UpdateProgress exists (update in progress or recently completed), use the target hash from it.
 	// This covers both the active update phase and the window after completion before CurrentPodTemplateHash is synced.
 	if pclq.Status.UpdateProgress != nil {
-		expectedPodTemplateHash = pclq.Status.UpdateProgress.PodTemplateHash
+		expectedPodTemplateHashes = componentutils.HashCandidates{
+			Canonical: pclq.Status.UpdateProgress.PodTemplateHash,
+			Legacy:    pclq.Status.UpdateProgress.PodTemplateHash,
+		}
 	} else if pclq.Status.CurrentPodTemplateHash != nil {
 		// Steady state: no rolling update tracking exists.
 		// Use the stable current hash for pods that have been reconciled.
-		expectedPodTemplateHash = *pclq.Status.CurrentPodTemplateHash
+		expectedPodTemplateHashes = componentutils.HashCandidates{
+			Canonical: *pclq.Status.CurrentPodTemplateHash,
+			Legacy:    *pclq.Status.CurrentPodTemplateHash,
+		}
+	}
+	if expectedPodTemplateHashes.Canonical != "" && pcs != nil {
+		currentDesiredHashes, err := componentutils.GetExpectedPCLQPodTemplateHashCandidates(pcs, pclq.ObjectMeta)
+		if err == nil && currentDesiredHashes.Matches(expectedPodTemplateHashes.Canonical) {
+			expectedPodTemplateHashes = currentDesiredHashes
+		}
 	}
 	// If expectedPodTemplateHash is empty, it means that the PCLQ has never been successfully reconciled and therefore no pods should be considered as updated.
 	// This prevents incorrectly marking all existing pods as updated when the PCLQ is first created.
 	// Once the PCLQ is successfully reconciled, the expectedPodTemplateHash will be set and the updated replicas can be calculated correctly.
-	if expectedPodTemplateHash != "" {
+	if expectedPodTemplateHashes.Canonical != "" {
 		updatedReplicas := lo.Reduce(existingPods, func(agg int, pod *corev1.Pod, _ int) int {
-			if pod.Labels[apicommon.LabelPodTemplateHash] == expectedPodTemplateHash {
+			if expectedPodTemplateHashes.Matches(pod.Labels[apicommon.LabelPodTemplateHash]) {
 				return agg + 1
 			}
 			return agg

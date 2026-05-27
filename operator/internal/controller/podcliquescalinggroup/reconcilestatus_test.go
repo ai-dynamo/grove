@@ -21,9 +21,11 @@ import (
 	"testing"
 	"time"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -95,7 +97,7 @@ func TestComputeReplicaStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			scheduled, available, updated := computeReplicaStatus(logr.Discard(), nil, "0", tt.expectedSize, tt.cliques)
+			scheduled, available, updated := computeReplicaStatus(logr.Discard(), componentutils.HashCandidates{}, tt.pcsGenerationHash, "0", tt.expectedSize, tt.cliques)
 
 			assert.Equal(t, tt.wantScheduled, scheduled, "scheduled mismatch")
 			assert.Equal(t, tt.wantAvailable, available, "available mismatch")
@@ -590,6 +592,62 @@ func TestReconcileStatus_EdgeCases(t *testing.T) {
 	}
 }
 
+// TestMutateCurrentPodCliqueSetGenerationHashWaitsForPodCliqueGenerationConvergence verifies that
+// the PCSG's CurrentPodCliqueSetGenerationHash is only advanced to the canonical PCS hash once all
+// of its PodCliques report having converged to that hash. While any child PodClique still reports
+// the old generation hash, the PCSG must continue to surface the old hash to avoid prematurely
+// signaling that a rollout has completed.
+func TestMutateCurrentPodCliqueSetGenerationHashWaitsForPodCliqueGenerationConvergence(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
+		WithScalingGroupConfig("compute", []string{"worker"}, 2, 1).
+		Build()
+	pcsGenerationHashes := componentutils.ComputePCSGenerationHashCandidates(pcs)
+	pcs.Status.CurrentGenerationHash = ptr.To(pcsGenerationHashes.Canonical)
+
+	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcs-0-compute", "test-ns", "test-pcs", 0).
+		WithReplicas(2).
+		WithCliqueNames([]string{"worker"}).
+		WithOptions(testutils.WithPCSGCurrentPCSGenerationHash("old-generation-hash")).
+		Build()
+	expectedTemplateHashes := componentutils.GetPCLQTemplateHashCandidates(pcs, pcsg)
+	pclqs := []grovecorev1alpha1.PodClique{
+		buildConvergedPCSGPodClique(t, pcsg, "worker", 0, expectedTemplateHashes, pcsGenerationHashes.Canonical),
+		buildConvergedPCSGPodClique(t, pcsg, "worker", 1, expectedTemplateHashes, "old-generation-hash"),
+	}
+
+	mutateCurrentPodCliqueSetGenerationHash(logr.Discard(), pcs, pcsg, pclqs)
+	require.NotNil(t, pcsg.Status.CurrentPodCliqueSetGenerationHash)
+	assert.Equal(t, "old-generation-hash", *pcsg.Status.CurrentPodCliqueSetGenerationHash)
+
+	pclqs[1].Status.CurrentPodCliqueSetGenerationHash = ptr.To(pcsGenerationHashes.Canonical)
+	mutateCurrentPodCliqueSetGenerationHash(logr.Discard(), pcs, pcsg, pclqs)
+	require.NotNil(t, pcsg.Status.CurrentPodCliqueSetGenerationHash)
+	assert.Equal(t, pcsGenerationHashes.Canonical, *pcsg.Status.CurrentPodCliqueSetGenerationHash)
+}
+
+// buildConvergedPCSGPodClique constructs a PodClique that is fully converged on the given
+// template hash, with its CurrentPodCliqueSetGenerationHash set to pcsGenerationHash so callers
+// can simulate cliques at a specific PCS generation.
+func buildConvergedPCSGPodClique(
+	t *testing.T,
+	pcsg *grovecorev1alpha1.PodCliqueScalingGroup,
+	cliqueName string,
+	pcsgReplicaIndex int,
+	expectedTemplateHashes map[string]componentutils.HashCandidates,
+	pcsGenerationHash string,
+) grovecorev1alpha1.PodClique {
+	t.Helper()
+	pclqName := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsg.Name, Replica: pcsgReplicaIndex}, cliqueName)
+	templateHashes, ok := expectedTemplateHashes[pclqName]
+	require.True(t, ok, "expected template hash for %s", pclqName)
+	pclq := testutils.NewPCSGPodCliqueBuilder(pclqName, pcsg.Namespace, "test-pcs", pcsg.Name, 0, pcsgReplicaIndex).
+		WithLabels(map[string]string{apicommon.LabelPodTemplateHash: templateHashes.Canonical}).
+		Build()
+	pclq.Status.CurrentPodTemplateHash = ptr.To(templateHashes.Canonical)
+	pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(pcsGenerationHash)
+	return *pclq
+}
+
 // Test helpers
 func buildHealthyClique(name string) grovecorev1alpha1.PodClique {
 	return *testutils.NewPodCliqueBuilder("test-pcs", uuid.NewUUID(), name, "test-ns", 0).
@@ -703,7 +761,12 @@ func TestPCSGMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mutateReplicas(logr.Discard(), &pcsHash, tt.pcsg, tt.pclqsPerReplica)
+			pcs := &grovecorev1alpha1.PodCliqueSet{
+				Status: grovecorev1alpha1.PodCliqueSetStatus{
+					CurrentGenerationHash: &pcsHash,
+				},
+			}
+			mutateReplicas(logr.Discard(), pcs, tt.pcsg, tt.pclqsPerReplica)
 
 			if !tt.wantWritten {
 				require.Nil(t, tt.pcsg.Status.UpdateProgress, "UpdateProgress must remain nil")
@@ -744,7 +807,7 @@ func TestCountPCSGReplicaUpdatedPCLQs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, countPCSGReplicaUpdatedPCLQs(tt.hash, tt.in))
+			assert.Equal(t, tt.want, countPCSGReplicaUpdatedPCLQs(componentutils.HashCandidates{}, tt.hash, tt.in))
 		})
 	}
 }

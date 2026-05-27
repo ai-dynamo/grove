@@ -24,8 +24,11 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 
+	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
@@ -176,13 +179,187 @@ func TestMutateUpdatedReplica(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Call the function
-			mutateUpdatedReplica(tt.pclq, tt.existingPods)
+			mutateUpdatedReplica(nil, tt.pclq, tt.existingPods)
 
 			// Assert the result
 			assert.Equal(t, tt.expectedUpdatedReplicas, tt.pclq.Status.UpdatedReplicas,
 				"UpdatedReplicas should match expected value")
 		})
 	}
+}
+
+// TestMutateUpdatedReplicaCountsCanonicalAndLegacyCurrentPodLabels verifies that
+// mutateUpdatedReplica treats both the canonical and legacy pod-template-hash
+// values as "current" when counting UpdatedReplicas. This protects in-flight
+// rollouts during a hash-format migration: pods labeled with either hash variant
+// of the current template are counted as updated, while pods with an unrelated
+// (stale) hash are not.
+func TestMutateUpdatedReplicaCountsCanonicalAndLegacyCurrentPodLabels(t *testing.T) {
+	template := &grovecorev1alpha1.PodCliqueTemplateSpec{
+		Name: "worker",
+		Spec: grovecorev1alpha1.PodCliqueSpec{
+			PodSpec: corev1.PodSpec{
+				Containers: []corev1.Container{
+					{Name: "sidecar", Image: "sidecar:v1"},
+					{Name: "main", Image: "main:v1"},
+				},
+			},
+		},
+	}
+	hashes := componentutils.ComputePCLQPodTemplateHashCandidates(template, "")
+	require.NotEqual(t, hashes.Canonical, hashes.Legacy, "test must exercise canonical/legacy divergence")
+
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "pcs", Namespace: "default"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{template},
+			},
+		},
+	}
+	pclq := &grovecorev1alpha1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pcs-0-worker",
+			Namespace: "default",
+			Labels: map[string]string{
+				apicommon.LabelPartOfKey:                "pcs",
+				apicommon.LabelPodCliqueSetReplicaIndex: "0",
+			},
+		},
+		Status: grovecorev1alpha1.PodCliqueStatus{
+			CurrentPodTemplateHash: ptr.To(hashes.Canonical),
+		},
+	}
+
+	mutateUpdatedReplica(pcs, pclq, []*corev1.Pod{
+		createPodWithHash("pod-canonical", hashes.Canonical),
+		createPodWithHash("pod-legacy", hashes.Legacy),
+		createPodWithHash("pod-stale", "stale-hash"),
+	})
+	assert.Equal(t, int32(2), pclq.Status.UpdatedReplicas)
+}
+
+// TestMutateCurrentHashesAdvancesGenerationWhenTemplateHashIsCurrent verifies that
+// once a PodClique has fully converged on the current template (Replicas ==
+// UpdatedReplicas) and its CurrentPodTemplateHash matches the template — even
+// via the legacy hash — mutateCurrentHashes advances both the
+// CurrentPodTemplateHash and the CurrentPodCliqueSetGenerationHash to their
+// canonical values, completing the migration off of legacy hashes.
+func TestMutateCurrentHashesAdvancesGenerationWhenTemplateHashIsCurrent(t *testing.T) {
+	pcs, pclq, templateHashes, generationHashes := newPodCliqueHashConvergenceFixture()
+	oldGenerationHash := "old-generation-hash"
+	pclq.Status.CurrentPodTemplateHash = ptr.To(templateHashes.Legacy)
+	pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(oldGenerationHash)
+	pclq.Status.Replicas = 2
+	pclq.Status.UpdatedReplicas = 2
+
+	err := mutateCurrentHashes(logr.Discard(), pcs, pclq)
+
+	require.NoError(t, err)
+	assert.Equal(t, templateHashes.Canonical, *pclq.Status.CurrentPodTemplateHash)
+	assert.Equal(t, generationHashes.Canonical, *pclq.Status.CurrentPodCliqueSetGenerationHash)
+}
+
+// TestMutateCurrentHashesDoesNotAdvanceWhenTemplateHashIsStale verifies that
+// mutateCurrentHashes refuses to advance CurrentPodTemplateHash or
+// CurrentPodCliqueSetGenerationHash when the PodClique has not actually
+// converged on the current PodCliqueSet template, even though the replica
+// counts (Replicas == UpdatedReplicas) would superficially suggest it has.
+//
+// "Stale" here means a hash value that matches neither the canonical nor the
+// legacy form of the expected pod-template hash for the current PCS template
+// (i.e. it is left over from some prior, no-longer-current template). Because
+// convergence is established by checking both the pod-template-hash label on
+// the PodClique and Status.CurrentPodTemplateHash against those expected
+// canonical/legacy hashes, a stale value in either field must block the
+// advance. The two table cases exercise exactly those inputs:
+//
+//   - "stale label": the PodClique's pod-template-hash label is a stale value
+//     while Status.CurrentPodTemplateHash is unset. Convergence must fail on
+//     the label check, so neither the template hash nor the generation hash
+//     may move to canonical.
+//   - "stale current template hash": the label is the current canonical hash
+//     (so the label check passes), but Status.CurrentPodTemplateHash already
+//     holds a stale value from a prior template. Convergence must fail on the
+//     status check, the stale Status.CurrentPodTemplateHash must be preserved
+//     as-is (not overwritten with the canonical hash), and the generation
+//     hash must not advance.
+func TestMutateCurrentHashesDoesNotAdvanceWhenTemplateHashIsStale(t *testing.T) {
+	tests := []struct {
+		name                    string
+		labelPodTemplateHash    string
+		currentPodTemplateHash  string
+		wantPCSGenerationHash   string
+		wantCurrentTemplateHash string
+	}{
+		{
+			name:                    "stale label",
+			labelPodTemplateHash:    "stale-template-hash",
+			currentPodTemplateHash:  "",
+			wantPCSGenerationHash:   "old-generation-hash",
+			wantCurrentTemplateHash: "",
+		},
+		{
+			name:                    "stale current template hash",
+			labelPodTemplateHash:    "",
+			currentPodTemplateHash:  "stale-template-hash",
+			wantPCSGenerationHash:   "old-generation-hash",
+			wantCurrentTemplateHash: "stale-template-hash",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pcs, pclq, templateHashes, _ := newPodCliqueHashConvergenceFixture()
+			if tt.labelPodTemplateHash == "" {
+				tt.labelPodTemplateHash = templateHashes.Canonical
+			}
+			pclq.Labels[apicommon.LabelPodTemplateHash] = tt.labelPodTemplateHash
+			pclq.Status.CurrentPodTemplateHash = ptr.To(tt.currentPodTemplateHash)
+			pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(tt.wantPCSGenerationHash)
+			pclq.Status.Replicas = 2
+			pclq.Status.UpdatedReplicas = 2
+
+			err := mutateCurrentHashes(logr.Discard(), pcs, pclq)
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantCurrentTemplateHash, *pclq.Status.CurrentPodTemplateHash)
+			assert.Equal(t, tt.wantPCSGenerationHash, *pclq.Status.CurrentPodCliqueSetGenerationHash)
+		})
+	}
+}
+
+func newPodCliqueHashConvergenceFixture() (*grovecorev1alpha1.PodCliqueSet, *grovecorev1alpha1.PodClique, componentutils.HashCandidates, componentutils.HashCandidates) {
+	template := &grovecorev1alpha1.PodCliqueTemplateSpec{
+		Name: "worker",
+		Spec: grovecorev1alpha1.PodCliqueSpec{
+			PodSpec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "main", Image: "main:v1"}},
+			},
+		},
+	}
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "pcs", Namespace: "default"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{template},
+			},
+		},
+	}
+	templateHashes := componentutils.ComputePCLQPodTemplateHashCandidates(template, "")
+	generationHashes := componentutils.ComputePCSGenerationHashCandidates(pcs)
+	pcs.Status.CurrentGenerationHash = ptr.To(generationHashes.Canonical)
+	pclq := &grovecorev1alpha1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pcs-0-worker",
+			Namespace: "default",
+			Labels: map[string]string{
+				apicommon.LabelPartOfKey:                "pcs",
+				apicommon.LabelPodCliqueSetReplicaIndex: "0",
+				apicommon.LabelPodTemplateHash:          templateHashes.Canonical,
+			},
+		},
+	}
+	return pcs, pclq, templateHashes, generationHashes
 }
 
 // createPodWithHash creates a test pod with the specified template hash label

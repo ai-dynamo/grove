@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
@@ -276,6 +277,81 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 			stats, err := reconciler.computeAvailableAndUpdatedReplicas(context.Background(), logr.Discard(), pcs)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expectedAvailable, stats.availableReplicas, "Available replicas mismatch")
+		})
+	}
+}
+
+// TestComputePCSUpdatedReplicasRequiresStandaloneHashConvergence verifies that
+// a standalone-PodClique-backed replica only counts toward updatedReplicas once
+// all three rollout hashes tracked by isStandalonePCLQUpdated have converged on
+// the values derived from the current PCS spec: the PCLQ's pod-template-hash
+// label, status.CurrentPodTemplateHash, and status.CurrentPodCliqueSetGenerationHash.
+// Each can lag the others mid-reconcile, so the cases pin one stale at a time
+// plus a happy-path case where everything converges.
+func TestComputePCSUpdatedReplicasRequiresStandaloneHashConvergence(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+		WithReplicas(1).
+		WithStandaloneClique("worker").
+		Build()
+	templateHashes := componentutils.ComputePCLQPodTemplateHashCandidates(pcs.Spec.Template.Cliques[0], pcs.Spec.Template.PriorityClassName)
+	generationHashes := componentutils.ComputePCSGenerationHashCandidates(pcs)
+	pcs.Status.CurrentGenerationHash = ptr.To(generationHashes.Canonical)
+
+	tests := []struct {
+		name                              string
+		labelPodTemplateHash              string
+		currentPodTemplateHash            string
+		currentPodCliqueSetGenerationHash string
+		wantUpdatedReplicas               int32
+	}{
+		{
+			name:                              "stale generation hash",
+			labelPodTemplateHash:              templateHashes.Canonical,
+			currentPodTemplateHash:            templateHashes.Canonical,
+			currentPodCliqueSetGenerationHash: "old-generation-hash",
+			wantUpdatedReplicas:               0,
+		},
+		{
+			name:                              "stale current template hash",
+			labelPodTemplateHash:              templateHashes.Canonical,
+			currentPodTemplateHash:            "old-template-hash",
+			currentPodCliqueSetGenerationHash: generationHashes.Canonical,
+			wantUpdatedReplicas:               0,
+		},
+		{
+			name:                              "stale label template hash",
+			labelPodTemplateHash:              "old-template-hash",
+			currentPodTemplateHash:            templateHashes.Canonical,
+			currentPodCliqueSetGenerationHash: generationHashes.Canonical,
+			wantUpdatedReplicas:               0,
+		},
+		{
+			name:                              "hashes converged",
+			labelPodTemplateHash:              templateHashes.Canonical,
+			currentPodTemplateHash:            templateHashes.Canonical,
+			currentPodCliqueSetGenerationHash: generationHashes.Canonical,
+			wantUpdatedReplicas:               1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pclq := testutils.NewPodCliqueBuilder(testPCSName, uuid.NewUUID(), "worker", testNamespace, 0).
+				WithOptions(testutils.WithPCLQReplicaReadyStatus(1)).
+				Build()
+			pclq.Labels[apicommon.LabelPodTemplateHash] = tt.labelPodTemplateHash
+			pclq.Status.UpdatedReplicas = 1
+			pclq.Status.CurrentPodTemplateHash = ptr.To(tt.currentPodTemplateHash)
+			pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(tt.currentPodCliqueSetGenerationHash)
+
+			cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, pclq})
+			reconciler := &Reconciler{client: cl}
+
+			stats, err := reconciler.computeAvailableAndUpdatedReplicas(context.Background(), logr.Discard(), pcs)
+
+			assert.NoError(t, err)
+			assert.Equal(t, int32(1), stats.availableReplicas)
+			assert.Equal(t, tt.wantUpdatedReplicas, stats.updatedReplicas)
 		})
 	}
 }
