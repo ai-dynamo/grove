@@ -191,6 +191,7 @@ The existing `TopologyLevelUnavailable` status condition on `PodCliqueSet`, whic
 #### Beta
 - Validated in at least one production workload
 - No breaking API changes since alpha
+- Deprecated `packDomain` API field removed after existing workload migration has been validated
 
 #### GA
 - Stable API
