@@ -221,7 +221,12 @@ func (r *Reconciler) emitAllScheduledReplicasLostIfNeeded(pcsg *grovecorev1alpha
 	}
 }
 
-// mutateMinAvailableBreachedCondition updates the MinAvailableBreached condition based on replica availability
+// mutateMinAvailableBreachedCondition updates the MinAvailableBreached condition based on replica availability.
+//
+// On a MinAvailableBreached True→False transition (i.e. the PCSG has just recovered), it also
+// removes the GangTerminationInProgress condition. That flag is set by the PCS-level gang-
+// termination handler when it fires for this PCSG; clearing it here re-arms the next breach
+// episode so a fresh regression after recovery can be recycled.
 func mutateMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) {
 	newCondition := computeMinAvailableBreachedCondition(logger, pcsg, pclqsPerPCSGReplica)
 	if k8sutils.HasConditionChanged(pcsg.Status.Conditions, newCondition) {
@@ -231,6 +236,12 @@ func mutateMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1al
 			"status", newCondition.Status,
 			"reason", newCondition.Reason)
 		meta.SetStatusCondition(&pcsg.Status.Conditions, newCondition)
+	}
+	if newCondition.Status == metav1.ConditionFalse &&
+		meta.IsStatusConditionTrue(pcsg.Status.Conditions, constants.ConditionTypeGangTerminationInProgress) {
+		logger.Info("Clearing GangTerminationInProgress condition — PCSG recovered",
+			"pcsg", client.ObjectKeyFromObject(pcsg))
+		meta.RemoveStatusCondition(&pcsg.Status.Conditions, constants.ConditionTypeGangTerminationInProgress)
 	}
 }
 

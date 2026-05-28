@@ -956,3 +956,53 @@ func assertCondition(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup
 	isBreached := condition.Status == metav1.ConditionTrue
 	assert.Equal(t, expectBreached, isBreached, "condition breach status mismatch")
 }
+
+// TestMutateMinAvailableBreachedConditionClearsGangTerminationInProgress pins the second half
+// of the in-progress-flag loop-break design: when MinAvailableBreached transitions from True
+// (or unset) to False, the PCSG status reconciler must also remove the
+// GangTerminationInProgress condition so the next regression can be recycled.
+func TestMutateMinAvailableBreachedConditionClearsGangTerminationInProgress(t *testing.T) {
+	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
+			Replicas:     2,
+			MinAvailable: ptr.To(int32(1)),
+		},
+		Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+			Conditions: []metav1.Condition{
+				{
+					Type:   constants.ConditionTypeMinAvailableBreached,
+					Status: metav1.ConditionTrue,
+					Reason: constants.ConditionReasonScheduledReplicasBelowMinAvailable,
+				},
+				{
+					Type:   constants.ConditionTypeGangTerminationInProgress,
+					Status: metav1.ConditionTrue,
+					Reason: constants.ConditionReasonGangTerminationActive,
+				},
+			},
+		},
+	}
+	pclqsHealthy := map[string][]grovecorev1alpha1.PodClique{
+		"0": healthyPCSGReplica(),
+		"1": healthyPCSGReplica(),
+	}
+
+	mutateMinAvailableBreachedCondition(logr.Discard(), pcsg, pclqsHealthy)
+
+	// MinAvailableBreached must now be False (recovery).
+	breach := pcsg.Status.Conditions
+	var breachStatus metav1.ConditionStatus
+	for _, c := range breach {
+		if c.Type == constants.ConditionTypeMinAvailableBreached {
+			breachStatus = c.Status
+		}
+	}
+	assert.Equal(t, metav1.ConditionFalse, breachStatus, "MinAvailableBreached should be False after recovery")
+
+	// GangTerminationInProgress must have been cleared.
+	for _, c := range pcsg.Status.Conditions {
+		if c.Type == constants.ConditionTypeGangTerminationInProgress {
+			t.Fatalf("GangTerminationInProgress condition should have been removed on recovery, still present with status %s", c.Status)
+		}
+	}
+}
