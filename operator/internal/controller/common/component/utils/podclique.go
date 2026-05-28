@@ -112,7 +112,9 @@ func WasPCLQEverScheduled(pclq *grovecorev1alpha1.PodClique) bool {
 
 // WasPCSGEverHealthy reports whether the PodCliqueScalingGroup has ever reached the
 // MinAvailableBreached=False state since creation. Mirrors WasPCLQEverScheduled but reads the
-// MinAvailableBreached condition (PCSGs have no PodCliqueScheduled equivalent).
+// PCSG's own MinAvailableBreached condition (PCSGs have no PodCliqueScheduled equivalent).
+// Used to gate gang-termination so an initial-startup PCSG that has not yet stabilized is left
+// alone — only regressions from a previously-healthy state get recycled.
 func WasPCSGEverHealthy(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) bool {
 	cond := meta.FindStatusCondition(pcsg.Status.Conditions, constants.ConditionTypeMinAvailableBreached)
 	if cond == nil {
