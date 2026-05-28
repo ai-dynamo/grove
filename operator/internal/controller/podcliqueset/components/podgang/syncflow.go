@@ -350,29 +350,35 @@ func buildPodCliqueInfo(sc *syncContext, pclqTemplateSpec *grovecorev1alpha1.Pod
 
 // createTopologyPackConstraint creates a TopologyPackConstraint based on the sync context and provided parameters for a resource.
 // PackConstraints are defined at multiple levels (PodCliqueSet, PodCliqueScalingGroup, PodClique). This function helps create a TopologyPackConstraint for any of these levels.
-func createTopologyPackConstraint(sc *syncContext, nsName types.NamespacedName, requiredTopologyConstraint *grovecorev1alpha1.TopologyConstraint) *groveschedulerv1alpha1.TopologyConstraint {
+func createTopologyPackConstraint(sc *syncContext, nsName types.NamespacedName, topologyConstraint *grovecorev1alpha1.TopologyConstraint) *groveschedulerv1alpha1.TopologyConstraint {
 	// If Topology aware scheduling is disabled, return nil even if TopologyConstraint is specified.
-	if !sc.tasEnabled || requiredTopologyConstraint == nil {
+	if !sc.tasEnabled || topologyConstraint == nil {
 		return nil
 	}
-	var pgPackConstraint *groveschedulerv1alpha1.TopologyPackConstraint
-	// If requiredTopologyConstraint is specified, set the required topology key accordingly.
-	requiredDomain := requiredTopologyConstraint.RequiredDomain()
-	requiredTopologyLevel, found := lo.Find(sc.topologyLevels, func(topologyLevel grovecorev1alpha1.TopologyLevel) bool {
-		return topologyLevel.Domain == requiredDomain
+
+	pgPackConstraint := &groveschedulerv1alpha1.TopologyPackConstraint{}
+	pgPackConstraint.Required = topologyLevelKeyForPackDomain(sc, nsName, topologyConstraint, topologyConstraint.RequiredDomain(), "required")
+	pgPackConstraint.Preferred = topologyLevelKeyForPackDomain(sc, nsName, topologyConstraint, topologyConstraint.PreferredDomain(), "preferred")
+
+	if pgPackConstraint.Required == nil && pgPackConstraint.Preferred == nil {
+		return nil
+	}
+	return &groveschedulerv1alpha1.TopologyConstraint{PackConstraint: pgPackConstraint}
+}
+
+func topologyLevelKeyForPackDomain(sc *syncContext, nsName types.NamespacedName, topologyConstraint *grovecorev1alpha1.TopologyConstraint, topologyDomain grovecorev1alpha1.TopologyDomain, packConstraintType string) *string {
+	if topologyDomain == "" {
+		return nil
+	}
+	topologyLevel, found := lo.Find(sc.topologyLevels, func(topologyLevel grovecorev1alpha1.TopologyLevel) bool {
+		return topologyLevel.Domain == topologyDomain
 	})
 	if !found {
-		// This can only happen if the ClusterTopologyBinding CR has been updated and no longer contains a topology level
-		// that is being referenced by the resource's TopologyConstraint.
-		// In the current version it's been decided to log this occurrence and skip setting the required constraint which is equivalent
-		// to nullifying the required constraint.
-		sc.logger.Info("required topology domain not found in cluster topology levels, skipping setting required pack constraint", "namespacedName", nsName, "requiredTopologyConstraint", *requiredTopologyConstraint)
-	} else {
-		pgPackConstraint = &groveschedulerv1alpha1.TopologyPackConstraint{
-			Required: ptr.To(requiredTopologyLevel.Key),
-		}
+		// This can happen if the ClusterTopologyBinding CR has changed after the resource was admitted.
+		sc.logger.Info(packConstraintType+" topology domain not found in cluster topology levels, skipping setting "+packConstraintType+" pack constraint", "namespacedName", nsName, "topologyDomain", topologyDomain, "topologyConstraint", *topologyConstraint)
+		return nil
 	}
-	return lo.Ternary(pgPackConstraint != nil, &groveschedulerv1alpha1.TopologyConstraint{PackConstraint: pgPackConstraint}, nil)
+	return ptr.To(topologyLevel.Key)
 }
 
 // determinePodCliqueReplicas determines replica count considering HPA mutations.

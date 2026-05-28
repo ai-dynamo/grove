@@ -962,10 +962,15 @@ func TestComputeExpectedPodGangs(t *testing.T) {
 }
 
 type expectedPodGangTopologyConstraints struct {
-	fqn             string
-	topologyLevel   *grovecorev1alpha1.TopologyLevel
-	pclqConstraints map[string]grovecorev1alpha1.TopologyLevel
-	pcsgConstraints map[string]grovecorev1alpha1.TopologyLevel
+	fqn                    string
+	topologyPackConstraint *expectedTopologyPackConstraint
+	pclqPackConstraints    map[string]expectedTopologyPackConstraint
+	pcsgPackConstraints    map[string]expectedTopologyPackConstraint
+}
+
+type expectedTopologyPackConstraint struct {
+	requiredKey  string
+	preferredKey string
 }
 
 // TestComputeExpectedPodGangsWithTopologyConstraints tests computeExpectedPodGangs with topology constraints.
@@ -986,6 +991,7 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 		name                               string
 		tasEnabled                         bool
 		pcsTopologyLevel                   *grovecorev1alpha1.TopologyLevel
+		pcsTopologyConstraint              *grovecorev1alpha1.TopologyConstraint
 		pclqTemplateSpecs                  []*grovecorev1alpha1.PodCliqueTemplateSpec
 		pcsgConfigs                        []grovecorev1alpha1.PodCliqueScalingGroupConfig
 		expectedNumPodGangs                int
@@ -1021,8 +1027,64 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 			expectedNumPodGangs: 1,
 			expectedPodGangTopologyConstraints: []expectedPodGangTopologyConstraints{
 				{
-					fqn:           "test-pcs-0",
-					topologyLevel: &grovecorev1alpha1.TopologyLevel{Domain: "zone", Key: "topology.kubernetes.io/zone"},
+					fqn: "test-pcs-0",
+					topologyPackConstraint: &expectedTopologyPackConstraint{
+						requiredKey: topologyLevelZone.Key,
+					},
+				},
+			},
+		},
+		{
+			name:       "PCS with preferred-only topology constraint at PCS level",
+			tasEnabled: true,
+			pcsTopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+				Pack: &grovecorev1alpha1.TopologyPackConstraint{PreferredDomain: "host"},
+			},
+			pclqTemplateSpecs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{
+					Name: "worker",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						Replicas:     3,
+						MinAvailable: ptr.To(int32(2)),
+					},
+				},
+			},
+			expectedNumPodGangs: 1,
+			expectedPodGangTopologyConstraints: []expectedPodGangTopologyConstraints{
+				{
+					fqn: "test-pcs-0",
+					topologyPackConstraint: &expectedTopologyPackConstraint{
+						preferredKey: topologyLevelHost.Key,
+					},
+				},
+			},
+		},
+		{
+			name:       "PCS with required and preferred topology constraints at PCS level",
+			tasEnabled: true,
+			pcsTopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+				Pack: &grovecorev1alpha1.TopologyPackConstraint{
+					RequiredDomain:  "zone",
+					PreferredDomain: "host",
+				},
+			},
+			pclqTemplateSpecs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{
+					Name: "worker",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						Replicas:     3,
+						MinAvailable: ptr.To(int32(2)),
+					},
+				},
+			},
+			expectedNumPodGangs: 1,
+			expectedPodGangTopologyConstraints: []expectedPodGangTopologyConstraints{
+				{
+					fqn: "test-pcs-0",
+					topologyPackConstraint: &expectedTopologyPackConstraint{
+						requiredKey:  topologyLevelZone.Key,
+						preferredKey: topologyLevelHost.Key,
+					},
 				},
 			},
 		},
@@ -1051,10 +1113,41 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 			expectedNumPodGangs: 1,
 			expectedPodGangTopologyConstraints: []expectedPodGangTopologyConstraints{
 				{
-					fqn:           "test-pcs-0",
-					topologyLevel: nil,
-					pclqConstraints: map[string]grovecorev1alpha1.TopologyLevel{
-						"test-pcs-0-worker": topologyLevelHost,
+					fqn: "test-pcs-0",
+					pclqPackConstraints: map[string]expectedTopologyPackConstraint{
+						"test-pcs-0-worker": {requiredKey: topologyLevelHost.Key},
+					},
+				},
+			},
+		},
+		{
+			name:       "PCS with preferred-only topology constraint on standalone PCLQ",
+			tasEnabled: true,
+			pclqTemplateSpecs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{
+					Name: "router",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						Replicas:     3,
+						MinAvailable: ptr.To(int32(2)),
+					},
+				},
+				{
+					Name: "worker",
+					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+						Pack: &grovecorev1alpha1.TopologyPackConstraint{PreferredDomain: "host"},
+					},
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						Replicas:     2,
+						MinAvailable: ptr.To(int32(1)),
+					},
+				},
+			},
+			expectedNumPodGangs: 1,
+			expectedPodGangTopologyConstraints: []expectedPodGangTopologyConstraints{
+				{
+					fqn: "test-pcs-0",
+					pclqPackConstraints: map[string]expectedTopologyPackConstraint{
+						"test-pcs-0-worker": {preferredKey: topologyLevelHost.Key},
 					},
 				},
 			},
@@ -1084,11 +1177,13 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 			expectedNumPodGangs: 1,
 			expectedPodGangTopologyConstraints: []expectedPodGangTopologyConstraints{
 				{
-					fqn:           "test-pcs-0",
-					topologyLevel: &topologyLevelZone,
-					pclqConstraints: map[string]grovecorev1alpha1.TopologyLevel{
-						"test-pcs-0-worker": topologyLevelHost,
-						"test-pcs-0-router": topologyLevelZone,
+					fqn: "test-pcs-0",
+					topologyPackConstraint: &expectedTopologyPackConstraint{
+						requiredKey: topologyLevelZone.Key,
+					},
+					pclqPackConstraints: map[string]expectedTopologyPackConstraint{
+						"test-pcs-0-worker": {requiredKey: topologyLevelHost.Key},
+						"test-pcs-0-router": {requiredKey: topologyLevelZone.Key},
 					},
 				},
 			},
@@ -1127,22 +1222,72 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 			expectedNumPodGangs: 2,
 			expectedPodGangTopologyConstraints: []expectedPodGangTopologyConstraints{
 				{
-					fqn:           "test-pcs-0",
-					topologyLevel: &topologyLevelZone,
-					pclqConstraints: map[string]grovecorev1alpha1.TopologyLevel{
-						"test-pcs-0-scaling-group-0-decode-leader": topologyLevelHost,
-						"test-pcs-0-scaling-group-0-decode-worker": topologyLevelHost,
+					fqn: "test-pcs-0",
+					topologyPackConstraint: &expectedTopologyPackConstraint{
+						requiredKey: topologyLevelZone.Key,
 					},
-					pcsgConstraints: map[string]grovecorev1alpha1.TopologyLevel{
-						"test-pcs-0-scaling-group-0": topologyLevelRack,
+					pclqPackConstraints: map[string]expectedTopologyPackConstraint{
+						"test-pcs-0-scaling-group-0-decode-leader": {requiredKey: topologyLevelHost.Key},
+						"test-pcs-0-scaling-group-0-decode-worker": {requiredKey: topologyLevelHost.Key},
+					},
+					pcsgPackConstraints: map[string]expectedTopologyPackConstraint{
+						"test-pcs-0-scaling-group-0": {requiredKey: topologyLevelRack.Key},
 					},
 				},
 				{
-					fqn:           "test-pcs-0-scaling-group-0",
-					topologyLevel: &topologyLevelRack,
-					pclqConstraints: map[string]grovecorev1alpha1.TopologyLevel{
-						"test-pcs-0-scaling-group-1-decode-leader": topologyLevelHost,
-						"test-pcs-0-scaling-group-1-decode-worker": topologyLevelHost,
+					fqn: "test-pcs-0-scaling-group-0",
+					topologyPackConstraint: &expectedTopologyPackConstraint{
+						requiredKey: topologyLevelRack.Key,
+					},
+					pclqPackConstraints: map[string]expectedTopologyPackConstraint{
+						"test-pcs-0-scaling-group-1-decode-leader": {requiredKey: topologyLevelHost.Key},
+						"test-pcs-0-scaling-group-1-decode-worker": {requiredKey: topologyLevelHost.Key},
+					},
+				},
+			},
+		},
+		{
+			name:       "PCS with preferred-only topology constraint on PCSG",
+			tasEnabled: true,
+			pclqTemplateSpecs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{
+					Name: "decode-leader",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						Replicas:     1,
+						MinAvailable: ptr.To(int32(1)),
+					},
+				},
+				{
+					Name: "decode-worker",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						Replicas:     5,
+						MinAvailable: ptr.To(int32(1)),
+					},
+				},
+			},
+			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				{
+					Name:         "scaling-group",
+					Replicas:     ptr.To(int32(2)),
+					MinAvailable: ptr.To(int32(1)),
+					CliqueNames:  []string{"decode-leader", "decode-worker"},
+					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+						Pack: &grovecorev1alpha1.TopologyPackConstraint{PreferredDomain: "rack"},
+					},
+				},
+			},
+			expectedNumPodGangs: 2,
+			expectedPodGangTopologyConstraints: []expectedPodGangTopologyConstraints{
+				{
+					fqn: "test-pcs-0",
+					pcsgPackConstraints: map[string]expectedTopologyPackConstraint{
+						"test-pcs-0-scaling-group-0": {preferredKey: topologyLevelRack.Key},
+					},
+				},
+				{
+					fqn: "test-pcs-0-scaling-group-0",
+					topologyPackConstraint: &expectedTopologyPackConstraint{
+						preferredKey: topologyLevelRack.Key,
 					},
 				},
 			},
@@ -1189,23 +1334,27 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 			expectedNumPodGangs: 2,
 			expectedPodGangTopologyConstraints: []expectedPodGangTopologyConstraints{
 				{
-					fqn:           "test-pcs-0",
-					topologyLevel: &topologyLevelZone,
-					pclqConstraints: map[string]grovecorev1alpha1.TopologyLevel{
-						"test-pcs-0-router":                        topologyLevelZone,
-						"test-pcs-0-scaling-group-0-decode-leader": topologyLevelHost,
-						"test-pcs-0-scaling-group-0-decode-worker": topologyLevelHost,
+					fqn: "test-pcs-0",
+					topologyPackConstraint: &expectedTopologyPackConstraint{
+						requiredKey: topologyLevelZone.Key,
 					},
-					pcsgConstraints: map[string]grovecorev1alpha1.TopologyLevel{
-						"test-pcs-0-scaling-group-0": topologyLevelRack,
+					pclqPackConstraints: map[string]expectedTopologyPackConstraint{
+						"test-pcs-0-router":                        {requiredKey: topologyLevelZone.Key},
+						"test-pcs-0-scaling-group-0-decode-leader": {requiredKey: topologyLevelHost.Key},
+						"test-pcs-0-scaling-group-0-decode-worker": {requiredKey: topologyLevelHost.Key},
+					},
+					pcsgPackConstraints: map[string]expectedTopologyPackConstraint{
+						"test-pcs-0-scaling-group-0": {requiredKey: topologyLevelRack.Key},
 					},
 				},
 				{
-					fqn:           "test-pcs-0-scaling-group-0",
-					topologyLevel: &topologyLevelRack,
-					pclqConstraints: map[string]grovecorev1alpha1.TopologyLevel{
-						"test-pcs-0-scaling-group-1-decode-leader": topologyLevelHost,
-						"test-pcs-0-scaling-group-1-decode-worker": topologyLevelHost,
+					fqn: "test-pcs-0-scaling-group-0",
+					topologyPackConstraint: &expectedTopologyPackConstraint{
+						requiredKey: topologyLevelRack.Key,
+					},
+					pclqPackConstraints: map[string]expectedTopologyPackConstraint{
+						"test-pcs-0-scaling-group-1-decode-leader": {requiredKey: topologyLevelHost.Key},
+						"test-pcs-0-scaling-group-1-decode-worker": {requiredKey: topologyLevelHost.Key},
 					},
 				},
 			},
@@ -1285,19 +1434,23 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 			expectedNumPodGangs: 2,
 			expectedPodGangTopologyConstraints: []expectedPodGangTopologyConstraints{
 				{
-					fqn:           "test-pcs-0",
-					topologyLevel: &topologyLevelZone,
-					pclqConstraints: map[string]grovecorev1alpha1.TopologyLevel{
-						"test-pcs-0-scaling-group-0-decode-leader": topologyLevelHost,
-						"test-pcs-0-scaling-group-0-decode-worker": topologyLevelHost,
+					fqn: "test-pcs-0",
+					topologyPackConstraint: &expectedTopologyPackConstraint{
+						requiredKey: topologyLevelZone.Key,
+					},
+					pclqPackConstraints: map[string]expectedTopologyPackConstraint{
+						"test-pcs-0-scaling-group-0-decode-leader": {requiredKey: topologyLevelHost.Key},
+						"test-pcs-0-scaling-group-0-decode-worker": {requiredKey: topologyLevelHost.Key},
 					},
 				},
 				{
-					fqn:           "test-pcs-0-scaling-group-0",
-					topologyLevel: &topologyLevelZone,
-					pclqConstraints: map[string]grovecorev1alpha1.TopologyLevel{
-						"test-pcs-0-scaling-group-1-decode-leader": topologyLevelHost,
-						"test-pcs-0-scaling-group-1-decode-worker": topologyLevelHost,
+					fqn: "test-pcs-0-scaling-group-0",
+					topologyPackConstraint: &expectedTopologyPackConstraint{
+						requiredKey: topologyLevelZone.Key,
+					},
+					pclqPackConstraints: map[string]expectedTopologyPackConstraint{
+						"test-pcs-0-scaling-group-1-decode-leader": {requiredKey: topologyLevelHost.Key},
+						"test-pcs-0-scaling-group-1-decode-worker": {requiredKey: topologyLevelHost.Key},
 					},
 				},
 			},
@@ -1308,7 +1461,9 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Setup
 			var pcsTopologyConstraint *grovecorev1alpha1.TopologyConstraint
-			if tc.pcsTopologyLevel != nil {
+			if tc.pcsTopologyConstraint != nil {
+				pcsTopologyConstraint = tc.pcsTopologyConstraint
+			} else if tc.pcsTopologyLevel != nil {
 				pcsTopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
 					PackDomain: tc.pcsTopologyLevel.Domain,
 				}
@@ -1356,6 +1511,10 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 			if !tc.tasEnabled {
 				mustNotHaveAnyTopologyConstraints(t, sc.expectedPodGangs)
 			} else {
+				if len(tc.expectedPodGangTopologyConstraints) == 0 {
+					mustNotHaveAnyTopologyConstraints(t, sc.expectedPodGangs)
+					return
+				}
 				// Iterate over the expected pod gang topology constraints.
 				for _, expectedPGConstraint := range tc.expectedPodGangTopologyConstraints {
 					// find the computed pod gang
@@ -1367,38 +1526,27 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 					// verify pod gang topology constraint. This is the top level topology constraint.
 					// For base pod gang it comes from PodCliqueSet.Spec.Template.TopologyConstraint.
 					// For scaled pod gangs it comes from PodCliqueScalingGroup.Spec.TopologyConstraint.
-					if expectedPGConstraint.topologyLevel == nil {
-						assert.Nil(t, computedPodGang.topologyConstraint)
-					} else {
-						// assert pod gang topology constraint is set correctly
-						assertRequiredTopologyConstraint(t, computedPodGang.topologyConstraint, expectedPGConstraint.topologyLevel.Key)
-					}
+					assertTopologyPackConstraint(t, computedPodGang.topologyConstraint, expectedPGConstraint.topologyPackConstraint)
 
 					// verify pclq topology constraints
 					for _, pclq := range computedPodGang.pclqs {
-						expectedPCLQConstraint, exists := expectedPGConstraint.pclqConstraints[pclq.fqn]
-						if !exists {
-							assert.Nil(t, pclq.topologyConstraint)
-						} else {
-							// assert pclq topology constraint is set correctly
-							assertRequiredTopologyConstraint(t, pclq.topologyConstraint, expectedPCLQConstraint.Key)
-						}
+						expectedPCLQConstraint := expectedPCLQPackConstraint(expectedPGConstraint, pclq.fqn)
+						assertTopologyPackConstraint(t, pclq.topologyConstraint, expectedPCLQConstraint)
 					}
 
-					// iterate over expected PCSG Constraints and verify computed pcsg topology constraints
-					for pcsgFQN, expectedPCSGTC := range expectedPGConstraint.pcsgConstraints {
+					// iterate over expected PCSG pack constraints and verify computed pcsg topology constraints
+					for pcsgFQN, expectedPCSGTC := range expectedPGConstraint.pcsgPackConstraints {
 						actualPCSGTC, found := lo.Find(computedPodGang.pcsgTopologyConstraints, func(pcsgTC groveschedulerv1alpha1.TopologyConstraintGroupConfig) bool {
 							return pcsgTC.Name == pcsgFQN
 						})
-						assert.True(t, found, "Expected PCSG topology constraint for %s not found", pcsgFQN)
-						// assert pcsg topology constraint is set correctly
-						assertRequiredTopologyConstraint(t, actualPCSGTC.TopologyConstraint, expectedPCSGTC.Key)
+						require.True(t, found, "Expected PCSG topology constraint for %s not found", pcsgFQN)
+						assertTopologyPackConstraint(t, actualPCSGTC.TopologyConstraint, &expectedPCSGTC)
 					}
 
 					// iterate over computed PCSG topology constraints to ensure that expectations are properly defined.
 					// This ensures that developer mistakes are caught when defining the topology constraint expectations.
 					for _, actualPCSGTC := range computedPodGang.pcsgTopologyConstraints {
-						_, exists := expectedPGConstraint.pcsgConstraints[actualPCSGTC.Name]
+						_, exists := expectedPGConstraint.pcsgPackConstraints[actualPCSGTC.Name]
 						if !exists {
 							t.Errorf("Unexpected PCSG topology constraint for %s found in PodGang %s", actualPCSGTC.Name, computedPodGang.fqn)
 						}
@@ -1407,6 +1555,13 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 			}
 		})
 	}
+}
+
+func expectedPCLQPackConstraint(expected expectedPodGangTopologyConstraints, pclqFQN string) *expectedTopologyPackConstraint {
+	if expectedPCLQConstraint, exists := expected.pclqPackConstraints[pclqFQN]; exists {
+		return &expectedPCLQConstraint
+	}
+	return nil
 }
 
 func mustNotHaveAnyTopologyConstraints(t *testing.T, podGangs []*podGangInfo) {
@@ -1420,12 +1575,25 @@ func mustNotHaveAnyTopologyConstraints(t *testing.T, podGangs []*podGangInfo) {
 	}
 }
 
-func assertRequiredTopologyConstraint(t *testing.T, got *groveschedulerv1alpha1.TopologyConstraint, wantedKey string) {
-	assert.NotNil(t, got)
-	assert.NotNil(t, got.PackConstraint)
-	assert.Nil(t, got.PackConstraint.Preferred)
-	assert.NotNil(t, got.PackConstraint.Required)
-	assert.Equal(t, wantedKey, *got.PackConstraint.Required)
+func assertTopologyPackConstraint(t *testing.T, got *groveschedulerv1alpha1.TopologyConstraint, expected *expectedTopologyPackConstraint) {
+	if expected == nil {
+		assert.Nil(t, got)
+		return
+	}
+	require.NotNil(t, got)
+	require.NotNil(t, got.PackConstraint)
+	if expected.requiredKey == "" {
+		assert.Nil(t, got.PackConstraint.Required)
+	} else {
+		require.NotNil(t, got.PackConstraint.Required)
+		assert.Equal(t, expected.requiredKey, *got.PackConstraint.Required)
+	}
+	if expected.preferredKey == "" {
+		assert.Nil(t, got.PackConstraint.Preferred)
+	} else {
+		require.NotNil(t, got.PackConstraint.Preferred)
+		assert.Equal(t, expected.preferredKey, *got.PackConstraint.Preferred)
+	}
 }
 
 // TestDeterminePCSGReplicas tests the determinePCSGReplicas method
