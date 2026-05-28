@@ -27,6 +27,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/authorization"
 	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/defaulting"
 	pcsvalidation "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/validation"
+	scalevalidation "github.com/ai-dynamo/grove/operator/internal/webhook/admission/scale/validation"
 
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
@@ -45,6 +46,11 @@ func Register(mgr manager.Manager, operatorCfg *configv1alpha1.OperatorConfigura
 	slog.Info("Registering webhook with manager", "handler", pcsvalidation.Name)
 	if err := pcsValidatingWebhook.RegisterWithManager(mgr); err != nil {
 		return fmt.Errorf("failed adding %s webhook handler: %v", pcsvalidation.Name, err)
+	}
+	replicaValidatingWebhook := scalevalidation.NewHandler(mgr)
+	slog.Info("Registering webhook with manager", "handler", scalevalidation.Name)
+	if err := replicaValidatingWebhook.RegisterWithManager(mgr); err != nil {
+		return fmt.Errorf("failed adding %s webhook handler: %v", scalevalidation.Name, err)
 	}
 	ctValidatingWebhook := ctvalidation.NewHandler(mgr, schedRegistry)
 	slog.Info("Registering webhook with manager", "handler", ctvalidation.Name)

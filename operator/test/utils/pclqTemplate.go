@@ -142,6 +142,12 @@ func (b *PodCliqueTemplateSpecBuilder) WithInitContainer(container corev1.Contai
 	return b
 }
 
+// WithResourceSharing sets resource sharing for the PodCliqueTemplateSpec.
+func (b *PodCliqueTemplateSpecBuilder) WithResourceSharing(resourceSharing []grovecorev1alpha1.ResourceSharingSpec) *PodCliqueTemplateSpecBuilder {
+	b.pclqTemplateSpec.ResourceSharing = resourceSharing
+	return b
+}
+
 // NewGPUContainer creates a container with GPU resources.
 // Optional command overrides the image entrypoint (e.g. "sleep", "infinity" for a long-running placeholder).
 func NewGPUContainer(name, image string, gpuCount int64, command ...string) corev1.Container {

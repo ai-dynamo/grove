@@ -170,6 +170,18 @@ func (b *PodCliqueSetBuilder) WithStatusConditions(conditions ...metav1.Conditio
 	return b
 }
 
+// WithResourceClaimTemplates sets the resource claim templates for the PodCliqueSet.
+func (b *PodCliqueSetBuilder) WithResourceClaimTemplates(resourceClaimTemplates ...grovecorev1alpha1.ResourceClaimTemplateConfig) *PodCliqueSetBuilder {
+	b.pcs.Spec.Template.ResourceClaimTemplates = resourceClaimTemplates
+	return b
+}
+
+// WithResourceSharing sets sharing for the PodCliqueSet.
+func (b *PodCliqueSetBuilder) WithResourceSharing(resourceSharing ...grovecorev1alpha1.PCSResourceSharingSpec) *PodCliqueSetBuilder {
+	b.pcs.Spec.Template.ResourceSharing = resourceSharing
+	return b
+}
+
 // Build creates a PodCliqueSet object.
 func (b *PodCliqueSetBuilder) Build() *grovecorev1alpha1.PodCliqueSet {
 	return b.pcs
