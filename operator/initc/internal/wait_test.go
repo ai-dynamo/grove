@@ -194,7 +194,8 @@ func TestRefreshReadyPodsOfPodClique(t *testing.T) {
 			},
 			pod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "podclique-a-pod-1",
+					Name:   "podclique-a-pod-1",
+					Labels: map[string]string{apicommon.LabelPodClique: "podclique-a"},
 				},
 				Status: corev1.PodStatus{
 					Conditions: []corev1.PodCondition{
@@ -218,7 +219,8 @@ func TestRefreshReadyPodsOfPodClique(t *testing.T) {
 			},
 			pod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "podclique-a-pod-1",
+					Name:   "podclique-a-pod-1",
+					Labels: map[string]string{apicommon.LabelPodClique: "podclique-a"},
 				},
 				Status: corev1.PodStatus{
 					Conditions: []corev1.PodCondition{
@@ -242,7 +244,8 @@ func TestRefreshReadyPodsOfPodClique(t *testing.T) {
 			},
 			pod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "podclique-a-pod-1",
+					Name:   "podclique-a-pod-1",
+					Labels: map[string]string{apicommon.LabelPodClique: "podclique-a"},
 				},
 			},
 			deletionEvent: true,
@@ -258,7 +261,8 @@ func TestRefreshReadyPodsOfPodClique(t *testing.T) {
 			},
 			pod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "podclique-b-pod-1",
+					Name:   "podclique-b-pod-1",
+					Labels: map[string]string{apicommon.LabelPodClique: "podclique-b"},
 				},
 				Status: corev1.PodStatus{
 					Conditions: []corev1.PodCondition{
@@ -282,7 +286,8 @@ func TestRefreshReadyPodsOfPodClique(t *testing.T) {
 			},
 			pod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "podclique-a-pod-1",
+					Name:   "podclique-a-pod-1",
+					Labels: map[string]string{apicommon.LabelPodClique: "podclique-a"},
 				},
 				Status: corev1.PodStatus{
 					Conditions: []corev1.PodCondition{

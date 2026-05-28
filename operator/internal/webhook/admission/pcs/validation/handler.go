@@ -20,6 +20,7 @@ import (
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	"github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
@@ -72,7 +73,12 @@ func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admis
 		return nil, errors.WrapError(err, ErrValidateCreatePodCliqueSet, string(admissionv1.Create), "failed to cast object to PodCliqueSet")
 	}
 
-	v := newPCSValidator(pcs, admissionv1.Create, h.tasConfig, h.schedulerConfig, h.client, h.schedRegistry)
+	pcsgs, err := componentutils.GetPCSGsForPCS(ctx, h.client, client.ObjectKeyFromObject(pcs))
+	if err != nil {
+		return nil, errors.WrapError(err, ErrValidateCreatePodCliqueSet, string(admissionv1.Create), fmt.Sprintf("failed to fetch PodCliqueScalingGroups for %s/%s", pcs.Namespace, pcs.Name))
+	}
+
+	v := newPCSValidator(pcs, pcsgs, admissionv1.Create, h.tasConfig, h.schedulerConfig, h.client, h.schedRegistry)
 	var allErrs field.ErrorList
 	topologyWarnings, topologyErrs := v.validateTopologyConstraintsOnCreate(ctx)
 	allErrs = append(allErrs, topologyErrs...)
@@ -102,8 +108,16 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 	if err != nil {
 		return nil, errors.WrapError(err, ErrValidateUpdatePodCliqueSet, string(admissionv1.Update), "failed to cast old object to PodCliqueSet")
 	}
+	if newPCS.DeletionTimestamp != nil {
+		return nil, nil
+	}
 
-	v := newPCSValidator(newPCS, admissionv1.Update, h.tasConfig, h.schedulerConfig, h.client, h.schedRegistry)
+	pcsgs, err := componentutils.GetPCSGsForPCS(ctx, h.client, client.ObjectKeyFromObject(newPCS))
+	if err != nil {
+		return nil, errors.WrapError(err, ErrValidateUpdatePodCliqueSet, string(admissionv1.Update), fmt.Sprintf("failed to fetch PodCliqueScalingGroups for %s/%s", newPCS.Namespace, newPCS.Name))
+	}
+
+	v := newPCSValidator(newPCS, pcsgs, admissionv1.Update, h.tasConfig, h.schedulerConfig, h.client, h.schedRegistry)
 	warnings, errs := v.validate()
 
 	// Validate MNNVL annotation immutability on PCS metadata and spec (clique templates)
