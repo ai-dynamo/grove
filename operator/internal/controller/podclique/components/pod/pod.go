@@ -150,10 +150,10 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 
 	labels := getLabels(pclq.ObjectMeta, pcsName, podGangName, pcsReplicaIndex, podIndex)
 	pod.ObjectMeta = metav1.ObjectMeta{
-		GenerateName: fmt.Sprintf("%s-", pclq.Name),
-		Namespace:    pclq.Namespace,
-		Labels:       labels,
-		Annotations:  pclq.Annotations,
+		Name:        apicommon.GeneratePodName(pclq.Name, podIndex),
+		Namespace:   pclq.Namespace,
+		Labels:      labels,
+		Annotations: pclq.Annotations,
 	}
 	if err = controllerutil.SetControllerReference(pclq, pod, r.scheme); err != nil {
 		return groveerr.WrapError(err,
@@ -364,7 +364,7 @@ func addEnvironmentVariables(pod *corev1.Pod, pclq *grovecorev1alpha1.PodClique,
 // configurePodHostname sets the pod hostname and subdomain for service discovery
 func configurePodHostname(pcsName string, pcsReplicaIndex int, pclqName string, pod *corev1.Pod, podIndex int) {
 	// Set hostname for service discovery (e.g., "my-pclq-0")
-	pod.Spec.Hostname = fmt.Sprintf("%s-%d", pclqName, podIndex)
+	pod.Spec.Hostname = apicommon.GeneratePodHostname(pclqName, podIndex)
 
 	// Set subdomain to headless service name (reusing existing logic)
 	pod.Spec.Subdomain = apicommon.GenerateHeadlessServiceName(

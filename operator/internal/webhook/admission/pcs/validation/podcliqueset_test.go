@@ -162,6 +162,265 @@ func TestResourceNamingValidation(t *testing.T) {
 	}
 }
 
+func TestGeneratedPodNameValidationUsesMaxReplicaIndexes(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		pcs     *grovecorev1alpha1.PodCliqueSet
+		wantErr bool
+	}{
+		{
+			name: "allows generated pod name above DNS label limit when hostname is valid",
+			pcs: testutils.NewPodCliqueSetBuilder(strings.Repeat("a", 30), "default", uuid.NewUUID()).
+				WithReplicas(101).
+				WithTerminationDelay(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(strings.Repeat("b", 26)).
+					WithReplicas(1).
+					WithRoleName("worker").
+					WithMinAvailable(1).
+					Build()).
+				Build(),
+		},
+		{
+			name: "standalone PodClique checks PCS max replica index for hostname",
+			pcs: testutils.NewPodCliqueSetBuilder(strings.Repeat("a", 30), "default", uuid.NewUUID()).
+				WithReplicas(1001).
+				WithTerminationDelay(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(strings.Repeat("b", 26)).
+					WithReplicas(1).
+					WithRoleName("worker").
+					WithMinAvailable(1).
+					Build()).
+				Build(),
+			wantErr: true,
+		},
+		{
+			name: "allows generated pod name at length limit",
+			pcs: testutils.NewPodCliqueSetBuilder(strings.Repeat("a", 30), "default", uuid.NewUUID()).
+				WithReplicas(11).
+				WithTerminationDelay(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(strings.Repeat("b", 23)).
+					WithReplicas(1).
+					WithRoleName("worker").
+					WithMinAvailable(1).
+					Build()).
+				Build(),
+		},
+		{
+			name: "standalone PodClique checks PodClique max pod index",
+			pcs: testutils.NewPodCliqueSetBuilder(strings.Repeat("a", 30), "default", uuid.NewUUID()).
+				WithReplicas(1).
+				WithTerminationDelay(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(strings.Repeat("b", 26)).
+					WithReplicas(1).
+					WithRoleName("worker").
+					WithMinAvailable(1).
+					WithScaleConfig(ptr.To(int32(1)), 1001).
+					Build()).
+				Build(),
+			wantErr: true,
+		},
+		{
+			name: "PCSG PodClique checks PCSG max replica index",
+			pcs: testutils.NewPodCliqueSetBuilder(strings.Repeat("a", 20), "default", uuid.NewUUID()).
+				WithReplicas(1).
+				WithTerminationDelay(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(strings.Repeat("b", 15)).
+					WithReplicas(1).
+					WithRoleName("worker").
+					WithMinAvailable(1).
+					Build()).
+				WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
+					Name:         strings.Repeat("c", 15),
+					CliqueNames:  []string{strings.Repeat("b", 15)},
+					Replicas:     ptr.To(int32(1)),
+					MinAvailable: ptr.To(int32(1)),
+					ScaleConfig: &grovecorev1alpha1.AutoScalingConfig{
+						MinReplicas: ptr.To(int32(1)),
+						MaxReplicas: 101,
+					},
+				}).
+				Build(),
+		},
+		{
+			name: "PCSG PodClique checks PCSG max replica index for hostname",
+			pcs: testutils.NewPodCliqueSetBuilder(strings.Repeat("a", 20), "default", uuid.NewUUID()).
+				WithReplicas(1).
+				WithTerminationDelay(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(strings.Repeat("b", 19)).
+					WithReplicas(1).
+					WithRoleName("worker").
+					WithMinAvailable(1).
+					Build()).
+				WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
+					Name:         strings.Repeat("c", 15),
+					CliqueNames:  []string{strings.Repeat("b", 19)},
+					Replicas:     ptr.To(int32(1)),
+					MinAvailable: ptr.To(int32(1)),
+					ScaleConfig: &grovecorev1alpha1.AutoScalingConfig{
+						MinReplicas: ptr.To(int32(1)),
+						MaxReplicas: 101,
+					},
+				}).
+				Build(),
+			wantErr: true,
+		},
+		{
+			name: "rejects generated hostnames with dots",
+			pcs: testutils.NewPodCliqueSetBuilder("workload.name", "default", uuid.NewUUID()).
+				WithReplicas(1).
+				WithTerminationDelay(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").
+					WithReplicas(1).
+					WithRoleName("worker").
+					WithMinAvailable(1).
+					Build()).
+				Build(),
+			wantErr: true,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			validator := newPCSValidator(tt.pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{
+				Profiles: []groveconfigv1alpha1.SchedulerProfile{
+					{Name: groveconfigv1alpha1.SchedulerNameKube},
+				},
+				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+			}, nil, testutils.NewDefaultFakeRegistry())
+
+			_, errs := validator.validate()
+
+			if tt.wantErr {
+				require.Error(t, errs.ToAggregate())
+			} else {
+				require.NoError(t, errs.ToAggregate())
+			}
+		})
+	}
+}
+
+func TestGeneratedPodResourceClaimReferenceNameValidation(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		pcs           *grovecorev1alpha1.PodCliqueSet
+		errorMatchers []testutils.ErrorMatcher
+	}{
+		{
+			name: "allows PCLQ resource claim reference name at DNS label limit",
+			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := testutils.NewPodCliqueSetBuilder(strings.Repeat("a", 44), "default", uuid.NewUUID()).
+					WithReplicas(1).
+					WithTerminationDelay(4 * time.Hour).
+					WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+					WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(strings.Repeat("b", 8)).
+						WithReplicas(1).
+						WithRoleName("worker").
+						WithMinAvailable(1).
+						Build()).
+					Build()
+				pcs.Spec.Template.Cliques[0].ResourceSharing = []grovecorev1alpha1.ResourceSharingSpec{
+					{Name: "gpu", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
+				}
+				return pcs
+			}(),
+		},
+		{
+			name: "rejects overlong PCS resource claim reference name",
+			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := testutils.NewPodCliqueSetBuilder(strings.Repeat("a", 56), "default", uuid.NewUUID()).
+					WithReplicas(1).
+					WithTerminationDelay(4 * time.Hour).
+					WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+					WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("b").
+						WithReplicas(1).
+						WithRoleName("worker").
+						WithMinAvailable(1).
+						Build()).
+					Build()
+				pcs.Spec.Template.ResourceSharing = []grovecorev1alpha1.PCSResourceSharingSpec{
+					{ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas}},
+				}
+				return pcs
+			}(),
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.resourceSharing[0].name"},
+			},
+		},
+		{
+			name: "rejects overlong PCSG resource claim reference name",
+			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := testutils.NewPodCliqueSetBuilder(strings.Repeat("a", 45), "default", uuid.NewUUID()).
+					WithReplicas(1).
+					WithTerminationDelay(4 * time.Hour).
+					WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+					WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("b").
+						WithReplicas(1).
+						WithRoleName("worker").
+						WithMinAvailable(1).
+						Build()).
+					WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
+						Name:         strings.Repeat("c", 8),
+						CliqueNames:  []string{"b"},
+						Replicas:     ptr.To(int32(1)),
+						MinAvailable: ptr.To(int32(1)),
+						ResourceSharing: []grovecorev1alpha1.PCSGResourceSharingSpec{
+							{ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas}},
+						},
+					}).
+					Build()
+				return pcs
+			}(),
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].resourceSharing[0].name"},
+			},
+		},
+		{
+			name: "rejects overlong PCLQ resource claim reference name",
+			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := testutils.NewPodCliqueSetBuilder(strings.Repeat("a", 50), "default", uuid.NewUUID()).
+					WithReplicas(1).
+					WithTerminationDelay(4 * time.Hour).
+					WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+					WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(strings.Repeat("b", 8)).
+						WithReplicas(1).
+						WithRoleName("worker").
+						WithMinAvailable(1).
+						Build()).
+					Build()
+				pcs.Spec.Template.Cliques[0].ResourceSharing = []grovecorev1alpha1.ResourceSharingSpec{
+					{Name: "gpu", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
+				}
+				return pcs
+			}(),
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].resourceSharing[0].name"},
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			validator := newPCSValidator(tt.pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{
+				Profiles: []groveconfigv1alpha1.SchedulerProfile{
+					{Name: groveconfigv1alpha1.SchedulerNameKube},
+				},
+				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+			}, nil, testutils.NewDefaultFakeRegistry())
+
+			_, errs := validator.validate()
+
+			if tt.errorMatchers != nil {
+				testutils.AssertErrorMatches(t, errs, tt.errorMatchers)
+			} else {
+				require.NoError(t, errs.ToAggregate())
+			}
+		})
+	}
+}
+
 func TestValidateSchedulerNames(t *testing.T) {
 	specPath := field.NewPath("cliques").Child("spec").Child("podSpec").Child("schedulerName")
 	tests := []struct {

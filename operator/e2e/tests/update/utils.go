@@ -557,7 +557,7 @@ func waitForOrdinalUpdating(tc *testctx.TestContext, ordinal int32) error {
 //  3. The new pod is created to fill the same logical position
 //  4. The new pod receives the same pod.Spec.Hostname (e.g., "workload1-pc-a-0-0")
 //
-// Only the pod name changes (due to GenerateName), while pod.Spec.Hostname represents the pod's
+// Only the pod name changes (due to its random suffix), while pod.Spec.Hostname represents the pod's
 // logical position in the workload hierarchy and remains constant.
 func getPodIdentifier(tc *testctx.TestContext, pod *corev1.Pod) string {
 	tc.T.Helper()

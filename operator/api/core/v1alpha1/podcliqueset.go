@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	resourcev1 "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 )
 
 // +genclient
@@ -398,6 +399,15 @@ type PodCliqueScalingGroupConfig struct {
 	// Must be equal to or stricter than parent PodCliqueSet constraints.
 	// +optional
 	TopologyConstraint *TopologyConstraint `json:"topologyConstraint,omitempty"`
+}
+
+// MaxReplicas returns the maximum number of replicas allowed with this scaling group config.
+func (p PodCliqueScalingGroupConfig) MaxReplicas() int32 {
+	replicas := max(1, ptr.Deref(p.Replicas, 0))
+	if p.ScaleConfig != nil {
+		replicas = max(replicas, p.ScaleConfig.MaxReplicas)
+	}
+	return replicas
 }
 
 // ResourceSharingScope defines the sharing scope for resource claims.
