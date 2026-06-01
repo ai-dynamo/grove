@@ -45,11 +45,15 @@ func GetPodCliqueSet(ctx context.Context, cl client.Client, logger logr.Logger, 
 	return grovectrl.ContinueReconcile()
 }
 
-// GetPodClique gets the latest PodClique object. It will usually hit the informer cache. If the object is not found, it will log a message and return DoNotRequeue.
+// GetPodClique gets the latest PodClique object. It will usually hit the informer cache.
+// When ignoreNotFound is true the caller signals that a NotFound response is expected (e.g.
+// during a normal cascade-delete of the parent PodCliqueSet). In that case the log is emitted
+// at V(1) (verbose/debug) to avoid spamming info logs at scale. Unexpected NotFound responses
+// (ignoreNotFound=false) are still propagated as errors so the calling reconciler can surface them.
 func GetPodClique(ctx context.Context, cl client.Client, logger logr.Logger, objectKey client.ObjectKey, pclq *v1alpha1.PodClique, ignoreNotFound bool) grovectrl.ReconcileStepResult {
 	if err := cl.Get(ctx, objectKey, pclq); err != nil {
 		if ignoreNotFound && apierrors.IsNotFound(err) {
-			logger.Info("PodClique not found", "objectKey", objectKey)
+			logger.V(1).Info("PodClique not found (expected during cascade-delete)", "objectKey", objectKey)
 			return grovectrl.DoNotRequeue()
 		}
 		return grovectrl.ReconcileWithErrors("error getting PodClique", err)

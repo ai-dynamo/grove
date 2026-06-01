@@ -192,6 +192,26 @@ func TestGetPodClique(t *testing.T) {
 	}
 }
 
+// TestGetPodClique_IgnoreNotFoundFalse verifies that when ignoreNotFound is false and the
+// PodClique does not exist, GetPodClique propagates the error rather than returning DoNotRequeue.
+// This path covers unexpected missing PodCliques (not cascade-delete) and should surface the error.
+func TestGetPodClique_IgnoreNotFoundFalse(t *testing.T) {
+	ctx := context.Background()
+	logger := logr.Discard()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	objectKey := types.NamespacedName{Name: "missing-pclq", Namespace: "default"}
+	pclq := &grovecorev1alpha1.PodClique{}
+	result := GetPodClique(ctx, fakeClient, logger, objectKey, pclq, false)
+
+	// Must not silently swallow the error or return DoNotRequeue — the caller
+	// should be aware the object is missing unexpectedly.
+	assert.True(t, result.NeedsRequeue() || result.HasErrors(), "expected error or requeue on unexpected NotFound with ignoreNotFound=false")
+}
+
 // TestGetPodCliqueScalingGroup tests the GetPodCliqueScalingGroup function
 func TestGetPodCliqueScalingGroup(t *testing.T) {
 	tests := []struct {
