@@ -42,7 +42,8 @@ Volcano expresses topology as a HyperNode tree. Leaf HyperNodes contain real Nod
 * Add Volcano as a topology-aware scheduler backend by implementing the `TopologyAwareSchedBackend` interface.
 * Translate each Grove `ClusterTopology` into Volcano `HyperNode` resources when the topology is auto-managed by Grove.
 * Support externally managed Volcano HyperNodes through `schedulerTopologyReferences` and drift detection.
-* Translate Grove `TopologyConstraint.packDomain` to Volcano `networkTopology.highestTierAllowed` using the numeric tier derived from the referenced `ClusterTopology` level.
+* Translate Grove `TopologyConstraint.pack.required` to Volcano `networkTopology.highestTierAllowed` with `mode: hard`, using the numeric tier derived from the referenced `ClusterTopology` level.
+* Translate Grove `TopologyConstraint.pack.preferred` to Volcano `networkTopology.highestTierAllowed` with `mode: soft` when no required pack constraint is present.
 * Preserve the base Volcano gang scheduling behavior defined by GREP-376 while adding topology constraints to the generated Volcano `PodGroup`.
 * Document the Volcano 1.14+ API requirements for users and cluster administrators.
 
@@ -59,7 +60,7 @@ Volcano expresses topology as a HyperNode tree. Leaf HyperNodes contain real Nod
 
 The Volcano backend will become a topology-aware scheduler backend. When topology-aware scheduling is enabled and Volcano is configured as an active scheduler profile, the ClusterTopology controller will invoke the Volcano backend through `TopologyAwareSchedBackend` in the same way it invokes the KAI backend.
 
-For auto-managed topologies, Grove will create and maintain Volcano `HyperNode` resources from each `ClusterTopology`. The generated HyperNodes will form a tree: leaf HyperNodes select real Nodes, and non-leaf HyperNodes reference child HyperNodes. Workload constraints will target those tiers through `networkTopology.highestTierAllowed`, using the numeric tier that corresponds to the requested Grove `packDomain`.
+For auto-managed topologies, Grove will create and maintain Volcano `HyperNode` resources from each `ClusterTopology`. The generated HyperNodes will form a tree: leaf HyperNodes select real Nodes, and non-leaf HyperNodes reference child HyperNodes. Workload constraints will target those tiers through `networkTopology.highestTierAllowed`, using the numeric tier that corresponds to the requested Grove pack domain.
 
 For externally managed topologies, the administrator can add a Volcano entry to `ClusterTopology.spec.schedulerTopologyReferences`. Grove will not create or update the referenced HyperNode, but it will check whether it is compatible with the Grove `ClusterTopology` and report drift through the standard `SchedulerTopologyDrift` condition and `schedulerTopologyStatuses`.
 
@@ -374,7 +375,7 @@ Generated names must be deterministic and valid Kubernetes object names. Value-l
 
 For Volcano 1.14+, only leaf HyperNodes point directly to Nodes. Non-leaf HyperNodes point to child HyperNodes using `exactMatch`. `regexMatch` must not be used for members whose type is `HyperNode`.
 
-If a `ClusterTopology` includes a `host` domain backed by `kubernetes.io/hostname`, each host value is unique, so a faithful Volcano topology needs one leaf HyperNode per Node. This can create many HyperNodes in large clusters. Administrators who do not need Grove `packDomain: host` semantics for Volcano can reduce the object count by omitting the `host` level from the Volcano-targeted `ClusterTopology`; in that case the narrowest generated HyperNodes, such as rack HyperNodes, can select real Nodes directly with `labelMatch` or `regexMatch`. Grove must not collapse all hosts into a single host HyperNode, because that would make `packDomain: host` behave like a broader domain and weaken the user's requested constraint.
+If a `ClusterTopology` includes a `host` domain backed by `kubernetes.io/hostname`, each host value is unique, so a faithful Volcano topology needs one leaf HyperNode per Node. This can create many HyperNodes in large clusters. Administrators who do not need Grove `pack.required: host` semantics for Volcano can reduce the object count by omitting the `host` level from the Volcano-targeted `ClusterTopology`; in that case the narrowest generated HyperNodes, such as rack HyperNodes, can select real Nodes directly with `labelMatch` or `regexMatch`. Grove must not collapse all hosts into a single host HyperNode, because that would make `pack.required: host` behave like a broader domain and weaken the user's requested constraint.
 
 ### Externally Managed HyperNodes
 
@@ -425,12 +426,14 @@ spec:
   template:
     topologyConstraint:
       topologyName: grove-topology
-      packDomain: block
+      pack:
+        required: block
     cliques:
       - name: prefill
         topologyConstraint:
           topologyName: grove-topology
-          packDomain: rack
+          pack:
+            required: rack
         spec:
           roleName: prefill
           replicas: 4
@@ -450,7 +453,7 @@ spec:
                 image: example.com/decode:latest
 ```
 
-The `PodCliqueSet` controller translates that workload into a Grove `PodGang` with both a gang-level topology constraint and a subgroup topology constraint. The `packDomain` values from the user-facing `PodCliqueSet` are resolved through `ClusterTopology` into the corresponding Node label keys:
+The `PodCliqueSet` controller translates that workload into a Grove `PodGang` with both a gang-level topology constraint and a subgroup topology constraint. The `pack.required` values from the user-facing `PodCliqueSet` are resolved through `ClusterTopology` into the corresponding Node label keys:
 
 ```yaml
 apiVersion: scheduler.grove.io/v1alpha1
@@ -524,6 +527,16 @@ spec:
 
 The translation computes `highestTierAllowed` from the required topology key and the referenced `ClusterTopology`. For `[block, rack, host]`, a required key of `topology.grove.io/block` becomes `highestTierAllowed: 3`, `topology.grove.io/rack` becomes `highestTierAllowed: 2`, and `kubernetes.io/hostname` becomes `highestTierAllowed: 1`.
 
+If a topology constraint only has `pack.preferred`, the `PodCliqueSet` controller resolves it into `PodGang.spec.topologyConstraint.packConstraint.preferred`, and the Volcano backend translates it with `mode: soft`:
+
+```yaml
+networkTopology:
+  mode: soft
+  highestTierAllowed: 2
+```
+
+If both `pack.required` and `pack.preferred` are present on the same Grove topology constraint, the Volcano backend must preserve the hard scheduling boundary first. Volcano `networkTopology` has one mode and one tier boundary, so the backend will translate the required constraint with `mode: hard` and will not encode the preferred hint in the generated `PodGroup`. The implementation should emit a Kubernetes event or status message explaining that the preferred hint was not translated for Volcano.
+
 If a PodGang has no topology constraints, the Volcano backend will keep generating a normal Volcano `PodGroup` without `networkTopology` fields.
 
 ### Operator Configuration and Dependencies
@@ -560,7 +573,9 @@ Unit tests:
 * Verify `SyncTopology()` creates, updates, and deletes stale auto-managed HyperNodes.
 * Verify generated HyperNodes have `ClusterTopology` owner references and are eligible for Kubernetes garbage collection on topology deletion.
 * Verify `CheckTopologyDrift()` returns in-sync for matching externally managed HyperNodes and drift for missing HyperNode, wrong tier, or mismatched Node selector.
-* Verify `packDomain` translation uses `networkTopology.highestTierAllowed` with `mode: hard`.
+* Verify `pack.required` translation uses `networkTopology.highestTierAllowed` with `mode: hard`.
+* Verify `pack.preferred`-only translation uses `networkTopology.highestTierAllowed` with `mode: soft`.
+* Verify constraints that set both `pack.required` and `pack.preferred` preserve the required constraint and report that the preferred hint was not translated for Volcano.
 * Verify PodGang-level topology constraints populate `PodGroup.spec.networkTopology`.
 * Verify subgroup-level topology constraints populate `PodGroup.spec.subGroupPolicy[*].networkTopology`.
 
