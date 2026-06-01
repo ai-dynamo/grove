@@ -15,7 +15,7 @@
   - [Volcano Scheduler Backend Topology](#volcano-scheduler-backend-topology)
   - [HyperNode Generation](#hypernode-generation)
   - [Externally Managed HyperNodes](#externally-managed-hypernodes)
-  - [PodGang to Volcano PodGroup Translation](#podgang-to-volcano-podgroup-translation)
+  - [PodCliqueSet to PodGang to Volcano PodGroup Translation](#podcliqueset-to-podgang-to-volcano-podgroup-translation)
   - [Operator Configuration and Dependencies](#operator-configuration-and-dependencies)
   - [Monitoring](#monitoring)
   - [Test Plan](#test-plan)
@@ -400,11 +400,57 @@ spec:
 
 When this reference is present, Grove will not create or mutate the referenced HyperNode. The Volcano backend will verify that the referenced HyperNode exists and that its tier and Node selector match the expected domain from `ClusterTopology.spec.levels`. It will report mismatches through `schedulerTopologyStatuses[*].inSync=false` and the aggregate `SchedulerTopologyDrift` condition.
 
-### PodGang to Volcano PodGroup Translation
+### PodCliqueSet to PodGang to Volcano PodGroup Translation
 
-GREP-376 defines the base translation from Grove `PodGang` to Volcano `PodGroup`, including `minMember` and `subGroupPolicy`. This GREP adds topology fields to the same generated `PodGroup` and uses Volcano `subGroupPolicy` directly for PodGroup subsets.
+Users do not create Volcano `PodGroup` resources directly, and they usually do not create Grove `PodGang` resources directly either. The user-facing workload API is `PodCliqueSet`. The translation path for Volcano topology-aware scheduling is:
 
-A Grove `PodGang` may carry both a gang-level topology constraint and a subgroup topology constraint:
+```text
+PodCliqueSet
+  -> Grove PodGang
+  -> Volcano PodGroup
+```
+
+A `PodCliqueSet` may carry a topology constraint at the whole-workload level and additional topology constraints at the `PodClique` or `PodCliqueScalingGroup` level. The `PodCliqueSet` controller resolves each Grove topology domain against the referenced `ClusterTopology` and creates a Grove `PodGang` that contains the resolved topology constraints. GREP-376 then defines the base translation from Grove `PodGang` to Volcano `PodGroup`, including `minMember` and `subGroupPolicy`. This GREP adds topology fields to the same generated `PodGroup` and uses Volcano `subGroupPolicy` directly for PodGroup subsets.
+
+For example, a user may submit a disaggregated inference `PodCliqueSet` that requests the whole replica to fit inside one block, while the `prefill` clique must fit inside one rack:
+
+```yaml
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: disaggregated-inference
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    topologyConstraint:
+      topologyName: grove-topology
+      packDomain: block
+    cliques:
+      - name: prefill
+        topologyConstraint:
+          topologyName: grove-topology
+          packDomain: rack
+        spec:
+          roleName: prefill
+          replicas: 4
+          podSpec:
+            schedulerName: volcano
+            containers:
+              - name: prefill
+                image: example.com/prefill:latest
+      - name: decode
+        spec:
+          roleName: decode
+          replicas: 8
+          podSpec:
+            schedulerName: volcano
+            containers:
+              - name: decode
+                image: example.com/decode:latest
+```
+
+The `PodCliqueSet` controller translates that workload into a Grove `PodGang` with both a gang-level topology constraint and a subgroup topology constraint. The `packDomain` values from the user-facing `PodCliqueSet` are resolved through `ClusterTopology` into the corresponding Node label keys:
 
 ```yaml
 apiVersion: scheduler.grove.io/v1alpha1
