@@ -237,17 +237,17 @@ func (w *pendingUpdateWork) getNextReplicaToUpdate(pcs *grovecorev1alpha1.PodCli
 
 // computeUpdateProgress calculates update completion for a PCS replica.
 func (pri *pcsReplicaInfo) computeUpdateProgress(pcs *grovecorev1alpha1.PodCliqueSet) {
-	pcsGenerationHashCandidates := componentutils.ComputePCSGenerationHashCandidates(pcs)
+	pcsGenerationHash := componentutils.ComputePCSGenerationHash(pcs)
 	updatedPCLQs := 0
 	for _, pclq := range pri.pclqs {
-		expectedTemplateHashes, err := componentutils.GetExpectedPCLQPodTemplateHashCandidates(pcs, pclq.ObjectMeta)
-		if err == nil && isPCLQUpdateComplete(&pclq, expectedTemplateHashes, pcsGenerationHashCandidates) {
+		expectedTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
+		if err == nil && isPCLQUpdateComplete(&pclq, expectedTemplateHash, pcsGenerationHash) {
 			updatedPCLQs++
 		}
 	}
 	updatedPCSGs := 0
 	for _, pcsg := range pri.pcsgs {
-		if componentutils.IsPCSGUpdateComplete(&pcsg, pcsGenerationHashCandidates.Canonical, pcsGenerationHashCandidates.Legacy) {
+		if componentutils.IsPCSGUpdateComplete(&pcsg, pcsGenerationHash) {
 			updatedPCSGs++
 		}
 	}
@@ -274,12 +274,12 @@ func (pri *pcsReplicaInfo) getNumScheduledPods(pcs *grovecorev1alpha1.PodCliqueS
 }
 
 // isPCLQUpdateComplete checks if a PodClique has completed its update to the target generation.
-func isPCLQUpdateComplete(pclq *grovecorev1alpha1.PodClique, expectedPodTemplateHashes, currentPCSGenerationHashes componentutils.HashCandidates) bool {
-	return expectedPodTemplateHashes.Matches(pclq.Labels[apicommon.LabelPodTemplateHash]) &&
+func isPCLQUpdateComplete(pclq *grovecorev1alpha1.PodClique, expectedPodTemplateHash, currentPCSGenerationHash string) bool {
+	return pclq.Labels[apicommon.LabelPodTemplateHash] == expectedPodTemplateHash &&
 		pclq.Status.CurrentPodTemplateHash != nil &&
-		expectedPodTemplateHashes.Matches(*pclq.Status.CurrentPodTemplateHash) &&
+		*pclq.Status.CurrentPodTemplateHash == expectedPodTemplateHash &&
 		pclq.Status.CurrentPodCliqueSetGenerationHash != nil &&
-		currentPCSGenerationHashes.Matches(*pclq.Status.CurrentPodCliqueSetGenerationHash) &&
+		*pclq.Status.CurrentPodCliqueSetGenerationHash == currentPCSGenerationHash &&
 		pclq.Status.UpdatedReplicas >= *pclq.Spec.MinAvailable &&
 		pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable
 }

@@ -904,35 +904,6 @@ func TestComputeHashWithOrderKeys(t *testing.T) {
 	})
 }
 
-func TestComputeHashLegacy_DivergesOnReorderedListTypeMapSlices(t *testing.T) {
-	mainContainer := corev1.Container{Name: "main", Image: "main:v1"}
-	sidecar := corev1.Container{Name: "sidecar", Image: "sidecar:v1"}
-
-	canonical := &corev1.PodTemplateSpec{
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{mainContainer, sidecar},
-			Volumes: []corev1.Volume{
-				{Name: "cache"},
-				{Name: "shared"},
-			},
-		},
-	}
-	shuffled := &corev1.PodTemplateSpec{
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{sidecar, mainContainer},
-			Volumes: []corev1.Volume{
-				{Name: "shared"},
-				{Name: "cache"},
-			},
-		},
-	}
-
-	assert.Equal(t, ComputeHash(canonical), ComputeHash(shuffled),
-		"canonical hashing should treat order-independent map-list reorders as the same desired spec")
-	assert.NotEqual(t, ComputeHashLegacy(canonical), ComputeHashLegacy(shuffled),
-		"legacy hashing must preserve the pre-canonical byte stream during the compatibility window")
-}
-
 // TestComputeHash_DoesNotCanonicalizeOrderSensitiveSlices documents the
 // boundary of the canonicalization: slices whose runtime behavior depends
 // on their order must remain order-sensitive in the hash, regardless of

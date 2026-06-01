@@ -29,58 +29,21 @@ import (
 	"k8s.io/utils/ptr"
 )
 
-func TestHashCandidates(t *testing.T) {
-	t.Run("matches_canonical_or_legacy_hash", func(t *testing.T) {
-		candidates := HashCandidates{
-			Canonical: "canonical-hash",
-			Legacy:    "legacy-hash",
-		}
-
-		assert.True(t, candidates.Matches("canonical-hash"))
-		assert.True(t, candidates.Matches("legacy-hash"))
-		assert.False(t, candidates.Matches("other-hash"))
-		assert.False(t, candidates.IsLegacy("canonical-hash"))
-		assert.True(t, candidates.IsLegacy("legacy-hash"))
-		assert.False(t, candidates.IsLegacy("other-hash"))
-	})
-
-	t.Run("legacy_is_false_when_hashes_are_equal", func(t *testing.T) {
-		candidates := HashCandidates{
-			Canonical: "same-hash",
-			Legacy:    "same-hash",
-		}
-
-		assert.True(t, candidates.Matches("same-hash"))
-		assert.False(t, candidates.IsLegacy("same-hash"))
-	})
-}
-
-func TestComputePCLQPodTemplateHashCandidates(t *testing.T) {
-	template := hashTestPCLQTemplate("worker", corev1.Container{Name: "sidecar"}, corev1.Container{Name: "main"})
-
-	candidates := ComputePCLQPodTemplateHashCandidates(template, "high-priority")
-
-	assert.Equal(t, ComputePCLQPodTemplateHash(template, "high-priority"), candidates.Canonical)
-	assert.Equal(t, ComputePCLQPodTemplateHashLegacy(template, "high-priority"), candidates.Legacy)
-	assert.NotEqual(t, candidates.Canonical, candidates.Legacy,
-		"the fixture stores a name-keyed slice out of canonical order so the legacy compatibility hash should diverge")
-}
-
-func TestGetExpectedPCLQPodTemplateHashCandidates(t *testing.T) {
+func TestGetExpectedPCLQPodTemplateHash(t *testing.T) {
 	pcs := hashTestPCSWithCliques(nil,
 		hashTestPCLQTemplate("worker", corev1.Container{Name: "sidecar"}, corev1.Container{Name: "main"}),
 	)
 	pcs.Spec.Template.PriorityClassName = "high-priority"
 
-	candidates, err := GetExpectedPCLQPodTemplateHashCandidates(pcs, hashTestStandalonePCLQObjectMeta(pcs, "worker"))
+	hash, err := GetExpectedPCLQPodTemplateHash(pcs, hashTestStandalonePCLQObjectMeta(pcs, "worker"))
 	require.NoError(t, err)
-	assert.Equal(t, ComputePCLQPodTemplateHashCandidates(pcs.Spec.Template.Cliques[0], "high-priority"), candidates)
+	assert.Equal(t, ComputePCLQPodTemplateHash(pcs.Spec.Template.Cliques[0], "high-priority"), hash)
 	assert.NotEqual(t,
-		ComputePCLQPodTemplateHashCandidates(pcs.Spec.Template.Cliques[0], "").Canonical,
-		candidates.Canonical,
+		ComputePCLQPodTemplateHash(pcs.Spec.Template.Cliques[0], ""),
+		hash,
 		"PCS priorityClassName must be included in the expected pod-template hash")
 
-	_, err = GetExpectedPCLQPodTemplateHashCandidates(pcs, hashTestStandalonePCLQObjectMeta(pcs, "missing"))
+	_, err = GetExpectedPCLQPodTemplateHash(pcs, hashTestStandalonePCLQObjectMeta(pcs, "missing"))
 	assert.Error(t, err)
 }
 
@@ -127,26 +90,6 @@ func TestComputePCSGenerationHash_StartupOrderPolicy(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestComputePCSGenerationHashLegacy_PreservesStoredCliqueOrder(t *testing.T) {
-	first := hashTestPCSWithCliques(nil,
-		hashTestPCLQTemplate("app", corev1.Container{Name: "main", Image: "app:v1"}),
-		hashTestPCLQTemplate("database", corev1.Container{Name: "main", Image: "database:v1"}),
-	)
-	reordered := hashTestPCSWithCliques(nil,
-		hashTestPCLQTemplate("database", corev1.Container{Name: "main", Image: "database:v1"}),
-		hashTestPCLQTemplate("app", corev1.Container{Name: "main", Image: "app:v1"}),
-	)
-
-	assert.Equal(t, ComputePCSGenerationHash(first), ComputePCSGenerationHash(reordered),
-		"canonical default startup hashes should sort cliques by name")
-	assert.NotEqual(t, ComputePCSGenerationHashLegacy(first), ComputePCSGenerationHashLegacy(reordered),
-		"legacy hashes preserve the stored clique slice order for compatibility with v0.1.0-alpha.8")
-
-	candidates := ComputePCSGenerationHashCandidates(reordered)
-	assert.Equal(t, ComputePCSGenerationHash(reordered), candidates.Canonical)
-	assert.Equal(t, ComputePCSGenerationHashLegacy(reordered), candidates.Legacy)
 }
 
 func hashTestPCLQTemplate(name string, containers ...corev1.Container) *grovecorev1alpha1.PodCliqueTemplateSpec {

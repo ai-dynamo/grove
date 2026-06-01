@@ -97,7 +97,7 @@ func TestComputeReplicaStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			scheduled, available, updated := computeReplicaStatus(logr.Discard(), componentutils.HashCandidates{}, tt.pcsGenerationHash, "0", tt.expectedSize, tt.cliques)
+			scheduled, available, updated := computeReplicaStatus(logr.Discard(), tt.pcsGenerationHash, "0", tt.expectedSize, tt.cliques)
 
 			assert.Equal(t, tt.wantScheduled, scheduled, "scheduled mismatch")
 			assert.Equal(t, tt.wantAvailable, available, "available mismatch")
@@ -601,17 +601,17 @@ func TestMutateCurrentPodCliqueSetGenerationHashWaitsForPodCliqueGenerationConve
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
 		WithScalingGroupConfig("compute", []string{"worker"}, 2, 1).
 		Build()
-	pcsGenerationHashes := componentutils.ComputePCSGenerationHashCandidates(pcs)
-	pcs.Status.CurrentGenerationHash = ptr.To(pcsGenerationHashes.Canonical)
+	pcsGenerationHash := componentutils.ComputePCSGenerationHash(pcs)
+	pcs.Status.CurrentGenerationHash = ptr.To(pcsGenerationHash)
 
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcs-0-compute", "test-ns", "test-pcs", 0).
 		WithReplicas(2).
 		WithCliqueNames([]string{"worker"}).
 		WithOptions(testutils.WithPCSGCurrentPCSGenerationHash("old-generation-hash")).
 		Build()
-	expectedTemplateHashes := componentutils.GetPCLQTemplateHashCandidates(pcs, pcsg)
+	expectedTemplateHashes := componentutils.GetPCLQTemplateHashes(pcs, pcsg)
 	pclqs := []grovecorev1alpha1.PodClique{
-		buildConvergedPCSGPodClique(t, pcsg, "worker", 0, expectedTemplateHashes, pcsGenerationHashes.Canonical),
+		buildConvergedPCSGPodClique(t, pcsg, "worker", 0, expectedTemplateHashes, pcsGenerationHash),
 		buildConvergedPCSGPodClique(t, pcsg, "worker", 1, expectedTemplateHashes, "old-generation-hash"),
 	}
 
@@ -619,10 +619,10 @@ func TestMutateCurrentPodCliqueSetGenerationHashWaitsForPodCliqueGenerationConve
 	require.NotNil(t, pcsg.Status.CurrentPodCliqueSetGenerationHash)
 	assert.Equal(t, "old-generation-hash", *pcsg.Status.CurrentPodCliqueSetGenerationHash)
 
-	pclqs[1].Status.CurrentPodCliqueSetGenerationHash = ptr.To(pcsGenerationHashes.Canonical)
+	pclqs[1].Status.CurrentPodCliqueSetGenerationHash = ptr.To(pcsGenerationHash)
 	mutateCurrentPodCliqueSetGenerationHash(logr.Discard(), pcs, pcsg, pclqs)
 	require.NotNil(t, pcsg.Status.CurrentPodCliqueSetGenerationHash)
-	assert.Equal(t, pcsGenerationHashes.Canonical, *pcsg.Status.CurrentPodCliqueSetGenerationHash)
+	assert.Equal(t, pcsGenerationHash, *pcsg.Status.CurrentPodCliqueSetGenerationHash)
 }
 
 // buildConvergedPCSGPodClique constructs a PodClique that is fully converged on the given
@@ -633,17 +633,17 @@ func buildConvergedPCSGPodClique(
 	pcsg *grovecorev1alpha1.PodCliqueScalingGroup,
 	cliqueName string,
 	pcsgReplicaIndex int,
-	expectedTemplateHashes map[string]componentutils.HashCandidates,
+	expectedTemplateHashes map[string]string,
 	pcsGenerationHash string,
 ) grovecorev1alpha1.PodClique {
 	t.Helper()
 	pclqName := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsg.Name, Replica: pcsgReplicaIndex}, cliqueName)
-	templateHashes, ok := expectedTemplateHashes[pclqName]
+	templateHash, ok := expectedTemplateHashes[pclqName]
 	require.True(t, ok, "expected template hash for %s", pclqName)
 	pclq := testutils.NewPCSGPodCliqueBuilder(pclqName, pcsg.Namespace, "test-pcs", pcsg.Name, 0, pcsgReplicaIndex).
-		WithLabels(map[string]string{apicommon.LabelPodTemplateHash: templateHashes.Canonical}).
+		WithLabels(map[string]string{apicommon.LabelPodTemplateHash: templateHash}).
 		Build()
-	pclq.Status.CurrentPodTemplateHash = ptr.To(templateHashes.Canonical)
+	pclq.Status.CurrentPodTemplateHash = ptr.To(templateHash)
 	pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(pcsGenerationHash)
 	return *pclq
 }
@@ -807,7 +807,7 @@ func TestCountPCSGReplicaUpdatedPCLQs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, countPCSGReplicaUpdatedPCLQs(componentutils.HashCandidates{}, tt.hash, tt.in))
+			assert.Equal(t, tt.want, countPCSGReplicaUpdatedPCLQs(tt.hash, tt.in))
 		})
 	}
 }

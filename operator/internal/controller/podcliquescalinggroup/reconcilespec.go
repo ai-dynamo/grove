@@ -116,9 +116,8 @@ func shouldResetOrTriggerUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grove
 	if pcs.Status.CurrentGenerationHash == nil {
 		return false
 	}
-	pcsGenerationHashCandidates := componentutils.ComputePCSGenerationHashCandidates(pcs)
 	matchesCurrentPCSGeneration := func(hash string) bool {
-		return hash == *pcs.Status.CurrentGenerationHash || pcsGenerationHashCandidates.Matches(hash)
+		return hash == *pcs.Status.CurrentGenerationHash
 	}
 
 	// If processing of rolling update of PCSG for PCS CurrentGenerationHash is either completed or in-progress,

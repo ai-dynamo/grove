@@ -23,7 +23,6 @@ import (
 
 	"github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 
 	"github.com/go-logr/logr"
@@ -102,32 +101,24 @@ func TestComputeUpdateWork(t *testing.T) {
 	}
 }
 
-// TestComputeUpdateWorkTreatsLegacyCurrentHashAsNew verifies that a ready pod
-// stamped with the legacy form of the current template hash is not considered
-// old work during the hash migration. Only pods whose hash matches neither the
-// canonical nor legacy candidate should be queued for rolling replacement.
-func TestComputeUpdateWorkTreatsLegacyCurrentHashAsNew(t *testing.T) {
+// TestComputeUpdateWorkTreatsOnlyExpectedHashAsNew verifies that only pods
+// stamped with the expected template hash are considered updated.
+func TestComputeUpdateWorkTreatsOnlyExpectedHashAsNew(t *testing.T) {
 	r := _resource{expectationsStore: expect.NewExpectationsStore()}
 	sc := &syncContext{
-		// The canonical and legacy pods both represent the desired template.
-		// The stale pod simulates an actually outdated template hash.
 		existingPCLQPods: []*corev1.Pod{
-			newTestPod("canonical-ready", "canonical-hash", withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)),
-			newTestPod("legacy-ready", "legacy-hash", withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)),
+			newTestPod("current-ready", "canonical-hash", withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)),
+			newTestPod("old-ready", "legacy-hash", withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)),
 			newTestPod("stale-ready", "stale-hash", withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)),
 		},
-		expectedPodTemplateHash: "canonical-hash",
-		expectedPodTemplateHashes: componentutils.HashCandidates{
-			Canonical: "canonical-hash",
-			Legacy:    "legacy-hash",
-		},
+		expectedPodTemplateHash:  "canonical-hash",
 		pclqExpectationsStoreKey: "test-key",
 	}
 
 	work := r.computeUpdateWork(logr.Discard(), sc)
 
-	assert.ElementsMatch(t, []string{"canonical-ready", "legacy-ready"}, podNames(work.newTemplateHashReadyPods))
-	assert.ElementsMatch(t, []string{"stale-ready"}, podNames(work.oldTemplateHashReadyPods))
+	assert.ElementsMatch(t, []string{"current-ready"}, podNames(work.newTemplateHashReadyPods))
+	assert.ElementsMatch(t, []string{"old-ready", "stale-ready"}, podNames(work.oldTemplateHashReadyPods))
 	assert.Empty(t, work.oldTemplateHashPendingPods)
 	assert.Empty(t, work.oldTemplateHashUnhealthyPods)
 	assert.Empty(t, work.oldTemplateHashStartingPods)
