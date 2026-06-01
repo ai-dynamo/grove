@@ -153,15 +153,15 @@ func TestGetPodClique(t *testing.T) {
 			expectedNeedsRequeue: false,
 		},
 		{
-			// Tests when PodClique is not found
-			name: "not_found",
+			// Tests when PodClique is not found and ignoreNotFound is true — logs at debug level and returns DoNotRequeue
+			name: "not_found_ignore",
 			namespacedName: types.NamespacedName{
 				Name:      "test-pclq",
 				Namespace: "default",
 			},
 			existingPCLQ:         nil,
 			notFound:             true,
-			expectedNeedsRequeue: false, // When ignoreNotFound is true and not found, returns DoNotRequeue()
+			expectedNeedsRequeue: false,
 		},
 	}
 
@@ -190,6 +190,22 @@ func TestGetPodClique(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestGetPodCliqueIgnoreNotFoundFalse tests that GetPodClique propagates the error when ignoreNotFound is false.
+func TestGetPodCliqueIgnoreNotFoundFalse(t *testing.T) {
+	ctx := context.Background()
+	logger := logr.Discard()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	pclq := &grovecorev1alpha1.PodClique{}
+	result := GetPodClique(ctx, fakeClient, logger, types.NamespacedName{Name: "missing", Namespace: "default"}, pclq, false)
+
+	assert.True(t, result.NeedsRequeue(), "should requeue on error when ignoreNotFound is false")
+	assert.NotEmpty(t, result.GetErrors(), "should carry error when ignoreNotFound is false")
 }
 
 // TestGetPodCliqueScalingGroup tests the GetPodCliqueScalingGroup function
