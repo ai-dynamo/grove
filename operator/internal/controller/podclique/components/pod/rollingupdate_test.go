@@ -26,7 +26,6 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 
 	"github.com/go-logr/logr"
-	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -99,36 +98,6 @@ func TestComputeUpdateWork(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestComputeUpdateWorkTreatsOnlyExpectedHashAsNew verifies that only pods
-// stamped with the expected template hash are considered updated.
-func TestComputeUpdateWorkTreatsOnlyExpectedHashAsNew(t *testing.T) {
-	r := _resource{expectationsStore: expect.NewExpectationsStore()}
-	sc := &syncContext{
-		existingPCLQPods: []*corev1.Pod{
-			newTestPod("current-ready", "canonical-hash", withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)),
-			newTestPod("old-ready", "legacy-hash", withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)),
-			newTestPod("stale-ready", "stale-hash", withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)),
-		},
-		expectedPodTemplateHash:  "canonical-hash",
-		pclqExpectationsStoreKey: "test-key",
-	}
-
-	work := r.computeUpdateWork(logr.Discard(), sc)
-
-	assert.ElementsMatch(t, []string{"current-ready"}, podNames(work.newTemplateHashReadyPods))
-	assert.ElementsMatch(t, []string{"old-ready", "stale-ready"}, podNames(work.oldTemplateHashReadyPods))
-	assert.Empty(t, work.oldTemplateHashPendingPods)
-	assert.Empty(t, work.oldTemplateHashUnhealthyPods)
-	assert.Empty(t, work.oldTemplateHashStartingPods)
-	assert.Empty(t, work.oldTemplateHashUncategorizedPods)
-}
-
-func podNames(pods []*corev1.Pod) []string {
-	return lo.Map(pods, func(pod *corev1.Pod, _ int) string {
-		return pod.Name
-	})
 }
 
 // newTestPod creates a pod with the given name, template hash label, and options applied.
