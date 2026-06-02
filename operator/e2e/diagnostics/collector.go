@@ -483,6 +483,9 @@ func createDiagnosticsFile(testName, diagDir string) (*os.File, string, error) {
 
 	if diagDir != "" {
 		filename := filepath.Join(diagDir, baseFilename)
+		if err := os.MkdirAll(diagDir, 0755); err != nil {
+			return nil, "", fmt.Errorf("failed to create diagnostics directory %s: %w", diagDir, err)
+		}
 		file, err := os.Create(filename)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to create diagnostics file in %s: %w", diagDir, err)

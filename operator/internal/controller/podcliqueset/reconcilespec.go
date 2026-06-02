@@ -26,13 +26,11 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
-	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
-	"github.com/samber/lo"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/ptr"
@@ -71,7 +69,7 @@ func (r *Reconciler) ensureFinalizer(ctx context.Context, logger logr.Logger, pc
 }
 
 // processGenerationHashChange computes the generation hash given a PodCliqueSet resource and if the generation has
-// changed from the previously persisted pcs.status.generationHash then it resets the pcs.status.rollingUpdateProgress
+// changed from the previously persisted pcs.status.generationHash then it resets the pcs.status.updateProgress
 func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	pcsObjectKey := client.ObjectKeyFromObject(pcs)
 	pcsObjectName := cache.NamespacedNameAsObjectName(pcsObjectKey).String()
@@ -82,19 +80,27 @@ func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger log
 	}
 	r.pcsGenerationHashExpectations.Delete(pcsObjectName)
 
-	newGenerationHash := computeGenerationHash(pcs)
+	generationHashCandidates := componentutils.ComputePCSGenerationHashCandidates(pcs)
 	if pcs.Status.CurrentGenerationHash == nil {
 		// update the generation hash and continue reconciliation. No rolling update is required.
-		if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, pcsObjectName, newGenerationHash); err != nil {
-			logger.Error(err, "failed to set generation hash on PCS", "newGenerationHash", newGenerationHash)
+		if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, pcsObjectName, generationHashCandidates.Canonical); err != nil {
+			logger.Error(err, "failed to set generation hash on PCS", "newGenerationHash", generationHashCandidates.Canonical)
 			return ctrlcommon.ReconcileWithErrors("error updating generation hash", err)
 		}
 		return ctrlcommon.ContinueReconcile()
 	}
 
-	if newGenerationHash != *pcs.Status.CurrentGenerationHash {
+	if generationHashCandidates.IsLegacy(*pcs.Status.CurrentGenerationHash) {
+		if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, pcsObjectName, generationHashCandidates.Canonical); err != nil {
+			logger.Error(err, "failed to migrate legacy generation hash on PCS", "legacyGenerationHash", generationHashCandidates.Legacy, "canonicalGenerationHash", generationHashCandidates.Canonical)
+			return ctrlcommon.ReconcileWithErrors("error migrating generation hash", err)
+		}
+		return ctrlcommon.ContinueReconcile()
+	}
+
+	if !generationHashCandidates.Matches(*pcs.Status.CurrentGenerationHash) {
 		// trigger rolling update by setting or overriding pcs.Status.UpdateProgress.
-		if err := r.initUpdateProgress(ctx, pcs, pcsObjectName, newGenerationHash); err != nil {
+		if err := r.initUpdateProgress(ctx, pcs, pcsObjectName, generationHashCandidates.Canonical); err != nil {
 			return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("could not triggering rolling update for PCS: %v", pcsObjectKey), err)
 		}
 	}
@@ -108,20 +114,23 @@ func (r *Reconciler) isGenerationHashExpectationSatisfied(pcsObjectName string, 
 	return !ok || (pcsGenerationHash != nil && expectedGenerationHash.(string) == *pcsGenerationHash)
 }
 
-// computeGenerationHash calculates a hash of the PodCliqueSet pod template specifications.
+// computeGenerationHash calculates a hash of the PodCliqueSet pod template
+// specifications.
+//
+// pcs.Spec.Template.Cliques is +listType=map +listMapKey=name, so it is an
+// unordered set; the hash must be stable across reorderings to avoid falsely
+// triggering rolling recreates when an upstream operator emits the same
+// cliques in a different sequence.
+//
+// Order is semantically meaningful when StartupType is CliqueStartupTypeInOrder,
+// so in that mode the original clique order is preserved and clique names are
+// passed as order keys to the shared hash helper.
 func computeGenerationHash(pcs *grovecorev1alpha1.PodCliqueSet) string {
-	podTemplateSpecs := lo.Map(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec, _ int) *corev1.PodTemplateSpec {
-		podTemplateSpec := &corev1.PodTemplateSpec{
-			ObjectMeta: metav1.ObjectMeta{
-				Labels:      pclqTemplateSpec.Labels,
-				Annotations: pclqTemplateSpec.Annotations,
-			},
-			Spec: pclqTemplateSpec.Spec.PodSpec,
-		}
-		podTemplateSpec.Spec.PriorityClassName = pcs.Spec.Template.PriorityClassName
-		return podTemplateSpec
-	})
-	return k8sutils.ComputeHash(podTemplateSpecs...)
+	return componentutils.ComputePCSGenerationHash(pcs)
+}
+
+func computeGenerationHashLegacy(pcs *grovecorev1alpha1.PodCliqueSet) string {
+	return componentutils.ComputePCSGenerationHashLegacy(pcs)
 }
 
 // setGenerationHashAndUpdateStatus updates the PodCliqueSet status with the new generation hash, stores the expectation, and updates the status subresource.

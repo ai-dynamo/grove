@@ -26,6 +26,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 
 	"github.com/go-logr/logr"
@@ -233,6 +234,47 @@ func TestGetPCSReplicaFromPCSG(t *testing.T) {
 				assert.Equal(t, tc.expected, result)
 			}
 		})
+	}
+}
+
+// TestIsReplicaUpdatedAcceptsLegacyCurrentHashesAndRejectsStale verifies that isReplicaUpdated
+// treats a PCSG replica as up-to-date when its PodCliques carry either the canonical or the legacy
+// pod-template hash form for the current spec, and still flags the replica as stale when any
+// PodClique's hash matches neither candidate. This guards the legacy hash migration path so that
+// PCLQs labeled with the pre-migration hash are not needlessly rolled.
+func TestIsReplicaUpdatedAcceptsLegacyCurrentHashesAndRejectsStale(t *testing.T) {
+	expectedHashes := map[string]componentutils.HashCandidates{
+		"pcsg-0-frontend": {Canonical: "frontend-canonical", Legacy: "frontend-legacy"},
+		"pcsg-0-worker":   {Canonical: "worker-canonical", Legacy: "worker-legacy"},
+	}
+
+	current, err := isReplicaUpdated(expectedHashes, []grovecorev1alpha1.PodClique{
+		podCliqueWithTemplateHash("pcsg-0-frontend", "frontend-legacy"),
+		podCliqueWithTemplateHash("pcsg-0-worker", "worker-canonical"),
+	})
+	require.NoError(t, err)
+	assert.True(t, current, "legacy-current PCLQ labels should not make a PCSG replica look stale")
+
+	stale, err := isReplicaUpdated(expectedHashes, []grovecorev1alpha1.PodClique{
+		podCliqueWithTemplateHash("pcsg-0-frontend", "frontend-legacy"),
+		podCliqueWithTemplateHash("pcsg-0-worker", "worker-stale"),
+	})
+	require.NoError(t, err)
+	assert.False(t, stale, "hashes matching neither current canonical nor current legacy must remain stale")
+}
+
+// podCliqueWithTemplateHash builds a minimal PodClique fixture identified by name and stamped with
+// the given value on the apicommon.LabelPodTemplateHash label. It is intended for tests of
+// hash-comparison logic (e.g. isReplicaUpdated) where only the pclq name and template-hash label
+// are relevant.
+func podCliqueWithTemplateHash(name, hash string) grovecorev1alpha1.PodClique {
+	return grovecorev1alpha1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+			Labels: map[string]string{
+				apicommon.LabelPodTemplateHash: hash,
+			},
+		},
 	}
 }
 

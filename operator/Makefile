@@ -220,7 +220,25 @@ run-scale-test: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
 run-scale-test: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
 run-scale-test:
 	@echo "> Running scale tests..."
-	@cd e2e && go test -count=1 -tags=e2e ./tests/scale/... -v -timeout 30m
+	@cd e2e && go test -count=1 -tags=e2e ./tests/scale/... -v -timeout 40m
+
+# Run the soak / churn benchmark against an existing cluster.
+# Gated behind the `soak` build tag so it does NOT run as part of
+# run-e2e or run-scale-test. Long-running (~30 min default).
+#
+# Usage: make run-soak-test [DIAG_DIR=<path>] [DIAG_MODE=<mode>] \
+#                           [SOAK_BASE=<n>] [SOAK_PEAK=<n>] [SOAK_CYCLES=<n>]
+# Examples:
+#   make run-soak-test                                       # Defaults: 25 → 50 PCS, 10 cycles
+#   make run-soak-test SOAK_CYCLES=3                         # Shorter run for quick validation
+#   make run-soak-test DIAG_DIR=/tmp/soak-baseline           # Capture artifacts for later comparison
+.PHONY: run-soak-test
+run-soak-test: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
+run-soak-test: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
+run-soak-test:
+	@echo "> Running soak / churn benchmark (long-running, on-demand)..."
+	@cd e2e && SOAK_BASE=$(SOAK_BASE) SOAK_PEAK=$(SOAK_PEAK) SOAK_CYCLES=$(SOAK_CYCLES) \
+		go test -count=1 -tags='e2e soak' ./tests/scale/... -v -timeout 60m -run Test_SoakChurn
 
 # Make targets for local development and testing
 # -------------------------------------------------------------

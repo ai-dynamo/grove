@@ -21,6 +21,7 @@ import (
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/require"
 	"k8s.io/utils/ptr"
@@ -68,7 +69,7 @@ func TestRegisterControllers(t *testing.T) {
 			},
 		}
 
-		err = RegisterControllers(mgr, &operatorConfig)
+		err = RegisterControllers(mgr, &operatorConfig, &testutils.FakeSchedulerRegistry{})
 		require.NoError(t, err)
 	})
 }

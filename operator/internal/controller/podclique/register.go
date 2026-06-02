@@ -220,10 +220,29 @@ func podCliqueSetPredicate() predicate.Predicate {
 			if !okOld || !okNew {
 				return false
 			}
-			return oldPCS.Status.CurrentGenerationHash != newPCS.Status.CurrentGenerationHash
+			return !stringPointersEqual(oldPCS.Status.CurrentGenerationHash, newPCS.Status.CurrentGenerationHash) ||
+				pcsCurrentlyUpdatingReplicaChanged(oldPCS.Status.UpdateProgress, newPCS.Status.UpdateProgress)
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 	}
+}
+
+// pcsCurrentlyUpdatingReplicaChanged reports whether the replica currently being updated has changed between the old and new PodCliqueSet update progress.
+func pcsCurrentlyUpdatingReplicaChanged(oldProgress, newProgress *grovecorev1alpha1.PodCliqueSetUpdateProgress) bool {
+	oldReplicaIndex, oldOK := currentPCSReplicaInUpdate(oldProgress)
+	newReplicaIndex, newOK := currentPCSReplicaInUpdate(newProgress)
+	if oldOK != newOK {
+		return true
+	}
+	return oldOK && oldReplicaIndex != newReplicaIndex
+}
+
+// currentPCSReplicaInUpdate returns the replica index of the PodCliqueSet replica currently being updated, if any.
+func currentPCSReplicaInUpdate(progress *grovecorev1alpha1.PodCliqueSetUpdateProgress) (int32, bool) {
+	if progress == nil || len(progress.CurrentlyUpdating) == 0 {
+		return 0, false
+	}
+	return progress.CurrentlyUpdating[0].ReplicaIndex, true
 }
 
 // mapPodCliqueScalingGroupToPCLQs maps a PodCliqueScalingGroup to one or more reconcile.Request(s) to its constituent PodCliques.
@@ -254,11 +273,36 @@ func podCliqueScalingGroupPredicate() predicate.Predicate {
 			if !okOld || !okNew {
 				return false
 			}
-			return oldPCSG.Status.CurrentPodCliqueSetGenerationHash != nil && newPCSG.Status.UpdateProgress != nil &&
-				*oldPCSG.Status.CurrentPodCliqueSetGenerationHash != newPCSG.Status.UpdateProgress.PodCliqueSetGenerationHash
+			return !stringPointersEqual(oldPCSG.Status.CurrentPodCliqueSetGenerationHash, newPCSG.Status.CurrentPodCliqueSetGenerationHash) ||
+				pcsgUpdateTargetGenerationChanged(oldPCSG.Status.UpdateProgress, newPCSG.Status.UpdateProgress)
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 	}
+}
+
+// pcsgUpdateTargetGenerationChanged reports whether the PodCliqueScalingGroup update's target PodCliqueSet generation hash has changed between the old and new update progress.
+func pcsgUpdateTargetGenerationChanged(oldProgress, newProgress *grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress) bool {
+	oldTarget, oldOK := pcsgUpdateTargetGeneration(oldProgress)
+	newTarget, newOK := pcsgUpdateTargetGeneration(newProgress)
+	if oldOK != newOK {
+		return true
+	}
+	return oldOK && oldTarget != newTarget
+}
+
+// pcsgUpdateTargetGeneration returns the target PodCliqueSet generation hash for an in-progress PodCliqueScalingGroup update, if any.
+func pcsgUpdateTargetGeneration(progress *grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress) (string, bool) {
+	if progress == nil {
+		return "", false
+	}
+	return progress.PodCliqueSetGenerationHash, true
+}
+
+func stringPointersEqual(oldValue, newValue *string) bool {
+	if oldValue == nil || newValue == nil {
+		return oldValue == newValue
+	}
+	return *oldValue == *newValue
 }
 
 // mapPodGangToPCLQs maps a PodGang to one or more reconcile.Request(s) for its constituent PodClique's.

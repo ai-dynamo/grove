@@ -24,7 +24,6 @@ import (
 
 	"github.com/ai-dynamo/grove/operator/e2e/grove/gvk"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
-	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -33,36 +32,32 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// testNoMNNVLArtifactsWhenDisabled verifies that no ComputeDomains, auto-mnnvl
-// annotations, or resourceClaims are produced for a GPU-capable PCS. It is shared
-// across test suites because the expected behavior is identical regardless of why
-// the feature is inactive.
+// testNoMNNVLArtifactsWhenDisabled verifies that a GPU PCS without the
+// mnnvl-group annotation produces no ComputeDomains or resourceClaims.
+// It is shared across test suites because the outcome is the same whether
+// the operator has autoMNNVLEnabled=false (feature disabled) or the
+// ComputeDomain CRD is not installed (unsupported cluster).
 func testNoMNNVLArtifactsWhenDisabled(t *testing.T, tc *testctx.TestContext) {
-	pcsName := "test-no-cd-created"
+	pcsName := "test-no-artifacts"
 
-	// Create a PCS with GPU requirement
-	pcs := buildComprehensivePCS(pcsName, 1)
-	err := tc.Client.Create(tc.Ctx, pcs)
-	require.NoError(t, err, "Failed to create PCS")
+	err := applyMNNVLYAML(tc, "mnnvl-comprehensive-bare.yaml", pcsName)
+	require.NoError(t, err, "Failed to apply YAML")
 	defer deletePCS(tc, pcsName)
 
-	// Wait for PCSGs to appear — this proves the reconciler has processed the
-	// PCS, so any ComputeDomains would have been created by now if the feature
-	// were enabled. This replaces a fixed sleep with a concrete readiness signal.
-	pcsgNames := []string{
-		fmt.Sprintf("%s-0-sg1", pcsName),
-		fmt.Sprintf("%s-0-sg2", pcsName),
+	// Wait for PCLQs — this proves the reconciler has processed the PCS,
+	// so any ComputeDomains would have been created by now.
+	pclqNames := []string{
+		fmt.Sprintf("%s-0-gpu", pcsName),
+		fmt.Sprintf("%s-0-cpu", pcsName),
 	}
-	for _, pcsgName := range pcsgNames {
-		pcsg, waitErr := waitForPCSG(tc, pcsgName)
-		require.NoError(t, waitErr, "Failed to wait for PCSG %s", pcsgName)
-		_, hasAnnotation := pcsg.GetAnnotations()[mnnvl.AnnotationMNNVLGroup]
-		assert.False(t, hasAnnotation, "PCSG %s should not have mnnvl-group annotation", pcsgName)
+	for _, pclqName := range pclqNames {
+		_, waitErr := waitForPCLQ(tc, pclqName)
+		require.NoError(t, waitErr, "Failed to wait for PCLQ %s", pclqName)
 	}
 
 	// Verify no ComputeDomain exists.
 	// If the CRD itself is not installed (unsupported scenario), the List call returns
-	// a "no matches for kind" error — that also means zero ComputeDomains, which is what we want.
+	// a "no matches for kind" error — that also means zero ComputeDomains, which is correct.
 	cdList := &unstructured.UnstructuredList{}
 	cdList.SetGroupVersionKind(gvk.ComputeDomain.GroupVersion().WithKind(gvk.ComputeDomain.Kind + "List"))
 	err = tc.Client.List(tc.Ctx, cdList, client.InNamespace(tc.Namespace))
@@ -70,19 +65,10 @@ func testNoMNNVLArtifactsWhenDisabled(t *testing.T, tc *testctx.TestContext) {
 		// CRD not installed → no ComputeDomains can exist, which is the expected state.
 	} else {
 		require.NoError(t, err, "Failed to list ComputeDomains")
-		assert.Empty(t, cdList.Items, "Expected 0 ComputeDomains when feature is disabled, got %d", len(cdList.Items))
+		assert.Empty(t, cdList.Items, "Expected 0 ComputeDomains, got %d", len(cdList.Items))
 	}
 
-	// Verify no resourceClaims are injected into any clique's PodSpec
-	pclqNames := []string{
-		fmt.Sprintf("%s-0-gpu1", pcsName),
-		fmt.Sprintf("%s-0-cpu1", pcsName),
-		fmt.Sprintf("%s-0-sg1-0-gpu2", pcsName),
-		fmt.Sprintf("%s-0-sg1-0-cpu2", pcsName),
-		fmt.Sprintf("%s-0-sg2-0-cpu3", pcsName),
-	}
-	// We specifically don't want an injected claim named MNNVLClaimName or container claim refs,
-	// but it's simpler to assert there are no claims at all, which covers the intent.
+	// Verify no resourceClaims are injected into either PCLQ's PodSpec.
 	for _, pclqName := range pclqNames {
 		pclq, waitErr := waitForPCLQ(tc, pclqName)
 		require.NoError(t, waitErr, "Failed to wait for PCLQ %s", pclqName)

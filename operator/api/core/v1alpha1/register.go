@@ -51,8 +51,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&PodCliqueList{},
 		&PodCliqueScalingGroup{},
 		&PodCliqueScalingGroupList{},
-		&ClusterTopology{},
-		&ClusterTopologyList{},
+		&ClusterTopologyBinding{},
+		&ClusterTopologyBindingList{},
 	)
 	metav1.AddToGroupVersion(scheme, SchemeGroupVersion)
 	return nil

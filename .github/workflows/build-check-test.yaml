@@ -57,7 +57,13 @@ jobs:
         with:
           go-version: "1.26.1"
           cache: true
-          cache-dependency-path: operator/go.sum
+          cache-dependency-path: |
+            operator/go.sum
+            operator/api/go.sum
+            operator/client/go.sum
+            scheduler/api/go.sum
+            scheduler/client/go.sum
+            cli-plugin/go.sum
       - name: test-unit
         run: make test-unit
   build:

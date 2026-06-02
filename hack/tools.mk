@@ -51,7 +51,7 @@ $(shell mkdir -p $(TOOLS_BIN_DIR) > /dev/null)
 # Common
 # -------------------------------------------------------------------------
 # Use this function to get the version of a go module from go.mod
-version_gomod = $(shell go list -mod=mod -f '{{ .Version }}' -m $(1))
+version_gomod = $(shell GOWORK=off go list -mod=mod -f '{{ .Version }}' -m $(1))
 
 .PHONY: clean-tools-bin
 clean-tools-bin:

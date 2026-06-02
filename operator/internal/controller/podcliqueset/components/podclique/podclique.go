@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"maps"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -130,6 +129,7 @@ func (r _resource) triggerDeletionOfExcessPCLQs(ctx context.Context, logger logr
 func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, existingPCLQFQNs []string) error {
 	expectedPCLQNames, _ := componentutils.GetExpectedPCLQNamesGroupByOwner(pcs)
 	tasks := make([]utils.Task, 0, len(expectedPCLQNames))
+	existingPCLQNameSet := componentutils.NewSet(existingPCLQFQNs)
 
 	for pcsReplica := range pcs.Spec.Replicas {
 		for _, expectedPCLQName := range expectedPCLQNames {
@@ -137,7 +137,7 @@ func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, 
 				Name:      apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: int(pcsReplica)}, expectedPCLQName),
 				Namespace: pcs.Namespace,
 			}
-			pclqExists := slices.Contains(existingPCLQFQNs, pclqObjectKey.Name)
+			pclqExists := existingPCLQNameSet.Has(pclqObjectKey.Name)
 			createOrUpdateTask := utils.Task{
 				Name: fmt.Sprintf("CreateOrUpdatePodClique-%s", pclqObjectKey),
 				Fn: func(ctx context.Context) error {

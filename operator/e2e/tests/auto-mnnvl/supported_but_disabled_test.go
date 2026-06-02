@@ -22,12 +22,8 @@ import (
 	"context"
 	"testing"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
-	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"k8s.io/apimachinery/pkg/types"
 )
 
 // Test_AutoMNNVL_SupportedButDisabled is the test suite for when Auto-MNNVL feature is disabled
@@ -49,7 +45,6 @@ func Test_AutoMNNVL_SupportedButDisabled(t *testing.T) {
 		description string
 		fn          func(*testing.T, *testctx.TestContext)
 	}{
-		{"no auto annotation added", testNoAutoAnnotationAdded},
 		{"explicit enabled annotation rejected", testExplicitEnabledAnnotationRejected},
 		{"no MNNVL artifacts created", testNoMNNVLArtifactsWhenDisabled},
 	}
@@ -62,37 +57,9 @@ func Test_AutoMNNVL_SupportedButDisabled(t *testing.T) {
 	}
 }
 
-// testNoAutoAnnotationAdded verifies that the webhook doesn't add the auto-mnnvl
-// annotation when the feature is disabled.
-func testNoAutoAnnotationAdded(t *testing.T, tc *testctx.TestContext) {
-	pcsName := "test-no-auto-annotation"
-
-	// Create a PCS with GPU requirement (no annotation)
-	pcs := buildGPUPCS(pcsName, 1)
-	err := tc.Client.Create(tc.Ctx, pcs)
-	require.NoError(t, err, "Failed to create PCS")
-	defer deletePCS(tc, pcsName)
-
-	// Verify the PCS does NOT have the auto-mnnvl annotation
-	var createdPCS grovecorev1alpha1.PodCliqueSet
-	err = tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: pcsName}, &createdPCS)
-	require.NoError(t, err, "Failed to get created PCS")
-
-	annotations := createdPCS.GetAnnotations()
-	_, hasAnnotation := annotations[mnnvl.AnnotationMNNVLGroup]
-	assert.False(t, hasAnnotation,
-		"PCS should NOT have mnnvl-group annotation when feature is disabled")
-}
-
 // testExplicitEnabledAnnotationRejected verifies that explicitly setting
-// mnnvl-group is rejected when the feature is disabled globally.
+// mnnvl-group annotation is rejected when the feature is disabled globally.
 func testExplicitEnabledAnnotationRejected(t *testing.T, tc *testctx.TestContext) {
-	pcsName := "test-explicit-enabled-rejected"
-
-	pcs := buildGPUPCS(pcsName, 1, map[string]string{
-		mnnvl.AnnotationMNNVLGroup: "default",
-	})
-
-	err := tc.Client.Create(tc.Ctx, pcs)
-	assert.Error(t, err, "PCS with mnnvl-group should be rejected when feature is disabled")
+	err := applyMNNVLYAML(tc, "mnnvl-gpu-default.yaml", "test-disabled-reject")
+	assert.Error(t, err, "PCS with mnnvl-group annotation should be rejected when feature is disabled")
 }

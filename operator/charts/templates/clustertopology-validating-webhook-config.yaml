@@ -35,7 +35,7 @@ webhooks:
           - CREATE
           - UPDATE
         resources:
-          - clustertopologies
+          - clustertopologybindings
         scope: "Cluster"
     sideEffects: None
     timeoutSeconds: 10

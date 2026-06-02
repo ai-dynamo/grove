@@ -1,0 +1,27 @@
+# MNNVL E2E: Simple GPU PCS with mnnvl-group: "none" (opt-out)
+# Used by: testExplicitOptOutHonored, testNoneOnAllLayersNoMNNVL
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: mnnvl-gpu-optout
+  annotations:
+    grove.io/mnnvl-group: "none"
+spec:
+  replicas: 1
+  template:
+    terminationDelay: 1s
+    cliques:
+      - name: gpu-worker
+        spec:
+          roleName: gpu-worker
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: gpu-container
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  limits:
+                    nvidia.com/gpu: "1"

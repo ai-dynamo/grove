@@ -1,0 +1,37 @@
+# MNNVL E2E: Simple GPU + CPU PCS with NO mnnvl-group annotation.
+# Verifies that without the annotation, no MNNVL artifacts are created
+# regardless of whether the feature is enabled or disabled at the operator level.
+# Used by: testNoMNNVLArtifactsWhenDisabled (shared_cases.go)
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: mnnvl-comprehensive-bare
+spec:
+  replicas: 1
+  template:
+    terminationDelay: 1s
+    cliques:
+      - name: gpu
+        spec:
+          roleName: gpu
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: gpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  limits:
+                    nvidia.com/gpu: "1"
+      - name: cpu
+        spec:
+          roleName: cpu
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: cpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
