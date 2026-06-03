@@ -20,6 +20,11 @@ resources:
     memory: 128Mi
     ephemeral-storage: 128Mi
 
+podSecurityContext:
+  seccompProfile:
+    type: RuntimeDefault
+securityContext: {}
+
 # Node selector to constrain the operator pod to nodes with matching labels.
 nodeSelector: {}
 
