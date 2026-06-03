@@ -11,7 +11,9 @@ spec:
   replicas: 1
   template:
     topologyConstraint:
-      packDomain: rack
+      topologyName: grove-topology
+      pack:
+        required: rack
     podCliqueScalingGroups:
       - name: workers
         replicas: 2

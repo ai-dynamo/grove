@@ -61,9 +61,6 @@ const (
 	// scaleTestTimeout defines the timeout for scale tests, set to 15 minutes.
 	scaleTestTimeout = 15 * time.Minute
 
-	// Grove label keys
-	LabelPodClique             = "grove.io/podclique"
-	LabelPodCliqueScalingGroup = "grove.io/podcliquescalinggroup"
 )
 
 // ConvertTypedToUnstructured converts a typed object to an unstructured object

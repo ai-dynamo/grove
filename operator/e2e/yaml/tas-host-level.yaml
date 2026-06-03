@@ -15,7 +15,9 @@ spec:
         labels:
           kai.scheduler/queue: test
         topologyConstraint:
-          packDomain: host
+          topologyName: grove-topology
+          pack:
+            required: host
         spec:
           roleName: worker
           replicas: 2
@@ -44,4 +46,3 @@ spec:
                 resources:
                   requests:
                     memory: 40Mi
-

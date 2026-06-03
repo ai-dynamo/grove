@@ -19,13 +19,14 @@ package podcliquescalinggroup
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
@@ -93,6 +94,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 	}
 
 	tasks := make([]utils.Task, 0, int(pcs.Spec.Replicas)*len(pcs.Spec.Template.PodCliqueScalingGroupConfigs))
+	existingPCSGNameSet := componentutils.NewSet(existingPCSGNames)
 	expectedPCSGNames := make([]string, 0, 20)
 	for pcsReplica := range pcs.Spec.Replicas {
 		for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
@@ -102,7 +104,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 				Name:      pcsgName,
 				Namespace: pcs.Namespace,
 			}
-			pcsgExists := slices.Contains(existingPCSGNames, pcsgName)
+			pcsgExists := existingPCSGNameSet.Has(pcsgName)
 			createOrUpdateTask := utils.Task{
 				Name: fmt.Sprintf("CreateOrUpdatePodCliqueScalingGroup-%s", pcsgObjectKey),
 				Fn: func(ctx context.Context) error {
@@ -113,9 +115,13 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 		}
 	}
 
-	excessPCSGNames := lo.Filter(existingPCSGNames, func(existingPCSGName string, _ int) bool {
-		return !slices.Contains(expectedPCSGNames, existingPCSGName)
-	})
+	expectedPCSGNameSet := componentutils.NewSet(expectedPCSGNames)
+	var excessPCSGNames []string
+	for _, existingPCSGName := range existingPCSGNames {
+		if !expectedPCSGNameSet.Has(existingPCSGName) {
+			excessPCSGNames = append(excessPCSGNames, existingPCSGName)
+		}
+	}
 	for _, excessPCSGName := range excessPCSGNames {
 		pcsgObjectKey := client.ObjectKey{
 			Namespace: pcs.Namespace,
@@ -208,6 +214,8 @@ func (r _resource) buildResource(pcsg *grovecorev1alpha1.PodCliqueScalingGroup, 
 			fmt.Sprintf("Error setting controller reference for PodCliqueScalingGroup: %v", client.ObjectKeyFromObject(pcsg)),
 		)
 	}
+	// Add finalizer at creation so PCSG controller does not need a separate PATCH on first reconcile.
+	controllerutil.AddFinalizer(pcsg, apiconstants.FinalizerPodCliqueScalingGroup)
 	// Only set replicas when creating the PCSG to allow external scaling (HPA, direct patching)
 	// Post-creation scaling must be done directly on the PCSG resource, not via PCS template
 	if !pcsgExists {
@@ -216,18 +224,46 @@ func (r _resource) buildResource(pcsg *grovecorev1alpha1.PodCliqueScalingGroup, 
 	pcsg.Spec.MinAvailable = pcsgConfig.MinAvailable
 	pcsg.Spec.CliqueNames = pcsgConfig.CliqueNames
 	pcsg.Labels = getLabels(pcs, pcsReplica, client.ObjectKeyFromObject(pcsg))
-
-	// Propagate MNNVL annotation from PCS to PCSG.
-	// Only propagate when enabled - if not enabled, PCSG controller has nothing to inject,
-	// so the annotation is not needed.
-	if mnnvl.IsAutoMNNVLEnabled(pcs.Annotations) {
-		if pcsg.Annotations == nil {
-			pcsg.Annotations = make(map[string]string)
-		}
-		pcsg.Annotations[mnnvl.AnnotationAutoMNNVL] = mnnvl.AnnotationAutoMNNVLEnabled
-	}
+	pcsg.Annotations = getAnnotations(pcsgConfig)
+	pcsg.Annotations = propagateMNNVLAnnotations(pcsg.Annotations, pcs.Annotations)
 
 	return nil
+}
+
+// propagateMNNVLAnnotations inherits the MNNVL group annotation from the parent PCS
+// onto the target annotations when it is not already present.
+func propagateMNNVLAnnotations(annotations map[string]string, pcsAnnotations map[string]string) map[string]string {
+	annotations = propagateAnnotation(annotations, pcsAnnotations, mnnvl.AnnotationMNNVLGroup)
+	return annotations
+}
+
+// propagateAnnotation copies the annotation identified by key from source to
+// target when it exists in source and is not already present in target.
+func propagateAnnotation(target map[string]string, source map[string]string, key string) map[string]string {
+	val, found := source[key]
+	if !found {
+		return target
+	}
+	if _, exists := target[key]; exists {
+		return target
+	}
+	if target == nil {
+		target = make(map[string]string)
+	}
+	target[key] = val
+	return target
+}
+
+// getAnnotations constructs annotations for a PodCliqueScalingGroup resource.
+func getAnnotations(pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig) map[string]string {
+	if len(pcsgConfig.Annotations) == 0 {
+		return nil
+	}
+	annotations := make(map[string]string, len(pcsgConfig.Annotations))
+	for k, v := range pcsgConfig.Annotations {
+		annotations[k] = v
+	}
+	return annotations
 }
 
 // getLabels constructs labels for a PodCliqueScalingGroup resource.

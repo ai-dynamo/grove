@@ -27,6 +27,16 @@ import (
 // +kubebuilder:subresource:status
 // +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.hpaPodSelector
 // +kubebuilder:resource:shortName={pcs}
+// +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.status.replicas`
+// +kubebuilder:printcolumn:name="Available",type=integer,JSONPath=`.status.availableReplicas`
+// +kubebuilder:printcolumn:name="Updated",type=integer,JSONPath=`.status.updatedReplicas`
+// +kubebuilder:printcolumn:name="PCLQs-Updated",type=integer,JSONPath=`.status.updateProgress.updatedPodCliquesCount`
+// +kubebuilder:printcolumn:name="PCLQs-Total",type=integer,JSONPath=`.status.updateProgress.totalPodCliquesCount`
+// +kubebuilder:printcolumn:name="PCSGs-Updated",type=integer,JSONPath=`.status.updateProgress.updatedPodCliqueScalingGroupsCount`
+// +kubebuilder:printcolumn:name="PCSGs-Total",type=integer,JSONPath=`.status.updateProgress.totalPodCliqueScalingGroupsCount`
+// +kubebuilder:validation:XValidation:rule="oldSelf.hasValue() || !has(self.spec.template.topologyConstraint) || !has(self.spec.template.topologyConstraint.packDomain)",message="packDomain is deprecated and cannot be used on new workloads; use pack.required",fieldPath=".spec.template.topologyConstraint.packDomain",optionalOldSelf=true,reason=FieldValueForbidden
+// +kubebuilder:validation:XValidation:rule="oldSelf.hasValue() || !has(self.spec.template.cliques) || self.spec.template.cliques.all(c, !has(c.topologyConstraint) || !has(c.topologyConstraint.packDomain))",message="packDomain is deprecated and cannot be used on new workloads; use pack.required",fieldPath=".spec.template.cliques",optionalOldSelf=true,reason=FieldValueForbidden
+// +kubebuilder:validation:XValidation:rule="oldSelf.hasValue() || !has(self.spec.template.podCliqueScalingGroups) || self.spec.template.podCliqueScalingGroups.all(g, !has(g.topologyConstraint) || !has(g.topologyConstraint.packDomain))",message="packDomain is deprecated and cannot be used on new workloads; use pack.required",fieldPath=".spec.template.podCliqueScalingGroups",optionalOldSelf=true,reason=FieldValueForbidden
 
 // PodCliqueSet is a set of PodGangs defining specification on how to spread and manage a gang of pods and monitoring their status.
 type PodCliqueSet struct {
@@ -96,10 +106,6 @@ type PodCliqueSetStatus struct {
 	// Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value
 	// then an update needs to be triggered.
 	CurrentGenerationHash *string `json:"currentGenerationHash,omitempty"`
-	// RollingUpdateProgress represents the progress of a rolling update.
-	// Deprecated: Use UpdateProgress instead. This field is maintained for backward compatibility and will be
-	// removed in a future release.
-	RollingUpdateProgress *PodCliqueSetRollingUpdateProgress `json:"rollingUpdateProgress,omitempty"`
 	// UpdateProgress represents the progress of an update.
 	UpdateProgress *PodCliqueSetUpdateProgress `json:"updateProgress,omitempty"`
 }
@@ -112,32 +118,6 @@ type PodCliqueSetUpdateStrategy struct {
 	// Default is RollingRecreate.
 	// +kubebuilder:default=RollingRecreate
 	Type UpdateStrategyType `json:"type,omitempty"`
-}
-
-// PodCliqueSetRollingUpdateProgress captures the progress of a rolling update of the PodCliqueSet.
-// Deprecated: Use PodCliqueSetUpdateProgress instead. This struct is maintained for backward compatibility.
-type PodCliqueSetRollingUpdateProgress struct {
-	// UpdateStartedAt is the time at which the rolling update started for the PodCliqueSet.
-	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
-	// UpdateEndedAt is the time at which the rolling update ended for the PodCliqueSet.
-	// +optional
-	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
-	// UpdatedPodCliqueScalingGroups is a list of PodCliqueScalingGroup names that have been updated to the desired PodCliqueSet generation hash.
-	UpdatedPodCliqueScalingGroups []string `json:"updatedPodCliqueScalingGroups,omitempty"`
-	// UpdatedPodCliques is a list of PodClique names that have been updated to the desired PodCliqueSet generation hash.
-	UpdatedPodCliques []string `json:"updatedPodCliques,omitempty"`
-	// CurrentlyUpdating captures the progress of the PodCliqueSet replica that is currently being updated.
-	// +optional
-	CurrentlyUpdating *PodCliqueSetReplicaRollingUpdateProgress `json:"currentlyUpdating,omitempty"`
-}
-
-// PodCliqueSetReplicaRollingUpdateProgress captures the progress of a rolling update for a specific PodCliqueSet replica.
-// Deprecated: Use PodCliqueSetReplicaUpdateProgress instead. This struct is maintained for backward compatibility.
-type PodCliqueSetReplicaRollingUpdateProgress struct {
-	// ReplicaIndex is the replica index of the PodCliqueSet that is being updated.
-	ReplicaIndex int32 `json:"replicaIndex"`
-	// UpdateStartedAt is the time at which the rolling update started for this PodCliqueSet replica index.
-	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
 }
 
 // PodCliqueSetUpdateProgress captures the progress of an update of the PodCliqueSet.
@@ -153,11 +133,26 @@ type PodCliqueSetUpdateProgress struct {
 	// pending on Grove.
 	// +optional
 	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
-	// UpdatedPodCliqueScalingGroups is a list of PodCliqueScalingGroup names that have been updated to the desired
-	// PodCliqueSet generation hash.
-	UpdatedPodCliqueScalingGroups []string `json:"updatedPodCliqueScalingGroups,omitempty"`
-	// UpdatedPodCliques is a list of PodClique names that have been updated to the desired PodCliqueSet generation hash.
-	UpdatedPodCliques []string `json:"updatedPodCliques,omitempty"`
+	// UpdatedPodCliquesCount is the number of PodCliques that have been updated to the desired PodCliqueSet
+	// generation hash. Recomputed each reconcile from child generation-hash labels.
+	// +optional
+	// +kubebuilder:default=0
+	UpdatedPodCliquesCount int32 `json:"updatedPodCliquesCount,omitempty"`
+	// TotalPodCliquesCount is the total number of PodCliques expected to exist for the PodCliqueSet at the
+	// current spec.
+	// +optional
+	// +kubebuilder:default=0
+	TotalPodCliquesCount int32 `json:"totalPodCliquesCount,omitempty"`
+	// UpdatedPodCliqueScalingGroupsCount is the number of PodCliqueScalingGroups that have been updated to the
+	// desired PodCliqueSet generation hash.
+	// +optional
+	// +kubebuilder:default=0
+	UpdatedPodCliqueScalingGroupsCount int32 `json:"updatedPodCliqueScalingGroupsCount,omitempty"`
+	// TotalPodCliqueScalingGroupsCount is the total number of PodCliqueScalingGroups expected to exist for the
+	// PodCliqueSet at the current spec.
+	// +optional
+	// +kubebuilder:default=0
+	TotalPodCliqueScalingGroupsCount int32 `json:"totalPodCliqueScalingGroupsCount,omitempty"`
 	// CurrentlyUpdating captures the progress of the PodCliqueSet replicas that are currently being updated.
 	// This field is only set for auto update strategies where Grove handles the orchestration. It is not set for the
 	// OnDelete update strategy.
@@ -270,15 +265,88 @@ type PodCliqueTemplateSpec struct {
 }
 
 // TopologyConstraint defines topology placement requirements.
+// +kubebuilder:validation:XValidation:rule="has(self.pack) || has(self.packDomain)",message="topologyConstraint must specify pack or deprecated packDomain",fieldPath=".pack",reason=FieldValueRequired
+// +kubebuilder:validation:XValidation:rule="!(has(self.packDomain) && has(self.pack) && has(self.pack.required))",message="must not set both pack.required and deprecated packDomain",fieldPath=".pack.required"
 type TopologyConstraint struct {
-	// PackDomain specifies the topology domain for grouping replicas.
+	// TopologyName is the name of the ClusterTopologyBinding resource to use for topology-aware scheduling.
+	// Setting TopologyName may be optional if the name can be inherited from a higher level scope.
+	// When TopologyName is specified at a PCS/PCSG/PCLQ resource constraint, it will also be inherited
+	// as the default ClusterTopologyBinding name on all sub-resources, unless overridden by another TopologyName
+	// at a sub-resource.
+	// For example, setting TopologyName at a PCS level makes it optional for child PCSG or PCLQ levels
+	// when the sub-resources reuse the same ClusterTopologyBinding.
+	// Immutable after creation.
+	// +optional
+	TopologyName string `json:"topologyName,omitempty"`
+
+	// Pack specifies topology packing constraints for each replica of the resource.
+	// +optional
+	Pack *TopologyPackConstraint `json:"pack,omitempty"`
+
+	// PackDomain specifies the required topology domain using the legacy field name.
 	// Controls placement constraint for EACH individual replica instance.
-	// Must be one of: region, zone, datacenter, block, rack, host, numa
+	// Must reference a domain in the topology levels defined in the ClusterTopologyBinding named by TopologyName.
 	// Example: "rack" means each replica independently placed within one rack.
 	// Note: Does NOT constrain all replicas to the same rack together.
 	// Different replicas can be in different topology domains.
-	// +kubebuilder:validation:Enum=region;zone;datacenter;block;rack;host;numa
-	PackDomain TopologyDomain `json:"packDomain"`
+	// Deprecated: use Pack.RequiredDomain.
+	// +optional
+	PackDomain TopologyDomain `json:"packDomain,omitempty"`
+}
+
+// TopologyPackConstraint defines topology pack placement requirements.
+// +kubebuilder:validation:XValidation:rule="has(self.required) || has(self.preferred)",message="pack must specify at least one of required or preferred",reason=FieldValueRequired
+type TopologyPackConstraint struct {
+	// RequiredDomain specifies the required topology packing constraint of each replica of the resource.
+	// The workload will not be scheduled if this constraint cannot be satisfied.
+	// Must reference a domain in the topology levels defined in the selected ClusterTopologyBinding.
+	// +optional
+	RequiredDomain TopologyDomain `json:"required,omitempty"`
+
+	// PreferredDomain specifies a preferred best-effort topology domain.
+	// If the constraint cannot be satisfied, the workload is scheduled anyway.
+	// +optional
+	PreferredDomain TopologyDomain `json:"preferred,omitempty"`
+}
+
+// HasAnyPackDomain reports whether the constraint has any required or preferred pack domain.
+func (tc *TopologyConstraint) HasAnyPackDomain() bool {
+	return tc != nil && (tc.RequiredDomain() != "" || tc.PreferredDomain() != "")
+}
+
+// RequiredDomain returns the required pack domain, falling back to legacy packDomain.
+func (tc *TopologyConstraint) RequiredDomain() TopologyDomain {
+	if tc == nil {
+		return ""
+	}
+	if tc.Pack != nil && tc.Pack.RequiredDomain != "" {
+		return tc.Pack.RequiredDomain
+	}
+	return tc.PackDomain
+}
+
+// PreferredDomain returns the preferred pack domain.
+func (tc *TopologyConstraint) PreferredDomain() TopologyDomain {
+	if tc == nil || tc.Pack == nil {
+		return ""
+	}
+	return tc.Pack.PreferredDomain
+}
+
+// ReferencedDomains returns the unique required and preferred domains referenced by the constraint.
+func (tc *TopologyConstraint) ReferencedDomains() []TopologyDomain {
+	if tc == nil {
+		return nil
+	}
+	var domains []TopologyDomain
+	required := tc.RequiredDomain()
+	if required != "" {
+		domains = append(domains, required)
+	}
+	if preferred := tc.PreferredDomain(); preferred != "" && preferred != required {
+		domains = append(domains, preferred)
+	}
+	return domains
 }
 
 // PodCliqueScalingGroupConfig is a group of PodClique's that are scaled together.
@@ -290,6 +358,12 @@ type PodCliqueScalingGroupConfig struct {
 	Name string `json:"name"`
 	// CliqueNames is the list of names of the PodClique's that are part of the scaling group.
 	CliqueNames []string `json:"cliqueNames"`
+	// Annotations is an unstructured key value map stored with a resource that may be
+	// set by external tools to store and retrieve arbitrary metadata. They are not
+	// queryable and should be preserved when modifying objects.
+	// More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
 	// Replicas is the desired number of replicas for the scaling group at template level.
 	// This allows one to control the replicas of the scaling group at startup.
 	// If not specified, it defaults to 1.

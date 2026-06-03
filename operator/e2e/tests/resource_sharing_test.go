@@ -26,16 +26,19 @@ import (
 	"strings"
 	"testing"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/e2e/grove/gvk"
+	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	k8sutils "github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
-	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/resources"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	v1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 const (
@@ -44,11 +47,6 @@ const (
 	rsNamespace    = "default"
 )
 
-var podCliqueGVR = schema.GroupVersionResource{
-	Group:    "grove.io",
-	Version:  "v1alpha1",
-	Resource: "podcliques",
-}
 
 // --- RC name inventories ---
 //
@@ -327,9 +325,9 @@ func Test_RS1_HierarchicalResourceSharing(t *testing.T) {
 	)
 	defer cleanup()
 
-	crClient := tc.Clients.CRClient
-	rcLabelSelector := fmt.Sprintf("app.kubernetes.io/managed-by=grove-operator,app.kubernetes.io/part-of=%s,app.kubernetes.io/component=resource-claim", rsWorkloadName)
-	podSelector := fmt.Sprintf("app.kubernetes.io/part-of=%s", rsWorkloadName)
+	crClient := tc.Client
+	rcLabelSelector := fmt.Sprintf("%s=%s,%s=%s,%s=resource-claim", apicommon.LabelManagedByKey, apicommon.LabelManagedByValue, apicommon.LabelPartOfKey, rsWorkloadName, apicommon.LabelComponentKey)
+	podSelector := fmt.Sprintf("%s=%s", apicommon.LabelPartOfKey, rsWorkloadName)
 
 	Logger.Info("2. Create cross-namespace RCT (rs-shared/ext-ns-tpl)")
 	createCrossNamespaceRCT(t, tc)
@@ -351,13 +349,13 @@ func Test_RS1_HierarchicalResourceSharing(t *testing.T) {
 		t.Fatalf("Failed to list ResourceClaims for label check: %v", err)
 	}
 	for _, rc := range rcList.Items {
-		if rc.Labels["app.kubernetes.io/managed-by"] != "grove-operator" {
+		if rc.Labels[apicommon.LabelManagedByKey] != apicommon.LabelManagedByValue {
 			t.Errorf("RC %s missing managed-by label", rc.Name)
 		}
-		if rc.Labels["app.kubernetes.io/part-of"] != rsWorkloadName {
+		if rc.Labels[apicommon.LabelPartOfKey] != rsWorkloadName {
 			t.Errorf("RC %s missing part-of label", rc.Name)
 		}
-		if rc.Labels["app.kubernetes.io/component"] != "resource-claim" {
+		if rc.Labels[apicommon.LabelComponentKey] != "resource-claim" {
 			t.Errorf("RC %s missing component label", rc.Name)
 		}
 	}
@@ -393,7 +391,7 @@ func Test_RS1_HierarchicalResourceSharing(t *testing.T) {
 		t.Fatalf("Failed to scale PCLQ: %v", err)
 	}
 	verifyRCState(t, tc, rcLabelSelector, 15, pclqScaleOutRCNames())
-	pods, err := pods.NewPodManager(tc.Clients, Logger).WaitForCount(ctx, rsNamespace, podSelector, 5, tc.Timeout, tc.Interval)
+	pods, err := pods.NewPodManager(tc.Client, Logger).WaitForCount(ctx, rsNamespace, podSelector, 5, tc.Timeout, tc.Interval)
 	if err != nil {
 		t.Fatalf("Expected 5 pods after PCLQ scale-out but timed out: %v", err)
 	}
@@ -447,7 +445,7 @@ func Test_RS1_HierarchicalResourceSharing(t *testing.T) {
 	verifyImmutabilityRejection(t, tc)
 
 	Logger.Info("16. Delete PCS and verify all ResourceClaims are garbage-collected")
-	wm := workload.NewWorkloadManager(tc.Clients, Logger)
+	wm := workload.NewWorkloadManager(tc.Client, Logger)
 	if err := wm.DeletePCSAndWait(ctx, tc.Namespace, rsWorkloadName, tc.Timeout, tc.Interval); err != nil {
 		t.Fatalf("Failed to delete PCS: %v", err)
 	}
@@ -461,19 +459,19 @@ func Test_RS1_HierarchicalResourceSharing(t *testing.T) {
 
 // scalePodClique scales a PodClique using the resource manager.
 func scalePodClique(tc *testctx.TestContext, name string, replicas int) error {
-	rm := resources.NewResourceManager(tc.Clients, Logger)
-	return rm.ScaleCRD(tc.Ctx, podCliqueGVR, tc.Namespace, name, replicas)
+	rm := resources.NewResourceManager(tc.Client, Logger)
+	return rm.ScaleCRD(tc.Ctx, gvk.PodClique, tc.Namespace, name, replicas)
 }
 
 // verifyRCState waits for the expected RC count and verifies exact RC names.
 func verifyRCState(t *testing.T, tc *testctx.TestContext, labelSelector string, expectedCount int, expectedNames []string) {
 	t.Helper()
-	err := k8sutils.WaitForResourceClaimCount(tc.Ctx, tc.Clients.CRClient, tc.Namespace, labelSelector, expectedCount, tc.Timeout, tc.Interval)
+	err := k8sutils.WaitForResourceClaimCount(tc.Ctx, tc.Client, tc.Namespace, labelSelector, expectedCount, tc.Timeout, tc.Interval)
 	if err != nil {
 		t.Fatalf("Expected %d ResourceClaims but timed out: %v", expectedCount, err)
 	}
 
-	rcList, err := k8sutils.ListResourceClaims(tc.Ctx, tc.Clients.CRClient, tc.Namespace, labelSelector)
+	rcList, err := k8sutils.ListResourceClaims(tc.Ctx, tc.Client, tc.Namespace, labelSelector)
 	if err != nil {
 		t.Fatalf("Failed to list ResourceClaims: %v", err)
 	}
@@ -491,7 +489,7 @@ func verifyRCState(t *testing.T, tc *testctx.TestContext, labelSelector string, 
 // verifyPodState waits for the expected pod count and verifies RC references in pod specs.
 func verifyPodState(t *testing.T, tc *testctx.TestContext, podSelector string, expectedCount int, expectedRefs map[string][]string) {
 	t.Helper()
-	pods, err := pods.NewPodManager(tc.Clients, Logger).WaitForCount(tc.Ctx, tc.Namespace, podSelector, expectedCount, tc.Timeout, tc.Interval)
+	pods, err := pods.NewPodManager(tc.Client, Logger).WaitForCount(tc.Ctx, tc.Namespace, podSelector, expectedCount, tc.Timeout, tc.Interval)
 	if err != nil {
 		t.Fatalf("Expected %d pods but timed out: %v", expectedCount, err)
 	}
@@ -507,9 +505,9 @@ func verifyPodResourceClaimRefs(t *testing.T, pods []v1.Pod, expectedRefsByPCLQ 
 	matchedPCLQs := make(map[string]bool)
 
 	for _, pod := range pods {
-		pclqName := pod.Labels[LabelPodClique]
+		pclqName := pod.Labels[apicommon.LabelPodClique]
 		if pclqName == "" {
-			t.Errorf("Pod %s missing %s label", pod.Name, LabelPodClique)
+			t.Errorf("Pod %s missing %s label", pod.Name, apicommon.LabelPodClique)
 			continue
 		}
 
@@ -568,7 +566,7 @@ func extractContainerClaimNames(container v1.Container) []string {
 
 func createCrossNamespaceRCT(t *testing.T, tc *testctx.TestContext) {
 	t.Helper()
-	crClient := tc.Clients.CRClient
+	crClient := tc.Client
 
 	ns := &v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "rs-shared"}}
 	if err := crClient.Create(tc.Ctx, ns); err != nil && !errors.IsAlreadyExists(err) {
@@ -668,7 +666,7 @@ func pcsScaleOutOwnerRefs() map[string]expectedOwner {
 
 func verifyOwnerReferences(t *testing.T, tc *testctx.TestContext, labelSelector string, expected map[string]expectedOwner) {
 	t.Helper()
-	rcList, err := k8sutils.ListResourceClaims(tc.Ctx, tc.Clients.CRClient, tc.Namespace, labelSelector)
+	rcList, err := k8sutils.ListResourceClaims(tc.Ctx, tc.Client, tc.Namespace, labelSelector)
 	if err != nil {
 		t.Fatalf("Failed to list ResourceClaims for ownerRef check: %v", err)
 	}
@@ -701,7 +699,7 @@ func verifyMultiPodPerReplicaRefs(t *testing.T, allPods []v1.Pod, pclqLabel stri
 	t.Helper()
 	var matchedPods []v1.Pod
 	for _, pod := range allPods {
-		if pod.Labels[LabelPodClique] == pclqLabel {
+		if pod.Labels[apicommon.LabelPodClique] == pclqLabel {
 			matchedPods = append(matchedPods, pod)
 		}
 	}
@@ -739,23 +737,21 @@ func verifyMultiPodPerReplicaRefs(t *testing.T, allPods []v1.Pod, pclqLabel stri
 
 func verifyImmutabilityRejection(t *testing.T, tc *testctx.TestContext) {
 	t.Helper()
-	pcs, err := tc.Clients.DynamicClient.Resource(workload.PodCliqueSetGVR).Namespace(tc.Namespace).Get(tc.Ctx, rsWorkloadName, metav1.GetOptions{})
-	if err != nil {
+	var pcs grovecorev1alpha1.PodCliqueSet
+	if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: rsWorkloadName}, &pcs); err != nil {
 		t.Fatalf("Failed to get PCS for immutability test: %v", err)
 	}
 
-	spec := pcs.Object["spec"].(map[string]interface{})
-	template := spec["template"].(map[string]interface{})
-	resourceSharing := template["resourceSharing"].([]interface{})
-	rs0 := resourceSharing[0].(map[string]interface{})
-	originalScope := rs0["scope"]
-	if originalScope == "PerReplica" {
-		rs0["scope"] = "AllReplicas"
+	if len(pcs.Spec.Template.ResourceSharing) == 0 {
+		t.Fatal("PCS has no resourceSharing entries to test immutability")
+	}
+	if pcs.Spec.Template.ResourceSharing[0].Scope == "PerReplica" {
+		pcs.Spec.Template.ResourceSharing[0].Scope = "AllReplicas"
 	} else {
-		rs0["scope"] = "PerReplica"
+		pcs.Spec.Template.ResourceSharing[0].Scope = "PerReplica"
 	}
 
-	_, err = tc.Clients.DynamicClient.Resource(workload.PodCliqueSetGVR).Namespace(tc.Namespace).Update(tc.Ctx, pcs, metav1.UpdateOptions{})
+	err := tc.Client.Update(tc.Ctx, &pcs)
 	if err == nil {
 		t.Fatal("Expected webhook rejection for immutable resourceSharing change, but update succeeded")
 	}

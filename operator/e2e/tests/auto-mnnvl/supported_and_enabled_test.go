@@ -24,12 +24,14 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/e2e/grove/gvk"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -45,7 +47,7 @@ func Test_AutoMNNVL_SupportedAndEnabled(t *testing.T) {
 	defer cleanup()
 
 	// Detect and validate cluster configuration
-	clusterConfig := requireClusterConfig(t, ctx, tc.Clients)
+	clusterConfig := requireClusterConfig(t, ctx, tc.Client)
 	clusterConfig.skipUnless(t, crdSupported, featureEnabled)
 
 	// Define all subtests
@@ -53,14 +55,14 @@ func Test_AutoMNNVL_SupportedAndEnabled(t *testing.T) {
 		description string
 		fn          func(*testing.T, *testctx.TestContext)
 	}{
-		{"PCS gets auto-mnnvl annotation", testPCSGetsAutoAnnotation},
-		{"ComputeDomain created per replica with correct metadata and spec", testComputeDomainCreatedPerReplica},
-		{"resourceClaim injection and annotation propagation", testResourceClaimInjection},
+		{"no annotation no MNNVL", testNoAnnotationNoMNNVL},
 		{"scale out and in manages ComputeDomains", testScaleOutAndIn},
 		{"PCS deletion cascades to ComputeDomain", testPCSDeletionCascadesToCD},
-		{"explicit disabled annotation is honored", testExplicitDisabledAnnotationHonored},
+		{"explicit opt-out is honored", testExplicitOptOutHonored},
 		{"invalid annotation is rejected", testInvalidAnnotationRejected},
 		{"annotation is immutable", testAnnotationImmutability},
+		{"CPU PCLQ ignored even with annotation", testCPUPCLQIgnoredEvenWithAnnotation},
+		{"MNNVL end to end", testMNNVLEndToEnd},
 	}
 
 	// Run all subtests
@@ -71,194 +73,32 @@ func Test_AutoMNNVL_SupportedAndEnabled(t *testing.T) {
 	}
 }
 
-// testPCSGetsAutoAnnotation verifies that the mutating webhook adds
-// grove.io/auto-mnnvl: enabled annotation to PCS with GPU requirements,
-// and does NOT add it to PCS without GPU requirements.
-func testPCSGetsAutoAnnotation(t *testing.T, tc *testctx.TestContext) {
-	t.Run("GPU PCS gets annotation", func(t *testing.T) {
-		pcsName := "test-gpu-annotation"
+// testNoAnnotationNoMNNVL verifies that a GPU PCS without an mnnvl-group
+// annotation does not get MNNVL behaviour: no ComputeDomain, no RCT in PodSpec.
+func testNoAnnotationNoMNNVL(t *testing.T, tc *testctx.TestContext) {
+	pcsName := "test-gpu-no-mnnvl"
 
-		// Create a PCS with GPU requirement (no annotation)
-		pcs := buildGPUPCS(pcsName, 1)
-		_, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Create(tc.Ctx, pcs, metav1.CreateOptions{})
-		require.NoError(t, err, "Failed to create PCS")
-		defer deletePCS(tc, pcsName)
-
-		// Verify the PCS has the auto-mnnvl annotation
-		createdPCS, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Get(tc.Ctx, pcsName, metav1.GetOptions{})
-		require.NoError(t, err, "Failed to get created PCS")
-
-		annotations := createdPCS.GetAnnotations()
-		assert.Equal(t, mnnvl.AnnotationAutoMNNVLEnabled, annotations[mnnvl.AnnotationAutoMNNVL],
-			"GPU PCS should have auto-mnnvl annotation set to 'enabled'")
-	})
-
-	t.Run("CPU-only PCS does not get annotation", func(t *testing.T) {
-		pcsName := "test-cpu-annotation"
-
-		// Create a PCS without GPU requirement
-		pcs := buildCPUOnlyPCS(pcsName, 1)
-		_, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Create(tc.Ctx, pcs, metav1.CreateOptions{})
-		require.NoError(t, err, "Failed to create PCS")
-		defer deletePCS(tc, pcsName)
-
-		// Verify the PCS does NOT have the auto-mnnvl annotation
-		createdPCS, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Get(tc.Ctx, pcsName, metav1.GetOptions{})
-		require.NoError(t, err, "Failed to get created PCS")
-
-		annotations := createdPCS.GetAnnotations()
-		_, hasAnnotation := annotations[mnnvl.AnnotationAutoMNNVL]
-		assert.False(t, hasAnnotation, "CPU-only PCS should NOT have auto-mnnvl annotation")
-	})
-}
-
-// testComputeDomainCreatedPerReplica verifies that one ComputeDomain is created
-// for each PCS replica, with correct metadata (finalizer, ownerRef, labels) and
-// spec (numNodes=0, RCT reference).
-func testComputeDomainCreatedPerReplica(t *testing.T, tc *testctx.TestContext) {
-	pcsName := "test-cd-per-replica"
-	replicas := 2
-
-	// Create a PCS with GPU requirement
-	pcs := buildGPUPCS(pcsName, replicas)
-	createdPCS, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Create(tc.Ctx, pcs, metav1.CreateOptions{})
-	require.NoError(t, err, "Failed to create PCS")
+	err := applyMNNVLYAML(tc, "mnnvl-gpu-bare.yaml", pcsName)
+	require.NoError(t, err, "Failed to apply YAML")
 	defer deletePCS(tc, pcsName)
 
-	// Wait for ComputeDomains to be created
-	err = waitForComputeDomainCount(tc, pcsName, replicas)
-	require.NoError(t, err, "Failed to wait for ComputeDomains")
+	var createdPCS grovecorev1alpha1.PodCliqueSet
+	err = tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: pcsName}, &createdPCS)
+	require.NoError(t, err, "Failed to get created PCS")
 
-	// Verify each replica has its own ComputeDomain with correct metadata and spec
-	for i := 0; i < replicas; i++ {
-		verifyComputeDomainContent(t, tc, pcsName, i, createdPCS.GetUID())
-	}
+	annotations := createdPCS.GetAnnotations()
+	_, hasAnnotation := annotations[mnnvl.AnnotationMNNVLGroup]
+	assert.False(t, hasAnnotation, "GPU PCS should NOT receive mnnvl-group annotation automatically")
 
-	// Deleting a CD should be blocked while the PCS replica still needs it.
-	// The finalizer should prevent deletion until the PCS replica is no longer using it.
-	cdName := fmt.Sprintf("%s-0", pcsName)
-	err = tc.Clients.DynamicClient.Resource(computeDomainGVR).Namespace(tc.Namespace).Delete(tc.Ctx, cdName, metav1.DeleteOptions{})
-	require.NoError(t, err, "Delete request should succeed (sets DeletionTimestamp)")
+	pclqName := fmt.Sprintf("%s-0-gpu-worker", pcsName)
+	pclq, err := waitForPCLQ(tc, pclqName)
+	require.NoError(t, err, "Failed to wait for PCLQ")
 
-	// CD should not be deleted while PCS still needs it (finalizer blocks deletion)
-	err = waitForComputeDomainCount(tc, pcsName, replicas)
-	require.NoError(t, err, "Controller should recreate deleted ComputeDomain")
+	assert.Empty(t, pclq.Spec.PodSpec.ResourceClaims, "PCLQ should not have resourceClaims without mnnvl-group annotation")
 
-	// Verify the CD has correct content
-	verifyComputeDomainContent(t, tc, pcsName, 0, createdPCS.GetUID())
-}
-
-// testResourceClaimInjection is a comprehensive test that verifies resourceClaim injection
-// and annotation propagation across multiple clique types and scaling groups.
-func testResourceClaimInjection(t *testing.T, tc *testctx.TestContext) {
-	pcsName := "inj-test"
-
-	// Create the comprehensive PCS
-	pcs := buildComprehensivePCS(pcsName, 1)
-	_, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Create(tc.Ctx, pcs, metav1.CreateOptions{})
-	require.NoError(t, err, "Failed to create PCS")
-	defer deletePCS(tc, pcsName)
-
-	// --- Verify standalone cliques ---
-
-	// 1. gpu1: should have claim, GPU container refs it, non-GPU doesn't
-	t.Run("standalone GPU mixed clique", func(t *testing.T) {
-		pclqName := fmt.Sprintf("%s-0-gpu1", pcsName)
-		pclq, err := waitForPCLQ(tc, pclqName)
-		require.NoError(t, err, "Failed to wait for PCLQ")
-
-		// Should have resourceClaim
-		requirePodSpecMNNVLClaim(t, &pclq.Spec.PodSpec, pcsName, 0)
-
-		// Check containers
-		for i := range pclq.Spec.PodSpec.Containers {
-			container := &pclq.Spec.PodSpec.Containers[i]
-			if container.Name == "gpu" {
-				requireContainerMNNVLClaim(t, container)
-			} else if container.Name == "cpu" {
-				requireNoContainerMNNVLClaim(t, container)
-			}
-		}
-	})
-
-	// 2. cpu1: no claims
-	t.Run("standalone CPU only clique", func(t *testing.T) {
-		pclqName := fmt.Sprintf("%s-0-cpu1", pcsName)
-		pclq, err := waitForPCLQ(tc, pclqName)
-		require.NoError(t, err, "Failed to wait for PCLQ")
-
-		assert.Empty(t, pclq.Spec.PodSpec.ResourceClaims, "CPU-only clique should not have resourceClaims")
-		for i := range pclq.Spec.PodSpec.Containers {
-			requireNoContainerMNNVLClaim(t, &pclq.Spec.PodSpec.Containers[i])
-		}
-	})
-
-	// --- Verify sg1 cliques ---
-
-	// 3. gpu2: should have claim, GPU container refs it, non-GPU doesn't
-	t.Run("sg1 GPU mixed clique", func(t *testing.T) {
-		pclqName := fmt.Sprintf("%s-0-sg1-0-gpu2", pcsName)
-		pclq, err := waitForPCLQ(tc, pclqName)
-		require.NoError(t, err, "Failed to wait for PCLQ")
-
-		requirePodSpecMNNVLClaim(t, &pclq.Spec.PodSpec, pcsName, 0)
-
-		for i := range pclq.Spec.PodSpec.Containers {
-			container := &pclq.Spec.PodSpec.Containers[i]
-			if container.Name == "gpu" {
-				requireContainerMNNVLClaim(t, container)
-			} else if container.Name == "cpu" {
-				requireNoContainerMNNVLClaim(t, container)
-			}
-		}
-	})
-
-	// 4. cpu2: no claims
-	t.Run("sg1 CPU only clique", func(t *testing.T) {
-		pclqName := fmt.Sprintf("%s-0-sg1-0-cpu2", pcsName)
-		pclq, err := waitForPCLQ(tc, pclqName)
-		require.NoError(t, err, "Failed to wait for PCLQ")
-
-		assert.Empty(t, pclq.Spec.PodSpec.ResourceClaims, "CPU-only clique should not have resourceClaims")
-		for i := range pclq.Spec.PodSpec.Containers {
-			requireNoContainerMNNVLClaim(t, &pclq.Spec.PodSpec.Containers[i])
-		}
-	})
-
-	// --- Verify sg2 clique ---
-
-	// 5. cpu3: no claims
-	t.Run("sg2 CPU only clique", func(t *testing.T) {
-		pclqName := fmt.Sprintf("%s-0-sg2-0-cpu3", pcsName)
-		pclq, err := waitForPCLQ(tc, pclqName)
-		require.NoError(t, err, "Failed to wait for PCLQ")
-
-		assert.Empty(t, pclq.Spec.PodSpec.ResourceClaims, "CPU-only clique should not have resourceClaims")
-		for i := range pclq.Spec.PodSpec.Containers {
-			requireNoContainerMNNVLClaim(t, &pclq.Spec.PodSpec.Containers[i])
-		}
-	})
-
-	// --- Verify PCSGs get annotation propagated ---
-
-	t.Run("sg1 has annotation", func(t *testing.T) {
-		pcsgName := fmt.Sprintf("%s-0-sg1", pcsName)
-		pcsg, err := waitForPCSG(tc, pcsgName)
-		require.NoError(t, err, "Failed to wait for sg1")
-
-		assert.Equal(t, mnnvl.AnnotationAutoMNNVLEnabled, pcsg.GetAnnotations()[mnnvl.AnnotationAutoMNNVL],
-			"sg1 should have auto-mnnvl annotation propagated")
-	})
-
-	t.Run("sg2 has annotation", func(t *testing.T) {
-		pcsgName := fmt.Sprintf("%s-0-sg2", pcsName)
-		pcsg, err := waitForPCSG(tc, pcsgName)
-		require.NoError(t, err, "Failed to wait for sg2")
-
-		// Current behavior: all PCSGs get annotation from PCS, regardless of clique GPU content
-		assert.Equal(t, mnnvl.AnnotationAutoMNNVLEnabled, pcsg.GetAnnotations()[mnnvl.AnnotationAutoMNNVL],
-			"sg2 should have auto-mnnvl annotation propagated (current behavior)")
-	})
+	cdName := fmt.Sprintf("%s-0-default", pcsName)
+	err = getComputeDomain(tc, cdName)
+	assert.Error(t, err, "No ComputeDomain should exist for a PCS without MNNVL opt-in")
 }
 
 // testScaleOutAndIn verifies that scaling out creates new ComputeDomains with correct content,
@@ -266,100 +106,86 @@ func testResourceClaimInjection(t *testing.T, tc *testctx.TestContext) {
 func testScaleOutAndIn(t *testing.T, tc *testctx.TestContext) {
 	pcsName := "test-scale-cd"
 
-	// Create a PCS with 1 replica
-	pcs := buildGPUPCS(pcsName, 1)
-	createdPCS, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Create(tc.Ctx, pcs, metav1.CreateOptions{})
-	require.NoError(t, err, "Failed to create PCS")
+	err := applyMNNVLYAML(tc, "mnnvl-gpu-default.yaml", pcsName)
+	require.NoError(t, err, "Failed to apply YAML")
 	defer deletePCS(tc, pcsName)
 
-	// Wait for initial ComputeDomain
-	err = waitForComputeDomainCount(tc, pcsName, 1)
+	var createdPCS grovecorev1alpha1.PodCliqueSet
+	err = tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: pcsName}, &createdPCS)
+	require.NoError(t, err, "Failed to get created PCS")
+
+	desiredReplicas := 1
+	err = waitForComputeDomainCount(tc, pcsName, desiredReplicas)
 	require.NoError(t, err, "Failed to wait for initial ComputeDomain")
 
-	// Verify initial CD content
-	verifyComputeDomainContent(t, tc, pcsName, 0, createdPCS.GetUID())
+	verifyComputeDomainContent(t, tc, pcsName, 0, "default", createdPCS.GetUID())
 
-	// --- Scale Out: 1 -> 3 replicas ---
-	err = scalePCS(tc, pcsName, 3)
+	// Scale Out: 1 -> 3
+	previousReplicas := desiredReplicas
+	desiredReplicas = 3
+	err = scalePCS(tc, pcsName, desiredReplicas)
 	require.NoError(t, err, "Failed to scale out PCS")
 
-	err = waitForComputeDomainCount(tc, pcsName, 3)
+	err = waitForComputeDomainCount(tc, pcsName, desiredReplicas)
 	require.NoError(t, err, "Failed to wait for scaled-out ComputeDomains")
 
-	// Verify all 3 CDs exist with correct content
-	for i := 0; i < 3; i++ {
-		verifyComputeDomainContent(t, tc, pcsName, i, createdPCS.GetUID())
+	for i := 0; i < desiredReplicas; i++ {
+		verifyComputeDomainContent(t, tc, pcsName, i, "default", createdPCS.GetUID())
 	}
 
-	// --- Scale In: 3 -> 1 replica ---
-	err = scalePCS(tc, pcsName, 1)
+	// Scale In: 3 -> 1
+	previousReplicas = desiredReplicas
+	desiredReplicas = 1
+	err = scalePCS(tc, pcsName, desiredReplicas)
 	require.NoError(t, err, "Failed to scale in PCS")
 
-	err = waitForComputeDomainCount(tc, pcsName, 1)
+	err = waitForComputeDomainCount(tc, pcsName, desiredReplicas)
 	require.NoError(t, err, "Failed to wait for scaled-in ComputeDomains")
 
-	// Verify only replica-0 exists with correct content
-	verifyComputeDomainContent(t, tc, pcsName, 0, createdPCS.GetUID())
+	verifyComputeDomainContent(t, tc, pcsName, 0, "default", createdPCS.GetUID())
 
-	// Verify replicas 1 and 2 are deleted
-	_, err = tc.Clients.DynamicClient.Resource(computeDomainGVR).Namespace(tc.Namespace).Get(tc.Ctx, fmt.Sprintf("%s-1", pcsName), metav1.GetOptions{})
-	assert.Error(t, err, "ComputeDomain 1 should be deleted after scale-in")
-
-	_, err = tc.Clients.DynamicClient.Resource(computeDomainGVR).Namespace(tc.Namespace).Get(tc.Ctx, fmt.Sprintf("%s-2", pcsName), metav1.GetOptions{})
-	assert.Error(t, err, "ComputeDomain 2 should be deleted after scale-in")
+	for i := desiredReplicas; i < previousReplicas; i++ {
+		err = getComputeDomain(tc, fmt.Sprintf("%s-%d-default", pcsName, i))
+		assert.Error(t, err, "ComputeDomain %d should be deleted after scale-in", i)
+	}
 }
 
 // testPCSDeletionCascadesToCD verifies that deleting PCS also deletes ComputeDomains.
 func testPCSDeletionCascadesToCD(t *testing.T, tc *testctx.TestContext) {
-	pcsName := "test-pcs-deletion-cascade"
+	pcsName := "test-del-cascade"
+	desiredReplicas := 2
 
-	// Create a PCS with GPU requirement
-	pcs := buildGPUPCS(pcsName, 2)
-	_, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Create(tc.Ctx, pcs, metav1.CreateOptions{})
-	require.NoError(t, err, "Failed to create PCS")
+	err := applyMNNVLYAML(tc, "mnnvl-gpu-default.yaml", pcsName)
+	require.NoError(t, err, "Failed to apply YAML")
 
-	// Wait for ComputeDomains
-	err = waitForComputeDomainCount(tc, pcsName, 2)
+	err = scalePCS(tc, pcsName, desiredReplicas)
+	require.NoError(t, err, "Failed to scale PCS to %d replicas", desiredReplicas)
+
+	err = waitForComputeDomainCount(tc, pcsName, desiredReplicas)
 	require.NoError(t, err, "Failed to wait for ComputeDomains")
 
-	// Delete the PCS
 	deletePCS(tc, pcsName)
 
-	// Wait for ComputeDomains to be deleted
 	err = waitForComputeDomainCount(tc, pcsName, 0)
 	assert.NoError(t, err, "ComputeDomains should be deleted when PCS is deleted")
 }
 
-// testExplicitDisabledAnnotationHonored verifies that auto-mnnvl: disabled prevents injection.
-func testExplicitDisabledAnnotationHonored(t *testing.T, tc *testctx.TestContext) {
-	pcsName := "test-explicit-disabled"
+// testExplicitOptOutHonored verifies that mnnvl-group: "none" prevents injection.
+func testExplicitOptOutHonored(t *testing.T, tc *testctx.TestContext) {
+	pcsName := "test-explicit-optout"
 
-	// Create a PCS with GPU requirement but explicit disabled annotation
-	pcs := buildGPUPCS(pcsName, 1)
-	annotations := pcs.GetAnnotations()
-	if annotations == nil {
-		annotations = make(map[string]string)
-	}
-	annotations[mnnvl.AnnotationAutoMNNVL] = mnnvl.AnnotationAutoMNNVLDisabled
-	pcs.SetAnnotations(annotations)
-
-	_, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Create(tc.Ctx, pcs, metav1.CreateOptions{})
-	require.NoError(t, err, "Failed to create PCS")
+	err := applyMNNVLYAML(tc, "mnnvl-gpu-optout.yaml", pcsName)
+	require.NoError(t, err, "Failed to apply YAML")
 	defer deletePCS(tc, pcsName)
 
-	// Wait for PCLQ to exist — this proves the reconciler has processed the PCS,
-	// so any ComputeDomains would have been created by now if the annotation
-	// were honoured incorrectly.
 	pclqName := fmt.Sprintf("%s-0-gpu-worker", pcsName)
 	pclq, err := waitForPCLQ(tc, pclqName)
 	require.NoError(t, err, "Failed to wait for PCLQ")
 
-	// Verify no ComputeDomain was created
-	cdName := fmt.Sprintf("%s-0", pcsName)
-	_, err = tc.Clients.DynamicClient.Resource(computeDomainGVR).Namespace(tc.Namespace).Get(tc.Ctx, cdName, metav1.GetOptions{})
-	assert.Error(t, err, "No ComputeDomain should be created when annotation is 'disabled'")
+	cdName := fmt.Sprintf("%s-0-none", pcsName)
+	err = getComputeDomain(tc, cdName)
+	assert.Error(t, err, "No ComputeDomain should be created when mnnvl-group is 'none'")
 
-	// Verify no MNNVL claims are injected into the clique or containers.
 	for _, claim := range pclq.Spec.PodSpec.ResourceClaims {
 		assert.NotEqual(t, mnnvl.MNNVLClaimName, claim.Name, "PCLQ should not have MNNVL resourceClaim")
 	}
@@ -370,46 +196,221 @@ func testExplicitDisabledAnnotationHonored(t *testing.T, tc *testctx.TestContext
 
 // testInvalidAnnotationRejected verifies that invalid annotation values are rejected.
 func testInvalidAnnotationRejected(t *testing.T, tc *testctx.TestContext) {
-	pcsName := "test-invalid-annotation"
-
-	// Create a PCS with invalid annotation value
-	pcs := buildGPUPCS(pcsName, 1)
-	annotations := pcs.GetAnnotations()
-	if annotations == nil {
-		annotations = make(map[string]string)
-	}
-	annotations[mnnvl.AnnotationAutoMNNVL] = "invalid-value"
-	pcs.SetAnnotations(annotations)
-
-	_, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Create(tc.Ctx, pcs, metav1.CreateOptions{})
-	assert.Error(t, err, "PCS with invalid annotation value should be rejected")
+	err := applyMNNVLYAML(tc, "mnnvl-gpu-invalid.yaml", "test-invalid-annot")
+	assert.Error(t, err, "PCS with invalid mnnvl-group value should be rejected")
 }
 
-// testAnnotationImmutability verifies that the auto-mnnvl annotation cannot be changed after creation.
+// testAnnotationImmutability verifies that the mnnvl-group annotation cannot be changed after creation.
+// Retries on conflict (409) since controllers may update the PCS between our Get and Update.
 func testAnnotationImmutability(t *testing.T, tc *testctx.TestContext) {
-	pcsName := "test-annotation-immutable"
+	pcsName := "test-annot-immut"
 
-	// Create a GPU PCS (will get auto-annotated with "enabled")
-	pcs := buildGPUPCS(pcsName, 1)
-	createdPCS, err := tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Create(tc.Ctx, pcs, metav1.CreateOptions{})
-	require.NoError(t, err, "Failed to create PCS")
+	err := applyMNNVLYAML(tc, "mnnvl-gpu-default.yaml", pcsName)
+	require.NoError(t, err, "Failed to apply YAML")
 	defer deletePCS(tc, pcsName)
 
-	// Verify it has the auto-mnnvl annotation
-	annotations := createdPCS.GetAnnotations()
-	require.Equal(t, mnnvl.AnnotationAutoMNNVLEnabled, annotations[mnnvl.AnnotationAutoMNNVL],
-		"PCS should have auto-mnnvl annotation set to 'enabled'")
+	// Retry on conflict: applyMNNVLYAML doesn't return the created object, so we
+	// need a separate Get. Between Get and Update a controller may reconcile the
+	// PCS, bumping its resourceVersion and causing a 409 Conflict before the
+	// validating webhook gets a chance to reject the mutation.
+	const maxRetries = 5
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		var pcs grovecorev1alpha1.PodCliqueSet
+		err = tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: pcsName}, &pcs)
+		require.NoError(t, err, "Failed to get PCS")
 
-	// Try to change annotation from "enabled" to "disabled"
-	createdPCS.Annotations[mnnvl.AnnotationAutoMNNVL] = mnnvl.AnnotationAutoMNNVLDisabled
-	_, err = tc.Clients.GroveClient.GroveV1alpha1().PodCliqueSets(tc.Namespace).Update(tc.Ctx, createdPCS, metav1.UpdateOptions{})
-	assert.Error(t, err, "Changing auto-mnnvl annotation should be rejected")
-	assert.Contains(t, err.Error(), "immutable", "Error should mention immutability")
+		require.Equal(t, "default", pcs.GetAnnotations()[mnnvl.AnnotationMNNVLGroup])
+
+		pcs.Annotations[mnnvl.AnnotationMNNVLGroup] = "other"
+		err = tc.Client.Update(tc.Ctx, &pcs)
+
+		if k8serrors.IsConflict(err) {
+			continue
+		}
+
+		assert.Error(t, err, "Changing mnnvl-group annotation should be rejected")
+		assert.Contains(t, err.Error(), "immutable", "Error should mention immutability")
+		return
+	}
+	t.Fatalf("Update kept hitting resource version conflicts after %d retries", maxRetries)
+}
+
+// testCPUPCLQIgnoredEvenWithAnnotation verifies CPU PCLQs are silently skipped.
+func testCPUPCLQIgnoredEvenWithAnnotation(t *testing.T, tc *testctx.TestContext) {
+	pcsName := "test-cpu-ignored"
+
+	err := applyMNNVLYAML(tc, "mnnvl-cpu-with-annotation.yaml", pcsName)
+	require.NoError(t, err, "Failed to apply YAML")
+	defer deletePCS(tc, pcsName)
+
+	err = waitForComputeDomainCount(tc, pcsName, 1)
+	require.NoError(t, err, "Only 1 CD for the GPU PCLQ")
+
+	// GPU PCLQ gets claims
+	gpuPclq, err := waitForPCLQ(tc, fmt.Sprintf("%s-0-gp", pcsName))
+	require.NoError(t, err)
+	requirePodSpecMNNVLClaim(t, &gpuPclq.Spec.PodSpec, pcsName, 0, "default")
+
+	// CPU PCLQ does not get claims despite having the annotation
+	cpuPclq, err := waitForPCLQ(tc, fmt.Sprintf("%s-0-cp", pcsName))
+	require.NoError(t, err)
+	requireNoPodSpecMNNVLClaim(t, &cpuPclq.Spec.PodSpec)
+}
+
+// testMNNVLEndToEnd exercises all inherit/override/none combinations at every
+// layer (PCS, PCSG, PCLQ), then scales out, scales in, and deletes the PCS,
+// verifying ComputeDomains and claims throughout the full lifecycle.
+func testMNNVLEndToEnd(t *testing.T, tc *testctx.TestContext) {
+	pcsName := "mnnvl-e2e"
+
+	err := applyMNNVLYAML(tc, "mnnvl-comprehensive-mix.yaml", pcsName)
+	require.NoError(t, err, "Failed to apply YAML")
+	defer deletePCS(tc, pcsName)
+
+	var createdPCS grovecorev1alpha1.PodCliqueSet
+	err = tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: pcsName}, &createdPCS)
+	require.NoError(t, err)
+
+	groups := []string{"default", "train", "infer", "batch", "solo"}
+
+	err = waitForComputeDomainCount(tc, pcsName, len(groups))
+	require.NoError(t, err, "Expected %d CDs for 1 replica", len(groups))
+
+	for _, grp := range groups {
+		verifyComputeDomainContent(t, tc, pcsName, 0, grp, createdPCS.GetUID())
+	}
+
+	// --- Verify finalizer blocks deletion and controller recreates the CD ---
+	cdName := fmt.Sprintf("%s-0-default", pcsName)
+	cdObj := &unstructured.Unstructured{}
+	cdObj.SetGroupVersionKind(gvk.ComputeDomain)
+	cdObj.SetName(cdName)
+	cdObj.SetNamespace(tc.Namespace)
+	err = tc.Client.Delete(tc.Ctx, cdObj)
+	require.NoError(t, err, "Delete request should succeed (sets DeletionTimestamp)")
+
+	err = waitForComputeDomainCount(tc, pcsName, len(groups))
+	require.NoError(t, err, "Controller should recreate deleted ComputeDomain")
+	verifyComputeDomainContent(t, tc, pcsName, 0, "default", createdPCS.GetUID())
+
+	// --- Verify PCLQs with claims (7 total) ---
+	type claimCheck struct {
+		name      string
+		groupName string
+	}
+	withClaims := []claimCheck{
+		{fmt.Sprintf("%s-0-sa1", pcsName), "default"},     // standalone, inherit
+		{fmt.Sprintf("%s-0-sa2", pcsName), "train"},       // standalone, override
+		{fmt.Sprintf("%s-0-g1-0-p1", pcsName), "default"}, // g1 (inherit), p1 inherit
+		{fmt.Sprintf("%s-0-g1-0-p2", pcsName), "infer"},   // g1 (inherit), p2 override
+		{fmt.Sprintf("%s-0-g2-0-p4", pcsName), "train"},   // g2 (train), p4 inherit
+		{fmt.Sprintf("%s-0-g2-0-p5", pcsName), "batch"},   // g2 (train), p5 override
+		{fmt.Sprintf("%s-0-g3-0-p8", pcsName), "solo"},    // g3 (none), p8 override
+	}
+	for _, cc := range withClaims {
+		t.Run(fmt.Sprintf("claims-%s", cc.name), func(t *testing.T) {
+			pclq, err := waitForPCLQ(tc, cc.name)
+			require.NoError(t, err, "Failed to wait for PCLQ %s", cc.name)
+			requirePodSpecMNNVLClaim(t, &pclq.Spec.PodSpec, pcsName, 0, cc.groupName)
+		})
+	}
+
+	// --- Verify PCLQs without claims (5 total) ---
+	noClaims := []string{
+		fmt.Sprintf("%s-0-sa3", pcsName),     // standalone, none
+		fmt.Sprintf("%s-0-g1-0-p3", pcsName), // g1 (inherit), p3 none
+		fmt.Sprintf("%s-0-g2-0-p6", pcsName), // g2 (train), p6 none
+		fmt.Sprintf("%s-0-g3-0-p7", pcsName), // g3 (none), p7 inherit -> none
+		fmt.Sprintf("%s-0-g3-0-p9", pcsName), // g3 (none), p9 none
+	}
+	for _, pclqName := range noClaims {
+		t.Run(fmt.Sprintf("no-claims-%s", pclqName), func(t *testing.T) {
+			pclq, err := waitForPCLQ(tc, pclqName)
+			require.NoError(t, err, "Failed to wait for PCLQ %s", pclqName)
+			requireNoPodSpecMNNVLClaim(t, &pclq.Spec.PodSpec)
+		})
+	}
+
+	// --- Scale Out: 1 -> 4 replicas ---
+	numGroups := len(groups)
+	desiredReplicas := 4
+	err = scalePCS(tc, pcsName, desiredReplicas)
+	require.NoError(t, err, "Failed to scale out PCS")
+
+	err = waitForComputeDomainCount(tc, pcsName, numGroups*desiredReplicas)
+	require.NoError(t, err, "Expected %d CDs after scale-out to %d replicas", numGroups*desiredReplicas, desiredReplicas)
+
+	// --- Scale In: 4 -> 2 replicas ---
+	previousReplicas := desiredReplicas
+	desiredReplicas = 2
+	err = scalePCS(tc, pcsName, desiredReplicas)
+	require.NoError(t, err, "Failed to scale in PCS")
+
+	err = waitForComputeDomainCount(tc, pcsName, numGroups*desiredReplicas)
+	require.NoError(t, err, "Expected %d CDs after scale-in to %d replicas", numGroups*desiredReplicas, desiredReplicas)
+
+	// Verify excess replica CDs are gone
+	for i := desiredReplicas; i < previousReplicas; i++ {
+		for _, grp := range groups {
+			err = getComputeDomain(tc, fmt.Sprintf("%s-%d-%s", pcsName, i, grp))
+			assert.Error(t, err, "CD for replica %d group %s should be deleted", i, grp)
+		}
+	}
+
+	// --- Delete PCS -> 0 CDs ---
+	deletePCS(tc, pcsName)
+	err = waitForComputeDomainCount(tc, pcsName, 0)
+	assert.NoError(t, err, "All CDs should be deleted when PCS is deleted")
+}
+
+// --- Helper / assertion functions ---
+
+// getComputeDomain attempts to get a ComputeDomain by name. Returns error if not found.
+func getComputeDomain(tc *testctx.TestContext, name string) error {
+	cd := &unstructured.Unstructured{}
+	cd.SetGroupVersionKind(gvk.ComputeDomain)
+	return tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: name}, cd)
+}
+
+// verifyComputeDomainContent verifies that a ComputeDomain exists with correct metadata and spec.
+func verifyComputeDomainContent(t *testing.T, tc *testctx.TestContext, pcsName string, replicaIndex int, groupName string, pcsUID types.UID) {
+	t.Helper()
+
+	cdName := fmt.Sprintf("%s-%d-%s", pcsName, replicaIndex, groupName)
+	cd := &unstructured.Unstructured{}
+	cd.SetGroupVersionKind(gvk.ComputeDomain)
+	err := tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: cdName}, cd)
+	require.NoError(t, err, "ComputeDomain %s should exist", cdName)
+
+	finalizers := cd.GetFinalizers()
+	assert.Contains(t, finalizers, mnnvl.FinalizerComputeDomain,
+		"ComputeDomain %s should have Grove finalizer", cdName)
+
+	ownerRefs := cd.GetOwnerReferences()
+	require.Len(t, ownerRefs, 1, "ComputeDomain %s should have exactly one owner reference", cdName)
+	assert.Equal(t, "PodCliqueSet", ownerRefs[0].Kind)
+	assert.Equal(t, pcsName, ownerRefs[0].Name)
+	assert.Equal(t, pcsUID, ownerRefs[0].UID)
+
+	labels := cd.GetLabels()
+	assert.Equal(t, pcsName, labels[apicommon.LabelPartOfKey])
+	assert.Equal(t, fmt.Sprintf("%d", replicaIndex), labels[apicommon.LabelPodCliqueSetReplicaIndex])
+
+	numNodes, found, err := unstructured.NestedInt64(cd.Object, "spec", "numNodes")
+	require.NoError(t, err)
+	assert.True(t, found, "numNodes should be set for ComputeDomain %s", cdName)
+	assert.Equal(t, int64(0), numNodes, "numNodes should be 0 for elastic mode")
+
+	rctName, found, err := unstructured.NestedString(cd.Object, "spec", "channel", "resourceClaimTemplate", "name")
+	require.NoError(t, err)
+	assert.True(t, found, "resourceClaimTemplate.name should be set for ComputeDomain %s", cdName)
+	expectedRCTName := fmt.Sprintf("%s-%d-%s", pcsName, replicaIndex, groupName)
+	assert.Equal(t, expectedRCTName, rctName, "ComputeDomain %s should reference correct RCT", cdName)
 }
 
 // requirePodSpecMNNVLClaim asserts the PodSpec includes the MNNVL claim
-// and the expected ResourceClaimTemplate reference for the PCS replica.
-func requirePodSpecMNNVLClaim(t *testing.T, podSpec *corev1.PodSpec, pcsName string, replicaIndex int) {
+// and the expected ResourceClaimTemplate reference for the PCS replica and group.
+func requirePodSpecMNNVLClaim(t *testing.T, podSpec *corev1.PodSpec, pcsName string, replicaIndex int, groupName string) {
 	t.Helper()
 
 	require.NotNil(t, podSpec, "PodSpec should not be nil")
@@ -426,9 +427,19 @@ func requirePodSpecMNNVLClaim(t *testing.T, podSpec *corev1.PodSpec, pcsName str
 	require.NotNil(t, mnnvlClaim.ResourceClaimTemplateName,
 		"GPU clique should reference a ResourceClaimTemplate")
 
-	expectedRCTName := mnnvl.GenerateRCTName(apicommon.ResourceNameReplica{Name: pcsName, Replica: replicaIndex})
+	expectedRCTName := mnnvl.GenerateRCTName(apicommon.ResourceNameReplica{Name: pcsName, Replica: replicaIndex}, groupName)
 	assert.Equal(t, expectedRCTName, *mnnvlClaim.ResourceClaimTemplateName)
+}
 
+// requireNoPodSpecMNNVLClaim asserts the PodSpec does NOT include the MNNVL claim.
+func requireNoPodSpecMNNVLClaim(t *testing.T, podSpec *corev1.PodSpec) {
+	t.Helper()
+	for _, claim := range podSpec.ResourceClaims {
+		assert.NotEqual(t, mnnvl.MNNVLClaimName, claim.Name, "PodSpec should not have MNNVL resourceClaim")
+	}
+	for i := range podSpec.Containers {
+		requireNoContainerMNNVLClaim(t, &podSpec.Containers[i])
+	}
 }
 
 // requireContainerMNNVLClaim asserts the container references the MNNVL claim.
@@ -458,43 +469,4 @@ func requireNoContainerMNNVLClaim(t *testing.T, container *corev1.Container) {
 			return
 		}
 	}
-}
-
-// verifyComputeDomainContent verifies that a ComputeDomain exists with correct metadata and spec.
-func verifyComputeDomainContent(t *testing.T, tc *testctx.TestContext, pcsName string, replicaIndex int, pcsUID types.UID) {
-	t.Helper()
-
-	cdName := fmt.Sprintf("%s-%d", pcsName, replicaIndex)
-	cd, err := tc.Clients.DynamicClient.Resource(computeDomainGVR).Namespace(tc.Namespace).Get(tc.Ctx, cdName, metav1.GetOptions{})
-	require.NoError(t, err, "ComputeDomain %s should exist", cdName)
-
-	// Verify finalizer
-	finalizers := cd.GetFinalizers()
-	assert.Contains(t, finalizers, mnnvl.FinalizerComputeDomain,
-		"ComputeDomain %s should have Grove finalizer", cdName)
-
-	// Verify owner reference
-	ownerRefs := cd.GetOwnerReferences()
-	require.Len(t, ownerRefs, 1, "ComputeDomain %s should have exactly one owner reference", cdName)
-	assert.Equal(t, "PodCliqueSet", ownerRefs[0].Kind)
-	assert.Equal(t, pcsName, ownerRefs[0].Name)
-	assert.Equal(t, pcsUID, ownerRefs[0].UID)
-
-	// Verify labels
-	labels := cd.GetLabels()
-	assert.Equal(t, pcsName, labels["app.kubernetes.io/part-of"])
-	assert.Equal(t, fmt.Sprintf("%d", replicaIndex), labels["grove.io/podcliqueset-replica-index"])
-
-	// Verify numNodes is 0 (elastic mode)
-	numNodes, found, err := unstructured.NestedInt64(cd.Object, "spec", "numNodes")
-	require.NoError(t, err)
-	assert.True(t, found, "numNodes should be set for ComputeDomain %s", cdName)
-	assert.Equal(t, int64(0), numNodes, "numNodes should be 0 for elastic mode")
-
-	// Verify RCT reference in spec
-	rctName, found, err := unstructured.NestedString(cd.Object, "spec", "channel", "resourceClaimTemplate", "name")
-	require.NoError(t, err)
-	assert.True(t, found, "resourceClaimTemplate.name should be set for ComputeDomain %s", cdName)
-	expectedRCTName := fmt.Sprintf("%s-%d", pcsName, replicaIndex)
-	assert.Equal(t, expectedRCTName, rctName, "ComputeDomain %s should reference correct RCT", cdName)
 }

@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"testing"
 
+	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
@@ -219,6 +220,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 	tests := []struct {
 		description                         string
 		pcsAnnotations                      map[string]string
+		cliqueAnnotations                   map[string]string
 		containers                          []corev1.Container
 		initContainers                      []corev1.Container
 		expectedContainersWithClaims        []string
@@ -231,7 +233,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 		{
 			description: "MNNVL enabled with GPU container injects claims",
 			pcsAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "default",
 			},
 			containers: []corev1.Container{
 				{
@@ -246,7 +248,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 			expectedContainersWithClaims:    []string{"gpu-worker"},
 			expectedContainersWithoutClaims: []string{},
 			expectPodLevelClaim:             true,
-			expectedRCTName:                 "coyote-0",
+			expectedRCTName:                 "coyote-0-default",
 		},
 		{
 			description:    "MNNVL not enabled does not inject claims",
@@ -268,7 +270,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 		{
 			description: "MNNVL enabled but no GPU containers does not inject claims",
 			pcsAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "default",
 			},
 			containers: []corev1.Container{
 				{
@@ -287,7 +289,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 		{
 			description: "MNNVL enabled with mixed GPU and non-GPU containers",
 			pcsAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "default",
 			},
 			containers: []corev1.Container{
 				{
@@ -314,7 +316,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 		{
 			description: "MNNVL enabled with GPU in init container",
 			pcsAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "default",
 			},
 			initContainers: []corev1.Container{
 				{
@@ -338,7 +340,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 		{
 			description: "MNNVL disabled explicitly does not inject claims",
 			pcsAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled,
+				mnnvl.AnnotationMNNVLGroup: mnnvl.AnnotationMNNVLGroupOptOut,
 			},
 			containers: []corev1.Container{
 				{
@@ -354,6 +356,69 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 			expectedContainersWithoutClaims: []string{"gpu-worker"},
 			expectPodLevelClaim:             false,
 		},
+		{
+			description: "mnnvl-group on PCS — RCT name includes group",
+			pcsAnnotations: map[string]string{
+				mnnvl.AnnotationMNNVLGroup: "workers",
+			},
+			containers: []corev1.Container{
+				{
+					Name: "gpu-worker",
+					Resources: corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							constants.GPUResourceName: resource.MustParse("8"),
+						},
+					},
+				},
+			},
+			expectedContainersWithClaims:    []string{"gpu-worker"},
+			expectedContainersWithoutClaims: []string{},
+			expectPodLevelClaim:             true,
+			expectedRCTName:                 "coyote-0-workers",
+		},
+		{
+			description: "mnnvl-group on clique overrides PCS auto-mnnvl",
+			pcsAnnotations: map[string]string{
+				mnnvl.AnnotationMNNVLGroup: "default",
+			},
+			cliqueAnnotations: map[string]string{
+				mnnvl.AnnotationMNNVLGroup: "encoders",
+			},
+			containers: []corev1.Container{
+				{
+					Name: "gpu-worker",
+					Resources: corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							constants.GPUResourceName: resource.MustParse("8"),
+						},
+					},
+				},
+			},
+			expectedContainersWithClaims:    []string{"gpu-worker"},
+			expectedContainersWithoutClaims: []string{},
+			expectPodLevelClaim:             true,
+			expectedRCTName:                 "coyote-0-encoders",
+		},
+		{
+			description: "mnnvl-group on clique only — no PCS annotation",
+			cliqueAnnotations: map[string]string{
+				mnnvl.AnnotationMNNVLGroup: "training",
+			},
+			containers: []corev1.Container{
+				{
+					Name: "gpu-worker",
+					Resources: corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							constants.GPUResourceName: resource.MustParse("8"),
+						},
+					},
+				},
+			},
+			expectedContainersWithClaims:    []string{"gpu-worker"},
+			expectedContainersWithoutClaims: []string{},
+			expectPodLevelClaim:             true,
+			expectedRCTName:                 "coyote-0-training",
+		},
 	}
 
 	for _, tc := range tests {
@@ -367,8 +432,10 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
 				WithAnnotations(tc.pcsAnnotations)
 
-			// Create PodCliqueTemplateSpec with containers
-			pclqTemplateSpec := testutils.NewPodCliqueTemplateSpecBuilder(pclqTemplateName).Build()
+			// Create PodCliqueTemplateSpec with containers and optional annotations
+			pclqTemplateSpec := testutils.NewPodCliqueTemplateSpecBuilder(pclqTemplateName).
+				WithAnnotations(tc.cliqueAnnotations).
+				Build()
 			pclqTemplateSpec.Spec.PodSpec.Containers = tc.containers
 			pclqTemplateSpec.Spec.PodSpec.InitContainers = tc.initContainers
 			pcsBuilder.WithPodCliqueTemplateSpec(pclqTemplateSpec)
@@ -421,6 +488,36 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 				"init containers without MNNVL claims should match expected")
 		})
 	}
+}
+
+func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testPCSNamespace, uuid.NewUUID()).
+		WithReplicas(1).
+		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder("worker").
+				WithAnnotations(map[string]string{
+					apiconstants.AnnotationTopologyName: "my-topology",
+					"example.com/keep":                  "yes",
+				}).
+				Build(),
+		).
+		Build()
+
+	pclq := &grovecorev1alpha1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-0-worker", testPCSName),
+			Namespace: testPCSNamespace,
+		},
+	}
+
+	operator := &_resource{scheme: groveclientscheme.Scheme}
+	err := operator.buildResource(logr.Discard(), pclq, pcs, 0, false)
+	require.NoError(t, err)
+	require.NotNil(t, pclq.Annotations)
+	assert.Equal(t, "yes", pclq.Annotations["example.com/keep"])
+	_, hasTopologyAnnotation := pclq.Annotations[apiconstants.AnnotationTopologyName]
+	assert.False(t, hasTopologyAnnotation)
 }
 
 // triageContainersByMNNVLClaim separates containers into those with MNNVL claim and those without.

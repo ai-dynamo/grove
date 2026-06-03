@@ -37,7 +37,7 @@ digraph TASArchitecture {
         ct_h100 [
             label=<
             <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="1" CELLPADDING="2">
-            <TR><TD><B>ClusterTopology</B></TD></TR>
+            <TR><TD><B>ClusterTopologyBinding</B></TD></TR>
             <TR><TD><FONT POINT-SIZE="9">"h100-topology"</FONT></TD></TR>
             <TR><TD><FONT POINT-SIZE="7" COLOR="#666666">Admin Created (kubectl/GitOps)</FONT></TD></TR>
             <TR><TD><FONT POINT-SIZE="7" COLOR="#666666">levels: [zone, block, host]</FONT></TD></TR>
@@ -48,11 +48,11 @@ digraph TASArchitecture {
         ct_gb200 [
             label=<
             <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="1" CELLPADDING="2">
-            <TR><TD><B>ClusterTopology</B></TD></TR>
+            <TR><TD><B>ClusterTopologyBinding</B></TD></TR>
             <TR><TD><FONT POINT-SIZE="9">"gb200-topology"</FONT></TD></TR>
             <TR><TD><FONT POINT-SIZE="7" COLOR="#666666">Admin Created (kubectl/GitOps)</FONT></TD></TR>
             <TR><TD><FONT POINT-SIZE="7" COLOR="#666666">levels: [zone, block, rack, host]</FONT></TD></TR>
-            <TR><TD><FONT POINT-SIZE="7" COLOR="#996600">schedulerReferences:</FONT></TD></TR>
+            <TR><TD><FONT POINT-SIZE="7" COLOR="#996600">schedulerTopologyReferences:</FONT></TD></TR>
             <TR><TD><FONT POINT-SIZE="7" COLOR="#996600">  kai-scheduler → gb200-kai-topology</FONT></TD></TR>
             </TABLE>>,
             fillcolor="#dceefb"
@@ -62,11 +62,11 @@ digraph TASArchitecture {
             label=<
             <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="1" CELLPADDING="2">
             <TR><TD><B>CT Controller</B></TD></TR>
-            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">· watches ClusterTopology CRs</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">· watches ClusterTopologyBinding CRs</FONT></TD></TR>
             <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">· auto-creates scheduler topo</FONT></TD></TR>
-            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">  (when no schedulerReferences)</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">  (when no schedulerTopologyReferences)</FONT></TD></TR>
             <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">· drift detection</FONT></TD></TR>
-            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">  (when schedulerReferences set)</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">  (when schedulerTopologyReferences set)</FONT></TD></TR>
             <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">· sets SchedulerTopologyDrift</FONT></TD></TR>
             </TABLE>>,
             shape=box,
@@ -93,7 +93,7 @@ digraph TASArchitecture {
             <TR><TD><B>Scheduler Backend</B></TD></TR>
             <TR><TD><B>Topology CR</B></TD></TR>
             <TR><TD><FONT POINT-SIZE="7" COLOR="#666666">(externally managed)</FONT></TD></TR>
-            <TR><TD><FONT POINT-SIZE="7" COLOR="#666666">via schedulerReferences</FONT></TD></TR>
+            <TR><TD><FONT POINT-SIZE="7" COLOR="#666666">via schedulerTopologyReferences</FONT></TD></TR>
             </TABLE>>,
             fillcolor="#fff3e0",
             style="filled,dashed"
@@ -175,9 +175,9 @@ digraph TASArchitecture {
     ct_controller -> ct_h100 [label="watches", style=dashed, constraint=false];
     ct_controller -> ct_gb200 [label="watches", style=dashed, constraint=false];
 
-    // Admin Layer: ClusterTopology -> Scheduler Backend
+    // Admin Layer: ClusterTopologyBinding -> Scheduler Backend
     ct_h100 -> sched_h100 [label="creates &\nowns (OwnerRef)"];
-    ct_gb200 -> sched_gb200 [label="drift detection\n(schedulerReferences)", style=dashed];
+    ct_gb200 -> sched_gb200 [label="drift detection\n(schedulerTopologyReferences)", style=dashed];
 
     // Admin Layer: Scheduler Backend -> label
     sched_h100 -> scheduler_label [style=dashed, arrowhead=none];

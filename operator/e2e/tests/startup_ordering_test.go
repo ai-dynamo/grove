@@ -44,6 +44,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // Test_SO1_InorderStartupOrderWithFullReplicas tests inorder startup with full replicas
@@ -541,11 +542,12 @@ func debugPodState(tc *testctx.TestContext) {
 				Logger.Infof("  Container %s: Ready=%v, State=%+v", status.Name, status.Ready, status.State)
 			}
 		}
-		events, err := tc.Clients.Clientset.CoreV1().Events(tc.Namespace).List(tc.Ctx, metav1.ListOptions{
-			FieldSelector: "involvedObject.name=" + pod.Name,
+		var eventList v1.EventList
+		err := tc.Client.List(tc.Ctx, &eventList, client.InNamespace(tc.Namespace), &client.ListOptions{
+			Raw: &metav1.ListOptions{FieldSelector: "involvedObject.name=" + pod.Name},
 		})
 		if err == nil {
-			for _, e := range events.Items {
+			for _, e := range eventList.Items {
 				if e.Type == "Warning" {
 					Logger.Infof("  Event Warning: %s: %s", e.Reason, e.Message)
 				}

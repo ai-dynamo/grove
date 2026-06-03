@@ -24,32 +24,39 @@ package automnnvl
 import (
 	"context"
 	"fmt"
+	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/e2e/grove/gvk"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
-	"github.com/ai-dynamo/grove/operator/e2e/k8s"
-	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/resources"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
+	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
-	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 	"gopkg.in/yaml.v3"
+	corev1 "k8s.io/api/core/v1"
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/kubernetes"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/rest"
-	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
+	// yamlDir is the relative path from the test directory to the YAML fixtures.
+	yamlDir = "../../yaml/auto-mnnvl/"
+
 	// groveOperatorNamespace is the namespace where the Grove operator is deployed
-	groveOperatorNamespace = "grove-system"
+	groveOperatorNamespace = setup.OperatorNamespace
 
 	// groveConfigMapPrefix is the prefix for the Grove operator ConfigMap name
 	groveConfigMapPrefix = "grove-operator-cm-"
@@ -106,11 +113,11 @@ func init() {
 // requireClusterConfig returns the cached cluster MNNVL configuration, detecting it on first call.
 // This function is safe to call from multiple tests - detection only happens once.
 // If detection fails, the test is marked as fatal.
-func requireClusterConfig(t *testing.T, ctx context.Context, clients *clients.Clients) *clusterMNNVLConfig {
+func requireClusterConfig(t *testing.T, ctx context.Context, k8sClient *k8sclient.Client) *clusterMNNVLConfig {
 	t.Helper()
 
 	configOnce.Do(func() {
-		cachedConfig, configErr = detectClusterConfig(ctx, clients)
+		cachedConfig, configErr = detectClusterConfig(ctx, k8sClient)
 		if configErr == nil {
 			logger.Infof("Detected cluster MNNVL config: %s", cachedConfig)
 		}
@@ -125,18 +132,18 @@ func requireClusterConfig(t *testing.T, ctx context.Context, clients *clients.Cl
 
 // detectClusterConfig detects the MNNVL configuration from the cluster.
 // It checks both the operator ConfigMap and the presence of the ComputeDomain CRD.
-func detectClusterConfig(ctx context.Context, clients *clients.Clients) (*clusterMNNVLConfig, error) {
+func detectClusterConfig(ctx context.Context, k8sClient *k8sclient.Client) (*clusterMNNVLConfig, error) {
 	config := &clusterMNNVLConfig{}
 
 	// Detect if MNNVL feature is enabled in operator config
-	featureEnabled, err := detectAutoMNNVLEnabled(ctx, clients.Clientset)
+	featureEnabled, err := detectAutoMNNVLEnabled(ctx, k8sClient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to detect feature enabled: %w", err)
 	}
 	config.featureEnabled = featureEnabled
 
 	// Detect if ComputeDomain CRD exists
-	crdSupported, err := detectComputeDomainCRDExists(ctx, clients.RestConfig)
+	crdSupported, err := detectComputeDomainCRDExists(ctx, k8sClient.RestConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to detect CRD supported: %w", err)
 	}
@@ -146,15 +153,15 @@ func detectClusterConfig(ctx context.Context, clients *clients.Clients) (*cluste
 }
 
 // detectAutoMNNVLEnabled checks if autoMNNVLEnabled is true in the operator ConfigMap
-func detectAutoMNNVLEnabled(ctx context.Context, clientset kubernetes.Interface) (bool, error) {
+func detectAutoMNNVLEnabled(ctx context.Context, k8sClient *k8sclient.Client) (bool, error) {
 	// List ConfigMaps in grove-system namespace to find the operator config
-	configMaps, err := clientset.CoreV1().ConfigMaps(groveOperatorNamespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
+	var configMapList corev1.ConfigMapList
+	if err := k8sClient.List(ctx, &configMapList, client.InNamespace(groveOperatorNamespace)); err != nil {
 		return false, fmt.Errorf("failed to list ConfigMaps in %s: %w", groveOperatorNamespace, err)
 	}
 
 	// Find the ConfigMap with the grove-operator-cm- prefix
-	for _, cm := range configMaps.Items {
+	for _, cm := range configMapList.Items {
 		if strings.HasPrefix(cm.Name, groveConfigMapPrefix) {
 			// Parse the config YAML
 			configData, ok := cm.Data["config.yaml"]
@@ -226,147 +233,63 @@ const (
 	defaultPollInterval = 2 * time.Second
 )
 
-// GVR for ComputeDomain (no typed client available)
-var computeDomainGVR = schema.GroupVersionResource{
-	Group:    mnnvl.ComputeDomainGroup,
-	Version:  mnnvl.ComputeDomainVersion,
-	Resource: mnnvl.ComputeDomainResource,
-}
+// metadataNameRegexp matches the PCS metadata.name line (exactly 2 leading spaces).
+var metadataNameRegexp = regexp.MustCompile(`(?m)^  name: \S+`)
 
-// buildGPUPCS builds a PCS with GPU requirements
-func buildGPUPCS(name string, replicas int) *grovecorev1alpha1.PodCliqueSet {
-	gpuClique := testutils.NewPodCliqueTemplateSpecBuilder("gpu-worker").
-		WithRoleName("gpu-worker").
-		WithReplicas(1).
-		WithMinAvailable(1).
-		WithContainer(testutils.NewGPUContainer("gpu-container", "busybox:latest", 1, "sleep", "infinity")).
-		Build()
-
-	return testutils.NewPodCliqueSetBuilder(name, "default", types.UID("")).
-		WithReplicas(int32(replicas)).
-		WithTerminationDelay(time.Second).
-		WithPodCliqueTemplateSpec(gpuClique).
-		Build()
-}
-
-// buildCPUOnlyPCS builds a PCS with CPU-only containers (no GPU)
-func buildCPUOnlyPCS(name string, replicas int) *grovecorev1alpha1.PodCliqueSet {
-	cpuClique := testutils.NewPodCliqueTemplateSpecBuilder("cpu-worker").
-		WithRoleName("cpu-worker").
-		WithReplicas(1).
-		WithMinAvailable(1).
-		WithContainer(testutils.NewContainer("cpu-container", "busybox:latest", "sleep", "infinity")).
-		Build()
-
-	return testutils.NewPodCliqueSetBuilder(name, "default", types.UID("")).
-		WithReplicas(int32(replicas)).
-		WithTerminationDelay(time.Second).
-		WithPodCliqueTemplateSpec(cpuClique).
-		Build()
-}
-
-// buildComprehensivePCS builds a PCS with multiple cliques and scaling groups for comprehensive testing.
-// Names are kept short to satisfy the 45-character resource name limit.
-// Structure:
-//   - Standalone cliques (not in any PCSG):
-//     1. "gpu1": 2 containers (1 GPU, 1 non-GPU)
-//     2. "cpu1": 1 container (no GPU)
-//   - PCSG "sg1" contains:
-//     3. "gpu2": 2 containers (1 GPU, 1 non-GPU)
-//     4. "cpu2": 1 container (no GPU)
-//   - PCSG "sg2" contains:
-//     5. "cpu3": 1 container (no GPU)
-func buildComprehensivePCS(name string, replicas int) *grovecorev1alpha1.PodCliqueSet {
-	// Standalone cliques
-	standaloneGPUMixed := testutils.NewPodCliqueTemplateSpecBuilder("gpu1").
-		WithRoleName("gpu1").
-		WithReplicas(1).
-		WithMinAvailable(1).
-		WithContainer(testutils.NewGPUContainer("gpu", "busybox:latest", 1, "sleep", "infinity")).
-		WithContainer(testutils.NewContainer("cpu", "busybox:latest", "sleep", "infinity")).
-		Build()
-
-	standaloneCPUOnly := testutils.NewPodCliqueTemplateSpecBuilder("cpu1").
-		WithRoleName("cpu1").
-		WithReplicas(1).
-		WithMinAvailable(1).
-		WithContainer(testutils.NewContainer("cpu", "busybox:latest", "sleep", "infinity")).
-		Build()
-
-	// PCSG sg1 cliques
-	pcsg1GPUMixed := testutils.NewPodCliqueTemplateSpecBuilder("gpu2").
-		WithRoleName("gpu2").
-		WithReplicas(1).
-		WithMinAvailable(1).
-		WithContainer(testutils.NewGPUContainer("gpu", "busybox:latest", 1, "sleep", "infinity")).
-		WithContainer(testutils.NewContainer("cpu", "busybox:latest", "sleep", "infinity")).
-		Build()
-
-	pcsg1CPUOnly := testutils.NewPodCliqueTemplateSpecBuilder("cpu2").
-		WithRoleName("cpu2").
-		WithReplicas(1).
-		WithMinAvailable(1).
-		WithContainer(testutils.NewContainer("cpu", "busybox:latest", "sleep", "infinity")).
-		Build()
-
-	// PCSG sg2 clique
-	pcsg2CPUOnly := testutils.NewPodCliqueTemplateSpecBuilder("cpu3").
-		WithRoleName("cpu3").
-		WithReplicas(1).
-		WithMinAvailable(1).
-		WithContainer(testutils.NewContainer("cpu", "busybox:latest", "sleep", "infinity")).
-		Build()
-
-	return testutils.NewPodCliqueSetBuilder(name, "default", types.UID("")).
-		WithReplicas(int32(replicas)).
-		WithTerminationDelay(time.Second).
-		WithPodCliqueTemplateSpec(standaloneGPUMixed).
-		WithPodCliqueTemplateSpec(standaloneCPUOnly).
-		WithPodCliqueTemplateSpec(pcsg1GPUMixed).
-		WithPodCliqueTemplateSpec(pcsg1CPUOnly).
-		WithPodCliqueTemplateSpec(pcsg2CPUOnly).
-		WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
-			Name:         "sg1",
-			CliqueNames:  []string{"gpu2", "cpu2"},
-			MinAvailable: ptr.To(int32(1)),
-		}).
-		WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
-			Name:         "sg2",
-			CliqueNames:  []string{"cpu3"},
-			MinAvailable: ptr.To(int32(1)),
-		}).
-		Build()
+// applyMNNVLYAML reads a YAML fixture, overrides the PCS metadata.name to
+// the given pcsName (so every test gets a unique resource), and applies it.
+func applyMNNVLYAML(tc *testctx.TestContext, yamlFile, pcsName string) error {
+	data, err := os.ReadFile(yamlDir + yamlFile)
+	if err != nil {
+		return fmt.Errorf("read YAML: %w", err)
+	}
+	patched := metadataNameRegexp.ReplaceAllStringFunc(string(data), func(_ string) string {
+		return "  name: " + pcsName
+	})
+	rm := resources.NewResourceManager(tc.Client.Client, logger)
+	_, err = rm.ApplyYAMLData(tc.Ctx, []byte(patched), tc.Namespace)
+	return err
 }
 
 // deletePCS deletes a PCS by name
 func deletePCS(tc *testctx.TestContext, name string) {
-	_ = workload.DeletePodCliqueSet(tc.Ctx, tc.Clients.DynamicClient, tc.Namespace, name)
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: tc.Namespace},
+	}
+	_ = tc.Client.Delete(tc.Ctx, pcs)
 }
 
 // scalePCS scales a PCS to the specified number of replicas
 func scalePCS(tc *testctx.TestContext, name string, replicas int) error {
-	return workload.ScalePodCliqueSetWithClient(tc.Ctx, tc.Clients.DynamicClient, tc.Namespace, name, replicas)
+	return workload.ScalePodCliqueSetWithClient(tc.Ctx, tc.Client, tc.Namespace, name, replicas)
 }
 
 // waitForComputeDomainCount waits for the specified number of ComputeDomains for a PCS
 func waitForComputeDomainCount(tc *testctx.TestContext, pcsName string, expectedCount int) error {
-	return k8s.PollForCondition(tc.Ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
-		list, err := tc.Clients.DynamicClient.Resource(computeDomainGVR).Namespace(tc.Namespace).List(tc.Ctx, metav1.ListOptions{
-			LabelSelector: fmt.Sprintf("app.kubernetes.io/part-of=%s", pcsName),
-		})
-		if err != nil {
-			return false, nil
+	fetchComputeDomains := waiter.FetchFunc[*unstructured.UnstructuredList](func(ctx context.Context) (*unstructured.UnstructuredList, error) {
+		list := &unstructured.UnstructuredList{}
+		list.SetGroupVersionKind(gvk.ComputeDomain.GroupVersion().WithKind(gvk.ComputeDomain.Kind + "List"))
+		if err := tc.Client.List(ctx, list, client.InNamespace(tc.Namespace), client.MatchingLabels{apicommon.LabelPartOfKey: pcsName}); err != nil {
+			return nil, err
 		}
-		return len(list.Items) == expectedCount, nil
+		return list, nil
 	})
+	hasExpectedCount := waiter.Predicate[*unstructured.UnstructuredList](func(list *unstructured.UnstructuredList) bool {
+		return len(list.Items) == expectedCount
+	})
+	w := waiter.New[*unstructured.UnstructuredList]().
+		WithTimeout(defaultPollTimeout).
+		WithInterval(defaultPollInterval).
+		WithRetryOnError()
+	return w.WaitUntil(tc.Ctx, fetchComputeDomains, hasExpectedCount)
 }
 
 // waitForPCSG waits for a PCSG to exist and returns it
 func waitForPCSG(tc *testctx.TestContext, pcsgName string) (*grovecorev1alpha1.PodCliqueScalingGroup, error) {
-	return workload.WaitForPodCliqueScalingGroup(tc.Ctx, tc.Clients.GroveClient, tc.Namespace, pcsgName, defaultPollTimeout, defaultPollInterval)
+	return workload.WaitForPodCliqueScalingGroup(tc.Ctx, tc.Client, tc.Namespace, pcsgName, defaultPollTimeout, defaultPollInterval)
 }
 
 // waitForPCLQ waits for a PCLQ to exist and returns it
 func waitForPCLQ(tc *testctx.TestContext, pclqName string) (*grovecorev1alpha1.PodClique, error) {
-	return workload.WaitForPodCliqueStandalone(tc.Ctx, tc.Clients.GroveClient, tc.Namespace, pclqName, defaultPollTimeout, defaultPollInterval)
+	return workload.WaitForPodCliqueStandalone(tc.Ctx, tc.Client, tc.Namespace, pclqName, defaultPollTimeout, defaultPollInterval)
 }

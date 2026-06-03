@@ -18,6 +18,17 @@
 
 package setup
 
+import (
+	"github.com/ai-dynamo/grove/operator/api/common"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+// OperatorPodLabels is the label selector for finding Grove operator pods.
+var OperatorPodLabels = client.MatchingLabels{common.LabelAppNameKey: OperatorDeploymentName}
+
+// OperatorPodLabelSelector is the raw label selector string for finding Grove operator pods.
+var OperatorPodLabelSelector = common.LabelAppNameKey + "=" + OperatorDeploymentName
+
 const (
 	// OperatorNamespace is the namespace where the Grove operator is deployed for E2E tests.
 	// This is used during installation (via Skaffold) and for finding operator pods during diagnostics.

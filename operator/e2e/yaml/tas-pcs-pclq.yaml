@@ -11,13 +11,17 @@ spec:
   replicas: 1
   template:
     topologyConstraint:
-      packDomain: block
+      topologyName: grove-topology
+      pack:
+        required: block
     cliques:
       - name: worker
         labels:
           kai.scheduler/queue: test
         topologyConstraint:
-          packDomain: host
+          topologyName: grove-topology
+          pack:
+            required: host
         spec:
           roleName: worker
           replicas: 2

@@ -15,7 +15,9 @@ spec:
         replicas: 2
         minAvailable: 2
         topologyConstraint:
-          packDomain: rack
+          topologyName: grove-topology
+          pack:
+            required: rack
         cliqueNames:
           - worker
     cliques:
@@ -23,7 +25,9 @@ spec:
         labels:
           kai.scheduler/queue: test
         topologyConstraint:
-          packDomain: host
+          topologyName: grove-topology
+          pack:
+            required: host
         spec:
           roleName: worker
           replicas: 2

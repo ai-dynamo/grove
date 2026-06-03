@@ -1,0 +1,40 @@
+# MNNVL E2E: GPU + CPU PCLQs, both with mnnvl-group annotation
+# CPU PCLQ should be silently ignored even though it has the annotation
+# Used by: testCPUPCLQIgnoredEvenWithAnnotation
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: mnnvl-cpu-with-annotation
+  annotations:
+    grove.io/mnnvl-group: "default"
+spec:
+  replicas: 1
+  template:
+    terminationDelay: 1s
+    cliques:
+      - name: gp
+        spec:
+          roleName: gp
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: gpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  limits:
+                    nvidia.com/gpu: "1"
+      - name: cp
+        annotations:
+          grove.io/mnnvl-group: "default"
+        spec:
+          roleName: cp
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: cpu
+                image: busybox:latest
+                command: ["sleep", "infinity"]

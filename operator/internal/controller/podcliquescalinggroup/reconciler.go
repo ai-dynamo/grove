@@ -24,9 +24,11 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	pcsgcomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup/components"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -37,6 +39,7 @@ import (
 type Reconciler struct {
 	config                  groveconfigv1alpha1.PodCliqueScalingGroupControllerConfiguration
 	client                  ctrlclient.Client
+	eventRecorder           record.EventRecorder
 	reconcileStatusRecorder ctrlcommon.ReconcileErrorRecorder
 	operatorRegistry        component.OperatorRegistry[grovecorev1alpha1.PodCliqueScalingGroup]
 }
@@ -48,6 +51,7 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg groveconfigv1alpha1.PodClique
 	return &Reconciler{
 		config:                  controllerCfg,
 		client:                  client,
+		eventRecorder:           eventRecorder,
 		reconcileStatusRecorder: ctrlcommon.NewReconcileErrorRecorder(client),
 		operatorRegistry:        pcsgcomponent.CreateOperatorRegistry(mgr, eventRecorder),
 	}
@@ -56,6 +60,9 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg groveconfigv1alpha1.PodClique
 // Reconcile reconciles a PodCliqueScalingGroup resource.
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := ctrllogger.FromContext(ctx).WithName(controllerName)
+
+	// GetPodCliqueSet is called 3× per reconcile (spec, status, podclique sync) — memoize.
+	ctx = componentutils.WithPodCliqueSetCache(ctx)
 
 	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{}
 	if result := ctrlutils.GetPodCliqueScalingGroup(ctx, r.client, logger, req.NamespacedName, pcsg); ctrlcommon.ShortCircuitReconcileFlow(result) {

@@ -20,24 +20,26 @@ import (
 	"fmt"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/controller/clustertopology"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podgang"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 // RegisterControllers registers all controllers with the manager.
-func RegisterControllers(mgr ctrl.Manager, config *configv1alpha1.OperatorConfiguration) error {
+func RegisterControllers(mgr ctrl.Manager, config *configv1alpha1.OperatorConfiguration, schedRegistry scheduler.Registry) error {
 	if config == nil {
 		return fmt.Errorf("operator configuration must not be nil")
 	}
-	pcsReconciler := podcliqueset.NewReconciler(mgr, config.Controllers.PodCliqueSet, config.TopologyAwareScheduling, config.Network)
+	pcsReconciler := podcliqueset.NewReconciler(mgr, config.Controllers.PodCliqueSet, config.TopologyAwareScheduling, config.Network, schedRegistry)
 	if err := pcsReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
-	pcReconciler := podclique.NewReconciler(mgr, config.Controllers.PodClique)
+	pcReconciler := podclique.NewReconciler(mgr, config.Controllers.PodClique, schedRegistry)
 	if err := pcReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
@@ -46,8 +48,13 @@ func RegisterControllers(mgr ctrl.Manager, config *configv1alpha1.OperatorConfig
 		return err
 	}
 
-	podgangReconciler := podgang.NewReconciler(mgr, config.Controllers.PodGang)
+	podgangReconciler := podgang.NewReconciler(mgr, config.Controllers.PodGang, schedRegistry)
 	if err := podgangReconciler.RegisterWithManager(mgr); err != nil {
+		return err
+	}
+
+	clusterTopologyReconciler := clustertopology.NewReconciler(mgr, schedRegistry)
+	if err := clusterTopologyReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
 

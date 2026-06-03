@@ -26,17 +26,15 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer/yaml"
 	"k8s.io/apimachinery/pkg/types"
 	yamlutil "k8s.io/apimachinery/pkg/util/yaml"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // AppliedResource holds information about an applied Kubernetes resource.
@@ -44,18 +42,17 @@ type AppliedResource struct {
 	Name      string
 	Namespace string
 	GVK       schema.GroupVersionKind
-	GVR       schema.GroupVersionResource
 }
 
-// ResourceManager provides Kubernetes resource operations using pre-created clients.
+// ResourceManager provides Kubernetes resource operations using a controller-runtime client.
 type ResourceManager struct {
-	clients *clients.Clients
-	logger  *log.Logger
+	cl     client.Client
+	logger *log.Logger
 }
 
-// NewResourceManager creates a ResourceManager bound to the given clients.
-func NewResourceManager(c *clients.Clients, logger *log.Logger) *ResourceManager {
-	return &ResourceManager{clients: c, logger: logger}
+// NewResourceManager creates a ResourceManager bound to the given client.
+func NewResourceManager(cl client.Client, logger *log.Logger) *ResourceManager {
+	return &ResourceManager{cl: cl, logger: logger}
 }
 
 // ApplyYAMLFile applies a YAML file containing Kubernetes resources.
@@ -100,8 +97,8 @@ func (rm *ResourceManager) ApplyYAMLData(ctx context.Context, yamlData []byte, n
 	return appliedResources, nil
 }
 
-// ScaleCRD patches the replicas field of a custom resource.
-func (rm *ResourceManager) ScaleCRD(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string, replicas int) error {
+// ScaleCRD patches the replicas field of a custom resource identified by GVK.
+func (rm *ResourceManager) ScaleCRD(ctx context.Context, gvk schema.GroupVersionKind, namespace, name string, replicas int) error {
 	scalePatch := map[string]interface{}{
 		"spec": map[string]interface{}{
 			"replicas": replicas,
@@ -112,22 +109,22 @@ func (rm *ResourceManager) ScaleCRD(ctx context.Context, gvr schema.GroupVersion
 		return fmt.Errorf("failed to marshal scale patch: %w", err)
 	}
 
-	if _, err := rm.clients.DynamicClient.Resource(gvr).Namespace(namespace).Patch(ctx, name, types.MergePatchType, patchBytes, metav1.PatchOptions{}); err != nil {
-		return fmt.Errorf("failed to scale %s %s: %w", gvr.Resource, name, err)
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(gvk)
+	obj.SetName(name)
+	obj.SetNamespace(namespace)
+
+	if err := rm.cl.Patch(ctx, obj, client.RawPatch(types.MergePatchType, patchBytes)); err != nil {
+		return fmt.Errorf("failed to scale %s %s: %w", gvk.Kind, name, err)
 	}
 
 	return nil
 }
 
 func (rm *ResourceManager) applyResource(ctx context.Context, obj *unstructured.Unstructured, gvk *schema.GroupVersionKind, namespace string) (*AppliedResource, error) {
-	gvr, mapping, err := rm.getResourceMapping(gvk)
-	if err != nil {
-		return nil, err
-	}
+	handleResourceNamespace(obj, namespace)
 
-	handleResourceNamespace(obj, mapping, namespace)
-
-	result, err := rm.createOrUpdateResource(ctx, gvr, mapping, obj)
+	result, err := rm.createOrUpdateResource(ctx, obj)
 	if err != nil {
 		return nil, fmt.Errorf("failed to apply %s %s: %w", gvk.Kind, obj.GetName(), err)
 	}
@@ -136,67 +133,44 @@ func (rm *ResourceManager) applyResource(ctx context.Context, obj *unstructured.
 		Name:      result.GetName(),
 		Namespace: result.GetNamespace(),
 		GVK:       *gvk,
-		GVR:       gvr,
 	}, nil
 }
 
-func (rm *ResourceManager) getResourceMapping(gvk *schema.GroupVersionKind) (schema.GroupVersionResource, *meta.RESTMapping, error) {
-	mapping, err := rm.clients.RestMapper.RESTMapping(gvk.GroupKind(), gvk.Version)
-	if err != nil {
-		return schema.GroupVersionResource{}, nil, fmt.Errorf("failed to get REST mapping for %s: %w", gvk.String(), err)
+func handleResourceNamespace(obj *unstructured.Unstructured, namespace string) {
+	if namespace != "" {
+		obj.SetNamespace(namespace)
 	}
-
-	return mapping.Resource, mapping, nil
-}
-
-func handleResourceNamespace(obj *unstructured.Unstructured, mapping *meta.RESTMapping, namespace string) {
-	if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
-		if namespace != "" {
-			obj.SetNamespace(namespace)
-		}
-		if obj.GetNamespace() == "" {
-			obj.SetNamespace("default")
-		}
-	} else {
-		obj.SetNamespace("")
+	// If no namespace is set and one was not provided, default to "default"
+	// for namespaced resources. client.Client will handle cluster-scoped
+	// resources correctly regardless of the namespace value.
+	if obj.GetNamespace() == "" {
+		obj.SetNamespace("default")
 	}
 }
 
-func (rm *ResourceManager) createOrUpdateResource(ctx context.Context, gvr schema.GroupVersionResource, mapping *meta.RESTMapping, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
-	result, err := rm.createResource(ctx, gvr, mapping, obj)
-	if err != nil {
+func (rm *ResourceManager) createOrUpdateResource(ctx context.Context, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	if err := rm.cl.Create(ctx, obj); err != nil {
 		if errors.IsAlreadyExists(err) {
-			return rm.updateResource(ctx, gvr, mapping, obj)
+			return rm.updateResource(ctx, obj)
 		}
 		return nil, err
 	}
-	return result, nil
+	return obj, nil
 }
 
-func (rm *ResourceManager) createResource(ctx context.Context, gvr schema.GroupVersionResource, mapping *meta.RESTMapping, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
-	if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
-		return rm.clients.DynamicClient.Resource(gvr).Namespace(obj.GetNamespace()).Create(ctx, obj, metav1.CreateOptions{})
-	}
-	return rm.clients.DynamicClient.Resource(gvr).Create(ctx, obj, metav1.CreateOptions{})
-}
-
-func (rm *ResourceManager) updateResource(ctx context.Context, gvr schema.GroupVersionResource, mapping *meta.RESTMapping, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
-	var existing *unstructured.Unstructured
-	var err error
-	if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
-		existing, err = rm.clients.DynamicClient.Resource(gvr).Namespace(obj.GetNamespace()).Get(ctx, obj.GetName(), metav1.GetOptions{})
-	} else {
-		existing, err = rm.clients.DynamicClient.Resource(gvr).Get(ctx, obj.GetName(), metav1.GetOptions{})
-	}
-	if err != nil {
+func (rm *ResourceManager) updateResource(ctx context.Context, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(obj.GroupVersionKind())
+	key := types.NamespacedName{Namespace: obj.GetNamespace(), Name: obj.GetName()}
+	if err := rm.cl.Get(ctx, key, existing); err != nil {
 		return nil, fmt.Errorf("get existing resource for update: %w", err)
 	}
 	obj.SetResourceVersion(existing.GetResourceVersion())
 
-	if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
-		return rm.clients.DynamicClient.Resource(gvr).Namespace(obj.GetNamespace()).Update(ctx, obj, metav1.UpdateOptions{})
+	if err := rm.cl.Update(ctx, obj); err != nil {
+		return nil, err
 	}
-	return rm.clients.DynamicClient.Resource(gvr).Update(ctx, obj, metav1.UpdateOptions{})
+	return obj, nil
 }
 
 func decodeNextYAMLObject(decoder *yamlutil.YAMLOrJSONDecoder) (*unstructured.Unstructured, *schema.GroupVersionKind, error) {

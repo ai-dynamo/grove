@@ -27,7 +27,8 @@ rules:
   - podcliques
   - podcliques/status
   - podcliquescalinggroups
-  - clustertopologies
+  - clustertopologybindings
+  - clustertopologybindings/status
   - podcliquescalinggroups/status
   verbs:
   - create
@@ -203,7 +204,7 @@ rules:
   - podcliquesets.grove.io
   - podcliques.grove.io
   - podcliquescalinggroups.grove.io
-  - clustertopologies.grove.io
+  - clustertopologybindings.grove.io
   - podgangs.scheduler.grove.io
   verbs:
   - get

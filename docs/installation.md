@@ -11,7 +11,7 @@ Locate the [release tag](https://github.com/ai-dynamo/grove/releases) to install
 Set the `KUBECONFIG` in your shell session, and run the following:
 
 ```bash
-helm upgrade -i grove oci://ghcr.io/ai-dynamo/grove/grove-charts:<tag>
+helm upgrade -i grove oci://ghcr.io/ai-dynamo/grove/grove-charts --version <version>
 ```
 
 ## Build and install Grove from source (*for developers*)
@@ -116,6 +116,64 @@ On clusters with NVIDIA MNNVL support, you can enable automatic Multi-Node NVLin
 
 Follow the instructions in the [quickstart guide](quickstart.md) to deploy a PodCliqueSet and validate your installation.
 
+## Upgrade Notes
+
+### ClusterTopology renamed to ClusterTopologyBinding
+
+Grove does not provide automatic migration for existing `ClusterTopology`
+resources.
+
+If `ClusterTopology` resources already exist in the cluster:
+
+1. Re-create them manually as `ClusterTopologyBinding` resources.
+2. Delete the old `ClusterTopology` instances.
+3. Delete the old `ClusterTopology` CRD.
+
+Example:
+
+```bash
+# 1. Verify any old ClusterTopology instances that still exist
+kubectl get clustertopologies.grove.io
+
+# 2. Re-create any ClusterTopology resources you want to keep as
+#    ClusterTopologyBinding resources
+
+# 3. Delete the old ClusterTopology instances
+kubectl delete clustertopologies.grove.io --all
+
+# 4. Delete the old ClusterTopology CRD
+kubectl delete crd clustertopologies.grove.io
+```
+
+This is expected to be a low-impact change because Grove has not yet had a
+release containing the update that allowed administrators to create
+`ClusterTopology` resources freely.
+
+## Advanced: `helm template` and GitOps
+
+`helm template` does not render the chart's `crds/` directory unless
+`--include-crds` is passed, so installs via `helm template | kubectl apply`,
+ArgoCD, Flux, or Kustomize fail with missing CRDs by default. Set
+`crdInstaller.enabled=true` to install and upgrade CRDs from an init
+container instead.
+
+In the same workflows you should also set `webhookServerSecret.enabled=false`:
+the chart otherwise renders an empty `grove-webhook-server-cert` Secret that
+overwrites the auto-generated TLS material on every re-apply or GitOps sync,
+breaking the webhook. With it disabled, the operator creates and manages the
+Secret itself.
+
+```bash
+helm template grove oci://ghcr.io/ai-dynamo/grove/grove-charts \
+  --version <version> \
+  --set crdInstaller.enabled=true \
+  --set webhookServerSecret.enabled=false \
+  | kubectl apply -f -
+```
+
+See [GREP-436](proposals/436-crd-upgrader/README.md#note-for-helm-template--gitops-users)
+for the CRD design details and the alternative `--include-crds` workflow.
+
 ## Troubleshooting
 
 ### Deployment Issues
@@ -148,6 +206,18 @@ make deploy
 **Solution:**
 ```bash
 kubectl logs -l app.kubernetes.io/name=grove-operator
+```
+
+#### `kubectl edit cm grove-operator-cm-*` fails with `field is immutable`
+
+**Cause:** The operator ConfigMap is rendered with `immutable: true` by design and cannot be edited in place.
+
+**Solution:** Change configuration via `helm upgrade`; a new ConfigMap is created and the operator rolls automatically.
+
+```bash
+helm upgrade grove oci://ghcr.io/ai-dynamo/grove/grove-charts \
+  --version <version> \
+  --set config.network.autoMNNVLEnabled=false
 ```
 
 ### Runtime Issues

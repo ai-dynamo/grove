@@ -24,9 +24,11 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	pclqcomponent "github.com/ai-dynamo/grove/operator/internal/controller/podclique/components"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -46,7 +48,7 @@ type Reconciler struct {
 }
 
 // NewReconciler creates a new instance of the PodClique Reconciler.
-func NewReconciler(mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueControllerConfiguration) *Reconciler {
+func NewReconciler(mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueControllerConfiguration, schedRegistry scheduler.Registry) *Reconciler {
 	eventRecorder := mgr.GetEventRecorderFor(controllerName)
 	expectationsStore := expect.NewExpectationsStore()
 	return &Reconciler{
@@ -55,13 +57,19 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueContr
 		eventRecorder:           eventRecorder,
 		reconcileStatusRecorder: ctrlcommon.NewReconcileErrorRecorder(mgr.GetClient()),
 		expectationsStore:       expectationsStore,
-		operatorRegistry:        pclqcomponent.CreateOperatorRegistry(mgr, eventRecorder, expectationsStore),
+		operatorRegistry:        pclqcomponent.CreateOperatorRegistry(mgr, eventRecorder, expectationsStore, schedRegistry),
 	}
 }
 
 // Reconcile reconciles the `PodClique` resource.
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := ctrllogger.FromContext(ctx).WithName(controllerName)
+
+	// Memoize lookups that happen multiple times within a single reconcile:
+	//   * GetPCLQPods — reconcileSpec + reconcileStatus each list pods
+	//   * GetPodCliqueSet — called 4× (spec, status, pod sync, resourceclaim)
+	ctx = componentutils.WithPCLQPodsCache(ctx)
+	ctx = componentutils.WithPodCliqueSetCache(ctx)
 
 	pclq := &grovecorev1alpha1.PodClique{}
 	if result := ctrlutils.GetPodClique(ctx, r.client, logger, req.NamespacedName, pclq, true); ctrlcommon.ShortCircuitReconcileFlow(result) {

@@ -24,6 +24,8 @@ import (
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	ctvalidation "github.com/ai-dynamo/grove/operator/internal/webhook/admission/clustertopology/validation"
 	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/authorization"
 	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/defaulting"
 	pcsvalidation "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/validation"
@@ -32,19 +34,24 @@ import (
 )
 
 // Register registers the webhooks with the controller manager.
-func Register(mgr manager.Manager, operatorCfg *configv1alpha1.OperatorConfiguration) error {
+func Register(mgr manager.Manager, operatorCfg *configv1alpha1.OperatorConfiguration, schedRegistry scheduler.Registry) error {
 	if operatorCfg == nil {
 		return fmt.Errorf("operator configuration must not be nil")
 	}
-	defaultingWebhook := defaulting.NewHandler(mgr, operatorCfg.Network)
+	defaultingWebhook := defaulting.NewHandler(mgr)
 	slog.Info("Registering webhook with manager", "handler", defaulting.Name)
 	if err := defaultingWebhook.RegisterWithManager(mgr); err != nil {
 		return fmt.Errorf("failed adding %s webhook handler: %v", defaulting.Name, err)
 	}
-	pcsValidatingWebhook := pcsvalidation.NewHandler(mgr, operatorCfg)
+	pcsValidatingWebhook := pcsvalidation.NewHandler(mgr, operatorCfg, schedRegistry)
 	slog.Info("Registering webhook with manager", "handler", pcsvalidation.Name)
 	if err := pcsValidatingWebhook.RegisterWithManager(mgr); err != nil {
 		return fmt.Errorf("failed adding %s webhook handler: %v", pcsvalidation.Name, err)
+	}
+	ctValidatingWebhook := ctvalidation.NewHandler(mgr, schedRegistry)
+	slog.Info("Registering webhook with manager", "handler", ctvalidation.Name)
+	if err := ctValidatingWebhook.RegisterWithManager(mgr); err != nil {
+		return fmt.Errorf("failed adding %s webhook handler: %v", ctvalidation.Name, err)
 	}
 	if operatorCfg.Authorizer.Enabled {
 		serviceAccountName, ok := os.LookupEnv(constants.EnvVarServiceAccountName)

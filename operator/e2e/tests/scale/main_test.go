@@ -25,7 +25,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/ai-dynamo/grove/operator/e2e/k8s/clients"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
 	"github.com/ai-dynamo/grove/operator/e2e/measurement"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
@@ -103,7 +103,7 @@ func envOrDefault(key, def string) string {
 // setupPprofHook configures async pprof profile downloads after each tracker phase.
 // Returns a TimelineOption (nil when disabled) and a cleanup function.
 // Best-effort: never aborts the test — logs warnings on failure and returns noop.
-func setupPprofHook(ctx context.Context, cl *clients.Clients, runID, diagDir string, cfg pyroscopeConfig) (measurement.TimelineOption, func()) {
+func setupPprofHook(ctx context.Context, cl *k8sclient.Client, runID, diagDir string, cfg pyroscopeConfig) (measurement.TimelineOption, func()) {
 	noop := func() {}
 
 	if cfg.Disabled {
@@ -112,7 +112,7 @@ func setupPprofHook(ctx context.Context, cl *clients.Clients, runID, diagDir str
 	}
 
 	logr := Logger.GetLogr()
-	session, err := portforward.ForwardService(ctx, cl.RestConfig, cl.Clientset,
+	session, err := portforward.ForwardService(ctx, cl.RestConfig, cl.Client,
 		cfg.Namespace, cfg.Service, cfg.Port, portforward.WithLogger(logr))
 	if err != nil {
 		Logger.Infof("WARN: pprof disabled — port-forward to svc/%s failed: %v", cfg.Service, err)

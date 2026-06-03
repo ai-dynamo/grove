@@ -16,7 +16,9 @@ spec:
         labels:
           kai.scheduler/queue: test
         topologyConstraint:
-          packDomain: rack  # Rack-level packing
+          topologyName: grove-topology
+          pack:
+            required: rack  # Rack-level packing
         spec:
           roleName: worker-rack
           replicas: 3
@@ -58,7 +60,9 @@ spec:
         labels:
           kai.scheduler/queue: test
         topologyConstraint:
-          packDomain: block  # Block-level packing (stricter)
+          topologyName: grove-topology
+          pack:
+            required: block  # Block-level packing (stricter)
         spec:
           roleName: worker-block
           replicas: 4

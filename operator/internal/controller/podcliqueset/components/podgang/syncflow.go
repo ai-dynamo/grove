@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
@@ -35,6 +34,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
@@ -60,6 +60,7 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs 
 			fmt.Sprintf("failed to list PodCliques for PodCliqueSet %v", pcsObjectKey),
 		)
 	}
+	sc.existingPCLQByName = componentutils.PodCliqueByName(sc.existingPCLQs)
 
 	sc.existingPCSGs, err = r.getExistingPCSGsForPCS(ctx, pcs)
 	if err != nil {
@@ -69,22 +70,30 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs 
 			fmt.Sprintf("failed to list PodCliqueScalingGroups for PodCliqueSet %v", pcsObjectKey),
 		)
 	}
+	sc.existingPCSGByName = componentutils.PCSGByName(sc.existingPCSGs)
 
-	// Implementation NOTE:
-	// In the current version of the code ClusterTopology CR is created by Grove operator and its contents
-	// are based on OperatorConfiguration.TopologyAwareSchedulingConfig. _resource struct already has access
-	// to OperatorConfiguration.TopologyAwareSchedulingConfig so we could have used it directly instead of fetching
-	// ClusterTopology CR again. This is true now, but in future this will change when we introduce support for
-	// externally defined ClusterTopology CR. Hence, fetching ClusterTopology CR here to keep the code future-proof.
 	sc.tasEnabled = r.tasConfig.Enabled
-	if r.tasConfig.Enabled {
-		sc.topologyLevels, err = clustertopology.GetClusterTopologyLevels(ctx, r.client, grovecorev1alpha1.DefaultClusterTopologyName)
-		if err != nil {
-			return nil, groveerr.WrapError(err,
-				errCodeGetClusterTopologyLevels,
-				component.OperationSync,
-				"failed to get cluster topology levels")
+	if r.tasConfig.Enabled && componentutils.HasAnyTopologyConstraint(pcs) {
+		topologyName, resolveErr := componentutils.FindExplicitTopologyNameForPodCliqueSet(pcs)
+		if resolveErr == nil && topologyName != "" {
+			sc.topologyLevels, err = clustertopology.GetClusterTopologyLevels(ctx, r.client, topologyName)
+			if err != nil {
+				if !apierrors.IsNotFound(err) {
+					return nil, groveerr.WrapError(err,
+						errCodeGetClusterTopologyLevels,
+						component.OperationSync,
+						fmt.Sprintf("failed to get cluster topology levels for %q", topologyName))
+				}
+				sc.logger.Info(
+					"ClusterTopologyBinding not found while preparing PodGang sync; continuing without translated topology constraints",
+					"pcs", pcsObjectKey,
+					"topologyName", topologyName,
+				)
+				sc.topologyLevels = nil
+			}
 		}
+		// If explicit topologyName lookup fails, sc.topologyLevels stays nil — the PCS reconciler
+		// handles this via the TopologyNameMissing condition.
 	}
 
 	if err = r.computeExpectedPodGangs(sc); err != nil {
@@ -94,6 +103,8 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs 
 			fmt.Sprintf("failed to compute existing PodGangs for PodCliqueSet %v", pcsObjectKey),
 		)
 	}
+	sc.expectedPodGangByName = podGangInfoByName(sc.expectedPodGangs)
+	sc.expectedPodGangNameSet = podGangInfoNameSet(sc.expectedPodGangs)
 
 	sc.existingPodGangs, err = componentutils.GetExistingPodGangs(ctx, r.client, pcs.ObjectMeta, pcs.Namespace)
 	if err != nil {
@@ -103,6 +114,7 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs 
 			fmt.Sprintf("Failed to get existing PodGangs for PodCliqueSet: %v", client.ObjectKeyFromObject(sc.pcs)),
 		)
 	}
+	sc.existingPodGangByName = componentutils.PodGangByName(sc.existingPodGangs)
 
 	sc.existingPCLQPods, err = r.getExistingPodsByPCLQForPCS(ctx, pcsObjectKey)
 	if err != nil {
@@ -345,11 +357,12 @@ func createTopologyPackConstraint(sc *syncContext, nsName types.NamespacedName, 
 	}
 	var pgPackConstraint *groveschedulerv1alpha1.TopologyPackConstraint
 	// If requiredTopologyConstraint is specified, set the required topology key accordingly.
+	requiredDomain := requiredTopologyConstraint.RequiredDomain()
 	requiredTopologyLevel, found := lo.Find(sc.topologyLevels, func(topologyLevel grovecorev1alpha1.TopologyLevel) bool {
-		return topologyLevel.Domain == requiredTopologyConstraint.PackDomain
+		return topologyLevel.Domain == requiredDomain
 	})
 	if !found {
-		// This can only happen if the ClusterTopology CR has been updated and no longer contains a topology level
+		// This can only happen if the ClusterTopologyBinding CR has been updated and no longer contains a topology level
 		// that is being referenced by the resource's TopologyConstraint.
 		// In the current version it's been decided to log this occurrence and skip setting the required constraint which is equivalent
 		// to nullifying the required constraint.
@@ -367,9 +380,7 @@ func determinePodCliqueReplicas(sc *syncContext, pclqTemplateSpec *grovecorev1al
 	if belongsToPCSG || pclqTemplateSpec.Spec.ScaleConfig == nil {
 		return pclqTemplateSpec.Spec.Replicas
 	}
-	matchingPCLQ, found := lo.Find(sc.existingPCLQs, func(pclq grovecorev1alpha1.PodClique) bool {
-		return pclqFQN == pclq.Name
-	})
+	matchingPCLQ, found := sc.existingPCLQByName[pclqFQN]
 	if !found {
 		// PodClique resource not found - might be during initial creation
 		// Fall back to template replicas but log warning for visibility
@@ -543,12 +554,8 @@ func (r _resource) verifyAllPodsCreated(sc *syncContext, pgi *podGangInfo) error
 
 // getPodsForPodCliquesPendingCreation counts expected pods from non-existent PodCliques.
 func (r _resource) getPodsForPodCliquesPendingCreation(sc *syncContext, podGang *podGangInfo) int {
-	existingPCLQNames := lo.Map(sc.existingPCLQs, func(pclq grovecorev1alpha1.PodClique, _ int) string {
-		return pclq.Name
-	})
-
 	return lo.Reduce(podGang.pclqs, func(agg int, pclq pclqInfo, _ int) int {
-		if !slices.Contains(existingPCLQNames, pclq.fqn) {
+		if _, ok := sc.existingPCLQByName[pclq.fqn]; !ok {
 			return agg + int(pclq.replicas)
 		}
 		return agg
@@ -623,20 +630,29 @@ func (r _resource) createOrUpdatePodGang(ctx context.Context, sc *syncContext, p
 // Convenience types and methods on these types that are used during sync flow run.
 // ------------------------------------------------------------------------------------------------
 
-// syncContext holds the relevant state required during the sync flow run.
+// syncContext holds the relevant state required during the sync flow run. The *ByName / *NameSet
+// fields are O(1) views over their corresponding slices and are populated eagerly in
+// prepareSyncFlow. Callers must access them as fields, not via getters — there is no lazy
+// fallback because lazy mutation of syncContext would race the moment the struct is shared
+// across goroutines.
 type syncContext struct {
 	//ctx                  context.Context
-	pcs                  *grovecorev1alpha1.PodCliqueSet
-	logger               logr.Logger
-	expectedPodGangs     []*podGangInfo
-	existingPodGangs     []groveschedulerv1alpha1.PodGang
-	deletedPodGangNames  []string
-	existingPCLQPods     map[string][]corev1.Pod
-	existingPCLQs        []grovecorev1alpha1.PodClique
-	existingPCSGs        []grovecorev1alpha1.PodCliqueScalingGroup
-	unassignedPodsByPCLQ map[string][]corev1.Pod
-	tasEnabled           bool
-	topologyLevels       []grovecorev1alpha1.TopologyLevel
+	pcs                    *grovecorev1alpha1.PodCliqueSet
+	logger                 logr.Logger
+	expectedPodGangs       []*podGangInfo
+	existingPodGangs       []groveschedulerv1alpha1.PodGang
+	existingPodGangByName  map[string]groveschedulerv1alpha1.PodGang
+	deletedPodGangNames    []string
+	existingPCLQPods       map[string][]corev1.Pod
+	existingPCLQs          []grovecorev1alpha1.PodClique
+	existingPCLQByName     map[string]grovecorev1alpha1.PodClique
+	existingPCSGs          []grovecorev1alpha1.PodCliqueScalingGroup
+	existingPCSGByName     map[string]grovecorev1alpha1.PodCliqueScalingGroup
+	expectedPodGangByName  map[string]*podGangInfo
+	expectedPodGangNameSet componentutils.Set[string]
+	unassignedPodsByPCLQ   map[string][]corev1.Pod
+	tasEnabled             bool
+	topologyLevels         []grovecorev1alpha1.TopologyLevel
 }
 
 // getPodGangNamesPendingCreation identifies PodGangs not yet created.
@@ -647,18 +663,14 @@ func (sc *syncContext) getPodGangNamesPendingCreation() []string {
 }
 
 func (sc *syncContext) isExistingPodGang(podGangName string) bool {
-	return slices.ContainsFunc(sc.existingPodGangs, func(pg groveschedulerv1alpha1.PodGang) bool {
-		return podGangName == pg.Name
-	})
+	_, ok := sc.existingPodGangByName[podGangName]
+	return ok
 }
 
 func (sc *syncContext) getExcessPodGangNames() []string {
 	var excessPodGangNames []string
-	expectedPodGangNames := lo.Map(sc.expectedPodGangs, func(pg *podGangInfo, _ int) string {
-		return pg.fqn
-	})
 	for _, existingPodGang := range sc.existingPodGangs {
-		if !slices.Contains(expectedPodGangNames, existingPodGang.Name) {
+		if !sc.expectedPodGangNameSet.Has(existingPodGang.Name) {
 			excessPodGangNames = append(excessPodGangNames, existingPodGang.Name)
 		}
 	}
@@ -666,27 +678,24 @@ func (sc *syncContext) getExcessPodGangNames() []string {
 }
 
 func (sc *syncContext) isPodGangInitialized(podGangName string) bool {
-	foundPG, ok := lo.Find(sc.existingPodGangs, func(pg groveschedulerv1alpha1.PodGang) bool {
-		return podGangName == pg.Name
-	})
+	foundPG, ok := sc.existingPodGangByName[podGangName]
 	return ok && k8sutils.IsConditionTrue(foundPG.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized))
 }
 
 // initializeAssignedAndUnassignedPodsForPCS categorizes pods by PodGang assignment.
+// The lookup yields a *podGangInfo that aliases an entry in sc.expectedPodGangs (which stores
+// pointers). Mutations via refreshAssociatedPCLQPods therefore propagate back to the slice;
+// changing expectedPodGangs to a value-typed slice would silently break this aliasing.
 func (sc *syncContext) initializeAssignedAndUnassignedPodsForPCS() {
 	for pclqName, pods := range sc.existingPCLQPods {
 		for _, pod := range pods {
 			if metav1.HasLabel(pod.ObjectMeta, apicommon.LabelPodGang) {
 				podGangName := pod.GetLabels()[apicommon.LabelPodGang]
-				// Find the index to work with the original slice element, not a copy
-				pgiIndex := slices.IndexFunc(sc.expectedPodGangs, func(pgi *podGangInfo) bool {
-					return podGangName == pgi.fqn
-				})
-				if pgiIndex == -1 {
+				pgi, ok := sc.expectedPodGangByName[podGangName]
+				if !ok {
 					continue
 				}
-				// Work with the original element in the slice, not a copy
-				sc.expectedPodGangs[pgiIndex].refreshAssociatedPCLQPods(pclqName, pod.Name)
+				pgi.refreshAssociatedPCLQPods(pclqName, pod.Name)
 			} else {
 				sc.unassignedPodsByPCLQ[pclqName] = append(sc.unassignedPodsByPCLQ[pclqName], pod)
 			}
@@ -698,10 +707,8 @@ func (sc *syncContext) initializeAssignedAndUnassignedPodsForPCS() {
 func (sc *syncContext) getPodCliques(podGang *podGangInfo) []grovecorev1alpha1.PodClique {
 	constituentPCLQs := make([]grovecorev1alpha1.PodClique, 0, len(podGang.pclqs))
 	for _, podGangConstituentPCLQInfo := range podGang.pclqs {
-		for _, pclq := range sc.existingPCLQs {
-			if pclq.Name == podGangConstituentPCLQInfo.fqn {
-				constituentPCLQs = append(constituentPCLQs, pclq)
-			}
+		if pclq, ok := sc.existingPCLQByName[podGangConstituentPCLQInfo.fqn]; ok {
+			constituentPCLQs = append(constituentPCLQs, pclq)
 		}
 	}
 	return constituentPCLQs
@@ -711,13 +718,27 @@ func (sc *syncContext) getPodCliques(podGang *podGangInfo) []grovecorev1alpha1.P
 // If the PCSG exists then it will return the pcsg.Spec.Replicas value, else it will return the template replicas
 // as defined in grovecorev1alpha1.PodCliqueScalingGroupConfig.Replicas
 func (sc *syncContext) determinePCSGReplicas(pcsgFQN string, pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig) int {
-	foundExistingPCSG, ok := lo.Find(sc.existingPCSGs, func(pcsg grovecorev1alpha1.PodCliqueScalingGroup) bool {
-		return pcsg.Name == pcsgFQN
-	})
-	if ok {
+	if foundExistingPCSG, ok := sc.existingPCSGByName[pcsgFQN]; ok {
 		return int(foundExistingPCSG.Spec.Replicas)
 	}
 	return int(*pcsgConfig.Replicas)
+}
+
+// podGangInfoByName builds a name-keyed map for O(1) podGangInfo lookups. Kept local because
+// podGangInfo is package-private; the public PodCliqueByName/PCSGByName/PodGangByName helpers
+// in componentutils cover the cross-package equivalents.
+func podGangInfoByName(podGangs []*podGangInfo) map[string]*podGangInfo {
+	return lo.SliceToMap(podGangs, func(podGang *podGangInfo) (string, *podGangInfo) {
+		return podGang.fqn, podGang
+	})
+}
+
+// podGangInfoNameSet builds a Set of podGangInfo FQNs. Kept local for the same reason as
+// podGangInfoByName.
+func podGangInfoNameSet(podGangs []*podGangInfo) componentutils.Set[string] {
+	return componentutils.NewSetBy(podGangs, func(podGang *podGangInfo) string {
+		return podGang.fqn
+	})
 }
 
 // syncFlowResult captures the result of a sync flow run.

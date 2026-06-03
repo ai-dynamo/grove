@@ -17,23 +17,29 @@
 package validation
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	schedmanager "github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
+	"github.com/ai-dynamo/grove/operator/internal/clustertopology"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 
 	"github.com/samber/lo"
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1validation "k8s.io/apimachinery/pkg/apis/meta/v1/validation"
 	"k8s.io/apimachinery/pkg/util/sets"
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -44,26 +50,25 @@ var allowedStartupTypes = sets.New(grovecorev1alpha1.CliqueStartupTypeInOrder, g
 
 // pcsValidator validates PodCliqueSet resources for create and update operations.
 type pcsValidator struct {
-	operation              admissionv1.Operation
-	pcs                    *grovecorev1alpha1.PodCliqueSet
-	tasEnabled             bool
-	clusterTopologyDomains []string
-	schedulerConfig        groveconfigv1alpha1.SchedulerConfiguration
+	operation       admissionv1.Operation
+	pcs             *grovecorev1alpha1.PodCliqueSet
+	tasEnabled      bool
+	schedulerConfig groveconfigv1alpha1.SchedulerConfiguration
+	client          client.Client
+	schedRegistry   scheduler.Registry
 }
 
 // newPCSValidator creates a new PodCliqueSet validator for the given operation.
 // schedulerConfig is the full scheduler configuration; the validator uses it for
 // scheduler-name matching and may use per-scheduler config for future validations.
-func newPCSValidator(pcs *grovecorev1alpha1.PodCliqueSet, operation admissionv1.Operation, tasConfig groveconfigv1alpha1.TopologyAwareSchedulingConfiguration, schedulerConfig groveconfigv1alpha1.SchedulerConfiguration) *pcsValidator {
-	topologyDomains := lo.Map(tasConfig.Levels, func(level grovecorev1alpha1.TopologyLevel, _ int) string {
-		return string(level.Domain)
-	})
+func newPCSValidator(pcs *grovecorev1alpha1.PodCliqueSet, operation admissionv1.Operation, tasConfig groveconfigv1alpha1.TopologyAwareSchedulingConfiguration, schedulerConfig groveconfigv1alpha1.SchedulerConfiguration, cl client.Client, schedRegistry scheduler.Registry) *pcsValidator {
 	return &pcsValidator{
-		operation:              operation,
-		pcs:                    pcs,
-		tasEnabled:             tasConfig.Enabled,
-		clusterTopologyDomains: topologyDomains,
-		schedulerConfig:        schedulerConfig,
+		operation:       operation,
+		pcs:             pcs,
+		tasEnabled:      tasConfig.Enabled,
+		schedulerConfig: schedulerConfig,
+		client:          cl,
+		schedRegistry:   schedRegistry,
 	}
 }
 
@@ -270,16 +275,14 @@ func (v *pcsValidator) validatePodCliqueTemplates(fldPath *field.Path) ([]string
 }
 
 // validateSchedulerNames ensures all pod scheduler names resolve to the same scheduler and that scheduler is enabled.
-// Empty schedulerName is resolved to the default backend name from schedmanager.GetDefault().
+// Empty schedulerName is resolved to the default backend name from the injected registry.
 func (v *pcsValidator) validateSchedulerNames(schedulerNames []string, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	specPath := fldPath.Child("spec").Child("podSpec").Child("schedulerName")
 
-	defaultSchedulerName := string(groveconfigv1alpha1.SchedulerNameKube)
-	if def := schedmanager.GetDefault(); def != nil {
-		defaultSchedulerName = def.Name()
-	}
+	defaultSchedulerName := v.schedRegistry.GetDefault().Name()
 
+	// Check-1: Check if the scheduler names are unique
 	// Resolve empty to default backend name; then require all resolved names to be the same.
 	uniqueSchedulerNames := lo.Uniq(lo.Map(schedulerNames, func(item string, _ int) string {
 		if item == "" {
@@ -291,12 +294,10 @@ func (v *pcsValidator) validateSchedulerNames(schedulerNames []string, fldPath *
 		allErrs = append(allErrs, field.Invalid(specPath, strings.Join(uniqueSchedulerNames, ", "), "the schedulerName for all pods have to be the same"))
 	}
 
-	// Validate that the resolved scheduler is enabled.
-	pcsSchedulerName := ""
-	if len(uniqueSchedulerNames) > 0 && uniqueSchedulerNames[0] != "" {
-		pcsSchedulerName = uniqueSchedulerNames[0]
-	}
-	if pcsSchedulerName != string(groveconfigv1alpha1.SchedulerNameKube) && schedmanager.Get(pcsSchedulerName) == nil {
+	// Check-2: Validate that the resolved scheduler is enabled.
+	pcsSchedulerName := uniqueSchedulerNames[0]
+	// default-scheduler is always valid; any other name must appear in the registry of enabled OperatorConfiguration backends.
+	if v.schedRegistry.Get(pcsSchedulerName) == nil {
 		allErrs = append(allErrs, field.Invalid(
 			specPath,
 			pcsSchedulerName,
@@ -417,9 +418,16 @@ func (v *pcsValidator) validateTerminationDelay(fldPath *field.Path) field.Error
 	return allErrs
 }
 
-func (v *pcsValidator) validateTopologyConstraintsOnCreate() field.ErrorList {
-	topoConstraintsValidator := newTopologyConstraintsValidator(v.pcs, v.tasEnabled, v.clusterTopologyDomains)
-	return topoConstraintsValidator.validate()
+func (v *pcsValidator) validateTopologyConstraintsOnCreate(ctx context.Context) ([]string, field.ErrorList) {
+	if !v.tasEnabled {
+		return nil, newTopologyConstraintsValidator(v.pcs, v.tasEnabled, nil).validate()
+	}
+	domains, errs := v.resolveTopologyDomains(ctx)
+	if len(errs) > 0 {
+		return nil, errs
+	}
+	topologyValidator := newTopologyConstraintsValidator(v.pcs, v.tasEnabled, domains)
+	return topologyValidator.warnings(), topologyValidator.validate()
 }
 
 // validatePodCliqueTemplateSpec validates a single PodClique template specification including metadata and spec.
@@ -683,7 +691,260 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigsUpdate(oldConfigs []g
 }
 
 func (v *pcsValidator) validateTopologyConstraintsUpdate(oldPCS *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
-	return newTopologyConstraintsValidator(v.pcs, v.tasEnabled, v.clusterTopologyDomains).validateUpdate(oldPCS)
+	immutabilityValidator := newTopologyConstraintsValidator(v.pcs, v.tasEnabled, nil)
+
+	// Allow only the legacy upgrade case to be repaired under the current rules: older objects could carry
+	// packDomain without topologyName, because topologyName did not exist in the API yet. Other invalid shapes
+	// are not treated as repairable legacy state here.
+	if componentutils.HasAnyTopologyConstraint(oldPCS) && hasRepairableLegacyTopologyConstraint(oldPCS) {
+		if _, err := componentutils.ResolveEffectiveTopologyNameForPodCliqueSet(oldPCS); err != nil {
+			if errors.Is(err, componentutils.ErrTopologyNameMissing) {
+				if allErrs := immutabilityValidator.validateTopologyConstraintImmutability(oldPCS, field.NewPath("spec").Child("template"), true); len(allErrs) > 0 {
+					return allErrs
+				}
+				return v.validateTopologyConstraintsForLegacyRepair(context.Background())
+			}
+			// Surface any other resolution failure as an internal error rather than
+			// assuming it is a repairable legacy state.
+			return field.ErrorList{field.InternalError(field.NewPath("spec", "template", "topologyConstraint", "topologyName"), err)}
+		}
+	}
+
+	// Domain/hierarchy validation is not needed on update because topology constraints are immutable.
+	// Only topologyName and packDomain immutability are checked here for already valid objects.
+	return immutabilityValidator.validateUpdate(oldPCS)
+}
+
+func (v *pcsValidator) validateTopologyConstraintsForLegacyRepair(ctx context.Context) field.ErrorList {
+	if !v.tasEnabled {
+		return newTopologyConstraintsValidator(v.pcs, v.tasEnabled, nil).validateForLegacyRepair()
+	}
+	domains, errs := v.resolveTopologyDomains(ctx)
+	if len(errs) > 0 {
+		return errs
+	}
+	return newTopologyConstraintsValidator(v.pcs, v.tasEnabled, domains).validateForLegacyRepair()
+}
+
+// resolveTopologyDomains resolves the ordered list of topology domains from the ClusterTopologyBinding
+// referenced by the PCS's effective topologyName. Returns nil domains (no validation) if no topology constraints exist.
+func (v *pcsValidator) resolveTopologyDomains(ctx context.Context) (domains []string, allErrs field.ErrorList) {
+	// No constraints at all — nothing to validate.
+	if !componentutils.HasAnyTopologyConstraint(v.pcs) {
+		return nil, nil
+	}
+
+	var topologyName string
+	topologyName, allErrs = resolveEffectiveTopologyNameFieldErrors(v.pcs)
+	if len(allErrs) > 0 {
+		return nil, allErrs
+	}
+
+	fldPath := field.NewPath("spec", "template", "topologyConstraint", "topologyName")
+
+	// Fetch the referenced ClusterTopologyBinding.
+	levels, err := clustertopology.GetClusterTopologyLevels(ctx, v.client, topologyName)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, field.ErrorList{field.Invalid(fldPath, topologyName,
+				fmt.Sprintf("ClusterTopologyBinding %q not found", topologyName))}
+		}
+		return nil, field.ErrorList{field.InternalError(fldPath,
+			fmt.Errorf("failed to fetch ClusterTopologyBinding %q: %w", topologyName, err))}
+	}
+
+	domains = make([]string, len(levels))
+	for i, level := range levels {
+		domains[i] = string(level.Domain)
+	}
+	return domains, nil
+}
+
+func validateResolvableTopologyConstraint(
+	tc *grovecorev1alpha1.TopologyConstraint,
+	tcPath *field.Path,
+	inheritedTopologyName string,
+	canInherit bool,
+) (effectiveTopologyName string, resolved bool, allErrs field.ErrorList) {
+	if tc == nil {
+		return "", false, nil
+	}
+	if tc.TopologyName == "" && (!canInherit || inheritedTopologyName == "") {
+		return "", false, field.ErrorList{field.Required(
+			tcPath.Child("topologyName"),
+			"topologyName is required when topologyConstraint is set and cannot be inherited",
+		)}
+	}
+	var err error
+	effectiveTopologyName, err = componentutils.ResolveEffectiveTopologyNameForConstraint(tc.TopologyName, inheritedTopologyName)
+	if err == nil {
+		return effectiveTopologyName, true, nil
+	}
+	if errors.Is(err, componentutils.ErrMultipleTopologyNamesUnsupported) {
+		return "", false, field.ErrorList{field.Invalid(
+			tcPath.Child("topologyName"),
+			tc.TopologyName,
+			"all topologyConstraint.topologyName values within a PodCliqueSet must match in the current implementation",
+		)}
+	}
+	return "", false, field.ErrorList{field.InternalError(tcPath.Child("topologyName"), err)}
+}
+
+type topologyNameObserver struct {
+	resolvedTopologyName   string
+	hasConflictingTopology bool
+}
+
+func (o *topologyNameObserver) Observe(effectiveTopologyName string) {
+	if o.resolvedTopologyName == "" {
+		o.resolvedTopologyName = effectiveTopologyName
+		return
+	}
+	if o.resolvedTopologyName != effectiveTopologyName {
+		o.hasConflictingTopology = true
+	}
+}
+
+func resolvePCSAndPCSGTopologyNames(
+	pcs *grovecorev1alpha1.PodCliqueSet,
+	topologyObserver *topologyNameObserver,
+) (
+	pcsEffectiveTopologyName string,
+	pcsResolvable bool,
+	pcsgEffectiveTopologyNameByCliqueName map[string]string,
+	allErrs field.ErrorList,
+) {
+	if pcs.Spec.Template.TopologyConstraint != nil {
+		effectiveTopologyName, resolved, errs := validateResolvableTopologyConstraint(
+			pcs.Spec.Template.TopologyConstraint,
+			field.NewPath("spec", "template", "topologyConstraint"),
+			"",
+			false,
+		)
+		allErrs = append(allErrs, errs...)
+		if resolved {
+			pcsEffectiveTopologyName = effectiveTopologyName
+			pcsResolvable = true
+			topologyObserver.Observe(effectiveTopologyName)
+		}
+	}
+
+	pcsgEffectiveTopologyNameByCliqueName = make(map[string]string)
+	for i, pcsg := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		if pcsg.TopologyConstraint == nil {
+			continue
+		}
+		effectiveTopologyName, resolved, errs := validateResolvableTopologyConstraint(
+			pcsg.TopologyConstraint,
+			field.NewPath("spec", "template", "podCliqueScalingGroups").Index(i).Child("topologyConstraint"),
+			pcsEffectiveTopologyName,
+			pcsResolvable,
+		)
+		allErrs = append(allErrs, errs...)
+		if resolved {
+			topologyObserver.Observe(effectiveTopologyName)
+			for _, cliqueName := range pcsg.CliqueNames {
+				if _, exists := pcsgEffectiveTopologyNameByCliqueName[cliqueName]; !exists {
+					pcsgEffectiveTopologyNameByCliqueName[cliqueName] = effectiveTopologyName
+				}
+			}
+		}
+	}
+
+	return pcsEffectiveTopologyName, pcsResolvable, pcsgEffectiveTopologyNameByCliqueName, allErrs
+}
+
+func resolvePCLQTopologyNames(
+	pcs *grovecorev1alpha1.PodCliqueSet,
+	pcsEffectiveTopologyName string,
+	pcsResolvable bool,
+	pcsgEffectiveTopologyNameByCliqueName map[string]string,
+	topologyObserver *topologyNameObserver,
+) field.ErrorList {
+	var allErrs field.ErrorList
+
+	for i, clique := range pcs.Spec.Template.Cliques {
+		if clique.TopologyConstraint == nil {
+			continue
+		}
+
+		inheritedTopologyName := pcsEffectiveTopologyName
+		canInherit := pcsResolvable
+		if pcsgTopologyName, exists := pcsgEffectiveTopologyNameByCliqueName[clique.Name]; exists {
+			inheritedTopologyName = pcsgTopologyName
+			canInherit = true
+		}
+
+		effectiveTopologyName, resolved, errs := validateResolvableTopologyConstraint(
+			clique.TopologyConstraint,
+			field.NewPath("spec", "template", "cliques").Index(i).Child("topologyConstraint"),
+			inheritedTopologyName,
+			canInherit,
+		)
+		allErrs = append(allErrs, errs...)
+		if resolved {
+			topologyObserver.Observe(effectiveTopologyName)
+		}
+	}
+
+	return allErrs
+}
+
+func topologyNameConflictFieldErrors(pcs *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
+	var allErrs field.ErrorList
+
+	if tc := pcs.Spec.Template.TopologyConstraint; tc != nil && tc.TopologyName != "" {
+		allErrs = append(allErrs, field.Invalid(
+			field.NewPath("spec", "template", "topologyConstraint", "topologyName"),
+			tc.TopologyName,
+			"all topologyConstraint.topologyName values within a PodCliqueSet must match in the current implementation",
+		))
+	}
+
+	for i, pcsg := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		if tc := pcsg.TopologyConstraint; tc != nil && tc.TopologyName != "" {
+			allErrs = append(allErrs, field.Invalid(
+				field.NewPath("spec", "template", "podCliqueScalingGroups").Index(i).Child("topologyConstraint", "topologyName"),
+				tc.TopologyName,
+				"all topologyConstraint.topologyName values within a PodCliqueSet must match in the current implementation",
+			))
+		}
+	}
+
+	for i, clique := range pcs.Spec.Template.Cliques {
+		if tc := clique.TopologyConstraint; tc != nil && tc.TopologyName != "" {
+			allErrs = append(allErrs, field.Invalid(
+				field.NewPath("spec", "template", "cliques").Index(i).Child("topologyConstraint", "topologyName"),
+				tc.TopologyName,
+				"all topologyConstraint.topologyName values within a PodCliqueSet must match in the current implementation",
+			))
+		}
+	}
+
+	return allErrs
+}
+
+func resolveEffectiveTopologyNameFieldErrors(pcs *grovecorev1alpha1.PodCliqueSet) (resolvedTopologyName string, allErrs field.ErrorList) {
+	topologyObserver := &topologyNameObserver{}
+
+	pcsEffectiveTopologyName, pcsResolvable, pcsgEffectiveTopologyNames, allErrs := resolvePCSAndPCSGTopologyNames(pcs, topologyObserver)
+	allErrs = append(allErrs, resolvePCLQTopologyNames(
+		pcs,
+		pcsEffectiveTopologyName,
+		pcsResolvable,
+		pcsgEffectiveTopologyNames,
+		topologyObserver,
+	)...)
+	if topologyObserver.hasConflictingTopology {
+		allErrs = append(allErrs, topologyNameConflictFieldErrors(pcs)...)
+	}
+	if len(allErrs) > 0 {
+		return "", allErrs
+	}
+	if topologyObserver.resolvedTopologyName == "" {
+		return "", nil
+	}
+	return topologyObserver.resolvedTopologyName, nil
 }
 
 // requiresOrderValidation checks if the StartupType requires clique order validation.

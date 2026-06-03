@@ -18,6 +18,7 @@ package pod
 
 import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -27,6 +28,8 @@ type DeletionSorter struct {
 	Pods []*corev1.Pod
 	// ExpectedPodTemplateHash is the hash that is expected as a label on the updated pods
 	ExpectedPodTemplateHash string
+	// ExpectedPodTemplateHashes are the canonical and legacy hashes accepted during hash migration.
+	ExpectedPodTemplateHashes componentutils.HashCandidates
 }
 
 // Len returns the length of the DeletionSorter
@@ -65,7 +68,7 @@ func (s DeletionSorter) Less(i, j int) bool {
 
 	// 4. Pods with older hashes < Pods with newer hashes
 	if s.Pods[i].Labels[apicommon.LabelPodTemplateHash] != s.Pods[j].Labels[apicommon.LabelPodTemplateHash] {
-		return s.Pods[i].Labels[apicommon.LabelPodTemplateHash] != s.ExpectedPodTemplateHash
+		return !s.expectedHashMatches(s.Pods[i].Labels[apicommon.LabelPodTemplateHash])
 	}
 
 	// 5. Empty creation time pods < newer pods < older pods
@@ -73,6 +76,13 @@ func (s DeletionSorter) Less(i, j int) bool {
 		return s.Pods[i].CreationTimestamp.IsZero()
 	}
 	return s.Pods[i].CreationTimestamp.After(s.Pods[j].CreationTimestamp.Time)
+}
+
+func (s DeletionSorter) expectedHashMatches(hash string) bool {
+	if s.ExpectedPodTemplateHashes.Canonical != "" {
+		return s.ExpectedPodTemplateHashes.Matches(hash)
+	}
+	return hash == s.ExpectedPodTemplateHash
 }
 
 // isPodReady checks if a pod is ready by looking for the PodReady condition with status True
