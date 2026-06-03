@@ -120,6 +120,13 @@ release: "{{ .Release.Name }}"
 {{- end }}
 {{- end -}}
 
+{{- define "operator.servicemonitor.labels" -}}
+{{- include "common.chart.labels" . }}
+{{- range $key, $val := .Values.serviceMonitor.labels }}
+{{ $key }}: {{ $val }}
+{{- end }}
+{{- end -}}
+
 {{- define "operator.clusterrole.labels" -}}
 {{- include "common.chart.labels" . }}
 {{- range $key, $val := .Values.clusterRole.labels }}

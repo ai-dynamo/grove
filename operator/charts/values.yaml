@@ -144,6 +144,16 @@ service:
     app.kubernetes.io/component: operator-service
     app.kubernetes.io/name: grove-operator
     app.kubernetes.io/part-of: grove
+  annotations: {}
+
+serviceMonitor:
+  enable: false
+  labels:
+    app.kubernetes.io/component: operator-service-monitor
+    app.kubernetes.io/name: grove-operator
+    app.kubernetes.io/part-of: grove
+    release: prometheus-stack
+
 
 clusterRole:
   name: grove:system:grove-operator

@@ -4,7 +4,11 @@ metadata:
   name: {{ required ".Values.service.name is required" .Values.service.name }}
   namespace: {{ .Release.Namespace }}
   labels:
-{{- include "operator.service.labels" . | nindent 4 }}
+    {{- include "operator.service.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   type: {{ .Values.service.type }}
   selector:
