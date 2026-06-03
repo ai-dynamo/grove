@@ -1,0 +1,18 @@
+{{- if .Values.serviceMonitor.enable }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: grove-operator-monitor
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{  include "operator.servicemonitor.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "operator.service.labels" . | nindent 6 }}
+  endpoints:
+  - port: metrics
+    path: /metrics
+    scheme: http
+{{- end }}
