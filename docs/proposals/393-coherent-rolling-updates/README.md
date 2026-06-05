@@ -182,7 +182,7 @@ type PodCliqueSetUpdateStrategy struct {
 
 `PodGangMap` (PGM) is a new namespaced custom resource that captures the **desired-state mapping between PodGangs and their constituent PodClique pod counts and PodCliqueScalingGroup replica indices** for a single `PodCliqueSet` replica. One `PodGangMap` exists per PCS replica, named `<pcs-name>-<pcs-replica-index>`.
 
-`PodGangMap` has no `Status` subresource as it only captures the desired-state. Mappings captured in this resource are read by the `PodGang`, `PodClique` and `PodCliqueScalingGroup` reconcilers.
+`PodGangMap` has no `Status` subresource as it only captures the desired-state. Mappings captured in this resource are read by the `PodGang` in PCS reconciler, `PodClique` component in PCSG reconciler and `Pod` component in PCLQ reconciler.
 
 ```go
 type PodGangMap struct {
@@ -278,7 +278,7 @@ type PodCliqueSetReplicaUpdateProgress struct {
 `InFlightPodGangs` is the orchestrator's hand-off to the PodGangMap component and back. In addition it also provide visibility into what PodGang(s) are currently getting updated. A coherent update for a PodCliqueSet replica proceeds in two phases: 
 
 * The **MPG phase**: In this phase MPGs are taken up one at a time — each MPG is rolled to the new hash, and only once it reports `PodGangConditionTypeAvailable=True` does the orchestrator move on to the next MPG 
-* The **TPG phase**: Once every MPG is at the new hash, all remaining TPGs are rolled together in a single iteration. 
+* The **TPG phase**: Once every MPG report `PodGangConditionTypeAvailable=True` , all remaining TPGs are rolled together in a single iteration. 
 
 In both phases the mechanism is the same. While `InFlightPodGangs` is empty, the PodGangMap component computes the next iteration's entries — creating the new-hash PodGangs and draining pods off the corresponding old-hash entries. The orchestrator then reads PGM, picks the new-hash entries that are not yet `Available`, and writes their names into `InFlightPodGangs`. It waits for every listed PodGang to reach `PodGangConditionTypeAvailable=True`, at which point it clears the field — which signals the PodGangMap component to compute the next iteration. The field is per-replica so that future configurable concurrency across replicas does not require a schema change.
 
