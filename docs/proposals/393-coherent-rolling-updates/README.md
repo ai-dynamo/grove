@@ -37,6 +37,7 @@
       - [Steady-state standalone PCLQ scale-out](#steady-state-standalone-pclq-scale-out)
       - [Steady-state standalone PCLQ scale-in](#steady-state-standalone-pclq-scale-in)
     - [<code>PodGang.MinReplicas</code> lifecycle](#podgangminreplicas-lifecycle)
+    - [Gang termination suppression during updates](#gang-termination-suppression-during-updates)
     - [<code>DependsOn</code> and scheduling order](#dependson-and-scheduling-order)
     - [PodGang naming convention](#podgang-naming-convention)
     - [Illustration by example](#illustration-by-example)
@@ -46,7 +47,7 @@
   - [Monitoring](#monitoring)
   - [Dependencies](#dependencies)
   - [Graduation Criteria](#graduation-criteria)
-<!-- /toc -->
+  <!-- /toc -->
 
 ## Summary
 
@@ -71,7 +72,7 @@ AI inference frameworks are evolving rapidly as new architectures/models are rel
 * Re-use of topology optimized resources during rolling update using resource reservations. Will be handled in future as a separate feature.
 * Explicit support for `maxSurge` and `maxUnavailable` API. However, similar concurrency controls and functionality will be supported in future.
 * User-configurable concurrency control during a coherent update — neither the number of `PodCliqueSet` replicas updated simultaneously nor the number of MVU iterations in flight per replica is configurable in the current iteration. Both default to one. Configurable knobs will be supported in future.
-* `scale-out` and `scale-in` of scale sub-resources (`PodClique`, `PodCliqueScalingGroup`, `PodCliqueSet`) during a coherent update. The current iteration blocks these operations for the duration of a coherent update. How scale operations should compose with an in-flight coherent update will be supported in future.
+* `scale-out` and `scale-in` of scale sub-resources (`PodClique`, `PodCliqueScalingGroup`, `PodCliqueSet`) during a coherent update. The current iteration rejects these operations PCS-wide for the duration of an in-flight coherent update — see [Handling scale-outs and scale-ins during update](#handling-scale-outs-and-scale-ins-during-update) for the precise scope and rationale. Narrower per-replica scoping and otherwise composing scale operations with an in-flight coherent update will be supported in future iterations.
 * Rollback and roll-forward of `PodCliqueSet` revisions. Tracking PCS revision history and providing operator-driven rollback / roll-forward to a prior version will be supported in future.
 
 ## Abbreviations
@@ -347,7 +348,7 @@ The PodGang component then materializes a `PodGang` resource for each entry, wit
 
 ### Coherent update behavior and flow
 
-A PCS is composed of PCLQs and PCSGs. Updates may target a subset of PCLQs or all of them. An MVU consists of `MinAvailable` replicas of each standalone PCLQ (pods) and each PCSG that are updated. The set of out-of-date components is captured in `Status.UpdateProgress` when an update begins, and a validating webhook then blocks scale-in/out of standalone `PodClique` and `PodCliqueScalingGroup` resources for the duration of the update — so the inputs to the MVU template stay fixed from the start of the update to the end. The MVU template itself is recomputed on every reconcile as it is cheap and deterministic, and helps avoid cached state across reconciles thus simplifying the controller.
+A PCS is composed of PCLQs and PCSGs. Updates may target a subset of PCLQs or all of them. An MVU consists of `MinAvailable` replicas of each standalone PCLQ (pods) and each PCSG that are updated. The set of out-of-date components is captured in `Status.UpdateProgress` when an update begins, and a validating webhook rejects scale-in/out across the entire PCS for the lifetime of the update (see [Handling scale-outs and scale-ins during update](#handling-scale-outs-and-scale-ins-during-update)) — so the inputs to the MVU template stay fixed from the start of the update to the end. The MVU template itself is recomputed on every reconcile as it is cheap and deterministic, and helps avoid cached state across reconciles thus simplifying the controller.
 
 Grove encodes the MVU's gang-scheduling intent by generating new `PodGang` resources, **MVU PodGangs (MPGs)**, that hold exactly the MVU's pods. PCSG replicas above MinAvailable go into separate **Tail PodGangs (TPGs)** — one per excess replica. Both MPGs and TPGs are gang-scheduled. Each TPG `DependsOn` every MPG of the same generation. The scheduler places TPG pods only after all those MPGs report `Available=True`.
 
@@ -565,6 +566,16 @@ The release step is what allows the orchestrator to advance. Two reasons drive i
 - **`Available=True` is the orchestrator's gate.** The PodCliqueSet reconciler waits on `PodGangConditionTypeAvailable=True` before clearing `InFlightPodGangs` and triggering the next iteration. The PodGang component sets `Available=True` only after `MinReplicas` has been set to 0, so the condition signals both "gang has been placed" and "`MinReplicas` has been cleared".
 
 The same lifecycle applies in steady state to PodGangs created by PCSG scale-out — the new SPG follows set → wait → release → mark Available exactly as an MPG does during an update.
+
+#### Gang termination suppression during updates
+
+Grove's gang-termination evaluator runs on the PodCliqueSet reconciler: it terminates a gang for a PCS replica when any constituent PodClique or PodCliqueScalingGroup has reported `MinAvailableBreached=True` for longer than `Spec.Template.TerminationDelay` (default `4h`). Termination triggers a full recreation of the affected PCS replica's PodGangs and pods.
+
+During a coherent update, every iteration deliberately drives `ReadyReplicas` for the in-flight components below `MinAvailable` for as long as it takes to take down the old-hash pods and bring up new-hash replacements. Without suppression, the evaluator would observe `MinAvailableBreached=True` on the in-flight PCLQs and PCSGs, and any iteration running longer than `TerminationDelay` would tear down the replica mid-roll.
+
+To prevent that, **gang termination is suppressed for the duration of any in-flight update**. While a PCLQ or PCSG is being updated, its `MinAvailableBreached` condition is held at `Unknown` rather than evaluated against live replica counts; the gang-termination evaluator skips `Unknown` children, so they cannot accumulate against `TerminationDelay`. Once the update completes for a given child, its condition resumes reflecting live state on the next reconcile and the evaluator returns to normal behavior.
+
+This behavior is **not specific to Coherent** — it is the same mechanism that protects in-flight `RollingRecreate` updates from mid-roll gang termination. The distinction in this iteration is that Coherent additionally rejects scale-in/out at admission for the duration of an update (see [Handling scale-outs and scale-ins during update](#handling-scale-outs-and-scale-ins-during-update)), whereas `RollingRecreate` permits scale operations to proceed while the update is in flight; in both cases the gang-termination evaluator stays paused.
 
 #### `DependsOn` and scheduling order
 
@@ -834,9 +845,16 @@ The status surface is shaped to allow broader concurrency in the future: `Curren
 
 ### Handling scale-outs and scale-ins during update
 
-Scale operations on PCLQ and PCSG resources are gated by the rules in [Limitations/Risks & Mitigations](#limitationsrisks--mitigations) — they are blocked for the entire duration of a coherent update. Beyond that gate, the directionality flip described in [`PodGangMap` as source of truth](#podgangmap-as-source-of-truth--directionality-flip) governs how scale operations land:
+Scale operations on PCLQ, PCSG, and PCS resources are gated by the rules in [Limitations/Risks & Mitigations](#limitationsrisks--mitigations) — they are **rejected by the validating webhook PCS-wide** for the entire duration of a coherent update. The block is intentionally coarse in this iteration:
 
-- **During an update (PGM as source of truth):** the MVU template is frozen at update start, so scale operations issued mid-update do not change the MVU template. The PCLQ / PCSG status mappings are followers of the PGM; any spec replica-count change observed by the PodClique / PodCliqueScalingGroup reconcilers is held until the update closes out.
+- It applies to children of **every** PCS replica, not just the replica currently being updated. Replicas that have already finished their iteration and replicas that have not yet started are equally blocked.
+- The mutation is **rejected at admission time** — the user receives an immediate error, the spec on the API server is never updated, and there is no reconciler-side hold to drain after the update closes out.
+
+The motivation for the coarse-grained block is implementation simplicity: per-replica scoping of scale operations against an in-flight coherent update is not yet hardened in the reconcilers, and lifting the block on a subset of replicas before that work is done would risk silent inconsistencies between PGM, the per-component `Status.PodGangMapping`, and the live pod set. Narrowing the block to only the replicas that are actually mid-update — and otherwise composing scale operations with an in-flight coherent update — will be supported in a subsequent iteration.
+
+Beyond the admission gate, the directionality flip described in [`PodGangMap` as source of truth](#podgangmap-as-source-of-truth--directionality-flip) governs how scale operations land in steady state:
+
+- **During an update (PGM as source of truth):** scale operations cannot reach the reconcilers because they are rejected at admission. The MVU template stays frozen for the lifetime of the update by construction.
 - **In steady state (status as source of truth):** scale-out adds a new entry to `Status.PodGangMapping` (a SPG name assigned by the PodCliqueScalingGroup reconciler, or an additional bucket on a standalone PCLQ); scale-in zeroes a count. The PodGangMap component reconstructs PGM from these mappings — preserving `DependsOn` for existing entries, inheriting `DependsOn` from anchor PodGangs for net-new SPG entries, and dropping zero-count entries.
 
 This split ensures scale operations never compete with the update flow for ownership of PGM entries.
