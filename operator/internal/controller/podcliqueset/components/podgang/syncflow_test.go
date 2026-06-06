@@ -18,7 +18,6 @@ package podgang
 
 import (
 	"errors"
-	"fmt"
 	"slices"
 	"testing"
 
@@ -53,13 +52,12 @@ var defaultFakeSchedulerRegistry = &testutils.FakeSchedulerRegistry{
 	DefaultBackend: "default-scheduler",
 }
 
-// buildTestPodGangMaps builds PodGangMap objects for all PCS replicas using the BPG/SPG convention.
-// existingPCSGs provides live PCSG replica counts; for PCS replicas with no matching PCSG object the
-// template MinAvailable/Replicas values are used instead.
+// buildTestPodGangMaps builds PodGangMap objects for all PCS replicas using the BPG/SPG convention,
+// derived from the PCS template (Cliques and PodCliqueScalingGroupConfigs).
 //
 // The function mutates pcs.Status.CurrentGenerationHash to testGenerationHash if it is not already set,
 // so that callers only need to build the PCS spec and do not have to set status fields themselves.
-func buildTestPodGangMaps(pcs *grovecorev1alpha1.PodCliqueSet, existingPCSGs []grovecorev1alpha1.PodCliqueScalingGroup) []*grovecorev1alpha1.PodGangMap {
+func buildTestPodGangMaps(pcs *grovecorev1alpha1.PodCliqueSet) []*grovecorev1alpha1.PodGangMap {
 	if pcs.Status.CurrentGenerationHash == nil {
 		pcs.Status.CurrentGenerationHash = ptr.To(testGenerationHash)
 	}
@@ -81,51 +79,10 @@ func buildTestPodGangMaps(pcs *grovecorev1alpha1.PodCliqueSet, existingPCSGs []g
 
 		// BPG entry: each PCSG contributes index slice [0, MinAvailable).
 		bpgPCSGIndices := make(map[string][]int32)
-		pcsgForReplica := lo.Filter(existingPCSGs, func(pcsg grovecorev1alpha1.PodCliqueScalingGroup, _ int) bool {
-			return pcsg.Labels[apicommon.LabelPodCliqueSetReplicaIndex] == fmt.Sprintf("%d", replicaIndex) ||
-				// fallback: check by naming convention when label is missing
-				lo.ContainsBy(pcs.Spec.Template.PodCliqueScalingGroupConfigs, func(cfg grovecorev1alpha1.PodCliqueScalingGroupConfig) bool {
-					return pcsg.Name == apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: replicaIndex}, cfg.Name)
-				})
-		})
 
 		var entries []grovecorev1alpha1.PodGangEntry
-		if len(pcsgForReplica) > 0 {
-			for _, pcsg := range pcsgForReplica {
-				if pcsg.Spec.MinAvailable != nil {
-					pcsgName := apicommon.ExtractScalingGroupNameFromPCSGFQN(pcsg.Name, apicommon.ResourceNameReplica{Name: pcs.Name, Replica: replicaIndex})
-					indices := make([]int32, 0, *pcsg.Spec.MinAvailable)
-					for i := int32(0); i < *pcsg.Spec.MinAvailable; i++ {
-						indices = append(indices, i)
-					}
-					bpgPCSGIndices[pcsgName] = indices
-				}
-			}
-			bpgName := apicommon.GenerateBasePodGangName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: replicaIndex})
-			entries = []grovecorev1alpha1.PodGangEntry{{
-				Name:                       bpgName,
-				PodCliqueSetGenerationHash: generationHash,
-				PodCliques:                 bpgPodCliques,
-				PCSGReplicaIndices:         bpgPCSGIndices,
-			}}
-			// SPG entries: one per PCSG replica beyond MinAvailable, holding a single replica index.
-			for _, pcsg := range pcsgForReplica {
-				if pcsg.Spec.MinAvailable == nil {
-					continue
-				}
-				pcsgName := apicommon.ExtractScalingGroupNameFromPCSGFQN(pcsg.Name, apicommon.ResourceNameReplica{Name: pcs.Name, Replica: replicaIndex})
-				minAvail := *pcsg.Spec.MinAvailable
-				for scaledIdx := range pcsg.Spec.Replicas - minAvail {
-					spgName := apicommon.CreatePodGangNameFromPCSGFQN(pcsg.Name, int(scaledIdx))
-					entries = append(entries, grovecorev1alpha1.PodGangEntry{
-						Name:                       spgName,
-						PodCliqueSetGenerationHash: generationHash,
-						PCSGReplicaIndices:         map[string][]int32{pcsgName: {minAvail + scaledIdx}},
-					})
-				}
-			}
-		} else if len(pcs.Spec.Template.PodCliqueScalingGroupConfigs) > 0 {
-			// No PCSG objects yet — derive from template config.
+		if len(pcs.Spec.Template.PodCliqueScalingGroupConfigs) > 0 {
+			// Derive PCSG entries from template config.
 			for _, cfg := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
 				if cfg.MinAvailable != nil {
 					indices := make([]int32, 0, *cfg.MinAvailable)
@@ -356,7 +313,7 @@ func TestGetPodsPendingCreation(t *testing.T) {
 				},
 			}
 
-			pgms := buildTestPodGangMaps(pcs, nil)
+			pgms := buildTestPodGangMaps(pcs)
 			objs := []client.Object{pcs}
 			for _, pgm := range pgms {
 				objs = append(objs, pgm)
@@ -448,7 +405,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		ctx := t.Context()
 		pcs := makePCS()
 		pclq := makePCLQ()
-		pgms := buildTestPodGangMaps(pcs, nil)
+		pgms := buildTestPodGangMaps(pcs)
 		objs := []client.Object{pcs, pclq}
 		for _, pgm := range pgms {
 			objs = append(objs, pgm)
@@ -483,7 +440,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		pclq := makePCLQ()
 		pod1 := makePod("worker-0", "")
 		pod2 := makePod("worker-1", "")
-		pgms := buildTestPodGangMaps(pcs, nil)
+		pgms := buildTestPodGangMaps(pcs)
 		objs := []client.Object{pcs, pclq, pod1, pod2}
 		for _, pgm := range pgms {
 			objs = append(objs, pgm)
@@ -512,7 +469,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		pclq := makePCLQ()
 		pod1 := makePod("worker-0", pgName)
 		pod2 := makePod("worker-1", pgName)
-		pgms := buildTestPodGangMaps(pcs, nil)
+		pgms := buildTestPodGangMaps(pcs)
 		objs := []client.Object{pcs, pclq, pod1, pod2}
 		for _, pgm := range pgms {
 			objs = append(objs, pgm)
@@ -545,7 +502,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		pg := makeExistingPodGang()
 		pod1 := makePod("worker-0", pgName)
 		pod2 := makePod("worker-1", pgName)
-		pgms := buildTestPodGangMaps(pcs, nil)
+		pgms := buildTestPodGangMaps(pcs)
 		objs := []client.Object{pcs, pclq, pg, pod1, pod2}
 		for _, pgm := range pgms {
 			objs = append(objs, pgm)
@@ -597,7 +554,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		}
 		pod1 := makePod("worker-2", pgName)
 		pod2 := makePod("worker-3", pgName)
-		pgms := buildTestPodGangMaps(pcs, nil)
+		pgms := buildTestPodGangMaps(pcs)
 		objs := []client.Object{pcs, pclq, pg, pod1, pod2}
 		for _, pgm := range pgms {
 			objs = append(objs, pgm)
@@ -666,7 +623,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 				OwnerReferences: []metav1.OwnerReference{{Name: pclq1Name, UID: "pclq1-uid", Controller: ptr.To(true)}},
 			},
 		}
-		pgms := buildTestPodGangMaps(pcs, nil)
+		pgms := buildTestPodGangMaps(pcs)
 		objs := []client.Object{pcs, pclq0, pclq1, pod1}
 		for _, pgm := range pgms {
 			objs = append(objs, pgm)
@@ -705,7 +662,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		pg := makeExistingPodGang()
 		pod1 := makePod("worker-0", "")
 		pod2 := makePod("worker-1", "")
-		pgms := buildTestPodGangMaps(pcs, nil)
+		pgms := buildTestPodGangMaps(pcs)
 		objs := []client.Object{pcs, pclq, pg, pod1, pod2}
 		for _, pgm := range pgms {
 			objs = append(objs, pgm)
@@ -910,7 +867,7 @@ func TestComputeExpectedPodGangs(t *testing.T) {
 					},
 				},
 			}
-			pgms := buildTestPodGangMaps(pcs, nil)
+			pgms := buildTestPodGangMaps(pcs)
 			objs := []client.Object{pcs}
 			for _, pgm := range pgms {
 				objs = append(objs, pgm)
@@ -1523,7 +1480,7 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 				},
 			}
 
-			pgms := buildTestPodGangMaps(pcs, nil)
+			pgms := buildTestPodGangMaps(pcs)
 			objs := []client.Object{pcs}
 			for _, pgm := range pgms {
 				objs = append(objs, pgm)
@@ -1778,7 +1735,7 @@ func TestPrepareSyncFlowTopologyResolution(t *testing.T) {
 				tc.mutatePCS(pcs)
 			}
 
-			pgms := buildTestPodGangMaps(pcs, nil)
+			pgms := buildTestPodGangMaps(pcs)
 			var objs []client.Object
 			objs = append(objs, pcs)
 			for _, pgm := range pgms {
@@ -1921,7 +1878,7 @@ func TestCreateOrUpdatePodGangs_ClearsStaleTopologyStateOnExistingPodGang(t *tes
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := t.Context()
 			pcs := tc.setupPCS()
-			pgms := buildTestPodGangMaps(pcs, nil)
+			pgms := buildTestPodGangMaps(pcs)
 			objs := []client.Object{pcs, makePCLQ(), makePod(), tc.existingPodGang}
 			for _, pgm := range pgms {
 				objs = append(objs, pgm)
@@ -2032,7 +1989,7 @@ func TestBuildResourceTopologyAnnotation(t *testing.T) {
 			ctLevels := []grovecorev1alpha1.TopologyLevel{
 				{Domain: "rack", Key: "topology.kubernetes.io/rack"},
 			}
-			pgms := buildTestPodGangMaps(pcs, nil)
+			pgms := buildTestPodGangMaps(pcs)
 			var objs []client.Object
 			objs = append(objs, pcs, pclq, pod)
 			for _, pgm := range pgms {

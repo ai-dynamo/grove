@@ -40,7 +40,7 @@ import (
 )
 
 func TestBuildEntriesFromStatuses(t *testing.T) {
-	pcs := newTestPCS("my-pcs", "gen-hash-1",
+	pcs := newTestPCS("gen-hash-1",
 		[]grovecorev1alpha1.PodCliqueTemplateSpec{
 			{Name: "frontend", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To(int32(2))}},
 			{Name: "pworker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
@@ -188,7 +188,7 @@ func TestFilterStandalonePCLQs(t *testing.T) {
 
 func TestAllOwnerMappingsInitialized(t *testing.T) {
 	// Default test PCS: 1 standalone PCLQ (frontend) + 1 PCSG (prefill).
-	pcs := newTestPCS("my-pcs", "abc12",
+	pcs := newTestPCS("abc12",
 		[]grovecorev1alpha1.PodCliqueTemplateSpec{
 			{Name: "frontend", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To(int32(2))}},
 			{Name: "pworker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
@@ -259,7 +259,7 @@ func TestAllOwnerMappingsInitialized(t *testing.T) {
 
 func TestComputeMVUEntriesFromSpec(t *testing.T) {
 	t.Run("standalone PCLQs only", func(t *testing.T) {
-		pcs := newTestPCS("my-pcs", "gen-hash-1",
+		pcs := newTestPCS("gen-hash-1",
 			[]grovecorev1alpha1.PodCliqueTemplateSpec{
 				{Name: "frontend", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To(int32(2))}},
 			},
@@ -276,7 +276,7 @@ func TestComputeMVUEntriesFromSpec(t *testing.T) {
 	})
 
 	t.Run("PCSGs only", func(t *testing.T) {
-		pcs := newTestPCS("my-pcs", "gen-hash-1",
+		pcs := newTestPCS("gen-hash-1",
 			[]grovecorev1alpha1.PodCliqueTemplateSpec{
 				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To(int32(2))}},
 			},
@@ -299,7 +299,7 @@ func TestComputeMVUEntriesFromSpec(t *testing.T) {
 	})
 
 	t.Run("mixed standalone PCLQs and PCSGs", func(t *testing.T) {
-		pcs := newTestPCS("my-pcs", "gen-hash-1",
+		pcs := newTestPCS("gen-hash-1",
 			[]grovecorev1alpha1.PodCliqueTemplateSpec{
 				{Name: "frontend", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To(int32(2))}},
 				{Name: "pworker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
@@ -328,7 +328,7 @@ func TestComputeMVUEntriesFromSpec(t *testing.T) {
 	})
 
 	t.Run("empty PCS spec produces no entries", func(t *testing.T) {
-		pcs := newTestPCS("my-pcs", "gen-hash-1", nil, nil)
+		pcs := newTestPCS("gen-hash-1", nil, nil)
 
 		entries := (_resource{clk: clock.RealClock{}}).computeMVUEntriesFromPCSTemplateSpec(pcs, 0)
 		assert.Empty(t, entries)
@@ -341,7 +341,7 @@ func TestComputeMVUEntriesFromSpec(t *testing.T) {
 // successive calls within one reconcile. A FakeClock pinned at a known nano makes the
 // generated names deterministic.
 func TestComputeMVUEntriesFromPCSTemplateSpec_GeneratedNames(t *testing.T) {
-	pcs := newTestPCS("my-pcs", "gen-hash-1",
+	pcs := newTestPCS("gen-hash-1",
 		[]grovecorev1alpha1.PodCliqueTemplateSpec{
 			{Name: "frontend", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To(int32(2))}},
 		},
@@ -430,8 +430,8 @@ func TestPodGangGenerationHash(t *testing.T) {
 			Status: grovecorev1alpha1.PodCliqueStatus{CurrentPodCliqueSetGenerationHash: hash},
 		}
 	}
-	pcsSteady := newTestPCS(pcsName, currentHash, nil, nil)
-	pcsCoherent := newTestPCS(pcsName, currentHash, nil, nil)
+	pcsSteady := newTestPCS(currentHash, nil, nil)
+	pcsCoherent := newTestPCS(currentHash, nil, nil)
 	pcsCoherent.Spec.UpdateStrategy = &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.CoherentStrategy}
 	pcsCoherent.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
 		UpdateStartedAt: metav1.Now(),
@@ -579,7 +579,7 @@ func TestSyncSteadyStateEntries_Integration(t *testing.T) {
 		pcsUID     = "pcs-test-uid"
 	)
 	pcsTemplate := func() *grovecorev1alpha1.PodCliqueSet {
-		pcs := newTestPCS(pcsName, pcsHash,
+		pcs := newTestPCS(pcsHash,
 			[]grovecorev1alpha1.PodCliqueTemplateSpec{
 				{Name: "frontend", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 5}},
 				{Name: "pworker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2}},
@@ -795,7 +795,7 @@ func TestSync_DeletesOrphanedPodGangMapsOnPCSReplicaScaleIn(t *testing.T) {
 		pcsUID  = "pcs-test-uid"
 	)
 	newPCS := func(replicas int32) *grovecorev1alpha1.PodCliqueSet {
-		pcs := newTestPCS(pcsName, pcsHash,
+		pcs := newTestPCS(pcsHash,
 			[]grovecorev1alpha1.PodCliqueTemplateSpec{
 				{Name: "frontend", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
 			},

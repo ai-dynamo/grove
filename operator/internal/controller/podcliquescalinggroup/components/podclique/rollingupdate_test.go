@@ -57,7 +57,7 @@ func TestCheckAndMarkPCSGCoherentUpdateEnded(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
 
-	run := func(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) (endedAt *metav1.Time, err error) {
+	run := func(_ *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) (endedAt *metav1.Time, err error) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcsg).WithStatusSubresource(pcsg).Build()
 		r := _resource{client: cl}
 		sc := &syncContext{ctx: context.Background(), pcsg: pcsg}

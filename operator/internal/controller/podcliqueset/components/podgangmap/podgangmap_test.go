@@ -37,7 +37,7 @@ import (
 )
 
 func TestSync_NoPGMsExist_NoCoherentUpdate_NoOp(t *testing.T) {
-	pcs := newTestPCS("my-pcs", "abc12xyz", nil, nil)
+	pcs := newTestPCS("abc12xyz", nil, nil)
 	pcs.Spec.UpdateStrategy = &grovecorev1alpha1.PodCliqueSetUpdateStrategy{
 		Type: grovecorev1alpha1.CoherentStrategy,
 	}
@@ -50,7 +50,7 @@ func TestSync_NoPGMsExist_NoCoherentUpdate_NoOp(t *testing.T) {
 }
 
 func TestSync_RollingRecreate_NoPGMsExist_NoOp(t *testing.T) {
-	pcs := newTestPCS("my-pcs", "abc12xyz", nil, nil)
+	pcs := newTestPCS("abc12xyz", nil, nil)
 	pcs.Spec.UpdateStrategy = &grovecorev1alpha1.PodCliqueSetUpdateStrategy{
 		Type: grovecorev1alpha1.RollingRecreateStrategy,
 	}
@@ -63,7 +63,7 @@ func TestSync_RollingRecreate_NoPGMsExist_NoOp(t *testing.T) {
 }
 
 func TestBuildEntryFromPodGang(t *testing.T) {
-	pcs := newTestPCS("my-pcs", "old-hash",
+	pcs := newTestPCS("old-hash",
 		[]grovecorev1alpha1.PodCliqueTemplateSpec{
 			{Name: "frontend", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To[int32](2)}},
 			{Name: "pleader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}},
@@ -150,7 +150,7 @@ func TestBuildEntryFromPodGang(t *testing.T) {
 }
 
 func TestExtractCliqueName(t *testing.T) {
-	pcs := newTestPCS("my-pcs", "",
+	pcs := newTestPCS("",
 		[]grovecorev1alpha1.PodCliqueTemplateSpec{
 			{Name: "frontend"},
 			{Name: "pleader"},
@@ -196,7 +196,7 @@ func TestComputeCoherentUpdateEntries_PodGangMapNotFound(t *testing.T) {
 	oldHash := "oldhash12345"
 	newHash := "newhash12345"
 
-	pcs := newTestPCS("my-pcs", newHash,
+	pcs := newTestPCS(newHash,
 		[]grovecorev1alpha1.PodCliqueTemplateSpec{
 			{Name: "frontend", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To[int32](2)}},
 			{Name: "pleader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}},
@@ -324,7 +324,7 @@ func TestComputeCoherentUpdateEntries_SubsequentReconcile(t *testing.T) {
 	oldHash := "oldhash12345"
 	newHash := "newhash12345"
 
-	pcs := newTestPCS("my-pcs", newHash,
+	pcs := newTestPCS(newHash,
 		[]grovecorev1alpha1.PodCliqueTemplateSpec{
 			{Name: "frontend", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To[int32](2)}},
 			{Name: "pleader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}},
@@ -439,7 +439,7 @@ func TestComputeCoherentUpdateEntries_GateBlocksAdvancementWhenPriorMPGNotAvaila
 	oldHash := "oldhash12345"
 	newHash := "newhash12345"
 
-	pcs := newTestPCS("my-pcs", newHash,
+	pcs := newTestPCS(newHash,
 		[]grovecorev1alpha1.PodCliqueTemplateSpec{
 			{Name: "frontend", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To[int32](2)}},
 			{Name: "pleader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}},
@@ -526,7 +526,7 @@ func TestComputeCoherentUpdateEntries_GateBlocksAdvancementWhenPriorMPGNotAvaila
 // TestBuildResource_EntriesAreSorted verifies that buildResource sorts PodGangMap entries
 // by name regardless of the order they are passed in.
 func TestBuildResource_EntriesAreSorted(t *testing.T) {
-	pcs := newTestPCS("my-pcs", "abc12xyz", nil, nil)
+	pcs := newTestPCS("abc12xyz", nil, nil)
 
 	r := &_resource{scheme: groveclientscheme.Scheme, clk: clock.RealClock{}}
 
@@ -549,14 +549,14 @@ func TestBuildResource_EntriesAreSorted(t *testing.T) {
 // --- Test helpers ---
 
 // newTestPCS creates a minimal PodCliqueSet for use in unit tests.
-func newTestPCS(name string, generationHash string, cliques []grovecorev1alpha1.PodCliqueTemplateSpec, pcsgConfigs []grovecorev1alpha1.PodCliqueScalingGroupConfig) *grovecorev1alpha1.PodCliqueSet {
+func newTestPCS(generationHash string, cliques []grovecorev1alpha1.PodCliqueTemplateSpec, pcsgConfigs []grovecorev1alpha1.PodCliqueScalingGroupConfig) *grovecorev1alpha1.PodCliqueSet {
 	cliquePtrs := make([]*grovecorev1alpha1.PodCliqueTemplateSpec, len(cliques))
 	for i := range cliques {
 		cliquePtrs[i] = &cliques[i]
 	}
 	pcs := &grovecorev1alpha1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
+			Name:      "my-pcs",
 			Namespace: "default",
 		},
 		Spec: grovecorev1alpha1.PodCliqueSetSpec{

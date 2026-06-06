@@ -67,7 +67,7 @@ func TestCheckAndRemovePodSchedulingGates(t *testing.T) {
 				pgm := buildPGM([]grovecorev1alpha1.PodGangEntry{
 					{Name: pg0, PodCliques: map[string]int32{"pca": 1}},
 				})
-				pg := buildPodGangWithRef(pg0, pclqFQN, "pod-0", 1)
+				pg := buildPodGangWithRef(pg0, "pod-0")
 				return []client.Object{pgm, pg}
 			},
 			gatedPods: func() []*corev1.Pod {
@@ -82,7 +82,7 @@ func TestCheckAndRemovePodSchedulingGates(t *testing.T) {
 					{Name: pg0, PodCliques: map[string]int32{"pca": 1}},
 					{Name: pg1, PodCliques: map[string]int32{"pca": 1}, DependsOn: []string{pg0}},
 				})
-				pg1PG := buildPodGangWithRef(pg1, pclqFQN, "pod-1", 1)
+				pg1PG := buildPodGangWithRef(pg1, "pod-1")
 				pg0PG := testutils.NewPodGangBuilder(pg0, testNamespace).
 					WithPodGroups([]groveschedulerv1alpha1.PodGroup{{Name: pclqFQN, MinReplicas: 1}}).Build()
 				pg0PCLQ := buildTestPodClique(pclqFQN, 1, 0) // scheduledReplicas=0 < minReplicas=1
@@ -100,7 +100,7 @@ func TestCheckAndRemovePodSchedulingGates(t *testing.T) {
 					{Name: pg0, PodCliques: map[string]int32{"pca": 1}},
 					{Name: pg1, PodCliques: map[string]int32{"pca": 1}, DependsOn: []string{pg0}},
 				})
-				pg1PG := buildPodGangWithRef(pg1, pclqFQN, "pod-1", 1)
+				pg1PG := buildPodGangWithRef(pg1, "pod-1")
 				pg0PG := testutils.NewPodGangBuilder(pg0, testNamespace).
 					WithPodGroups([]groveschedulerv1alpha1.PodGroup{{Name: pclqFQN, MinReplicas: 1}}).Build()
 				pg0PCLQ := buildTestPodClique(pclqFQN, 1, 1) // scheduledReplicas=1 >= minReplicas=1
@@ -122,7 +122,7 @@ func TestCheckAndRemovePodSchedulingGates(t *testing.T) {
 					{Name: pg1, PodCliques: map[string]int32{"pca": 2}},
 					{Name: pg2, PodCliques: map[string]int32{"pca": 1}, DependsOn: []string{pg0, pg1}},
 				})
-				pg2PG := buildPodGangWithRef(pg2, pclqFQN, "pod-tail", 1)
+				pg2PG := buildPodGangWithRef(pg2, "pod-tail")
 				pg0PG := testutils.NewPodGangBuilder(pg0, testNamespace).
 					WithPodGroups([]groveschedulerv1alpha1.PodGroup{{Name: pclq0FQN, MinReplicas: 2}}).Build()
 				pg1PG := testutils.NewPodGangBuilder(pg1, testNamespace).
@@ -146,7 +146,7 @@ func TestCheckAndRemovePodSchedulingGates(t *testing.T) {
 					{Name: pg1, PodCliques: map[string]int32{"pca": 2}},
 					{Name: pg2, PodCliques: map[string]int32{"pca": 1}, DependsOn: []string{pg0, pg1}},
 				})
-				pg2PG := buildPodGangWithRef(pg2, pclqFQN, "pod-tail", 1)
+				pg2PG := buildPodGangWithRef(pg2, "pod-tail")
 				pg0PG := testutils.NewPodGangBuilder(pg0, testNamespace).
 					WithPodGroups([]groveschedulerv1alpha1.PodGroup{{Name: pclq0FQN, MinReplicas: 2}}).Build()
 				pg1PG := testutils.NewPodGangBuilder(pg1, testNamespace).
@@ -420,12 +420,12 @@ func withGate(pod *corev1.Pod) *corev1.Pod {
 	return pod
 }
 
-func buildPodGangWithRef(pgName, pclqFQN, podName string, minReplicas int32) *groveschedulerv1alpha1.PodGang {
+func buildPodGangWithRef(pgName, podName string) *groveschedulerv1alpha1.PodGang {
 	return testutils.NewPodGangBuilder(pgName, testNamespace).
 		WithPodGroups([]groveschedulerv1alpha1.PodGroup{
 			{
 				Name:        pclqFQN,
-				MinReplicas: minReplicas,
+				MinReplicas: 1,
 				PodReferences: []groveschedulerv1alpha1.NamespacedName{
 					{Namespace: testNamespace, Name: podName},
 				},

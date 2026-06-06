@@ -101,19 +101,6 @@ func GroupPCSGsByPCSReplicaIndex(pcsgs []grovecorev1alpha1.PodCliqueScalingGroup
 	return grouped, nil
 }
 
-// groupPCSGsByLabel groups PodCliqueScalingGroups by the value of the specified label key
-func groupPCSGsByLabel(pcsgs []grovecorev1alpha1.PodCliqueScalingGroup, label string) map[string][]grovecorev1alpha1.PodCliqueScalingGroup {
-	result := make(map[string][]grovecorev1alpha1.PodCliqueScalingGroup)
-	for _, pcsg := range pcsgs {
-		labelValue, exists := pcsg.Labels[label]
-		if !exists {
-			continue
-		}
-		result[labelValue] = append(result[labelValue], pcsg)
-	}
-	return result
-}
-
 // GetPCSGsByPCSReplicaIndex groups the PodCliqueScalingGroups per PodCliqueSet replica index and returns a map with the key being the PodCliqueSet replica index and the value
 // being the slice of PodCliqueScalingGroup objects.
 func GetPCSGsByPCSReplicaIndex(ctx context.Context, cl client.Client, pcsObjKey client.ObjectKey) (map[int][]grovecorev1alpha1.PodCliqueScalingGroup, error) {

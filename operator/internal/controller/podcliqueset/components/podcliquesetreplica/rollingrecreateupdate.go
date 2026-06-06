@@ -39,16 +39,15 @@ func (r _resource) orchestrateRollingRecreateUpdate(ctx context.Context, logger 
 	}
 
 	if len(pcs.Status.UpdateProgress.CurrentlyUpdating) > 0 && updateWork.currentlyUpdatingReplicaInfo != nil {
-		if updateWork.currentlyUpdatingReplicaInfo.updateDone {
-			if err = r.markCurrentReplicaUpdateDone(ctx, logger, pcs); err != nil {
-				return err
-			}
-		} else {
+		if !updateWork.currentlyUpdatingReplicaInfo.updateDone {
 			return groveerr.New(
 				groveerr.ErrCodeContinueReconcileAndRequeue,
 				component.OperationSync,
 				fmt.Sprintf("rolling update of PodCliqueSet replica index %d is not completed", updateWork.currentlyUpdatingReplicaInfo.replicaIndex),
 			)
+		}
+		if err = r.markCurrentReplicaUpdateDone(ctx, logger, pcs); err != nil {
+			return err
 		}
 	}
 
