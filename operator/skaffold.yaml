@@ -1,12 +1,17 @@
-apiVersion: skaffold/v4beta14
+apiVersion: skaffold/v4beta12
 kind: Config
 metadata:
   name: grove-operator
 build:
+  local: # see https://skaffold.dev/docs/builders/build-environments/local/
+    push: true
+  tagPolicy:
+    envTemplate:
+      template: "{{.VERSION}}"
   artifacts:
     - image: grove-operator
-      ko:
-        dependencies:
+      ko: # see https://skaffold.dev/docs/builders/builder-types/ko/
+        dependencies: # configures which files should skaffold watch for changes in dev mode.
           paths:
             - api
             - cmd
@@ -19,8 +24,8 @@ build:
           - '{{.LD_FLAGS}}'
         main: ./cmd
     - image: grove-initc
-      ko:
-        dependencies:
+      ko: # see https://skaffold.dev/docs/builders/builder-types/ko/
+        dependencies: # configures which files should skaffold watch for changes in dev mode.
           paths:
             - api
             - initc
@@ -30,8 +35,8 @@ build:
           - -v
         main: ./initc/cmd
     - image: grove-install-crds
-      ko:
-        dependencies:
+      ko: # see https://skaffold.dev/docs/builders/builder-types/ko/
+        dependencies: # configures which files should skaffold watch for changes in dev mode.
           paths:
             - api
             - cmd/install-crds
@@ -42,59 +47,55 @@ build:
         ldflags:
           - '{{.LD_FLAGS}}'
         main: ./cmd/install-crds
-  tagPolicy:
-    envTemplate:
-      template: '{{.VERSION}}'
-  local:
-    push: true
 deploy:
-  helm:
+  helm: # see https://skaffold.dev/docs/deployers/helm/
     releases:
       - name: grove-operator
         chartPath: charts
         setValueTemplates:
-          crdInstaller.image.repository: '{{.IMAGE_REPO_grove_install_crds}}'
-          crdInstaller.image.tag: '{{.VERSION}}@{{.IMAGE_DIGEST_grove_install_crds}}'
-          deployment.env[0].name: GROVE_INIT_CONTAINER_IMAGE
-          deployment.env[0].value: '{{.CONTAINER_REGISTRY}}/grove-initc'
           image.repository: '{{.IMAGE_REPO}}'
-          image.tag: '{{.VERSION}}@{{.IMAGE_DIGEST}}'
+          image.tag: "{{.VERSION}}@{{.IMAGE_DIGEST}}"
+          crdInstaller.image.repository: '{{.IMAGE_REPO_grove_install_crds}}'
+          crdInstaller.image.tag: "{{.VERSION}}@{{.IMAGE_DIGEST_grove_install_crds}}"
+          deployment.env:
+            - name: GROVE_INIT_CONTAINER_IMAGE
+              value: "{{.CONTAINER_REGISTRY}}/grove-initc"
+        skipBuildDependencies: true
         createNamespace: true
         wait: true
-        skipBuildDependencies: true
 profiles:
   - name: debug
     patches:
       - op: add
         path: /deploy/helm/releases/0/setValues
         value:
+          replicaCount: 1
           config:
             leaderElection:
               enabled: false
-          replicaCount: 1
   - name: topology-test
     patches:
       - op: add
         path: /deploy/helm/releases/0/setValues
         value:
+          replicaCount: 1
           config:
-            leaderElection:
-              enabled: false
             scheduler:
               defaultProfileName: kai-scheduler
               profiles:
                 - name: kai-scheduler
+            leaderElection:
+              enabled: false
             topologyAwareScheduling:
               enabled: true
-          replicaCount: 1
   - name: mnnvl-test
     patches:
       - op: add
         path: /deploy/helm/releases/0/setValues
         value:
+          replicaCount: 1
           config:
             leaderElection:
               enabled: false
             network:
               autoMNNVLEnabled: true
-          replicaCount: 1
