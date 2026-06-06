@@ -154,16 +154,8 @@ func (r _resource) syncCoherentUpdateEntries(ctx context.Context, sc *syncContex
 	}
 
 	// Delete excess PodGangMaps (from scale-in).
-	for _, excessPGMName := range lo.Filter(sc.existingPGMNames, func(n string, _ int) bool { return !slices.Contains(expectedPGMNames, n) }) {
-		pgm := emptyPodGangMap(client.ObjectKey{Namespace: sc.pcs.Namespace, Name: excessPGMName})
-		if err := r.client.Delete(ctx, pgm); err != nil {
-			return groveerr.WrapError(err,
-				errCodeSyncPodGangMap,
-				component.OperationSync,
-				fmt.Sprintf("Error deleting excess PodGangMap %s for PodCliqueSet: %v", excessPGMName, client.ObjectKeyFromObject(sc.pcs)),
-			)
-		}
-		sc.logger.Info("Deleted excess PodGangMap", "name", excessPGMName)
+	if err = r.deleteOrphanedPodGangMaps(ctx, sc, expectedPGMNames); err != nil {
+		return err
 	}
 
 	sc.logger.Info("Successfully synced PodGangMap resources during coherent update")
@@ -507,9 +499,11 @@ func extractCliqueName(podGroupName string, pcs *grovecorev1alpha1.PodCliqueSet)
 //	preserved on entries that are still around and inherited by net-new Scaled-PG shells),
 //	then drops zero-count entries via removeEmptyEntries.
 func (r _resource) syncSteadyStateEntries(ctx context.Context, sc *syncContext) error {
+	expectedPGMNames := make([]string, 0, sc.pcs.Spec.Replicas)
 	existingPGMNames := sets.New[string](sc.existingPGMNames...)
 	for pcsReplicaIndex := range sc.pcs.Spec.Replicas {
 		pgmName := apicommon.GeneratePodGangMapName(apicommon.ResourceNameReplica{Name: sc.pcs.Name, Replica: int(pcsReplicaIndex)})
+		expectedPGMNames = append(expectedPGMNames, pgmName)
 		if !existingPGMNames.Has(pgmName) {
 			if err := r.createPodGangMapForReplica(ctx, sc, pgmName, int(pcsReplicaIndex)); err != nil {
 				return err
@@ -530,9 +524,30 @@ func (r _resource) syncSteadyStateEntries(ctx context.Context, sc *syncContext) 
 		entries := buildEntriesFromStatuses(existingEntries, sc.pcs, standalonePCLQs, pcsgs, int(pcsReplicaIndex))
 		entries = removeEmptyEntries(entries)
 
-		if err := r.createOrPatchPodGangMap(ctx, sc.pcs, pgmName, int(pcsReplicaIndex), entries); err != nil {
+		if err = r.createOrPatchPodGangMap(ctx, sc.pcs, pgmName, int(pcsReplicaIndex), entries); err != nil {
 			return err
 		}
+	}
+
+	// Delete excess PodGangMaps left over from a PCS replica scale-in. PodGangMap is
+	// owner-referenced to PCS, so it is not garbage-collected when only the PCS replica
+	// count shrinks; the steady-state path must clean up explicitly.
+	return r.deleteOrphanedPodGangMaps(ctx, sc, expectedPGMNames)
+}
+
+// deleteOrphanedPodGangMaps removes any PodGangMap whose name is not in expectedPGMNames.
+// Used to clean up PodGangMaps left behind by a PCS replica scale-in.
+func (r _resource) deleteOrphanedPodGangMaps(ctx context.Context, sc *syncContext, expectedPGMNames []string) error {
+	for _, orphanPGMName := range lo.Filter(sc.existingPGMNames, func(n string, _ int) bool { return !slices.Contains(expectedPGMNames, n) }) {
+		pgm := emptyPodGangMap(client.ObjectKey{Namespace: sc.pcs.Namespace, Name: orphanPGMName})
+		if err := r.client.Delete(ctx, pgm); err != nil {
+			return groveerr.WrapError(err,
+				errCodeSyncPodGangMap,
+				component.OperationSync,
+				fmt.Sprintf("Error deleting orphaned PodGangMap %s for PodCliqueSet: %v", orphanPGMName, client.ObjectKeyFromObject(sc.pcs)),
+			)
+		}
+		sc.logger.Info("Deleted orphaned PodGangMap", "name", orphanPGMName)
 	}
 	return nil
 }

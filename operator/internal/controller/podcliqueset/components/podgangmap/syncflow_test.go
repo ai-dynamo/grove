@@ -31,6 +31,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/clock"
 	clocktesting "k8s.io/utils/clock/testing"
@@ -778,5 +779,118 @@ func TestSyncSteadyStateEntries_Integration(t *testing.T) {
 		scaled := entryByName["my-pcs-0-100000"]
 		assert.Equal(t, []int32{1}, scaled.PCSGReplicaIndices["prefill"])
 		assert.Equal(t, []string{"my-pcs-0-1000"}, scaled.DependsOn)
+	})
+}
+
+// TestSync_DeletesOrphanedPodGangMapsOnPCSReplicaScaleIn verifies that PodGangMap
+// resources for PCS replica indices beyond Spec.Replicas are deleted on the next
+// reconcile, on both the steady-state and the coherent-update paths. PodGangMap
+// is owner-referenced to PCS, so it is not garbage-collected when only the PCS
+// replica count shrinks; the PodGangMap component is the only place that cleans
+// these up.
+func TestSync_DeletesOrphanedPodGangMapsOnPCSReplicaScaleIn(t *testing.T) {
+	const (
+		pcsName = "my-pcs"
+		pcsHash = "abc12"
+		pcsUID  = "pcs-test-uid"
+	)
+	newPCS := func(replicas int32) *grovecorev1alpha1.PodCliqueSet {
+		pcs := newTestPCS(pcsName, pcsHash,
+			[]grovecorev1alpha1.PodCliqueTemplateSpec{
+				{Name: "frontend", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+			},
+			nil,
+		)
+		pcs.UID = pcsUID
+		pcs.Spec.Replicas = replicas
+		pcs.Spec.UpdateStrategy = &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.CoherentStrategy}
+		return pcs
+	}
+	pgm := func(replicaIndex int32) *grovecorev1alpha1.PodGangMap {
+		name := pcsName + "-" + strconv.Itoa(int(replicaIndex))
+		return &grovecorev1alpha1.PodGangMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: "default",
+				Labels:    getLabels(pcsName, int(replicaIndex)),
+				OwnerReferences: []metav1.OwnerReference{
+					{APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(), Kind: "PodCliqueSet", Name: pcsName, UID: pcsUID, Controller: ptr.To(true)},
+				},
+			},
+			Spec: grovecorev1alpha1.PodGangMapSpec{
+				PodCliqueSetReplicaIndex: replicaIndex,
+				Entries: []grovecorev1alpha1.PodGangEntry{
+					{Name: name + "-1000", PodCliqueSetGenerationHash: pcsHash, PodCliques: map[string]int32{"frontend": 1}},
+				},
+			},
+		}
+	}
+	standalonePCLQ := func(replicaIndex int32) *grovecorev1alpha1.PodClique {
+		return &grovecorev1alpha1.PodClique{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      pcsName + "-" + strconv.Itoa(int(replicaIndex)) + "-frontend",
+				Namespace: "default",
+				Labels: map[string]string{
+					apicommon.LabelManagedByKey:             apicommon.LabelManagedByValue,
+					apicommon.LabelPartOfKey:                pcsName,
+					apicommon.LabelPodCliqueSetReplicaIndex: strconv.Itoa(int(replicaIndex)),
+				},
+				OwnerReferences: []metav1.OwnerReference{{Kind: "PodCliqueSet", Name: pcsName, UID: pcsUID, Controller: ptr.To(true)}},
+			},
+			Status: grovecorev1alpha1.PodCliqueStatus{
+				PodGangMapping: map[string]int32{pcsName + "-" + strconv.Itoa(int(replicaIndex)) + "-1000": 1},
+			},
+		}
+	}
+	assertDeleted := func(t *testing.T, cl client.Client, pgmName string) {
+		t.Helper()
+		got := &grovecorev1alpha1.PodGangMap{}
+		err := cl.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: pgmName}, got)
+		require.Error(t, err)
+		assert.True(t, apierrors.IsNotFound(err), "expected PodGangMap %s to be deleted; got err=%v", pgmName, err)
+	}
+	assertExists := func(t *testing.T, cl client.Client, pgmName string) {
+		t.Helper()
+		got := &grovecorev1alpha1.PodGangMap{}
+		require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: pgmName}, got))
+	}
+
+	t.Run("steady state: PCS scaled from 2 to 1 deletes orphaned PGM-1", func(t *testing.T) {
+		pcs := newPCS(1) // Spec already reflects scale-in to 1 replica.
+		// PGM-0 is the active PGM (still expected). PGM-1 is the orphan to be cleaned up.
+		// PCLQ-0 has a non-empty PodGangMapping so the steady-state gate is open for replica 0.
+		cl := testutils.NewTestClientBuilder().WithObjects(pcs, standalonePCLQ(0), pgm(0), pgm(1)).Build()
+		r := &_resource{client: cl, scheme: groveclientscheme.Scheme, clk: clock.RealClock{}}
+
+		require.NoError(t, r.Sync(context.Background(), logr.Discard(), pcs))
+
+		assertExists(t, cl, pcsName+"-0")
+		assertDeleted(t, cl, pcsName+"-1")
+	})
+
+	t.Run("steady state: PCS scaled to 0 deletes all orphaned PGMs", func(t *testing.T) {
+		pcs := newPCS(0) // No replicas declared; both PGMs are orphans.
+		cl := testutils.NewTestClientBuilder().WithObjects(pcs, pgm(0), pgm(1)).Build()
+		r := &_resource{client: cl, scheme: groveclientscheme.Scheme, clk: clock.RealClock{}}
+
+		require.NoError(t, r.Sync(context.Background(), logr.Discard(), pcs))
+
+		assertDeleted(t, cl, pcsName+"-0")
+		assertDeleted(t, cl, pcsName+"-1")
+	})
+
+	t.Run("coherent update path: PCS scaled from 2 to 1 deletes orphaned PGM-1", func(t *testing.T) {
+		pcs := newPCS(1)
+		// Drive the coherent-update path: UpdateProgress non-nil with UpdateEndedAt == nil.
+		pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+			UpdateStartedAt: metav1.Now(),
+		}
+		cl := testutils.NewTestClientBuilder().WithObjects(pcs, standalonePCLQ(0), pgm(0), pgm(1)).Build()
+		r := &_resource{client: cl, scheme: groveclientscheme.Scheme, clk: clock.RealClock{}}
+
+		require.NoError(t, r.Sync(context.Background(), logr.Discard(), pcs))
+
+		assertExists(t, cl, pcsName+"-0")
+		assertDeleted(t, cl, pcsName+"-1")
 	})
 }
