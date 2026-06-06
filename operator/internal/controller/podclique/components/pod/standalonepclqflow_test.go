@@ -76,8 +76,8 @@ func TestLatestPodGangName(t *testing.T) {
 
 	t.Run("malformed name returns error", func(t *testing.T) {
 		_, err := latestPodGangName(map[string]int32{
-			"workload1-0-1": 1,
-			"malformed-no-int-x":  1,
+			"workload1-0-1":      1,
+			"malformed-no-int-x": 1,
 		})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "malformed-no-int-x")
@@ -829,10 +829,10 @@ func TestGuardAgainstStaleSpecDuringCoherentUpdate(t *testing.T) {
 	}
 
 	tests := []struct {
-		name        string
-		pcs         *grovecorev1alpha1.PodCliqueSet
-		pclq        *grovecorev1alpha1.PodClique
-		expectFire  bool
+		name       string
+		pcs        *grovecorev1alpha1.PodCliqueSet
+		pclq       *grovecorev1alpha1.PodClique
+		expectFire bool
 	}{
 		{
 			name: "RollingRecreate strategy bypasses guard",
@@ -874,9 +874,9 @@ func TestGuardAgainstStaleSpecDuringCoherentUpdate(t *testing.T) {
 			}),
 		},
 		{
-			name: "State 1 (cache stale, label == status, no UpdateProgress) requeues",
-			pcs:  mkPCS(grovecorev1alpha1.CoherentStrategy, newHash, []string{cliqueName}),
-			pclq: mkPCLQ(oldTpl, ptr.To(oldTpl), nil),
+			name:       "State 1 (cache stale, label == status, no UpdateProgress) requeues",
+			pcs:        mkPCS(grovecorev1alpha1.CoherentStrategy, newHash, []string{cliqueName}),
+			pclq:       mkPCLQ(oldTpl, ptr.To(oldTpl), nil),
 			expectFire: true,
 		},
 		{
@@ -884,7 +884,7 @@ func TestGuardAgainstStaleSpecDuringCoherentUpdate(t *testing.T) {
 			// UpdateProgress lingers from a prior PCS update at oldHash; fresh update at newHash
 			// hasn't been observed yet, so label==status==oldTpl. Guard must not mistake the
 			// stale UpdateEndedAt for completion of the current generation.
-			pcs:  mkPCS(grovecorev1alpha1.CoherentStrategy, newHash, []string{cliqueName}),
+			pcs: mkPCS(grovecorev1alpha1.CoherentStrategy, newHash, []string{cliqueName}),
 			pclq: mkPCLQ(oldTpl, ptr.To(oldTpl), &grovecorev1alpha1.PodCliqueUpdateProgress{
 				UpdateStartedAt:            metav1.Now(),
 				UpdateEndedAt:              &metav1.Time{Time: time.Now()},

@@ -25,10 +25,10 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	clustertopologyvalidationwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/clustertopology/validation"
+	pclqvalidatingwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pclq/validation"
 	authorizationwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/authorization"
 	defaultingwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/defaulting"
 	validatingwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/validation"
-	pclqvalidatingwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pclq/validation"
 	pcsgvalidatingwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcsg/validation"
 
 	"github.com/go-logr/logr"

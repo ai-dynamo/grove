@@ -527,4 +527,3 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 		})
 	}
 }
-
