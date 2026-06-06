@@ -274,25 +274,25 @@ endif
 
 # Deploys grove-operator to a k8s cluster using skaffold.
 .PHONY: deploy
-deploy: $(SKAFFOLD)
+deploy: $(SKAFFOLD) $(HELM)
 	@$(MODULE_HACK_DIR)/prepare-charts.sh
 	@PACKAGE_PATH=${LD_PACKAGE_PATH} PROGRAM_NAME=${OPERATOR_NAME} $(MODULE_HACK_DIR)/deploy.sh run -m grove-operator -n $(NAMESPACE)
 
 # Deploys grove-operator to a k8s cluster using skaffold in dev mode.
 .PHONY: deploy-dev
-deploy-dev: $(SKAFFOLD)
+deploy-dev: $(SKAFFOLD) $(HELM)
 	@$(MODULE_HACK_DIR)/prepare-charts.sh
 	@PACKAGE_PATH=${LD_PACKAGE_PATH} PROGRAM_NAME=${OPERATOR_NAME} $(MODULE_HACK_DIR)/deploy.sh dev --cleanup=false --keep-running-on-failure -m grove-operator --trigger='manual' -n $(NAMESPACE)
 
 # Deploys grove-operator to a k8s cluster using skaffold in debug mode.
 .PHONY: deploy-debug
-deploy-debug: $(SKAFFOLD)
+deploy-debug: $(SKAFFOLD) $(HELM)
 	@$(MODULE_HACK_DIR)/prepare-charts.sh
 	@PACKAGE_PATH=${LD_PACKAGE_PATH} PROGRAM_NAME=${OPERATOR_NAME} $(MODULE_HACK_DIR)/deploy.sh debug --cleanup=false -m grove-operator -p debug -n $(NAMESPACE)
 
 # Undeploys grove-operator from a k8s cluster using skaffold.
 .PHONY: undeploy
-undeploy: $(SKAFFOLD)
+undeploy: $(SKAFFOLD) $(HELM)
 	@$(SKAFFOLD) delete -m grove-operator -n $(NAMESPACE)
 
 # Deploys all the add-ons to a k8s cluster.

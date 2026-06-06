@@ -306,3 +306,81 @@ func TestGetExistingPodGangs(t *testing.T) {
 		assert.Empty(t, result)
 	})
 }
+
+// TestArePodGangsAvailable verifies the per-batch availability check used by both the
+// coherent-update orchestrator and the PodGangMap iteration gate.
+func TestArePodGangsAvailable(t *testing.T) {
+	const namespace = "default"
+	scheme := runtime.NewScheme()
+	require.NoError(t, groveschedulerv1alpha1.AddToScheme(scheme))
+
+	mkPG := func(name string, available bool) *groveschedulerv1alpha1.PodGang {
+		conditionStatus := metav1.ConditionFalse
+		if available {
+			conditionStatus = metav1.ConditionTrue
+		}
+		return &groveschedulerv1alpha1.PodGang{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+			Status: groveschedulerv1alpha1.PodGangStatus{
+				Conditions: []metav1.Condition{{
+					Type:               string(groveschedulerv1alpha1.PodGangConditionTypeAvailable),
+					Status:             conditionStatus,
+					LastTransitionTime: metav1.Now(),
+					Reason:             "Test",
+				}},
+			},
+		}
+	}
+
+	t.Run("empty list returns true", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
+		ok, err := ArePodGangsAvailable(context.Background(), cl, namespace, nil)
+		require.NoError(t, err)
+		assert.True(t, ok)
+	})
+
+	t.Run("single Available PodGang returns true", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mkPG("pg-0", true)).Build()
+		ok, err := ArePodGangsAvailable(context.Background(), cl, namespace, []string{"pg-0"})
+		require.NoError(t, err)
+		assert.True(t, ok)
+	})
+
+	t.Run("single not-Available PodGang returns false", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mkPG("pg-0", false)).Build()
+		ok, err := ArePodGangsAvailable(context.Background(), cl, namespace, []string{"pg-0"})
+		require.NoError(t, err)
+		assert.False(t, ok)
+	})
+
+	t.Run("missing PodGang returns false (treated as not yet Available)", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
+		ok, err := ArePodGangsAvailable(context.Background(), cl, namespace, []string{"pg-missing"})
+		require.NoError(t, err)
+		assert.False(t, ok)
+	})
+
+	t.Run("all of multiple PodGangs Available returns true", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mkPG("pg-0", true), mkPG("pg-1", true)).Build()
+		ok, err := ArePodGangsAvailable(context.Background(), cl, namespace, []string{"pg-0", "pg-1"})
+		require.NoError(t, err)
+		assert.True(t, ok)
+	})
+
+	t.Run("any one of multiple PodGangs not Available returns false", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mkPG("pg-0", true), mkPG("pg-1", false)).Build()
+		ok, err := ArePodGangsAvailable(context.Background(), cl, namespace, []string{"pg-0", "pg-1"})
+		require.NoError(t, err)
+		assert.False(t, ok)
+	})
+
+	t.Run("PodGang with no Available condition returns false", func(t *testing.T) {
+		pgNoCondition := &groveschedulerv1alpha1.PodGang{
+			ObjectMeta: metav1.ObjectMeta{Name: "pg-0", Namespace: namespace},
+		}
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pgNoCondition).Build()
+		ok, err := ArePodGangsAvailable(context.Background(), cl, namespace, []string{"pg-0"})
+		require.NoError(t, err)
+		assert.False(t, ok)
+	})
+}

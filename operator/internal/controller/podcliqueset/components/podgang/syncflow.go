@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
@@ -35,6 +36,7 @@ import (
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
@@ -96,16 +98,6 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs 
 		// handles this via the TopologyNameMissing condition.
 	}
 
-	if err = r.computeExpectedPodGangs(sc); err != nil {
-		return nil, groveerr.WrapError(err,
-			errCodeComputeExistingPodGangs,
-			component.OperationSync,
-			fmt.Sprintf("failed to compute existing PodGangs for PodCliqueSet %v", pcsObjectKey),
-		)
-	}
-	sc.expectedPodGangByName = podGangInfoByName(sc.expectedPodGangs)
-	sc.expectedPodGangNameSet = podGangInfoNameSet(sc.expectedPodGangs)
-
 	sc.existingPodGangs, err = componentutils.GetExistingPodGangs(ctx, r.client, pcs.ObjectMeta, pcs.Namespace)
 	if err != nil {
 		return nil, groveerr.WrapError(err,
@@ -115,6 +107,16 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs 
 		)
 	}
 	sc.existingPodGangByName = componentutils.PodGangByName(sc.existingPodGangs)
+
+	if err = r.computeExpectedPodGangs(ctx, sc); err != nil {
+		return nil, groveerr.WrapError(err,
+			errCodeComputeExistingPodGangs,
+			component.OperationSync,
+			fmt.Sprintf("failed to compute expected PodGangs for PodCliqueSet %v", pcsObjectKey),
+		)
+	}
+	sc.expectedPodGangByName = podGangInfoByName(sc.expectedPodGangs)
+	sc.expectedPodGangNameSet = podGangInfoNameSet(sc.expectedPodGangs)
 
 	sc.existingPCLQPods, err = r.getExistingPodsByPCLQForPCS(ctx, pcsObjectKey)
 	if err != nil {
@@ -145,207 +147,125 @@ func (r _resource) getExistingPCLQsForPCS(ctx context.Context, pcs *grovecorev1a
 	return pclqList.Items, nil
 }
 
-// computeExpectedPodGangs computes expected PodGangs based on PCS replicas and scaling groups.
-func (r _resource) computeExpectedPodGangs(sc *syncContext) error {
-	var expectedPodGangs []*podGangInfo
-
-	// For each PodCliqueSet replica, a base PodGang is expected to be created.
-	// A base PodGang constitutes the minimum viable set of PodCliques that must be scheduled together.
-	basePodGangs, err := buildExpectedBasePodGangForPCSReplicas(sc)
-	if err != nil {
-		return err
+// getExistingPCSGsForPCS fetches all existing PCSGs for the PodCliqueSet.
+func (r _resource) getExistingPCSGsForPCS(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) ([]grovecorev1alpha1.PodCliqueScalingGroup, error) {
+	pcsgList := &grovecorev1alpha1.PodCliqueScalingGroupList{}
+	if err := r.client.List(ctx,
+		pcsgList,
+		client.InNamespace(pcs.Namespace),
+		client.MatchingLabels(
+			lo.Assign(
+				apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name),
+			),
+		),
+	); err != nil {
+		return nil, err
 	}
-	expectedPodGangs = append(expectedPodGangs, basePodGangs...)
+	return lo.Filter(pcsgList.Items, func(pcsg grovecorev1alpha1.PodCliqueScalingGroup, _ int) bool {
+		return metav1.IsControlledBy(&pcsg, pcs)
+	}), nil
+}
 
-	// For each replica of PodCliqueSet, get the PodGangs associated to PodCliqueScalingGroup replicas above MinAvailable.
-	// These are also commonly called "scaled PodGangs" which refer to replica indexes for PCSG above MinAvailable.
-	// Each scaled replica of a PCSG is gang scheduled as is represented by its own PodGang resource.
-	if len(sc.pcs.Spec.Template.PodCliqueScalingGroupConfigs) > 0 {
-		for pcsReplica := range sc.pcs.Spec.Replicas {
-			expectedPodGangsForPCSG, err := r.buildExpectedScaledPodGangsForPCSG(sc, int(pcsReplica))
+// computeExpectedPodGangs computes expected PodGangs by reading the PodGangMap for each PCS replica.
+// PodGangMap is the single source of truth for PodGang composition in all cases.
+func (r _resource) computeExpectedPodGangs(ctx context.Context, sc *syncContext) error {
+	for replicaIndex := range int(sc.pcs.Spec.Replicas) {
+		pgmName := apicommon.GeneratePodGangMapName(apicommon.ResourceNameReplica{Name: sc.pcs.Name, Replica: replicaIndex})
+		pgm, err := componentutils.GetPodGangMap(ctx, r.client, pgmName, sc.pcs.Namespace)
+		if err != nil {
+			return err
+		}
+		for _, entry := range pgm.Spec.Entries {
+			pgi, err := r.buildPodGangInfoFromEntry(sc, replicaIndex, entry)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to build PodGang info from entry %q in PodGangMap %s: %w", entry.Name, pgmName, err)
 			}
-			expectedPodGangs = append(expectedPodGangs, expectedPodGangsForPCSG...)
+			sc.expectedPodGangs = append(sc.expectedPodGangs, pgi)
 		}
 	}
-	sc.expectedPodGangs = expectedPodGangs
 	return nil
 }
 
-// buildExpectedBasePodGangForPCSReplicas builds the BASE PodGangs for each PodCliqueSet replica.
-// These are the foundational PodGangs that contain:
-// 1. Standalone PodCliques (not part of any scaling group)
-// 2. PodCliques that are part of PodCliqueScalingGroup replicas [0, minAvailable-1]
-func buildExpectedBasePodGangForPCSReplicas(sc *syncContext) ([]*podGangInfo, error) {
-	expectedPodGangs := make([]*podGangInfo, 0, int(sc.pcs.Spec.Replicas))
-	for pcsReplica := range int(sc.pcs.Spec.Replicas) {
-		basePodGang, err := buildExpectedBasePodGangForPCSReplica(sc, pcsReplica)
-		if err != nil {
-			return nil, err
-		}
-		expectedPodGangs = append(expectedPodGangs, basePodGang)
-	}
-	return expectedPodGangs, nil
-}
+// buildPodGangInfoFromEntry translates a PodGangEntry into a podGangInfo.
+// The entry's PCSGReplicaIndices give the PCSG replica indices owned by this PodGang
+// directly; no positional accumulator across entries is needed.
+func (r _resource) buildPodGangInfoFromEntry(sc *syncContext, pcsReplicaIndex int, pgEntry grovecorev1alpha1.PodGangEntry) (*podGangInfo, error) {
+	pg := &podGangInfo{fqn: pgEntry.Name, pcsReplicaIndex: pcsReplicaIndex}
 
-// buildExpectedBasePodGangForPCSReplica builds the base PodGang info for a given PodCliqueSet replica.
-func buildExpectedBasePodGangForPCSReplica(sc *syncContext, pcsReplica int) (*podGangInfo, error) {
-	podGangFQN := apicommon.GenerateBasePodGangName(apicommon.ResourceNameReplica{Name: sc.pcs.Name, Replica: pcsReplica})
-	pg := &podGangInfo{
-		fqn: podGangFQN,
-		// TopologyConstraint for the base PodGang comes from the topology constraint defined at the PCS level.
-		topologyConstraint: createTopologyPackConstraint(sc, client.ObjectKeyFromObject(sc.pcs), sc.pcs.Spec.Template.TopologyConstraint),
-	}
-	pclqInfos := make([]pclqInfo, 0, len(sc.pcs.Spec.Template.Cliques))
-
-	// Add all standalone PodCliques to the base PodGang PCLQs
-	pclqInfos = append(pclqInfos, buildStandalonePCLQInfosForBasePodGang(sc, pcsReplica)...)
-	// Compute PCSG PodCliques and TopologyConstraintGroupConfig's that are part of the base PodGang
-	pcsgPackConstraints, pcsgPodCliques, err := buildPCSGPackConstraintsAndPCLQsForBasePodGang(sc, pcsReplica)
+	pg.pclqs = buildStandalonePCLQInfos(sc, pcsReplicaIndex, pgEntry)
+	pcsgPCLQs, pcsgConstraints, err := buildPCLQInfosAndTopologyConstraintsForPCSGs(sc, pcsReplicaIndex, pgEntry)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build PCSG TopologyConstraintGroupConfigs and PodClique infos for base PodGang %q: %w", podGangFQN, err)
+		return nil, err
 	}
-	pclqInfos = append(pclqInfos, pcsgPodCliques...)
-	pg.pcsgTopologyConstraints = pcsgPackConstraints
-	pg.pclqs = pclqInfos
+	pg.pclqs = append(pg.pclqs, pcsgPCLQs...)
+	pg.pcsgTopologyConstraints = pcsgConstraints
+	pg.topologyConstraint = createTopologyPackConstraint(sc, client.ObjectKeyFromObject(sc.pcs), sc.pcs.Spec.Template.TopologyConstraint)
 
 	return pg, nil
 }
 
-func buildStandalonePCLQInfosForBasePodGang(sc *syncContext, pcsReplica int) []pclqInfo {
-	pclqInfos := make([]pclqInfo, 0, len(sc.pcs.Spec.Template.Cliques))
-	for _, pclqTemplateSpec := range sc.pcs.Spec.Template.Cliques {
-		// Check if this PodClique belongs to a scaling group
-		pcsgConfig := componentutils.FindScalingGroupConfigForClique(sc.pcs.Spec.Template.PodCliqueScalingGroupConfigs, pclqTemplateSpec.Name)
-		if pcsgConfig == nil { // Standalone PodClique
-			pclqFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: sc.pcs.Name, Replica: pcsReplica}, pclqTemplateSpec.Name)
-			pclqInfos = append(pclqInfos, buildPodCliqueInfo(sc, pclqTemplateSpec, pclqFQN, false))
+// buildStandalonePCLQInfos builds pclqInfo entries for standalone PodCliques referenced in the entry.
+// Iterates template cliques in order to keep the result deterministic.
+func buildStandalonePCLQInfos(sc *syncContext, pcsReplicaIndex int, pgEntry grovecorev1alpha1.PodGangEntry) []pclqInfo {
+	var pclqs []pclqInfo
+	for _, cliqueTemplate := range sc.pcs.Spec.Template.Cliques {
+		pclqFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: sc.pcs.Name, Replica: pcsReplicaIndex}, cliqueTemplate.Name)
+		desiredPCLQReplicas, ok := pgEntry.PodCliques[cliqueTemplate.Name]
+		if !ok {
+			continue
 		}
+		pi := pclqInfo{
+			fqn:          pclqFQN,
+			replicas:     desiredPCLQReplicas,
+			minAvailable: *cliqueTemplate.Spec.MinAvailable,
+		}
+		pi.topologyConstraint = createTopologyPackConstraint(sc, types.NamespacedName{Namespace: sc.pcs.Namespace, Name: pclqFQN}, cliqueTemplate.TopologyConstraint)
+		pclqs = append(pclqs, pi)
 	}
-	return pclqInfos
+	return pclqs
 }
 
-func buildPCSGPackConstraintsAndPCLQsForBasePodGang(sc *syncContext, pcsReplica int) ([]groveschedulerv1alpha1.TopologyConstraintGroupConfig, []pclqInfo, error) {
+// buildPCLQInfosAndTopologyConstraintsForPCSGs builds pclqInfo entries and TopologyConstraintGroupConfigs for
+// PCSG-owned PodCliques referenced in the entry. Iterates template PCSG configs in order to keep the result deterministic.
+func buildPCLQInfosAndTopologyConstraintsForPCSGs(sc *syncContext, pcsReplicaIndex int, pgEntry grovecorev1alpha1.PodGangEntry) ([]pclqInfo, []groveschedulerv1alpha1.TopologyConstraintGroupConfig, error) {
 	var (
-		pclqInfos           []pclqInfo
-		pcsgPackConstraints []groveschedulerv1alpha1.TopologyConstraintGroupConfig
+		pclqs           []pclqInfo
+		pcsgConstraints []groveschedulerv1alpha1.TopologyConstraintGroupConfig
 	)
 	for _, pcsgConfig := range sc.pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-		// Iterate through replicas of the PCSG that belong to the base PodGang [0, minAvailable-1]
-		minAvailable := int(*pcsgConfig.MinAvailable)
-		pcsgPodCliqueInfos, pcsgTopologyConstraints, err := doBuildBasePodGangPCLQsAndPCSGPackConstraints(sc, pcsReplica, pcsgConfig, minAvailable)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to build PCSG TopologyConstraintGroupConfigs and PodClique infos for base PodGang for PCSG %q: %w", pcsgConfig.Name, err)
+		pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: sc.pcs.Name, Replica: pcsReplicaIndex}, pcsgConfig.Name)
+		replicaIndices, ok := pgEntry.PCSGReplicaIndices[pcsgConfig.Name]
+		if !ok || len(replicaIndices) == 0 {
+			continue
 		}
-		pclqInfos = append(pclqInfos, pcsgPodCliqueInfos...)
-		pcsgPackConstraints = append(pcsgPackConstraints, pcsgTopologyConstraints...)
-	}
-	return pcsgPackConstraints, pclqInfos, nil
-}
-
-// doBuildBasePodGangPCLQsAndPCSGPackConstraints builds pclqInfos and TopologyConstraintGroupConfigs for a PCSG within a base PodGang.
-func doBuildBasePodGangPCLQsAndPCSGPackConstraints(sc *syncContext, pcsReplica int, pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig, minAvailable int) ([]pclqInfo, []groveschedulerv1alpha1.TopologyConstraintGroupConfig, error) {
-	var (
-		pclqInfos           []pclqInfo
-		pcsgPackConstraints []groveschedulerv1alpha1.TopologyConstraintGroupConfig
-	)
-
-	pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: sc.pcs.Name, Replica: pcsReplica}, pcsgConfig.Name)
-	for replicaIndex := 0; replicaIndex < minAvailable; replicaIndex++ {
-		// Iterate through each PCLQ within the PCSG
-		pclqFQNs := make([]string, 0, len(pcsgConfig.CliqueNames))
-		for _, pclqName := range pcsgConfig.CliqueNames {
-			pclqTemplateSpec := componentutils.FindPodCliqueTemplateSpecByName(sc.pcs, pclqName)
-			if pclqTemplateSpec == nil {
-				return nil, nil, fmt.Errorf("PodCliqueScalingGroup %q references a PodClique %q that does not exist in the PodCliqueSet: %v", pcsgConfig.Name, pclqName, client.ObjectKeyFromObject(sc.pcs))
+		for _, replicaIdx := range replicaIndices {
+			pclqFQNs := make([]string, 0, len(pcsgConfig.CliqueNames))
+			for _, cliqueName := range pcsgConfig.CliqueNames {
+				pclqTemplateSpec := componentutils.FindPodCliqueTemplateSpecByName(sc.pcs, cliqueName)
+				if pclqTemplateSpec == nil {
+					return nil, nil, fmt.Errorf("PCSG %q references clique %q that does not exist in PodCliqueSet %v", pcsgFQN, cliqueName, client.ObjectKeyFromObject(sc.pcs))
+				}
+				pclqFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsgFQN, Replica: int(replicaIdx)}, cliqueName)
+				pi := pclqInfo{
+					fqn:          pclqFQN,
+					replicas:     pclqTemplateSpec.Spec.Replicas,
+					minAvailable: *pclqTemplateSpec.Spec.MinAvailable,
+				}
+				pi.topologyConstraint = createTopologyPackConstraint(sc, types.NamespacedName{Namespace: sc.pcs.Namespace, Name: pclqFQN}, pclqTemplateSpec.TopologyConstraint)
+				pclqs = append(pclqs, pi)
+				pclqFQNs = append(pclqFQNs, pclqFQN)
 			}
-			pclqFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsgFQN, Replica: replicaIndex}, pclqName)
-			pclqInfos = append(pclqInfos, buildPodCliqueInfo(sc, pclqTemplateSpec, pclqFQN, true))
-			pclqFQNs = append(pclqFQNs, pclqFQN)
-		}
-		if sc.tasEnabled && pcsgConfig.TopologyConstraint != nil {
-			// For every PCSG a TopologyConstraintGroupConfig is created which has its own TopologyConstraint that is
-			// defined for PCLQs within the PCSG. For each PCSG replica there is a separate TopologyConstraintGroupConfig.
-			pcsgPackConstraints = append(pcsgPackConstraints, groveschedulerv1alpha1.TopologyConstraintGroupConfig{
-				Name:               fmt.Sprintf("%s-%d", pcsgFQN, replicaIndex),
-				PodGroupNames:      pclqFQNs,
-				TopologyConstraint: createTopologyPackConstraint(sc, types.NamespacedName{Namespace: sc.pcs.Namespace, Name: pcsgFQN}, pcsgConfig.TopologyConstraint),
-			})
-		}
-	}
-
-	return pclqInfos, pcsgPackConstraints, nil
-}
-
-func (r _resource) buildExpectedScaledPodGangsForPCSG(sc *syncContext, pcsReplica int) ([]*podGangInfo, error) {
-	var expectedPodGangs []*podGangInfo
-	for _, pcsgConfig := range sc.pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-		pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: sc.pcs.Name, Replica: pcsReplica}, pcsgConfig.Name)
-		replicas := sc.determinePCSGReplicas(pcsgFQN, pcsgConfig)
-		minAvailable := int(*pcsgConfig.MinAvailable)
-		scaledReplicas := replicas - minAvailable
-		for podGangIndex, pcsgReplica := 0, minAvailable; podGangIndex < scaledReplicas; podGangIndex, pcsgReplica = podGangIndex+1, pcsgReplica+1 {
-			pg, err := doBuildExpectedScaledPodGangForPCSG(sc, pcsgFQN, pcsgConfig, pcsgReplica, podGangIndex)
-			if err != nil {
-				return nil, fmt.Errorf("failed to build expected scaled PodGang for PCSG %q replica %d: %w", pcsgFQN, pcsgReplica, err)
+			pcsgTopologyConstraint := createTopologyPackConstraint(sc, types.NamespacedName{Namespace: sc.pcs.Namespace, Name: pcsgFQN}, pcsgConfig.TopologyConstraint)
+			if pcsgTopologyConstraint != nil {
+				pcsgConstraints = append(pcsgConstraints, groveschedulerv1alpha1.TopologyConstraintGroupConfig{
+					Name:               fmt.Sprintf("%s-%d", pcsgFQN, replicaIdx),
+					PodGroupNames:      pclqFQNs,
+					TopologyConstraint: pcsgTopologyConstraint,
+				})
 			}
-			expectedPodGangs = append(expectedPodGangs, pg)
 		}
 	}
-	return expectedPodGangs, nil
-}
-
-func doBuildExpectedScaledPodGangForPCSG(sc *syncContext, pcsgFQN string, pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig, pcsgReplica int, podGangIndex int) (*podGangInfo, error) {
-	var (
-		pclqInfos          = make([]pclqInfo, 0, len(pcsgConfig.CliqueNames))
-		topologyConstraint *groveschedulerv1alpha1.TopologyConstraint
-	)
-
-	// Iterate through each PCLQ within the PCSG
-	for _, pclqName := range pcsgConfig.CliqueNames {
-		pclqTemplateSpec := componentutils.FindPodCliqueTemplateSpecByName(sc.pcs, pclqName)
-		if pclqTemplateSpec == nil {
-			return nil, fmt.Errorf("PodCliqueScalingGroup %q references a PodClique %q that does not exist in the PodCliqueSet: %v", pcsgConfig.Name, pclqName, client.ObjectKeyFromObject(sc.pcs))
-		}
-		pclqFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsgFQN, Replica: pcsgReplica}, pclqName)
-		pclqInfos = append(pclqInfos, buildPodCliqueInfo(sc, pclqTemplateSpec, pclqFQN, true))
-	}
-
-	// For scaled PodGangs, the TopologyConstraint is determined as follows:
-	// 1. If PCSG has a TopologyConstraint defined, use that for the PodGang's TopologyConstraint
-	// 2. Else, fall back to PCS-level TopologyConstraint
-	// no need to set pcsg topology constraint
-	if sc.tasEnabled {
-		if pcsgConfig.TopologyConstraint != nil {
-			topologyConstraint = createTopologyPackConstraint(sc,
-				types.NamespacedName{Namespace: sc.pcs.Namespace, Name: pcsgFQN}, pcsgConfig.TopologyConstraint)
-		} else {
-			// Fall back to PCS-level constraints
-			topologyConstraint = createTopologyPackConstraint(sc, client.ObjectKeyFromObject(sc.pcs),
-				sc.pcs.Spec.Template.TopologyConstraint)
-		}
-	}
-
-	pg := &podGangInfo{
-		fqn:                apicommon.CreatePodGangNameFromPCSGFQN(pcsgFQN, podGangIndex),
-		topologyConstraint: topologyConstraint,
-		pclqs:              pclqInfos,
-	}
-
-	return pg, nil
-}
-
-// buildPodCliqueInfo creates pclqInfo with appropriate replica counts.
-func buildPodCliqueInfo(sc *syncContext, pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec, pclqFQN string, belongsToPCSG bool) pclqInfo {
-	replicas := determinePodCliqueReplicas(sc, pclqTemplateSpec, pclqFQN, belongsToPCSG)
-	expectedPCLQ := pclqInfo{
-		fqn:          pclqFQN,
-		replicas:     replicas,
-		minAvailable: *pclqTemplateSpec.Spec.MinAvailable,
-	}
-	expectedPCLQ.topologyConstraint = createTopologyPackConstraint(sc, types.NamespacedName{Namespace: sc.pcs.Namespace, Name: pclqFQN}, pclqTemplateSpec.TopologyConstraint)
-	return expectedPCLQ
+	return pclqs, pcsgConstraints, nil
 }
 
 // createTopologyPackConstraint creates a TopologyPackConstraint based on the sync context and provided parameters for a resource.
@@ -379,42 +299,6 @@ func topologyLevelKeyForPackDomain(sc *syncContext, nsName types.NamespacedName,
 		return nil
 	}
 	return ptr.To(topologyLevel.Key)
-}
-
-// determinePodCliqueReplicas determines replica count considering HPA mutations.
-func determinePodCliqueReplicas(sc *syncContext, pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec, pclqFQN string, belongsToPCSG bool) int32 {
-	if belongsToPCSG || pclqTemplateSpec.Spec.ScaleConfig == nil {
-		return pclqTemplateSpec.Spec.Replicas
-	}
-	matchingPCLQ, found := sc.existingPCLQByName[pclqFQN]
-	if !found {
-		// PodClique resource not found - might be during initial creation
-		// Fall back to template replicas but log warning for visibility
-		sc.logger.Info("[WARN]: PodClique resource not found, using template replicas",
-			"podCliqueFQN", pclqFQN,
-			"templateReplicas", pclqTemplateSpec.Spec.Replicas)
-		return pclqTemplateSpec.Spec.Replicas
-	}
-	return matchingPCLQ.Spec.Replicas
-}
-
-// getExistingPCSGsForPCS fetches all existing PCSGs for the PodCliqueSet.
-func (r _resource) getExistingPCSGsForPCS(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) ([]grovecorev1alpha1.PodCliqueScalingGroup, error) {
-	pcsgList := &grovecorev1alpha1.PodCliqueScalingGroupList{}
-	if err := r.client.List(ctx,
-		pcsgList,
-		client.InNamespace(pcs.Namespace),
-		client.MatchingLabels(
-			lo.Assign(
-				apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name),
-			),
-		),
-	); err != nil {
-		return nil, err
-	}
-	return lo.Filter(pcsgList.Items, func(pcsg grovecorev1alpha1.PodCliqueScalingGroup, _ int) bool {
-		return metav1.IsControlledBy(&pcsg, pcs)
-	}), nil
 }
 
 // getExistingPodsByPCLQForPCS fetches all non-terminating pods grouped by PodClique.
@@ -501,103 +385,34 @@ func (r _resource) createOrUpdatePodGangs(ctx context.Context, sc *syncContext) 
 
 		// Update status to set Initialized=True (idempotent - no need to check current state)
 		if !sc.isPodGangInitialized(expectedPG.fqn) {
-			if err := r.patchPodGangInitializedStatus(ctx, sc, expectedPG.fqn, metav1.ConditionTrue, groveschedulerv1alpha1.ConditionReasonPodGangPodsCreated, "PodGang is fully initialized"); err != nil {
+			if err := r.patchPodGangCondition(ctx, sc, expectedPG.fqn, groveschedulerv1alpha1.PodGangConditionTypeInitialized, metav1.ConditionTrue, groveschedulerv1alpha1.ConditionReasonPodGangPodsCreated, "PodGang is fully initialized"); err != nil {
 				sc.logger.Error(err, "failed to update Initialized condition in PodGang status", "PodGangName", expectedPG.fqn)
 				result.recordError(err)
 				continue
 			}
 		}
+
+		// Evaluate and set Available condition.
+		// A PodGang is Available when all MinReplica pods for all constituent PodGroups are
+		// scheduled and ready, and MinReplicas has been set to 0 on all PodGroups.
+		if !sc.isPodGangAvailable(expectedPG.fqn) {
+			if r.arePodGangMinReplicasReady(sc, expectedPG) {
+				if err := r.releaseMinReplicasConstraint(ctx, sc, expectedPG.fqn); err != nil {
+					sc.logger.Error(err, "failed to release MinReplicas constraint on PodGang", "PodGangName", expectedPG.fqn)
+					result.recordError(err)
+					continue
+				}
+				if err := r.patchPodGangCondition(ctx, sc, expectedPG.fqn, groveschedulerv1alpha1.PodGangConditionTypeAvailable, metav1.ConditionTrue, groveschedulerv1alpha1.ConditionReasonPodGangAvailable, "All MinReplica pods are ready and MinReplicas set to 0"); err != nil {
+					sc.logger.Error(err, "failed to update Available condition in PodGang status", "PodGangName", expectedPG.fqn)
+					result.recordError(err)
+					continue
+				}
+				sc.logger.Info("PodGang is now Available", "podGang", expectedPG.fqn)
+			}
+		}
 	}
 
 	return result
-}
-
-// patchPodGangInitializedStatus patches the Initialized condition with the given status.
-func (r _resource) patchPodGangInitializedStatus(ctx context.Context, sc *syncContext, podGangName string, status metav1.ConditionStatus, reason, message string) error {
-	// Create a PodGang object with only the status we want to patch
-	statusPatch := &groveschedulerv1alpha1.PodGang{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      podGangName,
-			Namespace: sc.pcs.Namespace,
-		},
-	}
-	setOrUpdateInitializedCondition(statusPatch, status, reason, message)
-	// One could argue why not use Status.Phase to also denote Initialized condition. For now the argument is that
-	// current set of phases (Pending, Starting, Running) is influenced by the status of constituent Pods w.r.t their
-	// scheduling state, whereas initialized condition is denoting if a PodGang is ready to be scheduled
-	// (so it is pre-scheduling phase state). We can always revisit this in future if this reasoning changes.
-	statusPatch.Status.Phase = groveschedulerv1alpha1.PodGangPhasePending
-	if err := r.client.Status().Patch(ctx, statusPatch, client.Merge); err != nil {
-		return err
-	}
-	sc.logger.Info("Successfully patched PodGang Initialized condition",
-		"podGang", podGangName, "status", status)
-	return nil
-}
-
-// verifyAllPodsCreated checks if all required pods exist before updating PodGang
-func (r _resource) verifyAllPodsCreated(sc *syncContext, pgi *podGangInfo) error {
-	pclqs := sc.getPodCliques(pgi)
-	if len(pclqs) != len(pgi.pclqs) {
-		// Not all constituent PCLQs exist yet
-		sc.logger.Info("Not all constituent PCLQs exist yet", "podGang", pgi.fqn, "expected", len(pgi.pclqs), "actual", len(pclqs))
-		return groveerr.New(groveerr.ErrCodeRequeueAfter,
-			component.OperationSync,
-			fmt.Sprintf("Waiting for all pods to be created for PodGang %s", pgi.fqn),
-		)
-	}
-	// check the health of each podclique
-	numPendingPods := r.getPodsPendingCreationOrAssociation(sc, pgi)
-	if numPendingPods > 0 {
-		sc.logger.Info("skipping creation of PodGang as all desired replicas have not yet been created or assigned", "podGang", pgi.fqn, "numPendingPodsToCreateOrAssociate", numPendingPods)
-		return groveerr.New(groveerr.ErrCodeRequeueAfter,
-			component.OperationSync,
-			fmt.Sprintf("Waiting for all pods to be created or assigned for PodGang %s", pgi.fqn),
-		)
-	}
-	return nil
-}
-
-// getPodsForPodCliquesPendingCreation counts expected pods from non-existent PodCliques.
-func (r _resource) getPodsForPodCliquesPendingCreation(sc *syncContext, podGang *podGangInfo) int {
-	return lo.Reduce(podGang.pclqs, func(agg int, pclq pclqInfo, _ int) int {
-		if _, ok := sc.existingPCLQByName[pclq.fqn]; !ok {
-			return agg + int(pclq.replicas)
-		}
-		return agg
-	}, 0)
-}
-
-// getPodsPendingCreationOrAssociation counts pods not yet created or labeled for the PodGang.
-func (r _resource) getPodsPendingCreationOrAssociation(sc *syncContext, podGang *podGangInfo) int {
-	// Find the number of expected pods from PodCliques that are pending creation
-	numPodsPendingPCLQCreate := r.getPodsForPodCliquesPendingCreation(sc, podGang)
-
-	// Find the number of pods pending creation of existing PodCliques
-	var numPodsPendingCreateOrAssociate int
-	pclqs := sc.getPodCliques(podGang)
-	for _, pclq := range pclqs {
-		existingPCLQPods := sc.existingPCLQPods[pclq.Name]
-		// If there is a difference between the expected replicas and the existing pods, we need to account for that.
-		// If the difference is positive, it means there are pending pods to create.
-		// If the difference is negative, it means there are more existing pods than expected. In this case, we do not need to create any new pods, therefore we can ignore the negative difference.
-		numPodsPendingCreateOrAssociate += max(0, int(pclq.Spec.Replicas)-len(existingPCLQPods))
-
-		// For all existing pods in the PCLQ, check if they have the PodGang label set. If that is not set then add them to numPodsPendingCreateOrAssociate.
-		for _, existingPod := range existingPCLQPods {
-			podGangLabelValue, ok := existingPod.GetLabels()[apicommon.LabelPodGang]
-			if !ok {
-				sc.logger.Info("Pod does not have a PodGang label yet", "podObjectKey", client.ObjectKeyFromObject(&existingPod), "expectedPodGangName", podGang.fqn)
-				numPodsPendingCreateOrAssociate += 1
-				continue
-			}
-			if podGangLabelValue != podGang.fqn {
-				sc.logger.Error(nil, "PodGang label does not match expected PodGang name. This should ideally never happen and indicates a coding error", "podObjectKey", client.ObjectKeyFromObject(&existingPod), "expectedPodGangName", podGang.fqn, "podGangLabelValue", podGangLabelValue)
-				numPodsPendingCreateOrAssociate += 1
-			}
-		}
-	}
-	return numPodsPendingPCLQCreate + numPodsPendingCreateOrAssociate
 }
 
 // createOrUpdatePodGang creates or updates a single PodGang resource.
@@ -620,16 +435,138 @@ func (r _resource) createOrUpdatePodGang(ctx context.Context, sc *syncContext, p
 		)
 	}
 
-	// Update status with Initialized=False condition and Phase if not already set.
+	// Update status with Initialized=False condition if not already set.
 	// This needs to be done separately since CreateOrPatch doesn't handle updates/patches to status subresource.
 	if !k8sutils.HasCondition(pg.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized)) {
-		if err = r.patchPodGangInitializedStatus(ctx, sc, pg.Name, metav1.ConditionFalse, groveschedulerv1alpha1.ConditionReasonPodGangPodsCreationPending, "Not all constituent pods have been created yet"); err != nil {
+		if err = r.patchPodGangCondition(ctx, sc, pg.Name, groveschedulerv1alpha1.PodGangConditionTypeInitialized, metav1.ConditionFalse, groveschedulerv1alpha1.ConditionReasonPodGangPodsCreationPending, "Not all constituent pods have been created yet"); err != nil {
 			return err
 		}
 	}
 
 	r.eventRecorder.Eventf(sc.pcs, corev1.EventTypeNormal, constants.ReasonPodGangCreateOrUpdateSuccessful, "Created/Updated PodGang %v", pgObjectKey)
 	sc.logger.Info("Triggered CreateOrPatch of PodGang", "objectKey", pgObjectKey)
+	return nil
+}
+
+// verifyAllPodsCreated checks if all required pods exist before updating PodGang
+func (r _resource) verifyAllPodsCreated(sc *syncContext, pgi *podGangInfo) error {
+	pclqs := sc.getPodCliques(pgi)
+	if len(pclqs) != len(pgi.pclqs) {
+		// Not all constituent PCLQs exist yet
+		sc.logger.Info("Not all constituent PCLQs exist yet", "podGang", pgi.fqn, "expected", len(pgi.pclqs), "actual", len(pclqs))
+		return groveerr.New(groveerr.ErrCodeRequeueAfter,
+			component.OperationSync,
+			fmt.Sprintf("Waiting for all pods to be created for PodGang %s", pgi.fqn),
+		)
+	}
+	// check the health of each podclique
+	numPendingPods := r.getPodsPendingCreationOrAssociation(pgi)
+	if numPendingPods > 0 {
+		sc.logger.Info("skipping creation of PodGang as all desired replicas have not yet been created or assigned", "podGang", pgi.fqn, "numPendingPodsToCreateOrAssociate", numPendingPods)
+		return groveerr.New(groveerr.ErrCodeRequeueAfter,
+			component.OperationSync,
+			fmt.Sprintf("Waiting for all pods to be created or assigned for PodGang %s", pgi.fqn),
+		)
+	}
+	return nil
+}
+
+// getPodsPendingCreationOrAssociation counts how many of this PodGang's expected pods are not
+// yet associated to it. For each constituent PodClique, the deficit is
+// `pclq.replicas - len(pclq.associatedPodNames)`:
+//   - If the PCLQ resource itself does not exist yet, `associatedPodNames` is empty, so the
+//     full replica count is reported as pending.
+//   - If the PCLQ exists but some pods haven't been created yet, only those uncreated pods are
+//     reported as pending.
+//   - Pods of the same PCLQ that are associated to a different PodGang (e.g. another MVU PodGang
+//     in the same PCS replica) do not appear in this PodGang's `associatedPodNames` and are
+//     correctly excluded — they belong to a sibling PodGang.
+func (r _resource) getPodsPendingCreationOrAssociation(podGang *podGangInfo) int {
+	var pending int
+	for _, pclq := range podGang.pclqs {
+		deficit := int(pclq.replicas) - len(pclq.associatedPodNames)
+		if deficit > 0 {
+			pending += deficit
+		}
+	}
+	return pending
+}
+
+// arePodGangMinReplicasReady returns true if, for each PodGroup in the PodGang, at least
+// MinReplicas pods that are associated to this PodGang are in Ready state.
+// Only pods whose names appear in associatedPodNames are considered — this correctly handles
+// the case where a standalone PCLQ's pods are spread across multiple PodGangs during a
+// coherent update.
+func (r _resource) arePodGangMinReplicasReady(sc *syncContext, pgi *podGangInfo) bool {
+	for _, pclq := range pgi.pclqs {
+		pods := sc.existingPCLQPods[pclq.fqn]
+		var readyCount int32
+		for i := range pods {
+			if slices.Contains(pclq.associatedPodNames, pods[i].Name) && k8sutils.IsPodReady(&pods[i]) {
+				readyCount++
+			}
+		}
+		if readyCount < pclq.minAvailable {
+			return false
+		}
+	}
+	return true
+}
+
+// releaseMinReplicasConstraint sets MinReplicas=0 on all PodGroups of the given PodGang.
+// This releases the gang scheduling constraint, allowing individual pods to be removed
+// without the scheduler evicting the entire PodGang for breaching the minimum availability
+// contract enforced via `podGroup.minReplicas` in a PodGang. This must be done after the backend
+// scheduler has scheduled minReplica pods across all PodGroups in a PodGang thus completing the gang-scheduling
+// constraint. After the initial gang scheduling has been done, we should relax the minReplicas constraints
+// to allow scale-ins. This is especially important in case of coherent updates where standalone PCLQ pods can be
+// spread across one or more PodGangs. This means that while a scale-in does not breach the minAvailability guarantee
+// as defined in the PodCliqueTemplateSpec but in the PodGang which has subset of the PCLQ replicas its `minReplicas`
+// can be breached.
+func (r _resource) releaseMinReplicasConstraint(ctx context.Context, sc *syncContext, podGangName string) error {
+	existingPG, ok := sc.existingPodGangByName[podGangName]
+	if !ok {
+		return fmt.Errorf("PodGang %s not found in existing PodGangs", podGangName)
+	}
+	patch := client.MergeFrom(&existingPG)
+	pgToUpdate := existingPG.DeepCopy()
+	for i := range pgToUpdate.Spec.PodGroups {
+		pgToUpdate.Spec.PodGroups[i].MinReplicas = 0
+	}
+	if err := r.client.Patch(ctx, pgToUpdate, patch); err != nil {
+		return fmt.Errorf("failed to set MinReplicas=0 on PodGang %s: %w", podGangName, err)
+	}
+	sc.logger.Info("Released MinReplicas constraint on PodGang", "podGang", podGangName)
+	return nil
+}
+
+// patchPodGangCondition patches a condition on the PodGang status.
+//
+// Implementation note: it does a Get-modify-Patch using client.MergeFrom rather than building
+// a fresh PodGang with only the new condition. JSON Merge Patch (RFC 7396) — what client.Merge
+// produces for CRDs — replaces list fields wholesale, so a patch sourced from a struct that
+// only has the one new condition would wipe every previously-set condition. Reading the live
+// state first and feeding meta.SetStatusCondition the full slice avoids that.
+func (r _resource) patchPodGangCondition(ctx context.Context, sc *syncContext, podGangName string, conditionType groveschedulerv1alpha1.PodGangConditionType, status metav1.ConditionStatus, reason, message string) error {
+	pg, err := componentutils.GetPodGang(ctx, r.client, podGangName, sc.pcs.Namespace)
+	if err != nil {
+		return err
+	}
+	patchBase := pg.DeepCopy()
+	condition := metav1.Condition{
+		Type:               string(conditionType),
+		Status:             status,
+		ObservedGeneration: pg.Generation,
+		LastTransitionTime: metav1.Now(),
+		Reason:             reason,
+		Message:            message,
+	}
+	meta.SetStatusCondition(&pg.Status.Conditions, condition)
+	if err := r.client.Status().Patch(ctx, pg, client.MergeFrom(patchBase)); err != nil {
+		return err
+	}
+	sc.logger.Info("Successfully patched PodGang condition",
+		"podGang", podGangName, "conditionType", conditionType, "status", status)
 	return nil
 }
 
@@ -688,6 +625,11 @@ func (sc *syncContext) isPodGangInitialized(podGangName string) bool {
 	return ok && k8sutils.IsConditionTrue(foundPG.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized))
 }
 
+func (sc *syncContext) isPodGangAvailable(podGangName string) bool {
+	foundPG, ok := sc.existingPodGangByName[podGangName]
+	return ok && k8sutils.IsConditionTrue(foundPG.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeAvailable))
+}
+
 // initializeAssignedAndUnassignedPodsForPCS categorizes pods by PodGang assignment.
 // The lookup yields a *podGangInfo that aliases an entry in sc.expectedPodGangs (which stores
 // pointers). Mutations via refreshAssociatedPCLQPods therefore propagate back to the slice;
@@ -718,16 +660,6 @@ func (sc *syncContext) getPodCliques(podGang *podGangInfo) []grovecorev1alpha1.P
 		}
 	}
 	return constituentPCLQs
-}
-
-// determinePCSGReplicas retrieves the number of replicas for a PCSG for a given PCS and PCS replica index.
-// If the PCSG exists then it will return the pcsg.Spec.Replicas value, else it will return the template replicas
-// as defined in grovecorev1alpha1.PodCliqueScalingGroupConfig.Replicas
-func (sc *syncContext) determinePCSGReplicas(pcsgFQN string, pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig) int {
-	if foundExistingPCSG, ok := sc.existingPCSGByName[pcsgFQN]; ok {
-		return int(foundExistingPCSG.Spec.Replicas)
-	}
-	return int(*pcsgConfig.Replicas)
 }
 
 // podGangInfoByName builds a name-keyed map for O(1) podGangInfo lookups. Kept local because
@@ -782,6 +714,8 @@ func (sfr *syncFlowResult) getAggregatedError() error {
 type podGangInfo struct {
 	// fqn is a fully qualified name of a PodGang.
 	fqn string
+	// pcsReplicaIndex is the PCS replica index this PodGang belongs to.
+	pcsReplicaIndex int
 	// pclqs holds the relevant information for all constituent PodCliques for this PodGang.
 	pclqs []pclqInfo
 	// topologyConstraint holds the topology pack constraint applicable at the PodGang level.

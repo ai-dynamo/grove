@@ -28,6 +28,8 @@ import (
 	authorizationwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/authorization"
 	defaultingwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/defaulting"
 	validatingwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/validation"
+	pclqvalidatingwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pclq/validation"
+	pcsgvalidatingwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcsg/validation"
 
 	"github.com/go-logr/logr"
 	cert "github.com/open-policy-agent/cert-controller/pkg/rotator"
@@ -131,6 +133,14 @@ func getWebhooks(authorizerEnabled bool) []cert.WebhookInfo {
 			Type: cert.Validating,
 			Name: clustertopologyvalidationwebhook.Name,
 		},
+		{
+			Type: cert.Validating,
+			Name: pclqvalidatingwebhook.Name,
+		},
+		{
+			Type: cert.Validating,
+			Name: pcsgvalidatingwebhook.Name,
+		},
 	}
 	if authorizerEnabled {
 		webhooks = append(webhooks, cert.WebhookInfo{
@@ -155,14 +165,17 @@ func createPlaceholderSecretIfNotExists(ctx context.Context, cl client.Client, n
 	}
 
 	// Secret does not exist — create an empty TLS secret for cert-controller to populate.
+	// Intentionally omits the app.kubernetes.io/managed-by=grove-operator label: that label
+	// marks workload resources reconciled as part of a PodCliqueSet, and e2e workload
+	// cleanup uses it to find resources that should disappear after each test. This secret
+	// is bootstrap infrastructure that lives for the lifetime of the Grove installation.
 	secret = &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: namespace,
 			Name:      secretName,
 			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": "grove-operator",
-				"app.kubernetes.io/component":  "webhook",
-				"app.kubernetes.io/part-of":    "grove",
+				"app.kubernetes.io/component": "webhook",
+				"app.kubernetes.io/part-of":   "grove",
 			},
 		},
 		Type: corev1.SecretTypeTLS,

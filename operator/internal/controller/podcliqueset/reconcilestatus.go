@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -127,7 +126,7 @@ func (r *Reconciler) computeAvailableAndUpdatedReplicas(ctx context.Context, log
 	// Fetch all PCSGs for this PCS, then drop any stray PCSGs (not part of the spec) using O(1)
 	// set lookup. slices.DeleteFunc compacts in-place; safe here because the slice came from a
 	// fresh fetch and isn't aliased.
-	pcsgs, err := componentutils.GetPCSGsForPCS(ctx, r.client, pcsObjectKey)
+	pcsgs, err := componentutils.ListPCSGsForPCS(ctx, r.client, pcsObjectKey)
 	if err != nil {
 		return stats, err
 	}
@@ -147,14 +146,19 @@ func (r *Reconciler) computeAvailableAndUpdatedReplicas(ctx context.Context, log
 	})
 
 	// Group both resources by PCS replica index
-	standalonePCLQsByReplica := componentutils.GroupPCLQsByPCSReplicaIndex(standalonePCLQs)
-	pcsgsByReplica := componentutils.GroupPCSGsByPCSReplicaIndex(pcsgs)
+	standalonePCLQsByReplica, err := componentutils.GroupPCLQsByPCSReplicaIndex(standalonePCLQs)
+	if err != nil {
+		return stats, err
+	}
+	pcsgsByReplica, err := componentutils.GroupPCSGsByPCSReplicaIndex(pcsgs)
+	if err != nil {
+		return stats, err
+	}
 	pcsGenerationHashCandidates := componentutils.ComputePCSGenerationHashCandidates(pcs)
 
 	for replicaIndex := 0; replicaIndex < int(pcs.Spec.Replicas); replicaIndex++ {
-		replicaIndexStr := strconv.Itoa(replicaIndex)
-		replicaStandalonePCLQs := standalonePCLQsByReplica[replicaIndexStr]
-		replicaPCSGs := pcsgsByReplica[replicaIndexStr]
+		replicaStandalonePCLQs := standalonePCLQsByReplica[replicaIndex]
+		replicaPCSGs := pcsgsByReplica[replicaIndex]
 		expectedPCSGCount := len(expectedPCSGFQNsPerPCSReplica[replicaIndex])
 		expectedPCLQCount := len(expectedStandAlonePCLQFQNsPerPCSReplica[replicaIndex])
 

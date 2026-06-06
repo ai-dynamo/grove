@@ -25,6 +25,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podcliquescalinggroup"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podcliquesetreplica"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podgang"
+	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podgangmap"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/resourceclaim"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/role"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/rolebinding"
@@ -35,6 +36,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
@@ -52,6 +54,7 @@ func CreateOperatorRegistry(mgr manager.Manager, eventRecorder record.EventRecor
 	reg.Register(component.KindPodCliqueScalingGroup, podcliquescalinggroup.New(cl, mgr.GetScheme(), eventRecorder))
 	reg.Register(component.KindHorizontalPodAutoscaler, hpa.New(cl, mgr.GetScheme()))
 	reg.Register(component.KindPodGang, podgang.New(cl, mgr.GetScheme(), eventRecorder, topologyAwareSchedulingConfig, schedRegistry))
+	reg.Register(component.KindPodGangMap, podgangmap.New(cl, mgr.GetScheme(), clock.RealClock{}))
 	reg.Register(component.KindPodCliqueSetReplica, podcliquesetreplica.New(cl, eventRecorder))
 
 	// Only register ComputeDomain operator if MNNVL is enabled

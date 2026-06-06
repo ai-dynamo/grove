@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -35,7 +36,6 @@ import (
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -142,6 +142,8 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGa
 	} else {
 		delete(pg.Labels, apicommon.LabelSchedulerName)
 	}
+	pg.Labels[apicommon.LabelPodCliqueSetGenerationHash] = *pcs.Status.CurrentGenerationHash
+	pg.Labels[apicommon.LabelPodCliqueSetReplicaIndex] = strconv.Itoa(pgi.pcsReplicaIndex)
 	pg.Annotations = mirrorPCSMetadata(pg.Annotations, pcs.Annotations, nil)
 	if r.tasConfig.Enabled && podGangHasTranslatedTopologyConstraints(pgi) {
 		if topologyName, err := componentutils.FindExplicitTopologyNameForPodCliqueSet(pcs); err == nil && topologyName != "" {
@@ -264,17 +266,4 @@ func (r _resource) getSchedulerNameForPCS(pcs *grovecorev1alpha1.PodCliqueSet) s
 		}
 	}
 	return r.schedRegistry.GetDefault().Name()
-}
-
-// setOrUpdateInitializedCondition sets or updates the PodGangInitialized condition on the PodGang status.
-func setOrUpdateInitializedCondition(pg *groveschedulerv1alpha1.PodGang, status metav1.ConditionStatus, reason, message string) {
-	condition := metav1.Condition{
-		Type:               string(groveschedulerv1alpha1.PodGangConditionTypeInitialized),
-		Status:             status,
-		ObservedGeneration: pg.Generation,
-		LastTransitionTime: metav1.Now(),
-		Reason:             reason,
-		Message:            message,
-	}
-	meta.SetStatusCondition(&pg.Status.Conditions, condition)
 }

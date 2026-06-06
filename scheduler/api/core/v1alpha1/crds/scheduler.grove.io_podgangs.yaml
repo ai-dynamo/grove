@@ -294,8 +294,6 @@ spec:
                   PlacementScore is network optimality score for the PodGang. If the choice that the scheduler has made corresponds to the
                   best possible placement of the pods in the PodGang, then the score will be 1.0. Higher the score, better the placement.
                 type: number
-            required:
-            - phase
             type: object
         required:
         - spec

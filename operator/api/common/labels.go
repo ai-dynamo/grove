@@ -35,8 +35,15 @@ const (
 	// LabelBasePodGang is a key for a label that sets the base PodGang name for scaled PodGangs.
 	// This label is present on scaled PodGangs (beyond MinAvailable) and points to their base PodGang.
 	LabelBasePodGang = "grove.io/base-podgang"
+	// LabelMinimumViableUnit is a key for a label that identifies MVU-shaped PodGangs.
+	// An MVU PodGang contains minAvailable replicas of all standalone PCLQs and all PCSGs —
+	// the smallest set of components that must be updated together in lockstep.
+	LabelMinimumViableUnit = "grove.io/minimum-viable-unit"
 	// LabelPodCliqueSetReplicaIndex is a key for a label that sets the replica index of a PodCliqueSet.
 	LabelPodCliqueSetReplicaIndex = "grove.io/podcliqueset-replica-index"
+	// LabelPodCliqueSetGenerationHash is set on PodGang resources to record the PCS generation hash
+	// they were created for.
+	LabelPodCliqueSetGenerationHash = "grove.io/podcliqueset-generation-hash"
 	// LabelPodCliqueScalingGroup is a key for a label that sets the PodCliqueScalingGroup name.
 	LabelPodCliqueScalingGroup = "grove.io/podcliquescalinggroup"
 	// LabelPodCliqueScalingGroupReplicaIndex is a key for a label that sets the replica index of a PodCliqueScalingGroup within PodCliqueSet.
@@ -88,6 +95,8 @@ const (
 	// LabelComponentNameResourceClaim is the label key representing the component name
 	// for a DRA ResourceClaim managed by the resource sharing subsystem.
 	LabelComponentNameResourceClaim = "resource-claim"
+	// LabelComponentNamePodGangMap is the label key representing the component name for a PodGangMap resource.
+	LabelComponentNamePodGangMap = "pcs-podgangmap"
 )
 
 // GetDefaultLabelsForPodCliqueSetManagedResources gets the default labels for resources managed by PodCliqueSet.

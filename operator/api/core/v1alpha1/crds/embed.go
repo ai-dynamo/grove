@@ -27,6 +27,8 @@ var (
 	clusterTopologyCRD string
 	//go:embed grove.io_podcliquescalinggroups.yaml
 	podCliqueScalingGroupCRD string
+	//go:embed grove.io_podgangmaps.yaml
+	podGangMapCRD string
 )
 
 // PodCliqueCRD returns the PodClique CRD
@@ -47,4 +49,9 @@ func ClusterTopologyCRD() string {
 // PodCliqueScalingGroupCRD returns the PodCliqueScalingGroup CRD
 func PodCliqueScalingGroupCRD() string {
 	return podCliqueScalingGroupCRD
+}
+
+// PodGangMapCRD returns the PodGangMap CRD
+func PodGangMapCRD() string {
+	return podGangMapCRD
 }

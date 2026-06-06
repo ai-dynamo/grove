@@ -26,9 +26,11 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	ctvalidation "github.com/ai-dynamo/grove/operator/internal/webhook/admission/clustertopology/validation"
+	pclqvalidation "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pclq/validation"
 	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/authorization"
 	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/defaulting"
 	pcsvalidation "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/validation"
+	pcsgvalidation "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcsg/validation"
 
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
@@ -47,6 +49,16 @@ func Register(mgr manager.Manager, operatorCfg *configv1alpha1.OperatorConfigura
 	slog.Info("Registering webhook with manager", "handler", pcsvalidation.Name)
 	if err := pcsValidatingWebhook.RegisterWithManager(mgr); err != nil {
 		return fmt.Errorf("failed adding %s webhook handler: %v", pcsvalidation.Name, err)
+	}
+	pcsgValidatingWebhook := pcsgvalidation.NewHandler(mgr)
+	slog.Info("Registering webhook with manager", "handler", pcsgvalidation.Name)
+	if err := pcsgValidatingWebhook.RegisterWithManager(mgr); err != nil {
+		return fmt.Errorf("failed adding %s webhook handler: %v", pcsgvalidation.Name, err)
+	}
+	pclqValidatingWebhook := pclqvalidation.NewHandler(mgr)
+	slog.Info("Registering webhook with manager", "handler", pclqvalidation.Name)
+	if err := pclqValidatingWebhook.RegisterWithManager(mgr); err != nil {
+		return fmt.Errorf("failed adding %s webhook handler: %v", pclqvalidation.Name, err)
 	}
 	ctValidatingWebhook := ctvalidation.NewHandler(mgr, schedRegistry)
 	slog.Info("Registering webhook with manager", "handler", ctvalidation.Name)

@@ -43,19 +43,19 @@ type PCSGTypeConfig struct {
 	FQN  string // Fully-qualified PCSG name
 }
 
-// TopologyVerifier provides Grove topology verification using a controller-runtime client.
-type TopologyVerifier struct {
+// Verifier provides Grove topology verification using a controller-runtime client.
+type Verifier struct {
 	cl     client.Client
 	logger *log.Logger
 }
 
-// NewTopologyVerifier creates a TopologyVerifier bound to the given client.
-func NewTopologyVerifier(cl client.Client, logger *log.Logger) *TopologyVerifier {
-	return &TopologyVerifier{cl: cl, logger: logger}
+// NewVerifier creates a Verifier bound to the given client.
+func NewVerifier(cl client.Client, logger *log.Logger) *Verifier {
+	return &Verifier{cl: cl, logger: logger}
 }
 
 // VerifyClusterTopologyLevels verifies that a ClusterTopologyBinding CR exists with the expected topology levels.
-func (tv *TopologyVerifier) VerifyClusterTopologyLevels(ctx context.Context, name string, expectedLevels []corev1alpha1.TopologyLevel) error {
+func (tv *Verifier) VerifyClusterTopologyLevels(ctx context.Context, name string, expectedLevels []corev1alpha1.TopologyLevel) error {
 	var clusterTopology corev1alpha1.ClusterTopologyBinding
 	if err := tv.cl.Get(ctx, types.NamespacedName{Name: name}, &clusterTopology); err != nil {
 		return fmt.Errorf("failed to get ClusterTopologyBinding %s: %w", name, err)
@@ -77,7 +77,7 @@ func (tv *TopologyVerifier) VerifyClusterTopologyLevels(ctx context.Context, nam
 }
 
 // VerifyKAITopologyLevels verifies that a KAI Topology CR exists with the expected levels.
-func (tv *TopologyVerifier) VerifyKAITopologyLevels(ctx context.Context, name string, expectedKeys []string) error {
+func (tv *Verifier) VerifyKAITopologyLevels(ctx context.Context, name string, expectedKeys []string) error {
 	var kaiTopology kaitopologyv1alpha1.Topology
 	if err := tv.cl.Get(ctx, types.NamespacedName{Name: name}, &kaiTopology); err != nil {
 		return fmt.Errorf("failed to get KAI Topology %s: %w", name, err)
@@ -121,7 +121,7 @@ func FilterPodsByLabel(pods []v1.Pod, labelKey, labelValue string) []v1.Pod {
 }
 
 // VerifyPodsInSameTopologyDomain verifies that all pods are in the same topology domain.
-func (tv *TopologyVerifier) VerifyPodsInSameTopologyDomain(ctx context.Context, pods []v1.Pod, topologyKey string) error {
+func (tv *Verifier) VerifyPodsInSameTopologyDomain(ctx context.Context, pods []v1.Pod, topologyKey string) error {
 	if len(pods) == 0 {
 		return errors.New("no pods provided for topology verification")
 	}
@@ -167,7 +167,7 @@ func (tv *TopologyVerifier) VerifyPodsInSameTopologyDomain(ctx context.Context, 
 }
 
 // VerifyLabeledPodsInTopologyDomain filters pods by label, verifies count, and checks topology domain.
-func (tv *TopologyVerifier) VerifyLabeledPodsInTopologyDomain(ctx context.Context, allPods []v1.Pod, labelKey, labelValue string, expectedCount int, topologyKey string) error {
+func (tv *Verifier) VerifyLabeledPodsInTopologyDomain(ctx context.Context, allPods []v1.Pod, labelKey, labelValue string, expectedCount int, topologyKey string) error {
 	filteredPods := FilterPodsByLabel(allPods, labelKey, labelValue)
 	if len(filteredPods) != expectedCount {
 		return fmt.Errorf("expected %d pods with %s=%s, got %d",
@@ -178,7 +178,7 @@ func (tv *TopologyVerifier) VerifyLabeledPodsInTopologyDomain(ctx context.Contex
 }
 
 // VerifyPCSGReplicasInTopologyDomain verifies that each PCSG replica's pods are in the same topology domain.
-func (tv *TopologyVerifier) VerifyPCSGReplicasInTopologyDomain(ctx context.Context, allPods []v1.Pod, pcsgLabel string, replicaCount, podsPerReplica int, topologyLabel string) error {
+func (tv *Verifier) VerifyPCSGReplicasInTopologyDomain(ctx context.Context, allPods []v1.Pod, pcsgLabel string, replicaCount, podsPerReplica int, topologyLabel string) error {
 	for replica := 0; replica < replicaCount; replica++ {
 		replicaPods := FilterPodsByLabel(
 			FilterPodsByLabel(allPods, common.LabelPodCliqueScalingGroup, pcsgLabel),
@@ -196,7 +196,7 @@ func (tv *TopologyVerifier) VerifyPCSGReplicasInTopologyDomain(ctx context.Conte
 }
 
 // VerifyMultiTypePCSGReplicas verifies multiple PCSG types across replicas.
-func (tv *TopologyVerifier) VerifyMultiTypePCSGReplicas(ctx context.Context, allPods []v1.Pod, pcsgTypes []PCSGTypeConfig, replicasPerType, podsPerReplica int, topologyLabel string) error {
+func (tv *Verifier) VerifyMultiTypePCSGReplicas(ctx context.Context, allPods []v1.Pod, pcsgTypes []PCSGTypeConfig, replicasPerType, podsPerReplica int, topologyLabel string) error {
 	for _, pcsgType := range pcsgTypes {
 		for replica := 0; replica < replicasPerType; replica++ {
 			replicaPods := FilterPodsByLabel(
@@ -218,7 +218,7 @@ func (tv *TopologyVerifier) VerifyMultiTypePCSGReplicas(ctx context.Context, all
 }
 
 // CreateClusterTopology creates a ClusterTopologyBinding CR with the given name and levels.
-func (tv *TopologyVerifier) CreateClusterTopology(ctx context.Context, name string, levels []corev1alpha1.TopologyLevel) error {
+func (tv *Verifier) CreateClusterTopology(ctx context.Context, name string, levels []corev1alpha1.TopologyLevel) error {
 	ct := &corev1alpha1.ClusterTopologyBinding{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "grove.io/v1alpha1", Kind: "ClusterTopologyBinding"},
 		ObjectMeta: metav1.ObjectMeta{Name: name},
@@ -234,7 +234,7 @@ func (tv *TopologyVerifier) CreateClusterTopology(ctx context.Context, name stri
 // EnsureClusterTopology creates a ClusterTopologyBinding if it does not already exist.
 // If it already exists it is left unchanged. This is safe to call from multiple
 // tests that share the same cluster-scoped ClusterTopologyBinding.
-func (tv *TopologyVerifier) EnsureClusterTopology(ctx context.Context, name string, levels []corev1alpha1.TopologyLevel) error {
+func (tv *Verifier) EnsureClusterTopology(ctx context.Context, name string, levels []corev1alpha1.TopologyLevel) error {
 	ct := &corev1alpha1.ClusterTopologyBinding{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "grove.io/v1alpha1", Kind: "ClusterTopologyBinding"},
 		ObjectMeta: metav1.ObjectMeta{Name: name},
@@ -252,7 +252,7 @@ func (tv *TopologyVerifier) EnsureClusterTopology(ctx context.Context, name stri
 }
 
 // CreateClusterTopologyWithSchedulerReferences creates a ClusterTopologyBinding CR with levels and schedulerTopologyReferences.
-func (tv *TopologyVerifier) CreateClusterTopologyWithSchedulerReferences(ctx context.Context, name string, levels []corev1alpha1.TopologyLevel, refs []corev1alpha1.SchedulerTopologyBinding) error {
+func (tv *Verifier) CreateClusterTopologyWithSchedulerReferences(ctx context.Context, name string, levels []corev1alpha1.TopologyLevel, refs []corev1alpha1.SchedulerTopologyBinding) error {
 	ct := &corev1alpha1.ClusterTopologyBinding{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "grove.io/v1alpha1", Kind: "ClusterTopologyBinding"},
 		ObjectMeta: metav1.ObjectMeta{Name: name},
@@ -269,7 +269,7 @@ func (tv *TopologyVerifier) CreateClusterTopologyWithSchedulerReferences(ctx con
 }
 
 // UpdateClusterTopologyLevels fetches an existing ClusterTopologyBinding and updates its levels.
-func (tv *TopologyVerifier) UpdateClusterTopologyLevels(ctx context.Context, name string, levels []corev1alpha1.TopologyLevel) error {
+func (tv *Verifier) UpdateClusterTopologyLevels(ctx context.Context, name string, levels []corev1alpha1.TopologyLevel) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var ct corev1alpha1.ClusterTopologyBinding
 		if err := tv.cl.Get(ctx, types.NamespacedName{Name: name}, &ct); err != nil {
@@ -285,7 +285,7 @@ func (tv *TopologyVerifier) UpdateClusterTopologyLevels(ctx context.Context, nam
 }
 
 // DeleteClusterTopology deletes a ClusterTopologyBinding CR by name.
-func (tv *TopologyVerifier) DeleteClusterTopology(ctx context.Context, name string) error {
+func (tv *Verifier) DeleteClusterTopology(ctx context.Context, name string) error {
 	ct := &corev1alpha1.ClusterTopologyBinding{}
 	ct.Name = name
 	if err := tv.cl.Delete(ctx, ct); err != nil {
@@ -296,7 +296,7 @@ func (tv *TopologyVerifier) DeleteClusterTopology(ctx context.Context, name stri
 }
 
 // WaitForKAITopology polls until the KAI Topology exists with the expected level keys and owner reference.
-func (tv *TopologyVerifier) WaitForKAITopology(ctx context.Context, name string, expectedKeys []string, timeout, interval time.Duration) error {
+func (tv *Verifier) WaitForKAITopology(ctx context.Context, name string, expectedKeys []string, timeout, interval time.Duration) error {
 	fetchFn := waiter.FetchFunc[*kaitopologyv1alpha1.Topology](func(ctx context.Context) (*kaitopologyv1alpha1.Topology, error) {
 		var kaiTopology kaitopologyv1alpha1.Topology
 		err := tv.cl.Get(ctx, types.NamespacedName{Name: name}, &kaiTopology)
@@ -332,7 +332,7 @@ func (tv *TopologyVerifier) WaitForKAITopology(ctx context.Context, name string,
 }
 
 // WaitForClusterTopologyCondition polls until the ClusterTopologyBinding has a condition matching the expected type, status, and reason.
-func (tv *TopologyVerifier) WaitForClusterTopologyCondition(ctx context.Context, name, conditionType, expectedStatus, expectedReason string, timeout, interval time.Duration) error {
+func (tv *Verifier) WaitForClusterTopologyCondition(ctx context.Context, name, conditionType, expectedStatus, expectedReason string, timeout, interval time.Duration) error {
 	fetchFn := waiter.FetchFunc[*corev1alpha1.ClusterTopologyBinding](func(ctx context.Context) (*corev1alpha1.ClusterTopologyBinding, error) {
 		var ct corev1alpha1.ClusterTopologyBinding
 		err := tv.cl.Get(ctx, types.NamespacedName{Name: name}, &ct)
@@ -360,7 +360,7 @@ func (tv *TopologyVerifier) WaitForClusterTopologyCondition(ctx context.Context,
 }
 
 // WaitForPCSCondition polls until the PodCliqueSet has a condition matching the expected type, status, and reason.
-func (tv *TopologyVerifier) WaitForPCSCondition(ctx context.Context, namespace, name, conditionType, expectedStatus, expectedReason string, timeout, interval time.Duration) error {
+func (tv *Verifier) WaitForPCSCondition(ctx context.Context, namespace, name, conditionType, expectedStatus, expectedReason string, timeout, interval time.Duration) error {
 	fetchFn := waiter.FetchFunc[*corev1alpha1.PodCliqueSet](func(ctx context.Context) (*corev1alpha1.PodCliqueSet, error) {
 		var pcs corev1alpha1.PodCliqueSet
 		err := tv.cl.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &pcs)
@@ -389,7 +389,7 @@ func (tv *TopologyVerifier) WaitForPCSCondition(ctx context.Context, namespace, 
 
 // VerifyClusterTopologySchedulerStatuses checks that the ClusterTopologyBinding has the expected number of
 // SchedulerTopologyStatuses and returns them.
-func (tv *TopologyVerifier) VerifyClusterTopologySchedulerStatuses(ctx context.Context, name string, expectedCount int) ([]corev1alpha1.SchedulerTopologyStatus, error) {
+func (tv *Verifier) VerifyClusterTopologySchedulerStatuses(ctx context.Context, name string, expectedCount int) ([]corev1alpha1.SchedulerTopologyStatus, error) {
 	var clusterTopology corev1alpha1.ClusterTopologyBinding
 	if err := tv.cl.Get(ctx, types.NamespacedName{Name: name}, &clusterTopology); err != nil {
 		return nil, fmt.Errorf("failed to get ClusterTopologyBinding %s: %w", name, err)

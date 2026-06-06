@@ -1,4 +1,5 @@
 // /*
+
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -99,6 +100,8 @@ type PodCliqueSetStatus struct {
 	// the pods that match this selector.
 	Selector *string `json:"hpaPodSelector,omitempty"`
 	// PodGangStatuses captures the status for all the PodGang's that are part of the PodCliqueSet.
+	// Deprecated: Status of the PodGang should be captured as part of the PodGang resource.
+	// This field is not been set today and will be removed in the future.
 	PodGangStatutes []PodGangStatus `json:"podGangStatuses,omitempty"`
 	// CurrentGenerationHash is a hash value generated out of a collection of fields in a PodCliqueSet.
 	// Since only a subset of fields is taken into account when generating the hash, not every change in the PodCliqueSetSpec will
@@ -111,13 +114,33 @@ type PodCliqueSetStatus struct {
 	UpdateProgress *PodCliqueSetUpdateProgress `json:"updateProgress,omitempty"`
 }
 
+// UpdateStrategyType defines the type of update strategy for PodCliqueSet.
+// +kubebuilder:validation:Enum={Coherent,RollingRecreate,OnDelete}
+type UpdateStrategyType string
+
+const (
+	// CoherentStrategy indicates that replicas will be updated in Minimal Viable Units —
+	// MinAvailable replicas of each updated standalone PodClique plus MinAvailable replicas of each
+	// updated PodCliqueScalingGroup — scheduled atomically as a new PodGang. This guarantees
+	// that pods forming a minimum-viable serving unit are always version-compatible.
+	// This is the default update strategy.
+	CoherentStrategy UpdateStrategyType = "Coherent"
+	// RollingRecreateStrategy indicates that replicas will be progressively deleted and recreated
+	// one at a time when templates change. This applies to both pods (for standalone PodCliques)
+	// and replicas of PodCliqueScalingGroups.
+	RollingRecreateStrategy UpdateStrategyType = "RollingRecreate"
+	// OnDeleteStrategy indicates that replicas will only be updated when they are manually deleted.
+	// Changes to templates do not automatically trigger replica deletions.
+	OnDeleteStrategy UpdateStrategyType = "OnDelete"
+)
+
 // PodCliqueSetUpdateStrategy defines the update strategy for a PodCliqueSet.
 type PodCliqueSetUpdateStrategy struct {
 	// Type indicates the type of update strategy.
 	// This strategy applies uniformly to both standalone PodCliques and
 	// PodCliqueScalingGroups within the PodCliqueSet.
-	// Default is RollingRecreate.
-	// +kubebuilder:default=RollingRecreate
+	// Default is Coherent.
+	// +kubebuilder:default=Coherent
 	Type UpdateStrategyType `json:"type,omitempty"`
 }
 
@@ -159,6 +182,18 @@ type PodCliqueSetUpdateProgress struct {
 	// OnDelete update strategy.
 	// +optional
 	CurrentlyUpdating []PodCliqueSetReplicaUpdateProgress `json:"currentlyUpdating,omitempty"`
+	// UpdatedStandalonePodCliques captures the names of standalone PodCliques whose pod template was detected
+	// as out-of-date when this coherent update started. The set is frozen for the lifetime of the update
+	// (cleared together with UpdateEndedAt). The MVU machinery uses this set, in combination with the live PCS
+	// spec, to compute the MVU template; a fresh recomputation from live PCLQ hashes would shrink the set as
+	// pods roll over and break the MVU invariants. Only populated for the Coherent strategy.
+	// +optional
+	UpdatedStandalonePodCliques []string `json:"updatedStandalonePodCliques,omitempty"`
+	// UpdatedPodCliqueScalingGroups captures the config names of PodCliqueScalingGroups that had at least one
+	// constituent PodClique detected as out-of-date when this coherent update started. Same lifetime semantics
+	// as UpdatedStandalonePodCliques. Only populated for the Coherent strategy.
+	// +optional
+	UpdatedPodCliqueScalingGroups []string `json:"updatedPodCliqueScalingGroups,omitempty"`
 }
 
 // PodCliqueSetReplicaUpdateProgress captures the progress of an update for a specific PodCliqueSet replica.
@@ -172,6 +207,14 @@ type PodCliqueSetReplicaUpdateProgress struct {
 	// running the latest specification.
 	// +optional
 	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
+	// InFlightPodGangs are the names of PodGangs that are part of the current update
+	// iteration for this replica. The orchestrator waits for all of them to become
+	// available before advancing to the next iteration.
+	// +optional
+	InFlightPodGangs []string `json:"inFlightPodGangs,omitempty"`
+	// ErrorMessage captures the reason the update of this replica is stalled or failing, if any.
+	// +optional
+	ErrorMessage *string `json:"errorMessage,omitempty"`
 }
 
 // PodCliqueSetTemplateSpec defines a template spec for a PodGang.
@@ -487,24 +530,6 @@ type HeadlessServiceConfig struct {
 	PublishNotReadyAddresses bool `json:"publishNotReadyAddresses"`
 }
 
-// UpdateStrategyType defines the type of update strategy for PodCliqueSet.
-// +kubebuilder:validation:Enum={RollingRecreate,OnDelete}
-type UpdateStrategyType string
-
-const (
-	// RollingRecreateStrategy indicates that replicas will be progressively
-	// deleted and recreated one at a time, when templates change. This applies to
-	// both pods (for standalone PodCliques) and replicas of PodCliqueScalingGroups.
-	// RollingRecreateStrategy qualifies as an auto update strategy in Grove since
-	// it handles the orchestration entirely by itself.
-	// This is the default update strategy.
-	RollingRecreateStrategy UpdateStrategyType = "RollingRecreate"
-	// OnDeleteStrategy indicates that replicas will only be updated when
-	// they are manually deleted. Changes to templates do not automatically
-	// trigger replica deletions.
-	OnDeleteStrategy UpdateStrategyType = "OnDelete"
-)
-
 // CliqueStartupType defines the order in which each PodClique is started.
 // +kubebuilder:validation:Enum={CliqueStartupTypeAnyOrder,CliqueStartupTypeInOrder,CliqueStartupTypeExplicit}
 type CliqueStartupType string
@@ -520,6 +545,7 @@ const (
 )
 
 // PodGangStatus defines the status of a PodGang.
+// Deprecated
 type PodGangStatus struct {
 	// Name is the name of the PodGang.
 	Name string `json:"name"`
@@ -531,6 +557,7 @@ type PodGangStatus struct {
 
 // PodGangPhase represents the phase of a PodGang.
 // +kubebuilder:validation:Enum={Pending,Starting,Running,Failed,Succeeded}
+// Deprecated
 type PodGangPhase string
 
 const (

@@ -26,6 +26,7 @@ GOIMPORTS_REVISER := $(TOOLS_BIN_DIR)/goimports-reviser
 YQ                := $(TOOLS_BIN_DIR)/yq
 GO_ADD_LICENSE    := $(TOOLS_BIN_DIR)/addlicense
 SKAFFOLD          := $(TOOLS_BIN_DIR)/skaffold
+HELM              := $(TOOLS_BIN_DIR)/helm
 CRD_REF_DOCS      := $(TOOLS_BIN_DIR)/crd-ref-docs
 MDTOC			  := $(TOOLS_BIN_DIR)/mdtoc
 GOTESTSUM         := $(TOOLS_BIN_DIR)/gotestsum
@@ -38,7 +39,8 @@ GOLANGCI_LINT_VERSION     ?= v2.6.1
 GOIMPORTS_REVISER_VERSION ?= v3.10.0
 YQ_VERSION                ?= v4.48.1
 GO_ADD_LICENSE_VERSION    ?= v1.2.0
-SKAFFOLD_VERSION          ?= v2.16.1
+SKAFFOLD_VERSION          ?= v2.20.0
+HELM_VERSION              ?= v4.2.0
 CRD_REF_DOCS_VERSION      ?= v0.2.0
 MDTOC_VERSION             ?= latest
 GOTESTSUM_VERSION         ?= latest
@@ -87,6 +89,9 @@ $(GO_ADD_LICENSE):
 $(SKAFFOLD):
 	curl -Lo $(SKAFFOLD) https://storage.googleapis.com/skaffold/releases/$(SKAFFOLD_VERSION)/skaffold-$(SYSTEM_NAME)-$(SYSTEM_ARCH)
 	chmod +x $(SKAFFOLD)
+
+$(HELM):
+	curl -L https://get.helm.sh/helm-$(HELM_VERSION)-$(SYSTEM_NAME)-$(SYSTEM_ARCH).tar.gz | tar -xz --strip-components=1 -C $(TOOLS_BIN_DIR) $(SYSTEM_NAME)-$(SYSTEM_ARCH)/helm
 
 $(CRD_REF_DOCS):
 	GOBIN=$(abspath $(TOOLS_BIN_DIR)) go install github.com/elastic/crd-ref-docs@$(CRD_REF_DOCS_VERSION)

@@ -10977,13 +10977,14 @@ spec:
                   PodCliqueScalingGroups.
                 properties:
                   type:
-                    default: RollingRecreate
+                    default: Coherent
                     description: |-
                       Type indicates the type of update strategy.
                       This strategy applies uniformly to both standalone PodCliques and
                       PodCliqueScalingGroups within the PodCliqueSet.
-                      Default is RollingRecreate.
+                      Default is Coherent.
                     enum:
+                    - Coherent
                     - RollingRecreate
                     - OnDelete
                     type: string
@@ -11107,10 +11108,14 @@ spec:
                 format: int64
                 type: integer
               podGangStatuses:
-                description: PodGangStatuses captures the status for all the PodGang's
-                  that are part of the PodCliqueSet.
+                description: |-
+                  PodGangStatuses captures the status for all the PodGang's that are part of the PodCliqueSet.
+                  Deprecated: Status of the PodGang should be captured as part of the PodGang resource.
+                  This field is not been set today and will be removed in the future.
                 items:
-                  description: PodGangStatus defines the status of a PodGang.
+                  description: |-
+                    PodGangStatus defines the status of a PodGang.
+                    Deprecated
                   properties:
                     conditions:
                       description: Conditions represents the latest available observations
@@ -11205,6 +11210,18 @@ spec:
                       description: PodCliqueSetReplicaUpdateProgress captures the
                         progress of an update for a specific PodCliqueSet replica.
                       properties:
+                        errorMessage:
+                          description: ErrorMessage captures the reason the update
+                            of this replica is stalled or failing, if any.
+                          type: string
+                        inFlightPodGangs:
+                          description: |-
+                            InFlightPodGangs are the names of PodGangs that are part of the current update
+                            iteration for this replica. The orchestrator waits for all of them to become
+                            available before advancing to the next iteration.
+                          items:
+                            type: string
+                          type: array
                         replicaIndex:
                           description: ReplicaIndex is the replica index of the PodCliqueSet
                             that is being updated.
@@ -11256,6 +11273,14 @@ spec:
                       for the PodCliqueSet.
                     format: date-time
                     type: string
+                  updatedPodCliqueScalingGroups:
+                    description: |-
+                      UpdatedPodCliqueScalingGroups captures the config names of PodCliqueScalingGroups that had at least one
+                      constituent PodClique detected as out-of-date when this coherent update started. Same lifetime semantics
+                      as UpdatedStandalonePodCliques. Only populated for the Coherent strategy.
+                    items:
+                      type: string
+                    type: array
                   updatedPodCliqueScalingGroupsCount:
                     default: 0
                     description: |-
@@ -11270,6 +11295,16 @@ spec:
                       generation hash. Recomputed each reconcile from child generation-hash labels.
                     format: int32
                     type: integer
+                  updatedStandalonePodCliques:
+                    description: |-
+                      UpdatedStandalonePodCliques captures the names of standalone PodCliques whose pod template was detected
+                      as out-of-date when this coherent update started. The set is frozen for the lifetime of the update
+                      (cleared together with UpdateEndedAt). The MVU machinery uses this set, in combination with the live PCS
+                      spec, to compute the MVU template; a fresh recomputation from live PCLQ hashes would shrink the set as
+                      pods roll over and break the MVU invariants. Only populated for the Coherent strategy.
+                    items:
+                      type: string
+                    type: array
                 type: object
               updatedReplicas:
                 default: 0

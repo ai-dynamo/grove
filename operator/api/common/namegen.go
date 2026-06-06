@@ -77,41 +77,22 @@ func GeneratePodCliqueScalingGroupName(pcsNameReplica ResourceNameReplica, pclqS
 	return fmt.Sprintf("%s-%d-%s", pcsNameReplica.Name, pcsNameReplica.Replica, pclqScalingGroupName)
 }
 
-// GenerateBasePodGangName generates a base PodGang name for a PodCliqueSet replica.
-// This is used for PodGangs that are not part of scaled scaling group replicas.
+// GenerateBasePodGangName generates a legacy base PodGang name (shape: `<pcs-name>-<pcs-replica-index>`)
+// for a PodCliqueSet replica. All existing PodCliqueSet resources that already have base PodGang with
+// this naming scheme will be preserved till they are updated via coherent update. For all new PodCliqueSet resources
+// this naming scheme will no longer be used.
+// Use GeneratePodGangName instead for all newly created PodGangs.
 func GenerateBasePodGangName(pcsNameReplica ResourceNameReplica) string {
 	return fmt.Sprintf("%s-%d", pcsNameReplica.Name, pcsNameReplica.Replica)
 }
 
-// CreatePodGangNameFromPCSGFQN generates the PodGang name for a replica of a PodCliqueScalingGroup
-// when the PCSG name is already fully qualified.
+// CreatePodGangNameFromPCSGFQN generates a legacy scaled PodGang name (shape: `<pcsg-fqn>-<index>`)
+// for each replica of PodCliqueScalingGroup above the minAvailable. All existing PodCliqueSet resources that
+// already have scaled PodGangs with this naming scheme will be preserved till they are updated via coherent update.
+// For all new PodCliqueSet resources this naming scheme to create scaled PodGangs will no longer be used.
+// Use GeneratePodGangName instead for all newly created PodGangs.
 func CreatePodGangNameFromPCSGFQN(pcsgFQN string, scaledPodGangIndex int) string {
 	return fmt.Sprintf("%s-%d", pcsgFQN, scaledPodGangIndex)
-}
-
-// GeneratePodGangNameForPodCliqueOwnedByPodCliqueSet generates the PodGang name for a PodClique
-// that is directly owned by a PodCliqueSet.
-func GeneratePodGangNameForPodCliqueOwnedByPodCliqueSet(pcs *v1alpha1.PodCliqueSet, pcsReplicaIndex int) string {
-	return GenerateBasePodGangName(ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex})
-}
-
-// GeneratePodGangNameForPodCliqueOwnedByPCSG generates the PodGang name for a PodClique
-// that is owned by a PodCliqueScalingGroup, using the PCSG object directly (no config lookup needed).
-func GeneratePodGangNameForPodCliqueOwnedByPCSG(pcs *v1alpha1.PodCliqueSet, pcsReplicaIndex int, pcsg *v1alpha1.PodCliqueScalingGroup, pcsgReplicaIndex int) string {
-	// MinAvailable should always be non-nil due to kubebuilder default and defaulting webhook
-	minAvailable := *pcsg.Spec.MinAvailable
-
-	// Apply the same logic as PodGang creation:
-	// Replicas 0..(minAvailable-1) → PCS replica PodGang (base PodGang)
-	// Replicas minAvailable+ → Scaled PodGangs (0-based indexing)
-	if pcsgReplicaIndex < int(minAvailable) {
-		return GenerateBasePodGangName(ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex})
-	} else {
-		// Convert scaling group replica index to 0-based scaled PodGang index
-		scaledPodGangIndex := pcsgReplicaIndex - int(minAvailable)
-		// Use the PCSG name directly (it's already the FQN)
-		return CreatePodGangNameFromPCSGFQN(pcsg.Name, scaledPodGangIndex)
-	}
 }
 
 // ExtractScalingGroupNameFromPCSGFQN extracts the scaling group name from a PodCliqueScalingGroup FQN.
@@ -119,4 +100,27 @@ func GeneratePodGangNameForPodCliqueOwnedByPCSG(pcs *v1alpha1.PodCliqueSet, pcsR
 func ExtractScalingGroupNameFromPCSGFQN(pcsgFQN string, pcsNameReplica ResourceNameReplica) string {
 	prefix := fmt.Sprintf("%s-%d-", pcsNameReplica.Name, pcsNameReplica.Replica)
 	return pcsgFQN[len(prefix):]
+}
+
+// GeneratePodGangName generates a PodGang name following the unified naming convention
+// for all PodGangs created for the PodCliqueSet.
+// Format: <pcs-name>-<pcs-replica-index>-<unique-suffix>
+//
+// `uniqueSuffix` is opaque to this function. The caller is responsible for ensuring that
+// every name produced for the same (pcsName, replicaIndex) is unique — both across
+// reconciles and within a single reconcile call when generating multiple names.
+//
+// This is the unified PodGang naming convention and applies to all update strategies
+// including Coherent and RollingRecreate, as well as initial deployment. Over time,
+// the legacy BasePodGang and ScaledPodGang naming conventions
+// (GenerateBasePodGangName, CreatePodGangNameFromPCSGFQN) will be retired in favor
+// of this scheme.
+func GeneratePodGangName(pcsName string, replicaIndex int32, uniqueSuffix string) string {
+	return fmt.Sprintf("%s-%d-%s", pcsName, replicaIndex, uniqueSuffix)
+}
+
+// GeneratePodGangMapName generates a PodGangMap resource name for a PodCliqueSet replica.
+// One PodGangMap exists per PodCliqueSet replica, named <pcs-name>-<pcs-replica-index>.
+func GeneratePodGangMapName(pcsNameReplica ResourceNameReplica) string {
+	return fmt.Sprintf("%s-%d", pcsNameReplica.Name, pcsNameReplica.Replica)
 }

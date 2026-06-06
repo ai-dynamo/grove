@@ -13,6 +13,7 @@
 - [PodClique](#podclique)
 - [PodCliqueScalingGroup](#podcliquescalinggroup)
 - [PodCliqueSet](#podcliqueset)
+- [PodGangMap](#podgangmap)
 
 
 
@@ -392,6 +393,7 @@ _Appears in:_
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#condition-v1-meta) array_ | Conditions represents the latest available observations of the PodCliqueScalingGroup by its controller. |  |  |
 | `currentPodCliqueSetGenerationHash` _string_ | CurrentPodCliqueSetGenerationHash establishes a correlation to PodCliqueSet generation hash indicating<br />that the spec of the PodCliqueSet at this generation is fully realized in the PodCliqueScalingGroup. |  |  |
 | `updateProgress` _[PodCliqueScalingGroupUpdateProgress](#podcliquescalinggroupupdateprogress)_ | UpdateProgress provides details about the ongoing update of the PodCliqueScalingGroup. |  |  |
+| `podGangMapping` _object (keys:string, values:integer array)_ | PodGangMapping captures the desired state of per-PodGang replica distribution.<br />During an update, this is derived from PodGangMap resource as that is a single source of truth during updates.<br />In steady state (post update) this field becomes a source of truth. Any scale-in and scale-out of the PodCliqueScalingGroup<br />is reflected in the desired state. PodGangMap resource will be synced from the desired state as captured in this<br />field during steady state.<br />Key is the PodGang name; value is the list of PCSG replica indices associated to that PodGang. |  |  |
 
 
 #### PodCliqueScalingGroupUpdateProgress
@@ -450,6 +452,8 @@ _Appears in:_
 | `replicaIndex` _integer_ | ReplicaIndex is the replica index of the PodCliqueSet that is being updated. |  |  |
 | `updateStartedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateStartedAt is the time at which the update started for this PodCliqueSet replica index. |  |  |
 | `updateEndedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateEndedAt is the time at which the update ended for this PodCliqueSet replica index.<br />The update ends when all child resources have been updated with the latest specification, when all Pods are<br />running the latest specification. |  |  |
+| `inFlightPodGangs` _string array_ | InFlightPodGangs are the names of PodGangs that are part of the current update<br />iteration for this replica. The orchestrator waits for all of them to become<br />available before advancing to the next iteration. |  |  |
+| `errorMessage` _string_ | ErrorMessage captures the reason the update of this replica is stalled or failing, if any. |  |  |
 
 
 #### PodCliqueSetSpec
@@ -490,7 +494,7 @@ _Appears in:_
 | `updatedReplicas` _integer_ | UpdatedReplicas is the number of replicas that have been updated to the desired revision of the PodCliqueSet. | 0 |  |
 | `availableReplicas` _integer_ | AvailableReplicas is the number of PodCliqueSet replicas that are available.<br />A PodCliqueSet replica is considered available when all standalone PodCliques within that replica<br />have MinAvailableBreached condition = False AND all PodCliqueScalingGroups (PCSG) within that replica<br />have MinAvailableBreached condition = False. | 0 |  |
 | `hpaPodSelector` _string_ | Selector is the label selector that determines which pods are part of the PodGang.<br />PodGang is a unit of scale and this selector is used by HPA to scale the PodGang based on metrics captured for<br />the pods that match this selector. |  |  |
-| `podGangStatuses` _[PodGangStatus](#podgangstatus) array_ | PodGangStatuses captures the status for all the PodGang's that are part of the PodCliqueSet. |  |  |
+| `podGangStatuses` _[PodGangStatus](#podgangstatus) array_ | PodGangStatuses captures the status for all the PodGang's that are part of the PodCliqueSet.<br />Deprecated: Status of the PodGang should be captured as part of the PodGang resource.<br />This field is not been set today and will be removed in the future. |  |  |
 | `currentGenerationHash` _string_ | CurrentGenerationHash is a hash value generated out of a collection of fields in a PodCliqueSet.<br />Since only a subset of fields is taken into account when generating the hash, not every change in the PodCliqueSetSpec will<br />be accounted for when generating this hash value. A field in PodCliqueSetSpec is included if a change to it triggers<br />a rolling recreate of PodCliques and/or PodCliqueScalingGroups.<br />Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value<br />then an update needs to be triggered. |  |  |
 | `updateProgress` _[PodCliqueSetUpdateProgress](#podcliquesetupdateprogress)_ | UpdateProgress represents the progress of an update. |  |  |
 
@@ -544,6 +548,8 @@ _Appears in:_
 | `updatedPodCliqueScalingGroupsCount` _integer_ | UpdatedPodCliqueScalingGroupsCount is the number of PodCliqueScalingGroups that have been updated to the<br />desired PodCliqueSet generation hash. | 0 |  |
 | `totalPodCliqueScalingGroupsCount` _integer_ | TotalPodCliqueScalingGroupsCount is the total number of PodCliqueScalingGroups expected to exist for the<br />PodCliqueSet at the current spec. | 0 |  |
 | `currentlyUpdating` _[PodCliqueSetReplicaUpdateProgress](#podcliquesetreplicaupdateprogress) array_ | CurrentlyUpdating captures the progress of the PodCliqueSet replicas that are currently being updated.<br />This field is only set for auto update strategies where Grove handles the orchestration. It is not set for the<br />OnDelete update strategy. |  |  |
+| `updatedStandalonePodCliques` _string array_ | UpdatedStandalonePodCliques captures the names of standalone PodCliques whose pod template was detected<br />as out-of-date when this coherent update started. The set is frozen for the lifetime of the update<br />(cleared together with UpdateEndedAt). The MVU machinery uses this set, in combination with the live PCS<br />spec, to compute the MVU template; a fresh recomputation from live PCLQ hashes would shrink the set as<br />pods roll over and break the MVU invariants. Only populated for the Coherent strategy. |  |  |
+| `updatedPodCliqueScalingGroups` _string array_ | UpdatedPodCliqueScalingGroups captures the config names of PodCliqueScalingGroups that had at least one<br />constituent PodClique detected as out-of-date when this coherent update started. Same lifetime semantics<br />as UpdatedStandalonePodCliques. Only populated for the Coherent strategy. |  |  |
 
 
 #### PodCliqueSetUpdateStrategy
@@ -559,7 +565,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `type` _[UpdateStrategyType](#updatestrategytype)_ | Type indicates the type of update strategy.<br />This strategy applies uniformly to both standalone PodCliques and<br />PodCliqueScalingGroups within the PodCliqueSet.<br />Default is RollingRecreate. | RollingRecreate | Enum: [RollingRecreate OnDelete] <br /> |
+| `type` _[UpdateStrategyType](#updatestrategytype)_ | Type indicates the type of update strategy.<br />This strategy applies uniformly to both standalone PodCliques and<br />PodCliqueScalingGroups within the PodCliqueSet.<br />Default is Coherent. | Coherent | Enum: [Coherent RollingRecreate OnDelete] <br /> |
 
 
 #### PodCliqueSpec
@@ -609,6 +615,7 @@ _Appears in:_
 | `currentPodCliqueSetGenerationHash` _string_ | CurrentPodCliqueSetGenerationHash establishes a correlation to PodCliqueSet generation hash indicating<br />that the spec of the PodCliqueSet at this generation is fully realized in the PodClique. |  |  |
 | `currentPodTemplateHash` _string_ | CurrentPodTemplateHash establishes a correlation to PodClique template hash indicating<br />that the spec of the PodClique at this template hash is fully realized in the PodClique. |  |  |
 | `updateProgress` _[PodCliqueUpdateProgress](#podcliqueupdateprogress)_ | UpdateProgress provides details about the ongoing update of the PodClique. |  |  |
+| `podGangMapping` _object (keys:string, values:integer)_ | PodGangMapping captures the desired state of per-PodGang pod distribution.<br />During an update, this is derived from PodGangMap resource as that is a single source of truth during updates.<br />In steady state (post update) this field becomes a source of truth. Any scale-in and scale-out of the PodClique<br />is reflected in the desired state. PodGangMap resource will be synced from the desired state as captured in this<br />field during steady state.<br />Key is the PodGang name; value is the number of pods of this PodClique associated to that PodGang. |  |  |
 
 
 #### PodCliqueTemplateSpec
@@ -652,11 +659,69 @@ _Appears in:_
 | `readyPodsSelectedToUpdate` _[PodsSelectedToUpdate](#podsselectedtoupdate)_ | ReadyPodsSelectedToUpdate captures the pod names of ready Pods that are either currently being updated or have<br />been previously updated. This field is only set for auto update strategies where Grove orchestrates Pod deletions.<br />For the OnDelete strategy this field is not set, because Pod replacement is initiated by user-driven Pod deletions. |  |  |
 
 
+#### PodGangEntry
+
+
+
+PodGangEntry describes the desired composition of a single PodGang.
+
+
+
+_Appears in:_
+- [PodGangMapSpec](#podgangmapspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name is the name of the PodGang this entry corresponds to. |  |  |
+| `podCliqueSetGenerationHash` _string_ | PodCliqueSetGenerationHash is the PodCliqueSet generation hash that pods in this PodGang<br />must match. Used by PodClique and PodCliqueScalingGroup reconcilers to create pods at the<br />correct spec version and to distinguish old pods from new pods during a coherent update. |  |  |
+| `podCliques` _object (keys:string, values:integer)_ | PodCliques maps standalone PodClique name to the number of pods that belong to this PodGang.<br />Only standalone PodCliques (not owned by a PodCliqueScalingGroup) are listed here.<br />PodCliques owned by a PodCliqueScalingGroup derive their PodGang association via<br />PCSGReplicaIndices below. |  |  |
+| `pcsgReplicaIndices` _object (keys:string, values:integer array)_ | PCSGReplicaIndices maps PodCliqueScalingGroup config name to the PCSG replica indices<br />that belong to this PodGang. The number of replicas is len(slice). Indices are stable<br />identities that survive entry reshuffles, so a PodClique reconciler for a PodCliqueScalingGroup-<br />owned PodClique can find its target PodGang by looking up its replica index here. |  |  |
+| `dependsOn` _string array_ | DependsOn lists the PodGang names within the same PodCliqueSet replica whose pods must be<br />scheduled before pods in this PodGang have their scheduling gates removed. |  |  |
+
+
+#### PodGangMap
+
+
+
+PodGangMap is the desired-state mapping between PodGangs and their constituent
+PodClique and PodCliqueScalingGroup pod counts for a single PodCliqueSet replica.
+One PodGangMap resource exists per PodCliqueSet replica, named <pcs-name>-<pcs-replica-index>.
+
+
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `grove.io/v1alpha1` | | |
+| `kind` _string_ | `PodGangMap` | | |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `spec` _[PodGangMapSpec](#podgangmapspec)_ | Spec defines the desired PodGang-to-pod-count mapping for this PodCliqueSet replica. |  |  |
+
+
+#### PodGangMapSpec
+
+
+
+PodGangMapSpec defines the desired PodGang composition for a PodCliqueSet replica.
+
+
+
+_Appears in:_
+- [PodGangMap](#podgangmap)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `podCliqueSetReplicaIndex` _integer_ | PodCliqueSetReplicaIndex is the index of the PodCliqueSet replica this map belongs to. |  |  |
+| `entries` _[PodGangEntry](#podgangentry) array_ | Entries is the ordered list of desired PodGangs for this PodCliqueSet replica.<br />Each entry corresponds to one PodGang and specifies its pod and replica counts. |  |  |
+
+
 #### PodGangPhase
 
 _Underlying type:_ _string_
 
 PodGangPhase represents the phase of a PodGang.
+Deprecated
 
 _Validation:_
 - Enum: [Pending Starting Running Failed Succeeded]
@@ -678,6 +743,7 @@ _Appears in:_
 
 
 PodGangStatus defines the status of a PodGang.
+Deprecated
 
 
 
@@ -900,15 +966,16 @@ _Underlying type:_ _string_
 UpdateStrategyType defines the type of update strategy for PodCliqueSet.
 
 _Validation:_
-- Enum: [RollingRecreate OnDelete]
+- Enum: [Coherent RollingRecreate OnDelete]
 
 _Appears in:_
 - [PodCliqueSetUpdateStrategy](#podcliquesetupdatestrategy)
 
 | Field | Description |
 | --- | --- |
-| `RollingRecreate` | RollingRecreateStrategy indicates that replicas will be progressively<br />deleted and recreated one at a time, when templates change. This applies to<br />both pods (for standalone PodCliques) and replicas of PodCliqueScalingGroups.<br />RollingRecreateStrategy qualifies as an auto update strategy in Grove since<br />it handles the orchestration entirely by itself.<br />This is the default update strategy.<br /> |
-| `OnDelete` | OnDeleteStrategy indicates that replicas will only be updated when<br />they are manually deleted. Changes to templates do not automatically<br />trigger replica deletions.<br /> |
+| `Coherent` | CoherentStrategy indicates that replicas will be updated in Minimal Viable Units —<br />MinAvailable replicas of each updated standalone PodClique plus MinAvailable replicas of each<br />updated PodCliqueScalingGroup — scheduled atomically as a new PodGang. This guarantees<br />that pods forming a minimum-viable serving unit are always version-compatible.<br />This is the default update strategy.<br /> |
+| `RollingRecreate` | RollingRecreateStrategy indicates that replicas will be progressively deleted and recreated<br />one at a time when templates change. This applies to both pods (for standalone PodCliques)<br />and replicas of PodCliqueScalingGroups.<br /> |
+| `OnDelete` | OnDeleteStrategy indicates that replicas will only be updated when they are manually deleted.<br />Changes to templates do not automatically trigger replica deletions.<br /> |
 
 
 
