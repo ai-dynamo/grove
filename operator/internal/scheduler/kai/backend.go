@@ -60,7 +60,7 @@ func (b *schedulerBackend) Name() string {
 }
 
 // Init initializes the KAI backend
-func (b *schedulerBackend) Init() error {
+func (b *schedulerBackend) Init(_ client.Client) error {
 	return nil
 }
 

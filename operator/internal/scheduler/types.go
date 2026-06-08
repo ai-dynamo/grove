@@ -40,7 +40,7 @@ type Backend interface {
 
 	// Init provides a hook to initialize/setup one-time scheduler resources,
 	// called at the startup of grove operator.
-	Init() error
+	Init(directClient client.Client) error
 
 	// SyncPodGang synchronizes (creates/updates) scheduler-specific resources for a PodGang
 	// reacting to a creation or update of a PodGang resource.

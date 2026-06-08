@@ -92,7 +92,7 @@ func NewFakeSchedulerBackend(name string) scheduler.Backend { return &FakeSchedu
 func (s *FakeSchedulerBackend) Name() string { return s.name }
 
 // Init is a no-op for the fake backend.
-func (s *FakeSchedulerBackend) Init() error { return nil }
+func (s *FakeSchedulerBackend) Init(_ client.Client) error { return nil }
 
 // SyncPodGang is a no-op for the fake backend.
 func (s *FakeSchedulerBackend) SyncPodGang(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {

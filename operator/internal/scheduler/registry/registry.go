@@ -24,6 +24,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kai"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kube"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler/volcano"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -42,10 +43,10 @@ type registry struct {
 // New creates a scheduler.Registry by initializing backend instances for each
 // profile in cfg.Profiles.
 // NOTE: This function should be called once during the lifecycle of the Grove operator.
-func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, cfg configv1alpha1.SchedulerConfiguration) (scheduler.Registry, error) {
+func New(cl, directClient client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, cfg configv1alpha1.SchedulerConfiguration) (scheduler.Registry, error) {
 	reg := &registry{backends: make(map[string]scheduler.Backend)}
 	for _, p := range cfg.Profiles {
-		backend, err := newSchedulerBackend(cl, scheme, eventRecorder, p)
+		backend, err := newSchedulerBackend(cl, directClient, scheme, eventRecorder, p)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize %s backend: %w", p.Name, err)
 		}
@@ -74,27 +75,6 @@ func (r *registry) GetOrDefault(name string) scheduler.Backend {
 	return r.backends[name]
 }
 
-// newSchedulerBackend creates and initializes a Backend for the given profile.
-// NOTE: For any newly supported backend, add a case for it in the switch statement.
-func newSchedulerBackend(cl client.Client, scheme *runtime.Scheme, rec record.EventRecorder, p configv1alpha1.SchedulerProfile) (scheduler.Backend, error) {
-	switch p.Name {
-	case configv1alpha1.SchedulerNameKube:
-		b := kube.New(cl, scheme, rec, p)
-		if err := b.Init(); err != nil {
-			return nil, err
-		}
-		return b, nil
-	case configv1alpha1.SchedulerNameKai:
-		b := kai.New(cl, scheme, rec, p)
-		if err := b.Init(); err != nil {
-			return nil, err
-		}
-		return b, nil
-	default:
-		return nil, fmt.Errorf("scheduler profile %q is not supported", p.Name)
-	}
-}
-
 // All returns all registered scheduler backends keyed by name.
 func (r *registry) All() map[string]scheduler.Backend {
 	result := make(map[string]scheduler.Backend, len(r.backends))
@@ -111,4 +91,24 @@ func (r *registry) AllTopologyAware() map[string]scheduler.TopologyAwareBackend 
 		}
 	}
 	return result
+}
+
+// newSchedulerBackend creates and initializes a Backend for the given profile.
+// NOTE: For any newly supported backend, add a case for it in the switch statement.
+func newSchedulerBackend(cl, directClient client.Client, scheme *runtime.Scheme, rec record.EventRecorder, p configv1alpha1.SchedulerProfile) (scheduler.Backend, error) {
+	var b scheduler.Backend
+	switch p.Name {
+	case configv1alpha1.SchedulerNameKube:
+		b = kube.New(cl, scheme, rec, p)
+	case configv1alpha1.SchedulerNameKai:
+		b = kai.New(cl, scheme, rec, p)
+	case configv1alpha1.SchedulerNameVolcano:
+		b = volcano.New(cl, scheme, rec, p)
+	default:
+		return nil, fmt.Errorf("scheduler profile %q is not supported", p.Name)
+	}
+	if err := b.Init(directClient); err != nil {
+		return nil, err
+	}
+	return b, nil
 }

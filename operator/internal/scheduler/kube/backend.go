@@ -61,7 +61,7 @@ func (b *schedulerBackend) Name() string {
 
 // Init initializes the Kube backend
 // For Kube backend, no special initialization is needed
-func (b *schedulerBackend) Init() error {
+func (b *schedulerBackend) Init(_ client.Client) error {
 	return nil
 }
 

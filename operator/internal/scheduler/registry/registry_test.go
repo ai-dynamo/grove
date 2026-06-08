@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // TestNewRegistry tests New with different scheduler profiles.
@@ -51,7 +52,7 @@ func TestNewRegistry(t *testing.T) {
 		},
 		{
 			name:          "unsupported scheduler",
-			schedulerName: "volcano",
+			schedulerName: "unknown-scheduler",
 			wantErr:       true,
 			errContains:   "not supported",
 		},
@@ -68,7 +69,7 @@ func TestNewRegistry(t *testing.T) {
 				},
 				DefaultProfileName: string(tt.schedulerName),
 			}
-			reg, err := New(cl, cl.Scheme(), recorder, cfg)
+			reg, err := New(cl, cl, cl.Scheme(), recorder, cfg)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -96,11 +97,27 @@ func TestNewRegistry(t *testing.T) {
 			},
 			DefaultProfileName: string(configv1alpha1.SchedulerNameKai),
 		}
-		reg, err := New(cl, cl.Scheme(), recorder, cfg)
+		reg, err := New(cl, cl, cl.Scheme(), recorder, cfg)
 		require.NoError(t, err)
 		require.NotNil(t, reg.Get(string(configv1alpha1.SchedulerNameKai)))
 		require.NotNil(t, reg.Get(string(configv1alpha1.SchedulerNameKube)))
 		assert.Equal(t, reg.GetDefault(), reg.Get(string(configv1alpha1.SchedulerNameKai)))
+	})
+
+	t.Run("volcano scheduler initialization", func(t *testing.T) {
+		cl := testutils.CreateDefaultFakeClient([]client.Object{testutils.NewVolcanoPodGroupCRD(true)})
+
+		recorder := record.NewFakeRecorder(10)
+		cfg := configv1alpha1.SchedulerConfiguration{
+			Profiles: []configv1alpha1.SchedulerProfile{
+				{Name: configv1alpha1.SchedulerNameVolcano},
+			},
+			DefaultProfileName: string(configv1alpha1.SchedulerNameVolcano),
+		}
+		reg, err := New(cl, cl, cl.Scheme(), recorder, cfg)
+		require.NoError(t, err)
+		require.NotNil(t, reg.GetDefault())
+		assert.Equal(t, string(configv1alpha1.SchedulerNameVolcano), reg.GetDefault().Name())
 	})
 }
 
