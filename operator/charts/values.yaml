@@ -20,6 +20,9 @@ resources:
     memory: 128Mi
     ephemeral-storage: 128Mi
 
+# Node selector to constrain the operator pod to nodes with matching labels.
+nodeSelector: {}
+
 # Set of tolerations to apply to the operator deployment.
 tolerations: [ ]
 

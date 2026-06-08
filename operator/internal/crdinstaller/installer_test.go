@@ -92,7 +92,7 @@ func TestInstallCRDs_AllApplied(t *testing.T) {
 		"podcliques.grove.io",
 		"podcliquesets.grove.io",
 		"podcliquescalinggroups.grove.io",
-		"clustertopologies.grove.io",
+		"clustertopologybindings.grove.io",
 		"podgangs.scheduler.grove.io",
 	} {
 		obj := &unstructured.Unstructured{}

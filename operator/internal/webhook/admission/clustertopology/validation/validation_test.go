@@ -43,15 +43,15 @@ func newTestHandler() *Handler {
 
 func newTestClusterTopology(
 	levels []grovecorev1alpha1.TopologyLevel,
-	refs []grovecorev1alpha1.SchedulerTopologyReference,
-) *grovecorev1alpha1.ClusterTopology {
-	return &grovecorev1alpha1.ClusterTopology{
+	refs []grovecorev1alpha1.SchedulerTopologyBinding,
+) *grovecorev1alpha1.ClusterTopologyBinding {
+	return &grovecorev1alpha1.ClusterTopologyBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-topology",
 		},
-		Spec: grovecorev1alpha1.ClusterTopologySpec{
-			Levels:                      levels,
-			SchedulerTopologyReferences: refs,
+		Spec: grovecorev1alpha1.ClusterTopologyBindingSpec{
+			Levels:                    levels,
+			SchedulerTopologyBindings: refs,
 		},
 	}
 }
@@ -60,7 +60,7 @@ func TestValidateCreate(t *testing.T) {
 	tests := []struct {
 		name        string
 		levels      []grovecorev1alpha1.TopologyLevel
-		refs        []grovecorev1alpha1.SchedulerTopologyReference
+		refs        []grovecorev1alpha1.SchedulerTopologyBinding
 		expectError bool
 		errContains string
 	}{
@@ -85,7 +85,7 @@ func TestValidateCreate(t *testing.T) {
 			levels: []grovecorev1alpha1.TopologyLevel{
 				{Domain: grovecorev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
 			},
-			refs: []grovecorev1alpha1.SchedulerTopologyReference{
+			refs: []grovecorev1alpha1.SchedulerTopologyBinding{
 				{SchedulerName: string(configv1alpha1.SchedulerNameKai), TopologyReference: "kai-topology"},
 			},
 			expectError: false,
@@ -122,7 +122,7 @@ func TestValidateCreate(t *testing.T) {
 			levels: []grovecorev1alpha1.TopologyLevel{
 				{Domain: grovecorev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
 			},
-			refs: []grovecorev1alpha1.SchedulerTopologyReference{
+			refs: []grovecorev1alpha1.SchedulerTopologyBinding{
 				{SchedulerName: string(configv1alpha1.SchedulerNameKai), TopologyReference: "kai-topology-a"},
 				{SchedulerName: string(configv1alpha1.SchedulerNameKai), TopologyReference: "kai-topology-b"},
 			},
@@ -134,7 +134,7 @@ func TestValidateCreate(t *testing.T) {
 			levels: []grovecorev1alpha1.TopologyLevel{
 				{Domain: grovecorev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
 			},
-			refs: []grovecorev1alpha1.SchedulerTopologyReference{
+			refs: []grovecorev1alpha1.SchedulerTopologyBinding{
 				{SchedulerName: "unknown-scheduler", TopologyReference: "topology"},
 			},
 			expectError: true,
@@ -145,7 +145,7 @@ func TestValidateCreate(t *testing.T) {
 			levels: []grovecorev1alpha1.TopologyLevel{
 				{Domain: grovecorev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
 			},
-			refs: []grovecorev1alpha1.SchedulerTopologyReference{
+			refs: []grovecorev1alpha1.SchedulerTopologyBinding{
 				{SchedulerName: string(configv1alpha1.SchedulerNameKube), TopologyReference: "kube-topology"},
 			},
 			expectError: true,
@@ -172,7 +172,7 @@ func TestValidateCreate_InvalidObject(t *testing.T) {
 	handler := newTestHandler()
 	_, err := handler.ValidateCreate(context.Background(), &runtime.Unknown{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "expected a ClusterTopology object")
+	assert.Contains(t, err.Error(), "expected a ClusterTopologyBinding object")
 }
 
 func TestValidateUpdate_Valid(t *testing.T) {
@@ -183,7 +183,7 @@ func TestValidateUpdate_Valid(t *testing.T) {
 	newCT := newTestClusterTopology([]grovecorev1alpha1.TopologyLevel{
 		{Domain: grovecorev1alpha1.TopologyDomainRegion, Key: "topology.kubernetes.io/region"},
 		{Domain: grovecorev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
-	}, []grovecorev1alpha1.SchedulerTopologyReference{
+	}, []grovecorev1alpha1.SchedulerTopologyBinding{
 		{SchedulerName: string(configv1alpha1.SchedulerNameKai), TopologyReference: "kai-topology"},
 	})
 
@@ -213,7 +213,7 @@ func TestValidateUpdate_UnknownSchedulerBackend(t *testing.T) {
 	}, nil)
 	newCT := newTestClusterTopology([]grovecorev1alpha1.TopologyLevel{
 		{Domain: grovecorev1alpha1.TopologyDomainRegion, Key: "topology.kubernetes.io/region"},
-	}, []grovecorev1alpha1.SchedulerTopologyReference{
+	}, []grovecorev1alpha1.SchedulerTopologyBinding{
 		{SchedulerName: "unknown-scheduler", TopologyReference: "topology"},
 	})
 

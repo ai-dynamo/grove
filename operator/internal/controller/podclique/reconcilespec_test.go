@@ -55,8 +55,8 @@ func TestPcsHasNoActiveRollingUpdate(t *testing.T) {
 			expected: true,
 		},
 		{
-			// Tests when RollingUpdateProgress is nil
-			name: "rolling_update_progress_nil",
+			// Tests when UpdateProgress is nil
+			name: "update_progress_nil",
 			pcs: &grovecorev1alpha1.PodCliqueSet{
 				Status: grovecorev1alpha1.PodCliqueSetStatus{
 					CurrentGenerationHash: ptr.To("hash123"),

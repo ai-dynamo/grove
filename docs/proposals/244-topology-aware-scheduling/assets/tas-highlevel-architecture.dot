@@ -37,7 +37,7 @@ digraph TASArchitecture {
         ct_h100 [
             label=<
             <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="1" CELLPADDING="2">
-            <TR><TD><B>ClusterTopology</B></TD></TR>
+            <TR><TD><B>ClusterTopologyBinding</B></TD></TR>
             <TR><TD><FONT POINT-SIZE="9">"h100-topology"</FONT></TD></TR>
             <TR><TD><FONT POINT-SIZE="7" COLOR="#666666">Admin Created (kubectl/GitOps)</FONT></TD></TR>
             <TR><TD><FONT POINT-SIZE="7" COLOR="#666666">levels: [zone, block, host]</FONT></TD></TR>
@@ -48,7 +48,7 @@ digraph TASArchitecture {
         ct_gb200 [
             label=<
             <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="1" CELLPADDING="2">
-            <TR><TD><B>ClusterTopology</B></TD></TR>
+            <TR><TD><B>ClusterTopologyBinding</B></TD></TR>
             <TR><TD><FONT POINT-SIZE="9">"gb200-topology"</FONT></TD></TR>
             <TR><TD><FONT POINT-SIZE="7" COLOR="#666666">Admin Created (kubectl/GitOps)</FONT></TD></TR>
             <TR><TD><FONT POINT-SIZE="7" COLOR="#666666">levels: [zone, block, rack, host]</FONT></TD></TR>
@@ -62,7 +62,7 @@ digraph TASArchitecture {
             label=<
             <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="1" CELLPADDING="2">
             <TR><TD><B>CT Controller</B></TD></TR>
-            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">· watches ClusterTopology CRs</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">· watches ClusterTopologyBinding CRs</FONT></TD></TR>
             <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">· auto-creates scheduler topo</FONT></TD></TR>
             <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">  (when no schedulerTopologyReferences)</FONT></TD></TR>
             <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="7">· drift detection</FONT></TD></TR>
@@ -175,7 +175,7 @@ digraph TASArchitecture {
     ct_controller -> ct_h100 [label="watches", style=dashed, constraint=false];
     ct_controller -> ct_gb200 [label="watches", style=dashed, constraint=false];
 
-    // Admin Layer: ClusterTopology -> Scheduler Backend
+    // Admin Layer: ClusterTopologyBinding -> Scheduler Backend
     ct_h100 -> sched_h100 [label="creates &\nowns (OwnerRef)"];
     ct_gb200 -> sched_gb200 [label="drift detection\n(schedulerTopologyReferences)", style=dashed];
 

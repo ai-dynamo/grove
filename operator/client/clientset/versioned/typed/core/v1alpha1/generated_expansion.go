@@ -18,7 +18,7 @@ limitations under the License.
 
 package v1alpha1
 
-type ClusterTopologyExpansion interface{}
+type ClusterTopologyBindingExpansion interface{}
 
 type PodCliqueExpansion interface{}
 

@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/gvk"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
@@ -79,7 +80,7 @@ func (wm *WorkloadManager) TriggerPCSReconcile(ctx context.Context, namespace, n
 			Namespace: namespace,
 		},
 	}
-	patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"grove.io/reconcile-trigger":%q}}}`, triggerID))
+	patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{%q:%q}}}`, constants.AnnotationReconcileTrigger, triggerID))
 	if err := wm.cl.Patch(ctx, pcs, client.RawPatch(types.MergePatchType, patch)); err != nil {
 		return fmt.Errorf("trigger PCS reconcile %s/%s: %w", namespace, name, err)
 	}

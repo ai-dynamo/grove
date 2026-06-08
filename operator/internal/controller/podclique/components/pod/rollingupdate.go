@@ -51,8 +51,9 @@ type updateWork struct {
 // getPodNamesPendingUpdate returns names of pods with old template hash that are not already being deleted
 func (w *updateWork) getPodNamesPendingUpdate(deletionExpectedPodUIDs []types.UID) []string {
 	allOldPods := lo.Union(w.oldTemplateHashPendingPods, w.oldTemplateHashUnhealthyPods, w.oldTemplateHashStartingPods, w.oldTemplateHashUncategorizedPods, w.oldTemplateHashReadyPods)
+	deletionExpectedPodUIDSet := componentutils.NewSet(deletionExpectedPodUIDs)
 	return lo.FilterMap(allOldPods, func(pod *corev1.Pod, _ int) (string, bool) {
-		if slices.Contains(deletionExpectedPodUIDs, pod.UID) {
+		if deletionExpectedPodUIDSet.Has(pod.UID) {
 			return "", false
 		}
 		return pod.Name, true
@@ -140,7 +141,7 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 func (r _resource) computeUpdateWork(logger logr.Logger, sc *syncContext) *updateWork {
 	work := &updateWork{}
 	for _, pod := range sc.existingPCLQPods {
-		if pod.Labels[common.LabelPodTemplateHash] != sc.expectedPodTemplateHash {
+		if !sc.podTemplateHashMatchesExpected(pod.Labels[common.LabelPodTemplateHash]) {
 			// Old-hash pod — skip if deletion already in flight.
 			if r.hasPodDeletionBeenTriggered(sc, pod) {
 				logger.Info("skipping old Pod since its deletion has already been triggered", "pod", client.ObjectKeyFromObject(pod))
@@ -169,6 +170,13 @@ func (r _resource) computeUpdateWork(logger logr.Logger, sc *syncContext) *updat
 		}
 	}
 	return work
+}
+
+func (sc *syncContext) podTemplateHashMatchesExpected(hash string) bool {
+	if sc.expectedPodTemplateHashes.Canonical != "" {
+		return sc.expectedPodTemplateHashes.Matches(hash)
+	}
+	return hash == sc.expectedPodTemplateHash
 }
 
 // hasPodDeletionBeenTriggered checks if a pod is already terminating or has a delete expectation recorded

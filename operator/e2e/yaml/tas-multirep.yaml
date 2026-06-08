@@ -12,7 +12,8 @@ spec:
   template:
     topologyConstraint:
       topologyName: grove-topology
-      packDomain: rack  # Each replica gang packs within its own rack
+      pack:
+        required: rack  # Each replica gang packs within its own rack
     cliques:
       - name: worker
         labels:

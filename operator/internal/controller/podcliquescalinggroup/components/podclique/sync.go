@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"slices"
 	"strconv"
 	"time"
 
@@ -47,10 +46,12 @@ type syncContext struct {
 	pcsgConfig                     *grovecorev1alpha1.PodCliqueScalingGroupConfig
 	pcsReplicaIndex                int
 	existingPCLQs                  []grovecorev1alpha1.PodClique
+	existingPCLQNameSet            componentutils.Set[string]
 	pcsgIndicesToTerminate         []string
 	pcsgIndicesToRequeue           []string
 	expectedPCLQFQNsPerPCSGReplica map[int][]string
 	expectedPCLQPodTemplateHashMap map[string]string
+	expectedPCLQPodTemplateHashes  map[string]componentutils.HashCandidates
 }
 
 // prepareSyncContext creates and initializes the synchronization context with all necessary data for PCSG reconciliation
@@ -86,6 +87,7 @@ func (r _resource) prepareSyncContext(ctx context.Context, logger logr.Logger, p
 	if err != nil {
 		return nil, err
 	}
+	syncCtx.existingPCLQNameSet = componentutils.PodCliqueNameSet(syncCtx.existingPCLQs)
 
 	// compute the PCSG indices that have their MinAvailableBreached condition set to true. Segregated these into two
 	// pcsgIndicesToTerminate will have the indices for which the TerminationDelay has expired.
@@ -93,7 +95,13 @@ func (r _resource) prepareSyncContext(ctx context.Context, logger logr.Logger, p
 	syncCtx.pcsgIndicesToTerminate, syncCtx.pcsgIndicesToRequeue = getMinAvailableBreachedPCSGIndices(logger, syncCtx.existingPCLQs, syncCtx.pcs.Spec.Template.TerminationDelay.Duration)
 
 	// pre-compute expected PodTemplateHash for each PCLQ
-	syncCtx.expectedPCLQPodTemplateHashMap = getExpectedPCLQPodTemplateHashMap(syncCtx.pcs, pcsg)
+	syncCtx.expectedPCLQPodTemplateHashes = getExpectedPCLQPodTemplateHashCandidatesMap(syncCtx.pcs, pcsg)
+	syncCtx.expectedPCLQPodTemplateHashMap = lo.MapValues(syncCtx.expectedPCLQPodTemplateHashes, func(candidates componentutils.HashCandidates, _ string) string {
+		return candidates.Canonical
+	})
+	if err = r.migrateLegacyCurrentPodCliqueLabels(ctx, syncCtx); err != nil {
+		return nil, err
+	}
 
 	return syncCtx, nil
 }
@@ -200,10 +208,9 @@ func computePCSGReplicasToDelete(existingReplicas, expectedReplicas int) []strin
 // createExpectedPCLQs creates any missing PodCliques needed to satisfy the desired PCSG replica configuration
 func (r _resource) createExpectedPCLQs(logger logr.Logger, sc *syncContext) error {
 	var tasks []utils.Task
-	existingPCLQFQNs := lo.Map(sc.existingPCLQs, func(pclq grovecorev1alpha1.PodClique, _ int) string { return pclq.Name })
 	for pcsgReplicaIndex, expectedPCLQNames := range sc.expectedPCLQFQNsPerPCSGReplica {
 		for _, pclqFQN := range expectedPCLQNames {
-			if slices.Contains(existingPCLQFQNs, pclqFQN) {
+			if sc.existingPCLQNameSet.Has(pclqFQN) {
 				continue
 			}
 			pclqObjectKey := client.ObjectKey{
@@ -233,14 +240,13 @@ func (r _resource) createExpectedPCLQs(logger logr.Logger, sc *syncContext) erro
 // This is used for the OnDelete update strategy where changes are applied in place rather than through recreation.
 func (r _resource) createOrUpdatePCLQs(logger logr.Logger, sc *syncContext) error {
 	var tasks []utils.Task
-	existingPCLQFQNs := lo.Map(sc.existingPCLQs, func(pclq grovecorev1alpha1.PodClique, _ int) string { return pclq.Name })
 	for pcsgReplicaIndex, expectedPCLQNames := range sc.expectedPCLQFQNsPerPCSGReplica {
 		for _, pclqFQN := range expectedPCLQNames {
 			pclqObjectKey := client.ObjectKey{
 				Name:      pclqFQN,
 				Namespace: sc.pcsg.Namespace,
 			}
-			pclqExists := slices.Contains(existingPCLQFQNs, pclqFQN)
+			pclqExists := sc.existingPCLQNameSet.Has(pclqFQN)
 			createOrUpdateTask := utils.Task{
 				Name: fmt.Sprintf("CreateOrUpdatePodClique-%s", pclqObjectKey),
 				Fn: func(ctx context.Context) error {
@@ -336,16 +342,40 @@ func (r _resource) getExistingPCLQs(ctx context.Context, pcsg *grovecorev1alpha1
 	return existingPCLQs, nil
 }
 
-// getExpectedPCLQPodTemplateHashMap computes the expected pod template hash for each PodClique in the PCSG
-func getExpectedPCLQPodTemplateHashMap(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[string]string {
-	pclqFQNToHash := make(map[string]string)
+// migrateLegacyCurrentPodCliqueLabels patches existing PodCliques whose pod-template-hash label matches a legacy hash, updating it in place to the current canonical hash.
+func (r _resource) migrateLegacyCurrentPodCliqueLabels(ctx context.Context, sc *syncContext) error {
+	for i := range sc.existingPCLQs {
+		pclq := &sc.existingPCLQs[i]
+		hashCandidates, ok := sc.expectedPCLQPodTemplateHashes[pclq.Name]
+		if !ok || !hashCandidates.IsLegacy(pclq.Labels[apicommon.LabelPodTemplateHash]) {
+			continue
+		}
+		patch := client.MergeFrom(pclq.DeepCopy())
+		if pclq.Labels == nil {
+			pclq.Labels = make(map[string]string, 1)
+		}
+		pclq.Labels[apicommon.LabelPodTemplateHash] = hashCandidates.Canonical
+		if err := r.client.Patch(ctx, pclq, patch); err != nil {
+			return groveerr.WrapError(err,
+				errCodeCreateOrUpdatePodCliques,
+				component.OperationSync,
+				fmt.Sprintf("failed to migrate legacy PodClique label for %v", client.ObjectKeyFromObject(pclq)),
+			)
+		}
+	}
+	return nil
+}
+
+// getExpectedPCLQPodTemplateHashCandidatesMap returns a map keyed by the fully-qualified PodClique name to the expected pod-template hash candidates (canonical and legacy) for every replica of the given PodCliqueScalingGroup.
+func getExpectedPCLQPodTemplateHashCandidatesMap(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[string]componentutils.HashCandidates {
+	pclqFQNToHash := make(map[string]componentutils.HashCandidates)
 	pcsgPCLQNames := pcsg.Spec.CliqueNames
 	for _, pcsgCliqueName := range pcsgPCLQNames {
 		pclqTemplateSpec := componentutils.FindPodCliqueTemplateSpecByName(pcs, pcsgCliqueName)
 		if pclqTemplateSpec == nil {
 			continue
 		}
-		podTemplateHash := componentutils.ComputePCLQPodTemplateHash(pclqTemplateSpec, pcs.Spec.Template.PriorityClassName)
+		podTemplateHash := componentutils.ComputePCLQPodTemplateHashCandidates(pclqTemplateSpec, pcs.Spec.Template.PriorityClassName)
 		for pcsgReplicaIndex := range int(pcsg.Spec.Replicas) {
 			cliqueFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{
 				Name:    pcsg.Name,
@@ -383,6 +413,7 @@ func (sc *syncContext) refreshExistingPCLQs(pcsg *grovecorev1alpha1.PodCliqueSca
 		}
 	}
 	sc.existingPCLQs = revisedExistingPCLQs
+	sc.existingPCLQNameSet = componentutils.PodCliqueNameSet(revisedExistingPCLQs)
 	return nil
 }
 

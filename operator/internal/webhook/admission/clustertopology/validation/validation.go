@@ -23,14 +23,14 @@ import (
 )
 
 func validateClusterTopology(
-	ct *grovecorev1alpha1.ClusterTopology,
+	ct *grovecorev1alpha1.ClusterTopologyBinding,
 	enabledBackends map[string]struct{},
 	topologyAwareBackends map[string]struct{},
 ) field.ErrorList {
 	allErrs := validateClusterTopologyLevels(ct.Spec.Levels, field.NewPath("spec", "levels"))
 	allErrs = append(allErrs,
 		validateSchedulerTopologyReferences(
-			ct.Spec.SchedulerTopologyReferences,
+			ct.Spec.SchedulerTopologyBindings,
 			enabledBackends,
 			topologyAwareBackends,
 			field.NewPath("spec", "schedulerTopologyReferences"),
@@ -66,7 +66,7 @@ func validateClusterTopologyLevels(levels []grovecorev1alpha1.TopologyLevel, fld
 // validateSchedulerTopologyReferences validates that each scheduler backend is referenced at most once
 // and that each referenced backend is enabled and topology-aware in the running Grove configuration.
 func validateSchedulerTopologyReferences(
-	refs []grovecorev1alpha1.SchedulerTopologyReference,
+	refs []grovecorev1alpha1.SchedulerTopologyBinding,
 	enabledBackends map[string]struct{},
 	topologyAwareBackends map[string]struct{},
 	fldPath *field.Path,

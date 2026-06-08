@@ -258,6 +258,12 @@ def create_cluster(cfg: ClusterConfig) -> None:
             f"{cfg.lb_port}@loadbalancer",
             "--registry-create",
             f"registry:0.0.0.0:{cfg.registry_port}",
+            # Scale CI creates enough pod/status churn that the default k3s
+            # sqlite/kine datastore can lag and stall watch/list calls. This
+            # keeps a single-server cluster, but bootstraps k3s with embedded
+            # etcd as the datastore instead of sqlite through kine.
+            "--k3s-arg",
+            "--cluster-init@server:0",
             "--k3s-arg",
             f"--node-taint={E2E_NODE_ROLE_KEY}=agent:NoSchedule@agent:*",
             "--k3s-node-label",

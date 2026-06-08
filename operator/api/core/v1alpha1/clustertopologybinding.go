@@ -27,74 +27,81 @@ import (
 // +kubebuilder:resource:scope=Cluster,shortName=ct
 // +kubebuilder:subresource:status
 
-// ClusterTopology defines the topology hierarchy for the cluster.
-type ClusterTopology struct {
+// ClusterTopologyBinding defines Grove's source-of-truth topology hierarchy and how it
+// binds to topology resources used by topology-aware scheduler backends.
+type ClusterTopologyBinding struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
-	// Spec defines the topology hierarchy specification.
-	Spec ClusterTopologySpec `json:"spec"`
-	// Status defines the observed state of the ClusterTopology.
-	Status ClusterTopologyStatus `json:"status,omitempty"`
+	// Spec defines the source-of-truth topology hierarchy and backend binding configuration.
+	Spec ClusterTopologyBindingSpec `json:"spec"`
+	// Status reports the observed state of backend topology bindings derived from this resource.
+	Status ClusterTopologyBindingStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
-// ClusterTopologyList is a list of ClusterTopology resources.
-type ClusterTopologyList struct {
+// ClusterTopologyBindingList is a list of ClusterTopologyBinding resources.
+type ClusterTopologyBindingList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []ClusterTopology `json:"items"`
+	Items           []ClusterTopologyBinding `json:"items"`
 }
 
-// ClusterTopologySpec defines the topology hierarchy specification.
-type ClusterTopologySpec struct {
-	// Levels is an ordered list of topology levels from broadest to narrowest scope.
-	// The order in this list defines the hierarchy (index 0 = broadest level).
-	// Uniqueness of domain and key is enforced by the ClusterTopology validating webhook.
+// ClusterTopologyBindingSpec defines the desired topology hierarchy and backend binding behavior.
+type ClusterTopologyBindingSpec struct {
+	// Levels is the source-of-truth ordered topology hierarchy, from broadest to
+	// narrowest scope, that Grove exposes to workloads and uses when reconciling
+	// backend-specific topology resources.
+	// Uniqueness of domain and key is enforced by the ClusterTopologyBinding validating webhook.
 	// +kubebuilder:validation:MinItems=1
 	Levels []TopologyLevel `json:"levels"`
 
-	// SchedulerTopologyReferences controls per-backend topology resource management.
-	// For each enabled TopologyAwareSchedBackend, the operator checks whether an entry
-	// for that backend exists in this list:
-	// - If absent: the operator auto-creates and manages the backend's topology resource.
-	// - If present: the named resource is assumed to be externally managed; the operator
-	//   compares its levels and reports any mismatch via the SchedulerTopologyDrift condition.
+	// SchedulerTopologyBindings declares how this ClusterTopologyBinding maps to
+	// each scheduler backend's topology resource.
+	// For each enabled TopologyAwareBackend, the operator checks whether an
+	// entry for that backend exists in this list:
+	// - If absent: the operator creates and manages the backend topology resource from Levels.
+	// - If present: the named backend topology resource is treated as externally
+	//   managed, and the operator only checks it for drift against Levels.
 	// +optional
-	SchedulerTopologyReferences []SchedulerTopologyReference `json:"schedulerTopologyReferences,omitempty"`
+	SchedulerTopologyBindings []SchedulerTopologyBinding `json:"schedulerTopologyBindings,omitempty"`
 }
 
-// ClusterTopologyStatus defines the observed state of ClusterTopology.
-type ClusterTopologyStatus struct {
+// ClusterTopologyBindingStatus defines the observed state of backend topology bindings
+// for this ClusterTopologyBinding.
+type ClusterTopologyBindingStatus struct {
 	// ObservedGeneration is the most recent generation observed by the controller.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
-	// Conditions represents the latest available observations of the ClusterTopology.
+	// Conditions represents the latest available observations of the ClusterTopologyBinding.
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
-	// SchedulerTopologyStatuses reports the sync state between this ClusterTopology
-	// and each topology-aware scheduler backend's topology resource.
+	// SchedulerTopologyStatuses reports whether each scheduler backend's topology
+	// resource is in sync with this ClusterTopologyBinding.
 	// +optional
 	SchedulerTopologyStatuses []SchedulerTopologyStatus `json:"schedulerTopologyStatuses,omitempty"`
 }
 
-// SchedulerTopologyReference maps a ClusterTopology to a scheduler backend's topology resource.
-type SchedulerTopologyReference struct {
+// SchedulerTopologyBinding identifies the topology resource through which a
+// scheduler backend is bound to this ClusterTopologyBinding.
+type SchedulerTopologyBinding struct {
 	// SchedulerName is the name of the scheduler backend (e.g., "kai-scheduler").
 	// +kubebuilder:validation:Required
 	SchedulerName string `json:"schedulerName"`
-	// TopologyReference is the name of the scheduler backend's topology resource.
+	// TopologyReference is the name of the backend-specific topology resource
+	// bound to this ClusterTopologyBinding.
 	// +kubebuilder:validation:Required
 	TopologyReference string `json:"topologyReference"`
 }
 
-// SchedulerTopologyStatus reports the sync state of a scheduler backend's topology resource.
+// SchedulerTopologyStatus reports whether a scheduler backend's bound topology
+// resource matches this ClusterTopologyBinding.
 type SchedulerTopologyStatus struct {
-	// SchedulerTopologyReference identifies the scheduler backend topology resource
+	// SchedulerTopologyBinding identifies the scheduler backend topology resource
 	// this status entry describes.
-	SchedulerTopologyReference `json:",inline"`
-	// InSync is true when the scheduler backend topology levels match the ClusterTopology levels.
+	SchedulerTopologyBinding `json:",inline"`
+	// InSync is true when the scheduler backend topology levels match the ClusterTopologyBinding levels.
 	InSync bool `json:"inSync"`
 	// SchedulerBackendTopologyObservedGeneration is the generation of the backend topology
 	// resource that was last compared. Zero if the resource was not found.
@@ -105,9 +112,9 @@ type SchedulerTopologyStatus struct {
 	Message string `json:"message,omitempty"`
 }
 
-// TopologyLevel defines a single level in the topology hierarchy.
-// Maps a platform-agnostic domain to a platform-specific node label key,
-// allowing workload operators a consistent way to reference topology levels when defining TopologyConstraint's.
+// TopologyLevel defines one level in Grove's source-of-truth topology hierarchy.
+// Each level maps a Grove topology domain to the node label key that a backend
+// topology representation should use for that level.
 type TopologyLevel struct {
 	// Domain is a platform provider-agnostic level identifier.
 	// +kubebuilder:validation:Required
@@ -123,7 +130,8 @@ type TopologyLevel struct {
 	Key string `json:"key"`
 }
 
-// TopologyDomain represents a level in the cluster topology hierarchy.
+// TopologyDomain is the Grove-facing identifier for a topology level in the
+// source-of-truth hierarchy.
 // +kubebuilder:validation:MinLength=1
 // +kubebuilder:validation:MaxLength=63
 // +kubebuilder:validation:Pattern=`^[a-z][a-z0-9-]*$`

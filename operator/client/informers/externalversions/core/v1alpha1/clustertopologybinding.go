@@ -32,70 +32,70 @@ import (
 	cache "k8s.io/client-go/tools/cache"
 )
 
-// ClusterTopologyInformer provides access to a shared informer and lister for
-// ClusterTopologies.
-type ClusterTopologyInformer interface {
+// ClusterTopologyBindingInformer provides access to a shared informer and lister for
+// ClusterTopologyBindings.
+type ClusterTopologyBindingInformer interface {
 	Informer() cache.SharedIndexInformer
-	Lister() corev1alpha1.ClusterTopologyLister
+	Lister() corev1alpha1.ClusterTopologyBindingLister
 }
 
-type clusterTopologyInformer struct {
+type clusterTopologyBindingInformer struct {
 	factory          internalinterfaces.SharedInformerFactory
 	tweakListOptions internalinterfaces.TweakListOptionsFunc
 }
 
-// NewClusterTopologyInformer constructs a new informer for ClusterTopology type.
+// NewClusterTopologyBindingInformer constructs a new informer for ClusterTopologyBinding type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
-func NewClusterTopologyInformer(client versioned.Interface, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
-	return NewFilteredClusterTopologyInformer(client, resyncPeriod, indexers, nil)
+func NewClusterTopologyBindingInformer(client versioned.Interface, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
+	return NewFilteredClusterTopologyBindingInformer(client, resyncPeriod, indexers, nil)
 }
 
-// NewFilteredClusterTopologyInformer constructs a new informer for ClusterTopology type.
+// NewFilteredClusterTopologyBindingInformer constructs a new informer for ClusterTopologyBinding type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
-func NewFilteredClusterTopologyInformer(client versioned.Interface, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
+func NewFilteredClusterTopologyBindingInformer(client versioned.Interface, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
 	return cache.NewSharedIndexInformer(
 		&cache.ListWatch{
 			ListFunc: func(options v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.GroveV1alpha1().ClusterTopologies().List(context.Background(), options)
+				return client.GroveV1alpha1().ClusterTopologyBindings().List(context.Background(), options)
 			},
 			WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.GroveV1alpha1().ClusterTopologies().Watch(context.Background(), options)
+				return client.GroveV1alpha1().ClusterTopologyBindings().Watch(context.Background(), options)
 			},
 			ListWithContextFunc: func(ctx context.Context, options v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.GroveV1alpha1().ClusterTopologies().List(ctx, options)
+				return client.GroveV1alpha1().ClusterTopologyBindings().List(ctx, options)
 			},
 			WatchFuncWithContext: func(ctx context.Context, options v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.GroveV1alpha1().ClusterTopologies().Watch(ctx, options)
+				return client.GroveV1alpha1().ClusterTopologyBindings().Watch(ctx, options)
 			},
 		},
-		&apicorev1alpha1.ClusterTopology{},
+		&apicorev1alpha1.ClusterTopologyBinding{},
 		resyncPeriod,
 		indexers,
 	)
 }
 
-func (f *clusterTopologyInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	return NewFilteredClusterTopologyInformer(client, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
+func (f *clusterTopologyBindingInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
+	return NewFilteredClusterTopologyBindingInformer(client, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
 }
 
-func (f *clusterTopologyInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&apicorev1alpha1.ClusterTopology{}, f.defaultInformer)
+func (f *clusterTopologyBindingInformer) Informer() cache.SharedIndexInformer {
+	return f.factory.InformerFor(&apicorev1alpha1.ClusterTopologyBinding{}, f.defaultInformer)
 }
 
-func (f *clusterTopologyInformer) Lister() corev1alpha1.ClusterTopologyLister {
-	return corev1alpha1.NewClusterTopologyLister(f.Informer().GetIndexer())
+func (f *clusterTopologyBindingInformer) Lister() corev1alpha1.ClusterTopologyBindingLister {
+	return corev1alpha1.NewClusterTopologyBindingLister(f.Informer().GetIndexer())
 }

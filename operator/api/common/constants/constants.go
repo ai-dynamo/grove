@@ -23,6 +23,10 @@ const (
 	OperatorConfigGroupName = "operator.config.grove.io"
 	// OperatorGroupName is the name of the group for all Grove custom resources.
 	OperatorGroupName = "grove.io"
+	// GroveDomainPrefix is the qualifying prefix for grove.io-owned labels and annotations.
+	// Labels and annotations with this prefix are managed by the Grove operator and have a
+	// lifecycle independent of any user-supplied PodCliqueSet metadata.
+	GroveDomainPrefix = OperatorGroupName + "/"
 )
 
 // Constants for finalizers.
@@ -43,6 +47,8 @@ const (
 	// AnnotationDisableManagedResourceProtection is an annotation set by an operator on a PodCliqueSet to explicitly
 	// disable protection of managed resources for a PodCliqueSet.
 	AnnotationDisableManagedResourceProtection = "grove.io/disable-managed-resource-protection"
+	// AnnotationReconcileTrigger is an annotation set on a PodCliqueSet to explicitly trigger a reconcile without changing its spec.
+	AnnotationReconcileTrigger = "grove.io/reconcile-trigger"
 	// AnnotationTopologyName is an annotation set on PodGang to allow KAI scheduler to discover which topology to use.
 	AnnotationTopologyName = "grove.io/topology-name"
 )
@@ -82,13 +88,13 @@ const (
 	EventDeleteError = "DeleteError"
 )
 
-// Constants for ClusterTopology Condition Types and Reasons.
+// Constants for ClusterTopologyBinding Condition Types and Reasons.
 const (
-	// ConditionSchedulerTopologyDrift is a condition on ClusterTopology indicating whether
-	// any scheduler backend topology resource has drifted from the ClusterTopology levels.
+	// ConditionSchedulerTopologyDrift is a condition on ClusterTopologyBinding indicating whether
+	// any scheduler backend topology resource has drifted from the ClusterTopologyBinding levels.
 	ConditionSchedulerTopologyDrift = "SchedulerTopologyDrift"
 
-	// ConditionReasonInSync is the reason when all scheduler backend topologies match the ClusterTopology levels.
+	// ConditionReasonInSync is the reason when all scheduler backend topologies match the ClusterTopologyBinding levels.
 	ConditionReasonInSync = "InSync"
 
 	// ConditionReasonDrift is the reason when a scheduler backend topology has drifted.
@@ -99,7 +105,7 @@ const (
 	ConditionReasonTopologyNotFound = "TopologyNotFound"
 
 	// ConditionReasonTopologyNameMissing is the reason when a PodCliqueSet has incomplete
-	// topology constraints or otherwise cannot resolve an explicit topology reference.
+	// topology constraints or otherwise cannot resolve one effective topology reference.
 	ConditionReasonTopologyNameMissing = "TopologyNameMissing"
 
 	// ConditionReasonTopologyAwareSchedulingDisabled is the reason when a PodCliqueSet has topology
@@ -115,7 +121,7 @@ const (
 	// This condition is set to true when number of scheduled pods in the PodClique is greater than or equal to PodCliqueSpec.MinAvailable.
 	ConditionTypePodCliqueScheduled = "PodCliqueScheduled"
 	// ConditionTopologyLevelsUnavailable indicates that the required topology levels defined on a PodCliqueSet for topology-aware scheduling are no longer available.
-	// This can happen when the ClusterTopology resource is modified which removes one or more levels required by the PodCliqueSet.
+	// This can happen when the ClusterTopologyBinding resource is modified which removes one or more levels required by the PodCliqueSet.
 	ConditionTopologyLevelsUnavailable = "TopologyLevelsUnavailable"
 )
 
@@ -131,19 +137,21 @@ const (
 	ConditionReasonSufficientScheduledPods = "SufficientScheduledPods"
 	// ConditionReasonInsufficientScheduledPCSGReplicas indicates that the number of scheduled replicas in the PodCliqueScalingGroup is below the PodCliqueScalingGroupSpec.MinAvailable.
 	ConditionReasonInsufficientScheduledPCSGReplicas = "InsufficientScheduledPodCliqueScalingGroupReplicas"
+	// ConditionReasonScheduledReplicasBelowMinAvailable indicates that scheduledReplicas is below MinAvailable but greater than zero.
+	ConditionReasonScheduledReplicasBelowMinAvailable = "ScheduledReplicasBelowMinAvailable"
 	// ConditionReasonInsufficientAvailablePCSGReplicas indicates that the number of ready replicas in the PodCliqueScalingGroup is below the PodCliqueScalingGroupSpec.MinAvailable.
 	ConditionReasonInsufficientAvailablePCSGReplicas = "InsufficientAvailablePodCliqueScalingGroupReplicas"
 	// ConditionReasonSufficientAvailablePCSGReplicas indicates that the number of ready replicas in the PodCliqueScalingGroup is greater than or equal to the PodCliqueScalingGroupSpec.MinAvailable.
 	ConditionReasonSufficientAvailablePCSGReplicas = "SufficientAvailablePodCliqueScalingGroupReplicas"
 	// ConditionReasonUpdateInProgress indicates that the resource is undergoing rolling update.
 	ConditionReasonUpdateInProgress = "UpdateInProgress"
-	// ConditionReasonClusterTopologyNotFound indicates that the ClusterTopology resource required for topology-aware scheduling was not found.
+	// ConditionReasonClusterTopologyNotFound indicates that the ClusterTopologyBinding resource required for topology-aware scheduling was not found.
 	ConditionReasonClusterTopologyNotFound = "ClusterTopologyNotFound"
 	// ConditionReasonTopologyLevelsUnavailable indicates that the one or more required topology levels defined on a
-	// PodCliqueSet for topology-aware scheduling are no longer defined in the ClusterTopology resource.
+	// PodCliqueSet for topology-aware scheduling are no longer defined in the ClusterTopologyBinding resource.
 	ConditionReasonTopologyLevelsUnavailable = "ClusterTopologyLevelsUnavailable"
 	// ConditionReasonAllTopologyLevelsAvailable indicates that all required topology levels defined on a
-	// PodCliqueSet for topology-aware scheduling are defined in the ClusterTopology resource.
+	// PodCliqueSet for topology-aware scheduling are defined in the ClusterTopologyBinding resource.
 	ConditionReasonAllTopologyLevelsAvailable = "AllClusterTopologyLevelsAvailable"
 )
 
@@ -154,6 +162,6 @@ const (
 	KindPodClique = "PodClique"
 	// KindPodCliqueScalingGroup is the kind for a PodCliqueScalingGroup resource.
 	KindPodCliqueScalingGroup = "PodCliqueScalingGroup"
-	// KindClusterTopology is the kind for a ClusterTopology resource.
-	KindClusterTopology = "ClusterTopology"
+	// KindClusterTopology is the kind for a ClusterTopologyBinding resource.
+	KindClusterTopology = "ClusterTopologyBinding"
 )

@@ -22,7 +22,6 @@ import (
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
-	schedmanager "github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
 
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -30,22 +29,24 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
-// Handler validates ClusterTopology resources.
+// Handler validates ClusterTopologyBinding resources.
 type Handler struct {
 	logger                logr.Logger
 	enabledBackends       map[string]struct{}
 	topologyAwareBackends map[string]struct{}
 }
 
-// NewHandler creates a new ClusterTopology validation handler.
-func NewHandler(mgr manager.Manager) *Handler {
+// NewHandler creates a new ClusterTopologyBinding validation handler.
+// The set of enabled / topology-aware backends is captured from schedRegistry at construction time,
+// matching the operator's startup-time backend initialization.
+func NewHandler(mgr manager.Manager, schedRegistry scheduler.Registry) *Handler {
 	enabledBackends := make(map[string]struct{})
-	topologyAwareBackends := make(map[string]struct{})
-	for name, backend := range schedmanager.All() {
+	for name := range schedRegistry.All() {
 		enabledBackends[name] = struct{}{}
-		if _, ok := backend.(scheduler.TopologyAwareSchedBackend); ok {
-			topologyAwareBackends[name] = struct{}{}
-		}
+	}
+	topologyAwareBackends := make(map[string]struct{})
+	for name := range schedRegistry.AllTopologyAware() {
+		topologyAwareBackends[name] = struct{}{}
 	}
 	return &Handler{
 		logger:                mgr.GetLogger().WithName("webhook").WithName(Name),
@@ -54,7 +55,7 @@ func NewHandler(mgr manager.Manager) *Handler {
 	}
 }
 
-// ValidateCreate validates a ClusterTopology create request.
+// ValidateCreate validates a ClusterTopologyBinding create request.
 func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
 	h.logValidation(ctx)
 	ct, err := castToClusterTopology(obj)
@@ -65,7 +66,7 @@ func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admis
 	return nil, allErrs.ToAggregate()
 }
 
-// ValidateUpdate validates a ClusterTopology update request.
+// ValidateUpdate validates a ClusterTopologyBinding update request.
 // Only the new object's structural validity is checked here. Transition validation
 // (e.g., detecting removed levels referenced by PodCliqueSets) is handled by the
 // PCS reconciler via the TopologyLevelsUnavailable condition, not by this webhook.
@@ -79,16 +80,16 @@ func (h *Handler) ValidateUpdate(ctx context.Context, _, newObj runtime.Object) 
 	return nil, allErrs.ToAggregate()
 }
 
-// ValidateDelete validates a ClusterTopology delete request.
+// ValidateDelete validates a ClusterTopologyBinding delete request.
 func (h *Handler) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
 	return nil, nil
 }
 
-// castToClusterTopology attempts to cast a runtime.Object to a ClusterTopology.
-func castToClusterTopology(obj runtime.Object) (*grovecorev1alpha1.ClusterTopology, error) {
-	ct, ok := obj.(*grovecorev1alpha1.ClusterTopology)
+// castToClusterTopology attempts to cast a runtime.Object to a ClusterTopologyBinding.
+func castToClusterTopology(obj runtime.Object) (*grovecorev1alpha1.ClusterTopologyBinding, error) {
+	ct, ok := obj.(*grovecorev1alpha1.ClusterTopologyBinding)
 	if !ok {
-		return nil, fmt.Errorf("expected a ClusterTopology object but got %T", obj)
+		return nil, fmt.Errorf("expected a ClusterTopologyBinding object but got %T", obj)
 	}
 	return ct, nil
 }
@@ -100,5 +101,5 @@ func (h *Handler) logValidation(ctx context.Context) {
 		h.logger.Error(err, "failed to get request from context")
 		return
 	}
-	h.logger.Info("ClusterTopology validation webhook invoked", "name", req.Name, "operation", req.Operation, "user", req.UserInfo.Username)
+	h.logger.Info("ClusterTopologyBinding validation webhook invoked", "name", req.Name, "operation", req.Operation, "user", req.UserInfo.Username)
 }

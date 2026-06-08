@@ -40,7 +40,7 @@ var groveCRDNames = []string{
 	"podcliques.grove.io",
 	"podcliquesets.grove.io",
 	"podcliquescalinggroups.grove.io",
-	"clustertopologies.grove.io",
+	"clustertopologybindings.grove.io",
 	"podgangs.scheduler.grove.io",
 }
 

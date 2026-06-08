@@ -19,7 +19,6 @@ package podcliquescalinggroup
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -27,6 +26,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
@@ -94,6 +94,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 	}
 
 	tasks := make([]utils.Task, 0, int(pcs.Spec.Replicas)*len(pcs.Spec.Template.PodCliqueScalingGroupConfigs))
+	existingPCSGNameSet := componentutils.NewSet(existingPCSGNames)
 	expectedPCSGNames := make([]string, 0, 20)
 	for pcsReplica := range pcs.Spec.Replicas {
 		for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
@@ -103,7 +104,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 				Name:      pcsgName,
 				Namespace: pcs.Namespace,
 			}
-			pcsgExists := slices.Contains(existingPCSGNames, pcsgName)
+			pcsgExists := existingPCSGNameSet.Has(pcsgName)
 			createOrUpdateTask := utils.Task{
 				Name: fmt.Sprintf("CreateOrUpdatePodCliqueScalingGroup-%s", pcsgObjectKey),
 				Fn: func(ctx context.Context) error {
@@ -114,9 +115,13 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 		}
 	}
 
-	excessPCSGNames := lo.Filter(existingPCSGNames, func(existingPCSGName string, _ int) bool {
-		return !slices.Contains(expectedPCSGNames, existingPCSGName)
-	})
+	expectedPCSGNameSet := componentutils.NewSet(expectedPCSGNames)
+	var excessPCSGNames []string
+	for _, existingPCSGName := range existingPCSGNames {
+		if !expectedPCSGNameSet.Has(existingPCSGName) {
+			excessPCSGNames = append(excessPCSGNames, existingPCSGName)
+		}
+	}
 	for _, excessPCSGName := range excessPCSGNames {
 		pcsgObjectKey := client.ObjectKey{
 			Namespace: pcs.Namespace,

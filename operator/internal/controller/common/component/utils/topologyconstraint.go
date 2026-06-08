@@ -25,8 +25,10 @@ import (
 )
 
 var (
-	// ErrTopologyNameMissing indicates that a topology constraint is incomplete and does not specify both topologyName and packDomain.
-	ErrTopologyNameMissing = errors.New("topology constraints require both topologyName and packDomain")
+	// ErrTopologyNameMissing indicates that a constrained level has no effective topologyName after inheritance is applied.
+	ErrTopologyNameMissing = errors.New("topology constraints require an explicit or inherited topologyName")
+	// ErrPackDomainMissing indicates that a topologyConstraint exists but does not specify any pack domain.
+	ErrPackDomainMissing = errors.New("topology constraints require at least one pack domain")
 	// ErrMultipleTopologyNamesUnsupported indicates that topology constraints within a single PCS reference different topology names.
 	ErrMultipleTopologyNamesUnsupported = errors.New("multiple topology names within a single PodCliqueSet are not supported")
 )
@@ -49,34 +51,127 @@ func HasAnyTopologyConstraint(pcs *grovecorev1alpha1.PodCliqueSet) bool {
 	return false
 }
 
-// ResolveTopologyNameForPodCliqueSet resolves the single topologyName used by all explicit topology constraints in the PCS.
+// ResolveEffectiveTopologyNameForConstraint resolves the topologyName for a single constrained level.
+func ResolveEffectiveTopologyNameForConstraint(explicitTopologyName, inheritedTopologyName string) (string, error) {
+	if explicitTopologyName != "" {
+		if inheritedTopologyName != "" && explicitTopologyName != inheritedTopologyName {
+			return "", ErrMultipleTopologyNamesUnsupported
+		}
+		return explicitTopologyName, nil
+	}
+	if inheritedTopologyName != "" {
+		return inheritedTopologyName, nil
+	}
+	return "", ErrTopologyNameMissing
+}
+
+// ResolveEffectiveTopologyNameForPodCliqueSet resolves the single effective topologyName for the PCS after inheritance is applied.
 // Callers that need to distinguish "no topology constraints at all" from invalid topology constraints
 // must first call HasAnyTopologyConstraint.
-func ResolveTopologyNameForPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) (string, error) {
-	topologyNames := sets.New[string]()
-	for _, tc := range getAllTopologyConstraintsInPodCliqueSet(pcs) {
-		if tc.TopologyName == "" || tc.PackDomain == "" {
-			return "", ErrTopologyNameMissing
+func ResolveEffectiveTopologyNameForPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) (string, error) {
+	resolvedTopologyName := ""
+	recordTopologyName := func(topologyName string) error {
+		if resolvedTopologyName == "" {
+			resolvedTopologyName = topologyName
+			return nil
 		}
-		topologyNames.Insert(tc.TopologyName)
+		if resolvedTopologyName != topologyName {
+			return ErrMultipleTopologyNamesUnsupported
+		}
+		return nil
 	}
-	switch topologyNames.Len() {
-	case 0:
+
+	pcsEffectiveTopologyName := ""
+	if tc := pcs.Spec.Template.TopologyConstraint; tc != nil {
+		if !tc.HasAnyPackDomain() {
+			return "", ErrPackDomainMissing
+		}
+		effectiveTopologyName, err := ResolveEffectiveTopologyNameForConstraint(tc.TopologyName, "")
+		if err != nil {
+			return "", err
+		}
+		pcsEffectiveTopologyName = effectiveTopologyName
+		if err := recordTopologyName(effectiveTopologyName); err != nil {
+			return "", err
+		}
+	}
+
+	pcsgTopologyNameByCliqueName := make(map[string]string)
+	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		if pcsgConfig.TopologyConstraint == nil {
+			continue
+		}
+		if !pcsgConfig.TopologyConstraint.HasAnyPackDomain() {
+			return "", ErrPackDomainMissing
+		}
+		effectiveTopologyName, err := ResolveEffectiveTopologyNameForConstraint(pcsgConfig.TopologyConstraint.TopologyName, pcsEffectiveTopologyName)
+		if err != nil {
+			return "", err
+		}
+		if err := recordTopologyName(effectiveTopologyName); err != nil {
+			return "", err
+		}
+		for _, cliqueName := range pcsgConfig.CliqueNames {
+			if _, exists := pcsgTopologyNameByCliqueName[cliqueName]; !exists {
+				pcsgTopologyNameByCliqueName[cliqueName] = effectiveTopologyName
+			}
+		}
+	}
+
+	for _, pclqTemplateSpec := range pcs.Spec.Template.Cliques {
+		if pclqTemplateSpec.TopologyConstraint == nil {
+			continue
+		}
+		if !pclqTemplateSpec.TopologyConstraint.HasAnyPackDomain() {
+			return "", ErrPackDomainMissing
+		}
+
+		inheritedTopologyName := pcsEffectiveTopologyName
+		if pcsgTopologyName, exists := pcsgTopologyNameByCliqueName[pclqTemplateSpec.Name]; exists {
+			inheritedTopologyName = pcsgTopologyName
+		}
+
+		effectiveTopologyName, err := ResolveEffectiveTopologyNameForConstraint(pclqTemplateSpec.TopologyConstraint.TopologyName, inheritedTopologyName)
+		if err != nil {
+			return "", err
+		}
+		if err := recordTopologyName(effectiveTopologyName); err != nil {
+			return "", err
+		}
+	}
+
+	if resolvedTopologyName == "" {
 		return "", ErrTopologyNameMissing
-	case 1:
-		return sets.List(topologyNames)[0], nil
-	default:
-		return "", ErrMultipleTopologyNamesUnsupported
 	}
+	return resolvedTopologyName, nil
+}
+
+// FindExplicitTopologyNameForPodCliqueSet returns one explicit topologyName from the PCS.
+// It is intended for callers operating on already-validated PCS objects where all explicit topologyName
+// values are expected to match. Callers that need to distinguish "no topology constraints at all" from
+// missing explicit topologyName values must first call HasAnyTopologyConstraint.
+func FindExplicitTopologyNameForPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) (string, error) {
+	if tc := pcs.Spec.Template.TopologyConstraint; tc != nil && tc.TopologyName != "" {
+		return tc.TopologyName, nil
+	}
+	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		if tc := pcsgConfig.TopologyConstraint; tc != nil && tc.TopologyName != "" {
+			return tc.TopologyName, nil
+		}
+	}
+	for _, pclqTemplateSpec := range pcs.Spec.Template.Cliques {
+		if tc := pclqTemplateSpec.TopologyConstraint; tc != nil && tc.TopologyName != "" {
+			return tc.TopologyName, nil
+		}
+	}
+	return "", ErrTopologyNameMissing
 }
 
 // GetUniqueTopologyDomainsInPodCliqueSet returns all unique, non-empty pack domains referenced by the PCS.
 func GetUniqueTopologyDomainsInPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) []grovecorev1alpha1.TopologyDomain {
 	topologyDomains := sets.New[grovecorev1alpha1.TopologyDomain]()
 	for _, tc := range getAllTopologyConstraintsInPodCliqueSet(pcs) {
-		if tc.PackDomain != "" {
-			topologyDomains.Insert(tc.PackDomain)
-		}
+		topologyDomains.Insert(tc.ReferencedDomains()...)
 	}
 	return topologyDomains.UnsortedList()
 }

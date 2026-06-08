@@ -56,14 +56,14 @@ func GetPodCliqueFQNsForPCSReplicaNotInPCSG(pcs *grovecorev1alpha1.PodCliqueSet,
 
 // isStandalonePCLQ checks if the PodClique is managed by PodCliqueSet or not
 func isStandalonePCLQ(pcs *grovecorev1alpha1.PodCliqueSet, pclqName string) bool {
-	return !lo.Reduce(pcs.Spec.Template.PodCliqueScalingGroupConfigs, func(agg bool, pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig, _ int) bool {
-		return agg || slices.Contains(pcsgConfig.CliqueNames, pclqName)
-	}, false)
+	return !lo.SomeBy(pcs.Spec.Template.PodCliqueScalingGroupConfigs, func(pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig) bool {
+		return slices.Contains(pcsgConfig.CliqueNames, pclqName)
+	})
 }
 
 // pcsCacheKey is a context key for per-reconcile memoization of GetPodCliqueSet results.
 // In the PodClique reconcile flow alone we Get the same PCS up to 4 times (reconcileSpec,
-// reconcileStatus, pod.prepareSyncFlow, resourceclaim) — each DeepCopying the full template.
+// reconcileStatus, pod.prepareSyncFlow, resourceClaim) — each DeepCopying the full template.
 type pcsCacheKey struct{}
 
 // pcsCache holds one slot keyed by "namespace/name".

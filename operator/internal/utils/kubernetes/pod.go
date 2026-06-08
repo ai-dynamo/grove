@@ -19,6 +19,7 @@ package kubernetes
 import (
 	"fmt"
 	"hash/fnv"
+	"sort"
 
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
@@ -134,14 +135,197 @@ func HasAnyContainerNotStarted(pod *corev1.Pod) bool {
 	return false
 }
 
-// ComputeHash computes a hash given one or more corev1.PodTemplateSpec.
+// ComputeHash returns a stable hash for one or more corev1.PodTemplateSpec.
+//
+// Each template is canonicalized before hashing so that specs representing
+// the same desired state hash to the same value, even when an upstream
+// controller serialized order-independent +listType=map slices (e.g.
+// Containers, Volumes) in a different order. See canonicalizePodSpecForHashing
+// for the field-level rules, including the slices intentionally left
+// untouched because their order is part of the spec.
 func ComputeHash(podTemplateSpecs ...*corev1.PodTemplateSpec) string {
+	return computeHash(canonicalizePodTemplateSpecForHashing, nil, podTemplateSpecs...)
+}
+
+// ComputeHashWithOrderKeys computes a hash for pod templates whose caller-level
+// identity/order matters in addition to the canonicalized PodTemplateSpec
+// content. orderKeys must be aligned with podTemplateSpecs by index.
+func ComputeHashWithOrderKeys(orderKeys []string, podTemplateSpecs ...*corev1.PodTemplateSpec) string {
+	if len(orderKeys) != len(podTemplateSpecs) {
+		panic("ComputeHashWithOrderKeys: orderKeys length must match podTemplateSpecs length")
+	}
+	return computeHash(canonicalizePodTemplateSpecForHashing, orderKeys, podTemplateSpecs...)
+}
+
+type podTemplateSpecHashInput struct {
+	OrderKey        string
+	PodTemplateSpec *corev1.PodTemplateSpec
+}
+
+// ComputeHashLegacy computes a hash using the pre-canonicalization byte stream.
+//
+// This is intentionally the v0.1.0-alpha.8 behavior: each PodTemplateSpec is
+// passed directly to dump.ForHash without sorting order-independent API lists.
+// It exists only for the one-release compatibility window while persisted
+// legacy hashes are migrated to ComputeHash.
+func ComputeHashLegacy(podTemplateSpecs ...*corev1.PodTemplateSpec) string {
+	return computeHash(func(podTemplateSpec *corev1.PodTemplateSpec) *corev1.PodTemplateSpec {
+		return podTemplateSpec
+	}, nil, podTemplateSpecs...)
+}
+
+func computeHash(prepare func(*corev1.PodTemplateSpec) *corev1.PodTemplateSpec, orderKeys []string, podTemplateSpecs ...*corev1.PodTemplateSpec) string {
 	podTemplateSpecHasher := fnv.New64a()
 	podTemplateSpecHasher.Reset()
-	for _, podTemplateSpec := range podTemplateSpecs {
-		_, _ = fmt.Fprintf(podTemplateSpecHasher, "%v", dump.ForHash(podTemplateSpec))
+	for i, podTemplateSpec := range podTemplateSpecs {
+		prepared := prepare(podTemplateSpec)
+		if orderKeys != nil {
+			_, _ = fmt.Fprintf(podTemplateSpecHasher, "%v", dump.ForHash(podTemplateSpecHashInput{
+				OrderKey:        orderKeys[i],
+				PodTemplateSpec: prepared,
+			}))
+			continue
+		}
+		_, _ = fmt.Fprintf(podTemplateSpecHasher, "%v", dump.ForHash(prepared))
 	}
 	return rand.SafeEncodeString(fmt.Sprint(podTemplateSpecHasher.Sum64()))
+}
+
+// canonicalizePodTemplateSpecForHashing returns a deep-copied PodTemplateSpec
+// with its PodSpec canonicalized via canonicalizePodSpecForHashing.
+func canonicalizePodTemplateSpecForHashing(in *corev1.PodTemplateSpec) *corev1.PodTemplateSpec {
+	if in == nil {
+		return nil
+	}
+	out := in.DeepCopy()
+	canonicalizePodSpecForHashing(&out.Spec)
+	return out
+}
+
+// canonicalizePodSpecForHashing sorts the order-independent +listType=map
+// slices in spec in place so that two PodSpecs representing the same desired
+// state serialize identically. Each per-helper function below documents its
+// own sort key.
+//
+// The following slices are intentionally left in their original order —
+// sorting them would mis-represent a real spec change as equivalent:
+//   - InitContainers: +listType=map, but the field doc states init containers
+//     "are run in the order they appear in this list".
+//   - Container.Env: +listType=map, but order participates in $(VAR)
+//     substitution and so can change runtime values.
+//   - Container.Args, Container.Command: ordered argument lists.
+//   - Container.EnvFrom, PodSpec.Tolerations, PodSpec.ReadinessGates,
+//     Container.ResizePolicy, Container.RestartPolicyRules: +listType=atomic;
+//     the API treats the slice as a single opaque value.
+func canonicalizePodSpecForHashing(spec *corev1.PodSpec) {
+	// Containers run in parallel and are +listType=map keyed by name —
+	// safe to sort. After sorting the slice, also canonicalize the
+	// per-container map-list fields (ports, volumeMounts, volumeDevices,
+	// resources.claims).
+	sort.SliceStable(spec.Containers, func(i, j int) bool {
+		return spec.Containers[i].Name < spec.Containers[j].Name
+	})
+	for i := range spec.Containers {
+		canonicalizeContainerForHashing(&spec.Containers[i])
+	}
+
+	// InitContainers slice itself is NOT reordered — execution sequence
+	// matters — but the per-container map-list fields inside each init
+	// container ARE order-independent and get canonicalized.
+	for i := range spec.InitContainers {
+		canonicalizeContainerForHashing(&spec.InitContainers[i])
+	}
+
+	// EphemeralContainers are +listType=map keyed by name; ordering has no
+	// runtime meaning. Sort them and canonicalize their inner slices via
+	// the embedded EphemeralContainerCommon (same shape as Container).
+	sort.SliceStable(spec.EphemeralContainers, func(i, j int) bool {
+		return spec.EphemeralContainers[i].Name < spec.EphemeralContainers[j].Name
+	})
+	for i := range spec.EphemeralContainers {
+		canonicalizeEphemeralContainerForHashing(&spec.EphemeralContainers[i])
+	}
+
+	sort.SliceStable(spec.Volumes, func(i, j int) bool {
+		return spec.Volumes[i].Name < spec.Volumes[j].Name
+	})
+	sort.SliceStable(spec.ImagePullSecrets, func(i, j int) bool {
+		return spec.ImagePullSecrets[i].Name < spec.ImagePullSecrets[j].Name
+	})
+	sort.SliceStable(spec.HostAliases, func(i, j int) bool {
+		return spec.HostAliases[i].IP < spec.HostAliases[j].IP
+	})
+	sort.SliceStable(spec.TopologySpreadConstraints, func(i, j int) bool {
+		a, b := spec.TopologySpreadConstraints[i], spec.TopologySpreadConstraints[j]
+		if a.TopologyKey != b.TopologyKey {
+			return a.TopologyKey < b.TopologyKey
+		}
+		return string(a.WhenUnsatisfiable) < string(b.WhenUnsatisfiable)
+	})
+	sort.SliceStable(spec.ResourceClaims, func(i, j int) bool {
+		return spec.ResourceClaims[i].Name < spec.ResourceClaims[j].Name
+	})
+	sort.SliceStable(spec.SchedulingGates, func(i, j int) bool {
+		return spec.SchedulingGates[i].Name < spec.SchedulingGates[j].Name
+	})
+}
+
+// canonicalizeContainerForHashing sorts the order-independent +listType=map
+// slices inside a single Container in place: Ports, VolumeMounts,
+// VolumeDevices, Resources.Claims. Order-significant slices (Env, EnvFrom,
+// Args, Command) are intentionally left untouched.
+func canonicalizeContainerForHashing(c *corev1.Container) {
+	canonicalizePortsForHashing(c.Ports)
+	canonicalizeVolumeMountsForHashing(c.VolumeMounts)
+	canonicalizeVolumeDevicesForHashing(c.VolumeDevices)
+	canonicalizeResourceClaimsForHashing(c.Resources.Claims)
+}
+
+// canonicalizeEphemeralContainerForHashing applies the same canonicalization
+// as canonicalizeContainerForHashing to the embedded EphemeralContainerCommon
+// inside an EphemeralContainer.
+func canonicalizeEphemeralContainerForHashing(ec *corev1.EphemeralContainer) {
+	canonicalizePortsForHashing(ec.Ports)
+	canonicalizeVolumeMountsForHashing(ec.VolumeMounts)
+	canonicalizeVolumeDevicesForHashing(ec.VolumeDevices)
+	canonicalizeResourceClaimsForHashing(ec.Resources.Claims)
+}
+
+// canonicalizePortsForHashing sorts ContainerPort entries by their composite
+// API key (containerPort, protocol). Container.Ports is +listType=map.
+func canonicalizePortsForHashing(ports []corev1.ContainerPort) {
+	sort.SliceStable(ports, func(p, q int) bool {
+		a, b := ports[p], ports[q]
+		if a.ContainerPort != b.ContainerPort {
+			return a.ContainerPort < b.ContainerPort
+		}
+		return string(a.Protocol) < string(b.Protocol)
+	})
+}
+
+// canonicalizeVolumeMountsForHashing sorts VolumeMount entries by mountPath.
+// Container.VolumeMounts is +listType=map +listMapKey=mountPath; order has
+// no runtime meaning.
+func canonicalizeVolumeMountsForHashing(mounts []corev1.VolumeMount) {
+	sort.SliceStable(mounts, func(i, j int) bool {
+		return mounts[i].MountPath < mounts[j].MountPath
+	})
+}
+
+// canonicalizeVolumeDevicesForHashing sorts VolumeDevice entries by
+// devicePath. Container.VolumeDevices is +listType=map +listMapKey=devicePath.
+func canonicalizeVolumeDevicesForHashing(devices []corev1.VolumeDevice) {
+	sort.SliceStable(devices, func(i, j int) bool {
+		return devices[i].DevicePath < devices[j].DevicePath
+	})
+}
+
+// canonicalizeResourceClaimsForHashing sorts ResourceClaim entries by name.
+// Container.Resources.Claims is +listType=map +listMapKey=name.
+func canonicalizeResourceClaimsForHashing(claims []corev1.ResourceClaim) {
+	sort.SliceStable(claims, func(i, j int) bool {
+		return claims[i].Name < claims[j].Name
+	})
 }
 
 // GetContainerStatusIfTerminatedErroneously gets the first occurrence of corev1.ContainerStatus (across init, sidecar and main containers)

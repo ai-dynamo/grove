@@ -90,17 +90,35 @@ generate-api-docs: $(CRD_REF_DOCS)
 # Runs unit tests for the entire codebase (all modules)
 .PHONY: test-unit
 test-unit:
+	@echo "> Running tests for operator/api"
+	@make --directory=operator/api test-unit
 	@echo "> Running tests for operator"
 	@make --directory=operator test-unit
+	@echo "> Running tests for operator/client"
+	@cd operator/client && go test ./...
+	@echo "> Running tests for scheduler/api"
+	@cd scheduler/api && go test ./...
+	@echo "> Running tests for scheduler/client"
+	@cd scheduler/client && go test ./...
+	@echo "> Running tests for cli-plugin"
+	@if [ -n "$$(cd cli-plugin && go list ./... 2>/dev/null)" ]; then \
+		cd cli-plugin && go test ./...; \
+	else \
+		echo "> Skipping cli-plugin (no Go packages)"; \
+	fi
 
 .PHONY: test-cover
 test-cover:
+	@echo "> Running tests with coverage for operator/api"
+	@make --directory=operator/api test-cover
 	@echo "> Running tests with coverage for operator"
 	@make --directory=operator test-cover
 
 # Generates HTML coverage reports for the entire codebase (all modules)
 .PHONY: cover-html
 cover-html:
+	@echo "> Generating HTML coverage report for operator/api"
+	@make --directory=operator/api cover-html
 	@echo "> Generating HTML coverage report for operator"
 	@make --directory=operator cover-html
 
