@@ -73,7 +73,6 @@ type SchedulerConfiguration struct {
 	// The default-scheduler backend is always enabled to ensure that the kubernetes default scheduler is always enabled and supported.
 	// Use profile name "default-scheduler" to configure or set it as default.
 	// Valid profile names: "default-scheduler", "kai-scheduler", "volcano". Use defaultProfileName to designate the default backend.
-	// The Volcano backend supports gang scheduling via Volcano PodGroup and currently rejects topology-aware scheduling constraints.
 	// +optional
 	Profiles []SchedulerProfile `json:"profiles,omitempty"`
 	// DefaultProfileName is the name of the default scheduler profile. If unset, defaulting sets it to "default-scheduler"
