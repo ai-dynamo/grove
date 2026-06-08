@@ -192,6 +192,14 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - apiextensions.k8s.io
+  resources:
+  - customresourcedefinitions
+  resourceNames:
+  - podgroups.scheduling.volcano.sh
+  verbs:
+  - get
 {{- end }}
 {{- if .Values.config.network.autoMNNVLEnabled }}
 # MNNVL (Multi-Node NVLink) support requires permissions for ComputeDomain and ResourceClaimTemplate resources.
