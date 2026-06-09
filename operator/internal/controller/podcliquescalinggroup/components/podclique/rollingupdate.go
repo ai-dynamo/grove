@@ -150,12 +150,8 @@ func (r _resource) markRollingUpdateEnd(ctx context.Context, logger logr.Logger,
 			fmt.Sprintf("failed to mark end of rolling update in status of PodCliqueScalingGroup: %v", client.ObjectKeyFromObject(pcsg)),
 		)
 	}
-	logger.Info("Marked the end of rolling update of PodCliqueScalingGroup")
-	return groveerr.New(
-		groveerr.ErrCodeContinueReconcileAndRequeue,
-		component.OperationSync,
-		fmt.Sprintf("rolling update of PodCliqueScalingGroup %v has ended, requeuing for status convergence", client.ObjectKeyFromObject(pcsg)),
-	)
+	logger.Info("Marked the end of rolling update for PodCliqueScalingGroup")
+	return nil
 }
 
 // computePendingUpdateWork analyzes existing replicas and categorizes them by update status and availability state
@@ -173,7 +169,7 @@ func computePendingUpdateWork(sc *syncContext) (*updateWork, error) {
 			sc.pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current == int32(pcsgReplicaIndex) {
 			continue
 		}
-		isUpdated, err := isReplicaUpdated(sc.expectedPCLQPodTemplateHashes, existingPCSGReplicaPCLQs)
+		isUpdated, err := isReplicaUpdated(sc.expectedPCLQPodTemplateHashMap, existingPCSGReplicaPCLQs)
 		if err != nil {
 			return nil, err
 		}
@@ -219,20 +215,20 @@ func isCurrentReplicaUpdateComplete(sc *syncContext) bool {
 		return false
 	}
 	return lo.EveryBy(existingPCSGReplicaPCLQs, func(pclq grovecorev1alpha1.PodClique) bool {
-		expectedPodTemplateHashes := sc.expectedPCLQPodTemplateHashes[pclq.Name]
-		return pclq.Status.CurrentPodTemplateHash != nil && expectedPodTemplateHashes.Matches(*pclq.Status.CurrentPodTemplateHash) &&
+		return pclq.Status.CurrentPodTemplateHash != nil && *pclq.Status.CurrentPodTemplateHash == sc.expectedPCLQPodTemplateHashMap[pclq.Name] &&
+			pclq.Status.CurrentPodCliqueSetGenerationHash != nil && *pclq.Status.CurrentPodCliqueSetGenerationHash == *sc.pcs.Status.CurrentGenerationHash &&
 			pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable
 	})
 }
 
 // isReplicaUpdated checks if all PodCliques in a PCSG replica have the expected pod template hash
-func isReplicaUpdated(expectedPCLQPodTemplateHashes map[string]componentutils.HashCandidates, pcsgReplicaPCLQs []grovecorev1alpha1.PodClique) (bool, error) {
+func isReplicaUpdated(expectedPCLQPodTemplateHashes map[string]string, pcsgReplicaPCLQs []grovecorev1alpha1.PodClique) (bool, error) {
 	for _, pclq := range pcsgReplicaPCLQs {
 		podTemplateHash, ok := pclq.Labels[apicommon.LabelPodTemplateHash]
 		if !ok {
 			return false, groveerr.ErrMissingPodTemplateHashLabel
 		}
-		if !expectedPCLQPodTemplateHashes[pclq.Name].Matches(podTemplateHash) {
+		if podTemplateHash != expectedPCLQPodTemplateHashes[pclq.Name] {
 			return false, nil
 		}
 	}

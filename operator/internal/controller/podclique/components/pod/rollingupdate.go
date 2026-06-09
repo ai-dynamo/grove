@@ -141,7 +141,7 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 func (r _resource) computeUpdateWork(logger logr.Logger, sc *syncContext) *updateWork {
 	work := &updateWork{}
 	for _, pod := range sc.existingPCLQPods {
-		if !sc.podTemplateHashMatchesExpected(pod.Labels[common.LabelPodTemplateHash]) {
+		if pod.Labels[common.LabelPodTemplateHash] != sc.expectedPodTemplateHash {
 			// Old-hash pod — skip if deletion already in flight.
 			if r.hasPodDeletionBeenTriggered(sc, pod) {
 				logger.Info("skipping old Pod since its deletion has already been triggered", "pod", client.ObjectKeyFromObject(pod))
@@ -170,13 +170,6 @@ func (r _resource) computeUpdateWork(logger logr.Logger, sc *syncContext) *updat
 		}
 	}
 	return work
-}
-
-func (sc *syncContext) podTemplateHashMatchesExpected(hash string) bool {
-	if sc.expectedPodTemplateHashes.Canonical != "" {
-		return sc.expectedPodTemplateHashes.Matches(hash)
-	}
-	return hash == sc.expectedPodTemplateHash
 }
 
 // hasPodDeletionBeenTriggered checks if a pod is already terminating or has a delete expectation recorded

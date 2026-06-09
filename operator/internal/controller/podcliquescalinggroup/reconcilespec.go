@@ -113,17 +113,10 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pcsg
 
 // shouldResetOrTriggerUpdate determines if a rolling update should be initiated based on generation hash changes
 func shouldResetOrTriggerUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) bool {
-	if pcs.Status.CurrentGenerationHash == nil {
-		return false
-	}
-	pcsGenerationHashCandidates := componentutils.ComputePCSGenerationHashCandidates(pcs)
-	matchesCurrentPCSGeneration := func(hash string) bool {
-		return hash == *pcs.Status.CurrentGenerationHash || pcsGenerationHashCandidates.Matches(hash)
-	}
-
 	// If processing of rolling update of PCSG for PCS CurrentGenerationHash is either completed or in-progress,
 	// there is no need to reset or trigger another rolling update of this PCSG for the same PCS CurrentGenerationHash.
-	if pcsg.Status.UpdateProgress != nil && matchesCurrentPCSGeneration(pcsg.Status.UpdateProgress.PodCliqueSetGenerationHash) {
+	if pcsg.Status.UpdateProgress != nil && pcs.Status.CurrentGenerationHash != nil &&
+		pcsg.Status.UpdateProgress.PodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash {
 		return false
 	}
 	return true
