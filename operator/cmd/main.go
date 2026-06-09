@@ -90,6 +90,7 @@ func main() {
 
 	// Initialize scheduler backends with the configured schedulers.
 	schedRegistry, err := schedulerregistry.New(
+		mgr.GetClient(),
 		cl,
 		mgr.GetScheme(),
 		mgr.GetEventRecorderFor("scheduler-backend"),

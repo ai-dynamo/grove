@@ -99,11 +99,6 @@ func (s *FakeSchedulerBackend) SyncPodGang(_ context.Context, _ *groveschedulerv
 	return nil
 }
 
-// OnPodGangDelete is a no-op for the fake backend.
-func (s *FakeSchedulerBackend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
-	return nil
-}
-
 // PreparePod is a no-op for the fake backend.
 func (s *FakeSchedulerBackend) PreparePod(_ *corev1.Pod) {}
 

@@ -72,13 +72,6 @@ func (b *schedulerBackend) SyncPodGang(_ context.Context, _ *groveschedulerv1alp
 	return nil
 }
 
-// OnPodGangDelete handles PodGang deletion
-// For default kube scheduler, no cleanup is needed
-func (b *schedulerBackend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
-	// No-op: default kube scheduler doesn't have any resources to clean up
-	return nil
-}
-
 // PreparePod prepares the Pod by setting the relevant schedulerName field with the chosen scheduler backend.
 func (b *schedulerBackend) PreparePod(pod *corev1.Pod) {
 	pod.Spec.SchedulerName = b.name

@@ -46,9 +46,6 @@ type Backend interface {
 	// reacting to a creation or update of a PodGang resource.
 	SyncPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error
 
-	// OnPodGangDelete cleans up scheduler-specific resources for the given PodGang.
-	OnPodGangDelete(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error
-
 	// PreparePod adds scheduler-backend-specific configuration to the given Pod object
 	// prior to its creation (schedulerName, annotations, etc.).
 	PreparePod(pod *corev1.Pod)
