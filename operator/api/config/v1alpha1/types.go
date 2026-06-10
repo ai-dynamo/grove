@@ -60,11 +60,18 @@ const (
 	SchedulerNameKube SchedulerName = "default-scheduler"
 	// SchedulerNameVolcano is the Volcano scheduler backend. It supports gang scheduling via Volcano PodGroup.
 	SchedulerNameVolcano SchedulerName = "volcano"
+	// SchedulerNameLPX is the LPX scheduler backend.
+	SchedulerNameLPX SchedulerName = "lpx-scheduler"
 )
 
 var (
 	// SupportedSchedulerNames is the list of profile names allowed in scheduler.profiles[].name.
-	SupportedSchedulerNames = []SchedulerName{SchedulerNameKai, SchedulerNameKube, SchedulerNameVolcano}
+	SupportedSchedulerNames = []SchedulerName{
+		SchedulerNameKai,
+		SchedulerNameKube,
+		SchedulerNameVolcano,
+		SchedulerNameLPX,
+	}
 )
 
 // SchedulerConfiguration configures scheduler profiles and which is the default.
@@ -72,7 +79,8 @@ type SchedulerConfiguration struct {
 	// Profiles is the list of scheduler profiles. Each profile has a backend name and an optional config.
 	// The default-scheduler backend is always enabled to ensure that the kubernetes default scheduler is always enabled and supported.
 	// Use profile name "default-scheduler" to configure or set it as default.
-	// Valid profile names: "default-scheduler", "kai-scheduler", "volcano". Use defaultProfileName to designate the default backend.
+	// Valid profile names: "default-scheduler", "kai-scheduler", "volcano", "lpx-scheduler".
+	// Use defaultProfileName to designate the default backend.
 	// +optional
 	Profiles []SchedulerProfile `json:"profiles,omitempty"`
 	// DefaultProfileName is the name of the default scheduler profile. If unset, defaulting sets it to "default-scheduler"
@@ -87,7 +95,7 @@ type SchedulerProfile struct {
 	// For the Kubernetes default scheduler use the standard "default-scheduler".
 	// Ensure that the name chosen is a valid scheduler name. The name will also be directly set in `Pod.Spec.SchedulerName`.
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=kai-scheduler;default-scheduler;volcano
+	// +kubebuilder:validation:Enum=kai-scheduler;default-scheduler;volcano;lpx-scheduler
 	Name SchedulerName `json:"name"`
 
 	// Config holds backend-specific options. The operator unmarshals it into the config type for this backend (see backend config types).

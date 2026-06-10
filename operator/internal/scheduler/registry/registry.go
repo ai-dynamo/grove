@@ -24,6 +24,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kai"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kube"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler/lpx"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/volcano"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -104,6 +105,8 @@ func newSchedulerBackend(cl, directClient client.Client, scheme *runtime.Scheme,
 		b = kai.New(cl, scheme, rec, p)
 	case configv1alpha1.SchedulerNameVolcano:
 		b = volcano.New(cl, scheme, rec, p)
+	case configv1alpha1.SchedulerNameLPX:
+		b = lpx.New(p)
 	default:
 		return nil, fmt.Errorf("scheduler profile %q is not supported", p.Name)
 	}
