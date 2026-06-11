@@ -22,6 +22,7 @@ import (
 
 	schedv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	kaitopologyv1alpha1 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/kai/v1alpha1"
+	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -37,6 +38,7 @@ func init() {
 		grovecorev1alpha1.AddToScheme,
 		schedv1alpha1.AddToScheme,
 		kaitopologyv1alpha1.AddToScheme,
+		kaischedulingv2alpha2.AddToScheme,
 		k8sscheme.AddToScheme,
 	)
 	utilruntime.Must(metav1.AddMetaToScheme(Scheme))
