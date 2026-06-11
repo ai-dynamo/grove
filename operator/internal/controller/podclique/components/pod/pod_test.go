@@ -18,6 +18,7 @@ package pod
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/ai-dynamo/grove/operator/api/common"
@@ -36,6 +37,26 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 )
+
+func TestAddServiceAccountTokenSecretVolumeUsesShortSecretName(t *testing.T) {
+	// 44 is the longest admitted PodCliqueSet name (the webhook caps combined
+	// resource name length at 45). The shortened "-ic-sat" suffix must keep the
+	// generated Secret name within the 63-byte label-value limit even at this bound.
+	pcsName := strings.Repeat("a", 44)
+	pod := &corev1.Pod{}
+
+	addServiceAccountTokenSecretVolume(pcsName, pod)
+
+	assert.Len(t, pod.Spec.Volumes, 1)
+	volume := pod.Spec.Volumes[0]
+	assert.Equal(t, serviceAccountTokenSecretVolumeName, volume.Name)
+	if assert.NotNil(t, volume.Secret) {
+		expectedSecretName := common.GenerateInitContainerSATokenSecretName(pcsName)
+		assert.Equal(t, expectedSecretName, volume.Secret.SecretName)
+		assert.NotEqual(t, common.GenerateLegacyInitContainerSATokenSecretName(pcsName), volume.Secret.SecretName)
+		assert.LessOrEqual(t, len(expectedSecretName), 63)
+	}
+}
 
 func TestBuildResourceWithLPXBackend(t *testing.T) {
 	const (
