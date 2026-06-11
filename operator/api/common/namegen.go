@@ -61,6 +61,14 @@ func GeneratePodServiceAccountName(pcsName string) string {
 // GenerateInitContainerSATokenSecretName generates a Secret name containing a service account token that will be mounted onto the init container
 // responsible for ensuring start-up order amongst PodCliques.
 func GenerateInitContainerSATokenSecretName(pcsName string) string {
+	return fmt.Sprintf("%s-ic-sat", pcsName)
+}
+
+// GenerateLegacyInitContainerSATokenSecretName generates the legacy init-container service account token
+// Secret name used before the suffix was shortened. Retained as a migration source and delete target.
+//
+// Deprecated: scheduled for removal three releases after the shortening (see https://github.com/ai-dynamo/grove/issues/658).
+func GenerateLegacyInitContainerSATokenSecretName(pcsName string) string {
 	return fmt.Sprintf("%s-initc-sa-token-secret", pcsName)
 }
 
