@@ -1089,6 +1089,62 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 			},
 		},
 		{
+			name:       "PCS with stale preferred domain preserves required topology constraint",
+			tasEnabled: true,
+			pcsTopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+				Pack: &grovecorev1alpha1.TopologyPackConstraint{
+					RequiredDomain:  "rack",
+					PreferredDomain: "block",
+				},
+			},
+			pclqTemplateSpecs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{
+					Name: "worker",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						Replicas:     3,
+						MinAvailable: ptr.To(int32(2)),
+					},
+				},
+			},
+			expectedNumPodGangs: 1,
+			expectedPodGangTopologyConstraints: []expectedPodGangTopologyConstraints{
+				{
+					fqn: "test-pcs-0",
+					topologyPackConstraint: &expectedTopologyPackConstraint{
+						requiredKey: topologyLevelRack.Key,
+					},
+				},
+			},
+		},
+		{
+			name:       "PCS with stale required domain preserves preferred topology constraint",
+			tasEnabled: true,
+			pcsTopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+				Pack: &grovecorev1alpha1.TopologyPackConstraint{
+					RequiredDomain:  "block",
+					PreferredDomain: "rack",
+				},
+			},
+			pclqTemplateSpecs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{
+					Name: "worker",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						Replicas:     3,
+						MinAvailable: ptr.To(int32(2)),
+					},
+				},
+			},
+			expectedNumPodGangs: 1,
+			expectedPodGangTopologyConstraints: []expectedPodGangTopologyConstraints{
+				{
+					fqn: "test-pcs-0",
+					topologyPackConstraint: &expectedTopologyPackConstraint{
+						preferredKey: topologyLevelRack.Key,
+					},
+				},
+			},
+		},
+		{
 			name:       "PCS with single standalone PCLQ where topology constraints are set for one of the PCLQs",
 			tasEnabled: true,
 			pclqTemplateSpecs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
