@@ -83,7 +83,16 @@ func getRestConfig() (*rest.Config, error) {
 		return nil, fmt.Errorf("had an error reading the kubeconfig at %s:%v", kubeconfigPath, err)
 	}
 
-	return clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return nil, err
+	}
+	// Raise client-side rate limits above client-go defaults (5 QPS / 10 burst);
+	// e2e polling loops otherwise hit "client rate limiter Wait ... context
+	// deadline exceeded" under rolling/ondelete update tests.
+	cfg.QPS = 50
+	cfg.Burst = 100
+	return cfg, nil
 }
 
 // StartNodeMonitoring starts a goroutine that monitors k3d cluster nodes for not ready status

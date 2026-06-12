@@ -110,7 +110,7 @@ class ClusterConfig(BaseSettings):
         config = ClusterConfig()
 
         # Override via environment
-        E2E_WORKER_NODES=50 E2E_KAI_VERSION=v0.14.0 python create-e2e-cluster.py
+        E2E_WORKER_NODES=50 E2E_KAI_VERSION=v0.15.2 python create-e2e-cluster.py
 
         # In shell
         export E2E_CLUSTER_NAME=my-test-cluster
@@ -127,7 +127,7 @@ class ClusterConfig(BaseSettings):
     lb_port: str = "8090:80"
     worker_nodes: int = Field(default=30, ge=1, le=100)
     worker_memory: Optional[str] = Field(default=DEFAULT_WORKER_MEMORY, pattern=r"^\d+[mMgG]?$")
-    k3s_image: str = "rancher/k3s:v1.34.2-k3s1"
+    k3s_image: str = "rancher/k3s:v1.35.5-k3s1"
     kai_version: str = Field(default=DEPENDENCIES['kai_scheduler']['version'], pattern=r"^v[\d.]+(-[\w.]+)?$")
     skaffold_profile: str = "topology-test"
     max_retries: int = Field(default=3, ge=1, le=10)

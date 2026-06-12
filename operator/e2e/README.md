@@ -82,7 +82,7 @@ helmCharts:
   kaiScheduler:
     releaseName: kai-scheduler
     chartRef: oci://ghcr.io/kai-scheduler/kai-scheduler/kai-scheduler
-    version: v0.14.0  # <- Update this version
+    version: v0.15.2  # <- Update this version
     namespace: kai-scheduler
 ```
 

@@ -61,7 +61,7 @@ make run-e2e-mnnvl-full
 # Or, manage cluster manually and run tests separately:
 
 # 1. Create the MNNVL cluster (lightweight: 2 workers, skip image prepull only)
-E2E_WORKER_NODES=2 E2E_K3S_IMAGE=rancher/k3s:v1.34.2-k3s1 make e2e-cluster-up E2E_CREATE_FLAGS="--skip-prepull"
+E2E_WORKER_NODES=2 E2E_K3S_IMAGE=rancher/k3s:v1.35.5-k3s1 make e2e-cluster-up E2E_CREATE_FLAGS="--skip-prepull"
 
 # 2. Push alpine image for test workloads
 docker pull alpine:latest && docker tag alpine:latest localhost:5001/alpine:latest && docker push localhost:5001/alpine:latest
