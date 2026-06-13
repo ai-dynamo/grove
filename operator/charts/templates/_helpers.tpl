@@ -88,6 +88,15 @@ chart: "{{ .Chart.Name }}-{{ .Chart.Version }}"
 release: "{{ .Release.Name }}"
 {{- end -}}
 
+{{/* Returns "true" if the named scheduler profile is configured, empty string otherwise. */}}
+{{- define "grove.scheduler.hasProfile" -}}
+{{- $root := index . 0 -}}
+{{- $profile := index . 1 -}}
+{{- range $root.Values.config.scheduler.profiles -}}
+{{- if eq .name $profile -}}true{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "operator.config.labels" -}}
 {{- include "common.chart.labels" . }}
 {{- range $key, $val := .Values.configMap.labels }}

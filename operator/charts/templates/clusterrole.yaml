@@ -131,6 +131,7 @@ rules:
   - patch
   - update
   - watch
+{{- if include "grove.scheduler.hasProfile" (list . "kai-scheduler") }}
 - apiGroups:
   - kai.scheduler
   resources:
@@ -143,6 +144,7 @@ rules:
   - patch
   - update
   - delete
+{{- end }}
 # DRA (Dynamic Resource Allocation) integration for resource sharing
 - apiGroups:
   - resource.k8s.io
@@ -165,13 +167,7 @@ rules:
   - get
   - list
   - watch
-{{- $volcanoEnabled := false -}}
-{{- range .Values.config.scheduler.profiles }}
-{{- if eq .name "volcano" }}
-{{- $volcanoEnabled = true -}}
-{{- end }}
-{{- end }}
-{{- if $volcanoEnabled }}
+{{- if include "grove.scheduler.hasProfile" (list . "volcano") }}
 - apiGroups:
   - scheduling.volcano.sh
   resources:
