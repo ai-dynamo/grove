@@ -153,10 +153,8 @@ func hasPodStatusChanged(updateEvent event.UpdateEvent) bool {
 		hasLastTerminationStateChanged(oldPod.Status.ContainerStatuses, newPod.Status.ContainerStatuses) {
 		return true
 	}
-	// Per-container started/ready transitions drive the rolling-update state machine
-	// (PodStartedButNotReady classification in rollingupdate.go). They are only
-	// meaningful while the pod is not yet fully ready; once Ready, container churn
-	// is already covered by the checks above.
+	// Per-container started/ready transitions are only meaningful while the pod is
+	// not yet fully ready; once Ready, container churn is already covered above.
 	return !k8sutils.IsPodReady(newPod) && hasStartedAndReadyChangedForAnyContainer(oldPod.Status.ContainerStatuses, newPod.Status.ContainerStatuses)
 }
 
