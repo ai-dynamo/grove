@@ -121,6 +121,23 @@ func IsAutoUpdateStrategy(pcs *grovecorev1alpha1.PodCliqueSet) bool {
 	return pcs.Spec.UpdateStrategy == nil || pcs.Spec.UpdateStrategy.Type != grovecorev1alpha1.OnDeleteStrategy
 }
 
+// IsInPlaceUpdateStrategy returns true when PodCliqueSet update strategy should attempt in-place Pod image updates.
+func IsInPlaceUpdateStrategy(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+	if pcs == nil || pcs.Spec.UpdateStrategy == nil {
+		return false
+	}
+	return pcs.Spec.UpdateStrategy.Type == grovecorev1alpha1.InPlaceIfPossibleStrategy ||
+		pcs.Spec.UpdateStrategy.Type == grovecorev1alpha1.InPlaceOnlyStrategy
+}
+
+// IsInPlaceOnlyStrategy returns true when unsupported in-place changes should block instead of falling back to recreate.
+func IsInPlaceOnlyStrategy(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+	if pcs == nil || pcs.Spec.UpdateStrategy == nil {
+		return false
+	}
+	return pcs.Spec.UpdateStrategy.Type == grovecorev1alpha1.InPlaceOnlyStrategy
+}
+
 // GetExpectedPCLQNamesGroupByOwner returns the expected unqualified PodClique names which are either owned by PodCliqueSet or PodCliqueScalingGroup.
 func GetExpectedPCLQNamesGroupByOwner(pcs *grovecorev1alpha1.PodCliqueSet) (expectedPCLQNamesForPCS []string, expectedPCLQNamesForPCSG []string) {
 	pcsgConfigs := pcs.Spec.Template.PodCliqueScalingGroupConfigs

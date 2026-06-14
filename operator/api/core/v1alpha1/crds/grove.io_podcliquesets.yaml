@@ -10916,6 +10916,17 @@ spec:
                   templates change. This applies to both standalone PodCliques and
                   PodCliqueScalingGroups.
                 properties:
+                  inPlaceUpdate:
+                    description: InPlaceUpdate configures behavior for in-place update
+                      strategies.
+                    properties:
+                      gracePeriodSeconds:
+                        description: |-
+                          GracePeriodSeconds is the delay between marking a Pod not ready through the
+                          Grove in-place readiness gate and patching container images.
+                        format: int32
+                        type: integer
+                    type: object
                   type:
                     default: RollingRecreate
                     description: |-
@@ -10926,6 +10937,8 @@ spec:
                     enum:
                     - RollingRecreate
                     - OnDelete
+                    - InPlaceIfPossible
+                    - InPlaceOnly
                     type: string
                 type: object
             required:

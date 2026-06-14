@@ -118,6 +118,17 @@ type PodCliqueSetUpdateStrategy struct {
 	// Default is RollingRecreate.
 	// +kubebuilder:default=RollingRecreate
 	Type UpdateStrategyType `json:"type,omitempty"`
+	// InPlaceUpdate configures behavior for in-place update strategies.
+	// +optional
+	InPlaceUpdate *InPlaceUpdateStrategy `json:"inPlaceUpdate,omitempty"`
+}
+
+// InPlaceUpdateStrategy defines settings for in-place Pod image updates.
+type InPlaceUpdateStrategy struct {
+	// GracePeriodSeconds is the delay between marking a Pod not ready through the
+	// Grove in-place readiness gate and patching container images.
+	// +optional
+	GracePeriodSeconds *int32 `json:"gracePeriodSeconds,omitempty"`
 }
 
 // PodCliqueSetUpdateProgress captures the progress of an update of the PodCliqueSet.
@@ -487,7 +498,7 @@ type HeadlessServiceConfig struct {
 }
 
 // UpdateStrategyType defines the type of update strategy for PodCliqueSet.
-// +kubebuilder:validation:Enum={RollingRecreate,OnDelete}
+// +kubebuilder:validation:Enum={RollingRecreate,OnDelete,InPlaceIfPossible,InPlaceOnly}
 type UpdateStrategyType string
 
 const (
@@ -502,6 +513,13 @@ const (
 	// they are manually deleted. Changes to templates do not automatically
 	// trigger replica deletions.
 	OnDeleteStrategy UpdateStrategyType = "OnDelete"
+	// InPlaceIfPossibleStrategy indicates that Pods should be updated in-place
+	// when their changes are eligible for in-place update. Unsupported changes
+	// fall back to RollingRecreate.
+	InPlaceIfPossibleStrategy UpdateStrategyType = "InPlaceIfPossible"
+	// InPlaceOnlyStrategy indicates that Pods should only be updated in-place.
+	// Unsupported changes block the update instead of deleting Pods.
+	InPlaceOnlyStrategy UpdateStrategyType = "InPlaceOnly"
 )
 
 // CliqueStartupType defines the order in which each PodClique is started.
