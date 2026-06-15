@@ -113,11 +113,15 @@ release: "{{ .Release.Name }}"
 {{- end }}
 {{- end -}}
 
-{{- define "operator.service.labels" -}}
-{{- include "common.chart.labels" . }}
+{{- define "operator.service.matchLabels" -}}
 {{- range $key, $val := .Values.service.labels }}
 {{ $key }}: {{ $val }}
 {{- end }}
+{{- end -}}
+
+{{- define "operator.service.labels" -}}
+{{- include "common.chart.labels" . }}
+{{- include "operator.service.matchLabels" . }}
 {{- end -}}
 
 {{- define "operator.servicemonitor.labels" -}}
