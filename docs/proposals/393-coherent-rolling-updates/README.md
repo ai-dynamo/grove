@@ -557,14 +557,16 @@ The PodGang component reports two conditions on every `PodGang.Status` to expres
 
 | Condition | Meaning |
 | --- | --- |
-| `PodGangConditionTypeScheduled` | Set to `True` once `MinReplicas` pods of every `PodGroup` have been scheduled onto nodes. Setting `Scheduled=True` also implies `MinReplicas` has been released to 0 on all PodGroups. |
-| `PodGangConditionTypeReady` | Set to `True` once `MinReplicas` pods of every `PodGroup` are `Ready` (passing readiness probes). |
+| `PodGangConditionTypeScheduled` | Set to `True` once `MinReplicas` pods of every `PodGroup` have been scheduled onto nodes. Setting `Scheduled=True` also implies `MinReplicas` has been released to 0 on all PodGroups. Once set to `True`, this condition remains `True` for the rest of the PodGang's lifetime — placement is a one-time event from the scheduler's perspective. |
+| `PodGangConditionTypeReady` | Set to `True` when `MinReplicas` pods of every `PodGroup` are currently `Ready` (passing readiness probes). Unlike `Scheduled`, this condition reflects current state — if a pod fails readiness or a scale-in drops the Ready count below `MinReplicas`, the PodGang component flips it back to `False`. |
 
-These conditions are progressive: a PodGang reaches `Scheduled=True` first, then `Ready=True`. Both stay `True` for the rest of the PodGang's lifetime — they are not flipped back to `False` after, for example, a pod failure or scale-in.
+`Scheduled` is therefore strictly progressive; `Ready` tracks live serving status. The orchestrator's coherent-update advancement reads `Ready=True` only on PodGangs in `InFlightPodGangs` (the current iteration's PodGangs), so a previously-advanced PodGang flipping `Ready=False` does not block update progression.
 
 The lifecycle of a PodGang the PodGang component creates — legacy BPG and SPG, MPG, and TPG alike — proceeds in three stages:
 
-1. **Set on creation.** Each `PodGroup`'s `MinReplicas` is set to the `minAvailable` value defined in the PCS spec for that PCLQ or PCSG. This forces the scheduler to place the whole gang at once before any constituent pod can run.
+1. **Set on creation.** Each `PodGroup`'s `MinReplicas` is set to a value chosen by the PodGang component:
+    - **First MPG** of a PCS replica (the MPG created at initial deployment, or the very first MPG of a coherent update if no prior MPG exists), and **legacy BPG, SPG, TPG**: `MinReplicas` is set to the `minAvailable` value defined in the PCS spec for that PCLQ or PCSG. This forces the scheduler to place the whole gang at once before any constituent pod can run, establishing the `MinAvailable` floor for that component.
+    - **Non-first MPGs** (every MPG created in a coherent-update iteration after the first): `MinReplicas` is set to `1` for every PodGroup. The previous MPG already provides the `MinAvailable` floor for the PCS replica, so the new MPG's role is to add capacity at the new pod-template hash, not to re-establish availability. Setting `MinReplicas=1` keeps placement tolerant to capacity pressure — the scheduler only needs to find one slot per PodGroup to consider the gang placed, rather than `minAvailable` slots all at once. This avoids stalling a coherent update when cluster capacity is tight.
 2. **Release `MinReplicas`, mark `Scheduled=True`.** Once the scheduler has placed `MinReplicas` pods of every `PodGroup` on nodes, the PodGang component patches `MinReplicas=0` on every PodGroup, then sets `Status.Conditions[Type=Scheduled]=True` with `Reason=PodGangScheduled`. Pod-component scheduling-gate-removal logic uses this condition (see [DependsOn and scheduling order](#dependson-and-scheduling-order)).
 3. **Mark `Ready=True`.** Once `MinReplicas` pods of every `PodGroup` pass readiness probes, the PodGang component sets `Status.Conditions[Type=Ready]=True` with `Reason=PodGangReady`. The orchestrator (PodCliqueSet reconciler) uses this condition to advance coherent-update iterations (see [Per-replica iteration tracking on PodCliqueSetReplicaUpdateProgress](#per-replica-iteration-tracking-on-podcliquesetreplicaupdateprogress)).
 
