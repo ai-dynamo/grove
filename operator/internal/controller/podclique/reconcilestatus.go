@@ -62,14 +62,14 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 
 	podCategories := k8sutils.CategorizePodsByConditionType(logger, existingPods)
 
+	// mutate PodClique Status Replicas, ReadyReplicas, ScheduleGatedReplicas and UpdatedReplicas.
+	mutateReplicas(pclq, podCategories, len(existingPods))
+	mutateUpdatedReplica(pclq, existingPods)
 	// mutate PodClique.Status.CurrentPodTemplateHash and PodClique.Status.CurrentPodCliqueSetGenerationHash
 	if err = mutateCurrentHashes(logger, pcs, pclq); err != nil {
 		logger.Error(err, "failed to compute PodClique current hashes")
 		return ctrlcommon.ReconcileWithErrors("failed to compute PodClique current hashes", err)
 	}
-	// mutate PodClique Status Replicas, ReadyReplicas, ScheduleGatedReplicas and UpdatedReplicas.
-	mutateReplicas(pclq, podCategories, len(existingPods))
-	mutateUpdatedReplica(pclq, existingPods)
 
 	// mutate the conditions only if the PodClique has been successfully reconciled at least once.
 	// This prevents prematurely setting incorrect conditions.
@@ -117,7 +117,7 @@ func mutateCurrentHashes(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet
 		if err != nil {
 			return err
 		}
-		if pclq.Status.CurrentPodTemplateHash == nil || *pclq.Status.CurrentPodTemplateHash == expectedPodTemplateHash {
+		if isPodCliqueTemplateHashCurrent(pclq, expectedPodTemplateHash) {
 			pclq.Status.CurrentPodTemplateHash = ptr.To(expectedPodTemplateHash)
 			pclq.Status.CurrentPodCliqueSetGenerationHash = pcs.Status.CurrentGenerationHash
 		}
@@ -127,6 +127,11 @@ func mutateCurrentHashes(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet
 		pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(pclq.Status.UpdateProgress.PodCliqueSetGenerationHash)
 	}
 	return nil
+}
+
+func isPodCliqueTemplateHashCurrent(pclq *grovecorev1alpha1.PodClique, expectedPodTemplateHash string) bool {
+	labelPodTemplateHash, ok := pclq.Labels[apicommon.LabelPodTemplateHash]
+	return ok && labelPodTemplateHash == expectedPodTemplateHash
 }
 
 // mutateReplicas updates the PodClique status with current replica counts based on pod categorization
@@ -146,6 +151,11 @@ func mutateUpdatedReplica(pclq *grovecorev1alpha1.PodClique, existingPods []*cor
 	// This covers both the active update phase and the window after completion before CurrentPodTemplateHash is synced.
 	if pclq.Status.UpdateProgress != nil {
 		expectedPodTemplateHash = pclq.Status.UpdateProgress.PodTemplateHash
+	} else if labelPodTemplateHash := pclq.Labels[apicommon.LabelPodTemplateHash]; labelPodTemplateHash != "" {
+		// The PodClique label is the desired pod template hash propagated by the
+		// owner sync. Prefer it over stale current-status bookkeeping so status can
+		// recover after a replacement pod already converged to the desired hash.
+		expectedPodTemplateHash = labelPodTemplateHash
 	} else if pclq.Status.CurrentPodTemplateHash != nil {
 		// Steady state: no rolling update tracking exists.
 		// Use the stable current hash for pods that have been reconciled.
