@@ -28,6 +28,18 @@ import (
 // +kubebuilder:subresource:status
 // +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.hpaPodSelector
 // +kubebuilder:resource:shortName={pclq}
+// +kubebuilder:printcolumn:name="Desired",type=integer,JSONPath=`.spec.replicas`
+// +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.status.replicas`
+// +kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=`.status.readyReplicas`
+// +kubebuilder:printcolumn:name="Scheduled",type=integer,JSONPath=`.status.scheduledReplicas`
+// +kubebuilder:printcolumn:name="Gated",type=integer,JSONPath=`.status.scheduleGatedReplicas`
+// +kubebuilder:printcolumn:name="Updated",type=integer,JSONPath=`.status.updatedReplicas`
+// +kubebuilder:printcolumn:name="MinAvail",type=integer,JSONPath=`.spec.minAvailable`
+// +kubebuilder:printcolumn:name="MinBreached",type=string,JSONPath=`.status.conditions[?(@.type=="MinAvailableBreached")].status`,priority=1
+// +kubebuilder:printcolumn:name="SchedOK",type=string,JSONPath=`.status.conditions[?(@.type=="PodCliqueScheduled")].status`,priority=1
+// +kubebuilder:printcolumn:name="PCSHash",type=string,JSONPath=`.status.currentPodCliqueSetGenerationHash`,priority=1
+// +kubebuilder:printcolumn:name="TemplateHash",type=string,JSONPath=`.status.currentPodTemplateHash`,priority=1
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // PodClique is a set of pods running the same image.
 type PodClique struct {

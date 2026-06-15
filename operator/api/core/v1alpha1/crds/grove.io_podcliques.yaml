@@ -16,7 +16,48 @@ spec:
     singular: podclique
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.replicas
+      name: Desired
+      type: integer
+    - jsonPath: .status.replicas
+      name: Replicas
+      type: integer
+    - jsonPath: .status.readyReplicas
+      name: Ready
+      type: integer
+    - jsonPath: .status.scheduledReplicas
+      name: Scheduled
+      type: integer
+    - jsonPath: .status.scheduleGatedReplicas
+      name: Gated
+      type: integer
+    - jsonPath: .status.updatedReplicas
+      name: Updated
+      type: integer
+    - jsonPath: .spec.minAvailable
+      name: MinAvail
+      type: integer
+    - jsonPath: .status.conditions[?(@.type=="MinAvailableBreached")].status
+      name: MinBreached
+      priority: 1
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="PodCliqueScheduled")].status
+      name: SchedOK
+      priority: 1
+      type: string
+    - jsonPath: .status.currentPodCliqueSetGenerationHash
+      name: PCSHash
+      priority: 1
+      type: string
+    - jsonPath: .status.currentPodTemplateHash
+      name: TemplateHash
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: PodClique is a set of pods running the same image.

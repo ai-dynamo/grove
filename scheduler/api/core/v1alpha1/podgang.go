@@ -25,6 +25,14 @@ import (
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName={pg}
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="Initialized",type=string,JSONPath=`.status.conditions[?(@.type=="Initialized")].status`
+// +kubebuilder:printcolumn:name="Scheduled",type=string,JSONPath=`.status.conditions[?(@.type=="Scheduled")].status`
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
+// +kubebuilder:printcolumn:name="Unhealthy",type=string,JSONPath=`.status.conditions[?(@.type=="Unhealthy")].status`,priority=1
+// +kubebuilder:printcolumn:name="Disrupting",type=string,JSONPath=`.status.conditions[?(@.type=="DisruptionTarget")].status`,priority=1
+// +kubebuilder:printcolumn:name="Score",type=number,JSONPath=`.status.placementScore`,priority=1
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // PodGang defines a specification of a group of pods that should be scheduled together.
 type PodGang struct {

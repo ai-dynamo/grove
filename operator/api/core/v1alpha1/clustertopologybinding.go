@@ -26,6 +26,11 @@ import (
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Cluster,shortName=ct
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Domains",type=string,JSONPath=`.spec.levels[*].domain`
+// +kubebuilder:printcolumn:name="Drift",type=string,JSONPath=`.status.conditions[?(@.type=="SchedulerTopologyDrift")].status`
+// +kubebuilder:printcolumn:name="Schedulers",type=string,JSONPath=`.spec.schedulerTopologyBindings[*].schedulerName`,priority=1
+// +kubebuilder:printcolumn:name="Keys",type=string,JSONPath=`.spec.levels[*].key`,priority=1
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // ClusterTopologyBinding defines Grove's source-of-truth topology hierarchy and how it
 // binds to topology resources used by topology-aware scheduler backends.

@@ -16,7 +16,25 @@ spec:
     singular: clustertopologybinding
   scope: Cluster
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.levels[*].domain
+      name: Domains
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="SchedulerTopologyDrift")].status
+      name: Drift
+      type: string
+    - jsonPath: .spec.schedulerTopologyBindings[*].schedulerName
+      name: Schedulers
+      priority: 1
+      type: string
+    - jsonPath: .spec.levels[*].key
+      name: Keys
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: |-
