@@ -359,7 +359,7 @@ A PCS is composed of PCLQs and PCSGs. Updates may target a subset of PCLQs or al
 
 Grove encodes the MVU's gang-scheduling intent by generating new `PodGang` resources, **MVU PodGangs (MPGs)**, that hold exactly the MVU's pods. PCSG replicas above MinAvailable go into separate **Tail PodGangs (TPGs)** — one per excess replica. Both MPGs and TPGs are gang-scheduled. Each TPG `DependsOn` every MPG of the same generation. The scheduler places TPG pods only after all those MPGs report `Ready=True`.
 
-A coherent update runs in two phases. **MPG phase**: MPGs are rolled one at a time. Each MPG must reach `Ready=True` before the next one starts. **TPG phase**: once every MPG is at the new hash, all remaining TPGs roll together in a single iteration. This bounds disruption — at most one MPG's worth of pods is unavailable at any moment.
+A coherent update runs in two phases. **MPG phase**: MPGs are rolled one at a time. Each MPG must reach `Ready=True` before the next one starts. During this phase, at most one MPG's worth of pods is mid-roll at any moment. **TPG phase**: once every MPG is at the new hash, all remaining TPGs roll together in a single iteration. The TPG phase trades the per-iteration bound for finishing the update in one step — disruption during this iteration scales with the total above-`MinAvailable` PCSG capacity being rolled.
 
 The remainder of this section describes:
 
