@@ -17,6 +17,7 @@
 package podclique
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -24,10 +25,15 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
+	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 )
@@ -145,6 +151,25 @@ func TestMutateUpdatedReplica(t *testing.T) {
 			expectedUpdatedReplicas: 2, // Only pods with current hash
 		},
 		{
+			name: "desired metadata label overrides stale current status",
+			pclq: &grovecorev1alpha1.PodClique{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						apicommon.LabelPodTemplateHash: "desired-hash",
+					},
+				},
+				Status: grovecorev1alpha1.PodCliqueStatus{
+					UpdateProgress:         nil,
+					CurrentPodTemplateHash: ptr.To("stale-hash"),
+				},
+			},
+			existingPods: []*corev1.Pod{
+				createPodWithHash("pod-1", "desired-hash"),
+				createPodWithHash("pod-2", "stale-hash"),
+			},
+			expectedUpdatedReplicas: 1,
+		},
+		{
 			name: "no pods exist",
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
@@ -185,6 +210,105 @@ func TestMutateUpdatedReplica(t *testing.T) {
 	}
 }
 
+// TestReconcileStatusConvergesWhenReadyPodMatchesDesiredHash covers the live
+// latch where PCLQ metadata and the Ready pod already carry the desired
+// pod-template hash, but Status.CurrentPodTemplateHash is stale and
+// UpdateProgress is absent. UpdatedReplicas must be derived from the desired
+// hash first so CurrentPodTemplateHash can advance in the same status pass.
+func TestReconcileStatusConvergesWhenReadyPodMatchesDesiredHash(t *testing.T) {
+	pcs, pclq, templateHash := newPodCliqueHashConvergenceFixture(t)
+	pclq.UID = types.UID("pclq-uid")
+	pclq.Generation = 2
+	pclq.Spec = grovecorev1alpha1.PodCliqueSpec{
+		Replicas:     1,
+		MinAvailable: ptr.To[int32](1),
+	}
+	pclq.Status = grovecorev1alpha1.PodCliqueStatus{
+		Replicas:                          1,
+		ReadyReplicas:                     1,
+		ScheduledReplicas:                 1,
+		UpdatedReplicas:                   0,
+		ObservedGeneration:                ptr.To[int64](2),
+		CurrentPodTemplateHash:            ptr.To("stale-template-hash"),
+		CurrentPodCliqueSetGenerationHash: ptr.To("old-generation-hash"),
+	}
+	pod := createReadyOwnedPodWithHash("ready-current-pod", pclq, templateHash)
+
+	cl := testutils.SetupFakeClient(pcs, pclq, pod)
+	r := &Reconciler{
+		client:        cl,
+		eventRecorder: record.NewFakeRecorder(1),
+	}
+
+	result := r.reconcileStatus(context.Background(), logr.Discard(), pclq)
+
+	_, err := result.Result()
+	require.NoError(t, err)
+	updatedPCLQ := &grovecorev1alpha1.PodClique{}
+	require.NoError(t, cl.Get(context.Background(), types.NamespacedName{Name: pclq.Name, Namespace: pclq.Namespace}, updatedPCLQ))
+	assert.Equal(t, int32(1), updatedPCLQ.Status.UpdatedReplicas)
+	assert.Equal(t, templateHash, *updatedPCLQ.Status.CurrentPodTemplateHash)
+	assert.Equal(t, *pcs.Status.CurrentGenerationHash, *updatedPCLQ.Status.CurrentPodCliqueSetGenerationHash)
+}
+
+// TestMutateCurrentHashesDoesNotAdvanceWhenTemplateHashIsStale verifies that
+// mutateCurrentHashes refuses to advance CurrentPodTemplateHash or
+// CurrentPodCliqueSetGenerationHash when the PodClique metadata label has not
+// actually converged on the current PodCliqueSet template, even though the
+// replica counts (Replicas == UpdatedReplicas) would superficially suggest it has.
+func TestMutateCurrentHashesDoesNotAdvanceWhenTemplateHashIsStale(t *testing.T) {
+	pcs, pclq, _ := newPodCliqueHashConvergenceFixture(t)
+	pclq.Labels[apicommon.LabelPodTemplateHash] = "stale-template-hash"
+	pclq.Status.CurrentPodTemplateHash = ptr.To("")
+	pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To("old-generation-hash")
+	pclq.Status.Replicas = 2
+	pclq.Status.UpdatedReplicas = 2
+
+	err := mutateCurrentHashes(logr.Discard(), pcs, pclq)
+
+	require.NoError(t, err)
+	assert.Equal(t, "", *pclq.Status.CurrentPodTemplateHash)
+	assert.Equal(t, "old-generation-hash", *pclq.Status.CurrentPodCliqueSetGenerationHash)
+}
+
+func newPodCliqueHashConvergenceFixture(t *testing.T) (*grovecorev1alpha1.PodCliqueSet, *grovecorev1alpha1.PodClique, string) {
+	t.Helper()
+	template := &grovecorev1alpha1.PodCliqueTemplateSpec{
+		Name: "worker",
+		Spec: grovecorev1alpha1.PodCliqueSpec{
+			PodSpec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "main", Image: "main:v1"}},
+			},
+		},
+	}
+	generationHash := "current-generation-hash"
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "pcs", Namespace: "default"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{template},
+			},
+		},
+		Status: grovecorev1alpha1.PodCliqueSetStatus{
+			CurrentGenerationHash: ptr.To(generationHash),
+		},
+	}
+	pclq := &grovecorev1alpha1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pcs-0-worker",
+			Namespace: "default",
+			Labels: map[string]string{
+				apicommon.LabelPartOfKey:                "pcs",
+				apicommon.LabelPodCliqueSetReplicaIndex: "0",
+			},
+		},
+	}
+	templateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
+	require.NoError(t, err)
+	pclq.Labels[apicommon.LabelPodTemplateHash] = templateHash
+	return pcs, pclq, templateHash
+}
+
 // createPodWithHash creates a test pod with the specified template hash label
 func createPodWithHash(name string, templateHash string) *corev1.Pod {
 	return &corev1.Pod{
@@ -197,9 +321,29 @@ func createPodWithHash(name string, templateHash string) *corev1.Pod {
 	}
 }
 
+func createReadyOwnedPodWithHash(name string, owner *grovecorev1alpha1.PodClique, templateHash string) *corev1.Pod {
+	pod := createPodWithHash(name, templateHash)
+	pod.Namespace = owner.Namespace
+	pod.Labels[apicommon.LabelPodClique] = owner.Name
+	pod.OwnerReferences = []metav1.OwnerReference{
+		*metav1.NewControllerRef(owner, grovecorev1alpha1.SchemeGroupVersion.WithKind("PodClique")),
+	}
+	pod.Status.Conditions = []corev1.PodCondition{
+		{
+			Type:   corev1.PodScheduled,
+			Status: corev1.ConditionTrue,
+		},
+		{
+			Type:   corev1.PodReady,
+			Status: corev1.ConditionTrue,
+		},
+	}
+	return pod
+}
+
 // TestEmitAllScheduledReplicasLostIfNeeded covers the only explicit signal users have when a
 // previously-running PodClique loses every scheduled pod. Gang termination is suppressed in
-// that state, so this event must fire on the non-zero → zero transition (and only on that
+// that state, so this event must fire on the non-zero to zero transition (and only on that
 // transition) for the regression to remain observable.
 func TestEmitAllScheduledReplicasLostIfNeeded(t *testing.T) {
 	tests := []struct {
@@ -294,7 +438,7 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 			// previously healthy. Gang termination has no useful action here
 			// (would re-create the same Pending pods) and the suppression has
 			// to win to avoid a churn loop.
-			name: "previously-healthy PCLQ loses all scheduled pods — must NOT breach",
+			name: "previously-healthy PCLQ loses all scheduled pods - must NOT breach",
 			pclq: &grovecorev1alpha1.PodClique{
 				Spec: grovecorev1alpha1.PodCliqueSpec{
 					Replicas:     2,
@@ -321,7 +465,7 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 		{
 			// Sanity case that the fix must preserve: a freshly-created PCLQ
 			// that has not yet scheduled any pods MUST NOT be considered breached.
-			name: "fresh PCLQ never scheduled — must not breach",
+			name: "fresh PCLQ never scheduled - must not breach",
 			pclq: &grovecorev1alpha1.PodClique{
 				Spec: grovecorev1alpha1.PodCliqueSpec{
 					Replicas:     3,
