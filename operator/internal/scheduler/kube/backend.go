@@ -73,8 +73,9 @@ func (b *schedulerBackend) SyncPodGang(_ context.Context, _ *groveschedulerv1alp
 }
 
 // PreparePod prepares the Pod by setting the relevant schedulerName field with the chosen scheduler backend.
-func (b *schedulerBackend) PreparePod(pod *corev1.Pod) {
+func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 	pod.Spec.SchedulerName = b.name
+	return nil
 }
 
 // ValidatePodCliqueSet runs default-scheduler-specific validations on the PodCliqueSet.

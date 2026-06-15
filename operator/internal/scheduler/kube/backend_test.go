@@ -23,6 +23,7 @@ import (
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"k8s.io/client-go/tools/record"
 )
 
@@ -34,7 +35,7 @@ func TestBackend_PreparePod(t *testing.T) {
 
 	pod := testutils.NewPodBuilder("test-pod", "default").Build()
 
-	b.PreparePod(pod)
+	require.NoError(t, b.PreparePod(pod))
 
 	assert.Equal(t, string(configv1alpha1.SchedulerNameKube), pod.Spec.SchedulerName)
 }
