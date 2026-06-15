@@ -76,7 +76,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 
 	logger := log.FromContext(ctx).WithValues("scheduler", backend.Name(), "podGang", req.NamespacedName)
 	if !podGang.DeletionTimestamp.IsZero() {
-		logger.Info("PodGang is being deleted")
 		return ctrl.Result{}, nil
 	}
 
