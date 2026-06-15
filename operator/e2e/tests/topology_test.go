@@ -1899,3 +1899,78 @@ func Test_TAS22_PodCliqueSetTopologyCELValidation(t *testing.T) {
 
 	Logger.Info("TAS22: PodCliqueSet topology CEL validation test completed successfully!")
 }
+
+// Test_TAS23_PreferredPackConstraintPropagation verifies that Grove preferred pack domains
+// are propagated to KAI PodGroup topology constraints. It does not assert placement because
+// preferred constraints are soft scheduling hints.
+func Test_TAS23_PreferredPackConstraintPropagation(t *testing.T) {
+	ctx := context.Background()
+
+	Logger.Info("1. Initialize a 28-node Grove cluster for preferred topology propagation testing")
+	expectedPods := 3 // 2 PCSG worker replicas + 1 standalone router
+	tc, cleanup := testctx.PrepareTest(ctx, t, 28,
+		testctx.WithWorkload(&testctx.WorkloadConfig{
+			Name:         "tas-preferred-pack",
+			YAMLPath:     "../yaml/tas-preferred-pack.yaml",
+			Namespace:    "default",
+			ExpectedPods: expectedPods,
+		}),
+	)
+	defer cleanup()
+	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
+	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
+
+	ensureGroveTopology(ctx, t, topologyVerifier)
+	Logger.Info("2. Deploy workload (TAS23: preferred topology pack constraints)")
+	if _, err := DeployWorkloadAndGetPods(tc, expectedPods); err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+
+	Logger.Info("3. Verify base KAI PodGroup required and preferred topology constraints")
+	basePodGroup := GetPodGroupOrFail(t, tc, podGroupVerifier, 0)
+
+	workersParent := podgroup.CreateExpectedPCSGParentSubGroup(tc.Workload.Name, 0, "workers", 0, "")
+	workersParent.PreferredTopologyLevel = setup.TopologyLabelHostname
+	router := podgroup.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, 0, "router", 1, "")
+	router.PreferredTopologyLevel = setup.TopologyLabelHostname
+	expectedBaseSubGroups := []podgroup.ExpectedSubGroup{
+		workersParent,
+		podgroup.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, 0, "workers", 0, "worker", 1, ""),
+		router,
+	}
+	if err := podGroupVerifier.VerifyPodGroupTopology(basePodGroup, setup.TopologyLabelBlock, setup.TopologyLabelRack, expectedBaseSubGroups); err != nil {
+		t.Fatalf("Failed to verify base KAI PodGroup topology: %v", err)
+	}
+
+	Logger.Info("4. Verify scaled PCSG KAI PodGroup preferred topology constraint")
+	podGroups, err := podGroupVerifier.GetKAIPodGroupsForPCS(tc.Ctx, tc.Namespace, tc.Workload.Name)
+	if err != nil {
+		t.Fatalf("Failed to get KAI PodGroups: %v", err)
+	}
+	workersFQN := nameutils.GeneratePodCliqueScalingGroupName(
+		nameutils.ResourceNameReplica{Name: tc.Workload.Name, Replica: 0},
+		"workers",
+	)
+	scaledPodGangName := nameutils.CreatePodGangNameFromPCSGFQN(workersFQN, 0)
+	scaledPodGroup, err := podgroup.FilterPodGroupByOwner(podGroups, scaledPodGangName)
+	if err != nil {
+		t.Fatalf("Failed to find scaled PodGroup %s: %v", scaledPodGangName, err)
+	}
+	expectedScaledSubGroups := []podgroup.ExpectedSubGroup{
+		podgroup.CreateExpectedPCLQInPCSGSubGroupNoParent(tc.Workload.Name, 0, "workers", 1, "worker", 1, ""),
+	}
+	if err := podGroupVerifier.VerifyPodGroupTopology(scaledPodGroup, "", setup.TopologyLabelHostname, expectedScaledSubGroups); err != nil {
+		t.Fatalf("Failed to verify scaled KAI PodGroup topology: %v", err)
+	}
+
+	Logger.Info("5. Verify TopologyLevelsUnavailable = False")
+	if err := topologyVerifier.WaitForPCSCondition(ctx, "default", tc.Workload.Name,
+		apicommonconstants.ConditionTopologyLevelsUnavailable,
+		string(metav1.ConditionFalse),
+		apicommonconstants.ConditionReasonAllTopologyLevelsAvailable,
+		tc.Timeout, tc.Interval); err != nil {
+		t.Fatalf("Failed to verify TopologyLevelsUnavailable is False: %v", err)
+	}
+
+	Logger.Info("TAS23: Preferred Pack Constraint Propagation test completed successfully!")
+}

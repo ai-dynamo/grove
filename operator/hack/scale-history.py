@@ -54,31 +54,36 @@ RUN_ID_RE = re.compile(r"^run-(\d{8})-(\d{6})$")
 
 def main() -> int:
     args = parse_args()
-    result_path = find_result_file(Path(args.input))
-    result = read_json(result_path)
+    result_paths = find_result_files(Path(args.input))
     commit = args.commit or best_effort_git(["rev-parse", "HEAD"])
     run_url = args.run_url or ""
 
-    timestamp = run_timestamp(result)
-    test_name = required_str(result, "testName")
-    run_id = required_str(result, "runID")
     history_dir = history_dir_for_args(args)
-    changed = append_history(
-        history_dir=history_dir,
-        result_path=result_path,
-        result=result,
-        run_record=build_run_record(
+    changed_results = []
+    for result_path in result_paths:
+        result = read_json(result_path)
+        timestamp = run_timestamp(result)
+        test_name = required_str(result, "testName")
+        run_id = required_str(result, "runID")
+        changed = append_history(
+            history_dir=history_dir,
+            result_path=result_path,
             result=result,
-            timestamp=timestamp,
-            test_name=test_name,
-            run_id=run_id,
-            commit=commit,
-            run_url=run_url,
-        ),
-    )
+            run_record=build_run_record(
+                result=result,
+                timestamp=timestamp,
+                test_name=test_name,
+                run_id=run_id,
+                commit=commit,
+                run_url=run_url,
+            ),
+        )
+        if changed:
+            changed_results.append(result)
+
     copy_dashboard_files(history_dir)
     if args.command == "branch":
-        commit_and_push(history_dir, args.branch, result, changed)
+        commit_and_push(history_dir, args.branch, changed_results)
     return 0
 
 
@@ -138,21 +143,21 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def find_result_file(input_path: Path) -> Path:
+def find_result_files(input_path: Path) -> list[Path]:
     input_path = input_path.expanduser().resolve()
     if input_path.is_file():
-        return input_path
+        return [input_path]
     if not input_path.is_dir():
         raise SystemExit(f"input does not exist: {input_path}")
 
     direct = input_path / RESULT_FILE
     if direct.exists():
-        return direct
+        return [direct]
 
     candidates = sorted(input_path.rglob(RESULT_FILE), key=result_sort_key)
     if not candidates:
         raise SystemExit(f"no {RESULT_FILE} found under {input_path}")
-    return candidates[-1]
+    return candidates
 
 
 def result_sort_key(path: Path) -> tuple[str, float]:
@@ -198,6 +203,7 @@ def append_history(
     append_ndjson(index_dir / "runs.ndjson", [run_record])
     print(f"stored: {test_name} {run_record['runID']}")
     return True
+
 
 def is_duplicate(index_path: Path, test_name: str, timestamp: str) -> bool:
     if not index_path.exists():
@@ -339,7 +345,7 @@ def prepare_branch_workdir(workdir: Path, branch: str, repo: str | None) -> Path
 
 
 def commit_and_push(
-    history_dir: Path, branch: str, result: dict[str, Any], result_changed: bool
+    history_dir: Path, branch: str, changed_results: list[dict[str, Any]]
 ) -> None:
     ensure_git_identity(history_dir)
     git(["add", "results", "index", "index.html", "app.js", "style.css"], cwd=history_dir)
@@ -347,11 +353,14 @@ def commit_and_push(
         print("no git changes to commit")
         return
 
-    if result_changed:
+    if len(changed_results) == 1:
+        result = changed_results[0]
         message = (
             f"Add scale test result {result.get('testName')} "
             f"{result.get('runID')}"
         )
+    elif changed_results:
+        message = f"Add {len(changed_results)} scale test results"
     else:
         message = "Update scale test dashboard"
     git(["commit", "-m", message], cwd=history_dir)

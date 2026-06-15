@@ -454,6 +454,25 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 			wantMsgContain: "available",
 		},
 		{
+			name:       "TAS enabled, required and preferred domains available - False/AllClusterTopologyLevelsAvailable",
+			tasEnabled: true,
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := basePCS("my-topology")
+				pcs.Spec.Template.TopologyConstraint.PackDomain = ""
+				pcs.Spec.Template.TopologyConstraint.Pack = &grovecorev1alpha1.TopologyPackConstraint{
+					RequiredDomain:  grovecorev1alpha1.TopologyDomainRack,
+					PreferredDomain: grovecorev1alpha1.TopologyDomainZone,
+				}
+				return pcs
+			},
+			extraObjects: []client.Object{
+				clusterTopology("my-topology", standardLevels),
+			},
+			wantStatus:     metav1.ConditionFalse,
+			wantReason:     apicommonconstants.ConditionReasonAllTopologyLevelsAvailable,
+			wantMsgContain: "available",
+		},
+		{
 			name:       "TAS enabled, named ClusterTopologyBinding is used instead of another available topology",
 			tasEnabled: true,
 			setupPCS:   func() *grovecorev1alpha1.PodCliqueSet { return basePCS("selected-topology") },
@@ -486,6 +505,25 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 			wantStatus:     metav1.ConditionTrue,
 			wantReason:     apicommonconstants.ConditionReasonTopologyLevelsUnavailable,
 			wantMsgContain: "Unavailable",
+		},
+		{
+			name:       "TAS enabled, preferred domain unavailable - True/ClusterTopologyLevelsUnavailable",
+			tasEnabled: true,
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := basePCS("my-topology")
+				pcs.Spec.Template.TopologyConstraint.PackDomain = ""
+				pcs.Spec.Template.TopologyConstraint.Pack = &grovecorev1alpha1.TopologyPackConstraint{
+					RequiredDomain:  grovecorev1alpha1.TopologyDomainRack,
+					PreferredDomain: grovecorev1alpha1.TopologyDomainHost,
+				}
+				return pcs
+			},
+			extraObjects: []client.Object{
+				clusterTopology("my-topology", standardLevels),
+			},
+			wantStatus:     metav1.ConditionTrue,
+			wantReason:     apicommonconstants.ConditionReasonTopologyLevelsUnavailable,
+			wantMsgContain: "host",
 		},
 		{
 			name:         "TAS enabled, topologyName set, CT not found — Unknown/ClusterTopologyNotFound",
@@ -632,6 +670,36 @@ func TestGetUniqueTopologyDomainsInPodCliqueSet(t *testing.T) {
 					tmpl.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
 						TopologyName: "my-topology",
 						PackDomain:   grovecorev1alpha1.TopologyDomainRack,
+					}
+				})
+			},
+			wantDomains: []grovecorev1alpha1.TopologyDomain{grovecorev1alpha1.TopologyDomainRack},
+		},
+		{
+			name: "PCS-level required and preferred pack domains - both domains included",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return makePCS(func(tmpl *grovecorev1alpha1.PodCliqueSetTemplateSpec) {
+					tmpl.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+						TopologyName: "my-topology",
+						Pack: &grovecorev1alpha1.TopologyPackConstraint{
+							RequiredDomain:  grovecorev1alpha1.TopologyDomainRack,
+							PreferredDomain: grovecorev1alpha1.TopologyDomainHost,
+						},
+					}
+				})
+			},
+			wantDomains: []grovecorev1alpha1.TopologyDomain{grovecorev1alpha1.TopologyDomainRack, grovecorev1alpha1.TopologyDomainHost},
+		},
+		{
+			name: "PCS-level matching required and preferred pack domains - domain included once",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return makePCS(func(tmpl *grovecorev1alpha1.PodCliqueSetTemplateSpec) {
+					tmpl.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+						TopologyName: "my-topology",
+						Pack: &grovecorev1alpha1.TopologyPackConstraint{
+							RequiredDomain:  grovecorev1alpha1.TopologyDomainRack,
+							PreferredDomain: grovecorev1alpha1.TopologyDomainRack,
+						},
 					}
 				})
 			},
