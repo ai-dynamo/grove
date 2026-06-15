@@ -147,8 +147,9 @@ For Volcano:
 * `TopologyGVR()` returns `topology.volcano.sh/v1alpha1, Resource=hypernodes`.
 * `TopologyResourceName(ct)` returns the synthetic root HyperNode name for the `ClusterTopologyBinding`. The default name is the `ClusterTopologyBinding` name.
 * `SyncTopology()` lists Nodes, derives the desired HyperNode tree from the `ClusterTopologyBinding` levels and Node label values, and creates or updates all auto-managed HyperNodes for the `ClusterTopologyBinding`.
-* `OnTopologyDelete()` is a no-op because every auto-managed HyperNode will have the `ClusterTopologyBinding` as its controller owner, allowing Kubernetes garbage collection to cascade-delete them.
 * `CheckTopologyDrift()` compares the externally managed HyperNode tree rooted at `ref.TopologyReference` with the desired topology derived from `ClusterTopologyBinding` and Node labels.
+
+Every auto-managed HyperNode will have the `ClusterTopologyBinding` as its controller owner, allowing Kubernetes garbage collection to cascade-delete them when the owning topology is deleted.
 
 ### HyperNode Generation
 
