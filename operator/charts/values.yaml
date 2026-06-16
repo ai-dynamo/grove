@@ -147,7 +147,7 @@ service:
   annotations: {}
 
 serviceMonitor:
-  enable: false
+  enabled: false
   name: grove-operator-monitor
   labels:
     app.kubernetes.io/component: operator-service-monitor
