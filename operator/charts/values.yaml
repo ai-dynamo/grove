@@ -153,6 +153,8 @@ serviceMonitor:
     app.kubernetes.io/component: operator-service-monitor
     app.kubernetes.io/name: grove-operator
     app.kubernetes.io/part-of: grove
+    # If the Prometheus Operator requires the 'release' label, set this value:
+    # release: prometheus
 
 clusterRole:
   name: grove:system:grove-operator
