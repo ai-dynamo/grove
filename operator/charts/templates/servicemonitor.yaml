@@ -1,9 +1,9 @@
-{{- if .Values.serviceMonitor.enable }}
+{{- if .Values.serviceMonitor.enabled }}
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{ .Values.serviceMonitor.name }}
+  name: {{ required ".Values.serviceMonitor.name is required" .Values.serviceMonitor.name }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "operator.servicemonitor.labels" . | nindent 4 }}
