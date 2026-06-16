@@ -130,6 +130,12 @@ func (b *TestClientBuilder) WithClient(cl client.Client) *TestClientBuilder {
 	return b
 }
 
+// WithScheme sets the scheme used by the delegating fake client.
+func (b *TestClientBuilder) WithScheme(scheme *runtime.Scheme) *TestClientBuilder {
+	b.scheme = scheme
+	return b
+}
+
 // WithObjects initializes the delegating fake client builder with objects.
 func (b *TestClientBuilder) WithObjects(objects ...client.Object) *TestClientBuilder {
 	if len(objects) > 0 {

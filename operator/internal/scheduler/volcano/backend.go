@@ -64,6 +64,13 @@ func (b *schedulerBackend) Name() string {
 }
 
 func (b *schedulerBackend) Init(directClient client.Client) error {
+	if err := volcanov1beta1.AddToScheme(b.scheme); err != nil {
+		return err
+	}
+	if err := apiextensionsv1.AddToScheme(b.scheme); err != nil {
+		return err
+	}
+
 	crd := &apiextensionsv1.CustomResourceDefinition{
 		ObjectMeta: metav1.ObjectMeta{Name: volcanoPodGroupCRDName},
 	}

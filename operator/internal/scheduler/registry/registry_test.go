@@ -25,9 +25,21 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+func newVolcanoDirectClient(t *testing.T, objects ...client.Object) client.Client {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	require.NoError(t, apiextensionsv1.AddToScheme(scheme))
+	return testutils.NewTestClientBuilder().
+		WithScheme(scheme).
+		WithObjects(objects...).
+		Build()
+}
 
 // TestNewRegistry tests New with different scheduler profiles.
 func TestNewRegistry(t *testing.T) {
@@ -116,7 +128,8 @@ func TestNewRegistry(t *testing.T) {
 	})
 
 	t.Run("volcano scheduler initialization", func(t *testing.T) {
-		cl := testutils.CreateDefaultFakeClient([]client.Object{testutils.NewVolcanoPodGroupCRD(true)})
+		cl := testutils.CreateDefaultFakeClient(nil)
+		directClient := newVolcanoDirectClient(t, testutils.NewVolcanoPodGroupCRD(true))
 
 		recorder := record.NewFakeRecorder(10)
 		cfg := configv1alpha1.SchedulerConfiguration{
@@ -125,7 +138,7 @@ func TestNewRegistry(t *testing.T) {
 			},
 			DefaultProfileName: string(configv1alpha1.SchedulerNameVolcano),
 		}
-		reg, err := New(cl, cl, cl.Scheme(), recorder, cfg)
+		reg, err := New(cl, directClient, cl.Scheme(), recorder, cfg)
 		require.NoError(t, err)
 		require.NotNil(t, reg.GetDefault())
 		assert.Equal(t, string(configv1alpha1.SchedulerNameVolcano), reg.GetDefault().Name())
