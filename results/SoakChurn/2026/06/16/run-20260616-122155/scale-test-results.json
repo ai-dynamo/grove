@@ -1,0 +1,566 @@
+{
+  "testName": "SoakChurn",
+  "runID": "run-20260616-122155",
+  "namespace": "default",
+  "pcsCount": 1,
+  "groveImage": "registry:5001/grove-operator:E2E_TESTS@sha256:902e877a6e0728f2c62de03756a0775f627ea568ca27df0f75f19a90bfe773b2",
+  "phases": [
+    {
+      "name": "operator-baseline",
+      "startTime": "2026-06-16T12:21:55.174392965Z",
+      "endTime": "2026-06-16T12:21:55.177999725Z",
+      "durationFromTestStartSeconds": 0.000077046,
+      "milestones": []
+    },
+    {
+      "name": "deploy",
+      "startTime": "2026-06-16T12:21:55.178026715Z",
+      "endTime": "2026-06-16T12:21:56.858373141Z",
+      "durationFromTestStartSeconds": 0.003710797,
+      "milestones": [
+        {
+          "name": "base-pods-ready",
+          "timestamp": "2026-06-16T12:21:56.858304568Z",
+          "durationFromPhaseStartSeconds": 1.680277872
+        }
+      ]
+    },
+    {
+      "name": "scale-up-c1",
+      "startTime": "2026-06-16T12:21:56.858411309Z",
+      "endTime": "2026-06-16T12:21:58.787439963Z",
+      "durationFromTestStartSeconds": 1.68409539,
+      "milestones": [
+        {
+          "name": "peak-pods-ready",
+          "timestamp": "2026-06-16T12:21:58.787378961Z",
+          "durationFromPhaseStartSeconds": 1.9289676519999999
+        }
+      ]
+    },
+    {
+      "name": "hold-peak-c1",
+      "startTime": "2026-06-16T12:21:58.787467174Z",
+      "endTime": "2026-06-16T12:22:28.967359254Z",
+      "durationFromTestStartSeconds": 3.613151245,
+      "milestones": [
+        {
+          "name": "peak-hold-elapsed",
+          "timestamp": "2026-06-16T12:22:28.967306575Z",
+          "durationFromPhaseStartSeconds": 30.179839401
+        }
+      ]
+    },
+    {
+      "name": "scale-down-c1",
+      "startTime": "2026-06-16T12:22:28.96738324Z",
+      "endTime": "2026-06-16T12:24:19.283122729Z",
+      "durationFromTestStartSeconds": 33.793067321,
+      "milestones": [
+        {
+          "name": "base-pods-restored",
+          "timestamp": "2026-06-16T12:24:19.283084121Z",
+          "durationFromPhaseStartSeconds": 110.315700871
+        }
+      ]
+    },
+    {
+      "name": "hold-base-c1",
+      "startTime": "2026-06-16T12:24:19.283145864Z",
+      "endTime": "2026-06-16T12:24:49.459693359Z",
+      "durationFromTestStartSeconds": 144.108829945,
+      "milestones": [
+        {
+          "name": "base-hold-elapsed",
+          "timestamp": "2026-06-16T12:24:49.459633298Z",
+          "durationFromPhaseStartSeconds": 30.176487435
+        }
+      ]
+    },
+    {
+      "name": "scale-up-c2",
+      "startTime": "2026-06-16T12:24:49.459723554Z",
+      "endTime": "2026-06-16T12:24:51.14178463Z",
+      "durationFromTestStartSeconds": 174.285407635,
+      "milestones": [
+        {
+          "name": "peak-pods-ready",
+          "timestamp": "2026-06-16T12:24:51.14166484Z",
+          "durationFromPhaseStartSeconds": 1.6819413170000002
+        }
+      ]
+    },
+    {
+      "name": "hold-peak-c2",
+      "startTime": "2026-06-16T12:24:51.141818111Z",
+      "endTime": "2026-06-16T12:25:21.320890251Z",
+      "durationFromTestStartSeconds": 175.967502192,
+      "milestones": [
+        {
+          "name": "peak-hold-elapsed",
+          "timestamp": "2026-06-16T12:25:21.320841688Z",
+          "durationFromPhaseStartSeconds": 30.179023577
+        }
+      ]
+    },
+    {
+      "name": "scale-down-c2",
+      "startTime": "2026-06-16T12:25:21.320914157Z",
+      "endTime": "2026-06-16T12:25:23.220061367Z",
+      "durationFromTestStartSeconds": 206.146598238,
+      "milestones": [
+        {
+          "name": "base-pods-restored",
+          "timestamp": "2026-06-16T12:25:23.219991372Z",
+          "durationFromPhaseStartSeconds": 1.8990772150000002
+        }
+      ]
+    },
+    {
+      "name": "hold-base-c2",
+      "startTime": "2026-06-16T12:25:23.220097451Z",
+      "endTime": "2026-06-16T12:25:53.398514789Z",
+      "durationFromTestStartSeconds": 208.045781532,
+      "milestones": [
+        {
+          "name": "base-hold-elapsed",
+          "timestamp": "2026-06-16T12:25:53.398465665Z",
+          "durationFromPhaseStartSeconds": 30.178368204
+        }
+      ]
+    },
+    {
+      "name": "scale-up-c3",
+      "startTime": "2026-06-16T12:25:53.398546627Z",
+      "endTime": "2026-06-16T12:25:55.002996373Z",
+      "durationFromTestStartSeconds": 238.224230708,
+      "milestones": [
+        {
+          "name": "peak-pods-ready",
+          "timestamp": "2026-06-16T12:25:55.0029015Z",
+          "durationFromPhaseStartSeconds": 1.604354894
+        }
+      ]
+    },
+    {
+      "name": "hold-peak-c3",
+      "startTime": "2026-06-16T12:25:55.003029102Z",
+      "endTime": "2026-06-16T12:26:25.180549923Z",
+      "durationFromTestStartSeconds": 239.828713183,
+      "milestones": [
+        {
+          "name": "peak-hold-elapsed",
+          "timestamp": "2026-06-16T12:26:25.180502542Z",
+          "durationFromPhaseStartSeconds": 30.17747344
+        }
+      ]
+    },
+    {
+      "name": "scale-down-c3",
+      "startTime": "2026-06-16T12:26:25.180576003Z",
+      "endTime": "2026-06-16T12:26:27.090101066Z",
+      "durationFromTestStartSeconds": 270.006260084,
+      "milestones": [
+        {
+          "name": "base-pods-restored",
+          "timestamp": "2026-06-16T12:26:27.090040565Z",
+          "durationFromPhaseStartSeconds": 1.9094645620000001
+        }
+      ]
+    },
+    {
+      "name": "hold-base-c3",
+      "startTime": "2026-06-16T12:26:27.090128127Z",
+      "endTime": "2026-06-16T12:26:57.270997244Z",
+      "durationFromTestStartSeconds": 271.915812208,
+      "milestones": [
+        {
+          "name": "base-hold-elapsed",
+          "timestamp": "2026-06-16T12:26:57.270946808Z",
+          "durationFromPhaseStartSeconds": 30.180818681
+        }
+      ]
+    },
+    {
+      "name": "scale-up-c4",
+      "startTime": "2026-06-16T12:26:57.271025296Z",
+      "endTime": "2026-06-16T12:26:58.733970488Z",
+      "durationFromTestStartSeconds": 302.096709377,
+      "milestones": [
+        {
+          "name": "peak-pods-ready",
+          "timestamp": "2026-06-16T12:26:58.733867703Z",
+          "durationFromPhaseStartSeconds": 1.462842427
+        }
+      ]
+    },
+    {
+      "name": "hold-peak-c4",
+      "startTime": "2026-06-16T12:26:58.734002556Z",
+      "endTime": "2026-06-16T12:27:28.913029945Z",
+      "durationFromTestStartSeconds": 303.559686637,
+      "milestones": [
+        {
+          "name": "peak-hold-elapsed",
+          "timestamp": "2026-06-16T12:27:28.912975363Z",
+          "durationFromPhaseStartSeconds": 30.178972797
+        }
+      ]
+    },
+    {
+      "name": "scale-down-c4",
+      "startTime": "2026-06-16T12:27:28.913058267Z",
+      "endTime": "2026-06-16T12:27:30.834715814Z",
+      "durationFromTestStartSeconds": 333.738742348,
+      "milestones": [
+        {
+          "name": "base-pods-restored",
+          "timestamp": "2026-06-16T12:27:30.834670235Z",
+          "durationFromPhaseStartSeconds": 1.9216119680000001
+        }
+      ]
+    },
+    {
+      "name": "hold-base-c4",
+      "startTime": "2026-06-16T12:27:30.834743375Z",
+      "endTime": "2026-06-16T12:28:01.015829585Z",
+      "durationFromTestStartSeconds": 335.660427456,
+      "milestones": [
+        {
+          "name": "base-hold-elapsed",
+          "timestamp": "2026-06-16T12:28:01.015770847Z",
+          "durationFromPhaseStartSeconds": 30.181027472
+        }
+      ]
+    },
+    {
+      "name": "scale-up-c5",
+      "startTime": "2026-06-16T12:28:01.015857397Z",
+      "endTime": "2026-06-16T12:28:02.51529433Z",
+      "durationFromTestStartSeconds": 365.841541478,
+      "milestones": [
+        {
+          "name": "peak-pods-ready",
+          "timestamp": "2026-06-16T12:28:02.515233118Z",
+          "durationFromPhaseStartSeconds": 1.499375721
+        }
+      ]
+    },
+    {
+      "name": "hold-peak-c5",
+      "startTime": "2026-06-16T12:28:02.51532782Z",
+      "endTime": "2026-06-16T12:28:32.695079614Z",
+      "durationFromTestStartSeconds": 367.341011901,
+      "milestones": [
+        {
+          "name": "peak-hold-elapsed",
+          "timestamp": "2026-06-16T12:28:32.695030481Z",
+          "durationFromPhaseStartSeconds": 30.179702661
+        }
+      ]
+    },
+    {
+      "name": "scale-down-c5",
+      "startTime": "2026-06-16T12:28:32.695107456Z",
+      "endTime": "2026-06-16T12:28:34.59298859Z",
+      "durationFromTestStartSeconds": 397.520791537,
+      "milestones": [
+        {
+          "name": "base-pods-restored",
+          "timestamp": "2026-06-16T12:28:34.592899246Z",
+          "durationFromPhaseStartSeconds": 1.8977917899999999
+        }
+      ]
+    },
+    {
+      "name": "hold-base-c5",
+      "startTime": "2026-06-16T12:28:34.593026757Z",
+      "endTime": "2026-06-16T12:29:04.770962567Z",
+      "durationFromTestStartSeconds": 399.418710838,
+      "milestones": [
+        {
+          "name": "base-hold-elapsed",
+          "timestamp": "2026-06-16T12:29:04.770914184Z",
+          "durationFromPhaseStartSeconds": 30.177887427
+        }
+      ]
+    },
+    {
+      "name": "scale-up-c6",
+      "startTime": "2026-06-16T12:29:04.770985912Z",
+      "endTime": "2026-06-16T12:29:06.229387796Z",
+      "durationFromTestStartSeconds": 429.596669993,
+      "milestones": [
+        {
+          "name": "peak-pods-ready",
+          "timestamp": "2026-06-16T12:29:06.229274356Z",
+          "durationFromPhaseStartSeconds": 1.458288444
+        }
+      ]
+    },
+    {
+      "name": "hold-peak-c6",
+      "startTime": "2026-06-16T12:29:06.229418432Z",
+      "endTime": "2026-06-16T12:29:36.409294927Z",
+      "durationFromTestStartSeconds": 431.055102513,
+      "milestones": [
+        {
+          "name": "peak-hold-elapsed",
+          "timestamp": "2026-06-16T12:29:36.409246524Z",
+          "durationFromPhaseStartSeconds": 30.179828092
+        }
+      ]
+    },
+    {
+      "name": "scale-down-c6",
+      "startTime": "2026-06-16T12:29:36.40932366Z",
+      "endTime": "2026-06-16T12:29:38.354833099Z",
+      "durationFromTestStartSeconds": 461.235007741,
+      "milestones": [
+        {
+          "name": "base-pods-restored",
+          "timestamp": "2026-06-16T12:29:38.354783404Z",
+          "durationFromPhaseStartSeconds": 1.945459754
+        }
+      ]
+    },
+    {
+      "name": "hold-base-c6",
+      "startTime": "2026-06-16T12:29:38.354859428Z",
+      "endTime": "2026-06-16T12:30:08.534322633Z",
+      "durationFromTestStartSeconds": 463.180543509,
+      "milestones": [
+        {
+          "name": "base-hold-elapsed",
+          "timestamp": "2026-06-16T12:30:08.534277916Z",
+          "durationFromPhaseStartSeconds": 30.179418488
+        }
+      ]
+    },
+    {
+      "name": "scale-up-c7",
+      "startTime": "2026-06-16T12:30:08.534346469Z",
+      "endTime": "2026-06-16T12:30:10.039688654Z",
+      "durationFromTestStartSeconds": 493.36003054,
+      "milestones": [
+        {
+          "name": "peak-pods-ready",
+          "timestamp": "2026-06-16T12:30:10.039623105Z",
+          "durationFromPhaseStartSeconds": 1.5052766659999999
+        }
+      ]
+    },
+    {
+      "name": "hold-peak-c7",
+      "startTime": "2026-06-16T12:30:10.039718248Z",
+      "endTime": "2026-06-16T12:30:40.218559749Z",
+      "durationFromTestStartSeconds": 494.865402329,
+      "milestones": [
+        {
+          "name": "peak-hold-elapsed",
+          "timestamp": "2026-06-16T12:30:40.218510576Z",
+          "durationFromPhaseStartSeconds": 30.178792318
+        }
+      ]
+    },
+    {
+      "name": "scale-down-c7",
+      "startTime": "2026-06-16T12:30:40.218589224Z",
+      "endTime": "2026-06-16T12:30:42.169449782Z",
+      "durationFromTestStartSeconds": 525.044273305,
+      "milestones": [
+        {
+          "name": "base-pods-restored",
+          "timestamp": "2026-06-16T12:30:42.169405626Z",
+          "durationFromPhaseStartSeconds": 1.950816402
+        }
+      ]
+    },
+    {
+      "name": "hold-base-c7",
+      "startTime": "2026-06-16T12:30:42.169477323Z",
+      "endTime": "2026-06-16T12:31:12.3507882Z",
+      "durationFromTestStartSeconds": 526.995161404,
+      "milestones": [
+        {
+          "name": "base-hold-elapsed",
+          "timestamp": "2026-06-16T12:31:12.350733618Z",
+          "durationFromPhaseStartSeconds": 30.181256295
+        }
+      ]
+    },
+    {
+      "name": "scale-up-c8",
+      "startTime": "2026-06-16T12:31:12.350813418Z",
+      "endTime": "2026-06-16T12:31:14.019500183Z",
+      "durationFromTestStartSeconds": 557.176497489,
+      "milestones": [
+        {
+          "name": "peak-pods-ready",
+          "timestamp": "2026-06-16T12:31:14.019433292Z",
+          "durationFromPhaseStartSeconds": 1.668619884
+        }
+      ]
+    },
+    {
+      "name": "hold-peak-c8",
+      "startTime": "2026-06-16T12:31:14.019539091Z",
+      "endTime": "2026-06-16T12:31:44.204290267Z",
+      "durationFromTestStartSeconds": 558.845223172,
+      "milestones": [
+        {
+          "name": "peak-hold-elapsed",
+          "timestamp": "2026-06-16T12:31:44.204239992Z",
+          "durationFromPhaseStartSeconds": 30.184700901
+        }
+      ]
+    },
+    {
+      "name": "scale-down-c8",
+      "startTime": "2026-06-16T12:31:44.204315355Z",
+      "endTime": "2026-06-16T12:31:46.135679233Z",
+      "durationFromTestStartSeconds": 589.029999436,
+      "milestones": [
+        {
+          "name": "base-pods-restored",
+          "timestamp": "2026-06-16T12:31:46.135617129Z",
+          "durationFromPhaseStartSeconds": 1.931301784
+        }
+      ]
+    },
+    {
+      "name": "hold-base-c8",
+      "startTime": "2026-06-16T12:31:46.135713494Z",
+      "endTime": "2026-06-16T12:32:16.315641279Z",
+      "durationFromTestStartSeconds": 590.961397575,
+      "milestones": [
+        {
+          "name": "base-hold-elapsed",
+          "timestamp": "2026-06-16T12:32:16.315596221Z",
+          "durationFromPhaseStartSeconds": 30.179882727
+        }
+      ]
+    },
+    {
+      "name": "scale-up-c9",
+      "startTime": "2026-06-16T12:32:16.315665896Z",
+      "endTime": "2026-06-16T12:32:18.068208479Z",
+      "durationFromTestStartSeconds": 621.141349977,
+      "milestones": [
+        {
+          "name": "peak-pods-ready",
+          "timestamp": "2026-06-16T12:32:18.067480286Z",
+          "durationFromPhaseStartSeconds": 1.7518144100000002
+        }
+      ]
+    },
+    {
+      "name": "hold-peak-c9",
+      "startTime": "2026-06-16T12:32:18.068271394Z",
+      "endTime": "2026-06-16T12:32:48.248075737Z",
+      "durationFromTestStartSeconds": 622.893955475,
+      "milestones": [
+        {
+          "name": "peak-hold-elapsed",
+          "timestamp": "2026-06-16T12:32:48.248022437Z",
+          "durationFromPhaseStartSeconds": 30.179751043
+        }
+      ]
+    },
+    {
+      "name": "scale-down-c9",
+      "startTime": "2026-06-16T12:32:48.248101465Z",
+      "endTime": "2026-06-16T12:32:50.191954222Z",
+      "durationFromTestStartSeconds": 653.073785546,
+      "milestones": [
+        {
+          "name": "base-pods-restored",
+          "timestamp": "2026-06-16T12:32:50.191897768Z",
+          "durationFromPhaseStartSeconds": 1.9437963329999999
+        }
+      ]
+    },
+    {
+      "name": "hold-base-c9",
+      "startTime": "2026-06-16T12:32:50.19198576Z",
+      "endTime": "2026-06-16T12:33:20.372513486Z",
+      "durationFromTestStartSeconds": 655.017669841,
+      "milestones": [
+        {
+          "name": "base-hold-elapsed",
+          "timestamp": "2026-06-16T12:33:20.372461648Z",
+          "durationFromPhaseStartSeconds": 30.180475898
+        }
+      ]
+    },
+    {
+      "name": "scale-up-c10",
+      "startTime": "2026-06-16T12:33:20.372543341Z",
+      "endTime": "2026-06-16T12:33:21.943636737Z",
+      "durationFromTestStartSeconds": 685.198227422,
+      "milestones": [
+        {
+          "name": "peak-pods-ready",
+          "timestamp": "2026-06-16T12:33:21.943567332Z",
+          "durationFromPhaseStartSeconds": 1.571024001
+        }
+      ]
+    },
+    {
+      "name": "hold-peak-c10",
+      "startTime": "2026-06-16T12:33:21.943672791Z",
+      "endTime": "2026-06-16T12:33:52.122694237Z",
+      "durationFromTestStartSeconds": 686.769356872,
+      "milestones": [
+        {
+          "name": "peak-hold-elapsed",
+          "timestamp": "2026-06-16T12:33:52.122632104Z",
+          "durationFromPhaseStartSeconds": 30.178959313
+        }
+      ]
+    },
+    {
+      "name": "scale-down-c10",
+      "startTime": "2026-06-16T12:33:52.122725574Z",
+      "endTime": "2026-06-16T12:33:54.057694105Z",
+      "durationFromTestStartSeconds": 716.948409655,
+      "milestones": [
+        {
+          "name": "base-pods-restored",
+          "timestamp": "2026-06-16T12:33:54.057640675Z",
+          "durationFromPhaseStartSeconds": 1.934915101
+        }
+      ]
+    },
+    {
+      "name": "hold-base-c10",
+      "startTime": "2026-06-16T12:33:54.057720214Z",
+      "endTime": "2026-06-16T12:34:24.236439923Z",
+      "durationFromTestStartSeconds": 718.883404295,
+      "milestones": [
+        {
+          "name": "base-hold-elapsed",
+          "timestamp": "2026-06-16T12:34:24.236392742Z",
+          "durationFromPhaseStartSeconds": 30.178672518
+        }
+      ]
+    },
+    {
+      "name": "final-check",
+      "startTime": "2026-06-16T12:34:24.236465702Z",
+      "endTime": "2026-06-16T12:34:24.257576952Z",
+      "durationFromTestStartSeconds": 749.062149783,
+      "milestones": []
+    }
+  ],
+  "testDurationSeconds": 749.083309415,
+  "k8sClient": {
+    "qps": 100,
+    "burst": 150
+  },
+  "controllerMaxReconcile": {
+    "podCliqueSet": 20,
+    "podCliqueScalingGroup": 20,
+    "podClique": 20
+  }
+}
