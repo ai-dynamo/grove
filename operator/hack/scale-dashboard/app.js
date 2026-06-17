@@ -146,7 +146,7 @@ function setOptions(select, values) {
 function render() {
   const runs = selectedRuns();
   const detail = selectedRunDetail(runs);
-  const detailNote = detail.isLimited ? "; milestone details hidden" : "";
+  const detailNote = detail.hideMilestoneCharts || detail.hideLatestMilestoneRows ? "; milestone details hidden" : "";
   setStatus(`${runs.length} ${state.testName} runs loaded${detailNote}`);
 
   drawTotalChart(runs);
@@ -268,10 +268,11 @@ function selectedRunDetail(runs) {
   const latest = runs[runs.length - 1];
   const milestoneChartCount = milestonePhaseNames(runs).length;
   const latestTableRowCount = latest ? latestValueRows(latest, true).length : 0;
+  const latestTableRowCountWithoutMilestones = latest ? latestValueRows(latest, false).length : 0;
+  const hasLatestMilestoneRows = latestTableRowCount > latestTableRowCountWithoutMilestones;
   return {
     hideMilestoneCharts: milestoneChartCount > MAX_MILESTONE_CHARTS,
-    hideLatestMilestoneRows: latestTableRowCount > MAX_LATEST_TABLE_ROWS,
-    isLimited: milestoneChartCount > MAX_MILESTONE_CHARTS || latestTableRowCount > MAX_LATEST_TABLE_ROWS,
+    hideLatestMilestoneRows: hasLatestMilestoneRows && latestTableRowCount > MAX_LATEST_TABLE_ROWS,
     latestTableRowCount,
     milestoneChartCount,
   };
