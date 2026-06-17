@@ -23,6 +23,8 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kai"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kube"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler/lpx"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler/volcano"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -49,6 +51,19 @@ var backendConstructors = map[configv1alpha1.SchedulerName]func() scheduler.Back
 			runtime.NewScheme(),
 			record.NewFakeRecorder(1),
 			configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKube},
+		)
+	},
+	configv1alpha1.SchedulerNameVolcano: func() scheduler.Backend {
+		return volcano.New(
+			fake.NewClientBuilder().Build(),
+			runtime.NewScheme(),
+			record.NewFakeRecorder(1),
+			configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameVolcano},
+		)
+	},
+	configv1alpha1.SchedulerNameLPX: func() scheduler.Backend {
+		return lpx.New(
+			configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameLPX},
 		)
 	},
 }
