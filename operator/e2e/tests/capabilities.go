@@ -76,6 +76,17 @@ var backendInterfaceCapabilities = map[string]map[Capability]bool{
 		// backend does not yet read or act on it. When it does, set
 		// GangScheduling: true here.
 	},
+	"volcano": {
+		// Volcano provides gang scheduling via the Volcano PodGroup CRD
+		// (operator/internal/scheduler/volcano/backend.go SyncPodGang).
+		// It does not implement scheduler.TopologyAwareBackend.
+		GangScheduling: true,
+	},
+	"lpx-scheduler": {
+		// LPX is a pass-through backend: it sets pod.Spec.SchedulerName and
+		// rejects topology constraints; SyncPodGang is a no-op, so it does
+		// not provide gang scheduling at the operator level.
+	},
 }
 
 // currentCapabilities holds the resolved CapabilitySet for the running e2e
