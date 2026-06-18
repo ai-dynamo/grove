@@ -97,6 +97,8 @@ profiles:
           config:
             scheduler:
               defaultProfileName: default-scheduler
+              profiles:
+                - name: default-scheduler
             leaderElection:
               enabled: false
   - name: mnnvl-test
