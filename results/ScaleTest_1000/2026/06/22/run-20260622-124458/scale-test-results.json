@@ -1,0 +1,73 @@
+{
+  "testName": "ScaleTest_1000",
+  "runID": "run-20260622-124458",
+  "namespace": "default",
+  "pcsCount": 1,
+  "groveImage": "registry:5001/grove-operator:E2E_TESTS@sha256:aa54af3df1c19e384b2a3419596b1265be947ef2172a6d9b58d476e3dc576450",
+  "phases": [
+    {
+      "name": "deploy",
+      "startTime": "2026-06-22T12:44:58.698235994Z",
+      "endTime": "2026-06-22T12:45:45.23691596Z",
+      "durationFromTestStartSeconds": 0.000047769,
+      "milestones": [
+        {
+          "name": "pods-created",
+          "timestamp": "2026-06-22T12:45:19.571590276Z",
+          "durationFromPhaseStartSeconds": 20.873354302
+        },
+        {
+          "name": "pods-ready",
+          "timestamp": "2026-06-22T12:45:45.118369725Z",
+          "durationFromPhaseStartSeconds": 46.420133731
+        },
+        {
+          "name": "pcs-available",
+          "timestamp": "2026-06-22T12:45:45.236820752Z",
+          "durationFromPhaseStartSeconds": 46.538584779
+        }
+      ]
+    },
+    {
+      "name": "steady-state-reconcile",
+      "startTime": "2026-06-22T12:45:45.236960262Z",
+      "endTime": "2026-06-22T12:46:15.453559334Z",
+      "durationFromTestStartSeconds": 46.538772037,
+      "milestones": [
+        {
+          "name": "pcs-still-available",
+          "timestamp": "2026-06-22T12:45:45.373326743Z",
+          "durationFromPhaseStartSeconds": 0.136366501
+        },
+        {
+          "name": "steady-state-window",
+          "timestamp": "2026-06-22T12:46:15.453508209Z",
+          "durationFromPhaseStartSeconds": 30.216547947
+        }
+      ]
+    },
+    {
+      "name": "delete",
+      "startTime": "2026-06-22T12:46:15.453580233Z",
+      "endTime": "2026-06-22T12:46:15.559991993Z",
+      "durationFromTestStartSeconds": 76.755392008,
+      "milestones": [
+        {
+          "name": "pcs-deleted",
+          "timestamp": "2026-06-22T12:46:15.559953742Z",
+          "durationFromPhaseStartSeconds": 0.106373499
+        }
+      ]
+    }
+  ],
+  "testDurationSeconds": 76.861815199,
+  "k8sClient": {
+    "qps": 100,
+    "burst": 150
+  },
+  "controllerMaxReconcile": {
+    "podCliqueSet": 20,
+    "podCliqueScalingGroup": 20,
+    "podClique": 20
+  }
+}
