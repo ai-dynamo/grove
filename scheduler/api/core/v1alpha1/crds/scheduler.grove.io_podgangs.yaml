@@ -37,10 +37,6 @@ spec:
       name: Disrupting
       priority: 1
       type: string
-    - jsonPath: .status.placementScore
-      name: Score
-      priority: 1
-      type: number
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
