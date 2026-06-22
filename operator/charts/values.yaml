@@ -98,6 +98,7 @@ config:
       - name: default-scheduler
       - name: kai-scheduler
       - name: volcano
+      - name: lpx-scheduler
   logLevel: info
   logFormat: json
   topologyAwareScheduling:

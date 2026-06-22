@@ -51,6 +51,12 @@ func TestNewRegistry(t *testing.T) {
 			expectedName:  "default-scheduler",
 		},
 		{
+			name:          "lpx scheduler initialization",
+			schedulerName: configv1alpha1.SchedulerNameLPX,
+			wantErr:       false,
+			expectedName:  "lpx-scheduler",
+		},
+		{
 			name:          "unsupported scheduler",
 			schedulerName: "unknown-scheduler",
 			wantErr:       true,
@@ -88,12 +94,14 @@ func TestNewRegistry(t *testing.T) {
 	}
 
 	t.Run("multiple profiles with default set to kai", func(t *testing.T) {
-		cl := testutils.CreateDefaultFakeClient(nil)
+		cl := testutils.CreateDefaultFakeClient([]client.Object{testutils.NewVolcanoPodGroupCRD(true)})
 		recorder := record.NewFakeRecorder(10)
 		cfg := configv1alpha1.SchedulerConfiguration{
 			Profiles: []configv1alpha1.SchedulerProfile{
 				{Name: configv1alpha1.SchedulerNameKube},
 				{Name: configv1alpha1.SchedulerNameKai},
+				{Name: configv1alpha1.SchedulerNameVolcano},
+				{Name: configv1alpha1.SchedulerNameLPX},
 			},
 			DefaultProfileName: string(configv1alpha1.SchedulerNameKai),
 		}
@@ -101,7 +109,10 @@ func TestNewRegistry(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, reg.Get(string(configv1alpha1.SchedulerNameKai)))
 		require.NotNil(t, reg.Get(string(configv1alpha1.SchedulerNameKube)))
+		require.NotNil(t, reg.Get(string(configv1alpha1.SchedulerNameVolcano)))
+		require.NotNil(t, reg.Get(string(configv1alpha1.SchedulerNameLPX)))
 		assert.Equal(t, reg.GetDefault(), reg.Get(string(configv1alpha1.SchedulerNameKai)))
+		assert.NotContains(t, reg.AllTopologyAware(), string(configv1alpha1.SchedulerNameLPX))
 	})
 
 	t.Run("volcano scheduler initialization", func(t *testing.T) {

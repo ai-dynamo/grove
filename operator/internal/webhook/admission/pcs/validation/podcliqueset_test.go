@@ -247,6 +247,18 @@ func TestValidateSchedulerNames(t *testing.T) {
 			expectErrors:   0,
 		},
 		{
+			name: "single lpx-scheduler when enabled",
+			schedulerConfig: groveconfigv1alpha1.SchedulerConfiguration{
+				Profiles: []groveconfigv1alpha1.SchedulerProfile{
+					{Name: groveconfigv1alpha1.SchedulerNameKube},
+					{Name: groveconfigv1alpha1.SchedulerNameLPX},
+				},
+				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+			},
+			schedulerNames: []string{"lpx-scheduler"},
+			expectErrors:   0,
+		},
+		{
 			name: "single default-scheduler when enabled (kube only)",
 			schedulerConfig: groveconfigv1alpha1.SchedulerConfiguration{
 				Profiles:           []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}},
