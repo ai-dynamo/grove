@@ -26,13 +26,13 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
+	"github.com/ai-dynamo/grove/operator/test/utils/schedulertest"
 
 	kaitopologyv1alpha1 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/kai/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/tools/record"
@@ -43,22 +43,6 @@ import (
 const topologyName = "test-topology"
 
 // -- Shared helpers --
-
-func newKAIScheme(t *testing.T) *runtime.Scheme {
-	t.Helper()
-	scheme := runtime.NewScheme()
-	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
-	require.NoError(t, kaitopologyv1alpha1.AddToScheme(scheme))
-	return scheme
-}
-
-func newKAIClient(t *testing.T, objects ...client.Object) client.Client {
-	t.Helper()
-	return testutils.NewTestClientBuilder().
-		WithScheme(newKAIScheme(t)).
-		WithObjects(objects...).
-		Build()
-}
 
 func newTASBackend(t *testing.T, cl client.Client) scheduler.TopologyAwareBackend {
 	t.Helper()
@@ -125,7 +109,7 @@ func convertToKAITopologyLevels(levels []grovecorev1alpha1.TopologyLevel) []kait
 // -- GVR and no-op tests --
 
 func TestTopologyGVR(t *testing.T) {
-	cl := newKAIClient(t)
+	cl := schedulertest.NewKAIClient(t)
 	b := newTASBackend(t, cl)
 
 	gvr := b.TopologyGVR()
@@ -137,7 +121,7 @@ func TestTopologyGVR(t *testing.T) {
 }
 
 func TestOnTopologyDeleteIsNoOp(t *testing.T) {
-	cl := newKAIClient(t)
+	cl := schedulertest.NewKAIClient(t)
 	b := newTASBackend(t, cl)
 
 	ct := createTestClusterTopology(topologyName, defaultTopologyLevels())
@@ -149,7 +133,7 @@ func TestOnTopologyDeleteIsNoOp(t *testing.T) {
 
 func TestSyncTopologyWhenNoneExists(t *testing.T) {
 	ctx := context.Background()
-	cl := newKAIClient(t)
+	cl := schedulertest.NewKAIClient(t)
 	b := newTASBackend(t, cl)
 
 	topologyLevels := []grovecorev1alpha1.TopologyLevel{
@@ -183,7 +167,7 @@ func TestSyncTopologyWhenLevelsUpdated(t *testing.T) {
 		{NodeLabel: "kubernetes.io/hostname"},
 	}, ct)
 
-	cl := newKAIClient(t, ct, existingKAITopology)
+	cl := schedulertest.NewKAIClient(t, ct, existingKAITopology)
 	b := newTASBackend(t, cl)
 
 	err := b.SyncTopology(ctx, cl, ct)
@@ -206,7 +190,7 @@ func TestSyncTopologyWhenNoChangeRequired(t *testing.T) {
 	existingKAITopology := createTestKAITopology(convertToKAITopologyLevels(topologyLevels), ct)
 	existingKAITopology.ResourceVersion = "1"
 
-	cl := newKAIClient(t, ct, existingKAITopology)
+	cl := schedulertest.NewKAIClient(t, ct, existingKAITopology)
 	b := newTASBackend(t, cl)
 
 	err := b.SyncTopology(ctx, cl, ct)
@@ -229,7 +213,7 @@ func TestSyncTopologyWithUnknownOwner(t *testing.T) {
 		{NodeLabel: "topology.kubernetes.io/zone"},
 	}, differentOwner)
 
-	cl := newKAIClient(t, ct, existingKAITopology)
+	cl := schedulertest.NewKAIClient(t, ct, existingKAITopology)
 	b := newTASBackend(t, cl)
 
 	err := b.SyncTopology(ctx, cl, ct)
@@ -291,7 +275,7 @@ func TestSyncTopologyErrors(t *testing.T) {
 			objects := tc.existingObjects(ct)
 
 			cl := testutils.NewTestClientBuilder().
-				WithScheme(newKAIScheme(t)).
+				WithScheme(schedulertest.NewKAIScheme(t)).
 				WithObjects(objects...).
 				RecordErrorForObjects(tc.method, injectedErr, client.ObjectKey{Name: topologyName}).
 				Build()
@@ -313,7 +297,7 @@ func TestCheckTopologyDrift_InSync(t *testing.T) {
 
 	existingKAITopology := createTestKAITopology(convertToKAITopologyLevels(topologyLevels), ct)
 
-	cl := newKAIClient(t, ct, existingKAITopology)
+	cl := schedulertest.NewKAIClient(t, ct, existingKAITopology)
 	b := newTASBackend(t, cl)
 
 	ref := grovecorev1alpha1.SchedulerTopologyBinding{
@@ -337,7 +321,7 @@ func TestCheckTopologyDrift_Drift(t *testing.T) {
 		{NodeLabel: "kubernetes.io/hostname"},
 	}, ct)
 
-	cl := newKAIClient(t, ct, existingKAITopology)
+	cl := schedulertest.NewKAIClient(t, ct, existingKAITopology)
 	b := newTASBackend(t, cl)
 
 	ref := grovecorev1alpha1.SchedulerTopologyBinding{
@@ -356,7 +340,7 @@ func TestCheckTopologyDrift_NotFound(t *testing.T) {
 	topologyLevels := defaultTopologyLevels()
 	ct := createTestClusterTopology(topologyName, topologyLevels)
 
-	cl := newKAIClient(t, ct)
+	cl := schedulertest.NewKAIClient(t, ct)
 	b := newTASBackend(t, cl)
 
 	ref := grovecorev1alpha1.SchedulerTopologyBinding{
@@ -393,7 +377,7 @@ func TestCheckTopologyDriftErrors(t *testing.T) {
 			objects := tc.existingObjects(ct)
 
 			cl := testutils.NewTestClientBuilder().
-				WithScheme(newKAIScheme(t)).
+				WithScheme(schedulertest.NewKAIScheme(t)).
 				WithObjects(objects...).
 				RecordErrorForObjects(tc.method, injectedErr, client.ObjectKey{Name: topologyName}).
 				Build()
@@ -413,7 +397,7 @@ func TestCheckTopologyDriftErrors(t *testing.T) {
 // -- buildKAITopology and isKAITopologyChanged tests --
 
 func TestBuildKAITopology(t *testing.T) {
-	cl := newKAIClient(t)
+	cl := schedulertest.NewKAIClient(t)
 	topologyLevels := defaultTopologyLevels()
 	ct := &grovecorev1alpha1.ClusterTopologyBinding{
 		ObjectMeta: metav1.ObjectMeta{

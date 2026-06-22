@@ -128,7 +128,10 @@ func TestNewRegistry(t *testing.T) {
 	})
 
 	t.Run("volcano scheduler initialization", func(t *testing.T) {
-		cl := testutils.CreateDefaultFakeClient(nil)
+		scheme := runtime.NewScheme()
+		cl := testutils.NewTestClientBuilder().
+			WithScheme(scheme).
+			Build()
 		directClient := newVolcanoDirectClient(t, testutils.NewVolcanoPodGroupCRD(true))
 
 		recorder := record.NewFakeRecorder(10)
@@ -138,7 +141,7 @@ func TestNewRegistry(t *testing.T) {
 			},
 			DefaultProfileName: string(configv1alpha1.SchedulerNameVolcano),
 		}
-		reg, err := New(cl, directClient, cl.Scheme(), recorder, cfg)
+		reg, err := New(cl, directClient, scheme, recorder, cfg)
 		require.NoError(t, err)
 		require.NotNil(t, reg.GetDefault())
 		assert.Equal(t, string(configv1alpha1.SchedulerNameVolcano), reg.GetDefault().Name())

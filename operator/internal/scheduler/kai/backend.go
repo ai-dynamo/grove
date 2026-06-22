@@ -60,7 +60,8 @@ func (b *schedulerBackend) Name() string {
 	return b.name
 }
 
-// Init initializes the KAI backend
+// Init registers the KAI API types into b.scheme and must be called before
+// that scheme is used to serialize or deserialize KAI objects.
 func (b *schedulerBackend) Init(_ client.Client) error {
 	return kaitopologyv1alpha1.AddToScheme(b.scheme)
 }

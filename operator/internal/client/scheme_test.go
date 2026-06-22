@@ -19,24 +19,20 @@ package client
 import (
 	"testing"
 
-	kaitopologyv1alpha1 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/kai/v1alpha1"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	schedv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
-	volcanov1beta1 "volcano.sh/apis/pkg/apis/scheduling/v1beta1"
 )
 
-func TestSchemeExcludesSchedulerSpecificAPIs(t *testing.T) {
+func TestSchemeIncludesSharedAPIs(t *testing.T) {
 	_, err := apiutil.GVKForObject(&corev1.Pod{}, Scheme)
 	require.NoError(t, err)
 
-	_, err = apiutil.GVKForObject(&kaitopologyv1alpha1.Topology{}, Scheme)
-	require.Error(t, err)
+	_, err = apiutil.GVKForObject(&grovecorev1alpha1.PodCliqueSet{}, Scheme)
+	require.NoError(t, err)
 
-	_, err = apiutil.GVKForObject(&volcanov1beta1.PodGroup{}, Scheme)
-	require.Error(t, err)
-
-	_, err = apiutil.GVKForObject(&apiextensionsv1.CustomResourceDefinition{}, Scheme)
-	require.Error(t, err)
+	_, err = apiutil.GVKForObject(&schedv1alpha1.PodGang{}, Scheme)
+	require.NoError(t, err)
 }

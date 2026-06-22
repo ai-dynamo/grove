@@ -26,6 +26,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kai"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
+	"github.com/ai-dynamo/grove/operator/test/utils/schedulertest"
 
 	"github.com/go-logr/logr"
 	kaitopologyv1alpha1 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/kai/v1alpha1"
@@ -33,7 +34,6 @@ import (
 	"github.com/stretchr/testify/require"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -41,23 +41,7 @@ import (
 
 const topologyName = "test-topology"
 
-func newKAIScheme(t *testing.T) *runtime.Scheme {
-	t.Helper()
-	scheme := runtime.NewScheme()
-	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
-	require.NoError(t, kaitopologyv1alpha1.AddToScheme(scheme))
-	return scheme
-}
-
-func newKAIClient(t *testing.T, objects ...client.Object) client.Client {
-	t.Helper()
-	return testutils.NewTestClientBuilder().
-		WithScheme(newKAIScheme(t)).
-		WithObjects(objects...).
-		Build()
-}
-
-func newKaiBackends(t *testing.T, cl client.Client) map[string]scheduler.TopologyAwareBackend {
+func newKAIBackends(t *testing.T, cl client.Client) map[string]scheduler.TopologyAwareBackend {
 	t.Helper()
 	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai}
 	b := kai.New(cl, cl.Scheme(), nil, profile)
@@ -73,10 +57,10 @@ func TestSynchronizeTopologyListsAndSyncs(t *testing.T) {
 	}
 	ct := createTestClusterTopology(topologyName, topologyLevels)
 
-	cl := newKAIClient(t, ct)
+	cl := schedulertest.NewKAIClient(t, ct)
 	logger := logr.Discard()
 
-	err := SynchronizeTopology(ctx, cl, logger, newKaiBackends(t, cl))
+	err := SynchronizeTopology(ctx, cl, logger, newKAIBackends(t, cl))
 	require.NoError(t, err)
 
 	// Verify KAI Topology was created
@@ -98,10 +82,10 @@ func TestSynchronizeTopologyMultipleCTs(t *testing.T) {
 		{Domain: grovecorev1alpha1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
 	})
 
-	cl := newKAIClient(t, ct1, ct2)
+	cl := schedulertest.NewKAIClient(t, ct1, ct2)
 	logger := logr.Discard()
 
-	err := SynchronizeTopology(ctx, cl, logger, newKaiBackends(t, cl))
+	err := SynchronizeTopology(ctx, cl, logger, newKAIBackends(t, cl))
 	require.NoError(t, err)
 
 	// Verify both KAI Topologies were created
@@ -118,10 +102,10 @@ func TestSynchronizeTopologyMultipleCTs(t *testing.T) {
 
 func TestSynchronizeTopologyNoCTs(t *testing.T) {
 	ctx := context.Background()
-	cl := newKAIClient(t)
+	cl := schedulertest.NewKAIClient(t)
 	logger := logr.Discard()
 
-	err := SynchronizeTopology(ctx, cl, logger, newKaiBackends(t, cl))
+	err := SynchronizeTopology(ctx, cl, logger, newKAIBackends(t, cl))
 	require.NoError(t, err)
 }
 
@@ -130,7 +114,7 @@ func TestSynchronizeTopologyNoTASBackends(t *testing.T) {
 	ct := createTestClusterTopology(topologyName, []grovecorev1alpha1.TopologyLevel{
 		{Domain: grovecorev1alpha1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
 	})
-	cl := newKAIClient(t, ct)
+	cl := schedulertest.NewKAIClient(t, ct)
 	logger := logr.Discard()
 
 	// Pass nil backends
@@ -149,13 +133,13 @@ func TestSynchronizeTopologySkipsExternallyManaged(t *testing.T) {
 		{SchedulerName: "kai-scheduler", TopologyReference: "external-kai-topology"},
 	}
 
-	cl := newKAIClient(t, ct)
+	cl := schedulertest.NewKAIClient(t, ct)
 	logger := logr.Discard()
 
 	// KAI backend is listed in schedulerTopologyReferences — SyncTopology should NOT be called.
 	// If it were called, it would try to create a KAI Topology and succeed, so we verify
 	// that no KAI Topology was created.
-	err := SynchronizeTopology(ctx, cl, logger, newKaiBackends(t, cl))
+	err := SynchronizeTopology(ctx, cl, logger, newKAIBackends(t, cl))
 	require.NoError(t, err)
 
 	kaiTopology := &kaitopologyv1alpha1.Topology{}
@@ -168,12 +152,12 @@ func TestSynchronizeTopologyListError(t *testing.T) {
 	listErr := apierrors.NewInternalError(assert.AnError)
 	ctListGVK := grovecorev1alpha1.SchemeGroupVersion.WithKind("ClusterTopologyBindingList")
 	cl := testutils.NewTestClientBuilder().
-		WithScheme(newKAIScheme(t)).
+		WithScheme(schedulertest.NewKAIScheme(t)).
 		RecordErrorForObjectsMatchingLabels(testutils.ClientMethodList, client.ObjectKey{}, ctListGVK, nil, listErr).
 		Build()
 	logger := logr.Discard()
 
-	err := SynchronizeTopology(ctx, cl, logger, newKaiBackends(t, cl))
+	err := SynchronizeTopology(ctx, cl, logger, newKAIBackends(t, cl))
 	assert.Error(t, err)
 }
 
