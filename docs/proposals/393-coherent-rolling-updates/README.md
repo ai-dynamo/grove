@@ -17,21 +17,26 @@
   - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
 - [Design Details](#design-details)
   - [API Changes](#api-changes)
-    - [<code>UpdateStrategyType</code> — <code>Coherent</code> is the default](#updatestrategytype--coherent-is-the-default)
-    - [<code>PodGangMap</code> — new CRD](#podgangmap--new-crd)
-    - [<code>PodCliqueSetStatus.UpdateProgress</code> extensions for Coherent update strategy](#podcliquesetstatusupdateprogress-extensions-for-coherent-update-strategy)
-      - [Capturing MVU scope in <code>PodCliqueSetUpdateProgress</code>](#capturing-mvu-scope-in-podcliquesetupdateprogress)
-      - [Per-replica iteration tracking on <code>PodCliqueSetReplicaUpdateProgress</code>](#per-replica-iteration-tracking-on-podcliquesetreplicaupdateprogress)
-    - [<code>PodGangMapping</code> on <code>PodCliqueStatus</code> and <code>PodCliqueScalingGroupStatus</code>](#podgangmapping-on-podcliquestatus-and-podcliquescalinggroupstatus)
+    - [UpdateStrategyType — Coherent is the default](#updatestrategytype--coherent-is-the-default)
+    - [RollingUpdateConfiguration — per-component update knobs](#rollingupdateconfiguration--per-component-update-knobs)
+    - [MaxUnavailable defaulting and validation](#maxunavailable-defaulting-and-validation)
+    - [PodGangMap — new CRD](#podgangmap--new-crd)
+    - [PodCliqueSetStatus.UpdateProgress extensions for Coherent update strategy](#podcliquesetstatusupdateprogress-extensions-for-coherent-update-strategy)
+      - [Capturing MVU scope in PodCliqueSetUpdateProgress](#capturing-mvu-scope-in-podcliquesetupdateprogress)
+      - [Per-replica sub-step tracking on PodCliqueSetReplicaUpdateProgress](#per-replica-sub-step-tracking-on-podcliquesetreplicaupdateprogress)
+    - [PodGangMapping on PodCliqueStatus and PodCliqueScalingGroupStatus](#podgangmapping-on-podcliquestatus-and-podcliquescalinggroupstatus)
     - [Labels on PodGang resources](#labels-on-podgang-resources)
   - [Gang scheduling during initial deployment of PCS](#gang-scheduling-during-initial-deployment-of-pcs)
   - [Coherent update behavior and flow](#coherent-update-behavior-and-flow)
     - [Actors and responsibilities](#actors-and-responsibilities)
-    - [<code>PodGangMap</code> as source of truth — directionality flip](#podgangmap-as-source-of-truth--directionality-flip)
+    - [PodGangMap as source of truth — directionality flip](#podgangmap-as-source-of-truth--directionality-flip)
     - [Rules of MPG composition](#rules-of-mpg-composition)
+      - [Step plan](#step-plan)
+        - [Worked example](#worked-example)
+      - [Per-sub-step gate](#per-sub-step-gate)
     - [Coherent update flow](#coherent-update-flow)
       - [Bootstrap (initial PCS deploy)](#bootstrap-initial-pcs-deploy)
-      - [One coherent update iteration](#one-coherent-update-iteration)
+      - [One coherent update step](#one-coherent-update-step)
       - [Steady-state PGM follower (post-update)](#steady-state-pgm-follower-post-update)
       - [Steady-state standalone PCLQ scale-out](#steady-state-standalone-pclq-scale-out)
       - [Steady-state standalone PCLQ scale-in](#steady-state-standalone-pclq-scale-in)
@@ -40,21 +45,26 @@
     - [DependsOn and scheduling order](#dependson-and-scheduling-order)
     - [PodGang naming convention](#podgang-naming-convention)
     - [Illustration by example](#illustration-by-example)
+      - [Case A — Clean divisibility](#case-a--clean-divisibility)
+      - [Case B — Residual and leftover](#case-b--residual-and-leftover)
+      - [Case E — Single-component update](#case-e--single-component-update)
+      - [Case H — Invalid: MaxUnavailable &lt; MinAvailable](#case-h--invalid-maxunavailable--minavailable)
+      - [Case I — Invalid: RollingUpdate on a PCSG-owned PCLQ template](#case-i--invalid-rollingupdate-on-a-pcsg-owned-pclq-template)
   - [PodGang label preservation contract](#podgang-label-preservation-contract)
   - [Update concurrency](#update-concurrency)
   - [Handling scale-outs and scale-ins during update](#handling-scale-outs-and-scale-ins-during-update)
   - [Monitoring](#monitoring)
   - [Dependencies](#dependencies)
   - [Graduation Criteria](#graduation-criteria)
-  <!-- /toc -->
+<!-- /toc -->
 
 ## Summary
 
-Disaggregated inference architectures split LLM serving into distinct phases — most commonly (but not limited to) **prefill** (context generation) and **decode** (token generation) — running as separate, independently scalable components. While this can improve throughput and hardware utilisation, it introduces a hard operational constraint during version upgrades: prefill and decode instances that communicate must always run compatible software versions. This proposal introduces **Coherent Rolling Updates** for `PodCliqueSet`, enabling atomic, availability-preserving software upgrades at the granularity of **Minimal Viable Units (MVUs)** — the smallest sets of components that must be updated in lockstep to maintain compatibility and ensure availability. `Coherent` is the default `UpdateStrategy` for `PodCliqueSet`.
+Disaggregated inference architectures split LLM serving into distinct phases — most commonly (but not limited to) **prefill** (context generation) and **decode** (token generation) — running as separate, independently scalable components. While this can improve throughput and hardware utilisation, it introduces a hard operational constraint during version upgrades: prefill and decode instances that communicate must always run compatible software versions. This proposal introduces **Coherent Rolling Updates** for `PodCliqueSet`, enabling availability-preserving software upgrades that progress in bounded steps. Each step pairs an atomic **Minimum Viable Unit (MVU)** — the smallest set of components that must come up together at the new version to remain compatible — with subsequent tail sub-steps that drain the remainder under a per-component **`MaxUnavailable`** disruption budget. `Coherent` is the default `UpdateStrategy` for `PodCliqueSet`.
 
 ## Motivation
 
-Inference frameworks (e.g., vLLM, SGLang, TensorRT-LLM) support disaggregated LLM serving, where stages like prefill and decode run as separate, networked components. While this can improve throughput and resource efficiency, it complicates standard deployment practices. A standard Kubernetes rolling update inevitably creates a period where old and new version pods run at the same time and may communicate. In disaggregated systems, this cross-version communication is unsafe, so applications must prevent it. However, once cross-version communication is disabled, rolling updates introduce another issue: different components often update at different rates, which leads to mismatched pools of compatible instances. For example, you might still have many old-version prefill instances running while most old-version decode instances have already been replaced. Since old prefill can only talk to old decode, a portion of the prefill capacity becomes unusable due to the lack of matching decode capacity. This kind of mismatch reduces effective end-to-end serving capacity during the update. Our goal is to design a rolling update strategy that maintains balanced, compatible capacity across components, so version upgrades do not reduce serving capacity.
+Inference frameworks (e.g., vLLM, SGLang, TensorRT-LLM) support disaggregated LLM serving, where stages like prefill and decode run as separate, networked components. While this can improve throughput and resource efficiency, it complicates standard deployment practices. A standard Kubernetes rolling update inevitably creates a period where old and new version pods run at the same time and may communicate. In disaggregated systems, this cross-version communication is unsafe, so applications must prevent it. However, once cross-version communication is disabled, rolling updates introduce another issue: different components often update at different rates, which leads to mismatched pools of compatible instances. For example, you might still have many old-version prefill instances running while most old-version decode instances have already been replaced. Since old prefill can only talk to old decode, a portion of the prefill capacity becomes unusable due to the lack of matching decode capacity. This kind of mismatch reduces effective end-to-end serving capacity during the update. Our goal is to design a rolling update strategy that maintains balanced, compatible capacity across components, with operator control over how much capacity may be unavailable at any moment.
 
 ### Why cross-version communication is considered unsafe in Disaggregated Inference?
 
@@ -65,12 +75,13 @@ AI inference frameworks are evolving rapidly as new architectures/models are rel
 * Enable rolling updates at a user-chosen granularity: the user selects which components to update in one event, and the system replaces them in lockstep within each MVU so cross-version mixing within the boundary is impossible.
 * Each MVU is gang-scheduled as a single unit, so an MVU's pods either come up together at the new version or none of them do.
 * Preserve `PodCliqueSet` availability during rolling updates to serve incoming traffic with sets of compatible interdependent components.
+* Provide a per-component **`MaxUnavailable`** knob that bounds the worst-case disruption per step, so operators can dial the tradeoff between rollout speed and serving capacity preserved during the rollout.
 
 ### Non-Goals
 
 * Ensure equal or better topology optimized placement of the workload after rolling update.
-* Explicit support for `maxSurge` and `maxUnavailable` API. However, similar concurrency controls and functionality will be supported in future.
-* User-configurable concurrency control during a coherent update — neither the number of `PodCliqueSet` replicas updated simultaneously nor the number of MVU iterations in flight per replica is configurable in the current iteration. Both default to one. Configurable knobs will be supported in future.
+* Explicit support for `maxSurge`. A future iteration will add `maxSurge` to the same per-component update configuration that carries `MaxUnavailable` today.
+* User-configurable concurrency control during a coherent update — neither the number of `PodCliqueSet` replicas updated simultaneously nor the number of MVU steps in flight per replica is configurable in the current iteration. Both default to one. Configurable knobs will be supported in future.
 * `scale-out` and `scale-in` of scale sub-resources (`PodClique`, `PodCliqueScalingGroup`, `PodCliqueSet`) during a coherent update. The current iteration rejects these operations PCS-wide for the duration of an in-flight coherent update — see [Handling scale-outs and scale-ins during update](#handling-scale-outs-and-scale-ins-during-update) for the precise scope and rationale. Narrower per-replica scoping and otherwise composing scale operations with an in-flight coherent update will be supported in future iterations.
 * Rollback and roll-forward of `PodCliqueSet` revisions. Tracking PCS revision history and providing operator-driven rollback / roll-forward to a prior version will be supported in future.
 
@@ -111,7 +122,7 @@ To realise the MVU model on top of Grove's existing scheduling primitives, Coher
 | ----------------- | ------------ | ------------ | ------------- |
 | **BPG** (Base PodGang)           | Legacy | Initial deployment under pre-Coherent strategies. | One per PCS replica. Carries `MinAvailable` replicas of every standalone `PodClique` and every `PodCliqueScalingGroup`. |
 | **SPG** (Scaled PodGang)         | Legacy / New | One per PCSG replica above `MinAvailable` — created at initial deployment under pre-Coherent strategies, or during steady-state PCSG scale-out after a coherent update. Under the legacy naming convention the name is `<pcs-name>-<replica>-scaled-<n>`; under the new convention (post first coherent update) the name follows `<pcs-name>-<replica>-<unix-nano>`. Structurally the same as a TPG but created outside an update window. | A single PCSG replica. |
-| **MPG** (Minimum-Viable PodGang) | New    | Initial deployment under `Coherent`, and again on every iteration of a coherent update. | The smallest PodGang that satisfies availability — `MinAvailable` replicas of every standalone `PodClique` and every `PodCliqueScalingGroup`. Plays the same role BPG used to, but is generated fresh on each update iteration rather than persisted across updates. |
+| **MPG** (Minimum-Viable PodGang) | New    | Initial deployment under `Coherent`, and again at the first sub-step of every MPG-bearing step of a coherent update. | The smallest PodGang that satisfies availability — `MinAvailable` replicas of every standalone `PodClique` and every `PodCliqueScalingGroup` in scope. Plays the same role BPG used to, but is generated fresh on each MPG-bearing step rather than persisted across updates. |
 | **TPG** (Tail PodGang)           | New    | During a coherent update, alongside an MPG. | PCSG replicas above `MinAvailable` that need to roll in lockstep with the MPG. Depends on the MPG via `DependsOn`, so the scheduler places it only after the MPG is up. |
 
 A single PCS replica can hold a mix of these variants at any given moment — for example, mid-update a replica might still have its old-hash MPG and TPGs present alongside a new-hash MPG and new-hash TPGs, until the old gangs are fully drained.
@@ -128,21 +139,27 @@ The system must update prefill and decode pods together as a single atomic unit 
 
 #### Story 2
 
-As an ML infrastructure team member deploying a disaggregated inference system where the prefill tier and decode tier are updated on different release cadences, I need to independently update only the decode `PodClique` (e.g., to pick up a memory-efficiency fix) without touching the prefill `PodClique`. The system should recognise that this is a backward compatible, single-component update and updates decode pods incrementally (up to a configurable concurrency limit), and leave prefill pods untouched — all without requiring a full MVU replacement.
+As an ML infrastructure team member deploying a disaggregated inference system where the prefill tier and decode tier are updated on different release cadences, I need to independently update only the decode `PodClique` (e.g., to pick up a memory-efficiency fix) without touching the prefill `PodClique`. The system should recognise this as a backward-compatible, single-component update, replace decode pods incrementally — at most `MaxUnavailable` decode pods at a time so the rest continue serving — and leave prefill pods untouched, all without requiring a full MVU replacement.
 
 ### Limitations/Risks & Mitigations
 
 The current iteration of Coherent Rolling Updates carries the following known limitations. Each is a deliberate scope boundary, with planned follow-up where applicable.
 
-1. **Re-triggering an update while one is in progress is not yet well-supported.** If the user mutates the PCS spec a second time while a coherent update is mid-flight, the system has no formal cancel-and-restart semantics for the in-flight update. The current behavior — the in-flight iteration completes against the previous hash, then the next iteration mints under the newer hash — has not been hardened against corner cases (e.g., a second update that reverts the first while iterations are still running, or that changes the MVU template shape).
-
-   *Mitigation:* operators should let an in-flight coherent update reach completion before triggering another spec change.
-
-2. **No surge-style availability headroom during a coherent update.** Coherent always replaces in place — pods of an updated component are taken down before their new-version replacements are created.
+1. **No surge-style availability headroom during a coherent update.** Coherent always replaces in place — pods of an updated component are taken down before their new-version replacements are created.
 
    *Mitigation:* operators who need additional availability headroom during a coherent update can either:
    - Provision more replicas at the PCLQ / PCSG level (so MinAvailable < Replicas, and the surplus continues serving while the MinAvailable floor is rolled), or
    - Provision more PCS replicas (so a fraction of the fleet is always at a non-updating replica index).
+
+2. **Initial PCS deployment retains the BPG / SPG composition.** A freshly created `PodCliqueSet` lays out one BPG-shaped PodGang carrying the full standalone-PCLQ count plus `MinAvailable` of every PCSG, plus one SPG-shaped PodGang per PCSG replica above `MinAvailable`. Names follow the unified [PodGang naming convention](#podgang-naming-convention), but the composition matches the legacy layout.
+
+   The cost of this layout shows up at gate removal: scheduling gates on every SPG's pods are lifted in a single batch once the BPG anchor reports `Scheduled=True`. The backend scheduler then sees the full pool of SPG pods become eligible at the same instant. Under capacity pressure, the scheduler's choice of placement order — which SPG it places first — determines the running distribution across PCSGs, and the scheduler is free to favour one PCSG over another. The result can be a skewed allocation of running replicas across PCSGs, even though every SPG was eligible. The MPG / TPG layout produced during coherent updates does not have this issue because gate removal is paced by sub-steps and `MaxUnavailable`, so only a small batch of TPGs becomes eligible at a time.
+
+   *Mitigation:* none in this iteration. The first coherent update on a `PodCliqueSet` naturally evolves the layout into MPG/TPG shape under the step/sub-step algorithm. A future iteration will evolve the initial layout to match.
+
+3. **Preemption between sub-steps can stall the rollout.** Predicate 3 of the [Per-sub-step gate](#per-sub-step-gate) requires that no in-scope component's `Ready` count fall below `replicas[c] - maxUnavailable[c]` before the next sub-step takes more pods down. If preemption or unrelated pod loss drops the count below that floor between sub-steps, the orchestrator stalls until availability recovers. This matches Kubernetes Deployment behavior under `maxUnavailable` and is the right safety behavior, but it can leave a coherent update parked indefinitely if preemption persists.
+
+   *Mitigation:* operators experiencing repeated stalls should inspect `Status.UpdateProgress.CurrentlyUpdating[].ErrorMessage` and address the underlying capacity/preemption pressure on the cluster. Future work may add a configurable stall timeout that escalates to a user-visible event.
 
 ## Design Details
 
@@ -150,7 +167,7 @@ The current iteration of Coherent Rolling Updates carries the following known li
 
 This section consolidates every API surface added or modified to support Coherent Rolling Updates.
 
-#### `UpdateStrategyType` — `Coherent` is the default
+#### UpdateStrategyType — Coherent is the default
 
 A new value `Coherent` is introduced on `UpdateStrategyType`. It is the **default** `UpdateStrategy` for a `PodCliqueSet`.
 
@@ -159,10 +176,14 @@ A new value `Coherent` is introduced on `UpdateStrategyType`. It is the **defaul
 type UpdateStrategyType string
 
 const (
-    // CoherentStrategy indicates that replicas will be updated in Minimal Viable Units —
-    // MinAvailable replicas of each updated standalone PodClique plus MinAvailable replicas of each
-    // updated PodCliqueScalingGroup — scheduled atomically as a new PodGang.
-    // This is the default update strategy.
+    // CoherentStrategy indicates a multi-step incremental update whose cadence is
+    // governed by the current replica ratios among the components of the PodCliqueSet
+    // under update. Each step takes down a proportional slice of every updated
+    // component together, so the surviving capacity at any moment remains a
+    // version-compatible, ratio-preserving subset of the workload. Each step pairs
+    // an MVU PodGang (carrying MinAvailable replicas of every updated component) with
+    // subsequent tail sub-steps that drain the per-step remainder under each
+    // component's MaxUnavailable budget. This is the default update strategy.
     CoherentStrategy UpdateStrategyType = "Coherent"
 )
 
@@ -173,7 +194,75 @@ type PodCliqueSetUpdateStrategy struct {
 }
 ```
 
-#### `PodGangMap` — new CRD
+The strategy type is uniform across all components of a `PodCliqueSet`. Per-component disruption budgets (`MaxUnavailable` today; `MaxSurge` later) live on each component's `RollingUpdate` configuration — see [RollingUpdateConfiguration — per-component update knobs](#rollingupdateconfiguration--per-component-update-knobs).
+
+#### RollingUpdateConfiguration — per-component update knobs
+
+`RollingUpdateConfiguration` is a new sub-struct that carries per-component update-time knobs. It attaches to each `PodCliqueTemplateSpec` (alongside its `Spec`) and to each `PodCliqueScalingGroupConfig` (alongside its `MinAvailable`). The struct is optional; the PCS defaulting webhook fills it in.
+
+```go
+// RollingUpdateConfiguration carries per-component knobs that bound disruption
+// during a rolling update. Applies to both the Coherent and RollingRecreate
+// strategies; ignored for OnDelete. See `MaxUnavailable defaulting and
+// validation` below for defaulting and validation rules.
+type RollingUpdateConfiguration struct {
+    // MaxUnavailable is the maximum number of pods (for a standalone PodClique) or
+    // PodCliqueScalingGroup replicas (for a PCSG) that may be unavailable at any
+    // moment during an update for this component.
+    // +optional
+    MaxUnavailable *int32 `json:"maxUnavailable,omitempty"`
+    // MaxSurge will be added in a future iteration.
+}
+
+type PodCliqueTemplateSpec struct {
+    Name string `json:"name"`
+    // ... existing fields ...
+    Spec PodCliqueSpec `json:"spec"`
+    // RollingUpdate is the per-component update configuration for this
+    // standalone PodClique. Standalone-only; rejected by the validating webhook
+    // when set on a template whose name appears in any
+    // PodCliqueScalingGroupConfig.CliqueNames.
+    // +optional
+    RollingUpdate *RollingUpdateConfiguration `json:"rollingUpdate,omitempty"`
+}
+
+type PodCliqueScalingGroupConfig struct {
+    Name         string  `json:"name"`
+    CliqueNames  []string `json:"cliqueNames"`
+    MinAvailable *int32  `json:"minAvailable,omitempty"`
+    // RollingUpdate is the per-component update configuration for this PCSG.
+    // +optional
+    RollingUpdate *RollingUpdateConfiguration `json:"rollingUpdate,omitempty"`
+    // ... existing fields ...
+}
+```
+
+**Why a sub-struct rather than a bare field on the component template?**
+`MaxUnavailable` is the first of an expected group of update-time knobs (`MaxSurge` is next). Grouping them under a named struct keeps related fields together, scopes the standalone-only validation rule to the parent rather than each individual field, and avoids the API churn of adding sibling top-level fields one at a time.
+
+**Why on each component rather than on `UpdateStrategy`?**
+The strategy type is a single PCS-wide choice — every component rolls under the same strategy. The disruption budget, in contrast, is naturally per-component: in the [worked examples](#illustration-by-example), `F`, `P`, and `D` each have their own `MaxUnavailable`. Putting `RollingUpdate` on each component keeps the budget next to the component it bounds and lets the validating webhook reject standalone-only constraints on PCSG-owned templates without a second indirection through the strategy.
+
+#### MaxUnavailable defaulting and validation
+
+`MaxUnavailable` is optional on the spec. The PCS defaulting webhook fills it in based on `Spec.UpdateStrategy.Type` so that downstream code always sees an explicit value, and the validating webhook rejects spec combinations that would violate the strategy's mechanics.
+
+**Defaulting.** Applied by the PCS defaulting webhook, per strategy:
+
+- `Coherent` → defaults to `MinAvailable` of the same component.
+- `RollingRecreate` → defaults to `1`.
+- `OnDelete` → not defaulted. The orchestrator does not consume `MaxUnavailable` under this strategy.
+
+The two defaults are chosen for internal consistency with the strategy's own mechanics. Coherent's MVU sub-step takes down `MinAvailable` pods of every updated component at once; any default below `MinAvailable` would put the very first sub-step over budget, so `MaxUnavailable = MinAvailable` is the smallest internally consistent value. RollingRecreate replaces pods one at a time and has no MVU sub-step, so `1` is the natural minimum and matches operator expectations for a Deployment-style rollout. Operators who want a different value set the field explicitly; the defaulting webhook only fills it in when unset.
+
+**Validation.** Applied by the PCS validating webhook:
+
+- `MaxUnavailable < MinAvailable` on any component is rejected, regardless of strategy.
+- `RollingUpdate` set on a `PodCliqueTemplateSpec` whose name appears in any `PodCliqueScalingGroupConfig.CliqueNames` is rejected. PCSG-owned `PodCliques` draw their budget from the owning PCSG's `RollingUpdate.MaxUnavailable`; setting it on the member template is meaningless and a likely operator mistake.
+
+**Strategy-flip safety.** If the user later switches `UpdateStrategy.Type` (e.g. `RollingRecreate` → `Coherent`) without explicitly setting `MaxUnavailable`, the previously-defaulted value (e.g. `1`) sticks — the defaulting webhook only defaults *unset* fields. The `MaxUnavailable < MinAvailable` rule closes this loop: under `Coherent`, the previously-defaulted `1` is below `MinAvailable` for any component with `MinAvailable >= 2`, and admission rejects the PCS until the operator sets an appropriate value. No strategy-conditional check at runtime is needed.
+
+#### PodGangMap — new CRD
 
 `PodGangMap` (PGM) is a new namespaced custom resource that captures the **desired-state mapping between PodGangs and their constituent PodClique pod counts and PodCliqueScalingGroup replica indices** for a single `PodCliqueSet` replica. One `PodGangMap` exists per PCS replica, named `<pcs-name>-<pcs-replica-index>`.
 
@@ -232,33 +321,51 @@ The `Labels` field is the mechanism by which the PodGangMap component conveys pe
 
 The role of `PodGangMap` in the update flow — and the directionality flip between update and steady state — is described in [Coherent update behavior and flow](#coherent-update-behavior-and-flow).
 
-#### `PodCliqueSetStatus.UpdateProgress` extensions for Coherent update strategy
+#### PodCliqueSetStatus.UpdateProgress extensions for Coherent update strategy
 
-##### Capturing MVU scope in `PodCliqueSetUpdateProgress`
+##### Capturing MVU scope in PodCliqueSetUpdateProgress
 
-Two new fields are added to `PodCliqueSetUpdateProgress` to capture the **frozen set of components** detected as out-of-date when a coherent update started. This is used to deterministically compute the MVU template.
+Two new fields are added to `PodCliqueSetUpdateProgress` to capture the **set of components in scope** for the current coherent update. This set is the user-declared compatibility boundary that the MVU floor must hold across, and it drives the step plan ([Step plan](#step-plan)) for every step.
 
 ```go
 type PodCliqueSetUpdateProgress struct {
     // ... existing fields ...
 
-    // UpdatedStandalonePodCliques captures the names of standalone PodCliques whose pod template
-    // was detected as out-of-date when this coherent update started. The set is frozen for the
-    // lifetime of the update and used to compute the MVU template. Only populated for Coherent.
+    // UpdatedStandalonePodCliques captures the names of standalone PodCliques in scope for the
+    // current coherent update. The set is established at update start from PodCliques whose pod
+    // templates changed in the PCS spec change that triggered the update, and is preserved for
+    // the lifetime of the update. On a mid-flight PCS spec change it is updated by merge — see
+    // below. Only populated for Coherent.
     // +optional
     UpdatedStandalonePodCliques []string `json:"updatedStandalonePodCliques,omitempty"`
 
-    // UpdatedPodCliqueScalingGroups captures the config names of PodCliqueScalingGroups that had
-    // at least one constituent PodClique detected as out-of-date when this coherent update started.
-    // Same lifetime semantics as UpdatedStandalonePodCliques. Only populated for Coherent.
+    // UpdatedPodCliqueScalingGroups captures the config names of PodCliqueScalingGroups in scope
+    // for the current coherent update. Same establishment and lifetime semantics as
+    // UpdatedStandalonePodCliques; a PCSG is in scope when any of its member PodCliques' pod
+    // templates changed in the triggering PCS spec change. Only populated for Coherent.
     // +optional
     UpdatedPodCliqueScalingGroups []string `json:"updatedPodCliqueScalingGroups,omitempty"`
 }
 ```
 
-Each PCLQ reports its current pod-template hash in status. During a rolling update that hash flips from old to new as pods are replaced, so any "what's still out-of-date?" computation against live status would shrink as the update progresses. If the MVU template were derived that way, components would silently drop out of scope the moment they finished rolling — and the bounded-disruption guarantee ("MinAvailable replicas of *each* updated component") would no longer be enforceable, because the controller would have lost track of which components were originally in scope. The snapshot is therefore taken once at update start and held fixed.
+**Why a frozen set rather than a live computation.** The in-scope set is the compatibility boundary the user implicitly declared when they edited the PCS spec — "these are the components that must roll together to remain version-compatible." Recomputing it live from per-PCLQ status every reconcile would not preserve this intent: as components finish rolling, a live recompute would shrink the set and the orchestrator would continue creating MPGs against a smaller and smaller MVU floor, breaking the original compatibility-boundary guarantee. The set is therefore established at update start and held fixed for the lifetime of the update.
 
-##### Per-replica iteration tracking on `PodCliqueSetReplicaUpdateProgress`
+**Establishment.** When a PCS hash advance is first observed and no coherent update is in flight, the set is built from components whose pod templates differ between the new PCS spec and what each child PCLQ is currently running. Concretely: a standalone PCLQ is added if its target template (computed from the new PCS spec) differs from its `Status.CurrentPodTemplateHash`; a PCSG is added if any of its member PCLQs satisfies the same condition. Components whose pod templates did not change in this PCS spec change are not added — they may have their `Status.CurrentPodCliqueSetGenerationHash` advance synchronously to the new PCS hash without rolling any pods, but they are not part of this update's MVU compatibility boundary.
+
+**Mid-flight PCS spec change.** If the user mutates the PCS spec again while an earlier coherent update is still in flight, the in-scope set is updated by **merge**, not by replacement:
+
+```
+new in-scope set =
+    { components whose pod templates changed in this latest PCS spec change }
+    ∪
+    { components from the previous in-scope set that have not yet fully converged }
+```
+
+Components from the previous in-scope set that have already fully converged drop out — the user did not touch them again, and their roll is complete. Components from the previous in-scope set that are still mid-roll stay in scope. Components touched only by the latest spec change join the set. The merge avoids spurious re-rolling of components that were not changed in the latest PCS spec change and were already at the previous target.
+
+
+
+##### Per-replica sub-step tracking on PodCliqueSetReplicaUpdateProgress
 
 `PodCliqueSetReplicaUpdateProgress` gains two coherent-specific fields:
 
@@ -266,9 +373,9 @@ Each PCLQ reports its current pod-template hash in status. During a rolling upda
 type PodCliqueSetReplicaUpdateProgress struct {
     // ... existing fields ...
 
-    // InFlightPodGangs are the names of PodGangs that are part of the current update iteration
-    // for this replica. The orchestrator waits for all of them to reach `PodGangConditionTypeReady=True` before
-    // advancing to the next iteration.
+    // InFlightPodGangs are the names of PodGangs created in the current sub-step
+    // for this replica. The orchestrator waits for all of them to reach
+    // PodGangConditionTypeReady=True before advancing to the next sub-step.
     // +optional
     InFlightPodGangs []string `json:"inFlightPodGangs,omitempty"`
 
@@ -278,14 +385,16 @@ type PodCliqueSetReplicaUpdateProgress struct {
 }
 ```
 
-`InFlightPodGangs` is the orchestrator's hand-off to the PodGangMap component and back. In addition it also provide visibility into what PodGang(s) are currently getting updated. A coherent update for a PodCliqueSet replica proceeds in two phases: 
+`InFlightPodGangs` is the orchestrator's hand-off to the PodGangMap component and back, and provides visibility into which PodGangs are currently being driven to `Ready`. The mechanism, on every sub-step:
 
-* The **MPG phase**: In this phase MPGs are taken up one at a time — each MPG is rolled to the new hash, and only once it reports `PodGangConditionTypeReady=True` does the orchestrator move on to the next MPG 
-* The **TPG phase**: Once every MPG report `PodGangConditionTypeReady=True` , all remaining TPGs are rolled together in a single iteration. 
+- While `InFlightPodGangs` is empty, the PodGangMap component computes the next sub-step's entries — creating the new-hash PodGangs that the sub-step requires and draining pods off the corresponding old-hash entries.
+- The orchestrator reads PGM, picks the new-hash entries created in this sub-step that are not yet `Ready`, and writes their names into `InFlightPodGangs`.
+- The orchestrator waits for every listed PodGang to reach `PodGangConditionTypeReady=True` (together with the other predicates from [Per-sub-step gate](#per-sub-step-gate)).
+- Once the predicates hold, the orchestrator clears `InFlightPodGangs`, which signals the PodGangMap component to compute the next sub-step's entries.
 
-In both phases the mechanism is the same. While `InFlightPodGangs` is empty, the PodGangMap component computes the next iteration's entries — creating the new-hash PodGangs and draining pods off the corresponding old-hash entries. The orchestrator then reads PGM, picks the new-hash entries that are not yet `Ready`, and writes their names into `InFlightPodGangs`. It waits for every listed PodGang to reach `PodGangConditionTypeReady=True`, at which point it clears the field — which signals the PodGangMap component to compute the next iteration. The field is per-replica so that future configurable concurrency across replicas does not require a schema change.
+The field is per-replica so that future configurable concurrency across replicas does not require a schema change.
 
-#### `PodGangMapping` on `PodCliqueStatus` and `PodCliqueScalingGroupStatus`
+#### PodGangMapping on PodCliqueStatus and PodCliqueScalingGroupStatus
 
 Both `PodCliqueStatus` and `PodCliqueScalingGroupStatus` gain a `PodGangMapping` field that captures the per-PodGang composition for that owner. The shapes differ — PCLQ is keyed by PodGang and valued by pod count; PCSG is keyed by PodGang and valued by the list of PCSG replica indices belonging to that PodGang — but the role each field plays in the design is identical.
 
@@ -315,7 +424,7 @@ type PodCliqueScalingGroupStatus struct {
 ```
 
 **Why are these fields needed at all, given that `PodGangMap` already captures per-PodGang composition?**  
-It is the directionality flip already described in [`PodGangMap` as source of truth — directionality flip](#podgangmap-as-source-of-truth--directionality-flip): during a coherent update PGM drives and these status fields are followers; in steady state these status fields are authoritative and PGM is rebuilt from them. PGM has a single writer (the PodGangMap component, owned by the PodCliqueSet reconciler), so any per-owner scale-in or scale-out decision needs a place to live within the owner's own reconciler before the PodGangMap component picks it up. That place is `Status.PodGangMapping`.
+It is the directionality flip already described in [PodGangMap as source of truth — directionality flip](#podgangmap-as-source-of-truth--directionality-flip): during a coherent update PGM drives and these status fields are followers; in steady state these status fields are authoritative and PGM is rebuilt from them. PGM has a single writer (the PodGangMap component, owned by the PodCliqueSet reconciler), so any per-owner scale-in or scale-out decision needs a place to live within the owner's own reconciler before the PodGangMap component picks it up. That place is `Status.PodGangMapping`.
 
 What forces the field to exist is steady-state scale-in, but the *reason* the decision must be local — and therefore stored on the owner's status — is different for PCLQ and PCSG:
 
@@ -349,24 +458,22 @@ The contract for the existing `grove.io/podgang` label on `PodClique` resources 
 
 The PodGangMap component writes the entire PGM in one shot. The PodGang component then materializes a `PodGang` resource for each entry, with `MinReplicas` set to the gang's MinAvailable.
 
-> **Note on layout.** The MPG-plus-TPG layout produced at initial deployment is structurally identical to the legacy BPG-plus-SPG layout — same per-PodGang composition, same dependency relationships. The differences are in naming and in the new mechanisms layered on top: the unified [PodGang naming convention](#podgang-naming-convention), the `scheduling.grove.io/anchor` label and `DependsOn` selector, and the PodGang condition lifecycle. Subsequent coherent updates depart from this layout (each iteration produces its own MPG); evolving the initial-deployment layout to match is left to a future iteration.
+> **Note on layout.** The MPG-plus-TPG layout produced at initial deployment is structurally identical to the legacy BPG-plus-SPG layout — same per-PodGang composition, same dependency relationships. The differences are in naming and in the new mechanisms layered on top: the unified [PodGang naming convention](#podgang-naming-convention), the `scheduling.grove.io/anchor` label and `DependsOn` selector, and the PodGang condition lifecycle. Subsequent coherent updates depart from this layout (each step's MPG is generated fresh); evolving the initial-deployment layout to match is left to a future iteration.
 
 > **Migration note.** When the PodGangMap component first runs against a PCS replica that pre-dates this proposal — one already serving traffic with the legacy BPG/SPG shape — it reconstructs PGM entries from the live `PodGang` resources first, so the existing names and `DependsOn` selectors are preserved. Only when no PodGangs exist for the replica does PGM fall back to computing entries from the PCS template. Legacy gangs are not torn down on first reconcile after a Grove upgrade; they get drained out naturally by subsequent coherent updates.
 
 ### Coherent update behavior and flow
 
-A PCS is composed of PCLQs and PCSGs. Updates may target a subset of PCLQs or all of them. An MVU consists of `MinAvailable` replicas of each standalone PCLQ (pods) and each PCSG that are updated. The set of out-of-date components is captured in `Status.UpdateProgress` when an update begins, and a validating webhook rejects scale-in/out across the entire PCS for the lifetime of the update (see [Handling scale-outs and scale-ins during update](#handling-scale-outs-and-scale-ins-during-update)) — so the inputs to the MVU template stay fixed from the start of the update to the end. The MVU template itself is recomputed on every reconcile as it is cheap and deterministic, and helps avoid cached state across reconciles thus simplifying the controller.
+A PCS is composed of PCLQs and PCSGs. Updates may target a subset of them or all of them. The compatibility-boundary set of in-scope components is captured in `Status.UpdateProgress` when an update begins and is preserved for the lifetime of the update (with merge on a mid-flight PCS spec change — see [Capturing MVU scope in PodCliqueSetUpdateProgress](#capturing-mvu-scope-in-podcliquesetupdateprogress)). A validating webhook rejects scale-in/out across the entire PCS for the lifetime of the update (see [Handling scale-outs and scale-ins during update](#handling-scale-outs-and-scale-ins-during-update)).
 
-Grove encodes the MVU's gang-scheduling intent by generating new `PodGang` resources, **MVU PodGangs (MPGs)**, that hold exactly the MVU's pods. PCSG replicas above MinAvailable go into separate **Tail PodGangs (TPGs)** — one per excess replica. Both MPGs and TPGs are gang-scheduled. Each TPG `DependsOn` every MPG of the same generation. The scheduler places TPG pods only after all those MPGs report `Ready=True`.
-
-A coherent update runs in two phases. **MPG phase**: MPGs are rolled one at a time. Each MPG must reach `Ready=True` before the next one starts. During this phase, at most one MPG's worth of pods is mid-roll at any moment. **TPG phase**: once every MPG is at the new hash, all remaining TPGs roll together in a single iteration. The TPG phase trades the per-iteration bound for finishing the update in one step — disruption during this iteration scales with the total above-`MinAvailable` PCSG capacity being rolled.
+The orchestrator turns this scope into a [Step plan](#step-plan): a sequence of steps where each step rolls a per-component `StepTarget[c]` of replicas, and each step is delivered through one or more sub-steps. Each MPG-bearing step starts by creating an MPG carrying `MinAvailable[c]` of every updated component — the gang-scheduled MVU floor for that step — and subsequent sub-steps drain the step's tail. PCSG replicas in the tail each get a dedicated TPG that depends on every MPG already created. Standalone PCLQ pods in the tail are subsumed into the same step's MPG, never get a dedicated PodGang. Sub-step advancement is gated by the predicates in [Per-sub-step gate](#per-sub-step-gate).
 
 The remainder of this section describes:
 
 - The **actors** that collaborate to drive a coherent update.
 - The **directionality flip** between update and steady state — `PodGangMap` is the source of truth during an update; PCLQ/PCSG `Status.PodGangMapping` is the source of truth in steady state.
-- The **rules** that determine MVU shape.
-- The **flow**, illustrated with sequence diagrams for bootstrap, one update iteration, and steady-state operation.
+- The **rules** that determine the step plan and each step's MPG composition.
+- The **flow**, illustrated with sequence diagrams for bootstrap, one update step, and steady-state operation.
 - A worked **illustration** on a representative disaggregated-inference PCS.
 
 #### Actors and responsibilities
@@ -375,18 +482,18 @@ A coherent update is driven by three reconcilers (PCS, PCSG, PCLQ) and the compo
 
 | Actor | Responsibility |
 | --- | --- |
-| **PodCliqueSet reconciler** (orchestrator) | Detects out-of-date children, captures the `UpdatedStandalonePodCliques`/`UpdatedPodCliqueScalingGroups` set in `Status.UpdateProgress`, picks the next PCS replica to update, populates `InFlightPodGangs`, and waits for them to reach `PodGangConditionTypeReady=True` before advancing the iteration. Closes the update out by setting `UpdateEndedAt`. Currently only one PCS replica is updated at a time. |
-| **PodGangMap component** (in PodCliqueSet reconciler) | Computes the next-iteration PGM entries during an update from the frozen MVU template and the existing PGM state. Waits for the previous iteration to be `Ready` before emitting the next, so only one is in flight at a time. In steady state it follows PCLQ/PCSG `Status.PodGangMapping`. |
+| **PodCliqueSet reconciler** (orchestrator) | Detects out-of-date children, establishes or merges the `UpdatedStandalonePodCliques`/`UpdatedPodCliqueScalingGroups` in-scope set in `Status.UpdateProgress`, picks the next PCS replica to update, plans each step, drives the per-sub-step loop, populates `InFlightPodGangs`, and waits for the [Per-sub-step gate](#per-sub-step-gate) before advancing. Closes the update out by setting `UpdateEndedAt`. Currently only one PCS replica is updated at a time. |
+| **PodGangMap component** (in PodCliqueSet reconciler) | Computes the next sub-step's PGM entries during an update from the in-scope component set, the live `Spec.Replicas` on each child, and the existing PGM state. Waits for the current sub-step's PodGangs to be `Ready` before emitting the next. In steady state it follows PCLQ/PCSG `Status.PodGangMapping`. |
 | **PodGang component** (in PodCliqueSet reconciler) | Reads the PGM as its single source of truth for desired PodGang composition. Materializes (creates / patches / deletes) `PodGang` resources from the PGM entries. Drives the `MinReplicas` and `PodGangConditionTypeScheduled`/`PodGangConditionTypeReady` lifecycle on every PodGang it creates — see [PodGang.MinReplicas lifecycle and conditions](#podgangminreplicas-lifecycle-and-conditions). |
 | **PodClique reconciler** (pod component) | For standalone PCLQs, distributes pods across PodGangs based on the PGM entries — takes down old-hash pods of the affected indices and recreates them schedule-gated against the new PodGang. Mirrors PGM into `PodCliqueStatus.PodGangMapping`. |
 | **PodCliqueScalingGroup reconciler** (PodClique component) | Symmetrical to the PodClique reconciler's pod component but for PCSG-owned PCLQs. Reassigns PCSG replicas from old-hash PodGangs to in-flight new-hash PodGangs based on PGM. Mirrors PGM into `PodCliqueScalingGroupStatus.PodGangMapping`. |
 
-#### `PodGangMap` as source of truth — directionality flip
+#### PodGangMap as source of truth — directionality flip
 
 `PodGangMap` is the **single descriptor of desired PodGang composition** for a PCS replica throughout its lifecycle. The directionality between PGM and the per-component status fields (`PodCliqueStatus.PodGangMapping`, `PodCliqueScalingGroupStatus.PodGangMapping`) flips between update and steady state:
 
 - **During a coherent update — PGM is authoritative.**
-  The PodGangMap component computes the next iteration's entries from the frozen MVU template and the existing PGM state, writing them to PGM. The PodGang component creates the PodGang resources from PGM. The PodClique reconciler (its pod component) and the PodCliqueScalingGroup reconciler (its PodClique component) consume PGM to decide which old-hash pods to take down, which gated pods to release, and how to project the per-PodGang counts back into their own `Status.PodGangMapping` fields. **Status here is a follower view** — it is rebuilt from PGM, not consulted to build PGM. This is what keeps disruption bounded — the takedown set for one iteration is fixed before any pod rolls over.
+  The PodGangMap component computes the next sub-step's entries from the in-scope component set, the live `Spec.Replicas` on each child, and the existing PGM state, writing them to PGM. The PodGang component creates the PodGang resources from PGM. The PodClique reconciler (its pod component) and the PodCliqueScalingGroup reconciler (its PodClique component) consume PGM to decide which old-hash pods to take down, which gated pods to release, and how to project the per-PodGang counts back into their own `Status.PodGangMapping` fields. **Status here is a follower view** — it is rebuilt from PGM, not consulted to build PGM. This is what keeps disruption bounded — the take-down set for one sub-step is fixed before any pod rolls over.
 
 - **In steady state — PCLQ/PCSG `Status.PodGangMapping` is authoritative.**
   Scale-in and scale-out are blocked while a coherent update is in flight. Once the update completes, those operations are permitted again and are handled by the PodClique and PodCliqueScalingGroup reconcilers — they update their own `Status.PodGangMapping` to reflect the new per-PodGang composition (for example, a PCSG scale-out adds a new `SPG` entry to its mapping). The PodGangMap component then enters its steady-state path: it gates on every standalone PCLQ and every PCSG having a non-empty `Status.PodGangMapping`, and **reconstructs PGM entries** from the union of those mappings. `DependsOn` is preserved on existing entries and inherited by net-new scale-out entries from the anchor PodGangs.
@@ -395,34 +502,105 @@ This flip is what allows the same PGM resource to act as both the driver of a co
 
 #### Rules of MPG composition
 
-These rules define what goes into a single MPG — how many pods of each updated standalone PCLQ and how many replicas of each updated PCSG are co-located in one MPG entry. TPG formation is covered in [Coherent update flow](#coherent-update-flow).
+These rules define how the orchestrator plans a coherent update and covers the following:
 
-When one or more PCLQs from one or more PCSGs and/or one or more standalone PCLQs are updated, each MPG contains:
+* How many steps it will run?
+* What each step's MPG contains
+* How the per-step tail drains into TPG sub-steps under each component's `MaxUnavailable` budget. 
 
-- `minAvailable` replicas of each updated standalone PCLQ.
-- `minAvailable` replicas of each updated PCSG, with all constituent PCLQs (and all their replicas) included as `PodGroups` in the MPG — even if only a subset of those PCLQs are updated.
+TPG mechanics — gang scheduling, `DependsOn`, the per-sub-step gate — are covered in [Coherent update flow](#coherent-update-flow).
 
-Residual standalone-PCLQ pods that cannot fill a complete MVU are absorbed into the last MPG of the iteration.
+The set of components in scope for the update is fixed at update start by the snapshot in `Status.UpdateProgress` (see [Capturing MVU scope in PodCliqueSetUpdateProgress](#capturing-mvu-scope-in-podcliquesetupdateprogress)) and stays frozen for the lifetime of the update. The per-component replica counts that drive the step plan, however, are read **fresh at the start of each step** from the live child resources. In this iteration, scale operations on every PCS-replica child are blocked at admission for the duration of the update (see [Handling scale-outs and scale-ins during update](#handling-scale-outs-and-scale-ins-during-update)), so these reads return the same value each time; future iterations may relax the block, and reading fresh at each step keeps the algorithm correct without further change. For each updated component `c` (a standalone PCLQ or a PCSG):
+
+- `replicas[c]` = live `Spec.Replicas` on the child resource (`PodClique.Spec.Replicas` for a standalone PCLQ; `PodCliqueScalingGroup.Spec.Replicas` for a PCSG), sourced at step start.
+- `minAvailable[c]` = `MinAvailable` from the same component.
+- `maxUnavailable[c]` = `RollingUpdate.MaxUnavailable` from the same component (always set on the stored spec — the defaulting webhook fills it in if the user did not).
+
+##### Step plan
+
+A coherent update for one PCS replica is a sequence of **steps**. Each step rolls a fixed per-component target — `StepTarget[c]` replicas of every updated component `c` — and delivers that target through one or more **sub-steps**. The orchestrator advances one sub-step at a time, gated by the predicates in [Per-sub-step gate](#per-sub-step-gate).
+
+*The algorithm:*
+
+1. Compute `StepTarget[c]` for the step (formulas below).
+2. If every component has `StepTarget[c] >= minAvailable[c]`, the step starts by creating an MPG carrying `minAvailable[c]` of every component. Otherwise the step is TPG-only.
+3. Drain the remainder `StepTarget[c] - minAvailable[c]` (or `StepTarget[c]` for a TPG-only step) across one or more TPG sub-steps. Each sub-step takes down at most `maxUnavailable[c]` of component `c`, batching all components into the same sub-step.
+
+The MPG-bearing steps come first, then the TPG-only steps drain whatever is left over:
+
+- `MPGSteps = min(replicas[c] / minAvailable[c])` over every updated component `c` (integer division). This is the largest count for which every component can supply a full `minAvailable[c]` to each step's MPG.
+- `StepTarget[c] = minAvailable[c] + TailPerStep[c]` for an MPG-bearing step, where `TailPerStep[c] = (replicas[c] - MPGSteps * minAvailable[c]) / MPGSteps` (integer division). So each MPG-bearing step rolls `minAvailable[c]` via the MPG plus an even share of the tail.
+- `Leftover[c] = replicas[c] - MPGSteps * StepTarget[c]` is what remains after the MPG-bearing steps. If every component's leftover is zero the plan ends; otherwise one or more TPG-only steps drain it under each component's `maxUnavailable[c]` budget. A single TPG-only step usually suffices; more than one is permitted if a component's leftover exceeds what one step's sub-steps can drain.
+
+The total number of steps is `MPGSteps` plus however many TPG-only steps are needed to clear every `Leftover[c]`.
+
+Two placement rules apply to every step:
+
+- **Standalone PCLQ pods are always subsumed into an MPG.** A standalone PCLQ never gets its own dedicated PodGang. In an MPG-bearing step the tail joins that step's MPG. In a TPG-only step it joins the most recently created MPG. The MPG's `MinReplicas` stays at `minAvailable[c]` throughout because the MVU floor was set when the MPG was created.
+- **PCSG replicas each get a dedicated TPG.** One TPG per PCSG replica rolled, with the constituent member PodCliques inside. Each TPG depends on every MPG that already exists when the TPG is created, via `DependsOn`.
+
+###### Worked example
+
+Consider a PCS with three updated components — `frontend` (standalone PCLQ), `prefill` (PCSG), and `decode` (PCSG):
+
+| Component | `replicas` | `minAvailable` | `maxUnavailable` |
+| --- | --- | --- | --- |
+| `frontend` (F) | 10 | 2 | 2 |
+| `prefill`  (P) | 10 | 3 | 3 |
+| `decode`   (D) | 20 | 3 | 4 |
+
+Step-plan computation:
+
+- `MPGSteps = min(10/2, 10/3, 20/3) = min(5, 3, 6) = 3`.
+- `TailPerStep[F] = (10 - 3*2) / 3 = 4/3 = 1`. `TailPerStep[P] = (10 - 3*3) / 3 = 1/3 = 0`. `TailPerStep[D] = (20 - 3*3) / 3 = 11/3 = 3`.
+- `StepTarget[F] = 2 + 1 = 3`. `StepTarget[P] = 3 + 0 = 3`. `StepTarget[D] = 3 + 3 = 6`.
+- `Leftover[F] = 10 - 3*3 = 1`. `Leftover[P] = 10 - 3*3 = 1`. `Leftover[D] = 20 - 3*6 = 2`.
+
+The plan has 3 MPG-bearing steps followed by 1 TPG-only step. Each MPG-bearing step rolls `{3 F, 3 P, 6 D}`; the TPG-only step rolls the leftover `{1 F, 1 P, 2 D}`.
+
+Steps and sub-steps:
+
+- **Steps 1, 2, 3 (MPG-bearing)** — each rolls `{3 F, 3 P, 6 D}`:
+  - Sub-step N.1: create MPG-N carrying the MVU floor `{2 F, 3 P, 3 D}`.
+  - Sub-step N.2: drain the step's tail `{1 F, 0 P, 3 D}` — F's 1 extra pod is subsumed into MPG-N; D's 3 extra replicas each become a TPG that depends on MPG-N. All three D-TPGs are created in this single sub-step because `maxUnavailable[D] = 4` accommodates `3`.
+- **Step 4 (TPG-only)** — rolls leftover `{1 F, 1 P, 2 D}`:
+  - Sub-step 4.1: F's leftover is subsumed into MPG-3 (the most recently created MPG); P's leftover becomes a TPG; D's 2 leftover replicas each become a TPG. All these TPGs are created in this single sub-step — each component's leftover is within its `maxUnavailable` budget.
+
+##### Per-sub-step gate
+
+Before advancing from sub-step `N.k` to sub-step `N.(k+1)`, or to the next step, all three predicates below must hold. The orchestrator evaluates them on every reconcile while the update is in flight; failure of any predicate stalls advancement and surfaces the reason on `Status.UpdateProgress.CurrentlyUpdating[].ErrorMessage`.
+
+1. **PodGangs created in sub-step `N.k` are `Ready=True`.** A sticky condition driven by `MinReplicas` count and readiness probes (see [PodGang.MinReplicas lifecycle and conditions](#podgangminreplicas-lifecycle-and-conditions)). Sub-steps that only subsume standalone PCLQ pods into a previously-created MPG do not create a new PodGang; this predicate has nothing to check in that case.
+
+2. **Subsumed-pod readiness (standalone PCLQs only).** Standalone PCLQ pods are the only kind that get subsumed into a previously-created MPG; PCSG replicas always get their own dedicated TPG and so do not subsume into anything. When sub-step `N.k` subsumes standalone PCLQ pods into an existing MPG, the count of `Ready` pods of that PCLQ bound to that MPG must equal or exceed the cumulative pod count the sub-step targeted for it. This ensures the just-added pods are actually serving before the next sub-step takes more pods down.
+
+3. **`MaxUnavailable` budget.** Before the next sub-step takes more pods down, verify that no component in the update scope is at risk of exceeding its `MaxUnavailable` budget. For each updated standalone PCLQ `c`: `PCLQ[c].Status.ReadyReplicas >= replicas[c] - maxUnavailable[c]`. For each updated PCSG `c`: `PCSG[c].Status.AvailableReplicas >= replicas[c] - maxUnavailable[c]`, where `AvailableReplicas` is the count of PCSG replicas whose constituent PCLQs are not in `MinAvailableBreached=True`. If a budget check fails — for example, an unrelated preemption between sub-steps dropped the `Ready` count — the orchestrator stalls until availability recovers. This matches Kubernetes Deployment behavior under `maxUnavailable`.
 
 #### Coherent update flow
 
-A coherent update progresses one PCS replica at a time, and within each replica one MVU iteration at a time. The five actors collaborate as follows:
+A coherent update progresses one PCS replica at a time. Within a replica, the flow has three layers: a one-shot **trigger** at update start, an outer **per-step loop** that drives the step plan, and an inner **per-sub-step loop** that drives the predicates from [Per-sub-step gate](#per-sub-step-gate).
 
-1. **Trigger.** The user mutates the `PCS.spec`. The PCS generation hash advances. The PodCliqueSet reconciler resets `Status.UpdateProgress` with `UpdateStartedAt` and freezes the set of out-of-date components in `UpdatedStandalonePodCliques` and `UpdatedPodCliqueScalingGroups`. This snapshot is the MVU template's input for the lifetime of the update.
+1. **Trigger.** The user mutates the `PCS.spec`. The PCS generation hash advances. The PodCliqueSet reconciler sets `UpdateStartedAt` on `Status.UpdateProgress` and establishes the in-scope set in `UpdatedStandalonePodCliques` and `UpdatedPodCliqueScalingGroups` from components whose pod templates changed in this PCS spec change. If a coherent update was already in flight, the set is merged rather than replaced — see [Capturing MVU scope in PodCliqueSetUpdateProgress](#capturing-mvu-scope-in-podcliquesetupdateprogress). The in-scope set is the compatibility boundary for this update; per-step replica counts are read fresh at the start of each step (see below).
 
-2. **Compute the next iteration's PGM entries.** The PodGangMap component reads the existing PGM, separates entries by PCS generation hash (old vs new), and computes the next iteration's MPG entry from the frozen MVU template. Old-hash entries are decremented in order — starting from the first old-hash MPG (or the legacy BPG) and proceeding through subsequent old-hash entries — by exactly what the new MPG consumes. This is the **take-down set** for this iteration. On the final iteration, when no further full MVU can be formed from the remaining old-hash entries, residual standalone PCLQ pods are absorbed into that last MPG, and any remaining PCSG replicas are each emitted as a **TPG** that depends on all MPGs created so far. The updated entries are written back to the PGM.
+2. **Per-step loop** (repeats until every in-scope component is fully rolled for the current PCS replica):
 
-3. **Gate on prior iteration availability.** The PodGangMap component will not emit the next iteration until every previously-generated new-hash PodGang reports `PodGangConditionTypeReady=True`. This is how "exactly one MVU in flight at a time" is realized.
+   1. **Plan the next step.** Read live `Spec.Replicas` from each in-scope child resource and the count of replicas already rolled for that component. From the *remaining* replicas, compute the step plan inputs for this step (`MPGSteps`, `StepTarget[c]`, `Leftover[c]` — see [Step plan](#step-plan)). Decide whether the next step is MPG-bearing or TPG-only. Replanning at every step lets the algorithm absorb scale operations cleanly if a future iteration lifts the admission block; in this iteration the block holds, so the recomputed numbers don't change from one step to the next.
 
-4. **Materialize PodGangs.** The PodGang component observes the new PGM entry, creates the corresponding `PodGang` resource with `MinReplicas` set to the gang's MinAvailable, and stamps the labels described in [Labels on `PodGang` resources](#labels-on-podgang-resources).
+   2. **Per-sub-step loop** (repeats until the step's per-component target is fully rolled):
 
-5. **Take down old, recreate new.** The PodClique reconciler (for standalone PCLQs) and the PodCliqueScalingGroup reconciler (for PCSG-owned PCLQs) consume the PGM. Old-hash pods on the take-down indices are deleted; replacements are created **schedule-gated** against the new PodGang. The schedule gate prevents the scheduler from placing any new-version pod until the entire MPG is present, preserving gang-scheduling semantics.
+      1. **Compute the next sub-step's PGM entries.** The PodGangMap component decrements the old-hash entries by what this sub-step takes down and adds the corresponding new-hash entries — an MPG for the step's first sub-step (MPG-bearing steps only), and one TPG per PCSG replica being rolled in this sub-step. Standalone PCLQ pods in the sub-step's take-down set are subsumed into the step's MPG (for MPG-bearing steps) or into the most recently created MPG (for TPG-only steps). The updated entries are written back to the PGM.
 
-6. **Wait for `PodGangConditionTypeReady`.** The orchestrator populates `Status.UpdateProgress.CurrentlyUpdating[0].InFlightPodGangs` with the names of new-hash PodGangs that do not yet have `PodGangConditionTypeReady` condition set to `True`, and waits on that condition. The full `PodGang` lifecycle — including how `MinReplicas` is released at `PodGangConditionTypeScheduled=True` and how `PodGangConditionTypeReady=True` is set once readiness probes pass — is described in [PodGang.MinReplicas lifecycle and conditions](#podgangminreplicas-lifecycle-and-conditions).
+      2. **Materialize PodGangs.** The PodGang component observes the new PGM entry, creates the corresponding `PodGang` resource with `MinReplicas` set to the gang's `MinAvailable`, and stamps the labels described in [Labels on PodGang resources](#labels-on-podgang-resources).
 
-7. **Advance.** Once all in-flight PodGangs report `PodGangConditionTypeReady=True`, the orchestrator clears `InFlightPodGangs` and explicitly requeues (the status-only patch does not fire a new reconcile on its own since the PCS For-watch uses `GenerationChangedPredicate`). On the next reconcile the PodGangMap component computes the next iteration's entries (step 2). When no old-hash entries remain for the replica, the orchestrator marks the replica's `UpdateEndedAt` and seeds `CurrentlyUpdating[0]` for the next pending replica. When all replicas are done, `UpdateProgress.UpdateEndedAt` is set and the strategy enters steady state.
+      3. **Take down old, create new.** The PodClique reconciler (for standalone PCLQs) and the PodCliqueScalingGroup reconciler (for PCSG-owned PCLQs) consume the PGM. Old-hash pods on the take-down set are deleted; replacements are created **schedule-gated** against the new PodGang. The schedule gate keeps the scheduler from placing any new-version pod until the entire new gang is present, preserving gang-scheduling semantics.
 
-The three diagrams below illustrate each phase of the lifecycle: bootstrap, one update iteration, and steady-state PGM-follower behavior.
+      4. **Wait for the per-sub-step gate.** The orchestrator populates `Status.UpdateProgress.CurrentlyUpdating[0].InFlightPodGangs` with the names of PodGangs created in this sub-step that do not yet have `Ready=True`, and waits on the three predicates from [Per-sub-step gate](#per-sub-step-gate). The full `PodGang` condition lifecycle — `Scheduled=True` after `MinReplicas` pods are placed, `Ready=True` after they pass readiness probes — is described in [PodGang.MinReplicas lifecycle and conditions](#podgangminreplicas-lifecycle-and-conditions).
+
+      5. **Advance to the next sub-step.** Once all three predicates hold, the orchestrator clears `InFlightPodGangs` and explicitly requeues (the status-only patch does not fire a new reconcile on its own since the PCS For-watch uses `GenerationChangedPredicate`). The next reconcile either runs the next sub-step (if the step's target still has remainder) or returns to step 2.1 to plan the next step.
+
+3. **Replica close-out.** When every in-scope component for the replica has been fully rolled, the orchestrator marks the replica's `UpdateEndedAt` and seeds `CurrentlyUpdating[0]` for the next pending replica. When all replicas are done, `UpdateProgress.UpdateEndedAt` is set and the strategy enters steady state.
+
+The three diagrams below illustrate each phase of the lifecycle: bootstrap, one update step, and steady-state PGM-follower behavior.
 
 ##### Bootstrap (initial PCS deploy)
 
@@ -452,33 +630,34 @@ sequenceDiagram
   PG->>PG: pods become Ready (pass readiness probes), then set PodGang Ready true on MPG and each TPG
 ```
 
-##### One coherent update iteration
+##### One coherent update step
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant User
   participant PCS as PodCliqueSet reconciler
   participant PGM as PodGangMap component
   participant PG as PodGang component
   participant PCLQ as PodClique reconciler
   participant PCSG as PodCliqueScalingGroup reconciler
 
-  User->>PCS: mutate PCS.spec
-  PCS->>PCS: reset UpdateProgress, freeze updated standalone PCLQs and PCSGs as MVU template input
-  PGM->>PGM: read existing PGM, compute next-iteration MPG/TPG, decrement old-hash entries
-  Note over PGM: gate: prior iteration PodGangs must report PodGangConditionTypeReady true
-  PG->>PG: create MPG with MinReplicas set and labels stamped
-  PCLQ->>PCLQ: take down old-hash pods, recreate new-version pods schedule-gated against MPG
-  PCSG->>PCSG: take down old-hash pods, recreate new-version pods (no scheduling gate)
-  PCLQ->>PCLQ: remove scheduling gates once PodGang is Scheduled and all DependsOn PodGangs are Scheduled
-  PCS->>PCS: populate InFlightPodGangs with new-hash PodGangs not yet Ready
-  PG->>PG: scheduler places MinReplicas pods, then release MinReplicas to 0 and set PodGang Scheduled true
-  PG->>PG: pods become Ready (pass readiness probes), then set PodGang Ready true
-  PCS->>PCS: observe Ready, clear InFlightPodGangs and explicitly requeue
-  alt old-hash entries remain
-    PCS->>PGM: next reconcile computes next iteration
-  else no old-hash entries
+  PCS->>PCS: plan step — read live Spec.Replicas, compute StepTarget[c] for this step
+  loop for each sub-step of the step
+    PGM->>PGM: compute sub-step's PGM entries — MPG (sub-step 1 of MPG-bearing steps) and/or per-PCSG-replica TPGs
+    PG->>PG: create new PodGangs with MinReplicas set and labels stamped
+    PCLQ->>PCLQ: take down old-hash pods, create new-version pods schedule-gated against new PodGang
+    PCSG->>PCSG: take down old-hash pods, create new-version pods (no scheduling gate)
+    PCLQ->>PCLQ: remove scheduling gates once PodGang is Scheduled and all DependsOn PodGangs are Scheduled
+    PCS->>PCS: populate InFlightPodGangs with new-hash PodGangs not yet Ready
+    PG->>PG: scheduler places MinReplicas pods, release MinReplicas to 0, set PodGang Scheduled true
+    PG->>PG: pods become Ready (pass readiness probes), set PodGang Ready true
+    PCS->>PCS: check three-predicate gate, on pass clear InFlightPodGangs and requeue
+  end
+  alt step's target not yet rolled
+    PCS->>PCS: continue with next sub-step of the same step
+  else step done, more in-scope replicas remain
+    PCS->>PCS: replan next step
+  else replica done
     PCS->>PCS: set replica UpdateEndedAt, seed CurrentlyUpdating for next replica or close out
   end
 ```
@@ -560,15 +739,13 @@ The PodGang component reports two conditions on every `PodGang.Status` to expres
 | `PodGangConditionTypeScheduled` | Set to `True` once `MinReplicas` pods of every `PodGroup` have been scheduled onto nodes. Setting `Scheduled=True` also implies `MinReplicas` has been released to 0 on all PodGroups. Once set to `True`, this condition remains `True` for the rest of the PodGang's lifetime — placement is a one-time event from the scheduler's perspective. |
 | `PodGangConditionTypeReady` | Set to `True` when `MinReplicas` pods of every `PodGroup` are currently `Ready` (passing readiness probes). Unlike `Scheduled`, this condition reflects current state — if a pod fails readiness or a scale-in drops the Ready count below `MinReplicas`, the PodGang component flips it back to `False`. |
 
-`Scheduled` is therefore strictly progressive; `Ready` tracks live serving status. The orchestrator's coherent-update advancement reads `Ready=True` only on PodGangs in `InFlightPodGangs` (the current iteration's PodGangs), so a previously-advanced PodGang flipping `Ready=False` does not block update progression.
+`Scheduled` is therefore strictly progressive; `Ready` tracks live serving status. The orchestrator's coherent-update advancement reads `Ready=True` only on PodGangs in `InFlightPodGangs` (the current sub-step's PodGangs), so a previously-advanced PodGang flipping `Ready=False` does not block update progression.
 
-The lifecycle of a PodGang the PodGang component creates — legacy BPG and SPG, MPG, and TPG alike — proceeds in three stages:
+The lifecycle of a PodGang the PodGang component creates — MPG, TPG, and legacy BPG/SPG alike — proceeds in three stages:
 
-1. **Set on creation.** Each `PodGroup`'s `MinReplicas` is set to a value chosen by the PodGang component:
-    - **First MPG** of a PCS replica (the MPG created at initial deployment, or the very first MPG of a coherent update if no prior MPG exists), and **legacy BPG, SPG, TPG**: `MinReplicas` is set to the `minAvailable` value defined in the PCS spec for that PCLQ or PCSG. This forces the scheduler to place the whole gang at once before any constituent pod can run, establishing the `MinAvailable` floor for that component.
-    - **Non-first MPGs** (every MPG created in a coherent-update iteration after the first): `MinReplicas` is set to `1` for every PodGroup. The previous MPG already provides the `MinAvailable` floor for the PCS replica, so the new MPG's role is to add capacity at the new pod-template hash, not to re-establish availability. Setting `MinReplicas=1` keeps placement tolerant to capacity pressure — the scheduler only needs to find one slot per PodGroup to consider the gang placed, rather than `minAvailable` slots all at once. This avoids stalling a coherent update when cluster capacity is tight.
+1. **Set on creation.** Each `PodGroup`'s `MinReplicas` is set to the `MinAvailable` value defined in the PCS spec for the constituent PCLQ or PCSG. This forces the scheduler to place the whole gang at once before any constituent pod can run, establishing the `MinAvailable` floor for that component.
 2. **Release `MinReplicas`, mark `Scheduled=True`.** Once the scheduler has placed `MinReplicas` pods of every `PodGroup` on nodes, the PodGang component patches `MinReplicas=0` on every PodGroup, then sets `Status.Conditions[Type=Scheduled]=True` with `Reason=PodGangScheduled`. Pod-component scheduling-gate-removal logic uses this condition (see [DependsOn and scheduling order](#dependson-and-scheduling-order)).
-3. **Mark `Ready=True`.** Once `MinReplicas` pods of every `PodGroup` pass readiness probes, the PodGang component sets `Status.Conditions[Type=Ready]=True` with `Reason=PodGangReady`. The orchestrator (PodCliqueSet reconciler) uses this condition to advance coherent-update iterations (see [Per-replica iteration tracking on PodCliqueSetReplicaUpdateProgress](#per-replica-iteration-tracking-on-podcliquesetreplicaupdateprogress)).
+3. **Mark `Ready=True`.** Once `MinReplicas` pods of every `PodGroup` pass readiness probes, the PodGang component sets `Status.Conditions[Type=Ready]=True` with `Reason=PodGangReady`. The orchestrator uses this condition (together with the rest of the per-sub-step gate) to advance coherent-update sub-steps — see [Per-sub-step gate](#per-sub-step-gate).
 
 `MinReplicas` is released to `0` at stage 2 — once the scheduler has placed the gang. **This is a workaround for a limitation in current backend schedulers, not a property of `MinReplicas` semantics.**
 
@@ -586,7 +763,7 @@ The same lifecycle applies in steady state to PodGangs created by PCSG scale-out
 
 Grove's gang-termination evaluator runs on the PodCliqueSet reconciler: it terminates a gang for a PCS replica when any constituent PodClique or PodCliqueScalingGroup has reported `MinAvailableBreached=True` for longer than `Spec.Template.TerminationDelay` (default `4h`). Termination triggers a full recreation of the affected PCS replica's PodGangs and pods.
 
-During a coherent update, every iteration deliberately drives `ReadyReplicas` for the in-flight components below `MinAvailable` for as long as it takes to take down the old-hash pods and bring up new-hash replacements. Without suppression, the evaluator would observe `MinAvailableBreached=True` on the in-flight PCLQs and PCSGs, and any iteration running longer than `TerminationDelay` would tear down the replica mid-roll.
+During a coherent update, every sub-step deliberately drives `ReadyReplicas` for the in-flight components below `MinAvailable` for as long as it takes to take down the old-hash pods and bring up new-hash replacements. Without suppression, the evaluator would observe `MinAvailableBreached=True` on the in-flight PCLQs and PCSGs, and any sub-step running longer than `TerminationDelay` would tear down the replica mid-roll.
 
 To prevent that, **gang termination is suppressed for the duration of any in-flight update**. While a PCLQ or PCSG is being updated, its `MinAvailableBreached` condition is held at `Unknown` rather than evaluated against live replica counts; the gang-termination evaluator skips `Unknown` children, so they cannot accumulate against `TerminationDelay`. Once the update completes for a given child, its condition resumes reflecting live state on the next reconcile and the evaluator returns to normal behavior.
 
@@ -598,14 +775,14 @@ Each PGM entry carries a `DependsOn *metav1.LabelSelector` selecting sibling Pod
 
 Anchor identity is expressed via the `scheduling.grove.io/anchor` label (see [Labels on PodGang resources](#labels-on-podgang-resources)):
 
-- **Anchor entries** are entries whose materialized PodGang carries `scheduling.grove.io/anchor: "true"`. For PCS deployed (or already migrated) under Coherent, each iteration's MPG is an anchor. For PCS that pre-date Coherent and still carry their original BPG/SPG layout, the BPG is the anchor — until the legacy gangs are drained out by subsequent coherent updates and replaced with MPGs. Anchors carry a nil `DependsOn` selector.
+- **Anchor entries** are entries whose materialized PodGang carries `scheduling.grove.io/anchor: "true"`. For PCS deployed (or already migrated) under Coherent, every MPG created by a coherent update step is an anchor. For PCS that pre-date Coherent and still carry their original BPG/SPG layout, the BPG is the anchor — until the legacy gangs are drained out by subsequent coherent updates and replaced with MPGs. Anchors carry a nil `DependsOn` selector.
 - **Non-anchor entries** are TPGs (during a coherent update) and SPGs (in steady state, created by PCSG scale-out). Their materialized PodGang does not carry the anchor label. Non-anchor entries carry `DependsOn = matchLabels{scheduling.grove.io/anchor: "true"}` — the selector resolves at runtime to every anchor PodGang in the same PCS replica.
 
 The ordering is enforced at gate-removal time, not at PodGang-creation time. The pod-component (PCLQ pod component / PCSG PodClique component) compiles the entry's `DependsOn` via `metav1.LabelSelectorAsSelector`, lists matching PodGangs in the replica, and removes the pod's scheduling gate only after every matched PodGang reports `PodGangConditionTypeScheduled=True`. A nil selector trivially passes.
 
 This produces three guarantees:
 
-- During an update iteration, an iteration's MPG always reaches `Scheduled` before its TPGs' pods are ungated. The MPG pods are scheduled before any TPG pods of the same iteration.
+- During an update step, the step's MPG always reaches `Scheduled` before the step's TPGs' pods are ungated. The MPG pods are scheduled before any TPG pods of the same step.
 - If the gang-termination evaluator tears down a PCS replica's PodGangs and the operator recreates them, the anchor PodGangs (MPGs, or a legacy BPG) must report `PodGangConditionTypeScheduled=True` before any SPG's or TPG's pods are ungated. The `DependsOn` selector enforces this regardless of whether the non-anchor PodGang was created in steady state or at recreate time.
 - The directionality flip preserves the rule: when the PodGangMap component reconstructs PGM entries from PCLQ/PCSG `Status.PodGangMapping` in steady state, the `DependsOn` selector on existing entries is preserved and **net-new** SPG entries are authored with the same `matchLabels{scheduling.grove.io/anchor: "true"}` selector. Scaling out never accidentally promotes an SPG to anchor status, and never accidentally demotes an existing anchor.
 
@@ -624,7 +801,7 @@ Existing PodGangs (BasePodGangs and ScaledPodGangs) on a `PodCliqueSet` that pre
 **Uniqueness guarantee.** Two cases must be safe:
 
 - **Across reconcile calls** — the next reconcile that generates a PodGang name reads `time.Now().UnixNano()` afresh, which is monotonically advanced by at least the wall-clock elapsed time on every supported platform. Two reconcile calls separated by any normal reconcile interval cannot collide.
-- **Within a single reconcile call** — a single reconcile call may need to generate K PodGang names at once (e.g. one MPG plus several TPGs in a single coherent-update iteration). To guarantee uniqueness within that call, the i-th PodGang's name is salted with `+i` on top of its nano timestamp. This avoids any dependency on the host clock's nanosecond resolution being fine enough to advance between successive reads within the call.
+- **Within a single reconcile call** — a single reconcile call may need to generate K PodGang names at once (e.g. one MPG plus several TPGs in a single coherent-update sub-step). To guarantee uniqueness within that call, the i-th PodGang's name is salted with `+i` on top of its nano timestamp. This avoids any dependency on the host clock's nanosecond resolution being fine enough to advance between successive reads within the call.
 
 #### Illustration by example
 
@@ -763,73 +940,107 @@ PodGang-1: {  # this is the base PodGang that must be scheduled
 ```
 
 *At time T4 (T4 > T3)* - An update is triggered.
-Updates to a PCS can be done to a subset of PodCliques or all of the PodCliques. Lets evaluate how MVUs are computed and PodGangs are created in different cases.
+Updates to a PCS can be done to a subset of components or to all of them. The cases below illustrate how the [Step plan](#step-plan) is computed and how steps and sub-steps proceed under different scopes and `MaxUnavailable` budgets. To keep the cases focused on the algorithm, each one summarises the PCS shape in a compact table and lists every step's sub-steps.
 
-Initial state prior to update:
+In every case below, `MaxUnavailable` defaults to `MinAvailable` for any component the user has not set it on (per [MaxUnavailable defaulting and validation](#maxunavailable-defaulting-and-validation)).
 
+The three components in scope across the cases are:
+
+- **FrontEnd (F)** — standalone PCLQ.
+- **Prefill (P)** — PCSG.
+- **Decode (D)** — PCSG.
+
+##### Case A — Clean divisibility
+
+| Component | `replicas` | `minAvailable` | `maxUnavailable` |
+| --- | --- | --- | --- |
+| FrontEnd (F) | 10 | 1 | 1 |
+| Prefill (P)  | 100 | 3 | 3 |
+| Decode (D)   | 80 | 3 | 4 |
+
+Step-plan computation:
+
+- `MPGSteps = min(10/1, 100/3, 80/3) = min(10, 33, 26) = 10`.
+- `TailPerStep[F] = (10 - 10*1) / 10 = 0`. `TailPerStep[P] = (100 - 10*3) / 10 = 7`. `TailPerStep[D] = (80 - 10*3) / 10 = 5`.
+- `StepTarget[F] = 1 + 0 = 1`. `StepTarget[P] = 3 + 7 = 10`. `StepTarget[D] = 3 + 5 = 8`.
+- `Leftover[F] = 10 - 10*1 = 0`. `Leftover[P] = 100 - 10*10 = 0`. `Leftover[D] = 80 - 10*8 = 0`.
+
+10 MPG-bearing steps, no TPG-only step. Each MPG-bearing step rolls `{1 F, 10 P, 8 D}`:
+
+- Sub-step N.1: create MPG-N carrying the MVU floor `{1 F, 3 P, 3 D}`.
+- Sub-step N.2: drain step tail `{0 F, 7 P, 5 D}` — emit 3 P-TPGs (cap `maxUnavailable[P]=3`) and 4 D-TPGs (cap `maxUnavailable[D]=4`), all depending on MPG-N.
+- Sub-step N.3: emit 3 more P-TPGs and 1 more D-TPG.
+- Sub-step N.4: emit 1 more P-TPG. Step done.
+
+##### Case B — Residual and leftover
+
+| Component | `replicas` | `minAvailable` | `maxUnavailable` |
+| --- | --- | --- | --- |
+| FrontEnd (F) | 20 | 2 | 2 |
+| Prefill (P)  | 10 | 3 | 3 |
+| Decode (D)   | 20 | 3 | 4 |
+
+Step-plan computation:
+
+- `MPGSteps = min(20/2, 10/3, 20/3) = min(10, 3, 6) = 3`.
+- `TailPerStep[F] = (20 - 3*2) / 3 = 4`. `TailPerStep[P] = (10 - 3*3) / 3 = 0`. `TailPerStep[D] = (20 - 3*3) / 3 = 3`.
+- `StepTarget[F] = 2 + 4 = 6`. `StepTarget[P] = 3 + 0 = 3`. `StepTarget[D] = 3 + 3 = 6`.
+- `Leftover[F] = 20 - 3*6 = 2`. `Leftover[P] = 10 - 3*3 = 1`. `Leftover[D] = 20 - 3*6 = 2`.
+
+3 MPG-bearing steps plus 1 TPG-only step.
+
+Each MPG-bearing step rolls `{6 F, 3 P, 6 D}`:
+
+- Sub-step N.1: create MPG-N carrying `{2 F, 3 P, 3 D}`.
+- Sub-step N.2: subsume 2 more F pods into MPG-N (`PodReferences` grows from 2 to 4); emit 3 D-TPGs depending on MPG-N (cap `maxUnavailable[D]=4`).
+- Sub-step N.3: subsume 2 more F pods into MPG-N (`PodReferences` grows from 4 to 6). Step done.
+
+TPG-only step 4 rolls leftover `{2 F, 1 P, 2 D}`:
+
+- Sub-step 4.1: subsume 2 F pods into MPG-3 (the most recently created MPG; `PodReferences` grows from 6 to 8); emit 1 P-TPG; emit 2 D-TPGs. All TPGs depend on every MPG that exists when they are created (MPG-1, MPG-2, MPG-3).
+
+Predicate 3 (`MaxUnavailable` budget) of the per-sub-step gate must hold before each sub-step transition. For sub-step 4.1 to clear, F's Ready count must be at least `20 - 2 = 18`, P's at least `10 - 3 = 7`, D's at least `20 - 4 = 16`.
+
+##### Case E — Single-component update
+
+The user updates only **FrontEnd (F)**, the standalone PCLQ, with `replicas=10, minAvailable=1, maxUnavailable=1`. **Prefill (P)** and **Decode (D)** are not in scope.
+
+- `MPGSteps = floor(10/1) = 10`. `TailPerStep[F] = 0`. `StepTarget[F] = 1`. `Leftover[F] = 0`.
+- 10 MPG-bearing steps, each rolling 1 F pod via the step's MPG. No TPG sub-steps (no tail). No TPG-only step.
+
+The MPG of each step carries only F (`{1 F}`); pods of P and D continue running in their existing PodGangs untouched. The MPGs depend on no anchor — each is itself an anchor.
+
+##### Case H — Invalid: MaxUnavailable < MinAvailable
+
+| Component | `replicas` | `minAvailable` | `maxUnavailable` |
+| --- | --- | --- | --- |
+| FrontEnd (F) | 20 | 2 | 1 |
+| Prefill (P)  | 10 | 3 | 3 |
+| Decode (D)   | 20 | 3 | 4 |
+
+FrontEnd has `MaxUnavailable = 1 < MinAvailable = 2`. The PCS validating webhook rejects the spec at admission (see [MaxUnavailable defaulting and validation](#maxunavailable-defaulting-and-validation)). The update never starts.
+
+The underlying reason: the MPG sub-step of step 1 would take down 2 F pods at once to establish the MVU floor, exceeding the user-declared cap of 1. There is no way to satisfy both `MinAvailable=2` and `MaxUnavailable=1` under Coherent's mechanics, so rejection at admission is the right behaviour.
+
+##### Case I — Invalid: RollingUpdate on a PCSG-owned PCLQ template
+
+```yaml
+template:
+  cliques:
+    - name: pleader
+      spec:
+        minAvailable: 1
+      rollingUpdate:
+        maxUnavailable: 2     # invalid — pleader is PCSG-owned
+  podCliqueScalingGroups:
+    - name: prefill
+      cliqueNames: [pleader, pworker]
+      minAvailable: 1
+      rollingUpdate:
+        maxUnavailable: 2
 ```
-BPG: {5F, 1P, 1D}, SPG: 3 * {P}, 2 * {D}
-MinAvailable: {F: 2, P: 1, D: 1}
-```
 
-**Notation used in the steps below.** `Recreate order: [A] -> [B]` means the PodGangs in group `A` must reach `PodGangConditionTypeReady=True` before the PodGangs in group `B` are scheduled. When the `Recreate order` line lists a single group with no `->`, all listed PodGangs are scheduled together in that step.
-
-**Case #1: All PCLQs (frontend, prefill, decode) are updated**
-
-In this example the user has updated all PCLQs in a PCS.
-MVU template is {2F, 1P, 1D} as it is a function of `MinAvailable` replicas of all standalone PCLQs and PCSGs that have been updated.
-
-Following are the steps demonstrating the creation and update of MPGs during the update:
-```
-Step-1:
-  Take-down set: {2F, 1P, 1D}
-  Recreate order: {2Fv1, 1Pv1, 1Dv1}
-  Expected state: PG: {3F}, 3 * {P}, 2 * {D}, MPG: {2Fv1, 1Pv1, 1Dv1}
-Step-2:
-  Take-down set: {3F}, 3 * {P}, 2 * {D}
-  Recreate order: [{3Fv1, 1Pv1, 1Dv1}] -> [{1Pv1}, {1Dv1}, {1Pv1}]
-  Expected state: MPG: {2Fv1, 1Pv1, 1Dv1}, {3Fv1, 1Pv1, 1Dv1}, TPGs: {1Pv1}, {1Dv1}, {1Pv1}
-```
-
-**Case #2: Prefill and Decode are updated**
-
-In this example the user has updated all PCLQs belonging to `Prefill` and `Decode` PCSGs. Updates to any constituent PCLQ of a PCSG is considered as an update of the entire PCSG. Let us represent the new version of Prefill and Decode as `Pv1` and `Dv1` respectively.
-MVU template is {1P, 1D} as it is a function of `MinAvailable` replicas of all PCSGs that have been updated.
-
-Following are the steps demonstrating the creation and update of MPGs during the update:
-
-```
-Step-1:
-  Take-down set: {1P, 1D}
-  Recreate order: {1Pv1, 1Dv1}
-  Expected state: PG: {5F}, 3 * {P}, 2 * {D}, MPG: {1Pv1, 1Dv1}
-Step-2 -> 
-  Take-down set: 1 * {P}, 1 * {D}
-  Recreate order: {1Pv1, 1Dv1}
-  Expected state: PG: {5F}, 2 * {P}, 1 * {D}, MPG: {1Pv1, 1Dv1}, {1Pv1, 1Dv1}
-Step-3 -> 
-  Take-down set: 2 * {P}, 1 * {D}
-  Recreate order: [{1Pv1, 1Dv1}] -> [{1Pv1}]
-  Expected state: PG: {5F}, MPG: {1Pv1, 1Dv1}, {1Pv1, 1Dv1}, {1Pv1, 1Dv1}, TPG: {1Pv1}
-```
-
-**Case #3: Only standalone PodClique(s) are updated**
-
-In this example, `Frontend` is the only standalone PodClique. Let us represent the new version of `Frontend` PodClique as Fv1 (where standalone `F` represents v0 or the initial version of the PodCliqueTemplateSpec). The `MinAvailable` replicas for `Frontend` PodClique is defined as 2. 
-MVU template is {2F} as it is a function of `MinAvailable` replicas of all standalone PCLQs that have been updated.
-
-Following are the steps demonstrating the creation and update of MPGs during the update:
-
-```
-Step-1:
-  Take-down set: {2F}
-  Recreate order: {2Fv1}
-  Expected state: PG: {3F, 1P, 1D}, 3 * {P}, 2 * {D}, MPG: {2Fv1}
-Step-2 -> 
-  Take-down set: {3F}
-  Recreate order: {3Fv1}
-  Expected state: PG: {1P, 1D}, 3 * {P}, 2 * {D}, MPG: {2Fv1}, {3Fv1}
-```
+`pleader` is a member PCLQ of the `prefill` PCSG, so its template must not carry a `RollingUpdate`. The validating webhook rejects the PCS at admission. Setting `RollingUpdate.MaxUnavailable` only on the `prefill` PCSG is the correct shape; the PCSG-level value governs the disruption budget for every constituent member PCLQ.
 
 
 ### PodGang label preservation contract
@@ -853,25 +1064,26 @@ Consumers should therefore source PodGang membership as follows:
 
 ### Update concurrency
 
-A coherent update has two natural concurrency knobs:
+A coherent update has three natural concurrency knobs:
 
 - **PCS-replica concurrency** — how many `PodCliqueSet` replicas may be updated simultaneously.
-- **MVU-iteration concurrency within a replica** — how many MVU iterations may be in flight at once for a single replica.
+- **Step concurrency within a replica** — how many steps of the [Step plan](#step-plan) may be in flight at once for a single replica.
+- **Sub-step batch size** — per component, the maximum number of pods or PCSG replicas that may be taken down within a single sub-step. This is `RollingUpdate.MaxUnavailable` and is already configurable per component.
 
-The current iteration enforces the simplest values for both: **exactly one PCS replica × exactly one MVU iteration**. The orchestrator processes `Status.UpdateProgress.CurrentlyUpdating[0]` only; the PodGangMap component will not emit the next iteration's entry until every previously-generated new-hash PodGang reports `PodGangConditionTypeReady=True`. This keeps the disruption surface bounded to a single MVU's worth of pods at any moment.
+The current iteration enforces the simplest values for the first two: **exactly one PCS replica × exactly one step**. The orchestrator processes `Status.UpdateProgress.CurrentlyUpdating[0]` only; sub-steps advance one at a time, gated by the predicates in [Per-sub-step gate](#per-sub-step-gate). The PodGangMap component will not emit the next sub-step's entries until every PodGang from the current sub-step reports `Ready=True`. This keeps the disruption surface bounded to a single sub-step's worth of pods at any moment, and within that sub-step bounded per-component by `MaxUnavailable`.
 
-The status surface is shaped to allow broader concurrency in the future: `CurrentlyUpdating` is a slice rather than a single value, and `InFlightPodGangs` is a per-replica list. Configurable concurrency for both knobs will be supported in future.
+The status surface is shaped to allow broader concurrency in the future: `CurrentlyUpdating` is a slice rather than a single value, and `InFlightPodGangs` is a per-replica list. Configurable PCS-replica and step concurrency will be supported in future iterations. Sub-step batch size (`MaxUnavailable`) is already configurable per component today.
 
 ### Handling scale-outs and scale-ins during update
 
 Scale operations on PCLQ, PCSG, and PCS resources are gated by the rules in [Limitations/Risks & Mitigations](#limitationsrisks--mitigations) — they are **rejected by the validating webhook PCS-wide** for the entire duration of a coherent update. The block is intentionally coarse in this iteration:
 
-- It applies to children of **every** PCS replica, not just the replica currently being updated. Replicas that have already finished their iteration and replicas that have not yet started are equally blocked.
+- It applies to children of **every** PCS replica, not just the replica currently being updated. Replicas that have already finished their rollout and replicas that have not yet started are equally blocked.
 - The mutation is **rejected at admission time** — the user receives an immediate error, the spec on the API server is never updated, and there is no reconciler-side hold to drain after the update closes out.
 
 The motivation for the coarse-grained block is implementation simplicity: per-replica scoping of scale operations against an in-flight coherent update is not yet hardened in the reconcilers, and lifting the block on a subset of replicas before that work is done would risk silent inconsistencies between PGM, the per-component `Status.PodGangMapping`, and the live pod set. Narrowing the block to only the replicas that are actually mid-update — and otherwise composing scale operations with an in-flight coherent update — will be supported in a subsequent iteration.
 
-Beyond the admission gate, the directionality flip described in [`PodGangMap` as source of truth](#podgangmap-as-source-of-truth--directionality-flip) governs how scale operations land in steady state:
+Beyond the admission gate, the directionality flip described in [PodGangMap as source of truth](#podgangmap-as-source-of-truth--directionality-flip) governs how scale operations land in steady state:
 
 - **During an update (PGM as source of truth):** scale operations cannot reach the reconcilers because they are rejected at admission. The MVU template stays frozen for the lifetime of the update by construction.
 - **In steady state (status as source of truth):** scale-out adds a new entry to `Status.PodGangMapping` (a SPG name assigned by the PodCliqueScalingGroup reconciler, or an additional bucket on a standalone PCLQ); scale-in zeroes a count. The PodGangMap component reconstructs PGM from these mappings — preserving `DependsOn` for existing entries, inheriting `DependsOn` from anchor PodGangs for net-new SPG entries, and dropping zero-count entries.
@@ -887,7 +1099,7 @@ Coherent Rolling Updates expose all observable state via `Status` fields and `Co
 - `Status.UpdateProgress.UpdateStartedAt` / `UpdateEndedAt` — wall-clock bounds of the update.
 - `Status.UpdateProgress.UpdatedPodCliquesCount` / `TotalPodCliquesCount` — coarse progress counters.
 - `Status.UpdateProgress.UpdatedPodCliqueScalingGroupsCount` / `TotalPodCliqueScalingGroupsCount` — symmetrical for PCSGs.
-- `Status.UpdateProgress.UpdatedStandalonePodCliques` / `UpdatedPodCliqueScalingGroups` — frozen sets of out-of-date components computed at update start.
+- `Status.UpdateProgress.UpdatedStandalonePodCliques` / `UpdatedPodCliqueScalingGroups` — in-scope compatibility-boundary sets for the current coherent update.
 - `Status.UpdateProgress.CurrentlyUpdating[].ReplicaIndex` / `UpdateStartedAt` / `UpdateEndedAt` — per-replica progress.
 - `Status.UpdateProgress.CurrentlyUpdating[].InFlightPodGangs` — names of new-hash PodGangs the orchestrator is waiting on; the most useful single field for pinpointing where an update is stuck.
 - `Status.UpdateProgress.CurrentlyUpdating[].ErrorMessage` — populated when an update is stalled or failing.
@@ -899,11 +1111,11 @@ Coherent Rolling Updates expose all observable state via `Status` fields and `Co
 **Conditions:**
 
 - `PodGang.Status.Conditions[Type=Scheduled]` is set to `True` when the scheduler has placed `MinReplicas` pods of every PodGroup; `Reason=PodGangScheduled`. This condition gates pod scheduling-gate removal across both initial deployment and coherent update.
-- `PodGang.Status.Conditions[Type=Ready]` is set to `True` when `MinReplicas` pods of every PodGroup are passing readiness probes; `Reason=PodGangReady`. The orchestrator waits on this condition before advancing coherent-update iterations.
+- `PodGang.Status.Conditions[Type=Ready]` is set to `True` when `MinReplicas` pods of every PodGroup are passing readiness probes; `Reason=PodGangReady`. The orchestrator waits on this condition (together with the rest of the [Per-sub-step gate](#per-sub-step-gate)) before advancing to the next sub-step.
 
 **Printer columns on `PodCliqueSet` CRD:** `Replicas`, `Ready`, `Updated`, `PCLQs-Updated`, `PCLQs-Total`, `PCSGs-Updated`, `PCSGs-Total` — surface the headline counters in `kubectl get pcs`.
 
-Prometheus metrics for update duration, iterations per replica, and stall events are deferred to a follow-up.
+Prometheus metrics for update duration, steps and sub-steps per replica, and stall events are deferred to a follow-up.
 
 ### Dependencies
 
@@ -913,7 +1125,8 @@ The cluster must have a scheduler that supports gang-scheduling, as required by 
 
 **Alpha**
 - Coherent update strategy implemented and functional for single and multi-replica PCS
-- All core behaviors work: MVU iteration, MPG/TPG formation, absorption, gate removal, `Ready` signaling, orchestrator advance
+- All core behaviors work: step plan computation, MPG/TPG formation, standalone-PCLQ subsumption, gate removal, `Ready` signaling, per-sub-step gate, orchestrator advance
+- Per-component `MaxUnavailable` honoured (defaulting + validation per [MaxUnavailable defaulting and validation](#maxunavailable-defaulting-and-validation))
 - Scale-out and scale-in blocked during update (webhook enforcement)
 - Legacy BPG/SPG migration on first coherent update works
 - Steady-state directionality flip: scale-out/scale-in post-update reflected in PGM
@@ -921,8 +1134,9 @@ The cluster must have a scheduler that supports gang-scheduling, as required by 
 - Unit, integration and E2E tests pass
 
 **Beta**
-- Configurable concurrency: PCS-replica concurrency and MVU-iteration concurrency knobs
-- `maxSurge` and `maxUnavailable` support
+- Configurable concurrency: PCS-replica concurrency and step concurrency knobs
+- `MaxSurge` support (added to `RollingUpdateConfiguration` alongside `MaxUnavailable`)
+- Initial PCS deployment evolved to step/sub-step layout, removing the BPG / SPG carry-forward limitation
 
 **GA**
 - Rollback/roll-forward support
