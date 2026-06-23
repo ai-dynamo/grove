@@ -32,7 +32,7 @@ jobs:
       - name: E2E setup
         uses: ./.github/actions/e2e-setup
         with:
-          go-version: "1.26.1"
+          go-version: "1.26.3"
 
       # Compile before cluster setup so KWOK nodes are fresh when the test starts.
       # KWOK nodes can become NotReady if the Go build runs after creation.
