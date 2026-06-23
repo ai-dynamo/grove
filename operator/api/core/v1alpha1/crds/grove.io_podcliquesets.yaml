@@ -18,9 +18,6 @@ spec:
   versions:
   - additionalPrinterColumns:
     - jsonPath: .spec.replicas
-      name: Desired
-      type: integer
-    - jsonPath: .status.replicas
       name: Replicas
       type: integer
     - jsonPath: .status.availableReplicas
@@ -41,18 +38,6 @@ spec:
     - jsonPath: .status.updateProgress.totalPodCliqueScalingGroupsCount
       name: PCSGs-Total
       type: integer
-    - jsonPath: .spec.updateStrategy.type
-      name: Strategy
-      priority: 1
-      type: string
-    - jsonPath: .status.conditions[?(@.type=="TopologyLevelsUnavailable")].status
-      name: TopoMissing
-      priority: 1
-      type: string
-    - jsonPath: .status.currentGenerationHash
-      name: Hash
-      priority: 1
-      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date

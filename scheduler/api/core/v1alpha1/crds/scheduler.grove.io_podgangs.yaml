@@ -20,23 +20,6 @@ spec:
     - jsonPath: .status.phase
       name: Phase
       type: string
-    - jsonPath: .status.conditions[?(@.type=="Initialized")].status
-      name: Initialized
-      type: string
-    - jsonPath: .status.conditions[?(@.type=="Scheduled")].status
-      name: Scheduled
-      type: string
-    - jsonPath: .status.conditions[?(@.type=="Ready")].status
-      name: Ready
-      type: string
-    - jsonPath: .status.conditions[?(@.type=="Unhealthy")].status
-      name: Unhealthy
-      priority: 1
-      type: string
-    - jsonPath: .status.conditions[?(@.type=="DisruptionTarget")].status
-      name: Disrupting
-      priority: 1
-      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date

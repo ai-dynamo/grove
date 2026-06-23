@@ -18,16 +18,13 @@ spec:
   versions:
   - additionalPrinterColumns:
     - jsonPath: .spec.replicas
-      name: Desired
-      type: integer
-    - jsonPath: .status.replicas
       name: Replicas
-      type: integer
-    - jsonPath: .status.scheduledReplicas
-      name: Scheduled
       type: integer
     - jsonPath: .status.availableReplicas
       name: Available
+      type: integer
+    - jsonPath: .status.scheduledReplicas
+      name: Scheduled
       type: integer
     - jsonPath: .status.updatedReplicas
       name: Updated
@@ -43,10 +40,6 @@ spec:
       type: integer
     - jsonPath: .status.conditions[?(@.type=="MinAvailableBreached")].status
       name: MinBreached
-      priority: 1
-      type: string
-    - jsonPath: .status.currentPodCliqueSetGenerationHash
-      name: PCSHash
       priority: 1
       type: string
     - jsonPath: .metadata.creationTimestamp
