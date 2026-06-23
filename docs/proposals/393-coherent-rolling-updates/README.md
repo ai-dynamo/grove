@@ -558,15 +558,15 @@ Step-plan computation:
 - `StepTarget[F] = 2 + 1 = 3`. `StepTarget[P] = 3 + 0 = 3`. `StepTarget[D] = 3 + 3 = 6`.
 - `Leftover[F] = 10 - 3*3 = 1`. `Leftover[P] = 10 - 3*3 = 1`. `Leftover[D] = 20 - 3*6 = 2`.
 
-The plan has 3 MPG-bearing steps followed by 1 TPG-only step. Each MPG-bearing step rolls `{3 F, 3 P, 6 D}`; the TPG-only step rolls the leftover `{1 F, 1 P, 2 D}`.
+The plan has 3 MPG-bearing steps followed by 1 TPG-only step. Each MPG-bearing step rolls `{3F, 3P, 6D}`; the TPG-only step rolls the leftover `{1F, 1P, 2D}`.
 
 Steps and sub-steps:
 
-- **Steps 1, 2, 3 (MPG-bearing)** — each rolls `{3 F, 3 P, 6 D}`:
-  - Sub-step N.1: create MPG-N carrying the MVU floor `{2 F, 3 P, 3 D}`.
-  - Sub-step N.2: drain the step's tail `{1 F, 0 P, 3 D}` — F's 1 extra pod is subsumed into MPG-N; D's 3 extra replicas each become a TPG that depends on MPG-N. All three D-TPGs are created in this single sub-step because `maxUnavailable[D] = 4` accommodates `3`.
-- **Step 4 (TPG-only)** — rolls leftover `{1 F, 1 P, 2 D}`:
-  - Sub-step 4.1: F's leftover is subsumed into MPG-3 (the most recently created MPG); P's leftover becomes a TPG; D's 2 leftover replicas each become a TPG. All these TPGs are created in this single sub-step — each component's leftover is within its `maxUnavailable` budget.
+- **Steps 1, 2, 3 (MPG-bearing)** — each rolls `{3F, 3P, 6D}`:
+  - Sub-step N.1: create MPG-N carrying the MVU floor `{2F, 3P, 3D}`.
+  - Sub-step N.2: drain the step's tail — 1F subsumed into MPG-N (no extra P to drain this step); `3 * {D}` D-TPGs depending on MPG-N. All three D-TPGs are created in this single sub-step because `maxUnavailable[D] = 4` accommodates `3`.
+- **Step 4 (TPG-only)** — rolls leftover `{1F, 1P, 2D}`:
+  - Sub-step 4.1: 1F subsumed into MPG-3 (the most recently created MPG); `1 * {P}` P-TPG; `2 * {D}` D-TPGs. All these TPGs are created in this single sub-step — each component's leftover is within its `maxUnavailable` budget.
 
 ##### Per-sub-step gate
 
@@ -975,12 +975,12 @@ Step-plan computation:
 - `StepTarget[F] = 1 + 0 = 1`. `StepTarget[P] = 3 + 7 = 10`. `StepTarget[D] = 3 + 5 = 8`.
 - `Leftover[F] = 10 - 10*1 = 0`. `Leftover[P] = 100 - 10*10 = 0`. `Leftover[D] = 80 - 10*8 = 0`.
 
-10 MPG-bearing steps, no TPG-only step. Each MPG-bearing step rolls `{1 F, 10 P, 8 D}`:
+10 MPG-bearing steps, no TPG-only step. Each MPG-bearing step rolls `{1F, 10P, 8D}`:
 
-- Sub-step N.1: create MPG-N carrying the MVU floor `{1 F, 3 P, 3 D}`.
-- Sub-step N.2: drain step tail `{0 F, 7 P, 5 D}` — emit 3 P-TPGs (cap `maxUnavailable[P]=3`) and 4 D-TPGs (cap `maxUnavailable[D]=4`), all depending on MPG-N.
-- Sub-step N.3: emit 3 more P-TPGs and 1 more D-TPG.
-- Sub-step N.4: emit 1 more P-TPG. Step done.
+- Sub-step N.1: create MPG-N carrying the MVU floor `{1F, 3P, 3D}`.
+- Sub-step N.2: drain step tail — `3 * {P}` P-TPGs (cap `maxUnavailable[P]=3`) and `4 * {D}` D-TPGs (cap `maxUnavailable[D]=4`), all depending on MPG-N.
+- Sub-step N.3: emit `3 * {P}` P-TPGs and `1 * {D}` D-TPG.
+- Sub-step N.4: emit `1 * {P}` P-TPG. Step done.
 
 ##### Case B — Residual and leftover
 
@@ -999,15 +999,15 @@ Step-plan computation:
 
 3 MPG-bearing steps plus 1 TPG-only step.
 
-Each MPG-bearing step rolls `{6 F, 3 P, 6 D}`:
+Each MPG-bearing step rolls `{6F, 3P, 6D}`:
 
-- Sub-step N.1: create MPG-N carrying `{2 F, 3 P, 3 D}`.
-- Sub-step N.2: subsume 2 more F pods into MPG-N (`PodReferences` grows from 2 to 4); emit 3 D-TPGs depending on MPG-N (cap `maxUnavailable[D]=4`).
+- Sub-step N.1: create MPG-N carrying `{2F, 3P, 3D}`.
+- Sub-step N.2: subsume 2 more F pods into MPG-N (`PodReferences` grows from 2 to 4); emit `3 * {D}` D-TPGs depending on MPG-N (cap `maxUnavailable[D]=4`).
 - Sub-step N.3: subsume 2 more F pods into MPG-N (`PodReferences` grows from 4 to 6). Step done.
 
-TPG-only step 4 rolls leftover `{2 F, 1 P, 2 D}`:
+TPG-only step 4 rolls leftover `{2F, 1P, 2D}`:
 
-- Sub-step 4.1: subsume 2 F pods into MPG-3 (the most recently created MPG; `PodReferences` grows from 6 to 8); emit 1 P-TPG; emit 2 D-TPGs. All TPGs depend on every MPG that exists when they are created (MPG-1, MPG-2, MPG-3).
+- Sub-step 4.1: subsume 2 F pods into MPG-3 (the most recently created MPG; `PodReferences` grows from 6 to 8); emit `1 * {P}` P-TPG; emit `2 * {D}` D-TPGs. All TPGs depend on every MPG that exists when they are created (MPG-1, MPG-2, MPG-3).
 
 Predicate 3 (`MaxUnavailable` budget) of the per-sub-step gate must hold before each sub-step transition. For sub-step 4.1 to clear, F's Ready count must be at least `20 - 2 = 18`, P's at least `10 - 3 = 7`, D's at least `20 - 4 = 16`.
 
@@ -1018,7 +1018,7 @@ The user updates only **FrontEnd (F)**, the standalone PCLQ, with `replicas=10, 
 - `MPGSteps = floor(10/1) = 10`. `TailPerStep[F] = 0`. `StepTarget[F] = 1`. `Leftover[F] = 0`.
 - 10 MPG-bearing steps, each rolling 1 F pod via the step's MPG. No TPG sub-steps (no tail). No TPG-only step.
 
-The MPG of each step carries only F (`{1 F}`); pods of P and D continue running in their existing PodGangs untouched. The MPGs depend on no anchor — each is itself an anchor.
+The MPG of each step carries only F (`{1F}`); pods of P and D continue running in their existing PodGangs untouched. The MPGs depend on no anchor — each is itself an anchor.
 
 ##### Case H — Invalid: MaxUnavailable < MinAvailable
 
