@@ -1,6 +1,6 @@
 module github.com/ai-dynamo/grove/scheduler/api
 
-go 1.25.0
+go 1.26.3
 
 require k8s.io/apimachinery v0.35.5
 

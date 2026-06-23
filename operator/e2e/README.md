@@ -10,7 +10,7 @@ The following tools must be installed:
 - **Docker** - For running containers and k3d
 - **skaffold** (v2.x) - For deploying Grove operator
 - **helm** - For deploying Helm charts
-- **Go** (1.24.5+) - For running the tests
+- **Go** (1.26.3+) - For running the tests
 
 The following tools are nice to have
 - **k3d** (v5.x) - For creating local Kubernetes clusters
