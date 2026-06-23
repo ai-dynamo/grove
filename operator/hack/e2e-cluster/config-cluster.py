@@ -161,12 +161,12 @@ def ensure_fake_gpu(desired: bool) -> None:
             f" --wait"
         )
 
-        log_info("Waiting for fake GPU operator pods to be ready...")
+        log_info("Waiting for fake GPU operator deployments to be available...")
         run_or_warn(
-            f"kubectl wait --for=condition=Ready pods"
+            f"kubectl wait --for=condition=Available deployment"
             f" -l app.kubernetes.io/name=fake-gpu-operator"
             f" -n {FAKE_GPU_NAMESPACE} --timeout=120s",
-            "Fake GPU operator pods did not become ready",
+            "Fake GPU operator deployments did not become available",
         )
 
         # Verify CRD exists
@@ -241,17 +241,17 @@ def _wait_for_cert_refresh_restart(
         log_info(f"No cert refresh restart detected within {timeout}s — continuing")
         return
 
-    log_info("Waiting for operator pod to be ready after cert refresh restart...")
+    log_info("Waiting for operator deployment to be available after cert refresh restart...")
     run_or_warn(
         f"kubectl rollout status deployment/{GROVE_RELEASE}"
         f" -n {GROVE_NAMESPACE} --timeout=120s",
         "Grove operator rollout did not complete after cert refresh restart",
     )
     run_or_warn(
-        f"kubectl wait --for=condition=Ready pods"
+        f"kubectl wait --for=condition=Available deployment"
         f" -l app.kubernetes.io/name=grove-operator"
         f" -n {GROVE_NAMESPACE} --timeout=120s",
-        "Grove operator pod did not become ready after cert refresh restart",
+        "Grove operator deployment did not become available after cert refresh restart",
     )
 
 
@@ -275,7 +275,7 @@ def ensure_auto_mnnvl(enabled: bool, *, skip_wait: bool = False) -> None:
     )
 
     if not skip_wait:
-        log_info("Waiting for Grove operator pod to be ready...")
+        log_info("Waiting for Grove operator deployment to be available...")
         # The upgrade may trigger a rolling restart; wait for the new pod.
         run_or_warn(
             f"kubectl rollout status deployment/{GROVE_RELEASE}"
@@ -283,10 +283,10 @@ def ensure_auto_mnnvl(enabled: bool, *, skip_wait: bool = False) -> None:
             "Grove operator rollout did not complete",
         )
         run_or_warn(
-            f"kubectl wait --for=condition=Ready pods"
+            f"kubectl wait --for=condition=Available deployment"
             f" -l app.kubernetes.io/name=grove-operator"
             f" -n {GROVE_NAMESPACE} --timeout=120s",
-            "Grove operator pod did not become ready",
+            "Grove operator deployment did not become available",
         )
         # Cert-rotation may exit the process to trigger a restart; poll for it
         # rather than using a fixed sleep.
