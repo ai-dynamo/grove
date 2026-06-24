@@ -1860,6 +1860,7 @@ func TestValidatePCSGResourceSharing(t *testing.T) {
 			cfg: grovecorev1alpha1.PodCliqueScalingGroupConfig{
 				Name:        "sga",
 				CliqueNames: []string{"worker"},
+				Replicas:    ptr.To(int32(1)),
 				ResourceSharing: []grovecorev1alpha1.PCSGResourceSharingSpec{
 					{
 						ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
@@ -1874,6 +1875,7 @@ func TestValidatePCSGResourceSharing(t *testing.T) {
 			cfg: grovecorev1alpha1.PodCliqueScalingGroupConfig{
 				Name:        "sga",
 				CliqueNames: []string{"worker"},
+				Replicas:    ptr.To(int32(1)),
 				ResourceSharing: []grovecorev1alpha1.PCSGResourceSharingSpec{
 					{
 						ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
@@ -2181,6 +2183,7 @@ func createScalingGroupConfig(name string, cliqueNames []string) grovecorev1alph
 	return grovecorev1alpha1.PodCliqueScalingGroupConfig{
 		Name:        name,
 		CliqueNames: cliqueNames,
+		Replicas:    ptr.To(int32(1)),
 	}
 }
 

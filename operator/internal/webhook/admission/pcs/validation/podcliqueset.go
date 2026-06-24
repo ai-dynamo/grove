@@ -185,10 +185,10 @@ func (v *pcsValidator) validatePCSGResourceSharing(cfg grovecorev1alpha1.PodCliq
 	}
 	allErrs = append(allErrs, v.validateResourceSharingSpecs(bases, fldPath)...)
 	pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(
-		apicommon.ResourceNameReplica{Name: v.pcs.Name, Replica: int(max(0, v.pcs.Spec.Replicas-1))},
+		apicommon.ResourceNameReplica{Name: v.pcs.Name, Replica: int(v.pcs.Spec.Replicas - 1)},
 		cfg.Name,
 	)
-	allErrs = append(allErrs, validatePodResourceClaimReferenceNames(pcsgFQN, cfg.MaxReplicas(), bases, fldPath)...)
+	allErrs = append(allErrs, validatePodResourceClaimReferenceNames(pcsgFQN, cfg.MaxAllowedReplicas(), bases, fldPath)...)
 	for i, ref := range cfg.ResourceSharing {
 		if ref.Filter == nil {
 			continue
@@ -331,7 +331,7 @@ func (v *pcsValidator) validatePodCliqueNameConstraints(fldPath *field.Path, cli
 // validateStandalonePodClique validates pod naming constraints for PodCliques that are not part of any scaling group.
 func validateStandalonePodClique(fldPath *field.Path, v *pcsValidator, cliqueTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec) field.ErrorList {
 	allErrs := field.ErrorList{}
-	if err := validatePodNameConstraints(v.pcs.Name, v.pcs.Spec.Replicas, "", 0, cliqueTemplateSpec.Name, cliqueTemplateSpec.Spec.MaxReplicas()); err != nil {
+	if err := validatePodNameConstraints(v.pcs.Name, v.pcs.Spec.Replicas, "", 0, cliqueTemplateSpec.Name, cliqueTemplateSpec.Spec.MaxAllowedReplicas()); err != nil {
 		// add error to each of filed paths that compose the podName in case of a PodCliqueTemplateSpec
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("name"), cliqueTemplateSpec.Name, err.Error()))
 		allErrs = append(allErrs, field.Invalid(field.NewPath("metadata").Child("name"), v.pcs.Name, err.Error()))
@@ -503,10 +503,10 @@ func (v *pcsValidator) validateScalingGroupPodCliqueNames(scalingGroupConfig gro
 	for i, pclqName := range pclqNameInScalingGrp {
 		maxPCLQReplicas := int32(1)
 		if templateSpec := componentutils.FindPodCliqueTemplateSpecByName(v.pcs, pclqName); templateSpec != nil {
-			maxPCLQReplicas = templateSpec.Spec.MaxReplicas()
+			maxPCLQReplicas = templateSpec.Spec.MaxAllowedReplicas()
 		}
 
-		if err := validatePodNameConstraints(v.pcs.Name, v.pcs.Spec.Replicas, scalingGroupConfig.Name, scalingGroupConfig.MaxReplicas(), pclqName, maxPCLQReplicas); err != nil {
+		if err := validatePodNameConstraints(v.pcs.Name, v.pcs.Spec.Replicas, scalingGroupConfig.Name, scalingGroupConfig.MaxAllowedReplicas(), pclqName, maxPCLQReplicas); err != nil {
 			// add error to each of filed paths that compose the podName
 			allErrs = append(allErrs, field.Invalid(fldPath.Index(i).Child("name"), pclqName, err.Error()))
 			allErrs = append(allErrs, field.Invalid(pcsgNameFieldPath, pclqName, err.Error()))
@@ -530,7 +530,7 @@ func (v *pcsValidator) validatePCLQResourceClaimReferenceNames(cliqueTemplateSpe
 		}
 		pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(pcsNameReplica, scalingGroupConfig.Name)
 		ownerNames = append(ownerNames, apicommon.GeneratePodCliqueName(
-			apicommon.ResourceNameReplica{Name: pcsgFQN, Replica: int(max(0, scalingGroupConfig.MaxReplicas()-1))},
+			apicommon.ResourceNameReplica{Name: pcsgFQN, Replica: int(scalingGroupConfig.MaxAllowedReplicas())},
 			cliqueTemplateSpec.Name,
 		))
 	}
@@ -540,14 +540,14 @@ func (v *pcsValidator) validatePCLQResourceClaimReferenceNames(cliqueTemplateSpe
 
 	allErrs := field.ErrorList{}
 	for _, ownerName := range ownerNames {
-		allErrs = append(allErrs, validatePodResourceClaimReferenceNames(ownerName, cliqueTemplateSpec.Spec.MaxReplicas(), cliqueTemplateSpec.ResourceSharing, fldPath)...)
+		allErrs = append(allErrs, validatePodResourceClaimReferenceNames(ownerName, cliqueTemplateSpec.Spec.MaxAllowedReplicas(), cliqueTemplateSpec.ResourceSharing, fldPath)...)
 	}
 	return allErrs
 }
 
-func validatePodResourceClaimReferenceNames(ownerName string, maxReplicas int32, refs []grovecorev1alpha1.ResourceSharingSpec, fldPath *field.Path) field.ErrorList {
+func validatePodResourceClaimReferenceNames(ownerName string, maxAllowedReplicas int32, refs []grovecorev1alpha1.ResourceSharingSpec, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-	maxReplicaIndex := int(max(0, maxReplicas-1))
+	maxReplicaIndex := int(maxAllowedReplicas - 1)
 
 	for i, ref := range refs {
 		var rcName string
@@ -1077,14 +1077,14 @@ func (v *pcsValidator) validatePodCliqueUpdate(oldCliques []*grovecorev1alpha1.P
 // Pod names that do not belong to a PCSG follow the format:
 // <pcs-name>-<pcs-index>-<pclq-name>-<pod-index>-<random>
 func validatePodNameConstraints(pcsName string, pcsReplicas int32, pcsgName string, pcsgReplicas int32, pclqName string, pclqReplicas int32) error {
-	pclqOwnerNameReplica := apicommon.ResourceNameReplica{Name: pcsName, Replica: int(max(0, pcsReplicas-1))}
+	pcsNameReplica := apicommon.ResourceNameReplica{Name: pcsName, Replica: int(pcsReplicas - 1)}
 	if pcsgName != "" {
-		pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(pclqOwnerNameReplica, pcsgName)
-		pclqOwnerNameReplica = apicommon.ResourceNameReplica{Name: pcsgFQN, Replica: int(max(0, pcsgReplicas-1))}
+		pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(pcsNameReplica, pcsgName)
+		pcsNameReplica = apicommon.ResourceNameReplica{Name: pcsgFQN, Replica: int(pcsgReplicas - 1)}
 	}
 
-	pclqFQN := apicommon.GeneratePodCliqueName(pclqOwnerNameReplica, pclqName)
-	podIndex := int(max(0, pclqReplicas-1))
+	pclqFQN := apicommon.GeneratePodCliqueName(pcsNameReplica, pclqName)
+	podIndex := int(pclqReplicas - 1)
 	podHostname := apicommon.GeneratePodHostname(pclqFQN, podIndex)
 	if validationErrs := k8svalidation.IsDNS1123Label(podHostname); len(validationErrs) > 0 {
 		return generatedPodConstraintError("hostname", podHostname, strings.Join(validationErrs, "; "), pcsName, pcsgName, pclqName)

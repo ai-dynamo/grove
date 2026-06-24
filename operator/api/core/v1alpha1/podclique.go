@@ -80,8 +80,8 @@ type PodCliqueSpec struct {
 	ScaleConfig *AutoScalingConfig `json:"autoScalingConfig,omitempty"`
 }
 
-// MaxReplicas returns the maximum number of replicas for this PodClique.
-func (p PodCliqueSpec) MaxReplicas() int32 {
+// MaxAllowedReplicas returns the maximum number of replicas that can be configured for this PodClique.
+func (p *PodCliqueSpec) MaxAllowedReplicas() int32 {
 	replicas := p.Replicas
 	if p.ScaleConfig != nil {
 		replicas = max(replicas, p.ScaleConfig.MaxReplicas)

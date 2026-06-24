@@ -19,7 +19,6 @@ package v1alpha1
 import (
 	resourcev1 "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 )
 
 // +genclient
@@ -401,9 +400,9 @@ type PodCliqueScalingGroupConfig struct {
 	TopologyConstraint *TopologyConstraint `json:"topologyConstraint,omitempty"`
 }
 
-// MaxReplicas returns the maximum number of replicas allowed with this scaling group config.
-func (p PodCliqueScalingGroupConfig) MaxReplicas() int32 {
-	replicas := max(1, ptr.Deref(p.Replicas, 0))
+// MaxAllowedReplicas returns the maximum number of replicas that can be configured with this scaling group config.
+func (p *PodCliqueScalingGroupConfig) MaxAllowedReplicas() int32 {
+	replicas := *p.Replicas
 	if p.ScaleConfig != nil {
 		replicas = max(replicas, p.ScaleConfig.MaxReplicas)
 	}
