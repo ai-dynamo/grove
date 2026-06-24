@@ -20,10 +20,6 @@ spec:
     - jsonPath: .spec.levels[*].domain
       name: Domains
       type: string
-    - jsonPath: .spec.schedulerTopologyBindings[*].schedulerName
-      name: Schedulers
-      priority: 1
-      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date

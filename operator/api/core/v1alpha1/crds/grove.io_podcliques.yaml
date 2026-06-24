@@ -17,6 +17,9 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
+    - jsonPath: .spec.minAvailable
+      name: MinAvail
+      type: integer
     - jsonPath: .spec.replicas
       name: Replicas
       type: integer
@@ -28,9 +31,6 @@ spec:
       type: integer
     - jsonPath: .status.updatedReplicas
       name: Updated
-      type: integer
-    - jsonPath: .spec.minAvailable
-      name: MinAvail
       type: integer
     - jsonPath: .status.scheduleGatedReplicas
       name: Gated
