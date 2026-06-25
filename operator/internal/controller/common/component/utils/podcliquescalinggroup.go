@@ -152,7 +152,7 @@ func GetPCLQsInPCSGPendingUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grov
 		existingPodTemplateHash := existingPCLQ.Labels[apicommon.LabelPodTemplateHash]
 		expectedPodTemplateHash := expectedPCLQPodTemplateHashes[existingPCLQ.Name]
 		if existingPodTemplateHash != expectedPodTemplateHash {
-			pclqFQNsPendingUpdate = append(pclqFQNsPendingUpdate, expectedPodTemplateHash)
+			pclqFQNsPendingUpdate = append(pclqFQNsPendingUpdate, existingPCLQ.Name)
 		}
 	}
 	return pclqFQNsPendingUpdate
