@@ -247,7 +247,7 @@ The strategy type is a single PCS-wide choice — every component rolls under th
 
 #### MaxUnavailable defaulting and validation
 
-`MaxUnavailable` is optional on the spec. The PCS defaulting webhook fills it in based on `Spec.UpdateStrategy.Type` so that downstream code always sees an explicit value, and the validating webhook rejects spec combinations that would violate the strategy's mechanics.
+`MaxUnavailable` is optional on the spec. The PCS defaulting webhook fills it in based on `Spec.UpdateStrategy.Type` so that downstream code always sees an explicit value, and the validating webhook rejects spec combinations that would violate Coherent's mechanics.
 
 **Defaulting.** Applied by the PCS defaulting webhook, per strategy:
 
@@ -259,10 +259,12 @@ The two defaults are chosen for internal consistency with the strategy's own mec
 
 **Validation.** Applied by the PCS validating webhook:
 
-- `MaxUnavailable < MinAvailable` on any component is rejected, regardless of strategy.
-- `RollingUpdate` set on a `PodCliqueTemplateSpec` whose name appears in any `PodCliqueScalingGroupConfig.CliqueNames` is rejected. PCSG-owned `PodCliques` draw their budget from the owning PCSG's `RollingUpdate.MaxUnavailable`; setting it on the member template is meaningless and a likely operator mistake.
+- `MaxUnavailable < MinAvailable` on any component is rejected **only when `Spec.UpdateStrategy.Type` is `Coherent`**. Coherent's MVU sub-step requires the budget to accommodate `MinAvailable` pods of every updated component at once; a budget below that floor makes the very first sub-step impossible. RollingRecreate has no such floor — it replaces pods one at a time — so `MaxUnavailable=1` paired with `MinAvailable>1` is a legal RollingRecreate spec and is not rejected.
+- `RollingUpdate` set on a `PodCliqueTemplateSpec` whose name appears in any `PodCliqueScalingGroupConfig.CliqueNames` is rejected, regardless of strategy. PCSG-owned `PodCliques` draw their budget from the owning PCSG's `RollingUpdate.MaxUnavailable`; setting it on the member template is meaningless and a likely operator mistake.
 
-**Strategy-flip safety.** If the user later switches `UpdateStrategy.Type` (e.g. `RollingRecreate` → `Coherent`) without explicitly setting `MaxUnavailable`, the previously-defaulted value (e.g. `1`) sticks — the defaulting webhook only defaults *unset* fields. The `MaxUnavailable < MinAvailable` rule closes this loop: under `Coherent`, the previously-defaulted `1` is below `MinAvailable` for any component with `MinAvailable >= 2`, and admission rejects the PCS until the operator sets an appropriate value. No strategy-conditional check at runtime is needed.
+**Strategy-flip safety.** A spec that is valid under RollingRecreate may become invalid under Coherent — e.g. an existing PCS with `MinAvailable=3` and the RollingRecreate default `MaxUnavailable=1` is fine while it stays on RollingRecreate, but the same field combination is rejected under Coherent. The validating webhook closes this loop by checking the inequality rule against the **requested** `Spec.UpdateStrategy.Type`, not the previously persisted one — so an admission call that flips the strategy is rejected if the post-flip combination would be invalid. This makes the flip event itself the failure boundary; an admitted spec is always internally consistent under its declared strategy. No runtime check during reconcile is needed.
+
+**Compatibility with existing PCS resources.** Existing PCS resources created before `RollingUpdateConfiguration` was introduced have no `MaxUnavailable` set. On the first reconcile after upgrade, the defaulting webhook fills the field in per the rules above. Since the inequality rule is scoped to Coherent, an existing PCS running under RollingRecreate with `MinAvailable>1` defaults cleanly to `MaxUnavailable=1` and remains admissible across future edits.
 
 #### PodGangMap — new CRD
 
@@ -1028,7 +1030,7 @@ The MPG of each step carries only F (`{1F}`); pods of P and D continue running i
 | Prefill (P)  | 10 | 3 | 3 |
 | Decode (D)   | 20 | 3 | 4 |
 
-FrontEnd has `MaxUnavailable = 1 < MinAvailable = 2`. The PCS validating webhook rejects the spec at admission (see [MaxUnavailable defaulting and validation](#maxunavailable-defaulting-and-validation)). The update never starts.
+FrontEnd has `MaxUnavailable = 1 < MinAvailable = 2`. Because the update strategy is Coherent, the PCS validating webhook rejects the spec at admission (see [MaxUnavailable defaulting and validation](#maxunavailable-defaulting-and-validation)). The update never starts.
 
 The underlying reason: the MPG sub-step of step 1 would take down 2 F pods at once to establish the MVU floor, exceeding the user-declared cap of 1. There is no way to satisfy both `MinAvailable=2` and `MaxUnavailable=1` under Coherent's mechanics, so rejection at admission is the right behaviour.
 

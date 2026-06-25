@@ -217,6 +217,33 @@ type PodCliqueSetReplicaUpdateProgress struct {
 	ErrorMessage *string `json:"errorMessage,omitempty"`
 }
 
+// RollingUpdateConfiguration carries per-component knobs that bound disruption
+// during a rolling update. It attaches to standalone PodCliqueTemplateSpec and
+// to PodCliqueScalingGroupConfig — i.e. to each component that an update event
+// can touch independently. No PCS-level RollingUpdateConfiguration is exposed
+// in this iteration because PCS-replica concurrency during an update is fixed
+// at one; a future iteration that lifts that limit may introduce one.
+type RollingUpdateConfiguration struct {
+	// MaxUnavailable is the maximum number of pods (for a standalone PodClique)
+	// or PodCliqueScalingGroup replicas (for a PCSG) that may be unavailable at
+	// any moment during an update of this component.
+	//
+	// Defaulting:
+	//   - Coherent: defaults to the component's MinAvailable.
+	//   - RollingRecreate: defaults to 1.
+	//   - OnDelete: not defaulted; the orchestrator does not consume it.
+	//
+	// Validation:
+	//   - Coherent: rejected if MaxUnavailable is less than MinAvailable. Coherent's
+	//     MVU sub-step takes down MinAvailable pods of every updated component at
+	//     once; a budget below that floor makes the first sub-step impossible.
+	//   - RollingRecreate: not enforced. RollingRecreate replaces pods one at a
+	//     time and has no MVU floor.
+	//   - OnDelete: not enforced; the orchestrator does not consume it.
+	// +optional
+	MaxUnavailable *int32 `json:"maxUnavailable,omitempty"`
+}
+
 // PodCliqueSetTemplateSpec defines a template spec for a PodGang.
 // A PodGang does not have a RestartPolicy field because the restart policy is predefined:
 // If the number of pods in any of the cliques falls below the threshold, the entire PodGang will be restarted.
@@ -303,6 +330,12 @@ type PodCliqueTemplateSpec struct {
 	// PCLQs have no children to filter, so no Filter field is available.
 	// +optional
 	ResourceSharing []ResourceSharingSpec `json:"resourceSharing,omitempty"`
+	// RollingUpdate is the per-component update configuration for this standalone PodClique.
+	// Must not be set on a PodCliqueTemplateSpec whose Name appears in any
+	// PodCliqueScalingGroupConfig.CliqueNames — PCSG-owned PodCliques draw their disruption
+	// budget from the owning PCSG's RollingUpdate.
+	// +optional
+	RollingUpdate *RollingUpdateConfiguration `json:"rollingUpdate,omitempty"`
 	// Specification of the desired behavior of a PodClique.
 	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#spec-and-status
 	Spec PodCliqueSpec `json:"spec"`
@@ -430,6 +463,11 @@ type PodCliqueScalingGroupConfig struct {
 	// ScaleConfig is the horizontal pod autoscaler configuration for the pod clique scaling group.
 	// +optional
 	ScaleConfig *AutoScalingConfig `json:"scaleConfig,omitempty"`
+	// RollingUpdate is the per-component update configuration for this PodCliqueScalingGroup.
+	// The PCSG-level value governs the disruption budget for every constituent member PodClique;
+	// the member PodCliqueTemplateSpecs must not carry their own RollingUpdate.
+	// +optional
+	RollingUpdate *RollingUpdateConfiguration `json:"rollingUpdate,omitempty"`
 	// ResourceSharing defines shared ResourceClaims at the PCSG level.
 	// Each entry references a template (internal or external) and specifies a Scope:
 	//   - AllReplicas: one RC for the entire PCSG, shared across all replicas

@@ -330,6 +330,7 @@ _Appears in:_
 | `replicas` _integer_ | Replicas is the desired number of replicas for the scaling group at template level.<br />This allows one to control the replicas of the scaling group at startup.<br />If not specified, it defaults to 1. | 1 |  |
 | `minAvailable` _integer_ | MinAvailable serves two purposes:<br />Gang Scheduling:<br />It defines the minimum number of replicas that are guaranteed to be gang scheduled.<br />Gang Termination:<br />It defines the minimum requirement of available replicas for a PodCliqueScalingGroup.<br />Violation of this threshold for a duration beyond TerminationDelay will result in termination of the PodCliqueSet replica that it belongs to.<br />Default: If not specified, it defaults to 1.<br />Constraints:<br />MinAvailable cannot be greater than Replicas.<br />If ScaleConfig is defined then its MinAvailable should not be less than ScaleConfig.MinReplicas. | 1 |  |
 | `scaleConfig` _[AutoScalingConfig](#autoscalingconfig)_ | ScaleConfig is the horizontal pod autoscaler configuration for the pod clique scaling group. |  |  |
+| `rollingUpdate` _[RollingUpdateConfiguration](#rollingupdateconfiguration)_ | RollingUpdate is the per-component update configuration for this PodCliqueScalingGroup.<br />The PCSG-level value governs the disruption budget for every constituent member PodClique;<br />the member PodCliqueTemplateSpecs must not carry their own RollingUpdate. |  |  |
 | `resourceSharing` _[PCSGResourceSharingSpec](#pcsgresourcesharingspec) array_ | ResourceSharing defines shared ResourceClaims at the PCSG level.<br />Each entry references a template (internal or external) and specifies a Scope:<br />  - AllReplicas: one RC for the entire PCSG, shared across all replicas<br />  - PerReplica: one RC per PCSG replica, shared across all PCLQs in that replica<br />The optional Filter field controls which PodCliques receive the claims.<br />At PCSG level, only childCliqueNames filtering is available. |  |  |
 | `topologyConstraint` _[TopologyConstraint](#topologyconstraint)_ | TopologyConstraint defines topology placement requirements for PodCliqueScalingGroup.<br />Must be equal to or stricter than parent PodCliqueSet constraints. |  |  |
 
@@ -636,6 +637,7 @@ _Appears in:_
 | `annotations` _object (keys:string, values:string)_ | Annotations is an unstructured key value map stored with a resource that may be<br />set by external tools to store and retrieve arbitrary metadata. They are not<br />queryable and should be preserved when modifying objects.<br />More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations |  |  |
 | `topologyConstraint` _[TopologyConstraint](#topologyconstraint)_ | TopologyConstraint defines topology placement requirements for PodClique.<br />Must be equal to or stricter than parent resource constraints. |  |  |
 | `resourceSharing` _[ResourceSharingSpec](#resourcesharingspec) array_ | ResourceSharing defines shared ResourceClaims for this PodClique.<br />Each entry references a template (internal or external) and specifies a Scope:<br />  - AllReplicas: one RC per PCLQ, shared by all replica pods<br />  - PerReplica: one RC per PCLQ replica, shared by all pods within that replica<br />This is distinct from adding ResourceClaimTemplate inside<br />Spec.PodSpec.ResourceClaims[x].ResourceClaimTemplateName, which creates a unique<br />ResourceClaim for each pod.<br />PCLQs have no children to filter, so no Filter field is available. |  |  |
+| `rollingUpdate` _[RollingUpdateConfiguration](#rollingupdateconfiguration)_ | RollingUpdate is the per-component update configuration for this standalone PodClique.<br />Must not be set on a PodCliqueTemplateSpec whose Name appears in any<br />PodCliqueScalingGroupConfig.CliqueNames — PCSG-owned PodCliques draw their disruption<br />budget from the owning PCSG's RollingUpdate. |  |  |
 | `spec` _[PodCliqueSpec](#podcliquespec)_ | Specification of the desired behavior of a PodClique.<br />More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#spec-and-status |  |  |
 
 
@@ -833,6 +835,28 @@ _Appears in:_
 | `name` _string_ | Name of the referenced template. Resolved by first looking up<br />PodCliqueSetTemplateSpec.ResourceClaimTemplates; if no match is found,<br />the operator looks for a Kubernetes ResourceClaimTemplate object in the<br />target namespace. Internal templates shadow external ones with the same name. |  |  |
 | `namespace` _string_ | Namespace of the external ResourceClaimTemplate. When set, the name is<br />resolved as an external Kubernetes ResourceClaimTemplate in the given<br />namespace. When empty, defaults to the PCS namespace during resolution. |  |  |
 | `scope` _[ResourceSharingScope](#resourcesharingscope)_ | Scope determines the sharing granularity for the ResourceClaims created from<br />this template. |  | Enum: [AllReplicas PerReplica] <br /> |
+
+
+#### RollingUpdateConfiguration
+
+
+
+RollingUpdateConfiguration carries per-component knobs that bound disruption
+during a rolling update. It attaches to standalone PodCliqueTemplateSpec and
+to PodCliqueScalingGroupConfig — i.e. to each component that an update event
+can touch independently. No PCS-level RollingUpdateConfiguration is exposed
+in this iteration because PCS-replica concurrency during an update is fixed
+at one; a future iteration that lifts that limit may introduce one.
+
+
+
+_Appears in:_
+- [PodCliqueScalingGroupConfig](#podcliquescalinggroupconfig)
+- [PodCliqueTemplateSpec](#podcliquetemplatespec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `maxUnavailable` _integer_ | MaxUnavailable is the maximum number of pods (for a standalone PodClique)<br />or PodCliqueScalingGroup replicas (for a PCSG) that may be unavailable at<br />any moment during an update of this component.<br />Defaulting:<br />  - Coherent: defaults to the component's MinAvailable.<br />  - RollingRecreate: defaults to 1.<br />  - OnDelete: not defaulted; the orchestrator does not consume it.<br />Validation:<br />  - Coherent: rejected if MaxUnavailable is less than MinAvailable. Coherent's<br />    MVU sub-step takes down MinAvailable pods of every updated component at<br />    once; a budget below that floor makes the first sub-step impossible.<br />  - RollingRecreate: not enforced. RollingRecreate replaces pods one at a<br />    time and has no MVU floor.<br />  - OnDelete: not enforced; the orchestrator does not consume it. |  |  |
 
 
 #### SchedulerTopologyBinding
