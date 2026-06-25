@@ -521,7 +521,7 @@ func (v *pcsValidator) validatePCLQResourceClaimReferenceNames(cliqueTemplateSpe
 		return nil
 	}
 
-	pcsNameReplica := apicommon.ResourceNameReplica{Name: v.pcs.Name, Replica: int(max(0, v.pcs.Spec.Replicas-1))}
+	pcsNameReplica := apicommon.ResourceNameReplica{Name: v.pcs.Name, Replica: int(v.pcs.Spec.Replicas - 1)}
 
 	var ownerNames []string
 	for _, scalingGroupConfig := range v.pcs.Spec.Template.PodCliqueScalingGroupConfigs {
@@ -530,7 +530,7 @@ func (v *pcsValidator) validatePCLQResourceClaimReferenceNames(cliqueTemplateSpe
 		}
 		pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(pcsNameReplica, scalingGroupConfig.Name)
 		ownerNames = append(ownerNames, apicommon.GeneratePodCliqueName(
-			apicommon.ResourceNameReplica{Name: pcsgFQN, Replica: int(scalingGroupConfig.MaxAllowedReplicas())},
+			apicommon.ResourceNameReplica{Name: pcsgFQN, Replica: int(scalingGroupConfig.MaxAllowedReplicas() - 1)},
 			cliqueTemplateSpec.Name,
 		))
 	}
