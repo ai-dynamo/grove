@@ -103,7 +103,8 @@ func main() {
 
 	// Synchronize backend topologies for all existing ClusterTopologyBinding resources.
 	// This must be done before starting the controllers that may depend on the ClusterTopologyBinding resource.
-	if err = clustertopology.SynchronizeTopology(ctx, cl, logger, schedRegistry.AllTopologyAware()); err != nil {
+	// Uses a bounded exponential backoff so that transient API-server errors do not crash the operator.
+	if err = clustertopology.SynchronizeTopologyWithRetry(ctx, cl, logger, schedRegistry.AllTopologyAware(), clustertopology.DefaultSyncRetryBackoff); err != nil {
 		logger.Error(err, "failed to synchronize cluster topology")
 		handleErrorAndExit(err, cli.ExitErrSynchronizeTopology)
 	}

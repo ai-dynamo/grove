@@ -18,7 +18,12 @@ package clustertopology
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"net"
+	"syscall"
 	"testing"
+	"time"
 
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
@@ -35,6 +40,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -301,6 +307,168 @@ func createTestClusterTopology(name string, levels []grovecorev1alpha1.TopologyL
 			Levels: levels,
 		},
 	}
+}
+
+// transientListClient wraps a client.Client and returns failErr for the first failCount List calls,
+// then delegates all subsequent calls to the underlying client. Used to simulate transient API errors.
+type transientListClient struct {
+	client.Client
+	failCount int
+	callCount int
+	failErr   error
+}
+
+func (c *transientListClient) List(ctx context.Context, objList client.ObjectList, opts ...client.ListOption) error {
+	c.callCount++
+	if c.callCount <= c.failCount {
+		return c.failErr
+	}
+	return c.Client.List(ctx, objList, opts...)
+}
+
+// fastBackoff is a zero-duration backoff suitable for unit tests to avoid slowing them down.
+var fastBackoff = wait.Backoff{Duration: time.Millisecond, Factor: 1.0, Steps: 10}
+
+func TestSynchronizeTopologyWithRetry_SucceedsAfterTransientError(t *testing.T) {
+	ctx := context.Background()
+	ct := createTestClusterTopology(topologyName, []grovecorev1alpha1.TopologyLevel{
+		{Domain: grovecorev1alpha1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
+	})
+	base := testutils.CreateDefaultFakeClient([]client.Object{ct})
+	// Inject a transient 500 error for the first 2 List calls; the 3rd call succeeds.
+	cl := &transientListClient{
+		Client:    base,
+		failCount: 2,
+		failErr:   apierrors.NewInternalError(assert.AnError),
+	}
+
+	err := SynchronizeTopologyWithRetry(ctx, cl, logr.Discard(), newKaiBackends(base), fastBackoff)
+	require.NoError(t, err)
+	assert.Equal(t, 3, cl.callCount, "expected 2 transient failures then 1 success")
+
+	// Verify topology was still created correctly.
+	kaiTopology := &kaitopologyv1alpha1.Topology{}
+	require.NoError(t, base.Get(ctx, client.ObjectKey{Name: topologyName}, kaiTopology))
+	assert.Len(t, kaiTopology.Spec.Levels, 1)
+}
+
+func TestSynchronizeTopologyWithRetry_PermanentErrorNotRetried(t *testing.T) {
+	ctx := context.Background()
+	permErr := apierrors.NewForbidden(schema.GroupResource{Resource: "clustertopologybindings"}, "", assert.AnError)
+	ctListGVK := grovecorev1alpha1.SchemeGroupVersion.WithKind("ClusterTopologyBindingList")
+	cl := testutils.NewTestClientBuilder().
+		RecordErrorForObjectsMatchingLabels(testutils.ClientMethodList, client.ObjectKey{}, ctListGVK, nil, permErr).
+		Build()
+
+	callCount := 0
+	// Wrap the permanent-error client in a counter to verify it is only called once.
+	countingCl := &transientListClient{Client: cl, failCount: 100, failErr: permErr}
+
+	err := SynchronizeTopologyWithRetry(ctx, countingCl, logr.Discard(), newKaiBackends(cl), fastBackoff)
+	require.Error(t, err)
+	assert.True(t, apierrors.IsForbidden(err), "expected Forbidden error to propagate")
+	// The permanent error must not be retried: fn is called exactly once.
+	_ = callCount
+	assert.Equal(t, 1, countingCl.callCount, "permanent error should not be retried")
+}
+
+func TestSynchronizeTopologyWithRetry_ExhaustsRetriesOnPersistentTransientError(t *testing.T) {
+	ctx := context.Background()
+	transientErr := apierrors.NewServiceUnavailable("apiserver temporarily unavailable")
+	ctListGVK := grovecorev1alpha1.SchemeGroupVersion.WithKind("ClusterTopologyBindingList")
+	cl := testutils.NewTestClientBuilder().
+		RecordErrorForObjectsMatchingLabels(testutils.ClientMethodList, client.ObjectKey{}, ctListGVK, nil, transientErr).
+		Build()
+
+	shortBackoff := wait.Backoff{Duration: time.Millisecond, Factor: 1.0, Steps: 3}
+	err := SynchronizeTopologyWithRetry(ctx, cl, logr.Discard(), newKaiBackends(cl), shortBackoff)
+	require.Error(t, err, "should fail after exhausting retry budget")
+	assert.True(t, apierrors.IsServiceUnavailable(err))
+}
+
+// mockTimeoutError is a net.Error that reports Timeout() == true, mimicking a
+// transport-level dial timeout (e.g. API server rolling restart, network partition).
+type mockTimeoutError struct{}
+
+func (mockTimeoutError) Error() string   { return "i/o timeout" }
+func (mockTimeoutError) Timeout() bool   { return true }
+func (mockTimeoutError) Temporary() bool { return true }
+
+func TestIsTransientAPIError(t *testing.T) {
+	tests := []struct {
+		name      string
+		err       error
+		wantRetry bool
+	}{
+		{
+			name:      "apierrors.InternalError is transient",
+			err:       apierrors.NewInternalError(fmt.Errorf("internal")),
+			wantRetry: true,
+		},
+		{
+			name:      "apierrors.ServiceUnavailable is transient",
+			err:       apierrors.NewServiceUnavailable("unavailable"),
+			wantRetry: true,
+		},
+		{
+			name:      "apierrors.Forbidden is permanent",
+			err:       apierrors.NewForbidden(schema.GroupResource{}, "", fmt.Errorf("denied")),
+			wantRetry: false,
+		},
+		{
+			name:      "net.Error timeout is transient",
+			err:       mockTimeoutError{},
+			wantRetry: true,
+		},
+		{
+			name:      "io.EOF is transient",
+			err:       io.EOF,
+			wantRetry: true,
+		},
+		{
+			name:      "ECONNREFUSED is transient",
+			err:       syscall.ECONNREFUSED,
+			wantRetry: true,
+		},
+		{
+			name:      "wrapped net.Error timeout is transient",
+			err:       fmt.Errorf("wrapped: %w", mockTimeoutError{}),
+			wantRetry: true,
+		},
+		{
+			name:      "wrapped ECONNREFUSED is transient",
+			err:       fmt.Errorf("wrapped: %w", syscall.ECONNREFUSED),
+			wantRetry: true,
+		},
+		{
+			name:      "net.Error non-timeout is not transient",
+			err:       &net.OpError{Err: fmt.Errorf("some non-timeout net error")},
+			wantRetry: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.wantRetry, isTransientAPIError(tc.err))
+		})
+	}
+}
+
+func TestSynchronizeTopologyWithRetry_TransportErrorRetried(t *testing.T) {
+	ctx := context.Background()
+	ct := createTestClusterTopology(topologyName, []grovecorev1alpha1.TopologyLevel{
+		{Domain: grovecorev1alpha1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
+	})
+	base := testutils.CreateDefaultFakeClient([]client.Object{ct})
+	// Inject a transport-level timeout for the first 2 List calls; the 3rd succeeds.
+	cl := &transientListClient{
+		Client:    base,
+		failCount: 2,
+		failErr:   mockTimeoutError{},
+	}
+
+	err := SynchronizeTopologyWithRetry(ctx, cl, logr.Discard(), newKaiBackends(base), fastBackoff)
+	require.NoError(t, err)
+	assert.Equal(t, 3, cl.callCount, "expected 2 transient transport failures then 1 success")
 }
 
 func TestBuildSchedulerReferenceMap(t *testing.T) {
