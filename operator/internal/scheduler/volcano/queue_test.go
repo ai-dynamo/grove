@@ -20,6 +20,8 @@ import (
 	"context"
 	"testing"
 
+	schedulertest "github.com/ai-dynamo/grove/operator/test/utils/scheduler"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -93,19 +95,19 @@ func TestValidateQueueExistsAndIsOpen(t *testing.T) {
 	}
 
 	t.Run("existing open queue", func(t *testing.T) {
-		cl := newVolcanoClient(t, makeQueue("gpu-training", volcanov1beta1.QueueStateOpen))
+		cl := schedulertest.NewVolcanoClient(t, makeQueue("gpu-training", volcanov1beta1.QueueStateOpen))
 		require.NoError(t, validateQueueExistsAndIsOpen(context.Background(), cl, "gpu-training"))
 	})
 
 	t.Run("missing queue", func(t *testing.T) {
-		cl := newVolcanoClient(t)
+		cl := schedulertest.NewVolcanoClient(t)
 		err := validateQueueExistsAndIsOpen(context.Background(), cl, "gpu-training")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "does not exist")
 	})
 
 	t.Run("queue not open", func(t *testing.T) {
-		cl := newVolcanoClient(t, makeQueue("gpu-training", "Closed"))
+		cl := schedulertest.NewVolcanoClient(t, makeQueue("gpu-training", "Closed"))
 		err := validateQueueExistsAndIsOpen(context.Background(), cl, "gpu-training")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "is not Open")

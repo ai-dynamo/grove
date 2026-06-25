@@ -14,34 +14,36 @@
 // limitations under the License.
 // */
 
-package schedulertest
+package scheduler
 
 import (
 	"testing"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
-	kaitopologyv1alpha1 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/kai/v1alpha1"
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/stretchr/testify/require"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	volcanov1beta1 "volcano.sh/apis/pkg/apis/scheduling/v1beta1"
 )
 
-// NewKAIScheme returns an isolated scheme with the Grove and KAI types used by KAI scheduler tests.
-func NewKAIScheme(t *testing.T) *runtime.Scheme {
+// NewVolcanoScheme returns an isolated scheme with the Grove, Volcano, and CRD types used by Volcano scheduler tests.
+func NewVolcanoScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	scheme := runtime.NewScheme()
-	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
-	require.NoError(t, kaitopologyv1alpha1.AddToScheme(scheme))
+	require.NoError(t, groveschedulerv1alpha1.AddToScheme(scheme))
+	require.NoError(t, volcanov1beta1.AddToScheme(scheme))
+	require.NoError(t, apiextensionsv1.AddToScheme(scheme))
 	return scheme
 }
 
-// NewKAIClient returns a fake client using NewKAIScheme.
-func NewKAIClient(t *testing.T, objects ...client.Object) client.Client {
+// NewVolcanoClient returns a fake client using NewVolcanoScheme.
+func NewVolcanoClient(t *testing.T, objects ...client.Object) client.Client {
 	t.Helper()
 	return testutils.NewTestClientBuilder().
-		WithScheme(NewKAIScheme(t)).
+		WithScheme(NewVolcanoScheme(t)).
 		WithObjects(objects...).
 		Build()
 }

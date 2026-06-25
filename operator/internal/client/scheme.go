@@ -30,6 +30,9 @@ import (
 // Scheme is the kubernetes runtime scheme
 var Scheme = runtime.NewScheme()
 
+// init adds Grove and Kubernetes API groups to Scheme via their AddToScheme functions.
+// Scheduler-specific API groups (KAI, Volcano, etc.) are added by each backend's
+// Init into the scheme passed to it and should not be added here.
 func init() {
 	localSchemeBuilder := runtime.NewSchemeBuilder(
 		configv1alpha1.AddToScheme,
