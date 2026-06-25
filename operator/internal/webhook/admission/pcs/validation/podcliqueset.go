@@ -558,6 +558,15 @@ func validatePodResourceClaimReferenceNames(ownerName string, maxAllowedReplicas
 		case grovecorev1alpha1.ResourceSharingScopePerReplica:
 			rcName = resourceclaim.RCName(ownerName, &ref, &maxReplicaIndex)
 		default:
+			allErrs = append(allErrs, field.Invalid(
+				fldPath.Index(i).Child("scope"),
+				ref.Scope,
+				fmt.Sprintf(
+					"pod resource claim reference scope %q is invalid. Pod resource claim scope must be one of AllReplicas, PerReplica",
+					ref.Scope,
+				),
+			))
+
 			continue
 		}
 
@@ -1077,13 +1086,13 @@ func (v *pcsValidator) validatePodCliqueUpdate(oldCliques []*grovecorev1alpha1.P
 // Pod names that do not belong to a PCSG follow the format:
 // <pcs-name>-<pcs-index>-<pclq-name>-<pod-index>-<random>
 func validatePodNameConstraints(pcsName string, pcsReplicas int32, pcsgName string, pcsgReplicas int32, pclqName string, pclqReplicas int32) error {
-	pcsNameReplica := apicommon.ResourceNameReplica{Name: pcsName, Replica: int(pcsReplicas - 1)}
+	parentNameReplica := apicommon.ResourceNameReplica{Name: pcsName, Replica: int(pcsReplicas - 1)}
 	if pcsgName != "" {
-		pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(pcsNameReplica, pcsgName)
-		pcsNameReplica = apicommon.ResourceNameReplica{Name: pcsgFQN, Replica: int(pcsgReplicas - 1)}
+		pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(parentNameReplica, pcsgName)
+		parentNameReplica = apicommon.ResourceNameReplica{Name: pcsgFQN, Replica: int(pcsgReplicas - 1)}
 	}
 
-	pclqFQN := apicommon.GeneratePodCliqueName(pcsNameReplica, pclqName)
+	pclqFQN := apicommon.GeneratePodCliqueName(parentNameReplica, pclqName)
 	podIndex := int(pclqReplicas - 1)
 	podHostname := apicommon.GeneratePodHostname(pclqFQN, podIndex)
 	if validationErrs := k8svalidation.IsDNS1123Label(podHostname); len(validationErrs) > 0 {
