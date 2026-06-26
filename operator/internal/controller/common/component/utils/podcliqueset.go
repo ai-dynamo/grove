@@ -57,6 +57,16 @@ func GetStandalonePCLQFQNSet(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaInde
 	return fqns
 }
 
+// GetPCSGOwnedCliqueNames returns the set of all PodClique names that belong to
+// any PodCliqueScalingGroupConfig in the PCS template.
+func GetPCSGOwnedCliqueNames(pcs *grovecorev1alpha1.PodCliqueSet) sets.Set[string] {
+	names := sets.New[string]()
+	for _, cfg := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		names.Insert(cfg.CliqueNames...)
+	}
+	return names
+}
+
 // GetStandalonePCLQFQNs returns the fully-qualified names of all standalone PodCliques
 // for a given PCS replica as a slice. See GetStandalonePCLQFQNSet for the definition of standalone.
 func GetStandalonePCLQFQNs(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int) []string {

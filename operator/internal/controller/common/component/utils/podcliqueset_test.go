@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -629,6 +630,79 @@ func TestCountStandalonePCLQs(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.expected, CountStandalonePCLQs(tc.pcs))
+		})
+	}
+}
+
+func TestGetPCSGOwnedCliqueNames(t *testing.T) {
+	tests := []struct {
+		name     string
+		pcs      *grovecorev1alpha1.PodCliqueSet
+		expected sets.Set[string]
+	}{
+		{
+			name: "no PCSG configs returns empty set",
+			pcs: &grovecorev1alpha1.PodCliqueSet{
+				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+							{Name: "worker"},
+						},
+					},
+				},
+			},
+			expected: sets.New[string](),
+		},
+		{
+			name: "single PCSG with two member cliques",
+			pcs: &grovecorev1alpha1.PodCliqueSet{
+				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+							{Name: "router"},
+							{Name: "decode-leader"},
+							{Name: "decode-worker"},
+						},
+						PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+							{Name: "decode", CliqueNames: []string{"decode-leader", "decode-worker"}},
+						},
+					},
+				},
+			},
+			expected: sets.New("decode-leader", "decode-worker"),
+		},
+		{
+			name: "multiple PCSGs each contribute their member cliques",
+			pcs: &grovecorev1alpha1.PodCliqueSet{
+				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+						PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+							{Name: "prefill", CliqueNames: []string{"pleader", "pworker"}},
+							{Name: "decode", CliqueNames: []string{"dleader", "dworker"}},
+						},
+					},
+				},
+			},
+			expected: sets.New("pleader", "pworker", "dleader", "dworker"),
+		},
+		{
+			name: "PCSG with empty CliqueNames contributes nothing",
+			pcs: &grovecorev1alpha1.PodCliqueSet{
+				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+						PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+							{Name: "empty", CliqueNames: nil},
+						},
+					},
+				},
+			},
+			expected: sets.New[string](),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, GetPCSGOwnedCliqueNames(tc.pcs))
 		})
 	}
 }
