@@ -24,6 +24,7 @@ import (
 	"os"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
 	"github.com/ai-dynamo/grove/operator/e2e/measurement"
@@ -63,6 +64,15 @@ func TestMain(m *testing.M) {
 	}
 
 	code := m.Run()
+
+	// Perform a final cascading cleanup before tearing down the cluster to prevent
+	// resource leakage when the cluster is reused for subsequent tests.
+	// We use a 5-minute timeout as a safe upper bound; internal operations have their own stricter timeouts.
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := sharedCluster.CleanupWorkloads(cleanupCtx, true); err != nil {
+		Logger.Errorf("Final cascading cleanup failed: %v", err)
+	}
 
 	sharedCluster.Teardown()
 
