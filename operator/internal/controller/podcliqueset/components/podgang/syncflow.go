@@ -608,7 +608,7 @@ func (r _resource) createOrUpdatePodGang(ctx context.Context, sc *syncContext, p
 	}
 	pg := emptyPodGang(pgObjectKey)
 	sc.logger.Info("CreateOrPatch PodGang", "objectKey", pgObjectKey)
-	_, err := controllerutil.CreateOrPatch(ctx, r.client, pg, func() error {
+	opResult, err := controllerutil.CreateOrPatch(ctx, r.client, pg, func() error {
 		return r.buildResource(sc.pcs, pgInfo, pg)
 	})
 	if err != nil {
@@ -628,7 +628,7 @@ func (r _resource) createOrUpdatePodGang(ctx context.Context, sc *syncContext, p
 		}
 	}
 
-	r.eventRecorder.Eventf(sc.pcs, corev1.EventTypeNormal, constants.ReasonPodGangCreateOrUpdateSuccessful, "Created/Updated PodGang %v", pgObjectKey)
+	component.RecordCreateOrPatchSuccessEvent(r.eventRecorder, sc.pcs, opResult, constants.ReasonPodGangCreateOrUpdateSuccessful, "Created/Updated PodGang %v", pgObjectKey)
 	sc.logger.Info("Triggered CreateOrPatch of PodGang", "objectKey", pgObjectKey)
 	return nil
 }
