@@ -18,6 +18,7 @@ package podclique
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -26,7 +27,10 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
@@ -58,6 +62,39 @@ func TestNew(t *testing.T) {
 	assert.Equal(t, client, resource.client)
 	assert.Equal(t, scheme, resource.scheme)
 	assert.Equal(t, eventRecorder, resource.eventRecorder)
+}
+
+func TestMarkRollingUpdateEndReturnsRequeueAfterPatch(t *testing.T) {
+	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pcsg", Namespace: "test-ns"},
+		Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+			UpdateProgress: &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+				UpdateStartedAt: metav1.Now(),
+				ReadyReplicaIndicesSelectedToUpdate: &grovecorev1alpha1.PodCliqueScalingGroupReplicaUpdateProgress{
+					Current: 1,
+				},
+			},
+		},
+	}
+	cl := testutils.NewTestClientBuilder().
+		WithObjects(pcsg).
+		WithStatusSubresource(&grovecorev1alpha1.PodCliqueScalingGroup{}).
+		Build()
+	r := _resource{client: cl}
+
+	err := r.markRollingUpdateEnd(context.Background(), logr.Discard(), pcsg)
+
+	require.Error(t, err)
+	var groveError *groveerr.GroveError
+	require.True(t, errors.As(err, &groveError))
+	assert.Equal(t, groveerr.ErrCodeContinueReconcileAndRequeue, groveError.Code)
+	assert.Equal(t, component.OperationSync, groveError.Operation)
+
+	var updated grovecorev1alpha1.PodCliqueScalingGroup
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(pcsg), &updated))
+	require.NotNil(t, updated.Status.UpdateProgress)
+	assert.NotNil(t, updated.Status.UpdateProgress.UpdateEndedAt)
+	assert.Nil(t, updated.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate)
 }
 
 // TestGetPCSGTemplateNumPods tests calculating the number of pods in a PCSG template

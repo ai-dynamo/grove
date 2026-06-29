@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
@@ -669,16 +670,17 @@ func TestComputePCSUpdateProgressCounts(t *testing.T) {
 	oldHash := "gen-hash-old"
 	pcsUID := uuid.NewUUID()
 
-	standalonePCLQ := func(replicaIndex int32, hash string) *grovecorev1alpha1.PodClique {
-		return testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, replicaIndex).
-			WithOptions(testutils.WithPCLQCurrentPCSGenerationHash(hash)).Build()
+	standalonePCLQ := func(t *testing.T, pcs *grovecorev1alpha1.PodCliqueSet, replicaIndex int32, hash string) *grovecorev1alpha1.PodClique {
+		pclq := testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, replicaIndex).Build()
+		return markStandalonePCLQConverged(t, pcs, pclq, hash)
 	}
 	standalonePCLQNoHash := func(replicaIndex int32) *grovecorev1alpha1.PodClique {
 		return testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, replicaIndex).Build()
 	}
-	standaloneTerminatingPCLQ := func(replicaIndex int32, hash string) *grovecorev1alpha1.PodClique {
-		return testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, replicaIndex).
-			WithOptions(testutils.WithPCLQCurrentPCSGenerationHash(hash), testutils.WithPCLQTerminating()).Build()
+	standaloneTerminatingPCLQ := func(t *testing.T, pcs *grovecorev1alpha1.PodCliqueSet, replicaIndex int32, hash string) *grovecorev1alpha1.PodClique {
+		pclq := testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, replicaIndex).
+			WithOptions(testutils.WithPCLQTerminating()).Build()
+		return markStandalonePCLQConverged(t, pcs, pclq, hash)
 	}
 	// makePCSG builds a PCSG whose CurrentPodCliqueSetGenerationHash equals `hash` (i.e. updated).
 	makePCSG := func(replicaIndex int, hash string) *grovecorev1alpha1.PodCliqueScalingGroup {
@@ -696,7 +698,7 @@ func TestComputePCSUpdateProgressCounts(t *testing.T) {
 	testCases := []struct {
 		name             string
 		setupPCS         func() *grovecorev1alpha1.PodCliqueSet
-		childResources   func() []client.Object
+		childResources   func(*testing.T, *grovecorev1alpha1.PodCliqueSet) []client.Object
 		wantUpdatedPCLQs int32
 		wantTotalPCLQs   int32
 		wantUpdatedPCSGs int32
@@ -711,10 +713,10 @@ func TestComputePCSUpdateProgressCounts(t *testing.T) {
 					WithScalingGroup("compute", []string{"frontend"}).
 					WithPodCliqueSetGenerationHash(&pcsHash).Build()
 			},
-			childResources: func() []client.Object {
+			childResources: func(t *testing.T, pcs *grovecorev1alpha1.PodCliqueSet) []client.Object {
 				return []client.Object{
 					makePCSG(0, pcsHash), makePCSG(1, pcsHash),
-					standalonePCLQ(0, pcsHash), standalonePCLQ(1, pcsHash),
+					standalonePCLQ(t, pcs, 0, pcsHash), standalonePCLQ(t, pcs, 1, pcsHash),
 				}
 			},
 			wantUpdatedPCLQs: 2, wantTotalPCLQs: 2,
@@ -729,12 +731,12 @@ func TestComputePCSUpdateProgressCounts(t *testing.T) {
 					WithScalingGroup("compute", []string{"frontend"}).
 					WithPodCliqueSetGenerationHash(&pcsHash).Build()
 			},
-			childResources: func() []client.Object {
+			childResources: func(t *testing.T, pcs *grovecorev1alpha1.PodCliqueSet) []client.Object {
 				return []client.Object{
-					makePCSG(0, pcsHash),       // updated
-					makePCSGNoHash(1),          // not updated — no current hash
-					standalonePCLQ(0, pcsHash), // updated
-					standalonePCLQ(1, oldHash), // not updated — old hash
+					makePCSG(0, pcsHash),               // updated
+					makePCSGNoHash(1),                  // not updated — no current hash
+					standalonePCLQ(t, pcs, 0, pcsHash), // updated
+					standalonePCLQ(t, pcs, 1, oldHash), // not updated — old hash
 				}
 			},
 			wantUpdatedPCLQs: 1, wantTotalPCLQs: 2,
@@ -748,10 +750,10 @@ func TestComputePCSUpdateProgressCounts(t *testing.T) {
 					WithStandaloneClique("worker").
 					WithPodCliqueSetGenerationHash(&pcsHash).Build()
 			},
-			childResources: func() []client.Object {
+			childResources: func(t *testing.T, pcs *grovecorev1alpha1.PodCliqueSet) []client.Object {
 				return []client.Object{
-					standalonePCLQ(0, pcsHash),            // counted
-					standaloneTerminatingPCLQ(1, pcsHash), // skipped — terminating
+					standalonePCLQ(t, pcs, 0, pcsHash),            // counted
+					standaloneTerminatingPCLQ(t, pcs, 1, pcsHash), // skipped — terminating
 				}
 			},
 			wantUpdatedPCLQs: 1, wantTotalPCLQs: 2,
@@ -765,7 +767,7 @@ func TestComputePCSUpdateProgressCounts(t *testing.T) {
 					WithStandaloneClique("worker").
 					WithPodCliqueSetGenerationHash(&pcsHash).Build()
 			},
-			childResources: func() []client.Object {
+			childResources: func(_ *testing.T, _ *grovecorev1alpha1.PodCliqueSet) []client.Object {
 				return []client.Object{standalonePCLQNoHash(0)}
 			},
 			wantUpdatedPCLQs: 0, wantTotalPCLQs: 1,
@@ -776,7 +778,7 @@ func TestComputePCSUpdateProgressCounts(t *testing.T) {
 	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
 			pcs := tt.setupPCS()
-			objects := append([]client.Object{pcs}, tt.childResources()...)
+			objects := append([]client.Object{pcs}, tt.childResources(t, pcs)...)
 			cl := testutils.CreateDefaultFakeClient(objects)
 			r := &Reconciler{client: cl}
 
@@ -814,10 +816,8 @@ func TestPCSMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 				WithOptions(testutils.WithPCSGCurrentPCSGenerationHash(pcsHash)).Build(),
 			testutils.NewPodCliqueScalingGroupBuilder(pcsgName(1), testNamespace, testPCSName, 1).
 				WithOptions(testutils.WithPCSGCurrentPCSGenerationHash(pcsHash)).Build(),
-			testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).
-				WithOptions(testutils.WithPCLQCurrentPCSGenerationHash(pcsHash)).Build(),
-			testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 1).
-				WithOptions(testutils.WithPCLQCurrentPCSGenerationHash(pcsHash)).Build(),
+			markStandalonePCLQConverged(t, pcs, testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).Build(), pcsHash),
+			markStandalonePCLQConverged(t, pcs, testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 1).Build(), pcsHash),
 		}
 		return pcs, children
 	}
@@ -845,42 +845,67 @@ func TestPCSMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 func TestCountUpdatedPCLQs(t *testing.T) {
 	hash := "h"
 	otherHash := "old"
-	matching := grovecorev1alpha1.PodClique{}
-	matching.Name = "matching"
-	matching.Status.CurrentPodCliqueSetGenerationHash = &hash
+	pcsUID := uuid.NewUUID()
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+		WithStandaloneClique("worker").
+		WithPodCliqueSetGenerationHash(&hash).
+		Build()
 
-	nonMatching := grovecorev1alpha1.PodClique{}
-	nonMatching.Name = "non-matching"
-	nonMatching.Status.CurrentPodCliqueSetGenerationHash = &otherHash
+	matching := *markStandalonePCLQConverged(t, pcs, testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).Build(), hash)
+	nonMatching := *markStandalonePCLQConverged(t, pcs, testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).Build(), otherHash)
 
-	noHash := grovecorev1alpha1.PodClique{}
-	noHash.Name = "no-hash"
+	noHash := *testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).Build()
+	staleLabel := *matching.DeepCopy()
+	staleLabel.Labels[apicommon.LabelPodTemplateHash] = "old-template"
+	staleCurrentTemplate := *matching.DeepCopy()
+	staleCurrentTemplate.Status.CurrentPodTemplateHash = ptr.To("old-template")
+	notReady := *matching.DeepCopy()
+	notReady.Status.ReadyReplicas = 0
+	notUpdated := *matching.DeepCopy()
+	notUpdated.Status.UpdatedReplicas = 0
 
-	terminatingMatching := grovecorev1alpha1.PodClique{}
-	terminatingMatching.Name = "terminating"
-	terminatingMatching.Status.CurrentPodCliqueSetGenerationHash = &hash
+	terminatingMatching := *matching.DeepCopy()
 	now := metav1.NewTime(time.Now())
 	terminatingMatching.DeletionTimestamp = &now
 	terminatingMatching.Finalizers = []string{"f"}
 
 	tests := []struct {
 		name string
-		hash *string
+		pcs  *grovecorev1alpha1.PodCliqueSet
 		in   []grovecorev1alpha1.PodClique
 		want int32
 	}{
-		{"nil hash → 0 (early return guards against unintialized PCS)", nil, []grovecorev1alpha1.PodClique{matching}, 0},
-		{"empty input → 0", &hash, nil, 0},
-		{"all matching", &hash, []grovecorev1alpha1.PodClique{matching, matching}, 2},
-		{"none matching", &hash, []grovecorev1alpha1.PodClique{nonMatching, noHash}, 0},
-		{"mixed", &hash, []grovecorev1alpha1.PodClique{matching, nonMatching, matching, noHash}, 2},
-		{"terminating excluded even if hash matches", &hash, []grovecorev1alpha1.PodClique{matching, terminatingMatching}, 1},
+		{"nil hash -> 0 (early return guards against uninitialized PCS)", testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).WithStandaloneClique("worker").Build(), []grovecorev1alpha1.PodClique{matching}, 0},
+		{"empty input -> 0", pcs, nil, 0},
+		{"all matching", pcs, []grovecorev1alpha1.PodClique{matching, matching}, 2},
+		{"none matching", pcs, []grovecorev1alpha1.PodClique{nonMatching, noHash}, 0},
+		{"stale label hash is not counted", pcs, []grovecorev1alpha1.PodClique{staleLabel}, 0},
+		{"stale current template hash is not counted", pcs, []grovecorev1alpha1.PodClique{staleCurrentTemplate}, 0},
+		{"not ready is not counted", pcs, []grovecorev1alpha1.PodClique{notReady}, 0},
+		{"not updated is not counted", pcs, []grovecorev1alpha1.PodClique{notUpdated}, 0},
+		{"mixed", pcs, []grovecorev1alpha1.PodClique{matching, nonMatching, matching, noHash}, 2},
+		{"terminating excluded even if hash matches", pcs, []grovecorev1alpha1.PodClique{matching, terminatingMatching}, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, countUpdatedPCLQs(tt.hash, tt.in))
+			assert.Equal(t, tt.want, countUpdatedPCLQs(tt.pcs, tt.in))
 		})
 	}
+}
+
+func markStandalonePCLQConverged(t testing.TB, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, generationHash string) *grovecorev1alpha1.PodClique {
+	t.Helper()
+	expectedTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
+	require.NoError(t, err)
+	if pclq.Labels == nil {
+		pclq.Labels = map[string]string{}
+	}
+	pclq.Labels[apicommon.LabelPodTemplateHash] = expectedTemplateHash
+	pclq.Status.CurrentPodTemplateHash = ptr.To(expectedTemplateHash)
+	pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(generationHash)
+	pclq.Status.ReadyReplicas = *pclq.Spec.MinAvailable
+	pclq.Status.UpdatedReplicas = *pclq.Spec.MinAvailable
+	return pclq
 }
 
 func TestCountUpdatedPCSGs(t *testing.T) {

@@ -23,6 +23,7 @@ import (
 	"slices"
 	"strconv"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/clustertopology"
@@ -158,10 +159,10 @@ func (r *Reconciler) computeAvailableAndUpdatedReplicas(ctx context.Context, log
 
 		stats.totalPCLQs += int32(expectedPCLQCount)
 		stats.totalPCSGs += int32(expectedPCSGCount)
-		stats.updatedPCLQs += countUpdatedPCLQs(pcs.Status.CurrentGenerationHash, replicaStandalonePCLQs)
+		stats.updatedPCLQs += countUpdatedPCLQs(pcs, replicaStandalonePCLQs)
 		stats.updatedPCSGs += countUpdatedPCSGs(pcs.Status.CurrentGenerationHash, replicaPCSGs)
 
-		isReplicaAvailable, isReplicaUpdated := r.computeReplicaStatus(pcs.Status.CurrentGenerationHash, replicaPCSGs,
+		isReplicaAvailable, isReplicaUpdated := r.computeReplicaStatus(pcs, replicaPCSGs,
 			replicaStandalonePCLQs, expectedPCSGCount, expectedPCLQCount)
 		if isReplicaAvailable {
 			stats.availableReplicas++
@@ -178,9 +179,9 @@ func (r *Reconciler) computeAvailableAndUpdatedReplicas(ctx context.Context, log
 	return stats, nil
 }
 
-// countUpdatedPCLQs counts non-terminating PCLQs whose generation hash matches the PCS hash.
-func countUpdatedPCLQs(pcsGenerationHash *string, pclqs []grovecorev1alpha1.PodClique) int32 {
-	if pcsGenerationHash == nil {
+// countUpdatedPCLQs counts non-terminating standalone PCLQs that have fully converged to the PCS hash.
+func countUpdatedPCLQs(pcs *grovecorev1alpha1.PodCliqueSet, pclqs []grovecorev1alpha1.PodClique) int32 {
+	if pcs.Status.CurrentGenerationHash == nil {
 		return 0
 	}
 	var n int32
@@ -189,8 +190,7 @@ func countUpdatedPCLQs(pcsGenerationHash *string, pclqs []grovecorev1alpha1.PodC
 		if k8sutils.IsResourceTerminating(pclq.ObjectMeta) {
 			continue
 		}
-		if pclq.Status.CurrentPodCliqueSetGenerationHash != nil &&
-			*pclq.Status.CurrentPodCliqueSetGenerationHash == *pcsGenerationHash {
+		if isStandalonePCLQUpdated(pcs, pclq) {
 			n++
 		}
 	}
@@ -216,14 +216,14 @@ func countUpdatedPCSGs(pcsGenerationHash *string, pcsgs []grovecorev1alpha1.PodC
 }
 
 // computeReplicaStatus determines if a replica is available and updated based on its components.
-func (r *Reconciler) computeReplicaStatus(pcsGenerationHash *string, replicaPCSGs []grovecorev1alpha1.PodCliqueScalingGroup, standalonePCLQs []grovecorev1alpha1.PodClique, expectedPCSGs int, expectedStandalonePCLQs int) (bool, bool) {
-	pclqsAvailable, pclqsUpdated := r.computePCLQsStatus(pcsGenerationHash, expectedStandalonePCLQs, standalonePCLQs)
-	pcsgsAvailable, pcsgsUpdated := r.computePCSGsStatus(pcsGenerationHash, expectedPCSGs, replicaPCSGs)
+func (r *Reconciler) computeReplicaStatus(pcs *grovecorev1alpha1.PodCliqueSet, replicaPCSGs []grovecorev1alpha1.PodCliqueScalingGroup, standalonePCLQs []grovecorev1alpha1.PodClique, expectedPCSGs int, expectedStandalonePCLQs int) (bool, bool) {
+	pclqsAvailable, pclqsUpdated := r.computePCLQsStatus(pcs, expectedStandalonePCLQs, standalonePCLQs)
+	pcsgsAvailable, pcsgsUpdated := r.computePCSGsStatus(pcs.Status.CurrentGenerationHash, expectedPCSGs, replicaPCSGs)
 	return pclqsAvailable && pcsgsAvailable, pclqsUpdated && pcsgsUpdated
 }
 
 // computePCLQsStatus checks if standalone PodCliques are available and updated.
-func (r *Reconciler) computePCLQsStatus(pcsGenerationHash *string, expectedStandalonePCLQs int, existingPCLQs []grovecorev1alpha1.PodClique) (isAvailable, isUpdated bool) {
+func (r *Reconciler) computePCLQsStatus(pcs *grovecorev1alpha1.PodCliqueSet, expectedStandalonePCLQs int, existingPCLQs []grovecorev1alpha1.PodClique) (isAvailable, isUpdated bool) {
 	nonTerminatedPCLQs := lo.Filter(existingPCLQs, func(pclq grovecorev1alpha1.PodClique, _ int) bool {
 		return !k8sutils.IsResourceTerminating(pclq.ObjectMeta)
 	})
@@ -234,13 +234,28 @@ func (r *Reconciler) computePCLQsStatus(pcsGenerationHash *string, expectedStand
 		})
 
 	isUpdated = isAvailable && lo.EveryBy(nonTerminatedPCLQs, func(pclq grovecorev1alpha1.PodClique) bool {
-		return pcsGenerationHash != nil &&
-			pclq.Status.CurrentPodCliqueSetGenerationHash != nil &&
-			*pclq.Status.CurrentPodCliqueSetGenerationHash == *pcsGenerationHash &&
-			pclq.Status.UpdatedReplicas >= *pclq.Spec.MinAvailable
+		return isStandalonePCLQUpdated(pcs, &pclq)
 	})
 
 	return
+}
+
+// isStandalonePCLQUpdated checks if a standalone PodClique is fully updated to the expected pod template and PodCliqueSet generation hashes.
+func isStandalonePCLQUpdated(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) bool {
+	if pcs.Status.CurrentGenerationHash == nil || pclq.Spec.MinAvailable == nil {
+		return false
+	}
+	expectedPodTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
+	if err != nil || expectedPodTemplateHash == "" {
+		return false
+	}
+	return pclq.Labels[apicommon.LabelPodTemplateHash] == expectedPodTemplateHash &&
+		pclq.Status.CurrentPodTemplateHash != nil &&
+		*pclq.Status.CurrentPodTemplateHash == expectedPodTemplateHash &&
+		pclq.Status.CurrentPodCliqueSetGenerationHash != nil &&
+		*pclq.Status.CurrentPodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash &&
+		pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable &&
+		pclq.Status.UpdatedReplicas >= *pclq.Spec.MinAvailable
 }
 
 // computePCSGsStatus checks if PodCliqueScalingGroups are available and updated.
