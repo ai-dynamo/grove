@@ -59,11 +59,11 @@ func GetExistingPodGangs(ctx context.Context, cl client.Client, pcsObjectMeta me
 	return podGangs.Items, nil
 }
 
-// ArePodGangsAvailable returns true when every named PodGang exists in the given namespace
-// and reports PodGangConditionTypeAvailable. Returns false (with a nil error) if any PodGang
-// is not found or has not yet reached Available. Returns an error only on unexpected API
+// ArePodGangsReady returns true when every named PodGang exists in the given namespace
+// and reports PodGangConditionTypeReady=True. Returns false (with a nil error) if any PodGang
+// is not found or has not yet reached Ready. Returns an error only on unexpected API
 // failures (anything other than NotFound).
-func ArePodGangsAvailable(ctx context.Context, cl client.Client, namespace string, names []string) (bool, error) {
+func ArePodGangsReady(ctx context.Context, cl client.Client, namespace string, names []string) (bool, error) {
 	for _, name := range names {
 		pg, err := GetPodGang(ctx, cl, name, namespace)
 		if err != nil {
@@ -72,7 +72,7 @@ func ArePodGangsAvailable(ctx context.Context, cl client.Client, namespace strin
 			}
 			return false, err
 		}
-		if !k8sutils.IsConditionTrue(pg.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeAvailable)) {
+		if !k8sutils.IsConditionTrue(pg.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeReady)) {
 			return false, nil
 		}
 	}

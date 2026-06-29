@@ -574,7 +574,7 @@ Steps and sub-steps:
 
 Before advancing from sub-step `N.k` to sub-step `N.(k+1)`, or to the next step, all three predicates below must hold. The orchestrator evaluates them on every reconcile while the update is in flight; failure of any predicate stalls advancement and surfaces the reason on `Status.UpdateProgress.CurrentlyUpdating[].ErrorMessage`.
 
-1. **PodGangs created in sub-step `N.k` are `Ready=True`.** A sticky condition driven by `MinReplicas` count and readiness probes (see [PodGang.MinReplicas lifecycle and conditions](#podgangminreplicas-lifecycle-and-conditions)). Sub-steps that only subsume standalone PCLQ pods into a previously-created MPG do not create a new PodGang; this predicate has nothing to check in that case.
+1. **PodGangs created in sub-step `N.k` are `Ready=True`.** A live condition driven by readiness probes of the constituent PodCliques (see [PodGang.MinReplicas lifecycle and conditions](#podgangminreplicas-lifecycle-and-conditions)). Sub-steps that only subsume standalone PCLQ pods into a previously-created MPG do not create a new PodGang; this predicate has nothing to check in that case.
 
 2. **Subsumed-pod readiness (standalone PCLQs only).** Standalone PCLQ pods are the only kind that get subsumed into a previously-created MPG; PCSG replicas always get their own dedicated TPG and so do not subsume into anything. When sub-step `N.k` subsumes standalone PCLQ pods into an existing MPG, the count of `Ready` pods of that PCLQ bound to that MPG must equal or exceed the cumulative pod count the sub-step targeted for it. This ensures the just-added pods are actually serving before the next sub-step takes more pods down.
 

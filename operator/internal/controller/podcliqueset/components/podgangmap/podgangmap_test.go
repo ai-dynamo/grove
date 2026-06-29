@@ -388,10 +388,10 @@ func TestComputeCoherentUpdateEntries_SubsequentReconcile(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "my-pcs-0-500", Namespace: "default"},
 		Status: groveschedulerv1alpha1.PodGangStatus{
 			Conditions: []metav1.Condition{{
-				Type:               string(groveschedulerv1alpha1.PodGangConditionTypeAvailable),
+				Type:               string(groveschedulerv1alpha1.PodGangConditionTypeReady),
 				Status:             metav1.ConditionTrue,
 				LastTransitionTime: metav1.Now(),
-				Reason:             groveschedulerv1alpha1.ConditionReasonPodGangAvailable,
+				Reason:             groveschedulerv1alpha1.ConditionReasonPodGangReady,
 			}},
 		},
 	}
@@ -427,7 +427,7 @@ func TestComputeCoherentUpdateEntries_SubsequentReconcile(t *testing.T) {
 
 // TestComputeCoherentUpdateEntries_GateBlocksAdvancementWhenPriorMPGNotAvailable verifies that
 // canAdvanceMVUIteration prevents minting another MVU iteration when the prior new-hash MPG's
-// PodGang resource has not yet reached PodGangConditionTypeAvailable. The expected behaviour is
+// PodGang resource has not yet reached PodGangConditionTypeReady. The expected behaviour is
 // that computeCoherentUpdateEntries returns the existing PGM contents (oldEntries +
 // existingNewEntries) unchanged for this reconcile, deferring the next iteration's mint to a
 // later reconcile when the prior PodGang has stabilised.
@@ -478,7 +478,7 @@ func TestComputeCoherentUpdateEntries_GateBlocksAdvancementWhenPriorMPGNotAvaila
 		ObjectMeta: metav1.ObjectMeta{Name: "my-pcs-0-500", Namespace: "default"},
 		Status: groveschedulerv1alpha1.PodGangStatus{
 			Conditions: []metav1.Condition{{
-				Type:               string(groveschedulerv1alpha1.PodGangConditionTypeAvailable),
+				Type:               string(groveschedulerv1alpha1.PodGangConditionTypeReady),
 				Status:             metav1.ConditionFalse,
 				LastTransitionTime: metav1.Now(),
 				Reason:             "PodGangNotAvailable",

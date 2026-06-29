@@ -373,7 +373,7 @@ func TestCheckAndAdvanceCoherentUpdate(t *testing.T) {
 		if available {
 			pg.Status.Conditions = []metav1.Condition{
 				{
-					Type:   string(groveschedulerv1alpha1.PodGangConditionTypeAvailable),
+					Type:   string(groveschedulerv1alpha1.PodGangConditionTypeReady),
 					Status: metav1.ConditionTrue,
 				},
 			}

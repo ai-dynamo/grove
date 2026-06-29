@@ -217,14 +217,14 @@ func (r _resource) computeCoherentUpdateEntries(ctx context.Context, pcs *grovec
 
 // canAdvanceMVUIteration reports whether the coherent-update flow may emit the next MVU
 // iteration's new-hash entry. The intent is bounded disruption: each prior iteration's
-// PodGangs must reach PodGangConditionTypeAvailable before another iteration is minted.
+// PodGangs must reach PodGangConditionTypeReady before another iteration is minted.
 // Without this gate, G0 (PodGangMap component) would emit a new iteration on every reconcile
 // while G1 (orchestrator) is still waiting on prior ones, producing multiple in-flight MPGs
 // concurrently and breaking MVU's bounded-disruption guarantee.
 //
 // A single MVU iteration may emit multiple entries at once (computeTailPodGangs drains all
 // remaining PCSG indices into Tail-PGs in one call), so the gate verifies the whole prior
-// batch via componentutils.ArePodGangsAvailable rather than only the highest-indexed entry.
+// batch via componentutils.ArePodGangsReady rather than only the highest-indexed entry.
 //
 // During a coherent update only the coherent flow mints PGM entries, so every entry in
 // existingNewEntries is one this update emitted; the steady-state PGM follower does not run
@@ -234,7 +234,7 @@ func (r _resource) canAdvanceMVUIteration(ctx context.Context, pcs *grovecorev1a
 	for _, e := range existingNewEntries {
 		names = append(names, e.Name)
 	}
-	return componentutils.ArePodGangsAvailable(ctx, r.client, pcs.Namespace, names)
+	return componentutils.ArePodGangsReady(ctx, r.client, pcs.Namespace, names)
 }
 
 // collectMPGNamesFromEntries returns the names of MVU PodGang entries in the given slice.

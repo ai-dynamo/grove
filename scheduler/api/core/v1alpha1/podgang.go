@@ -156,8 +156,14 @@ type PodGangConditionType string
 
 const (
 	// PodGangConditionTypeScheduled indicates that the PodGang has been scheduled.
+	// It is set to True once MinReplicas pods of every PodGroup have been placed on nodes
+	// by the backend scheduler. Once True, this condition remains True for the rest of the
+	// PodGang's lifetime — placement is a one-time event from the scheduler's perspective.
 	PodGangConditionTypeScheduled PodGangConditionType = "Scheduled"
 	// PodGangConditionTypeReady indicates that all the constituent PodGroups are Ready.
+	// It is set to True when, for every PodGroup, the count of Ready pods (passing readiness
+	// probes) is at least the MinAvailable of the constituent PodClique. Unlike Scheduled,
+	// this condition reflects current state — if pods fail readiness, it flips back to False.
 	PodGangConditionTypeReady PodGangConditionType = "Ready"
 	// PodGangConditionTypeInitialized indicates that all Pods have been created and PodGang has been populated with pod references.
 	// This condition is set to True after all pods are created, signaling that scheduling gates can be removed.
@@ -165,10 +171,6 @@ const (
 	// PodGangConditionTypeUnhealthy indicates that the PodGang is unhealthy. It is now a candidate for gang termination.
 	// If this condition is true for at least PodGangSpec.TerminationDelay duration, then the PodGang will be terminated.
 	PodGangConditionTypeUnhealthy PodGangConditionType = "Unhealthy"
-	// PodGangConditionTypeAvailable indicates that the PodGang is fully available for serving.
-	// A PodGang is Available when all MinReplica pods for all constituent PodGroups are scheduled
-	// and ready, and MinReplicas has been set to 0 on all PodGroups within this PodGang.
-	PodGangConditionTypeAvailable PodGangConditionType = "Available"
 	// PodGangConditionTypeDisruptionTarget indicates that the PodGang is a target for disruption and is about to be terminated.
 	// due to one of the following reasons:
 	// 1. PodGang is preempted by a higher priority PodGang.
@@ -182,10 +184,12 @@ const (
 	ConditionReasonPodGangPodsCreationPending = "PodGangPodsCreationPending"
 	// ConditionReasonPodGangPodsCreated indicates that all constituent Pods for a PodGang have been created.
 	ConditionReasonPodGangPodsCreated = "PodGangPodsCreated"
-	// ConditionReasonPodGangAvailable indicates that the PodGang is fully available for serving.
-	ConditionReasonPodGangAvailable = "PodGangAvailable"
-	// ConditionReasonPodGangNotAvailable indicates that the PodGang is not yet available for serving.
-	ConditionReasonPodGangNotAvailable = "PodGangNotAvailable"
+	// ConditionReasonPodGangScheduled indicates that MinReplicas pods of every PodGroup have been placed on nodes by the backend scheduler.
+	ConditionReasonPodGangScheduled = "PodGangScheduled"
+	// ConditionReasonPodGangReady indicates that, for every PodGroup, at least MinAvailable pods are passing readiness probes.
+	ConditionReasonPodGangReady = "PodGangReady"
+	// ConditionReasonPodGangNotReady indicates that one or more PodGroups have fewer Ready pods than the constituent PodClique's MinAvailable.
+	ConditionReasonPodGangNotReady = "PodGangNotReady"
 )
 
 // PodGangStatus defines the status of a PodGang.

@@ -39,6 +39,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -218,6 +219,7 @@ func buildStandalonePCLQInfos(sc *syncContext, pcsReplicaIndex int, pgEntry grov
 			fqn:          pclqFQN,
 			replicas:     desiredPCLQReplicas,
 			minAvailable: *cliqueTemplate.Spec.MinAvailable,
+			isStandalone: true,
 		}
 		pi.topologyConstraint = createTopologyPackConstraint(sc, types.NamespacedName{Namespace: sc.pcs.Namespace, Name: pclqFQN}, cliqueTemplate.TopologyConstraint)
 		pclqs = append(pclqs, pi)
@@ -250,6 +252,7 @@ func buildPCLQInfosAndTopologyConstraintsForPCSGs(sc *syncContext, pcsReplicaInd
 					fqn:          pclqFQN,
 					replicas:     pclqTemplateSpec.Spec.Replicas,
 					minAvailable: *pclqTemplateSpec.Spec.MinAvailable,
+					isStandalone: false,
 				}
 				pi.topologyConstraint = createTopologyPackConstraint(sc, types.NamespacedName{Namespace: sc.pcs.Namespace, Name: pclqFQN}, pclqTemplateSpec.TopologyConstraint)
 				pclqs = append(pclqs, pi)
@@ -358,57 +361,36 @@ func (r _resource) deleteExcessPodGangs(ctx context.Context, sc *syncContext) er
 	return nil
 }
 
-// createOrUpdatePodGangs creates or updates all expected PodGangs.
-// PodGangs are created with empty podReferences, Initialized=False.
-// Once all pods are created, PodReferences are populated and the PodGang is marked as Initialized=True.
+// createOrUpdatePodGangs reconciles every expected PodGang. For each PodGang it performs the
+// create-or-patch, verifies pods are present, and advances the Initialized → Scheduled → Ready
+// condition lifecycle. Each step is idempotent.
 func (r _resource) createOrUpdatePodGangs(ctx context.Context, sc *syncContext) syncFlowResult {
 	result := syncFlowResult{}
 	for _, expectedPG := range sc.expectedPodGangs {
-		// create or update all expected PodGang.
 		if err := r.createOrUpdatePodGang(ctx, sc, expectedPG); err != nil {
-			sc.logger.Error(err, "failed to create PodGang", "PodGangName", expectedPG.fqn)
+			sc.logger.Error(err, "failed to create or update PodGang", "PodGangName", expectedPG.fqn)
 			result.recordError(err)
 			return result
 		}
-
-		// If the PodGang does not exist and the creation succeeded then record the PodGang creation.
 		if !sc.isExistingPodGang(expectedPG.fqn) {
 			result.recordPodGangCreation(expectedPG.fqn)
 		}
-
-		// Verify all pods are created before proceeding
 		if err := r.verifyAllPodsCreated(sc, expectedPG); err != nil {
 			sc.logger.Info("Not all pods are created or associated to the PodGang yet", "PodGangName", expectedPG.fqn)
 			result.recordError(err)
 			continue
 		}
-
-		// Update status to set Initialized=True (idempotent - no need to check current state)
-		if !sc.isPodGangInitialized(expectedPG.fqn) {
-			if err := r.patchPodGangCondition(ctx, sc, expectedPG.fqn, groveschedulerv1alpha1.PodGangConditionTypeInitialized, metav1.ConditionTrue, groveschedulerv1alpha1.ConditionReasonPodGangPodsCreated, "PodGang is fully initialized"); err != nil {
-				sc.logger.Error(err, "failed to update Initialized condition in PodGang status", "PodGangName", expectedPG.fqn)
-				result.recordError(err)
-				continue
-			}
+		if err := r.reconcileInitializedCondition(ctx, sc, expectedPG); err != nil {
+			result.recordError(err)
+			continue
 		}
-
-		// Evaluate and set Available condition.
-		// A PodGang is Available when all MinReplica pods for all constituent PodGroups are
-		// scheduled and ready, and MinReplicas has been set to 0 on all PodGroups.
-		if !sc.isPodGangAvailable(expectedPG.fqn) {
-			if r.arePodGangMinReplicasReady(sc, expectedPG) {
-				if err := r.releaseMinReplicasConstraint(ctx, sc, expectedPG.fqn); err != nil {
-					sc.logger.Error(err, "failed to release MinReplicas constraint on PodGang", "PodGangName", expectedPG.fqn)
-					result.recordError(err)
-					continue
-				}
-				if err := r.patchPodGangCondition(ctx, sc, expectedPG.fqn, groveschedulerv1alpha1.PodGangConditionTypeAvailable, metav1.ConditionTrue, groveschedulerv1alpha1.ConditionReasonPodGangAvailable, "All MinReplica pods are ready and MinReplicas set to 0"); err != nil {
-					sc.logger.Error(err, "failed to update Available condition in PodGang status", "PodGangName", expectedPG.fqn)
-					result.recordError(err)
-					continue
-				}
-				sc.logger.Info("PodGang is now Available", "podGang", expectedPG.fqn)
-			}
+		if err := r.reconcileScheduledCondition(ctx, sc, expectedPG); err != nil {
+			result.recordError(err)
+			continue
+		}
+		if err := r.reconcileReadyCondition(ctx, sc, expectedPG); err != nil {
+			result.recordError(err)
+			continue
 		}
 	}
 
@@ -492,6 +474,88 @@ func (r _resource) getPodsPendingCreationOrAssociation(podGang *podGangInfo) int
 	return pending
 }
 
+// reconcileInitializedCondition marks the PodGang as Initialized=True once all expected pods exist
+// and have been associated. Idempotent — no-op when the condition is already True.
+func (r _resource) reconcileInitializedCondition(ctx context.Context, sc *syncContext, pgi *podGangInfo) error {
+	if sc.isPodGangInitialized(pgi.fqn) {
+		return nil
+	}
+	if err := r.patchPodGangCondition(ctx, sc, pgi.fqn, groveschedulerv1alpha1.PodGangConditionTypeInitialized, metav1.ConditionTrue, groveschedulerv1alpha1.ConditionReasonPodGangPodsCreated, "PodGang is fully initialized"); err != nil {
+		sc.logger.Error(err, "failed to update Initialized condition in PodGang status", "PodGangName", pgi.fqn)
+		return err
+	}
+	return nil
+}
+
+// reconcileScheduledCondition advances the PodGang's Scheduled condition (sticky).
+// When MinReplicas pods of every PodGroup have been placed on nodes, it first releases MinReplicas=0
+// on standalone-PCLQ PodGroups, then patches Scheduled=True. Idempotent — no-op when the condition
+// is already True or when placement has not yet completed.
+func (r _resource) reconcileScheduledCondition(ctx context.Context, sc *syncContext, pgi *podGangInfo) error {
+	if sc.isPodGangScheduled(pgi.fqn) {
+		return nil
+	}
+	if !r.arePodGangMinReplicasScheduled(sc, pgi) {
+		return nil
+	}
+	if err := r.releaseMinReplicasConstraint(ctx, sc, pgi); err != nil {
+		sc.logger.Error(err, "failed to release MinReplicas constraint on PodGang", "PodGangName", pgi.fqn)
+		return err
+	}
+	if err := r.patchPodGangCondition(ctx, sc, pgi.fqn, groveschedulerv1alpha1.PodGangConditionTypeScheduled, metav1.ConditionTrue, groveschedulerv1alpha1.ConditionReasonPodGangScheduled, "MinReplicas pods of every PodGroup are scheduled"); err != nil {
+		sc.logger.Error(err, "failed to update Scheduled condition in PodGang status", "PodGangName", pgi.fqn)
+		return err
+	}
+	sc.logger.Info("PodGang is now Scheduled", "podGang", pgi.fqn)
+	return nil
+}
+
+// reconcileReadyCondition flips the PodGang's Ready condition based on live readiness.
+// True ↔ False both directions: when MinAvailable pods of every PodGroup pass readiness probes the
+// condition is set True; if readiness regresses it flips back to False. Idempotent — no-op when
+// the current condition state already matches the live verdict.
+func (r _resource) reconcileReadyCondition(ctx context.Context, sc *syncContext, pgi *podGangInfo) error {
+	ready := r.arePodGangMinReplicasReady(sc, pgi)
+	if ready == sc.isPodGangReady(pgi.fqn) {
+		return nil
+	}
+	status := metav1.ConditionFalse
+	reason := groveschedulerv1alpha1.ConditionReasonPodGangNotReady
+	message := "one or more PodGroups have fewer Ready pods than MinAvailable"
+	if ready {
+		status = metav1.ConditionTrue
+		reason = groveschedulerv1alpha1.ConditionReasonPodGangReady
+		message = "MinAvailable pods of every PodGroup are ready"
+	}
+	if err := r.patchPodGangCondition(ctx, sc, pgi.fqn, groveschedulerv1alpha1.PodGangConditionTypeReady, status, reason, message); err != nil {
+		sc.logger.Error(err, "failed to update Ready condition in PodGang status", "PodGangName", pgi.fqn)
+		return err
+	}
+	sc.logger.Info("PodGang Ready condition updated", "podGang", pgi.fqn, "ready", ready)
+	return nil
+}
+
+// arePodGangMinReplicasScheduled returns true if, for each PodGroup in the PodGang, at least
+// MinReplicas pods that are associated to this PodGang have been scheduled onto a node.
+// Only pods whose names appear in associatedPodNames are considered — this correctly handles
+// the case where a standalone PCLQ's pods are spread across multiple PodGangs during a
+// coherent update.
+func (r _resource) arePodGangMinReplicasScheduled(sc *syncContext, pgi *podGangInfo) bool {
+	for _, pclq := range pgi.pclqs {
+		pods := sc.existingPCLQPods[pclq.fqn]
+		var scheduledCount int32
+		for i := range pods {
+			if slices.Contains(pclq.associatedPodNames, pods[i].Name) && k8sutils.IsPodScheduled(&pods[i]) {
+				scheduledCount++
+			}
+		}
+		if scheduledCount < pclq.minAvailable {
+			return false
+		}
+	}
+	return true
+}
+
 // arePodGangMinReplicasReady returns true if, for each PodGroup in the PodGang, at least
 // MinReplicas pods that are associated to this PodGang are in Ready state.
 // Only pods whose names appear in associatedPodNames are considered — this correctly handles
@@ -513,30 +577,46 @@ func (r _resource) arePodGangMinReplicasReady(sc *syncContext, pgi *podGangInfo)
 	return true
 }
 
-// releaseMinReplicasConstraint sets MinReplicas=0 on all PodGroups of the given PodGang.
-// This releases the gang scheduling constraint, allowing individual pods to be removed
-// without the scheduler evicting the entire PodGang for breaching the minimum availability
-// contract enforced via `podGroup.minReplicas` in a PodGang. This must be done after the backend
-// scheduler has scheduled minReplica pods across all PodGroups in a PodGang thus completing the gang-scheduling
-// constraint. After the initial gang scheduling has been done, we should relax the minReplicas constraints
-// to allow scale-ins. This is especially important in case of coherent updates where standalone PCLQ pods can be
-// spread across one or more PodGangs. This means that while a scale-in does not breach the minAvailability guarantee
-// as defined in the PodCliqueTemplateSpec but in the PodGang which has subset of the PCLQ replicas its `minReplicas`
+// releaseMinReplicasConstraint sets MinReplicas=0 on every standalone-PCLQ PodGroup of the given PodGang.
+// PCSG-member PodGroups keep their original MinReplicas so the backend scheduler continues to
+// protect them from preemption. See GREP-393 section - "Why standalone-PCLQ PodGroups release MinReplicas
+// but PCSG-member PodGroups do not".
+//
+// This releases the gang scheduling constraint for standalone PodGroups, allowing individual pods
+// to be removed without the scheduler evicting the entire PodGang for breaching the minimum
+// availability contract enforced via `podGroup.minReplicas` in a PodGang. This must be done after
+// the backend scheduler has scheduled minReplica pods across all PodGroups in a PodGang thus
+// completing the gang-scheduling constraint. After the initial gang scheduling has been done, we
+// should relax the minReplicas constraints to allow scale-ins. This is especially important in case
+// of coherent updates where standalone PCLQ pods can be spread across one or more PodGangs. This
+// means that while a scale-in does not breach the minAvailability guarantee as defined in the
+// PodCliqueTemplateSpec but in the PodGang which has subset of the PCLQ replicas its `minReplicas`
 // can be breached.
-func (r _resource) releaseMinReplicasConstraint(ctx context.Context, sc *syncContext, podGangName string) error {
-	existingPG, ok := sc.existingPodGangByName[podGangName]
+func (r _resource) releaseMinReplicasConstraint(ctx context.Context, sc *syncContext, pgi *podGangInfo) error {
+	existingPG, ok := sc.existingPodGangByName[pgi.fqn]
 	if !ok {
-		return fmt.Errorf("PodGang %s not found in existing PodGangs", podGangName)
+		return fmt.Errorf("PodGang %s not found in existing PodGangs", pgi.fqn)
+	}
+	standaloneFQNs := sets.New[string]()
+	for _, pclq := range pgi.pclqs {
+		if pclq.isStandalone {
+			standaloneFQNs.Insert(pclq.fqn)
+		}
+	}
+	if standaloneFQNs.Len() == 0 {
+		return nil
 	}
 	patch := client.MergeFrom(&existingPG)
 	pgToUpdate := existingPG.DeepCopy()
 	for i := range pgToUpdate.Spec.PodGroups {
-		pgToUpdate.Spec.PodGroups[i].MinReplicas = 0
+		if standaloneFQNs.Has(pgToUpdate.Spec.PodGroups[i].Name) {
+			pgToUpdate.Spec.PodGroups[i].MinReplicas = 0
+		}
 	}
 	if err := r.client.Patch(ctx, pgToUpdate, patch); err != nil {
-		return fmt.Errorf("failed to set MinReplicas=0 on PodGang %s: %w", podGangName, err)
+		return fmt.Errorf("failed to set MinReplicas=0 on standalone PodGroups of PodGang %s: %w", pgi.fqn, err)
 	}
-	sc.logger.Info("Released MinReplicas constraint on PodGang", "podGang", podGangName)
+	sc.logger.Info("Released MinReplicas constraint on standalone PodGroups of PodGang", "podGang", pgi.fqn, "standalonePodGroups", standaloneFQNs.UnsortedList())
 	return nil
 }
 
@@ -625,9 +705,14 @@ func (sc *syncContext) isPodGangInitialized(podGangName string) bool {
 	return ok && k8sutils.IsConditionTrue(foundPG.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized))
 }
 
-func (sc *syncContext) isPodGangAvailable(podGangName string) bool {
+func (sc *syncContext) isPodGangScheduled(podGangName string) bool {
 	foundPG, ok := sc.existingPodGangByName[podGangName]
-	return ok && k8sutils.IsConditionTrue(foundPG.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeAvailable))
+	return ok && k8sutils.IsConditionTrue(foundPG.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeScheduled))
+}
+
+func (sc *syncContext) isPodGangReady(podGangName string) bool {
+	foundPG, ok := sc.existingPodGangByName[podGangName]
+	return ok && k8sutils.IsConditionTrue(foundPG.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeReady))
 }
 
 // initializeAssignedAndUnassignedPodsForPCS categorizes pods by PodGang assignment.
@@ -750,4 +835,9 @@ type pclqInfo struct {
 	// topologyConstraint holds the topology pack constraint for the PodClique.
 	// These will be cleared when TAS is disabled.
 	topologyConstraint *groveschedulerv1alpha1.TopologyConstraint
+	// isStandalone is true when this PodClique is not owned by a PodCliqueScalingGroup.
+	// Standalone PodGroups have their MinReplicas released to 0 once the PodGang is Scheduled,
+	// while PCSG-member PodGroups keep their original MinReplicas to retain preemption protection.
+	// See GREP-393 §"Why standalone-PCLQ PodGroups release MinReplicas but PCSG-member PodGroups do not".
+	isStandalone bool
 }

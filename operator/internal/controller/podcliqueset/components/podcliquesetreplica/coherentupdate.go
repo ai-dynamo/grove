@@ -38,7 +38,7 @@ import (
 // orchestrateCoherentUpdate manages the coherent update process for PodCliqueSet replicas.
 // The orchestrator's responsibilities are narrowed to state machine progression:
 //   - Pick the next replica to update
-//   - Wait for InFlightPodGangs to become Available (PodGangConditionTypeAvailable)
+//   - Wait for InFlightPodGangs to become Ready (PodGangConditionTypeReady)
 //   - Advance to the next iteration or mark replica/update as complete
 //
 // It does NOT compute PodGangMap entries (PodGangMap component does that),
@@ -84,8 +84,8 @@ func (r _resource) orchestrateCoherentUpdate(ctx context.Context, logger logr.Lo
 	return r.patchUpdateProgressStatus(ctx, logger, pcs, original)
 }
 
-// checkAndAdvanceCoherentUpdate checks if the current in-flight PodGangs are Available.
-// If they are not yet Available, it re-queues. If they are Available and the replica is fully
+// checkAndAdvanceCoherentUpdate checks if the current in-flight PodGangs are Ready.
+// If they are not yet Ready, it re-queues. If they are Ready and the replica is fully
 // updated, it marks the replica as done and returns (true, nil) so the caller falls through to
 // pick the next replica or close the update. Otherwise, it clears InFlightPodGangs and re-queues
 // so that the PodGangMap component can compute the next iteration's entries.
@@ -118,27 +118,27 @@ func (r _resource) checkAndAdvanceCoherentUpdate(ctx context.Context, logger log
 		return false, r.populateInFlightPodGangs(ctx, logger, pcs, currentProgress)
 	}
 
-	// Check if all in-flight PodGangs have become Available.
-	available, err := componentutils.ArePodGangsAvailable(ctx, r.client, pcs.Namespace, currentProgress.InFlightPodGangs)
+	// Check if all in-flight PodGangs have become Ready.
+	ready, err := componentutils.ArePodGangsReady(ctx, r.client, pcs.Namespace, currentProgress.InFlightPodGangs)
 	if err != nil {
 		return false, groveerr.WrapError(err,
 			errCodeListPCLQs,
 			component.OperationSync,
-			"failed to check availability of in-flight PodGangs",
+			"failed to check readiness of in-flight PodGangs",
 		)
 	}
-	if !available {
-		logger.Info("Waiting for in-flight PodGangs to become Available",
+	if !ready {
+		logger.Info("Waiting for in-flight PodGangs to become Ready",
 			"replicaIndex", replicaIndex,
 			"inFlightPodGangs", currentProgress.InFlightPodGangs)
 		return false, groveerr.New(
 			groveerr.ErrCodeContinueReconcileAndRequeue,
 			component.OperationSync,
-			fmt.Sprintf("coherent update of PodCliqueSet replica %d in progress, waiting for in-flight PodGangs to become Available", replicaIndex),
+			fmt.Sprintf("coherent update of PodCliqueSet replica %d in progress, waiting for in-flight PodGangs to become Ready", replicaIndex),
 		)
 	}
 
-	// All in-flight PodGangs are Available but the replica is not yet fully updated. Clear
+	// All in-flight PodGangs are Ready but the replica is not yet fully updated. Clear
 	// InFlightPodGangs and requeue so the PodGangMap component computes the next iteration's
 	// entries on the next reconcile. The requeue is required because patchUpdateProgressStatus
 	// only mutates status, and the PCS controller's For-watch uses GenerationChangedPredicate —
@@ -190,7 +190,7 @@ func (w *coherentPendingWork) getNextPendingReplicaByIndex() *int {
 }
 
 // populateInFlightPodGangs reads the PodGangMap for the currently-updating replica,
-// identifies new-hash entries whose PodGangs are not yet Available, and sets them
+// identifies new-hash entries whose PodGangs are not yet Ready, and sets them
 // as InFlightPodGangs in the PCS status.
 func (r _resource) populateInFlightPodGangs(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, currentProgress *grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress) error {
 	replicaIndex := currentProgress.ReplicaIndex
@@ -228,7 +228,7 @@ func (r _resource) populateInFlightPodGangs(ctx context.Context, logger logr.Log
 				fmt.Sprintf("failed to get PodGang %s to check availability", entry.Name),
 			)
 		}
-		if !k8sutils.IsConditionTrue(pg.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeAvailable)) {
+		if !k8sutils.IsConditionTrue(pg.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeReady)) {
 			inFlightNames = append(inFlightNames, entry.Name)
 		}
 	}
