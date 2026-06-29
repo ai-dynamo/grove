@@ -29,7 +29,7 @@ Before using topology-aware scheduling, ensure your cluster meets the following 
 
 The `ClusterTopologyBinding.spec.levels` list must be ordered from broadest to narrowest scope. For example: `zone`, then `rack`, then `host`.
 
-Each constrained PCS must resolve to one effective `topologyName`. You can set `topologyName` once at the PCS level and let child constraints inherit it, but a single PCS cannot use multiple topology names.
+A PCS-level `topologyConstraint` applies through the PCS -> PCSG -> PCLQ hierarchy. Child PCSG or PCLQ constraints can refine placement with an equal or narrower pack domain and can inherit the parent `topologyName`. A single PCS cannot use multiple topology names.
 
 ## Enabling the Feature
 
@@ -64,7 +64,7 @@ Topology constraints can appear at any layer of the PCS hierarchy: PCS, PCSG, or
 | `rack` | `host` | Allowed. `host` is narrower than `rack`. |
 | `rack` | `zone` | Rejected. `zone` is broader than `rack`. |
 
-The topology name also propagates downward through the hierarchy. A child `topologyConstraint` can omit `topologyName` if it inherits the same topology from its parent.
+The topology name also follows this hierarchy: a child `topologyConstraint` can omit `topologyName` when it inherits the same topology from its nearest constrained parent.
 
 > **Note:** Topology constraints are immutable after PCS creation. Any attempt to add, modify, or remove `topologyName`, `pack.required`, or `pack.preferred` on an existing PCS, PCSG, or PCLQ is rejected. To change topology placement, delete the PCS and recreate it.
 
@@ -72,7 +72,7 @@ The topology name also propagates downward through the hierarchy. A child `topol
 
 ## Topology Domain Requirements
 
-Common Grove topology domain names include `region`, `zone`, `datacenter`, `block`, `rack`, `host`, and `numa`. Any domain that you use in a PCS must be defined in the selected ClusterTopologyBinding.
+Common Grove topology domain names include `region`, `zone`, `datacenter`, `block`, `rack`, and `host`. Any domain that you use in a PCS must be defined in the selected ClusterTopologyBinding.
 
 Topology domain names must be lowercase DNS-label style values: start with a letter, contain lowercase letters, numbers, or hyphens, and be no longer than 63 characters.
 
