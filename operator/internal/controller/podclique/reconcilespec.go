@@ -137,15 +137,15 @@ func shouldCheckPendingUpdatesForPCLQ(logger logr.Logger, pcs *grovecorev1alpha1
 
 // shouldResetOrTriggerUpdate determines if an update should be started or reset based on generation hash comparison
 func shouldResetOrTriggerUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) bool {
+	// Wait for the first reconciliation of the PodCliqueSet
+	if pcs.Status.CurrentGenerationHash == nil {
+		return false
+	}
+
 	// PCLQ has never been updated yet and PCS has a new generation hash.
 	firstEverUpdateRequired := pclq.Status.UpdateProgress == nil && pclq.Status.CurrentPodCliqueSetGenerationHash != nil && *pcs.Status.CurrentGenerationHash != *pclq.Status.CurrentPodCliqueSetGenerationHash
 	if firstEverUpdateRequired {
 		return true
-	}
-
-	// Wait for the first reconciliation of the PodCliqueSet
-	if pcs.Status.CurrentGenerationHash == nil {
-		return false
 	}
 
 	// PCLQ is undergoing an update for a different PCS generation hash

@@ -146,6 +146,20 @@ func TestShouldResetOrTriggerUpdatePCSG(t *testing.T) {
 		expected bool
 	}{
 		{
+			name: "should_not_trigger_update_until_pcs_current_generation_hash_exists",
+			pcs: &grovecorev1alpha1.PodCliqueSet{
+				Status: grovecorev1alpha1.PodCliqueSetStatus{
+					CurrentGenerationHash: nil,
+				},
+			},
+			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
+				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+					UpdateProgress: nil,
+				},
+			},
+			expected: false,
+		},
+		{
 			name: "should_trigger_update_when_no_update_progress",
 			pcs: &grovecorev1alpha1.PodCliqueSet{
 				Status: grovecorev1alpha1.PodCliqueSetStatus{
