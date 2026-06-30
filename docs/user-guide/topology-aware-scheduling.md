@@ -48,6 +48,8 @@ helm upgrade -i grove oci://ghcr.io/ai-dynamo/grove/grove-charts --version <vers
   --set config.topologyAwareScheduling.enabled=true
 ```
 
+For installation details and version selection, see the [installation guide](../installation.md).
+
 If you customize scheduler profiles, make sure your topology-aware scheduler backend is listed in `config.scheduler.profiles`. Workloads that use topology constraints should either rely on that backend as Grove's default scheduler profile or set `podSpec.schedulerName` to that backend's scheduler name.
 
 ### Validation Behavior
@@ -81,6 +83,8 @@ Topology domain names must be lowercase DNS-label style values: start with a let
 You usually do not need to set `ClusterTopologyBinding.spec.schedulerTopologyBindings`. Omit it when Grove should manage the scheduler backend topology resource from `spec.levels`.
 
 Set `schedulerTopologyBindings` only when the scheduler backend topology resource already exists and is managed outside Grove. The `schedulerName` must match an enabled topology-aware scheduler backend, and `topologyReference` is the backend-specific topology resource name. A ClusterTopologyBinding can have at most one binding entry for each scheduler backend.
+
+The example below shows a KAI-backed binding with `schedulerName: kai-scheduler`.
 
 ## Usage Examples
 
@@ -261,4 +265,4 @@ The `TopologyLevelsUnavailable` condition reports whether all topology domains r
 | `True` | `ClusterTopologyLevelsUnavailable` | The PCS references a domain that is no longer defined in the selected ClusterTopologyBinding. |
 | `Unknown` | `ClusterTopologyNotFound` | The selected ClusterTopologyBinding does not exist. |
 | `Unknown` | `TopologyNameMissing` | A topology constraint exists but Grove cannot resolve an effective `topologyName`. |
-| `Unknown` | `TopologyAwareSchedulingDisabled` | The PCS has topology constraints but topology-aware scheduling is disabled. |
+| `Unknown` | `TopologyAwareSchedulingDisabled` | Grove cannot evaluate topology availability for the existing constrained PCS because topology-aware scheduling is disabled. |
