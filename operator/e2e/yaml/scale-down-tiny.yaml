@@ -40,4 +40,4 @@ spec:
                 image: registry:5001/nginx:alpine-slim
                 resources:
                   requests:
-                    memory: 10Mi
+                    memory: 1Mi
