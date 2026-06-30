@@ -49,7 +49,7 @@ func GetPodCliqueSet(ctx context.Context, cl client.Client, logger logr.Logger, 
 func GetPodClique(ctx context.Context, cl client.Client, logger logr.Logger, objectKey client.ObjectKey, pclq *v1alpha1.PodClique, ignoreNotFound bool) grovectrl.ReconcileStepResult {
 	if err := cl.Get(ctx, objectKey, pclq); err != nil {
 		if ignoreNotFound && apierrors.IsNotFound(err) {
-			logger.Info("PodClique not found", "objectKey", objectKey)
+			logger.V(1).Info("PodClique not found", "objectKey", objectKey)
 			return grovectrl.DoNotRequeue()
 		}
 		return grovectrl.ReconcileWithErrors("error getting PodClique", err)
