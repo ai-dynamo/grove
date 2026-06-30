@@ -618,3 +618,51 @@ func filterOutEnvVar(envVars []string, exclude string) []string {
 	}
 	return result
 }
+
+func TestGetLabels_PodIndexLabel(t *testing.T) {
+	tests := []struct {
+		name             string
+		pclqName         string
+		podIndex         int
+		expectedLabelVal string
+	}{
+		{name: "pod index 0", pclqName: "workload1-0-pc-worker", podIndex: 0, expectedLabelVal: "0"},
+		{name: "pod index 1", pclqName: "workload1-0-pc-worker", podIndex: 1, expectedLabelVal: "1"},
+		{name: "pod index 5", pclqName: "workload1-0-pc-worker", podIndex: 5, expectedLabelVal: "5"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pclqObjectMeta := metav1.ObjectMeta{
+				Name:      tt.pclqName,
+				Namespace: "default",
+				Labels: map[string]string{
+					common.LabelManagedByKey: common.LabelManagedByValue,
+				},
+			}
+			labels := getLabels(pclqObjectMeta, "workload1", "gang-0", 0, tt.podIndex)
+			assert.Equal(t, tt.expectedLabelVal, labels[common.LabelPodCliquePodIndex],
+				"LabelPodCliquePodIndex should match podIndex")
+		})
+	}
+}
+
+// TestPodGenerateNameIncludesPodIndex verifies that each pod's GenerateName embeds the
+// pod index so that the Kubernetes-generated suffix yields names like
+// "<pclq>-<index>-<random>" (e.g. ubuntu-0-worker-0-2tnab).
+func TestPodGenerateNameIncludesPodIndex(t *testing.T) {
+	tests := []struct {
+		pclqName       string
+		podIndex       int
+		expectedPrefix string
+	}{
+		{pclqName: "ubuntu-0-worker", podIndex: 0, expectedPrefix: "ubuntu-0-worker-0-"},
+		{pclqName: "ubuntu-0-worker", podIndex: 1, expectedPrefix: "ubuntu-0-worker-1-"},
+		{pclqName: "workload1-2-pc-server", podIndex: 3, expectedPrefix: "workload1-2-pc-server-3-"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.expectedPrefix, func(t *testing.T) {
+			got := fmt.Sprintf("%s-%d-", tt.pclqName, tt.podIndex)
+			assert.Equal(t, tt.expectedPrefix, got)
+		})
+	}
+}

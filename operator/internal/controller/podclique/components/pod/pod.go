@@ -150,7 +150,7 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 
 	labels := getLabels(pclq.ObjectMeta, pcsName, podGangName, pcsReplicaIndex, podIndex)
 	pod.ObjectMeta = metav1.ObjectMeta{
-		GenerateName: fmt.Sprintf("%s-", pclq.Name),
+		GenerateName: fmt.Sprintf("%s-%d-", pclq.Name, podIndex),
 		Namespace:    pclq.Namespace,
 		Labels:       labels,
 		Annotations:  pclq.Annotations,
