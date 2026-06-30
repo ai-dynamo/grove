@@ -144,6 +144,10 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGa
 	}
 	pg.Labels[apicommon.LabelPodCliqueSetGenerationHash] = *pcs.Status.CurrentGenerationHash
 	pg.Labels[apicommon.LabelPodCliqueSetReplicaIndex] = strconv.Itoa(pgi.pcsReplicaIndex)
+	// Stamp labels sourced from the PodGangEntry. Today this carries the grove.io/epoch label.
+	for k, v := range pgi.extraLabels {
+		pg.Labels[k] = v
+	}
 	pg.Annotations = mirrorPCSMetadata(pg.Annotations, pcs.Annotations, nil)
 	if r.tasConfig.Enabled && podGangHasTranslatedTopologyConstraints(pgi) {
 		if topologyName, err := componentutils.FindExplicitTopologyNameForPodCliqueSet(pcs); err == nil && topologyName != "" {

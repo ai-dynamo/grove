@@ -20,6 +20,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -396,9 +397,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 
 		pgAfter := &groveschedulerv1alpha1.PodGang{}
 		require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: pgName}, pgAfter))
-		require.Len(t, pgAfter.Status.Conditions, 1)
-		assert.Equal(t, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized), pgAfter.Status.Conditions[0].Type)
-		assert.Equal(t, metav1.ConditionTrue, pgAfter.Status.Conditions[0].Status)
+		assert.True(t, k8sutils.IsConditionTrue(pgAfter.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized)))
 	})
 
 	t.Run("existing PodGang, all pods ready - updates PodGang, sets Initialized=True", func(t *testing.T) {
@@ -431,9 +430,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		require.Len(t, pgAfter.Spec.PodGroups, 1)
 		assert.Equal(t, pclqName, pgAfter.Spec.PodGroups[0].Name)
 		assert.Len(t, pgAfter.Spec.PodGroups[0].PodReferences, 2)
-		require.NotEmpty(t, pgAfter.Status.Conditions)
-		assert.Equal(t, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized), pgAfter.Status.Conditions[0].Type)
-		assert.Equal(t, metav1.ConditionTrue, pgAfter.Status.Conditions[0].Status)
+		assert.True(t, k8sutils.IsConditionTrue(pgAfter.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized)))
 	})
 
 	t.Run("existing initialized PodGang, pods replaced - updates PodReferences to replacement pods", func(t *testing.T) {
@@ -2155,41 +2152,56 @@ func TestReconcileScheduledCondition(t *testing.T) {
 	unscheduledPod := *testutils.NewPodBuilder("fe-0", ns).
 		WithCondition(corev1.PodCondition{Type: corev1.PodScheduled, Status: corev1.ConditionFalse}).
 		Build()
+	pastTime := metav1.NewTime(metav1.Now().Add(-time.Hour))
 
 	tests := []struct {
 		name                  string
 		pods                  []corev1.Pod
 		initialConditions     []metav1.Condition
+		initialLastScheduled  *metav1.Time
 		initialMinReplicas    int32
 		wantScheduledTrue     bool
 		wantMinReplicasZeroed bool
+		wantLastScheduledSet  bool
+		// wantLastScheduledUnchanged asserts that LastScheduled was not overwritten by this reconcile.
+		// Useful for "already scheduled, no fresh transition" cases.
+		wantLastScheduledUnchanged bool
 	}{
 		{
-			name: "already Scheduled=True is a no-op",
-			pods: []corev1.Pod{scheduledPod},
-			initialConditions: []metav1.Condition{{
-				Type:               string(groveschedulerv1alpha1.PodGangConditionTypeScheduled),
-				Status:             metav1.ConditionTrue,
-				Reason:             groveschedulerv1alpha1.ConditionReasonPodGangScheduled,
-				LastTransitionTime: metav1.Now(),
-			}},
-			initialMinReplicas:    2,
-			wantScheduledTrue:     true,
-			wantMinReplicasZeroed: false,
+			name:                       "already Scheduled=True with LastScheduled set is a no-op",
+			pods:                       []corev1.Pod{scheduledPod},
+			initialConditions:          []metav1.Condition{{Type: string(groveschedulerv1alpha1.PodGangConditionTypeScheduled), Status: metav1.ConditionTrue, Reason: groveschedulerv1alpha1.ConditionReasonPodGangScheduled, LastTransitionTime: pastTime}},
+			initialLastScheduled:       &pastTime,
+			initialMinReplicas:         0,
+			wantScheduledTrue:          true,
+			wantMinReplicasZeroed:      true,
+			wantLastScheduledUnchanged: true,
 		},
 		{
-			name:                  "not yet scheduled is a no-op",
+			name:                  "not yet scheduled flips Scheduled=False and leaves MinReplicas as-is",
 			pods:                  []corev1.Pod{unscheduledPod},
 			initialMinReplicas:    2,
 			wantScheduledTrue:     false,
 			wantMinReplicasZeroed: false,
 		},
 		{
-			name:                  "scheduled releases MinReplicas and sets Scheduled=True",
+			name:                  "first scheduled transition releases MinReplicas, sets Scheduled=True and LastScheduled",
 			pods:                  []corev1.Pod{scheduledPod},
 			initialMinReplicas:    2,
 			wantScheduledTrue:     true,
 			wantMinReplicasZeroed: true,
+			wantLastScheduledSet:  true,
+		},
+		{
+			name:                       "re-transition after regression sets Scheduled=True and bumps LastScheduled but does not re-release",
+			pods:                       []corev1.Pod{scheduledPod},
+			initialConditions:          []metav1.Condition{{Type: string(groveschedulerv1alpha1.PodGangConditionTypeScheduled), Status: metav1.ConditionFalse, Reason: groveschedulerv1alpha1.ConditionReasonPodGangNotReady, LastTransitionTime: pastTime}},
+			initialLastScheduled:       &pastTime,
+			initialMinReplicas:         5,
+			wantScheduledTrue:          true,
+			wantMinReplicasZeroed:      false,
+			wantLastScheduledSet:       true,
+			wantLastScheduledUnchanged: false,
 		},
 	}
 
@@ -2207,7 +2219,10 @@ func TestReconcileScheduledCondition(t *testing.T) {
 						MinReplicas: tc.initialMinReplicas,
 					}},
 				},
-				Status: groveschedulerv1alpha1.PodGangStatus{Conditions: tc.initialConditions},
+				Status: groveschedulerv1alpha1.PodGangStatus{
+					Conditions:    tc.initialConditions,
+					LastScheduled: tc.initialLastScheduled,
+				},
 			}
 			fakeClient := testutils.NewTestClientBuilder().
 				WithObjects(pcs, existingPG).
@@ -2227,7 +2242,8 @@ func TestReconcileScheduledCondition(t *testing.T) {
 				},
 			}
 
-			require.NoError(t, r.reconcileScheduledCondition(ctx, sc, pgi))
+			require.NoError(t, r.releaseStandalonePodGroupsMinReplicas(ctx, sc, pgi))
+			require.NoError(t, r.reconcilePodGangStatus(ctx, sc, pgi))
 
 			got := &groveschedulerv1alpha1.PodGang{}
 			require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: pgName}, got))
@@ -2237,6 +2253,16 @@ func TestReconcileScheduledCondition(t *testing.T) {
 				assert.Equal(t, int32(0), got.Spec.PodGroups[0].MinReplicas)
 			} else {
 				assert.Equal(t, tc.initialMinReplicas, got.Spec.PodGroups[0].MinReplicas)
+			}
+			if tc.wantLastScheduledSet {
+				require.NotNil(t, got.Status.LastScheduled)
+				if tc.initialLastScheduled != nil && !tc.wantLastScheduledUnchanged {
+					assert.True(t, got.Status.LastScheduled.After(tc.initialLastScheduled.Time), "expected LastScheduled to advance past prior value")
+				}
+			}
+			if tc.wantLastScheduledUnchanged {
+				require.NotNil(t, got.Status.LastScheduled)
+				assert.Equal(t, tc.initialLastScheduled.Unix(), got.Status.LastScheduled.Unix(), "expected LastScheduled to be preserved")
 			}
 		})
 	}
@@ -2255,40 +2281,49 @@ func TestReconcileReadyCondition(t *testing.T) {
 	notReadyPod := *testutils.NewPodBuilder("fe-0", ns).
 		WithCondition(corev1.PodCondition{Type: corev1.PodReady, Status: corev1.ConditionFalse}).
 		Build()
+	pastTime := metav1.NewTime(metav1.Now().Add(-time.Hour))
 	readyCondTrue := metav1.Condition{
 		Type:               string(groveschedulerv1alpha1.PodGangConditionTypeReady),
 		Status:             metav1.ConditionTrue,
 		Reason:             groveschedulerv1alpha1.ConditionReasonPodGangReady,
-		LastTransitionTime: metav1.Now(),
+		LastTransitionTime: pastTime,
 	}
 
 	tests := []struct {
-		name              string
-		pods              []corev1.Pod
-		initialConditions []metav1.Condition
-		wantReadyTrue     bool
+		name                  string
+		pods                  []corev1.Pod
+		initialConditions     []metav1.Condition
+		initialLastReady      *metav1.Time
+		wantReadyTrue         bool
+		wantLastReadySet      bool
+		wantLastReadyUnchanged bool
 	}{
 		{
-			name:          "no Ready condition and pods not ready is a no-op",
+			name:          "no Ready condition and pods not ready: Ready=False, LastReady stays nil",
 			pods:          []corev1.Pod{notReadyPod},
 			wantReadyTrue: false,
 		},
 		{
-			name:              "Ready=True with pods still ready is a no-op",
-			pods:              []corev1.Pod{readyPod},
-			initialConditions: []metav1.Condition{readyCondTrue},
-			wantReadyTrue:     true,
+			name:                  "Ready=True with pods still ready is a no-op for LastReady",
+			pods:                  []corev1.Pod{readyPod},
+			initialConditions:     []metav1.Condition{readyCondTrue},
+			initialLastReady:      &pastTime,
+			wantReadyTrue:         true,
+			wantLastReadyUnchanged: true,
 		},
 		{
-			name:          "pods become ready and Ready flips to True",
-			pods:          []corev1.Pod{readyPod},
-			wantReadyTrue: true,
+			name:             "pods become ready: Ready flips to True and LastReady is set",
+			pods:             []corev1.Pod{readyPod},
+			wantReadyTrue:    true,
+			wantLastReadySet: true,
 		},
 		{
-			name:              "pods stop being ready and Ready flips to False",
-			pods:              []corev1.Pod{notReadyPod},
-			initialConditions: []metav1.Condition{readyCondTrue},
-			wantReadyTrue:     false,
+			name:                  "pods stop being ready: Ready flips to False, LastReady is preserved",
+			pods:                  []corev1.Pod{notReadyPod},
+			initialConditions:     []metav1.Condition{readyCondTrue},
+			initialLastReady:      &pastTime,
+			wantReadyTrue:         false,
+			wantLastReadyUnchanged: true,
 		},
 	}
 
@@ -2300,7 +2335,10 @@ func TestReconcileReadyCondition(t *testing.T) {
 			}
 			existingPG := &groveschedulerv1alpha1.PodGang{
 				ObjectMeta: metav1.ObjectMeta{Name: pgName, Namespace: ns},
-				Status:     groveschedulerv1alpha1.PodGangStatus{Conditions: tc.initialConditions},
+				Status: groveschedulerv1alpha1.PodGangStatus{
+					Conditions: tc.initialConditions,
+					LastReady:  tc.initialLastReady,
+				},
 			}
 			fakeClient := testutils.NewTestClientBuilder().
 				WithObjects(pcs, existingPG).
@@ -2320,11 +2358,22 @@ func TestReconcileReadyCondition(t *testing.T) {
 				},
 			}
 
-			require.NoError(t, r.reconcileReadyCondition(ctx, sc, pgi))
+			require.NoError(t, r.reconcilePodGangStatus(ctx, sc, pgi))
 
 			got := &groveschedulerv1alpha1.PodGang{}
 			require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: pgName}, got))
 			assert.Equal(t, tc.wantReadyTrue, k8sutils.IsConditionTrue(got.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeReady)))
+			if tc.wantLastReadySet {
+				require.NotNil(t, got.Status.LastReady)
+			}
+			if tc.wantLastReadyUnchanged {
+				require.NotNil(t, got.Status.LastReady)
+				assert.Equal(t, tc.initialLastReady.Unix(), got.Status.LastReady.Unix(), "expected LastReady to be preserved")
+			}
+			// Verify LastReady is never reset to nil if it was previously set.
+			if tc.initialLastReady != nil {
+				require.NotNil(t, got.Status.LastReady, "LastReady must never be reset to nil once set")
+			}
 		})
 	}
 }

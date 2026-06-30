@@ -30,6 +30,7 @@ import (
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
+	"k8s.io/apimachinery/pkg/api/equality"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/go-logr/logr"
@@ -191,7 +192,7 @@ func (r _resource) computeExpectedPodGangs(ctx context.Context, sc *syncContext)
 // The entry's PCSGReplicaIndices give the PCSG replica indices owned by this PodGang
 // directly; no positional accumulator across entries is needed.
 func (r _resource) buildPodGangInfoFromEntry(sc *syncContext, pcsReplicaIndex int, pgEntry grovecorev1alpha1.PodGangEntry) (*podGangInfo, error) {
-	pg := &podGangInfo{fqn: pgEntry.Name, pcsReplicaIndex: pcsReplicaIndex}
+	pg := &podGangInfo{fqn: pgEntry.Name, pcsReplicaIndex: pcsReplicaIndex, extraLabels: pgEntry.Labels}
 
 	pg.pclqs = buildStandalonePCLQInfos(sc, pcsReplicaIndex, pgEntry)
 	pcsgPCLQs, pcsgConstraints, err := buildPCLQInfosAndTopologyConstraintsForPCSGs(sc, pcsReplicaIndex, pgEntry)
@@ -380,15 +381,11 @@ func (r _resource) createOrUpdatePodGangs(ctx context.Context, sc *syncContext) 
 			result.recordError(err)
 			continue
 		}
-		if err := r.reconcileInitializedCondition(ctx, sc, expectedPG); err != nil {
+		if err := r.releaseStandalonePodGroupsMinReplicas(ctx, sc, expectedPG); err != nil {
 			result.recordError(err)
 			continue
 		}
-		if err := r.reconcileScheduledCondition(ctx, sc, expectedPG); err != nil {
-			result.recordError(err)
-			continue
-		}
-		if err := r.reconcileReadyCondition(ctx, sc, expectedPG); err != nil {
+		if err := r.reconcilePodGangStatus(ctx, sc, expectedPG); err != nil {
 			result.recordError(err)
 			continue
 		}
@@ -474,65 +471,121 @@ func (r _resource) getPodsPendingCreationOrAssociation(podGang *podGangInfo) int
 	return pending
 }
 
-// reconcileInitializedCondition marks the PodGang as Initialized=True once all expected pods exist
-// and have been associated. Idempotent — no-op when the condition is already True.
-func (r _resource) reconcileInitializedCondition(ctx context.Context, sc *syncContext, pgi *podGangInfo) error {
-	if sc.isPodGangInitialized(pgi.fqn) {
-		return nil
-	}
-	if err := r.patchPodGangCondition(ctx, sc, pgi.fqn, groveschedulerv1alpha1.PodGangConditionTypeInitialized, metav1.ConditionTrue, groveschedulerv1alpha1.ConditionReasonPodGangPodsCreated, "PodGang is fully initialized"); err != nil {
-		sc.logger.Error(err, "failed to update Initialized condition in PodGang status", "PodGangName", pgi.fqn)
+// releaseStandalonePodGroupsMinReplicas patches Spec.PodGroups[*].MinReplicas to 0 on
+// standalone-PCLQ PodGroups, on the first-ever Scheduled=True transition of this PodGang.
+// Trigger: arePodGangMinReplicasScheduled is true AND pg.Status.LastScheduled is nil.
+// After the release the gang stays released for the rest of its lifetime even if Scheduled
+// later flips back to False and forward again, because LastScheduled is monotonic and never
+// reset to nil.
+func (r _resource) releaseStandalonePodGroupsMinReplicas(ctx context.Context, sc *syncContext, pgi *podGangInfo) error {
+	pg, err := componentutils.GetPodGang(ctx, r.client, pgi.fqn, sc.pcs.Namespace)
+	if err != nil {
 		return err
 	}
-	return nil
-}
-
-// reconcileScheduledCondition advances the PodGang's Scheduled condition (sticky).
-// When MinReplicas pods of every PodGroup have been placed on nodes, it first releases MinReplicas=0
-// on standalone-PCLQ PodGroups, then patches Scheduled=True. Idempotent — no-op when the condition
-// is already True or when placement has not yet completed.
-func (r _resource) reconcileScheduledCondition(ctx context.Context, sc *syncContext, pgi *podGangInfo) error {
-	if sc.isPodGangScheduled(pgi.fqn) {
+	// LastScheduled is the canonical marker for "this gang has been Scheduled=True at
+	// least once before", which means the release has already run in a prior reconcile.
+	// Skip without issuing a no-op spec patch.
+	if pg.Status.LastScheduled != nil {
 		return nil
 	}
 	if !r.arePodGangMinReplicasScheduled(sc, pgi) {
 		return nil
 	}
-	if err := r.releaseMinReplicasConstraint(ctx, sc, pgi); err != nil {
+	if err = r.releaseMinReplicasConstraint(ctx, sc, pgi); err != nil {
 		sc.logger.Error(err, "failed to release MinReplicas constraint on PodGang", "PodGangName", pgi.fqn)
 		return err
 	}
-	if err := r.patchPodGangCondition(ctx, sc, pgi.fqn, groveschedulerv1alpha1.PodGangConditionTypeScheduled, metav1.ConditionTrue, groveschedulerv1alpha1.ConditionReasonPodGangScheduled, "MinReplicas pods of every PodGroup are scheduled"); err != nil {
-		sc.logger.Error(err, "failed to update Scheduled condition in PodGang status", "PodGangName", pgi.fqn)
-		return err
-	}
-	sc.logger.Info("PodGang is now Scheduled", "podGang", pgi.fqn)
 	return nil
 }
 
-// reconcileReadyCondition flips the PodGang's Ready condition based on live readiness.
-// True ↔ False both directions: when MinAvailable pods of every PodGroup pass readiness probes the
-// condition is set True; if readiness regresses it flips back to False. Idempotent — no-op when
-// the current condition state already matches the live verdict.
-func (r _resource) reconcileReadyCondition(ctx context.Context, sc *syncContext, pgi *podGangInfo) error {
-	ready := r.arePodGangMinReplicasReady(sc, pgi)
-	if ready == sc.isPodGangReady(pgi.fqn) {
-		return nil
-	}
-	status := metav1.ConditionFalse
-	reason := groveschedulerv1alpha1.ConditionReasonPodGangNotReady
-	message := "one or more PodGroups have fewer Ready pods than MinAvailable"
-	if ready {
-		status = metav1.ConditionTrue
-		reason = groveschedulerv1alpha1.ConditionReasonPodGangReady
-		message = "MinAvailable pods of every PodGroup are ready"
-	}
-	if err := r.patchPodGangCondition(ctx, sc, pgi.fqn, groveschedulerv1alpha1.PodGangConditionTypeReady, status, reason, message); err != nil {
-		sc.logger.Error(err, "failed to update Ready condition in PodGang status", "PodGangName", pgi.fqn)
+// reconcilePodGangStatus drives the PodGang Status lifecycle: writes the Initialized,
+// Scheduled and Ready conditions from live observations, and advances LastScheduled /
+// LastReady on every fresh False->True transition.
+//
+// Both Scheduled and Ready are live: they can flip True->False if placement or readiness
+// regresses, and back to True on recovery. LastScheduled and LastReady advance on every
+// fresh False->True transition and are never reset to nil. The function emits at most one
+// status-subresource patch per call.
+func (r _resource) reconcilePodGangStatus(ctx context.Context, sc *syncContext, pgi *podGangInfo) error {
+	pg, err := componentutils.GetPodGang(ctx, r.client, pgi.fqn, sc.pcs.Namespace)
+	if err != nil {
 		return err
 	}
-	sc.logger.Info("PodGang Ready condition updated", "podGang", pgi.fqn, "ready", ready)
+	patchBase := pg.DeepCopy()
+
+	minReplicasScheduled := r.arePodGangMinReplicasScheduled(sc, pgi)
+	minReplicasReady := r.arePodGangMinReplicasReady(sc, pgi)
+	now := metav1.Now()
+
+	// Initialized: True once verifyAllPodsCreated passes (which is the gate for entering this
+	// function). The pre-create Initialized=False is set elsewhere in createOrUpdatePodGang.
+	setPodGangCondition(pg, groveschedulerv1alpha1.PodGangConditionTypeInitialized, metav1.ConditionTrue,
+		groveschedulerv1alpha1.ConditionReasonPodGangPodsCreated, "PodGang is fully initialized")
+
+	setScheduledCondition(pg, minReplicasScheduled, now)
+	setReadyCondition(pg, minReplicasReady, now)
+
+	if equality.Semantic.DeepEqual(pg.Status, patchBase.Status) {
+		return nil
+	}
+	if err = r.client.Status().Patch(ctx, pg, client.MergeFrom(patchBase)); err != nil {
+		return err
+	}
+	sc.logger.Info("Patched PodGang status",
+		"podGang", pgi.fqn,
+		"scheduled", meta.IsStatusConditionTrue(pg.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeScheduled)),
+		"ready", meta.IsStatusConditionTrue(pg.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeReady)),
+		"lastScheduled", pg.Status.LastScheduled,
+		"lastReady", pg.Status.LastReady)
 	return nil
+}
+
+func setScheduledCondition(pg *groveschedulerv1alpha1.PodGang, minReplicasScheduled bool, now metav1.Time) {
+	scheduledStatus := metav1.ConditionFalse
+	scheduledReason := groveschedulerv1alpha1.ConditionReasonPodGangNotReady
+	scheduledMessage := "one or more PodGroups have fewer scheduled pods than MinReplicas"
+	if minReplicasScheduled {
+		scheduledStatus = metav1.ConditionTrue
+		scheduledReason = groveschedulerv1alpha1.ConditionReasonPodGangScheduled
+		scheduledMessage = "MinReplicas pods of every PodGroup are scheduled"
+	}
+	transitioned := setPodGangCondition(pg, groveschedulerv1alpha1.PodGangConditionTypeScheduled, scheduledStatus, scheduledReason, scheduledMessage)
+	if transitioned && minReplicasScheduled {
+		pg.Status.LastScheduled = &now
+	}
+}
+
+func setReadyCondition(pg *groveschedulerv1alpha1.PodGang, minReplicasReady bool, now metav1.Time) {
+	readyStatus := metav1.ConditionFalse
+	readyReason := groveschedulerv1alpha1.ConditionReasonPodGangNotReady
+	readyMessage := "one or more PodGroups have fewer Ready pods than MinAvailable"
+	if minReplicasReady {
+		readyStatus = metav1.ConditionTrue
+		readyReason = groveschedulerv1alpha1.ConditionReasonPodGangReady
+		readyMessage = "MinAvailable pods of every PodGroup are ready"
+	}
+	transitioned := setPodGangCondition(pg, groveschedulerv1alpha1.PodGangConditionTypeReady, readyStatus, readyReason, readyMessage)
+	if transitioned && minReplicasReady {
+		pg.Status.LastReady = &now
+	}
+}
+
+// setPodGangCondition is a thin wrapper around meta.SetStatusCondition that builds the
+// metav1.Condition value and reports whether the condition's status changed (i.e. whether
+// this call was a transition rather than an idempotent re-assertion of the same status).
+// Returns true on a fresh transition of any direction, false when the prior status already
+// matched the new status.
+func setPodGangCondition(pg *groveschedulerv1alpha1.PodGang, condType groveschedulerv1alpha1.PodGangConditionType, status metav1.ConditionStatus, reason, message string) bool {
+	prior := meta.FindStatusCondition(pg.Status.Conditions, string(condType))
+	changed := prior == nil || prior.Status != status
+	meta.SetStatusCondition(&pg.Status.Conditions, metav1.Condition{
+		Type:               string(condType),
+		Status:             status,
+		ObservedGeneration: pg.Generation,
+		Reason:             reason,
+		Message:            message,
+	})
+	return changed
 }
 
 // arePodGangMinReplicasScheduled returns true if, for each PodGroup in the PodGang, at least
@@ -803,6 +856,10 @@ type podGangInfo struct {
 	pcsReplicaIndex int
 	// pclqs holds the relevant information for all constituent PodCliques for this PodGang.
 	pclqs []pclqInfo
+	// extraLabels carries labels sourced from the PodGangEntry that should be stamped on
+	// the materialized PodGang resource, on top of the labels buildResource adds by default.
+	// Today this carries the grove.io/epoch label.
+	extraLabels map[string]string
 	// topologyConstraint holds the topology pack constraint applicable at the PodGang level.
 	// These will be cleared when TAS is disabled.
 	topologyConstraint *groveschedulerv1alpha1.TopologyConstraint
