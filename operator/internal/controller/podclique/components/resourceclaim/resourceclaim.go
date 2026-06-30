@@ -58,16 +58,11 @@ func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovec
 // GetExistingResourceNames returns the names of PCLQ-level ResourceClaims
 // by selecting on the grove.io/podclique label that Sync stamps on each RC.
 func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, pclqObjMeta metav1.ObjectMeta) ([]string, error) {
-	objMetaList := &metav1.PartialObjectMetadataList{}
-	objMetaList.SetGroupVersionKind(resourcev1.SchemeGroupVersion.WithKind("ResourceClaim"))
-	if err := r.client.List(ctx,
-		objMetaList,
+	objMetaList, err := resourceclaim.ListResourceClaimMetadata(ctx, r.client,
 		client.InNamespace(pclqObjMeta.Namespace),
 		client.MatchingLabels(pclqResourceClaimLabels(pclqObjMeta)),
-	); err != nil {
-		if meta.IsNoMatchError(err) {
-			return nil, nil
-		}
+	)
+	if err != nil {
 		return nil, groveerr.WrapError(err,
 			errSyncPCLQLevelRC,
 			component.OperationGetExistingResourceNames,
@@ -194,7 +189,7 @@ func pclqResourceClaimLabels(pclqObjMeta metav1.ObjectMeta) map[string]string {
 // GC would create a deadlock since GC only fires after the PCLQ is fully deleted.
 func (r _resource) Delete(ctx context.Context, logger logr.Logger, pclqObjMeta metav1.ObjectMeta) error {
 	labels := pclqResourceClaimLabels(pclqObjMeta)
-	if err := r.client.DeleteAllOf(ctx, &resourcev1.ResourceClaim{},
+	if err := resourceclaim.DeleteResourceClaims(ctx, r.client,
 		client.InNamespace(pclqObjMeta.Namespace),
 		client.MatchingLabels(labels),
 	); err != nil {

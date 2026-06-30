@@ -29,7 +29,6 @@ import (
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
-	resourcev1 "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -55,13 +54,11 @@ func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovec
 
 // GetExistingResourceNames returns the names of all ResourceClaims owned by this PCS.
 func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Logger, pcsObjMeta metav1.ObjectMeta) ([]string, error) {
-	objMetaList := &metav1.PartialObjectMetadataList{}
-	objMetaList.SetGroupVersionKind(resourcev1.SchemeGroupVersion.WithKind("ResourceClaim"))
-	if err := r.client.List(ctx,
-		objMetaList,
+	objMetaList, err := resourceclaim.ListResourceClaimMetadata(ctx, r.client,
 		client.InNamespace(pcsObjMeta.Namespace),
 		client.MatchingLabels(resourceclaim.ResourceClaimLabels(pcsObjMeta.Name)),
-	); err != nil {
+	)
+	if err != nil {
 		return nil, groveerr.WrapError(err,
 			errSyncPCSResourceClaim,
 			component.OperationGetExistingResourceNames,
@@ -163,7 +160,7 @@ func (r _resource) cleanupStaleResourceClaims(ctx context.Context, _ logr.Logger
 // levels: PCS, PCSG, and PCLQ). This is safe because Delete is only called during
 // PCS deletion when the entire hierarchy is being torn down.
 func (r _resource) Delete(ctx context.Context, _ logr.Logger, pcsObjMeta metav1.ObjectMeta) error {
-	if err := r.client.DeleteAllOf(ctx, &resourcev1.ResourceClaim{},
+	if err := resourceclaim.DeleteResourceClaims(ctx, r.client,
 		client.InNamespace(pcsObjMeta.Namespace),
 		client.MatchingLabels(resourceclaim.ResourceClaimLabels(pcsObjMeta.Name)),
 	); err != nil {

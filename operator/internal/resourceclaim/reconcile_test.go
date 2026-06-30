@@ -26,10 +26,14 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
+	resourcev1beta2 "k8s.io/api/resource/v1beta2"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 // --- RCName ---
@@ -490,6 +494,101 @@ func TestDeleteResourceClaim(t *testing.T) {
 		err := DeleteResourceClaim(context.Background(), cl, "nonexistent", "default")
 		require.NoError(t, err)
 	})
+
+	t.Run("falls back to v1beta2 when v1 API is not served", func(t *testing.T) {
+		var calls []string
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+			Delete: func(_ context.Context, _ client.WithWatch, obj client.Object, _ ...client.DeleteOption) error {
+				switch obj.(type) {
+				case *resourcev1.ResourceClaim:
+					calls = append(calls, resourcev1.SchemeGroupVersion.String())
+					return resourceClaimNoKindMatch(resourcev1.SchemeGroupVersion.Version)
+				case *resourcev1beta2.ResourceClaim:
+					calls = append(calls, resourcev1beta2.SchemeGroupVersion.String())
+					return nil
+				default:
+					return fmt.Errorf("unexpected delete object type %T", obj)
+				}
+			},
+		}).Build()
+
+		err := DeleteResourceClaim(context.Background(), cl, "my-rc", "default")
+		require.NoError(t, err)
+		assert.Equal(t, []string{
+			resourcev1.SchemeGroupVersion.String(),
+			resourcev1beta2.SchemeGroupVersion.String(),
+		}, calls)
+	})
+}
+
+func TestDeleteResourceClaims(t *testing.T) {
+	scheme := newTestScheme()
+
+	t.Run("falls back to v1beta2 when v1 API is not served", func(t *testing.T) {
+		var calls []string
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+			DeleteAllOf: func(_ context.Context, _ client.WithWatch, obj client.Object, _ ...client.DeleteAllOfOption) error {
+				switch obj.(type) {
+				case *resourcev1.ResourceClaim:
+					calls = append(calls, resourcev1.SchemeGroupVersion.String())
+					return resourceClaimNoKindMatch(resourcev1.SchemeGroupVersion.Version)
+				case *resourcev1beta2.ResourceClaim:
+					calls = append(calls, resourcev1beta2.SchemeGroupVersion.String())
+					return nil
+				default:
+					return fmt.Errorf("unexpected delete-all object type %T", obj)
+				}
+			},
+		}).Build()
+
+		err := DeleteResourceClaims(context.Background(), cl,
+			client.InNamespace("default"),
+			client.MatchingLabels(ResourceClaimLabels("my-pcs")),
+		)
+		require.NoError(t, err)
+		assert.Equal(t, []string{
+			resourcev1.SchemeGroupVersion.String(),
+			resourcev1beta2.SchemeGroupVersion.String(),
+		}, calls)
+	})
+}
+
+func TestListResourceClaimMetadata(t *testing.T) {
+	scheme := newTestScheme()
+
+	t.Run("falls back to v1beta2 when v1 API is not served", func(t *testing.T) {
+		var calls []string
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+			List: func(_ context.Context, _ client.WithWatch, list client.ObjectList, _ ...client.ListOption) error {
+				gvk := list.GetObjectKind().GroupVersionKind()
+				calls = append(calls, gvk.GroupVersion().String())
+				if gvk.Version == resourcev1.SchemeGroupVersion.Version {
+					return resourceClaimNoKindMatch(resourcev1.SchemeGroupVersion.Version)
+				}
+				if gvk.Version != resourcev1beta2.SchemeGroupVersion.Version {
+					return fmt.Errorf("unexpected list version %q", gvk.Version)
+				}
+
+				objMetaList, ok := list.(*metav1.PartialObjectMetadataList)
+				if !ok {
+					return fmt.Errorf("unexpected list object type %T", list)
+				}
+				objMetaList.Items = []metav1.PartialObjectMetadata{
+					{ObjectMeta: metav1.ObjectMeta{Name: "my-rc", Namespace: "default"}},
+				}
+				return nil
+			},
+		}).Build()
+
+		objMetaList, err := ListResourceClaimMetadata(context.Background(), cl, client.InNamespace("default"))
+		require.NoError(t, err)
+		require.Len(t, objMetaList.Items, 1)
+		assert.Equal(t, "my-rc", objMetaList.Items[0].Name)
+		assert.Equal(t, []string{
+			resourcev1.SchemeGroupVersion.String(),
+			resourcev1beta2.SchemeGroupVersion.String(),
+		}, calls)
+	})
 }
 
 // --- CleanupStalePerReplicaRCs ---
@@ -559,3 +658,10 @@ func TestCleanupStalePerReplicaRCs(t *testing.T) {
 
 // Ensure ptr.To works for tests that need int pointer
 var _ = ptr.To(0)
+
+func resourceClaimNoKindMatch(version string) error {
+	return &meta.NoKindMatchError{
+		GroupKind:        resourcev1.SchemeGroupVersion.WithKind(resourceClaimKind).GroupKind(),
+		SearchedVersions: []string{version},
+	}
+}

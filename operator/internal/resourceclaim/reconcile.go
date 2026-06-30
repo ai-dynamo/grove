@@ -26,15 +26,20 @@ import (
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
+	resourcev1beta2 "k8s.io/api/resource/v1beta2"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
+
+const resourceClaimKind = "ResourceClaim"
 
 // ResourceSharer is the common interface for all level-specific resource sharing
 // types (PCS, PCSG, PCLQ). It enables the reconciler to operate uniformly over
@@ -125,7 +130,42 @@ func DeleteResourceClaim(ctx context.Context, cl client.Client, name, namespace 
 	rc := &resourcev1.ResourceClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
 	}
-	return client.IgnoreNotFound(cl.Delete(ctx, rc))
+	err := cl.Delete(ctx, rc)
+	if !meta.IsNoMatchError(err) {
+		return client.IgnoreNotFound(err)
+	}
+
+	rcBeta := &resourcev1beta2.ResourceClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+	}
+	return client.IgnoreNotFound(cl.Delete(ctx, rcBeta))
+}
+
+// DeleteResourceClaims deletes all ResourceClaims matching the given options.
+func DeleteResourceClaims(ctx context.Context, cl client.Client, opts ...client.DeleteAllOfOption) error {
+	err := cl.DeleteAllOf(ctx, &resourcev1.ResourceClaim{}, opts...)
+	if !meta.IsNoMatchError(err) {
+		return err
+	}
+	return cl.DeleteAllOf(ctx, &resourcev1beta2.ResourceClaim{}, opts...)
+}
+
+// ListResourceClaimMetadata lists ResourceClaims matching the given options.
+func ListResourceClaimMetadata(ctx context.Context, cl client.Client, opts ...client.ListOption) (*metav1.PartialObjectMetadataList, error) {
+	objMetaList := newResourceClaimMetadataList(resourcev1.SchemeGroupVersion)
+	err := cl.List(ctx, objMetaList, opts...)
+	if !meta.IsNoMatchError(err) {
+		return objMetaList, err
+	}
+
+	objMetaList = newResourceClaimMetadataList(resourcev1beta2.SchemeGroupVersion)
+	return objMetaList, cl.List(ctx, objMetaList, opts...)
+}
+
+func newResourceClaimMetadataList(groupVersion schema.GroupVersion) *metav1.PartialObjectMetadataList {
+	objMetaList := &metav1.PartialObjectMetadataList{}
+	objMetaList.SetGroupVersionKind(groupVersion.WithKind(resourceClaimKind))
+	return objMetaList
 }
 
 // EnsureResourceClaims creates ResourceClaims for a list of ResourceSharer entries
@@ -326,7 +366,7 @@ func CleanupStalePerReplicaRCs(
 		sel = sel.Add(*notInReq)
 	}
 
-	return cl.DeleteAllOf(ctx, &resourcev1.ResourceClaim{},
+	return DeleteResourceClaims(ctx, cl,
 		client.InNamespace(namespace),
 		client.MatchingLabelsSelector{Selector: sel},
 	)
