@@ -162,18 +162,6 @@ type podTemplateSpecHashInput struct {
 	PodTemplateSpec *corev1.PodTemplateSpec
 }
 
-// ComputeHashLegacy computes a hash using the pre-canonicalization byte stream.
-//
-// This is intentionally the v0.1.0-alpha.8 behavior: each PodTemplateSpec is
-// passed directly to dump.ForHash without sorting order-independent API lists.
-// It exists only for the one-release compatibility window while persisted
-// legacy hashes are migrated to ComputeHash.
-func ComputeHashLegacy(podTemplateSpecs ...*corev1.PodTemplateSpec) string {
-	return computeHash(func(podTemplateSpec *corev1.PodTemplateSpec) *corev1.PodTemplateSpec {
-		return podTemplateSpec
-	}, nil, podTemplateSpecs...)
-}
-
 func computeHash(prepare func(*corev1.PodTemplateSpec) *corev1.PodTemplateSpec, orderKeys []string, podTemplateSpecs ...*corev1.PodTemplateSpec) string {
 	podTemplateSpecHasher := fnv.New64a()
 	podTemplateSpecHasher.Reset()

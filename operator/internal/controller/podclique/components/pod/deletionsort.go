@@ -18,7 +18,6 @@ package pod
 
 import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -28,8 +27,6 @@ type DeletionSorter struct {
 	Pods []*corev1.Pod
 	// ExpectedPodTemplateHash is the hash that is expected as a label on the updated pods
 	ExpectedPodTemplateHash string
-	// ExpectedPodTemplateHashes are the canonical and legacy hashes accepted during hash migration.
-	ExpectedPodTemplateHashes componentutils.HashCandidates
 }
 
 // Len returns the length of the DeletionSorter
@@ -79,9 +76,6 @@ func (s DeletionSorter) Less(i, j int) bool {
 }
 
 func (s DeletionSorter) expectedHashMatches(hash string) bool {
-	if s.ExpectedPodTemplateHashes.Canonical != "" {
-		return s.ExpectedPodTemplateHashes.Matches(hash)
-	}
 	return hash == s.ExpectedPodTemplateHash
 }
 

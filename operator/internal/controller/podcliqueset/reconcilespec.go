@@ -80,27 +80,19 @@ func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger log
 	}
 	r.pcsGenerationHashExpectations.Delete(pcsObjectName)
 
-	generationHashCandidates := componentutils.ComputePCSGenerationHashCandidates(pcs)
+	generationHash := computeGenerationHash(pcs)
 	if pcs.Status.CurrentGenerationHash == nil {
 		// update the generation hash and continue reconciliation. No rolling update is required.
-		if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, pcsObjectName, generationHashCandidates.Canonical); err != nil {
-			logger.Error(err, "failed to set generation hash on PCS", "newGenerationHash", generationHashCandidates.Canonical)
+		if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, pcsObjectName, generationHash); err != nil {
+			logger.Error(err, "failed to set generation hash on PCS", "newGenerationHash", generationHash)
 			return ctrlcommon.ReconcileWithErrors("error updating generation hash", err)
 		}
 		return ctrlcommon.ContinueReconcile()
 	}
 
-	if generationHashCandidates.IsLegacy(*pcs.Status.CurrentGenerationHash) {
-		if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, pcsObjectName, generationHashCandidates.Canonical); err != nil {
-			logger.Error(err, "failed to migrate legacy generation hash on PCS", "legacyGenerationHash", generationHashCandidates.Legacy, "canonicalGenerationHash", generationHashCandidates.Canonical)
-			return ctrlcommon.ReconcileWithErrors("error migrating generation hash", err)
-		}
-		return ctrlcommon.ContinueReconcile()
-	}
-
-	if !generationHashCandidates.Matches(*pcs.Status.CurrentGenerationHash) {
+	if *pcs.Status.CurrentGenerationHash != generationHash {
 		// trigger rolling update by setting or overriding pcs.Status.UpdateProgress.
-		if err := r.initUpdateProgress(ctx, pcs, pcsObjectName, generationHashCandidates.Canonical); err != nil {
+		if err := r.initUpdateProgress(ctx, pcs, pcsObjectName, generationHash); err != nil {
 			return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("could not triggering rolling update for PCS: %v", pcsObjectKey), err)
 		}
 	}
@@ -127,10 +119,6 @@ func (r *Reconciler) isGenerationHashExpectationSatisfied(pcsObjectName string, 
 // passed as order keys to the shared hash helper.
 func computeGenerationHash(pcs *grovecorev1alpha1.PodCliqueSet) string {
 	return componentutils.ComputePCSGenerationHash(pcs)
-}
-
-func computeGenerationHashLegacy(pcs *grovecorev1alpha1.PodCliqueSet) string {
-	return componentutils.ComputePCSGenerationHashLegacy(pcs)
 }
 
 // setGenerationHashAndUpdateStatus updates the PodCliqueSet status with the new generation hash, stores the expectation, and updates the status subresource.

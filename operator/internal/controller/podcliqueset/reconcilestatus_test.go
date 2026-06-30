@@ -293,9 +293,9 @@ func TestComputePCSUpdatedReplicasRequiresStandaloneHashConvergence(t *testing.T
 		WithReplicas(1).
 		WithStandaloneClique("worker").
 		Build()
-	templateHashes := componentutils.ComputePCLQPodTemplateHashCandidates(pcs.Spec.Template.Cliques[0], pcs.Spec.Template.PriorityClassName)
-	generationHashes := componentutils.ComputePCSGenerationHashCandidates(pcs)
-	pcs.Status.CurrentGenerationHash = ptr.To(generationHashes.Canonical)
+	templateHash := componentutils.ComputePCLQPodTemplateHash(pcs.Spec.Template.Cliques[0], pcs.Spec.Template.PriorityClassName)
+	generationHash := componentutils.ComputePCSGenerationHash(pcs)
+	pcs.Status.CurrentGenerationHash = ptr.To(generationHash)
 
 	tests := []struct {
 		name                              string
@@ -306,30 +306,30 @@ func TestComputePCSUpdatedReplicasRequiresStandaloneHashConvergence(t *testing.T
 	}{
 		{
 			name:                              "stale generation hash",
-			labelPodTemplateHash:              templateHashes.Canonical,
-			currentPodTemplateHash:            templateHashes.Canonical,
+			labelPodTemplateHash:              templateHash,
+			currentPodTemplateHash:            templateHash,
 			currentPodCliqueSetGenerationHash: "old-generation-hash",
 			wantUpdatedReplicas:               0,
 		},
 		{
 			name:                              "stale current template hash",
-			labelPodTemplateHash:              templateHashes.Canonical,
+			labelPodTemplateHash:              templateHash,
 			currentPodTemplateHash:            "old-template-hash",
-			currentPodCliqueSetGenerationHash: generationHashes.Canonical,
+			currentPodCliqueSetGenerationHash: generationHash,
 			wantUpdatedReplicas:               0,
 		},
 		{
 			name:                              "stale label template hash",
 			labelPodTemplateHash:              "old-template-hash",
-			currentPodTemplateHash:            templateHashes.Canonical,
-			currentPodCliqueSetGenerationHash: generationHashes.Canonical,
+			currentPodTemplateHash:            templateHash,
+			currentPodCliqueSetGenerationHash: generationHash,
 			wantUpdatedReplicas:               0,
 		},
 		{
 			name:                              "hashes converged",
-			labelPodTemplateHash:              templateHashes.Canonical,
-			currentPodTemplateHash:            templateHashes.Canonical,
-			currentPodCliqueSetGenerationHash: generationHashes.Canonical,
+			labelPodTemplateHash:              templateHash,
+			currentPodTemplateHash:            templateHash,
+			currentPodCliqueSetGenerationHash: generationHash,
 			wantUpdatedReplicas:               1,
 		},
 	}

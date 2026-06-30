@@ -173,9 +173,6 @@ func (r _resource) computeUpdateWork(logger logr.Logger, sc *syncContext) *updat
 }
 
 func (sc *syncContext) podTemplateHashMatchesExpected(hash string) bool {
-	if sc.expectedPodTemplateHashes.Canonical != "" {
-		return sc.expectedPodTemplateHashes.Matches(hash)
-	}
 	return hash == sc.expectedPodTemplateHash
 }
 
