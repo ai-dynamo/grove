@@ -1,6 +1,6 @@
 # Grove Core Concepts Tutorial
 
-This tutorial provides a comprehensive overview of Grove's core concepts: **PodClique**, **PodCliqueSet**, and **PodCliqueScalingGroup**. Through practical examples, you'll learn how to deploy and scale multi-component AI workloads from simple single-node setups to complex multi-node distributed systems. The examples are inference-flavored because Grove started there, but the primitives are workload-level: upstream frameworks such as Ray, Dynamo, llm-d, NeMo-RL, Megatron-LM, and Kubeflow Trainer can use them to express training, inference, or hybrid pipelines that need coordinated scheduling, startup, scaling, and topology intent.
+This tutorial provides a comprehensive overview of Grove's core concepts: **PodClique**, **PodCliqueSet**, and **PodCliqueScalingGroup**. Through practical examples, you'll learn how to deploy and scale multi-component AI workloads from simple single-node setups to complex multi-node distributed systems. The examples are inference-flavored because Grove started there, but the primitives are workload-level: users deploy upstream frameworks such as Ray, Dynamo, llm-d, NeMo-RL, Megatron-LM, Kubeflow Trainer, etc. and use Grove's API to express training, inference, or hybrid pipelines that need coordinated scheduling, startup, scaling, and topology intent.
 
 ## Prerequisites
 
