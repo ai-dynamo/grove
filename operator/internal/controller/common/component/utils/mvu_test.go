@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	"github.com/stretchr/testify/assert"
@@ -168,7 +169,11 @@ func TestNewPodGangEntryBuilder(t *testing.T) {
 		assert.Equal(t, "my-pcs-0-1002", e3.Name)
 	})
 
-	t.Run("clock advances reflected in subsequent calls", func(t *testing.T) {
+	t.Run("clock advances after construction do not affect subsequent calls", func(t *testing.T) {
+		// A builder represents one batch. The epoch is captured once at NewPodGangEntryBuilder
+		// and shared across every entry the builder produces. Clock advances mid-batch are
+		// ignored so all entries carry the same grove.io/epoch label, only the within-batch
+		// counter +i changes between calls.
 		fakeClk := clocktesting.NewFakeClock(time.Unix(0, 1000))
 		builder := NewPodGangEntryBuilder("my-pcs", 0, "h", fakeClk)
 
@@ -176,10 +181,8 @@ func TestNewPodGangEntryBuilder(t *testing.T) {
 		fakeClk.Step(500 * time.Nanosecond)
 		e2 := builder(nil, nil, nil)
 
-		// e1: 1000 + 0 = 1000
-		// e2: 1500 + 1 = 1501 (i increments on every call regardless of clock)
 		assert.Equal(t, "my-pcs-0-1000", e1.Name)
-		assert.Equal(t, "my-pcs-0-1501", e2.Name)
+		assert.Equal(t, "my-pcs-0-1001", e2.Name)
 	})
 
 	t.Run("two builder instances have independent counters", func(t *testing.T) {
@@ -203,5 +206,32 @@ func TestNewPodGangEntryBuilder(t *testing.T) {
 		e2 := builder(nil, nil, []string{e1.Name})
 
 		assert.Equal(t, []string{e1.Name}, e2.DependsOn)
+	})
+
+	t.Run("all entries from one builder share the same grove.io/epoch label", func(t *testing.T) {
+		fakeClk := clocktesting.NewFakeClock(time.Unix(0, 1000))
+		builder := NewPodGangEntryBuilder("my-pcs", 0, "h", fakeClk)
+
+		e1 := builder(nil, nil, nil)
+		fakeClk.Step(500 * time.Nanosecond)
+		e2 := builder(nil, nil, nil)
+		e3 := builder(nil, nil, nil)
+
+		assert.Equal(t, "1000", e1.Labels[apicommon.LabelEpoch])
+		assert.Equal(t, "1000", e2.Labels[apicommon.LabelEpoch])
+		assert.Equal(t, "1000", e3.Labels[apicommon.LabelEpoch])
+	})
+
+	t.Run("separate builders produce separate epoch labels", func(t *testing.T) {
+		fakeClk := clocktesting.NewFakeClock(time.Unix(0, 1000))
+		b1 := NewPodGangEntryBuilder("my-pcs", 0, "h", fakeClk)
+		fakeClk.Step(500 * time.Nanosecond)
+		b2 := NewPodGangEntryBuilder("my-pcs", 0, "h", fakeClk)
+
+		e1 := b1(nil, nil, nil)
+		e2 := b2(nil, nil, nil)
+
+		assert.Equal(t, "1000", e1.Labels[apicommon.LabelEpoch])
+		assert.Equal(t, "1500", e2.Labels[apicommon.LabelEpoch])
 	})
 }

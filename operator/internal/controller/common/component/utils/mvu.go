@@ -106,8 +106,13 @@ func GetPCSGReplicasFromPCSTemplateSpec(pcs *grovecorev1alpha1.PodCliqueSet) map
 // clocktesting.FakeClock for deterministic name generation.
 func NewPodGangEntryBuilder(pcsName string, pcsReplicaIndex int32, pcsGenerationHash string, clock clock.Clock) PodGangEntryBuilder {
 	var i int64
+	// All entries produced by this builder belong to the same batch and share one epoch.
+	// The unique-suffix on each entry's name is salted with +i for within-batch name
+	// uniqueness, but the grove.io/epoch label is the unsalted base value.
+	baseEpoch := clock.Now().UnixNano()
+	epochLabel := strconv.FormatInt(baseEpoch, 10)
 	return func(standalonePCLQReplicas map[string]int32, pcsgReplicaIndices map[string][]int32, dependsOn []string) grovecorev1alpha1.PodGangEntry {
-		suffix := strconv.FormatInt(clock.Now().UnixNano()+i, 10)
+		suffix := strconv.FormatInt(baseEpoch+i, 10)
 		i++
 		return grovecorev1alpha1.PodGangEntry{
 			Name:                       apicommon.GeneratePodGangName(pcsName, pcsReplicaIndex, suffix),
@@ -115,6 +120,7 @@ func NewPodGangEntryBuilder(pcsName string, pcsReplicaIndex int32, pcsGeneration
 			PodCliques:                 standalonePCLQReplicas,
 			PCSGReplicaIndices:         pcsgReplicaIndices,
 			DependsOn:                  dependsOn,
+			Labels:                     map[string]string{apicommon.LabelEpoch: epochLabel},
 		}
 	}
 }
