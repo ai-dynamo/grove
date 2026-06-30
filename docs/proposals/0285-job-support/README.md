@@ -86,15 +86,77 @@ In job mode, `MinAvailableBreached`-based gang termination is disabled. If pods 
 **API overhead and topology placement loss at scale.**
 Job mode uses `restartPolicy: Never`, which disables kubelet's in-place container restart. Grove is solely responsible for recreating pods on failure. At scale, this means every gang restart triggers a full pod deletion and recreation cycle — incurring Kubernetes API overhead and requiring the scheduler to re-place all pods from scratch. Re-scheduling at scale can take meaningful time and may not recover the same topology placement that the previous attempt had. This is a known limitation of the design.
 
-**`maxRuntime` is not reset on restarts.**
-`maxRuntime` is measured from the first start of the resource and does not reset across gang restarts. Users who set a tight deadline may find the budget exhausted before all retry attempts have run. Mitigation: documentation should clearly state this behavior; users should size `maxRuntime` to account for the full expected duration across all attempts, not just one.
+**`maxRuntime` at the `PodCliqueScalingGroup` / `PodCliqueSet` level is not reset on restarts.**
+`maxRuntime` on a `PodCliqueScalingGroup` or `PodCliqueSet` is measured from the first start of that resource and does not reset when replicas are restarted. Users who set a tight deadline may find the budget exhausted before all retry attempts have run. Mitigation: documentation should clearly state this behavior; users should size `maxRuntime` to account for the full expected duration across all attempts, not just one. Note: `maxRuntime` at the `PodClique` level does reset per instance, since the `PodClique` itself is recreated on gang restart.
 
 **Log loss on retry.**
 When a failed `PodClique` is deleted and recreated during a gang restart, terminal pods from the previous attempt are cascade-deleted along with it. Logs from failed attempts are not durably retained across retries. Mitigation: users who need per-attempt logs should rely on a cluster-level logging stack (e.g. Fluentd, Loki) rather than `kubectl logs`.
 
 ## Design Details
 
-<!-- TODO -->
+### Job Mode Signal
+
+Job mode is signaled by setting `restartPolicy: Never` on the pod template spec of a `PodClique`. No separate mode flag is needed. `restartPolicy: Always` (the current default) continues to work unchanged; `restartPolicy: OnFailure` is explicitly forbidden and rejected at admission.
+
+A `PodCliqueScalingGroup` or `PodCliqueSet` is in job mode when at least one of its child `PodClique`s is in job mode. The job-mode fields (`completedNames`, `maxRestarts`, `maxRuntime`) are valid on a `PodCliqueScalingGroup` or `PodCliqueSet` only when at least one child is in job mode; setting them on a fully long-running resource is a validation error.
+
+### New API Fields
+
+The new fields are added flat under `spec`, at the same level as `replicas` and `minAvailable`. No new nested struct is introduced.
+
+**PodCliqueSpec** gains one new field:
+
+```go
+// MaxRuntime is the maximum wall-clock duration from when the first pod in this
+// PodClique starts running until the PodClique is considered Failed.
+// Only valid when restartPolicy: Never is set on the pod template.
+// +optional
+MaxRuntime *metav1.Duration `json:"maxRuntime,omitempty"`
+```
+
+**PodCliqueScalingGroupSpec** and **PodCliqueSetSpec** each gain:
+
+```go
+// CompletedNames lists the names of child PodCliques (for PCSG) or PodCliques /
+// PodCliqueScalingGroups (for PCS) within a replica that must reach Completed
+// for that replica to be considered Completed. If omitted, all job-mode children
+// must complete.
+// +optional
+CompletedNames []string `json:"completedNames,omitempty"`
+
+// MaxRestarts is the maximum number of times a replica may be restarted after
+// failure. Each restart consumes one unit from this per-replica budget. A replica
+// that exhausts its budget is considered failed.
+// +optional
+MaxRestarts *int32 `json:"maxRestarts,omitempty"`
+
+// MaxRuntime is the maximum wall-clock duration from when the first replica of
+// this resource starts running until the resource is considered Failed. Not reset
+// on replica restarts.
+// +optional
+MaxRuntime *metav1.Duration `json:"maxRuntime,omitempty"`
+```
+
+### Phase and Status Model
+
+**New phases.** Two terminal phases are added across all three resource types:
+
+- `Completed` — all required job-mode children have succeeded.
+- `Failed` — enough children have failed that the completion criterion is permanently unreachable, or `maxRuntime` has been exceeded. Once set, this phase is irreversible.
+
+These phases are represented as a dedicated `phase` field on each resource's status. Non-job-mode resources never set these phases.
+
+**New status field.** `PodCliqueScalingGroup` and `PodCliqueSet` each gain a `replicaRestartCounts` field to track per-replica restart history:
+
+```go
+// ReplicaRestartCounts tracks the number of times each replica has been restarted,
+// indexed by replica index. This field is the authoritative restart history — it is
+// not recomputed from child resources, which may have been deleted. A PCSG replica
+// has no corresponding CRD object, so this is the only place restart state persists.
+ReplicaRestartCounts []int32 `json:"replicaRestartCounts,omitempty"`
+```
+
+This field accumulates across restarts and is never decremented.
 
 ### Monitoring
 
