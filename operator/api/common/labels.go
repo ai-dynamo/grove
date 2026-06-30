@@ -44,6 +44,12 @@ const (
 	// LabelPodCliqueSetGenerationHash is set on PodGang resources to record the PCS generation hash
 	// they were created for.
 	LabelPodCliqueSetGenerationHash = "grove.io/podcliqueset-generation-hash"
+	// LabelEpoch is set on PodGang resources to record the batch in which the PodGang was created.
+	// The value is a monotonic unix-nano timestamp. PodGangs created together share the same epoch.
+	// Subsequent batches carry strictly greater values. Consumed by the coherent-update orchestrator
+	// (via InFlightEpoch) and by the pod-component scheduling-gate-removal logic (via the
+	// PodGangEntry's DependsOn).
+	LabelEpoch = "grove.io/epoch"
 	// LabelPodCliqueScalingGroup is a key for a label that sets the PodCliqueScalingGroup name.
 	LabelPodCliqueScalingGroup = "grove.io/podcliquescalinggroup"
 	// LabelPodCliqueScalingGroupReplicaIndex is a key for a label that sets the replica index of a PodCliqueScalingGroup within PodCliqueSet.

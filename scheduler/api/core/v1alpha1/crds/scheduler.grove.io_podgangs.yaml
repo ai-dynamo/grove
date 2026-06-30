@@ -286,6 +286,20 @@ spec:
                   - type
                   type: object
                 type: array
+              lastReady:
+                description: |-
+                  LastReady is the wall-clock time at which the Ready condition most recently
+                  transitioned from False (or absent) to True. nil until the first such transition,
+                  never reset to nil thereafter.
+                format: date-time
+                type: string
+              lastScheduled:
+                description: |-
+                  LastScheduled is the wall-clock time at which the Scheduled condition most recently
+                  transitioned from False (or absent) to True. nil until the first such transition,
+                  never reset to nil thereafter.
+                format: date-time
+                type: string
               phase:
                 description: Phase is the current phase of a PodGang.
                 type: string

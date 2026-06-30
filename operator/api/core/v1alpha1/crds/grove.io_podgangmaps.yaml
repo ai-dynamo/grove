@@ -60,6 +60,14 @@ spec:
                       items:
                         type: string
                       type: array
+                    labels:
+                      additionalProperties:
+                        type: string
+                      description: |-
+                        Labels carries additional labels to stamp on the materialized PodGang resource,
+                        beyond the labels the PodGang materialization adds by default. Today this carries
+                        the grove.io/epoch label used for scheduling-order semantics.
+                      type: object
                     name:
                       description: Name is the name of the PodGang this entry corresponds
                         to.

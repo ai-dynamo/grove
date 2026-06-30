@@ -35,6 +35,7 @@
         - [Worked example](#worked-example)
       - [Per-sub-step gate](#per-sub-step-gate)
     - [Coherent update flow](#coherent-update-flow)
+      - [Crash safety and partial-write recovery](#crash-safety-and-partial-write-recovery)
       - [Bootstrap (initial PCS deploy)](#bootstrap-initial-pcs-deploy)
       - [One coherent update step](#one-coherent-update-step)
       - [Steady-state PGM follower (post-update)](#steady-state-pgm-follower-post-update)
@@ -57,7 +58,7 @@
   - [Monitoring](#monitoring)
   - [Dependencies](#dependencies)
   - [Graduation Criteria](#graduation-criteria)
-  <!-- /toc -->
+<!-- /toc -->
 
 ## Summary
 

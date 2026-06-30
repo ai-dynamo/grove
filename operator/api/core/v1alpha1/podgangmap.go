@@ -77,6 +77,11 @@ type PodGangEntry struct {
 	// owned PodClique can find its target PodGang by looking up its replica index here.
 	// +optional
 	PCSGReplicaIndices map[string][]int32 `json:"pcsgReplicaIndices,omitempty"`
+	// Labels carries additional labels to stamp on the materialized PodGang resource,
+	// beyond the labels the PodGang materialization adds by default. Today this carries
+	// the grove.io/epoch label used for scheduling-order semantics.
+	// +optional
+	Labels map[string]string `json:"labels,omitempty"`
 	// DependsOn lists the PodGang names within the same PodCliqueSet replica whose pods must be
 	// scheduled before pods in this PodGang have their scheduling gates removed.
 	// +optional

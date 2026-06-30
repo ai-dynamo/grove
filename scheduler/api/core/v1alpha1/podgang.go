@@ -157,13 +157,16 @@ type PodGangConditionType string
 const (
 	// PodGangConditionTypeScheduled indicates that the PodGang has been scheduled.
 	// It is set to True once MinReplicas pods of every PodGroup have been placed on nodes
-	// by the backend scheduler. Once True, this condition remains True for the rest of the
-	// PodGang's lifetime — placement is a one-time event from the scheduler's perspective.
+	// by the backend scheduler. This condition reflects current state: if scheduled pods
+	// are subsequently evicted, deleted, or preempted such that the count for any PodGroup
+	// falls below its MinReplicas, the condition flips back to False. PodGangStatus.LastScheduled
+	// captures the wall-clock time of the most recent False->True transition.
 	PodGangConditionTypeScheduled PodGangConditionType = "Scheduled"
 	// PodGangConditionTypeReady indicates that all the constituent PodGroups are Ready.
 	// It is set to True when, for every PodGroup, the count of Ready pods (passing readiness
-	// probes) is at least the MinAvailable of the constituent PodClique. Unlike Scheduled,
-	// this condition reflects current state — if pods fail readiness, it flips back to False.
+	// probes) is at least the MinAvailable of the constituent PodClique. This condition
+	// reflects current state: if pods fail readiness, it flips back to False. PodGangStatus.LastReady
+	// captures the wall-clock time of the most recent False->True transition.
 	PodGangConditionTypeReady PodGangConditionType = "Ready"
 	// PodGangConditionTypeInitialized indicates that all Pods have been created and PodGang has been populated with pod references.
 	// This condition is set to True after all pods are created, signaling that scheduling gates can be removed.
@@ -203,4 +206,14 @@ type PodGangStatus struct {
 	// best possible placement of the pods in the PodGang, then the score will be 1.0. Higher the score, better the placement.
 	// +optional
 	PlacementScore *float64 `json:"placementScore,omitempty"`
+	// LastScheduled is the wall-clock time at which the Scheduled condition most recently
+	// transitioned from False (or absent) to True. nil until the first such transition,
+	// never reset to nil thereafter.
+	// +optional
+	LastScheduled *metav1.Time `json:"lastScheduled,omitempty"`
+	// LastReady is the wall-clock time at which the Ready condition most recently
+	// transitioned from False (or absent) to True. nil until the first such transition,
+	// never reset to nil thereafter.
+	// +optional
+	LastReady *metav1.Time `json:"lastReady,omitempty"`
 }
