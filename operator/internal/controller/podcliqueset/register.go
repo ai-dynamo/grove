@@ -164,7 +164,8 @@ func podCliqueScalingGroupPredicate() predicate.Predicate {
 				return false
 			}
 			return hasMinAvailableBreachedConditionChanged(oldPCSG.Status.Conditions, newPCSG.Status.Conditions) ||
-				hasPodCliqueScalingGroupStatusChanged(&oldPCSG.Status, &newPCSG.Status)
+				hasPodCliqueScalingGroupStatusChanged(&oldPCSG.Status, &newPCSG.Status) ||
+				!reflect.DeepEqual(oldPCSG.Status.PodGangMapping, newPCSG.Status.PodGangMapping)
 		},
 		GenericFunc: func(_ event.TypedGenericEvent[client.Object]) bool { return false },
 	}
@@ -191,7 +192,8 @@ func hasStatusChanged(updateEvent event.UpdateEvent) bool {
 	return hasAnyStatusReplicasChanged(oldPCLQ.Status, newPCLQ.Status) ||
 		hasPodCliqueHashStatusChanged(oldPCLQ.Status, newPCLQ.Status) ||
 		hasUpdateStatusChanged(oldPCLQ.Status.UpdateProgress, newPCLQ.Status.UpdateProgress) ||
-		hasMinAvailableBreachedConditionChanged(oldPCLQ.Status.Conditions, newPCLQ.Status.Conditions)
+		hasMinAvailableBreachedConditionChanged(oldPCLQ.Status.Conditions, newPCLQ.Status.Conditions) ||
+		!reflect.DeepEqual(oldPCLQ.Status.PodGangMapping, newPCLQ.Status.PodGangMapping)
 }
 
 // hasAnyStatusReplicasChanged checks if any replica count fields have changed.

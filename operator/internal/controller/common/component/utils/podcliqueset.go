@@ -25,6 +25,7 @@ import (
 
 	"github.com/samber/lo"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -38,24 +39,51 @@ func GetExpectedPCSGFQNsForPCS(pcs *grovecorev1alpha1.PodCliqueSet) []string {
 func GetPodCliqueFQNsForPCSNotInPCSG(pcs *grovecorev1alpha1.PodCliqueSet) []string {
 	pclqFQNs := make([]string, 0, int(pcs.Spec.Replicas)*len(pcs.Spec.Template.Cliques))
 	for pcsReplicaIndex := range int(pcs.Spec.Replicas) {
-		pclqFQNs = append(pclqFQNs, GetPodCliqueFQNsForPCSReplicaNotInPCSG(pcs, pcsReplicaIndex)...)
+		pclqFQNs = append(pclqFQNs, GetStandalonePCLQFQNs(pcs, pcsReplicaIndex)...)
 	}
 	return pclqFQNs
 }
 
-// GetPodCliqueFQNsForPCSReplicaNotInPCSG computes the FQNs for all PodCliques for a PCS replica which are not part of any PCSG.
-func GetPodCliqueFQNsForPCSReplicaNotInPCSG(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int) []string {
-	pclqNames := make([]string, 0, len(pcs.Spec.Template.Cliques))
+// GetStandalonePCLQFQNSet returns a set of fully-qualified names of all standalone PodCliques
+// for a given PCS replica. A standalone PodClique is one whose name does not appear in any
+// PodCliqueScalingGroupConfig.CliqueNames in the PCS template.
+func GetStandalonePCLQFQNSet(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int) sets.Set[string] {
+	fqns := sets.New[string]()
 	for _, pclqTemplateSpec := range pcs.Spec.Template.Cliques {
-		if isStandalonePCLQ(pcs, pclqTemplateSpec.Name) {
-			pclqNames = append(pclqNames, common.GeneratePodCliqueName(common.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}, pclqTemplateSpec.Name))
+		if isStandalonePCLQName(pcs, pclqTemplateSpec.Name) {
+			fqns.Insert(common.GeneratePodCliqueName(common.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}, pclqTemplateSpec.Name))
 		}
 	}
-	return pclqNames
+	return fqns
 }
 
-// isStandalonePCLQ checks if the PodClique is managed by PodCliqueSet or not
-func isStandalonePCLQ(pcs *grovecorev1alpha1.PodCliqueSet, pclqName string) bool {
+// GetPCSGOwnedCliqueNames returns the set of all PodClique names that belong to
+// any PodCliqueScalingGroupConfig in the PCS template.
+func GetPCSGOwnedCliqueNames(pcs *grovecorev1alpha1.PodCliqueSet) sets.Set[string] {
+	names := sets.New[string]()
+	for _, cfg := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		names.Insert(cfg.CliqueNames...)
+	}
+	return names
+}
+
+// GetStandalonePCLQFQNs returns the fully-qualified names of all standalone PodCliques
+// for a given PCS replica as a slice. See GetStandalonePCLQFQNSet for the definition of standalone.
+func GetStandalonePCLQFQNs(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int) []string {
+	return GetStandalonePCLQFQNSet(pcs, pcsReplicaIndex).UnsortedList()
+}
+
+// CountStandalonePCLQs returns the number of standalone PodCliques defined in the PCS template.
+// A standalone PodClique is one whose name does not appear in any PodCliqueScalingGroupConfig.CliqueNames.
+func CountStandalonePCLQs(pcs *grovecorev1alpha1.PodCliqueSet) int {
+	return lo.CountBy(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec) bool {
+		return isStandalonePCLQName(pcs, pclqTemplateSpec.Name)
+	})
+}
+
+// isStandalonePCLQName checks if the PodClique is managed by PodCliqueSet or not
+// NOTE: This function should only be used by callers who can always pass a valid PCLQ name.
+func isStandalonePCLQName(pcs *grovecorev1alpha1.PodCliqueSet, pclqName string) bool {
 	return !lo.SomeBy(pcs.Spec.Template.PodCliqueScalingGroupConfigs, func(pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig) bool {
 		return slices.Contains(pcsgConfig.CliqueNames, pclqName)
 	})
@@ -114,11 +142,42 @@ func GetPodCliqueSetName(objectMeta metav1.ObjectMeta) string {
 
 // IsAutoUpdateStrategy returns true when PodCliqueSet update strategy is automatically orchestrated by Grove.
 // Only the OnDelete update strategy is not an auto update strategy.
+// Deprecated: Use IsOnDeleteStrategy, IsCoherentStrategy, or IsRollingRecreateUpdateInProgress for explicit checks.
 func IsAutoUpdateStrategy(pcs *grovecorev1alpha1.PodCliqueSet) bool {
 	if pcs == nil {
 		return false
 	}
 	return pcs.Spec.UpdateStrategy == nil || pcs.Spec.UpdateStrategy.Type != grovecorev1alpha1.OnDeleteStrategy
+}
+
+// IsOnDeleteStrategy returns true when the PodCliqueSet update strategy is OnDelete.
+func IsOnDeleteStrategy(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+	if pcs == nil {
+		return false
+	}
+	return pcs.Spec.UpdateStrategy != nil && pcs.Spec.UpdateStrategy.Type == grovecorev1alpha1.OnDeleteStrategy
+}
+
+// IsCoherentStrategy returns true when the PodCliqueSet update strategy is Coherent.
+func IsCoherentStrategy(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+	if pcs == nil {
+		return false
+	}
+	return pcs.Spec.UpdateStrategy != nil && pcs.Spec.UpdateStrategy.Type == grovecorev1alpha1.CoherentStrategy
+}
+
+// IsCoherentUpdateInProgress returns true when a Coherent update has been initiated and not yet completed.
+func IsCoherentUpdateInProgress(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+	return IsCoherentStrategy(pcs) &&
+		pcs.Status.UpdateProgress != nil &&
+		pcs.Status.UpdateProgress.UpdateEndedAt == nil
+}
+
+// IsRollingRecreateUpdateInProgress returns true when a RollingRecreate update has been initiated and not yet completed.
+func IsRollingRecreateUpdateInProgress(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+	return (pcs.Spec.UpdateStrategy == nil || pcs.Spec.UpdateStrategy.Type == grovecorev1alpha1.RollingRecreateStrategy) &&
+		pcs.Status.UpdateProgress != nil &&
+		pcs.Status.UpdateProgress.UpdateEndedAt == nil
 }
 
 // GetExpectedPCLQNamesGroupByOwner returns the expected unqualified PodClique names which are either owned by PodCliqueSet or PodCliqueScalingGroup.
@@ -150,7 +209,7 @@ func GetExpectedPCSGFQNsPerPCSReplica(pcs *grovecorev1alpha1.PodCliqueSet) map[i
 func GetExpectedStandAlonePCLQFQNsPerPCSReplica(pcs *grovecorev1alpha1.PodCliqueSet) map[int][]string {
 	pclqFQNsByPCSReplica := make(map[int][]string)
 	for pcsReplicaIndex := range int(pcs.Spec.Replicas) {
-		pclqFQNsByPCSReplica[pcsReplicaIndex] = GetPodCliqueFQNsForPCSReplicaNotInPCSG(pcs, pcsReplicaIndex)
+		pclqFQNsByPCSReplica[pcsReplicaIndex] = GetStandalonePCLQFQNs(pcs, pcsReplicaIndex)
 	}
 	return pclqFQNsByPCSReplica
 }

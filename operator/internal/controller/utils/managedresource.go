@@ -18,6 +18,7 @@ package utils
 
 import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -62,4 +63,13 @@ func IsManagedPodGang(obj client.Object) bool {
 		return false
 	}
 	return IsManagedByGrove(podGang.Labels)
+}
+
+// IsManagedPodGangMap checks if the PodGangMap is managed by Grove and owned by a PodCliqueSet.
+func IsManagedPodGangMap(obj client.Object) bool {
+	pgm, ok := obj.(*grovecorev1alpha1.PodGangMap)
+	if !ok {
+		return false
+	}
+	return IsManagedByGrove(pgm.GetLabels()) && HasExpectedOwner(constants.KindPodCliqueSet, pgm.GetOwnerReferences())
 }

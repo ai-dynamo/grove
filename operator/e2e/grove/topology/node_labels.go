@@ -49,7 +49,7 @@ type touchedLabelSnapshot map[string]map[string]originalLabelState
 // MutateNodeLabels applies label changes to nodes. Returns a cleanup function that
 // restores each touched label to its original state.
 // The cleanup function is safe to call multiple times. It reports rollback failures via t.Errorf.
-func (tv *TopologyVerifier) MutateNodeLabels(ctx context.Context, t testing.TB, changes []NodeLabelChange) (cleanup func(), err error) {
+func (tv *Verifier) MutateNodeLabels(ctx context.Context, t testing.TB, changes []NodeLabelChange) (cleanup func(), err error) {
 	// Snapshot the original state of each touched label key before any mutation,
 	// so rollback can restore exactly what this helper changed.
 	originalTouchedLabels := make(touchedLabelSnapshot) // nodeName -> labelKey -> original state
@@ -161,7 +161,7 @@ func captureTouchedLabelSnapshot(snapshot touchedLabelSnapshot, change NodeLabel
 // rollbackNodeLabels reverses label mutations on the specified nodes:
 // - Restores original values for labels that existed before mutation.
 // - Removes labels that did not exist before mutation.
-func rollbackNodeLabels(ctx context.Context, tv *TopologyVerifier, mutatedNodes []string, originalTouchedLabels touchedLabelSnapshot) error {
+func rollbackNodeLabels(ctx context.Context, tv *Verifier, mutatedNodes []string, originalTouchedLabels touchedLabelSnapshot) error {
 	for _, nodeName := range mutatedNodes {
 		labels := make(map[string]interface{})
 
@@ -200,7 +200,7 @@ func rollbackNodeLabels(ctx context.Context, tv *TopologyVerifier, mutatedNodes 
 }
 
 // GetWorkerNodeNames returns sorted names of all worker nodes matching the e2e worker label selector.
-func (tv *TopologyVerifier) GetWorkerNodeNames(ctx context.Context) ([]string, error) {
+func (tv *Verifier) GetWorkerNodeNames(ctx context.Context) ([]string, error) {
 	var nodeList v1.NodeList
 	if err := tv.cl.List(ctx, &nodeList, &client.ListOptions{
 		Raw: &metav1.ListOptions{LabelSelector: setup.GetWorkerNodeLabelSelector()},

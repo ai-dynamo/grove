@@ -26,22 +26,33 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-var (
-	// errReplicaIndexIntConversion indicates the replica index label value could not be converted to an integer.
-	errReplicaIndexIntConversion = errors.New("failed to convert replica index to int")
-	// errNotFoundPodCliqueSetReplicaIndexLabel indicates the PodCliqueSet replica index label is missing from the resource.
-	errNotFoundPodCliqueSetReplicaIndexLabel = fmt.Errorf("label %s not found on resource", apicommon.LabelPodCliqueSetReplicaIndex)
-)
+// errReplicaIndexIntConversion indicates the replica index label value could not be converted to an integer.
+var errReplicaIndexIntConversion = errors.New("failed to convert replica index to int")
 
 // GetPodCliqueSetReplicaIndex extracts the PodCliqueSet replica index from the labels on the managed resource.
 func GetPodCliqueSetReplicaIndex(objMeta metav1.ObjectMeta) (int, error) {
 	pcsReplicaIndexStr, ok := objMeta.GetLabels()[apicommon.LabelPodCliqueSetReplicaIndex]
 	if !ok {
-		return 0, errNotFoundPodCliqueSetReplicaIndexLabel
+		return 0, fmt.Errorf("label %s not found on resource %v", apicommon.LabelPodCliqueSetReplicaIndex, GetObjectKeyFromObjectMeta(objMeta))
 	}
 	pcsReplicaIndex, err := strconv.Atoi(pcsReplicaIndexStr)
 	if err != nil {
 		return 0, fmt.Errorf("%w: %w invalid PodCliqueSet replica index label value set on resource %v", errReplicaIndexIntConversion, err, GetObjectKeyFromObjectMeta(objMeta))
 	}
 	return pcsReplicaIndex, nil
+}
+
+// GetPodCliqueScalingGroupReplicaIndex extracts the PodCliqueScalingGroup replica index from the labels on the managed resource.
+// Returns an error if the label is missing or unparseable. Intended for callers that know the resource is owned by a
+// PodCliqueScalingGroup (and therefore must have the label).
+func GetPodCliqueScalingGroupReplicaIndex(objMeta metav1.ObjectMeta) (int, error) {
+	pcsgReplicaIndexStr, ok := objMeta.GetLabels()[apicommon.LabelPodCliqueScalingGroupReplicaIndex]
+	if !ok {
+		return 0, fmt.Errorf("label %s not found on resource %v", apicommon.LabelPodCliqueScalingGroupReplicaIndex, GetObjectKeyFromObjectMeta(objMeta))
+	}
+	pcsgReplicaIndex, err := strconv.Atoi(pcsgReplicaIndexStr)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %w invalid PodCliqueScalingGroup replica index label value set on resource %v", errReplicaIndexIntConversion, err, GetObjectKeyFromObjectMeta(objMeta))
+	}
+	return pcsgReplicaIndex, nil
 }

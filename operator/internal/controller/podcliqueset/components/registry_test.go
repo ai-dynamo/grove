@@ -71,6 +71,7 @@ func TestCreateOperatorRegistry(t *testing.T) {
 			component.KindPodCliqueScalingGroup,
 			component.KindHorizontalPodAutoscaler,
 			component.KindPodGang,
+			component.KindPodGangMap,
 			component.KindPodCliqueSetReplica,
 		}
 
@@ -112,6 +113,7 @@ func TestCreateOperatorRegistry(t *testing.T) {
 			component.KindPodCliqueScalingGroup,
 			component.KindHorizontalPodAutoscaler,
 			component.KindPodGang,
+			component.KindPodGangMap,
 			component.KindPodCliqueSetReplica,
 			component.KindComputeDomain,
 		}

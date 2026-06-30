@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
@@ -392,3 +393,55 @@ const (
 	bucketNewReady
 	bucketSkipped // terminating pods — not in any bucket
 )
+
+// TestCheckAndMarkPCLQCoherentUpdateEnded exercises the PCLQ-level coherent close-out gate.
+// runSyncFlow already filters callers on IsCoherentUpdateInProgress / IsPCLQAutoUpdateInProgress /
+// isStandalonePCLQ; this function only checks the count conditions, so the tests focus there.
+func TestCheckAndMarkPCLQCoherentUpdateEnded(t *testing.T) {
+	const (
+		pclqName = "test-pclq"
+		ns       = "default"
+	)
+	now := metav1.Time{Time: time.Now()}
+	mkPCLQ := func(specReplicas, statusReplicas, updatedReplicas int32) *grovecorev1alpha1.PodClique {
+		return &grovecorev1alpha1.PodClique{
+			ObjectMeta: metav1.ObjectMeta{Name: pclqName, Namespace: ns, ResourceVersion: "1"},
+			Spec:       grovecorev1alpha1.PodCliqueSpec{Replicas: specReplicas},
+			Status: grovecorev1alpha1.PodCliqueStatus{
+				Replicas:        statusReplicas,
+				UpdatedReplicas: updatedReplicas,
+				UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
+					UpdateStartedAt: now,
+					PodTemplateHash: testNewHash,
+				},
+			},
+		}
+	}
+	run := func(t *testing.T, pclq *grovecorev1alpha1.PodClique) (endedAt *metav1.Time, err error) {
+		cl := fake.NewClientBuilder().WithScheme(buildTestScheme(t)).WithObjects(pclq).WithStatusSubresource(pclq).Build()
+		r := &_resource{client: cl}
+		sc := &syncContext{ctx: context.Background(), pclq: pclq}
+		err = r.checkAndMarkPCLQCoherentUpdateEnded(logr.Discard(), sc)
+		return pclq.Status.UpdateProgress.UpdateEndedAt, err
+	}
+
+	t.Run("status.Replicas != spec.Replicas leaves UpdateEndedAt nil", func(t *testing.T) {
+		// One pod still missing — not yet a complete count.
+		endedAt, err := run(t, mkPCLQ(3, 2, 2))
+		require.NoError(t, err)
+		assert.Nil(t, endedAt)
+	})
+
+	t.Run("status.UpdatedReplicas < status.Replicas leaves UpdateEndedAt nil", func(t *testing.T) {
+		// Count is right but at least one pod still on the old template.
+		endedAt, err := run(t, mkPCLQ(3, 3, 2))
+		require.NoError(t, err)
+		assert.Nil(t, endedAt)
+	})
+
+	t.Run("all pods on new template marks UpdateEndedAt", func(t *testing.T) {
+		endedAt, err := run(t, mkPCLQ(3, 3, 3))
+		require.NoError(t, err)
+		require.NotNil(t, endedAt)
+	})
+}

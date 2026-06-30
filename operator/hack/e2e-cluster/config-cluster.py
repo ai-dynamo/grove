@@ -263,9 +263,26 @@ def ensure_auto_mnnvl(enabled: bool, *, skip_wait: bool = False) -> None:
 
     Uses ``helm upgrade --reuse-values`` so all other chart values stay
     unchanged.  The operator pod is restarted automatically by Helm.
+
+    The operator ConfigMap is rendered with ``immutable: true`` and a
+    content-hash-suffix name (see ``charts/templates/_helpers.tpl``).  Helm
+    upgrade still issues a patch against it even when the rendered body is
+    byte-identical to what is on the cluster, and the apiserver rejects any
+    patch that touches ``data`` on an immutable ConfigMap.  Pre-deleting the
+    CM lets ``helm upgrade`` recreate it fresh; the running operator pod
+    keeps the prior CM mounted via the projected volume until the rollout
+    cycles it.
     """
     desired_str = str(enabled).lower()
     log_info(f"Setting autoMNNVLEnabled={desired_str} on {GROVE_RELEASE}...")
+
+    # Delete the existing operator CM so helm upgrade can create it fresh
+    # instead of patching (which fails because of `immutable: true`).
+    run_quiet(
+        f"kubectl delete configmap -n {GROVE_NAMESPACE}"
+        f" -l app.kubernetes.io/component=operator-configmap"
+        f" --ignore-not-found"
+    )
 
     run(
         f"helm upgrade {GROVE_RELEASE} charts"

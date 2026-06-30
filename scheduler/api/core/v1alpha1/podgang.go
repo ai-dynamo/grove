@@ -156,8 +156,17 @@ type PodGangConditionType string
 
 const (
 	// PodGangConditionTypeScheduled indicates that the PodGang has been scheduled.
+	// It is set to True once MinReplicas pods of every PodGroup have been placed on nodes
+	// by the backend scheduler. This condition reflects current state: if scheduled pods
+	// are subsequently evicted, deleted, or preempted such that the count for any PodGroup
+	// falls below its MinReplicas, the condition flips back to False. PodGangStatus.LastScheduled
+	// captures the wall-clock time of the most recent False->True transition.
 	PodGangConditionTypeScheduled PodGangConditionType = "Scheduled"
 	// PodGangConditionTypeReady indicates that all the constituent PodGroups are Ready.
+	// It is set to True when, for every PodGroup, the count of Ready pods (passing readiness
+	// probes) is at least the MinAvailable of the constituent PodClique. This condition
+	// reflects current state: if pods fail readiness, it flips back to False. PodGangStatus.LastReady
+	// captures the wall-clock time of the most recent False->True transition.
 	PodGangConditionTypeReady PodGangConditionType = "Ready"
 	// PodGangConditionTypeInitialized indicates that all Pods have been created and PodGang has been populated with pod references.
 	// This condition is set to True after all pods are created, signaling that scheduling gates can be removed.
@@ -178,15 +187,33 @@ const (
 	ConditionReasonPodGangPodsCreationPending = "PodGangPodsCreationPending"
 	// ConditionReasonPodGangPodsCreated indicates that all constituent Pods for a PodGang have been created.
 	ConditionReasonPodGangPodsCreated = "PodGangPodsCreated"
+	// ConditionReasonPodGangScheduled indicates that MinReplicas pods of every PodGroup have been placed on nodes by the backend scheduler.
+	ConditionReasonPodGangScheduled = "PodGangScheduled"
+	// ConditionReasonPodGangReady indicates that, for every PodGroup, at least MinAvailable pods are passing readiness probes.
+	ConditionReasonPodGangReady = "PodGangReady"
+	// ConditionReasonPodGangNotReady indicates that one or more PodGroups have fewer Ready pods than the constituent PodClique's MinAvailable.
+	ConditionReasonPodGangNotReady = "PodGangNotReady"
 )
 
 // PodGangStatus defines the status of a PodGang.
 type PodGangStatus struct {
 	// Phase is the current phase of a PodGang.
+	// +optional
 	Phase PodGangPhase `json:"phase"`
 	// Conditions is a list of conditions that describe the current state of the PodGang.
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 	// PlacementScore is network optimality score for the PodGang. If the choice that the scheduler has made corresponds to the
 	// best possible placement of the pods in the PodGang, then the score will be 1.0. Higher the score, better the placement.
+	// +optional
 	PlacementScore *float64 `json:"placementScore,omitempty"`
+	// LastScheduled is the wall-clock time at which the Scheduled condition most recently
+	// transitioned from False (or absent) to True. nil until the first such transition,
+	// never reset to nil thereafter.
+	// +optional
+	LastScheduled *metav1.Time `json:"lastScheduled,omitempty"`
+	// LastReady is the wall-clock time at which the Ready condition most recently
+	// transitioned from False (or absent) to True. nil until the first such transition,
+	// never reset to nil thereafter.
+	// +optional
+	LastReady *metav1.Time `json:"lastReady,omitempty"`
 }

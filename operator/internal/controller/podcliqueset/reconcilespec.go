@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"sync"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
@@ -31,7 +32,9 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 
 	"github.com/go-logr/logr"
+	"github.com/samber/lo"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -143,21 +146,91 @@ func (r *Reconciler) setGenerationHashAndUpdateStatus(ctx context.Context, pcs *
 	return nil
 }
 
-// initUpdateProgress initializes a new rolling update by resetting progress tracking.
+// initUpdateProgress initializes a new update by resetting progress tracking for the active strategy.
+//
+// For the Coherent strategy it also captures the set of components (standalone PodCliques and
+// PodCliqueScalingGroups) that are out-of-date relative to the new PCS spec at this exact moment.
+// This snapshot drives the MVU template for the lifetime of the update — recomputing the set
+// from live PCLQ hashes on every reconcile would shrink it as pods roll over and break the
+// MVU invariants.
 func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsObjectName, newGenerationHash string) error {
-	pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
-		UpdateStartedAt: metav1.Now(),
-	}
-	// OnDelete strategy sets UpdateEndedAt too, since we do not know when all the pods will manually be deleted, and gang termination is disabled when an update is in progress
-	if pcs.Spec.UpdateStrategy != nil && pcs.Spec.UpdateStrategy.Type == grovecorev1alpha1.OnDeleteStrategy {
-		pcs.Status.UpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
+	if componentutils.IsCoherentStrategy(pcs) {
+		updatedStandalonePCLQs, updatedPCSGs, err := r.findUpdatedStandalonePCLQsAndPCSGs(ctx, pcs)
+		if err != nil {
+			return fmt.Errorf("could not detect out-of-date components for PodCliqueSet %v: %w", client.ObjectKeyFromObject(pcs), err)
+		}
+		pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+			UpdateStartedAt:               metav1.Now(),
+			UpdatedStandalonePodCliques:   updatedStandalonePCLQs,
+			UpdatedPodCliqueScalingGroups: updatedPCSGs,
+		}
+	} else {
+		pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+			UpdateStartedAt: metav1.Now(),
+		}
+		// OnDelete strategy sets UpdateEndedAt too, since we do not know when all the pods will manually be deleted, and gang termination is disabled when an update is in progress
+		if pcs.Spec.UpdateStrategy != nil && pcs.Spec.UpdateStrategy.Type == grovecorev1alpha1.OnDeleteStrategy {
+			pcs.Status.UpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
+		}
 	}
 	pcs.Status.UpdatedReplicas = 0
-	pcs.Status.CurrentGenerationHash = &newGenerationHash
 	if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, pcsObjectName, newGenerationHash); err != nil {
 		return fmt.Errorf("could not set UpdateProgress for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
 	}
 	return nil
+}
+
+// findUpdatedStandalonePCLQsAndPCSGs lists live PodCliques for this PCS and returns the names of
+// components (standalone PodCliques and PodCliqueScalingGroup configs) that have at least one live
+// PodClique whose CurrentPodTemplateHash does not match the per-clique hash of the new PCS spec.
+// PCLQs at one clique can be in mixed hash states (e.g. partway through a coherent update), so the
+// "any live PCLQ mismatches" rule must scan every PCLQ at the clique, not just sample one. Returned
+// slices are sorted ascending for stable status persistence.
+func (r *Reconciler) findUpdatedStandalonePCLQsAndPCSGs(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (standalone, pcsgs []string, err error) {
+	pclqs, err := componentutils.GetPCLQsMatchingLabels(ctx, r.client, pcs.Namespace, apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name))
+	if err != nil {
+		return nil, nil, err
+	}
+	pclqsByCliqueName, err := indexPCLQsByCliqueName(pclqs)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	standaloneSet := sets.New[string]()
+	pcsgSet := sets.New[string]()
+
+	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
+		newHash := componentutils.ComputePCLQPodTemplateHash(cliqueTemplate, pcs.Spec.Template.PriorityClassName)
+		anyOutOfDate := lo.ContainsBy(pclqsByCliqueName[cliqueTemplate.Name], func(pclq grovecorev1alpha1.PodClique) bool {
+			return pclq.Status.CurrentPodTemplateHash == nil || *pclq.Status.CurrentPodTemplateHash != newHash
+		})
+		if !anyOutOfDate {
+			continue
+		}
+		// Standalone cliques aren't in any PCSG config; PCSG-owned cliques attribute to the owning PCSG.
+		if owningPCSG := componentutils.FindScalingGroupConfigForClique(pcs.Spec.Template.PodCliqueScalingGroupConfigs, cliqueTemplate.Name); owningPCSG != nil {
+			pcsgSet.Insert(owningPCSG.Name)
+		} else {
+			standaloneSet.Insert(cliqueTemplate.Name)
+		}
+	}
+
+	standalone = sets.List(standaloneSet)
+	pcsgs = sets.List(pcsgSet)
+	return standalone, pcsgs, nil
+}
+
+// indexPCLQsByCliqueName groups the supplied PodCliques by unqualified clique name.
+func indexPCLQsByCliqueName(pclqs []grovecorev1alpha1.PodClique) (map[string][]grovecorev1alpha1.PodClique, error) {
+	out := make(map[string][]grovecorev1alpha1.PodClique)
+	for _, pclq := range pclqs {
+		cliqueName, err := utils.GetPodCliqueNameFromPodCliqueFQN(pclq.ObjectMeta)
+		if err != nil {
+			return nil, err
+		}
+		out[cliqueName] = append(out[cliqueName], pclq)
+	}
+	return out, nil
 }
 
 // syncPodCliqueSetResources synchronizes all managed child resources. Components are
@@ -284,8 +357,10 @@ func (r *Reconciler) recordIncompleteReconcile(ctx context.Context, logger logr.
 // are processed in order to respect cross-group dependencies.
 func getKindSyncGroups() [][]component.Kind {
 	return [][]component.Kind{
-		// G1: RBAC + static per-PCS infra (Service, HPA targets by name so no ordering
+		// G0: RBAC + static per-PCS infra (Service, HPA targets by name so no ordering
 		// vs PodClique/PCSG needed, ComputeDomain/ResourceClaim are independent add-ons).
+		// PodGangMap is computed here — it has no dependency on any other component, and
+		// must be ready before PodCliqueSetReplica (G1) and PodClique/PCSG/PodGang (G2) read it.
 		{
 			component.KindServiceAccount,
 			component.KindRole,
@@ -293,17 +368,20 @@ func getKindSyncGroups() [][]component.Kind {
 			component.KindServiceAccountTokenSecret,
 			component.KindHeadlessService,
 			component.KindHorizontalPodAutoscaler,
-			component.KindPodCliqueSetReplica,
 			component.KindComputeDomain,
 			component.KindResourceClaim,
+			component.KindPodGangMap,
 		},
-		// G2: PodClique must exist before PodGang can reference their pods.
+		// G1: PodCliqueSetReplica orchestrates replica deletion and rolling updates; it reads
+		// PodGangMap (for Coherent updates) so must run after G0.
+		{
+			component.KindPodCliqueSetReplica,
+		},
+		// G2: PodClique, PCSG, and PodGang run concurrently. PodGang reads existing PodClique/Pod
+		// state from the API server (persisted from prior reconciles) — no same-reconcile ordering
+		// dependency between them. PCSG creates its own PodCliques via a separate reconciler.
 		{
 			component.KindPodClique,
-		},
-		// G3: PCSG and PodGang run concurrently — PCSG creates its own PodCliques via a
-		// separate reconciler, and PodGang reads existing PodClique/Pod state.
-		{
 			component.KindPodCliqueScalingGroup,
 			component.KindPodGang,
 		},

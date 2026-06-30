@@ -1882,6 +1882,156 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 	}
 }
 
+// TestValidateRollingUpdateConfiguration covers the per-component MaxUnavailable >= MinAvailable rule.
+// The inequality is enforced only under Coherent; other strategies accept any value.
+func TestValidateRollingUpdateConfiguration(t *testing.T) {
+	tests := []struct {
+		name         string
+		strategy     grovecorev1alpha1.UpdateStrategyType
+		ru           *grovecorev1alpha1.RollingUpdateConfiguration
+		minAvailable int32
+		wantErr      bool
+	}{
+		{
+			name:         "Coherent accepts MaxUnavailable equal to MinAvailable",
+			strategy:     grovecorev1alpha1.CoherentStrategy,
+			ru:           &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](3)},
+			minAvailable: 3,
+			wantErr:      false,
+		},
+		{
+			name:         "Coherent accepts MaxUnavailable greater than MinAvailable",
+			strategy:     grovecorev1alpha1.CoherentStrategy,
+			ru:           &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](5)},
+			minAvailable: 3,
+			wantErr:      false,
+		},
+		{
+			name:         "Coherent rejects MaxUnavailable less than MinAvailable",
+			strategy:     grovecorev1alpha1.CoherentStrategy,
+			ru:           &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)},
+			minAvailable: 3,
+			wantErr:      true,
+		},
+		{
+			name:         "RollingRecreate accepts MaxUnavailable less than MinAvailable",
+			strategy:     grovecorev1alpha1.RollingRecreateStrategy,
+			ru:           &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)},
+			minAvailable: 3,
+			wantErr:      false,
+		},
+		{
+			name:         "OnDelete accepts MaxUnavailable less than MinAvailable",
+			strategy:     grovecorev1alpha1.OnDeleteStrategy,
+			ru:           &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)},
+			minAvailable: 3,
+			wantErr:      false,
+		},
+		{
+			name:         "nil RollingUpdate is a no-op under Coherent",
+			strategy:     grovecorev1alpha1.CoherentStrategy,
+			ru:           nil,
+			minAvailable: 3,
+			wantErr:      false,
+		},
+		{
+			name:         "nil MaxUnavailable is a no-op under Coherent",
+			strategy:     grovecorev1alpha1.CoherentStrategy,
+			ru:           &grovecorev1alpha1.RollingUpdateConfiguration{},
+			minAvailable: 3,
+			wantErr:      false,
+		},
+		{
+			name:         "nil UpdateStrategy bypasses the check",
+			strategy:     "",
+			ru:           &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)},
+			minAvailable: 3,
+			wantErr:      false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pcs := &grovecorev1alpha1.PodCliqueSet{}
+			if tc.strategy != "" {
+				pcs.Spec.UpdateStrategy = &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: tc.strategy}
+			}
+			v := &pcsValidator{pcs: pcs}
+			errs := v.validateRollingUpdateConfiguration(tc.ru, tc.minAvailable, field.NewPath("spec", "template", "cliques").Index(0).Child("rollingUpdate"))
+			if tc.wantErr {
+				require.Len(t, errs, 1)
+				assert.Contains(t, errs[0].Detail, "must not be less than minAvailable")
+			} else {
+				assert.Empty(t, errs)
+			}
+		})
+	}
+}
+
+// TestValidatePCSGOwnedPCLQRollingUpdate covers the rule that PCSG-owned PodCliqueTemplateSpecs must not carry RollingUpdate.
+func TestValidatePCSGOwnedPCLQRollingUpdate(t *testing.T) {
+	withRU := func(name string, ru *grovecorev1alpha1.RollingUpdateConfiguration) *grovecorev1alpha1.PodCliqueTemplateSpec {
+		return &grovecorev1alpha1.PodCliqueTemplateSpec{
+			Name:          name,
+			Spec:          grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)},
+			RollingUpdate: ru,
+		}
+	}
+	someRU := &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)}
+
+	tests := []struct {
+		name           string
+		cliques        []*grovecorev1alpha1.PodCliqueTemplateSpec
+		scalingGroups  []grovecorev1alpha1.PodCliqueScalingGroupConfig
+		wantErrIndices []int
+	}{
+		{
+			name:    "standalone PCLQ is not rejected",
+			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{withRU("router", someRU)},
+		},
+		{
+			name:           "PCSG-owned PCLQ with RollingUpdate is rejected",
+			cliques:        []*grovecorev1alpha1.PodCliqueTemplateSpec{withRU("worker", someRU)},
+			scalingGroups:  []grovecorev1alpha1.PodCliqueScalingGroupConfig{{Name: "sg", CliqueNames: []string{"worker"}}},
+			wantErrIndices: []int{0},
+		},
+		{
+			name:          "PCSG-owned PCLQ without RollingUpdate is not rejected",
+			cliques:       []*grovecorev1alpha1.PodCliqueTemplateSpec{withRU("worker", nil)},
+			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{{Name: "sg", CliqueNames: []string{"worker"}}},
+		},
+		{
+			name: "only the PCSG-owned PCLQ is rejected when both kinds carry RollingUpdate",
+			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				withRU("router", someRU),
+				withRU("worker", someRU),
+			},
+			scalingGroups:  []grovecorev1alpha1.PodCliqueScalingGroupConfig{{Name: "sg", CliqueNames: []string{"worker"}}},
+			wantErrIndices: []int{1},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pcs := &grovecorev1alpha1.PodCliqueSet{
+				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+						Cliques:                      tc.cliques,
+						PodCliqueScalingGroupConfigs: tc.scalingGroups,
+					},
+				},
+			}
+			v := &pcsValidator{pcs: pcs}
+			errs := v.validatePCSGOwnedPCLQRollingUpdate(field.NewPath("spec", "template", "cliques"))
+			require.Len(t, errs, len(tc.wantErrIndices))
+			for i, idx := range tc.wantErrIndices {
+				assert.Contains(t, errs[i].Field, fmt.Sprintf("cliques[%d].rollingUpdate", idx))
+				assert.Contains(t, errs[i].Detail, "must not be set on a PodCliqueTemplateSpec")
+			}
+		})
+	}
+}
+
 // ---------------------------- Helper Functions ----------------------------
 
 // defaultTASConfig returns a default TAS configuration with TAS disabled.

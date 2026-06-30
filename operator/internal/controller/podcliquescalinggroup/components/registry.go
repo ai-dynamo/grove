@@ -22,12 +22,13 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup/components/podclique"
 
 	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
 // CreateOperatorRegistry initializes the operator registry for the PodCliqueScalingGroup reconciler.
 func CreateOperatorRegistry(mgr manager.Manager, eventRecorder record.EventRecorder) component.OperatorRegistry[v1alpha1.PodCliqueScalingGroup] {
 	reg := component.NewOperatorRegistry[v1alpha1.PodCliqueScalingGroup]()
-	reg.Register(component.KindPodClique, podclique.New(mgr.GetClient(), mgr.GetScheme(), eventRecorder))
+	reg.Register(component.KindPodClique, podclique.New(mgr.GetClient(), mgr.GetScheme(), eventRecorder, clock.RealClock{}))
 	return reg
 }

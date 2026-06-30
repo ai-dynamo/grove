@@ -55,6 +55,7 @@ const (
 	errCodeRemovePodSchedulingGate             grovecorev1alpha1.ErrorCode = "ERR_REMOVE_POD_SCHEDULING_GATE"
 	errCodeCreatePod                           grovecorev1alpha1.ErrorCode = "ERR_CREATE_POD"
 	errCodeMissingPodGangLabelOnPCLQ           grovecorev1alpha1.ErrorCode = "ERR_MISSING_PODGANG_LABEL_ON_PODCLIQUE"
+	errCodeMissingPodGangLabelOnPod            grovecorev1alpha1.ErrorCode = "ERR_MISSING_PODGANG_LABEL_ON_POD"
 	errCodeInitContainerImageEnvVarMissing     grovecorev1alpha1.ErrorCode = "ERR_INITCONTAINER_ENVIRONMENT_VARIABLE_MISSING"
 	errCodeCreatePodCliqueExpectationsStoreKey grovecorev1alpha1.ErrorCode = "ERR_CREATE_PODCLIQUE_EXPECTATIONS_STORE_KEY"
 	errCodeDeletePodCliqueExpectations         grovecorev1alpha1.ErrorCode = "ERR_DELETE_PODCLIQUE_EXPECTATIONS_STORE_KEY"
@@ -226,13 +227,9 @@ func injectAllResourceClaimRefs(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grove
 				pcsgName, pclq.Name, pcs.Name)
 		}
 		matchNames = append(matchNames, pcsgConfig.Name)
-		idxStr, exists := pclq.Labels[apicommon.LabelPodCliqueScalingGroupReplicaIndex]
-		if !exists {
-			return fmt.Errorf("missing PCSG replica index label %q for PodCliqueScalingGroup %q", apicommon.LabelPodCliqueScalingGroupReplicaIndex, pcsgName)
-		}
-		pcsgReplicaIndex, err = strconv.Atoi(idxStr)
+		pcsgReplicaIndex, err = k8sutils.GetPodCliqueScalingGroupReplicaIndex(pclq.ObjectMeta)
 		if err != nil {
-			return fmt.Errorf("invalid PCSG replica index label %q: %w", idxStr, err)
+			return fmt.Errorf("could not extract PCSG replica index from PodClique %q for PodCliqueScalingGroup %q: %w", pclq.Name, pcsgName, err)
 		}
 	}
 

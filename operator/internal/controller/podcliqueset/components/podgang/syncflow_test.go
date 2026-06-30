@@ -20,6 +20,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -28,14 +29,14 @@ import (
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
-	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
@@ -43,183 +44,13 @@ import (
 	ctrllogger "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-var defaultFakeSchedulerRegistry = &testutils.FakeSchedulerRegistry{
-	Backends: map[string]scheduler.Backend{
-		"default-scheduler": testutils.NewFakeSchedulerBackend("default-scheduler"),
-	},
-	DefaultBackend: "default-scheduler",
-}
-
-// This is a critical test for HPA scaling logic:
-// - Tests how PodGangs split when scaling: base vs scaled PodGangs
-// - Verifies minAvailable logic works correctly during scale up/down
-// - Ensures the first minAvailable replicas stay gang-scheduled together
-func TestMinAvailableWithHPAScaling(t *testing.T) {
-	tests := []struct {
-		name                   string
-		minAvailable           *int32
-		initialReplicas        int32
-		scaledReplicas         int32
-		expectedBasePodGang    string
-		expectedScaledPodGangs []string
-	}{
-		{
-			name:                "Scale up from 2 to 4 with minAvailable=1",
-			minAvailable:        ptr.To(int32(1)),
-			initialReplicas:     2,
-			scaledReplicas:      4,
-			expectedBasePodGang: "test-pcs-0", // Contains replicas 0 to (minAvailable-1) = 0
-			expectedScaledPodGangs: []string{
-				"test-pcs-0-test-sg-0", // scaled PodGang 0 (scaling group replica 1)
-				"test-pcs-0-test-sg-1", // scaled PodGang 1 (scaling group replica 2)
-				"test-pcs-0-test-sg-2", // scaled PodGang 2 (scaling group replica 3)
-			},
-		},
-		{
-			name:                "Scale up from 3 to 6 with minAvailable=2",
-			minAvailable:        ptr.To(int32(2)),
-			initialReplicas:     3,
-			scaledReplicas:      6,
-			expectedBasePodGang: "test-pcs-0", // Contains replicas 0-1
-			expectedScaledPodGangs: []string{
-				"test-pcs-0-test-sg-0", // scaled PodGang 0 (scaling group replica 2)
-				"test-pcs-0-test-sg-1", // scaled PodGang 1 (scaling group replica 3)
-				"test-pcs-0-test-sg-2", // scaled PodGang 2 (scaling group replica 4)
-				"test-pcs-0-test-sg-3", // scaled PodGang 3 (scaling group replica 5)
-			},
-		},
-		{
-			name:                "Scale down from 5 to 3 with minAvailable=1",
-			minAvailable:        ptr.To(int32(1)),
-			initialReplicas:     5,
-			scaledReplicas:      3,
-			expectedBasePodGang: "test-pcs-0", // Contains replica 0 (unchanged)
-			expectedScaledPodGangs: []string{
-				"test-pcs-0-test-sg-0", // scaled PodGang 0 (scaling group replica 1)
-				"test-pcs-0-test-sg-1", // scaled PodGang 1 (scaling group replica 2)
-				// scaling group replicas 3-4 should be deleted
-			},
-		},
-		{
-			name:                   "Scale to exactly minAvailable",
-			minAvailable:           ptr.To(int32(2)),
-			initialReplicas:        4,
-			scaledReplicas:         2,
-			expectedBasePodGang:    "test-pcs-0", // Contains replicas 0-1
-			expectedScaledPodGangs: []string{
-				// No scaled PodGangs when replicas == minAvailable
-			},
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			// Create test PodCliqueSet
-			pcs := &grovecorev1alpha1.PodCliqueSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-pcs",
-					Namespace: "default",
-					UID:       "test-uid-123",
-				},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
-					Replicas: 1,
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-							{
-								Name: "test-clique",
-								Spec: grovecorev1alpha1.PodCliqueSpec{
-									Replicas:     2,
-									MinAvailable: ptr.To(int32(2)),
-								},
-							},
-						},
-						PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
-							{
-								Name:         "test-sg",
-								Replicas:     &test.scaledReplicas, // This simulates HPA scaling
-								MinAvailable: test.minAvailable,
-								CliqueNames:  []string{"test-clique"},
-							},
-						},
-					},
-				},
-			}
-
-			// Create test PodCliqueScalingGroup (simulates what HPA would create)
-			pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-pcs-0-test-sg",
-					Namespace: "default",
-					Labels: map[string]string{
-						"app.kubernetes.io/managed-by":        "grove-operator",
-						"app.kubernetes.io/part-of":           "test-pcs",
-						"grove.io/podcliqueset-replica-index": "0",
-					},
-					OwnerReferences: []metav1.OwnerReference{
-						{
-							APIVersion: "grove.io/v1alpha1",
-							Kind:       "PodCliqueSet",
-							Name:       "test-pcs",
-							UID:        "test-uid-123",
-							Controller: ptr.To(true),
-						},
-					},
-				},
-				Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
-					Replicas:     test.scaledReplicas, // This is what HPA modifies
-					MinAvailable: test.minAvailable,
-					CliqueNames:  []string{"test-clique"},
-				},
-			}
-
-			// Create fake client with both PCS and PCSG using testutils
-			fakeClient := testutils.NewTestClientBuilder().
-				WithObjects(pcs, pcsg).
-				Build()
-
-			// Test the PodGang creation logic
-			r := &_resource{client: fakeClient, schedRegistry: defaultFakeSchedulerRegistry}
-			sc := &syncContext{
-				pcs: pcs,
-			}
-
-			// Test scaled PodGang creation - this should read the scaled PCSG
-			expectedPodGangs, err := r.buildExpectedScaledPodGangsForPCSG(sc, 0)
-			require.NoError(t, err)
-
-			// Verify scaled PodGangs
-			actualScaledPodGangs := make([]string, 0, len(expectedPodGangs))
-			for _, pg := range expectedPodGangs {
-				actualScaledPodGangs = append(actualScaledPodGangs, pg.fqn)
-			}
-			assert.Equal(t, test.expectedScaledPodGangs, actualScaledPodGangs,
-				"Scaled PodGangs should match expected after scaling")
-
-			// Test base PodGang logic - this should be independent of scaling
-			basePodGangs, err := buildExpectedBasePodGangForPCSReplicas(sc)
-			require.NoError(t, err)
-			require.Len(t, basePodGangs, 1, "Should have exactly one base PodGang")
-			assert.Equal(t, test.expectedBasePodGang, basePodGangs[0].fqn,
-				"Base PodGang name should be correct and unchanged by scaling")
-
-			// Verify base PodGang only contains replicas 0 to (minAvailable-1)
-			minAvail := int32(1)
-			if test.minAvailable != nil {
-				minAvail = *test.minAvailable
-			}
-			expectedBasePodCliques := int(minAvail)
-			actualBasePodCliques := len(basePodGangs[0].pclqs)
-			assert.Equal(t, expectedBasePodCliques, actualBasePodCliques,
-				"Base PodGang should only contain PodCliques for replicas 0 to (minAvailable-1)")
-		})
-	}
-}
+const testGenerationHash = "testhash"
 
 // TestVerifyAllPodsCreated tests verifyAllPodsCreated with minimal sc + podGangInfo (no PCS/prepareSyncFlow).
 // It covers both the PCLQ existence check and getPodsPendingCreationOrAssociation logic (Replicas and podgang label).
 func TestVerifyAllPodsCreated(t *testing.T) {
-	makePod := func(name string, podGangLabel string) v1.Pod {
-		pod := v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}}
+	makePod := func(name string, podGangLabel string) corev1.Pod {
+		pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}}
 		if podGangLabel != "" {
 			pod.Labels = map[string]string{apicommon.LabelPodGang: podGangLabel}
 		}
@@ -234,21 +65,21 @@ func TestVerifyAllPodsCreated(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		existingPods  map[string][]v1.Pod
+		existingPods  map[string][]corev1.Pod
 		existingPCLQs []grovecorev1alpha1.PodClique
 		podGang       *podGangInfo
 		wantRequeue   bool
 	}{
 		{
 			name:          "requeue when not all constituent PCLQs exist yet",
-			existingPods:  map[string][]v1.Pod{"pclq-a": {makePod("a1", "pg-1")}},
+			existingPods:  map[string][]corev1.Pod{"pclq-a": {makePod("a1", "pg-1")}},
 			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a", 1, 1)},
 			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 1, minAvailable: 1}, {fqn: "pclq-b", replicas: 1, minAvailable: 1}}},
 			wantRequeue:   true,
 		},
 		{
 			name: "requeue when PCLQ has fewer pods than Replicas (even if >= MinAvailable)",
-			existingPods: map[string][]v1.Pod{
+			existingPods: map[string][]corev1.Pod{
 				"pclq-a": {makePod("a1", "pg-1"), makePod("a2", "pg-1")}, // 2 pods, Replicas=5, MinAvailable=2
 			},
 			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a", 5, 2)},
@@ -257,7 +88,7 @@ func TestVerifyAllPodsCreated(t *testing.T) {
 		},
 		{
 			name: "requeue when Pod missing podgang label",
-			existingPods: map[string][]v1.Pod{
+			existingPods: map[string][]corev1.Pod{
 				"pclq-a": {makePod("a1", ""), makePod("a2", "pg-1")}, // a1 missing label
 			},
 			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a", 2, 1)},
@@ -266,7 +97,7 @@ func TestVerifyAllPodsCreated(t *testing.T) {
 		},
 		{
 			name: "requeue when Pod has wrong podgang label",
-			existingPods: map[string][]v1.Pod{
+			existingPods: map[string][]corev1.Pod{
 				"pclq-a": {makePod("a1", "pg-wrong"), makePod("a2", "pg-1")},
 			},
 			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a", 2, 1)},
@@ -275,7 +106,7 @@ func TestVerifyAllPodsCreated(t *testing.T) {
 		},
 		{
 			name: "success when all Replicas created and all pods have correct podgang label",
-			existingPods: map[string][]v1.Pod{
+			existingPods: map[string][]corev1.Pod{
 				"pclq-a": {makePod("a1", "pg-1"), makePod("a2", "pg-1"), makePod("a3", "pg-1"), makePod("a4", "pg-1"), makePod("a5", "pg-1")},
 			},
 			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a", 5, 2)},
@@ -283,17 +114,23 @@ func TestVerifyAllPodsCreated(t *testing.T) {
 			wantRequeue:   false,
 		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
 			sc := &syncContext{
-				logger:             ctrllogger.FromContext(t.Context()).WithName("test"),
-				existingPCLQPods:   tt.existingPods,
-				existingPCLQs:      tt.existingPCLQs,
-				existingPCLQByName: componentutils.PodCliqueByName(tt.existingPCLQs),
+				logger:                ctrllogger.FromContext(t.Context()).WithName("test"),
+				existingPCLQPods:      tc.existingPods,
+				existingPCLQs:         tc.existingPCLQs,
+				existingPCLQByName:    componentutils.PodCliqueByName(tc.existingPCLQs),
+				expectedPodGangs:      []*podGangInfo{tc.podGang},
+				expectedPodGangByName: map[string]*podGangInfo{tc.podGang.fqn: tc.podGang},
+				unassignedPodsByPCLQ:  map[string][]corev1.Pod{},
 			}
-			r := &_resource{schedRegistry: defaultFakeSchedulerRegistry}
-			err := r.verifyAllPodsCreated(sc, tt.podGang)
-			if tt.wantRequeue {
+			r := &_resource{schedRegistry: testutils.NewDefaultFakeRegistry()}
+			// Populate pclqInfo.associatedPodNames the same way prepareSyncFlow does in
+			// production, so verifyAllPodsCreated has the same view.
+			sc.initializeAssignedAndUnassignedPodsForPCS()
+			err := r.verifyAllPodsCreated(sc, tc.podGang)
+			if tc.wantRequeue {
 				require.Error(t, err)
 				var groveErr *groveerr.GroveError
 				require.True(t, errors.As(err, &groveErr))
@@ -305,7 +142,7 @@ func TestVerifyAllPodsCreated(t *testing.T) {
 	}
 }
 
-// This test checks the accounting of the number of pending pods before creating a PodGang
+// TestGetPodsPendingCreation checks the accounting of the number of pending pods before creating a PodGang.
 func TestGetPodsPendingCreation(t *testing.T) {
 	tests := []struct {
 		name                          string
@@ -337,9 +174,8 @@ func TestGetPodsPendingCreation(t *testing.T) {
 		},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			// Create test PodCliqueSet
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
 			pcs := &grovecorev1alpha1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pcs",
@@ -375,8 +211,8 @@ func TestGetPodsPendingCreation(t *testing.T) {
 						PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
 							{
 								Name:         "prefill",
-								Replicas:     &test.pcsgTemplateReplicas,
-								MinAvailable: test.pcsgMinAvailable,
+								Replicas:     &tc.pcsgTemplateReplicas,
+								MinAvailable: tc.pcsgMinAvailable,
 								CliqueNames:  []string{"prefill-leader", "prefill-worker"},
 							},
 						},
@@ -384,34 +220,34 @@ func TestGetPodsPendingCreation(t *testing.T) {
 				},
 			}
 
-			// Create fake client with both PCS and PCSG using testutils
+			pgms := buildTestPodGangMaps(pcs)
+			objs := []client.Object{pcs}
+			for _, pgm := range pgms {
+				objs = append(objs, pgm)
+			}
 			fakeClient := testutils.NewTestClientBuilder().
-				WithObjects(pcs).
+				WithObjects(objs...).
 				Build()
 
-			// Setup test
-			r := &_resource{client: fakeClient, schedRegistry: defaultFakeSchedulerRegistry}
+			r := &_resource{client: fakeClient, schedRegistry: testutils.NewDefaultFakeRegistry()}
 			ctx := t.Context()
 			logger := ctrllogger.FromContext(ctx).WithName("grove-test")
 
-			// Prepare sync context
 			sc, err := r.prepareSyncFlow(ctx, logger, pcs)
 			require.NoError(t, err)
 
-			// Validate the number of expected PodGangs
-			assert.Equal(t, len(test.expectedPendingPodsPerPodGang), len(sc.expectedPodGangs))
+			assert.Equal(t, len(tc.expectedPendingPodsPerPodGang), len(sc.expectedPodGangs))
 
-			// Verify pending pods per PodGang and total number of pending pods
 			var totalNumPendingPods int
 			pendingPodGangNames := sc.getPodGangNamesPendingCreation()
 			for i, podGang := range sc.expectedPodGangs {
 				isPodGangPendingCreation := slices.Contains(pendingPodGangNames, podGang.fqn)
 				assert.True(t, isPodGangPendingCreation)
-				numPendingPods := r.getPodsPendingCreationOrAssociation(sc, podGang)
-				assert.Equal(t, test.expectedPendingPodsPerPodGang[i], numPendingPods)
+				numPendingPods := r.getPodsPendingCreationOrAssociation(podGang)
+				assert.Equal(t, tc.expectedPendingPodsPerPodGang[i], numPendingPods)
 				totalNumPendingPods += numPendingPods
 			}
-			assert.Equal(t, test.totalNumPendingPods, totalNumPendingPods)
+			assert.Equal(t, tc.totalNumPendingPods, totalNumPendingPods)
 		})
 	}
 }
@@ -447,12 +283,12 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 			Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To(int32(1))},
 		}
 	}
-	makePod := func(name, podGangLabel string) *v1.Pod {
+	makePod := func(name, podGangLabel string) *corev1.Pod {
 		labels := lo.Assign(pcsLabels)
 		if podGangLabel != "" {
 			labels[apicommon.LabelPodGang] = podGangLabel
 		}
-		return &v1.Pod{
+		return &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: name, Namespace: ns,
 				Labels:          labels,
@@ -476,30 +312,30 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		ctx := t.Context()
 		pcs := makePCS()
 		pclq := makePCLQ()
-		// PCLQ exists (created by PodCliqueSet reconciler before PodGang) but PodClique controller
-		// hasn't created pods yet — this is the typical "not ready" scenario.
+		pgms := buildTestPodGangMaps(pcs)
+		objs := []client.Object{pcs, pclq}
+		for _, pgm := range pgms {
+			objs = append(objs, pgm)
+		}
 		fakeClient := testutils.NewTestClientBuilder().
-			WithObjects(pcs, pclq).
+			WithObjects(objs...).
 			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
 			Build()
-		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: defaultFakeSchedulerRegistry}
+		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: testutils.NewDefaultFakeRegistry()}
 		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
 		require.NoError(t, err)
 		require.Len(t, sc.expectedPodGangs, 1)
 		require.Empty(t, sc.existingPodGangs, "PodGang should not exist yet")
 
 		result := r.createOrUpdatePodGangs(ctx, sc)
-		// createOrUpdatePodGang succeeds, but verifyAllPodsCreated fails (no pods) → requeue error recorded, loop continues
 		require.True(t, result.hasErrors(), "should have requeue error because pods don't exist yet")
 		require.Len(t, result.createdPodGangNames, 1, "PodGang should still be recorded as created")
 		assert.Equal(t, pgName, result.createdPodGangNames[0])
 
-		// Verify PodGang was created in the cluster
 		pgAfter := &groveschedulerv1alpha1.PodGang{}
 		require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: pgName}, pgAfter))
 		assert.Equal(t, pcsName, pgAfter.OwnerReferences[0].Name)
 
-		// Initialized=True should NOT have been set (verification failed)
 		var groveErr *groveerr.GroveError
 		require.True(t, errors.As(result.errs[0], &groveErr))
 		assert.Equal(t, groveerr.ErrCodeRequeueAfter, groveErr.Code)
@@ -509,20 +345,23 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		ctx := t.Context()
 		pcs := makePCS()
 		pclq := makePCLQ()
-		// Pods exist but have no grove.io/podgang label
 		pod1 := makePod("worker-0", "")
 		pod2 := makePod("worker-1", "")
+		pgms := buildTestPodGangMaps(pcs)
+		objs := []client.Object{pcs, pclq, pod1, pod2}
+		for _, pgm := range pgms {
+			objs = append(objs, pgm)
+		}
 		fakeClient := testutils.NewTestClientBuilder().
-			WithObjects(pcs, pclq, pod1, pod2).
+			WithObjects(objs...).
 			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
 			Build()
-		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: defaultFakeSchedulerRegistry}
+		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: testutils.NewDefaultFakeRegistry()}
 		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
 		require.NoError(t, err)
 		require.Empty(t, sc.existingPodGangs)
 
 		result := r.createOrUpdatePodGangs(ctx, sc)
-		// verifyAllPodsCreated fails because pods don't have the PodGang label → error recorded, loop continues
 		require.True(t, result.hasErrors(), "should have requeue error because pods are missing PodGang label")
 		require.Len(t, result.createdPodGangNames, 1)
 
@@ -537,11 +376,16 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		pclq := makePCLQ()
 		pod1 := makePod("worker-0", pgName)
 		pod2 := makePod("worker-1", pgName)
+		pgms := buildTestPodGangMaps(pcs)
+		objs := []client.Object{pcs, pclq, pod1, pod2}
+		for _, pgm := range pgms {
+			objs = append(objs, pgm)
+		}
 		fakeClient := testutils.NewTestClientBuilder().
-			WithObjects(pcs, pclq, pod1, pod2).
+			WithObjects(objs...).
 			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
 			Build()
-		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: defaultFakeSchedulerRegistry}
+		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: testutils.NewDefaultFakeRegistry()}
 		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
 		require.NoError(t, err)
 		require.Empty(t, sc.existingPodGangs)
@@ -551,12 +395,9 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		require.Len(t, result.createdPodGangNames, 1)
 		assert.Equal(t, pgName, result.createdPodGangNames[0])
 
-		// Verify PodGang exists and Initialized=True
 		pgAfter := &groveschedulerv1alpha1.PodGang{}
 		require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: pgName}, pgAfter))
-		require.Len(t, pgAfter.Status.Conditions, 1)
-		assert.Equal(t, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized), pgAfter.Status.Conditions[0].Type)
-		assert.Equal(t, metav1.ConditionTrue, pgAfter.Status.Conditions[0].Status)
+		assert.True(t, k8sutils.IsConditionTrue(pgAfter.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized)))
 	})
 
 	t.Run("existing PodGang, all pods ready - updates PodGang, sets Initialized=True", func(t *testing.T) {
@@ -566,29 +407,30 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		pg := makeExistingPodGang()
 		pod1 := makePod("worker-0", pgName)
 		pod2 := makePod("worker-1", pgName)
+		pgms := buildTestPodGangMaps(pcs)
+		objs := []client.Object{pcs, pclq, pg, pod1, pod2}
+		for _, pgm := range pgms {
+			objs = append(objs, pgm)
+		}
 		fakeClient := testutils.NewTestClientBuilder().
-			WithObjects(pcs, pclq, pg, pod1, pod2).
+			WithObjects(objs...).
 			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
 			Build()
-		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: defaultFakeSchedulerRegistry}
+		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: testutils.NewDefaultFakeRegistry()}
 		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
 		require.NoError(t, err)
 		assert.True(t, sc.isExistingPodGang(pgName))
 
 		result := r.createOrUpdatePodGangs(ctx, sc)
 		require.False(t, result.hasErrors(), "should succeed: %v", result.errs)
-		// Existing PodGang → not recorded as new creation
 		assert.Empty(t, result.createdPodGangNames, "should not record creation for existing PodGang")
 
-		// Verify PodGang was updated and Initialized=True
 		pgAfter := &groveschedulerv1alpha1.PodGang{}
 		require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: pgName}, pgAfter))
 		require.Len(t, pgAfter.Spec.PodGroups, 1)
 		assert.Equal(t, pclqName, pgAfter.Spec.PodGroups[0].Name)
 		assert.Len(t, pgAfter.Spec.PodGroups[0].PodReferences, 2)
-		require.NotEmpty(t, pgAfter.Status.Conditions)
-		assert.Equal(t, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized), pgAfter.Status.Conditions[0].Type)
-		assert.Equal(t, metav1.ConditionTrue, pgAfter.Status.Conditions[0].Status)
+		assert.True(t, k8sutils.IsConditionTrue(pgAfter.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized)))
 	})
 
 	t.Run("existing initialized PodGang, pods replaced - updates PodReferences to replacement pods", func(t *testing.T) {
@@ -596,7 +438,6 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		pcs := makePCS()
 		pclq := makePCLQ()
 		pg := makeExistingPodGang()
-		// PodGang already has Initialized=True and old PodReferences (worker-0, worker-1)
 		pg.Spec.PodGroups = []groveschedulerv1alpha1.PodGroup{
 			{
 				Name: pclqName,
@@ -614,14 +455,18 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 				Reason: groveschedulerv1alpha1.ConditionReasonPodGangPodsCreated,
 			},
 		}
-		// Original pods (worker-0, worker-1) are gone; replacement pods (worker-2, worker-3) exist with correct label
 		pod1 := makePod("worker-2", pgName)
 		pod2 := makePod("worker-3", pgName)
+		pgms := buildTestPodGangMaps(pcs)
+		objs := []client.Object{pcs, pclq, pg, pod1, pod2}
+		for _, pgm := range pgms {
+			objs = append(objs, pgm)
+		}
 		fakeClient := testutils.NewTestClientBuilder().
-			WithObjects(pcs, pclq, pg, pod1, pod2).
+			WithObjects(objs...).
 			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
 			Build()
-		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: defaultFakeSchedulerRegistry}
+		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: testutils.NewDefaultFakeRegistry()}
 		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
 		require.NoError(t, err)
 		assert.True(t, sc.isExistingPodGang(pgName))
@@ -630,7 +475,6 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		require.False(t, result.hasErrors(), "should succeed: %v", result.errs)
 		assert.Empty(t, result.createdPodGangNames)
 
-		// Verify PodReferences now point to the replacement pods
 		pgAfter := &groveschedulerv1alpha1.PodGang{}
 		require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: pgName}, pgAfter))
 		require.Len(t, pgAfter.Spec.PodGroups, 1)
@@ -639,13 +483,11 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		refNames := []string{refs[0].Name, refs[1].Name}
 		assert.ElementsMatch(t, []string{"worker-2", "worker-3"}, refNames, "PodReferences should point to replacement pods, not old ones")
 
-		// isPodGangInitialized returns true → patchPodGangInitializedStatus is skipped (no redundant status patch)
 		assert.True(t, sc.isPodGangInitialized(pgName))
 	})
 
 	t.Run("multiple PodGangs, first not ready second ready - both processed, requeue for first", func(t *testing.T) {
 		ctx := t.Context()
-		// 2 PCS replicas → 2 base PodGangs: test-pcs-0 and test-pcs-1
 		pcs := &grovecorev1alpha1.PodCliqueSet{
 			ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: ns, UID: "pcs-uid"},
 			Spec: grovecorev1alpha1.PodCliqueSetSpec{
@@ -677,41 +519,40 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 			},
 			Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))},
 		}
-		// PodGang 0: no pods → verifyAllPodsCreated will fail
-		// PodGang 1: pod exists with correct label → will succeed and get Initialized=True
-		pod1 := &v1.Pod{
+		pod1 := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "worker-1-0", Namespace: ns,
 				Labels:          lo.Assign(pcsLabels, map[string]string{apicommon.LabelPodGang: pg1Name}),
 				OwnerReferences: []metav1.OwnerReference{{Name: pclq1Name, UID: "pclq1-uid", Controller: ptr.To(true)}},
 			},
 		}
+		pgms := buildTestPodGangMaps(pcs)
+		objs := []client.Object{pcs, pclq0, pclq1, pod1}
+		for _, pgm := range pgms {
+			objs = append(objs, pgm)
+		}
 		fakeClient := testutils.NewTestClientBuilder().
-			WithObjects(pcs, pclq0, pclq1, pod1).
+			WithObjects(objs...).
 			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
 			Build()
-		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: defaultFakeSchedulerRegistry}
+		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: testutils.NewDefaultFakeRegistry()}
 		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
 		require.NoError(t, err)
 		require.Len(t, sc.expectedPodGangs, 2, "should have 2 expected PodGangs for 2 PCS replicas")
 
 		result := r.createOrUpdatePodGangs(ctx, sc)
 
-		// Both PodGangs should be created
 		require.Len(t, result.createdPodGangNames, 2, "both PodGangs should be recorded as created")
 		assert.ElementsMatch(t, []string{pg0Name, pg1Name}, result.createdPodGangNames)
 
-		// Result should have errors (from PodGang 0's failed verification) triggering a requeue
 		require.True(t, result.hasErrors(), "should have errors because first PodGang's pods are not ready")
 
-		// PodGang 1 should be fully initialized despite PodGang 0's failure
 		pg1After := &groveschedulerv1alpha1.PodGang{}
 		require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: pg1Name}, pg1After))
 		require.NotEmpty(t, pg1After.Status.Conditions)
 		assert.Equal(t, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized), pg1After.Status.Conditions[0].Type)
 		assert.Equal(t, metav1.ConditionTrue, pg1After.Status.Conditions[0].Status)
 
-		// PodGang 0 should exist but NOT be initialized (verification failed)
 		pg0After := &groveschedulerv1alpha1.PodGang{}
 		require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: pg0Name}, pg0After))
 		assert.False(t, sc.isPodGangInitialized(pg0Name), "PodGang 0 should not be initialized")
@@ -722,20 +563,23 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		pcs := makePCS()
 		pclq := makePCLQ()
 		pg := makeExistingPodGang()
-		// Pods exist but without the PodGang label
 		pod1 := makePod("worker-0", "")
 		pod2 := makePod("worker-1", "")
+		pgms := buildTestPodGangMaps(pcs)
+		objs := []client.Object{pcs, pclq, pg, pod1, pod2}
+		for _, pgm := range pgms {
+			objs = append(objs, pgm)
+		}
 		fakeClient := testutils.NewTestClientBuilder().
-			WithObjects(pcs, pclq, pg, pod1, pod2).
+			WithObjects(objs...).
 			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
 			Build()
-		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: defaultFakeSchedulerRegistry}
+		r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme, eventRecorder: record.NewFakeRecorder(10), schedRegistry: testutils.NewDefaultFakeRegistry()}
 		sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
 		require.NoError(t, err)
 		assert.True(t, sc.isExistingPodGang(pgName))
 
 		result := r.createOrUpdatePodGangs(ctx, sc)
-		// createOrUpdatePodGang succeeds, but verifyAllPodsCreated fails → error recorded, loop continues
 		require.True(t, result.hasErrors(), "should have requeue error because pods are not associated")
 		assert.Empty(t, result.createdPodGangNames, "should not record creation for existing PodGang")
 
@@ -745,7 +589,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 	})
 }
 
-// TestComputeExpectedPodGangs tests the computeExpectedPodGangs function
+// TestComputeExpectedPodGangs tests the computeExpectedPodGangs function driven by PodGangMap.
 func TestComputeExpectedPodGangs(t *testing.T) {
 	tests := []struct {
 		name                      string
@@ -910,9 +754,8 @@ func TestComputeExpectedPodGangs(t *testing.T) {
 		},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			// Setup
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
 			pcs := &grovecorev1alpha1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pcs",
@@ -920,15 +763,20 @@ func TestComputeExpectedPodGangs(t *testing.T) {
 					UID:       "test-uid-123",
 				},
 				Spec: grovecorev1alpha1.PodCliqueSetSpec{
-					Replicas: test.pcsReplicas,
+					Replicas: tc.pcsReplicas,
 					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-						Cliques:                      test.pclqs,
-						PodCliqueScalingGroupConfigs: test.pcsgConfigs,
+						Cliques:                      tc.pclqs,
+						PodCliqueScalingGroupConfigs: tc.pcsgConfigs,
 					},
 				},
 			}
-			fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs).Build()
-			r := &_resource{client: fakeClient, schedRegistry: defaultFakeSchedulerRegistry}
+			pgms := buildTestPodGangMaps(pcs)
+			objs := []client.Object{pcs}
+			for _, pgm := range pgms {
+				objs = append(objs, pgm)
+			}
+			fakeClient := testutils.NewTestClientBuilder().WithObjects(objs...).Build()
+			r := &_resource{client: fakeClient, schedRegistry: testutils.NewDefaultFakeRegistry()}
 			sc := &syncContext{
 				pcs:            pcs,
 				logger:         ctrllogger.FromContext(t.Context()),
@@ -938,31 +786,36 @@ func TestComputeExpectedPodGangs(t *testing.T) {
 				topologyLevels: nil,
 			}
 
-			// Test
-			err := r.computeExpectedPodGangs(sc)
+			err := r.computeExpectedPodGangs(t.Context(), sc)
 
-			// Assert
 			require.NoError(t, err)
-			assert.Equal(t, test.expectedNumPodGangs, len(sc.expectedPodGangs))
+			assert.Equal(t, tc.expectedNumPodGangs, len(sc.expectedPodGangs))
 
-			// Verify base PodGang names
 			var basePodGangNames []string
 			var scaledPodGangNames []string
 			for _, pg := range sc.expectedPodGangs {
-				if slices.Contains(test.expectedBasePodGangNames, pg.fqn) {
+				if slices.Contains(tc.expectedBasePodGangNames, pg.fqn) {
 					basePodGangNames = append(basePodGangNames, pg.fqn)
 				} else {
 					scaledPodGangNames = append(scaledPodGangNames, pg.fqn)
 				}
 			}
-			assert.ElementsMatch(t, test.expectedBasePodGangNames, basePodGangNames)
-			assert.ElementsMatch(t, test.expectedScaledPodGangFQNs, scaledPodGangNames)
+			assert.ElementsMatch(t, tc.expectedBasePodGangNames, basePodGangNames)
+			assert.ElementsMatch(t, tc.expectedScaledPodGangFQNs, scaledPodGangNames)
 		})
 	}
 }
 
 type expectedPodGangTopologyConstraints struct {
-	fqn                    string
+	fqn             string
+	topologyLevel   *grovecorev1alpha1.TopologyLevel
+	pclqConstraints map[string]grovecorev1alpha1.TopologyLevel
+	pcsgConstraints map[string]grovecorev1alpha1.TopologyLevel
+
+	// topologyPackConstraint, pclqPackConstraints, and pcsgPackConstraints are the preferred-pack-aware
+	// shape introduced by #652. Use these when a test case must express required+preferred together,
+	// or a preferred-only constraint. When non-nil they take precedence over topologyLevel /
+	// pclqConstraints / pcsgConstraints above.
 	topologyPackConstraint *expectedTopologyPackConstraint
 	pclqPackConstraints    map[string]expectedTopologyPackConstraint
 	pcsgPackConstraints    map[string]expectedTopologyPackConstraint
@@ -1027,10 +880,8 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 			expectedNumPodGangs: 1,
 			expectedPodGangTopologyConstraints: []expectedPodGangTopologyConstraints{
 				{
-					fqn: "test-pcs-0",
-					topologyPackConstraint: &expectedTopologyPackConstraint{
-						requiredKey: topologyLevelZone.Key,
-					},
+					fqn:           "test-pcs-0",
+					topologyLevel: &grovecorev1alpha1.TopologyLevel{Domain: "zone", Key: "topology.kubernetes.io/zone"},
 				},
 			},
 		},
@@ -1169,9 +1020,10 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 			expectedNumPodGangs: 1,
 			expectedPodGangTopologyConstraints: []expectedPodGangTopologyConstraints{
 				{
-					fqn: "test-pcs-0",
-					pclqPackConstraints: map[string]expectedTopologyPackConstraint{
-						"test-pcs-0-worker": {requiredKey: topologyLevelHost.Key},
+					fqn:           "test-pcs-0",
+					topologyLevel: nil,
+					pclqConstraints: map[string]grovecorev1alpha1.TopologyLevel{
+						"test-pcs-0-worker": topologyLevelHost,
 					},
 				},
 			},
@@ -1233,13 +1085,11 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 			expectedNumPodGangs: 1,
 			expectedPodGangTopologyConstraints: []expectedPodGangTopologyConstraints{
 				{
-					fqn: "test-pcs-0",
-					topologyPackConstraint: &expectedTopologyPackConstraint{
-						requiredKey: topologyLevelZone.Key,
-					},
-					pclqPackConstraints: map[string]expectedTopologyPackConstraint{
-						"test-pcs-0-worker": {requiredKey: topologyLevelHost.Key},
-						"test-pcs-0-router": {requiredKey: topologyLevelZone.Key},
+					fqn:           "test-pcs-0",
+					topologyLevel: &topologyLevelZone,
+					pclqConstraints: map[string]grovecorev1alpha1.TopologyLevel{
+						"test-pcs-0-worker": topologyLevelHost,
+						"test-pcs-0-router": topologyLevelZone,
 					},
 				},
 			},
@@ -1278,26 +1128,25 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 			expectedNumPodGangs: 2,
 			expectedPodGangTopologyConstraints: []expectedPodGangTopologyConstraints{
 				{
-					fqn: "test-pcs-0",
-					topologyPackConstraint: &expectedTopologyPackConstraint{
-						requiredKey: topologyLevelZone.Key,
+					fqn:           "test-pcs-0",
+					topologyLevel: &topologyLevelZone,
+					pclqConstraints: map[string]grovecorev1alpha1.TopologyLevel{
+						"test-pcs-0-scaling-group-0-decode-leader": topologyLevelHost,
+						"test-pcs-0-scaling-group-0-decode-worker": topologyLevelHost,
 					},
-					pclqPackConstraints: map[string]expectedTopologyPackConstraint{
-						"test-pcs-0-scaling-group-0-decode-leader": {requiredKey: topologyLevelHost.Key},
-						"test-pcs-0-scaling-group-0-decode-worker": {requiredKey: topologyLevelHost.Key},
-					},
-					pcsgPackConstraints: map[string]expectedTopologyPackConstraint{
-						"test-pcs-0-scaling-group-0": {requiredKey: topologyLevelRack.Key},
+					pcsgConstraints: map[string]grovecorev1alpha1.TopologyLevel{
+						"test-pcs-0-scaling-group-0": topologyLevelRack,
 					},
 				},
 				{
-					fqn: "test-pcs-0-scaling-group-0",
-					topologyPackConstraint: &expectedTopologyPackConstraint{
-						requiredKey: topologyLevelRack.Key,
+					fqn:           "test-pcs-0-scaling-group-0",
+					topologyLevel: &topologyLevelZone,
+					pclqConstraints: map[string]grovecorev1alpha1.TopologyLevel{
+						"test-pcs-0-scaling-group-1-decode-leader": topologyLevelHost,
+						"test-pcs-0-scaling-group-1-decode-worker": topologyLevelHost,
 					},
-					pclqPackConstraints: map[string]expectedTopologyPackConstraint{
-						"test-pcs-0-scaling-group-1-decode-leader": {requiredKey: topologyLevelHost.Key},
-						"test-pcs-0-scaling-group-1-decode-worker": {requiredKey: topologyLevelHost.Key},
+					pcsgConstraints: map[string]grovecorev1alpha1.TopologyLevel{
+						"test-pcs-0-scaling-group-1": topologyLevelRack,
 					},
 				},
 			},
@@ -1342,8 +1191,8 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 				},
 				{
 					fqn: "test-pcs-0-scaling-group-0",
-					topologyPackConstraint: &expectedTopologyPackConstraint{
-						preferredKey: topologyLevelRack.Key,
+					pcsgPackConstraints: map[string]expectedTopologyPackConstraint{
+						"test-pcs-0-scaling-group-1": {preferredKey: topologyLevelRack.Key},
 					},
 				},
 			},
@@ -1390,27 +1239,26 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 			expectedNumPodGangs: 2,
 			expectedPodGangTopologyConstraints: []expectedPodGangTopologyConstraints{
 				{
-					fqn: "test-pcs-0",
-					topologyPackConstraint: &expectedTopologyPackConstraint{
-						requiredKey: topologyLevelZone.Key,
+					fqn:           "test-pcs-0",
+					topologyLevel: &topologyLevelZone,
+					pclqConstraints: map[string]grovecorev1alpha1.TopologyLevel{
+						"test-pcs-0-router":                        topologyLevelZone,
+						"test-pcs-0-scaling-group-0-decode-leader": topologyLevelHost,
+						"test-pcs-0-scaling-group-0-decode-worker": topologyLevelHost,
 					},
-					pclqPackConstraints: map[string]expectedTopologyPackConstraint{
-						"test-pcs-0-router":                        {requiredKey: topologyLevelZone.Key},
-						"test-pcs-0-scaling-group-0-decode-leader": {requiredKey: topologyLevelHost.Key},
-						"test-pcs-0-scaling-group-0-decode-worker": {requiredKey: topologyLevelHost.Key},
-					},
-					pcsgPackConstraints: map[string]expectedTopologyPackConstraint{
-						"test-pcs-0-scaling-group-0": {requiredKey: topologyLevelRack.Key},
+					pcsgConstraints: map[string]grovecorev1alpha1.TopologyLevel{
+						"test-pcs-0-scaling-group-0": topologyLevelRack,
 					},
 				},
 				{
-					fqn: "test-pcs-0-scaling-group-0",
-					topologyPackConstraint: &expectedTopologyPackConstraint{
-						requiredKey: topologyLevelRack.Key,
+					fqn:           "test-pcs-0-scaling-group-0",
+					topologyLevel: &topologyLevelZone,
+					pclqConstraints: map[string]grovecorev1alpha1.TopologyLevel{
+						"test-pcs-0-scaling-group-1-decode-leader": topologyLevelHost,
+						"test-pcs-0-scaling-group-1-decode-worker": topologyLevelHost,
 					},
-					pclqPackConstraints: map[string]expectedTopologyPackConstraint{
-						"test-pcs-0-scaling-group-1-decode-leader": {requiredKey: topologyLevelHost.Key},
-						"test-pcs-0-scaling-group-1-decode-worker": {requiredKey: topologyLevelHost.Key},
+					pcsgConstraints: map[string]grovecorev1alpha1.TopologyLevel{
+						"test-pcs-0-scaling-group-1": topologyLevelRack,
 					},
 				},
 			},
@@ -1490,23 +1338,19 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 			expectedNumPodGangs: 2,
 			expectedPodGangTopologyConstraints: []expectedPodGangTopologyConstraints{
 				{
-					fqn: "test-pcs-0",
-					topologyPackConstraint: &expectedTopologyPackConstraint{
-						requiredKey: topologyLevelZone.Key,
-					},
-					pclqPackConstraints: map[string]expectedTopologyPackConstraint{
-						"test-pcs-0-scaling-group-0-decode-leader": {requiredKey: topologyLevelHost.Key},
-						"test-pcs-0-scaling-group-0-decode-worker": {requiredKey: topologyLevelHost.Key},
+					fqn:           "test-pcs-0",
+					topologyLevel: &topologyLevelZone,
+					pclqConstraints: map[string]grovecorev1alpha1.TopologyLevel{
+						"test-pcs-0-scaling-group-0-decode-leader": topologyLevelHost,
+						"test-pcs-0-scaling-group-0-decode-worker": topologyLevelHost,
 					},
 				},
 				{
-					fqn: "test-pcs-0-scaling-group-0",
-					topologyPackConstraint: &expectedTopologyPackConstraint{
-						requiredKey: topologyLevelZone.Key,
-					},
-					pclqPackConstraints: map[string]expectedTopologyPackConstraint{
-						"test-pcs-0-scaling-group-1-decode-leader": {requiredKey: topologyLevelHost.Key},
-						"test-pcs-0-scaling-group-1-decode-worker": {requiredKey: topologyLevelHost.Key},
+					fqn:           "test-pcs-0-scaling-group-0",
+					topologyLevel: &topologyLevelZone,
+					pclqConstraints: map[string]grovecorev1alpha1.TopologyLevel{
+						"test-pcs-0-scaling-group-1-decode-leader": topologyLevelHost,
+						"test-pcs-0-scaling-group-1-decode-worker": topologyLevelHost,
 					},
 				},
 			},
@@ -1515,11 +1359,11 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			// Setup
 			var pcsTopologyConstraint *grovecorev1alpha1.TopologyConstraint
-			if tc.pcsTopologyConstraint != nil {
+			switch {
+			case tc.pcsTopologyConstraint != nil:
 				pcsTopologyConstraint = tc.pcsTopologyConstraint
-			} else if tc.pcsTopologyLevel != nil {
+			case tc.pcsTopologyLevel != nil:
 				pcsTopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
 					PackDomain: tc.pcsTopologyLevel.Domain,
 				}
@@ -1539,8 +1383,13 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 				},
 			}
 
-			fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs).Build()
-			r := &_resource{client: fakeClient, schedRegistry: defaultFakeSchedulerRegistry}
+			pgms := buildTestPodGangMaps(pcs)
+			objs := []client.Object{pcs}
+			for _, pgm := range pgms {
+				objs = append(objs, pgm)
+			}
+			fakeClient := testutils.NewTestClientBuilder().WithObjects(objs...).Build()
+			r := &_resource{client: fakeClient, schedRegistry: testutils.NewDefaultFakeRegistry()}
 			sc := &syncContext{
 				pcs:            pcs,
 				logger:         ctrllogger.FromContext(t.Context()),
@@ -1550,9 +1399,7 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 				topologyLevels: clusterTopologyLevels,
 			}
 
-			// Test
-			err := r.computeExpectedPodGangs(sc)
-			// Assert
+			err := r.computeExpectedPodGangs(t.Context(), sc)
 			require.NoError(t, err)
 
 			basePodGangFQN := apicommon.GenerateBasePodGangName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: 0})
@@ -1567,260 +1414,18 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 			if !tc.tasEnabled {
 				mustNotHaveAnyTopologyConstraints(t, sc.expectedPodGangs)
 			} else {
-				if len(tc.expectedPodGangTopologyConstraints) == 0 {
-					mustNotHaveAnyTopologyConstraints(t, sc.expectedPodGangs)
-					return
-				}
-				// Iterate over the expected pod gang topology constraints.
 				for _, expectedPGConstraint := range tc.expectedPodGangTopologyConstraints {
-					// find the computed pod gang
 					computedPodGang, found := lo.Find(sc.expectedPodGangs, func(pg *podGangInfo) bool {
 						return pg.fqn == expectedPGConstraint.fqn
 					})
 					require.True(t, found, "Expected PodGang %s not found", expectedPGConstraint.fqn)
 
-					// verify pod gang topology constraint. This is the top level topology constraint.
-					// For base pod gang it comes from PodCliqueSet.Spec.Template.TopologyConstraint.
-					// For scaled pod gangs it comes from PodCliqueScalingGroup.Spec.TopologyConstraint.
-					assertTopologyPackConstraint(t, computedPodGang.topologyConstraint, expectedPGConstraint.topologyPackConstraint)
-
-					// verify pclq topology constraints
-					for _, pclq := range computedPodGang.pclqs {
-						expectedPCLQConstraint := expectedPCLQPackConstraint(expectedPGConstraint, pclq.fqn)
-						assertTopologyPackConstraint(t, pclq.topologyConstraint, expectedPCLQConstraint)
-					}
-
-					// iterate over expected PCSG pack constraints and verify computed pcsg topology constraints
-					for pcsgFQN, expectedPCSGTC := range expectedPGConstraint.pcsgPackConstraints {
-						actualPCSGTC, found := lo.Find(computedPodGang.pcsgTopologyConstraints, func(pcsgTC groveschedulerv1alpha1.TopologyConstraintGroupConfig) bool {
-							return pcsgTC.Name == pcsgFQN
-						})
-						require.True(t, found, "Expected PCSG topology constraint for %s not found", pcsgFQN)
-						assertTopologyPackConstraint(t, actualPCSGTC.TopologyConstraint, &expectedPCSGTC)
-					}
-
-					// iterate over computed PCSG topology constraints to ensure that expectations are properly defined.
-					// This ensures that developer mistakes are caught when defining the topology constraint expectations.
-					for _, actualPCSGTC := range computedPodGang.pcsgTopologyConstraints {
-						_, exists := expectedPGConstraint.pcsgPackConstraints[actualPCSGTC.Name]
-						if !exists {
-							t.Errorf("Unexpected PCSG topology constraint for %s found in PodGang %s", actualPCSGTC.Name, computedPodGang.fqn)
-						}
-					}
+					assertPodGangLevelConstraint(t, computedPodGang, expectedPGConstraint)
+					assertPCLQConstraints(t, computedPodGang, expectedPGConstraint)
+					assertPCSGConstraints(t, computedPodGang, expectedPGConstraint)
 				}
 			}
 		})
-	}
-}
-
-func expectedPCLQPackConstraint(expected expectedPodGangTopologyConstraints, pclqFQN string) *expectedTopologyPackConstraint {
-	if expectedPCLQConstraint, exists := expected.pclqPackConstraints[pclqFQN]; exists {
-		return &expectedPCLQConstraint
-	}
-	return nil
-}
-
-func mustNotHaveAnyTopologyConstraints(t *testing.T, podGangs []*podGangInfo) {
-	for _, pg := range podGangs {
-		// assert no topology constraints are set.
-		assert.Nil(t, pg.topologyConstraint)
-		for _, pclq := range pg.pclqs {
-			assert.Nil(t, pclq.topologyConstraint)
-		}
-		assert.Nil(t, pg.pcsgTopologyConstraints)
-	}
-}
-
-func assertTopologyPackConstraint(t *testing.T, got *groveschedulerv1alpha1.TopologyConstraint, expected *expectedTopologyPackConstraint) {
-	if expected == nil {
-		assert.Nil(t, got)
-		return
-	}
-	require.NotNil(t, got)
-	require.NotNil(t, got.PackConstraint)
-	if expected.requiredKey == "" {
-		assert.Nil(t, got.PackConstraint.Required)
-	} else {
-		require.NotNil(t, got.PackConstraint.Required)
-		assert.Equal(t, expected.requiredKey, *got.PackConstraint.Required)
-	}
-	if expected.preferredKey == "" {
-		assert.Nil(t, got.PackConstraint.Preferred)
-	} else {
-		require.NotNil(t, got.PackConstraint.Preferred)
-		assert.Equal(t, expected.preferredKey, *got.PackConstraint.Preferred)
-	}
-}
-
-// TestDeterminePCSGReplicas tests the determinePCSGReplicas method
-func TestDeterminePCSGReplicas(t *testing.T) {
-	tests := []struct {
-		name             string
-		pcsgFQN          string
-		pcsgConfig       grovecorev1alpha1.PodCliqueScalingGroupConfig
-		existingPCSGs    []grovecorev1alpha1.PodCliqueScalingGroup
-		expectedReplicas int
-	}{
-		{
-			name:    "Returns existing PCSG replicas when PCSG exists",
-			pcsgFQN: "test-pcs-0-worker-sg",
-			pcsgConfig: grovecorev1alpha1.PodCliqueScalingGroupConfig{
-				Name:         "worker-sg",
-				Replicas:     ptr.To(int32(3)),
-				MinAvailable: ptr.To(int32(1)),
-				CliqueNames:  []string{"worker"},
-			},
-			existingPCSGs: []grovecorev1alpha1.PodCliqueScalingGroup{
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "test-pcs-0-worker-sg",
-						Namespace: "default",
-					},
-					Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
-						Replicas:     5, // HPA scaled to 5
-						MinAvailable: ptr.To(int32(1)),
-						CliqueNames:  []string{"worker"},
-					},
-				},
-			},
-			expectedReplicas: 5, // Should use actual PCSG replicas
-		},
-		{
-			name:    "Returns template replicas when PCSG does not exist",
-			pcsgFQN: "test-pcs-0-worker-sg",
-			pcsgConfig: grovecorev1alpha1.PodCliqueScalingGroupConfig{
-				Name:         "worker-sg",
-				Replicas:     ptr.To(int32(3)),
-				MinAvailable: ptr.To(int32(1)),
-				CliqueNames:  []string{"worker"},
-			},
-			existingPCSGs:    []grovecorev1alpha1.PodCliqueScalingGroup{},
-			expectedReplicas: 3, // Should use template replicas
-		},
-		{
-			name:    "Finds the correct PCSG among multiple existing PCSGs and returns its replicas",
-			pcsgFQN: "test-pcs-1-worker-sg",
-			pcsgConfig: grovecorev1alpha1.PodCliqueScalingGroupConfig{
-				Name:         "worker-sg",
-				Replicas:     ptr.To(int32(3)),
-				MinAvailable: ptr.To(int32(1)),
-				CliqueNames:  []string{"worker"},
-			},
-			existingPCSGs: []grovecorev1alpha1.PodCliqueScalingGroup{
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "test-pcs-0-worker-sg",
-						Namespace: "default",
-					},
-					Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
-						Replicas:     10,
-						MinAvailable: ptr.To(int32(1)),
-						CliqueNames:  []string{"worker"},
-					},
-				},
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "test-pcs-1-worker-sg", // This one should match
-						Namespace: "default",
-					},
-					Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
-						Replicas:     7,
-						MinAvailable: ptr.To(int32(1)),
-						CliqueNames:  []string{"worker"},
-					},
-				},
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "test-pcs-0-other-sg",
-						Namespace: "default",
-					},
-					Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
-						Replicas:     15,
-						MinAvailable: ptr.To(int32(2)),
-						CliqueNames:  []string{"other"},
-					},
-				},
-			},
-			expectedReplicas: 7, // Should find and use the matching PCSG replicas
-		},
-		{
-			name:    "Returns the template replicas when no existing PCSG matches",
-			pcsgFQN: "test-pcs-2-worker-sg",
-			pcsgConfig: grovecorev1alpha1.PodCliqueScalingGroupConfig{
-				Name:         "worker-sg",
-				Replicas:     ptr.To(int32(4)),
-				MinAvailable: ptr.To(int32(2)),
-				CliqueNames:  []string{"worker"},
-			},
-			existingPCSGs: []grovecorev1alpha1.PodCliqueScalingGroup{
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "test-pcs-0-worker-sg",
-						Namespace: "default",
-					},
-					Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
-						Replicas:     10,
-						MinAvailable: ptr.To(int32(2)),
-						CliqueNames:  []string{"worker"},
-					},
-				},
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "test-pcs-1-worker-sg",
-						Namespace: "default",
-					},
-					Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
-						Replicas:     8,
-						MinAvailable: ptr.To(int32(2)),
-						CliqueNames:  []string{"worker"},
-					},
-				},
-			},
-			expectedReplicas: 4, // Should use template replicas as none match
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			sc := &syncContext{
-				existingPCSGs:      test.existingPCSGs,
-				existingPCSGByName: componentutils.PCSGByName(test.existingPCSGs),
-			}
-
-			actualReplicas := sc.determinePCSGReplicas(test.pcsgFQN, test.pcsgConfig)
-			assert.Equal(t, test.expectedReplicas, actualReplicas,
-				"determinePCSGReplicas should return expected replica count")
-		})
-	}
-}
-
-// makePCSWithTopology creates a minimal PCS with an optional topology constraint.
-func makePCSWithTopology(ns, name string, topologyName string) *grovecorev1alpha1.PodCliqueSet {
-	pcs := &grovecorev1alpha1.PodCliqueSet{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, UID: "pcs-uid"},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Replicas: 1,
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
-				},
-			},
-		},
-	}
-	if topologyName != "" {
-		pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
-			TopologyName: topologyName,
-			PackDomain:   "rack",
-		}
-	}
-	return pcs
-}
-
-// makeClusterTopologyWithLevels creates a ClusterTopologyBinding with the given levels.
-func makeClusterTopologyWithLevels(name string, levels []grovecorev1alpha1.TopologyLevel) *grovecorev1alpha1.ClusterTopologyBinding {
-	return &grovecorev1alpha1.ClusterTopologyBinding{
-		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec:       grovecorev1alpha1.ClusterTopologyBindingSpec{Levels: levels},
 	}
 }
 
@@ -1894,12 +1499,16 @@ func TestPrepareSyncFlowTopologyResolution(t *testing.T) {
 				tc.mutatePCS(pcs)
 			}
 
+			pgms := buildTestPodGangMaps(pcs)
 			var objs []client.Object
 			objs = append(objs, pcs)
+			for _, pgm := range pgms {
+				objs = append(objs, pgm)
+			}
 			if tc.clusterTopologyExists {
-				topologyName, err := componentutils.FindExplicitTopologyNameForPodCliqueSet(pcs)
+				topologyName, err := componentutils.ResolveEffectiveTopologyNameForPodCliqueSet(pcs)
 				require.NoError(t, err)
-				objs = append(objs, makeClusterTopologyWithLevels(topologyName, ctLevels))
+				objs = append(objs, makeClusterTopologyBindingWithLevels(topologyName, ctLevels))
 			}
 
 			fakeClient := testutils.NewTestClientBuilder().WithObjects(objs...).Build()
@@ -1908,7 +1517,7 @@ func TestPrepareSyncFlowTopologyResolution(t *testing.T) {
 				scheme:        groveclientscheme.Scheme,
 				eventRecorder: record.NewFakeRecorder(10),
 				tasConfig:     configv1alpha1.TopologyAwareSchedulingConfiguration{Enabled: tc.tasEnabled},
-				schedRegistry: defaultFakeSchedulerRegistry,
+				schedRegistry: testutils.NewDefaultFakeRegistry(),
 			}
 
 			sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
@@ -1946,8 +1555,8 @@ func TestCreateOrUpdatePodGangs_ClearsStaleTopologyStateOnExistingPodGang(t *tes
 		}
 	}
 
-	makePod := func() *v1.Pod {
-		return &v1.Pod{
+	makePod := func() *corev1.Pod {
+		return &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "worker-0",
 				Namespace: ns,
@@ -1990,12 +1599,12 @@ func TestCreateOrUpdatePodGangs_ClearsStaleTopologyStateOnExistingPodGang(t *tes
 		wantTopologyConstraint bool
 	}{
 		{
-			name: "stale ClusterTopologyBinding domain removes existing PodGang topology metadata",
+			name: "stale ClusterTopology domain removes existing PodGang topology metadata",
 			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
 				return makePCSWithTopology(ns, pcsName, "my-topology")
 			},
 			clusterTopologyObjects: []client.Object{
-				makeClusterTopologyWithLevels("my-topology", []grovecorev1alpha1.TopologyLevel{
+				makeClusterTopologyBindingWithLevels("my-topology", []grovecorev1alpha1.TopologyLevel{
 					{Domain: "zone", Key: "topology.kubernetes.io/zone"},
 				}),
 			},
@@ -2018,7 +1627,7 @@ func TestCreateOrUpdatePodGangs_ClearsStaleTopologyStateOnExistingPodGang(t *tes
 			wantTopologyConstraint: false,
 		},
 		{
-			name: "missing ClusterTopologyBinding removes stale topology metadata from existing PodGang",
+			name: "missing ClusterTopology removes stale topology metadata from existing PodGang",
 			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
 				return makePCSWithTopology(ns, pcsName, "missing-topology")
 			},
@@ -2033,7 +1642,11 @@ func TestCreateOrUpdatePodGangs_ClearsStaleTopologyStateOnExistingPodGang(t *tes
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := t.Context()
 			pcs := tc.setupPCS()
+			pgms := buildTestPodGangMaps(pcs)
 			objs := []client.Object{pcs, makePCLQ(), makePod(), tc.existingPodGang}
+			for _, pgm := range pgms {
+				objs = append(objs, pgm)
+			}
 			objs = append(objs, tc.clusterTopologyObjects...)
 
 			fakeClient := testutils.NewTestClientBuilder().
@@ -2046,7 +1659,7 @@ func TestCreateOrUpdatePodGangs_ClearsStaleTopologyStateOnExistingPodGang(t *tes
 				scheme:        groveclientscheme.Scheme,
 				eventRecorder: record.NewFakeRecorder(10),
 				tasConfig:     configv1alpha1.TopologyAwareSchedulingConfiguration{Enabled: true},
-				schedRegistry: defaultFakeSchedulerRegistry,
+				schedRegistry: testutils.NewDefaultFakeRegistry(),
 			}
 
 			sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
@@ -2090,12 +1703,12 @@ func TestBuildResourceTopologyAnnotation(t *testing.T) {
 		}
 	}
 
-	makePod := func(podGangLabel string) *v1.Pod {
+	makePod := func(podGangLabel string) *corev1.Pod {
 		labels := lo.Assign(pcsLabels)
 		if podGangLabel != "" {
 			labels[apicommon.LabelPodGang] = podGangLabel
 		}
-		return &v1.Pod{
+		return &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "worker-0", Namespace: ns,
 				Labels:          labels,
@@ -2140,10 +1753,14 @@ func TestBuildResourceTopologyAnnotation(t *testing.T) {
 			ctLevels := []grovecorev1alpha1.TopologyLevel{
 				{Domain: "rack", Key: "topology.kubernetes.io/rack"},
 			}
+			pgms := buildTestPodGangMaps(pcs)
 			var objs []client.Object
 			objs = append(objs, pcs, pclq, pod)
+			for _, pgm := range pgms {
+				objs = append(objs, pgm)
+			}
 			if tc.topologyName != "" {
-				objs = append(objs, makeClusterTopologyWithLevels(tc.topologyName, ctLevels))
+				objs = append(objs, makeClusterTopologyBindingWithLevels(tc.topologyName, ctLevels))
 			}
 
 			fakeClient := testutils.NewTestClientBuilder().
@@ -2156,7 +1773,7 @@ func TestBuildResourceTopologyAnnotation(t *testing.T) {
 				scheme:        groveclientscheme.Scheme,
 				eventRecorder: record.NewFakeRecorder(10),
 				tasConfig:     configv1alpha1.TopologyAwareSchedulingConfiguration{Enabled: tc.tasEnabled},
-				schedRegistry: defaultFakeSchedulerRegistry,
+				schedRegistry: testutils.NewDefaultFakeRegistry(),
 			}
 
 			sc, err := r.prepareSyncFlow(ctx, ctrllogger.FromContext(ctx).WithName("test"), pcs)
@@ -2175,5 +1792,817 @@ func TestBuildResourceTopologyAnnotation(t *testing.T) {
 				assert.False(t, hasAnnotation, "PodGang should not have the topology-name annotation")
 			}
 		})
+	}
+}
+
+func TestArePodGangMinReplicasReady(t *testing.T) {
+	makeReadyPod := func(name string) corev1.Pod {
+		return *testutils.NewPodBuilder(name, "default").
+			WithCondition(corev1.PodCondition{Type: corev1.PodReady, Status: corev1.ConditionTrue}).
+			Build()
+	}
+	makeNotReadyPod := func(name string) corev1.Pod {
+		return *testutils.NewPodBuilder(name, "default").
+			WithCondition(corev1.PodCondition{Type: corev1.PodReady, Status: corev1.ConditionFalse}).
+			Build()
+	}
+
+	tests := []struct {
+		name                   string
+		existingPodsByPCLQName map[string][]corev1.Pod
+		pgi                    *podGangInfo
+		expectedResult         bool
+	}{
+		{
+			name: "all associated pods ready and >= minAvailable",
+			existingPodsByPCLQName: map[string][]corev1.Pod{
+				"pcs-0-frontend": {makeReadyPod("fe-0"), makeReadyPod("fe-1"), makeReadyPod("fe-2")},
+			},
+			pgi: &podGangInfo{
+				fqn: "pg-0",
+				pclqs: []pclqInfo{
+					{fqn: "pcs-0-frontend", minAvailable: 2, associatedPodNames: []string{"fe-0", "fe-1", "fe-2"}},
+				},
+			},
+			expectedResult: true,
+		},
+		{
+			name: "not enough ready pods for minAvailable",
+			existingPodsByPCLQName: map[string][]corev1.Pod{
+				"pcs-0-frontend": {makeReadyPod("fe-0"), makeNotReadyPod("fe-1"), makeNotReadyPod("fe-2")},
+			},
+			pgi: &podGangInfo{
+				fqn: "pg-0",
+				pclqs: []pclqInfo{
+					{fqn: "pcs-0-frontend", minAvailable: 2, associatedPodNames: []string{"fe-0", "fe-1", "fe-2"}},
+				},
+			},
+			expectedResult: false,
+		},
+		{
+			name: "only counts pods associated to this PodGang",
+			existingPodsByPCLQName: map[string][]corev1.Pod{
+				"pcs-0-frontend": {makeReadyPod("fe-0"), makeReadyPod("fe-1"), makeReadyPod("fe-2"), makeReadyPod("fe-3")},
+			},
+			pgi: &podGangInfo{
+				fqn: "pg-1",
+				pclqs: []pclqInfo{
+					{fqn: "pcs-0-frontend", minAvailable: 2, associatedPodNames: []string{"fe-2", "fe-3"}},
+				},
+			},
+			expectedResult: true,
+		},
+		{
+			name: "unassociated ready pods do not satisfy minAvailable",
+			existingPodsByPCLQName: map[string][]corev1.Pod{
+				"pcs-0-frontend": {makeReadyPod("fe-0"), makeReadyPod("fe-1"), makeNotReadyPod("fe-2")},
+			},
+			pgi: &podGangInfo{
+				fqn: "pg-1",
+				pclqs: []pclqInfo{
+					{fqn: "pcs-0-frontend", minAvailable: 2, associatedPodNames: []string{"fe-2"}},
+				},
+			},
+			expectedResult: false,
+		},
+		{
+			name: "multiple PodGroups all must satisfy minAvailable",
+			existingPodsByPCLQName: map[string][]corev1.Pod{
+				"pcs-0-frontend": {makeReadyPod("fe-0"), makeReadyPod("fe-1")},
+				"pcs-0-backend":  {makeReadyPod("be-0"), makeNotReadyPod("be-1")},
+			},
+			pgi: &podGangInfo{
+				fqn: "pg-0",
+				pclqs: []pclqInfo{
+					{fqn: "pcs-0-frontend", minAvailable: 2, associatedPodNames: []string{"fe-0", "fe-1"}},
+					{fqn: "pcs-0-backend", minAvailable: 2, associatedPodNames: []string{"be-0", "be-1"}},
+				},
+			},
+			expectedResult: false,
+		},
+	}
+
+	r := &_resource{}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sc := &syncContext{existingPCLQPods: tc.existingPodsByPCLQName}
+			assert.Equal(t, tc.expectedResult, r.arePodGangMinReplicasReady(sc, tc.pgi))
+		})
+	}
+}
+
+// TestPatchPodGangCondition verifies that patchPodGangCondition uses Get-modify-Patch with
+// client.MergeFrom so existing conditions on the PodGang are preserved when a new condition
+// is set. The earlier implementation built a fresh PodGang with only the new condition and
+// patched with client.Merge — JSON Merge Patch (RFC 7396) replaces lists wholesale, which
+// wiped every previously-set condition. This test locks in the fix.
+func TestPatchPodGangCondition(t *testing.T) {
+	ctx := t.Context()
+	const (
+		pcsName = "test-pcs"
+		ns      = "test-ns"
+		pgName  = "test-pcs-0"
+	)
+
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: ns},
+	}
+	existingPG := &groveschedulerv1alpha1.PodGang{
+		ObjectMeta: metav1.ObjectMeta{Name: pgName, Namespace: ns},
+		Status: groveschedulerv1alpha1.PodGangStatus{
+			Conditions: []metav1.Condition{
+				{
+					Type:               string(groveschedulerv1alpha1.PodGangConditionTypeInitialized),
+					Status:             metav1.ConditionTrue,
+					Reason:             groveschedulerv1alpha1.ConditionReasonPodGangPodsCreated,
+					Message:            "Initial seed",
+					LastTransitionTime: metav1.Now(),
+				},
+			},
+		},
+	}
+
+	fakeClient := testutils.NewTestClientBuilder().
+		WithObjects(pcs, existingPG).
+		WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
+		Build()
+	r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme}
+	sc := &syncContext{pcs: pcs, logger: ctrllogger.FromContext(ctx).WithName("test")}
+
+	// Add a second condition; the existing Initialized condition must remain.
+	require.NoError(t, r.patchPodGangCondition(
+		ctx, sc, pgName,
+		groveschedulerv1alpha1.PodGangConditionTypeReady,
+		metav1.ConditionTrue,
+		groveschedulerv1alpha1.ConditionReasonPodGangReady,
+		"MinAvailable pods of every PodGroup are ready",
+	))
+
+	got := &groveschedulerv1alpha1.PodGang{}
+	require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: pgName}, got))
+
+	assert.Len(t, got.Status.Conditions, 2, "existing Initialized condition must not be wiped")
+	condByType := make(map[string]metav1.Condition, len(got.Status.Conditions))
+	for _, c := range got.Status.Conditions {
+		condByType[c.Type] = c
+	}
+	require.Contains(t, condByType, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized))
+	require.Contains(t, condByType, string(groveschedulerv1alpha1.PodGangConditionTypeReady))
+	assert.Equal(t, metav1.ConditionTrue, condByType[string(groveschedulerv1alpha1.PodGangConditionTypeReady)].Status)
+	assert.Equal(t, "Initial seed", condByType[string(groveschedulerv1alpha1.PodGangConditionTypeInitialized)].Message,
+		"existing condition message must be preserved untouched")
+}
+
+func TestArePodGangMinReplicasScheduled(t *testing.T) {
+	makeScheduledPod := func(name string) corev1.Pod {
+		return *testutils.NewPodBuilder(name, "default").
+			WithCondition(corev1.PodCondition{Type: corev1.PodScheduled, Status: corev1.ConditionTrue}).
+			Build()
+	}
+	makeUnscheduledPod := func(name string) corev1.Pod {
+		return *testutils.NewPodBuilder(name, "default").
+			WithCondition(corev1.PodCondition{Type: corev1.PodScheduled, Status: corev1.ConditionFalse}).
+			Build()
+	}
+
+	tests := []struct {
+		name                   string
+		existingPodsByPCLQName map[string][]corev1.Pod
+		pgi                    *podGangInfo
+		expectedResult         bool
+	}{
+		{
+			name: "all associated pods scheduled and >= minAvailable",
+			existingPodsByPCLQName: map[string][]corev1.Pod{
+				"pcs-0-frontend": {makeScheduledPod("fe-0"), makeScheduledPod("fe-1"), makeScheduledPod("fe-2")},
+			},
+			pgi: &podGangInfo{
+				fqn: "pg-0",
+				pclqs: []pclqInfo{
+					{fqn: "pcs-0-frontend", minAvailable: 2, associatedPodNames: []string{"fe-0", "fe-1", "fe-2"}},
+				},
+			},
+			expectedResult: true,
+		},
+		{
+			name: "not enough scheduled pods for minAvailable",
+			existingPodsByPCLQName: map[string][]corev1.Pod{
+				"pcs-0-frontend": {makeScheduledPod("fe-0"), makeUnscheduledPod("fe-1"), makeUnscheduledPod("fe-2")},
+			},
+			pgi: &podGangInfo{
+				fqn: "pg-0",
+				pclqs: []pclqInfo{
+					{fqn: "pcs-0-frontend", minAvailable: 2, associatedPodNames: []string{"fe-0", "fe-1", "fe-2"}},
+				},
+			},
+			expectedResult: false,
+		},
+		{
+			name: "only counts pods associated to this PodGang",
+			existingPodsByPCLQName: map[string][]corev1.Pod{
+				"pcs-0-frontend": {makeScheduledPod("fe-0"), makeScheduledPod("fe-1"), makeScheduledPod("fe-2"), makeScheduledPod("fe-3")},
+			},
+			pgi: &podGangInfo{
+				fqn: "pg-1",
+				pclqs: []pclqInfo{
+					{fqn: "pcs-0-frontend", minAvailable: 2, associatedPodNames: []string{"fe-2", "fe-3"}},
+				},
+			},
+			expectedResult: true,
+		},
+		{
+			name: "multiple PodGroups all must satisfy minAvailable",
+			existingPodsByPCLQName: map[string][]corev1.Pod{
+				"pcs-0-frontend": {makeScheduledPod("fe-0"), makeScheduledPod("fe-1")},
+				"pcs-0-backend":  {makeScheduledPod("be-0"), makeUnscheduledPod("be-1")},
+			},
+			pgi: &podGangInfo{
+				fqn: "pg-0",
+				pclqs: []pclqInfo{
+					{fqn: "pcs-0-frontend", minAvailable: 2, associatedPodNames: []string{"fe-0", "fe-1"}},
+					{fqn: "pcs-0-backend", minAvailable: 2, associatedPodNames: []string{"be-0", "be-1"}},
+				},
+			},
+			expectedResult: false,
+		},
+	}
+
+	r := &_resource{}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sc := &syncContext{existingPCLQPods: tc.existingPodsByPCLQName}
+			assert.Equal(t, tc.expectedResult, r.arePodGangMinReplicasScheduled(sc, tc.pgi))
+		})
+	}
+}
+
+func TestReleaseMinReplicasConstraint(t *testing.T) {
+	const (
+		pcsName = "test-pcs"
+		ns      = "test-ns"
+		pgName  = "test-pcs-0"
+	)
+	standaloneFQN := "test-pcs-0-frontend"
+	pcsgMemberFQN := "test-pcs-0-sg-0-worker"
+
+	tests := []struct {
+		name                string
+		pgi                 *podGangInfo
+		initialMinReplicas  map[string]int32
+		expectedMinReplicas map[string]int32
+	}{
+		{
+			name: "standalone PodGroup is released; PCSG-member PodGroup retains MinReplicas",
+			pgi: &podGangInfo{
+				fqn: pgName,
+				pclqs: []pclqInfo{
+					{fqn: standaloneFQN, minAvailable: 2, isStandalone: true},
+					{fqn: pcsgMemberFQN, minAvailable: 3, isStandalone: false},
+				},
+			},
+			initialMinReplicas: map[string]int32{
+				standaloneFQN: 2,
+				pcsgMemberFQN: 3,
+			},
+			expectedMinReplicas: map[string]int32{
+				standaloneFQN: 0,
+				pcsgMemberFQN: 3,
+			},
+		},
+		{
+			name: "no standalone PodGroups is a no-op",
+			pgi: &podGangInfo{
+				fqn: pgName,
+				pclqs: []pclqInfo{
+					{fqn: pcsgMemberFQN, minAvailable: 3, isStandalone: false},
+				},
+			},
+			initialMinReplicas: map[string]int32{
+				pcsgMemberFQN: 3,
+			},
+			expectedMinReplicas: map[string]int32{
+				pcsgMemberFQN: 3,
+			},
+		},
+		{
+			name: "all-standalone releases every PodGroup",
+			pgi: &podGangInfo{
+				fqn: pgName,
+				pclqs: []pclqInfo{
+					{fqn: standaloneFQN, minAvailable: 2, isStandalone: true},
+				},
+			},
+			initialMinReplicas: map[string]int32{
+				standaloneFQN: 2,
+			},
+			expectedMinReplicas: map[string]int32{
+				standaloneFQN: 0,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			pg := &groveschedulerv1alpha1.PodGang{
+				ObjectMeta: metav1.ObjectMeta{Name: pgName, Namespace: ns},
+			}
+			for fqn, mr := range tc.initialMinReplicas {
+				pg.Spec.PodGroups = append(pg.Spec.PodGroups, groveschedulerv1alpha1.PodGroup{
+					Name:        fqn,
+					MinReplicas: mr,
+				})
+			}
+			pcs := &grovecorev1alpha1.PodCliqueSet{
+				ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: ns},
+			}
+			fakeClient := testutils.NewTestClientBuilder().
+				WithObjects(pcs, pg).
+				Build()
+			existingByName := map[string]groveschedulerv1alpha1.PodGang{pgName: *pg}
+			r := &_resource{client: fakeClient}
+			sc := &syncContext{
+				pcs:                   pcs,
+				logger:                ctrllogger.FromContext(ctx).WithName("test"),
+				existingPodGangByName: existingByName,
+			}
+
+			require.NoError(t, r.releaseMinReplicasConstraint(ctx, sc, tc.pgi))
+
+			got := &groveschedulerv1alpha1.PodGang{}
+			require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: pgName}, got))
+			require.Len(t, got.Spec.PodGroups, len(tc.expectedMinReplicas))
+			for _, pg := range got.Spec.PodGroups {
+				assert.Equal(t, tc.expectedMinReplicas[pg.Name], pg.MinReplicas, "PodGroup %s", pg.Name)
+			}
+		})
+	}
+}
+
+func TestReconcileScheduledCondition(t *testing.T) {
+	const (
+		pcsName = "test-pcs"
+		ns      = "test-ns"
+		pgName  = "test-pcs-0"
+	)
+	standaloneFQN := "test-pcs-0-frontend"
+	scheduledPod := *testutils.NewPodBuilder("fe-0", ns).
+		WithCondition(corev1.PodCondition{Type: corev1.PodScheduled, Status: corev1.ConditionTrue}).
+		Build()
+	unscheduledPod := *testutils.NewPodBuilder("fe-0", ns).
+		WithCondition(corev1.PodCondition{Type: corev1.PodScheduled, Status: corev1.ConditionFalse}).
+		Build()
+	pastTime := metav1.NewTime(metav1.Now().Add(-time.Hour))
+
+	tests := []struct {
+		name                  string
+		pods                  []corev1.Pod
+		initialConditions     []metav1.Condition
+		initialLastScheduled  *metav1.Time
+		initialMinReplicas    int32
+		wantScheduledTrue     bool
+		wantMinReplicasZeroed bool
+		wantLastScheduledSet  bool
+		// wantLastScheduledUnchanged asserts that LastScheduled was not overwritten by this reconcile.
+		// Useful for "already scheduled, no fresh transition" cases.
+		wantLastScheduledUnchanged bool
+	}{
+		{
+			name:                       "already Scheduled=True with LastScheduled set is a no-op",
+			pods:                       []corev1.Pod{scheduledPod},
+			initialConditions:          []metav1.Condition{{Type: string(groveschedulerv1alpha1.PodGangConditionTypeScheduled), Status: metav1.ConditionTrue, Reason: groveschedulerv1alpha1.ConditionReasonPodGangScheduled, LastTransitionTime: pastTime}},
+			initialLastScheduled:       &pastTime,
+			initialMinReplicas:         0,
+			wantScheduledTrue:          true,
+			wantMinReplicasZeroed:      true,
+			wantLastScheduledUnchanged: true,
+		},
+		{
+			name:                  "not yet scheduled flips Scheduled=False and leaves MinReplicas as-is",
+			pods:                  []corev1.Pod{unscheduledPod},
+			initialMinReplicas:    2,
+			wantScheduledTrue:     false,
+			wantMinReplicasZeroed: false,
+		},
+		{
+			name:                  "first scheduled transition releases MinReplicas, sets Scheduled=True and LastScheduled",
+			pods:                  []corev1.Pod{scheduledPod},
+			initialMinReplicas:    2,
+			wantScheduledTrue:     true,
+			wantMinReplicasZeroed: true,
+			wantLastScheduledSet:  true,
+		},
+		{
+			name:                       "re-transition after regression sets Scheduled=True and bumps LastScheduled but does not re-release",
+			pods:                       []corev1.Pod{scheduledPod},
+			initialConditions:          []metav1.Condition{{Type: string(groveschedulerv1alpha1.PodGangConditionTypeScheduled), Status: metav1.ConditionFalse, Reason: groveschedulerv1alpha1.ConditionReasonPodGangNotReady, LastTransitionTime: pastTime}},
+			initialLastScheduled:       &pastTime,
+			initialMinReplicas:         5,
+			wantScheduledTrue:          true,
+			wantMinReplicasZeroed:      false,
+			wantLastScheduledSet:       true,
+			wantLastScheduledUnchanged: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			pcs := &grovecorev1alpha1.PodCliqueSet{
+				ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: ns},
+			}
+			existingPG := &groveschedulerv1alpha1.PodGang{
+				ObjectMeta: metav1.ObjectMeta{Name: pgName, Namespace: ns},
+				Spec: groveschedulerv1alpha1.PodGangSpec{
+					PodGroups: []groveschedulerv1alpha1.PodGroup{{
+						Name:        standaloneFQN,
+						MinReplicas: tc.initialMinReplicas,
+					}},
+				},
+				Status: groveschedulerv1alpha1.PodGangStatus{
+					Conditions:    tc.initialConditions,
+					LastScheduled: tc.initialLastScheduled,
+				},
+			}
+			fakeClient := testutils.NewTestClientBuilder().
+				WithObjects(pcs, existingPG).
+				WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
+				Build()
+			r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme}
+			sc := &syncContext{
+				pcs:                   pcs,
+				logger:                ctrllogger.FromContext(ctx).WithName("test"),
+				existingPodGangByName: map[string]groveschedulerv1alpha1.PodGang{pgName: *existingPG},
+				existingPCLQPods:      map[string][]corev1.Pod{standaloneFQN: tc.pods},
+			}
+			pgi := &podGangInfo{
+				fqn: pgName,
+				pclqs: []pclqInfo{
+					{fqn: standaloneFQN, minAvailable: 1, associatedPodNames: []string{"fe-0"}, isStandalone: true},
+				},
+			}
+
+			require.NoError(t, r.releaseStandalonePodGroupsMinReplicas(ctx, sc, pgi))
+			require.NoError(t, r.reconcilePodGangStatus(ctx, sc, pgi))
+
+			got := &groveschedulerv1alpha1.PodGang{}
+			require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: pgName}, got))
+			assert.Equal(t, tc.wantScheduledTrue, k8sutils.IsConditionTrue(got.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeScheduled)))
+			require.Len(t, got.Spec.PodGroups, 1)
+			if tc.wantMinReplicasZeroed {
+				assert.Equal(t, int32(0), got.Spec.PodGroups[0].MinReplicas)
+			} else {
+				assert.Equal(t, tc.initialMinReplicas, got.Spec.PodGroups[0].MinReplicas)
+			}
+			if tc.wantLastScheduledSet {
+				require.NotNil(t, got.Status.LastScheduled)
+				if tc.initialLastScheduled != nil && !tc.wantLastScheduledUnchanged {
+					assert.True(t, got.Status.LastScheduled.After(tc.initialLastScheduled.Time), "expected LastScheduled to advance past prior value")
+				}
+			}
+			if tc.wantLastScheduledUnchanged {
+				require.NotNil(t, got.Status.LastScheduled)
+				assert.Equal(t, tc.initialLastScheduled.Unix(), got.Status.LastScheduled.Unix(), "expected LastScheduled to be preserved")
+			}
+		})
+	}
+}
+
+func TestReconcileReadyCondition(t *testing.T) {
+	const (
+		pcsName = "test-pcs"
+		ns      = "test-ns"
+		pgName  = "test-pcs-0"
+	)
+	pclqFQN := "test-pcs-0-frontend"
+	readyPod := *testutils.NewPodBuilder("fe-0", ns).
+		WithCondition(corev1.PodCondition{Type: corev1.PodReady, Status: corev1.ConditionTrue}).
+		Build()
+	notReadyPod := *testutils.NewPodBuilder("fe-0", ns).
+		WithCondition(corev1.PodCondition{Type: corev1.PodReady, Status: corev1.ConditionFalse}).
+		Build()
+	pastTime := metav1.NewTime(metav1.Now().Add(-time.Hour))
+	readyCondTrue := metav1.Condition{
+		Type:               string(groveschedulerv1alpha1.PodGangConditionTypeReady),
+		Status:             metav1.ConditionTrue,
+		Reason:             groveschedulerv1alpha1.ConditionReasonPodGangReady,
+		LastTransitionTime: pastTime,
+	}
+
+	tests := []struct {
+		name                  string
+		pods                  []corev1.Pod
+		initialConditions     []metav1.Condition
+		initialLastReady      *metav1.Time
+		wantReadyTrue         bool
+		wantLastReadySet      bool
+		wantLastReadyUnchanged bool
+	}{
+		{
+			name:          "no Ready condition and pods not ready: Ready=False, LastReady stays nil",
+			pods:          []corev1.Pod{notReadyPod},
+			wantReadyTrue: false,
+		},
+		{
+			name:                  "Ready=True with pods still ready is a no-op for LastReady",
+			pods:                  []corev1.Pod{readyPod},
+			initialConditions:     []metav1.Condition{readyCondTrue},
+			initialLastReady:      &pastTime,
+			wantReadyTrue:         true,
+			wantLastReadyUnchanged: true,
+		},
+		{
+			name:             "pods become ready: Ready flips to True and LastReady is set",
+			pods:             []corev1.Pod{readyPod},
+			wantReadyTrue:    true,
+			wantLastReadySet: true,
+		},
+		{
+			name:                  "pods stop being ready: Ready flips to False, LastReady is preserved",
+			pods:                  []corev1.Pod{notReadyPod},
+			initialConditions:     []metav1.Condition{readyCondTrue},
+			initialLastReady:      &pastTime,
+			wantReadyTrue:         false,
+			wantLastReadyUnchanged: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			pcs := &grovecorev1alpha1.PodCliqueSet{
+				ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: ns},
+			}
+			existingPG := &groveschedulerv1alpha1.PodGang{
+				ObjectMeta: metav1.ObjectMeta{Name: pgName, Namespace: ns},
+				Status: groveschedulerv1alpha1.PodGangStatus{
+					Conditions: tc.initialConditions,
+					LastReady:  tc.initialLastReady,
+				},
+			}
+			fakeClient := testutils.NewTestClientBuilder().
+				WithObjects(pcs, existingPG).
+				WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
+				Build()
+			r := &_resource{client: fakeClient, scheme: groveclientscheme.Scheme}
+			sc := &syncContext{
+				pcs:                   pcs,
+				logger:                ctrllogger.FromContext(ctx).WithName("test"),
+				existingPodGangByName: map[string]groveschedulerv1alpha1.PodGang{pgName: *existingPG},
+				existingPCLQPods:      map[string][]corev1.Pod{pclqFQN: tc.pods},
+			}
+			pgi := &podGangInfo{
+				fqn: pgName,
+				pclqs: []pclqInfo{
+					{fqn: pclqFQN, minAvailable: 1, associatedPodNames: []string{"fe-0"}, isStandalone: true},
+				},
+			}
+
+			require.NoError(t, r.reconcilePodGangStatus(ctx, sc, pgi))
+
+			got := &groveschedulerv1alpha1.PodGang{}
+			require.NoError(t, fakeClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: pgName}, got))
+			assert.Equal(t, tc.wantReadyTrue, k8sutils.IsConditionTrue(got.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeReady)))
+			if tc.wantLastReadySet {
+				require.NotNil(t, got.Status.LastReady)
+			}
+			if tc.wantLastReadyUnchanged {
+				require.NotNil(t, got.Status.LastReady)
+				assert.Equal(t, tc.initialLastReady.Unix(), got.Status.LastReady.Unix(), "expected LastReady to be preserved")
+			}
+			// Verify LastReady is never reset to nil if it was previously set.
+			if tc.initialLastReady != nil {
+				require.NotNil(t, got.Status.LastReady, "LastReady must never be reset to nil once set")
+			}
+		})
+	}
+}
+
+// Test helper functions
+// ----------------------------------------------------------------------
+
+// buildTestPodGangMaps builds PodGangMap objects for all PCS replicas using the BPG/SPG convention,
+// derived from the PCS template (Cliques and PodCliqueScalingGroupConfigs).
+//
+// The function mutates pcs.Status.CurrentGenerationHash to testGenerationHash if it is not already set,
+// so that callers only need to build the PCS spec and do not have to set status fields themselves.
+func buildTestPodGangMaps(pcs *grovecorev1alpha1.PodCliqueSet) []*grovecorev1alpha1.PodGangMap {
+	if pcs.Status.CurrentGenerationHash == nil {
+		pcs.Status.CurrentGenerationHash = ptr.To(testGenerationHash)
+	}
+	generationHash := *pcs.Status.CurrentGenerationHash
+
+	var pgms []*grovecorev1alpha1.PodGangMap
+	for replicaIndex := range int(pcs.Spec.Replicas) {
+		pgmName := apicommon.GeneratePodGangMapName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: replicaIndex})
+		standaloneFQNs := componentutils.GetStandalonePCLQFQNSet(pcs, replicaIndex)
+
+		// BPG entry: standalone PCLQs at template replicas.
+		bpgPodCliques := make(map[string]int32)
+		for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
+			fqn := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: replicaIndex}, cliqueTemplate.Name)
+			if standaloneFQNs.Has(fqn) {
+				bpgPodCliques[cliqueTemplate.Name] = cliqueTemplate.Spec.Replicas
+			}
+		}
+
+		// BPG entry: each PCSG contributes index slice [0, MinAvailable).
+		bpgPCSGIndices := make(map[string][]int32)
+
+		var entries []grovecorev1alpha1.PodGangEntry
+		if len(pcs.Spec.Template.PodCliqueScalingGroupConfigs) > 0 {
+			// Derive PCSG entries from template config.
+			for _, cfg := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+				if cfg.MinAvailable != nil {
+					indices := make([]int32, 0, *cfg.MinAvailable)
+					for i := int32(0); i < *cfg.MinAvailable; i++ {
+						indices = append(indices, i)
+					}
+					bpgPCSGIndices[cfg.Name] = indices
+				}
+			}
+			bpgName := apicommon.GenerateBasePodGangName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: replicaIndex})
+			entries = []grovecorev1alpha1.PodGangEntry{{
+				Name:                       bpgName,
+				PodCliqueSetGenerationHash: generationHash,
+				PodCliques:                 bpgPodCliques,
+				PCSGReplicaIndices:         bpgPCSGIndices,
+			}}
+			// SPG entries from template, holding one replica index each above MinAvailable.
+			for _, cfg := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+				pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: replicaIndex}, cfg.Name)
+				if cfg.Replicas == nil || cfg.MinAvailable == nil {
+					continue
+				}
+				minAvail := *cfg.MinAvailable
+				for scaledIdx := range *cfg.Replicas - minAvail {
+					spgName := apicommon.CreatePodGangNameFromPCSGFQN(pcsgFQN, int(scaledIdx))
+					entries = append(entries, grovecorev1alpha1.PodGangEntry{
+						Name:                       spgName,
+						PodCliqueSetGenerationHash: generationHash,
+						PCSGReplicaIndices:         map[string][]int32{cfg.Name: {minAvail + scaledIdx}},
+					})
+				}
+			}
+		} else {
+			// Standalone PCLQs only — single BPG entry.
+			bpgName := apicommon.GenerateBasePodGangName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: replicaIndex})
+			entries = []grovecorev1alpha1.PodGangEntry{{
+				Name:                       bpgName,
+				PodCliqueSetGenerationHash: generationHash,
+				PodCliques:                 bpgPodCliques,
+			}}
+		}
+
+		pgms = append(pgms, &grovecorev1alpha1.PodGangMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      pgmName,
+				Namespace: pcs.Namespace,
+			},
+			Spec: grovecorev1alpha1.PodGangMapSpec{
+				PodCliqueSetReplicaIndex: int32(replicaIndex),
+				Entries:                  entries,
+			},
+		})
+	}
+	return pgms
+}
+
+func assertPodGangLevelConstraint(t *testing.T, pg *podGangInfo, expected expectedPodGangTopologyConstraints) {
+	t.Helper()
+	if expected.topologyPackConstraint != nil {
+		assertPackConstraint(t, pg.topologyConstraint, *expected.topologyPackConstraint)
+		return
+	}
+	if expected.topologyLevel == nil {
+		assert.Nil(t, pg.topologyConstraint)
+		return
+	}
+	assertRequiredTopologyConstraint(t, pg.topologyConstraint, expected.topologyLevel.Key)
+}
+
+func assertPCLQConstraints(t *testing.T, pg *podGangInfo, expected expectedPodGangTopologyConstraints) {
+	t.Helper()
+	if expected.pclqPackConstraints != nil {
+		for _, pclq := range pg.pclqs {
+			want, exists := expected.pclqPackConstraints[pclq.fqn]
+			if !exists {
+				assert.Nil(t, pclq.topologyConstraint, "PCLQ %s should have no topology constraint", pclq.fqn)
+				continue
+			}
+			assertPackConstraint(t, pclq.topologyConstraint, want)
+		}
+		return
+	}
+	for _, pclq := range pg.pclqs {
+		want, exists := expected.pclqConstraints[pclq.fqn]
+		if !exists {
+			assert.Nil(t, pclq.topologyConstraint, "PCLQ %s should have no topology constraint", pclq.fqn)
+			continue
+		}
+		assertRequiredTopologyConstraint(t, pclq.topologyConstraint, want.Key)
+	}
+}
+
+func assertPCSGConstraints(t *testing.T, pg *podGangInfo, expected expectedPodGangTopologyConstraints) {
+	t.Helper()
+	if expected.pcsgPackConstraints != nil {
+		for pcsgFQN, want := range expected.pcsgPackConstraints {
+			actualPCSGTC, found := lo.Find(pg.pcsgTopologyConstraints, func(pcsgTC groveschedulerv1alpha1.TopologyConstraintGroupConfig) bool {
+				return pcsgTC.Name == pcsgFQN
+			})
+			assert.True(t, found, "Expected PCSG topology constraint for %s not found", pcsgFQN)
+			assertPackConstraint(t, actualPCSGTC.TopologyConstraint, want)
+		}
+		for _, actualPCSGTC := range pg.pcsgTopologyConstraints {
+			if _, exists := expected.pcsgPackConstraints[actualPCSGTC.Name]; !exists {
+				t.Errorf("Unexpected PCSG topology constraint for %s found in PodGang %s", actualPCSGTC.Name, pg.fqn)
+			}
+		}
+		return
+	}
+	for pcsgFQN, expectedPCSGTC := range expected.pcsgConstraints {
+		actualPCSGTC, found := lo.Find(pg.pcsgTopologyConstraints, func(pcsgTC groveschedulerv1alpha1.TopologyConstraintGroupConfig) bool {
+			return pcsgTC.Name == pcsgFQN
+		})
+		assert.True(t, found, "Expected PCSG topology constraint for %s not found", pcsgFQN)
+		assertRequiredTopologyConstraint(t, actualPCSGTC.TopologyConstraint, expectedPCSGTC.Key)
+	}
+	for _, actualPCSGTC := range pg.pcsgTopologyConstraints {
+		if _, exists := expected.pcsgConstraints[actualPCSGTC.Name]; !exists {
+			t.Errorf("Unexpected PCSG topology constraint for %s found in PodGang %s", actualPCSGTC.Name, pg.fqn)
+		}
+	}
+}
+
+func mustNotHaveAnyTopologyConstraints(t *testing.T, podGangs []*podGangInfo) {
+	for _, pg := range podGangs {
+		assert.Nil(t, pg.topologyConstraint)
+		for _, pclq := range pg.pclqs {
+			assert.Nil(t, pclq.topologyConstraint)
+		}
+		assert.Nil(t, pg.pcsgTopologyConstraints)
+	}
+}
+
+func assertRequiredTopologyConstraint(t *testing.T, got *groveschedulerv1alpha1.TopologyConstraint, wantedKey string) {
+	assert.NotNil(t, got)
+	assert.NotNil(t, got.PackConstraint)
+	assert.Nil(t, got.PackConstraint.Preferred)
+	assert.NotNil(t, got.PackConstraint.Required)
+	assert.Equal(t, wantedKey, *got.PackConstraint.Required)
+}
+
+// assertPackConstraint checks both required and preferred keys of a TopologyConstraint. An empty
+// expected key asserts the corresponding side is nil; a non-empty key asserts the value matches.
+func assertPackConstraint(t *testing.T, got *groveschedulerv1alpha1.TopologyConstraint, want expectedTopologyPackConstraint) {
+	t.Helper()
+	if want.requiredKey == "" && want.preferredKey == "" {
+		assert.Nil(t, got)
+		return
+	}
+	require.NotNil(t, got)
+	require.NotNil(t, got.PackConstraint)
+	if want.requiredKey == "" {
+		assert.Nil(t, got.PackConstraint.Required, "expected no required key")
+	} else {
+		require.NotNil(t, got.PackConstraint.Required, "expected required key %q", want.requiredKey)
+		assert.Equal(t, want.requiredKey, *got.PackConstraint.Required)
+	}
+	if want.preferredKey == "" {
+		assert.Nil(t, got.PackConstraint.Preferred, "expected no preferred key")
+	} else {
+		require.NotNil(t, got.PackConstraint.Preferred, "expected preferred key %q", want.preferredKey)
+		assert.Equal(t, want.preferredKey, *got.PackConstraint.Preferred)
+	}
+}
+
+// makePCSWithTopology creates a minimal PCS with an optional topology constraint.
+func makePCSWithTopology(ns, name string, topologyName string) *grovecorev1alpha1.PodCliqueSet {
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, UID: "pcs-uid"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Replicas: 1,
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
+				},
+			},
+		},
+	}
+	if topologyName != "" {
+		pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+			TopologyName: topologyName,
+			PackDomain:   "rack",
+		}
+	}
+	return pcs
+}
+
+// makeClusterTopologyBindingWithLevels creates a ClusterTopologyBinding with the given levels.
+func makeClusterTopologyBindingWithLevels(name string, levels []grovecorev1alpha1.TopologyLevel) *grovecorev1alpha1.ClusterTopologyBinding {
+	return &grovecorev1alpha1.ClusterTopologyBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec:       grovecorev1alpha1.ClusterTopologyBindingSpec{Levels: levels},
 	}
 }

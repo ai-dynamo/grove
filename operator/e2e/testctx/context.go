@@ -434,7 +434,7 @@ func (tc *TestContext) ScalePCSGInstanceAndWait(pcsgInstanceName string, replica
 func (tc *TestContext) ScalePCSGAcrossAllReplicasAndWait(pcsName, pcsgName string, pcsReplicas, pcsgReplicas int32, expectedTotalPods, expectedPending int) {
 	tc.T.Helper()
 
-	for replicaIndex := int32(0); replicaIndex < pcsReplicas; replicaIndex++ {
+	for replicaIndex := range pcsReplicas {
 		pcsgInstanceName := fmt.Sprintf("%s-%d-%s", pcsName, replicaIndex, pcsgName)
 		if err := tc.ScalePCSG(pcsgInstanceName, int(pcsgReplicas)); err != nil {
 			tc.T.Fatalf("Failed to scale PodCliqueScalingGroup instance %s: %v", pcsgInstanceName, err)

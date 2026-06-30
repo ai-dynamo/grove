@@ -180,6 +180,18 @@ webhooks:
       app.kubernetes.io/name: pcs-validating-webhook
       app.kubernetes.io/part-of: grove
     annotations: {}
+  podCliqueScalingGroupValidationWebhook:
+    labels:
+      app.kubernetes.io/component: operator-pcsg-validating-webhook
+      app.kubernetes.io/name: pcsg-validating-webhook
+      app.kubernetes.io/part-of: grove
+    annotations: {}
+  podCliqueValidationWebhook:
+    labels:
+      app.kubernetes.io/component: operator-pclq-validating-webhook
+      app.kubernetes.io/name: pclq-validating-webhook
+      app.kubernetes.io/part-of: grove
+    annotations: {}
   podCliqueSetDefaultingWebhook:
     labels:
       app.kubernetes.io/component: operator-pcs-defaulting-webhook
@@ -204,8 +216,8 @@ webhookServerSecret:
   # Set to false when deploying via `helm template | kubectl apply` or GitOps tools
   # (ArgoCD, FluxCD), where the empty secret in the template overwrites auto-generated
   # certificates on every apply. The operator will create the secret itself if missing.
-  # Defaults to true for backward compatibility. 
-  enabled: true
+  # Defaults to true for backward compatibility.
+  enabled: false
   labels:
     app.kubernetes.io/component: operator-webhook-server-secret
     app.kubernetes.io/name: grove-webhook-server-secret
@@ -222,7 +234,7 @@ crdInstaller:
   # the crds/ directory, and upgrades are managed manually by the user.
   # Set to true to opt in to automated CRD upgrades on every helm upgrade.
   # WARNING: when enabled, the operator ServiceAccount receives apiextensions.k8s.io permissions.
-  enabled: false
+  enabled: true
   image:
     repository: grove-install-crds
     # Overrides the image tag whose default is the chart appVersion.
