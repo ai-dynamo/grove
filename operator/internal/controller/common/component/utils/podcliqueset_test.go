@@ -877,3 +877,40 @@ func TestGetExpectedPCLQNamesGroupByOwner(t *testing.T) {
 		})
 	}
 }
+
+func TestGetStandalonePCLQReplicasFromSpec(t *testing.T) {
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+					{Name: "frontend", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To(int32(2))}},
+					{Name: "prefill-worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
+				},
+				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+					{Name: "prefill", Replicas: ptr.To(int32(4)), MinAvailable: ptr.To(int32(1)), CliqueNames: []string{"prefill-worker"}},
+				},
+			},
+		},
+	}
+
+	result := GetStandalonePCLQReplicasFromPCSTemplateSpec(pcs)
+	assert.Equal(t, map[string]int32{"frontend": 5}, result)
+}
+
+func TestGetPCSGReplicasFromSpec(t *testing.T) {
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+					{Name: "prefill", Replicas: ptr.To(int32(4)), MinAvailable: ptr.To(int32(1)), CliqueNames: []string{"prefill-worker"}},
+					{Name: "decode", Replicas: ptr.To(int32(3)), MinAvailable: ptr.To(int32(1)), CliqueNames: []string{"decode-worker"}},
+				},
+			},
+		},
+	}
+
+	result := GetPCSGReplicasFromPCSTemplateSpec(pcs)
+	assert.Equal(t, map[string]int32{"prefill": 4, "decode": 3}, result)
+}

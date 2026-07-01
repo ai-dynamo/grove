@@ -22,7 +22,6 @@ import (
 	"testing"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -682,7 +681,7 @@ func TestComputeNextPodGangMapState_DeductsFromLowestIndexFirst(t *testing.T) {
 // makeTestEntryBuilder creates a simple entryBuilder that produces entries with an incrementing
 // name and the given composition. PCSG content is supplied as an explicit slice of replica
 // indices (not a count), matching the post-refactor PodGangEntryBuilder signature.
-func makeTestEntryBuilder(counter *int) componentutils.PodGangEntryBuilder {
+func makeTestEntryBuilder(counter *int) PodGangEntryBuilder {
 	return func(standalonePCLQPods map[string]int32, pcsgReplicaIndices map[string][]int32, dependsOn []string) grovecorev1alpha1.PodGangEntry {
 		name := fmt.Sprintf("mvu-%d", *counter)
 		*counter++

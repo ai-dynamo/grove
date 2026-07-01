@@ -199,7 +199,7 @@ func (r _resource) computeCoherentUpdateEntries(ctx context.Context, pcs *grovec
 	// each builder invocation; an intra-builder counter salts successive calls so that K names
 	// generated within one reconcile call are distinct even if the host clock does not advance
 	// between successive reads.
-	entryBuilder := componentutils.NewPodGangEntryBuilder(pcs.Name, int32(replicaIndex), newGenerationHash, r.clk)
+	entryBuilder := NewPodGangEntryBuilder(pcs.Name, int32(replicaIndex), newGenerationHash, r.clk)
 
 	// MPG names from prior iterations of this update — Tail-PGs created in this iteration depend on them.
 	mpgNames := collectMPGNamesFromEntries(existingNewEntries)
@@ -645,7 +645,7 @@ func (r _resource) computeMVUEntriesFromPCSTemplateSpec(pcs *grovecorev1alpha1.P
 		pcsgIndexPool[name] = indices
 	}
 
-	entryBuilder := componentutils.NewPodGangEntryBuilder(pcs.Name, int32(pcsReplicaIndex), pcsGenerationHash, r.clk)
+	entryBuilder := NewPodGangEntryBuilder(pcs.Name, int32(pcsReplicaIndex), pcsGenerationHash, r.clk)
 	return computeAllMVUPodGangEntries(template, standalonePCLQReplicas, pcsgIndexPool, entryBuilder)
 }
 
@@ -658,7 +658,7 @@ func computeAllMVUPodGangEntries(
 	template componentutils.MVUTemplate,
 	standalonePCLQReplicas map[string]int32,
 	pcsgIndexPool map[string][]int32,
-	entryBuilder componentutils.PodGangEntryBuilder,
+	entryBuilder PodGangEntryBuilder,
 ) []grovecorev1alpha1.PodGangEntry {
 	var entries []grovecorev1alpha1.PodGangEntry
 	var mpgNames []string

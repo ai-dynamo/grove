@@ -96,7 +96,7 @@ func computeNextPodGangMapState(
 	template mvuTemplate,
 	oldEntries []grovecorev1alpha1.PodGangEntry,
 	mpgNames []string,
-	entryBuilder componentutils.PodGangEntryBuilder,
+	entryBuilder PodGangEntryBuilder,
 ) podGangMapState {
 	if canFormMVUPodGang(template, oldEntries) {
 		updatedOldEntries, newEntries := computeNextMVUPodGang(template, oldEntries, entryBuilder)
@@ -129,7 +129,7 @@ func canFormMVUPodGang(template mvuTemplate, oldEntries []grovecorev1alpha1.PodG
 func computeNextMVUPodGang(
 	template mvuTemplate,
 	oldEntries []grovecorev1alpha1.PodGangEntry,
-	entryBuilder componentutils.PodGangEntryBuilder,
+	entryBuilder PodGangEntryBuilder,
 ) (updatedOldEntries []grovecorev1alpha1.PodGangEntry, newEntries []grovecorev1alpha1.PodGangEntry) {
 	// Clone standalone PCLQ counts from template — may grow if absorption happens.
 	nextMVUStandalonePCLQs := maps.Clone(template.standalonePCLQs)
@@ -174,7 +174,7 @@ func computeTailPodGangs(
 	template mvuTemplate,
 	oldEntries []grovecorev1alpha1.PodGangEntry,
 	mpgNames []string,
-	entryBuilder componentutils.PodGangEntryBuilder,
+	entryBuilder PodGangEntryBuilder,
 ) (updatedOldEntries []grovecorev1alpha1.PodGangEntry, newEntries []grovecorev1alpha1.PodGangEntry, done bool) {
 	for pcsgName := range template.pcsgs {
 		remaining := sumPCSGReplicasInEntries(oldEntries, pcsgName)

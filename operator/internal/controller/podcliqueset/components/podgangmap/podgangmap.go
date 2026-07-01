@@ -163,3 +163,40 @@ func emptyPodGangMap(objKey client.ObjectKey) *grovecorev1alpha1.PodGangMap {
 		},
 	}
 }
+
+// PodGangEntryBuilder is a function that creates a PodGangEntry given standalone PCLQ pod counts,
+// PCSG replica indices for the PodGang, and the grove.io/epoch value this entry depends on (nil
+// means no ordering constraint).
+type PodGangEntryBuilder func(standalonePCLQReplicas map[string]int32, pcsgReplicaIndices map[string][]int32, dependsOn []string) grovecorev1alpha1.PodGangEntry
+
+// NewPodGangEntryBuilder returns a closure that creates PodGangEntry values with names
+// generated under the unified PodGang naming convention.
+//
+// The builder captures one epoch at construction (clock.Now().UnixNano()) and stamps every
+// entry it produces with that epoch as the grove.io/epoch label. All entries from one builder
+// therefore belong to the same batch. Names remain unique within a batch by salting the
+// suffix with a within-builder counter (+i on every invocation).
+//
+// pcsGenerationHash is not part of the PodGang name; it is written into
+// PodGangEntry.PodCliqueSetGenerationHash so consumers can identify the cohort each entry
+// belongs to.
+//
+// In production callers should pass clock.RealClock{}; tests can pass clocktesting.FakeClock
+// for deterministic name generation.
+func NewPodGangEntryBuilder(pcsName string, pcsReplicaIndex int32, pcsGenerationHash string, clock clock.Clock) PodGangEntryBuilder {
+	var i int64
+	baseEpoch := clock.Now().UnixNano()
+	epochLabel := strconv.FormatInt(baseEpoch, 10)
+	return func(standalonePCLQReplicas map[string]int32, pcsgReplicaIndices map[string][]int32, dependsOn []string) grovecorev1alpha1.PodGangEntry {
+		suffix := strconv.FormatInt(baseEpoch+i, 10)
+		i++
+		return grovecorev1alpha1.PodGangEntry{
+			Name:                       apicommon.GeneratePodGangName(pcsName, pcsReplicaIndex, suffix),
+			PodCliqueSetGenerationHash: pcsGenerationHash,
+			PodCliques:                 standalonePCLQReplicas,
+			PCSGReplicaIndices:         pcsgReplicaIndices,
+			DependsOn:                  dependsOn,
+			Labels:                     map[string]string{apicommon.LabelEpoch: epochLabel},
+		}
+	}
+}

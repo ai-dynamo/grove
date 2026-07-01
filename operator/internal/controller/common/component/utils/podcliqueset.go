@@ -213,3 +213,45 @@ func GetExpectedStandAlonePCLQFQNsPerPCSReplica(pcs *grovecorev1alpha1.PodClique
 	}
 	return pclqFQNsByPCSReplica
 }
+
+// GetStandalonePCLQMinAvailableFromPCSTemplateSpec returns the minAvailable pod count per standalone PCLQ from the PCS spec.
+func GetStandalonePCLQMinAvailableFromPCSTemplateSpec(pcs *grovecorev1alpha1.PodCliqueSet) map[string]int32 {
+	result := make(map[string]int32)
+	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
+		pcsgConfig := FindScalingGroupConfigForClique(pcs.Spec.Template.PodCliqueScalingGroupConfigs, cliqueTemplate.Name)
+		if pcsgConfig == nil {
+			result[cliqueTemplate.Name] = *cliqueTemplate.Spec.MinAvailable
+		}
+	}
+	return result
+}
+
+// GetStandalonePCLQReplicasFromPCSTemplateSpec returns the total replica count per standalone PCLQ from the PCS spec.
+func GetStandalonePCLQReplicasFromPCSTemplateSpec(pcs *grovecorev1alpha1.PodCliqueSet) map[string]int32 {
+	result := make(map[string]int32)
+	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
+		pcsgConfig := FindScalingGroupConfigForClique(pcs.Spec.Template.PodCliqueScalingGroupConfigs, cliqueTemplate.Name)
+		if pcsgConfig == nil {
+			result[cliqueTemplate.Name] = cliqueTemplate.Spec.Replicas
+		}
+	}
+	return result
+}
+
+// GetPCSGMinAvailableFromPCSTemplateSpec returns the minAvailable replica count per PCSG from the PCS spec.
+func GetPCSGMinAvailableFromPCSTemplateSpec(pcs *grovecorev1alpha1.PodCliqueSet) map[string]int32 {
+	result := make(map[string]int32)
+	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		result[pcsgConfig.Name] = *pcsgConfig.MinAvailable
+	}
+	return result
+}
+
+// GetPCSGReplicasFromPCSTemplateSpec returns the total replica count per PCSG from the PCS spec.
+func GetPCSGReplicasFromPCSTemplateSpec(pcs *grovecorev1alpha1.PodCliqueSet) map[string]int32 {
+	result := make(map[string]int32)
+	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		result[pcsgConfig.Name] = *pcsgConfig.Replicas
+	}
+	return result
+}
