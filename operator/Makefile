@@ -134,12 +134,12 @@ run-e2e-verbose: $(GOTESTSUM)
 # Create a k3d cluster for e2e testing (with Grove and Kai scheduler deployed)
 # This is optional - tests work with any Kubernetes cluster that has the required components
 .PHONY: e2e-cluster-up
-e2e-cluster-up:
+e2e-cluster-up: $(UV)
 	@$(MODULE_HACK_DIR)/infra-manager.py setup $(E2E_CREATE_FLAGS)
 
 # Delete the k3d e2e test cluster
 .PHONY: e2e-cluster-down
-e2e-cluster-down:
+e2e-cluster-down: $(UV)
 	@$(MODULE_HACK_DIR)/infra-manager.py delete k3d-cluster
 
 # Full e2e test run: create k3d cluster, run tests, then cleanup
@@ -171,7 +171,7 @@ run-e2e-mnnvl-full: e2e-cluster-up
 	@docker tag alpine:latest localhost:$(E2E_REGISTRY_PORT)/alpine:latest
 	@docker push localhost:$(E2E_REGISTRY_PORT)/alpine:latest
 	@echo "> Running autoMNNVL e2e tests (all 4 configurations)..."
-	@python3 $(MODULE_HACK_DIR)/e2e-autoMNNVL/run_autoMNNVL_e2e_all.py || \
+	@$(MODULE_HACK_DIR)/e2e-autoMNNVL/run_autoMNNVL_e2e_all.py || \
 		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down
@@ -205,12 +205,12 @@ run-e2e-real-full: e2e-cluster-up-real
 # Uses the scale.yaml preset with 100 KWOK virtual nodes.
 # Override defaults: make scale-cluster-up E2E_CREATE_FLAGS="--set kwok.nodes=200"
 .PHONY: scale-cluster-up
-scale-cluster-up:
+scale-cluster-up: $(UV)
 	@$(MODULE_HACK_DIR)/infra-manager.py setup --config $(MODULE_HACK_DIR)/scale.yaml $(E2E_CREATE_FLAGS)
 
 # Delete the scale test cluster
 .PHONY: scale-cluster-down
-scale-cluster-down:
+scale-cluster-down: $(UV)
 	@$(MODULE_HACK_DIR)/infra-manager.py delete k3d-cluster
 
 # Run scale tests against an existing cluster

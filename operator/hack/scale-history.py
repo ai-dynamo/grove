@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run
 # /*
 # Copyright 2026 The Grove Authors.
 #
@@ -19,12 +19,12 @@
 
 Examples:
   Local testing:
-    python operator/hack/scale-history.py local \
+    ./operator/hack/scale-history.py local \
       --input operator/e2e/tests/scale/ScaleTest_20 \
       --history-dir /tmp/grove-scale-history
 
   History branch:
-    python operator/hack/scale-history.py branch \
+    ./operator/hack/scale-history.py branch \
       --input "$RUNNER_TEMP/grove-scale" \
       --commit "$GITHUB_SHA" \
       --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"

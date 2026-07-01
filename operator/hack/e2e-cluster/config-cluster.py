@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run
 # /*
 # Copyright 2026 The Grove Authors.
 #
@@ -35,13 +35,13 @@ Supported configuration axes:
 
 Usage:
     # Install fake GPU + enable MNNVL
-    python config-cluster.py --fake-gpu=yes --auto-mnnvl=enabled
+    ./config-cluster.py --fake-gpu=yes --auto-mnnvl=enabled
 
     # Uninstall fake GPU + disable MNNVL
-    python config-cluster.py --fake-gpu=no --auto-mnnvl=disabled
+    ./config-cluster.py --fake-gpu=no --auto-mnnvl=disabled
 
     # Enable MNNVL without fake GPU, operator expected to crash
-    python config-cluster.py --fake-gpu=no --auto-mnnvl=enabled --skip-operator-wait
+    ./config-cluster.py --fake-gpu=no --auto-mnnvl=enabled --skip-operator-wait
 """
 
 from __future__ import annotations
