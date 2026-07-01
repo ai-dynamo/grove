@@ -73,7 +73,7 @@ profiles:
           config:
             leaderElection:
               enabled: false
-  - name: topology-test
+  - name: e2e-kai
     patches:
       - op: add
         path: /deploy/helm/releases/0/setValues
@@ -88,6 +88,19 @@ profiles:
               enabled: false
             topologyAwareScheduling:
               enabled: true
+  - name: e2e-default-scheduler
+    patches:
+      - op: add
+        path: /deploy/helm/releases/0/setValues
+        value:
+          replicaCount: 1
+          config:
+            scheduler:
+              defaultProfileName: default-scheduler
+              profiles:
+                - name: default-scheduler
+            leaderElection:
+              enabled: false
   - name: mnnvl-test
     patches:
       - op: add
