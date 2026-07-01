@@ -130,6 +130,9 @@ func runScaleDownTest(t *testing.T, v scaleDownVariant) {
 		timeout:      scaleDownTimeout,
 		pollInterval: defaultScalePollInterval,
 	}, func(tracker *measurement.TimelineTracker, tc *testctx.TestContext, _ string) {
+		baseline := &operatorBaseline{}
+		addOperatorBaselinePhase(tracker, tc, baseline)
+
 		tracker.AddPhase(measurement.PhaseDefinition{
 			Name: "deploy",
 			ActionFn: func(ctx context.Context) error {
@@ -178,21 +181,10 @@ func runScaleDownTest(t *testing.T, v scaleDownVariant) {
 			},
 		})
 
-		tracker.AddPhase(measurement.PhaseDefinition{
-			Name: "delete",
-			ActionFn: func(ctx context.Context) error {
-				return workload.NewWorkloadManager(tc.Client, Logger).DeletePCS(ctx, tc.Namespace, tc.Workload.Name)
-			},
-			Milestones: []measurement.MilestoneDefinition{
-				{
-					Name: "pcs-deleted",
-					Condition: &condition.PCSDeletedCondition{
-						Client:    tc.Client.Client,
-						Name:      tc.Workload.Name,
-						Namespace: tc.Namespace,
-					},
-				},
-			},
-		})
+		addFinalCheckAndDeletePhases(tracker, tc, scaleFinalCheckConfig{
+			targetReplicas: v.targetReplicas,
+			targetPods:     v.targetPods,
+			workloadName:   v.workloadName,
+		}, baseline)
 	})
 }
