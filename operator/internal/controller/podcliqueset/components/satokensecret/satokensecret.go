@@ -39,6 +39,7 @@ const (
 	errCodeSetControllerReference grovecorev1alpha1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
 	errCodeCreateSecret           grovecorev1alpha1.ErrorCode = "ERR_CREATE_SECRET"
 	errCodeDeleteSecret           grovecorev1alpha1.ErrorCode = "ERR_DELETE_SECRET"
+	errCodeListPods               grovecorev1alpha1.ErrorCode = "ERR_LIST_PODS"
 )
 
 type _resource struct {
@@ -107,17 +108,6 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 	}
 
 	secret := emptySecret(objKey)
-	legacySecret, err := r.getSecret(ctx, getLegacyObjectKey(pcs.ObjectMeta))
-	if err != nil {
-		return groveerr.WrapError(err,
-			errCodeGetSecret,
-			component.OperationSync,
-			fmt.Sprintf("Error getting legacy satokensecret for PodCliqueSet: %v", pcsObjKey),
-		)
-	}
-	if legacySecret != nil && metav1.IsControlledBy(legacySecret, pcs) {
-		secret.Data = copyMigratableSecretData(legacySecret.Data)
-	}
 	if err = r.buildResource(pcs, secret); err != nil {
 		return err
 	}
@@ -185,23 +175,6 @@ func hasServiceAccountToken(secret *corev1.Secret) bool {
 	return len(secret.Data[corev1.ServiceAccountTokenKey]) > 0
 }
 
-func copyMigratableSecretData(data map[string][]byte) map[string][]byte {
-	if len(data) == 0 {
-		return nil
-	}
-	copied := make(map[string][]byte, len(data))
-	for key, value := range data {
-		if key == corev1.ServiceAccountTokenKey {
-			continue
-		}
-		copied[key] = append([]byte(nil), value...)
-	}
-	if len(copied) == 0 {
-		return nil
-	}
-	return copied
-}
-
 func newWaitingForTokenError(objKey client.ObjectKey) error {
 	return groveerr.New(
 		groveerr.ErrCodeRequeueAfter,
@@ -235,6 +208,22 @@ func (r _resource) cleanupLegacySecret(ctx context.Context, logger logr.Logger, 
 	if legacySecret == nil || !metav1.IsControlledBy(legacySecret, pcs) {
 		return nil
 	}
+	referencingPods, err := r.getPodsReferencingSecret(ctx, pcs, legacyObjKey.Name)
+	if err != nil {
+		return groveerr.WrapError(err,
+			errCodeListPods,
+			component.OperationSync,
+			fmt.Sprintf("Error listing Pods referencing legacy satokensecret: %v for PodCliqueSet: %v", legacyObjKey, pcsObjKey),
+		)
+	}
+	if len(referencingPods) > 0 {
+		logger.Info("Skipping legacy Secret cleanup because Pods still reference it", "objectKey", legacyObjKey, "pods", referencingPods)
+		return groveerr.New(
+			groveerr.ErrCodeContinueReconcileAndRequeue,
+			component.OperationSync,
+			fmt.Sprintf("Secret %v is still referenced by Pods: %v", legacyObjKey, referencingPods),
+		)
+	}
 	if err = client.IgnoreNotFound(r.client.Delete(ctx, legacySecret)); err != nil {
 		return groveerr.WrapError(err,
 			errCodeDeleteSecret,
@@ -244,6 +233,34 @@ func (r _resource) cleanupLegacySecret(ctx context.Context, logger logr.Logger, 
 	}
 	logger.Info("Deleted legacy Secret after replacement Secret acquired token", "objectKey", legacyObjKey)
 	return nil
+}
+
+func (r _resource) getPodsReferencingSecret(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, secretName string) ([]string, error) {
+	podList := &corev1.PodList{}
+	if err := r.client.List(ctx,
+		podList,
+		client.InNamespace(pcs.Namespace),
+		client.MatchingLabels(apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name)),
+	); err != nil {
+		return nil, err
+	}
+
+	podNames := make([]string, 0, len(podList.Items))
+	for _, pod := range podList.Items {
+		if podReferencesSecret(pod, secretName) {
+			podNames = append(podNames, client.ObjectKeyFromObject(&pod).String())
+		}
+	}
+	return podNames, nil
+}
+
+func podReferencesSecret(pod corev1.Pod, secretName string) bool {
+	for _, volume := range pod.Spec.Volumes {
+		if volume.Secret != nil && volume.Secret.SecretName == secretName {
+			return true
+		}
+	}
+	return false
 }
 
 // getObjectKey constructs the object key for the ServiceAccount token Secret.

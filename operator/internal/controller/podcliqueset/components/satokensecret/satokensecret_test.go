@@ -254,7 +254,7 @@ func TestSync(t *testing.T) {
 		}
 	})
 
-	t.Run("copies owned legacy secret data except token when creating new secret", func(t *testing.T) {
+	t.Run("does not copy owned legacy secret data when creating new secret", func(t *testing.T) {
 		pcsUID := types.UID("pcs-uid-123")
 		legacySecretData := map[string][]byte{
 			corev1.ServiceAccountTokenKey:  []byte("legacy-token"),
@@ -299,13 +299,8 @@ func TestSync(t *testing.T) {
 		secretName := apicommon.GenerateInitContainerSATokenSecretName("test-pcs")
 		err = cl.Get(context.Background(), client.ObjectKey{Name: secretName, Namespace: "default"}, secret)
 		require.NoError(t, err)
-		assert.NotContains(t, secret.Data, corev1.ServiceAccountTokenKey)
-		assert.Equal(t, []byte("legacy-ca"), secret.Data[corev1.ServiceAccountRootCAKey])
-		assert.Equal(t, []byte("migrated"), secret.Data["migration-marker"])
+		assert.Empty(t, secret.Data)
 		assert.Equal(t, secretName, secret.Labels[apicommon.LabelAppNameKey])
-
-		legacySecretData["migration-marker"][0] = 'x'
-		assert.Equal(t, []byte("migrated"), secret.Data["migration-marker"])
 
 		remainingLegacySecret := &corev1.Secret{}
 		err = cl.Get(context.Background(), client.ObjectKey{Name: apicommon.GenerateLegacyInitContainerSATokenSecretName("test-pcs"), Namespace: "default"}, remainingLegacySecret)
@@ -443,7 +438,9 @@ func TestSync(t *testing.T) {
 	for _, tc := range []struct {
 		name               string
 		tokenReady         bool
+		referenceLegacy    bool
 		expectRequeue      bool
+		expectContinue     bool
 		expectLegacySecret bool
 	}{
 		{
@@ -453,6 +450,13 @@ func TestSync(t *testing.T) {
 		{
 			name:               "keeps owned legacy secret while new secret waits for token",
 			expectRequeue:      true,
+			expectLegacySecret: true,
+		},
+		{
+			name:               "keeps owned legacy secret while pods still reference it",
+			tokenReady:         true,
+			referenceLegacy:    true,
+			expectContinue:     true,
 			expectLegacySecret: true,
 		},
 	} {
@@ -472,9 +476,13 @@ func TestSync(t *testing.T) {
 			}
 			legacySecret := newOwnedSecret(apicommon.GenerateLegacyInitContainerSATokenSecretName(pcs.Name), pcs)
 
+			objects := []client.Object{secret, legacySecret}
+			if tc.referenceLegacy {
+				objects = append(objects, newPodReferencingSecret("test-pod", pcs, legacySecret.Name))
+			}
 			cl := fake.NewClientBuilder().
 				WithScheme(scheme).
-				WithObjects(secret, legacySecret).
+				WithObjects(objects...).
 				Build()
 			operator := New(cl, scheme)
 
@@ -482,6 +490,8 @@ func TestSync(t *testing.T) {
 
 			if tc.expectRequeue {
 				assertRequeueAfter(t, err)
+			} else if tc.expectContinue {
+				assertContinueReconcileAndRequeue(t, err)
 			} else {
 				require.NoError(t, err)
 			}
@@ -499,6 +509,14 @@ func TestSync(t *testing.T) {
 			}
 		})
 	}
+}
+
+func assertContinueReconcileAndRequeue(t *testing.T, err error) {
+	t.Helper()
+
+	var groveErr *groveerr.GroveError
+	require.True(t, errors.As(err, &groveErr))
+	assert.Equal(t, groveerr.ErrCodeContinueReconcileAndRequeue, groveErr.Code)
 }
 
 func assertRequeueAfter(t *testing.T, err error) {
@@ -521,6 +539,28 @@ func newOwnedSecret(name string, pcs *grovecorev1alpha1.PodCliqueSet) *corev1.Se
 					Name:       pcs.Name,
 					UID:        pcs.UID,
 					Controller: ptr.To(true),
+				},
+			},
+		},
+	}
+}
+
+func newPodReferencingSecret(name string, pcs *grovecorev1alpha1.PodCliqueSet, secretName string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: pcs.Namespace,
+			Labels:    apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name),
+		},
+		Spec: corev1.PodSpec{
+			Volumes: []corev1.Volume{
+				{
+					Name: "sa-token-secret-vol",
+					VolumeSource: corev1.VolumeSource{
+						Secret: &corev1.SecretVolumeSource{
+							SecretName: secretName,
+						},
+					},
 				},
 			},
 		},
