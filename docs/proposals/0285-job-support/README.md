@@ -12,6 +12,11 @@
     - [Story 3: Leader-driven completion](#story-3-leader-driven-completion)
   - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
 - [Design Details](#design-details)
+  - [Job Mode Signal](#job-mode-signal)
+  - [New API Fields](#new-api-fields)
+  - [Completion and Failure Evaluation](#completion-and-failure-evaluation)
+  - [Gang Restart Flow](#gang-restart-flow)
+  - [Phase and Status Model](#phase-and-status-model)
   - [Monitoring](#monitoring)
   - [Test Plan](#test-plan)
   - [Graduation Criteria](#graduation-criteria)
@@ -42,7 +47,7 @@ This GREP closes that gap by extending Grove's existing hierarchy with the compl
 ### Non-Goals
 
 - **No pod-level retry.** A failed pod within a `PodClique` is not replaced in isolation. Any pod failure immediately fails the `PodClique`; the retry scope is the gang, owned by the parent `PodCliqueScalingGroup` or `PodCliqueSet`.
-- `completions` and `completedIndexes` — configurable completion counts and index-based filtering at the `PodCliqueScalingGroup` and `PodCliqueSet` levels. In MVP, all replicas must complete successfully for a resource to be considered Completed.
+- `completions` and `completedIndexes` — configurable completion counts and index-based filtering at the `PodCliqueScalingGroup` and `PodCliqueSet` levels. In this release, all replicas must complete successfully for a resource to be considered Completed.
 - Pod cleanup policies other than the fixed default (retain terminal pods, delete active pods on terminal state).
 - TTL-based automatic workload deletion after completion.
 
@@ -136,6 +141,55 @@ MaxRestarts *int32 `json:"maxRestarts,omitempty"`
 // +optional
 MaxRuntime *metav1.Duration `json:"maxRuntime,omitempty"`
 ```
+
+### Completion and Failure Evaluation
+
+Completion and failure are evaluated independently at each level, using only the observed state of direct children.
+
+**PodClique**
+
+A `PodClique` is **Completed** when all of its pods have exited with code 0 (`phase=Succeeded`). It is **Failed** when any pod exits with a non-zero code (`phase=Failed`), since pod-level retry is not supported and a single failure makes the all-pods completion criterion unreachable. If `maxRuntime` is exceeded, the `PodClique` is marked `Failed` immediately regardless of pod states.
+
+Non-job-mode `PodClique`s (`restartPolicy: Always`) never set `Completed` or `Failed`.
+
+**PodCliqueScalingGroup**
+
+Evaluation is two-level:
+
+1. *Replica state*: a replica is **Completed** when all of its job-mode child `PodClique`s are `Completed` — or, if `completedNames` is set, when all named children are `Completed`. A replica is **Failed** when any required child `PodClique` reaches `Failed` and the replica's restart budget (`maxRestarts`) is exhausted. A failure of a `PodClique` not listed in `completedNames` triggers a gang restart and consumes budget, but does not immediately mark the replica as `Failed` — the named children can still complete on the next attempt.
+
+2. *PCSG state*: the PCSG is **Completed** when all replicas are `Completed`. It is **Failed** when enough replicas have exhausted their budget that the remaining replicas cannot satisfy the completion criterion. If `maxRuntime` is exceeded, the PCSG is marked `Failed` immediately.
+
+**PodCliqueSet**
+
+Follows the same two-level pattern as PCSG, with constituent `PodClique`s and `PodCliqueScalingGroup`s in place of `PodClique`s.
+
+**General invariants**
+
+- `Failed` is irreversible: a resource that reaches `Failed` will not subsequently transition to `Completed`, by construction of the failure definition.
+- Terminal states (`Completed`, `Failed`) are written to status before any pod cleanup begins.
+
+### Gang Restart Flow
+
+When a `PodClique` reaches `Failed`, its parent evaluates whether to restart or mark the replica as terminally failed.
+
+**PCLQ failure handled by PCSG:**
+
+1. The PCSG increments `replicaRestartCounts[replicaIndex]`.
+2. If the budget is not exhausted: the PCSG deletes the failed `PodClique` and recreates it from the template. The new `PodClique` goes through gang scheduling before any pods are launched.
+3. If the budget is exhausted: the PCSG marks that replica as `Failed` and re-evaluates its own phase.
+
+**PCLQ or PCSG failure handled by PCS:**
+
+When a constituent `PodClique` or `PodCliqueScalingGroup` within a PCS replica fails, the PCS treats it as a gang-level failure for the whole replica:
+
+1. The PCS increments `replicaRestartCounts[replicaIndex]`.
+2. If the budget is not exhausted: the PCS deletes all constituents of that replica (all `PodClique`s and `PodCliqueScalingGroup`s) and recreates them together from the template.
+3. If the budget is exhausted: the PCS marks that replica as `Failed` and re-evaluates its own phase.
+
+**Ordering guarantee.** In all cases, the terminal phase and updated `replicaRestartCounts` are persisted to status before any deletion begins. If the controller restarts mid-cleanup, it can resume from the persisted state without double-counting restarts or re-creating resources that were already deleted. Cleanup of active (non-terminal) pods when a resource reaches a terminal state is described in [Cleanup Behavior](#cleanup-behavior).
+
+**Gang scheduling on restart.** Recreated pods are subject to the same `minAvailable` gang scheduling gates as on initial launch — all pods wait until the full gang can be placed simultaneously.
 
 ### Phase and Status Model
 
