@@ -20,6 +20,11 @@ resources:
     memory: 128Mi
     ephemeral-storage: 128Mi
 
+podSecurityContext:
+  seccompProfile:
+    type: RuntimeDefault
+securityContext: {}
+
 # Node selector to constrain the operator pod to nodes with matching labels.
 nodeSelector: {}
 
@@ -141,6 +146,21 @@ service:
     app.kubernetes.io/component: operator-service
     app.kubernetes.io/name: grove-operator
     app.kubernetes.io/part-of: grove
+  # -- Annotations to add to the Grove Operator Service resource
+  annotations: {}
+
+serviceMonitor:
+  # -- Enable the Prometheus ServiceMonitor resource
+  enabled: false
+  # -- Name of the Prometheus ServiceMonitor resource
+  name: grove-operator-monitor
+  # -- Labels for the Prometheus ServiceMonitor resource
+  labels:
+    app.kubernetes.io/component: operator-service-monitor
+    app.kubernetes.io/name: grove-operator
+    app.kubernetes.io/part-of: grove
+    # If the Prometheus Operator requires the 'release' label, set this value:
+    # release: prometheus
 
 clusterRole:
   name: grove:system:grove-operator
