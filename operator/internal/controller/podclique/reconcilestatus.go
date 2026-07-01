@@ -165,9 +165,11 @@ func mutateUpdatedReplica(pclq *grovecorev1alpha1.PodClique, existingPods []*cor
 	}
 }
 
-// mutateSelector creates and sets the label selector for autoscaler use when scaling is configured
+// mutateSelector publishes the label selector on the PodClique /scale subresource so HPAs can
+// target the PodClique. PodCliques that belong to a PodCliqueScalingGroup are scaled via the PCSG
+// and must not advertise their own selector.
 func mutateSelector(pcsName string, pclq *grovecorev1alpha1.PodClique) error {
-	if pclq.Spec.ScaleConfig == nil {
+	if _, isPCSGMember := pclq.Labels[apicommon.LabelPodCliqueScalingGroup]; isPCSGMember {
 		return nil
 	}
 	labels := lo.Assign(

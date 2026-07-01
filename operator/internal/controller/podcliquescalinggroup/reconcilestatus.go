@@ -330,22 +330,19 @@ func (r *Reconciler) getPodCliquesPerPCSGReplica(ctx context.Context, pcsName st
 	return pclqsPerPCSGReplica, nil
 }
 
-// mutateSelector creates and sets the label selector for autoscaler use when scaling is configured
+// mutateSelector publishes the label selector on the PodCliqueScalingGroup /scale subresource so
+// HPAs can target the PCSG.
 func mutateSelector(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) error {
 	pcsReplicaIndex, err := k8sutils.GetPodCliqueSetReplicaIndex(pcsg.ObjectMeta)
 	if err != nil {
 		return err
 	}
-	matchingPCSGConfig, ok := lo.Find(pcs.Spec.Template.PodCliqueScalingGroupConfigs, func(pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig) bool {
+	_, ok := lo.Find(pcs.Spec.Template.PodCliqueScalingGroupConfigs, func(pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig) bool {
 		pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}, pcsgConfig.Name)
 		return pcsgFQN == pcsg.Name
 	})
 	if !ok {
 		// This should ideally never happen but if you find a PCSG that is not defined in PCS then just ignore it.
-		return nil
-	}
-	// No ScaleConfig has been defined of this PCSG, therefore there is no need to add a selector in the status.
-	if matchingPCSGConfig.ScaleConfig == nil {
 		return nil
 	}
 	labels := lo.Assign(

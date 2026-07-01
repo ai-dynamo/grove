@@ -350,3 +350,53 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 		})
 	}
 }
+
+// TestMutateSelector verifies the /scale selector is published for standalone PodCliques (with or
+// without ScaleConfig) and suppressed for PodCliques that belong to a PodCliqueScalingGroup,
+// regardless of whether the PodClique itself has ScaleConfig set.
+func TestMutateSelector(t *testing.T) {
+	const (
+		pcsName       = "test-pcs"
+		standaloneFQN = "test-pcs-0-frontend"
+		pcsgMemberFQN = "test-pcs-0-prefill-0-worker"
+		pcsgName      = "test-pcs-0-prefill"
+	)
+	withScale := &grovecorev1alpha1.AutoScalingConfig{MaxReplicas: 5}
+
+	tests := []struct {
+		name             string
+		pclqName         string
+		pcsgMemberLabel  string // empty == standalone
+		scaleConfig      *grovecorev1alpha1.AutoScalingConfig
+		expectSelectorOK bool
+	}{
+		{name: "standalone, no ScaleConfig", pclqName: standaloneFQN, expectSelectorOK: true},
+		{name: "standalone, with ScaleConfig", pclqName: standaloneFQN, scaleConfig: withScale, expectSelectorOK: true},
+		{name: "PCSG member, no ScaleConfig", pclqName: pcsgMemberFQN, pcsgMemberLabel: pcsgName, expectSelectorOK: false},
+		// PCSG members are scaled through the PCSG; their own ScaleConfig (if any) must not
+		// resurrect the selector and re-expose them as an HPA target.
+		{name: "PCSG member, with ScaleConfig", pclqName: pcsgMemberFQN, pcsgMemberLabel: pcsgName, scaleConfig: withScale, expectSelectorOK: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			labels := map[string]string{}
+			if tt.pcsgMemberLabel != "" {
+				labels[apicommon.LabelPodCliqueScalingGroup] = tt.pcsgMemberLabel
+			}
+			pclq := &grovecorev1alpha1.PodClique{
+				ObjectMeta: metav1.ObjectMeta{Name: tt.pclqName, Labels: labels},
+				Spec:       grovecorev1alpha1.PodCliqueSpec{ScaleConfig: tt.scaleConfig},
+			}
+
+			err := mutateSelector(pcsName, pclq)
+			assert.NoError(t, err)
+			if tt.expectSelectorOK {
+				require.NotNil(t, pclq.Status.Selector, "selector should be populated")
+				assert.Contains(t, *pclq.Status.Selector, apicommon.LabelPodClique+"="+pclq.Name)
+			} else {
+				assert.Nil(t, pclq.Status.Selector, "selector should not be populated for PCSG-member PCLQ")
+			}
+		})
+	}
+}
