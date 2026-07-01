@@ -22,11 +22,11 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
+	schedulertest "github.com/ai-dynamo/grove/operator/test/utils/scheduler"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/client-go/tools/record"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // TestNewRegistry tests New with different scheduler profiles.
@@ -94,7 +94,7 @@ func TestNewRegistry(t *testing.T) {
 	}
 
 	t.Run("multiple profiles with default set to kai", func(t *testing.T) {
-		cl := testutils.CreateDefaultFakeClient([]client.Object{testutils.NewVolcanoPodGroupCRD(true)})
+		cl := schedulertest.NewVolcanoClient(t, testutils.NewVolcanoPodGroupCRD(true))
 		recorder := record.NewFakeRecorder(10)
 		cfg := configv1alpha1.SchedulerConfiguration{
 			Profiles: []configv1alpha1.SchedulerProfile{
@@ -116,7 +116,7 @@ func TestNewRegistry(t *testing.T) {
 	})
 
 	t.Run("volcano scheduler initialization", func(t *testing.T) {
-		cl := testutils.CreateDefaultFakeClient([]client.Object{testutils.NewVolcanoPodGroupCRD(true)})
+		cl := schedulertest.NewVolcanoClient(t, testutils.NewVolcanoPodGroupCRD(true))
 
 		recorder := record.NewFakeRecorder(10)
 		cfg := configv1alpha1.SchedulerConfiguration{

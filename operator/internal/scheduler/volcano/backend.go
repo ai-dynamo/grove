@@ -63,7 +63,16 @@ func (b *schedulerBackend) Name() string {
 	return b.name
 }
 
+// Init registers the Volcano API types into b.scheme and must be called before
+// that scheme is used to serialize or deserialize Volcano objects.
 func (b *schedulerBackend) Init(directClient client.Client) error {
+	if err := volcanov1beta1.AddToScheme(b.scheme); err != nil {
+		return fmt.Errorf("failed to register volcano scheme: %w", err)
+	}
+	if err := apiextensionsv1.AddToScheme(b.scheme); err != nil {
+		return fmt.Errorf("failed to register apiextensions scheme: %w", err)
+	}
+
 	crd := &apiextensionsv1.CustomResourceDefinition{
 		ObjectMeta: metav1.ObjectMeta{Name: volcanoPodGroupCRDName},
 	}

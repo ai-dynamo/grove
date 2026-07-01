@@ -122,6 +122,21 @@ func TestShouldResetOrTriggerUpdate(t *testing.T) {
 		expected bool
 	}{
 		{
+			name: "waits_for_pcs_current_generation_hash_before_first_ever_update",
+			pcs: &grovecorev1alpha1.PodCliqueSet{
+				Status: grovecorev1alpha1.PodCliqueSetStatus{
+					CurrentGenerationHash: nil,
+				},
+			},
+			pclq: &grovecorev1alpha1.PodClique{
+				Status: grovecorev1alpha1.PodCliqueStatus{
+					UpdateProgress:                    nil,
+					CurrentPodCliqueSetGenerationHash: ptr.To("old-hash"),
+				},
+			},
+			expected: false,
+		},
+		{
 			name: "first_ever_update_required",
 			pcs: &grovecorev1alpha1.PodCliqueSet{
 				Status: grovecorev1alpha1.PodCliqueSetStatus{

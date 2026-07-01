@@ -24,6 +24,7 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
+	schedulertest "github.com/ai-dynamo/grove/operator/test/utils/scheduler"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/stretchr/testify/assert"
@@ -36,7 +37,7 @@ import (
 )
 
 func TestBackend_PreparePod(t *testing.T) {
-	cl := testutils.CreateDefaultFakeClient(nil)
+	cl := schedulertest.NewVolcanoClient(t)
 	recorder := record.NewFakeRecorder(10)
 	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameVolcano}
 	b := New(cl, cl.Scheme(), recorder, profile)
@@ -52,7 +53,7 @@ func TestBackend_PreparePod(t *testing.T) {
 }
 
 func TestBackend_PreparePodFailsWhenPodGangLabelMissing(t *testing.T) {
-	cl := testutils.CreateDefaultFakeClient(nil)
+	cl := schedulertest.NewVolcanoClient(t)
 	recorder := record.NewFakeRecorder(10)
 	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameVolcano}
 	b := New(cl, cl.Scheme(), recorder, profile)
@@ -85,7 +86,7 @@ func TestBackend_Init(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cl := testutils.CreateDefaultFakeClient(tt.objects)
+			cl := schedulertest.NewVolcanoClient(t, tt.objects...)
 			recorder := record.NewFakeRecorder(10)
 			profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameVolcano}
 			b := New(cl, cl.Scheme(), recorder, profile)
@@ -122,7 +123,7 @@ func TestBackend_SyncPodGang(t *testing.T) {
 			},
 		},
 	}
-	cl := testutils.CreateDefaultFakeClient([]client.Object{podGang})
+	cl := schedulertest.NewVolcanoClient(t, podGang)
 	recorder := record.NewFakeRecorder(10)
 	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameVolcano}
 	b := New(cl, cl.Scheme(), recorder, profile)
@@ -169,7 +170,7 @@ func TestBackend_SyncPodGangPreservesSchedulingConstraintsAfterRelease(t *testin
 			},
 		},
 	}
-	cl := testutils.CreateDefaultFakeClient([]client.Object{podGang})
+	cl := schedulertest.NewVolcanoClient(t, podGang)
 	recorder := record.NewFakeRecorder(10)
 	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameVolcano}
 	b := New(cl, cl.Scheme(), recorder, profile)
@@ -213,7 +214,7 @@ func TestBackend_SyncPodGangDefaultQueue(t *testing.T) {
 			},
 		},
 	}
-	cl := testutils.CreateDefaultFakeClient([]client.Object{podGang})
+	cl := schedulertest.NewVolcanoClient(t, podGang)
 	recorder := record.NewFakeRecorder(10)
 	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameVolcano}
 	b := New(cl, cl.Scheme(), recorder, profile)
@@ -228,7 +229,7 @@ func TestBackend_SyncPodGangDefaultQueue(t *testing.T) {
 }
 
 func TestBackend_ValidatePodCliqueSet(t *testing.T) {
-	cl := testutils.CreateDefaultFakeClient(nil)
+	cl := schedulertest.NewVolcanoClient(t)
 	recorder := record.NewFakeRecorder(10)
 	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameVolcano}
 	b := New(cl, cl.Scheme(), recorder, profile)
@@ -374,7 +375,7 @@ func TestBackend_ValidatePodCliqueSetQueues(t *testing.T) {
 		t.Run(tc.description, func(t *testing.T) {
 			pcs := makePCS()
 			tc.mutate(pcs)
-			cl := testutils.CreateDefaultFakeClient(tc.existingObjs)
+			cl := schedulertest.NewVolcanoClient(t, tc.existingObjs...)
 			recorder := record.NewFakeRecorder(10)
 			profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameVolcano}
 			b := New(cl, cl.Scheme(), recorder, profile)

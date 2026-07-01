@@ -60,7 +60,7 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pclq
 		)
 	}
 
-	sc.expectedPodTemplateHashes, err = componentutils.GetExpectedPCLQPodTemplateHashCandidates(sc.pcs, pclq.ObjectMeta)
+	sc.expectedPodTemplateHash, err = componentutils.GetExpectedPCLQPodTemplateHash(sc.pcs, pclq.ObjectMeta)
 	if err != nil {
 		return nil, groveerr.WrapError(err,
 			errCodeGetPodCliqueTemplate,
@@ -68,7 +68,6 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pclq
 			fmt.Sprintf("failed to compute pod clique template hash for PodClique: %v in PodCliqueSet", client.ObjectKeyFromObject(pclq)),
 		)
 	}
-	sc.expectedPodTemplateHash = sc.expectedPodTemplateHashes.Canonical
 
 	// get the PCLQ expectations key
 	sc.pclqExpectationsStoreKey, err = getPodCliqueExpectationsStoreKey(logger, component.OperationSync, pclq.ObjectMeta)
@@ -101,9 +100,6 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pclq
 			component.OperationSync,
 			fmt.Sprintf("failed to list pods that belong to the PodClique %v", client.ObjectKeyFromObject(pclq)),
 		)
-	}
-	if err = r.migrateLegacyCurrentPodLabels(ctx, logger, sc); err != nil {
-		return nil, err
 	}
 
 	return sc, nil
@@ -238,8 +234,7 @@ func selectExcessPodsToDelete(sc *syncContext, logger logr.Logger) []*corev1.Pod
 	if diff := len(sc.existingPCLQPods) - int(sc.pclq.Spec.Replicas); diff > 0 {
 		logger.Info("found excess pods for PodClique", "numExcessPods", diff)
 		sorter := DeletionSorter{
-			Pods:                      sc.existingPCLQPods,
-			ExpectedPodTemplateHashes: sc.expectedPodTemplateHashes,
+			Pods: sc.existingPCLQPods,
 		}
 		sorter.ExpectedPodTemplateHash = sc.getExpectedPodTemplateHash()
 		sort.Sort(sorter)
@@ -255,32 +250,6 @@ func (sc *syncContext) getExpectedPodTemplateHash() string {
 		return sc.pclq.Status.UpdateProgress.PodTemplateHash
 	}
 	return sc.pclq.Labels[apicommon.LabelPodTemplateHash]
-}
-
-// Pods carry the PodClique pod-template hash in a label so the controller can
-// tell which desired template created each live pod. Older controllers hashed
-// the same template before canonicalizing Kubernetes map-list fields, so those
-// pods may have a legacy hash that should converge without a rollout.
-func (r _resource) migrateLegacyCurrentPodLabels(ctx context.Context, logger logr.Logger, sc *syncContext) error {
-	for _, pod := range sc.existingPCLQPods {
-		if !sc.expectedPodTemplateHashes.IsLegacy(pod.Labels[apicommon.LabelPodTemplateHash]) {
-			continue
-		}
-		patch := client.MergeFrom(pod.DeepCopy())
-		if pod.Labels == nil {
-			pod.Labels = make(map[string]string, 1)
-		}
-		pod.Labels[apicommon.LabelPodTemplateHash] = sc.expectedPodTemplateHashes.Canonical
-		if err := client.IgnoreNotFound(r.client.Patch(ctx, pod, patch)); err != nil {
-			return groveerr.WrapError(err,
-				errCodeBuildPodResource,
-				component.OperationSync,
-				fmt.Sprintf("failed to migrate legacy PodTemplateHash label for Pod %v", client.ObjectKeyFromObject(pod)),
-			)
-		}
-		logger.Info("migrated legacy PodTemplateHash label on Pod", "pod", client.ObjectKeyFromObject(pod), "podTemplateHash", sc.expectedPodTemplateHashes.Canonical)
-	}
-	return nil
 }
 
 // checkAndRemovePodSchedulingGates removes scheduling gates from pods when their dependencies are satisfied
@@ -482,7 +451,6 @@ type syncContext struct {
 	podNamesUpdatedInPCLQPodGangSet componentutils.Set[string]
 	pclqExpectationsStoreKey        string
 	expectedPodTemplateHash         string
-	expectedPodTemplateHashes       componentutils.HashCandidates
 }
 
 // syncFlowResult captures the result of a sync flow run.
