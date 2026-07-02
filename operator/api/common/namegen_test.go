@@ -26,6 +26,11 @@ import (
 	"k8s.io/utils/ptr"
 )
 
+func TestGenerateInitContainerSATokenSecretName(t *testing.T) {
+	assert.Equal(t, "test-pcs-ic-sat", GenerateInitContainerSATokenSecretName("test-pcs"))
+	assert.Equal(t, "test-pcs-initc-sa-token-secret", GenerateLegacyInitContainerSATokenSecretName("test-pcs"))
+}
+
 func TestExtractScalingGroupNameFromPCSGFQN(t *testing.T) {
 	tests := []struct {
 		name           string
