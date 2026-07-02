@@ -94,11 +94,15 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 	// In either of these cases we should pick up next pod to update if there are any pending pods to update.
 	var nextPodToUpdate *corev1.Pod
 	if podNamesPendingUpdate := updateWork.getPodNamesPendingUpdate(r.expectationsStore.GetDeleteExpectations(sc.pclqExpectationsStoreKey)); len(podNamesPendingUpdate) > 0 {
-		if pclq.Status.ReadyReplicas < *pclq.Spec.MinAvailable {
+		// Selecting the next pod deletes one Ready pod. To keep at least MinAvailable Ready pods
+		// afterwards we need ReadyReplicas-1 >= MinAvailable, i.e. block while ReadyReplicas <= MinAvailable.
+		// Using '<' here is off-by-one: it permits deleting the last Ready pod when ReadyReplicas == MinAvailable,
+		// dropping Ready to below MinAvailable (contributed to the harbinger-24b 0-ready outage window).
+		if pclq.Status.ReadyReplicas <= *pclq.Spec.MinAvailable {
 			return groveerr.New(
 				groveerr.ErrCodeContinueReconcileAndRequeue,
 				component.OperationSync,
-				fmt.Sprintf("ready replicas %d lesser than minAvailable %d, requeuing", pclq.Status.ReadyReplicas, *pclq.Spec.MinAvailable),
+				fmt.Sprintf("ready replicas %d not greater than minAvailable %d, requeuing", pclq.Status.ReadyReplicas, *pclq.Spec.MinAvailable),
 			)
 		}
 		nextPodToUpdate = updateWork.getNextPodToUpdate()
@@ -149,13 +153,20 @@ func (r _resource) computeUpdateWork(logger logr.Logger, sc *syncContext) *updat
 			}
 			// Pending, unhealthy, starting, and uncategorized pods are deleted immediately;
 			// ready pods are queued for ordered one-at-a-time replacement.
+			//
+			// Readiness is checked BEFORE the unhealthy predicates so that a currently-Ready,
+			// serving pod is never classified as non-ready merely because it carries a stale
+			// non-zero LastTerminationState from an earlier restart. This mirrors the status-side
+			// categorization in k8sutils.CategorizePodsByConditionType (which counts such a pod in
+			// ReadyReplicas). Diverging here caused deleteOldNonReadyPods to hard-delete a serving
+			// pod out-of-band from the minAvailable-protected rolling path (harbinger-24b outage).
 			switch {
 			case k8sutils.IsPodPending(pod):
 				work.oldTemplateHashPendingPods = append(work.oldTemplateHashPendingPods, pod)
-			case k8sutils.HasAnyStartedButNotReadyContainer(pod) || k8sutils.HasAnyContainerExitedErroneously(logger, pod):
-				work.oldTemplateHashUnhealthyPods = append(work.oldTemplateHashUnhealthyPods, pod)
 			case k8sutils.IsPodReady(pod):
 				work.oldTemplateHashReadyPods = append(work.oldTemplateHashReadyPods, pod)
+			case k8sutils.HasAnyStartedButNotReadyContainer(pod) || k8sutils.HasAnyContainerExitedErroneously(logger, pod):
+				work.oldTemplateHashUnhealthyPods = append(work.oldTemplateHashUnhealthyPods, pod)
 			case k8sutils.HasAnyContainerNotStarted(pod):
 				work.oldTemplateHashStartingPods = append(work.oldTemplateHashStartingPods, pod)
 			default:
