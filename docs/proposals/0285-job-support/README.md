@@ -14,6 +14,7 @@
 - [Design Details](#design-details)
   - [Job Mode Signal](#job-mode-signal)
   - [New API Fields](#new-api-fields)
+  - [Examples](#examples)
   - [Completion and Failure Evaluation](#completion-and-failure-evaluation)
   - [Gang Restart Flow](#gang-restart-flow)
   - [Phase and Status Model](#phase-and-status-model)
@@ -142,6 +143,59 @@ MaxRestarts *int32 `json:"maxRestarts,omitempty"`
 // on replica restarts.
 // +optional
 MaxRuntime *metav1.Duration `json:"maxRuntime,omitempty"`
+```
+
+### Examples
+
+**All-ranks completion** — all 8 workers must succeed; the gang retries up to 3 times within a 24-hour window:
+
+```yaml
+# PodCliqueSet spec (relevant fields only)
+spec:
+  replicas: 1
+  maxRestarts: 3
+  maxRuntime: 24h
+  template:
+    podCliqueScalingGroups:
+    - name: trainer
+      spec:
+        template:
+          cliques:
+          - name: worker
+            spec:
+              replicas: 8
+              template:
+                spec:
+                  restartPolicy: Never
+```
+
+**Leader-driven completion** — the PCSG replica is complete when the leader exits 0, regardless of workers:
+
+```yaml
+# PodCliqueSet spec (relevant fields only)
+spec:
+  replicas: 1
+  maxRuntime: 24h
+  template:
+    podCliqueScalingGroups:
+    - name: trainer
+      completedNames: [leader]
+      maxRestarts: 3
+      spec:
+        template:
+          cliques:
+          - name: leader
+            spec:
+              replicas: 1
+              template:
+                spec:
+                  restartPolicy: Never
+          - name: worker
+            spec:
+              replicas: 7
+              template:
+                spec:
+                  restartPolicy: Never
 ```
 
 ### Completion and Failure Evaluation
