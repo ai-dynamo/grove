@@ -6,18 +6,17 @@
   - [Goals](#goals)
   - [Non-Goals](#non-goals)
 - [Proposal](#proposal)
-    - [Topology Enumeration](#topology-enumeration)
+  - [Topology Representation and Enumeration](#topology-representation-and-enumeration)
     - [Scheduling](#scheduling)
-    - [Validation](#validation)
-    - [Scale-up / scale-in / rolling updates](#scale-up--scale-in--rolling-updates)
-  - [User Stories](#user-stories)
+  - [Validation](#validation)
+  - [Scale-Up, Scale-In, and Rolling Updates](#scale-up-scale-in-and-rolling-updates)
+- [User Stories](#user-stories)
     - [Story 1: Attention-FFN disaggregated inference](#story-1-attention-ffn-disaggregated-inference)
-  - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
+- [Limitations, Risks, and Mitigations](#limitations-risks-and-mitigations)
 - [Design Details](#design-details)
-    - [API Changes](#api-changes)
-    - [PodCliqueStatus](#podcliquestatus)
-      - [Failure Modes](#failure-modes)
-    - [Example Usage](#example-usage)
+  - [API Changes](#api-changes)
+  - [PodClique Status](#podclique-status)
+  - [Failure Modes](#failure-modes)
   - [Monitoring](#monitoring)
   - [Test Plan](#test-plan)
   - [Graduation Criteria](#graduation-criteria)
@@ -46,16 +45,16 @@ For users deploying to a cluster with multiple topology domains, they cannot kno
 
 * Allow users to define inter-clique affinities where Grove will ensure that N pods are created in each target domain from the union of the referenced `PodClique` group’s scheduled pods.
 * No impact to existing workloads or topology constraint definitions. Where possible, conflicting requirements are surfaced as errors during admission.
-* No special handling required in schedulers for the base case; Grove creates pods with required node affinity for the resolved topology label. Special handling can be added as-needed.
+* No special handling required in schedulers for the base case; Grove creates pods with required node affinity for the resolved topology label key and value. Special handling can be added as-needed.
 * Support scale-up, scale-down, and rolling updates.
 
 ### Non-Goals
-
 * Support dynamic rescheduling; if a pod is evicted and moved to a new topology domain, Grove will not ensure the affinity is still respected.
+* Support for independent autoscaling of different target domains.
 
 ## Proposal
 
-```
+```yaml
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
@@ -74,45 +73,72 @@ spec:
               domain: block
               cliqueNames:
                 - ffn
+    podCliqueScalingGroups:
+      - name: workers
+        replicas: 1
+        minAvailable: 1
+        cliqueNames:
+          - ffn
+          - decode
 ```
 
 Grove will implement affinity between `PodClique` within a topology domain for cliques in the same `PodCliqueScalingGroup` (PCSG).
 
-1. Resolve the `domain` in the `ClusterTopology` indicated by `topologyName` to the concrete node label key.
-2. Optimistically create N (`replicas`) pods in each `domain` for the `PodClique` with a defined `affinity.topologyAffinity`.
-3. Inject the `grove-initc` init container into topology-affinity pods. The init container waits for the associated `cliqueNames` to be ready and for the owning `PodClique` to publish `TopologyAffinityReady=True`.
-4. Once all associated `cliqueNames` reach their scheduled minimum, extract the union of scheduled `domain` values from the nodes assigned to those associated pods.
-5. Delete pods outside the target domain set or above `replicas` per target domain. `TopologyAffinityReady` is set once every target domain has exactly `replicas` non-terminating pods and no extra topology-affinity pods remain.
+1. Resolve `topologyName` and `domain` to the required Node-label key and any configured ResourceSlice-attribute evidence mappings.
+2. Enumerate the unique non-empty values of that Node label and create `spec.replicas` candidate Pods for the topology-affinity clique in every such domain.
+3. Restrict every candidate to its assigned domain with required `key=value` Node affinity.
+4. Inject the `grove-initc` init container into topology-affinity pods. The init container waits for the associated `cliqueNames` to be ready and for the owning `PodClique` to publish `TopologyAffinityReady=True`.
+5. Once all associated `cliqueNames` reach their scheduled minimum, extract the union of their scheduled Pods' resolved domain values. ResourceSlice attributes may provide values from allocated devices.
+6. Delete pods outside the target domain set or above `replicas` per target domain. `TopologyAffinityReady` is set once every target domain has exactly `replicas` non-terminating pods and no extra topology-affinity pods remain.
 
-Affinity is resolved independently for each PCSG replica; Grove does not compute a union across different PCSGs or across different PCSG replica indexes.
-Standalone `PodCliques` are out of scope for the initial implementation.
+Affinity is resolved independently for each PCSG replica. Grove does not compute a union across different PCSGs or PCSG replica indexes. Standalone PodCliques are outside the initial scope.
 
-#### Topology Enumeration
+### Topology Representation and Enumeration
 
-* For large clusters, listing and watching all nodes can be an expensive operation.
-* Grove runs a `node-label-value-store` controller that watches Node metadata rather than full Node objects.
-* Label keys are tracked lazily: the first topology-affinity `PodClique` that resolves a `ClusterTopology` domain to a label key registers that key and triggers a metadata rebuild.
-* A single store is shared across topology-affinity rules and caches only unique values for the requested node label keys.
+The new `PodCliqueSet` API does not select Node labels, ResourceClaims, drivers, or ResourceSlice attributes. Those infrastructure mappings belong to the referenced `ClusterTopologyBinding`:
+
+```yaml
+apiVersion: grove.io/v1alpha1
+kind: ClusterTopologyBinding
+metadata:
+  name: afd-disagg-fabric
+spec:
+  levels:
+    - domain: block
+      key: network.topology.nvidia.com/block-domain
+      resourceSliceAttributes:
+        - driver: myresource.nvidia.com
+          name: network.topology.nvidia.com/block_domain
+```
+
+A `ClusterTopologyBinding` level requires a Node-label `key`. It may also contain driver-specific ResourceSlice attribute mappings. The key is used for topology-affinity target placement while ResourceSlice attributes are only used for resolving the domains of associated Pods with allocated devices.
+
+Domain enumeration reads only the unique non-empty values for the configured Node label. For ResourceClaim-backed Pods ,  the attributes configured for a driver are read from allocated devices.
+
+The scheduler remains responsible for satisfying the generated Node affinity together with any claim allocation constraints.
 
 #### Scheduling
 
-* With no underlying scheduler changes, this should work as-is for pods that do not require special considerations because Grove adds required node affinity for the resolved topology label value.
+* With no underlying scheduler changes, this should work as-is for pods that do not require special considerations because Grove adds required node affinity for the resolved topology label key and value.
 * The `PodGang` controller sizes topology-affinity pod groups from `PodClique.status.topologyAffinity.targetDomains`, requeueing until the topology-affinity status is available. The resulting `PodGroup.minReplicas` is the expanded replica count, `len(targetDomains) * spec.replicas`.
 * The init container holds application startup until the associated cliques are ready and the topology-affinity clique has converged on its final target domains.
 * Existing topology constraints take precedence over `topologyAffinity`.
 
-#### Validation
+### Validation
+
+Admission and runtime validation enforce the following rules:
 
 * No circular dependencies between two or more `PodClique` templates.
 * A `PodClique` that defines `topologyAffinity` and every referenced `cliqueName` must belong to the same PCSG. Cross-PCSG references and references from standalone `PodCliques` are rejected.
-* A `PodClique` that defines `podSpec.nodeSelector` or `podSpec.affinity.nodeAffinity` against the same resolved node label key as `topologyAffinity` will be rejected. Other node affinity is allowed.
+* A `PodClique` that defines `podSpec.nodeSelector` or `podSpec.affinity.nodeAffinity` against the same resolved node label key as `topologyAffinity` will be rejected. Other node affinity outside of `podSpec.nodeName` is allowed.
   * Pod affinities will not be rejected, but could lead to unschedulable situations.
+* The complete `topologyAffinity` value is immutable after PodCliqueSet creation. Adding, removing, or changing `topologyName`, `domain`, or `cliqueNames` requires workload recreation; live `replicas` remains mutable as the per-domain scale value.
 
-#### Scale-up / scale-in / rolling updates
+### Scale-Up, Scale-In, and Rolling Updates
 
 The implementation reconciles toward `len(targetDomains) * spec.replicas` pods. `spec.replicas` remains the per-domain scale value, while `status.totalReplicas` reports the expanded pod count. Scale-up creates only per-domain deficits. Scale-in and target-domain shrink delete pods outside target domains or above the per-domain count, using the normal deletion ordering so outdated pods are preferred during updates.
 
-### User Stories
+## User Stories
 
 #### Story 1: Attention-FFN disaggregated inference
 
@@ -125,7 +151,7 @@ A user would like to deploy their AFD workload to the cluster using a `PodClique
 
 The user defines the `PodCliqueSet` as follows:
 
-```
+```yaml
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
@@ -146,6 +172,13 @@ spec:
               domain: block
               cliqueNames:
                 - ffn
+    podCliqueScalingGroups:
+      - name: inference
+        replicas: 1
+        minAvailable: 1
+        cliqueNames:
+          - ffn
+          - decode
 ```
 
 We define the `decode` `PodClique` with 1 replica, but because of the affinity to the `ffn` `PodClique`, it consequently deploys that 1 replica to both network domain `A` and `B`:
@@ -196,7 +229,7 @@ However, the final state of the cluster is a single `decode` replica in `A`:
 +------------------------------------------------+
 ```
 
-### Limitations/Risks & Mitigations
+## Limitations, Risks, and Mitigations
 
 * If the associated cliques never reach their scheduled minimum, topology-affinity pods continue to exist in all known domains and their init containers continue to wait until the owning PCSG or `PodCliqueSet` replica is terminated after `spec.template.terminationDelay`.
 * We’re relying on a relatively static set of pre-created domains. This may not be well supported for cloud clusters where a domain might not be currently represented in the cluster (e.g., where scale-up into an availability zone would be supported).
@@ -205,130 +238,136 @@ However, the final state of the cluster is a single `decode` replica in `A`:
 
 ## Design Details
 
-#### API Changes
+### API Changes
+
+`TopologyLevel` is extended so one logical domain may be represented by a Node nabel and by different attribute names from different DRA drivers:
 
 ```go
-// PodCliqueSpec defines the specification of a PodClique.
+// TopologyLevel maps one logical topology domain to its infrastructure representations.
+type TopologyLevel struct {
+	// Domain is the logical topology level identifier.
+	Domain TopologyDomain `json:"domain"`
+
+	// Key is the required Node label key representing this domain and used for
+	// all topology-affinity Pod placement.
+	Key string `json:"key"`
+
+	// ResourceSliceAttributes maps DRA drivers to the device attribute that
+	// carries this domain's canonical string value.
+	// +listType=map
+	// +listMapKey=driver
+	// +optional
+	ResourceSliceAttributes []ResourceSliceAttributeReference `json:"resourceSliceAttributes,omitempty"`
+}
+
+// ResourceSliceAttributeReference identifies one driver's representation of a topology domain.
+type ResourceSliceAttributeReference struct {
+	// Driver is the DRA driver name published in ResourceSlice.spec.driver.
+	Driver string `json:"driver"`
+
+	// Name is the fully qualified DRA device attribute name.
+	Name resourcev1.FullyQualifiedName `json:"name"`
+}
+```
+
+`key` is required. `resourceSliceAttributes` are optional. Duplicate driver entries are invalid.
+
+```go
 type PodCliqueSpec struct {
-	[snip]
-	// Affinity is a group of affinity scheduling rules for a PodClique.
+	// Existing fields omitted.
+
+	// Affinity defines inter-clique placement and startup relationships.
 	// +optional
 	Affinity *PodCliqueAffinity `json:"affinity,omitempty"`
 }
 
 // PodCliqueAffinity is a group of affinity scheduling rules for a PodClique.
 type PodCliqueAffinity struct {
-	// Describes PodClique topology affinity rules.
-	// This clique's pods are placed in the topology domains occupied by the referenced cliques.
+	// TopologyAffinity places this clique's Pods in the logical topology domains
+	// occupied by the referenced cliques.
+	// Immutable after PodCliqueSet creation.
 	// +optional
 	TopologyAffinity *TopologyAffinity `json:"topologyAffinity,omitempty"`
 }
 
 // TopologyAffinity defines PodClique topology affinity rules.
 type TopologyAffinity struct {
-	// TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.
-	// If topologyAffinity is set, topologyName and domain must both be specified.
-	// +required
+	// TopologyName names the ClusterTopologyBinding used for domain resolution.
+	// It is required, establishes the PodCliqueSet's single effective topology,
+	// must match every other topology-affinity rule, and is immutable.
 	TopologyName string `json:"topologyName"`
-	// Domain specifies the topology domain for creating affine replicas.
-	// Must reference a domain in the topology levels defined in the ClusterTopology CR name as set in TopologyName.
-	// Example: "rack" means replicas placed within all racks that the dependent cliqueNames are scheduled in.
-	// +required
-	Domain string `json:"domain"`
+
+	// Domain names the logical topology level within the ClusterTopologyBinding.
+	Domain TopologyDomain `json:"domain"`
+
 	// CliqueNames is the list of names of the PodCliques that are part of the affinity group.
 	// Each referenced PodClique must belong to the same PodCliqueScalingGroup as this PodClique.
 	// Pods are scheduled at the union of all scheduled PodClique domains within the same PCSG replica.
-	// +required
 	CliqueNames []string `json:"cliqueNames"`
 }
 ```
 
-#### PodCliqueStatus
+### PodClique Status
 
-A `TopologyAffinityReady` condition is added when `spec.affinity.topologyAffinity` is defined. It is `False` while associated `PodCliques` have not reached their scheduled minimum, while pods outside the final target domains are still present, or while any target domain has a pod count different from `spec.replicas`. It is `True` once the topology-affinity pods exactly match the resolved target domains. The condition is removed if topology affinity is removed from the `PodClique`.
+`TopologyAffinityReady` is present whenever `spec.affinity.topologyAffinity` is defined. It is `False` while domains are unresolved, associated PodCliques have not reached their readiness threshold, or target candidates are still converging. It is `True` only when the final candidate set exactly matches the target domains and all readiness gates pass.
 
-`PodCliqueStatus` also publishes the resolved topology-affinity state:
+The condition uses a small stable reason set:
+
+| Status | Reason | Meaning |
+| --- | --- | --- |
+| `False` | `FeatureDisabled` | The alpha feature gate is disabled for a pre-existing affine workload. |
+| `False` | `TopologyUnavailable` | The binding, selected level, required DRA API, or topology inventory is unavailable. |
+| `False` | `AssociatedCliquesNotReady` | Domain resolution is complete, but the associated cliques have not met their readiness requirement. |
+| `False` | `TopologyDrift` | A scheduled candidate's current Node label disagrees with its assigned domain. |
+| `True` | `` | Domain resolution, candidate placement, and associated readiness all satisfy the rule. |
 
 ```go
 type PodCliqueStatus struct {
-	[snip]
 	// Replicas is the replica count exposed through the scale subresource.
 	// For topology-affinity PodCliques, this matches Spec.Replicas so autoscalers scale per-domain replicas.
 	// Use TotalReplicas for the total non-terminated Pod count across all topology domains.
 	Replicas int32 `json:"replicas,omitempty"`
+
 	// TotalReplicas is the total number of non-terminated Pods targeted by this PodClique.
 	// For topology-affinity PodCliques, this is the expanded count across all topology domains.
 	TotalReplicas int32 `json:"totalReplicas,omitempty"`
-	// TopologyAffinity captures the resolved topology-affinity state used by controllers that need to size or gate
-	// topology-affinity PodCliques without directly reading Node labels.
+
+	// TopologyAffinity captures logical domain resolution and convergence state.
 	// +optional
 	TopologyAffinity *PodCliqueTopologyAffinityStatus `json:"topologyAffinity,omitempty"`
 }
 
-// PodCliqueTopologyAffinityStatus captures the resolved topology-affinity state for a PodClique.
 type PodCliqueTopologyAffinityStatus struct {
-	// LabelKey is the node label key for the configured topology domain.
-	// +optional
-	LabelKey string `json:"labelKey,omitempty"`
-	// AllDomains is the set of all currently known values for LabelKey.
+	// ObservedTopologyBindingGeneration is the ClusterTopologyBinding generation
+	// last accepted for a complete topology resolution.
+	ObservedTopologyBindingGeneration int64 `json:"observedTopologyBindingGeneration,omitempty"`
+
+	// AllDomains is the set of unique non-empty values currently published for
+	// the selected topology level's required Node label key.
 	// +listType=set
-	// +optional
 	AllDomains []string `json:"allDomains,omitempty"`
-	// AssociatedDomains is the set of topology domains used by associated PodCliques.
+
+	// AssociatedDomains is the resolved union for the associated PodCliques.
 	// +listType=set
-	// +optional
 	AssociatedDomains []string `json:"associatedDomains,omitempty"`
-	// TargetDomains is the set of topology domains this PodClique should currently occupy.
+
+	// TargetDomains is the domain set toward which this PodClique is reconciling.
 	// +listType=set
-	// +optional
 	TargetDomains []string `json:"targetDomains,omitempty"`
-	// AssociatedReady indicates whether all associated PodCliques have reached their scheduled minimum.
-	// +optional
+
+	// AssociatedReady reports whether the associated PodCliques satisfy their
+	// readiness threshold independently of domain discovery.
 	AssociatedReady bool `json:"associatedReady,omitempty"`
 }
 ```
 
-##### Failure Modes
+### Failure Modes
 
-* If the `ClusterTopology` cannot be resolved or the configured domain is removed, status reconciliation fails and the controller retries. Admission rejects this on create/update when the topology is already invalid.
+* If the `ClusterTopologyBinding` cannot be resolved or the configured domain is removed, status reconciliation fails and the controller retries. Admission rejects this on create/update when the topology is already invalid.
 * If an associated pod is scheduled onto a node that does not carry the resolved topology label key, Grove cannot resolve the associated domain and retries with an error.
-* If target domains become empty, Grove does not create new topology-affinity pods for that reconcile.
-
-#### Example Usage
-
-```
-apiVersion: grove.io/v1alpha1
-kind: ClusterTopology
-metadata:
-  name: afd-disagg-fabric
-spec:
-  levels:
-    - domain: block
-      key: network.topology.nvidia.com/fabric-pod
-
----
-
-apiVersion: grove.io/v1alpha1
-kind: PodCliqueSet
-metadata:
-  name: afd-disagg
-spec:
-  replicas: 1
-  template:
-    cliques:
-      - name: ffn
-        spec:
-          replicas: 2
-      - name: decode
-        spec:
-          replicas: 2
-          affinity:
-            topologyAffinity:
-              topologyName: afd-disagg-fabric
-              domain: block
-              cliqueNames:
-                - ffn
-```
+* If one associated Pod's allocated devices resolve to multiple domain values, Grove rejects that Pod's topology resolution as ambiguous.
+* If a ResourceSlice-derived associated value is not selectable through at least one Node carrying the configured `key=value`, Grove retries with an error rather than creating an unconstrained target.
+* If associated domains are empty while any associated PodClique has non-zero replicas, Grove treats the evidence as unresolved rather than deleting every target Pod.
 
 ### Monitoring
 
@@ -342,8 +381,8 @@ Topology-affinity health is observable through `PodClique.status.topologyAffinit
 
 * API and generated-client coverage for `PodCliqueAffinity`, `TopologyAffinity`, `PodCliqueStatus.totalReplicas`, and `PodCliqueStatus.topologyAffinity`.
 * PCS validating webhook tests for required `topologyName` and `domain`, valid referenced `cliqueNames`, rejection of circular dependencies, rejection of cross-PCSG or standalone topology-affinity references, rejection when `minAvailable != replicas`, and rejection of direct `nodeSelector` or `nodeAffinity` conflicts on the resolved topology label key.
-* Node-label value store tests for dynamic label-key registration, metadata-only Node watches, unique value caching, and rebuild behavior when a new topology label key is registered.
-* PodClique pod sync tests for optimistic per-domain pod creation, required node affinity injection for each resolved topology value, init container injection, deletion of pods outside `targetDomains`, per-domain scale-up and scale-in, and rolling-update deletion ordering.
+* Topology resolver tests for dynamic label-key registration, metadata-only Node watches, unique value caching, allocated-device ResourceSlice evidence, rejection of per-Pod multi-value evidence, and rebuild behavior when a new topology mapping is registered.
+* PodClique pod sync tests for optimistic per-domain pod creation, required `key=value` Node affinity injection for every candidate including claim-backed candidates, unchanged claims, init container injection, deletion of pods outside `targetDomains`, per-domain scale-up and scale-in, and rolling-update deletion ordering.
 * PodClique status tests for `TopologyAffinityReady`, `allDomains`, `associatedDomains`, `targetDomains`, `associatedReady`, `status.replicas`, and `status.totalReplicas`.
 * PodGang sync tests for requeueing until `targetDomains` is available and for setting expanded `PodGroup.minReplicas` to `len(targetDomains) * spec.replicas`.
 * Gang-termination tests showing that overprovisioned topology-affinity pods keep the owning PCSG below availability until `spec.template.terminationDelay` expires, then trigger normal PCSG or `PodCliqueSet` replica termination.
