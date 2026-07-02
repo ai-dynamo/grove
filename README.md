@@ -4,9 +4,9 @@
 [![GitHub Release](https://img.shields.io/github/v/release/ai-dynamo/grove)](https://github.com/ai-dynamo/grove/releases/latest)
 [![Discord](https://dcbadge.limes.pink/api/server/D92uqZRjCZ?style=flat)](https://discord.gg/UxcbxEYqS4)
 
-**One workload API. Any AI framework. Any scheduler.**
+**One workload API. Any AI workload. Any scheduler.**
 
-Grove is a Kubernetes workload API for AI systems across training, inference, and hybrid pipelines (e.g. RL). Upstream frameworks such as Kubeflow Trainer, Dynamo, Ray, llm-d, NeMo-RL, Megatron-LM, and more can express workload requirements once via [PodCliqueSet](operator/api/core/v1alpha1/podcliqueset.go), and Grove compiles that intent into scheduler-compatible `PodGang` resources composed of `PodGroup`s. From one declarative spec, Grove coordinates hierarchical gang scheduling, topology-aware placement, multi-level autoscaling, and explicit startup ordering, so platform teams can support flexible framework requirements for AI/ML workloads without stitching together scheduler-specific controllers, YAML, or scripts.
+Grove is a Kubernetes workload API for AI systems across training, inference, and hybrid pipelines (e.g. RL). Grove's primitives are framework-agnostic: a controller, adapter, or platform layer can translate workload intent from systems such as Ray, Dynamo, llm-d, NeMo-RL, Megatron-LM, or Kubeflow Trainer into [PodCliqueSet](operator/api/core/v1alpha1/podcliqueset.go), and Grove compiles that intent into scheduler-compatible `PodGang` resources composed of `PodGroup`s. From one declarative spec, Grove coordinates hierarchical gang scheduling, topology-aware placement, multi-level autoscaling, and explicit startup ordering, so platform teams can support flexible framework requirements for AI/ML workloads without stitching together scheduler-specific controllers, YAML, or scripts.
 
 ## Quick Start on Local Kind Cluster
 
@@ -34,12 +34,13 @@ For more install options including local and remote K8s clusters, see the
 
 ## Motivation
 
-Modern AI workloads need scheduling capabilities that Kubernetes natively doesn't provide out-of-the-box:
+Modern AI workloads need orchestration capabilities that Kubernetes doesn't provide out of the box:
 
 - **Scaling for multi-node, multi-pod units** - Large model instances, training jobs, and hybrid pipelines may span multiple pods across multiple nodes. In these cases, the scaling unit is no longer an individual pod, but a group of pods that form one functional unit.
 - **Hierarchical gang scheduling** - Distributed jobs require the right pods to be scheduled together; otherwise resources sit idle and the workload can deadlock. Grove supports gang semantics at multiple levels, from leader/worker training jobs to disaggregated inference pipelines with prefill, decode, routing, and other roles.
 - **Startup ordering** - Even when components are scheduled together, they may need to start in a specific order. MPI workloads, parameter-server jobs, and leader/worker model instances often require workers to be ready before the coordinator launches the application.
 - **Topology-aware placement** - AI workloads communicate heavily across components. Network-optimized placement, e.g. within NVLink domains, is crucial to reduce communication overhead and improve performance.
+- **Network-aware GPU setup** - Multi-node GPU workloads often need more than placement; when enabled and opted into, Grove can automate MNNVL-related resource wiring for high-bandwidth GPU communication.
 
 ## How It Works
 
