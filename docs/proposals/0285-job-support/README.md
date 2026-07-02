@@ -17,10 +17,12 @@
   - [Completion and Failure Evaluation](#completion-and-failure-evaluation)
   - [Gang Restart Flow](#gang-restart-flow)
   - [Phase and Status Model](#phase-and-status-model)
+  - [Cleanup Behavior](#cleanup-behavior)
   - [Monitoring](#monitoring)
   - [Test Plan](#test-plan)
   - [Graduation Criteria](#graduation-criteria)
 - [Alternatives](#alternatives)
+  - [Conditions-only for job observability](#conditions-only-for-job-observability)
 <!-- /toc -->
 
 ## Summary
@@ -212,18 +214,95 @@ ReplicaRestartCounts []int32 `json:"replicaRestartCounts,omitempty"`
 
 This field accumulates across restarts and is never decremented.
 
+### Cleanup Behavior
+
+Grove applies a single fixed cleanup policy for job-mode resources: active pods are deleted when a resource reaches a terminal state; terminal pods are retained.
+
+**On `PodClique` terminal state (`Completed` or `Failed`):**
+- Delete all active pods (`Pending`, `Running`) in the `PodClique`.
+- Retain all terminal pods (`Succeeded`, `Failed`) for log access via `kubectl logs`.
+
+**On `PodCliqueScalingGroup` or `PodCliqueSet` terminal state:**
+- Cascade the cleanup to all child `PodClique`s: delete their active pods.
+- This covers leader-driven completion, where the PCSG or PCS may complete while worker `PodClique` pods are still running.
+
+**During a gang restart:**
+- The failed `PodClique` is deleted entirely (not retained), which cascade-deletes its terminal pods as well. Logs from the failed attempt are not preserved across restarts. See [Log loss on retry](#limitationsrisks--mitigations).
+
+**Terminal pod retention:**
+- Terminal pods remain available until the workload is deleted by the user or an external TTL policy (out of scope for this release).
+
+**Ordering:**
+- Phase is always written to status before any pod deletion begins.
+
 ### Monitoring
 
-<!-- TODO -->
+Job support surfaces observability through a dedicated `phase` field on each resource's status and Kubernetes events for key lifecycle transitions. No new conditions are introduced.
+
+**Status phase.** The `phase` field is the primary at-a-glance signal of job progress, visible directly in `kubectl get` output:
+
+| Phase | Meaning |
+|---|---|
+| `Completed` | All required job-mode children succeeded. |
+| `Failed` | Completion is permanently unreachable, or `maxRuntime` was exceeded. |
+
+Non-job-mode resources never set these phases.
+
+**Kubernetes events.** Events carry the detail behind phase transitions and operational actions. The `involvedObject` field identifies the resource the event is attached to; the `message` field carries per-event detail such as replica index and child name. The `involvedObject.kind` distinguishes PCSG-level from PCS-level events sharing the same reason string.
+
+| Attached to | Type | Reason | Message carries |
+|---|---|---|---|
+| PCLQ / PCSG / PCS | `Normal` | `JobCompleted` | — |
+| PCLQ / PCSG / PCS | `Warning` | `JobFailed` | Failure reason |
+| PCLQ / PCSG / PCS | `Warning` | `JobFailedMaxRuntimeExceeded` | Elapsed duration |
+| PCSG / PCS | `Warning` | `GangRestartTriggered` | Replica index, failed child name |
+| PCSG / PCS | `Warning` | `RestartBudgetExhausted` | Replica index |
+
+The existing `PodCliqueScalingGroupReplicaDeleteSuccessful` / `PodCliqueSetReplicaDeleteSuccessful` events continue to fire on gang restart as before — `GangRestartTriggered` is an additional, job-mode-specific signal that explicitly names the cause.
 
 ### Test Plan
 
-<!-- TODO -->
+**Unit tests**
+
+- Validation: `restartPolicy: OnFailure` is rejected; `completedNames`, `maxRestarts`, and `maxRuntime` on a fully long-running resource are rejected.
+- Completion evaluation logic at each level: all-pods success → `Completed`; any pod failure → PCLQ `Failed`; named-children completion → PCSG/PCS replica `Completed`; non-`completedNames` child failure triggers restart but not immediate replica failure.
+- Failure evaluation: budget exhaustion → replica `Failed`; `maxRuntime` exceeded → immediate `Failed`; `Failed` is irreversible.
+- `replicaRestartCounts` increments correctly on each restart and is never decremented.
+- Status phase is written before pod deletion (ordering guarantee).
+
+**E2e tests** (new file: `e2e/tests/job_support_test.go`)
+
+- **All-ranks completion**: all workers complete successfully → PCS reaches `Completed`.
+- **Pod failure → gang restart**: one pod fails → PCLQ fails → parent restarts the gang → restart budget decremented.
+- **Budget exhaustion**: replica exhausts `maxRestarts` → PCSG/PCS fails.
+- **`maxRuntime` exceeded**: deadline fires → resource marked `Failed` immediately.
+- **Leader-driven completion**: leader exits 0, workers still running → PCSG replica `Completed`, active worker pods cleaned up.
+- **Mixed job/long-running**: job-mode PCLQ completes alongside long-running PCLQ → parent reaches `Completed`.
+- **Gang scheduling on restart**: after a gang restart, verify that a new PCLQ / PCSG / PCS replica is created and the existing gang scheduling machinery places it as a complete gang.
+- **Phase and events**: verify `phase=Completed`/`Failed` and `GangRestartTriggered`/`JobCompleted`/`JobFailed` events are emitted at the right moments.
 
 ### Graduation Criteria
 
-<!-- TODO -->
+**Alpha**
+
+- Full implementation of job support as described in this GREP, including all API fields, controller logic, phase and event emission, and cleanup behavior.
+- Unit and e2e tests passing.
+
+**Beta**
+
+- Validated in at least one production workload.
+- No breaking API changes since alpha.
+- User-facing documentation available.
+
+**GA**
+
+- Stable API.
+- No open critical issues related to the feature.
 
 ## Alternatives
 
-<!-- TODO -->
+### Conditions-only for job observability
+
+Rather than a dedicated `phase` field, job completion and failure could be expressed purely as conditions — `JobCompleted` and `JobFailed` — consistent with how Kubernetes Job, Deployment, and Grove's existing `MinAvailableBreached` condition work. This approach is more idiomatic with the Kubernetes API conventions and requires no new field type on status.
+
+It was ruled out in favor of a dedicated `phase` field because conditions require `kubectl describe` or a JSONPath query to read; a `phase` field is visible directly in `kubectl get` output without any flags. For a terminal, mutually-exclusive state like job completion or failure, a dedicated field is a better fit than a boolean condition — it communicates clearly that the resource has reached a final state and avoids the ambiguity of having both `JobCompleted=False` and `JobFailed=False` during normal running.
