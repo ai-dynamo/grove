@@ -401,6 +401,15 @@ type PodCliqueScalingGroupConfig struct {
 	TopologyConstraint *TopologyConstraint `json:"topologyConstraint,omitempty"`
 }
 
+// MaxAllowedReplicas returns the maximum number of replicas that can be configured with this scaling group config.
+func (p *PodCliqueScalingGroupConfig) MaxAllowedReplicas() int32 {
+	replicas := *p.Replicas
+	if p.ScaleConfig != nil {
+		replicas = max(replicas, p.ScaleConfig.MaxReplicas)
+	}
+	return replicas
+}
+
 // ResourceSharingScope defines the sharing scope for resource claims.
 // +kubebuilder:validation:Enum=AllReplicas;PerReplica
 type ResourceSharingScope string

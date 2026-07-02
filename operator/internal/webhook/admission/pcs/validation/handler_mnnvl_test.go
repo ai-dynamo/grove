@@ -358,6 +358,7 @@ func createValidPCSWithPCSGConfigAnnotations(pcsgAnnotations map[string]string) 
 			Name:        "scaling-group-1",
 			CliqueNames: []string{"worker"},
 			Annotations: pcsgAnnotations,
+			Replicas:    ptr.To(int32(1)),
 		}).
 		Build()
 }
