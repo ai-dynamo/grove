@@ -134,9 +134,10 @@ CompletedNames []string `json:"completedNames,omitempty"`
 
 // MaxRestarts is the maximum number of times a replica may be restarted after
 // failure. Each restart consumes one unit from this per-replica budget. A replica
-// that exhausts its budget is considered failed. Setting MaxRestarts to 0 means
-// no restart is attempted — the first failure immediately marks the replica failed.
+// that exhausts its budget is considered failed. Defaults to 0 — the first failure
+// immediately marks the replica failed with no restart attempt.
 // +optional
+// +kubebuilder:default=0
 MaxRestarts *int32 `json:"maxRestarts,omitempty"`
 
 // MaxRuntime is the maximum wall-clock duration from when the first replica of
