@@ -93,12 +93,13 @@ config:
       concurrentSyncs: 3
   # Scheduler configures which scheduler backends are active. default-scheduler is always available.
   # List profiles to enable backends; set defaultProfileName to the profile that is the default backend.
+  # Enable the corresponding profiles when required.
   scheduler:
     profiles:
       - name: default-scheduler
-      - name: kai-scheduler
-      - name: volcano
-      - name: lpx-scheduler
+      # - name: kai-scheduler
+      # - name: volcano
+      # - name: lpx-scheduler
   logLevel: info
   logFormat: json
   topologyAwareScheduling:
