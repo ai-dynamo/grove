@@ -226,7 +226,7 @@ run-scale-test: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
 run-scale-test: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
 run-scale-test:
 	@echo "> Running scale tests..."
-	@cd e2e && go test -count=1 -tags=e2e ./tests/scale/... -v -timeout 40m $(if $(TEST_PATTERN),-run $(TEST_PATTERN))
+	@cd e2e && go test -count=1 -tags=e2e ./tests/scale/... -v -timeout 40m $(if $(TEST_PATTERN),-run '$(TEST_PATTERN)')
 
 # Run the soak / churn benchmark against an existing cluster.
 # Gated behind the `soak` build tag so it does NOT run as part of

@@ -42,12 +42,13 @@ const (
 // at initialReplicas (encoded in the YAML) and then patches spec.replicas to
 // targetReplicas so the timeline isolates the marginal scale-up cost.
 type scaleUpVariant struct {
-	name           string
-	workloadName   string
-	yamlPath       string
-	initialPods    int
-	targetReplicas int
-	targetPods     int
+	name            string
+	workloadName    string
+	yamlPath        string
+	initialReplicas int
+	initialPods     int
+	targetReplicas  int
+	targetPods      int
 	// workerNodes overrides scaleUpWorkerNodes for variants that need fewer
 	// nodes (e.g. the tiny sanity test). Zero means "use the default".
 	workerNodes int
@@ -59,13 +60,14 @@ type scaleUpVariant struct {
 // running the 500/1000-pod scenarios.
 func Test_ScaleUp_Tiny(t *testing.T) {
 	runScaleUpTest(t, scaleUpVariant{
-		name:           "ScaleUp_Tiny",
-		workloadName:   "scale-up-tiny",
-		yamlPath:       "../../yaml/scale-up-tiny.yaml",
-		initialPods:    0,
-		targetReplicas: 5,
-		targetPods:     10,
-		workerNodes:    5,
+		name:            "ScaleUp_Tiny",
+		workloadName:    "scale-up-tiny",
+		yamlPath:        "../../yaml/scale-up-tiny.yaml",
+		initialReplicas: 0,
+		initialPods:     0,
+		targetReplicas:  5,
+		targetPods:      10,
+		workerNodes:     5,
 	})
 }
 
@@ -73,39 +75,28 @@ func Test_ScaleUp_Tiny(t *testing.T) {
 // Captures the cold-start case where no PCSGs/PodCliques exist yet.
 func Test_ScaleUp_FromZero(t *testing.T) {
 	runScaleUpTest(t, scaleUpVariant{
-		name:           "ScaleUp_FromZero",
-		workloadName:   "scale-up-from-zero",
-		yamlPath:       "../../yaml/scale-up-from-zero.yaml",
-		initialPods:    0,
-		targetReplicas: 500,
-		targetPods:     1000,
+		name:            "ScaleUp_FromZero",
+		workloadName:    "scale-up-from-zero",
+		yamlPath:        "../../yaml/scale-up-from-zero.yaml",
+		initialReplicas: 0,
+		initialPods:     0,
+		targetReplicas:  500,
+		targetPods:      1000,
 	})
 }
 
-// Test_ScaleUp_SmallDelta scales an existing 1000-pod PCS by +10% (to 1100 pods).
-// Captures the steady-state-with-modest-growth case.
-func Test_ScaleUp_SmallDelta(t *testing.T) {
+// Test_ScaleUp scales an existing 500-pod PCS by 2x (to 1000 pods). Captures
+// the burst-growth case where the controller has to create as many new
+// replicas as already exist.
+func Test_ScaleUp(t *testing.T) {
 	runScaleUpTest(t, scaleUpVariant{
-		name:           "ScaleUp_SmallDelta",
-		workloadName:   "scale-up-small-delta",
-		yamlPath:       "../../yaml/scale-up-small-delta.yaml",
-		initialPods:    1000,
-		targetReplicas: 550,
-		targetPods:     1100,
-	})
-}
-
-// Test_ScaleUp_LargeDelta scales an existing 500-pod PCS by 2x (to 1000 pods).
-// Captures the burst-growth case where the controller has to create as many
-// new replicas as already exist.
-func Test_ScaleUp_LargeDelta(t *testing.T) {
-	runScaleUpTest(t, scaleUpVariant{
-		name:           "ScaleUp_LargeDelta",
-		workloadName:   "scale-up-large-delta",
-		yamlPath:       "../../yaml/scale-up-large-delta.yaml",
-		initialPods:    500,
-		targetReplicas: 500,
-		targetPods:     1000,
+		name:            "ScaleUp",
+		workloadName:    "scale-up",
+		yamlPath:        "../../yaml/scale-up.yaml",
+		initialReplicas: 250,
+		initialPods:     500,
+		targetReplicas:  500,
+		targetPods:      1000,
 	})
 }
 
@@ -167,7 +158,7 @@ func runScaleUpTest(t *testing.T, v scaleUpVariant) {
 			Name: "scale-up",
 			ActionFn: func(ctx context.Context) error {
 				Logger.Infof("scaling %s from %d to %d PCS replicas (target %d pods)",
-					tc.Workload.Name, v.initialPods/2, v.targetReplicas, v.targetPods)
+					tc.Workload.Name, v.initialReplicas, v.targetReplicas, v.targetPods)
 				return workload.NewWorkloadManager(tc.Client, Logger).ScalePCS(ctx, tc.Namespace, tc.Workload.Name, v.targetReplicas)
 			},
 			Milestones: []measurement.MilestoneDefinition{

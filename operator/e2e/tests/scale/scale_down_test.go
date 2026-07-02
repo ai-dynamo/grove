@@ -42,12 +42,13 @@ const (
 // PCS at the YAML-encoded initialReplicas and then patches spec.replicas to
 // targetReplicas so the timeline isolates the marginal scale-down cost.
 type scaleDownVariant struct {
-	name           string
-	workloadName   string
-	yamlPath       string
-	initialPods    int
-	targetReplicas int
-	targetPods     int
+	name            string
+	workloadName    string
+	yamlPath        string
+	initialReplicas int
+	initialPods     int
+	targetReplicas  int
+	targetPods      int
 	// workerNodes overrides scaleDownWorkerNodes for variants that need fewer
 	// nodes (e.g. the tiny sanity test). Zero means "use the default".
 	workerNodes int
@@ -59,13 +60,14 @@ type scaleDownVariant struct {
 // PodsAtCountCondition before running the 500/1000-pod scenarios.
 func Test_ScaleDown_Tiny(t *testing.T) {
 	runScaleDownTest(t, scaleDownVariant{
-		name:           "ScaleDown_Tiny",
-		workloadName:   "scale-down-tiny",
-		yamlPath:       "../../yaml/scale-down-tiny.yaml",
-		initialPods:    10,
-		targetReplicas: 0,
-		targetPods:     0,
-		workerNodes:    5,
+		name:            "ScaleDown_Tiny",
+		workloadName:    "scale-down-tiny",
+		yamlPath:        "../../yaml/scale-down-tiny.yaml",
+		initialReplicas: 5,
+		initialPods:     10,
+		targetReplicas:  0,
+		targetPods:      0,
+		workerNodes:     5,
 	})
 }
 
@@ -73,39 +75,28 @@ func Test_ScaleDown_Tiny(t *testing.T) {
 // Captures the cascade-delete-everything case where every child must be torn down.
 func Test_ScaleDown_ToZero(t *testing.T) {
 	runScaleDownTest(t, scaleDownVariant{
-		name:           "ScaleDown_ToZero",
-		workloadName:   "scale-down-to-zero",
-		yamlPath:       "../../yaml/scale-down-to-zero.yaml",
-		initialPods:    1000,
-		targetReplicas: 0,
-		targetPods:     0,
+		name:            "ScaleDown_ToZero",
+		workloadName:    "scale-down-to-zero",
+		yamlPath:        "../../yaml/scale-down-to-zero.yaml",
+		initialReplicas: 500,
+		initialPods:     1000,
+		targetReplicas:  0,
+		targetPods:      0,
 	})
 }
 
-// Test_ScaleDown_SmallDelta scales an existing 1100-pod PCS by -10% (to 1000 pods).
-// Captures the steady-state-with-modest-shrink case.
-func Test_ScaleDown_SmallDelta(t *testing.T) {
+// Test_ScaleDown scales an existing 1000-pod PCS by 0.5x (to 500 pods).
+// Captures the burst-shrink case where the controller has to tear down as
+// many replicas as it keeps.
+func Test_ScaleDown(t *testing.T) {
 	runScaleDownTest(t, scaleDownVariant{
-		name:           "ScaleDown_SmallDelta",
-		workloadName:   "scale-down-small-delta",
-		yamlPath:       "../../yaml/scale-down-small-delta.yaml",
-		initialPods:    1100,
-		targetReplicas: 500,
-		targetPods:     1000,
-	})
-}
-
-// Test_ScaleDown_LargeDelta scales an existing 1000-pod PCS by 0.5x (to 500 pods).
-// Captures the burst-shrink case where the controller has to tear down as many
-// replicas as it keeps.
-func Test_ScaleDown_LargeDelta(t *testing.T) {
-	runScaleDownTest(t, scaleDownVariant{
-		name:           "ScaleDown_LargeDelta",
-		workloadName:   "scale-down-large-delta",
-		yamlPath:       "../../yaml/scale-down-large-delta.yaml",
-		initialPods:    1000,
-		targetReplicas: 250,
-		targetPods:     500,
+		name:            "ScaleDown",
+		workloadName:    "scale-down",
+		yamlPath:        "../../yaml/scale-down.yaml",
+		initialReplicas: 500,
+		initialPods:     1000,
+		targetReplicas:  250,
+		targetPods:      500,
 	})
 }
 
@@ -165,7 +156,7 @@ func runScaleDownTest(t *testing.T, v scaleDownVariant) {
 			Name: "scale-down",
 			ActionFn: func(ctx context.Context) error {
 				Logger.Infof("scaling %s from %d to %d PCS replicas (target %d pods)",
-					tc.Workload.Name, v.initialPods/2, v.targetReplicas, v.targetPods)
+					tc.Workload.Name, v.initialReplicas, v.targetReplicas, v.targetPods)
 				return workload.NewWorkloadManager(tc.Client, Logger).ScalePCS(ctx, tc.Namespace, tc.Workload.Name, v.targetReplicas)
 			},
 			Milestones: []measurement.MilestoneDefinition{

@@ -1,14 +1,14 @@
-# Scale Up Test: large-delta variant (2x)
-# Starts at 250 PCS replicas (500 pods); the test scales to 500 (1000 pods).
+# Scale Down Test (-50%)
+# Starts at 500 PCS replicas (1000 pods); the test scales to 250 (500 pods).
 ---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
-  name: scale-up-large-delta
+  name: scale-down
   labels:
-    app: scale-up-large-delta
+    app: scale-down
 spec:
-  replicas: 250
+  replicas: 500
   template:
     cliques:
       - name: expert-worker
