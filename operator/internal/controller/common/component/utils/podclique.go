@@ -86,8 +86,53 @@ func GroupPCLQsByPCSReplicaIndex(pclqs []grovecorev1alpha1.PodClique) map[string
 	return groupPCLQsByLabel(pclqs, apicommon.LabelPodCliqueSetReplicaIndex)
 }
 
+// InitialScheduleGrace is the small window after PodClique / PodCliqueScalingGroup creation in
+// which a flipped Status of a status condition is treated as the first-time-set rather than a
+// transition from a different state. WasPCLQEverScheduled / WasPCSGEverHealthy use it to absorb
+// the gap between the apiserver setting CreationTimestamp and the first reconcile that mutates
+// the relevant condition.
+const InitialScheduleGrace = 5 * time.Second
+
+// WasPCLQEverScheduled reports whether the PodClique has ever reached the
+// PodCliqueScheduled=True state since creation. The signal is derived from the
+// PodCliqueScheduled condition: either it is currently True, or it is currently False with a
+// LastTransitionTime sufficiently after CreationTimestamp that the condition must have flipped
+// since creation (i.e. through True). Used to gate gang-termination actions so a workload that
+// has never been healthy is left alone — only regressions get recycled.
+func WasPCLQEverScheduled(pclq *grovecorev1alpha1.PodClique) bool {
+	sched := meta.FindStatusCondition(pclq.Status.Conditions, constants.ConditionTypePodCliqueScheduled)
+	if sched == nil {
+		return false
+	}
+	if sched.Status == metav1.ConditionTrue {
+		return true
+	}
+	return sched.LastTransitionTime.After(pclq.CreationTimestamp.Add(InitialScheduleGrace))
+}
+
+// WasPCSGEverHealthy reports whether the PodCliqueScalingGroup has ever reached the
+// MinAvailableBreached=False state since creation. Mirrors WasPCLQEverScheduled but reads the
+// PCSG's own MinAvailableBreached condition (PCSGs have no PodCliqueScheduled equivalent).
+// Used to gate gang-termination so an initial-startup PCSG that has not yet stabilized is left
+// alone — only regressions from a previously-healthy state get recycled.
+func WasPCSGEverHealthy(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) bool {
+	cond := meta.FindStatusCondition(pcsg.Status.Conditions, constants.ConditionTypeMinAvailableBreached)
+	if cond == nil {
+		return false
+	}
+	if cond.Status == metav1.ConditionFalse {
+		return true
+	}
+	return cond.LastTransitionTime.After(pcsg.CreationTimestamp.Add(InitialScheduleGrace))
+}
+
 // GetMinAvailableBreachedPCLQInfo filters PodCliques that have grovecorev1alpha1.ConditionTypeMinAvailableBreached set to true.
 // For each such PodClique it returns the name of the PodClique a duration to wait for before terminationDelay is breached.
+//
+// PodCliques that have never been scheduled (per WasPCLQEverScheduled) are excluded — the
+// MinAvailableBreached condition is still True on them (operators can observe the state) but
+// gang-termination would only churn-loop Pending pods against a cluster that already cannot
+// schedule them. Recycling makes sense only after a workload has been healthy and then regressed.
 func GetMinAvailableBreachedPCLQInfo(pclqs []grovecorev1alpha1.PodClique, terminationDelay time.Duration, since time.Time) ([]string, time.Duration) {
 	pclqCandidateNames := make([]string, 0, len(pclqs))
 	waitForDurations := make([]time.Duration, 0, len(pclqs))
@@ -96,11 +141,15 @@ func GetMinAvailableBreachedPCLQInfo(pclqs []grovecorev1alpha1.PodClique, termin
 		if cond == nil {
 			continue
 		}
-		if cond.Status == metav1.ConditionTrue {
-			pclqCandidateNames = append(pclqCandidateNames, pclq.Name)
-			waitFor := terminationDelay - since.Sub(cond.LastTransitionTime.Time)
-			waitForDurations = append(waitForDurations, waitFor)
+		if cond.Status != metav1.ConditionTrue {
+			continue
 		}
+		if !WasPCLQEverScheduled(&pclq) {
+			continue
+		}
+		pclqCandidateNames = append(pclqCandidateNames, pclq.Name)
+		waitFor := terminationDelay - since.Sub(cond.LastTransitionTime.Time)
+		waitForDurations = append(waitForDurations, waitFor)
 	}
 	if len(pclqCandidateNames) == 0 {
 		return nil, 0

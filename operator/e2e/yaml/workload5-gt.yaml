@@ -1,0 +1,121 @@
+# Workload 5: GT-5 PCSG-replica gang-termination scenario.
+# Same shape as workload2-gt but with pc-c.minAvailable raised to 3 (no
+# tolerance), so killing any pod from a pc-c replica immediately breaches
+# only that PCSG replica — exercising the PCSG-replica-scoped recycle path
+# (sg-x has 2 replicas, MinAvailable=1, so the surviving replica keeps the
+# PCSG itself non-breached and the action stays at PCSG-replica scope).
+# Containers run sleep infinity (busybox, minimal footprint).
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: workload5-gt
+  labels:
+    app: workload5-gt
+spec:
+  replicas: 1
+  template:
+    terminationDelay: 10s
+    cliques:
+      - name: pc-a
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: role-a
+          replicas: 2
+          minAvailable: 1
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: pc-a
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi
+      - name: pc-b
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: role-b
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: pc-b
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi
+      - name: pc-c
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: role-c
+          replicas: 3
+          minAvailable: 3
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: pc-c
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi
+    podCliqueScalingGroups:
+      - name: sg-x
+        replicas: 2
+        minAvailable: 1
+        cliqueNames:
+          - pc-b
+          - pc-c
+
+

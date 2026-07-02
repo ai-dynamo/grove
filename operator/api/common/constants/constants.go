@@ -120,6 +120,13 @@ const (
 	// ConditionTypePodCliqueScheduled indicates that the PodClique has been successfully scheduled.
 	// This condition is set to true when number of scheduled pods in the PodClique is greater than or equal to PodCliqueSpec.MinAvailable.
 	ConditionTypePodCliqueScheduled = "PodCliqueScheduled"
+	// ConditionTypeGangTerminationInProgress indicates that gang termination has fired for this resource and the
+	// gang termination is still in flight. The condition is set when gang termination deletes the PodCliques
+	// (either PCSG-replica scoped or PCS-level) and is cleared when MinAvailableBreached transitions back to
+	// False (workload recovered). While the condition is True, further gang-termination action is suppressed —
+	// at most one fire per breach episode, regardless of how long the workload stays below MinAvailable.
+	// Its only Reason is ConditionReasonGangTerminationActive.
+	ConditionTypeGangTerminationInProgress = "GangTerminationInProgress"
 	// ConditionTopologyLevelsUnavailable indicates that the required topology levels defined on a PodCliqueSet for topology-aware scheduling are no longer available.
 	// This can happen when the ClusterTopologyBinding resource is modified which removes one or more levels required by the PodCliqueSet.
 	ConditionTopologyLevelsUnavailable = "TopologyLevelsUnavailable"
@@ -145,6 +152,12 @@ const (
 	ConditionReasonSufficientAvailablePCSGReplicas = "SufficientAvailablePodCliqueScalingGroupReplicas"
 	// ConditionReasonUpdateInProgress indicates that the resource is undergoing rolling update.
 	ConditionReasonUpdateInProgress = "UpdateInProgress"
+	// ConditionReasonGangTerminationActive is the (only) Reason paired with
+	// ConditionTypeGangTerminationInProgress=True. The Kubernetes condition API requires a
+	// non-empty Reason, and the flag has exactly one cause, so this Reason simply restates the
+	// Type in the CamelCase token form callers branch on. If a second cause for the flag is ever
+	// introduced, add a distinct Reason then.
+	ConditionReasonGangTerminationActive = "GangTerminationActive"
 	// ConditionReasonClusterTopologyNotFound indicates that the ClusterTopologyBinding resource required for topology-aware scheduling was not found.
 	ConditionReasonClusterTopologyNotFound = "ClusterTopologyNotFound"
 	// ConditionReasonTopologyLevelsUnavailable indicates that the one or more required topology levels defined on a
