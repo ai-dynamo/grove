@@ -1,14 +1,16 @@
-# Scale Test: 1000-pod workload
-# 500 PCS replicas × 1 scaling group with 2 expert-worker pods = 1000 pods
+# Scale Up Test: tiny sanity variant
+# Starts at replicas: 0; the test scales to 5 PCS replicas (10 pods).
+# Used to validate cluster + test plumbing end-to-end without paying the cost
+# of the real 500/1000-pod scenarios.
 ---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
-  name: scale-test-1000
+  name: scale-up-tiny
   labels:
-    app: scale-test-1000
+    app: scale-up-tiny
 spec:
-  replicas: 500
+  replicas: 0
   template:
     cliques:
       - name: expert-worker

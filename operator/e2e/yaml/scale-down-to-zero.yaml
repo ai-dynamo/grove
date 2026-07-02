@@ -1,12 +1,12 @@
-# Scale Test: 1000-pod workload
-# 500 PCS replicas × 1 scaling group with 2 expert-worker pods = 1000 pods
+# Scale Down Test: to-zero variant
+# Starts at 500 PCS replicas (1000 pods); the test scales to 0.
 ---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
-  name: scale-test-1000
+  name: scale-down-to-zero
   labels:
-    app: scale-test-1000
+    app: scale-down-to-zero
 spec:
   replicas: 500
   template:

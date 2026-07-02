@@ -1,14 +1,14 @@
-# Scale Test: 1000-pod workload
-# 500 PCS replicas × 1 scaling group with 2 expert-worker pods = 1000 pods
+# Scale Down Test: small-delta variant (-10%)
+# Starts at 550 PCS replicas (1100 pods); the test scales to 500 (1000 pods).
 ---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
-  name: scale-test-1000
+  name: scale-down-small-delta
   labels:
-    app: scale-test-1000
+    app: scale-down-small-delta
 spec:
-  replicas: 500
+  replicas: 550
   template:
     cliques:
       - name: expert-worker
