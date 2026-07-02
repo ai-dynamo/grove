@@ -27,6 +27,7 @@ import (
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	pcsgcomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup/components"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
+	grovemetrics "github.com/ai-dynamo/grove/operator/internal/metrics"
 
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -82,12 +83,18 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		deletionOrSpecReconcileFlowResult = r.reconcileSpec(ctx, specLog, pcsg)
 	}
 
-	if statusReconcileResult := r.reconcileStatus(ctx, logger, ctrlclient.ObjectKeyFromObject(pcsg)); ctrlcommon.ShortCircuitReconcileFlow(statusReconcileResult) {
-		return statusReconcileResult.Result()
+	statusReconcileResult := r.reconcileStatus(ctx, logger, ctrlclient.ObjectKeyFromObject(pcsg))
+
+	if ctrlcommon.ShortCircuitReconcileFlow(statusReconcileResult) {
+		result, err := statusReconcileResult.Result()
+		grovemetrics.RecordReconcileError(controllerName, err)
+		return result, err
 	}
 
 	if ctrlcommon.ShortCircuitReconcileFlow(deletionOrSpecReconcileFlowResult) {
-		return deletionOrSpecReconcileFlowResult.Result()
+		result, err := deletionOrSpecReconcileFlowResult.Result()
+		grovemetrics.RecordReconcileError(controllerName, err)
+		return result, err
 	}
 
 	return ctrlcommon.DoNotRequeue().Result()

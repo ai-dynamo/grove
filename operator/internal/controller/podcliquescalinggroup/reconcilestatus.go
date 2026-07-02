@@ -29,12 +29,14 @@ import (
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
+	grovemetrics "github.com/ai-dynamo/grove/operator/internal/metrics"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -97,6 +99,9 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	}
 
 	if err = r.client.Status().Patch(ctx, pcsg, patchObj); err != nil {
+		if apierrors.IsConflict(err) {
+			grovemetrics.RecordStatusUpdateConflict(controllerName, "PodCliqueScalingGroup")
+		}
 		logger.Error(err, "failed to update PodCliqueScalingGroup status")
 		return ctrlcommon.ReconcileWithErrors("failed to update the status with label selector and replicas", err)
 	}

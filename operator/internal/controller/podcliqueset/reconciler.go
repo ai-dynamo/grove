@@ -27,6 +27,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcscomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
+	grovemetrics "github.com/ai-dynamo/grove/operator/internal/metrics"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	"github.com/go-logr/logr"
@@ -74,11 +75,17 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 
 	reconcileSpecFlowResult := r.reconcileSpec(ctx, logger, pcs)
-	if statusReconcileResult := r.reconcileStatus(ctx, logger, pcs); ctrlcommon.ShortCircuitReconcileFlow(statusReconcileResult) {
-		return statusReconcileResult.Result()
+	statusReconcileResult := r.reconcileStatus(ctx, logger, pcs)
+
+	if ctrlcommon.ShortCircuitReconcileFlow(statusReconcileResult) {
+		result, err := statusReconcileResult.Result()
+		grovemetrics.RecordReconcileError(controllerName, err)
+		return result, err
 	}
 
-	return reconcileSpecFlowResult.Result()
+	result, err := reconcileSpecFlowResult.Result()
+	grovemetrics.RecordReconcileError(controllerName, err)
+	return result, err
 }
 
 // reconcileDelete handles PodCliqueSet deletion when a deletion timestamp is set.
