@@ -196,10 +196,16 @@ func hasStatusChanged(updateEvent event.UpdateEvent) bool {
 
 // hasAnyStatusReplicasChanged checks if any replica count fields have changed.
 func hasAnyStatusReplicasChanged(oldPCLQStatus, newPCLQStatus grovecorev1alpha1.PodCliqueStatus) bool {
-	return oldPCLQStatus.Replicas != newPCLQStatus.Replicas ||
-		oldPCLQStatus.ReadyReplicas != newPCLQStatus.ReadyReplicas ||
+	if oldPCLQStatus.Replicas != newPCLQStatus.Replicas ||
 		oldPCLQStatus.ScheduleGatedReplicas != newPCLQStatus.ScheduleGatedReplicas ||
-		oldPCLQStatus.UpdatedReplicas != newPCLQStatus.UpdatedReplicas
+		oldPCLQStatus.UpdatedReplicas != newPCLQStatus.UpdatedReplicas {
+		return true
+	}
+	// Only fire on ReadyReplicas boundary transitions: not-fully-ready ↔ fully-ready.
+	// Intermediate increments don't change the PodCliqueSet's view of availability.
+	oldFullyReady := oldPCLQStatus.Replicas > 0 && oldPCLQStatus.ReadyReplicas == oldPCLQStatus.Replicas
+	newFullyReady := newPCLQStatus.Replicas > 0 && newPCLQStatus.ReadyReplicas == newPCLQStatus.Replicas
+	return oldFullyReady != newFullyReady
 }
 
 func hasPodCliqueHashStatusChanged(oldPCLQStatus, newPCLQStatus grovecorev1alpha1.PodCliqueStatus) bool {
