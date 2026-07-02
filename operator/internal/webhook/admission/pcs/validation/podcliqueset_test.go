@@ -78,9 +78,7 @@ func TestResourceNamingValidation(t *testing.T) {
 			pcsName:     "inference",
 			cliqueNames: []string{""},
 			errorMatchers: []testutils.ErrorMatcher{
-				// TODO: @unmarshall @renormalize only one should be required here, fix later
 				{ErrorType: field.ErrorTypeRequired, Field: "spec.template.cliques[0].name"},
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].name"},
 			},
 		},
 		{
