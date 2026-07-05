@@ -381,7 +381,8 @@ func waitForRollingUpdateComplete(tc *testctx.TestContext, expectedReplicas int3
 	w := waiter.New[*grovev1alpha1.PodCliqueSet]().
 		WithTimeout(tc.Timeout).
 		WithInterval(tc.Interval)
-	return w.WaitUntil(tc.Ctx, fetchPCS, predicate)
+	err := w.WaitUntil(tc.Ctx, fetchPCS, predicate)
+	return err
 }
 
 // scalePodCliqueInPCS scales all PodClique instances for a given clique name across all PCS replicas.

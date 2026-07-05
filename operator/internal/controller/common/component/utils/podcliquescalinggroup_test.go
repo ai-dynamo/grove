@@ -164,7 +164,6 @@ func TestIsPCSGUpdateComplete(t *testing.T) {
 		name              string
 		pcsg              *grovecorev1alpha1.PodCliqueScalingGroup
 		pcsGenerationHash string
-		compatibleHashes  []string
 		expected          bool
 	}{
 		{
@@ -197,22 +196,11 @@ func TestIsPCSGUpdateComplete(t *testing.T) {
 			pcsGenerationHash: "new-hash",
 			expected:          false,
 		},
-		{
-			name: "returns_true_when_hash_matches_compatible_legacy_hash",
-			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
-				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
-					CurrentPodCliqueSetGenerationHash: ptr.To("legacy-hash"),
-				},
-			},
-			pcsGenerationHash: "canonical-hash",
-			compatibleHashes:  []string{"legacy-hash"},
-			expected:          true,
-		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := IsPCSGUpdateComplete(tc.pcsg, tc.pcsGenerationHash, tc.compatibleHashes...)
+			result := IsPCSGUpdateComplete(tc.pcsg, tc.pcsGenerationHash)
 			assert.Equal(t, tc.expected, result)
 		})
 	}

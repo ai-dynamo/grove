@@ -499,9 +499,9 @@ def deploy_grove_operator(config: ClusterConfig, operator_dir: Path):
 
     console.print("[green]✅ Grove operator deployed[/green]")
 
-    # Wait for Grove pods
-    console.print("[yellow]ℹ️  Waiting for Grove pods to be ready...[/yellow]")
-    sh.kubectl("wait", "--for=condition=Ready", "pods", "--all", "-n", "grove-system", "--timeout=5m")
+    # Wait for Grove deployments
+    console.print("[yellow]ℹ️  Waiting for Grove deployments to be available...[/yellow]")
+    sh.kubectl("wait", "--for=condition=Available", "deployment", "--all", "-n", "grove-system", "--timeout=5m")
 
     # Wait for webhook
     console.print("[yellow]ℹ️  Waiting for Grove webhook to be ready...[/yellow]")
@@ -692,8 +692,8 @@ def main(
 
     # Wait for Kai and apply queues
     if not skip_kai:
-        console.print("[yellow]ℹ️  Waiting for Kai Scheduler pods to be ready...[/yellow]")
-        sh.kubectl("wait", "--for=condition=Ready", "pods", "--all", "-n", "kai-scheduler", "--timeout=5m")
+        console.print("[yellow]ℹ️  Waiting for Kai Scheduler deployments to be available...[/yellow]")
+        sh.kubectl("wait", "--for=condition=Available", "deployment", "--all", "-n", "kai-scheduler", "--timeout=5m")
 
         # Wait for webhook to be available before applying queues (pods ready != webhook ready)
         console.print("[yellow]ℹ️  Creating default Kai queues (with retry for webhook readiness)...[/yellow]")
