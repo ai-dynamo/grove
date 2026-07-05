@@ -1,10 +1,8 @@
-# Workload 5: GT-5 PCSG-replica gang-termination scenario.
-# Same shape as workload2-gt but with pc-c.minAvailable raised to 3 (no
-# tolerance), so killing any pod from a pc-c replica immediately breaches
-# only that PCSG replica — exercising the PCSG-replica-scoped recycle path
-# (sg-x has 2 replicas, MinAvailable=1, so the surviving replica keeps the
-# PCSG itself non-breached and the action stays at PCSG-replica scope).
-# Containers run sleep infinity (busybox, minimal footprint).
+# workload5-gt: same shape as workload2-gt but with pc-c.minAvailable raised to
+# 3 (equal to replicas, no tolerance). Standalone clique pc-a (replicas=2,
+# min=1); scaling group sg-x (replicas=2, min=1) of cliques pc-b (replicas=1,
+# min=1) and pc-c (replicas=3, min=3). 10 pods total; terminationDelay 10s.
+# Containers run sleep infinity (busybox).
 ---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet

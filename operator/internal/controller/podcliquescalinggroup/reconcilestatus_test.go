@@ -107,14 +107,15 @@ func TestComputeReplicaStatus(t *testing.T) {
 	}
 }
 
-// healthyPCSGReplica returns a PCSG replica entry with no breached PCLQs (an empty PCLQ
-// list is sufficient because computeMinAvailableBreachedReplicas only counts a replica as
-// breached when at least one of its PCLQs has MinAvailableBreached=True).
+// healthyPCSGReplica returns a complete PCSG replica entry (one non-terminating, non-breached
+// PCLQ). The tests using this set Spec.CliqueNames to a single name so the replica counts as
+// complete; computeNotInBreachReplicas only counts a replica as not-in-breach when all expected
+// PodCliques exist and none has MinAvailableBreached=True.
 func healthyPCSGReplica() []grovecorev1alpha1.PodClique {
 	return []grovecorev1alpha1.PodClique{{}}
 }
 
-// breachedPCSGReplica returns a PCSG replica entry with one breached PCLQ.
+// breachedPCSGReplica returns a complete PCSG replica entry with one breached PCLQ.
 func breachedPCSGReplica() []grovecorev1alpha1.PodClique {
 	return []grovecorev1alpha1.PodClique{{
 		Status: grovecorev1alpha1.PodCliqueStatus{
@@ -126,10 +127,19 @@ func breachedPCSGReplica() []grovecorev1alpha1.PodClique {
 	}}
 }
 
+// incompletePCSGReplica returns a replica entry that is missing PodCliques relative to
+// Spec.CliqueNames (an empty PCLQ list). It has no breached PCLQ but must NOT be counted as
+// not-in-breach, because a partially-created replica is not a valid healthy replica.
+func incompletePCSGReplica() []grovecorev1alpha1.PodClique {
+	return []grovecorev1alpha1.PodClique{}
+}
+
 // TestComputeMinAvailableBreachedCondition exercises the PCSG-level breach formula:
-// the PCSG is in breach when (existing replicas) - (breached replicas) < MinAvailable.
-// A replica is "breached" if at least one of its constituent PodCliques is breached;
-// the pclqsMap drives both counts.
+// the PCSG is in breach when (not-in-breach replicas) < MinAvailable. A replica counts as
+// not-in-breach only when it is complete (all Spec.CliqueNames PodCliques exist and are
+// non-terminating) AND none of them is breached; incomplete replicas are never counted as
+// not-in-breach. Each fixture replica carries one PodClique, so the PCSG sets CliqueNames to a
+// single name.
 func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -215,6 +225,34 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 			wantStatus:   metav1.ConditionTrue,
 			wantReason:   "InsufficientAvailablePodCliqueScalingGroupReplicas",
 		},
+		{
+			// Replica 0 is incomplete (its pc-c was deleted and not yet recreated) so it has no
+			// breached PodClique but is not a valid healthy replica; replica 1 is breached.
+			// notInBreach=0 < MinAvailable=1 → in breach. An incomplete replica must not be
+			// mistaken for a healthy one (which would also poison the was-healthy gate).
+			name:         "one replica incomplete, one breached, MinAvailable=1 — in breach",
+			replicas:     2,
+			minAvailable: ptr.To(int32(1)),
+			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
+				"0": incompletePCSGReplica(),
+				"1": breachedPCSGReplica(),
+			},
+			wantStatus: metav1.ConditionTrue,
+			wantReason: "InsufficientAvailablePodCliqueScalingGroupReplicas",
+		},
+		{
+			// Replica 0 is incomplete, replica 1 is complete and healthy. notInBreach=1 ==
+			// MinAvailable=1 → not in breach (the one complete replica satisfies MinAvailable).
+			name:         "one replica incomplete, one healthy, MinAvailable=1 — not in breach",
+			replicas:     2,
+			minAvailable: ptr.To(int32(1)),
+			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
+				"0": incompletePCSGReplica(),
+				"1": healthyPCSGReplica(),
+			},
+			wantStatus: metav1.ConditionFalse,
+			wantReason: "SufficientAvailablePodCliqueScalingGroupReplicas",
+		},
 	}
 
 	for _, tt := range tests {
@@ -227,6 +265,9 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 				Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
 					Replicas:     tt.replicas,
 					MinAvailable: minAvailable,
+					// Each fixture replica carries exactly one PodClique, so a single clique name
+					// makes healthy/breached replicas "complete" and empty ones "incomplete".
+					CliqueNames: []string{"pc"},
 				},
 			}
 
@@ -966,6 +1007,9 @@ func TestMutateMinAvailableBreachedConditionClearsGangTerminationInProgress(t *t
 		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
 			Replicas:     2,
 			MinAvailable: ptr.To(int32(1)),
+			// Each fixture replica carries one PodClique, so a single clique name makes the
+			// recovered replicas count as complete and not-in-breach.
+			CliqueNames: []string{"pc"},
 		},
 		Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
 			Conditions: []metav1.Condition{

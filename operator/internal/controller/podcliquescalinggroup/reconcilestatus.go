@@ -267,9 +267,7 @@ func computeMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1a
 	}
 
 	minAvailable := int(*pcsg.Spec.MinAvailable)
-	breachedReplicas := computeMinAvailableBreachedReplicas(logger, pcsg, pclqsPerPCSGReplica)
-	existingReplicas := len(pclqsPerPCSGReplica)
-	notInBreachReplicas := existingReplicas - breachedReplicas
+	notInBreachReplicas := computeNotInBreachReplicas(logger, pcsg, pclqsPerPCSGReplica)
 	if notInBreachReplicas < minAvailable {
 		return metav1.Condition{
 			Type:    constants.ConditionTypeMinAvailableBreached,
@@ -286,23 +284,44 @@ func computeMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1a
 	}
 }
 
-// computeMinAvailableBreachedReplicas counts PCSG replicas that have at least one PodClique with MinAvailable breached.
-// Bounded to expected replica indexes [0, Spec.Replicas) so stale-index children left behind during scale-down do not
-// inflate the breach count and drive availableReplicas below minAvailable spuriously.
-func computeMinAvailableBreachedReplicas(logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) int {
-	var breachedReplicas int
+// computeNotInBreachReplicas counts PCSG replicas that are healthy for the purpose of the PCSG-level
+// MinAvailableBreached signal. A replica counts as not-in-breach only when it is *complete* — all
+// expected PodCliques (len(Spec.CliqueNames)) exist and are non-terminating — AND none of those
+// PodCliques has MinAvailableBreached=True.
+//
+// Completeness is required because a partially-created replica (e.g. one whose pc-c was deleted and
+// not yet recreated) has no breached PodClique yet is still not a valid healthy replica. Counting it
+// as not-in-breach would spuriously report the PCSG healthy and would also poison the was-healthy gate,
+// which reads a MinAvailableBreached=False as evidence that the PCSG was once healthy. This mirrors
+// computeReplicaStatus, which likewise treats a replica as unscheduled/unavailable unless all expected
+// PodCliques exist.
+//
+// Iteration is bounded to expected replica indexes [0, Spec.Replicas) so stale-index children left
+// behind during scale-down neither inflate nor deflate the count.
+func computeNotInBreachReplicas(logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) int {
+	expectedPCLQsPerReplica := len(pcsg.Spec.CliqueNames)
+	var notInBreachReplicas int
 	for replicaIndex := 0; replicaIndex < int(pcsg.Spec.Replicas); replicaIndex++ {
 		pcsgReplicaIndex := strconv.Itoa(replicaIndex)
-		pclqs := pclqsPerPCSGReplica[pcsgReplicaIndex]
-		isMinAvailableBreached := lo.Reduce(pclqs, func(agg bool, pclq grovecorev1alpha1.PodClique, _ int) bool {
-			return agg || k8sutils.IsConditionTrue(pclq.Status.Conditions, constants.ConditionTypeMinAvailableBreached)
-		}, false)
-		if isMinAvailableBreached {
-			breachedReplicas++
+		nonTerminatingPCLQs := lo.Filter(pclqsPerPCSGReplica[pcsgReplicaIndex], func(pclq grovecorev1alpha1.PodClique, _ int) bool {
+			return !k8sutils.IsResourceTerminating(pclq.ObjectMeta)
+		})
+		if len(nonTerminatingPCLQs) != expectedPCLQsPerReplica {
+			logger.Info("PodCliqueScalingGroup replica is incomplete; not counting it as not-in-breach",
+				"pcsgReplicaIndex", pcsgReplicaIndex, "expectedPCLQs", expectedPCLQsPerReplica, "actualPCLQs", len(nonTerminatingPCLQs))
+			continue
 		}
-		logger.Info("PodCliqueScalingGroup replica has MinAvailableBreached condition set to true", "pcsgReplicaIndex", pcsgReplicaIndex, "isMinAvailableBreached", isMinAvailableBreached)
+		anyBreached := lo.SomeBy(nonTerminatingPCLQs, func(pclq grovecorev1alpha1.PodClique) bool {
+			return k8sutils.IsConditionTrue(pclq.Status.Conditions, constants.ConditionTypeMinAvailableBreached)
+		})
+		if anyBreached {
+			logger.Info("PodCliqueScalingGroup replica has at least one PodClique with MinAvailableBreached=True",
+				"pcsgReplicaIndex", pcsgReplicaIndex)
+			continue
+		}
+		notInBreachReplicas++
 	}
-	return breachedReplicas
+	return notInBreachReplicas
 }
 
 // getPodCliquesPerPCSGReplica retrieves and groups PodCliques by their PCSG replica index

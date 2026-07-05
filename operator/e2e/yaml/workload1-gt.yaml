@@ -1,4 +1,7 @@
-# Workload 1: Strict Startup (AnyOrder)
+# workload1-gt: every clique has MinAvailable == replicas (no breach tolerance).
+# Standalone clique pc-a (replicas=2, min=2); scaling group sg-x (replicas=2,
+# min=2) of cliques pc-b (replicas=1, min=1) and pc-c (replicas=3, min=3).
+# 10 pods total; terminationDelay 10s. Containers run sleep infinity (busybox).
 ---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet

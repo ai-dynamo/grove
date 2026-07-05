@@ -207,11 +207,12 @@ func Test_GT4_GangTerminationMinReplicasPCSGOwned(t *testing.T) {
 	verifyPCSGReplicaRecreatedOnly(t, tc, "0", pcsg0OriginalUIDs, pcsg1OriginalUIDs, pcAOriginalUIDs)
 
 	Logger.Info("5. Kill 1 ready pod from sg-x-1-pc-c — expect NO PCS-level gang termination (pc-a must survive)")
-	// PCSG-0 is still cycling (PCSG-replica-scoped restart fires every TerminationDelay
-	// because its replacement pods stay Pending on cordoned nodes), so we cannot assert
-	// on PCSG-0's UIDs. The signal that the workload is NOT PCS-gang-terminated is that
-	// pc-a (the standalone PCLQ) keeps its UIDs — only PCS-level termination would
-	// delete pc-a.
+	// We assert on pc-a (the standalone PCLQ) rather than on PCSG-0's UIDs: PCSG-0 was already
+	// recycled once by the PCSG-replica-scoped restart in step 4, so its pods no longer carry
+	// their original UIDs. That path does not keep re-firing — WasPCLQEverScheduled excludes the
+	// freshly recreated, never-scheduled PodCliques from the breached set — but the UIDs still
+	// reflect the step-4 recycle, so they are not a useful signal here. pc-a's UIDs change only
+	// under PCS-level gang termination, so pc-a surviving proves no PCS-level termination fired.
 	pods, err = tc.ListPods()
 	if err != nil {
 		t.Fatalf("Failed to list pods: %v", err)

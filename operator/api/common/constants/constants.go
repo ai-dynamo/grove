@@ -120,11 +120,14 @@ const (
 	// ConditionTypePodCliqueScheduled indicates that the PodClique has been successfully scheduled.
 	// This condition is set to true when number of scheduled pods in the PodClique is greater than or equal to PodCliqueSpec.MinAvailable.
 	ConditionTypePodCliqueScheduled = "PodCliqueScheduled"
-	// ConditionTypeGangTerminationInProgress indicates that gang termination has fired for this resource and the
-	// gang termination is still in flight. The condition is set when gang termination deletes the PodCliques
-	// (either PCSG-replica scoped or PCS-level) and is cleared when MinAvailableBreached transitions back to
-	// False (workload recovered). While the condition is True, further gang-termination action is suppressed —
-	// at most one fire per breach episode, regardless of how long the workload stays below MinAvailable.
+	// ConditionTypeGangTerminationInProgress indicates that PCS-level gang termination has fired for this
+	// PodCliqueScalingGroup and is still in flight. It is set on the PCSG when the PCS-level handler deletes
+	// the PodCliques of the whole PCS replica, and is cleared when the PCSG's MinAvailableBreached transitions
+	// back to False (recovered). While it is True, further PCS-level gang termination for the PCS replica is
+	// suppressed — at most one fire per breach episode, regardless of how long the workload stays below
+	// MinAvailable. This is a PCS-level-only mechanism: the PCSG-replica-scoped recycle path does not use this
+	// flag and instead breaks its own re-fire loop via WasPCLQEverScheduled, since a freshly recreated
+	// PodClique has never been scheduled and is therefore excluded from the breached set.
 	// Its only Reason is ConditionReasonGangTerminationActive.
 	ConditionTypeGangTerminationInProgress = "GangTerminationInProgress"
 	// ConditionTopologyLevelsUnavailable indicates that the required topology levels defined on a PodCliqueSet for topology-aware scheduling are no longer available.

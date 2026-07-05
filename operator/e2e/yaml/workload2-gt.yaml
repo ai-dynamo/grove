@@ -1,5 +1,8 @@
-# Workload 2: Flexible Startup
-# Containers run sleep infinity (busybox, minimal footprint).
+# workload2-gt: slack between MinAvailable and replicas, so a single pod loss
+# stays within tolerance. Standalone clique pc-a (replicas=2, min=1); scaling
+# group sg-x (replicas=2, min=1) of cliques pc-b (replicas=1, min=1) and pc-c
+# (replicas=3, min=1). 10 pods total; terminationDelay 10s. Containers run
+# sleep infinity (busybox).
 ---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
