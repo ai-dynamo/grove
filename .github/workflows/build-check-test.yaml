@@ -55,7 +55,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: "1.26.1"
+          go-version: "1.26.3"
           cache: true
           cache-dependency-path: |
             operator/go.sum
@@ -73,7 +73,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: "1.26.1"
+          go-version: "1.26.3"
           cache: true
           cache-dependency-path: operator/go.sum
       - name: build-operator
@@ -87,7 +87,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: "1.26.1"
+          go-version: "1.26.3"
           cache: true
           cache-dependency-path: operator/go.sum
       - name: check

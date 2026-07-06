@@ -86,7 +86,7 @@ make e2e-cluster-down
 - `kubectl` installed
 - `helm` installed
 - `skaffold` installed
-- Go 1.25+
+- Go 1.26.3+
 
 ## Cluster Details
 

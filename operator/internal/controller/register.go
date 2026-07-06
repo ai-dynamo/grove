@@ -17,10 +17,12 @@
 package controller
 
 import (
+	"context"
 	"fmt"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/clustertopology"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset"
@@ -34,6 +36,11 @@ import (
 func RegisterControllers(mgr ctrl.Manager, config *configv1alpha1.OperatorConfiguration, schedRegistry scheduler.Registry) error {
 	if config == nil {
 		return fmt.Errorf("operator configuration must not be nil")
+	}
+	// Register shared cache field indexes once, before any controller reconciles. GetPCLQPods
+	// (componentutils) lists a PodClique's Pods through this index.
+	if err := componentutils.RegisterPodControllerUIDIndex(context.Background(), mgr.GetFieldIndexer()); err != nil {
+		return err
 	}
 	pcsReconciler := podcliqueset.NewReconciler(mgr, config.Controllers.PodCliqueSet, config.TopologyAwareScheduling, config.Network, schedRegistry)
 	if err := pcsReconciler.RegisterWithManager(mgr); err != nil {
