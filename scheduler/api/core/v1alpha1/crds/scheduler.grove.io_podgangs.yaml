@@ -286,6 +286,20 @@ spec:
                   - type
                   type: object
                 type: array
+              lastReady:
+                description: |-
+                  LastReady is the wall-clock time at which the Ready condition most recently
+                  transitioned from False (or absent) to True. nil until the first such transition,
+                  never reset to nil thereafter.
+                format: date-time
+                type: string
+              lastScheduled:
+                description: |-
+                  LastScheduled is the wall-clock time at which the Scheduled condition most recently
+                  transitioned from False (or absent) to True. nil until the first such transition,
+                  never reset to nil thereafter.
+                format: date-time
+                type: string
               phase:
                 description: Phase is the current phase of a PodGang.
                 type: string
@@ -294,8 +308,6 @@ spec:
                   PlacementScore is network optimality score for the PodGang. If the choice that the scheduler has made corresponds to the
                   best possible placement of the pods in the PodGang, then the score will be 1.0. Higher the score, better the placement.
                 type: number
-            required:
-            - phase
             type: object
         required:
         - spec

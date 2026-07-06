@@ -75,7 +75,7 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pcsg
 		return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("could not get owner PodCliqueSet for PodCliqueScalingGroup: %v", pcsgObjectKey), err)
 	}
 
-	if !componentutils.IsAutoUpdateStrategy(pcs) {
+	if componentutils.IsOnDeleteStrategy(pcs) {
 		if shouldResetOrTriggerUpdate(pcs, pcsg) {
 			if err = r.initOrResetUpdate(ctx, pcs, pcsg); err != nil {
 				return ctrlcommon.ReconcileWithErrors("could not initialize update for OnDelete", err)
@@ -133,8 +133,7 @@ func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1alph
 		UpdateStartedAt:            metav1.Now(),
 		PodCliqueSetGenerationHash: *pcs.Status.CurrentGenerationHash,
 	}
-	// OnDelete strategy sets UpdateEndedAt too, since we do not know when all the pods will manually be deleted, and gang termination is disabled when an update is in progress
-	if !componentutils.IsAutoUpdateStrategy(pcs) {
+	if componentutils.IsOnDeleteStrategy(pcs) {
 		pcsg.Status.UpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
 	}
 	// reset the updated replicas count to 0 so that the update can start afresh.

@@ -658,6 +658,7 @@ func TestComputeHash(t *testing.T) {
 	hash1 := ComputeHash(podSpec1)
 	hash2 := ComputeHash(podSpec1)
 	assert.Equal(t, hash1, hash2)
+	t.Logf("hash1: %s", hash1)
 
 	// Different specs should produce different hashes
 	hash3 := ComputeHash(podSpec2)

@@ -145,6 +145,13 @@ type PodCliqueStatus struct {
 	CurrentPodTemplateHash *string `json:"currentPodTemplateHash,omitempty"`
 	// UpdateProgress provides details about the ongoing update of the PodClique.
 	UpdateProgress *PodCliqueUpdateProgress `json:"updateProgress,omitempty"`
+	// PodGangMapping captures the desired state of per-PodGang pod distribution.
+	// During an update, this is derived from PodGangMap resource as that is a single source of truth during updates.
+	// In steady state (post update) this field becomes a source of truth. Any scale-in and scale-out of the PodClique
+	// is reflected in the desired state. PodGangMap resource will be synced from the desired state as captured in this
+	// field during steady state.
+	// Key is the PodGang name; value is the number of pods of this PodClique associated to that PodGang.
+	PodGangMapping map[string]int32 `json:"podGangMapping,omitempty"`
 }
 
 // PodCliqueUpdateProgress provides details about the ongoing update of the PodClique.

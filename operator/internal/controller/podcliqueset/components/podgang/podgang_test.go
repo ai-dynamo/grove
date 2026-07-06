@@ -35,6 +35,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -60,6 +61,7 @@ func TestBuildResourceWithLPXBackend(t *testing.T) {
 				Build(),
 		).
 		Build()
+	pcs.Status.CurrentGenerationHash = ptr.To("testhash")
 	scheme := runtime.NewScheme()
 	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
 	require.NoError(t, groveschedulerv1alpha1.AddToScheme(scheme))
@@ -97,24 +99,6 @@ func TestBuildResourceWithLPXBackend(t *testing.T) {
 	assert.Equal(t, podName, podGang.Spec.PodGroups[0].PodReferences[0].Name)
 }
 
-func TestSetInitializedCondition(t *testing.T) {
-	pg := &groveschedulerv1alpha1.PodGang{
-		ObjectMeta: metav1.ObjectMeta{Name: "pg-1", Namespace: "default", Generation: 1},
-	}
-	setOrUpdateInitializedCondition(pg, metav1.ConditionFalse, "PodsPending", "waiting")
-	require.Len(t, pg.Status.Conditions, 1)
-	assert.Equal(t, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized), pg.Status.Conditions[0].Type)
-	assert.Equal(t, metav1.ConditionFalse, pg.Status.Conditions[0].Status)
-	assert.Equal(t, "PodsPending", pg.Status.Conditions[0].Reason)
-	assert.Equal(t, "waiting", pg.Status.Conditions[0].Message)
-
-	// Update existing condition to ready
-	setOrUpdateInitializedCondition(pg, metav1.ConditionTrue, "Ready", "all ready")
-	require.Len(t, pg.Status.Conditions, 1)
-	assert.Equal(t, metav1.ConditionTrue, pg.Status.Conditions[0].Status)
-	assert.Equal(t, "Ready", pg.Status.Conditions[0].Reason)
-}
-
 // TestBuildResource verifies that buildResource correctly populates PodGang
 // labels and annotations. PCS owns the non-grove.io key namespace exclusively
 // (additions and removals on the PCS propagate); grove.io/-prefixed keys are
@@ -123,13 +107,18 @@ func TestBuildResource(t *testing.T) {
 	const (
 		pcsName              = "test-pcs"
 		defaultSchedulerName = "default-scheduler"
+		generationHash       = "testhash"
 	)
 	// expectedDefaultLabels reflects what every PodGang carries after buildResource:
 	// the operator-managed label set from getLabels plus the scheduler name resolved
 	// from the fake registry (testutils.NewDefaultFakeRegistry returns "default-scheduler").
 	expectedDefaultLabels := lo.Assign(
 		getLabels(pcsName),
-		map[string]string{apicommon.LabelSchedulerName: defaultSchedulerName},
+		map[string]string{
+			apicommon.LabelSchedulerName:              defaultSchedulerName,
+			apicommon.LabelPodCliqueSetGenerationHash: generationHash,
+			apicommon.LabelPodCliqueSetReplicaIndex:   "0",
+		},
 	)
 
 	tests := []struct {
@@ -301,6 +290,9 @@ func TestBuildResource(t *testing.T) {
 							},
 						},
 					},
+				},
+				Status: grovecorev1alpha1.PodCliqueSetStatus{
+					CurrentGenerationHash: ptr.To(generationHash),
 				},
 			}
 
