@@ -223,10 +223,10 @@ func (r *Reconciler) emitAllScheduledReplicasLostIfNeeded(pcsg *grovecorev1alpha
 
 // mutateMinAvailableBreachedCondition updates the MinAvailableBreached condition based on replica availability.
 //
-// On a MinAvailableBreached True→False transition (i.e. the PCSG has just recovered), it also
-// removes the GangTerminationInProgress condition. That flag is set by the PCS-level gang-
-// termination handler when it fires for this PCSG; clearing it here re-arms the next breach
-// episode so a fresh regression after recovery can be recycled.
+// Whenever the computed condition is False (the PCSG is healthy) and the GangTerminationInProgress
+// condition is present, the latter is removed. The flag is only ever set while the PCSG is in
+// breach, so the first False observed with the flag still set is the recovery; clearing it
+// re-arms the next breach episode so a fresh regression can be recycled.
 func mutateMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) {
 	newCondition := computeMinAvailableBreachedCondition(logger, pcsg, pclqsPerPCSGReplica)
 	if k8sutils.HasConditionChanged(pcsg.Status.Conditions, newCondition) {

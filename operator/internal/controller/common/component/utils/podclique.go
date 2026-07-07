@@ -99,6 +99,13 @@ const InitialScheduleGrace = 5 * time.Second
 // LastTransitionTime sufficiently after CreationTimestamp that the condition must have flipped
 // since creation (i.e. through True). Used to gate gang-termination actions so a workload that
 // has never been healthy is left alone — only regressions get recycled.
+//
+// Limitation: like every status-derived check in the operator, this only sees transitions the
+// operator actually observed and persisted. If the condition flipped while no reconcile ran
+// (e.g. the operator was down), that transition is lost and the PCLQ is treated as
+// never-scheduled. This is a deliberate design trade-off: the gate errs on the side of NOT
+// gang-terminating, and the system stays eventually consistent — once the operator observes a
+// healthy state the gate re-arms and a later regression is recycled normally.
 func WasPCLQEverScheduled(pclq *grovecorev1alpha1.PodClique) bool {
 	sched := meta.FindStatusCondition(pclq.Status.Conditions, constants.ConditionTypePodCliqueScheduled)
 	if sched == nil {
@@ -115,6 +122,7 @@ func WasPCLQEverScheduled(pclq *grovecorev1alpha1.PodClique) bool {
 // PCSG's own MinAvailableBreached condition (PCSGs have no PodCliqueScheduled equivalent).
 // Used to gate gang-termination so an initial-startup PCSG that has not yet stabilized is left
 // alone — only regressions from a previously-healthy state get recycled.
+// Shares the observed-transitions-only limitation documented on WasPCLQEverScheduled.
 func WasPCSGEverHealthy(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) bool {
 	cond := meta.FindStatusCondition(pcsg.Status.Conditions, constants.ConditionTypeMinAvailableBreached)
 	if cond == nil {

@@ -220,7 +220,9 @@ func Test_GT4_GangTerminationMinReplicasPCSGOwned(t *testing.T) {
 	pcAUIDsBeforeStep5 := capturePodUIDsForClique(pods, "workload2-gt-0-pc-a")
 	cordonAndKillPodsFromClique(ctx, t, tc, pcsg1Target, 1)
 	time.Sleep(terminationDelayInWorkloadYAML + gangTerminationGrace)
-	verifyNoGangTermination(t, tc, pcAUIDsBeforeStep5, 0)
+	// minRunning=totalWLPods-1 also proves the killed pod's replacement (or the rest of the
+	// workload) wasn't silently lost — with 0 the check devolved to UID-survival only.
+	verifyNoGangTermination(t, tc, pcAUIDsBeforeStep5, totalWLPods-1)
 
 	Logger.Info("6. Kill the remaining 2 ready pods from sg-x-1-pc-c — test plan expects all PCS pods terminated")
 	pods, err = tc.ListPods()
@@ -334,7 +336,12 @@ func Test_GT6_ScaledPodGangPodDeletion(t *testing.T) {
 	time.Sleep(terminationDelayInWorkloadYAML + gangTerminationGrace)
 
 	Logger.Info("6. Verify pc-a (standalone PCLQ) kept its UIDs — only PCS-level gang term would delete pc-a")
-	verifyNoGangTermination(t, tc, pcAUIDs, 0)
+	verifyNoGangTermination(t, tc, pcAUIDs, totalWLPods-1)
+
+	Logger.Info("7. Verify the deleted scaled pod was actually recreated and the workload is fully ready again")
+	if err := tc.WaitForReadyPods(totalWLPods); err != nil {
+		t.Fatalf("scaled pod was not recreated/ready after deletion: %v", err)
+	}
 }
 
 // ---------- helpers ----------
@@ -490,7 +497,10 @@ func dumpPodsByClique(t *testing.T, pods *corev1.PodList) {
 
 // verifyAllPodsRecreated polls until every UID in originalUIDs is absent from
 // the workload's current pods AND the workload has exactly expectedPods
-// non-terminating pods. Strong signal that PCS-level gang termination fired.
+// non-terminating pods, all of them Ready. Strong signal that PCS-level gang
+// termination fired AND the replacement gang actually recovered — without the
+// readiness requirement a replacement gang stuck Pending (e.g. unschedulable)
+// would be reported as a successful recycle.
 func verifyAllPodsRecreated(t *testing.T, tc *testctx.TestContext, originalUIDs map[types.UID]struct{}, expectedPods int) {
 	t.Helper()
 	deadline := time.Now().Add(tc.Timeout)
@@ -500,20 +510,24 @@ func verifyAllPodsRecreated(t *testing.T, tc *testctx.TestContext, originalUIDs 
 		if err != nil {
 			t.Fatalf("Failed to list pods during recreate check: %v", err)
 		}
-		survivors, nonTerminating := 0, 0
-		for _, p := range pods.Items {
+		survivors, nonTerminating, ready := 0, 0, 0
+		for i := range pods.Items {
+			p := &pods.Items[i]
 			if _, ok := originalUIDs[p.UID]; ok {
 				survivors++
 			}
 			if p.DeletionTimestamp == nil {
 				nonTerminating++
+				if isPodReady(p) {
+					ready++
+				}
 			}
 		}
-		if survivors == 0 && nonTerminating == expectedPods {
-			Logger.Infof("Gang termination confirmed: 0/%d original UIDs survive, %d non-terminating pods", len(originalUIDs), nonTerminating)
+		if survivors == 0 && nonTerminating == expectedPods && ready == expectedPods {
+			Logger.Infof("Gang termination confirmed: 0/%d original UIDs survive, %d non-terminating pods, all ready", len(originalUIDs), nonTerminating)
 			return
 		}
-		lastErr = fmt.Sprintf("survivors=%d non-terminating=%d (want survivors=0 non-terminating=%d)", survivors, nonTerminating, expectedPods)
+		lastErr = fmt.Sprintf("survivors=%d non-terminating=%d ready=%d (want survivors=0 non-terminating=%d ready=%d)", survivors, nonTerminating, ready, expectedPods, expectedPods)
 		time.Sleep(tc.Interval)
 	}
 	t.Fatalf("Gang termination did not occur within %s — final state: %s", tc.Timeout, lastErr)
@@ -579,7 +593,12 @@ func verifyPCSGReplicaRecreatedOnly(t *testing.T, tc *testctx.TestContext, pcsgR
 			currentPCA[p.UID] = struct{}{}
 		}
 
-		targetRecreated := overlap(currentByPCSGIdx[pcsgReplicaIndex], originalPCSG0) == 0
+		// Requiring the full replacement pod count (not just zero UID overlap) prevents a
+		// false-positive during the transient deletion window: right after the delete the
+		// target index has no non-terminating pods at all, so overlap(nil, original)==0
+		// would hold before any replacement pod exists.
+		targetCurrent := currentByPCSGIdx[pcsgReplicaIndex]
+		targetRecreated := len(targetCurrent) == len(originalPCSG0) && overlap(targetCurrent, originalPCSG0) == 0
 		otherIntact := overlap(currentByPCSGIdx[otherIndex(pcsgReplicaIndex)], originalPCSG1) == len(originalPCSG1)
 		pcAIntact := overlap(currentPCA, originalPCA) == len(originalPCA)
 
