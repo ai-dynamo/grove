@@ -36,6 +36,7 @@ import (
 
 const (
 	errCodeGetSecret              grovecorev1alpha1.ErrorCode = "ERR_GET_SECRET"
+	errCodeSecretConflict         grovecorev1alpha1.ErrorCode = "ERR_SECRET_CONFLICT"
 	errCodeSetControllerReference grovecorev1alpha1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
 	errCodeCreateSecret           grovecorev1alpha1.ErrorCode = "ERR_CREATE_SECRET"
 	errCodeDeleteSecret           grovecorev1alpha1.ErrorCode = "ERR_DELETE_SECRET"
@@ -92,7 +93,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 	if existingSecret != nil {
 		if !metav1.IsControlledBy(existingSecret, pcs) {
 			return groveerr.New(
-				errCodeGetSecret,
+				errCodeSecretConflict,
 				component.OperationSync,
 				fmt.Sprintf("Secret %v already exists but is not controlled by PodCliqueSet %v", objKey, pcsObjKey),
 			)
@@ -208,6 +209,8 @@ func (r _resource) cleanupLegacySecret(ctx context.Context, logger logr.Logger, 
 	if legacySecret == nil || !metav1.IsControlledBy(legacySecret, pcs) {
 		return nil
 	}
+	// Legacy cleanup is best-effort for Pods discoverable through current PCS-managed labels.
+	// Older Pods without these labels may keep the legacy Secret until they are replaced.
 	referencingPods, err := r.getPodsReferencingSecret(ctx, pcs, legacyObjKey.Name)
 	if err != nil {
 		return groveerr.WrapError(err,

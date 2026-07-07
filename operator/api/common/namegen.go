@@ -67,7 +67,9 @@ func GenerateInitContainerSATokenSecretName(pcsName string) string {
 // GenerateLegacyInitContainerSATokenSecretName generates the legacy init-container service account token
 // Secret name used before the suffix was shortened. Retained as a migration source and delete target.
 //
-// Deprecated: scheduled for removal three releases after the shortening (see https://github.com/ai-dynamo/grove/issues/658).
+// Deprecated: retained for migration after shortening the suffix to "-ic-sat".
+// Expected in v0.1.0-alpha.12; remove three releases later.
+// Track removal in https://github.com/ai-dynamo/grove/issues/658.
 func GenerateLegacyInitContainerSATokenSecretName(pcsName string) string {
 	return fmt.Sprintf("%s-initc-sa-token-secret", pcsName)
 }

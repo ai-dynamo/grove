@@ -383,6 +383,9 @@ func TestSync(t *testing.T) {
 		err := operator.Sync(context.Background(), logr.Discard(), pcs)
 
 		require.Error(t, err)
+		var groveErr *groveerr.GroveError
+		require.True(t, errors.As(err, &groveErr))
+		assert.Equal(t, errCodeSecretConflict, groveErr.Code)
 		assert.Contains(t, err.Error(), "already exists but is not controlled")
 		assert.Contains(t, err.Error(), secretName)
 
