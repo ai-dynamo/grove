@@ -108,6 +108,9 @@ func runFullReplicasScenario(t *testing.T, workloadName, yamlFile, targetCliqueF
 
 	Logger.Info("5. Verify all PCS-replica pods got recreated (zero original UIDs survive)")
 	verifyAllPodsRecreated(t, tc, originalUIDs, totalWLPods)
+
+	Logger.Info("6. Uncordon the node and verify the recycled gang actually recovers to fully ready")
+	uncordonAndVerifyRecovery(t, tc, []string{target.Spec.NodeName}, totalWLPods)
 }
 
 // Test_GT3_GangTerminationMinReplicasPCSOwned: WL2 (min replicas allow
@@ -140,7 +143,7 @@ func Test_GT3_GangTerminationMinReplicasPCSOwned(t *testing.T) {
 	}
 
 	Logger.Info("3. Kill 1 ready pod from pc-a (min=1, replicas=2) — expect NO gang termination")
-	survivorsAfterFirstKill := cordonAndKillPodsFromClique(ctx, t, tc, targetClique, 1)
+	survivorsAfterFirstKill, cordonedFirst := cordonAndKillPodsFromClique(ctx, t, tc, targetClique, 1)
 	time.Sleep(terminationDelayInWorkloadYAML + gangTerminationGrace)
 	verifyNoGangTermination(t, tc, survivorsAfterFirstKill, totalWLPods-1)
 
@@ -150,11 +153,14 @@ func Test_GT3_GangTerminationMinReplicasPCSOwned(t *testing.T) {
 		t.Fatalf("Failed to list pods: %v", err)
 	}
 	originalUIDs := capturePodUIDs(pods)
-	cordonAndKillPodsFromClique(ctx, t, tc, targetClique, 1)
+	_, cordonedSecond := cordonAndKillPodsFromClique(ctx, t, tc, targetClique, 1)
 	time.Sleep(terminationDelayInWorkloadYAML + gangTerminationGrace)
 
 	Logger.Info("5. Verify all PCS-replica pods got recreated")
 	verifyAllPodsRecreated(t, tc, originalUIDs, totalWLPods)
+
+	Logger.Info("6. Uncordon the killed pods' nodes and verify the recycled gang recovers to fully ready")
+	uncordonAndVerifyRecovery(t, tc, append(cordonedFirst, cordonedSecond...), totalWLPods)
 }
 
 // Test_GT4_GangTerminationMinReplicasPCSGOwned: WL2, multi-step against
@@ -189,7 +195,7 @@ func Test_GT4_GangTerminationMinReplicasPCSGOwned(t *testing.T) {
 	}
 
 	Logger.Info("3. Kill 1 ready pod from sg-x-0-pc-c (min=1, replicas=3) — expect NO gang termination")
-	survivorsA := cordonAndKillPodsFromClique(ctx, t, tc, pcsg0Target, 1)
+	survivorsA, cordonedA := cordonAndKillPodsFromClique(ctx, t, tc, pcsg0Target, 1)
 	time.Sleep(terminationDelayInWorkloadYAML + gangTerminationGrace)
 	verifyNoGangTermination(t, tc, survivorsA, totalWLPods-1)
 
@@ -201,9 +207,12 @@ func Test_GT4_GangTerminationMinReplicasPCSGOwned(t *testing.T) {
 	pcsg0OriginalUIDs := capturePodUIDsForPCSGReplica(pods, "0")
 	pcsg1OriginalUIDs := capturePodUIDsForPCSGReplica(pods, "1")
 	pcAOriginalUIDs := capturePodUIDsForClique(pods, "workload2-gt-0-pc-a")
-	cordonAndKillPodsFromClique(ctx, t, tc, pcsg0Target, 2)
+	_, cordonedB := cordonAndKillPodsFromClique(ctx, t, tc, pcsg0Target, 2)
 	time.Sleep(terminationDelayInWorkloadYAML + gangTerminationGrace)
 	// Verify only PCSG-0 pods got recreated; PCSG-1 + pc-a survived intact.
+	// PCSG-0's replacement pods stay Pending from here on (their nodes are cordoned) — that is
+	// load-bearing: step 6 expects PCS-level termination, which requires BOTH PCSG replicas in
+	// breach, so PCSG-0 must remain broken until then. Recovery is verified once, at the end.
 	verifyPCSGReplicaRecreatedOnly(t, tc, "0", pcsg0OriginalUIDs, pcsg1OriginalUIDs, pcAOriginalUIDs)
 
 	Logger.Info("5. Kill 1 ready pod from sg-x-1-pc-c — expect NO PCS-level gang termination (pc-a must survive)")
@@ -218,11 +227,13 @@ func Test_GT4_GangTerminationMinReplicasPCSGOwned(t *testing.T) {
 		t.Fatalf("Failed to list pods: %v", err)
 	}
 	pcAUIDsBeforeStep5 := capturePodUIDsForClique(pods, "workload2-gt-0-pc-a")
-	cordonAndKillPodsFromClique(ctx, t, tc, pcsg1Target, 1)
+	_, cordonedC := cordonAndKillPodsFromClique(ctx, t, tc, pcsg1Target, 1)
 	time.Sleep(terminationDelayInWorkloadYAML + gangTerminationGrace)
-	// minRunning=totalWLPods-1 also proves the killed pod's replacement (or the rest of the
-	// workload) wasn't silently lost — with 0 the check devolved to UID-survival only.
-	verifyNoGangTermination(t, tc, pcAUIDsBeforeStep5, totalWLPods-1)
+	// Exactly 5 pods can be Running here: PCSG-0's 4 replacements are Pending (cordoned nodes,
+	// deliberately — see step 4) and this step killed 1 more, so the floor is pc-a(2) +
+	// pc-b-1(1) + pc-c-1's remaining(2). A higher floor is unsatisfiable while capacity is
+	// withheld; UID survival of pc-a is the primary no-PCS-level-termination signal.
+	verifyNoGangTermination(t, tc, pcAUIDsBeforeStep5, totalWLPods-5)
 
 	Logger.Info("6. Kill the remaining 2 ready pods from sg-x-1-pc-c — test plan expects all PCS pods terminated")
 	pods, err = tc.ListPods()
@@ -230,9 +241,13 @@ func Test_GT4_GangTerminationMinReplicasPCSGOwned(t *testing.T) {
 		t.Fatalf("Failed to list pods: %v", err)
 	}
 	finalOriginalUIDs := capturePodUIDs(pods)
-	cordonAndKillPodsFromClique(ctx, t, tc, pcsg1Target, 2)
+	_, cordonedD := cordonAndKillPodsFromClique(ctx, t, tc, pcsg1Target, 2)
 	time.Sleep(terminationDelayInWorkloadYAML + gangTerminationGrace)
 	verifyAllPodsRecreated(t, tc, finalOriginalUIDs, totalWLPods)
+
+	Logger.Info("7. Uncordon all nodes cordoned by this test and verify the recycled gang recovers to fully ready")
+	allCordoned := append(append(append(cordonedA, cordonedB...), cordonedC...), cordonedD...)
+	uncordonAndVerifyRecovery(t, tc, allCordoned, totalWLPods)
 }
 
 // Test_GT5_IndividualPCSGReplicaTermination: WL5 (PCS pc-a min=1 r=2;
@@ -276,11 +291,14 @@ func Test_GT5_IndividualPCSGReplicaTermination(t *testing.T) {
 	pcAOriginalUIDs := capturePodUIDsForClique(pods, "workload5-gt-0-pc-a")
 
 	Logger.Infof("4. Kill all 3 pods from %s — should breach only that PCSG replica", pcsg0Target)
-	cordonAndKillPodsFromClique(ctx, t, tc, pcsg0Target, 3)
+	_, cordoned := cordonAndKillPodsFromClique(ctx, t, tc, pcsg0Target, 3)
 	time.Sleep(terminationDelayInWorkloadYAML + gangTerminationGrace)
 
 	Logger.Info("5. Verify only PCSG-0 was recreated; PCSG-1 and pc-a kept their UIDs")
 	verifyPCSGReplicaRecreatedOnly(t, tc, "0", pcsg0OriginalUIDs, pcsg1OriginalUIDs, pcAOriginalUIDs)
+
+	Logger.Info("6. Uncordon the killed pods' nodes and verify the recycled PCSG replica recovers to fully ready")
+	uncordonAndVerifyRecovery(t, tc, cordoned, totalWLPods)
 }
 
 // Test_GT6_ScaledPodGangPodDeletion: WL2 (pc-c min=1 r=3 tolerates 2 pod
@@ -338,10 +356,10 @@ func Test_GT6_ScaledPodGangPodDeletion(t *testing.T) {
 	Logger.Info("6. Verify pc-a (standalone PCLQ) kept its UIDs — only PCS-level gang term would delete pc-a")
 	verifyNoGangTermination(t, tc, pcAUIDs, totalWLPods-1)
 
-	Logger.Info("7. Verify the deleted scaled pod was actually recreated and the workload is fully ready again")
-	if err := tc.WaitForReadyPods(totalWLPods); err != nil {
-		t.Fatalf("scaled pod was not recreated/ready after deletion: %v", err)
-	}
+	Logger.Info("7. Uncordon the node and verify the deleted scaled pod's replacement actually becomes ready")
+	// The replacement pod cannot schedule while the node stays cordoned (the harness runs with
+	// exactly totalWLPods schedulable nodes), so capacity must be released before asserting it.
+	uncordonAndVerifyRecovery(t, tc, []string{scaled.Spec.NodeName}, totalWLPods)
 }
 
 // ---------- helpers ----------
@@ -450,8 +468,10 @@ func capturePodUIDsForPCSGReplica(pods *corev1.PodList, pcsgReplicaIndex string)
 
 // cordonAndKillPodsFromClique picks n ready pods from cliqueFQN, cordons their
 // nodes (so the replacement pods cannot reschedule), and deletes them. Returns
-// the UIDs that survived in case the caller wants to assert on them.
-func cordonAndKillPodsFromClique(ctx context.Context, t *testing.T, tc *testctx.TestContext, cliqueFQN string, n int) map[types.UID]struct{} {
+// the UIDs that survived in case the caller wants to assert on them, plus the
+// cordoned node names so the caller can release the capacity again with
+// uncordonAndVerifyRecovery once the termination behavior has been asserted.
+func cordonAndKillPodsFromClique(ctx context.Context, t *testing.T, tc *testctx.TestContext, cliqueFQN string, n int) (map[types.UID]struct{}, []string) {
 	t.Helper()
 	pods, err := tc.ListPods()
 	if err != nil {
@@ -464,10 +484,12 @@ func cordonAndKillPodsFromClique(ctx context.Context, t *testing.T, tc *testctx.
 	}
 
 	killedUIDs := make(map[types.UID]struct{}, n)
+	cordonedNodes := make([]string, 0, n)
 	for _, p := range targets {
 		if err := tc.CordonNode(p.Spec.NodeName); err != nil {
 			t.Fatalf("Failed to cordon node %s: %v", p.Spec.NodeName, err)
 		}
+		cordonedNodes = append(cordonedNodes, p.Spec.NodeName)
 		if err := tc.Client.Delete(ctx, p); err != nil {
 			t.Fatalf("Failed to delete pod %s: %v", p.Name, err)
 		}
@@ -482,7 +504,7 @@ func cordonAndKillPodsFromClique(ctx context.Context, t *testing.T, tc *testctx.
 		}
 		survivors[p.UID] = struct{}{}
 	}
-	return survivors
+	return survivors, cordonedNodes
 }
 
 // dumpPodsByClique writes one log line per pod with clique/phase/ready info,
@@ -497,10 +519,13 @@ func dumpPodsByClique(t *testing.T, pods *corev1.PodList) {
 
 // verifyAllPodsRecreated polls until every UID in originalUIDs is absent from
 // the workload's current pods AND the workload has exactly expectedPods
-// non-terminating pods, all of them Ready. Strong signal that PCS-level gang
-// termination fired AND the replacement gang actually recovered — without the
-// readiness requirement a replacement gang stuck Pending (e.g. unschedulable)
-// would be reported as a successful recycle.
+// non-terminating pods. Strong signal that PCS-level gang termination fired.
+//
+// Readiness is deliberately NOT asserted here: the harness runs with exactly
+// totalWLPods schedulable nodes (PrepareTest cordons the rest) and the kill
+// steps cordon the freed nodes, so the replacement gang CANNOT fully schedule
+// while the test-cordoned nodes are still cordoned. Callers assert actual
+// recovery afterwards with uncordonAndVerifyRecovery.
 func verifyAllPodsRecreated(t *testing.T, tc *testctx.TestContext, originalUIDs map[types.UID]struct{}, expectedPods int) {
 	t.Helper()
 	deadline := time.Now().Add(tc.Timeout)
@@ -510,27 +535,39 @@ func verifyAllPodsRecreated(t *testing.T, tc *testctx.TestContext, originalUIDs 
 		if err != nil {
 			t.Fatalf("Failed to list pods during recreate check: %v", err)
 		}
-		survivors, nonTerminating, ready := 0, 0, 0
-		for i := range pods.Items {
-			p := &pods.Items[i]
+		survivors, nonTerminating := 0, 0
+		for _, p := range pods.Items {
 			if _, ok := originalUIDs[p.UID]; ok {
 				survivors++
 			}
 			if p.DeletionTimestamp == nil {
 				nonTerminating++
-				if isPodReady(p) {
-					ready++
-				}
 			}
 		}
-		if survivors == 0 && nonTerminating == expectedPods && ready == expectedPods {
-			Logger.Infof("Gang termination confirmed: 0/%d original UIDs survive, %d non-terminating pods, all ready", len(originalUIDs), nonTerminating)
+		if survivors == 0 && nonTerminating == expectedPods {
+			Logger.Infof("Gang termination confirmed: 0/%d original UIDs survive, %d non-terminating pods", len(originalUIDs), nonTerminating)
 			return
 		}
-		lastErr = fmt.Sprintf("survivors=%d non-terminating=%d ready=%d (want survivors=0 non-terminating=%d ready=%d)", survivors, nonTerminating, ready, expectedPods, expectedPods)
+		lastErr = fmt.Sprintf("survivors=%d non-terminating=%d (want survivors=0 non-terminating=%d)", survivors, nonTerminating, expectedPods)
 		time.Sleep(tc.Interval)
 	}
 	t.Fatalf("Gang termination did not occur within %s — final state: %s", tc.Timeout, lastErr)
+}
+
+// uncordonAndVerifyRecovery releases the capacity the test withheld (the nodes
+// cordoned around the pod kills) and then requires every workload pod to become
+// Ready. This is the recovery half of the recycle assertion: without it a
+// replacement gang stuck Pending forever (e.g. the operator never rewires the
+// new pods into a schedulable PodGang) would still pass the UID-turnover check.
+// It must run only AFTER the termination behavior has been asserted — releasing
+// capacity earlier would heal the breach and prevent the fire under test.
+func uncordonAndVerifyRecovery(t *testing.T, tc *testctx.TestContext, cordonedNodes []string, expectedPods int) {
+	t.Helper()
+	tc.UncordonNodes(cordonedNodes)
+	if err := tc.WaitForReadyPods(expectedPods); err != nil {
+		t.Fatalf("workload did not recover to %d ready pods after uncordoning %v: %v", expectedPods, cordonedNodes, err)
+	}
+	Logger.Infof("Recovery confirmed: %d pods ready after uncordoning %d nodes", expectedPods, len(cordonedNodes))
 }
 
 // verifyNoGangTermination asserts that the workload did NOT gang-terminate by
