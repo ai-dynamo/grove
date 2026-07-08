@@ -18,10 +18,10 @@ package utils
 
 import (
 	"context"
+	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
-
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/samber/lo"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -73,6 +73,72 @@ func ArePodGangsReady(ctx context.Context, cl client.Client, namespace string, n
 			return false, err
 		}
 		if !k8sutils.IsConditionTrue(pg.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeReady)) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// AllPodGangsAtEpochEverScheduled returns true when every PodGang created for
+// a PodCliqueSet replica index and epoch has been scheduled at least once.
+// The check is monotonic: once a PodGang has ever been scheduled, a subsequent
+// flap of PodGangConditionTypeScheduled tp `False` does not undo the truth of this predicate.
+// It returns false when no PodGang matches the (pcsName, pcsReplicaIndex, epoch) triple.
+// Returns (_, err) only on transport errors from the client list.
+func AllPodGangsAtEpochEverScheduled(ctx context.Context,
+	cl client.Client,
+	namespace string,
+	pcsName string,
+	pcsReplicaIndex int32,
+	epoch string) (bool, error) {
+
+	var podGangs groveschedulerv1alpha1.PodGangList
+	if err := cl.List(ctx, &podGangs, client.InNamespace(namespace), client.MatchingLabels(map[string]string{
+		apicommon.LabelPartOfKey:                pcsName,
+		apicommon.LabelPodCliqueSetReplicaIndex: strconv.Itoa(int(pcsReplicaIndex)),
+		apicommon.LabelEpoch:                    epoch,
+	})); err != nil {
+		return false, err
+	}
+	if len(podGangs.Items) == 0 {
+		return false, nil
+	}
+	for i := range podGangs.Items {
+		podGang := podGangs.Items[i]
+		if podGang.Status.LastScheduled == nil {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// AllPodGangsAtEpochEverReady returns true when every PodGang created for
+// a PodCliqueSet replica index and epoch has become ready at least once.
+// The check is monotonic: once a PodGang has ever been ready, a subsequent
+// flap of PodGangConditionTypeReady tp `False` does not undo the truth of this predicate.
+// It returns false when no PodGang matches the (pcsName, pcsReplicaIndex, epoch) triple.
+// Returns (_, err) only on transport errors from the client list.
+func AllPodGangsAtEpochEverReady(ctx context.Context,
+	cl client.Client,
+	namespace string,
+	pcsName string,
+	pcsReplicaIndex int32,
+	epoch string) (bool, error) {
+
+	var podGangs groveschedulerv1alpha1.PodGangList
+	if err := cl.List(ctx, &podGangs, client.InNamespace(namespace), client.MatchingLabels(map[string]string{
+		apicommon.LabelPartOfKey:                pcsName,
+		apicommon.LabelPodCliqueSetReplicaIndex: strconv.Itoa(int(pcsReplicaIndex)),
+		apicommon.LabelEpoch:                    epoch,
+	})); err != nil {
+		return false, err
+	}
+	if len(podGangs.Items) == 0 {
+		return false, nil
+	}
+	for i := range podGangs.Items {
+		podGang := podGangs.Items[i]
+		if podGang.Status.LastReady == nil {
 			return false, nil
 		}
 	}

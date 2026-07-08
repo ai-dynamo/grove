@@ -80,10 +80,39 @@ func (b *PodGangBuilder) WithSchedulerName(name string) *PodGangBuilder {
 	return b
 }
 
+// WithLabel sets a single label on the PodGang.
+func (b *PodGangBuilder) WithLabel(key, value string) *PodGangBuilder {
+	if b.pg.Labels == nil {
+		b.pg.Labels = make(map[string]string)
+	}
+	b.pg.Labels[key] = value
+	return b
+}
+
 // WithDeletionTimestamp sets the DeletionTimestamp on the PodGang to simulate a pending deletion.
 func (b *PodGangBuilder) WithDeletionTimestamp() *PodGangBuilder {
 	now := metav1.NewTime(time.Now())
 	b.pg.DeletionTimestamp = &now
+	return b
+}
+
+// WithStatusConditions adds conditions to PodGang status.
+func (b *PodGangBuilder) WithStatusConditions(conditions ...metav1.Condition) *PodGangBuilder {
+	for i := range conditions {
+		b.pg.Status.Conditions = append(b.pg.Status.Conditions, conditions[i])
+	}
+	return b
+}
+
+// WithStatusLastScheduled sets PodGang.Status.LastScheduled to the value passed in.
+func (b *PodGangBuilder) WithStatusLastScheduled(t metav1.Time) *PodGangBuilder {
+	b.pg.Status.LastScheduled = &t
+	return b
+}
+
+// WithStatusLastReady sets PodGang.Status.LastReady to the value passed in.
+func (b *PodGangBuilder) WithStatusLastReady(t metav1.Time) *PodGangBuilder {
+	b.pg.Status.LastReady = &t
 	return b
 }
 

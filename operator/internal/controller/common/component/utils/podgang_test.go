@@ -18,9 +18,12 @@ package utils
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/stretchr/testify/assert"
@@ -383,4 +386,200 @@ func TestArePodGangsReady(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, ok)
 	})
+}
+
+// TestAllPodGangsAtEpochEverScheduled verifies the monotonic "ever scheduled"
+// check used by the pod component's scheduling-gate removal path.
+func TestAllPodGangsAtEpochEverScheduled(t *testing.T) {
+	const (
+		namespace              = "default"
+		pcsName                = "test-pcs"
+		defaultPCSReplicaIndex = int32(0)
+		defaultEpoch           = "1700000000000000000"
+	)
+	scheme := groveclientscheme.Scheme
+
+	type podGangSpec struct {
+		name            string
+		epoch           string
+		pcsReplicaIndex int32
+		everScheduled   bool
+	}
+
+	mkPG := func(s podGangSpec) *groveschedulerv1alpha1.PodGang {
+		return newTestPodGangForEpoch(s.name, namespace, pcsName, s.pcsReplicaIndex, s.epoch, s.everScheduled, false)
+	}
+
+	tests := []struct {
+		name  string
+		specs []podGangSpec
+		want  bool
+	}{
+		{
+			name:  "no matching PodGangs returns false",
+			specs: nil,
+			want:  false,
+		},
+		{
+			name:  "single PodGang with LastScheduled set returns true",
+			specs: []podGangSpec{{name: "pg-0", epoch: defaultEpoch, pcsReplicaIndex: defaultPCSReplicaIndex, everScheduled: true}},
+			want:  true,
+		},
+		{
+			name:  "single PodGang with LastScheduled nil returns false",
+			specs: []podGangSpec{{name: "pg-0", epoch: defaultEpoch, pcsReplicaIndex: defaultPCSReplicaIndex, everScheduled: false}},
+			want:  false,
+		},
+		{
+			name: "all of multiple PodGangs with LastScheduled set returns true",
+			specs: []podGangSpec{
+				{name: "pg-0", epoch: defaultEpoch, pcsReplicaIndex: defaultPCSReplicaIndex, everScheduled: true},
+				{name: "pg-1", epoch: defaultEpoch, pcsReplicaIndex: defaultPCSReplicaIndex, everScheduled: true},
+			},
+			want: true,
+		},
+		{
+			name: "any one of multiple PodGangs with LastScheduled nil returns false",
+			specs: []podGangSpec{
+				{name: "pg-0", epoch: defaultEpoch, pcsReplicaIndex: defaultPCSReplicaIndex, everScheduled: true},
+				{name: "pg-1", epoch: defaultEpoch, pcsReplicaIndex: defaultPCSReplicaIndex, everScheduled: false},
+			},
+			want: false,
+		},
+		{
+			name: "PodGang at a different epoch is filtered out even if not scheduled",
+			specs: []podGangSpec{
+				{name: "pg-0", epoch: defaultEpoch, pcsReplicaIndex: defaultPCSReplicaIndex, everScheduled: true},
+				{name: "pg-other-epoch", epoch: "1700000000000000001", pcsReplicaIndex: defaultPCSReplicaIndex, everScheduled: false},
+			},
+			want: true,
+		},
+		{
+			name: "PodGang at a different replica index is filtered out even if not scheduled",
+			specs: []podGangSpec{
+				{name: "pg-0", epoch: defaultEpoch, pcsReplicaIndex: defaultPCSReplicaIndex, everScheduled: true},
+				{name: "pg-other-replica", epoch: defaultEpoch, pcsReplicaIndex: 1, everScheduled: false},
+			},
+			want: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			builder := fake.NewClientBuilder().WithScheme(scheme)
+			for _, s := range tc.specs {
+				builder = builder.WithObjects(mkPG(s))
+			}
+			cl := builder.Build()
+			ok, err := AllPodGangsAtEpochEverScheduled(t.Context(), cl, namespace, pcsName, defaultPCSReplicaIndex, defaultEpoch)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, ok)
+		})
+	}
+}
+
+// TestAllPodGangsAtEpochEverReady verifies the monotonic "ever ready"
+// check used by the orchestrator's sub-step advance precondition.
+func TestAllPodGangsAtEpochEverReady(t *testing.T) {
+	const (
+		namespace              = "default"
+		pcsName                = "test-pcs"
+		defaultPCSReplicaIndex = int32(0)
+		defaultEpoch           = "1700000000000000000"
+	)
+	scheme := groveclientscheme.Scheme
+
+	type podGangSpec struct {
+		name            string
+		epoch           string
+		pcsReplicaIndex int32
+		everReady       bool
+	}
+
+	mkPG := func(s podGangSpec) *groveschedulerv1alpha1.PodGang {
+		return newTestPodGangForEpoch(s.name, namespace, pcsName, s.pcsReplicaIndex, s.epoch, false, s.everReady)
+	}
+
+	tests := []struct {
+		name  string
+		specs []podGangSpec
+		want  bool
+	}{
+		{
+			name:  "no matching PodGangs returns false",
+			specs: nil,
+			want:  false,
+		},
+		{
+			name:  "single PodGang with LastReady set returns true",
+			specs: []podGangSpec{{name: "pg-0", epoch: defaultEpoch, pcsReplicaIndex: defaultPCSReplicaIndex, everReady: true}},
+			want:  true,
+		},
+		{
+			name:  "single PodGang with LastReady nil returns false",
+			specs: []podGangSpec{{name: "pg-0", epoch: defaultEpoch, pcsReplicaIndex: defaultPCSReplicaIndex, everReady: false}},
+			want:  false,
+		},
+		{
+			name: "all of multiple PodGangs with LastReady set returns true",
+			specs: []podGangSpec{
+				{name: "pg-0", epoch: defaultEpoch, pcsReplicaIndex: defaultPCSReplicaIndex, everReady: true},
+				{name: "pg-1", epoch: defaultEpoch, pcsReplicaIndex: defaultPCSReplicaIndex, everReady: true},
+			},
+			want: true,
+		},
+		{
+			name: "any one of multiple PodGangs with LastReady nil returns false",
+			specs: []podGangSpec{
+				{name: "pg-0", epoch: defaultEpoch, pcsReplicaIndex: defaultPCSReplicaIndex, everReady: true},
+				{name: "pg-1", epoch: defaultEpoch, pcsReplicaIndex: defaultPCSReplicaIndex, everReady: false},
+			},
+			want: false,
+		},
+		{
+			name: "PodGang at a different epoch is filtered out even if not ready",
+			specs: []podGangSpec{
+				{name: "pg-0", epoch: defaultEpoch, pcsReplicaIndex: defaultPCSReplicaIndex, everReady: true},
+				{name: "pg-other-epoch", epoch: "1700000000000000001", pcsReplicaIndex: defaultPCSReplicaIndex, everReady: false},
+			},
+			want: true,
+		},
+		{
+			name: "PodGang at a different replica index is filtered out even if not ready",
+			specs: []podGangSpec{
+				{name: "pg-0", epoch: defaultEpoch, pcsReplicaIndex: defaultPCSReplicaIndex, everReady: true},
+				{name: "pg-other-replica", epoch: defaultEpoch, pcsReplicaIndex: 1, everReady: false},
+			},
+			want: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			builder := fake.NewClientBuilder().WithScheme(scheme)
+			for _, s := range tc.specs {
+				builder = builder.WithObjects(mkPG(s))
+			}
+			cl := builder.Build()
+			ok, err := AllPodGangsAtEpochEverReady(t.Context(), cl, namespace, pcsName, defaultPCSReplicaIndex, defaultEpoch)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, ok)
+		})
+	}
+}
+
+// newTestPodGangForEpoch builds a PodGang stamped with the three labels used
+// by the AllPodGangsAtEpoch* filter helpers (part-of, pcs-replica-index, epoch).
+// Optionally sets Status.LastScheduled and/or Status.LastReady to the current
+// time when the respective flags are true.
+func newTestPodGangForEpoch(name, namespace, pcsName string, pcsReplicaIndex int32, epoch string, scheduled, ready bool) *groveschedulerv1alpha1.PodGang {
+	b := testutils.NewPodGangBuilder(name, namespace).
+		WithLabel(apicommon.LabelPartOfKey, pcsName).
+		WithLabel(apicommon.LabelPodCliqueSetReplicaIndex, strconv.Itoa(int(pcsReplicaIndex))).
+		WithLabel(apicommon.LabelEpoch, epoch)
+	if scheduled {
+		b = b.WithStatusLastScheduled(metav1.Now())
+	}
+	if ready {
+		b = b.WithStatusLastReady(metav1.Now())
+	}
+	return b.Build()
 }
