@@ -84,6 +84,12 @@ type PodGangEntry struct {
 	Labels map[string]string `json:"labels,omitempty"`
 	// DependsOn lists the PodGang names within the same PodCliqueSet replica whose pods must be
 	// scheduled before pods in this PodGang have their scheduling gates removed.
+	// Deprecated: use DependsOnEpoch. Will be removed once all consumers migrate.
 	// +optional
 	DependsOn []string `json:"dependsOn,omitempty"`
+	// DependsOnEpoch is the epoch of the PodGangs whose pods must be scheduled
+	// before this entry's PodGang becomes eligible for scheduling. nil means
+	// the entry has no scheduling dependency and is eligible immediately.
+	// +optional
+	DependsOnEpoch *string `json:"dependsOnEpoch,omitempty"`
 }

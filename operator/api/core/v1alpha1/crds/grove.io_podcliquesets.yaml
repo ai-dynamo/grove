@@ -11266,14 +11266,23 @@ spec:
                         progress of an update for a specific PodCliqueSet replica.
                       properties:
                         errorMessage:
-                          description: ErrorMessage captures the reason the update
-                            of this replica is stalled or failing, if any.
+                          description: |-
+                            ErrorMessage captures the reason the update of this replica is stalled or failing, if any.
+                            Deprecated: use WaitingFor. Will be removed once all consumers migrate.
+                          type: string
+                        inFlightEpoch:
+                          description: |-
+                            InFlightEpoch is the epoch of the most recent batch present on the PodGangMap
+                            for this replica. Populated by the orchestrator each reconcile by reading the
+                            max epoch across PodGangMap entries. Never cleared until the coherent update
+                            completes for this replica.
                           type: string
                         inFlightPodGangs:
                           description: |-
                             InFlightPodGangs are the names of PodGangs that are part of the current update
                             iteration for this replica. The orchestrator waits for all of them to become
                             available before advancing to the next iteration.
+                            Deprecated: use InFlightEpoch. Will be removed once all consumers migrate.
                           items:
                             type: string
                           type: array
@@ -11293,6 +11302,14 @@ spec:
                           description: UpdateStartedAt is the time at which the update
                             started for this PodCliqueSet replica index.
                           format: date-time
+                          type: string
+                        waitingFor:
+                          description: |-
+                            WaitingFor describes the current reason the orchestrator has not advanced
+                            the coherent update this reconcile. Populated whenever any advance
+                            precondition is not met: PodGangs at the current InFlightEpoch not yet
+                            reporting LastReady, subsumed pods still coming up, or an availability
+                            budget preventing further takedown. Cleared once all preconditions hold.
                           type: string
                       required:
                       - replicaIndex

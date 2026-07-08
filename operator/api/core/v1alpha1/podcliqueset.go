@@ -210,11 +210,26 @@ type PodCliqueSetReplicaUpdateProgress struct {
 	// InFlightPodGangs are the names of PodGangs that are part of the current update
 	// iteration for this replica. The orchestrator waits for all of them to become
 	// available before advancing to the next iteration.
+	// Deprecated: use InFlightEpoch. Will be removed once all consumers migrate.
 	// +optional
 	InFlightPodGangs []string `json:"inFlightPodGangs,omitempty"`
+	// InFlightEpoch is the epoch of the most recent batch present on the PodGangMap
+	// for this replica. Populated by the orchestrator each reconcile by reading the
+	// max epoch across PodGangMap entries. Never cleared until the coherent update
+	// completes for this replica.
+	// +optional
+	InFlightEpoch *string `json:"inFlightEpoch,omitempty"`
 	// ErrorMessage captures the reason the update of this replica is stalled or failing, if any.
+	// Deprecated: use WaitingFor. Will be removed once all consumers migrate.
 	// +optional
 	ErrorMessage *string `json:"errorMessage,omitempty"`
+	// WaitingFor describes the current reason the orchestrator has not advanced
+	// the coherent update this reconcile. Populated whenever any advance
+	// precondition is not met: PodGangs at the current InFlightEpoch not yet
+	// reporting LastReady, subsumed pods still coming up, or an availability
+	// budget preventing further takedown. Cleared once all preconditions hold.
+	// +optional
+	WaitingFor *string `json:"waitingFor,omitempty"`
 }
 
 // RollingUpdateConfiguration carries per-component knobs that bound disruption
