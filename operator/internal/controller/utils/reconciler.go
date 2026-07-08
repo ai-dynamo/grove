@@ -37,7 +37,7 @@ import (
 func GetPodCliqueSet(ctx context.Context, cl client.Client, logger logr.Logger, objectKey client.ObjectKey, pcs *v1alpha1.PodCliqueSet) grovectrl.ReconcileStepResult {
 	if err := cl.Get(ctx, objectKey, pcs); err != nil {
 		if apierrors.IsNotFound(err) {
-			logger.Info("PodCliqueSet not found", "objectKey", objectKey)
+			logger.V(1).Info("PodCliqueSet not found", "objectKey", objectKey)
 			return grovectrl.DoNotRequeue()
 		}
 		return grovectrl.ReconcileWithErrors("error getting PodCliqueSet", err)
@@ -49,7 +49,7 @@ func GetPodCliqueSet(ctx context.Context, cl client.Client, logger logr.Logger, 
 func GetPodClique(ctx context.Context, cl client.Client, logger logr.Logger, objectKey client.ObjectKey, pclq *v1alpha1.PodClique, ignoreNotFound bool) grovectrl.ReconcileStepResult {
 	if err := cl.Get(ctx, objectKey, pclq); err != nil {
 		if ignoreNotFound && apierrors.IsNotFound(err) {
-			logger.Info("PodClique not found", "objectKey", objectKey)
+			logger.V(1).Info("PodClique not found", "objectKey", objectKey)
 			return grovectrl.DoNotRequeue()
 		}
 		return grovectrl.ReconcileWithErrors("error getting PodClique", err)
@@ -61,7 +61,7 @@ func GetPodClique(ctx context.Context, cl client.Client, logger logr.Logger, obj
 func GetPodCliqueScalingGroup(ctx context.Context, cl client.Client, logger logr.Logger, objectKey client.ObjectKey, pcsg *v1alpha1.PodCliqueScalingGroup) grovectrl.ReconcileStepResult {
 	if err := cl.Get(ctx, objectKey, pcsg); err != nil {
 		if apierrors.IsNotFound(err) {
-			logger.Info("PodCliqueScalingGroup not found")
+			logger.V(1).Info("PodCliqueScalingGroup not found")
 			return grovectrl.DoNotRequeue()
 		}
 		logger.Error(err, "error getting PodCliqueScalingGroup")

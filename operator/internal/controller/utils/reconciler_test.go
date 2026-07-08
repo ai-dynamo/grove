@@ -18,11 +18,13 @@ package utils
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	"github.com/go-logr/logr"
+	"github.com/go-logr/logr/funcr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -190,6 +192,30 @@ func TestGetPodClique(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestGetPodCliqueNotFoundLogVerbosity verifies the not-found message is suppressed at V(0)
+// and emitted at V(1) — regression guard for issue #622.
+func TestGetPodCliqueNotFoundLogVerbosity(t *testing.T) {
+	ctx := context.Background()
+	objectKey := types.NamespacedName{Name: "missing-pclq", Namespace: "default"}
+	scheme := runtime.NewScheme()
+	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	countNotFound := func(verbosity int) int {
+		var n int
+		logger := funcr.New(func(_, msg string) {
+			if strings.Contains(msg, "PodClique not found") {
+				n++
+			}
+		}, funcr.Options{Verbosity: verbosity})
+		_ = GetPodClique(ctx, fakeClient, logger, objectKey, &grovecorev1alpha1.PodClique{}, true)
+		return n
+	}
+
+	assert.Equal(t, 0, countNotFound(0), "V(0) must not emit not-found message")
+	assert.Equal(t, 1, countNotFound(1), "V(1) must emit exactly one not-found message")
 }
 
 // TestGetPodCliqueScalingGroup tests the GetPodCliqueScalingGroup function
