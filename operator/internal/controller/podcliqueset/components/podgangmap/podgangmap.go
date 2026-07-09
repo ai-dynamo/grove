@@ -83,13 +83,6 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
 	logger.Info("Syncing PodGangMap resources")
 
-	// InFlightPodGangs will be non-nil if a coherent update is currently in-progress, and
-	// it is waiting for the set of PodGang's in this list to become available before it can
-	// proceed further. Till that happens computation for next set of PodGangs is skipped.
-	if hasInFlightPodGangs(pcs) {
-		return nil
-	}
-
 	sc, err := r.prepareSyncFlow(ctx, logger, pcs)
 	if err != nil {
 		return err

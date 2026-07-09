@@ -209,52 +209,62 @@ func TestAllOwnerMappingsInitialized(t *testing.T) {
 		}
 	}
 
-	t.Run("returns true when every spec-declared owner is observed and has a non-empty mapping", func(t *testing.T) {
-		assert.True(t, allOwnerMappingsInitialized(pcs,
-			[]grovecorev1alpha1.PodClique{pclqWith(map[string]int32{"pg-0": 1})},
-			[]grovecorev1alpha1.PodCliqueScalingGroup{pcsgWith(map[string][]int32{"pg-0": {0}})},
-		))
-	})
-
-	t.Run("returns false when any standalone PCLQ has nil mapping", func(t *testing.T) {
-		assert.False(t, allOwnerMappingsInitialized(pcs,
-			[]grovecorev1alpha1.PodClique{pclqWith(nil)},
-			[]grovecorev1alpha1.PodCliqueScalingGroup{pcsgWith(map[string][]int32{"pg-0": {0}})},
-		))
-	})
-
-	t.Run("returns false when any PCSG has empty mapping", func(t *testing.T) {
-		assert.False(t, allOwnerMappingsInitialized(pcs,
-			[]grovecorev1alpha1.PodClique{pclqWith(map[string]int32{"pg-0": 1})},
-			[]grovecorev1alpha1.PodCliqueScalingGroup{pcsgWith(map[string][]int32{})},
-		))
-	})
-
-	t.Run("returns false when no owners observed yet (PCS bootstrap window)", func(t *testing.T) {
-		// Spec declares 1 standalone PCLQ + 1 PCSG; cache hasn't seen them yet. The follower
-		// must not rebuild PGM during this window — it would wipe entries seeded from spec
-		// by createPodGangMapForReplica.
-		assert.False(t, allOwnerMappingsInitialized(pcs, nil, nil))
-	})
-
-	t.Run("returns false when standalone PCLQ observed but PCSG cache lags", func(t *testing.T) {
-		// Spec has 1 standalone PCLQ + 1 PCSG. PCLQ seeded its mapping; PCSG cache hasn't
-		// caught up. Rebuilding now would drop the PCSG-side counts from PGM.
-		assert.False(t, allOwnerMappingsInitialized(pcs,
-			[]grovecorev1alpha1.PodClique{pclqWith(map[string]int32{"pg-0": 1})},
-			nil,
-		))
-	})
-
-	t.Run("returns false during gang-termination window when PCLQs deleted but PCSGs remain", func(t *testing.T) {
-		// Gang termination deletes all PCLQs (standalone + PCSG-owned) but leaves PCSGs.
-		// Spec still declares 1 standalone PCLQ; cache reports 0. Gate must stay closed
-		// until the PCS reconciler recreates the PCLQs and their pod component reseeds.
-		assert.False(t, allOwnerMappingsInitialized(pcs,
-			nil,
-			[]grovecorev1alpha1.PodCliqueScalingGroup{pcsgWith(map[string][]int32{"pg-0": {0}})},
-		))
-	})
+	tests := []struct {
+		name            string
+		standalonePCLQs []grovecorev1alpha1.PodClique
+		pcsgs           []grovecorev1alpha1.PodCliqueScalingGroup
+		want            bool
+	}{
+		{
+			name:            "every spec-declared owner is observed and has a non-empty mapping",
+			standalonePCLQs: []grovecorev1alpha1.PodClique{pclqWith(map[string]int32{"pg-0": 1})},
+			pcsgs:           []grovecorev1alpha1.PodCliqueScalingGroup{pcsgWith(map[string][]int32{"pg-0": {0}})},
+			want:            true,
+		},
+		{
+			name:            "standalone PCLQ has nil mapping",
+			standalonePCLQs: []grovecorev1alpha1.PodClique{pclqWith(nil)},
+			pcsgs:           []grovecorev1alpha1.PodCliqueScalingGroup{pcsgWith(map[string][]int32{"pg-0": {0}})},
+			want:            false,
+		},
+		{
+			name:            "PCSG has empty mapping",
+			standalonePCLQs: []grovecorev1alpha1.PodClique{pclqWith(map[string]int32{"pg-0": 1})},
+			pcsgs:           []grovecorev1alpha1.PodCliqueScalingGroup{pcsgWith(map[string][]int32{})},
+			want:            false,
+		},
+		{
+			// Spec declares 1 standalone PCLQ + 1 PCSG; cache hasn't seen them yet. The follower
+			// must not rebuild PGM during this window. It would wipe entries seeded from spec
+			// by createPodGangMapForReplica.
+			name:            "no owners observed yet (PCS bootstrap window)",
+			standalonePCLQs: nil,
+			pcsgs:           nil,
+			want:            false,
+		},
+		{
+			// Spec has 1 standalone PCLQ + 1 PCSG. PCLQ seeded its mapping; PCSG cache hasn't
+			// caught up. Rebuilding now would drop the PCSG-side counts from PGM.
+			name:            "standalone PCLQ observed but PCSG cache lags",
+			standalonePCLQs: []grovecorev1alpha1.PodClique{pclqWith(map[string]int32{"pg-0": 1})},
+			pcsgs:           nil,
+			want:            false,
+		},
+		{
+			// Gang termination deletes all PCLQs (standalone + PCSG-owned) but leaves PCSGs.
+			// Spec still declares 1 standalone PCLQ; cache reports 0. Gate must stay closed
+			// until the PCS reconciler recreates the PCLQs and their pod component reseeds.
+			name:            "gang-termination window: PCLQs deleted but PCSGs remain",
+			standalonePCLQs: nil,
+			pcsgs:           []grovecorev1alpha1.PodCliqueScalingGroup{pcsgWith(map[string][]int32{"pg-0": {0}})},
+			want:            false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, allOwnerMappingsInitialized(pcs, tc.standalonePCLQs, tc.pcsgs))
+		})
+	}
 }
 
 func TestComputeMVUEntriesFromSpec(t *testing.T) {
@@ -363,46 +373,76 @@ func TestComputeMVUEntriesFromPCSTemplateSpec_GeneratedNames(t *testing.T) {
 	}
 }
 
-func TestHasInFlightPodGangs(t *testing.T) {
-	t.Run("returns false when UpdateProgress is nil", func(t *testing.T) {
-		pcs := &grovecorev1alpha1.PodCliqueSet{}
-		assert.False(t, hasInFlightPodGangs(pcs))
-	})
-
-	t.Run("returns false when CurrentlyUpdating is empty", func(t *testing.T) {
-		pcs := &grovecorev1alpha1.PodCliqueSet{
-			Status: grovecorev1alpha1.PodCliqueSetStatus{
-				UpdateProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{},
-			},
-		}
-		assert.False(t, hasInFlightPodGangs(pcs))
-	})
-
-	t.Run("returns false when InFlightPodGangs is empty", func(t *testing.T) {
-		pcs := &grovecorev1alpha1.PodCliqueSet{
-			Status: grovecorev1alpha1.PodCliqueSetStatus{
-				UpdateProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
-					CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{
-						{ReplicaIndex: 0},
-					},
+func TestIsPCSReplicaUnderUpdate(t *testing.T) {
+	tests := []struct {
+		name            string
+		updateProgress  *grovecorev1alpha1.PodCliqueSetUpdateProgress
+		pcsReplicaIndex int
+		want            bool
+	}{
+		{
+			name:            "UpdateProgress is nil",
+			updateProgress:  nil,
+			pcsReplicaIndex: 0,
+			want:            false,
+		},
+		{
+			name:            "CurrentlyUpdating is empty",
+			updateProgress:  &grovecorev1alpha1.PodCliqueSetUpdateProgress{},
+			pcsReplicaIndex: 0,
+			want:            false,
+		},
+		{
+			name: "queried index not in CurrentlyUpdating",
+			updateProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{
+					{ReplicaIndex: 1},
 				},
 			},
-		}
-		assert.False(t, hasInFlightPodGangs(pcs))
-	})
-
-	t.Run("returns true when InFlightPodGangs is populated", func(t *testing.T) {
-		pcs := &grovecorev1alpha1.PodCliqueSet{
-			Status: grovecorev1alpha1.PodCliqueSetStatus{
-				UpdateProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
-					CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{
-						{ReplicaIndex: 0, InFlightPodGangs: []string{"pg-0"}},
-					},
+			pcsReplicaIndex: 0,
+			want:            false,
+		},
+		{
+			name: "index in CurrentlyUpdating with UpdateEndedAt nil",
+			updateProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{
+					{ReplicaIndex: 0},
 				},
 			},
-		}
-		assert.True(t, hasInFlightPodGangs(pcs))
-	})
+			pcsReplicaIndex: 0,
+			want:            true,
+		},
+		{
+			name: "index in CurrentlyUpdating with UpdateEndedAt set",
+			updateProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{
+					{ReplicaIndex: 0, UpdateEndedAt: ptr.To(metav1.Now())},
+				},
+			},
+			pcsReplicaIndex: 0,
+			want:            false,
+		},
+		{
+			name: "multi-replica list matches only queried index",
+			updateProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{
+					{ReplicaIndex: 0, UpdateEndedAt: ptr.To(metav1.Now())},
+					{ReplicaIndex: 2},
+					{ReplicaIndex: 3, UpdateEndedAt: ptr.To(metav1.Now())},
+				},
+			},
+			pcsReplicaIndex: 2,
+			want:            true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pcs := &grovecorev1alpha1.PodCliqueSet{
+				Status: grovecorev1alpha1.PodCliqueSetStatus{UpdateProgress: tc.updateProgress},
+			}
+			assert.Equal(t, tc.want, isPCSReplicaUnderUpdate(pcs, tc.pcsReplicaIndex))
+		})
+	}
 }
 
 // TestPodGangGenerationHash covers the three-source priority:
@@ -564,14 +604,14 @@ func TestGetPodGangPCSReplicaIndex(t *testing.T) {
 	}
 }
 
-// TestSyncSteadyStateEntries_Integration exercises the full Sync() path with a fake client to
-// confirm two follower behaviours end-to-end:
+// TestSyncSteadyStateEntries exercises the full Sync() path with a fake client to
+// confirm two follower behaviors end-to-end:
 //
 //  1. Gate closed (some owner has empty Status.PodGangMapping) → PGM is left as-is.
 //  2. Gate open with stale PGM contents → PGM is reconciled to current PCLQ/PCSG status:
 //     existing entries' DependsOn is preserved, net-new Scaled-PGs inherit DependsOn from
 //     the anchor entries, ghost entries are dropped.
-func TestSyncSteadyStateEntries_Integration(t *testing.T) {
+func TestSyncSteadyStateEntries(t *testing.T) {
 	const (
 		pcsName    = "my-pcs"
 		pcsHash    = "abc12"
@@ -881,10 +921,42 @@ func TestSync_DeletesOrphanedPodGangMapsOnPCSReplicaScaleIn(t *testing.T) {
 
 	t.Run("coherent update path: PCS scaled from 2 to 1 deletes orphaned PGM-1", func(t *testing.T) {
 		pcs := newPCS(1)
-		// Drive the coherent-update path: UpdateProgress non-nil with UpdateEndedAt == nil.
+		// Drive the coherent-update path for replica 0: strategy=Coherent (already set by newPCS),
+		// UpdateProgress with replica 0 in CurrentlyUpdating and UpdateEndedAt nil, and
+		// UpdatedStandalonePodCliques populated so computeMVUTemplate succeeds.
 		pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
-			UpdateStartedAt: metav1.Now(),
+			UpdateStartedAt:             metav1.Now(),
+			UpdatedStandalonePodCliques: []string{"frontend"},
+			CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{
+				{ReplicaIndex: 0},
+			},
 		}
+		// MinAvailable is required on the template for computeMVUTemplate.
+		pcs.Spec.Template.Cliques[0].Spec.MinAvailable = ptr.To(int32(1))
+		cl := testutils.NewTestClientBuilder().WithObjects(pcs, standalonePCLQ(0), pgm(0), pgm(1)).Build()
+		r := &_resource{client: cl, scheme: groveclientscheme.Scheme, clk: clock.RealClock{}}
+
+		require.NoError(t, r.Sync(context.Background(), logr.Discard(), pcs))
+
+		assertExists(t, cl, pcsName+"-0")
+		assertDeleted(t, cl, pcsName+"-1")
+	})
+
+	t.Run("strategy gate: non-Coherent strategy routes through steady-state even when CurrentlyUpdating is populated", func(t *testing.T) {
+		// Even if the orchestrator has populated CurrentlyUpdating for replica 0, a
+		// non-Coherent UpdateStrategy must NOT trigger the coherent path in PGM. This
+		// verifies the coherentUpdateStrategy && ... guard in runSyncFlow. Orphan
+		// cleanup still runs on the steady-state path.
+		pcs := newPCS(1)
+		pcs.Spec.UpdateStrategy = &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.RollingRecreateStrategy}
+		pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+			CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{
+				{ReplicaIndex: 0},
+			},
+		}
+		// No UpdatedStandalonePodCliques / MinAvailable is set. If the code accidentally
+		// dispatched to the coherent path, computeMVUTemplate would fail and Sync would return
+		// an error. A green run of this subtest is proof that the strategy gate holds.
 		cl := testutils.NewTestClientBuilder().WithObjects(pcs, standalonePCLQ(0), pgm(0), pgm(1)).Build()
 		r := &_resource{client: cl, scheme: groveclientscheme.Scheme, clk: clock.RealClock{}}
 

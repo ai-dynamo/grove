@@ -22,7 +22,10 @@ import (
 	"slices"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // mvuTemplate describes the composition of one MVU PodGang.
@@ -39,17 +42,28 @@ type mvuTemplate struct {
 // update so the template stays stable as PCLQs roll over to the new hash. MinAvailable values are
 // looked up live from PCS.Spec.Template — the webhook prevents MinAvailable changes mid-update,
 // so the spec values are the same as they were at update start.
-func computeMVUTemplate(pcs *grovecorev1alpha1.PodCliqueSet) (*mvuTemplate, error) {
+func computeMVUTemplate(pcs *grovecorev1alpha1.PodCliqueSet) (mvuTmpl *mvuTemplate, err error) {
+	defer func() {
+		if err != nil {
+			err = groveerr.WrapError(err,
+				errCodeSyncPodGangMap,
+				component.OperationSync,
+				fmt.Sprintf("Error computing MVU template for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
+			)
+		}
+	}()
 	progress := pcs.Status.UpdateProgress
 	if progress == nil {
-		return nil, fmt.Errorf("UpdateProgress is unset on PodCliqueSet %s; cannot derive MVU template", pcs.Name)
+		err = fmt.Errorf("UpdateProgress is unset on PodCliqueSet %s; cannot derive MVU template", pcs.Name)
+		return
 	}
 
 	standalone := make(map[string]int32, len(progress.UpdatedStandalonePodCliques))
 	for _, name := range progress.UpdatedStandalonePodCliques {
 		template := componentutils.FindPodCliqueTemplateSpecByName(pcs, name)
 		if template == nil {
-			return nil, fmt.Errorf("standalone PodClique %q in UpdateProgress.UpdatedStandalonePodCliques is no longer in PCS %s spec", name, pcs.Name)
+			err = fmt.Errorf("standalone PodClique %q in UpdateProgress.UpdatedStandalonePodCliques is no longer in PCS %s spec", name, pcs.Name)
+			return
 		}
 		standalone[name] = *template.Spec.MinAvailable
 	}
@@ -58,7 +72,8 @@ func computeMVUTemplate(pcs *grovecorev1alpha1.PodCliqueSet) (*mvuTemplate, erro
 	for _, name := range progress.UpdatedPodCliqueScalingGroups {
 		pcsgConfig := componentutils.FindScalingGroupConfigByName(pcs, name)
 		if pcsgConfig == nil {
-			return nil, fmt.Errorf("PodCliqueScalingGroup %q in UpdateProgress.UpdatedPodCliqueScalingGroups is no longer in PCS %s spec", name, pcs.Name)
+			err = fmt.Errorf("PodCliqueScalingGroup %q in UpdateProgress.UpdatedPodCliqueScalingGroups is no longer in PCS %s spec", name, pcs.Name)
+			return
 		}
 		pcsgs[name] = *pcsgConfig.MinAvailable
 	}

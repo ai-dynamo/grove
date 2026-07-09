@@ -45,7 +45,8 @@ type syncContext struct {
 	logger           logr.Logger
 	pclqsByReplica   map[int][]grovecorev1alpha1.PodClique
 	pcsgsByReplica   map[int][]grovecorev1alpha1.PodCliqueScalingGroup
-	existingPGMNames []string
+	existingPGMNames sets.Set[string]
+	mvuTemplate      *mvuTemplate
 }
 
 // prepareSyncFlow fetches the state needed for the sync flow.
@@ -65,11 +66,19 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs 
 	if err != nil {
 		return nil, err
 	}
-	sc.existingPGMNames, err = r.GetExistingResourceNames(ctx, logger, pcs.ObjectMeta)
+	existingPGMNames, err := r.GetExistingResourceNames(ctx, logger, pcs.ObjectMeta)
 	if err != nil {
 		return nil, err
 	}
-
+	sc.existingPGMNames = sets.New[string](existingPGMNames...)
+	if componentutils.IsCoherentUpdateInProgress(pcs) {
+		// MVU template is the snapshot captured on PCS.Status.UpdateProgress at update start.
+		// It is invariant for the lifetime of the update, so compute it once and reuse across replicas.
+		sc.mvuTemplate, err = computeMVUTemplate(sc.pcs)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return sc, nil
 }
 
@@ -115,52 +124,58 @@ func (r _resource) getPCSGsByReplica(ctx context.Context, pcs *grovecorev1alpha1
 	return pcsgsByReplica, nil
 }
 
-// runSyncFlow dispatches to the appropriate sync strategy based on PCS state.
+// runSyncFlow computes and persists the PodGangMap for every PCS replica.
+// Replicas currently under coherent update take the coherent-update path.
+// Others take the steady-state path. Orphan PodGangMaps left by a scale-in
+// are cleaned up at the end.
 func (r _resource) runSyncFlow(ctx context.Context, sc *syncContext) error {
-	if componentutils.IsCoherentUpdateInProgress(sc.pcs) {
-		return r.syncCoherentUpdateEntries(ctx, sc)
+	coherentUpdateStrategy := componentutils.IsCoherentStrategy(sc.pcs)
+	expectedPGMNames := sets.New[string]()
+	for pcsReplicaIndex := range int(sc.pcs.Spec.Replicas) {
+		pgmName := apicommon.GeneratePodGangMapName(apicommon.ResourceNameReplica{Name: sc.pcs.Name, Replica: pcsReplicaIndex})
+		expectedPGMNames.Insert(pgmName)
+		if coherentUpdateStrategy && isPCSReplicaUnderUpdate(sc.pcs, pcsReplicaIndex) {
+			if err := r.syncCoherentUpdateEntries(ctx, sc, pcsReplicaIndex); err != nil {
+				return err
+			}
+		} else {
+			if err := r.syncSteadyStateEntries(ctx, sc, pcsReplicaIndex); err != nil {
+				return err
+			}
+		}
 	}
-	return r.syncSteadyStateEntries(ctx, sc)
+	return r.deleteOrphanedPodGangMaps(ctx, sc, expectedPGMNames)
 }
 
 // syncCoherentUpdateEntries computes and persists PodGangMap entries during a coherent update.
-func (r _resource) syncCoherentUpdateEntries(ctx context.Context, sc *syncContext) error {
-	// MVU template is the snapshot captured on PCS.Status.UpdateProgress at update start.
-	// It is invariant for the lifetime of the update, so compute it once and reuse across replicas.
-	template, err := computeMVUTemplate(sc.pcs)
+func (r _resource) syncCoherentUpdateEntries(ctx context.Context, sc *syncContext, pcsReplicaIndex int) error {
+	pgmName := apicommon.GeneratePodGangMapName(apicommon.ResourceNameReplica{Name: sc.pcs.Name, Replica: pcsReplicaIndex})
+	entries, err := r.computeCoherentUpdateEntries(ctx, sc.pcs, pcsReplicaIndex, pgmName, sc.pclqsByReplica[pcsReplicaIndex], sc.mvuTemplate)
 	if err != nil {
 		return groveerr.WrapError(err,
 			errCodeSyncPodGangMap,
 			component.OperationSync,
-			fmt.Sprintf("Error computing MVU template for PodCliqueSet: %v", client.ObjectKeyFromObject(sc.pcs)),
+			fmt.Sprintf("Error computing entries for PodGangMap %s: %v", pgmName, client.ObjectKeyFromObject(sc.pcs)),
 		)
 	}
+	return r.createOrPatchPodGangMap(ctx, sc.pcs, pgmName, pcsReplicaIndex, entries)
+}
 
-	expectedPGMNames := make([]string, 0, sc.pcs.Spec.Replicas)
-	for pcsReplicaIndex := range sc.pcs.Spec.Replicas {
-		pgmName := apicommon.GeneratePodGangMapName(apicommon.ResourceNameReplica{Name: sc.pcs.Name, Replica: int(pcsReplicaIndex)})
-		expectedPGMNames = append(expectedPGMNames, pgmName)
-
-		entries, err := r.computeCoherentUpdateEntries(ctx, sc.pcs, int(pcsReplicaIndex), pgmName, sc.pclqsByReplica[int(pcsReplicaIndex)], template)
-		if err != nil {
-			return groveerr.WrapError(err,
-				errCodeSyncPodGangMap,
-				component.OperationSync,
-				fmt.Sprintf("Error computing entries for PodGangMap %s: %v", pgmName, client.ObjectKeyFromObject(sc.pcs)),
-			)
-		}
-		if err = r.createOrPatchPodGangMap(ctx, sc.pcs, pgmName, int(pcsReplicaIndex), entries); err != nil {
-			return err
+// isPCSReplicaUnderUpdate reports whether the PCS replica at the given index
+// is currently under update. True when the replica appears in
+// pcs.Status.UpdateProgress.CurrentlyUpdating with UpdateEndedAt unset. Does
+// not consult Spec.UpdateStrategy. Callers scope the strategy check.
+func isPCSReplicaUnderUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int) bool {
+	if pcs.Status.UpdateProgress == nil {
+		return false
+	}
+	for i := range pcs.Status.UpdateProgress.CurrentlyUpdating {
+		p := &pcs.Status.UpdateProgress.CurrentlyUpdating[i]
+		if int(p.ReplicaIndex) == pcsReplicaIndex && p.UpdateEndedAt == nil {
+			return true
 		}
 	}
-
-	// Delete excess PodGangMaps (from scale-in).
-	if err = r.deleteOrphanedPodGangMaps(ctx, sc, expectedPGMNames); err != nil {
-		return err
-	}
-
-	sc.logger.Info("Successfully synced PodGangMap resources during coherent update")
-	return nil
+	return false
 }
 
 // computeCoherentUpdateEntries computes PodGangMap entries for a coherent update.
@@ -487,59 +502,46 @@ func extractCliqueName(podGroupName string, pcs *grovecorev1alpha1.PodCliqueSet)
 	return "", fmt.Errorf("PodGroup name %q does not match any known clique template in PCS %s", podGroupName, pcs.Name)
 }
 
-// syncSteadyStateEntries follows the desired PCLQ/PCSG status mappings into PGM entries.
-// For each PCS replica:
+// syncSteadyStateEntries follows the desired PCLQ/PCSG status mappings into PGM entries
+// for a single PCS replica.
 //
-//	If its PodGangMap doesn't exist yet, it is created via createPodGangMapForReplica
-//	(which decides between MVU-from-spec and Base/Scaled-from-existing-resources).
+// If the PodGangMap doesn't exist yet, it is created via createPodGangMapForReplica
+// (which decides between MVU-from-spec and Base/Scaled-from-existing-resources).
 //
-//	If the PodGangMap exists, the follower applies a single rule: skip the replica until
-//	every standalone PCLQ AND every PCSG has a non-empty Status.PodGangMapping. Once that
-//	gate is open, the follower reconstructs the entry list from the current status mappings
-//	via buildEntriesFromStatuses (with the existing entries supplied so that DependsOn is
-//	preserved on entries that are still around and inherited by net-new Scaled-PG shells),
-//	then drops zero-count entries via removeEmptyEntries.
-func (r _resource) syncSteadyStateEntries(ctx context.Context, sc *syncContext) error {
-	expectedPGMNames := make([]string, 0, sc.pcs.Spec.Replicas)
-	existingPGMNames := sets.New[string](sc.existingPGMNames...)
-	for pcsReplicaIndex := range sc.pcs.Spec.Replicas {
-		pgmName := apicommon.GeneratePodGangMapName(apicommon.ResourceNameReplica{Name: sc.pcs.Name, Replica: int(pcsReplicaIndex)})
-		expectedPGMNames = append(expectedPGMNames, pgmName)
-		if !existingPGMNames.Has(pgmName) {
-			if err := r.createPodGangMapForReplica(ctx, sc, pgmName, int(pcsReplicaIndex)); err != nil {
-				return err
-			}
-			continue
-		}
-
-		standalonePCLQs := filterStandalonePCLQs(sc.pclqsByReplica[int(pcsReplicaIndex)])
-		pcsgs := sc.pcsgsByReplica[int(pcsReplicaIndex)]
-		if !allOwnerMappingsInitialized(sc.pcs, standalonePCLQs, pcsgs) {
-			continue
-		}
-
-		existingEntries, err := r.getExistingPGMEntries(ctx, sc.pcs, pgmName)
-		if err != nil {
-			return err
-		}
-		entries := buildEntriesFromStatuses(existingEntries, sc.pcs, standalonePCLQs, pcsgs, int(pcsReplicaIndex))
-		entries = removeEmptyEntries(entries)
-
-		if err = r.createOrPatchPodGangMap(ctx, sc.pcs, pgmName, int(pcsReplicaIndex), entries); err != nil {
-			return err
-		}
+// If the PodGangMap exists, the follower applies a single rule: skip the replica until
+// every standalone PCLQ AND every PCSG has a non-empty Status.PodGangMapping. Once that
+// gate is open, the follower reconstructs the entry list from the current status mappings
+// via buildEntriesFromStatuses (with the existing entries supplied so that DependsOn is
+// preserved on entries that are still around and inherited by net-new Scaled-PG shells),
+// then drops zero-count entries via removeEmptyEntries.
+func (r _resource) syncSteadyStateEntries(ctx context.Context, sc *syncContext, pcsReplicaIndex int) error {
+	pgmName := apicommon.GeneratePodGangMapName(apicommon.ResourceNameReplica{Name: sc.pcs.Name, Replica: pcsReplicaIndex})
+	if !sc.existingPGMNames.Has(pgmName) {
+		return r.createPodGangMapForReplica(ctx, sc, pgmName, pcsReplicaIndex)
 	}
 
-	// Delete excess PodGangMaps left over from a PCS replica scale-in. PodGangMap is
-	// owner-referenced to PCS, so it is not garbage-collected when only the PCS replica
-	// count shrinks; the steady-state path must clean up explicitly.
-	return r.deleteOrphanedPodGangMaps(ctx, sc, expectedPGMNames)
+	standalonePCLQs := filterStandalonePCLQs(sc.pclqsByReplica[pcsReplicaIndex])
+	pcsgs := sc.pcsgsByReplica[pcsReplicaIndex]
+	if !allOwnerMappingsInitialized(sc.pcs, standalonePCLQs, pcsgs) {
+		return nil
+	}
+
+	existingEntries, err := r.getExistingPGMEntries(ctx, sc.pcs, pgmName)
+	if err != nil {
+		return err
+	}
+	entries := buildEntriesFromStatuses(existingEntries, sc.pcs, standalonePCLQs, pcsgs, pcsReplicaIndex)
+	entries = removeEmptyEntries(entries)
+
+	return r.createOrPatchPodGangMap(ctx, sc.pcs, pgmName, pcsReplicaIndex, entries)
 }
 
 // deleteOrphanedPodGangMaps removes any PodGangMap whose name is not in expectedPGMNames.
-// Used to clean up PodGangMaps left behind by a PCS replica scale-in.
-func (r _resource) deleteOrphanedPodGangMaps(ctx context.Context, sc *syncContext, expectedPGMNames []string) error {
-	for _, orphanPGMName := range lo.Filter(sc.existingPGMNames, func(n string, _ int) bool { return !slices.Contains(expectedPGMNames, n) }) {
+// Used to clean up PodGangMaps left behind by a PCS replica scale-in. PodGangMap is
+// owner-referenced to PCS, so it is not garbage-collected when only the PCS replica
+// count shrinks; the sync flow must clean up explicitly.
+func (r _resource) deleteOrphanedPodGangMaps(ctx context.Context, sc *syncContext, expectedPGMNames sets.Set[string]) error {
+	for orphanPGMName := range sc.existingPGMNames.Difference(expectedPGMNames) {
 		pgm := emptyPodGangMap(client.ObjectKey{Namespace: sc.pcs.Namespace, Name: orphanPGMName})
 		if err := r.client.Delete(ctx, pgm); err != nil {
 			return groveerr.WrapError(err,
@@ -817,11 +819,4 @@ func (r _resource) createOrPatchPodGangMap(ctx context.Context, pcs *grovecorev1
 			fmt.Sprintf("Error creating or updating PodGangMap %s for PodCliqueSet: %v", pgmName, client.ObjectKeyFromObject(pcs)))
 	}
 	return nil
-}
-
-// hasInFlightPodGangs returns true if the orchestrator has in-flight PodGangs awaiting availability.
-func hasInFlightPodGangs(pcs *grovecorev1alpha1.PodCliqueSet) bool {
-	return pcs.Status.UpdateProgress != nil &&
-		len(pcs.Status.UpdateProgress.CurrentlyUpdating) > 0 &&
-		len(pcs.Status.UpdateProgress.CurrentlyUpdating[0].InFlightPodGangs) > 0
 }
