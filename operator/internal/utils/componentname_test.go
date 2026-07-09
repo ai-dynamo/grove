@@ -179,3 +179,31 @@ func TestGetPodCliqueNameFromPodCliqueFQN(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractPodGangNameSuffix(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		expected  int
+		expectErr bool
+	}{
+		{"unified scheme small suffix", "workload1-0-5", 5, false},
+		{"unified scheme zero suffix", "workload1-0-0", 0, false},
+		{"unified scheme multi-digit suffix", "workload1-0-12345", 12345, false},
+		{"legacy SPG name", "workload1-0-sg-3", 3, false},
+		{"no dash", "abc", 0, true},
+		{"trailing dash", "workload1-0-", 0, true},
+		{"non-integer suffix", "workload1-0-foo", 0, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ExtractPodGangNameSuffix(tc.input)
+			if tc.expectErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tc.expected, got)
+		})
+	}
+}

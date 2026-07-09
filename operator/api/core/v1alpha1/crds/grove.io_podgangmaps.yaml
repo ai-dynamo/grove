@@ -1,0 +1,122 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  name: podgangmaps.grove.io
+spec:
+  group: grove.io
+  names:
+    kind: PodGangMap
+    listKind: PodGangMapList
+    plural: podgangmaps
+    shortNames:
+    - pgm
+    singular: podgangmap
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          PodGangMap is the desired-state mapping between PodGangs and their constituent
+          PodClique and PodCliqueScalingGroup pod counts for a single PodCliqueSet replica.
+          One PodGangMap resource exists per PodCliqueSet replica, named <pcs-name>-<pcs-replica-index>.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: Spec defines the desired PodGang-to-pod-count mapping for
+              this PodCliqueSet replica.
+            properties:
+              entries:
+                description: |-
+                  Entries is the ordered list of desired PodGangs for this PodCliqueSet replica.
+                  Each entry corresponds to one PodGang and specifies its pod and replica counts.
+                items:
+                  description: PodGangEntry describes the desired composition of a
+                    single PodGang.
+                  properties:
+                    dependsOn:
+                      description: |-
+                        DependsOn lists the PodGang names within the same PodCliqueSet replica whose pods must be
+                        scheduled before pods in this PodGang have their scheduling gates removed.
+                      items:
+                        type: string
+                      type: array
+                    labels:
+                      additionalProperties:
+                        type: string
+                      description: |-
+                        Labels carries additional labels to stamp on the materialized PodGang resource,
+                        beyond the labels the PodGang materialization adds by default. Today this carries
+                        the grove.io/epoch label used for scheduling-order semantics.
+                      type: object
+                    name:
+                      description: Name is the name of the PodGang this entry corresponds
+                        to.
+                      type: string
+                    pcsgReplicaIndices:
+                      additionalProperties:
+                        items:
+                          format: int32
+                          type: integer
+                        type: array
+                      description: |-
+                        PCSGReplicaIndices maps PodCliqueScalingGroup config name to the PCSG replica indices
+                        that belong to this PodGang. The number of replicas is len(slice). Indices are stable
+                        identities that survive entry reshuffles, so a PodClique reconciler for a PodCliqueScalingGroup-
+                        owned PodClique can find its target PodGang by looking up its replica index here.
+                      type: object
+                    podCliqueSetGenerationHash:
+                      description: |-
+                        PodCliqueSetGenerationHash is the PodCliqueSet generation hash that pods in this PodGang
+                        must match. Used by PodClique and PodCliqueScalingGroup reconcilers to create pods at the
+                        correct spec version and to distinguish old pods from new pods during a coherent update.
+                      type: string
+                    podCliques:
+                      additionalProperties:
+                        format: int32
+                        type: integer
+                      description: |-
+                        PodCliques maps standalone PodClique name to the number of pods that belong to this PodGang.
+                        Only standalone PodCliques (not owned by a PodCliqueScalingGroup) are listed here.
+                        PodCliques owned by a PodCliqueScalingGroup derive their PodGang association via
+                        PCSGReplicaIndices below.
+                      type: object
+                  required:
+                  - name
+                  - podCliqueSetGenerationHash
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              podCliqueSetReplicaIndex:
+                description: PodCliqueSetReplicaIndex is the index of the PodCliqueSet
+                  replica this map belongs to.
+                format: int32
+                type: integer
+            required:
+            - entries
+            - podCliqueSetReplicaIndex
+            type: object
+        type: object
+    served: true
+    storage: true

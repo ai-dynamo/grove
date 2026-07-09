@@ -40,6 +40,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/clock"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -53,8 +54,9 @@ func TestNew(t *testing.T) {
 
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 	eventRecorder := &record.FakeRecorder{}
+	clk := clock.RealClock{}
 
-	operator := New(client, scheme, eventRecorder)
+	operator := New(client, scheme, eventRecorder, clk)
 
 	assert.NotNil(t, operator)
 	resource, ok := operator.(*_resource)
@@ -62,6 +64,7 @@ func TestNew(t *testing.T) {
 	assert.Equal(t, client, resource.client)
 	assert.Equal(t, scheme, resource.scheme)
 	assert.Equal(t, eventRecorder, resource.eventRecorder)
+	assert.Equal(t, clk, resource.clk)
 }
 
 func TestMarkRollingUpdateEndReturnsRequeueAfterPatch(t *testing.T) {
@@ -1064,7 +1067,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 				eventRecorder: &record.FakeRecorder{},
 			}
 
-			err := operator.buildResource(logr.Discard(), pcs, pcsg, pcsgReplicaIndex, pclq, false)
+			err := operator.buildResource(logr.Discard(), pcs, pcsg, pcsgReplicaIndex, pclq, false, "test-podgang")
 			require.NoError(t, err)
 
 			// Verify pod-level claims
@@ -1144,7 +1147,7 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 	}
 
 	operator := &_resource{scheme: groveclientscheme.Scheme}
-	err := operator.buildResource(logr.Discard(), pcs, pcsg, 0, pclq, false)
+	err := operator.buildResource(logr.Discard(), pcs, pcsg, 0, pclq, false, "test-podgang")
 	require.NoError(t, err)
 	require.NotNil(t, pclq.Annotations)
 	assert.Equal(t, "yes", pclq.Annotations["example.com/keep"])

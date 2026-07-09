@@ -1,0 +1,98 @@
+# Coherent Update - Case 1: All PCLQs (frontend, prefill, decode) are updated.
+# MVU template: {2F, 1P, 1D}
+#
+# This manifest represents the state at T4 from the proposal illustration:
+#   - Frontend scaled to 5 replicas (standalone, minAvailable=2)
+#   - Prefill PCSG scaled to 4 replicas (minAvailable=1)
+#   - Decode PCSG scaled to 3 replicas (minAvailable=1)
+#
+# Expected PodGang distribution on initial deploy:
+#   PG 0: 2 frontend + 1 prefill replica + 1 decode replica (MVU)
+#   PG 1: 3 frontend + 1 prefill replica + 1 decode replica (last iteration absorbs remaining frontend)
+#   Tail-MPGs: 2 * {P}, 1 * {D}
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: coherent-case1
+  labels:
+    app: coherent-case1
+spec:
+  updateStrategy:
+    type: Coherent
+  replicas: 1
+  template:
+    cliques:
+      - name: frontend
+        spec:
+          roleName: frontend
+          minAvailable: 2
+          replicas: 5
+          podSpec:
+            containers:
+              - name: frontend
+                image: nginx:latest
+                resources:
+                  requests:
+                    cpu: 10m
+      - name: pleader
+        spec:
+          roleName: prefill-leader
+          minAvailable: 1
+          replicas: 1
+          podSpec:
+            containers:
+              - name: prefill
+                image: nginx:latest
+                resources:
+                  requests:
+                    cpu: 10m
+      - name: pworker
+        spec:
+          roleName: prefill-worker
+          minAvailable: 2
+          replicas: 3
+          podSpec:
+            containers:
+              - name: prefill
+                image: nginx:latest
+                resources:
+                  requests:
+                    cpu: 10m
+      - name: dleader
+        spec:
+          roleName: decode-leader
+          minAvailable: 1
+          replicas: 1
+          podSpec:
+            containers:
+              - name: decode
+                image: nginx:latest
+                resources:
+                  requests:
+                    cpu: 10m
+      - name: dworker
+        spec:
+          roleName: decode-worker
+          minAvailable: 2
+          replicas: 4
+          podSpec:
+            containers:
+              - name: decode
+                image: nginx:latest
+                resources:
+                  requests:
+                    cpu: 10m
+    podCliqueScalingGroups:
+      - name: prefill
+        replicas: 4
+        minAvailable: 1
+        cliqueNames:
+          - pleader
+          - pworker
+      - name: decode
+        replicas: 3
+        minAvailable: 1
+        cliqueNames:
+          - dleader
+          - dworker

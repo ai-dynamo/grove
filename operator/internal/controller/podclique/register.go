@@ -20,6 +20,7 @@ import (
 	"context"
 	"strings"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
@@ -79,6 +80,11 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 			&groveschedulerv1alpha1.PodGang{},
 			handler.EnqueueRequestsFromMapFunc(mapPodGangToPCLQs()),
 			builder.WithPredicates(podGangPredicate()),
+		).
+		Watches(
+			&grovecorev1alpha1.PodGangMap{},
+			handler.EnqueueRequestsFromMapFunc(mapPodGangMapToPCLQs()),
+			builder.WithPredicates(podGangMapPredicate()),
 		).
 		Complete(r)
 }
@@ -374,6 +380,56 @@ func isPodGangInitialized(obj client.Object) bool {
 
 	// Check if Initialized condition is True
 	return meta.IsStatusConditionTrue(podGang.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized))
+}
+
+// mapPodGangMapToPCLQs maps a PodGangMap to reconcile.Requests for the standalone PodCliques
+// referenced by its entries. PodCliqueScalingGroup-owned PCLQs are intentionally excluded —
+// the API contract puts only standalone PCLQ names under entry.PodCliques (PCSG-owned PCLQs are
+// reached via the PCSG's own PodGangMap watcher → PCSG → owned PCLQ chain).
+func mapPodGangMapToPCLQs() handler.MapFunc {
+	return func(_ context.Context, obj client.Object) []reconcile.Request {
+		pgm, ok := obj.(*grovecorev1alpha1.PodGangMap)
+		if !ok {
+			return nil
+		}
+		pcsOwnerRef := k8sutils.FindOwnerRefByKind(pgm.OwnerReferences, constants.KindPodCliqueSet)
+		if pcsOwnerRef == nil {
+			return nil
+		}
+		pcsReplica := apicommon.ResourceNameReplica{Name: pcsOwnerRef.Name, Replica: int(pgm.Spec.PodCliqueSetReplicaIndex)}
+		seen := make(map[string]struct{})
+		var requests []reconcile.Request
+		for _, entry := range pgm.Spec.Entries {
+			for pclqName := range entry.PodCliques {
+				fqn := apicommon.GeneratePodCliqueName(pcsReplica, pclqName)
+				if _, dup := seen[fqn]; dup {
+					continue
+				}
+				seen[fqn] = struct{}{}
+				requests = append(requests, reconcile.Request{
+					NamespacedName: types.NamespacedName{Name: fqn, Namespace: pgm.Namespace},
+				})
+			}
+		}
+		return requests
+	}
+}
+
+// podGangMapPredicate triggers PodClique reconciliation on PodGangMap creation and spec changes.
+// Deletion is skipped — PodGangMap deletion is driven by PodCliqueSet deletion, which already
+// cascades to its PodCliques via owner references.
+func podGangMapPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			return grovectrlutils.IsManagedPodGangMap(e.Object)
+		},
+		DeleteFunc: func(_ event.DeleteEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			return grovectrlutils.IsManagedPodGangMap(e.ObjectOld) &&
+				e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration()
+		},
+		GenericFunc: func(_ event.GenericEvent) bool { return false },
+	}
 }
 
 // isManagedPod checks if a Pod is managed by Grove and owned by a PodClique

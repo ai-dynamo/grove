@@ -36,6 +36,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	dockerclient "github.com/docker/docker/client"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -481,6 +482,10 @@ func (scm *SharedClusterManager) listRemainingGroveManagedResources(ctx context.
 
 		resourceList, err := listUnstructured(ctx, scm.k8s, rt, opts...)
 		if err != nil {
+			if meta.IsNoMatchError(err) {
+				// CRD not installed in this cluster (e.g. ComputeDomain without NVIDIA DRA driver); skip silently.
+				continue
+			}
 			scm.logger.Errorf("Failed to list %s: %v", rt.name, err)
 			continue
 		}

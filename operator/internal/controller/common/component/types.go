@@ -83,6 +83,8 @@ const (
 	KindComputeDomain Kind = "ComputeDomain"
 	// KindResourceClaim indicates that the resource is a DRA ResourceClaim.
 	KindResourceClaim Kind = "ResourceClaim"
+	// KindPodGangMap indicates that the resource is a PodGangMap.
+	KindPodGangMap Kind = "PodGangMap"
 )
 
 // OperatorRegistry is a facade that gives access to all components operators.

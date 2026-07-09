@@ -30,7 +30,7 @@ function copy_crds() {
   mkdir -p ${target_path}
 
   echo "Copying grove-operator CRDS..."
-  declare -a operator_crds=("grove.io_podcliquesets.yaml" "grove.io_podcliques.yaml" "grove.io_podcliquescalinggroups.yaml" "grove.io_clustertopologybindings.yaml")
+  declare -a operator_crds=("grove.io_podcliquesets.yaml" "grove.io_podcliques.yaml" "grove.io_podcliquescalinggroups.yaml" "grove.io_clustertopologybindings.yaml" "grove.io_podgangmaps.yaml")
   for crd in "${operator_crds[@]}"; do
     local src_crd_path="${OPERATOR_GO_MODULE_ROOT}/api/core/v1alpha1/crds/${crd}"
     if [ ! -f ${src_crd_path} ]; then

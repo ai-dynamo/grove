@@ -232,3 +232,91 @@ func TestIsManagedPodClique(t *testing.T) {
 		})
 	}
 }
+
+func TestIsManagedPodGangMap(t *testing.T) {
+	managedLabels := map[string]string{apicommon.LabelManagedByKey: apicommon.LabelManagedByValue}
+	pcsOwnerRef := newOwnerReference("PodCliqueSet", "test-pcs", true)
+
+	testCases := []struct {
+		description string
+		obj         client.Object
+		expected    bool
+	}{
+		{
+			description: "managed PodGangMap with PodCliqueSet owner returns true",
+			obj: &grovecorev1alpha1.PodGangMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:            "test-pcs-0",
+					Namespace:       "test-ns",
+					Labels:          managedLabels,
+					OwnerReferences: []metav1.OwnerReference{pcsOwnerRef},
+				},
+			},
+			expected: true,
+		},
+		{
+			description: "missing managed-by label returns false",
+			obj: &grovecorev1alpha1.PodGangMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:            "test-pcs-0",
+					Namespace:       "test-ns",
+					OwnerReferences: []metav1.OwnerReference{pcsOwnerRef},
+				},
+			},
+			expected: false,
+		},
+		{
+			description: "wrong managed-by value returns false",
+			obj: &grovecorev1alpha1.PodGangMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:            "test-pcs-0",
+					Namespace:       "test-ns",
+					Labels:          map[string]string{apicommon.LabelManagedByKey: "other-operator"},
+					OwnerReferences: []metav1.OwnerReference{pcsOwnerRef},
+				},
+			},
+			expected: false,
+		},
+		{
+			description: "wrong owner kind returns false",
+			obj: &grovecorev1alpha1.PodGangMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:            "test-pcs-0",
+					Namespace:       "test-ns",
+					Labels:          managedLabels,
+					OwnerReferences: []metav1.OwnerReference{newOwnerReference("WrongKind", "test", true)},
+				},
+			},
+			expected: false,
+		},
+		{
+			description: "no owner references returns false",
+			obj: &grovecorev1alpha1.PodGangMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pcs-0",
+					Namespace: "test-ns",
+					Labels:    managedLabels,
+				},
+			},
+			expected: false,
+		},
+		{
+			description: "object is not a PodGangMap returns false",
+			obj: &grovecorev1alpha1.PodCliqueSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:            "test-pcs",
+					Namespace:       "test-ns",
+					Labels:          managedLabels,
+					OwnerReferences: []metav1.OwnerReference{pcsOwnerRef},
+				},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			assert.Equal(t, tc.expected, IsManagedPodGangMap(tc.obj))
+		})
+	}
+}

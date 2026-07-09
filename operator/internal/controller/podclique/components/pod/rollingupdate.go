@@ -278,3 +278,32 @@ func (r _resource) markRollingUpdateEnd(ctx context.Context, logger logr.Logger,
 	logger.Info("Marked the end of rolling update of PodClique")
 	return nil
 }
+
+// checkAndMarkPCLQCoherentUpdateEnded closes out the PCLQ-level UpdateProgress when a coherent update has
+// finished rolling all pods of a standalone PCLQ to the new template.
+//
+// In a coherent update, pods are rolled by reconcileStandalonePCLQDistribution's count-driven
+// create/delete loop — there is no per-PCLQ orchestrator akin to processPendingUpdates that would
+// call markRollingUpdateEnd. Without an explicit completion step, mutateCurrentHashes (in the PCLQ
+// status path) refuses to advance pclq.Status.CurrentPodCliqueSetGenerationHash because
+// IsPCLQAutoUpdateInProgress stays true, which strands the PCS-level orchestrator's "replica done"
+// check.
+//
+// Conditions for completion:
+//   - PCS is in a coherent update.
+//   - PCLQ has UpdateProgress set with no UpdateEndedAt yet.
+//   - This is a standalone PCLQ (PCSG-owned PCLQs never have UpdateProgress set on them by this
+//     reconciler; they roll via gang-termination by the PCSG controller).
+//   - status.Replicas == spec.Replicas (all expected pods exist) and status.UpdatedReplicas ==
+//     status.Replicas (all live pods carry the new template hash). UpdatedReplicas is computed
+//     against UpdateProgress.PodTemplateHash by mutateUpdatedReplica, so this comparison is
+//     race-free — no extra pod walk required here.
+func (r _resource) checkAndMarkPCLQCoherentUpdateEnded(logger logr.Logger, sc *syncContext) error {
+	if sc.pclq.Status.Replicas != sc.pclq.Spec.Replicas {
+		return nil
+	}
+	if sc.pclq.Status.UpdatedReplicas != sc.pclq.Status.Replicas {
+		return nil
+	}
+	return r.markRollingUpdateEnd(sc.ctx, logger, sc.pclq)
+}

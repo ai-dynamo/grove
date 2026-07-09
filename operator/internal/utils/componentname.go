@@ -64,3 +64,24 @@ func GetPodCliqueNameFromPodCliqueFQN(pclqObjectMeta metav1.ObjectMeta) (string,
 	pclqNamePrefix := fmt.Sprintf("%s-%s-", pcsName, pcsReplicaIndex)
 	return pclqObjectMeta.Name[len(pclqNamePrefix):], nil
 }
+
+// ExtractPodGangNameSuffix parses the trailing integer segment from a PodGang name.
+//
+// Under the unified PodGang naming convention introduced for coherent updates, all PodGang
+// names follow the shape <pcs>-<replica>-<unix-nano>; the suffix is the unix-nano value.
+// Legacy SPG names of the form <pcsg-fqn>-<int> also have an integer trailing segment and
+// parse correctly; this function does not interpret the meaning of the suffix.
+//
+// Returns an error if the name has no trailing '-<integer>' segment — Grove is the sole
+// writer of these names so a parse failure indicates a contract violation, not a soft skip.
+func ExtractPodGangNameSuffix(podGangName string) (int, error) {
+	dash := strings.LastIndex(podGangName, "-")
+	if dash < 0 || dash == len(podGangName)-1 {
+		return 0, fmt.Errorf("PodGang name %q has no trailing '-<integer>' suffix", podGangName)
+	}
+	suffix, err := strconv.Atoi(podGangName[dash+1:])
+	if err != nil {
+		return 0, fmt.Errorf("trailing suffix of PodGang name %q is not an integer: %w", podGangName, err)
+	}
+	return suffix, nil
+}
