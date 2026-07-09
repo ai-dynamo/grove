@@ -266,7 +266,15 @@ func computeMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1a
 		}
 	}
 
-	minAvailable := int(*pcsg.Spec.MinAvailable)
+	// The apiserver defaults Spec.MinAvailable to 1 (+kubebuilder:default), but objects
+	// persisted under an older CRD schema can still read back nil until their next write —
+	// dereferencing unguarded would crash-loop the operator off a single legacy object.
+	minAvailable := 1
+	if pcsg.Spec.MinAvailable != nil {
+		minAvailable = int(*pcsg.Spec.MinAvailable)
+	} else {
+		logger.Info("PCSG has nil Spec.MinAvailable; assuming API default of 1", "pcsg", client.ObjectKeyFromObject(pcsg))
+	}
 	notInBreachReplicas := computeNotInBreachReplicas(logger, pcsg, pclqsPerPCSGReplica)
 	if notInBreachReplicas < minAvailable {
 		return metav1.Condition{
