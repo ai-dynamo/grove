@@ -1,0 +1,34 @@
+# Grove PodCliqueSet with minCount semantics and no PodCliqueScalingGroup.
+# Grove's Kueue backend builds one prebuilt Kueue Workload per PodGang, with a
+# podSet whose count == clique replicas and minCount == clique minAvailable.
+# Apply after kueue-kind-queue.yaml and grove-kind-topology.yaml.
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: grove-kueue-mincount
+  labels:
+    app: grove-kueue-mincount
+    kueue.x-k8s.io/queue-name: grove-poc
+spec:
+  replicas: 1
+  template:
+    topologyConstraint:
+      topologyName: grove-kind-topology
+      pack:
+        required: rack
+    cliques:
+    - name: frontend
+      spec:
+        roleName: frontend
+        replicas: 4
+        minAvailable: 2
+        podSpec:
+          schedulerName: kueue
+          terminationGracePeriodSeconds: 5
+          containers:
+          - name: pause
+            image: registry.k8s.io/pause:3.9
+            resources:
+              requests:
+                cpu: 100m
+                memory: 64Mi

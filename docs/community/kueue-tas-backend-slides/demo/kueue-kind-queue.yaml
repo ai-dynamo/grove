@@ -1,0 +1,44 @@
+# CPU-only Kueue queue setup for kind smoke tests.
+# This is intentionally not the slide-deck GPU/TAS platform example.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ResourceFlavor
+metadata:
+  name: kind-cpu
+spec:
+  nodeLabels:
+    topology.ai-dynamo.io/tas-node: "true"
+  topologyName: grove-kind-topology
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: kind-cpu
+spec:
+  namespaceSelector: {}
+  resourceGroups:
+  - coveredResources:
+    - cpu
+    - memory
+    flavors:
+    - name: kind-cpu
+      resources:
+      - name: cpu
+        nominalQuota: "4"
+      - name: memory
+        nominalQuota: 8Gi
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: production-gpu
+  namespace: default
+spec:
+  clusterQueue: kind-cpu
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: grove-poc
+  namespace: default
+spec:
+  clusterQueue: kind-cpu

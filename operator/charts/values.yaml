@@ -99,13 +99,14 @@ config:
     profiles:
       - name: default-scheduler
       - name: kai-scheduler
+      - name: kueue
       # Uncomment optional scheduler profiles only when their dependencies are installed.
       # - name: volcano
       # - name: lpx-scheduler
   logLevel: info
   logFormat: json
   topologyAwareScheduling:
-    enabled: false
+    enabled: true
   authorizer:
     enabled: false
     exemptServiceAccountUserNames:

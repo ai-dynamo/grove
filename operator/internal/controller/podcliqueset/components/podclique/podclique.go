@@ -48,6 +48,7 @@ const (
 	errDeletePodClique             grovecorev1alpha1.ErrorCode = "ERR_DELETE_PODCLIQUE"
 	errCodeListPodCliques          grovecorev1alpha1.ErrorCode = "ERR_LIST_PODCLIQUES"
 	errCodeCreateOrUpdatePodClique grovecorev1alpha1.ErrorCode = "ERR_CREATE_OR_UPDATE_PODCLIQUE"
+	kueueQueueNameLabel            string                      = "kueue.x-k8s.io/queue-name"
 )
 
 type _resource struct {
@@ -392,8 +393,13 @@ func getLabels(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int, pclqObjectKe
 		apicommon.LabelPodGang:                  podGangName,
 		apicommon.LabelPodTemplateHash:          componentutils.ComputePCLQPodTemplateHash(pclqTemplateSpec, pcs.Spec.Template.PriorityClassName),
 	}
+	pcsQueueLabels := map[string]string{}
+	if queueName := pcs.Labels[kueueQueueNameLabel]; queueName != "" {
+		pcsQueueLabels[kueueQueueNameLabel] = queueName
+	}
 	return lo.Assign(
 		pclqTemplateSpec.Labels,
+		pcsQueueLabels,
 		apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name),
 		pclqComponentLabels,
 	)

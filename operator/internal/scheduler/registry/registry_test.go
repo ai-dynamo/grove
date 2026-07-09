@@ -55,6 +55,12 @@ func TestNewRegistry(t *testing.T) {
 			expectedName:  "lpx-scheduler",
 		},
 		{
+			name:          "kueue scheduler initialization",
+			schedulerName: configv1alpha1.SchedulerNameKueue,
+			wantErr:       false,
+			expectedName:  "kueue",
+		},
+		{
 			name:          "unsupported scheduler",
 			schedulerName: "unknown-scheduler",
 			wantErr:       true,
@@ -100,6 +106,7 @@ func TestNewRegistry(t *testing.T) {
 				{Name: configv1alpha1.SchedulerNameKai},
 				{Name: configv1alpha1.SchedulerNameVolcano},
 				{Name: configv1alpha1.SchedulerNameLPX},
+				{Name: configv1alpha1.SchedulerNameKueue},
 			},
 			DefaultProfileName: string(configv1alpha1.SchedulerNameKai),
 		}
@@ -109,6 +116,7 @@ func TestNewRegistry(t *testing.T) {
 		require.NotNil(t, reg.Get(string(configv1alpha1.SchedulerNameKube)))
 		require.NotNil(t, reg.Get(string(configv1alpha1.SchedulerNameVolcano)))
 		require.NotNil(t, reg.Get(string(configv1alpha1.SchedulerNameLPX)))
+		require.NotNil(t, reg.Get(string(configv1alpha1.SchedulerNameKueue)))
 		assert.Equal(t, reg.GetDefault(), reg.Get(string(configv1alpha1.SchedulerNameKai)))
 		assert.NotContains(t, reg.AllTopologyAware(), string(configv1alpha1.SchedulerNameLPX))
 	})

@@ -1,0 +1,57 @@
+# Grove PodCliqueSet with a PodCliqueScalingGroup (PCSG).
+# POC assumption: PCSG.minAvailable == PCSG.replicas, so the whole gang is
+# all-or-nothing. Grove builds one prebuilt Kueue Workload per PodGang and
+# omits minCount for the PCSG podSets.
+# Apply after kueue-kind-queue.yaml and grove-kind-topology.yaml.
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: grove-kueue-pcsg
+  labels:
+    app: grove-kueue-pcsg
+    kueue.x-k8s.io/queue-name: grove-poc
+spec:
+  replicas: 1
+  template:
+    topologyConstraint:
+      topologyName: grove-kind-topology
+      pack:
+        required: rack
+    podCliqueScalingGroups:
+    - name: decode
+      replicas: 2
+      minAvailable: 2
+      cliqueNames:
+      - decode-leader
+      - decode-worker
+    cliques:
+    - name: decode-leader
+      spec:
+        roleName: decode-leader
+        replicas: 1
+        minAvailable: 1
+        podSpec:
+          schedulerName: kueue
+          terminationGracePeriodSeconds: 5
+          containers:
+          - name: pause
+            image: registry.k8s.io/pause:3.9
+            resources:
+              requests:
+                cpu: 50m
+                memory: 32Mi
+    - name: decode-worker
+      spec:
+        roleName: decode-worker
+        replicas: 2
+        minAvailable: 2
+        podSpec:
+          schedulerName: kueue
+          terminationGracePeriodSeconds: 5
+          containers:
+          - name: pause
+            image: registry.k8s.io/pause:3.9
+            resources:
+              requests:
+                cpu: 50m
+                memory: 32Mi

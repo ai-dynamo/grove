@@ -1,0 +1,11 @@
+# Grove source-of-truth topology for the CPU-only kind TAS smoke test.
+apiVersion: grove.io/v1alpha1
+kind: ClusterTopologyBinding
+metadata:
+  name: grove-kind-topology
+spec:
+  levels:
+  - domain: rack
+    key: topology.ai-dynamo.io/rack
+  - domain: host
+    key: kubernetes.io/hostname

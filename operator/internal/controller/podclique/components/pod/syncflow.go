@@ -84,7 +84,6 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pclq
 	if err = lo.Ternary(apierrors.IsNotFound(err), nil, err); err != nil {
 		return nil, err
 	}
-
 	// initialize the Pod names that are updated in the PodGang resource for this PCLQ.
 	sc.podNamesUpdatedInPCLQPodGangs = r.getPodNamesUpdatedInAssociatedPodGang(existingPodGang, pclq.Name)
 	sc.podNamesUpdatedInPCLQPodGangSet = componentutils.NewSet(sc.podNamesUpdatedInPCLQPodGangs)
