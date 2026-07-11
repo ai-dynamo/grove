@@ -24,10 +24,9 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
+	commonrevision "github.com/ai-dynamo/grove/operator/internal/controller/common/revision"
 
 	"github.com/samber/lo"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -193,19 +192,6 @@ func groupPCLQsByLabel(pclqs []grovecorev1alpha1.PodClique, labelKey string) map
 	return grouped
 }
 
-// ComputePCLQPodTemplateHash computes the pod template hash for the PCLQ pod spec.
-func ComputePCLQPodTemplateHash(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec, priorityClassName string) string {
-	podTemplateSpec := corev1.PodTemplateSpec{
-		ObjectMeta: metav1.ObjectMeta{
-			Labels:      pclqTemplateSpec.Labels,
-			Annotations: pclqTemplateSpec.Annotations,
-		},
-		Spec: pclqTemplateSpec.Spec.PodSpec,
-	}
-	podTemplateSpec.Spec.PriorityClassName = priorityClassName
-	return k8sutils.ComputeHash(&podTemplateSpec)
-}
-
 // IsPCLQRollingUpdateInProgress checks if PodClique is under a rolling update.
 func IsPCLQRollingUpdateInProgress(pclq *grovecorev1alpha1.PodClique) bool {
 	return pclq.Status.UpdateProgress != nil && pclq.Status.UpdateProgress.UpdateEndedAt == nil
@@ -218,44 +204,35 @@ func IsLastPCLQUpdateCompleted(pclq *grovecorev1alpha1.PodClique) bool {
 	return pclq.Status.UpdateProgress != nil && pclq.Status.UpdateProgress.UpdateEndedAt != nil
 }
 
-// IsPCLQUpdateComplete reports whether the PodClique has converged to the current generation hash of the
-// PodCliqueSet. It assumes the PodCliqueSet has a current generation hash, which holds during a rolling
-// update and in the status path that guards it.
-func IsPCLQUpdateComplete(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) bool {
-	// A PodCliqueSet without a current generation hash has no target for its children to converge to, so
-	// no PodClique can be complete. computePCLQsStatus reaches here for a freshly created PodCliqueSet
-	// before its first generation hash is recorded.
-	if pcs.Status.CurrentGenerationHash == nil {
+// IsPCLQUpdateComplete reports whether the PodClique has converged to the selected revision.
+func IsPCLQUpdateComplete(revision *commonrevision.Revision, pclq *grovecorev1alpha1.PodClique) bool {
+	if revision == nil {
 		return false
 	}
-	expectedPodTemplateHash, err := GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
+	expectedPodTemplateHash, err := GetExpectedPCLQPodTemplateHash(revision, pclq.ObjectMeta)
 	if err != nil || expectedPodTemplateHash == "" {
 		return false
 	}
 	podTemplateHashConverged := pclq.Labels[apicommon.LabelPodTemplateHash] == expectedPodTemplateHash &&
 		pclq.Status.CurrentPodTemplateHash != nil && *pclq.Status.CurrentPodTemplateHash == expectedPodTemplateHash
 	pcsGenerationHashConverged := pclq.Status.CurrentPodCliqueSetGenerationHash != nil &&
-		*pclq.Status.CurrentPodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash
+		*pclq.Status.CurrentPodCliqueSetGenerationHash == revision.GenerationHash()
 	// A PodClique scaled to zero has no pods to make Ready, so hash convergence alone completes it. Its
 	// resource spec still advances to the new revision, so a later scale-out launches new-spec pods.
 	minAvailablePodsUpdatedAndReady := pclq.Spec.Replicas == 0 ||
-		(pclq.Status.UpdatedReplicas >= *pclq.Spec.MinAvailable &&
+		(pclq.Spec.MinAvailable != nil && pclq.Status.UpdatedReplicas >= *pclq.Spec.MinAvailable &&
 			pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable)
 
 	return podTemplateHashConverged && pcsGenerationHashConverged && minAvailablePodsUpdatedAndReady
 }
 
-// GetExpectedPCLQPodTemplateHash finds the matching PodCliqueTemplateSpec from the PodCliqueSet and computes the pod template hash for the PCLQ pod spec.
-func GetExpectedPCLQPodTemplateHash(pcs *grovecorev1alpha1.PodCliqueSet, pclqObjectMeta metav1.ObjectMeta) (string, error) {
+// GetExpectedPCLQPodTemplateHash returns the selected pod template identity for a PodClique.
+func GetExpectedPCLQPodTemplateHash(revision *commonrevision.Revision, pclqObjectMeta metav1.ObjectMeta) (string, error) {
 	cliqueName, err := GetPodCliqueNameFromPodCliqueFQN(pclqObjectMeta)
 	if err != nil {
 		return "", err
 	}
-	matchingPCLQTemplateSpec := FindPodCliqueTemplateSpecByName(pcs, cliqueName)
-	if matchingPCLQTemplateSpec == nil {
-		return "", fmt.Errorf("pod clique template not found for cliqueName: %s", cliqueName)
-	}
-	return ComputePCLQPodTemplateHash(matchingPCLQTemplateSpec, pcs.Spec.Template.PriorityClassName), nil
+	return revision.CliqueHash(cliqueName)
 }
 
 // FindPodCliqueTemplateSpecByName retrieves the PodCliqueTemplateSpec from the PodCliqueSet by its name.
