@@ -832,9 +832,12 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 			pcs := newBuildResourcePCS("worker", tc.cliqueAnnotations, tc.containers, tc.initContainers)
 			pcsg := newBuildResourcePCSG(tc.pcsgAnnotations)
 			pclq := emptyMemberPodClique("test-pcs-0-sg-0-worker")
-			ss := &syncSnapshot{pcs: pcs, pcsg: pcsg, pcsReplicaIndex: 0, pgm: newAnchorPodGangMap()}
+			revision, err := testutils.NewRevision(pcs)
+			require.NoError(t, err)
+			ss := &syncSnapshot{pcs: pcs, pcsg: pcsg, pcsReplicaIndex: 0, pgm: newAnchorPodGangMap(), revision: revision}
 
 			require.NoError(t, operator.buildResource(logr.Discard(), ss, 0, pclq, false))
+			assert.Equal(t, testutils.ComputePodCliqueTemplateHashes(pcs)["worker"], pclq.Labels[apicommon.LabelPodTemplateHash])
 
 			assertPodLevelMNNVLClaim(t, pclq, tc.expectPodLevelClaim, tc.expectedRCTName)
 			assertContainerMNNVLClaims(t, pclq.Spec.PodSpec.Containers, tc.expectedContainersWithClaims, tc.expectedContainersWithoutClaims)
@@ -850,7 +853,9 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 	}, nil, nil)
 	pcsg := newBuildResourcePCSG(nil)
 	pclq := emptyMemberPodClique("test-pcs-0-sg-0-worker")
-	ss := &syncSnapshot{pcs: pcs, pcsg: pcsg, pcsReplicaIndex: 0, pgm: newAnchorPodGangMap()}
+	revision, err := testutils.NewRevision(pcs)
+	require.NoError(t, err)
+	ss := &syncSnapshot{pcs: pcs, pcsg: pcsg, pcsReplicaIndex: 0, pgm: newAnchorPodGangMap(), revision: revision}
 
 	operator := &_resource{scheme: groveclientscheme.Scheme}
 	require.NoError(t, operator.buildResource(logr.Discard(), ss, 0, pclq, false))
