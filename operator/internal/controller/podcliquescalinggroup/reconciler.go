@@ -59,8 +59,11 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg groveconfigv1alpha1.PodClique
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := ctrllogger.FromContext(ctx).WithName(controllerName)
 
-	// GetPodCliqueSet is called 3× per reconcile (spec, status, podclique sync) — memoize.
+	// Memoize lookups that happen multiple times within a single reconcile:
+	//  * GetPodCliqueSet is called 3× per reconcile (spec, status, podclique sync) — memoize.
+	//  * GetPodCliqueSetRevision — reconcileSpec + prepareSyncContext each get the current revision
 	ctx = componentutils.WithPodCliqueSetCache(ctx)
+	ctx = componentutils.WithPodCliqueSetRevisionCache(ctx)
 
 	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{}
 	if result := ctrlutils.GetPodCliqueScalingGroup(ctx, r.client, logger, req.NamespacedName, pcsg); ctrlcommon.ShortCircuitReconcileFlow(result) {

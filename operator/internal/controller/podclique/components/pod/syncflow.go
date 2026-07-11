@@ -58,7 +58,15 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pclq
 		)
 	}
 
-	sc.expectedPodTemplateHash, err = componentutils.GetExpectedPCLQPodTemplateHash(sc.pcs, pclq.ObjectMeta)
+	revision, err := componentutils.GetPodCliqueSetRevision(ctx, r.client, sc.pcs)
+	if err != nil {
+		return nil, groveerr.WrapError(err,
+			errCodeGetPodCliqueTemplate,
+			component.OperationSync,
+			fmt.Sprintf("failed to get PodCliqueSet revision for PodClique: %v", client.ObjectKeyFromObject(pclq)),
+		)
+	}
+	sc.expectedPodTemplateHash, err = componentutils.GetExpectedPCLQPodTemplateHash(revision, pclq.ObjectMeta)
 	if err != nil {
 		return nil, groveerr.WrapError(err,
 			errCodeGetPodCliqueTemplate,

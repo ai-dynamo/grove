@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
@@ -456,8 +457,10 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 				eventRecorder: record.NewFakeRecorder(10),
 			}
 
-			err := operator.buildResource(logr.Discard(), pclq, pcs, pcsReplica, false)
+			podTemplateHash := testutils.ComputePodCliqueTemplateHashes(pcs)[pclqTemplateName]
+			err := operator.buildResource(logr.Discard(), pclq, pcs, pcsReplica, false, podTemplateHash)
 			require.NoError(t, err)
+			assert.Equal(t, podTemplateHash, pclq.Labels[apicommon.LabelPodTemplateHash])
 
 			// Verify pod-level claims
 			if tc.expectPodLevelClaim {
@@ -510,7 +513,7 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 	}
 
 	operator := &_resource{scheme: groveclientscheme.Scheme}
-	err := operator.buildResource(logr.Discard(), pclq, pcs, 0, false)
+	err := operator.buildResource(logr.Discard(), pclq, pcs, 0, false, "template-hash")
 	require.NoError(t, err)
 	require.NotNil(t, pclq.Annotations)
 	assert.Equal(t, "yes", pclq.Annotations["example.com/keep"])

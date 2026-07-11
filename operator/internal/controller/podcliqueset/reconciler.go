@@ -23,6 +23,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	pcscomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
@@ -36,12 +37,12 @@ import (
 
 // Reconciler reconciles PodCliqueSet resources.
 type Reconciler struct {
-	config                        configv1alpha1.PodCliqueSetControllerConfiguration
-	tasConfig                     configv1alpha1.TopologyAwareSchedulingConfiguration
-	client                        ctrlclient.Client
-	reconcileStatusRecorder       ctrlcommon.ReconcileErrorRecorder
-	operatorRegistry              component.OperatorRegistry[grovecorev1alpha1.PodCliqueSet]
-	pcsGenerationHashExpectations sync.Map
+	config                  configv1alpha1.PodCliqueSetControllerConfiguration
+	tasConfig               configv1alpha1.TopologyAwareSchedulingConfiguration
+	client                  ctrlclient.Client
+	reconcileStatusRecorder ctrlcommon.ReconcileErrorRecorder
+	operatorRegistry        component.OperatorRegistry[grovecorev1alpha1.PodCliqueSet]
+	pcsRevisionExpectations sync.Map
 }
 
 // NewReconciler creates a new reconciler for PodCliqueSet.
@@ -49,18 +50,21 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueSetCo
 	eventRecorder := mgr.GetEventRecorderFor(controllerName)
 	client := mgr.GetClient()
 	return &Reconciler{
-		config:                        controllerCfg,
-		tasConfig:                     topologyAwareSchedulingConfig,
-		client:                        client,
-		reconcileStatusRecorder:       ctrlcommon.NewReconcileErrorRecorder(client),
-		operatorRegistry:              pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, schedRegistry),
-		pcsGenerationHashExpectations: sync.Map{},
+		config:                  controllerCfg,
+		tasConfig:               topologyAwareSchedulingConfig,
+		client:                  client,
+		reconcileStatusRecorder: ctrlcommon.NewReconcileErrorRecorder(client),
+		operatorRegistry:        pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, schedRegistry),
+		pcsRevisionExpectations: sync.Map{},
 	}
 }
 
 // Reconcile reconciles a PodCliqueSet resource.
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := ctrllogger.FromContext(ctx).WithName(controllerName)
+
+	// GetPodCliqueSetRevision — reconcileSpec + reconcileStatus each get the current revision
+	ctx = componentutils.WithPodCliqueSetRevisionCache(ctx)
 
 	pcs := &grovecorev1alpha1.PodCliqueSet{}
 	if result := ctrlutils.GetPodCliqueSet(ctx, r.client, logger, req.NamespacedName, pcs); ctrlcommon.ShortCircuitReconcileFlow(result) {
@@ -76,12 +80,17 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return statusReconcileResult.Result()
 	}
 
+	if historyReconcileResult := r.truncateRevisionHistory(ctx, logger, pcs); ctrlcommon.ShortCircuitReconcileFlow(historyReconcileResult) {
+		return historyReconcileResult.Result()
+	}
+
 	return reconcileSpecFlowResult.Result()
 }
 
 // reconcileDelete handles PodCliqueSet deletion when a deletion timestamp is set.
 func (r *Reconciler) reconcileDelete(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	if !pcs.DeletionTimestamp.IsZero() {
+		r.pcsRevisionExpectations.Delete(pcs.UID)
 		if !controllerutil.ContainsFinalizer(pcs, constants.FinalizerPodCliqueSet) {
 			return ctrlcommon.DoNotRequeue()
 		}
