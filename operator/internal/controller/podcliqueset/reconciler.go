@@ -38,12 +38,12 @@ import (
 
 // Reconciler reconciles PodCliqueSet resources.
 type Reconciler struct {
-	config                        configv1alpha1.PodCliqueSetControllerConfiguration
-	tasConfig                     configv1alpha1.TopologyAwareSchedulingConfiguration
-	client                        ctrlclient.Client
-	reconcileStatusRecorder       ctrlcommon.ReconcileErrorRecorder
-	operatorRegistry              component.OperatorRegistry[grovecorev1alpha1.PodCliqueSet]
-	pcsGenerationHashExpectations sync.Map
+	config                  configv1alpha1.PodCliqueSetControllerConfiguration
+	tasConfig               configv1alpha1.TopologyAwareSchedulingConfiguration
+	client                  ctrlclient.Client
+	reconcileStatusRecorder ctrlcommon.ReconcileErrorRecorder
+	operatorRegistry        component.OperatorRegistry[grovecorev1alpha1.PodCliqueSet]
+	pcsRevisionExpectations sync.Map
 }
 
 // NewReconciler creates a new reconciler for PodCliqueSet.
@@ -51,12 +51,12 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueSetCo
 	eventRecorder := mgr.GetEventRecorderFor(controllerName)
 	client := mgr.GetClient()
 	return &Reconciler{
-		config:                        controllerCfg,
-		tasConfig:                     topologyAwareSchedulingConfig,
-		client:                        client,
-		reconcileStatusRecorder:       ctrlcommon.NewReconcileErrorRecorder(client),
-		operatorRegistry:              pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, schedRegistry),
-		pcsGenerationHashExpectations: sync.Map{},
+		config:                  controllerCfg,
+		tasConfig:               topologyAwareSchedulingConfig,
+		client:                  client,
+		reconcileStatusRecorder: ctrlcommon.NewReconcileErrorRecorder(client),
+		operatorRegistry:        pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, schedRegistry),
+		pcsRevisionExpectations: sync.Map{},
 	}
 }
 

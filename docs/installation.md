@@ -118,6 +118,26 @@ Follow the instructions in the [quickstart guide](quickstart.md) to deploy a Pod
 
 ## Upgrade Notes
 
+### Rollout revision adoption
+
+Before upgrading to a release that stores PodCliqueSet revisions in
+`apps/v1` `ControllerRevision` objects:
+
+1. Apply the release CRDs before starting the new operator. The
+   `PodCliqueSet` CRD must preserve `status.currentRevision`.
+2. Allow every existing PodCliqueSet update to finish. A legacy object is
+   adopted only when `status.observedGeneration` equals `metadata.generation`
+   and no automatic update is active.
+3. Start the new operator. It records the already-observed desired workload as
+   a baseline ControllerRevision while preserving the existing rollout hashes;
+   it does not update or replace workload children during adoption.
+
+The next rollout-relevant spec change creates a new ControllerRevision and
+uses the normal update strategy. An active or otherwise unobserved legacy
+revision is left unchanged and reports a reconciliation error until the
+migration precondition is resolved. Downgrading afterward to an operator that
+does not understand ControllerRevision-backed selection is unsupported.
+
 ### ClusterTopology renamed to ClusterTopologyBinding
 
 Grove does not provide automatic migration for existing `ClusterTopology`

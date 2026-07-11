@@ -491,7 +491,8 @@ _Appears in:_
 | `availableReplicas` _integer_ | AvailableReplicas is the number of PodCliqueSet replicas that are available.<br />A PodCliqueSet replica is considered available when all standalone PodCliques within that replica<br />have MinAvailableBreached condition = False AND all PodCliqueScalingGroups (PCSG) within that replica<br />have MinAvailableBreached condition = False. | 0 |  |
 | `hpaPodSelector` _string_ | Selector is the label selector that determines which pods are part of the PodGang.<br />PodGang is a unit of scale and this selector is used by HPA to scale the PodGang based on metrics captured for<br />the pods that match this selector. |  |  |
 | `podGangStatuses` _[PodGangStatus](#podgangstatus) array_ | PodGangStatuses captures the status for all the PodGang's that are part of the PodCliqueSet. |  |  |
-| `currentGenerationHash` _string_ | CurrentGenerationHash is a hash value generated out of a collection of fields in a PodCliqueSet.<br />Since only a subset of fields is taken into account when generating the hash, not every change in the PodCliqueSetSpec will<br />be accounted for when generating this hash value. A field in PodCliqueSetSpec is included if a change to it triggers<br />a rolling recreate of PodCliques and/or PodCliqueScalingGroups.<br />Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value<br />then an update needs to be triggered. |  |  |
+| `currentGenerationHash` _string_ | CurrentGenerationHash is the opaque identity selected for the current rollout-relevant revision. |  |  |
+| `currentRevision` _string_ | CurrentRevision names the ControllerRevision containing the selected rollout revision. |  |  |
 | `updateProgress` _[PodCliqueSetUpdateProgress](#podcliquesetupdateprogress)_ | UpdateProgress represents the progress of an update. |  |  |
 
 

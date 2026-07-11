@@ -53,6 +53,10 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 		logger.Error(err, "could not get PodCliqueSet for PodClique", "pclqObjectKey", pclqObjectKey)
 		return ctrlcommon.ReconcileWithErrors("could not get PodCliqueSet for PodClique", err)
 	}
+	revision, err := componentutils.GetPodCliqueSetRevisionData(ctx, r.client, pcs)
+	if err != nil {
+		return ctrlcommon.ReconcileWithErrors("could not get PodCliqueSet revision", err)
+	}
 
 	existingPods, err := componentutils.GetPCLQPods(ctx, r.client, pcsName, pclq)
 	if err != nil {
@@ -66,7 +70,7 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	mutateReplicas(pclq, podCategories, len(existingPods))
 	mutateUpdatedReplica(pclq, existingPods)
 	// mutate PodClique.Status.CurrentPodTemplateHash and PodClique.Status.CurrentPodCliqueSetGenerationHash
-	if err = mutateCurrentHashes(logger, pcs, pclq); err != nil {
+	if err = mutateCurrentHashes(logger, revision.CliqueHashes, pcs, pclq); err != nil {
 		logger.Error(err, "failed to compute PodClique current hashes")
 		return ctrlcommon.ReconcileWithErrors("failed to compute PodClique current hashes", err)
 	}
@@ -107,13 +111,13 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 }
 
 // mutateCurrentHashes updates the PodClique's current template and generation hashes when updates are complete
-func mutateCurrentHashes(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) error {
+func mutateCurrentHashes(logger logr.Logger, cliqueHashes map[string]string, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) error {
 	if componentutils.IsPCLQAutoUpdateInProgress(pclq) || pclq.Status.UpdatedReplicas != pclq.Status.Replicas {
 		logger.Info("PodClique is currently updating, cannot set PodCliqueSet CurrentGenerationHash yet")
 		return nil
 	}
 	if pclq.Status.UpdateProgress == nil {
-		expectedPodTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
+		expectedPodTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(cliqueHashes, pclq.ObjectMeta)
 		if err != nil {
 			return err
 		}

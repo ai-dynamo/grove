@@ -274,7 +274,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 			cl := testutils.CreateDefaultFakeClient(existingObjects)
 			reconciler := &Reconciler{client: cl}
 			// Compute available replicas
-			stats, err := reconciler.computeAvailableAndUpdatedReplicas(context.Background(), logr.Discard(), pcs)
+			stats, err := reconciler.computeAvailableAndUpdatedReplicas(context.Background(), logr.Discard(), candidateCliqueHashes(pcs), pcs)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expectedAvailable, stats.availableReplicas, "Available replicas mismatch")
 		})
@@ -782,7 +782,7 @@ func TestComputePCSUpdateProgressCounts(t *testing.T) {
 			cl := testutils.CreateDefaultFakeClient(objects)
 			r := &Reconciler{client: cl}
 
-			stats, err := r.computeAvailableAndUpdatedReplicas(context.Background(), logr.Discard(), pcs)
+			stats, err := r.computeAvailableAndUpdatedReplicas(context.Background(), logr.Discard(), candidateCliqueHashes(pcs), pcs)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantUpdatedPCLQs, stats.updatedPCLQs, "updatedPCLQs")
 			assert.Equal(t, tt.wantTotalPCLQs, stats.totalPCLQs, "totalPCLQs")
@@ -826,14 +826,14 @@ func TestPCSMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 		pcs, children := build(false)
 		cl := testutils.CreateDefaultFakeClient(append([]client.Object{pcs}, children...))
 		r := &Reconciler{client: cl}
-		require.NoError(t, r.mutateReplicas(context.Background(), logr.Discard(), pcs))
+		require.NoError(t, r.mutateReplicas(context.Background(), logr.Discard(), candidateCliqueHashes(pcs), pcs))
 		assert.Nil(t, pcs.Status.UpdateProgress, "UpdateProgress must remain nil when not initialized")
 	})
 	t.Run("UpdateProgress non-nil — counts populated from informer cache", func(t *testing.T) {
 		pcs, children := build(true)
 		cl := testutils.CreateDefaultFakeClient(append([]client.Object{pcs}, children...))
 		r := &Reconciler{client: cl}
-		require.NoError(t, r.mutateReplicas(context.Background(), logr.Discard(), pcs))
+		require.NoError(t, r.mutateReplicas(context.Background(), logr.Discard(), candidateCliqueHashes(pcs), pcs))
 		require.NotNil(t, pcs.Status.UpdateProgress)
 		assert.Equal(t, int32(2), pcs.Status.UpdateProgress.UpdatedPodCliquesCount)
 		assert.Equal(t, int32(2), pcs.Status.UpdateProgress.TotalPodCliquesCount)
@@ -888,14 +888,14 @@ func TestCountUpdatedPCLQs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, countUpdatedPCLQs(tt.pcs, tt.in))
+			assert.Equal(t, tt.want, countUpdatedPCLQs(candidateCliqueHashes(tt.pcs), tt.pcs, tt.in))
 		})
 	}
 }
 
 func markStandalonePCLQConverged(t testing.TB, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, generationHash string) *grovecorev1alpha1.PodClique {
 	t.Helper()
-	expectedTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
+	expectedTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(candidateCliqueHashes(pcs), pclq.ObjectMeta)
 	require.NoError(t, err)
 	if pclq.Labels == nil {
 		pclq.Labels = map[string]string{}

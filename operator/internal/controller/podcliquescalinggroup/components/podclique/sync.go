@@ -44,6 +44,7 @@ type syncContext struct {
 	pcs                            *grovecorev1alpha1.PodCliqueSet
 	pcsg                           *grovecorev1alpha1.PodCliqueScalingGroup
 	pcsgConfig                     *grovecorev1alpha1.PodCliqueScalingGroupConfig
+	cliqueHashes                   map[string]string
 	pcsReplicaIndex                int
 	existingPCLQs                  []grovecorev1alpha1.PodClique
 	existingPCLQNameSet            componentutils.Set[string]
@@ -72,6 +73,11 @@ func (r _resource) prepareSyncContext(ctx context.Context, logger logr.Logger, p
 			fmt.Sprintf("failed to get owner PodCliqueSet for PodCliqueScalingGroup %s", client.ObjectKeyFromObject(pcsg)),
 		)
 	}
+	revision, err := componentutils.GetPodCliqueSetRevisionData(ctx, r.client, syncCtx.pcs)
+	if err != nil {
+		return nil, err
+	}
+	syncCtx.cliqueHashes = revision.CliqueHashes
 
 	// Resolve PCS replica index and matching PCSG config for resource sharing
 	syncCtx.pcsReplicaIndex, err = getPCSReplicaFromPCSG(pcsg)
@@ -94,7 +100,10 @@ func (r _resource) prepareSyncContext(ctx context.Context, logger logr.Logger, p
 	syncCtx.pcsgIndicesToTerminate, syncCtx.pcsgIndicesToRequeue = getMinAvailableBreachedPCSGIndices(logger, syncCtx.existingPCLQs, syncCtx.pcs.Spec.Template.TerminationDelay.Duration)
 
 	// pre-compute expected PodTemplateHash for each PCLQ
-	syncCtx.expectedPCLQPodTemplateHashMap = getExpectedPCLQPodTemplateHashMap(syncCtx.pcs, pcsg)
+	syncCtx.expectedPCLQPodTemplateHashMap, err = getExpectedPCLQPodTemplateHashMap(syncCtx.cliqueHashes, syncCtx.pcs, pcsg)
+	if err != nil {
+		return nil, err
+	}
 
 	return syncCtx, nil
 }
@@ -213,7 +222,7 @@ func (r _resource) createExpectedPCLQs(logger logr.Logger, sc *syncContext) erro
 			createTask := utils.Task{
 				Name: fmt.Sprintf("CreatePodClique-%s", pclqObjectKey),
 				Fn: func(ctx context.Context) error {
-					return r.doCreate(ctx, logger, sc.pcs, sc.pcsg, pcsgReplicaIndex, pclqObjectKey)
+					return r.doCreate(ctx, logger, sc.pcs, sc.cliqueHashes, sc.pcsg, pcsgReplicaIndex, pclqObjectKey)
 				},
 			}
 			tasks = append(tasks, createTask)
@@ -243,7 +252,7 @@ func (r _resource) createOrUpdatePCLQs(logger logr.Logger, sc *syncContext) erro
 			createOrUpdateTask := utils.Task{
 				Name: fmt.Sprintf("CreateOrUpdatePodClique-%s", pclqObjectKey),
 				Fn: func(ctx context.Context) error {
-					return r.doCreateOrUpdate(ctx, logger, sc.pcs, sc.pcsg, pcsgReplicaIndex, pclqObjectKey, pclqExists)
+					return r.doCreateOrUpdate(ctx, logger, sc.pcs, sc.cliqueHashes, sc.pcsg, pcsgReplicaIndex, pclqObjectKey, pclqExists)
 				},
 			}
 			tasks = append(tasks, createOrUpdateTask)
@@ -336,7 +345,7 @@ func (r _resource) getExistingPCLQs(ctx context.Context, pcsg *grovecorev1alpha1
 }
 
 // getExpectedPCLQPodTemplateHashMap computes the expected pod template hash for each PodClique in the PCSG
-func getExpectedPCLQPodTemplateHashMap(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[string]string {
+func getExpectedPCLQPodTemplateHashMap(cliqueHashes map[string]string, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) (map[string]string, error) {
 	pclqFQNToHash := make(map[string]string)
 	pcsgPCLQNames := pcsg.Spec.CliqueNames
 	for _, pcsgCliqueName := range pcsgPCLQNames {
@@ -344,7 +353,10 @@ func getExpectedPCLQPodTemplateHashMap(pcs *grovecorev1alpha1.PodCliqueSet, pcsg
 		if pclqTemplateSpec == nil {
 			continue
 		}
-		podTemplateHash := componentutils.ComputePCLQPodTemplateHash(pclqTemplateSpec, pcs.Spec.Template.PriorityClassName)
+		podTemplateHash, err := componentutils.GetSelectedPCLQPodTemplateHash(cliqueHashes, pcsgCliqueName)
+		if err != nil {
+			return nil, err
+		}
 		for pcsgReplicaIndex := range int(pcsg.Spec.Replicas) {
 			cliqueFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{
 				Name:    pcsg.Name,
@@ -353,7 +365,7 @@ func getExpectedPCLQPodTemplateHashMap(pcs *grovecorev1alpha1.PodCliqueSet, pcsg
 			pclqFQNToHash[cliqueFQN] = podTemplateHash
 		}
 	}
-	return pclqFQNToHash
+	return pclqFQNToHash, nil
 }
 
 // refreshExistingPCLQs removes all the excess PCLQs that belong to any PCSG replica > expectedPCSGReplicas.

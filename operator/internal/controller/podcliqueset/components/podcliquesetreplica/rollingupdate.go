@@ -73,6 +73,10 @@ func (r _resource) orchestrateRollingUpdate(ctx context.Context, logger logr.Log
 
 // computePendingUpdateWork identifies replicas that need updating and tracks current update progress.
 func (r _resource) computePendingUpdateWork(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsIndicesToTerminate []int) (*pendingUpdateWork, error) {
+	revision, err := componentutils.GetPodCliqueSetRevisionData(ctx, r.client, pcs)
+	if err != nil {
+		return nil, err
+	}
 	replicaInfos, err := r.getPCSReplicaInfos(ctx, pcs, pcsIndicesToTerminate)
 	if err != nil {
 		return nil, err
@@ -80,7 +84,7 @@ func (r _resource) computePendingUpdateWork(ctx context.Context, pcs *grovecorev
 	// iterate through each replica
 	pendingWork := &pendingUpdateWork{}
 	for _, replicaInfo := range replicaInfos {
-		replicaInfo.computeUpdateProgress(pcs)
+		replicaInfo.computeUpdateProgress(revision.CliqueHashes, pcs)
 
 		if len(pcs.Status.UpdateProgress.CurrentlyUpdating) > 0 &&
 			pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex == int32(replicaInfo.replicaIndex) {
@@ -236,10 +240,10 @@ func (w *pendingUpdateWork) getNextReplicaToUpdate(pcs *grovecorev1alpha1.PodCli
 }
 
 // computeUpdateProgress calculates update completion for a PCS replica.
-func (pri *pcsReplicaInfo) computeUpdateProgress(pcs *grovecorev1alpha1.PodCliqueSet) {
+func (pri *pcsReplicaInfo) computeUpdateProgress(cliqueHashes map[string]string, pcs *grovecorev1alpha1.PodCliqueSet) {
 	updatedPCLQs := 0
 	for _, pclq := range pri.pclqs {
-		if isPCLQUpdateComplete(pcs, &pclq) {
+		if isPCLQUpdateComplete(cliqueHashes, pcs, &pclq) {
 			updatedPCLQs++
 		}
 	}
@@ -275,11 +279,11 @@ func (pri *pcsReplicaInfo) getNumScheduledPods(pcs *grovecorev1alpha1.PodCliqueS
 }
 
 // isPCLQUpdateComplete checks if a PodClique has completed its update to the target generation and template.
-func isPCLQUpdateComplete(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) bool {
+func isPCLQUpdateComplete(cliqueHashes map[string]string, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) bool {
 	if pcs.Status.CurrentGenerationHash == nil || pclq.Spec.MinAvailable == nil {
 		return false
 	}
-	expectedPodTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
+	expectedPodTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(cliqueHashes, pclq.ObjectMeta)
 	if err != nil || expectedPodTemplateHash == "" {
 		return false
 	}

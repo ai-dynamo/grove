@@ -265,7 +265,8 @@ func TestProcessUpdateInitializesProgressWithoutActivePCSUpdate(t *testing.T) {
 		UpdatedReplicas:                   1,
 	}
 
-	fakeClient := testutils.SetupFakeClient(pcs, pclq)
+	revision := testutils.NewPodCliqueSetControllerRevision(pcs, testutils.ComputePodCliqueTemplateHashes(pcs))
+	fakeClient := testutils.SetupFakeClient(pcs, pclq, revision)
 	reconciler := &Reconciler{client: fakeClient}
 
 	result := reconciler.processUpdate(context.Background(), logr.Discard(), pclq)
@@ -410,7 +411,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 			fakeClient := testutils.SetupFakeClient(pcs, pclq)
 			reconciler := &Reconciler{client: fakeClient}
 
-			err := reconciler.initOrResetUpdate(context.Background(), pcs, pclq)
+			err := reconciler.initOrResetUpdate(context.Background(), pcs, pclq, "new-pod-template-hash")
 			require.NoError(t, err, "initOrResetUpdate should not return errors")
 
 			// Fetch the updated PCLQ from the fake client

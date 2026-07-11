@@ -1028,6 +1028,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 					},
 				},
 			}
+			cliqueHashes := map[string]string{pclqTemplateName: "selected-worker"}
 
 			// Create PCSG with MNNVL annotations and required label for pcsReplicaIndex
 			pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
@@ -1064,8 +1065,9 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 				eventRecorder: &record.FakeRecorder{},
 			}
 
-			err := operator.buildResource(logr.Discard(), pcs, pcsg, pcsgReplicaIndex, pclq, false)
+			err := operator.buildResource(logr.Discard(), pcs, cliqueHashes, pcsg, pcsgReplicaIndex, pclq, false)
 			require.NoError(t, err)
+			assert.Equal(t, "selected-worker", pclq.Labels[apicommon.LabelPodTemplateHash])
 
 			// Verify pod-level claims
 			if tc.expectPodLevelClaim {
@@ -1144,7 +1146,7 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 	}
 
 	operator := &_resource{scheme: groveclientscheme.Scheme}
-	err := operator.buildResource(logr.Discard(), pcs, pcsg, 0, pclq, false)
+	err := operator.buildResource(logr.Discard(), pcs, map[string]string{"worker": "selected-worker"}, pcsg, 0, pclq, false)
 	require.NoError(t, err)
 	require.NotNil(t, pclq.Annotations)
 	assert.Equal(t, "yes", pclq.Annotations["example.com/keep"])

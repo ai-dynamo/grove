@@ -75,11 +75,19 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pclq
 	if err != nil {
 		return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("could not get owner PodCliqueSet for PodClique: %v", pclqObjectKey), err)
 	}
+	revision, err := componentutils.GetPodCliqueSetRevisionData(ctx, r.client, pcs)
+	if err != nil {
+		return ctrlcommon.ReconcileWithErrors("PodCliqueSet revision is not initialized", err)
+	}
+	podTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(revision.CliqueHashes, pclq.ObjectMeta)
+	if err != nil {
+		return ctrlcommon.ReconcileWithErrors("PodCliqueSet revision does not contain PodClique", err)
+	}
 
 	// Handle OnDelete strategy first
 	if !componentutils.IsAutoUpdateStrategy(pcs) {
 		if shouldResetOrTriggerUpdate(pcs, pclq) {
-			if err = r.initOrResetUpdate(ctx, pcs, pclq); err != nil {
+			if err = r.initOrResetUpdate(ctx, pcs, pclq, podTemplateHash); err != nil {
 				return ctrlcommon.ReconcileWithErrors("could not initialize update for OnDelete", err)
 			}
 		}
@@ -99,7 +107,7 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pclq
 
 	if shouldResetOrTriggerUpdate(pcs, pclq) {
 		logger.Info("PodCliqueSet has a new generation hash. Initializing or resetting update for PodClique", "PodCliqueSetGenerationHash", *pcs.Status.CurrentGenerationHash, "CurrentPodCliqueSetGenerationHash", pclq.Status.CurrentPodCliqueSetGenerationHash, "isPCLQAutoUpdateInProgress", componentutils.IsPCLQAutoUpdateInProgress(pclq), "isLastPCLQUpdateCompleted", componentutils.IsLastPCLQUpdateCompleted(pclq))
-		if err = r.initOrResetUpdate(ctx, pcs, pclq); err != nil {
+		if err = r.initOrResetUpdate(ctx, pcs, pclq, podTemplateHash); err != nil {
 			return ctrlcommon.ReconcileWithErrors("could not initialize RollingRecreate update", err)
 		}
 	}
@@ -168,11 +176,7 @@ func shouldResetOrTriggerUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grove
 }
 
 // initOrResetUpdate initializes or resets the update progress status for the PodClique
-func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) error {
-	podTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
-	if err != nil {
-		return fmt.Errorf("could not update PodClique %s status with update progress: %w", client.ObjectKeyFromObject(pclq), err)
-	}
+func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, podTemplateHash string) error {
 	// reset and start the update
 	patch := client.MergeFrom(pclq.DeepCopy())
 	pclq.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueUpdateProgress{
@@ -186,7 +190,7 @@ func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1alph
 	}
 	// reset the updated replicas count to 0 so that the update can start afresh.
 	pclq.Status.UpdatedReplicas = 0
-	if err = r.client.Status().Patch(ctx, pclq, patch); err != nil {
+	if err := r.client.Status().Patch(ctx, pclq, patch); err != nil {
 		return fmt.Errorf("failed to update PodClique %s status with update progress: %w", client.ObjectKeyFromObject(pclq), err)
 	}
 	return nil

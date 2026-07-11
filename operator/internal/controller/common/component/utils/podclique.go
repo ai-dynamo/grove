@@ -223,17 +223,22 @@ func IsLastPCLQUpdateCompleted(pclq *grovecorev1alpha1.PodClique) bool {
 	return pclq.Status.UpdateProgress != nil && pclq.Status.UpdateProgress.UpdateEndedAt != nil
 }
 
-// GetExpectedPCLQPodTemplateHash finds the matching PodCliqueTemplateSpec from the PodCliqueSet and computes the pod template hash for the PCLQ pod spec.
-func GetExpectedPCLQPodTemplateHash(pcs *grovecorev1alpha1.PodCliqueSet, pclqObjectMeta metav1.ObjectMeta) (string, error) {
+// GetExpectedPCLQPodTemplateHash returns the selected pod template identity for a PodClique.
+func GetExpectedPCLQPodTemplateHash(cliqueHashes map[string]string, pclqObjectMeta metav1.ObjectMeta) (string, error) {
 	cliqueName, err := utils.GetPodCliqueNameFromPodCliqueFQN(pclqObjectMeta)
 	if err != nil {
 		return "", err
 	}
-	matchingPCLQTemplateSpec := FindPodCliqueTemplateSpecByName(pcs, cliqueName)
-	if matchingPCLQTemplateSpec == nil {
-		return "", fmt.Errorf("pod clique template not found for cliqueName: %s", cliqueName)
+	return GetSelectedPCLQPodTemplateHash(cliqueHashes, cliqueName)
+}
+
+// GetSelectedPCLQPodTemplateHash returns the persisted identity selected for a clique template.
+func GetSelectedPCLQPodTemplateHash(cliqueHashes map[string]string, cliqueName string) (string, error) {
+	hash, ok := cliqueHashes[cliqueName]
+	if !ok || hash == "" {
+		return "", fmt.Errorf("no selected pod template hash for cliqueName: %s", cliqueName)
 	}
-	return ComputePCLQPodTemplateHash(matchingPCLQTemplateSpec, pcs.Spec.Template.PriorityClassName), nil
+	return hash, nil
 }
 
 // FindPodCliqueTemplateSpecByName retrieves the PodCliqueTemplateSpec from the PodCliqueSet by its name.

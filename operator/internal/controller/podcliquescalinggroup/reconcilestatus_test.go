@@ -544,7 +544,8 @@ func TestReconcileStatus(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			pcsg, pcs, cliques := tt.setup()
-			allObjects := append([]client.Object{pcsg, pcs}, cliques...)
+			revision := testutils.NewPodCliqueSetControllerRevision(pcs, testutils.ComputePodCliqueTemplateHashes(pcs))
+			allObjects := append([]client.Object{pcsg, pcs, revision}, cliques...)
 			fakeClient := testutils.SetupFakeClient(allObjects...)
 			reconciler := &Reconciler{client: fakeClient}
 
@@ -587,7 +588,8 @@ func TestReconcileStatus_EdgeCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).Build()
-			fakeClient := testutils.SetupFakeClient(tt.pcsg, pcs)
+			revision := testutils.NewPodCliqueSetControllerRevision(pcs, testutils.ComputePodCliqueTemplateHashes(pcs))
+			fakeClient := testutils.SetupFakeClient(tt.pcsg, pcs, revision)
 			reconciler := &Reconciler{client: fakeClient}
 
 			result := reconciler.reconcileStatus(ctx, logr.Discard(), client.ObjectKeyFromObject(tt.pcsg))
@@ -728,7 +730,7 @@ func TestPCSGMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mutateReplicas(logr.Discard(), pcs, tt.pcsg, tt.pclqsPerReplica(t, tt.pcsg))
+			mutateReplicas(logr.Discard(), testutils.ComputePodCliqueTemplateHashes(pcs), pcs, tt.pcsg, tt.pclqsPerReplica(t, tt.pcsg))
 
 			if !tt.wantWritten {
 				require.Nil(t, tt.pcsg.Status.UpdateProgress, "UpdateProgress must remain nil")
@@ -751,7 +753,7 @@ func TestCountPCSGReplicaUpdatedPCLQs(t *testing.T) {
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).
 		WithReplicas(1).
 		WithCliqueNames([]string{"frontend"}).Build()
-	expectedHashes := componentutils.GetPCLQTemplateHashes(pcs, pcsg)
+	expectedHashes := componentutils.GetPCLQTemplateHashes(testutils.ComputePodCliqueTemplateHashes(pcs), pcs, pcsg)
 	mk := func(currHash *string, terminating bool) grovecorev1alpha1.PodClique {
 		p := testutils.NewPCSGPodCliqueBuilder("test-pcsg-0-frontend", "test-ns", "test-pcs", "test-pcsg", 0, 0).Build()
 		if currHash != nil {
@@ -855,7 +857,7 @@ func TestHavePCSGPodCliquesConverged(t *testing.T) {
 			if tt.mutate != nil && len(pclqs) > 0 {
 				tt.mutate(&pclqs[0])
 			}
-			assert.Equal(t, tt.want, havePCSGPodCliquesConverged(pcs, pcsg, pclqs))
+			assert.Equal(t, tt.want, havePCSGPodCliquesConverged(testutils.ComputePodCliqueTemplateHashes(pcs), pcs, pcsg, pclqs))
 		})
 	}
 }
@@ -934,7 +936,7 @@ func TestReconcileStatusBoundedDuringScaleDown(t *testing.T) {
 	}
 
 	objs := []client.Object{
-		pcsg, pcs,
+		pcsg, pcs, testutils.NewPodCliqueSetControllerRevision(pcs, testutils.ComputePodCliqueTemplateHashes(pcs)),
 		mkChild("test-pcsg-0-frontend", 0),
 		mkChild("test-pcsg-0-backend", 0),
 		mkChild("test-pcsg-1-frontend", 1),
@@ -970,7 +972,7 @@ func pcsgChildName(pcsgName string, replicaIndex int, cliqueName string) string 
 
 func markPCSGPCLQConverged(t testing.TB, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclq *grovecorev1alpha1.PodClique, generationHash string) *grovecorev1alpha1.PodClique {
 	t.Helper()
-	expectedHashes := componentutils.GetPCLQTemplateHashes(pcs, pcsg)
+	expectedHashes := componentutils.GetPCLQTemplateHashes(testutils.ComputePodCliqueTemplateHashes(pcs), pcs, pcsg)
 	expectedTemplateHash, ok := expectedHashes[pclq.Name]
 	require.True(t, ok, "expected template hash for %s", pclq.Name)
 	if pclq.Labels == nil {

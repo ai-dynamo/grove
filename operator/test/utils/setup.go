@@ -19,6 +19,7 @@ package utils
 import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
+	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -35,6 +36,7 @@ import (
 func SetupFakeClient(objects ...client.Object) client.WithWatch {
 	scheme := runtime.NewScheme()
 	utilruntime.Must(grovecorev1alpha1.AddToScheme(scheme))
+	utilruntime.Must(appsv1.AddToScheme(scheme))
 	utilruntime.Must(v1.AddToScheme(scheme))
 
 	return fake.NewClientBuilder().
