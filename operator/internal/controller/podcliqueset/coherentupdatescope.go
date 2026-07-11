@@ -19,6 +19,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	commonrevision "github.com/ai-dynamo/grove/operator/internal/controller/common/revision"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -36,12 +37,20 @@ type updateScope struct {
 // is already in flight, the previous scope's still-pending components are merged in so a half-rolled
 // component is finished rather than frozen. It reads the current generation hash from status, so it must
 // run before that hash is overwritten with the new one.
-func (r *Reconciler) computeCoherentUpdateScope(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (updateScope, error) {
+func (r *Reconciler) computeCoherentUpdateScope(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, revision *commonrevision.Revision) (updateScope, error) {
 	deployedHashByClique, err := r.deployedPodTemplateHashByClique(ctx, pcs)
 	if err != nil {
 		return updateScope{}, err
 	}
-	newInScope := newlyChangedInScope(pcs, deployedHashByClique)
+	desiredHashByClique := make(map[string]string, len(pcs.Spec.Template.Cliques))
+	for _, clique := range pcs.Spec.Template.Cliques {
+		hash, err := revision.CliqueHash(clique.Name)
+		if err != nil {
+			return updateScope{}, err
+		}
+		desiredHashByClique[clique.Name] = hash
+	}
+	newInScope := newlyChangedInScope(pcs, desiredHashByClique, deployedHashByClique)
 	if !componentutils.IsCoherentUpdateInProgress(pcs) {
 		return newInScope, nil
 	}
@@ -72,16 +81,16 @@ func (r *Reconciler) deployedPodTemplateHashByClique(ctx context.Context, pcs *g
 	return hashByClique, nil
 }
 
-// newlyChangedInScope returns the components whose newly computed pod template hash differs from the
+// newlyChangedInScope returns the components whose selected pod template hash differs from the
 // deployed hash, so this edit must roll them. A changed clique that is not part of any
 // PodCliqueScalingGroup is a standalone entry, and a PodCliqueScalingGroup is in scope when any of its
 // constituent cliques changed. Standalone changes go straight to the scope, so only changed
 // PodCliqueScalingGroup cliques are collected to resolve group membership in a second pass.
-func newlyChangedInScope(pcs *grovecorev1alpha1.PodCliqueSet, deployedHashByClique map[string]string) updateScope {
+func newlyChangedInScope(pcs *grovecorev1alpha1.PodCliqueSet, desiredHashByClique, deployedHashByClique map[string]string) updateScope {
 	scope := updateScope{standalonePCLQs: sets.New[string](), podCliqueScalingGroups: sets.New[string]()}
 	changedPCSGPCLQs := sets.New[string]()
 	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
-		newHash := componentutils.ComputePCLQPodTemplateHash(cliqueTemplate, pcs.Spec.Template.PriorityClassName)
+		newHash := desiredHashByClique[cliqueTemplate.Name]
 		if deployedHashByClique[cliqueTemplate.Name] == newHash {
 			continue
 		}
