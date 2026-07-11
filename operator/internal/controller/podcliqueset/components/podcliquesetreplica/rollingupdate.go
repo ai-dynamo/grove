@@ -25,6 +25,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	commonrevision "github.com/ai-dynamo/grove/operator/internal/controller/common/revision"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 
 	"github.com/go-logr/logr"
@@ -71,6 +72,10 @@ func (r _resource) orchestrateRollingUpdate(ctx context.Context, logger logr.Log
 
 // computePendingUpdateWork identifies replicas that need updating and tracks current update progress.
 func (r _resource) computePendingUpdateWork(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsIndicesToTerminate []int) (*pendingUpdateWork, error) {
+	revision, err := componentutils.GetPodCliqueSetRevision(ctx, r.client, pcs)
+	if err != nil {
+		return nil, err
+	}
 	replicaInfos, err := r.getPCSReplicaInfos(ctx, pcs, pcsIndicesToTerminate)
 	if err != nil {
 		return nil, err
@@ -78,7 +83,7 @@ func (r _resource) computePendingUpdateWork(ctx context.Context, pcs *grovecorev
 	// iterate through each replica
 	pendingWork := &pendingUpdateWork{}
 	for _, replicaInfo := range replicaInfos {
-		replicaInfo.computeUpdateProgress(pcs)
+		replicaInfo.computeUpdateProgress(revision, pcs)
 
 		if len(pcs.Status.UpdateProgress.CurrentlyUpdating) > 0 &&
 			pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex == int32(replicaInfo.replicaIndex) {
@@ -234,20 +239,17 @@ func (w *pendingUpdateWork) getNextReplicaToUpdate(pcs *grovecorev1alpha1.PodCli
 }
 
 // computeUpdateProgress calculates update completion for a PCS replica.
-func (pri *pcsReplicaInfo) computeUpdateProgress(pcs *grovecorev1alpha1.PodCliqueSet) {
+func (pri *pcsReplicaInfo) computeUpdateProgress(revision *commonrevision.Revision, pcs *grovecorev1alpha1.PodCliqueSet) {
 	updatedPCLQs := 0
 	for _, pclq := range pri.pclqs {
-		if isPCLQUpdateComplete(pcs, &pclq) {
+		if isPCLQUpdateComplete(revision, &pclq) {
 			updatedPCLQs++
 		}
 	}
 	updatedPCSGs := 0
-	if pcs.Status.CurrentGenerationHash != nil {
-		currentHash := *pcs.Status.CurrentGenerationHash
-		for _, pcsg := range pri.pcsgs {
-			if componentutils.IsPCSGUpdateComplete(&pcsg, currentHash) {
-				updatedPCSGs++
-			}
+	for _, pcsg := range pri.pcsgs {
+		if componentutils.IsPCSGUpdateComplete(&pcsg, revision.GenerationHash()) {
+			updatedPCSGs++
 		}
 	}
 	pri.updateProgress = replicaUpdateProgress{
@@ -273,11 +275,11 @@ func (pri *pcsReplicaInfo) getNumScheduledPods(pcs *grovecorev1alpha1.PodCliqueS
 }
 
 // isPCLQUpdateComplete checks if a PodClique has completed its update to the target generation and template.
-func isPCLQUpdateComplete(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) bool {
-	if pcs.Status.CurrentGenerationHash == nil || pclq.Spec.MinAvailable == nil {
+func isPCLQUpdateComplete(revision *commonrevision.Revision, pclq *grovecorev1alpha1.PodClique) bool {
+	if pclq.Spec.MinAvailable == nil {
 		return false
 	}
-	expectedPodTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
+	expectedPodTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(revision, pclq.ObjectMeta)
 	if err != nil || expectedPodTemplateHash == "" {
 		return false
 	}
@@ -285,7 +287,7 @@ func isPCLQUpdateComplete(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1
 		pclq.Status.CurrentPodTemplateHash != nil &&
 		*pclq.Status.CurrentPodTemplateHash == expectedPodTemplateHash &&
 		pclq.Status.CurrentPodCliqueSetGenerationHash != nil &&
-		*pclq.Status.CurrentPodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash &&
+		*pclq.Status.CurrentPodCliqueSetGenerationHash == revision.GenerationHash() &&
 		pclq.Status.UpdatedReplicas >= *pclq.Spec.MinAvailable &&
 		pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable
 }

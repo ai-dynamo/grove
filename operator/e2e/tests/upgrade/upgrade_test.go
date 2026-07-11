@@ -30,11 +30,15 @@ import (
 	"os"
 	"testing"
 
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	"github.com/google/go-github/v86/github"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/utils/ptr"
 )
 
 // TestUpgradeFromGitHubRelease verifies that a workload's pods created with
@@ -65,12 +69,28 @@ func TestUpgradeFromLatestGitHubRelease(t *testing.T) {
 
 	upgradeGrove(t, tc)
 
+	waitForRevisionAdoption(t, tc)
 	tc.ScalePCSAndWait(workload.Name, 2, 4, 0)
 
 	initContainerImage := fmt.Sprintf("ghcr.io/ai-dynamo/grove/grove-initc:%s", fromVersion)
 	verifyInitContainerUpdate(t, tc, podsList, initContainerImage)
 
 	verifyPodUIDsUnchanged(t, tc, podsList)
+}
+
+// waitForRevisionAdoption waits for an existing workload to transition to the new controller revision state tracking.
+// If a workload is updated prior to this occurring, the reconciler will not be able to continue.
+func waitForRevisionAdoption(t *testing.T, tc *testctx.TestContext) {
+	t.Helper()
+
+	fetchPCS := waiter.FetchByName(tc.Workload.Name, k8sclient.Getter[*grovecorev1alpha1.PodCliqueSet](tc.Client, tc.Namespace))
+	err := waiter.New[*grovecorev1alpha1.PodCliqueSet]().
+		WithTimeout(tc.Timeout).
+		WithInterval(tc.Interval).
+		WaitUntil(tc.Ctx, fetchPCS, func(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+			return pcs != nil && ptr.Deref(pcs.Status.CurrentRevision, "") != ""
+		})
+	require.NoError(t, err, "waiting for upgraded Grove operator to create the PodCliqueSet controller revision")
 }
 
 // verifyInitContainerUpdate verifies that workload pods receive the new init container images after an upgrade.

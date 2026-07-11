@@ -73,6 +73,7 @@ func setupTest(t *testing.T, cfg testConfig) *testctx.TestContext {
 		t.Context(),
 		t,
 		1,
+		testctx.WithNamespace(cfg.workload.Namespace),
 		testctx.WithWorkload(cfg.workload),
 	)
 	t.Cleanup(cleanup)
@@ -103,7 +104,7 @@ func setupTest(t *testing.T, cfg testConfig) *testctx.TestContext {
 	_, err = tc.DeployAndVerifyWorkload()
 	require.NoError(t, err, "applying workload")
 
-	err = podsManager.WaitForReadyInNamespace(t.Context(), cfg.workload.Namespace, 2, defaultPollTimeout, defaultPollInterval)
+	err = tc.WaitForPods(cfg.workload.ExpectedPods)
 	require.NoError(t, err, "waiting for workload to become ready")
 
 	return tc

@@ -25,6 +25,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
+	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -50,6 +51,7 @@ func (r *Reconciler) RegisterWithManager(mgr manager.Manager) error {
 			MaxConcurrentReconciles: *r.config.ConcurrentSyncs,
 		}).
 		For(&grovecorev1alpha1.PodCliqueSet{}, builder.WithPredicates(podCliqueSetPredicate())).
+		Owns(&appsv1.ControllerRevision{}).
 		Owns(&grovecorev1alpha1.PodGangMap{}, builder.WithPredicates(deleteOnlyPredicate())).
 		Owns(&groveschedulerv1alpha1.PodGang{}, builder.WithPredicates(deleteOnlyPredicate())).
 		Watches(

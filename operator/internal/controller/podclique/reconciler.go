@@ -69,8 +69,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// Memoize lookups that happen multiple times within a single reconcile:
 	//   * GetPCLQPods — reconcileSpec + reconcileStatus each list pods
 	//   * GetPodCliqueSet — called 4× (spec, status, pod sync, resourceclaim)
+	//   * GetPodCliqueSetRevision — reconcileSpec + reconcileStatus each get the current revision
 	ctx = componentutils.WithPCLQPodsCache(ctx)
 	ctx = componentutils.WithPodCliqueSetCache(ctx)
+	ctx = componentutils.WithPodCliqueSetRevisionCache(ctx)
 
 	pclq := &grovecorev1alpha1.PodClique{}
 	if result := ctrlutils.GetPodClique(ctx, r.client, logger, req.NamespacedName, pclq, true); ctrlcommon.ShortCircuitReconcileFlow(result) {

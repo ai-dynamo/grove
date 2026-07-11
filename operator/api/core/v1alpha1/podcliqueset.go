@@ -98,13 +98,10 @@ type PodCliqueSetStatus struct {
 	Selector *string `json:"hpaPodSelector,omitempty"`
 	// PodGangStatuses captures the status for all the PodGang's that are part of the PodCliqueSet.
 	PodGangStatutes []PodGangStatus `json:"podGangStatuses,omitempty"`
-	// CurrentGenerationHash is a hash value generated out of a collection of fields in a PodCliqueSet.
-	// Since only a subset of fields is taken into account when generating the hash, not every change in the PodCliqueSetSpec will
-	// be accounted for when generating this hash value. A field in PodCliqueSetSpec is included if a change to it triggers
-	// a rolling recreate of PodCliques and/or PodCliqueScalingGroups.
-	// Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value
-	// then an update needs to be triggered.
+	// CurrentGenerationHash is the opaque identity selected for the current rollout-relevant revision.
 	CurrentGenerationHash *string `json:"currentGenerationHash,omitempty"`
+	// CurrentRevision names the ControllerRevision containing the selected rollout revision.
+	CurrentRevision *string `json:"currentRevision,omitempty"`
 	// UpdateProgress represents the progress of an update.
 	UpdateProgress *PodCliqueSetUpdateProgress `json:"updateProgress,omitempty"`
 }
