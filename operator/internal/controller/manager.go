@@ -32,6 +32,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/webhook"
 
 	"github.com/go-logr/logr"
+	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -126,7 +127,7 @@ func createManagerOptions(operatorCfg *configv1alpha1.OperatorConfiguration) ctr
 }
 
 // cacheOptions returns cache configuration that restricts informers for shared
-// core types to only grove-managed resources via label selectors.
+// Kubernetes types to only grove-managed resources via label selectors.
 // Grove CRDs are not filtered because all instances are grove-managed by definition.
 func cacheOptions() cache.Options {
 	managedByGrove := cache.ByObject{
@@ -136,6 +137,7 @@ func cacheOptions() cache.Options {
 	}
 	return cache.Options{
 		ByObject: map[client.Object]cache.ByObject{
+			&appsv1.ControllerRevision{}:             managedByGrove,
 			&corev1.Pod{}:                            managedByGrove,
 			&corev1.ServiceAccount{}:                 managedByGrove,
 			&corev1.Service{}:                        managedByGrove,

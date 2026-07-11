@@ -25,7 +25,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	"github.com/ai-dynamo/grove/operator/internal/utils/podtemplatehash"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -234,7 +234,8 @@ func TestReconcileStatusConvergesWhenReadyPodMatchesDesiredHash(t *testing.T) {
 	}
 	pod := createReadyOwnedPodWithHash("ready-current-pod", pclq, templateHash)
 
-	cl := testutils.SetupFakeClient(pcs, pclq, pod)
+	revision := testutils.NewPodCliqueSetControllerRevision(pcs, map[string]string{"worker": templateHash})
+	cl := testutils.SetupFakeClient(pcs, pclq, pod, revision)
 	r := &Reconciler{
 		client:        cl,
 		eventRecorder: record.NewFakeRecorder(1),
@@ -257,14 +258,15 @@ func TestReconcileStatusConvergesWhenReadyPodMatchesDesiredHash(t *testing.T) {
 // actually converged on the current PodCliqueSet template, even though the
 // replica counts (Replicas == UpdatedReplicas) would superficially suggest it has.
 func TestMutateCurrentHashesDoesNotAdvanceWhenTemplateHashIsStale(t *testing.T) {
-	pcs, pclq, _ := newPodCliqueHashConvergenceFixture(t)
+	pcs, pclq, templateHash := newPodCliqueHashConvergenceFixture(t)
 	pclq.Labels[apicommon.LabelPodTemplateHash] = "stale-template-hash"
 	pclq.Status.CurrentPodTemplateHash = ptr.To("")
 	pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To("old-generation-hash")
 	pclq.Status.Replicas = 2
 	pclq.Status.UpdatedReplicas = 2
 
-	err := mutateCurrentHashes(logr.Discard(), pcs, pclq)
+	selectedRevision := testutils.NewSelectedRevision(*pcs.Status.CurrentGenerationHash, map[string]string{"worker": templateHash})
+	err := mutateCurrentHashes(logr.Discard(), selectedRevision, pclq)
 
 	require.NoError(t, err)
 	assert.Equal(t, "", *pclq.Status.CurrentPodTemplateHash)
@@ -282,6 +284,7 @@ func newPodCliqueHashConvergenceFixture(t *testing.T) (*grovecorev1alpha1.PodCli
 		},
 	}
 	generationHash := "current-generation-hash"
+	templateHash := podtemplatehash.ComputePodClique(template, "")
 	pcs := &grovecorev1alpha1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "pcs", Namespace: "default"},
 		Spec: grovecorev1alpha1.PodCliqueSetSpec{
@@ -303,8 +306,6 @@ func newPodCliqueHashConvergenceFixture(t *testing.T) (*grovecorev1alpha1.PodCli
 			},
 		},
 	}
-	templateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
-	require.NoError(t, err)
 	pclq.Labels[apicommon.LabelPodTemplateHash] = templateHash
 	return pcs, pclq, templateHash
 }

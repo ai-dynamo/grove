@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"testing"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
@@ -441,6 +442,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 			pcsBuilder.WithPodCliqueTemplateSpec(pclqTemplateSpec)
 
 			pcs := pcsBuilder.Build()
+			selectedRevision := testutils.NewSelectedRevision("generation", map[string]string{pclqTemplateName: "selected-worker"})
 
 			// Create empty PodClique with matching name suffix
 			pclqName := fmt.Sprintf("%s-%d-%s", testPCSName, pcsReplica, pclqTemplateName)
@@ -458,8 +460,9 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 				eventRecorder: record.NewFakeRecorder(10),
 			}
 
-			err := operator.buildResource(logr.Discard(), pclq, pcs, pcsReplica, false)
+			err := operator.buildResource(logr.Discard(), pclq, pcs, selectedRevision, pcsReplica, false)
 			require.NoError(t, err)
+			assert.Equal(t, "selected-worker", pclq.Labels[apicommon.LabelPodTemplateHash])
 
 			// Verify pod-level claims
 			if tc.expectPodLevelClaim {
@@ -512,7 +515,8 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 	}
 
 	operator := &_resource{scheme: groveclientscheme.Scheme}
-	err := operator.buildResource(logr.Discard(), pclq, pcs, 0, false)
+	selectedRevision := testutils.NewSelectedRevision("generation", testutils.ComputePodCliqueTemplateHashes(pcs))
+	err := operator.buildResource(logr.Discard(), pclq, pcs, selectedRevision, 0, false)
 	require.NoError(t, err)
 	require.NotNil(t, pclq.Annotations)
 	assert.Equal(t, "yes", pclq.Annotations["example.com/keep"])

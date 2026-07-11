@@ -30,6 +30,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	"github.com/go-logr/logr"
+	"k8s.io/client-go/tools/cache"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -38,12 +39,12 @@ import (
 
 // Reconciler reconciles PodCliqueSet resources.
 type Reconciler struct {
-	config                        configv1alpha1.PodCliqueSetControllerConfiguration
-	tasConfig                     configv1alpha1.TopologyAwareSchedulingConfiguration
-	client                        ctrlclient.Client
-	reconcileStatusRecorder       ctrlcommon.ReconcileErrorRecorder
-	operatorRegistry              component.OperatorRegistry[grovecorev1alpha1.PodCliqueSet]
-	pcsGenerationHashExpectations sync.Map
+	config                  configv1alpha1.PodCliqueSetControllerConfiguration
+	tasConfig               configv1alpha1.TopologyAwareSchedulingConfiguration
+	client                  ctrlclient.Client
+	reconcileStatusRecorder ctrlcommon.ReconcileErrorRecorder
+	operatorRegistry        component.OperatorRegistry[grovecorev1alpha1.PodCliqueSet]
+	pcsRevisionExpectations sync.Map
 }
 
 // NewReconciler creates a new reconciler for PodCliqueSet.
@@ -51,12 +52,12 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueSetCo
 	eventRecorder := mgr.GetEventRecorderFor(controllerName)
 	client := mgr.GetClient()
 	return &Reconciler{
-		config:                        controllerCfg,
-		tasConfig:                     topologyAwareSchedulingConfig,
-		client:                        client,
-		reconcileStatusRecorder:       ctrlcommon.NewReconcileErrorRecorder(client),
-		operatorRegistry:              pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, schedRegistry),
-		pcsGenerationHashExpectations: sync.Map{},
+		config:                  controllerCfg,
+		tasConfig:               topologyAwareSchedulingConfig,
+		client:                  client,
+		reconcileStatusRecorder: ctrlcommon.NewReconcileErrorRecorder(client),
+		operatorRegistry:        pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, schedRegistry),
+		pcsRevisionExpectations: sync.Map{},
 	}
 }
 
@@ -66,6 +67,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 
 	pcs := &grovecorev1alpha1.PodCliqueSet{}
 	if result := ctrlutils.GetPodCliqueSet(ctx, r.client, logger, req.NamespacedName, pcs); ctrlcommon.ShortCircuitReconcileFlow(result) {
+		if !result.HasErrors() {
+			pcsObjectName := cache.NamespacedNameAsObjectName(req.NamespacedName).String()
+			r.pcsRevisionExpectations.Delete(pcsObjectName)
+		}
 		return result.Result()
 	}
 
@@ -74,8 +79,16 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 
 	reconcileSpecFlowResult := r.reconcileSpec(ctx, logger, pcs)
+	if ctrlcommon.ShortCircuitReconcileFlow(reconcileSpecFlowResult) {
+		return reconcileSpecFlowResult.Result()
+	}
+
 	if statusReconcileResult := r.reconcileStatus(ctx, logger, pcs); ctrlcommon.ShortCircuitReconcileFlow(statusReconcileResult) {
 		return statusReconcileResult.Result()
+	}
+
+	if historyReconcileResult := r.truncateRevisionHistory(ctx, logger, pcs); ctrlcommon.ShortCircuitReconcileFlow(historyReconcileResult) {
+		return historyReconcileResult.Result()
 	}
 
 	return reconcileSpecFlowResult.Result()
@@ -84,6 +97,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 // reconcileDelete handles PodCliqueSet deletion when a deletion timestamp is set.
 func (r *Reconciler) reconcileDelete(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	if !pcs.DeletionTimestamp.IsZero() {
+		pcsObjectName := cache.NamespacedNameAsObjectName(ctrlclient.ObjectKeyFromObject(pcs)).String()
+		r.pcsRevisionExpectations.Delete(pcsObjectName)
 		if !controllerutil.ContainsFinalizer(pcs, constants.FinalizerPodCliqueSet) {
 			return ctrlcommon.DoNotRequeue()
 		}
