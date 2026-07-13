@@ -26,9 +26,12 @@ inputs:
 runs:
   using: "composite"
   steps:
-    # Most tools (Go, k3d, skaffold, helm, make, python3) are pre-installed in the
-    # runner image (eks-grove-e2e-runner). Each step checks first and only installs
-    # if missing, so this action works on both baked and vanilla runners.
+    # Most tools (Go, k3d, skaffold, helm, make) are pre-installed in the runner
+    # image (eks-grove-e2e-runner). Each step checks first and only installs if
+    # missing, so this action works on both baked and vanilla runners. Python is
+    # provisioned by uv (see operator/pyproject.toml + .python-version); the
+    # hack scripts use a `#!/usr/bin/env -S uv run` shebang so direct invocation
+    # auto-resolves the venv.
 
     - name: Install build-essential for make
       shell: bash
@@ -99,21 +102,21 @@ runs:
           helm version
         fi
 
-    - name: Install Python3 and pip
+    - name: Install uv
       shell: bash
       run: |
-        if command -v python3 &>/dev/null && command -v pip3 &>/dev/null; then
-          echo "Python3 already installed: $(python3 --version)"
+        if command -v uv &>/dev/null; then
+          echo "uv already installed: $(uv --version)"
         else
-          sudo apt-get update && sudo apt-get install -y python3 python3-pip
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
         fi
 
-    - name: Install Python dependencies
+    - name: Sync Python dependencies
       shell: bash
-      run: |
-        echo "Installing Python dependencies..."
-        pip3 install --break-system-packages -r operator/hack/e2e-cluster/requirements.txt
-        pip3 install --break-system-packages -r operator/hack/requirements.txt
-
-        echo "Verifying Python dependencies..."
-        python3 -c "import docker; import sh; import typer; import pydantic; import pydantic_settings; import rich; import tenacity; print('All dependencies installed successfully')"
+      working-directory: operator
+      # uv sync provisions the Python version pinned by .python-version and
+      # installs the locked dependencies into operator/.venv. Pre-warming here
+      # surfaces resolve/install failures in a labeled step and keeps subsequent
+      # `make` targets fast.
+      run: uv sync --locked

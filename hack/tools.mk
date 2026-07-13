@@ -29,6 +29,7 @@ SKAFFOLD          := $(TOOLS_BIN_DIR)/skaffold
 CRD_REF_DOCS      := $(TOOLS_BIN_DIR)/crd-ref-docs
 MDTOC			  := $(TOOLS_BIN_DIR)/mdtoc
 GOTESTSUM         := $(TOOLS_BIN_DIR)/gotestsum
+UV                := $(or $(shell command -v uv 2>/dev/null),$(TOOLS_BIN_DIR)/uv)
 
 # default tool versions
 # -------------------------------------------------------------------------
@@ -96,3 +97,6 @@ $(MDTOC):
 
 $(GOTESTSUM):
 	GOBIN=$(abspath $(TOOLS_BIN_DIR)) go install gotest.tools/gotestsum@$(GOTESTSUM_VERSION)
+
+$(UV):
+	curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=$(abspath $(TOOLS_BIN_DIR)) UV_NO_MODIFY_PATH=1 sh
