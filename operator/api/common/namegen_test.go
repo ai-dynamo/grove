@@ -17,6 +17,7 @@
 package common
 
 import (
+	"regexp"
 	"testing"
 
 	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
@@ -113,6 +114,17 @@ func TestExtractScalingGroupNameFromPCSGFQN(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestGeneratePodName(t *testing.T) {
+	podName := GeneratePodName("workload-0-prefill-1-worker", 12)
+
+	assert.Regexp(t, regexp.MustCompile(`^workload-0-prefill-1-worker-12-[a-z0-9]{5}$`), podName)
+	assert.Len(t, podName[len("workload-0-prefill-1-worker-12-"):], PodNameRandomSuffixLength)
+}
+
+func TestGeneratePodHostname(t *testing.T) {
+	assert.Equal(t, "workload-0-prefill-1-worker-12", GeneratePodHostname("workload-0-prefill-1-worker", 12))
 }
 
 func TestGenerateBasePodGangName(t *testing.T) {

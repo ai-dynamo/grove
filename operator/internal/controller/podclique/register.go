@@ -18,7 +18,6 @@ package podclique
 
 import (
 	"context"
-	"strings"
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
@@ -317,20 +316,12 @@ func mapPodGangToPCLQs() handler.MapFunc {
 			if len(podGroup.PodReferences) == 0 {
 				continue
 			}
-			podRefName := podGroup.PodReferences[0].Name
-			pclqFQN := extractPCLQNameFromPodName(podRefName)
 			requests = append(requests, reconcile.Request{
-				NamespacedName: types.NamespacedName{Name: pclqFQN, Namespace: podGang.Namespace},
+				NamespacedName: types.NamespacedName{Name: podGroup.Name, Namespace: podGang.Namespace},
 			})
 		}
 		return requests
 	}
-}
-
-// extractPCLQNameFromPodName extracts the PodClique name from a Pod name by removing the replica index suffix
-func extractPCLQNameFromPodName(podName string) string {
-	endIndex := strings.LastIndex(podName, "-")
-	return podName[:endIndex]
 }
 
 // podGangPredicate filters PodGang events to trigger on initialization and spec updates

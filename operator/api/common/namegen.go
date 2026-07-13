@@ -20,6 +20,14 @@ import (
 	"fmt"
 
 	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+
+	utilrand "k8s.io/apimachinery/pkg/util/rand"
+)
+
+const (
+	// PodNameRandomSuffixLength is the length of the random suffix Grove adds to
+	// generated Pod names.
+	PodNameRandomSuffixLength = 5
 )
 
 // ResourceNameReplica is a type that holds a resource name and its replica index.
@@ -75,6 +83,21 @@ func GeneratePodCliqueName(ownerNameReplica ResourceNameReplica, pclqTemplateNam
 // PodCliqueScalingGroup name is only guaranteed to be unique within the PodCliqueSet, so it is prefixed with the PodCliqueSet name and its replica index.
 func GeneratePodCliqueScalingGroupName(pcsNameReplica ResourceNameReplica, pclqScalingGroupName string) string {
 	return fmt.Sprintf("%s-%d-%s", pcsNameReplica.Name, pcsNameReplica.Replica, pclqScalingGroupName)
+}
+
+// GeneratePodName generates a Pod name based on the PodClique FQN, Pod index, and a random suffix.
+func GeneratePodName(pclqName string, podIndex int) string {
+	return GeneratePodNameWithSuffix(pclqName, podIndex, utilrand.String(PodNameRandomSuffixLength))
+}
+
+// GeneratePodNameWithSuffix generates a Pod name with a caller-provided suffix.
+func GeneratePodNameWithSuffix(pclqName string, podIndex int, suffix string) string {
+	return fmt.Sprintf("%s-%s", GeneratePodHostname(pclqName, podIndex), suffix)
+}
+
+// GeneratePodHostname generates the stable Pod hostname used for service discovery.
+func GeneratePodHostname(pclqName string, podIndex int) string {
+	return fmt.Sprintf("%s-%d", pclqName, podIndex)
 }
 
 // GenerateBasePodGangName generates a base PodGang name for a PodCliqueSet replica.
