@@ -158,17 +158,13 @@ spec:
   maxRestarts: 3
   maxRuntime: 24h
   template:
-    podCliqueScalingGroups:
-    - name: trainer
+    cliques:
+    - name: worker
       spec:
-        template:
-          cliques:
-          - name: worker
-            spec:
-              replicas: 8
-              template:
-                spec:
-                  restartPolicy: Never
+        replicas: 8
+        minAvailable: 8
+        podSpec:
+          restartPolicy: Never
 ```
 
 **Leader-driven completion** — the PCSG replica is complete when the leader exits 0, regardless of workers:
@@ -183,21 +179,20 @@ spec:
     - name: trainer
       completedNames: [leader]
       maxRestarts: 3
+      cliqueNames: [leader, worker]
+    cliques:
+    - name: leader
       spec:
-        template:
-          cliques:
-          - name: leader
-            spec:
-              replicas: 1
-              template:
-                spec:
-                  restartPolicy: Never
-          - name: worker
-            spec:
-              replicas: 7
-              template:
-                spec:
-                  restartPolicy: Never
+        replicas: 1
+        minAvailable: 1
+        podSpec:
+          restartPolicy: Never
+    - name: worker
+      spec:
+        replicas: 7
+        minAvailable: 7
+        podSpec:
+          restartPolicy: Never
 ```
 
 ### Completion and Failure Evaluation
