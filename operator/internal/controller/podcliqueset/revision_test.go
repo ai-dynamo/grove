@@ -45,6 +45,7 @@ import (
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestControllerRevisionInitializesNewPodCliqueSet(t *testing.T) {
@@ -59,7 +60,7 @@ func TestControllerRevisionInitializesNewPodCliqueSet(t *testing.T) {
 
 	result := r.processRevision(ctx, logr.Discard(), pcs)
 	require.False(t, result.HasErrors())
-	assert.False(t, reconcileRequeues(result))
+	assert.True(t, reconcileRequeues(result))
 	require.NotNil(t, pcs.Status.CurrentGenerationHash)
 	assert.Equal(t, expectedGenerationHash, *pcs.Status.CurrentGenerationHash)
 	assert.Equal(t, expectedCliqueHashes, selectedCliqueHashes(ctx, t, fakeClient, pcs))
@@ -82,13 +83,63 @@ func TestControllerRevisionExpectationDoesNotBlockRecreatedPodCliqueSet(t *testi
 
 	result := r.processRevision(ctx, logr.Discard(), pcs)
 	require.False(t, result.HasErrors())
-	assert.False(t, reconcileRequeues(result))
+	assert.True(t, reconcileRequeues(result))
 	require.NotNil(t, pcs.Status.CurrentRevision)
 	assert.NotEqual(t, "deleted-revision", *pcs.Status.CurrentRevision)
 
 	value, ok := r.pcsRevisionExpectations.Load(pcsObjectName)
 	require.True(t, ok)
 	assert.Equal(t, pcs.UID, value.(revisionExpectation).uid)
+}
+
+func TestControllerRevisionExpectationWaitsForSelectedRevisionCacheVisibility(t *testing.T) {
+	ctx := context.Background()
+	pcs := testutils.NewPodCliqueSetBuilder("cache-lag", "default", uuid.NewUUID()).Build()
+	desired, cliques, err := marshalDesiredRevision(pcs)
+	require.NoError(t, err)
+	generationHash := computeGenerationHash(pcs)
+	raw, err := json.Marshal(commonrevision.Data{
+		Version:        commonrevision.DataVersion,
+		Desired:        desired,
+		Cliques:        cliques,
+		GenerationHash: generationHash,
+		CliqueHashes:   candidateCliqueHashes(pcs),
+	})
+	require.NoError(t, err)
+	revision := ownedControllerRevision(pcs, "cache-lag-revision", raw)
+	pcs.Status.CurrentRevision = ptr.To(revision.Name)
+	pcs.Status.CurrentGenerationHash = ptr.To(generationHash)
+
+	baseClient := testutils.SetupFakeClient(pcs, revision)
+	revisionVisible := false
+	laggingClient := interceptor.NewClient(baseClient, interceptor.Funcs{
+		Get: func(ctx context.Context, interceptedClient client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if _, ok := obj.(*appsv1.ControllerRevision); ok && key.Name == revision.Name && !revisionVisible {
+				return apierrors.NewNotFound(appsv1.Resource("controllerrevisions"), key.Name)
+			}
+			return interceptedClient.Get(ctx, key, obj, opts...)
+		},
+	})
+	r := &Reconciler{client: laggingClient, pcsRevisionExpectations: sync.Map{}}
+	pcsObjectName := cache.NamespacedNameAsObjectName(client.ObjectKeyFromObject(pcs)).String()
+	r.pcsRevisionExpectations.Store(pcsObjectName, revisionExpectation{
+		uid:       pcs.UID,
+		selection: revisionSelection{name: revision.Name, generationHash: generationHash},
+	})
+
+	result := r.processRevision(ctx, logr.Discard(), pcs)
+	require.False(t, result.HasErrors())
+	assert.True(t, reconcileRequeues(result))
+	assert.Contains(t, result.GetDescription(), "is not yet visible")
+	_, ok := r.pcsRevisionExpectations.Load(pcsObjectName)
+	assert.True(t, ok)
+
+	revisionVisible = true
+	result = r.processRevision(ctx, logr.Discard(), pcs)
+	require.False(t, result.HasErrors())
+	assert.False(t, reconcileRequeues(result))
+	_, ok = r.pcsRevisionExpectations.Load(pcsObjectName)
+	assert.False(t, ok)
 }
 
 func TestControllerRevisionExpectationClearedOnDeletion(t *testing.T) {
@@ -240,7 +291,7 @@ func TestControllerRevisionUpgrade(t *testing.T) {
 	expectedWorkerHash := candidateCliqueHashes(pcs)["worker"]
 	result = r.processRevision(ctx, logr.Discard(), pcs)
 	require.False(t, result.HasErrors())
-	assert.False(t, reconcileRequeues(result))
+	assert.True(t, reconcileRequeues(result))
 	assert.Equal(t, expectedGenerationHash, *pcs.Status.CurrentGenerationHash)
 	assert.Equal(t, map[string]string{
 		"sidecar": "alpha8-sidecar",

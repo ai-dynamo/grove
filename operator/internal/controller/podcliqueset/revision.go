@@ -60,18 +60,21 @@ type revisionExpectation struct {
 func (r *Reconciler) processRevision(ctx context.Context, _ logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	pcsObjectKey := client.ObjectKeyFromObject(pcs)
 	pcsObjectName := cache.NamespacedNameAsObjectName(pcsObjectKey).String()
-	if !r.isRevisionExpectationSatisfied(pcsObjectName, pcs) {
-		return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, fmt.Sprintf("current revision is not up-to-date for PodCliqueSet: %v", pcsObjectKey))
+	currentRevision, expectationResult := r.observeRevisionExpectation(ctx, pcsObjectName, pcs)
+	if ctrlcommon.ShortCircuitReconcileFlow(expectationResult) {
+		return expectationResult
 	}
-	r.pcsRevisionExpectations.Delete(pcsObjectName)
 
 	if pcs.Status.CurrentRevision == nil {
 		return r.initializeControllerRevision(ctx, pcs, pcsObjectName)
 	}
 
-	currentRevision, err := componentutils.GetSelectedPodCliqueSetRevision(ctx, r.client, pcs)
-	if err != nil {
-		return ctrlcommon.ReconcileWithErrors("error loading current ControllerRevision", err)
+	if currentRevision == nil {
+		var err error
+		currentRevision, err = componentutils.GetSelectedPodCliqueSetRevision(ctx, r.client, pcs)
+		if err != nil {
+			return ctrlcommon.ReconcileWithErrors("error loading current ControllerRevision", err)
+		}
 	}
 
 	desired, desiredCliques, err := marshalDesiredRevision(pcs)
@@ -114,7 +117,7 @@ func (r *Reconciler) processRevision(ctx context.Context, _ logr.Logger, pcs *gr
 	if err = r.createAndSelectControllerRevision(ctx, pcs, pcsObjectName, data, true); err != nil {
 		return ctrlcommon.ReconcileWithErrors("error creating and selecting ControllerRevision", err)
 	}
-	return ctrlcommon.ContinueReconcile()
+	return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, fmt.Sprintf("waiting for selected ControllerRevision %q to be observed for PodCliqueSet: %v", *pcs.Status.CurrentRevision, pcsObjectKey))
 }
 
 func (r *Reconciler) initializeControllerRevision(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsObjectName string) ctrlcommon.ReconcileStepResult {
@@ -160,7 +163,7 @@ func (r *Reconciler) initializeControllerRevision(ctx context.Context, pcs *grov
 	if legacy {
 		return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, "adopted legacy PodCliqueSet revision without mutating children")
 	}
-	return ctrlcommon.ContinueReconcile()
+	return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, fmt.Sprintf("waiting for selected ControllerRevision %q to be observed for PodCliqueSet: %v", *pcs.Status.CurrentRevision, client.ObjectKeyFromObject(pcs)))
 }
 
 func marshalDesiredRevision(pcs *grovecorev1alpha1.PodCliqueSet) (json.RawMessage, map[string]json.RawMessage, error) {
@@ -345,18 +348,28 @@ func (r *Reconciler) setRevisionStatus(ctx context.Context, pcs *grovecorev1alph
 	return nil
 }
 
-func (r *Reconciler) isRevisionExpectationSatisfied(pcsObjectName string, pcs *grovecorev1alpha1.PodCliqueSet) bool {
+func (r *Reconciler) observeRevisionExpectation(ctx context.Context, pcsObjectName string, pcs *grovecorev1alpha1.PodCliqueSet) (*commonrevision.SelectedRevision, ctrlcommon.ReconcileStepResult) {
 	value, ok := r.pcsRevisionExpectations.Load(pcsObjectName)
 	if !ok {
-		return true
+		return nil, ctrlcommon.ContinueReconcile()
 	}
 	expected := value.(revisionExpectation)
 	if expected.uid != pcs.UID {
 		r.pcsRevisionExpectations.CompareAndDelete(pcsObjectName, value)
-		return true
+		return nil, ctrlcommon.ContinueReconcile()
 	}
-	if pcs.Status.CurrentRevision == nil || pcs.Status.CurrentGenerationHash == nil {
-		return false
+	pcsObjectKey := client.ObjectKeyFromObject(pcs)
+	if pcs.Status.CurrentRevision == nil || pcs.Status.CurrentGenerationHash == nil ||
+		*pcs.Status.CurrentRevision != expected.selection.name || *pcs.Status.CurrentGenerationHash != expected.selection.generationHash {
+		return nil, ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, fmt.Sprintf("current revision is not up-to-date for PodCliqueSet: %v", pcsObjectKey))
 	}
-	return *pcs.Status.CurrentRevision == expected.selection.name && *pcs.Status.CurrentGenerationHash == expected.selection.generationHash
+	selectedRevision, err := componentutils.GetSelectedPodCliqueSetRevision(ctx, r.client, pcs)
+	if apierrors.IsNotFound(err) {
+		return nil, ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, fmt.Sprintf("selected ControllerRevision %q is not yet visible for PodCliqueSet: %v", expected.selection.name, pcsObjectKey))
+	}
+	if err != nil {
+		return nil, ctrlcommon.ReconcileWithErrors("error loading current ControllerRevision", err)
+	}
+	r.pcsRevisionExpectations.CompareAndDelete(pcsObjectName, value)
+	return selectedRevision, ctrlcommon.ContinueReconcile()
 }
