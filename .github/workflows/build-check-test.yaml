@@ -111,6 +111,8 @@ jobs:
     # use NVIDIA self-hosted runner setting is on Velonix repository
     runs-on: prod-grove-e2e-v1
     timeout-minutes: 60
+    env:
+      GROVE_UPGRADE_E2E_CLUSTER_NAME: grove-upgrade-e2e-${{ github.run_id }}-${{ github.run_attempt }}
     strategy:
       fail-fast: false
       matrix:
@@ -137,6 +139,8 @@ jobs:
             test_pattern: "^Test_CRD_Installer"
           - test_name: resource_sharing
             test_pattern: "^Test_RS"
+          - test_name: upgrade_from_latest_release
+            make_target: "run-upgrade-e2e"
     name: E2E - ${{ matrix.test_name }}
     steps:
       # print runner specs so we have a record in case of failures
@@ -157,6 +161,8 @@ jobs:
         uses: ./.github/actions/e2e-setup
 
       - name: Run e2e tests - ${{ matrix.test_name }}
+        env:
+          GITHUB_TOKEN: ${{ matrix.test_name == 'upgrade_from_latest_release' && secrets.GITHUB_TOKEN || '' }}
         run: |
           make ${{ matrix.make_target || 'run-e2e-full' }} TEST_PATTERN='${{ matrix.test_pattern }}' E2E_CREATE_FLAGS='--dind-memory-mode'
         working-directory: operator
@@ -168,7 +174,11 @@ jobs:
         if: always()
         working-directory: operator
         run: |
-          make e2e-cluster-down || true
+          if [[ "${{ matrix.test_name }}" == "upgrade_from_latest_release" ]]; then
+            k3d cluster delete "$GROVE_UPGRADE_E2E_CLUSTER_NAME" || true
+          else
+            make e2e-cluster-down || true
+          fi
 
       # Upload diagnostic logs collected by debug_utils.go on test failure.
       # Uses 'warn' since this only runs on failure and missing files indicates a problem.
@@ -204,6 +214,7 @@ jobs:
           - test_name: auto_mnnvl
           - test_name: crd_installer
           - test_name: resource_sharing
+          - test_name: upgrade_from_latest_release
     name: E2E - ${{ matrix.test_name }}
     steps:
       - name: Skip E2E (no relevant changes)
