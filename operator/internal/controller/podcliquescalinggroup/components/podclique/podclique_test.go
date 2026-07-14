@@ -39,6 +39,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"github.com/ai-dynamo/grove/operator/internal/eventrecorder"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -61,7 +62,7 @@ func TestNew(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, client, resource.client)
 	assert.Equal(t, scheme, resource.scheme)
-	assert.Equal(t, eventRecorder, resource.eventRecorder)
+	assert.NotNil(t, resource.eventRecorder)
 }
 
 func TestMarkRollingUpdateEndReturnsRequeueAfterPatch(t *testing.T) {
@@ -586,7 +587,7 @@ func TestDelete(t *testing.T) {
 
 			r := &_resource{
 				client:        fakeClient,
-				eventRecorder: &record.FakeRecorder{},
+				eventRecorder: eventrecorder.NewTest(&record.FakeRecorder{}),
 			}
 
 			err := r.Delete(ctx, logger, tc.pcsgObjMeta)
@@ -1061,7 +1062,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 			operator := &_resource{
 				client:        nil, // not needed for buildResource
 				scheme:        scheme,
-				eventRecorder: &record.FakeRecorder{},
+				eventRecorder: eventrecorder.NewTest(&record.FakeRecorder{}),
 			}
 
 			err := operator.buildResource(logr.Discard(), pcs, pcsg, pcsgReplicaIndex, pclq, false)

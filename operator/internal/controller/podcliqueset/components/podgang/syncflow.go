@@ -628,7 +628,7 @@ func (r _resource) createOrUpdatePodGang(ctx context.Context, sc *syncContext, p
 		}
 	}
 
-	component.RecordCreateOrPatchSuccessEvent(r.eventRecorder, sc.pcs, opResult, constants.ReasonPodGangCreateOrUpdateSuccessful, "Created/Updated PodGang %v", pgObjectKey)
+	r.eventRecorder.CreateOrPatchSuccess(sc.pcs, opResult, constants.ReasonPodGangCreateOrUpdateSuccessful, "Created/Updated PodGang %v", pgObjectKey)
 	sc.logger.Info("Triggered CreateOrPatch of PodGang", "objectKey", pgObjectKey)
 	return nil
 }

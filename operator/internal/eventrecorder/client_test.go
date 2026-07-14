@@ -14,7 +14,7 @@
 // limitations under the License.
 // */
 
-package component
+package eventrecorder
 
 import (
 	"testing"
@@ -27,17 +27,25 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
-// withFakeClock installs a controllable clock on the package-level no-op event limiter for the
-// duration of a test and restores the previous limiter afterwards.
-func withFakeClock(t *testing.T) *time.Time {
-	t.Helper()
-	previous := noopEventLimiter
-	t.Cleanup(func() { noopEventLimiter = previous })
+func testConfig() Config {
+	return Config{
+		Rules: []RateLimitRule{
+			{
+				EventType: corev1.EventTypeNormal,
+				Reasons:   []string{"Synced"},
+				Interval:  defaultNoopSuccessEventInterval,
+				Burst:     defaultNoopSuccessEventBurst,
+			},
+		},
+	}
+}
 
+func testClient(t *testing.T, delegate record.EventRecorder) (*Client, *time.Time) {
+	t.Helper()
+	client := New(delegate, testConfig())
 	now := time.Now()
-	noopEventLimiter = newEventRateLimiter(noopSuccessEventInterval, noopSuccessEventBurst)
-	noopEventLimiter.now = func() time.Time { return now }
-	return &now
+	client.limiters[0].now = func() time.Time { return now }
+	return client, &now
 }
 
 func drainEvent(t *testing.T, recorder *record.FakeRecorder) (string, bool) {
@@ -50,7 +58,7 @@ func drainEvent(t *testing.T, recorder *record.FakeRecorder) (string, bool) {
 	}
 }
 
-func TestRecordCreateOrPatchSuccessEvent_ActualChangesAlwaysRecorded(t *testing.T) {
+func TestCreateOrPatchSuccess_ActualChangesAlwaysRecorded(t *testing.T) {
 	tests := []struct {
 		name     string
 		opResult controllerutil.OperationResult
@@ -61,14 +69,13 @@ func TestRecordCreateOrPatchSuccessEvent_ActualChangesAlwaysRecorded(t *testing.
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			withFakeClock(t)
-			recorder := record.NewFakeRecorder(10)
+			delegate := record.NewFakeRecorder(10)
+			client, _ := testClient(t, delegate)
 			obj := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "test"}}
 
-			// Repeated actual changes must never be rate-limited.
 			for i := 0; i < 3; i++ {
-				RecordCreateOrPatchSuccessEvent(recorder, obj, tc.opResult, "Synced", "synced %s", obj.Name)
-				event, ok := drainEvent(t, recorder)
+				client.CreateOrPatchSuccess(obj, tc.opResult, "Synced", "synced %s", obj.Name)
+				event, ok := drainEvent(t, delegate)
 				assert.True(t, ok, "expected an event on iteration %d", i)
 				assert.Equal(t, "Normal Synced synced test", event)
 			}
@@ -76,50 +83,60 @@ func TestRecordCreateOrPatchSuccessEvent_ActualChangesAlwaysRecorded(t *testing.
 	}
 }
 
-func TestRecordCreateOrPatchSuccessEvent_NoopRateLimited(t *testing.T) {
-	now := withFakeClock(t)
-	recorder := record.NewFakeRecorder(10)
+func TestCreateOrPatchSuccess_NoopRateLimited(t *testing.T) {
+	delegate := record.NewFakeRecorder(10)
+	client, now := testClient(t, delegate)
 	obj := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "test"}}
 
 	emit := func() {
-		RecordCreateOrPatchSuccessEvent(recorder, obj, controllerutil.OperationResultNone, "Synced", "synced %s", obj.Name)
+		client.CreateOrPatchSuccess(obj, controllerutil.OperationResultNone, "Synced", "synced %s", obj.Name)
 	}
 
-	// The first steady-state event is surfaced (burst).
 	emit()
-	event, ok := drainEvent(t, recorder)
+	event, ok := drainEvent(t, delegate)
 	assert.True(t, ok, "expected the first no-op event to be recorded")
 	assert.Equal(t, "Normal Synced synced test", event)
 
-	// Immediately repeated no-op events for the same object+reason are throttled.
 	for i := 0; i < 5; i++ {
 		emit()
-		_, ok := drainEvent(t, recorder)
+		_, ok := drainEvent(t, delegate)
 		assert.False(t, ok, "did not expect a throttled no-op event on iteration %d", i)
 	}
 
-	// Once the interval elapses, a single event is allowed through again.
-	*now = now.Add(noopSuccessEventInterval + time.Second)
+	*now = now.Add(defaultNoopSuccessEventInterval + time.Second)
 	emit()
-	event, ok = drainEvent(t, recorder)
+	event, ok = drainEvent(t, delegate)
 	assert.True(t, ok, "expected a no-op event after the interval elapsed")
 	assert.Equal(t, "Normal Synced synced test", event)
 }
 
-func TestRecordCreateOrPatchSuccessEvent_DistinctKeysLimitedIndependently(t *testing.T) {
-	withFakeClock(t)
-	recorder := record.NewFakeRecorder(10)
+func TestCreateOrPatchSuccess_DistinctKeysLimitedIndependently(t *testing.T) {
+	delegate := record.NewFakeRecorder(10)
+	client, _ := testClient(t, delegate)
 	objA := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "a"}}
 	objB := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "b"}}
 
-	RecordCreateOrPatchSuccessEvent(recorder, objA, controllerutil.OperationResultNone, "Synced", "synced")
-	RecordCreateOrPatchSuccessEvent(recorder, objB, controllerutil.OperationResultNone, "Synced", "synced")
+	client.CreateOrPatchSuccess(objA, controllerutil.OperationResultNone, "Synced", "synced")
+	client.CreateOrPatchSuccess(objB, controllerutil.OperationResultNone, "Synced", "synced")
 
-	// Both distinct objects should surface their first no-op event.
-	_, ok := drainEvent(t, recorder)
+	_, ok := drainEvent(t, delegate)
 	assert.True(t, ok)
-	_, ok = drainEvent(t, recorder)
+	_, ok = drainEvent(t, delegate)
 	assert.True(t, ok)
-	_, ok = drainEvent(t, recorder)
+	_, ok = drainEvent(t, delegate)
+	assert.False(t, ok)
+}
+
+func TestClient_RateLimitsConfiguredEventType(t *testing.T) {
+	delegate := record.NewFakeRecorder(10)
+	client, _ := testClient(t, delegate)
+	obj := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "test"}}
+
+	client.Eventf(obj, corev1.EventTypeNormal, "Synced", "first")
+	_, ok := drainEvent(t, delegate)
+	assert.True(t, ok)
+
+	client.Eventf(obj, corev1.EventTypeNormal, "Synced", "second")
+	_, ok = drainEvent(t, delegate)
 	assert.False(t, ok)
 }
