@@ -145,6 +145,8 @@ func PrepareTest(ctx context.Context, t *testing.T, requiredWorkerNodes int, opt
 	diag := diagnostics.NewDiagCollector(k8sClient, tc.Namespace, diagMode, diagDir, Logger)
 
 	cleanup := func() {
+		ctx := context.WithoutCancel(ctx)
+
 		if t.Failed() {
 			diag.CollectAll(ctx, t.Name())
 		}

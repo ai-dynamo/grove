@@ -1,6 +1,6 @@
-//go:build e2e
+//go:build e2e && e2eupgrade
 
-// Copyright 2025 The Grove Authors.
+// Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,15 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package tests contains end-to-end tests for the Grove operator.
-//
-// These tests are disabled by default due to the 'e2e' build tag above.
-// To run these tests, use:
-//
-//	go test -tags=e2e ./e2e/tests/...
-//
-// Without the -tags=e2e flag, these tests will be skipped entirely.
-package tests
+package upgrade
 
 import (
 	"context"
@@ -30,23 +22,22 @@ import (
 	"testing"
 
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
+	"github.com/ai-dynamo/grove/operator/e2e/tests"
 )
 
-// TestMain manages the lifecycle of the shared cluster for all tests
+// TestMain manages the lifecycle of the shared cluster for all upgrade tests.
 func TestMain(m *testing.M) {
 	ctx := context.Background()
 
 	// Setup shared cluster once for all tests
-	sharedCluster := setup.SharedCluster(Logger)
-	if err := sharedCluster.Setup(ctx, TestImages); err != nil {
-		Logger.Errorf("failed to setup shared cluster: %s", err)
+	sharedCluster := setup.SharedCluster(tests.Logger)
+	if err := sharedCluster.Setup(ctx, nil); err != nil {
+		tests.Logger.Errorf("failed to setup shared cluster: %s", err)
 		os.Exit(1)
 	}
 
-	// Run tests
 	code := m.Run()
 
-	// Teardown shared cluster
 	sharedCluster.Teardown()
 
 	os.Exit(code)

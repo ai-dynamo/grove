@@ -259,3 +259,12 @@ func InitContainerNames(pod v1.Pod) []string {
 	}
 	return names
 }
+
+// InitContainerImages returns the images of all init containers in a pod.
+func InitContainerImages(pod v1.Pod) []string {
+	images := make([]string, len(pod.Spec.InitContainers))
+	for i, c := range pod.Spec.InitContainers {
+		images[i] = c.Image
+	}
+	return images
+}

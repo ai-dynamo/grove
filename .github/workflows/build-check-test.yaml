@@ -135,6 +135,8 @@ jobs:
             test_pattern: "^Test_CRD_Installer"
           - test_name: resource_sharing
             test_pattern: "^Test_RS"
+          - test_name: upgrade_from_latest_release
+            make_target: "run-upgrade-e2e"
     name: E2E - ${{ matrix.test_name }}
     steps:
       # print runner specs so we have a record in case of failures
@@ -155,6 +157,8 @@ jobs:
         uses: ./.github/actions/e2e-setup
 
       - name: Run e2e tests - ${{ matrix.test_name }}
+        env:
+          GITHUB_TOKEN: ${{ matrix.test_name == 'upgrade_from_latest_release' && secrets.GITHUB_TOKEN || '' }}
         run: |
           make ${{ matrix.make_target || 'run-e2e-full' }} TEST_PATTERN='${{ matrix.test_pattern }}' E2E_CREATE_FLAGS='--dind-memory-mode'
         working-directory: operator
@@ -202,6 +206,7 @@ jobs:
           - test_name: auto_mnnvl
           - test_name: crd_installer
           - test_name: resource_sharing
+          - test_name: upgrade_from_latest_release
     name: E2E - ${{ matrix.test_name }}
     steps:
       - name: Skip E2E (no relevant changes)

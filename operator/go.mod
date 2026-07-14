@@ -8,6 +8,7 @@ require (
 	github.com/docker/docker v28.3.3+incompatible
 	github.com/go-logr/logr v1.4.3
 	github.com/go-logr/zapr v1.3.0
+	github.com/google/go-github/v86 v86.0.0
 	github.com/kai-scheduler/KAI-scheduler v0.15.2
 	github.com/open-policy-agent/cert-controller v0.14.0
 	github.com/samber/lo v1.52.0
@@ -75,6 +76,7 @@ require (
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
+	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
 	github.com/gosuri/uitable v0.0.4 // indirect
