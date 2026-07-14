@@ -42,7 +42,7 @@ import (
 func CreateOperatorRegistry(mgr manager.Manager, eventRecorder record.EventRecorder, topologyAwareSchedulingConfig configv1alpha1.TopologyAwareSchedulingConfiguration, networkConfig configv1alpha1.NetworkAcceleration, schedRegistry scheduler.Registry) component.OperatorRegistry[v1alpha1.PodCliqueSet] {
 	cl := mgr.GetClient()
 	reg := component.NewOperatorRegistry[v1alpha1.PodCliqueSet]()
-	reg.Register(component.KindPodClique, podclique.New(cl, mgr.GetScheme(), eventRecorder))
+	reg.Register(component.KindPodClique, podclique.New(cl, mgr.GetScheme(), eventRecorder, schedRegistry))
 	reg.Register(component.KindHeadlessService, service.New(cl, mgr.GetScheme()))
 	reg.Register(component.KindRole, role.New(cl, mgr.GetScheme()))
 	reg.Register(component.KindRoleBinding, rolebinding.New(cl, mgr.GetScheme()))

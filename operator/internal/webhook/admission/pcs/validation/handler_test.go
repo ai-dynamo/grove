@@ -247,6 +247,103 @@ func TestValidatePodCliqueSetWithLPXBackend(t *testing.T) {
 	assert.Contains(t, err.Error(), "does not support Grove topology constraints")
 }
 
+// TestValidatePodCliqueSetWithDisjointBackends documents that backend-specific
+// validation must run for every scheduler selected by a PodClique, not just the
+// scheduler on the first PodClique in the PodCliqueSet.
+func TestValidatePodCliqueSetWithDisjointBackends(t *testing.T) {
+	profile := groveconfigv1alpha1.SchedulerProfile{Name: groveconfigv1alpha1.SchedulerNameLPX}
+	registry := &testutils.FakeSchedulerRegistry{
+		Backends: map[string]scheduler.Backend{
+			string(groveconfigv1alpha1.SchedulerNameKube): testutils.NewFakeSchedulerBackend(
+				string(groveconfigv1alpha1.SchedulerNameKube),
+			),
+			string(groveconfigv1alpha1.SchedulerNameLPX): lpx.New(profile),
+		},
+		DefaultBackend: string(groveconfigv1alpha1.SchedulerNameKube),
+	}
+	handler := &Handler{schedRegistry: registry}
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder("kube-worker").
+				WithRoleName("kube-worker").
+				WithReplicas(1).
+				WithPodSpec(corev1.PodSpec{
+					SchedulerName: string(groveconfigv1alpha1.SchedulerNameKube),
+					Containers: []corev1.Container{{
+						Name:  "worker",
+						Image: "worker",
+					}},
+				}).
+				Build(),
+		).
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder("lpx-worker").
+				WithRoleName("lpx-worker").
+				WithReplicas(1).
+				WithPodSpec(corev1.PodSpec{
+					SchedulerName: string(groveconfigv1alpha1.SchedulerNameLPX),
+					Containers: []corev1.Container{{
+						Name:  "worker",
+						Image: "worker",
+					}},
+				}).
+				Build(),
+		).
+		Build()
+	pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{}
+
+	err := handler.validatePodCliqueSetWithBackend(context.Background(), pcs)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not support Grove topology constraints")
+}
+
+func TestValidatePodCliqueSetScopesCliquesToTheirBackend(t *testing.T) {
+	registry := &testutils.FakeSchedulerRegistry{
+		Backends: map[string]scheduler.Backend{
+			string(groveconfigv1alpha1.SchedulerNameKai): testutils.NewFakeSchedulerBackend(
+				string(groveconfigv1alpha1.SchedulerNameKai),
+			),
+			string(groveconfigv1alpha1.SchedulerNameLPX): lpx.New(
+				groveconfigv1alpha1.SchedulerProfile{Name: groveconfigv1alpha1.SchedulerNameLPX},
+			),
+		},
+		DefaultBackend: string(groveconfigv1alpha1.SchedulerNameKai),
+	}
+	handler := &Handler{schedRegistry: registry}
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder("kai-worker").
+				WithRoleName("kai-worker").
+				WithReplicas(1).
+				WithTopologyConstraint(&grovecorev1alpha1.TopologyConstraint{}).
+				WithPodSpec(corev1.PodSpec{
+					SchedulerName: string(groveconfigv1alpha1.SchedulerNameKai),
+					Containers:    []corev1.Container{{Name: "worker", Image: "worker"}},
+				}).
+				Build(),
+		).
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder("lpx-worker").
+				WithRoleName("lpx-worker").
+				WithReplicas(1).
+				WithPodSpec(corev1.PodSpec{
+					SchedulerName: string(groveconfigv1alpha1.SchedulerNameLPX),
+					Containers:    []corev1.Container{{Name: "worker", Image: "worker"}},
+				}).
+				Build(),
+		).
+		Build()
+	pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+		{
+			Name:               "kai-workers",
+			CliqueNames:        []string{"kai-worker"},
+			TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{},
+		},
+	}
+
+	require.NoError(t, handler.validatePodCliqueSetWithBackend(context.Background(), pcs))
+}
+
 // TestValidateUpdate tests validation of PodCliqueSet update requests.
 func TestValidateUpdate(t *testing.T) {
 	startupType := ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)

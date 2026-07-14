@@ -54,7 +54,7 @@ func TestNew(t *testing.T) {
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 	eventRecorder := &record.FakeRecorder{}
 
-	operator := New(client, scheme, eventRecorder)
+	operator := New(client, scheme, eventRecorder, testutils.NewDefaultFakeRegistry())
 
 	assert.NotNil(t, operator)
 	resource, ok := operator.(*_resource)

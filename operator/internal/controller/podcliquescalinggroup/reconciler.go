@@ -27,6 +27,7 @@ import (
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	pcsgcomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup/components"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -45,7 +46,7 @@ type Reconciler struct {
 }
 
 // NewReconciler creates a new instance of the PodClique Reconciler.
-func NewReconciler(mgr ctrl.Manager, controllerCfg groveconfigv1alpha1.PodCliqueScalingGroupControllerConfiguration) *Reconciler {
+func NewReconciler(mgr ctrl.Manager, controllerCfg groveconfigv1alpha1.PodCliqueScalingGroupControllerConfiguration, schedRegistry scheduler.Registry) *Reconciler {
 	eventRecorder := mgr.GetEventRecorderFor(controllerName)
 	client := mgr.GetClient()
 	return &Reconciler{
@@ -53,7 +54,7 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg groveconfigv1alpha1.PodClique
 		client:                  client,
 		eventRecorder:           eventRecorder,
 		reconcileStatusRecorder: ctrlcommon.NewReconcileErrorRecorder(client),
-		operatorRegistry:        pcsgcomponent.CreateOperatorRegistry(mgr, eventRecorder),
+		operatorRegistry:        pcsgcomponent.CreateOperatorRegistry(mgr, eventRecorder, schedRegistry),
 	}
 }
 

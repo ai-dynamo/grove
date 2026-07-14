@@ -137,7 +137,13 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGa
 	pg.Labels = mirrorPCSMetadata(pg.Labels, pcs.Labels, getLabels(pcs.Name))
 	// Set scheduler name so the podgang controller can resolve the correct backend.
 	// When no scheduler can be resolved, drop any stale label from a previous reconcile.
-	if schedName := r.getSchedulerNameForPCS(pcs); schedName != "" {
+	schedName := pgi.schedulerName
+	if schedName == "" {
+		// Preserve compatibility for directly constructed podGangInfo values in
+		// callers and tests. Reconciled PodGangs always carry schedulerName.
+		schedName = r.getSchedulerNameForPCS(pcs)
+	}
+	if schedName != "" {
 		pg.Labels[apicommon.LabelSchedulerName] = schedName
 	} else {
 		delete(pg.Labels, apicommon.LabelSchedulerName)
@@ -253,17 +259,19 @@ func podGangHasTranslatedTopologyConstraints(pgi *podGangInfo) bool {
 	return false
 }
 
-// getSchedulerNameForPCS returns the scheduler backend name for the PodCliqueSet:
-// First check the PodClique templates to find any schedulerName configured. Validating webhook ensures
-// that there cannot be more than one scheduler name configured for a PCS.
-// the template's schedulerName if set (same across all cliques per validation), else the default backend.
+// getSchedulerNameForPCS returns the first explicitly configured scheduler, or the default backend.
+// Reconciled PodGangs carry their resolved scheduler directly; this is a compatibility fallback for
+// callers that construct podGangInfo without a scheduler name.
 func (r _resource) getSchedulerNameForPCS(pcs *grovecorev1alpha1.PodCliqueSet) string {
 	for _, c := range pcs.Spec.Template.Cliques {
 		if c != nil && c.Spec.PodSpec.SchedulerName != "" {
 			return c.Spec.PodSpec.SchedulerName
 		}
 	}
-	return r.schedRegistry.GetDefault().Name()
+	if defaultBackend := r.schedRegistry.GetDefault(); defaultBackend != nil {
+		return defaultBackend.Name()
+	}
+	return ""
 }
 
 // setOrUpdateInitializedCondition sets or updates the PodGangInitialized condition on the PodGang status.

@@ -33,6 +33,7 @@ import (
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -74,14 +75,16 @@ type _resource struct {
 	client        client.Client
 	scheme        *runtime.Scheme
 	eventRecorder record.EventRecorder
+	schedRegistry scheduler.Registry
 }
 
 // New creates a new PodClique operator for managing PodClique resources within PodCliqueScalingGroups
-func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder) component.Operator[grovecorev1alpha1.PodCliqueScalingGroup] {
+func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, schedRegistry scheduler.Registry) component.Operator[grovecorev1alpha1.PodCliqueScalingGroup] {
 	return &_resource{
 		client:        client,
 		scheme:        scheme,
 		eventRecorder: eventRecorder,
+		schedRegistry: schedRegistry,
 	}
 }
 
@@ -313,9 +316,16 @@ func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1alpha1.PodC
 		return err
 	}
 
-	podGangName := apicommon.GeneratePodGangNameForPodCliqueOwnedByPCSG(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex)
+	basePodGangName := apicommon.GeneratePodGangNameForPodCliqueOwnedByPCSG(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex)
+	podGangName := componentutils.GenerateSchedulerScopedPodGangName(basePodGangName, pcs, pclqTemplateSpec.Spec.PodSpec.SchedulerName, r.schedRegistry)
+	scopedBasePodGangName := componentutils.GenerateSchedulerScopedPodGangName(
+		apicommon.GenerateBasePodGangName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}),
+		pcs,
+		pclqTemplateSpec.Spec.PodSpec.SchedulerName,
+		r.schedRegistry,
+	)
 
-	pclq.Labels = getLabels(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex, pclqObjectKey, pclqTemplateSpec, podGangName)
+	pclq.Labels = getLabels(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex, pclqObjectKey, pclqTemplateSpec, podGangName, scopedBasePodGangName)
 	pclq.Annotations = maps.Clone(pclqTemplateSpec.Annotations)
 	// PodGang owns topology selection; do not propagate a template topology annotation to PodClique pods.
 	delete(pclq.Annotations, apiconstants.AnnotationTopologyName)
@@ -469,7 +479,7 @@ func getPodCliqueSelectorLabels(pcsgObjectMeta metav1.ObjectMeta) map[string]str
 }
 
 // getLabels constructs the complete set of labels for a PodClique including Grove-specific, component, and template labels
-func getLabels(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsgReplicaIndex int, pclqObjectKey client.ObjectKey, pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec, podGangName string) map[string]string {
+func getLabels(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsgReplicaIndex int, pclqObjectKey client.ObjectKey, pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec, podGangName, basePodGangName string) map[string]string {
 	pclqComponentLabels := map[string]string{
 		apicommon.LabelAppNameKey:                        pclqObjectKey.Name,
 		apicommon.LabelComponentKey:                      apicommon.LabelComponentNamePodCliqueScalingGroupPodClique,
@@ -481,9 +491,6 @@ func getLabels(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, pcsg *g
 	}
 
 	// Add base-podgang label for scaled PodGang pods (beyond minAvailable)
-	basePodGangName := apicommon.GenerateBasePodGangName(
-		apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex},
-	)
 	if podGangName != basePodGangName {
 		// This pod belongs to a scaled PodGang - add the base PodGang label
 		pclqComponentLabels[apicommon.LabelBasePodGang] = basePodGangName

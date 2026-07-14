@@ -167,7 +167,6 @@ func TestValidateSchedulerNames(t *testing.T) {
 		schedulerConfig      groveconfigv1alpha1.SchedulerConfiguration
 		schedulerNames       []string
 		expectErrors         int
-		expectInvalidSame    bool
 		expectInvalidEnabled bool
 	}{
 		{
@@ -219,7 +218,7 @@ func TestValidateSchedulerNames(t *testing.T) {
 			expectErrors:   0,
 		},
 		{
-			name: "mixed default-scheduler and kai-scheduler",
+			name: "different enabled scheduler names",
 			schedulerConfig: groveconfigv1alpha1.SchedulerConfiguration{
 				Profiles: []groveconfigv1alpha1.SchedulerProfile{
 					{Name: groveconfigv1alpha1.SchedulerNameKube},
@@ -227,10 +226,8 @@ func TestValidateSchedulerNames(t *testing.T) {
 				},
 				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
 			},
-			schedulerNames:       []string{"default-scheduler", "kai-scheduler"},
-			expectErrors:         1,
-			expectInvalidSame:    true,
-			expectInvalidEnabled: false,
+			schedulerNames: []string{"default-scheduler", "kai-scheduler"},
+			expectErrors:   0,
 		},
 		{
 			name: "single kai-scheduler when enabled (kube+kai)",
@@ -264,7 +261,6 @@ func TestValidateSchedulerNames(t *testing.T) {
 			},
 			schedulerNames:       []string{"kai-scheduler"},
 			expectErrors:         1,
-			expectInvalidSame:    false,
 			expectInvalidEnabled: true,
 		},
 		{
@@ -278,11 +274,10 @@ func TestValidateSchedulerNames(t *testing.T) {
 			},
 			schedulerNames:       []string{"volcano"},
 			expectErrors:         1,
-			expectInvalidSame:    false,
 			expectInvalidEnabled: true,
 		},
 		{
-			name: "mixed empty and kai when default is default-scheduler",
+			name: "empty resolves to default alongside a different enabled scheduler",
 			schedulerConfig: groveconfigv1alpha1.SchedulerConfiguration{
 				Profiles: []groveconfigv1alpha1.SchedulerProfile{
 					{Name: groveconfigv1alpha1.SchedulerNameKube},
@@ -290,10 +285,21 @@ func TestValidateSchedulerNames(t *testing.T) {
 				},
 				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
 			},
-			schedulerNames:       []string{"", "kai-scheduler"},
+			schedulerNames: []string{"", "kai-scheduler"},
+			expectErrors:   0,
+		},
+		{
+			name: "each distinct scheduler must be enabled",
+			schedulerConfig: groveconfigv1alpha1.SchedulerConfiguration{
+				Profiles: []groveconfigv1alpha1.SchedulerProfile{
+					{Name: groveconfigv1alpha1.SchedulerNameKube},
+					{Name: groveconfigv1alpha1.SchedulerNameKai},
+				},
+				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+			},
+			schedulerNames:       []string{"default-scheduler", "volcano"},
 			expectErrors:         1,
-			expectInvalidSame:    true,
-			expectInvalidEnabled: false,
+			expectInvalidEnabled: true,
 		},
 	}
 	for _, tt := range tests {
@@ -319,9 +325,6 @@ func TestValidateSchedulerNames(t *testing.T) {
 			assert.Len(t, errs, tt.expectErrors, "validation errors: %v", errs)
 			if tt.expectErrors > 0 {
 				msgs := lo.Map(errs, func(e *field.Error, _ int) string { return e.ErrorBody() })
-				if tt.expectInvalidSame {
-					assert.Contains(t, strings.Join(msgs, " "), "have to be the same")
-				}
 				if tt.expectInvalidEnabled {
 					assert.Contains(t, strings.Join(msgs, " "), "not enabled")
 				}

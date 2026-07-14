@@ -20,6 +20,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
@@ -28,6 +30,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -50,6 +53,7 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs 
 		logger:               logger,
 		existingPCLQPods:     make(map[string][]corev1.Pod),
 		unassignedPodsByPCLQ: make(map[string][]corev1.Pod),
+		schedRegistry:        r.schedRegistry,
 	}
 
 	sc.existingPCLQs, err = r.getExistingPCLQsForPCS(ctx, pcs)
@@ -180,20 +184,19 @@ func (r _resource) computeExpectedPodGangs(sc *syncContext) error {
 func buildExpectedBasePodGangForPCSReplicas(sc *syncContext) ([]*podGangInfo, error) {
 	expectedPodGangs := make([]*podGangInfo, 0, int(sc.pcs.Spec.Replicas))
 	for pcsReplica := range int(sc.pcs.Spec.Replicas) {
-		basePodGang, err := buildExpectedBasePodGangForPCSReplica(sc, pcsReplica)
+		basePodGangs, err := buildExpectedBasePodGangForPCSReplica(sc, pcsReplica)
 		if err != nil {
 			return nil, err
 		}
-		expectedPodGangs = append(expectedPodGangs, basePodGang)
+		expectedPodGangs = append(expectedPodGangs, basePodGangs...)
 	}
 	return expectedPodGangs, nil
 }
 
 // buildExpectedBasePodGangForPCSReplica builds the base PodGang info for a given PodCliqueSet replica.
-func buildExpectedBasePodGangForPCSReplica(sc *syncContext, pcsReplica int) (*podGangInfo, error) {
+func buildExpectedBasePodGangForPCSReplica(sc *syncContext, pcsReplica int) ([]*podGangInfo, error) {
 	podGangFQN := apicommon.GenerateBasePodGangName(apicommon.ResourceNameReplica{Name: sc.pcs.Name, Replica: pcsReplica})
 	pg := &podGangInfo{
-		fqn: podGangFQN,
 		// TopologyConstraint for the base PodGang comes from the topology constraint defined at the PCS level.
 		topologyConstraint: createTopologyPackConstraint(sc, client.ObjectKeyFromObject(sc.pcs), sc.pcs.Spec.Template.TopologyConstraint),
 	}
@@ -210,7 +213,7 @@ func buildExpectedBasePodGangForPCSReplica(sc *syncContext, pcsReplica int) (*po
 	pg.pcsgTopologyConstraints = pcsgPackConstraints
 	pg.pclqs = pclqInfos
 
-	return pg, nil
+	return partitionPodGangInfoByScheduler(sc, podGangFQN, pg), nil
 }
 
 func buildStandalonePCLQInfosForBasePodGang(sc *syncContext, pcsReplica int) []pclqInfo {
@@ -286,17 +289,18 @@ func (r _resource) buildExpectedScaledPodGangsForPCSG(sc *syncContext, pcsReplic
 		minAvailable := int(*pcsgConfig.MinAvailable)
 		scaledReplicas := replicas - minAvailable
 		for podGangIndex, pcsgReplica := 0, minAvailable; podGangIndex < scaledReplicas; podGangIndex, pcsgReplica = podGangIndex+1, pcsgReplica+1 {
-			pg, err := doBuildExpectedScaledPodGangForPCSG(sc, pcsgFQN, pcsgConfig, pcsgReplica, podGangIndex)
+			pg, err := doBuildExpectedScaledPodGangForPCSG(sc, pcsgFQN, pcsgConfig, pcsgReplica)
 			if err != nil {
 				return nil, fmt.Errorf("failed to build expected scaled PodGang for PCSG %q replica %d: %w", pcsgFQN, pcsgReplica, err)
 			}
-			expectedPodGangs = append(expectedPodGangs, pg)
+			basePodGangName := apicommon.CreatePodGangNameFromPCSGFQN(pcsgFQN, podGangIndex)
+			expectedPodGangs = append(expectedPodGangs, partitionPodGangInfoByScheduler(sc, basePodGangName, pg)...)
 		}
 	}
 	return expectedPodGangs, nil
 }
 
-func doBuildExpectedScaledPodGangForPCSG(sc *syncContext, pcsgFQN string, pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig, pcsgReplica int, podGangIndex int) (*podGangInfo, error) {
+func doBuildExpectedScaledPodGangForPCSG(sc *syncContext, pcsgFQN string, pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig, pcsgReplica int) (*podGangInfo, error) {
 	var (
 		pclqInfos          = make([]pclqInfo, 0, len(pcsgConfig.CliqueNames))
 		topologyConstraint *groveschedulerv1alpha1.TopologyConstraint
@@ -328,7 +332,6 @@ func doBuildExpectedScaledPodGangForPCSG(sc *syncContext, pcsgFQN string, pcsgCo
 	}
 
 	pg := &podGangInfo{
-		fqn:                apicommon.CreatePodGangNameFromPCSGFQN(pcsgFQN, podGangIndex),
 		topologyConstraint: topologyConstraint,
 		pclqs:              pclqInfos,
 	}
@@ -340,12 +343,66 @@ func doBuildExpectedScaledPodGangForPCSG(sc *syncContext, pcsgFQN string, pcsgCo
 func buildPodCliqueInfo(sc *syncContext, pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec, pclqFQN string, belongsToPCSG bool) pclqInfo {
 	replicas := determinePodCliqueReplicas(sc, pclqTemplateSpec, pclqFQN, belongsToPCSG)
 	expectedPCLQ := pclqInfo{
-		fqn:          pclqFQN,
-		replicas:     replicas,
-		minAvailable: *pclqTemplateSpec.Spec.MinAvailable,
+		fqn:           pclqFQN,
+		replicas:      replicas,
+		minAvailable:  *pclqTemplateSpec.Spec.MinAvailable,
+		schedulerName: componentutils.ResolveSchedulerName(sc.schedRegistry, pclqTemplateSpec.Spec.PodSpec.SchedulerName),
 	}
 	expectedPCLQ.topologyConstraint = createTopologyPackConstraint(sc, types.NamespacedName{Namespace: sc.pcs.Namespace, Name: pclqFQN}, pclqTemplateSpec.TopologyConstraint)
 	return expectedPCLQ
+}
+
+// partitionPodGangInfoByScheduler splits a logical PodGang into one PodGang per
+// selected scheduler. This prevents a scheduler backend from waiting on Pods
+// that are intentionally assigned to a different scheduler.
+func partitionPodGangInfoByScheduler(sc *syncContext, basePodGangName string, pg *podGangInfo) []*podGangInfo {
+	pclqsByScheduler := make(map[string][]pclqInfo)
+	for _, pclq := range pg.pclqs {
+		pclqsByScheduler[pclq.schedulerName] = append(pclqsByScheduler[pclq.schedulerName], pclq)
+	}
+	schedulerNames := slices.Sorted(maps.Keys(pclqsByScheduler))
+
+	result := make([]*podGangInfo, 0, len(schedulerNames))
+	for _, schedulerName := range schedulerNames {
+		pclqs := pclqsByScheduler[schedulerName]
+		result = append(result, &podGangInfo{
+			fqn:                     componentutils.GenerateSchedulerScopedPodGangName(basePodGangName, sc.pcs, schedulerName, sc.schedRegistry),
+			schedulerName:           schedulerName,
+			pclqs:                   pclqs,
+			topologyConstraint:      pg.topologyConstraint,
+			pcsgTopologyConstraints: filterPCSGTopologyConstraints(pg.pcsgTopologyConstraints, pclqs),
+		})
+	}
+	return result
+}
+
+func filterPCSGTopologyConstraints(configs []groveschedulerv1alpha1.TopologyConstraintGroupConfig, pclqs []pclqInfo) []groveschedulerv1alpha1.TopologyConstraintGroupConfig {
+	if len(configs) == 0 {
+		return nil
+	}
+	allowedPodGroups := make(map[string]struct{}, len(pclqs))
+	for _, pclq := range pclqs {
+		allowedPodGroups[pclq.fqn] = struct{}{}
+	}
+
+	result := make([]groveschedulerv1alpha1.TopologyConstraintGroupConfig, 0, len(configs))
+	for _, config := range configs {
+		filteredPodGroupNames := make([]string, 0, len(config.PodGroupNames))
+		for _, podGroupName := range config.PodGroupNames {
+			if _, ok := allowedPodGroups[podGroupName]; ok {
+				filteredPodGroupNames = append(filteredPodGroupNames, podGroupName)
+			}
+		}
+		if len(filteredPodGroupNames) == 0 {
+			continue
+		}
+		config.PodGroupNames = filteredPodGroupNames
+		result = append(result, config)
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 // createTopologyPackConstraint creates a TopologyPackConstraint based on the sync context and provided parameters for a resource.
@@ -659,6 +716,7 @@ type syncContext struct {
 	unassignedPodsByPCLQ   map[string][]corev1.Pod
 	tasEnabled             bool
 	topologyLevels         []grovecorev1alpha1.TopologyLevel
+	schedRegistry          scheduler.Registry
 }
 
 // getPodGangNamesPendingCreation identifies PodGangs not yet created.
@@ -782,6 +840,8 @@ func (sfr *syncFlowResult) getAggregatedError() error {
 type podGangInfo struct {
 	// fqn is a fully qualified name of a PodGang.
 	fqn string
+	// schedulerName is the resolved scheduler backend for this PodGang.
+	schedulerName string
 	// pclqs holds the relevant information for all constituent PodCliques for this PodGang.
 	pclqs []pclqInfo
 	// topologyConstraint holds the topology pack constraint applicable at the PodGang level.
@@ -810,6 +870,8 @@ type pclqInfo struct {
 	replicas int32
 	// minAvailable is the minimum number of pods that are required for gang scheduling from this PodClique
 	minAvailable int32
+	// schedulerName is the resolved scheduler backend for this PodClique.
+	schedulerName string
 	// associatedPodNames are Pod names (having this PodClique as an owner) that have already been associated to this PodGang.
 	// This will be updated as and when pods are either deleted or new pods are associated.
 	associatedPodNames []string
