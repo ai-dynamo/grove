@@ -13,7 +13,7 @@
 # limitations under the License.
 
 name: "E2E Setup"
-description: "Install all tools and dependencies needed to run E2E tests (Go, k3d, skaffold, helm, Python + deps)"
+description: "Install all tools and dependencies needed to run E2E tests"
 
 inputs:
   go-version:
@@ -24,42 +24,14 @@ inputs:
 runs:
   using: "composite"
   steps:
-    # Most tools (Go, k3d, skaffold, helm, make) are pre-installed in the runner
-    # image (eks-grove-e2e-runner). Each step checks first and only installs if
-    # missing, so this action works on both baked and vanilla runners. Python is
-    # provisioned by uv (see operator/pyproject.toml + .python-version); the
-    # hack scripts use a `#!/usr/bin/env -S uv run` shebang so direct invocation
-    # auto-resolves the venv.
-
-    - name: Install build-essential for make
+    - name: Install OS packages
       shell: bash
       run: |
-        if command -v make &>/dev/null; then
-          echo "make already installed: $(make --version | head -1)"
-        else
-          sudo apt-get update && sudo apt install build-essential -y
-        fi
+        sudo apt-get update
+        sudo apt-get install -y build-essential
 
     - name: Set up Go
-      shell: bash
-      run: |
-        REQUIRED="${{ inputs.go-version }}"
-        if command -v go &>/dev/null; then
-          INSTALLED="$(go version | grep -oP '\d+\.\d+\.\d+')"
-          if [[ "${INSTALLED}" == "${REQUIRED}" ]]; then
-            echo "Go ${INSTALLED} already installed — matches required version"
-          else
-            echo "Go ${INSTALLED} installed but ${REQUIRED} required"
-            echo "NEED_GO_SETUP=true" >> "$GITHUB_ENV"
-          fi
-        else
-          echo "Go not found, installing ${REQUIRED}..."
-          echo "NEED_GO_SETUP=true" >> "$GITHUB_ENV"
-        fi
-
-    - name: Set up Go (fallback)
-      if: env.NEED_GO_SETUP == 'true'
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
         go-version: ${{ inputs.go-version }}
         cache: true
@@ -69,36 +41,27 @@ runs:
       shell: bash
       run: echo "GOROOT=$(env -u GOROOT go env GOROOT)" >> "$GITHUB_ENV"
 
-    - name: Install k3d
+    - name: Add repo tools to PATH
       shell: bash
       run: |
-        if command -v k3d &>/dev/null; then
-          echo "k3d already installed: $(k3d version | head -1)"
-        else
-          curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
-          k3d version
-        fi
+        echo "${GITHUB_WORKSPACE}/hack/tools/bin" >> "$GITHUB_PATH"
 
-    - name: Install skaffold
-      shell: bash
-      run: |
-        if command -v skaffold &>/dev/null; then
-          echo "Skaffold already installed: $(skaffold version)"
-        else
-          curl -Lo skaffold https://storage.googleapis.com/skaffold/releases/latest/skaffold-linux-amd64
-          sudo install skaffold /usr/local/bin/
-          skaffold version
-        fi
+    - name: Cache e2e CLI tools
+      uses: actions/cache@v4
+      with:
+        path: hack/tools/bin
+        key: ${{ runner.os }}-${{ runner.arch }}-e2e-tools-${{ hashFiles('hack/tools.mk') }}
 
-    - name: Install Helm
+    - name: Install e2e CLI tools
       shell: bash
       run: |
-        if command -v helm &>/dev/null; then
-          echo "Helm already installed: $(helm version --short)"
-        else
-          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-          helm version
-        fi
+        make -C operator \
+          "${GITHUB_WORKSPACE}/hack/tools/bin/k3d" \
+          "${GITHUB_WORKSPACE}/hack/tools/bin/kubectl" \
+          "${GITHUB_WORKSPACE}/hack/tools/bin/helm" \
+          "${GITHUB_WORKSPACE}/hack/tools/bin/skaffold" \
+          "${GITHUB_WORKSPACE}/hack/tools/bin/jq" \
+          "${GITHUB_WORKSPACE}/hack/tools/bin/yq"
 
     - name: Install uv
       shell: bash
