@@ -68,7 +68,7 @@ func (r *Reconciler) RegisterWithManager(mgr manager.Manager) error {
 		Complete(r)
 }
 
-// podCliqueSetPredicate returns a predicate that allows spec changes and explicit no-op reconcile triggers.
+// podCliqueSetPredicate returns a predicate that allows deletion, spec changes, and explicit no-op reconcile triggers.
 func podCliqueSetPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(_ event.CreateEvent) bool { return true },
@@ -77,7 +77,8 @@ func podCliqueSetPredicate() predicate.Predicate {
 			if updateEvent.ObjectOld == nil || updateEvent.ObjectNew == nil {
 				return false
 			}
-			return hasSpecChanged(updateEvent) ||
+			return isPodCliqueSetMarkedForDeletion(updateEvent) ||
+				hasSpecChanged(updateEvent) ||
 				hasAnnotationChanged(updateEvent.ObjectOld.GetAnnotations(), updateEvent.ObjectNew.GetAnnotations(), constants.AnnotationReconcileTrigger)
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return true },
@@ -173,6 +174,16 @@ func podCliqueScalingGroupPredicate() predicate.Predicate {
 // hasSpecChanged checks if the resource generation has changed.
 func hasSpecChanged(updateEvent event.UpdateEvent) bool {
 	return updateEvent.ObjectOld.GetGeneration() != updateEvent.ObjectNew.GetGeneration()
+}
+
+func isPodCliqueSetMarkedForDeletion(updateEvent event.UpdateEvent) bool {
+	oldPCS, oldOK := updateEvent.ObjectOld.(*grovecorev1alpha1.PodCliqueSet)
+	newPCS, newOK := updateEvent.ObjectNew.(*grovecorev1alpha1.PodCliqueSet)
+	if !oldOK || !newOK {
+		return false
+	}
+
+	return oldPCS.DeletionTimestamp == nil && newPCS.DeletionTimestamp != nil
 }
 
 func hasAnnotationChanged(oldAnnotations, newAnnotations map[string]string, key string) bool {
