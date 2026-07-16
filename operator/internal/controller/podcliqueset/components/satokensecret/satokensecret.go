@@ -221,11 +221,9 @@ func (r _resource) cleanupLegacySecret(ctx context.Context, logger logr.Logger, 
 	}
 	if len(referencingPods) > 0 {
 		logger.Info("Skipping legacy Secret cleanup because Pods still reference it", "objectKey", legacyObjKey, "pods", referencingPods)
-		return groveerr.New(
-			groveerr.ErrCodeContinueReconcileAndRequeue,
-			component.OperationSync,
-			fmt.Sprintf("Secret %v is still referenced by Pods: %v", legacyObjKey, referencingPods),
-		)
+		// Cleanup is opportunistic on future reconciles or PodCliqueSet deletion.
+		// Referencing Pods may be long-lived, so do not poll while they remain.
+		return nil
 	}
 	if err = client.IgnoreNotFound(r.client.Delete(ctx, legacySecret)); err != nil {
 		return groveerr.WrapError(err,

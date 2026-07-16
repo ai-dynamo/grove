@@ -439,12 +439,12 @@ func TestSync(t *testing.T) {
 	})
 
 	for _, tc := range []struct {
-		name               string
-		tokenReady         bool
-		referenceLegacy    bool
-		expectRequeue      bool
-		expectContinue     bool
-		expectLegacySecret bool
+		name                       string
+		tokenReady                 bool
+		referenceLegacy            bool
+		expectRequeue              bool
+		expectLegacySecret         bool
+		retryAfterReferenceRemoval bool
 	}{
 		{
 			name:       "deletes owned legacy secret after new secret has token",
@@ -456,11 +456,11 @@ func TestSync(t *testing.T) {
 			expectLegacySecret: true,
 		},
 		{
-			name:               "keeps owned legacy secret while pods still reference it",
-			tokenReady:         true,
-			referenceLegacy:    true,
-			expectContinue:     true,
-			expectLegacySecret: true,
+			name:                       "keeps owned legacy secret without requeue while pods still reference it",
+			tokenReady:                 true,
+			referenceLegacy:            true,
+			expectLegacySecret:         true,
+			retryAfterReferenceRemoval: true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -480,8 +480,10 @@ func TestSync(t *testing.T) {
 			legacySecret := newOwnedSecret(apicommon.GenerateLegacyInitContainerSATokenSecretName(pcs.Name), pcs)
 
 			objects := []client.Object{secret, legacySecret}
+			var referencingPod *corev1.Pod
 			if tc.referenceLegacy {
-				objects = append(objects, newPodReferencingSecret("test-pod", pcs, legacySecret.Name))
+				referencingPod = newPodReferencingSecret("test-pod", pcs, legacySecret.Name)
+				objects = append(objects, referencingPod)
 			}
 			cl := fake.NewClientBuilder().
 				WithScheme(scheme).
@@ -493,8 +495,6 @@ func TestSync(t *testing.T) {
 
 			if tc.expectRequeue {
 				assertRequeueAfter(t, err)
-			} else if tc.expectContinue {
-				assertContinueReconcileAndRequeue(t, err)
 			} else {
 				require.NoError(t, err)
 			}
@@ -510,16 +510,16 @@ func TestSync(t *testing.T) {
 			} else {
 				assert.True(t, apierrors.IsNotFound(err))
 			}
+
+			if tc.retryAfterReferenceRemoval {
+				require.NoError(t, cl.Delete(context.Background(), referencingPod))
+				require.NoError(t, operator.Sync(context.Background(), logr.Discard(), pcs))
+
+				err = cl.Get(context.Background(), client.ObjectKeyFromObject(legacySecret), &corev1.Secret{})
+				assert.True(t, apierrors.IsNotFound(err))
+			}
 		})
 	}
-}
-
-func assertContinueReconcileAndRequeue(t *testing.T, err error) {
-	t.Helper()
-
-	var groveErr *groveerr.GroveError
-	require.True(t, errors.As(err, &groveErr))
-	assert.Equal(t, groveerr.ErrCodeContinueReconcileAndRequeue, groveErr.Code)
 }
 
 func assertRequeueAfter(t *testing.T, err error) {
