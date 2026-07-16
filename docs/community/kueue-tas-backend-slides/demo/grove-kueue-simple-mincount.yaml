@@ -1,7 +1,10 @@
-# Grove PodCliqueSet with minCount semantics and no PodCliqueScalingGroup.
-# Grove's Kueue backend builds one prebuilt Kueue Workload per PodGang, with a
-# podSet whose count == clique replicas and minCount == clique minAvailable.
-# Apply after kueue-kind-queue.yaml and grove-kind-topology.yaml.
+# Grove PodCliqueSet demonstrating Kueue partial admission via minCount.
+# frontend requests replicas=4 with minAvailable=2. Each Pod requests 1 CPU and
+# the demo ClusterQueue only has 2 CPU of quota, so Kueue admits the Workload at
+# minCount=2 and leaves the other 2 Pods gated: 2 of 4 Pods run.
+# With WORKERS=1 (control-plane + worker) and required: host, the 2 admitted Pods
+# land on 2 distinct nodes.
+# Apply after setup-kueue-kind-demo.sh.
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
@@ -15,7 +18,7 @@ spec:
     topologyConstraint:
       topologyName: grove-kind-topology
       pack:
-        required: rack
+        required: host
     cliques:
     - name: frontend
       spec:
@@ -30,5 +33,5 @@ spec:
             image: registry.k8s.io/pause:3.9
             resources:
               requests:
-                cpu: 100m
+                cpu: "1"
                 memory: 64Mi

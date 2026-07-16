@@ -26,6 +26,7 @@ DEPLOY_REGISTRY=true
 RECREATE_CLUSTER=false
 FEATURE_GATES=()
 FAKE_NODES=0
+WORKER_NODES=0
 USAGE=""
 
 function kind::create_usage() {
@@ -37,6 +38,7 @@ function kind::create_usage() {
     -r | --recreate                       If this flag is specified then it will recreate the cluster if it already exists.
     -g | --feature-gates <feature-gates>  Comma separated list of feature gates to enable on the cluster.
     -f | --fake-nodes    <count>          Number of fake nodes to create using KWOK. Default value is 0.
+    -w | --workers      <count>          Number of kind worker nodes to add. Default value is 0.
   ")
   echo "${usage}"
 }
@@ -80,6 +82,10 @@ function kind::parse_flags() {
         shift
         FAKE_NODES=$1
         ;;
+      --workers | -w)
+        shift
+        WORKER_NODES=$1
+        ;;
       -h | --help)
         shift
         echo "${USAGE}"
@@ -111,6 +117,13 @@ nodes:
 - role: control-plane
   image: kindest/node:v1.35.1
 EOF
+  local worker_index
+  for ((worker_index = 0; worker_index < WORKER_NODES; worker_index++)); do
+    cat >>"${KIND_CONFIG_DIR}/cluster-config.yaml" <<EOF
+- role: worker
+  image: kindest/node:v1.35.1
+EOF
+  done
   if [ "${DEPLOY_REGISTRY}" = true ]; then
     echo "Adding registry config to the kind cluster config..."
     printf -v reg '[plugins."io.containerd.grpc.v1.cri".registry]

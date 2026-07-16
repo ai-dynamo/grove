@@ -23,9 +23,9 @@ spec:
     - name: kind-cpu
       resources:
       - name: cpu
-        nominalQuota: "4"
+        nominalQuota: "2"
       - name: memory
-        nominalQuota: 8Gi
+        nominalQuota: 4Gi
 ---
 apiVersion: kueue.x-k8s.io/v1beta2
 kind: LocalQueue

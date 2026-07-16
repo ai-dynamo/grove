@@ -2,7 +2,7 @@
 # POC assumption: PCSG.minAvailable == PCSG.replicas, so the whole gang is
 # all-or-nothing. Grove builds one prebuilt Kueue Workload per PodGang and
 # omits minCount for the PCSG podSets.
-# Apply after kueue-kind-queue.yaml and grove-kind-topology.yaml.
+# Apply after setup-kueue-kind-demo.sh.
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
@@ -16,7 +16,7 @@ spec:
     topologyConstraint:
       topologyName: grove-kind-topology
       pack:
-        required: rack
+        required: host
     podCliqueScalingGroups:
     - name: decode
       replicas: 2

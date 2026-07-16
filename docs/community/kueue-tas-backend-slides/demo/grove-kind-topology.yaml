@@ -1,11 +1,10 @@
-# Grove source-of-truth topology for the CPU-only kind TAS smoke test.
+# Grove source-of-truth topology for the 2-node kind TAS smoke test.
+# Use required: host on PodCliqueSet so Kueue TAS packs at kubernetes.io/hostname.
 apiVersion: grove.io/v1alpha1
 kind: ClusterTopologyBinding
 metadata:
   name: grove-kind-topology
 spec:
   levels:
-  - domain: rack
-    key: topology.ai-dynamo.io/rack
   - domain: host
     key: kubernetes.io/hostname
