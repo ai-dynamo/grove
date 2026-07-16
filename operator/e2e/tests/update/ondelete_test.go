@@ -1,6 +1,5 @@
 //go:build e2e
 
-// /*
 // Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +13,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package update
 
@@ -109,7 +107,7 @@ func Test_OD2_ManualDeletionCreatesUpdatedPod(t *testing.T) {
 		t.Fatalf("Failed to delete pod and wait for replacement: %v", err)
 	}
 
-	if err = tc.WaitForRunningPods( 10); err != nil {
+	if err = tc.WaitForRunningPods(10); err != nil {
 		t.Fatalf("Failed to wait for pod with new specification to be created")
 	}
 
@@ -190,7 +188,7 @@ func Test_OD3_ScaleInPrefersOutdatedPods(t *testing.T) {
 	}
 
 	// wait for the new pc-a pod to be created
-	if err = tc.WaitForReadyPods( 10); err != nil {
+	if err = tc.WaitForReadyPods(10); err != nil {
 		t.Fatalf("Failed to wait for pod with new specification to be created")
 	}
 
@@ -226,7 +224,7 @@ func Test_OD3_ScaleInPrefersOutdatedPods(t *testing.T) {
 	}
 
 	// Wait for scale-in to complete (9 total pods: 1 pc-a + 8 others)
-	if err = tc.WaitForPods( 9); err != nil {
+	if err = tc.WaitForPods(9); err != nil {
 		t.Fatalf("Failed to wait for pods after pc-a scale-in: %v", err)
 	}
 
@@ -330,7 +328,7 @@ func Test_OD5_PCSGManualDeletionCreatesUpdatedReplica(t *testing.T) {
 		t.Fatalf("Failed to delete pod and wait for replacement: %v", err)
 	}
 
-	if err = tc.WaitForRunningPods( 10); err != nil {
+	if err = tc.WaitForRunningPods(10); err != nil {
 		t.Fatalf("Failed to wait for pod with new specification to be created")
 	}
 
@@ -400,7 +398,7 @@ func Test_OD6_MixedPCLQsAndPCSG(t *testing.T) {
 		t.Fatalf("Failed to delete standalone pod and wait for replacement: %v", err)
 	}
 
-	if err = tc.WaitForRunningPods( 10); err != nil {
+	if err = tc.WaitForRunningPods(10); err != nil {
 		t.Fatalf("Failed to wait for pod with new specification to be created")
 	}
 
@@ -410,7 +408,7 @@ func Test_OD6_MixedPCLQsAndPCSG(t *testing.T) {
 		t.Fatalf("Failed to delete PCSG pod and wait for replacement: %v", err)
 	}
 
-	if err = tc.WaitForRunningPods( 10); err != nil {
+	if err = tc.WaitForRunningPods(10); err != nil {
 		t.Fatalf("Failed to wait for pod with new specification to be created")
 	}
 
@@ -535,7 +533,7 @@ func Test_OD8_NodeFailureRecoveryWorkflow(t *testing.T) {
 		t.Fatalf("Failed to delete pod (simulating eviction): %v", err)
 	}
 
-	if err = tc.WaitForRunningPods( 10); err != nil {
+	if err = tc.WaitForRunningPods(10); err != nil {
 		t.Fatalf("Failed to wait for replacement pod to be created")
 	}
 
