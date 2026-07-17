@@ -43,7 +43,7 @@ import (
 // pclq.Spec.PodSpec is still the pre-update template. Creating pods from that stale Spec lands
 // them in the new-hash MPG carrying the old pod-template-hash, and the MPG never goes Available.
 //
-// The guard fires only for cliques in pcs.Status.UpdateProgress.UpdatedStandalonePodCliques (the
+// The guard fires only for cliques in pcs.Status.UpdateProgress.InScopeStandalonePodCliques (the
 // snapshot of cliques the update must roll). For those, label==status on the PCLQ is ambiguous:
 // either the cache has not yet seen the PCS-side patch (label and status both at pre-update), or
 // the roll has finished and mutateCurrentHashes advanced status to match the label. UpdateProgress
@@ -55,7 +55,7 @@ func guardAgainstStaleSpecDuringCoherentUpdate(sc *syncContext) error {
 	if !componentutils.IsCoherentUpdateInProgress(sc.pcs) {
 		return nil
 	}
-	if !slices.Contains(sc.pcs.Status.UpdateProgress.UpdatedStandalonePodCliques, sc.cliqueName) {
+	if !slices.Contains(sc.pcs.Status.UpdateProgress.InScopeStandalonePodCliques, sc.cliqueName) {
 		return nil
 	}
 	if sc.pclq.Status.CurrentPodTemplateHash == nil {

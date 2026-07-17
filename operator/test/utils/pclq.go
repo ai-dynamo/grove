@@ -120,6 +120,12 @@ func (b *PodCliqueBuilder) WithOwnerReference(kind, name string, uid types.UID) 
 	return b
 }
 
+// WithPodGangMapping sets the Status.PodGangMapping for the PodClique.
+func (b *PodCliqueBuilder) WithPodGangMapping(mapping map[string]int32) *PodCliqueBuilder {
+	b.pclq.Status.PodGangMapping = mapping
+	return b
+}
+
 // WithOptions applies option functions to customize the PodClique.
 func (b *PodCliqueBuilder) WithOptions(opts ...PCLQOption) *PodCliqueBuilder {
 	for _, opt := range opts {

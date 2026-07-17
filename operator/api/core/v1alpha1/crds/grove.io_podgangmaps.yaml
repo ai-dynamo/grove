@@ -55,18 +55,22 @@ spec:
                   properties:
                     dependsOn:
                       description: |-
-                        DependsOn lists the PodGang names within the same PodCliqueSet replica whose pods must be
-                        scheduled before pods in this PodGang have their scheduling gates removed.
-                        Deprecated: use DependsOnEpoch. Will be removed once all consumers migrate.
+                        DependsOn lists the epochs whose PodGangs must be scheduled before this entry's PodGang
+                        becomes eligible for scheduling. An empty DependsOn means the entry has no scheduling
+                        dependency and its PodGang is eligible for scheduling immediately.
                       items:
                         type: string
                       type: array
-                    dependsOnEpoch:
+                    isEpochAnchor:
                       description: |-
-                        DependsOnEpoch is the epoch of the PodGangs whose pods must be scheduled
-                        before this entry's PodGang becomes eligible for scheduling. nil means
-                        the entry has no scheduling dependency and is eligible immediately.
-                      type: string
+                        IsEpochAnchor marks whether this entry is the epoch anchor for its epoch. When true the entry
+                        carries the minimum-availability floor that entries depending on it are scheduled after, and
+                        standalone PodClique tail pods are subsumed into it. When false the entry collapses the tail
+                        PodGangs of a single PodCliqueScalingGroup within one epoch into one entry: PCSGReplicaIndices
+                        holds that epoch's rolled indices for the PCSG, which the PodGang materializer expands into one
+                        PodGang per index. It is the durable marker that lets the step structure recorded in Status be
+                        recovered from the entries after a crash between the spec and status writes.
+                      type: boolean
                     labels:
                       additionalProperties:
                         type: string
@@ -86,10 +90,11 @@ spec:
                           type: integer
                         type: array
                       description: |-
-                        PCSGReplicaIndices maps PodCliqueScalingGroup config name to the PCSG replica indices
-                        that belong to this PodGang. The number of replicas is len(slice). Indices are stable
-                        identities that survive entry reshuffles, so a PodClique reconciler for a PodCliqueScalingGroup-
-                        owned PodClique can find its target PodGang by looking up its replica index here.
+                        PCSGReplicaIndices maps a PodCliqueScalingGroup config name to the PCSG replica indices this
+                        entry carries. For a non-anchor entry the PodGang materializer expands these into one PodGang
+                        per index. Indices are stable identities that survive entry reshuffles, so a PodClique
+                        reconciler for a PodCliqueScalingGroup-owned PodClique can find its target PodGang by looking
+                        up its replica index here.
                       type: object
                     podCliqueSetGenerationHash:
                       description: |-
@@ -124,6 +129,79 @@ spec:
             - entries
             - podCliqueSetReplicaIndex
             type: object
+          status:
+            description: |-
+              Status records the observed progress of an in-flight coherent update for this
+              PodCliqueSet replica. It is populated only while a coherent update is in flight
+              and is cleared once the update completes.
+            properties:
+              updateProgress:
+                description: |-
+                  UpdateProgress records the steps and sub-steps emitted so far for the
+                  in-flight coherent update, along with their readiness. It is non-nil only
+                  while a coherent update is in flight for this replica and is cleared once
+                  the update completes.
+                properties:
+                  steps:
+                    description: |-
+                      Steps records the update's steps in emission order. It gives a view of
+                      what is done and what is in progress, and lets the coherent update path
+                      detect step boundaries and locate the anchor a step's standalone tail
+                      pods subsume into.
+                    items:
+                      description: PodGangMapUpdateStep records one step of a coherent
+                        update.
+                      properties:
+                        isAnchorBearing:
+                          description: |-
+                            IsAnchorBearing is true when this step produces an anchor entry (in its
+                            first sub-step). It is false for a leftover step that produces no anchor.
+                            When IsAnchorBearing is true, the anchor's epoch is SubSteps[0].Epoch.
+                          type: boolean
+                        state:
+                          description: |-
+                            State is the step's readiness. It is Ready when every sub-step is Ready,
+                            otherwise InProgress. Readiness is derived from PodGang readiness, which
+                            never un-sets, so State only ever advances from InProgress to Ready.
+                          type: string
+                        subSteps:
+                          description: |-
+                            SubSteps are this step's sub-steps in emission order. For an
+                            anchor-bearing step, SubSteps[0] is the anchor-bearing sub-step and the
+                            rest are tail sub-steps.
+                          items:
+                            description: |-
+                              PodGangMapUpdateSubStep records one sub-step of a coherent update. A sub-step
+                              corresponds to exactly one batch of PodGangs sharing a single epoch.
+                            properties:
+                              epoch:
+                                description: |-
+                                  Epoch is the grove.io/epoch value shared by every PodGang this sub-step
+                                  emitted.
+                                type: string
+                              state:
+                                description: |-
+                                  State is the sub-step's readiness. It is Ready when every PodGang at Epoch
+                                  has become ready at least once, otherwise InProgress. Readiness never
+                                  un-sets, so State only ever advances from InProgress to Ready.
+                                type: string
+                            required:
+                            - epoch
+                            - state
+                            type: object
+                          type: array
+                      required:
+                      - isAnchorBearing
+                      - state
+                      - subSteps
+                      type: object
+                    type: array
+                required:
+                - steps
+                type: object
+            type: object
         type: object
     served: true
     storage: true
+    subresources:
+      status: {}

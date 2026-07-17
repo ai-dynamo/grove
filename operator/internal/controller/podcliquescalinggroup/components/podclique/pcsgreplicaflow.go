@@ -189,7 +189,7 @@ func generateScaledPodGangNames(count int, pcsName string, pcsReplicaIndex int, 
 	names := make([]string, 0, count)
 	for i := range count {
 		suffix := strconv.FormatInt(base+int64(i), 10)
-		names = append(names, apicommon.GeneratePodGangName(pcsName, int32(pcsReplicaIndex), suffix))
+		names = append(names, apicommon.GeneratePodGangName(pcsName, pcsReplicaIndex, suffix))
 	}
 	return names
 }

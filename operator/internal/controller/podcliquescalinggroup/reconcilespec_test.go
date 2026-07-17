@@ -232,7 +232,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 					WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{
 						Type: grovecorev1alpha1.RollingRecreateStrategy,
 					}).
-					WithPodCliqueSetGenerationHash(ptr.To("current-hash")).
+					WithStatusCurrentGenerationHash(ptr.To("current-hash")).
 					Build()
 			},
 			setupPCSG: func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueScalingGroup {
@@ -251,7 +251,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 				return testutils.NewPodCliqueSetBuilder(testPCSNamePCSG, testNamespacePCSG, pcsUID).
 					WithReplicas(2).
 					WithScalingGroup(testPCSGName, []string{"worker", "router"}).
-					WithPodCliqueSetGenerationHash(ptr.To("current-hash")).
+					WithStatusCurrentGenerationHash(ptr.To("current-hash")).
 					Build()
 			},
 			setupPCSG: func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueScalingGroup {
@@ -273,7 +273,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 					WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{
 						Type: grovecorev1alpha1.OnDeleteStrategy,
 					}).
-					WithPodCliqueSetGenerationHash(ptr.To("current-hash")).
+					WithStatusCurrentGenerationHash(ptr.To("current-hash")).
 					Build()
 			},
 			setupPCSG: func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueScalingGroup {
@@ -295,7 +295,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 					WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{
 						Type: grovecorev1alpha1.RollingRecreateStrategy,
 					}).
-					WithPodCliqueSetGenerationHash(ptr.To("new-hash")).
+					WithStatusCurrentGenerationHash(ptr.To("new-hash")).
 					Build()
 			},
 			setupPCSG: func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueScalingGroup {
@@ -324,7 +324,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 					WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{
 						Type: grovecorev1alpha1.OnDeleteStrategy,
 					}).
-					WithPodCliqueSetGenerationHash(ptr.To("new-hash")).
+					WithStatusCurrentGenerationHash(ptr.To("new-hash")).
 					Build()
 			},
 			setupPCSG: func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueScalingGroup {

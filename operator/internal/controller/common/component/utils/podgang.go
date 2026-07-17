@@ -22,21 +22,13 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
+
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/samber/lo"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
-
-// GetPodGangSelectorLabels creates the label selector to list all the PodGangs for a PodCliqueSet.
-func GetPodGangSelectorLabels(pcsObjMeta metav1.ObjectMeta) map[string]string {
-	return lo.Assign(
-		apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcsObjMeta.Name),
-		map[string]string{
-			apicommon.LabelComponentKey: apicommon.LabelComponentNamePodGang,
-		})
-}
 
 // GetPodGang fetches a PodGang by name and namespace.
 func GetPodGang(ctx context.Context, cl client.Client, podGangName, namespace string) (*groveschedulerv1alpha1.PodGang, error) {
@@ -48,15 +40,27 @@ func GetPodGang(ctx context.Context, cl client.Client, podGangName, namespace st
 	return podGang, nil
 }
 
-// GetExistingPodGangs fetches all existing PodGangs that are managed by Grove in the given namespace.
-func GetExistingPodGangs(ctx context.Context, cl client.Client, pcsObjectMeta metav1.ObjectMeta, namespace string) ([]groveschedulerv1alpha1.PodGang, error) {
-	podGangs := groveschedulerv1alpha1.PodGangList{}
-	if err := cl.List(ctx, &podGangs,
-		client.InNamespace(namespace),
-		client.MatchingLabels(GetPodGangSelectorLabels(pcsObjectMeta))); err != nil {
+// ListExistingPodGangs fetches all existing PodGangs that are managed by Grove in the given namespace.
+func ListExistingPodGangs(ctx context.Context, cl client.Client, pcsObjectMeta metav1.ObjectMeta) ([]groveschedulerv1alpha1.PodGang, error) {
+	return ListPodGangsMatchingLabels(ctx, cl, pcsObjectMeta.Namespace, GetPodGangSelectorLabels(pcsObjectMeta))
+}
+
+// GetPodGangSelectorLabels creates the label selector to list all the PodGangs for a PodCliqueSet.
+func GetPodGangSelectorLabels(pcsObjMeta metav1.ObjectMeta) map[string]string {
+	return lo.Assign(
+		apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcsObjMeta.Name),
+		map[string]string{
+			apicommon.LabelComponentKey: apicommon.LabelComponentNamePodGang,
+		})
+}
+
+// ListPodGangsMatchingLabels lists all PodGangs in a namespace that matches the selector labels.
+func ListPodGangsMatchingLabels(ctx context.Context, cl client.Client, namespace string, selectorLabels map[string]string) ([]groveschedulerv1alpha1.PodGang, error) {
+	podGangList := &groveschedulerv1alpha1.PodGangList{}
+	if err := cl.List(ctx, podGangList, client.InNamespace(namespace), client.MatchingLabels(selectorLabels)); err != nil {
 		return nil, err
 	}
-	return podGangs.Items, nil
+	return podGangList.Items, nil
 }
 
 // ArePodGangsReady returns true when every named PodGang exists in the given namespace

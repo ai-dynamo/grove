@@ -215,7 +215,7 @@ func TestGeneratePodGangName(t *testing.T) {
 	tests := []struct {
 		name         string
 		pcsName      string
-		replicaIndex int32
+		replicaIndex int
 		uniqueSuffix string
 		expected     string
 	}{

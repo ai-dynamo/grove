@@ -39,6 +39,8 @@ type PodGangMapsGetter interface {
 type PodGangMapInterface interface {
 	Create(ctx context.Context, podGangMap *corev1alpha1.PodGangMap, opts v1.CreateOptions) (*corev1alpha1.PodGangMap, error)
 	Update(ctx context.Context, podGangMap *corev1alpha1.PodGangMap, opts v1.UpdateOptions) (*corev1alpha1.PodGangMap, error)
+	// Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
+	UpdateStatus(ctx context.Context, podGangMap *corev1alpha1.PodGangMap, opts v1.UpdateOptions) (*corev1alpha1.PodGangMap, error)
 	Delete(ctx context.Context, name string, opts v1.DeleteOptions) error
 	DeleteCollection(ctx context.Context, opts v1.DeleteOptions, listOpts v1.ListOptions) error
 	Get(ctx context.Context, name string, opts v1.GetOptions) (*corev1alpha1.PodGangMap, error)

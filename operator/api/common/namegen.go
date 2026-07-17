@@ -102,6 +102,14 @@ func ExtractScalingGroupNameFromPCSGFQN(pcsgFQN string, pcsNameReplica ResourceN
 	return pcsgFQN[len(prefix):]
 }
 
+// ExtractPodCliqueNameFromStandalonePCLQFQN extracts the unqualified PodClique template name from a
+// standalone PodClique FQN. For example, "simple1-0-frontend" with pcsNameReplica="simple1-0"
+// returns "frontend". The caller must pass a standalone PodClique FQN.
+func ExtractPodCliqueNameFromStandalonePCLQFQN(pclqFQN string, pcsNameReplica ResourceNameReplica) string {
+	prefix := fmt.Sprintf("%s-%d-", pcsNameReplica.Name, pcsNameReplica.Replica)
+	return pclqFQN[len(prefix):]
+}
+
 // GeneratePodGangName generates a PodGang name following the unified naming convention
 // for all PodGangs created for the PodCliqueSet.
 // Format: <pcs-name>-<pcs-replica-index>-<unique-suffix>
@@ -115,7 +123,7 @@ func ExtractScalingGroupNameFromPCSGFQN(pcsgFQN string, pcsNameReplica ResourceN
 // the legacy BasePodGang and ScaledPodGang naming conventions
 // (GenerateBasePodGangName, CreatePodGangNameFromPCSGFQN) will be retired in favor
 // of this scheme.
-func GeneratePodGangName(pcsName string, replicaIndex int32, uniqueSuffix string) string {
+func GeneratePodGangName(pcsName string, replicaIndex int, uniqueSuffix string) string {
 	return fmt.Sprintf("%s-%d-%s", pcsName, replicaIndex, uniqueSuffix)
 }
 

@@ -313,7 +313,7 @@ func (r _resource) getOldAndNewEntries(ctx context.Context, pcs *grovecorev1alph
 //  3. Otherwise (steady state, no update in flight), pcs.Status.CurrentGenerationHash —
 //     which is what every live PodGang corresponds to in steady state.
 func (r _resource) buildEntriesFromExistingPodGangs(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, replicaIndex int, pclqs []grovecorev1alpha1.PodClique) ([]grovecorev1alpha1.PodGangEntry, error) {
-	existingPodGangs, err := componentutils.GetExistingPodGangs(ctx, r.client, pcs.ObjectMeta, pcs.Namespace)
+	existingPodGangs, err := componentutils.ListExistingPodGangs(ctx, r.client, pcs.ObjectMeta, pcs.Namespace)
 	if err != nil {
 		return nil, err
 	}

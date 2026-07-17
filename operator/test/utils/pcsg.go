@@ -97,6 +97,12 @@ func (b *PodCliqueScalingGroupBuilder) WithOwnerReference(kind, name, uid string
 	return b
 }
 
+// WithPodGangMapping sets the Status.PodGangMapping for the PodCliqueScalingGroup.
+func (b *PodCliqueScalingGroupBuilder) WithPodGangMapping(mapping map[string][]int32) *PodCliqueScalingGroupBuilder {
+	b.pcsg.Status.PodGangMapping = mapping
+	return b
+}
+
 // WithOptions applies option functions to customize the PodCliqueScalingGroup.
 func (b *PodCliqueScalingGroupBuilder) WithOptions(opts ...PCSGOption) *PodCliqueScalingGroupBuilder {
 	for _, opt := range opts {

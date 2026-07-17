@@ -176,7 +176,7 @@ type PodGangEntryBuilder func(standalonePCLQReplicas map[string]int32, pcsgRepli
 //
 // In production callers should pass clock.RealClock{}; tests can pass clocktesting.FakeClock
 // for deterministic name generation.
-func NewPodGangEntryBuilder(pcsName string, pcsReplicaIndex int32, pcsGenerationHash string, clock clock.Clock) PodGangEntryBuilder {
+func NewPodGangEntryBuilder(pcsName string, pcsReplicaIndex int, pcsGenerationHash string, clock clock.Clock) PodGangEntryBuilder {
 	var i int64
 	baseEpoch := clock.Now().UnixNano()
 	epochLabel := strconv.FormatInt(baseEpoch, 10)

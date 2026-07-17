@@ -2290,12 +2290,12 @@ func TestReconcileReadyCondition(t *testing.T) {
 	}
 
 	tests := []struct {
-		name                  string
-		pods                  []corev1.Pod
-		initialConditions     []metav1.Condition
-		initialLastReady      *metav1.Time
-		wantReadyTrue         bool
-		wantLastReadySet      bool
+		name                   string
+		pods                   []corev1.Pod
+		initialConditions      []metav1.Condition
+		initialLastReady       *metav1.Time
+		wantReadyTrue          bool
+		wantLastReadySet       bool
 		wantLastReadyUnchanged bool
 	}{
 		{
@@ -2304,11 +2304,11 @@ func TestReconcileReadyCondition(t *testing.T) {
 			wantReadyTrue: false,
 		},
 		{
-			name:                  "Ready=True with pods still ready is a no-op for LastReady",
-			pods:                  []corev1.Pod{readyPod},
-			initialConditions:     []metav1.Condition{readyCondTrue},
-			initialLastReady:      &pastTime,
-			wantReadyTrue:         true,
+			name:                   "Ready=True with pods still ready is a no-op for LastReady",
+			pods:                   []corev1.Pod{readyPod},
+			initialConditions:      []metav1.Condition{readyCondTrue},
+			initialLastReady:       &pastTime,
+			wantReadyTrue:          true,
 			wantLastReadyUnchanged: true,
 		},
 		{
@@ -2318,11 +2318,11 @@ func TestReconcileReadyCondition(t *testing.T) {
 			wantLastReadySet: true,
 		},
 		{
-			name:                  "pods stop being ready: Ready flips to False, LastReady is preserved",
-			pods:                  []corev1.Pod{notReadyPod},
-			initialConditions:     []metav1.Condition{readyCondTrue},
-			initialLastReady:      &pastTime,
-			wantReadyTrue:         false,
+			name:                   "pods stop being ready: Ready flips to False, LastReady is preserved",
+			pods:                   []corev1.Pod{notReadyPod},
+			initialConditions:      []metav1.Condition{readyCondTrue},
+			initialLastReady:       &pastTime,
+			wantReadyTrue:          false,
 			wantLastReadyUnchanged: true,
 		},
 	}

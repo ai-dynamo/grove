@@ -23,6 +23,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 )
 
 // PodCliqueSetBuilder is a builder for PodCliqueSet objects.
@@ -136,8 +137,38 @@ func (b *PodCliqueSetBuilder) WithScalingGroupConfig(name string, cliqueNames []
 	return b
 }
 
-// WithPodCliqueSetGenerationHash sets the CurrentGenerationHash in the PodCliqueSet status.
-func (b *PodCliqueSetBuilder) WithPodCliqueSetGenerationHash(pcsGenerationHash *string) *PodCliqueSetBuilder {
+// WithStandaloneCliqueMaxUnavailable sets RollingUpdate.MaxUnavailable on the named standalone clique template.
+func (b *PodCliqueSetBuilder) WithStandaloneCliqueMaxUnavailable(name string, maxUnavailable int32) *PodCliqueSetBuilder {
+	for _, cliqueTemplate := range b.pcs.Spec.Template.Cliques {
+		if cliqueTemplate.Name == name {
+			cliqueTemplate.RollingUpdate = &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To(maxUnavailable)}
+		}
+	}
+	return b
+}
+
+// WithStandaloneCliqueMinAvailable sets Spec.MinAvailable on the named standalone clique template.
+func (b *PodCliqueSetBuilder) WithStandaloneCliqueMinAvailable(name string, minAvailable int32) *PodCliqueSetBuilder {
+	for _, cliqueTemplate := range b.pcs.Spec.Template.Cliques {
+		if cliqueTemplate.Name == name {
+			cliqueTemplate.Spec.MinAvailable = ptr.To(minAvailable)
+		}
+	}
+	return b
+}
+
+// WithScalingGroupMaxUnavailable sets RollingUpdate.MaxUnavailable on the named PodCliqueScalingGroup config.
+func (b *PodCliqueSetBuilder) WithScalingGroupMaxUnavailable(name string, maxUnavailable int32) *PodCliqueSetBuilder {
+	for i := range b.pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		if b.pcs.Spec.Template.PodCliqueScalingGroupConfigs[i].Name == name {
+			b.pcs.Spec.Template.PodCliqueScalingGroupConfigs[i].RollingUpdate = &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To(maxUnavailable)}
+		}
+	}
+	return b
+}
+
+// WithStatusCurrentGenerationHash sets the CurrentGenerationHash in the PodCliqueSet status.
+func (b *PodCliqueSetBuilder) WithStatusCurrentGenerationHash(pcsGenerationHash *string) *PodCliqueSetBuilder {
 	b.pcs.Status.CurrentGenerationHash = pcsGenerationHash
 	return b
 }

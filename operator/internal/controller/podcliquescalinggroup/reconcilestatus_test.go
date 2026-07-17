@@ -445,7 +445,7 @@ func TestReconcileStatus(t *testing.T) {
 					WithCliqueNames([]string{"frontend", "backend"}).
 					WithOptions(testutils.WithPCSGObservedGeneration(1)).Build()
 				pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
-					WithPodCliqueSetGenerationHash(&pcsGenerationHash).
+					WithStatusCurrentGenerationHash(&pcsGenerationHash).
 					WithScalingGroup("compute", []string{"frontend", "backend"}).
 					Build()
 				cliques := []client.Object{
@@ -482,7 +482,7 @@ func TestReconcileStatus(t *testing.T) {
 					WithMinAvailable(2).
 					WithOptions(testutils.WithPCSGObservedGeneration(1)).Build()
 				pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
-					WithPodCliqueSetGenerationHash(&pcsGenerationHash).
+					WithStatusCurrentGenerationHash(&pcsGenerationHash).
 					WithScalingGroupConfig("compute", []string{"worker"}, 3, 2).
 					Build()
 				cliques := []client.Object{
@@ -514,7 +514,7 @@ func TestReconcileStatus(t *testing.T) {
 					WithCliqueNames([]string{"frontend", "backend"}).
 					WithOptions(testutils.WithPCSGObservedGeneration(1)).Build()
 				pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
-					WithPodCliqueSetGenerationHash(&pcsGenerationHash).
+					WithStatusCurrentGenerationHash(&pcsGenerationHash).
 					WithScalingGroup("compute", []string{"frontend", "backend"}).
 					Build()
 				cliques := []client.Object{
@@ -630,7 +630,7 @@ func TestPCSGMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 	pcsHash := "gen-hash-current"
 	otherHash := "gen-hash-old"
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
-		WithPodCliqueSetGenerationHash(&pcsHash).
+		WithStatusCurrentGenerationHash(&pcsHash).
 		WithScalingGroup("compute", []string{"frontend", "backend"}).
 		Build()
 
@@ -750,7 +750,7 @@ func TestCountPCSGReplicaUpdatedPCLQs(t *testing.T) {
 	hash := "h"
 	otherHash := "old"
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
-		WithPodCliqueSetGenerationHash(&hash).
+		WithStatusCurrentGenerationHash(&hash).
 		WithScalingGroup("compute", []string{"frontend"}).
 		Build()
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).
@@ -792,7 +792,7 @@ func TestCountPCSGReplicaUpdatedPCLQs(t *testing.T) {
 func TestHavePCSGPodCliquesConverged(t *testing.T) {
 	hash := "generation-hash"
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
-		WithPodCliqueSetGenerationHash(&hash).
+		WithStatusCurrentGenerationHash(&hash).
 		WithScalingGroup("compute", []string{"frontend"}).
 		Build()
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).
@@ -922,7 +922,7 @@ func TestReconcileStatusBoundedDuringScaleDown(t *testing.T) {
 		PodCliqueSetGenerationHash: pcsHash,
 	}
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
-		WithPodCliqueSetGenerationHash(&pcsHash).
+		WithStatusCurrentGenerationHash(&pcsHash).
 		WithScalingGroup("compute", []string{"frontend", "backend"}).
 		Build()
 

@@ -255,3 +255,21 @@ func GetPCSGReplicasFromPCSTemplateSpec(pcs *grovecorev1alpha1.PodCliqueSet) map
 	}
 	return result
 }
+
+// GetMaxUnavailableForComponents returns maxUnavailable keyed by component name for the given
+// in-scope components which could be standalone PodCliques and/or PodCliqueScalingGroups.
+func GetMaxUnavailableForComponents(pcs *grovecorev1alpha1.PodCliqueSet, componentNames []string) map[string]int32 {
+	inScope := sets.New(componentNames...)
+	result := make(map[string]int32, len(componentNames))
+	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
+		if inScope.Has(cliqueTemplate.Name) && isStandalonePCLQName(pcs, cliqueTemplate.Name) {
+			result[cliqueTemplate.Name] = *cliqueTemplate.RollingUpdate.MaxUnavailable
+		}
+	}
+	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		if inScope.Has(pcsgConfig.Name) {
+			result[pcsgConfig.Name] = *pcsgConfig.RollingUpdate.MaxUnavailable
+		}
+	}
+	return result
+}

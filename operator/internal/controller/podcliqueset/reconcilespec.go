@@ -152,8 +152,8 @@ func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1alp
 		}
 		pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
 			UpdateStartedAt:               metav1.Now(),
-			UpdatedStandalonePodCliques:   updatedStandalonePCLQs,
-			UpdatedPodCliqueScalingGroups: updatedPCSGs,
+			InScopeStandalonePodCliques:   updatedStandalonePCLQs,
+			InScopePodCliqueScalingGroups: updatedPCSGs,
 		}
 	} else {
 		pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{

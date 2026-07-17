@@ -182,18 +182,19 @@ type PodCliqueSetUpdateProgress struct {
 	// OnDelete update strategy.
 	// +optional
 	CurrentlyUpdating []PodCliqueSetReplicaUpdateProgress `json:"currentlyUpdating,omitempty"`
-	// UpdatedStandalonePodCliques captures the names of standalone PodCliques whose pod template was detected
-	// as out-of-date when this coherent update started. The set is frozen for the lifetime of the update
-	// (cleared together with UpdateEndedAt). The MVU machinery uses this set, in combination with the live PCS
-	// spec, to compute the MVU template; a fresh recomputation from live PCLQ hashes would shrink the set as
-	// pods roll over and break the MVU invariants. Only populated for the Coherent strategy.
+	// InScopeStandalonePodCliques captures the names of standalone PodCliques whose pod template
+	// changed and are therefore in scope for the current coherent update. It names what changed,
+	// not what has finished updating. The set is frozen for the lifetime of the update and is
+	// cleared when UpdateEndedAt is set. Only populated for the Coherent strategy.
 	// +optional
-	UpdatedStandalonePodCliques []string `json:"updatedStandalonePodCliques,omitempty"`
-	// UpdatedPodCliqueScalingGroups captures the config names of PodCliqueScalingGroups that had at least one
-	// constituent PodClique detected as out-of-date when this coherent update started. Same lifetime semantics
-	// as UpdatedStandalonePodCliques. Only populated for the Coherent strategy.
+	InScopeStandalonePodCliques []string `json:"inScopeStandalonePodCliques,omitempty"`
+	// InScopePodCliqueScalingGroups captures the config names of PodCliqueScalingGroups that had at
+	// least one constituent PodClique whose pod template changed and are therefore in scope for the
+	// current coherent update. It names what changed, not what has finished updating. The set is
+	// frozen for the lifetime of the update and is cleared when UpdateEndedAt is set. Only populated
+	// for the Coherent strategy.
 	// +optional
-	UpdatedPodCliqueScalingGroups []string `json:"updatedPodCliqueScalingGroups,omitempty"`
+	InScopePodCliqueScalingGroups []string `json:"inScopePodCliqueScalingGroups,omitempty"`
 }
 
 // PodCliqueSetReplicaUpdateProgress captures the progress of an update for a specific PodCliqueSet replica.
@@ -213,10 +214,9 @@ type PodCliqueSetReplicaUpdateProgress struct {
 	// Deprecated: use InFlightEpoch. Will be removed once all consumers migrate.
 	// +optional
 	InFlightPodGangs []string `json:"inFlightPodGangs,omitempty"`
-	// InFlightEpoch is the epoch of the most recent batch present on the PodGangMap
-	// for this replica. Populated by the orchestrator each reconcile by reading the
-	// max epoch across PodGangMap entries. Never cleared until the coherent update
-	// completes for this replica.
+	// InFlightEpoch is the grove.io/epoch of the PodGangs currently being rolled
+	// (in flight) for this replica's coherent update. It is cleared once the
+	// coherent update for this replica completes.
 	// +optional
 	InFlightEpoch *string `json:"inFlightEpoch,omitempty"`
 	// ErrorMessage captures the reason the update of this replica is stalled or failing, if any.
