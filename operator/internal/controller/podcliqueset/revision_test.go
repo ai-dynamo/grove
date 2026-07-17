@@ -95,15 +95,16 @@ func TestControllerRevisionExpectationDoesNotBlockRecreatedPodCliqueSet(t *testi
 func TestControllerRevisionExpectationWaitsForSelectedRevisionCacheVisibility(t *testing.T) {
 	ctx := context.Background()
 	pcs := testutils.NewPodCliqueSetBuilder("cache-lag", "default", uuid.NewUUID()).Build()
-	desired, cliques, err := marshalDesiredRevision(pcs)
+	cliques, err := marshalDesiredCliques(pcs)
 	require.NoError(t, err)
 	generationHash := computeGenerationHash(pcs)
+	cliqueHashes := candidateCliqueHashes(pcs)
+	for i := range cliques {
+		cliques[i].Hash = cliqueHashes[cliques[i].Name]
+	}
 	raw, err := json.Marshal(commonrevision.Data{
-		Version:        commonrevision.DataVersion,
-		Desired:        desired,
 		Cliques:        cliques,
 		GenerationHash: generationHash,
-		CliqueHashes:   candidateCliqueHashes(pcs),
 	})
 	require.NoError(t, err)
 	revision := ownedControllerRevision(pcs, "cache-lag-revision", raw)
@@ -320,47 +321,6 @@ func TestControllerRevisionUpgradeRejectsActiveLegacyUpdate(t *testing.T) {
 	assert.NotNil(t, pcs.Status.UpdateProgress)
 }
 
-func TestSemanticallyEqualJSON(t *testing.T) {
-	tests := []struct {
-		name      string
-		left      json.RawMessage
-		right     json.RawMessage
-		wantEqual bool
-		wantError bool
-	}{
-		{
-			name:      "normalizes representation differences",
-			left:      json.RawMessage(`[{"metadata":{"labels":{"app":"worker"},"creationTimestamp":null},"spec":{"containers":[{"name":"worker","image":"v1","resources":{}}]}}]`),
-			right:     json.RawMessage(`[{"spec":{"containers":[{"resources":{},"image":"v1","name":"worker"}]},"metadata":{"labels":{"app":"worker"}}}]`),
-			wantEqual: true,
-		},
-		{
-			name:      "detects semantic changes",
-			left:      json.RawMessage(`[{"spec":{"containers":[{"name":"worker","image":"v1"}]}}]`),
-			right:     json.RawMessage(`[{"spec":{"containers":[{"name":"worker","image":"v2"}]}}]`),
-			wantEqual: false,
-		},
-		{
-			name:      "fails closed for malformed stored content",
-			left:      json.RawMessage(`[{`),
-			right:     json.RawMessage(`[]`),
-			wantError: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			equal, err := semanticallyEqualJSON[[]corev1.PodTemplateSpec](tt.left, tt.right)
-			if tt.wantError {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantEqual, equal)
-		})
-	}
-}
-
 func TestControllerRevisionPreservesSemanticallyEqualCliqueIdentity(t *testing.T) {
 	ctx := context.Background()
 	pcs := testutils.NewPodCliqueSetBuilder("semantic", "default", uuid.NewUUID()).
@@ -369,20 +329,20 @@ func TestControllerRevisionPreservesSemanticallyEqualCliqueIdentity(t *testing.T
 		Build()
 	pcs.Spec.Template.Cliques[0].Spec.PodSpec.Containers = []corev1.Container{{Name: "worker", Image: "worker:v1"}}
 	pcs.Spec.Template.Cliques[1].Spec.PodSpec.Containers = []corev1.Container{{Name: "sidecar", Image: "sidecar:v1"}}
-	desired, cliques, err := marshalDesiredRevision(pcs)
+	cliques, err := marshalDesiredCliques(pcs)
 	require.NoError(t, err)
 	oldHashes := map[string]string{"worker": "worker-old", "sidecar": "sidecar-old"}
+	for i := range cliques {
+		cliques[i].Hash = oldHashes[cliques[i].Name]
+	}
 	data := commonrevision.Data{
-		Version:        commonrevision.DataVersion,
-		Desired:        desired,
 		Cliques:        cliques,
 		GenerationHash: "generation-old",
-		CliqueHashes:   oldHashes,
 	}
 	var indentedSidecar json.RawMessage
-	indentedSidecar, err = json.MarshalIndent(data.Cliques["sidecar"], "", "  ")
+	indentedSidecar, err = json.MarshalIndent(data.Cliques[1].Template, "", "  ")
 	require.NoError(t, err)
-	data.Cliques["sidecar"] = indentedSidecar
+	data.Cliques[1].Template = indentedSidecar
 	raw, err := json.Marshal(data)
 	require.NoError(t, err)
 	revision := ownedControllerRevision(pcs, "semantic-old", raw)
@@ -400,23 +360,22 @@ func TestControllerRevisionPreservesSemanticallyEqualCliqueIdentity(t *testing.T
 	assert.NotEqual(t, "worker-old", selected["worker"])
 }
 
-func TestControllerRevisionIgnoresSemanticallyEqualDesiredRepresentation(t *testing.T) {
+func TestControllerRevisionIgnoresSemanticallyEqualTemplateRepresentation(t *testing.T) {
 	ctx := context.Background()
 	pcs := testutils.NewPodCliqueSetBuilder("semantic-noop", "default", uuid.NewUUID()).
 		WithPodCliqueParameters("worker", 1, nil).
 		Build()
 	pcs.Spec.Template.Cliques[0].Spec.PodSpec.Containers = []corev1.Container{{Name: "worker", Image: "worker:v1"}}
-	desired, cliques, err := marshalDesiredRevision(pcs)
+	cliques, err := marshalDesiredCliques(pcs)
 	require.NoError(t, err)
-	indentedDesired, err := json.MarshalIndent(desired, "", "  ")
+	indentedTemplate, err := json.MarshalIndent(cliques[0].Template, "", "  ")
 	require.NoError(t, err)
-	require.NotEqual(t, string(desired), string(indentedDesired))
+	require.NotEqual(t, string(cliques[0].Template), string(indentedTemplate))
+	cliques[0].Template = indentedTemplate
+	cliques[0].Hash = "worker-old"
 	data := commonrevision.Data{
-		Version:        commonrevision.DataVersion,
-		Desired:        indentedDesired,
 		Cliques:        cliques,
 		GenerationHash: "generation-old",
-		CliqueHashes:   map[string]string{"worker": "worker-old"},
 	}
 	raw, err := json.Marshal(data)
 	require.NoError(t, err)

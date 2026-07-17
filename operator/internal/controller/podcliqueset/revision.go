@@ -36,8 +36,6 @@ import (
 
 	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -77,11 +75,11 @@ func (r *Reconciler) processRevision(ctx context.Context, _ logr.Logger, pcs *gr
 		}
 	}
 
-	desired, desiredCliques, err := marshalDesiredRevision(pcs)
+	desiredCliques, err := marshalDesiredCliques(pcs)
 	if err != nil {
 		return ctrlcommon.ReconcileWithErrors("error serializing desired revision", err)
 	}
-	equal, err := semanticallyEqualJSON[[]corev1.PodTemplateSpec](currentRevision.Desired(), desired)
+	equal, err := currentRevision.MatchesOrderedCliques(desiredCliques)
 	if err != nil {
 		return ctrlcommon.ReconcileWithErrors("error comparing desired revision", err)
 	}
@@ -89,30 +87,21 @@ func (r *Reconciler) processRevision(ctx context.Context, _ logr.Logger, pcs *gr
 		return ctrlcommon.ContinueReconcile()
 	}
 
-	cliqueHashes := make(map[string]string, len(pcs.Spec.Template.Cliques))
-	for _, clique := range pcs.Spec.Template.Cliques {
-		if old, ok := currentRevision.Clique(clique.Name); ok {
-			cliqueEqual, err := semanticallyEqualJSON[corev1.PodTemplateSpec](old, desiredCliques[clique.Name])
-			if err != nil {
-				return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("error comparing revision for clique %s", clique.Name), err)
-			}
-			if cliqueEqual {
-				cliqueHashes[clique.Name], err = currentRevision.CliqueHash(clique.Name)
-				if err != nil {
-					return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("error loading selected identity for clique %s", clique.Name), err)
-				}
-				continue
-			}
+	for i, clique := range pcs.Spec.Template.Cliques {
+		selectedHash, matches, err := currentRevision.MatchingCliqueHash(desiredCliques[i])
+		if err != nil {
+			return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("error comparing revision for clique %s", clique.Name), err)
 		}
-		cliqueHashes[clique.Name] = podtemplatehash.ComputePodClique(clique, pcs.Spec.Template.PriorityClassName)
+		if matches {
+			desiredCliques[i].Hash = selectedHash
+			continue
+		}
+		desiredCliques[i].Hash = podtemplatehash.ComputePodClique(clique, pcs.Spec.Template.PriorityClassName)
 	}
 
 	data := commonrevision.Data{
-		Version:        commonrevision.DataVersion,
-		Desired:        desired,
 		Cliques:        desiredCliques,
 		GenerationHash: computeGenerationHash(pcs),
-		CliqueHashes:   cliqueHashes,
 	}
 	if err = r.createAndSelectControllerRevision(ctx, pcs, pcsObjectName, data, true); err != nil {
 		return ctrlcommon.ReconcileWithErrors("error creating and selecting ControllerRevision", err)
@@ -146,16 +135,16 @@ func (r *Reconciler) initializeControllerRevision(ctx context.Context, pcs *grov
 		}
 	}
 
-	desired, desiredCliques, err := marshalDesiredRevision(pcs)
+	desiredCliques, err := marshalDesiredCliques(pcs)
 	if err != nil {
 		return ctrlcommon.ReconcileWithErrors("error serializing desired revision", err)
 	}
+	for i := range desiredCliques {
+		desiredCliques[i].Hash = cliqueHashes[desiredCliques[i].Name]
+	}
 	data := commonrevision.Data{
-		Version:        commonrevision.DataVersion,
-		Desired:        desired,
 		Cliques:        desiredCliques,
 		GenerationHash: generationHash,
-		CliqueHashes:   cliqueHashes,
 	}
 	if err = r.createAndSelectControllerRevision(ctx, pcs, pcsObjectName, data, false); err != nil {
 		return ctrlcommon.ReconcileWithErrors("error creating and selecting ControllerRevision", err)
@@ -166,20 +155,18 @@ func (r *Reconciler) initializeControllerRevision(ctx context.Context, pcs *grov
 	return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, fmt.Sprintf("waiting for selected ControllerRevision %q to be observed for PodCliqueSet: %v", *pcs.Status.CurrentRevision, client.ObjectKeyFromObject(pcs)))
 }
 
-func marshalDesiredRevision(pcs *grovecorev1alpha1.PodCliqueSet) (json.RawMessage, map[string]json.RawMessage, error) {
+func marshalDesiredCliques(pcs *grovecorev1alpha1.PodCliqueSet) ([]commonrevision.CliqueData, error) {
 	podTemplates := rolloutPodTemplateSpecs(pcs)
-	desired, err := json.Marshal(podTemplates)
-	if err != nil {
-		return nil, nil, fmt.Errorf("could not serialize PodCliqueSet %v: %w", client.ObjectKeyFromObject(pcs), err)
-	}
-	cliques := make(map[string]json.RawMessage, len(pcs.Spec.Template.Cliques))
+	cliques := make([]commonrevision.CliqueData, len(pcs.Spec.Template.Cliques))
 	for i, clique := range pcs.Spec.Template.Cliques {
-		cliques[clique.Name], err = json.Marshal(podTemplates[i])
+		cliques[i].Name = clique.Name
+		template, err := json.Marshal(podTemplates[i])
 		if err != nil {
-			return nil, nil, fmt.Errorf("could not serialize clique %s: %w", clique.Name, err)
+			return nil, fmt.Errorf("could not serialize clique %s: %w", clique.Name, err)
 		}
+		cliques[i].Template = template
 	}
-	return desired, cliques, nil
+	return cliques, nil
 }
 
 func candidateCliqueHashes(pcs *grovecorev1alpha1.PodCliqueSet) map[string]string {
@@ -188,17 +175,6 @@ func candidateCliqueHashes(pcs *grovecorev1alpha1.PodCliqueSet) map[string]strin
 		hashes[clique.Name] = podtemplatehash.ComputePodClique(clique, pcs.Spec.Template.PriorityClassName)
 	}
 	return hashes
-}
-
-func semanticallyEqualJSON[T any](left, right json.RawMessage) (bool, error) {
-	var leftValue, rightValue T
-	if err := json.Unmarshal(left, &leftValue); err != nil {
-		return false, fmt.Errorf("could not decode stored revision content: %w", err)
-	}
-	if err := json.Unmarshal(right, &rightValue); err != nil {
-		return false, fmt.Errorf("could not decode proposed revision content: %w", err)
-	}
-	return equality.Semantic.DeepEqual(leftValue, rightValue), nil
 }
 
 func (r *Reconciler) legacyCliqueHashes(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, hashes map[string]string) (map[string]string, error) {

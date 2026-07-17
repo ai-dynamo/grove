@@ -20,27 +20,30 @@ package revision
 import (
 	"encoding/json"
 	"fmt"
-	"slices"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 )
 
-// DataVersion is the current ControllerRevision data schema version.
-const DataVersion = 1
-
-// Data is the persisted ControllerRevision.Data schema. Revision construction code populates it;
-// reconciliation code should consume a validated SelectedRevision instead.
+// Data is the persisted ControllerRevision.Data schema.
+// Reconciliation code should consume a validated SelectedRevision instead.
 type Data struct {
-	Version        int                        `json:"version"`
-	Desired        json.RawMessage            `json:"desired"`
-	Cliques        map[string]json.RawMessage `json:"cliques"`
-	GenerationHash string                     `json:"generationHash"`
-	CliqueHashes   map[string]string          `json:"cliqueHashes"`
+	Cliques        []CliqueData `json:"cliques"`
+	GenerationHash string       `json:"generationHash"`
 }
 
-// SelectedRevision is a validated, read-oriented view of persisted revision data.
-// It deliberately exposes no maps or owned byte slices so reconciliation code cannot mutate
-// the selected rollout identity after loading it.
+// CliqueData stores the raw PodClique template and hash.
+type CliqueData struct {
+	Name     string          `json:"name"`
+	Template json.RawMessage `json:"template"`
+	Hash     string          `json:"hash"`
+}
+
+// SelectedRevision is a validated view of the revision data.
 type SelectedRevision struct {
-	data Data
+	cliques        []CliqueData
+	cliqueIndexes  map[string]int
+	generationHash string
 }
 
 // DecodeSelectedRevision decodes and validates persisted ControllerRevision data.
@@ -49,57 +52,95 @@ func DecodeSelectedRevision(raw []byte) (*SelectedRevision, error) {
 	if err := json.Unmarshal(raw, &data); err != nil {
 		return nil, fmt.Errorf("could not decode selected revision: %w", err)
 	}
-	if err := validateData(data); err != nil {
+	cliqueIndexes, err := validateData(data)
+	if err != nil {
 		return nil, err
 	}
-	return &SelectedRevision{data: data}, nil
+	return &SelectedRevision{
+		cliques:        data.Cliques,
+		cliqueIndexes:  cliqueIndexes,
+		generationHash: data.GenerationHash,
+	}, nil
 }
 
-// Desired returns a copy of the complete desired rollout content.
-func (r *SelectedRevision) Desired() json.RawMessage {
-	return slices.Clone(r.data.Desired)
+// MatchesOrderedCliques reports whether cliques have the same names, order, and
+// semantically equal templates as the selected revision. Hashes are not compared.
+func (r *SelectedRevision) MatchesOrderedCliques(cliques []CliqueData) (bool, error) {
+	if len(r.cliques) != len(cliques) {
+		return false, nil
+	}
+	for i, clique := range cliques {
+		selected := r.cliques[i]
+		if selected.Name != clique.Name {
+			return false, nil
+		}
+		equal, err := semanticallyEqualPodTemplate(selected.Template, clique.Template)
+		if err != nil || !equal {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
-// Clique returns a copy of the desired rollout content for one clique.
-func (r *SelectedRevision) Clique(name string) (json.RawMessage, bool) {
-	clique, ok := r.data.Cliques[name]
-	return slices.Clone(clique), ok
+// MatchingCliqueHash returns the selected hash for a name-matched clique when
+// its template is semantically equal to the selected template.
+func (r *SelectedRevision) MatchingCliqueHash(clique CliqueData) (string, bool, error) {
+	index, ok := r.cliqueIndexes[clique.Name]
+	if !ok {
+		return "", false, nil
+	}
+	selected := r.cliques[index]
+	equal, err := semanticallyEqualPodTemplate(selected.Template, clique.Template)
+	if err != nil || !equal {
+		return "", false, err
+	}
+	return selected.Hash, true, nil
 }
 
 // GenerationHash returns the persisted PodCliqueSet generation identity.
 func (r *SelectedRevision) GenerationHash() string {
-	return r.data.GenerationHash
+	return r.generationHash
 }
 
 // CliqueHash returns the persisted template identity selected for one clique.
 func (r *SelectedRevision) CliqueHash(name string) (string, error) {
-	hash, ok := r.data.CliqueHashes[name]
+	index, ok := r.cliqueIndexes[name]
 	if !ok {
 		return "", fmt.Errorf("no selected pod template hash for cliqueName: %s", name)
 	}
-	return hash, nil
+	return r.cliques[index].Hash, nil
 }
 
-func validateData(data Data) error {
-	if data.Version != DataVersion {
-		return fmt.Errorf("unsupported selected revision version: %d", data.Version)
+func semanticallyEqualPodTemplate(left, right json.RawMessage) (bool, error) {
+	var leftValue, rightValue corev1.PodTemplateSpec
+	if err := json.Unmarshal(left, &leftValue); err != nil {
+		return false, fmt.Errorf("could not decode stored revision content: %w", err)
 	}
+	if err := json.Unmarshal(right, &rightValue); err != nil {
+		return false, fmt.Errorf("could not decode proposed revision content: %w", err)
+	}
+	return equality.Semantic.DeepEqual(leftValue, rightValue), nil
+}
+
+func validateData(data Data) (map[string]int, error) {
 	if data.GenerationHash == "" {
-		return fmt.Errorf("selected revision has no generation hash")
+		return nil, fmt.Errorf("selected revision has no generation hash")
 	}
-	if !json.Valid(data.Desired) {
-		return fmt.Errorf("selected revision has invalid desired content")
-	}
-	if len(data.Cliques) != len(data.CliqueHashes) {
-		return fmt.Errorf("selected revision has different clique content and hash counts")
-	}
-	for name, clique := range data.Cliques {
-		if !json.Valid(clique) {
-			return fmt.Errorf("selected revision has invalid content for clique %s", name)
+	cliqueIndexes := make(map[string]int, len(data.Cliques))
+	for i, clique := range data.Cliques {
+		if clique.Name == "" {
+			return nil, fmt.Errorf("selected revision has a clique with no name")
 		}
-		if data.CliqueHashes[name] == "" {
-			return fmt.Errorf("selected revision has no hash for clique %s", name)
+		if _, ok := cliqueIndexes[clique.Name]; ok {
+			return nil, fmt.Errorf("selected revision has duplicate clique %s", clique.Name)
 		}
+		if !json.Valid(clique.Template) {
+			return nil, fmt.Errorf("selected revision has invalid content for clique %s", clique.Name)
+		}
+		if clique.Hash == "" {
+			return nil, fmt.Errorf("selected revision has no hash for clique %s", clique.Name)
+		}
+		cliqueIndexes[clique.Name] = i
 	}
-	return nil
+	return cliqueIndexes, nil
 }

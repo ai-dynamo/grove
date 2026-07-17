@@ -18,6 +18,7 @@ package utils
 
 import (
 	"encoding/json"
+	"sort"
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -189,16 +190,9 @@ func ComputePodCliqueTemplateHashes(pcs *grovecorev1alpha1.PodCliqueSet) map[str
 
 // NewSelectedRevision creates a validated selected revision fixture.
 func NewSelectedRevision(generationHash string, cliqueHashes map[string]string) *revisiondata.SelectedRevision {
-	cliques := make(map[string]json.RawMessage, len(cliqueHashes))
-	for name := range cliqueHashes {
-		cliques[name] = json.RawMessage(`{}`)
-	}
 	raw, err := json.Marshal(revisiondata.Data{
-		Version:        revisiondata.DataVersion,
-		Desired:        json.RawMessage(`[]`),
-		Cliques:        cliques,
+		Cliques:        selectedRevisionCliques(cliqueHashes),
 		GenerationHash: generationHash,
-		CliqueHashes:   cliqueHashes,
 	})
 	if err != nil {
 		panic(err)
@@ -215,16 +209,9 @@ func NewPodCliqueSetControllerRevision(pcs *grovecorev1alpha1.PodCliqueSet, cliq
 	if pcs.Status.CurrentGenerationHash == nil {
 		pcs.Status.CurrentGenerationHash = ptr.To("test-generation")
 	}
-	cliques := make(map[string]json.RawMessage, len(cliqueHashes))
-	for name := range cliqueHashes {
-		cliques[name] = json.RawMessage(`{}`)
-	}
 	data, _ := json.Marshal(revisiondata.Data{
-		Version:        revisiondata.DataVersion,
-		Desired:        json.RawMessage(`[]`),
-		Cliques:        cliques,
+		Cliques:        selectedRevisionCliques(cliqueHashes),
 		GenerationHash: *pcs.Status.CurrentGenerationHash,
-		CliqueHashes:   cliqueHashes,
 	})
 	name := pcs.Name + "-test-revision"
 	pcs.Status.CurrentRevision = ptr.To(name)
@@ -238,6 +225,24 @@ func NewPodCliqueSetControllerRevision(pcs *grovecorev1alpha1.PodCliqueSet, cliq
 		Data:     runtime.RawExtension{Raw: data},
 		Revision: pcs.Generation,
 	}
+}
+
+func selectedRevisionCliques(cliqueHashes map[string]string) []revisiondata.CliqueData {
+	names := make([]string, 0, len(cliqueHashes))
+	for name := range cliqueHashes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	cliques := make([]revisiondata.CliqueData, 0, len(names))
+	for _, name := range names {
+		cliques = append(cliques, revisiondata.CliqueData{
+			Name:     name,
+			Template: json.RawMessage(`{}`),
+			Hash:     cliqueHashes[name],
+		})
+	}
+	return cliques
 }
 
 func createEmptyPodCliqueSet(name, namespace string, uid types.UID) *grovecorev1alpha1.PodCliqueSet {

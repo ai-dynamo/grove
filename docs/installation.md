@@ -135,8 +135,14 @@ Before upgrading to a release that stores PodCliqueSet revisions in
 The next rollout-relevant spec change creates a new ControllerRevision and
 uses the normal update strategy. An active or otherwise unobserved legacy
 revision is left unchanged and reports a reconciliation error until the
-migration precondition is resolved. Downgrading afterward to an operator that
-does not understand ControllerRevision-backed selection is unsupported.
+migration precondition is resolved.
+
+Downgrading to an operator that predates ControllerRevision-backed selection
+falls back to its legacy generation-hash reconciliation. The older operator
+ignores ControllerRevision objects, and changing versions alone does not
+replace workload children because adoption preserves the selected generation
+and per-clique hashes. As with upgrades, allow active updates to finish before
+changing operator versions.
 
 ### ClusterTopology renamed to ClusterTopologyBinding
 
