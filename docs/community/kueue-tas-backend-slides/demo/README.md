@@ -1,4 +1,4 @@
-# Grove + Kueue kind demo (2-node, hostname TAS)
+# Grove + Kueue kind demo (2-node, rack TAS + hostname anti-affinity)
 
 ## Cluster
 
@@ -17,19 +17,21 @@ docs/community/kueue-tas-backend-slides/demo/setup-kueue-kind-demo.sh
 kubectl get topology grove-kind-topology
 ```
 
-`setup-kueue-kind-demo.sh` labels every node with `topology.ai-dynamo.io/tas-node=true`,
-applies `grove-kind-topology.yaml` (host -> `kubernetes.io/hostname`), and applies
-`kueue-kind-queue.yaml`. Grove syncs the `ClusterTopologyBinding` to a Kueue
-`Topology` with the same name.
+`setup-kueue-kind-demo.sh` enables Kueue's `PartialAdmission` feature gate, labels
+both nodes as members of `rack-0`, applies `grove-kind-topology.yaml` (rack only),
+and applies `kueue-kind-queue.yaml`. Grove syncs the `ClusterTopologyBinding` to a
+Kueue `Topology` with the same name. Hostname is intentionally not a TAS level:
+Kueue would otherwise pin pods to one host and fight hostname anti-affinity.
 
 ## Demos
 
 ### Partial admission via minCount (primary)
 
 `grove-kueue-simple-mincount.yaml` requests `replicas: 4`, `minAvailable: 2`, and
-`pack.required: host`, with each Pod requesting 1 CPU. The demo ClusterQueue has
-only 2 CPU of quota, so Kueue admits the Workload at `minCount=2`: 2 of the 4 Pods
-run (one per node via hostname TAS) and the other 2 stay scheduling-gated.
+`pack.required: rack`, with each Pod requesting 1 CPU. The demo ClusterQueue has
+only 2 CPU of quota, so Kueue admits the Workload at `minCount=2` into `rack-0`.
+Required hostname anti-affinity places those 2 Pods on different nodes; the other
+2 Pods must remain scheduling-gated.
 
 ```sh
 docs/community/kueue-tas-backend-slides/demo/validate-grove-kueue-mincount.sh

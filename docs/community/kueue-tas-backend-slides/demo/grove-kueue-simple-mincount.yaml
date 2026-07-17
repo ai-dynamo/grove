@@ -1,9 +1,7 @@
-# Grove PodCliqueSet demonstrating Kueue partial admission via minCount.
-# frontend requests replicas=4 with minAvailable=2. Each Pod requests 1 CPU and
-# the demo ClusterQueue only has 2 CPU of quota, so Kueue admits the Workload at
-# minCount=2 and leaves the other 2 Pods gated: 2 of 4 Pods run.
-# With WORKERS=1 (control-plane + worker) and required: host, the 2 admitted Pods
-# land on 2 distinct nodes.
+# Grove PodCliqueSet demonstrating Kueue partial admission and TAS placement.
+# Kueue admits 2 of 4 Pods into the same rack (TAS pins rack only). Required
+# hostname anti-affinity then places those 2 Pods on different nodes; the
+# remaining 2 Pods must stay gated.
 # Apply after setup-kueue-kind-demo.sh.
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
@@ -18,7 +16,7 @@ spec:
     topologyConstraint:
       topologyName: grove-kind-topology
       pack:
-        required: host
+        required: rack
     cliques:
     - name: frontend
       spec:
@@ -28,6 +26,17 @@ spec:
         podSpec:
           schedulerName: kueue
           terminationGracePeriodSeconds: 5
+          affinity:
+            podAntiAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+              - labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/part-of: grove-kueue-mincount
+                topologyKey: kubernetes.io/hostname
+          tolerations:
+          - key: node-role.kubernetes.io/control-plane
+            operator: Exists
+            effect: NoSchedule
           containers:
           - name: pause
             image: registry.k8s.io/pause:3.9
