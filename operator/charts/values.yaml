@@ -98,9 +98,9 @@ config:
   scheduler:
     profiles:
       - name: default-scheduler
-      - name: kai-scheduler
       - name: kueue
       # Uncomment optional scheduler profiles only when their dependencies are installed.
+      # - name: kai-scheduler
       # - name: volcano
       # - name: lpx-scheduler
   logLevel: info
