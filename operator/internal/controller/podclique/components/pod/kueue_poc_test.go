@@ -24,6 +24,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -80,13 +81,17 @@ func TestBuildResource_StampsPrebuiltWorkloadMetadataForSimplePCS(t *testing.T) 
 	}
 	pod := &corev1.Pod{}
 
-	require.NoError(t, r.buildResource(pcs, pclq, "demo-0", pod, 0))
+	require.NoError(t, r.buildResource(pcs, pclq, nil, "demo-0", pod, 0))
 
 	assert.Equal(t, "5", pod.Annotations[kueuePodGroupTotalCountAnnotation])
 	assert.Equal(t, "demo-0", pod.Labels[kueuePodGroupNameLabel])
 	assert.Equal(t, "demo-0", pod.Labels[kueuePrebuiltWorkloadNameLabel])
 	assert.Equal(t, "grove-poc", pod.Labels["kueue.x-k8s.io/queue-name"])
 	assert.Equal(t, "demo-0-worker", pod.Annotations[kueueRoleHashAnnotation])
+<<<<<<< HEAD
+=======
+	assert.True(t, hasPodGangSchedulingGate(pod), "Kueue-backed Pod must still carry the Grove PodGang scheduling gate")
+>>>>>>> 3641774 (add topology constraints to pods created for kueue)
 }
 
 func TestBuildResource_StampsPrebuiltWorkloadMetadataForPCSG(t *testing.T) {
@@ -131,7 +136,7 @@ func TestBuildResource_StampsPrebuiltWorkloadMetadataForPCSG(t *testing.T) {
 	}
 	pod := &corev1.Pod{}
 
-	require.NoError(t, r.buildResource(pcs, pclq, "demo-0", pod, 0))
+	require.NoError(t, r.buildResource(pcs, pclq, nil, "demo-0", pod, 0))
 
 	// (leader 1 + worker 2) * pcsg replicas 2 = 6 pods in the PodGang.
 	assert.Equal(t, "6", pod.Annotations[kueuePodGroupTotalCountAnnotation])
@@ -140,4 +145,89 @@ func TestBuildResource_StampsPrebuiltWorkloadMetadataForPCSG(t *testing.T) {
 	assert.Equal(t, "demo-0", pod.Labels[kueuePrebuiltWorkloadNameLabel])
 	assert.Equal(t, "grove-poc", pod.Labels["kueue.x-k8s.io/queue-name"])
 	assert.Equal(t, "demo-0-decode-0-worker", pod.Annotations[kueueRoleHashAnnotation])
+}
+
+func TestBuildResource_StampsRequiredTopologyFromPodGang(t *testing.T) {
+	cl := testutils.CreateDefaultFakeClient(nil)
+	r := newKueuePOCResource(cl)
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{},
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+				},
+			},
+		},
+	}
+	pclq := &grovecorev1alpha1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "demo-0-worker",
+			Namespace: "default",
+			Labels: map[string]string{
+				apicommon.LabelPartOfKey:                "demo",
+				apicommon.LabelPodCliqueSetReplicaIndex: "0",
+				apicommon.LabelPodGang:                  "demo-0",
+			},
+		},
+		Spec: grovecorev1alpha1.PodCliqueSpec{
+			Replicas: 1,
+			PodSpec:  corev1.PodSpec{SchedulerName: string(configv1alpha1.SchedulerNameKueue)},
+		},
+	}
+	hostKey := "kubernetes.io/hostname"
+	podGang := &groveschedulerv1alpha1.PodGang{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default"},
+		Spec: groveschedulerv1alpha1.PodGangSpec{
+			PodGroups: []groveschedulerv1alpha1.PodGroup{
+				{
+					Name: "demo-0-worker",
+					TopologyConstraint: &groveschedulerv1alpha1.TopologyConstraint{
+						PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{Required: &hostKey},
+					},
+				},
+			},
+		},
+	}
+	pod := &corev1.Pod{}
+
+	require.NoError(t, r.buildResource(pcs, pclq, podGang, "demo-0", pod, 0))
+
+	assert.Equal(t, hostKey, pod.Annotations[kueuePodSetRequiredTopology])
+}
+
+func TestBuildResource_RequiresPodGangForKueueTopology(t *testing.T) {
+	cl := testutils.CreateDefaultFakeClient(nil)
+	r := newKueuePOCResource(cl)
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{},
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+				},
+			},
+		},
+	}
+	pclq := &grovecorev1alpha1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "demo-0-worker",
+			Namespace: "default",
+			Labels: map[string]string{
+				apicommon.LabelPartOfKey:                "demo",
+				apicommon.LabelPodCliqueSetReplicaIndex: "0",
+				apicommon.LabelPodGang:                  "demo-0",
+			},
+		},
+		Spec: grovecorev1alpha1.PodCliqueSpec{
+			Replicas: 1,
+			PodSpec:  corev1.PodSpec{SchedulerName: string(configv1alpha1.SchedulerNameKueue)},
+		},
+	}
+
+	err := r.buildResource(pcs, pclq, nil, "demo-0", &corev1.Pod{}, 0)
+
+	require.ErrorContains(t, err, "is required to resolve Kueue topology")
 }

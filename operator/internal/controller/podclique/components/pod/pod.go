@@ -33,6 +33,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
@@ -71,6 +72,7 @@ const (
 	kueuePodGroupTotalCountAnnotation = "kueue.x-k8s.io/pod-group-total-count"
 	kueuePodGroupNameLabel            = "kueue.x-k8s.io/pod-group-name"
 	kueuePrebuiltWorkloadNameLabel    = "kueue.x-k8s.io/prebuilt-workload-name"
+	kueuePodSetRequiredTopology       = "kueue.x-k8s.io/podset-required-topology"
 	kueueRoleHashAnnotation           = "kueue.x-k8s.io/role-hash"
 )
 
@@ -140,7 +142,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pclq *grovecore
 }
 
 // buildResource constructs a Pod resource from PodClique specifications, setting up metadata, labels, scheduling gates, and dependencies
-func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, podGangName string, pod *corev1.Pod, podIndex int) error {
+func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, podGang *groveschedulerv1alpha1.PodGang, podGangName string, pod *corev1.Pod, podIndex int) error {
 	// Extract PCS replica index from PodClique FQN
 	pcsName := componentutils.GetPodCliqueSetName(pclq.ObjectMeta)
 	pcsReplicaIndex, err := utils.GetPodCliqueSetReplicaIndexFromPodCliqueFQN(pcsName, pclq.Name)
@@ -182,7 +184,18 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 		)
 	}
 	if backend.Name() == string(configv1alpha1.SchedulerNameKueue) {
+		if podGang == nil && componentutils.HasAnyTopologyConstraint(pcs) {
+			return groveerr.WrapError(
+				fmt.Errorf("PodGang %s/%s is required to resolve Kueue topology", pclq.Namespace, podGangName),
+				errCodeBuildPodResource,
+				component.OperationSync,
+				"failed to prepare pod spec with scheduler backend",
+			)
+		}
 		stampKueuePodGroupMetadata(pod, pcs, pclq, podGangName)
+		if topologyKey := scheduler.RequiredTopologyKeyForPodGroup(podGang, pclq.Name, ""); topologyKey != "" && pod.Annotations[kueuePodSetRequiredTopology] == "" {
+			pod.Annotations[kueuePodSetRequiredTopology] = topologyKey
+		}
 	}
 	if err = backend.PreparePod(pod); err != nil {
 		return groveerr.WrapError(

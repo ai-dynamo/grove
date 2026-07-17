@@ -155,7 +155,7 @@ func (b *schedulerBackend) buildPrebuiltWorkload(pcs *grovecorev1alpha1.PodCliqu
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert pod spec for clique %q: %w", cliqueTemplate.Name, err)
 		}
-		topologyKey := podGangTopologyKey(podGang, podGroup, b.config.RequiredTopologyKey)
+		topologyKey := scheduler.RequiredTopologyKeyForPodGroup(podGang, podGroup.Name, b.config.RequiredTopologyKey)
 
 		template := map[string]any{"spec": podSpec}
 		if topologyKey != "" {
@@ -221,25 +221,6 @@ func findCliqueTemplateForPodGroup(pcs *grovecorev1alpha1.PodCliqueSet, podGroup
 		}
 	}
 	return best
-}
-
-// podGangTopologyKey returns the translated required topology node-label key for a PodGroup, preferring the
-// PodGroup constraint, then the PodGang-wide constraint, then the backend configured default.
-func podGangTopologyKey(podGang *groveschedulerv1alpha1.PodGang, podGroup groveschedulerv1alpha1.PodGroup, fallback string) string {
-	if key := packRequired(podGroup.TopologyConstraint); key != "" {
-		return key
-	}
-	if key := packRequired(podGang.Spec.TopologyConstraint); key != "" {
-		return key
-	}
-	return fallback
-}
-
-func packRequired(tc *groveschedulerv1alpha1.TopologyConstraint) string {
-	if tc == nil || tc.PackConstraint == nil || tc.PackConstraint.Required == nil {
-		return ""
-	}
-	return *tc.PackConstraint.Required
 }
 
 func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {

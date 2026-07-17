@@ -103,7 +103,7 @@ func TestBuildResourceWithLPXBackend(t *testing.T) {
 	resource := &_resource{scheme: scheme, schedRegistry: registry}
 	pod := &corev1.Pod{}
 
-	require.NoError(t, resource.buildResource(pcs, pclq, podGangName, pod, 0))
+	require.NoError(t, resource.buildResource(pcs, pclq, nil, podGangName, pod, 0))
 
 	assert.Equal(t, string(configv1alpha1.SchedulerNameLPX), pod.Spec.SchedulerName)
 	assert.Equal(t, pclq.Name+"-", pod.GenerateName)
