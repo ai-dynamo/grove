@@ -289,9 +289,9 @@ func (r _resource) checkAndRemovePodSchedulingGates(sc *syncContext, logger logr
 				Name: fmt.Sprintf("RemoveSchedulingGate-%s-%d", p.Name, i),
 				Fn: func(ctx context.Context) error {
 					podClone := p.DeepCopy()
-					// Remove only the Grove PodGang gate. Other controllers (for example Kueue) may
-					// add their own scheduling gates on the same Pod; clearing the whole list would
-					// wipe those and let the Pod schedule before those owners have released it.
+					// Remove only the Grove PodGang gate. Other controllers may add their own
+					// scheduling gates on the same Pod; clearing the whole list would wipe those
+					// and let the Pod schedule before those owners have released it.
 					if !removePodGangSchedulingGate(p) {
 						return nil
 					}

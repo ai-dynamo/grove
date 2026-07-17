@@ -321,10 +321,10 @@ func TestCheckAndRemovePodSchedulingGates_ConcurrentExecution(t *testing.T) {
 }
 
 func TestCheckAndRemovePodSchedulingGates_PreservesForeignGates(t *testing.T) {
-	const kueueAdmissionGate = "kueue.x-k8s.io/admission"
+	const foreignAdmissionGate = "foo.io/admission"
 
 	pod := createTestPod("simple1-0", true, true)
-	pod.Spec.SchedulingGates = append(pod.Spec.SchedulingGates, corev1.PodSchedulingGate{Name: kueueAdmissionGate})
+	pod.Spec.SchedulingGates = append(pod.Spec.SchedulingGates, corev1.PodSchedulingGate{Name: foreignAdmissionGate})
 
 	basePodGang := &groveschedulerv1alpha1.PodGang{
 		ObjectMeta: metav1.ObjectMeta{
@@ -360,7 +360,7 @@ func TestCheckAndRemovePodSchedulingGates_PreservesForeignGates(t *testing.T) {
 	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pod), updatedPod))
 	assert.False(t, hasPodGangSchedulingGate(updatedPod), "Grove PodGang gate should be removed")
 	require.Len(t, updatedPod.Spec.SchedulingGates, 1)
-	assert.Equal(t, kueueAdmissionGate, updatedPod.Spec.SchedulingGates[0].Name, "foreign Kueue admission gate must be preserved")
+	assert.Equal(t, foreignAdmissionGate, updatedPod.Spec.SchedulingGates[0].Name, "foreign admission gate must be preserved")
 }
 
 func TestRemovePodGangSchedulingGate(t *testing.T) {
@@ -368,29 +368,29 @@ func TestRemovePodGangSchedulingGate(t *testing.T) {
 		pod := &corev1.Pod{
 			Spec: corev1.PodSpec{
 				SchedulingGates: []corev1.PodSchedulingGate{
-					{Name: "kueue.x-k8s.io/admission"},
+					{Name: "foo.io/admission"},
 					{Name: podGangSchedulingGate},
-					{Name: "kueue.x-k8s.io/topology"},
+					{Name: "foo.io/topology"},
 				},
 			},
 		}
 		assert.True(t, removePodGangSchedulingGate(pod))
 		assert.Equal(t, []corev1.PodSchedulingGate{
-			{Name: "kueue.x-k8s.io/admission"},
-			{Name: "kueue.x-k8s.io/topology"},
+			{Name: "foo.io/admission"},
+			{Name: "foo.io/topology"},
 		}, pod.Spec.SchedulingGates)
 	})
 	t.Run("returns false when Grove gate is absent", func(t *testing.T) {
 		pod := &corev1.Pod{
 			Spec: corev1.PodSpec{
 				SchedulingGates: []corev1.PodSchedulingGate{
-					{Name: "kueue.x-k8s.io/admission"},
+					{Name: "foo.io/admission"},
 				},
 			},
 		}
 		assert.False(t, removePodGangSchedulingGate(pod))
 		assert.Equal(t, []corev1.PodSchedulingGate{
-			{Name: "kueue.x-k8s.io/admission"},
+			{Name: "foo.io/admission"},
 		}, pod.Spec.SchedulingGates)
 	})
 }
