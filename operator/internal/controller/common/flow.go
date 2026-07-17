@@ -92,7 +92,6 @@ func ContinueReconcile() ReconcileStepResult {
 // ReconcileWithErrors returns a ReconcileStepResult that re-queues the reconciliation with the given errors.
 func ReconcileWithErrors(description string, errs ...error) ReconcileStepResult {
 	return ReconcileStepResult{
-		result:            ctrl.Result{Requeue: true},
 		errs:              errs,
 		continueReconcile: false,
 		description:       description,

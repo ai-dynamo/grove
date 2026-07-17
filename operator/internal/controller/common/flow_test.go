@@ -151,7 +151,7 @@ func TestReconcileWithErrors(t *testing.T) {
 	result := ReconcileWithErrors("test description", err1, err2)
 
 	assert.False(t, result.continueReconcile)
-	assert.True(t, result.result.Requeue)
+	assert.True(t, result.result.IsZero())
 	assert.True(t, result.HasErrors())
 	assert.Len(t, result.GetErrors(), 2)
 	assert.Equal(t, "test description", result.GetDescription())
