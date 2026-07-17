@@ -18,14 +18,14 @@ import (
 	"context"
 	"testing"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
-	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
+	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -40,6 +40,10 @@ func TestBackend_PreparePod(t *testing.T) {
 	pod := testutils.NewPodBuilder("test-pod", "default").
 		WithSchedulerName("default-scheduler").
 		Build()
+	pod.Labels = map[string]string{
+		apicommon.LabelPodGang:   "test-podgang",
+		apicommon.LabelPodClique: "test-clique",
+	}
 	pod.Annotations = map[string]string{"keep": "me"}
 
 	require.NoError(t, b.PreparePod(pod))
@@ -47,6 +51,8 @@ func TestBackend_PreparePod(t *testing.T) {
 	assert.Equal(t, "kai-scheduler", pod.Spec.SchedulerName)
 	assert.Equal(t, "me", pod.Annotations["keep"])
 	assert.Equal(t, "true", pod.Annotations["kai.scheduler/skip-podgrouper"])
+	assert.Equal(t, "test-podgang", pod.Annotations["pod-group-name"])
+	assert.Equal(t, "test-clique", pod.Labels["kai.scheduler/subgroup-name"])
 }
 
 func TestBackend_PreparePod_PreservesExistingSkipAnnotation(t *testing.T) {
@@ -57,11 +63,15 @@ func TestBackend_PreparePod_PreservesExistingSkipAnnotation(t *testing.T) {
 
 	pod := testutils.NewPodBuilder("test-pod", "default").
 		Build()
+	pod.Labels = map[string]string{
+		apicommon.LabelPodGang:   "test-podgang",
+		apicommon.LabelPodClique: "test-clique",
+	}
 	pod.Annotations = map[string]string{"kai.scheduler/skip-podgrouper": "custom"}
 
-	b.PreparePod(pod)
+	require.NoError(t, b.PreparePod(pod))
 
-	assert.Equal(t, "custom", pod.Annotations["kai.scheduler/skip-podgrouper"])
+	assert.Equal(t, "true", pod.Annotations["kai.scheduler/skip-podgrouper"])
 }
 
 func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
@@ -109,6 +119,7 @@ func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
 	recorder := record.NewFakeRecorder(10)
 	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai}
 	b := New(cl, cl.Scheme(), recorder, profile)
+	require.NoError(t, b.Init(cl))
 
 	ctx := context.Background()
 	require.NoError(t, b.SyncPodGang(ctx, podGang))
@@ -116,24 +127,28 @@ func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
 	gotPodGroup := &kaischedulingv2alpha2.PodGroup{}
 	require.NoError(t, cl.Get(ctx, client.ObjectKey{Name: podGang.Name, Namespace: podGang.Namespace}, gotPodGroup))
 
-	assert.Equal(t, int32(5), gotPodGroup.Spec.MinMember)
+	require.NotNil(t, gotPodGroup.Spec.MinMember)
+	assert.Equal(t, int32(5), *gotPodGroup.Spec.MinMember)
 	assert.Equal(t, "team-a", gotPodGroup.Spec.Queue)
 	assert.Equal(t, "high-priority", gotPodGroup.Spec.PriorityClassName)
 	assert.Equal(t, "zone", gotPodGroup.Spec.TopologyConstraint.RequiredTopologyLevel)
 
 	require.Len(t, gotPodGroup.Spec.SubGroups, 3)
 	assert.Equal(t, "decoder-group", gotPodGroup.Spec.SubGroups[0].Name)
-	assert.Equal(t, int32(0), gotPodGroup.Spec.SubGroups[0].MinMember)
+	require.NotNil(t, gotPodGroup.Spec.SubGroups[0].MinSubGroup)
+	assert.Equal(t, int32(1), *gotPodGroup.Spec.SubGroups[0].MinSubGroup)
 
 	assert.Equal(t, "encoder", gotPodGroup.Spec.SubGroups[1].Name)
-	assert.Equal(t, int32(2), gotPodGroup.Spec.SubGroups[1].MinMember)
+	require.NotNil(t, gotPodGroup.Spec.SubGroups[1].MinMember)
+	assert.Equal(t, int32(2), *gotPodGroup.Spec.SubGroups[1].MinMember)
 	assert.Nil(t, gotPodGroup.Spec.SubGroups[1].Parent)
 	assert.Equal(t, "host", gotPodGroup.Spec.SubGroups[1].TopologyConstraint.RequiredTopologyLevel)
 
 	assert.Equal(t, "decoder", gotPodGroup.Spec.SubGroups[2].Name)
 	require.NotNil(t, gotPodGroup.Spec.SubGroups[2].Parent)
 	assert.Equal(t, "decoder-group", *gotPodGroup.Spec.SubGroups[2].Parent)
-	assert.Equal(t, int32(3), gotPodGroup.Spec.SubGroups[2].MinMember)
+	require.NotNil(t, gotPodGroup.Spec.SubGroups[2].MinMember)
+	assert.Equal(t, int32(3), *gotPodGroup.Spec.SubGroups[2].MinMember)
 
 	// Update PodGang: remove queue label and change min replicas.
 	updatedPodGang := podGang.DeepCopy()
@@ -147,29 +162,32 @@ func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
 
 	// Existing queue should be preserved even when source label is removed.
 	assert.Equal(t, "team-a", gotAfterUpdate.Spec.Queue)
-	assert.Equal(t, int32(7), gotAfterUpdate.Spec.MinMember)
-	assert.Equal(t, int32(4), gotAfterUpdate.Spec.SubGroups[1].MinMember)
+	require.NotNil(t, gotAfterUpdate.Spec.MinMember)
+	assert.Equal(t, int32(7), *gotAfterUpdate.Spec.MinMember)
+	require.NotNil(t, gotAfterUpdate.Spec.SubGroups[1].MinMember)
+	assert.Equal(t, int32(4), *gotAfterUpdate.Spec.SubGroups[1].MinMember)
 }
 
-func TestBackend_OnPodGangDelete(t *testing.T) {
-	podGang := testutils.NewPodGangBuilder("to-delete", "default").
+func TestBackend_SyncPodGangSetsOwnerReferenceAndSkipAnnotation(t *testing.T) {
+	podGang := testutils.NewPodGangBuilder("owned", "default").
 		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
 		Build()
-	podGroup := &kaischedulingv2alpha2.PodGroup{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "to-delete",
-			Namespace: "default",
-		},
-	}
 
-	cl := testutils.NewTestClientBuilder().WithObjects(podGang, podGroup).Build()
+	cl := testutils.NewTestClientBuilder().WithObjects(podGang).Build()
 	recorder := record.NewFakeRecorder(10)
 	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai}
 	b := New(cl, cl.Scheme(), recorder, profile)
+	require.NoError(t, b.Init(cl))
 
 	ctx := context.Background()
-	require.NoError(t, b.OnPodGangDelete(ctx, podGang))
+	require.NoError(t, b.SyncPodGang(ctx, podGang))
 
-	err := cl.Get(ctx, client.ObjectKey{Name: podGroup.Name, Namespace: podGroup.Namespace}, &kaischedulingv2alpha2.PodGroup{})
-	assert.Error(t, err)
+	podGroup := &kaischedulingv2alpha2.PodGroup{}
+	require.NoError(t, cl.Get(ctx, client.ObjectKey{Name: podGang.Name, Namespace: podGang.Namespace}, podGroup))
+	require.Len(t, podGroup.OwnerReferences, 1)
+	assert.Equal(t, podGang.Name, podGroup.OwnerReferences[0].Name)
+
+	updatedPodGang := &groveschedulerv1alpha1.PodGang{}
+	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), updatedPodGang))
+	assert.Equal(t, annotationValSkipPGR, updatedPodGang.Annotations[annotationKeySkipPGR])
 }

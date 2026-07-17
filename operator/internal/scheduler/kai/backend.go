@@ -19,14 +19,15 @@ import (
 	"fmt"
 	"reflect"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
-	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	kaitopologyv1alpha1 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/kai/v1alpha1"
+	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -49,10 +50,12 @@ type schedulerBackend struct {
 var _ scheduler.Backend = (*schedulerBackend)(nil)
 
 const (
-	labelKeyQueueName        = "kai.scheduler/queue"
-	labelKeyNodePoolName     = "kai.scheduler/node-pool"
-	annotationKeySkipPGR     = "kai.scheduler/skip-podgrouper"
-	annotationValSkipPGR     = "true"
+	labelKeyQueueName    = "kai.scheduler/queue"
+	labelKeyNodePoolName = "kai.scheduler/node-pool"
+	annotationKeySkipPGR = "kai.scheduler/skip-podgrouper"
+	annotationValSkipPGR = "true"
+	annotationPodGroup   = "pod-group-name"
+	labelSubGroup        = "kai.scheduler/subgroup-name"
 )
 
 // New creates a new KAI backend instance. profile is the scheduler profile for kai-scheduler;
@@ -86,9 +89,13 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 	if podGang == nil {
 		return fmt.Errorf("podGang is nil")
 	}
+	if err := b.ensurePodGangSkipAnnotation(ctx, podGang); err != nil {
+		return fmt.Errorf("ensure KAI podgrouper skip annotation: %w", err)
+	}
 
 	newPodGroup, err := b.buildPodGroupForPodGang(podGang)
 	if err != nil {
+		b.recordWarning(podGang, "KAIBackendMappingFailed", err)
 		return err
 	}
 
@@ -109,29 +116,28 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 	return b.client.Update(ctx, oldPodGroup)
 }
 
-// OnPodGangDelete removes the PodGroup owned by this PodGang
-func (b *schedulerBackend) OnPodGangDelete(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
-	if podGang == nil {
-		return nil
-	}
-	return client.IgnoreNotFound(b.client.Delete(ctx, &kaischedulingv2alpha2.PodGroup{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      podGang.Name,
-			Namespace: podGang.Namespace,
-		},
-	}))
-}
-
 // PreparePod adds KAI scheduler-specific configuration to the Pod.
-// Sets Pod.Spec.SchedulerName so the pod is scheduled by KAI.
+// It sets externally-created PodGroup membership because KAI's podgrouper is skipped.
 func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
+	podGangName := pod.Labels[apicommon.LabelPodGang]
+	if podGangName == "" {
+		return fmt.Errorf("KAI scheduler requires pod label %q", apicommon.LabelPodGang)
+	}
+	subGroupName := pod.Labels[apicommon.LabelPodClique]
+	if subGroupName == "" {
+		return fmt.Errorf("KAI scheduler requires pod label %q", apicommon.LabelPodClique)
+	}
+
 	pod.Spec.SchedulerName = b.Name()
 	if pod.Annotations == nil {
 		pod.Annotations = map[string]string{}
 	}
-	if _, exists := pod.Annotations[annotationKeySkipPGR]; !exists {
-		pod.Annotations[annotationKeySkipPGR] = annotationValSkipPGR
+	if pod.Labels == nil {
+		pod.Labels = map[string]string{}
 	}
+	pod.Annotations[annotationKeySkipPGR] = annotationValSkipPGR
+	pod.Annotations[annotationPodGroup] = podGangName
+	pod.Labels[labelSubGroup] = subGroupName
 	return nil
 }
 
@@ -158,7 +164,7 @@ func (b *schedulerBackend) buildPodGroupForPodGang(podGang *groveschedulerv1alph
 		}
 		subGroups = append(subGroups, kaischedulingv2alpha2.SubGroup{
 			Name:               groupConfig.Name,
-			MinMember:          0,
+			MinSubGroup:        ptr.To(int32(len(groupConfig.PodGroupNames))),
 			TopologyConstraint: groupTopologyConstraint,
 		})
 		for _, podGroupName := range groupConfig.PodGroupNames {
@@ -174,7 +180,7 @@ func (b *schedulerBackend) buildPodGroupForPodGang(podGang *groveschedulerv1alph
 		}
 		subGroup := kaischedulingv2alpha2.SubGroup{
 			Name:               podGroup.Name,
-			MinMember:          podGroup.MinReplicas,
+			MinMember:          ptr.To(podGroup.MinReplicas),
 			TopologyConstraint: subGroupTopologyConstraint,
 		}
 		if parentName, found := parentBySubGroupName[podGroup.Name]; found {
@@ -192,7 +198,7 @@ func (b *schedulerBackend) buildPodGroupForPodGang(podGang *groveschedulerv1alph
 			Annotations: cloneStringMap(podGang.Annotations),
 		},
 		Spec: kaischedulingv2alpha2.PodGroupSpec{
-			MinMember:         minMember,
+			MinMember:         ptr.To(minMember),
 			Queue:             resolveQueueName(podGang),
 			PriorityClassName: podGang.Spec.PriorityClassName,
 			SubGroups:         subGroups,
@@ -205,6 +211,24 @@ func (b *schedulerBackend) buildPodGroupForPodGang(podGang *groveschedulerv1alph
 		return nil, err
 	}
 	return result, nil
+}
+
+func (b *schedulerBackend) ensurePodGangSkipAnnotation(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
+	if podGang.Annotations != nil && podGang.Annotations[annotationKeySkipPGR] == annotationValSkipPGR {
+		return nil
+	}
+	before := podGang.DeepCopy()
+	if podGang.Annotations == nil {
+		podGang.Annotations = map[string]string{}
+	}
+	podGang.Annotations[annotationKeySkipPGR] = annotationValSkipPGR
+	return b.client.Patch(ctx, podGang, client.MergeFrom(before))
+}
+
+func (b *schedulerBackend) recordWarning(obj runtime.Object, reason string, err error) {
+	if b.eventRecorder != nil && obj != nil && err != nil {
+		b.eventRecorder.Eventf(obj, corev1.EventTypeWarning, reason, "%v", err)
+	}
 }
 
 // getTopologyName resolves topology name from PodGang annotations with fallback keys.

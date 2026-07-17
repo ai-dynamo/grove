@@ -167,7 +167,6 @@ rules:
   - get
   - list
   - watch
-# KAI Scheduler integration for resource sharing
 {{- if include "grove.scheduler.hasProfile" (list . "kai-scheduler") }}
 - apiGroups:
   - scheduling.run.ai
@@ -183,6 +182,18 @@ rules:
   - delete
 {{- end }}
 {{- if include "grove.scheduler.hasProfile" (list . "volcano") }}
+- apiGroups:
+  - scheduling.volcano.sh
+  resources:
+  - podgroups
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+  - patch
+  - update
+  - delete
 - apiGroups:
   - scheduling.volcano.sh
   resources:
