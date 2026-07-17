@@ -289,11 +289,16 @@ func (r _resource) checkAndRemovePodSchedulingGates(sc *syncContext, logger logr
 				Name: fmt.Sprintf("RemoveSchedulingGate-%s-%d", p.Name, i),
 				Fn: func(ctx context.Context) error {
 					podClone := p.DeepCopy()
-					p.Spec.SchedulingGates = nil
+					// Remove only the Grove PodGang gate. Other controllers (for example Kueue) may
+					// add their own scheduling gates on the same Pod; clearing the whole list would
+					// wipe those and let the Pod schedule before those owners have released it.
+					if !removePodGangSchedulingGate(p) {
+						return nil
+					}
 					if err := client.IgnoreNotFound(r.client.Patch(ctx, p, client.MergeFrom(podClone))); err != nil {
 						return err
 					}
-					logger.Info("Removed scheduling gate from pod", "podObjectKey", podObjectKey)
+					logger.Info("Removed Grove PodGang scheduling gate from pod", "podObjectKey", podObjectKey)
 					return nil
 				},
 			}
@@ -408,6 +413,19 @@ func hasPodGangSchedulingGate(pod *corev1.Pod) bool {
 	return slices.ContainsFunc(pod.Spec.SchedulingGates, func(schedulingGate corev1.PodSchedulingGate) bool {
 		return podGangSchedulingGate == schedulingGate.Name
 	})
+}
+
+// removePodGangSchedulingGate removes only the Grove PodGang scheduling gate from the Pod,
+// leaving any other scheduling gates untouched. Returns true if the gate was present and removed.
+func removePodGangSchedulingGate(pod *corev1.Pod) bool {
+	idx := slices.IndexFunc(pod.Spec.SchedulingGates, func(schedulingGate corev1.PodSchedulingGate) bool {
+		return podGangSchedulingGate == schedulingGate.Name
+	})
+	if idx < 0 {
+		return false
+	}
+	pod.Spec.SchedulingGates = slices.Delete(pod.Spec.SchedulingGates, idx, idx+1)
+	return true
 }
 
 // createPods creates the specified number of new pods for the PodClique with proper indexing and concurrency control
