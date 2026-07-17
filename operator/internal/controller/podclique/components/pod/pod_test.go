@@ -67,6 +67,7 @@ func TestBuildResourceWithLPXBackend(t *testing.T) {
 		Build()
 	pclq := testutils.NewPodCliqueBuilder(pcsName, uid, cliqueName, namespace, 0).Build()
 	pclq.Spec.PodSpec = *podSpec.DeepCopy()
+	pclq.Annotations = map[string]string{"example.com/source": "podclique"}
 
 	scheme := runtime.NewScheme()
 	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
@@ -91,6 +92,10 @@ func TestBuildResourceWithLPXBackend(t *testing.T) {
 	require.Len(t, pod.Spec.ResourceClaims, 1)
 	require.NotNil(t, pod.Spec.ResourceClaims[0].ResourceClaimName)
 	assert.Equal(t, claimName, *pod.Spec.ResourceClaims[0].ResourceClaimName)
+	assert.Equal(t, "podclique", pod.Annotations["example.com/source"])
+
+	pod.Annotations["example.com/source"] = "pod"
+	assert.Equal(t, "podclique", pclq.Annotations["example.com/source"])
 }
 
 // TestGetSelectorLabelsForPods_PCSGOwnedPodClique tests that getSelectorLabelsForPods

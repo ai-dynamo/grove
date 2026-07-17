@@ -19,6 +19,7 @@ package pod
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -153,7 +154,7 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 		GenerateName: fmt.Sprintf("%s-", pclq.Name),
 		Namespace:    pclq.Namespace,
 		Labels:       labels,
-		Annotations:  pclq.Annotations,
+		Annotations:  maps.Clone(pclq.Annotations),
 	}
 	if err = controllerutil.SetControllerReference(pclq, pod, r.scheme); err != nil {
 		return groveerr.WrapError(err,
