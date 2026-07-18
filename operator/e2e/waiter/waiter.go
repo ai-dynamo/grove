@@ -131,11 +131,6 @@ func (w *Waiter[T]) WaitFor(ctx context.Context, fetchFn FetchFunc[T], predicate
 			case <-ticker.C:
 			}
 		}
-		select {
-		case <-timeoutCtx.Done():
-			return zero, fmt.Errorf("condition not met within timeout of %v", w.timeout)
-		default:
-		}
 
 		result, err := fetchFn(timeoutCtx)
 		if err != nil {

@@ -34,72 +34,82 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// TestPcsHasNoActiveRollingUpdate tests the pcsHasNoActiveRollingUpdate function
-func TestPcsHasNoActiveRollingUpdate(t *testing.T) {
+// TestShouldCheckPendingUpdatesForPCLQ verifies that standalone PCLQs can
+// evaluate their own update state when the owning PCS has a current generation,
+// even before a PCS replica is actively selected for rolling update.
+func TestShouldCheckPendingUpdatesForPCLQ(t *testing.T) {
+	replicas := int32(1)
+	minAvailable := int32(1)
 	tests := []struct {
 		// Test case description
-		name string
-		// pcs is the PodCliqueSet to check
-		pcs *grovecorev1alpha1.PodCliqueSet
+		name                string
+		pcsUpdateProgress   *grovecorev1alpha1.PodCliqueSetUpdateProgress
+		pclqPCSReplicaIndex int32
+		pcsgOwned           bool
 		// expected is the expected result
 		expected bool
 	}{
 		{
-			// Tests when CurrentGenerationHash is nil
-			name: "current_generation_hash_nil",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				Status: grovecorev1alpha1.PodCliqueSetStatus{
-					CurrentGenerationHash: nil,
-				},
-			},
-			expected: true,
+			name:                "standalone_without_pcs_update_progress",
+			pclqPCSReplicaIndex: 0,
+			expected:            true,
 		},
 		{
-			// Tests when UpdateProgress is nil
-			name: "update_progress_nil",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				Status: grovecorev1alpha1.PodCliqueSetStatus{
-					CurrentGenerationHash: ptr.To("hash123"),
-					UpdateProgress:        nil,
-				},
+			name: "standalone_matching_active_pcs_replica",
+			pcsUpdateProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
 			},
-			expected: true,
+			pclqPCSReplicaIndex: 0,
+			expected:            true,
 		},
 		{
-			// Tests when CurrentlyUpdating is empty
-			name: "currently_updating_nil",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				Status: grovecorev1alpha1.PodCliqueSetStatus{
-					CurrentGenerationHash: ptr.To("hash123"),
-					UpdateProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
-						CurrentlyUpdating: nil,
-					},
-				},
-			},
-			expected: true,
+			name:                "standalone_active_pcs_update_without_selected_replica",
+			pcsUpdateProgress:   &grovecorev1alpha1.PodCliqueSetUpdateProgress{},
+			pclqPCSReplicaIndex: 0,
+			expected:            false,
 		},
 		{
-			// Tests when all required fields are present (active rolling update)
-			name: "active_rolling_update",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				Status: grovecorev1alpha1.PodCliqueSetStatus{
-					CurrentGenerationHash: ptr.To("hash123"),
-					UpdateProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
-						CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{
-							{
-								ReplicaIndex: 0,
-							},
-						},
-					},
-				},
+			name: "standalone_nonmatching_active_pcs_replica",
+			pcsUpdateProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 1}},
 			},
-			expected: false,
+			pclqPCSReplicaIndex: 0,
+			expected:            false,
+		},
+		{
+			name:                "pcsg_owned_pclq",
+			pclqPCSReplicaIndex: 0,
+			pcsgOwned:           true,
+			expected:            false,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := pcsHasNoActiveRollingUpdate(tc.pcs)
+			pcsUID := uuid.NewUUID()
+			pcsBuilder := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+				WithReplicas(2).
+				WithPodCliqueParameters("worker", 1, nil).
+				WithPodCliqueSetGenerationHash(ptr.To("current-hash"))
+			if tc.pcsUpdateProgress != nil {
+				pcsBuilder.WithUpdateProgress(tc.pcsUpdateProgress)
+			}
+			if tc.pcsgOwned {
+				pcsBuilder.WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
+					Name:         "group",
+					CliqueNames:  []string{"worker"},
+					Replicas:     &replicas,
+					MinAvailable: &minAvailable,
+				})
+			}
+			pcs := pcsBuilder.Build()
+			pclq := testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, tc.pclqPCSReplicaIndex).Build()
+			if tc.pcsgOwned {
+				pclq = testutils.NewPCSGPodCliqueBuilder(testPCSName+"-0-worker-0", testNamespace, testPCSName, "group", 0, 0).Build()
+			}
+
+			result, err := shouldCheckPendingUpdatesForPCLQ(logr.Discard(), pcs, pclq)
+			require.NoError(t, err)
 			assert.Equal(t, tc.expected, result)
 		})
 	}
@@ -121,6 +131,21 @@ func TestShouldResetOrTriggerUpdate(t *testing.T) {
 		pclq     *grovecorev1alpha1.PodClique
 		expected bool
 	}{
+		{
+			name: "waits_for_pcs_current_generation_hash_before_first_ever_update",
+			pcs: &grovecorev1alpha1.PodCliqueSet{
+				Status: grovecorev1alpha1.PodCliqueSetStatus{
+					CurrentGenerationHash: nil,
+				},
+			},
+			pclq: &grovecorev1alpha1.PodClique{
+				Status: grovecorev1alpha1.PodCliqueStatus{
+					UpdateProgress:                    nil,
+					CurrentPodCliqueSetGenerationHash: ptr.To("old-hash"),
+				},
+			},
+			expected: false,
+		},
 		{
 			name: "first_ever_update_required",
 			pcs: &grovecorev1alpha1.PodCliqueSet{
@@ -222,6 +247,39 @@ const (
 	testNamespace = "test-namespace"
 	testPCSName   = "test-pcs"
 )
+
+func TestProcessUpdateInitializesProgressWithoutActivePCSUpdate(t *testing.T) {
+	pcsUID := uuid.NewUUID()
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+		WithReplicas(1).
+		WithPodCliqueParameters("worker", 1, nil).
+		WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{
+			Type: grovecorev1alpha1.RollingRecreateStrategy,
+		}).
+		WithPodCliqueSetGenerationHash(ptr.To("new-generation-hash")).
+		Build()
+	pclq := testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).Build()
+	pclq.Status = grovecorev1alpha1.PodCliqueStatus{
+		CurrentPodCliqueSetGenerationHash: ptr.To("old-generation-hash"),
+		CurrentPodTemplateHash:            ptr.To("old-template-hash"),
+		UpdatedReplicas:                   1,
+	}
+
+	fakeClient := testutils.SetupFakeClient(pcs, pclq)
+	reconciler := &Reconciler{client: fakeClient}
+
+	result := reconciler.processUpdate(context.Background(), logr.Discard(), pclq)
+
+	_, err := result.Result()
+	require.NoError(t, err)
+	updatedPCLQ := &grovecorev1alpha1.PodClique{}
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pclq), updatedPCLQ))
+	require.NotNil(t, updatedPCLQ.Status.UpdateProgress)
+	assert.Nil(t, updatedPCLQ.Status.UpdateProgress.UpdateEndedAt)
+	assert.Equal(t, "new-generation-hash", updatedPCLQ.Status.UpdateProgress.PodCliqueSetGenerationHash)
+	assert.NotEmpty(t, updatedPCLQ.Status.UpdateProgress.PodTemplateHash)
+	assert.Equal(t, int32(0), updatedPCLQ.Status.UpdatedReplicas)
+}
 
 // TestInitOrResetUpdate tests the initOrResetUpdate function for both OnDelete and RollingRecreate strategies
 func TestInitOrResetUpdate(t *testing.T) {

@@ -23,17 +23,79 @@ import (
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler/lpx"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+func TestBuildResourceWithLPXBackend(t *testing.T) {
+	const (
+		namespace   = "default"
+		pcsName     = "model"
+		cliqueName  = "gpu-worker"
+		podGangName = "model-0"
+		podName     = "model-0-gpu-worker-abcde"
+	)
+
+	pcs := testutils.NewPodCliqueSetBuilder(pcsName, namespace, "test-uid").
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder(cliqueName).
+				WithPodSpec(corev1.PodSpec{
+					SchedulerName: string(configv1alpha1.SchedulerNameLPX),
+					Containers: []corev1.Container{{
+						Name:  "worker",
+						Image: "worker",
+					}},
+				}).
+				Build(),
+		).
+		Build()
+	scheme := runtime.NewScheme()
+	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	require.NoError(t, groveschedulerv1alpha1.AddToScheme(scheme))
+	registry := &testutils.FakeSchedulerRegistry{
+		Backends: map[string]scheduler.Backend{
+			string(configv1alpha1.SchedulerNameLPX): lpx.New(
+				configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameLPX},
+			),
+		},
+		DefaultBackend: string(configv1alpha1.SchedulerNameLPX),
+	}
+	resource := &_resource{
+		scheme:        scheme,
+		schedRegistry: registry,
+	}
+	podGang := &groveschedulerv1alpha1.PodGang{
+		ObjectMeta: metav1.ObjectMeta{Name: podGangName, Namespace: namespace},
+	}
+	info := &podGangInfo{
+		fqn: podGangName,
+		pclqs: []pclqInfo{{
+			fqn:                "model-0-gpu-worker",
+			replicas:           1,
+			minAvailable:       1,
+			associatedPodNames: []string{podName},
+		}},
+	}
+
+	require.NoError(t, resource.buildResource(pcs, info, podGang))
+
+	assert.Equal(t, string(configv1alpha1.SchedulerNameLPX), podGang.Labels[apicommon.LabelSchedulerName])
+	require.Len(t, podGang.Spec.PodGroups, 1)
+	require.Len(t, podGang.Spec.PodGroups[0].PodReferences, 1)
+	assert.Equal(t, namespace, podGang.Spec.PodGroups[0].PodReferences[0].Namespace)
+	assert.Equal(t, podName, podGang.Spec.PodGroups[0].PodReferences[0].Name)
+}
 
 func TestSetInitializedCondition(t *testing.T) {
 	pg := &groveschedulerv1alpha1.PodGang{

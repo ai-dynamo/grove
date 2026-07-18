@@ -17,11 +17,17 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .status.replicas
+    - jsonPath: .spec.minAvailable
+      name: MinAvail
+      type: integer
+    - jsonPath: .spec.replicas
       name: Replicas
       type: integer
     - jsonPath: .status.availableReplicas
       name: Available
+      type: integer
+    - jsonPath: .status.scheduledReplicas
+      name: Scheduled
       type: integer
     - jsonPath: .status.updatedReplicas
       name: Updated
@@ -32,6 +38,13 @@ spec:
     - jsonPath: .status.updateProgress.totalPodCliquesCount
       name: PCLQs-Total
       type: integer
+    - jsonPath: .status.conditions[?(@.type=="MinAvailableBreached")].status
+      name: MinBreached
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
     name: v1alpha1
     schema:
       openAPIV3Schema:

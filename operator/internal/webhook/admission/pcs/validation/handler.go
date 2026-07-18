@@ -139,7 +139,10 @@ func (h *Handler) validatePodCliqueSetWithBackend(ctx context.Context, pcs *v1al
 
 	backend := h.schedRegistry.GetOrDefault(schedulerName)
 	if backend == nil {
-		return fmt.Errorf("schedulerName %q is not a supported backend", schedulerName)
+		if schedulerName == "" {
+			return fmt.Errorf("default scheduler backend is not configured")
+		}
+		return fmt.Errorf("schedulerName %q is not enabled in OperatorConfiguration", schedulerName)
 	}
 	return backend.ValidatePodCliqueSet(ctx, pcs)
 }

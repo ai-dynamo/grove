@@ -237,18 +237,19 @@ func (w *pendingUpdateWork) getNextReplicaToUpdate(pcs *grovecorev1alpha1.PodCli
 
 // computeUpdateProgress calculates update completion for a PCS replica.
 func (pri *pcsReplicaInfo) computeUpdateProgress(pcs *grovecorev1alpha1.PodCliqueSet) {
-	pcsGenerationHashCandidates := componentutils.ComputePCSGenerationHashCandidates(pcs)
 	updatedPCLQs := 0
 	for _, pclq := range pri.pclqs {
-		expectedTemplateHashes, err := componentutils.GetExpectedPCLQPodTemplateHashCandidates(pcs, pclq.ObjectMeta)
-		if err == nil && isPCLQUpdateComplete(&pclq, expectedTemplateHashes, pcsGenerationHashCandidates) {
+		if isPCLQUpdateComplete(pcs, &pclq) {
 			updatedPCLQs++
 		}
 	}
 	updatedPCSGs := 0
-	for _, pcsg := range pri.pcsgs {
-		if componentutils.IsPCSGUpdateComplete(&pcsg, pcsGenerationHashCandidates.Canonical, pcsGenerationHashCandidates.Legacy) {
-			updatedPCSGs++
+	if pcs.Status.CurrentGenerationHash != nil {
+		currentHash := *pcs.Status.CurrentGenerationHash
+		for _, pcsg := range pri.pcsgs {
+			if componentutils.IsPCSGUpdateComplete(&pcsg, currentHash) {
+				updatedPCSGs++
+			}
 		}
 	}
 	pri.updateProgress = replicaUpdateProgress{
@@ -273,13 +274,20 @@ func (pri *pcsReplicaInfo) getNumScheduledPods(pcs *grovecorev1alpha1.PodCliqueS
 	return noScheduled
 }
 
-// isPCLQUpdateComplete checks if a PodClique has completed its update to the target generation.
-func isPCLQUpdateComplete(pclq *grovecorev1alpha1.PodClique, expectedPodTemplateHashes, currentPCSGenerationHashes componentutils.HashCandidates) bool {
-	return expectedPodTemplateHashes.Matches(pclq.Labels[apicommon.LabelPodTemplateHash]) &&
+// isPCLQUpdateComplete checks if a PodClique has completed its update to the target generation and template.
+func isPCLQUpdateComplete(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) bool {
+	if pcs.Status.CurrentGenerationHash == nil || pclq.Spec.MinAvailable == nil {
+		return false
+	}
+	expectedPodTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
+	if err != nil || expectedPodTemplateHash == "" {
+		return false
+	}
+	return pclq.Labels[apicommon.LabelPodTemplateHash] == expectedPodTemplateHash &&
 		pclq.Status.CurrentPodTemplateHash != nil &&
-		expectedPodTemplateHashes.Matches(*pclq.Status.CurrentPodTemplateHash) &&
+		*pclq.Status.CurrentPodTemplateHash == expectedPodTemplateHash &&
 		pclq.Status.CurrentPodCliqueSetGenerationHash != nil &&
-		currentPCSGenerationHashes.Matches(*pclq.Status.CurrentPodCliqueSetGenerationHash) &&
+		*pclq.Status.CurrentPodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash &&
 		pclq.Status.UpdatedReplicas >= *pclq.Spec.MinAvailable &&
 		pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable
 }

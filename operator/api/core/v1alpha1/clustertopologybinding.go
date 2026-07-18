@@ -26,6 +26,8 @@ import (
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Cluster,shortName=ct
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Domains",type=string,JSONPath=`.spec.levels[*].domain`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // ClusterTopologyBinding defines Grove's source-of-truth topology hierarchy and how it
 // binds to topology resources used by topology-aware scheduler backends.

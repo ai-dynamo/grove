@@ -61,21 +61,25 @@ make run-e2e-mnnvl-full
 # Or, manage cluster manually and run tests separately:
 
 # 1. Create the MNNVL cluster (lightweight: 2 workers, skip image prepull only)
-E2E_WORKER_NODES=2 E2E_K3S_IMAGE=rancher/k3s:v1.34.2-k3s1 make e2e-cluster-up E2E_CREATE_FLAGS="--skip-prepull"
+E2E_WORKER_NODES=2 E2E_K3S_IMAGE=rancher/k3s:v1.35.5-k3s1 make e2e-cluster-up E2E_CREATE_FLAGS="--skip-prepull"
 
 # 2. Push alpine image for test workloads
 docker pull alpine:latest && docker tag alpine:latest localhost:5001/alpine:latest && docker push localhost:5001/alpine:latest
 
-# 3. Run all configs on the existing cluster
-python3 ./hack/e2e-autoMNNVL/run_autoMNNVL_e2e_all.py
+# 3. (Optional) Pre-warm the Python venv from operator/ — the shebang on each
+#    script will run this lazily on first invocation if you skip this step.
+uv sync --locked
 
-# 4. Or run a single config
-python3 ./hack/e2e-autoMNNVL/run_autoMNNVL_e2e.py --fake-gpu=yes --auto-mnnvl=enabled
+# 4. Run all configs on the existing cluster
+./hack/e2e-autoMNNVL/run_autoMNNVL_e2e_all.py
 
-# 5. Configure an existing cluster directly (without running tests)
-python3 ./hack/e2e-cluster/config-cluster.py --fake-gpu=yes --auto-mnnvl=enabled
+# 5. Or run a single config
+./hack/e2e-autoMNNVL/run_autoMNNVL_e2e.py --fake-gpu=yes --auto-mnnvl=enabled
 
-# 6. Delete the cluster
+# 6. Configure an existing cluster directly (without running tests)
+./hack/e2e-cluster/config-cluster.py --fake-gpu=yes --auto-mnnvl=enabled
+
+# 7. Delete the cluster
 make e2e-cluster-down
 ```
 
@@ -86,7 +90,8 @@ make e2e-cluster-down
 - `kubectl` installed
 - `helm` installed
 - `skaffold` installed
-- Go 1.25+
+- `uv` installed (Python + dependencies are auto-provisioned from `operator/pyproject.toml`)
+- Go 1.26.3+
 
 ## Cluster Details
 

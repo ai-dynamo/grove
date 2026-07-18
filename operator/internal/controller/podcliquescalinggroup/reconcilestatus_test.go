@@ -18,6 +18,7 @@ package podcliquescalinggroup
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -97,7 +98,7 @@ func TestComputeReplicaStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			scheduled, available, updated := computeReplicaStatus(logr.Discard(), componentutils.HashCandidates{}, tt.pcsGenerationHash, "0", tt.expectedSize, tt.cliques)
+			scheduled, available, updated := computeReplicaStatus(logr.Discard(), tt.pcsGenerationHash, nil, "0", tt.expectedSize, tt.cliques)
 
 			assert.Equal(t, tt.wantScheduled, scheduled, "scheduled mismatch")
 			assert.Equal(t, tt.wantAvailable, available, "available mismatch")
@@ -106,83 +107,151 @@ func TestComputeReplicaStatus(t *testing.T) {
 	}
 }
 
+// healthyPCSGReplica returns a complete PCSG replica entry (one non-terminating, non-breached
+// PCLQ). The tests using this set Spec.CliqueNames to a single name so the replica counts as
+// complete; computeNotInBreachReplicas only counts a replica as not-in-breach when all expected
+// PodCliques exist and none has MinAvailableBreached=True.
+func healthyPCSGReplica() []grovecorev1alpha1.PodClique {
+	return []grovecorev1alpha1.PodClique{{}}
+}
+
+// breachedPCSGReplica returns a complete PCSG replica entry with one breached PCLQ.
+func breachedPCSGReplica() []grovecorev1alpha1.PodClique {
+	return []grovecorev1alpha1.PodClique{{
+		Status: grovecorev1alpha1.PodCliqueStatus{
+			Conditions: []metav1.Condition{{
+				Type:   constants.ConditionTypeMinAvailableBreached,
+				Status: metav1.ConditionTrue,
+			}},
+		},
+	}}
+}
+
+// incompletePCSGReplica returns a replica entry that is missing PodCliques relative to
+// Spec.CliqueNames (an empty PCLQ list). It has no breached PCLQ but must NOT be counted as
+// not-in-breach, because a partially-created replica is not a valid healthy replica.
+func incompletePCSGReplica() []grovecorev1alpha1.PodClique {
+	return []grovecorev1alpha1.PodClique{}
+}
+
+// TestComputeMinAvailableBreachedCondition exercises the PCSG-level breach formula:
+// the PCSG is in breach when (not-in-breach replicas) < MinAvailable. A replica counts as
+// not-in-breach only when it is complete (all Spec.CliqueNames PodCliques exist and are
+// non-terminating) AND none of them is breached; incomplete replicas are never counted as
+// not-in-breach. Each fixture replica carries one PodClique, so the PCSG sets CliqueNames to a
+// single name.
 func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 	tests := []struct {
 		name         string
 		replicas     int32
 		minAvailable *int32
-		scheduled    int32
-		available    int32
 		pclqsMap     map[string][]grovecorev1alpha1.PodClique
 		wantStatus   metav1.ConditionStatus
 		wantReason   string
 	}{
 		{
-			name:       "sufficient replicas",
-			replicas:   3,
-			scheduled:  3,
-			available:  3,
-			pclqsMap:   make(map[string][]grovecorev1alpha1.PodClique),
+			name:     "all replicas healthy, none breached",
+			replicas: 3,
+			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
+				"0": healthyPCSGReplica(),
+				"1": healthyPCSGReplica(),
+				"2": healthyPCSGReplica(),
+			},
 			wantStatus: metav1.ConditionFalse,
 			wantReason: "SufficientAvailablePodCliqueScalingGroupReplicas",
 		},
 		{
-			name:         "custom minAvailable met",
+			name:         "1 of 5 replicas breached, MinAvailable=2 — not in breach",
 			replicas:     5,
 			minAvailable: ptr.To(int32(2)),
-			scheduled:    3,
-			available:    3,
-			pclqsMap:     make(map[string][]grovecorev1alpha1.PodClique),
-			wantStatus:   metav1.ConditionFalse,
-			wantReason:   "SufficientAvailablePodCliqueScalingGroupReplicas",
-		},
-		{
-			// 0 < scheduled < MinAvailable is structurally unreachable from initial
-			// startup under gang scheduling, so it is treated as a regression and
-			// breaches MinAvailable.
-			name:         "partially scheduled regression breaches",
-			replicas:     3,
-			minAvailable: ptr.To(int32(2)),
-			scheduled:    1,
-			available:    1,
-			pclqsMap:     make(map[string][]grovecorev1alpha1.PodClique),
-			wantStatus:   metav1.ConditionTrue,
-			wantReason:   "ScheduledReplicasBelowMinAvailable",
-		},
-		{
-			// scheduled == 0 stays suppressed: gang termination would only recreate
-			// the same Pending replicas against the same cluster state.
-			name:         "zero scheduled does not breach",
-			replicas:     3,
-			minAvailable: ptr.To(int32(2)),
-			scheduled:    0,
-			available:    0,
-			pclqsMap:     make(map[string][]grovecorev1alpha1.PodClique),
-			wantStatus:   metav1.ConditionFalse,
-			wantReason:   "InsufficientScheduledPodCliqueScalingGroupReplicas",
-		},
-		{
-			name:         "insufficient available",
-			replicas:     3,
-			minAvailable: ptr.To(int32(2)),
-			scheduled:    2,
-			available:    1,
 			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
-				"0": {
-					{
-						Status: grovecorev1alpha1.PodCliqueStatus{
-							Conditions: []metav1.Condition{
-								{
-									Type:   constants.ConditionTypeMinAvailableBreached,
-									Status: metav1.ConditionTrue,
-								},
-							},
-						},
-					},
-				},
+				"0": breachedPCSGReplica(),
+				"1": healthyPCSGReplica(),
+				"2": healthyPCSGReplica(),
+				"3": healthyPCSGReplica(),
+				"4": healthyPCSGReplica(),
+			},
+			wantStatus: metav1.ConditionFalse,
+			wantReason: "SufficientAvailablePodCliqueScalingGroupReplicas",
+		},
+		{
+			// GT-4 step 4 scenario: WL2 sg-x has 2 replicas, MinAvailable=1.
+			// Killing all pc-c pods of replica 0 breaches that replica; replica 1
+			// stays healthy. notInBreach=1 == MinAvailable=1 → PCSG NOT in breach.
+			// PCS-level handler must NOT delete the whole PCS replica here; only
+			// the PCSG-level scoped restart should fire.
+			name:         "1 of 2 replicas breached, MinAvailable=1 — not in breach (PCSG-scoped restart only)",
+			replicas:     2,
+			minAvailable: ptr.To(int32(1)),
+			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
+				"0": breachedPCSGReplica(),
+				"1": healthyPCSGReplica(),
+			},
+			wantStatus: metav1.ConditionFalse,
+			wantReason: "SufficientAvailablePodCliqueScalingGroupReplicas",
+		},
+		{
+			// GT-4 step 6: both PCSG replicas breached. notInBreach=0 < 1 → PCSG
+			// in breach. PCS-level handler should restart the whole PCS replica.
+			name:         "both replicas breached, MinAvailable=1 — in breach (escalates to PCS-level)",
+			replicas:     2,
+			minAvailable: ptr.To(int32(1)),
+			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
+				"0": breachedPCSGReplica(),
+				"1": breachedPCSGReplica(),
 			},
 			wantStatus: metav1.ConditionTrue,
 			wantReason: "InsufficientAvailablePodCliqueScalingGroupReplicas",
+		},
+		{
+			name:         "2 of 3 replicas breached, MinAvailable=2 — in breach",
+			replicas:     3,
+			minAvailable: ptr.To(int32(2)),
+			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
+				"0": breachedPCSGReplica(),
+				"1": breachedPCSGReplica(),
+				"2": healthyPCSGReplica(),
+			},
+			wantStatus: metav1.ConditionTrue,
+			wantReason: "InsufficientAvailablePodCliqueScalingGroupReplicas",
+		},
+		{
+			// No replicas exist yet (mid-creation / scale-up). notInBreach=0 < min → breach.
+			// TerminationDelay (default 4h) absorbs the startup window before any action fires.
+			name:         "no replicas exist yet — in breach (startup)",
+			replicas:     3,
+			minAvailable: ptr.To(int32(2)),
+			pclqsMap:     map[string][]grovecorev1alpha1.PodClique{},
+			wantStatus:   metav1.ConditionTrue,
+			wantReason:   "InsufficientAvailablePodCliqueScalingGroupReplicas",
+		},
+		{
+			// Replica 0 is incomplete (its pc-c was deleted and not yet recreated) so it has no
+			// breached PodClique but is not a valid healthy replica; replica 1 is breached.
+			// notInBreach=0 < MinAvailable=1 → in breach. An incomplete replica must not be
+			// mistaken for a healthy one (which would also poison the was-healthy gate).
+			name:         "one replica incomplete, one breached, MinAvailable=1 — in breach",
+			replicas:     2,
+			minAvailable: ptr.To(int32(1)),
+			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
+				"0": incompletePCSGReplica(),
+				"1": breachedPCSGReplica(),
+			},
+			wantStatus: metav1.ConditionTrue,
+			wantReason: "InsufficientAvailablePodCliqueScalingGroupReplicas",
+		},
+		{
+			// Replica 0 is incomplete, replica 1 is complete and healthy. notInBreach=1 ==
+			// MinAvailable=1 → not in breach (the one complete replica satisfies MinAvailable).
+			name:         "one replica incomplete, one healthy, MinAvailable=1 — not in breach",
+			replicas:     2,
+			minAvailable: ptr.To(int32(1)),
+			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
+				"0": incompletePCSGReplica(),
+				"1": healthyPCSGReplica(),
+			},
+			wantStatus: metav1.ConditionFalse,
+			wantReason: "SufficientAvailablePodCliqueScalingGroupReplicas",
 		},
 	}
 
@@ -196,10 +265,9 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 				Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
 					Replicas:     tt.replicas,
 					MinAvailable: minAvailable,
-				},
-				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
-					ScheduledReplicas: tt.scheduled,
-					AvailableReplicas: tt.available,
+					// Each fixture replica carries exactly one PodClique, so a single clique name
+					// makes healthy/breached replicas "complete" and empty ones "incomplete".
+					CliqueNames: []string{"pc"},
 				},
 			}
 
@@ -256,104 +324,35 @@ func TestEmitAllScheduledReplicasLostIfNeeded(t *testing.T) {
 	}
 }
 
-// TestComputeMinAvailableBreachedConditionPartialScheduleRegression covers the
-// regression-after-healthy-state behaviour at the PodCliqueScalingGroup level.
-// See the PodClique-level test for the full rationale.
-//
-// Several cases populate pclqsMap with breached PCLQs. That input is unread by
-// the under-scheduled branches today, but we keep it populated so that any
-// future refactor that drops the short-circuit and starts consulting pclqsMap
-// must continue to satisfy the assertions.
-func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testing.T) {
+// TestComputeMinAvailableBreachedConditionUpdateInProgress pins the precedence of the
+// IsPCSGUpdateInProgress short-circuit over the breach formula: while a rolling update is
+// running, the condition must be Unknown so gang termination does not fire mid-update even
+// if the breach formula would otherwise flip True.
+func TestComputeMinAvailableBreachedConditionUpdateInProgress(t *testing.T) {
 	pastTransition := metav1.NewTime(time.Now().Add(-10 * time.Minute))
-
-	// breachedPCLQReplica is a single PCSG replica whose constituent PodCliques
-	// already report MinAvailableBreached=True. If a refactor accidentally
-	// consulted pclqsMap on the under-scheduled paths, these would inflate the
-	// breached count and could flip the answer — the assertions below must
-	// remain correct in that hypothetical world.
-	breachedPCLQReplica := map[string][]grovecorev1alpha1.PodClique{
-		"0": {{Status: grovecorev1alpha1.PodCliqueStatus{
-			Conditions: []metav1.Condition{{Type: constants.ConditionTypeMinAvailableBreached, Status: metav1.ConditionTrue}},
-		}}},
-	}
 
 	tests := []struct {
 		name           string
 		replicas       int32
 		minAvailable   *int32
-		scheduled      int32
-		available      int32
 		updateProgress *grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress
-		conditions     []metav1.Condition
 		pclqsMap       map[string][]grovecorev1alpha1.PodClique
 		wantStatus     metav1.ConditionStatus
 		wantReason     string
 	}{
 		{
-			name:         "0 < scheduled < MinAvailable breaches",
-			replicas:     3,
-			minAvailable: ptr.To(int32(3)),
-			scheduled:    1,
-			available:    1,
-			conditions: []metav1.Condition{{
-				Type:               constants.ConditionTypeMinAvailableBreached,
-				Status:             metav1.ConditionFalse,
-				Reason:             constants.ConditionReasonSufficientAvailablePCSGReplicas,
-				LastTransitionTime: pastTransition,
-			}},
-			pclqsMap:   breachedPCLQReplica,
-			wantStatus: metav1.ConditionTrue,
-			wantReason: constants.ConditionReasonScheduledReplicasBelowMinAvailable,
-		},
-		{
-			// Sanity-pin: scheduled == 0 must NOT breach, even with PCLQs in the
-			// map already breached. The short-circuit on scheduled==0 has to
-			// take precedence over PCLQ-level breach signal — otherwise a stale
-			// PCLQ condition would push us into a churn loop.
-			name:         "scheduled == 0 with breached PCLQs in map — must NOT breach",
+			name:         "update in progress overrides every-replica-breached",
 			replicas:     2,
-			minAvailable: ptr.To(int32(2)),
-			scheduled:    0,
-			available:    0,
-			conditions: []metav1.Condition{{
-				Type:               constants.ConditionTypeMinAvailableBreached,
-				Status:             metav1.ConditionFalse,
-				Reason:             constants.ConditionReasonSufficientAvailablePCSGReplicas,
-				LastTransitionTime: pastTransition,
-			}},
-			pclqsMap:   breachedPCLQReplica,
-			wantStatus: metav1.ConditionFalse,
-			wantReason: constants.ConditionReasonInsufficientScheduledPCSGReplicas,
-		},
-		{
-			// A fresh PCSG that has never scheduled any replica must NOT be
-			// reported as breached.
-			name:         "fresh PCSG never scheduled — must not breach",
-			replicas:     3,
-			minAvailable: ptr.To(int32(3)),
-			scheduled:    0,
-			available:    0,
-			pclqsMap:     map[string][]grovecorev1alpha1.PodClique{},
-			wantStatus:   metav1.ConditionFalse,
-			wantReason:   constants.ConditionReasonInsufficientScheduledPCSGReplicas,
-		},
-		{
-			// Pin branch ordering: when an update is in progress, the
-			// IsPCSGUpdateInProgress short-circuit must win over the regression
-			// breach branch. Otherwise a rolling update across a node cordon
-			// would falsely flip the breach to True and risk silent churn.
-			name:         "update in progress overrides partial-schedule breach",
-			replicas:     3,
-			minAvailable: ptr.To(int32(3)),
-			scheduled:    1,
-			available:    1,
+			minAvailable: ptr.To(int32(1)),
 			updateProgress: &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
 				UpdateStartedAt:            pastTransition,
 				UpdateEndedAt:              nil, // active update
 				PodCliqueSetGenerationHash: "gen-hash-1",
 			},
-			pclqsMap:   breachedPCLQReplica,
+			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
+				"0": breachedPCSGReplica(),
+				"1": breachedPCSGReplica(),
+			},
 			wantStatus: metav1.ConditionUnknown,
 			wantReason: constants.ConditionReasonUpdateInProgress,
 		},
@@ -367,10 +366,7 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 					MinAvailable: tt.minAvailable,
 				},
 				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
-					ScheduledReplicas: tt.scheduled,
-					AvailableReplicas: tt.available,
-					Conditions:        tt.conditions,
-					UpdateProgress:    tt.updateProgress,
+					UpdateProgress: tt.updateProgress,
 				},
 			}
 
@@ -443,24 +439,27 @@ func TestReconcileStatus(t *testing.T) {
 					WithReplicas(2).
 					WithCliqueNames([]string{"frontend", "backend"}).
 					WithOptions(testutils.WithPCSGObservedGeneration(1)).Build()
-				pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).WithPodCliqueSetGenerationHash(&pcsGenerationHash).Build()
+				pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
+					WithPodCliqueSetGenerationHash(&pcsGenerationHash).
+					WithScalingGroup("compute", []string{"frontend", "backend"}).
+					Build()
 				cliques := []client.Object{
-					testutils.NewPCSGPodCliqueBuilder("test-pcsg-0-frontend", "test-ns", "test-pcs", "test-pcsg", 0, 0).
+					markPCSGPCLQConverged(t, pcs, pcsg, testutils.NewPCSGPodCliqueBuilder("test-pcsg-0-frontend", "test-ns", "test-pcs", "test-pcsg", 0, 0).
 						WithOwnerReference("PodCliqueScalingGroup", "test-pcsg", "").
 						WithReplicas(2).
-						WithOptions(testutils.WithPCLQScheduledAndAvailable(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
-					testutils.NewPCSGPodCliqueBuilder("test-pcsg-0-backend", "test-ns", "test-pcs", "test-pcsg", 0, 0).
+						WithOptions(testutils.WithPCLQScheduledAndAvailable()).Build(), pcsGenerationHash),
+					markPCSGPCLQConverged(t, pcs, pcsg, testutils.NewPCSGPodCliqueBuilder("test-pcsg-0-backend", "test-ns", "test-pcs", "test-pcsg", 0, 0).
 						WithOwnerReference("PodCliqueScalingGroup", "test-pcsg", "").
 						WithReplicas(2).
-						WithOptions(testutils.WithPCLQScheduledAndAvailable(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
-					testutils.NewPCSGPodCliqueBuilder("test-pcsg-1-frontend", "test-ns", "test-pcs", "test-pcsg", 0, 1).
+						WithOptions(testutils.WithPCLQScheduledAndAvailable()).Build(), pcsGenerationHash),
+					markPCSGPCLQConverged(t, pcs, pcsg, testutils.NewPCSGPodCliqueBuilder("test-pcsg-1-frontend", "test-ns", "test-pcs", "test-pcsg", 0, 1).
 						WithOwnerReference("PodCliqueScalingGroup", "test-pcsg", "").
 						WithReplicas(2).
-						WithOptions(testutils.WithPCLQScheduledAndAvailable(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
-					testutils.NewPCSGPodCliqueBuilder("test-pcsg-1-backend", "test-ns", "test-pcs", "test-pcsg", 0, 1).
+						WithOptions(testutils.WithPCLQScheduledAndAvailable()).Build(), pcsGenerationHash),
+					markPCSGPCLQConverged(t, pcs, pcsg, testutils.NewPCSGPodCliqueBuilder("test-pcsg-1-backend", "test-ns", "test-pcs", "test-pcsg", 0, 1).
 						WithOwnerReference("PodCliqueScalingGroup", "test-pcsg", "").
 						WithReplicas(2).
-						WithOptions(testutils.WithPCLQScheduledAndAvailable(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
+						WithOptions(testutils.WithPCLQScheduledAndAvailable()).Build(), pcsGenerationHash),
 				}
 				return pcsg, pcs, cliques
 			},
@@ -477,20 +476,23 @@ func TestReconcileStatus(t *testing.T) {
 					WithCliqueNames([]string{"worker"}).
 					WithMinAvailable(2).
 					WithOptions(testutils.WithPCSGObservedGeneration(1)).Build()
-				pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).WithPodCliqueSetGenerationHash(&pcsGenerationHash).Build()
+				pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
+					WithPodCliqueSetGenerationHash(&pcsGenerationHash).
+					WithScalingGroupConfig("compute", []string{"worker"}, 3, 2).
+					Build()
 				cliques := []client.Object{
-					testutils.NewPCSGPodCliqueBuilder("test-pcsg-0-worker", "test-ns", "test-pcs", "test-pcsg", 0, 0).
+					markPCSGPCLQConverged(t, pcs, pcsg, testutils.NewPCSGPodCliqueBuilder("test-pcsg-0-worker", "test-ns", "test-pcs", "test-pcsg", 0, 0).
 						WithOwnerReference("PodCliqueScalingGroup", "test-pcsg", "").
 						WithReplicas(2).
-						WithOptions(testutils.WithPCLQScheduledAndAvailable(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
+						WithOptions(testutils.WithPCLQScheduledAndAvailable()).Build(), pcsGenerationHash),
 					testutils.NewPCSGPodCliqueBuilder("test-pcsg-1-worker", "test-ns", "test-pcs", "test-pcsg", 0, 1).
 						WithOwnerReference("PodCliqueScalingGroup", "test-pcsg", "").
 						WithReplicas(2).
-						WithOptions(testutils.WithPCLQScheduledButBreached(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
+						WithOptions(testutils.WithPCLQScheduledButBreached()).Build(),
 					testutils.NewPCSGPodCliqueBuilder("test-pcsg-2-worker", "test-ns", "test-pcs", "test-pcsg", 0, 2).
 						WithOwnerReference("PodCliqueScalingGroup", "test-pcsg", "").
 						WithReplicas(2).
-						WithOptions(testutils.WithPCLQNotScheduled(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
+						WithOptions(testutils.WithPCLQNotScheduled()).Build(),
 				}
 				return pcsg, pcs, cliques
 			},
@@ -506,26 +508,29 @@ func TestReconcileStatus(t *testing.T) {
 					WithReplicas(2).
 					WithCliqueNames([]string{"frontend", "backend"}).
 					WithOptions(testutils.WithPCSGObservedGeneration(1)).Build()
-				pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).WithPodCliqueSetGenerationHash(&pcsGenerationHash).Build()
+				pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
+					WithPodCliqueSetGenerationHash(&pcsGenerationHash).
+					WithScalingGroup("compute", []string{"frontend", "backend"}).
+					Build()
 				cliques := []client.Object{
 					// Replica 0: healthy
-					testutils.NewPCSGPodCliqueBuilder("test-pcsg-0-frontend", "test-ns", "test-pcs", "test-pcsg", 0, 0).
+					markPCSGPCLQConverged(t, pcs, pcsg, testutils.NewPCSGPodCliqueBuilder("test-pcsg-0-frontend", "test-ns", "test-pcs", "test-pcsg", 0, 0).
 						WithOwnerReference("PodCliqueScalingGroup", "test-pcsg", "").
 						WithReplicas(2).
-						WithOptions(testutils.WithPCLQScheduledAndAvailable(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
-					testutils.NewPCSGPodCliqueBuilder("test-pcsg-0-backend", "test-ns", "test-pcs", "test-pcsg", 0, 0).
+						WithOptions(testutils.WithPCLQScheduledAndAvailable()).Build(), pcsGenerationHash),
+					markPCSGPCLQConverged(t, pcs, pcsg, testutils.NewPCSGPodCliqueBuilder("test-pcsg-0-backend", "test-ns", "test-pcs", "test-pcsg", 0, 0).
 						WithOwnerReference("PodCliqueScalingGroup", "test-pcsg", "").
 						WithReplicas(2).
-						WithOptions(testutils.WithPCLQScheduledAndAvailable(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
+						WithOptions(testutils.WithPCLQScheduledAndAvailable()).Build(), pcsGenerationHash),
 					// Replica 1: has one terminating clique
-					testutils.NewPCSGPodCliqueBuilder("test-pcsg-1-frontend", "test-ns", "test-pcs", "test-pcsg", 0, 1).
+					markPCSGPCLQConverged(t, pcs, pcsg, testutils.NewPCSGPodCliqueBuilder("test-pcsg-1-frontend", "test-ns", "test-pcs", "test-pcsg", 0, 1).
 						WithOwnerReference("PodCliqueScalingGroup", "test-pcsg", "").
 						WithReplicas(2).
-						WithOptions(testutils.WithPCLQScheduledAndAvailable(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
+						WithOptions(testutils.WithPCLQScheduledAndAvailable()).Build(), pcsGenerationHash),
 					testutils.NewPCSGPodCliqueBuilder("test-pcsg-1-backend", "test-ns", "test-pcs", "test-pcsg", 0, 1).
 						WithOwnerReference("PodCliqueScalingGroup", "test-pcsg", "").
 						WithReplicas(2).
-						WithOptions(testutils.WithPCLQTerminating(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
+						WithOptions(testutils.WithPCLQTerminating()).Build(),
 				}
 				return pcsg, pcs, cliques
 			},
@@ -592,62 +597,6 @@ func TestReconcileStatus_EdgeCases(t *testing.T) {
 	}
 }
 
-// TestMutateCurrentPodCliqueSetGenerationHashWaitsForPodCliqueGenerationConvergence verifies that
-// the PCSG's CurrentPodCliqueSetGenerationHash is only advanced to the canonical PCS hash once all
-// of its PodCliques report having converged to that hash. While any child PodClique still reports
-// the old generation hash, the PCSG must continue to surface the old hash to avoid prematurely
-// signaling that a rollout has completed.
-func TestMutateCurrentPodCliqueSetGenerationHashWaitsForPodCliqueGenerationConvergence(t *testing.T) {
-	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
-		WithScalingGroupConfig("compute", []string{"worker"}, 2, 1).
-		Build()
-	pcsGenerationHashes := componentutils.ComputePCSGenerationHashCandidates(pcs)
-	pcs.Status.CurrentGenerationHash = ptr.To(pcsGenerationHashes.Canonical)
-
-	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcs-0-compute", "test-ns", "test-pcs", 0).
-		WithReplicas(2).
-		WithCliqueNames([]string{"worker"}).
-		WithOptions(testutils.WithPCSGCurrentPCSGenerationHash("old-generation-hash")).
-		Build()
-	expectedTemplateHashes := componentutils.GetPCLQTemplateHashCandidates(pcs, pcsg)
-	pclqs := []grovecorev1alpha1.PodClique{
-		buildConvergedPCSGPodClique(t, pcsg, "worker", 0, expectedTemplateHashes, pcsGenerationHashes.Canonical),
-		buildConvergedPCSGPodClique(t, pcsg, "worker", 1, expectedTemplateHashes, "old-generation-hash"),
-	}
-
-	mutateCurrentPodCliqueSetGenerationHash(logr.Discard(), pcs, pcsg, pclqs)
-	require.NotNil(t, pcsg.Status.CurrentPodCliqueSetGenerationHash)
-	assert.Equal(t, "old-generation-hash", *pcsg.Status.CurrentPodCliqueSetGenerationHash)
-
-	pclqs[1].Status.CurrentPodCliqueSetGenerationHash = ptr.To(pcsGenerationHashes.Canonical)
-	mutateCurrentPodCliqueSetGenerationHash(logr.Discard(), pcs, pcsg, pclqs)
-	require.NotNil(t, pcsg.Status.CurrentPodCliqueSetGenerationHash)
-	assert.Equal(t, pcsGenerationHashes.Canonical, *pcsg.Status.CurrentPodCliqueSetGenerationHash)
-}
-
-// buildConvergedPCSGPodClique constructs a PodClique that is fully converged on the given
-// template hash, with its CurrentPodCliqueSetGenerationHash set to pcsGenerationHash so callers
-// can simulate cliques at a specific PCS generation.
-func buildConvergedPCSGPodClique(
-	t *testing.T,
-	pcsg *grovecorev1alpha1.PodCliqueScalingGroup,
-	cliqueName string,
-	pcsgReplicaIndex int,
-	expectedTemplateHashes map[string]componentutils.HashCandidates,
-	pcsGenerationHash string,
-) grovecorev1alpha1.PodClique {
-	t.Helper()
-	pclqName := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsg.Name, Replica: pcsgReplicaIndex}, cliqueName)
-	templateHashes, ok := expectedTemplateHashes[pclqName]
-	require.True(t, ok, "expected template hash for %s", pclqName)
-	pclq := testutils.NewPCSGPodCliqueBuilder(pclqName, pcsg.Namespace, "test-pcs", pcsg.Name, 0, pcsgReplicaIndex).
-		WithLabels(map[string]string{apicommon.LabelPodTemplateHash: templateHashes.Canonical}).
-		Build()
-	pclq.Status.CurrentPodTemplateHash = ptr.To(templateHashes.Canonical)
-	pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(pcsGenerationHash)
-	return *pclq
-}
-
 // Test helpers
 func buildHealthyClique(name string) grovecorev1alpha1.PodClique {
 	return *testutils.NewPodCliqueBuilder("test-pcs", uuid.NewUUID(), name, "test-ns", 0).
@@ -675,18 +624,26 @@ func buildTerminatingClique(name string) grovecorev1alpha1.PodClique {
 func TestPCSGMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 	pcsHash := "gen-hash-current"
 	otherHash := "gen-hash-old"
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
+		WithPodCliqueSetGenerationHash(&pcsHash).
+		WithScalingGroup("compute", []string{"frontend", "backend"}).
+		Build()
 
-	matchingPCLQ := func(name string) grovecorev1alpha1.PodClique {
-		return *testutils.NewPodCliqueBuilder("test-pcs", uuid.NewUUID(), name, "test-ns", 0).
-			WithOptions(testutils.WithPCLQCurrentPCSGenerationHash(pcsHash)).Build()
+	matchingPCLQ := func(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, replicaIndex int, cliqueName string) grovecorev1alpha1.PodClique {
+		name := pcsgChildName(pcsg.Name, replicaIndex, cliqueName)
+		pclq := testutils.NewPCSGPodCliqueBuilder(name, "test-ns", "test-pcs", pcsg.Name, 0, replicaIndex).Build()
+		return *markPCSGPCLQConverged(t, pcs, pcsg, pclq, pcsHash)
 	}
-	staleHashPCLQ := func(name string) grovecorev1alpha1.PodClique {
-		return *testutils.NewPodCliqueBuilder("test-pcs", uuid.NewUUID(), name, "test-ns", 0).
-			WithOptions(testutils.WithPCLQCurrentPCSGenerationHash(otherHash)).Build()
+	staleHashPCLQ := func(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, replicaIndex int, cliqueName string) grovecorev1alpha1.PodClique {
+		name := pcsgChildName(pcsg.Name, replicaIndex, cliqueName)
+		pclq := testutils.NewPCSGPodCliqueBuilder(name, "test-ns", "test-pcs", pcsg.Name, 0, replicaIndex).Build()
+		return *markPCSGPCLQConverged(t, pcs, pcsg, pclq, otherHash)
 	}
-	terminatingMatchingPCLQ := func(name string) grovecorev1alpha1.PodClique {
-		return *testutils.NewPodCliqueBuilder("test-pcs", uuid.NewUUID(), name, "test-ns", 0).
-			WithOptions(testutils.WithPCLQCurrentPCSGenerationHash(pcsHash), testutils.WithPCLQTerminating()).Build()
+	terminatingMatchingPCLQ := func(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, replicaIndex int, cliqueName string) grovecorev1alpha1.PodClique {
+		name := pcsgChildName(pcsg.Name, replicaIndex, cliqueName)
+		pclq := testutils.NewPCSGPodCliqueBuilder(name, "test-ns", "test-pcs", pcsg.Name, 0, replicaIndex).
+			WithOptions(testutils.WithPCLQTerminating()).Build()
+		return *markPCSGPCLQConverged(t, pcs, pcsg, pclq, pcsHash)
 	}
 
 	build := func(replicas int32, withProgress bool) *grovecorev1alpha1.PodCliqueScalingGroup {
@@ -705,34 +662,40 @@ func TestPCSGMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 	tests := []struct {
 		name             string
 		pcsg             *grovecorev1alpha1.PodCliqueScalingGroup
-		pclqsPerReplica  map[string][]grovecorev1alpha1.PodClique
+		pclqsPerReplica  func(*testing.T, *grovecorev1alpha1.PodCliqueScalingGroup) map[string][]grovecorev1alpha1.PodClique
 		wantWritten      bool
 		wantUpdatedCount int32
 		wantTotalCount   int32
 	}{
 		{
-			name:            "UpdateProgress nil — counts not written, no panic",
-			pcsg:            build(2, false),
-			pclqsPerReplica: map[string][]grovecorev1alpha1.PodClique{"0": {matchingPCLQ("frontend"), matchingPCLQ("backend")}},
-			wantWritten:     false,
+			name: "UpdateProgress nil - counts not written, no panic",
+			pcsg: build(2, false),
+			pclqsPerReplica: func(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[string][]grovecorev1alpha1.PodClique {
+				return map[string][]grovecorev1alpha1.PodClique{"0": {matchingPCLQ(t, pcsg, 0, "frontend"), matchingPCLQ(t, pcsg, 0, "backend")}}
+			},
+			wantWritten: false,
 		},
 		{
-			name: "UpdateProgress set, all PCLQs at current hash → updated == total",
+			name: "UpdateProgress set, all PCLQs at current hash -> updated == total",
 			pcsg: build(2, true),
-			pclqsPerReplica: map[string][]grovecorev1alpha1.PodClique{
-				"0": {matchingPCLQ("frontend"), matchingPCLQ("backend")},
-				"1": {matchingPCLQ("frontend"), matchingPCLQ("backend")},
+			pclqsPerReplica: func(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[string][]grovecorev1alpha1.PodClique {
+				return map[string][]grovecorev1alpha1.PodClique{
+					"0": {matchingPCLQ(t, pcsg, 0, "frontend"), matchingPCLQ(t, pcsg, 0, "backend")},
+					"1": {matchingPCLQ(t, pcsg, 1, "frontend"), matchingPCLQ(t, pcsg, 1, "backend")},
+				}
 			},
 			wantWritten:      true,
 			wantUpdatedCount: 4,
 			wantTotalCount:   4, // replicas (2) * cliqueNames (2)
 		},
 		{
-			name: "UpdateProgress set, mixed hashes → partial updated count",
+			name: "UpdateProgress set, mixed hashes -> partial updated count",
 			pcsg: build(2, true),
-			pclqsPerReplica: map[string][]grovecorev1alpha1.PodClique{
-				"0": {matchingPCLQ("frontend"), staleHashPCLQ("backend")},
-				"1": {matchingPCLQ("frontend"), matchingPCLQ("backend")},
+			pclqsPerReplica: func(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[string][]grovecorev1alpha1.PodClique {
+				return map[string][]grovecorev1alpha1.PodClique{
+					"0": {matchingPCLQ(t, pcsg, 0, "frontend"), staleHashPCLQ(t, pcsg, 0, "backend")},
+					"1": {matchingPCLQ(t, pcsg, 1, "frontend"), matchingPCLQ(t, pcsg, 1, "backend")},
+				}
 			},
 			wantWritten:      true,
 			wantUpdatedCount: 3,
@@ -741,18 +704,22 @@ func TestPCSGMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 		{
 			name: "UpdateProgress set, terminating matching PCLQ excluded from updated count",
 			pcsg: build(2, true),
-			pclqsPerReplica: map[string][]grovecorev1alpha1.PodClique{
-				"0": {matchingPCLQ("frontend"), terminatingMatchingPCLQ("backend")},
-				"1": {matchingPCLQ("frontend"), matchingPCLQ("backend")},
+			pclqsPerReplica: func(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[string][]grovecorev1alpha1.PodClique {
+				return map[string][]grovecorev1alpha1.PodClique{
+					"0": {matchingPCLQ(t, pcsg, 0, "frontend"), terminatingMatchingPCLQ(t, pcsg, 0, "backend")},
+					"1": {matchingPCLQ(t, pcsg, 1, "frontend"), matchingPCLQ(t, pcsg, 1, "backend")},
+				}
 			},
 			wantWritten:      true,
 			wantUpdatedCount: 3, // terminating excluded even though hash matches
 			wantTotalCount:   4, // total derives from spec, unaffected by terminating children
 		},
 		{
-			name:             "UpdateProgress set, zero replicas → counts are 0/0",
-			pcsg:             build(0, true),
-			pclqsPerReplica:  map[string][]grovecorev1alpha1.PodClique{},
+			name: "UpdateProgress set, zero replicas -> counts are 0/0",
+			pcsg: build(0, true),
+			pclqsPerReplica: func(_ *testing.T, _ *grovecorev1alpha1.PodCliqueScalingGroup) map[string][]grovecorev1alpha1.PodClique {
+				return map[string][]grovecorev1alpha1.PodClique{}
+			},
 			wantWritten:      true,
 			wantUpdatedCount: 0,
 			wantTotalCount:   0,
@@ -761,12 +728,7 @@ func TestPCSGMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pcs := &grovecorev1alpha1.PodCliqueSet{
-				Status: grovecorev1alpha1.PodCliqueSetStatus{
-					CurrentGenerationHash: &pcsHash,
-				},
-			}
-			mutateReplicas(logr.Discard(), pcs, tt.pcsg, tt.pclqsPerReplica)
+			mutateReplicas(logr.Discard(), pcs, tt.pcsg, tt.pclqsPerReplica(t, tt.pcsg))
 
 			if !tt.wantWritten {
 				require.Nil(t, tt.pcsg.Status.UpdateProgress, "UpdateProgress must remain nil")
@@ -782,15 +744,25 @@ func TestPCSGMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 func TestCountPCSGReplicaUpdatedPCLQs(t *testing.T) {
 	hash := "h"
 	otherHash := "old"
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
+		WithPodCliqueSetGenerationHash(&hash).
+		WithScalingGroup("compute", []string{"frontend"}).
+		Build()
+	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).
+		WithReplicas(1).
+		WithCliqueNames([]string{"frontend"}).Build()
+	expectedHashes := componentutils.GetPCLQTemplateHashes(pcs, pcsg)
 	mk := func(currHash *string, terminating bool) grovecorev1alpha1.PodClique {
-		var p grovecorev1alpha1.PodClique
-		p.Status.CurrentPodCliqueSetGenerationHash = currHash
+		p := testutils.NewPCSGPodCliqueBuilder("test-pcsg-0-frontend", "test-ns", "test-pcs", "test-pcsg", 0, 0).Build()
+		if currHash != nil {
+			p = markPCSGPCLQConverged(t, pcs, pcsg, p, *currHash)
+		}
 		if terminating {
 			now := metav1.NewTime(time.Now())
 			p.DeletionTimestamp = &now
 			p.Finalizers = []string{"f"}
 		}
-		return p
+		return *p
 	}
 
 	tests := []struct {
@@ -807,7 +779,83 @@ func TestCountPCSGReplicaUpdatedPCLQs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, countPCSGReplicaUpdatedPCLQs(componentutils.HashCandidates{}, tt.hash, tt.in))
+			assert.Equal(t, tt.want, countPCSGReplicaUpdatedPCLQs(tt.hash, expectedHashes, tt.in))
+		})
+	}
+}
+
+func TestHavePCSGPodCliquesConverged(t *testing.T) {
+	hash := "generation-hash"
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
+		WithPodCliqueSetGenerationHash(&hash).
+		WithScalingGroup("compute", []string{"frontend"}).
+		Build()
+	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).
+		WithReplicas(1).
+		WithCliqueNames([]string{"frontend"}).Build()
+	base := markPCSGPCLQConverged(t, pcs, pcsg,
+		testutils.NewPCSGPodCliqueBuilder("test-pcsg-0-frontend", "test-ns", "test-pcs", "test-pcsg", 0, 0).Build(),
+		hash)
+
+	tests := []struct {
+		name   string
+		pclqs  []grovecorev1alpha1.PodClique
+		mutate func(*grovecorev1alpha1.PodClique)
+		want   bool
+	}{
+		{
+			name:  "all expected hashes converged",
+			pclqs: []grovecorev1alpha1.PodClique{*base.DeepCopy()},
+			want:  true,
+		},
+		{
+			name:  "missing expected child",
+			pclqs: nil,
+			want:  false,
+		},
+		{
+			name:  "label hash stale",
+			pclqs: []grovecorev1alpha1.PodClique{*base.DeepCopy()},
+			mutate: func(pclq *grovecorev1alpha1.PodClique) {
+				pclq.Labels[apicommon.LabelPodTemplateHash] = "old-template"
+			},
+			want: false,
+		},
+		{
+			name:  "status template hash stale",
+			pclqs: []grovecorev1alpha1.PodClique{*base.DeepCopy()},
+			mutate: func(pclq *grovecorev1alpha1.PodClique) {
+				pclq.Status.CurrentPodTemplateHash = ptr.To("old-template")
+			},
+			want: false,
+		},
+		{
+			name:  "generation hash stale",
+			pclqs: []grovecorev1alpha1.PodClique{*base.DeepCopy()},
+			mutate: func(pclq *grovecorev1alpha1.PodClique) {
+				pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To("old-generation")
+			},
+			want: false,
+		},
+		{
+			name:  "terminating child",
+			pclqs: []grovecorev1alpha1.PodClique{*base.DeepCopy()},
+			mutate: func(pclq *grovecorev1alpha1.PodClique) {
+				now := metav1.NewTime(time.Now())
+				pclq.DeletionTimestamp = &now
+				pclq.Finalizers = []string{"f"}
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pclqs := tt.pclqs
+			if tt.mutate != nil && len(pclqs) > 0 {
+				tt.mutate(&pclqs[0])
+			}
+			assert.Equal(t, tt.want, havePCSGPodCliquesConverged(pcs, pcsg, pclqs))
 		})
 	}
 }
@@ -869,13 +917,20 @@ func TestReconcileStatusBoundedDuringScaleDown(t *testing.T) {
 		PodCliqueSetGenerationHash: pcsHash,
 	}
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
-		WithPodCliqueSetGenerationHash(&pcsHash).Build()
+		WithPodCliqueSetGenerationHash(&pcsHash).
+		WithScalingGroup("compute", []string{"frontend", "backend"}).
+		Build()
 
 	mkChild := func(name string, replicaIdx int) client.Object {
-		return testutils.NewPCSGPodCliqueBuilder(name, "test-ns", "test-pcs", "test-pcsg", 0, replicaIdx).
+		pclq := testutils.NewPCSGPodCliqueBuilder(name, "test-ns", "test-pcs", "test-pcsg", 0, replicaIdx).
 			WithOwnerReference("PodCliqueScalingGroup", "test-pcsg", "").
 			WithReplicas(2).
-			WithOptions(testutils.WithPCLQScheduledAndAvailable(), testutils.WithPCLQCurrentPCSGenerationHash(pcsHash)).Build()
+			WithOptions(testutils.WithPCLQScheduledAndAvailable()).Build()
+		if replicaIdx >= int(pcsg.Spec.Replicas) {
+			pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(pcsHash)
+			return pclq
+		}
+		return markPCSGPCLQConverged(t, pcs, pcsg, pclq, pcsHash)
 	}
 
 	objs := []client.Object{
@@ -909,6 +964,26 @@ func TestReconcileStatusBoundedDuringScaleDown(t *testing.T) {
 		"UpdatedPodCliquesCount must never exceed TotalPodCliquesCount")
 }
 
+func pcsgChildName(pcsgName string, replicaIndex int, cliqueName string) string {
+	return fmt.Sprintf("%s-%d-%s", pcsgName, replicaIndex, cliqueName)
+}
+
+func markPCSGPCLQConverged(t testing.TB, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclq *grovecorev1alpha1.PodClique, generationHash string) *grovecorev1alpha1.PodClique {
+	t.Helper()
+	expectedHashes := componentutils.GetPCLQTemplateHashes(pcs, pcsg)
+	expectedTemplateHash, ok := expectedHashes[pclq.Name]
+	require.True(t, ok, "expected template hash for %s", pclq.Name)
+	if pclq.Labels == nil {
+		pclq.Labels = map[string]string{}
+	}
+	pclq.Labels[apicommon.LabelPodTemplateHash] = expectedTemplateHash
+	pclq.Status.CurrentPodTemplateHash = ptr.To(expectedTemplateHash)
+	pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(generationHash)
+	pclq.Status.ReadyReplicas = *pclq.Spec.MinAvailable
+	pclq.Status.UpdatedReplicas = *pclq.Spec.MinAvailable
+	return pclq
+}
+
 func assertCondition(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, expectBreached bool) {
 	var condition *metav1.Condition
 	for i := range pcsg.Status.Conditions {
@@ -921,4 +996,116 @@ func assertCondition(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup
 	require.NotNil(t, condition, "MinAvailableBreached condition should exist")
 	isBreached := condition.Status == metav1.ConditionTrue
 	assert.Equal(t, expectBreached, isBreached, "condition breach status mismatch")
+}
+
+// TestMutateMinAvailableBreachedConditionClearsGangTerminationInProgress pins the second half
+// of the in-progress-flag loop-break design: when MinAvailableBreached transitions from True
+// (or unset) to False, the PCSG status reconciler must also remove the
+// GangTerminationInProgress condition so the next regression can be recycled.
+func TestMutateMinAvailableBreachedConditionClearsGangTerminationInProgress(t *testing.T) {
+	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
+			Replicas:     2,
+			MinAvailable: ptr.To(int32(1)),
+			// Each fixture replica carries one PodClique, so a single clique name makes the
+			// recovered replicas count as complete and not-in-breach.
+			CliqueNames: []string{"pc"},
+		},
+		Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+			Conditions: []metav1.Condition{
+				{
+					Type:   constants.ConditionTypeMinAvailableBreached,
+					Status: metav1.ConditionTrue,
+					Reason: constants.ConditionReasonScheduledReplicasBelowMinAvailable,
+				},
+				{
+					Type:   constants.ConditionTypeGangTerminationInProgress,
+					Status: metav1.ConditionTrue,
+					Reason: constants.ConditionReasonGangTerminationActive,
+				},
+			},
+		},
+	}
+	pclqsHealthy := map[string][]grovecorev1alpha1.PodClique{
+		"0": healthyPCSGReplica(),
+		"1": healthyPCSGReplica(),
+	}
+
+	mutateMinAvailableBreachedCondition(logr.Discard(), pcsg, pclqsHealthy)
+
+	// MinAvailableBreached must now be False (recovery).
+	breach := pcsg.Status.Conditions
+	var breachStatus metav1.ConditionStatus
+	for _, c := range breach {
+		if c.Type == constants.ConditionTypeMinAvailableBreached {
+			breachStatus = c.Status
+		}
+	}
+	assert.Equal(t, metav1.ConditionFalse, breachStatus, "MinAvailableBreached should be False after recovery")
+
+	// GangTerminationInProgress must have been cleared.
+	for _, c := range pcsg.Status.Conditions {
+		if c.Type == constants.ConditionTypeGangTerminationInProgress {
+			t.Fatalf("GangTerminationInProgress condition should have been removed on recovery, still present with status %s", c.Status)
+		}
+	}
+}
+
+// TestMutateSelector verifies the /scale selector is published for PCSGs regardless of whether
+// ScaleConfig is set in the parent PodCliqueSet template, and is suppressed for PCSGs whose name
+// does not match any config in the PodCliqueSet template.
+func TestMutateSelector(t *testing.T) {
+	const (
+		pcsName        = "test-pcs"
+		pcsgConfigName = "prefill"
+	)
+	pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: pcsName, Replica: 0}, pcsgConfigName)
+	withScale := &grovecorev1alpha1.AutoScalingConfig{MaxReplicas: 5}
+
+	tests := []struct {
+		name                    string
+		pcsgName                string // FQN to put on the PCSG; defaults to pcsgFQN
+		pcsgConfigScaleConfig   *grovecorev1alpha1.AutoScalingConfig
+		expectSelectorPopulated bool
+	}{
+		{name: "no ScaleConfig still publishes selector", expectSelectorPopulated: true},
+		{name: "ScaleConfig present publishes selector", pcsgConfigScaleConfig: withScale, expectSelectorPopulated: true},
+		// PCSG whose name does not match any config in the PCS template (e.g. stale object
+		// during a rename) must not publish a selector.
+		{name: "unknown PCSG name does not publish selector", pcsgName: "test-pcs-0-stale", expectSelectorPopulated: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pcs := &grovecorev1alpha1.PodCliqueSet{
+				ObjectMeta: metav1.ObjectMeta{Name: pcsName},
+				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+						PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+							{Name: pcsgConfigName, ScaleConfig: tt.pcsgConfigScaleConfig},
+						},
+					},
+				},
+			}
+			name := tt.pcsgName
+			if name == "" {
+				name = pcsgFQN
+			}
+			pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   name,
+					Labels: map[string]string{apicommon.LabelPodCliqueSetReplicaIndex: "0"},
+				},
+			}
+
+			err := mutateSelector(pcs, pcsg)
+			require.NoError(t, err)
+			if tt.expectSelectorPopulated {
+				require.NotNil(t, pcsg.Status.Selector)
+				assert.Contains(t, *pcsg.Status.Selector, apicommon.LabelPodCliqueScalingGroup+"="+pcsg.Name)
+			} else {
+				assert.Nil(t, pcsg.Status.Selector)
+			}
+		})
+	}
 }

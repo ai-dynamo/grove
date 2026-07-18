@@ -79,17 +79,13 @@ func (f *fakeBackend) CheckTopologyDrift(_ context.Context, _ *grovecorev1alpha1
 }
 
 // Backend interface stubs (not exercised by the CT controller).
-func (f *fakeBackend) Init() error { return nil }
+func (f *fakeBackend) Init(_ client.Client) error { return nil }
 
 func (f *fakeBackend) SyncPodGang(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
 	return nil
 }
 
-func (f *fakeBackend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
-	return nil
-}
-
-func (f *fakeBackend) PreparePod(_ *corev1.Pod) {}
+func (f *fakeBackend) PreparePod(_ *corev1.Pod) error { return nil }
 
 func (f *fakeBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet) error {
 	return nil

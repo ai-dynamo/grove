@@ -265,7 +265,8 @@ func (v *pcsValidator) validatePodCliqueTemplates(fldPath *field.Path) ([]string
 	allErrs = append(allErrs, sliceMustHaveUniqueElements(cliqueNames, fldPath.Child("name"))...)
 	allErrs = append(allErrs, sliceMustHaveUniqueElements(cliqueRoles, fldPath.Child("roleName"))...)
 
-	allErrs = append(allErrs, v.validateSchedulerNames(schedulerNames, fldPath)...)
+	schedulerErrs := v.validateSchedulerNames(schedulerNames, fldPath)
+	allErrs = append(allErrs, schedulerErrs...)
 
 	if v.isStartupTypeExplicit() {
 		allErrs = append(allErrs, validateCliqueDependencies(cliqueTemplateSpecs, fldPath)...)
@@ -430,12 +431,25 @@ func (v *pcsValidator) validateTopologyConstraintsOnCreate(ctx context.Context) 
 	return topologyValidator.warnings(), topologyValidator.validate()
 }
 
+// validatePodCliqueTemplateName skips constraint checks when the name is empty.
+func (v *pcsValidator) validatePodCliqueTemplateName(
+	cliqueTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec,
+	fldPath *field.Path,
+	scalingGroupCliqueNames sets.Set[string],
+) field.ErrorList {
+	allErrs := validateNonEmptyStringField(cliqueTemplateSpec.Name, fldPath.Child("name"))
+	if len(allErrs) > 0 {
+		return allErrs
+	}
+	return append(allErrs, v.validatePodCliqueNameConstraints(fldPath, cliqueTemplateSpec, scalingGroupCliqueNames)...)
+}
+
 // validatePodCliqueTemplateSpec validates a single PodClique template specification including metadata and spec.
 func (v *pcsValidator) validatePodCliqueTemplateSpec(cliqueTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec,
 	fldPath *field.Path, scalingGroupCliqueNames sets.Set[string]) ([]string, field.ErrorList) {
 	allErrs := field.ErrorList{}
 
-	allErrs = append(allErrs, validateNonEmptyStringField(cliqueTemplateSpec.Name, fldPath.Child("name"))...)
+	allErrs = append(allErrs, v.validatePodCliqueTemplateName(cliqueTemplateSpec, fldPath, scalingGroupCliqueNames)...)
 	allErrs = append(allErrs, metav1validation.ValidateLabels(cliqueTemplateSpec.Labels, fldPath.Child("labels"))...)
 	allErrs = append(allErrs, apivalidation.ValidateAnnotations(cliqueTemplateSpec.Annotations, fldPath.Child("annotations"))...)
 
@@ -444,7 +458,6 @@ func (v *pcsValidator) validatePodCliqueTemplateSpec(cliqueTemplateSpec *groveco
 	if len(errs) != 0 {
 		allErrs = append(allErrs, errs...)
 	}
-	allErrs = append(allErrs, v.validatePodCliqueNameConstraints(fldPath, cliqueTemplateSpec, scalingGroupCliqueNames)...)
 
 	return warnings, allErrs
 }

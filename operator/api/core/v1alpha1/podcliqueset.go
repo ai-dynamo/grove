@@ -27,13 +27,14 @@ import (
 // +kubebuilder:subresource:status
 // +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.hpaPodSelector
 // +kubebuilder:resource:shortName={pcs}
-// +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.status.replicas`
+// +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicas`
 // +kubebuilder:printcolumn:name="Available",type=integer,JSONPath=`.status.availableReplicas`
 // +kubebuilder:printcolumn:name="Updated",type=integer,JSONPath=`.status.updatedReplicas`
 // +kubebuilder:printcolumn:name="PCLQs-Updated",type=integer,JSONPath=`.status.updateProgress.updatedPodCliquesCount`
 // +kubebuilder:printcolumn:name="PCLQs-Total",type=integer,JSONPath=`.status.updateProgress.totalPodCliquesCount`
 // +kubebuilder:printcolumn:name="PCSGs-Updated",type=integer,JSONPath=`.status.updateProgress.updatedPodCliqueScalingGroupsCount`
 // +kubebuilder:printcolumn:name="PCSGs-Total",type=integer,JSONPath=`.status.updateProgress.totalPodCliqueScalingGroupsCount`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 // +kubebuilder:validation:XValidation:rule="oldSelf.hasValue() || !has(self.spec.template.topologyConstraint) || !has(self.spec.template.topologyConstraint.packDomain)",message="packDomain is deprecated and cannot be used on new workloads; use pack.required",fieldPath=".spec.template.topologyConstraint.packDomain",optionalOldSelf=true,reason=FieldValueForbidden
 // +kubebuilder:validation:XValidation:rule="oldSelf.hasValue() || !has(self.spec.template.cliques) || self.spec.template.cliques.all(c, !has(c.topologyConstraint) || !has(c.topologyConstraint.packDomain))",message="packDomain is deprecated and cannot be used on new workloads; use pack.required",fieldPath=".spec.template.cliques",optionalOldSelf=true,reason=FieldValueForbidden
 // +kubebuilder:validation:XValidation:rule="oldSelf.hasValue() || !has(self.spec.template.podCliqueScalingGroups) || self.spec.template.podCliqueScalingGroups.all(g, !has(g.topologyConstraint) || !has(g.topologyConstraint.packDomain))",message="packDomain is deprecated and cannot be used on new workloads; use pack.required",fieldPath=".spec.template.podCliqueScalingGroups",optionalOldSelf=true,reason=FieldValueForbidden

@@ -24,6 +24,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
+	kaitopologyv1alpha1 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/kai/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -59,9 +60,10 @@ func (b *schedulerBackend) Name() string {
 	return b.name
 }
 
-// Init initializes the KAI backend
-func (b *schedulerBackend) Init() error {
-	return nil
+// Init registers the KAI API types into b.scheme and must be called before
+// that scheme is used to serialize or deserialize KAI objects.
+func (b *schedulerBackend) Init(_ client.Client) error {
+	return kaitopologyv1alpha1.AddToScheme(b.scheme)
 }
 
 // SyncPodGang converts PodGang to KAI PodGroup and synchronizes it
@@ -69,15 +71,11 @@ func (b *schedulerBackend) SyncPodGang(_ context.Context, _ *groveschedulerv1alp
 	return nil
 }
 
-// OnPodGangDelete removes the PodGroup owned by this PodGang
-func (b *schedulerBackend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
-	return nil
-}
-
 // PreparePod adds KAI scheduler-specific configuration to the Pod.
 // Sets Pod.Spec.SchedulerName so the pod is scheduled by KAI.
-func (b *schedulerBackend) PreparePod(pod *corev1.Pod) {
+func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 	pod.Spec.SchedulerName = b.Name()
+	return nil
 }
 
 // ValidatePodCliqueSet runs KAI-specific validations on the PodCliqueSet.

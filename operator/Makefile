@@ -24,7 +24,7 @@ LD_PACKAGE_PATH := "github.com/ai-dynamo/grove/operator/internal"
 OPERATOR_NAME        := "grove-operator"
 INITC_NAME           := "grove-initc"
 INSTALL_CRDS_NAME    := "grove-install-crds"
-K3S_IMAGE       ?= rancher/k3s:v1.34.2-k3s1
+K3S_IMAGE       ?= rancher/k3s:v1.35.5-k3s1
 E2E_REGISTRY_PORT ?= 5001
 E2E_CREATE_FLAGS  ?=
 
@@ -123,23 +123,23 @@ run-e2e:
 	@echo "> Preparing charts (copying CRDs)..."
 	@$(MODULE_HACK_DIR)/prepare-charts.sh
 	@echo "> Running e2e tests (compilation may take a few minutes with no output)..."
-	@cd e2e && go test -count=1 -tags=e2e ./tests/... -v -timeout 45m $(if $(TEST_PATTERN),-run $(TEST_PATTERN))
+	@cd e2e && go test -count=1 -tags=e2e ./tests/... -v -timeout 45m $(if $(TEST_PATTERN),-run '$(TEST_PATTERN)')
 
 # Same as run-e2e but with gotestsum for cleaner pass/fail summaries and colored output
 .PHONY: run-e2e-verbose
 run-e2e-verbose: $(GOTESTSUM)
 	@echo "> Running e2e tests (verbose)..."
-	@cd e2e && $(GOTESTSUM) --format short-verbose -- -count=1 -tags=e2e ./tests/... -timeout 45m $(if $(TEST_PATTERN),-run $(TEST_PATTERN))
+	@cd e2e && $(GOTESTSUM) --format short-verbose -- -count=1 -tags=e2e ./tests/... -timeout 45m $(if $(TEST_PATTERN),-run '$(TEST_PATTERN)')
 
 # Create a k3d cluster for e2e testing (with Grove and Kai scheduler deployed)
 # This is optional - tests work with any Kubernetes cluster that has the required components
 .PHONY: e2e-cluster-up
-e2e-cluster-up:
+e2e-cluster-up: $(UV)
 	@$(MODULE_HACK_DIR)/infra-manager.py setup $(E2E_CREATE_FLAGS)
 
 # Delete the k3d e2e test cluster
 .PHONY: e2e-cluster-down
-e2e-cluster-down:
+e2e-cluster-down: $(UV)
 	@$(MODULE_HACK_DIR)/infra-manager.py delete k3d-cluster
 
 # Full e2e test run: create k3d cluster, run tests, then cleanup
@@ -171,7 +171,7 @@ run-e2e-mnnvl-full: e2e-cluster-up
 	@docker tag alpine:latest localhost:$(E2E_REGISTRY_PORT)/alpine:latest
 	@docker push localhost:$(E2E_REGISTRY_PORT)/alpine:latest
 	@echo "> Running autoMNNVL e2e tests (all 4 configurations)..."
-	@python3 $(MODULE_HACK_DIR)/e2e-autoMNNVL/run_autoMNNVL_e2e_all.py || \
+	@$(MODULE_HACK_DIR)/e2e-autoMNNVL/run_autoMNNVL_e2e_all.py || \
 		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down
@@ -205,22 +205,28 @@ run-e2e-real-full: e2e-cluster-up-real
 # Uses the scale.yaml preset with 100 KWOK virtual nodes.
 # Override defaults: make scale-cluster-up E2E_CREATE_FLAGS="--set kwok.nodes=200"
 .PHONY: scale-cluster-up
-scale-cluster-up:
+scale-cluster-up: $(UV)
 	@$(MODULE_HACK_DIR)/infra-manager.py setup --config $(MODULE_HACK_DIR)/scale.yaml $(E2E_CREATE_FLAGS)
 
 # Delete the scale test cluster
 .PHONY: scale-cluster-down
-scale-cluster-down:
+scale-cluster-down: $(UV)
 	@$(MODULE_HACK_DIR)/infra-manager.py delete k3d-cluster
 
 # Run scale tests against an existing cluster
-# Usage: make run-scale-test [DIAG_DIR=<path>] [DIAG_MODE=<mode>]
+# Usage: make run-scale-test [TEST_PATTERN=<pattern>] [DIAG_DIR=<path>] [DIAG_MODE=<mode>]
+# Examples:
+#   make run-scale-test                                       # Run all scale tests
+#   make run-scale-test TEST_PATTERN=Test_ScaleUp             # Run all scale-up variants
+#   make run-scale-test TEST_PATTERN=Test_ScaleDown           # Run all scale-down variants
+#   make run-scale-test TEST_PATTERN='Test_Scale(Up|Down)'    # Run both directions
+#   make run-scale-test TEST_PATTERN=Test_ScaleUp_Tiny        # Run the sanity test only
 .PHONY: run-scale-test
 run-scale-test: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
 run-scale-test: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
 run-scale-test:
 	@echo "> Running scale tests..."
-	@cd e2e && go test -count=1 -tags=e2e ./tests/scale/... -v -timeout 40m
+	@cd e2e && go test -count=1 -tags=e2e ./tests/scale/... -v -timeout 40m $(if $(TEST_PATTERN),-run '$(TEST_PATTERN)')
 
 # Run the soak / churn benchmark against an existing cluster.
 # Gated behind the `soak` build tag so it does NOT run as part of

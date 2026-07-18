@@ -137,6 +137,18 @@ select {
   padding: 14px 14px 10px;
 }
 
+.detail-message {
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  display: flex;
+  margin-bottom: 16px;
+  min-height: 56px;
+  padding: 14px;
+}
+
 .chart-panel-header {
   align-items: flex-start;
   display: flex;
@@ -300,6 +312,10 @@ th {
   color: var(--muted);
   font-size: 12px;
   text-transform: uppercase;
+}
+
+.detail-note-row td {
+  color: var(--muted);
 }
 
 td:nth-child(2),

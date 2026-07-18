@@ -92,20 +92,15 @@ func NewFakeSchedulerBackend(name string) scheduler.Backend { return &FakeSchedu
 func (s *FakeSchedulerBackend) Name() string { return s.name }
 
 // Init is a no-op for the fake backend.
-func (s *FakeSchedulerBackend) Init() error { return nil }
+func (s *FakeSchedulerBackend) Init(_ client.Client) error { return nil }
 
 // SyncPodGang is a no-op for the fake backend.
 func (s *FakeSchedulerBackend) SyncPodGang(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
 	return nil
 }
 
-// OnPodGangDelete is a no-op for the fake backend.
-func (s *FakeSchedulerBackend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
-	return nil
-}
-
 // PreparePod is a no-op for the fake backend.
-func (s *FakeSchedulerBackend) PreparePod(_ *corev1.Pod) {}
+func (s *FakeSchedulerBackend) PreparePod(_ *corev1.Pod) error { return nil }
 
 // ValidatePodCliqueSet is a no-op for the fake backend.
 func (s *FakeSchedulerBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet) error {

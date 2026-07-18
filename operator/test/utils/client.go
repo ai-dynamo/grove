@@ -117,6 +117,8 @@ func CreateFakeClientForObjectsMatchingLabels(deleteErr, listErr *apierrors.Stat
 // ------------------- Functions to explicitly create and configure a test client builder -------------------
 
 // NewTestClientBuilder creates a new TestClientBuilder with a default scheme.
+// Tests that use scheduler-specific types must provide a scheme containing
+// those types with WithScheme.
 func NewTestClientBuilder() *TestClientBuilder {
 	return &TestClientBuilder{
 		delegatingClientBuilder: fake.NewClientBuilder(),
@@ -127,6 +129,12 @@ func NewTestClientBuilder() *TestClientBuilder {
 // WithClient sets the delegating client for the TestClientBuilder.
 func (b *TestClientBuilder) WithClient(cl client.Client) *TestClientBuilder {
 	b.delegatingClient = cl
+	return b
+}
+
+// WithScheme sets the scheme used by the delegating fake client.
+func (b *TestClientBuilder) WithScheme(scheme *runtime.Scheme) *TestClientBuilder {
+	b.scheme = scheme
 	return b
 }
 

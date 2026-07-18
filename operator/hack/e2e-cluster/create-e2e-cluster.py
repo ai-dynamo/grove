@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run
 # /*
 # Copyright 2026 The Grove Authors.
 #
@@ -18,8 +18,8 @@
 """
 create-e2e-cluster.py - k3d cluster setup for local E2E testing
 
-Python Dependencies: See requirements.txt
-Minimum Python version: 3.8+
+Python Dependencies: declared in operator/pyproject.toml (run `uv sync` from operator/)
+Minimum Python version: 3.12+ (pinned via operator/.python-version)
 
 Environment Variables:
     All cluster configuration can be overridden via E2E_* environment variables:
@@ -60,7 +60,13 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    BarColumn,
+    TaskProgressColumn,
+)
 
 # Initialize CLI app and console
 app = typer.Typer(help="k3d cluster setup for local E2E testing")
@@ -71,12 +77,14 @@ console = Console(stderr=True)
 # Configuration
 # ============================================================================
 
+
 # Load dependencies from centralized YAML file
 def load_dependencies():
     """Load dependency versions and images from dependencies.yaml"""
     deps_file = Path(__file__).resolve().parent / "dependencies.yaml"
-    with open(deps_file, 'r') as f:
+    with open(deps_file, "r") as f:
         return yaml.safe_load(f)
+
 
 DEPENDENCIES = load_dependencies()
 
@@ -110,7 +118,7 @@ class ClusterConfig(BaseSettings):
         config = ClusterConfig()
 
         # Override via environment
-        E2E_WORKER_NODES=50 E2E_KAI_VERSION=v0.14.0 python create-e2e-cluster.py
+        E2E_WORKER_NODES=50 E2E_KAI_VERSION=v0.15.2 ./create-e2e-cluster.py
 
         # In shell
         export E2E_CLUSTER_NAME=my-test-cluster
@@ -126,9 +134,13 @@ class ClusterConfig(BaseSettings):
     api_port: int = Field(default=6560, ge=1, le=65535)
     lb_port: str = "8090:80"
     worker_nodes: int = Field(default=30, ge=1, le=100)
-    worker_memory: Optional[str] = Field(default=DEFAULT_WORKER_MEMORY, pattern=r"^\d+[mMgG]?$")
-    k3s_image: str = "rancher/k3s:v1.34.2-k3s1"
-    kai_version: str = Field(default=DEPENDENCIES['kai_scheduler']['version'], pattern=r"^v[\d.]+(-[\w.]+)?$")
+    worker_memory: Optional[str] = Field(
+        default=DEFAULT_WORKER_MEMORY, pattern=r"^\d+[mMgG]?$"
+    )
+    k3s_image: str = "rancher/k3s:v1.35.5-k3s1"
+    kai_version: str = Field(
+        default=DEPENDENCIES["kai_scheduler"]["version"], pattern=r"^v[\d.]+(-[\w.]+)?$"
+    )
     skaffold_profile: str = "topology-test"
     max_retries: int = Field(default=3, ge=1, le=10)
 
@@ -143,12 +155,15 @@ class ClusterConfig(BaseSettings):
 # Utility functions
 # ============================================================================
 
+
 def require_command(cmd: str):
     """Check if a command exists."""
     try:
         sh.which(cmd)
     except sh.ErrorReturnCode:
-        console.print(f"[red]❌ Required command '{cmd}' not found. Please install it first.[/red]")
+        console.print(
+            f"[red]❌ Required command '{cmd}' not found. Please install it first.[/red]"
+        )
         raise typer.Exit(1)
 
 
@@ -157,7 +172,7 @@ def run_cmd(cmd, *args, **kwargs) -> Tuple[int, Any]:
     Pass _ok_code=[0, 1, ...] to suppress exceptions for expected exit codes.
     """
     # Extract _ok_code from kwargs and handle it ourselves
-    ok_codes = kwargs.pop('_ok_code', [0])
+    ok_codes = kwargs.pop("_ok_code", [0])
 
     try:
         output = cmd(*args, **kwargs)
@@ -171,9 +186,9 @@ def run_cmd(cmd, *args, **kwargs) -> Tuple[int, Any]:
 def get_system_total_memory_ki() -> Optional[int]:
     """Read MemTotal from /proc/meminfo (KiB). Returns None on non-Linux systems."""
     try:
-        with open('/proc/meminfo') as f:
+        with open("/proc/meminfo") as f:
             for line in f:
-                if line.startswith('MemTotal:'):
+                if line.startswith("MemTotal:"):
                     return int(line.split()[1])
     except FileNotFoundError:
         return None
@@ -184,6 +199,7 @@ def get_system_total_memory_ki() -> Optional[int]:
 # Image pre-pulling functions
 # ============================================================================
 
+
 def prepull_images(images: List[str], registry_port: str, version: str) -> None:
     """
     Pre-pull images in parallel and push them to the local k3d registry.
@@ -193,14 +209,18 @@ def prepull_images(images: List[str], registry_port: str, version: str) -> None:
         return
 
     console.print(Panel.fit("Pre-pulling images to local registry", style="bold blue"))
-    console.print(f"[yellow]Pre-pulling {len(images)} images in parallel (this speeds up cluster startup)...[/yellow]")
+    console.print(
+        f"[yellow]Pre-pulling {len(images)} images in parallel (this speeds up cluster startup)...[/yellow]"
+    )
 
     # Initialize Docker client
     try:
         client = docker.from_env()
     except Exception as e:
         console.print(f"[yellow]⚠️  Failed to connect to Docker: {e}[/yellow]")
-        console.print("[yellow]⚠️  Skipping image pre-pull (cluster will pull images on-demand)[/yellow]")
+        console.print(
+            "[yellow]⚠️  Skipping image pre-pull (cluster will pull images on-demand)[/yellow]"
+        )
         return
 
     def pull_tag_push(image_name: str) -> Tuple[str, bool, Optional[str]]:
@@ -252,24 +272,37 @@ def prepull_images(images: List[str], registry_port: str, version: str) -> None:
                     failed_images.append(image_name)
 
     if failed_images:
-        console.print(f"[yellow]⚠️  Failed to pre-pull {len(failed_images)} images[/yellow]")
-        console.print("[yellow]   Cluster will pull these images on-demand (may be slower)[/yellow]")
+        console.print(
+            f"[yellow]⚠️  Failed to pre-pull {len(failed_images)} images[/yellow]"
+        )
+        console.print(
+            "[yellow]   Cluster will pull these images on-demand (may be slower)[/yellow]"
+        )
     else:
-        console.print(f"[green]✅ Successfully pre-pulled all {len(images)} images[/green]")
+        console.print(
+            f"[green]✅ Successfully pre-pulled all {len(images)} images[/green]"
+        )
 
 
 # ============================================================================
 # Cluster operations
 # ============================================================================
 
+
 def delete_cluster(config: ClusterConfig):
     """Delete the k3d cluster."""
-    console.print(f"[yellow]ℹ️  Deleting k3d cluster '{config.cluster_name}'...[/yellow]")
-    exit_code, _ = run_cmd(sh.k3d, "cluster", "delete", config.cluster_name, _ok_code=[0, 1])
+    console.print(
+        f"[yellow]ℹ️  Deleting k3d cluster '{config.cluster_name}'...[/yellow]"
+    )
+    exit_code, _ = run_cmd(
+        sh.k3d, "cluster", "delete", config.cluster_name, _ok_code=[0, 1]
+    )
     if exit_code == 0:
         console.print(f"[green]✅ Cluster '{config.cluster_name}' deleted[/green]")
     else:
-        console.print(f"[yellow]⚠️  Cluster '{config.cluster_name}' not found or already deleted[/yellow]")
+        console.print(
+            f"[yellow]⚠️  Cluster '{config.cluster_name}' not found or already deleted[/yellow]"
+        )
 
 
 def create_cluster(config: ClusterConfig) -> bool:
@@ -278,7 +311,13 @@ def create_cluster(config: ClusterConfig) -> bool:
 
     console.print("[yellow]Configuration:[/yellow]")
     for key, value in config.model_dump().items():
-        if key not in ['nodes_per_zone', 'nodes_per_block', 'nodes_per_rack', 'cluster_timeout', 'max_retries']:
+        if key not in [
+            "nodes_per_zone",
+            "nodes_per_block",
+            "nodes_per_rack",
+            "cluster_timeout",
+            "max_retries",
+        ]:
             console.print(f"  {key:20s}: {value}")
 
     # In DinD, --agents-memory can't be used (broken /proc/meminfo bind-mount), so we
@@ -302,7 +341,8 @@ def create_cluster(config: ClusterConfig) -> bool:
                     f"allocatable: ~{effective_allocatable_mi}Mi/node)[/yellow]"
                 )
                 dind_memory_args = [
-                    "--k3s-arg", f"--kubelet-arg=system-reserved=memory={system_reserved_mi}Mi@agent:*",
+                    "--k3s-arg",
+                    f"--kubelet-arg=system-reserved=memory={system_reserved_mi}Mi@agent:*",
                 ]
             else:
                 console.print(
@@ -311,44 +351,76 @@ def create_cluster(config: ClusterConfig) -> bool:
                 )
 
     for attempt in range(1, config.max_retries + 1):
-        console.print(f"[yellow]ℹ️  Cluster creation attempt {attempt} of {config.max_retries}...[/yellow]")
+        console.print(
+            f"[yellow]ℹ️  Cluster creation attempt {attempt} of {config.max_retries}...[/yellow]"
+        )
 
         # Clean up any partial cluster (silent deletion to ensure clean slate)
-        console.print(f"[yellow]   Checking for existing cluster '{config.cluster_name}'...[/yellow]")
-        exit_code, _ = run_cmd(sh.k3d, "cluster", "delete", config.cluster_name, _ok_code=[0, 1])
+        console.print(
+            f"[yellow]   Checking for existing cluster '{config.cluster_name}'...[/yellow]"
+        )
+        exit_code, _ = run_cmd(
+            sh.k3d, "cluster", "delete", config.cluster_name, _ok_code=[0, 1]
+        )
         if exit_code == 0:
             console.print(f"[yellow]   Removed existing cluster[/yellow]")
         else:
-            console.print(f"[yellow]   No existing cluster found (proceeding with creation)[/yellow]")
+            console.print(
+                f"[yellow]   No existing cluster found (proceeding with creation)[/yellow]"
+            )
 
         # Create cluster
         exit_code, _ = run_cmd(
-            sh.k3d, "cluster", "create", config.cluster_name,
-            "--servers", "1",
-            "--agents", str(config.worker_nodes),
-            "--image", config.k3s_image,
-            "--api-port", config.api_port,
-            "--port", f"{config.lb_port}@loadbalancer",
-            "--registry-create", f"registry:0.0.0.0:{config.registry_port}",
-            "--k3s-arg", "--node-taint=node_role.e2e.grove.nvidia.com=agent:NoSchedule@agent:*",
-            "--k3s-node-label", "node_role.e2e.grove.nvidia.com=agent@agent:*",
-            "--k3s-node-label", "nvidia.com/gpu.deploy.operands=false@server:*",
-            "--k3s-node-label", "nvidia.com/gpu.deploy.operands=false@agent:*",
-            *(["--agents-memory", config.worker_memory] if config.worker_memory else dind_memory_args),
-            "--timeout", config.cluster_timeout,
+            sh.k3d,
+            "cluster",
+            "create",
+            config.cluster_name,
+            "--servers",
+            "1",
+            "--agents",
+            str(config.worker_nodes),
+            "--image",
+            config.k3s_image,
+            "--api-port",
+            config.api_port,
+            "--port",
+            f"{config.lb_port}@loadbalancer",
+            "--registry-create",
+            f"registry:0.0.0.0:{config.registry_port}",
+            "--k3s-arg",
+            "--node-taint=node_role.e2e.grove.nvidia.com=agent:NoSchedule@agent:*",
+            "--k3s-node-label",
+            "node_role.e2e.grove.nvidia.com=agent@agent:*",
+            "--k3s-node-label",
+            "nvidia.com/gpu.deploy.operands=false@server:*",
+            "--k3s-node-label",
+            "nvidia.com/gpu.deploy.operands=false@agent:*",
+            *(
+                ["--agents-memory", config.worker_memory]
+                if config.worker_memory
+                else dind_memory_args
+            ),
+            "--timeout",
+            config.cluster_timeout,
             "--wait",
-            _ok_code=[0, 1]
+            _ok_code=[0, 1],
         )
 
         if exit_code == 0:
-            console.print(f"[green]✅ Cluster created successfully on attempt {attempt}[/green]")
+            console.print(
+                f"[green]✅ Cluster created successfully on attempt {attempt}[/green]"
+            )
             return True
 
         if attempt < config.max_retries:
-            console.print("[yellow]⚠️  Cluster creation failed, retrying in 10 seconds...[/yellow]")
+            console.print(
+                "[yellow]⚠️  Cluster creation failed, retrying in 10 seconds...[/yellow]"
+            )
             time.sleep(10)
 
-    console.print(f"[red]❌ Cluster creation failed after {config.max_retries} attempts[/red]")
+    console.print(
+        f"[red]❌ Cluster creation failed after {config.max_retries} attempts[/red]"
+    )
     return False
 
 
@@ -361,9 +433,16 @@ def wait_for_nodes(config: ClusterConfig, max_restart_rounds: int = 2):
     retries — up to max_restart_rounds times.
     """
     for attempt in range(1, max_restart_rounds + 2):
-        console.print(f"[yellow]ℹ️  Waiting for all nodes to be ready (attempt {attempt})...[/yellow]")
+        console.print(
+            f"[yellow]ℹ️  Waiting for all nodes to be ready (attempt {attempt})...[/yellow]"
+        )
         exit_code, _ = run_cmd(
-            sh.kubectl, "wait", "--for=condition=Ready", "nodes", "--all", "--timeout=5m",
+            sh.kubectl,
+            "wait",
+            "--for=condition=Ready",
+            "nodes",
+            "--all",
+            "--timeout=5m",
             _ok_code=[0, 1],
         )
         if exit_code == 0:
@@ -371,9 +450,11 @@ def wait_for_nodes(config: ClusterConfig, max_restart_rounds: int = 2):
             return
 
         not_ready_output = sh.kubectl(
-            "get", "nodes",
+            "get",
+            "nodes",
             "--no-headers",
-            "-o", "custom-columns=NAME:.metadata.name,STATUS:.status.conditions[?(@.type=='Ready')].status",
+            "-o",
+            "custom-columns=NAME:.metadata.name,STATUS:.status.conditions[?(@.type=='Ready')].status",
         ).strip()
 
         not_ready_nodes = [
@@ -387,19 +468,27 @@ def wait_for_nodes(config: ClusterConfig, max_restart_rounds: int = 2):
             return
 
         if attempt > max_restart_rounds:
-            console.print(f"[red]❌ {len(not_ready_nodes)} node(s) still NotReady after {max_restart_rounds} restart rounds: {not_ready_nodes}[/red]")
+            console.print(
+                f"[red]❌ {len(not_ready_nodes)} node(s) still NotReady after {max_restart_rounds} restart rounds: {not_ready_nodes}[/red]"
+            )
             raise typer.Exit(1)
 
-        console.print(f"[yellow]⚠️  {len(not_ready_nodes)} node(s) NotReady: {not_ready_nodes}[/yellow]")
+        console.print(
+            f"[yellow]⚠️  {len(not_ready_nodes)} node(s) NotReady: {not_ready_nodes}[/yellow]"
+        )
 
         docker_client = docker.from_env()
         for node_name in not_ready_nodes:
             if not node_name.startswith(f"k3d-{config.cluster_name}-"):
-                console.print(f"[yellow]   Skipping container {node_name} (not part of cluster '{config.cluster_name}')[/yellow]")
+                console.print(
+                    f"[yellow]   Skipping container {node_name} (not part of cluster '{config.cluster_name}')[/yellow]"
+                )
                 continue
             try:
                 container = docker_client.containers.get(node_name)
-                console.print(f"[yellow]   Restarting container {node_name}...[/yellow]")
+                console.print(
+                    f"[yellow]   Restarting container {node_name}...[/yellow]"
+                )
                 container.restart(timeout=30)
                 console.print(f"[green]   ✓ Restarted {node_name}[/green]")
             except docker.errors.NotFound:
@@ -407,7 +496,9 @@ def wait_for_nodes(config: ClusterConfig, max_restart_rounds: int = 2):
             except Exception as e:
                 console.print(f"[red]   ✗ Failed to restart {node_name}: {e}[/red]")
 
-        console.print("[yellow]   Waiting 15s for restarted nodes to rejoin...[/yellow]")
+        console.print(
+            "[yellow]   Waiting 15s for restarted nodes to rejoin...[/yellow]"
+        )
         time.sleep(15)
 
 
@@ -417,21 +508,33 @@ def install_kai_scheduler(config: ClusterConfig):
     console.print(f"[yellow]Version: {config.kai_version}[/yellow]")
 
     # Delete existing installation (ignore errors)
-    run_cmd(sh.helm, "uninstall", "kai-scheduler", "-n", "kai-scheduler", _ok_code=[0, 1])
+    run_cmd(
+        sh.helm, "uninstall", "kai-scheduler", "-n", "kai-scheduler", _ok_code=[0, 1]
+    )
 
     sh.helm(
-        "install", "kai-scheduler",
+        "install",
+        "kai-scheduler",
         f"oci://ghcr.io/kai-scheduler/kai-scheduler/kai-scheduler",
-        "--version", config.kai_version,
-        "--namespace", "kai-scheduler",
+        "--version",
+        config.kai_version,
+        "--namespace",
+        "kai-scheduler",
         "--create-namespace",
-        "--set", "global.tolerations[0].key=node-role.kubernetes.io/control-plane",
-        "--set", "global.tolerations[0].operator=Exists",
-        "--set", "global.tolerations[0].effect=NoSchedule",
-        "--set", "global.tolerations[1].key=node_role.e2e.grove.nvidia.com",
-        "--set", "global.tolerations[1].operator=Equal",
-        "--set", "global.tolerations[1].value=agent",
-        "--set", "global.tolerations[1].effect=NoSchedule"
+        "--set",
+        "global.tolerations[0].key=node-role.kubernetes.io/control-plane",
+        "--set",
+        "global.tolerations[0].operator=Exists",
+        "--set",
+        "global.tolerations[0].effect=NoSchedule",
+        "--set",
+        "global.tolerations[1].key=node_role.e2e.grove.nvidia.com",
+        "--set",
+        "global.tolerations[1].operator=Equal",
+        "--set",
+        "global.tolerations[1].value=agent",
+        "--set",
+        "global.tolerations[1].effect=NoSchedule",
     )
     console.print("[green]✅ Kai Scheduler installed[/green]")
 
@@ -441,19 +544,23 @@ def deploy_grove_operator(config: ClusterConfig, operator_dir: Path):
     console.print(Panel.fit("Deploying Grove operator", style="bold blue"))
 
     # Delete existing installation (ignore errors)
-    run_cmd(sh.helm, "uninstall", "grove-operator", "-n", "grove-system", _ok_code=[0, 1])
+    run_cmd(
+        sh.helm, "uninstall", "grove-operator", "-n", "grove-system", _ok_code=[0, 1]
+    )
 
     # Set environment for skaffold build
     build_date = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    os.environ.update({
-        "VERSION": "E2E_TESTS",
-        "LD_FLAGS": (
-            "-X github.com/ai-dynamo/grove/operator/internal/version.gitCommit=e2e-test-commit "
-            "-X github.com/ai-dynamo/grove/operator/internal/version.gitTreeState=clean "
-            f"-X github.com/ai-dynamo/grove/operator/internal/version.buildDate={build_date} "
-            "-X github.com/ai-dynamo/grove/operator/internal/version.gitVersion=E2E_TESTS"
-        )
-    })
+    os.environ.update(
+        {
+            "VERSION": "E2E_TESTS",
+            "LD_FLAGS": (
+                "-X github.com/ai-dynamo/grove/operator/internal/version.gitCommit=e2e-test-commit "
+                "-X github.com/ai-dynamo/grove/operator/internal/version.gitTreeState=clean "
+                f"-X github.com/ai-dynamo/grove/operator/internal/version.buildDate={build_date} "
+                "-X github.com/ai-dynamo/grove/operator/internal/version.gitVersion=E2E_TESTS"
+            ),
+        }
+    )
 
     push_repo = f"localhost:{config.registry_port}"
     pull_repo = f"registry:{config.registry_port}"
@@ -464,11 +571,13 @@ def deploy_grove_operator(config: ClusterConfig, operator_dir: Path):
     build_output = json.loads(
         sh.skaffold(
             "build",
-            "--default-repo", push_repo,
-            "--profile", config.skaffold_profile,
+            "--default-repo",
+            push_repo,
+            "--profile",
+            config.skaffold_profile,
             "--quiet",
             "--output={{json .}}",
-            _cwd=str(operator_dir)
+            _cwd=str(operator_dir),
         )
     )
 
@@ -487,29 +596,49 @@ def deploy_grove_operator(config: ClusterConfig, operator_dir: Path):
     # Deploy
     sh.skaffold(
         "deploy",
-        "--profile", config.skaffold_profile,
-        "--namespace", "grove-system",
+        "--profile",
+        config.skaffold_profile,
+        "--namespace",
+        "grove-system",
         "--status-check=false",
         "--default-repo=",
-        "--images", f"grove-operator={images['grove-operator']}",
-        "--images", f"grove-initc={images['grove-initc']}",
-        "--images", f"grove-install-crds={images['grove-install-crds']}",
-        _cwd=str(operator_dir)
+        "--images",
+        f"grove-operator={images['grove-operator']}",
+        "--images",
+        f"grove-initc={images['grove-initc']}",
+        "--images",
+        f"grove-install-crds={images['grove-install-crds']}",
+        _cwd=str(operator_dir),
     )
 
     console.print("[green]✅ Grove operator deployed[/green]")
 
-    # Wait for Grove pods
-    console.print("[yellow]ℹ️  Waiting for Grove pods to be ready...[/yellow]")
-    sh.kubectl("wait", "--for=condition=Ready", "pods", "--all", "-n", "grove-system", "--timeout=5m")
+    # Wait for Grove deployments
+    console.print(
+        "[yellow]ℹ️  Waiting for Grove deployments to be available...[/yellow]"
+    )
+    sh.kubectl(
+        "wait",
+        "--for=condition=Available",
+        "deployment",
+        "--all",
+        "-n",
+        "grove-system",
+        "--timeout=5m",
+    )
 
     # Wait for webhook
     console.print("[yellow]ℹ️  Waiting for Grove webhook to be ready...[/yellow]")
     for i in range(1, WEBHOOK_READY_MAX_RETRIES + 1):
         exit_code, result = run_cmd(
-            sh.kubectl, "create", "-f", str(operator_dir / "e2e/yaml/workload1.yaml"),
-            "--dry-run=server", "-n", "default",
-            _ok_code=[0, 1]
+            sh.kubectl,
+            "create",
+            "-f",
+            str(operator_dir / "e2e/yaml/workload1.yaml"),
+            "--dry-run=server",
+            "-n",
+            "default",
+            _ok_code=[0, 1],
         )
 
         # Get output text - handle both string and ErrorReturnCode
@@ -520,7 +649,14 @@ def deploy_grove_operator(config: ClusterConfig, operator_dir: Path):
 
         # Check if webhook responded (any response means it's alive, even errors)
         # We're checking that the webhook service is reachable and processing requests
-        webhook_keywords = ["validated", "denied", "error", "invalid", "created", "podcliqueset"]
+        webhook_keywords = [
+            "validated",
+            "denied",
+            "error",
+            "invalid",
+            "created",
+            "podcliqueset",
+        ]
         if any(kw in output for kw in webhook_keywords):
             console.print("[green]✅ Grove webhook is ready[/green]")
             break
@@ -530,19 +666,26 @@ def deploy_grove_operator(config: ClusterConfig, operator_dir: Path):
             console.print(f"Last response: {output}")
             raise typer.Exit(1)
 
-        console.print(f"[yellow]Webhook not ready yet, retrying in {WEBHOOK_READY_POLL_INTERVAL_SECONDS}s... ({i}/{WEBHOOK_READY_MAX_RETRIES})[/yellow]")
+        console.print(
+            f"[yellow]Webhook not ready yet, retrying in {WEBHOOK_READY_POLL_INTERVAL_SECONDS}s... ({i}/{WEBHOOK_READY_MAX_RETRIES})[/yellow]"
+        )
         time.sleep(WEBHOOK_READY_POLL_INTERVAL_SECONDS)
 
 
 def apply_topology_labels(config: ClusterConfig):
     """Apply topology labels to worker nodes."""
-    console.print(Panel.fit("Applying topology labels to worker nodes", style="bold blue"))
+    console.print(
+        Panel.fit("Applying topology labels to worker nodes", style="bold blue")
+    )
 
     # Get worker nodes sorted by name
     nodes_output = sh.kubectl(
-        "get", "nodes",
-        "-l", "node_role.e2e.grove.nvidia.com=agent",
-        "-o", "jsonpath={.items[*].metadata.name}"
+        "get",
+        "nodes",
+        "-l",
+        "node_role.e2e.grove.nvidia.com=agent",
+        "-o",
+        "jsonpath={.items[*].metadata.name}",
     ).strip()
 
     worker_nodes = sorted(nodes_output.split())
@@ -553,27 +696,46 @@ def apply_topology_labels(config: ClusterConfig):
         rack = idx // config.nodes_per_rack
 
         sh.kubectl(
-            "label", "node", node,
+            "label",
+            "node",
+            node,
             f"kubernetes.io/zone=zone-{zone}",
             f"kubernetes.io/block=block-{block}",
             f"kubernetes.io/rack=rack-{rack}",
-            "--overwrite"
+            "--overwrite",
         )
 
-    console.print(f"[green]✅ Applied topology labels to {len(worker_nodes)} worker nodes[/green]")
+    console.print(
+        f"[green]✅ Applied topology labels to {len(worker_nodes)} worker nodes[/green]"
+    )
 
 
 # ============================================================================
 # CLI Commands
 # ============================================================================
 
+
 @app.command()
 def main(
-    skip_kai: bool = typer.Option(False, "--skip-kai", help="Skip Kai Scheduler installation"),
-    skip_grove: bool = typer.Option(False, "--skip-grove", help="Skip Grove operator deployment"),
-    skip_topology: bool = typer.Option(False, "--skip-topology", help="Skip topology label application"),
-    skip_prepull: bool = typer.Option(False, "--skip-prepull", help="Skip image pre-pulling (faster but cluster startup will be slower)"),
-    dind_memory_mode: bool = typer.Option(False, "--dind-memory-mode", help="Use kubelet system-reserved to emulate node memory limits (for DinD where --agents-memory fails)"),
+    skip_kai: bool = typer.Option(
+        False, "--skip-kai", help="Skip Kai Scheduler installation"
+    ),
+    skip_grove: bool = typer.Option(
+        False, "--skip-grove", help="Skip Grove operator deployment"
+    ),
+    skip_topology: bool = typer.Option(
+        False, "--skip-topology", help="Skip topology label application"
+    ),
+    skip_prepull: bool = typer.Option(
+        False,
+        "--skip-prepull",
+        help="Skip image pre-pulling (faster but cluster startup will be slower)",
+    ),
+    dind_memory_mode: bool = typer.Option(
+        False,
+        "--dind-memory-mode",
+        help="Use kubelet system-reserved to emulate node memory limits (for DinD where --agents-memory fails)",
+    ),
     delete: bool = typer.Option(False, "--delete", help="Delete the cluster and exit"),
 ):
     """
@@ -591,17 +753,18 @@ def main(
     # Workaround: Typer has issues with boolean flags in some environments
     # Manually check sys.argv for flags since Typer may pass None or strings
     import sys
-    if '--delete' in sys.argv:
+
+    if "--delete" in sys.argv:
         delete = True
-    if '--skip-kai' in sys.argv:
+    if "--skip-kai" in sys.argv:
         skip_kai = True
-    if '--skip-grove' in sys.argv:
+    if "--skip-grove" in sys.argv:
         skip_grove = True
-    if '--skip-topology' in sys.argv:
+    if "--skip-topology" in sys.argv:
         skip_topology = True
-    if '--skip-prepull' in sys.argv:
+    if "--skip-prepull" in sys.argv:
         skip_prepull = True
-    if '--dind-memory-mode' in sys.argv:
+    if "--dind-memory-mode" in sys.argv:
         dind_memory_mode = True
 
     config = ClusterConfig()
@@ -617,7 +780,7 @@ def main(
         if isinstance(value, bool):
             return value
         if isinstance(value, str):
-            return value.lower() not in ('false', '0', '', 'no', 'n', 'none')
+            return value.lower() not in ("false", "0", "", "no", "n", "none")
         return bool(value)
 
     delete = to_bool(delete)
@@ -665,22 +828,20 @@ def main(
     if not skip_prepull:
         # Pre-pull Kai Scheduler images
         prepull_images(
-            DEPENDENCIES['kai_scheduler']['images'],
+            DEPENDENCIES["kai_scheduler"]["images"],
             config.registry_port,
-            DEPENDENCIES['kai_scheduler']['version']
+            DEPENDENCIES["kai_scheduler"]["version"],
         )
         # Pre-pull cert-manager images
         prepull_images(
-            DEPENDENCIES['cert_manager']['images'],
+            DEPENDENCIES["cert_manager"]["images"],
             config.registry_port,
-            DEPENDENCIES['cert_manager']['version']
+            DEPENDENCIES["cert_manager"]["version"],
         )
         # Pre-pull test workload images (busybox for topology tests)
-        if 'test_images' in DEPENDENCIES and 'busybox' in DEPENDENCIES['test_images']:
+        if "test_images" in DEPENDENCIES and "busybox" in DEPENDENCIES["test_images"]:
             prepull_images(
-                DEPENDENCIES['test_images']['busybox'],
-                config.registry_port,
-                'latest'
+                DEPENDENCIES["test_images"]["busybox"], config.registry_port, "latest"
             )
 
     # Install components
@@ -692,15 +853,30 @@ def main(
 
     # Wait for Kai and apply queues
     if not skip_kai:
-        console.print("[yellow]ℹ️  Waiting for Kai Scheduler pods to be ready...[/yellow]")
-        sh.kubectl("wait", "--for=condition=Ready", "pods", "--all", "-n", "kai-scheduler", "--timeout=5m")
+        console.print(
+            "[yellow]ℹ️  Waiting for Kai Scheduler deployments to be available...[/yellow]"
+        )
+        sh.kubectl(
+            "wait",
+            "--for=condition=Available",
+            "deployment",
+            "--all",
+            "-n",
+            "kai-scheduler",
+            "--timeout=5m",
+        )
 
         # Wait for webhook to be available before applying queues (pods ready != webhook ready)
-        console.print("[yellow]ℹ️  Creating default Kai queues (with retry for webhook readiness)...[/yellow]")
+        console.print(
+            "[yellow]ℹ️  Creating default Kai queues (with retry for webhook readiness)...[/yellow]"
+        )
         for i in range(1, KAI_QUEUE_MAX_RETRIES + 1):
             exit_code, result = run_cmd(
-                sh.kubectl, "apply", "-f", str(operator_dir / "e2e/yaml/queues.yaml"),
-                _ok_code=[0, 1]
+                sh.kubectl,
+                "apply",
+                "-f",
+                str(operator_dir / "e2e/yaml/queues.yaml"),
+                _ok_code=[0, 1],
             )
             if exit_code == 0:
                 console.print("[green]✅ Kai queues created successfully[/green]")
@@ -708,10 +884,14 @@ def main(
 
             if i == KAI_QUEUE_MAX_RETRIES:
                 console.print("[red]❌ Failed to create Kai queues after retries[/red]")
-                console.print(f"Last error: {result.stderr if hasattr(result, 'stderr') else result}")
+                console.print(
+                    f"Last error: {result.stderr if hasattr(result, 'stderr') else result}"
+                )
                 raise typer.Exit(1)
 
-            console.print(f"[yellow]Webhook not ready yet, retrying in {KAI_QUEUE_POLL_INTERVAL_SECONDS}s... ({i}/{KAI_QUEUE_MAX_RETRIES})[/yellow]")
+            console.print(
+                f"[yellow]Webhook not ready yet, retrying in {KAI_QUEUE_POLL_INTERVAL_SECONDS}s... ({i}/{KAI_QUEUE_MAX_RETRIES})[/yellow]"
+            )
             time.sleep(KAI_QUEUE_POLL_INTERVAL_SECONDS)
 
     # Apply topology
@@ -733,7 +913,9 @@ def main(
 
     # For ~/.kube/config: smart merge (updates this cluster context, preserves others)
     # Without --overwrite, k3d will merge with existing contexts
-    sh.k3d("kubeconfig", "merge", config.cluster_name, "-o", str(default_kubeconfig_path))
+    sh.k3d(
+        "kubeconfig", "merge", config.cluster_name, "-o", str(default_kubeconfig_path)
+    )
     default_kubeconfig_path.chmod(0o600)
     console.print(f"[green]  ✓ Merged to {default_kubeconfig_path}[/green]")
 
@@ -743,7 +925,9 @@ def main(
     console.print(f"\n  export E2E_REGISTRY_PORT={config.registry_port}")
     console.print("  make run-e2e")
     console.print("  make run-e2e TEST_PATTERN=Test_GS  # specific tests\n")
-    console.print(f"[green]✅ Cluster '{config.cluster_name}' is ready for E2E testing![/green]")
+    console.print(
+        f"[green]✅ Cluster '{config.cluster_name}' is ready for E2E testing![/green]"
+    )
 
 
 if __name__ == "__main__":

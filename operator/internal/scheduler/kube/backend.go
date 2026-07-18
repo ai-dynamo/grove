@@ -61,7 +61,7 @@ func (b *schedulerBackend) Name() string {
 
 // Init initializes the Kube backend
 // For Kube backend, no special initialization is needed
-func (b *schedulerBackend) Init() error {
+func (b *schedulerBackend) Init(_ client.Client) error {
 	return nil
 }
 
@@ -72,16 +72,10 @@ func (b *schedulerBackend) SyncPodGang(_ context.Context, _ *groveschedulerv1alp
 	return nil
 }
 
-// OnPodGangDelete handles PodGang deletion
-// For default kube scheduler, no cleanup is needed
-func (b *schedulerBackend) OnPodGangDelete(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
-	// No-op: default kube scheduler doesn't have any resources to clean up
-	return nil
-}
-
 // PreparePod prepares the Pod by setting the relevant schedulerName field with the chosen scheduler backend.
-func (b *schedulerBackend) PreparePod(pod *corev1.Pod) {
+func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 	pod.Spec.SchedulerName = b.name
+	return nil
 }
 
 // ValidatePodCliqueSet runs default-scheduler-specific validations on the PodCliqueSet.

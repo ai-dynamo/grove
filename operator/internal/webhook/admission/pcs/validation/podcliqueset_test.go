@@ -78,9 +78,7 @@ func TestResourceNamingValidation(t *testing.T) {
 			pcsName:     "inference",
 			cliqueNames: []string{""},
 			errorMatchers: []testutils.ErrorMatcher{
-				// TODO: @unmarshall @renormalize only one should be required here, fix later
 				{ErrorType: field.ErrorTypeRequired, Field: "spec.template.cliques[0].name"},
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].name"},
 			},
 		},
 		{
@@ -244,6 +242,18 @@ func TestValidateSchedulerNames(t *testing.T) {
 				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
 			},
 			schedulerNames: []string{"kai-scheduler"},
+			expectErrors:   0,
+		},
+		{
+			name: "single lpx-scheduler when enabled",
+			schedulerConfig: groveconfigv1alpha1.SchedulerConfiguration{
+				Profiles: []groveconfigv1alpha1.SchedulerProfile{
+					{Name: groveconfigv1alpha1.SchedulerNameKube},
+					{Name: groveconfigv1alpha1.SchedulerNameLPX},
+				},
+				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+			},
+			schedulerNames: []string{"lpx-scheduler"},
 			expectErrors:   0,
 		},
 		{

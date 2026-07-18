@@ -198,12 +198,7 @@ func (tc *TestContext) GetLabelSelector() string {
 
 // ListPods lists pods matching the current workload's label selector.
 func (tc *TestContext) ListPods() (*v1.PodList, error) {
-	return tc.ListPodsWithContext(tc.Ctx)
-}
-
-// ListPodsWithContext lists pods matching the current workload's label selector using ctx.
-func (tc *TestContext) ListPodsWithContext(ctx context.Context) (*v1.PodList, error) {
-	return tc.newPodManager().List(ctx, tc.Namespace, tc.GetLabelSelector())
+	return tc.newPodManager().List(tc.Ctx, tc.Namespace, tc.GetLabelSelector())
 }
 
 // WaitForPods waits for the expected pod count to be ready.

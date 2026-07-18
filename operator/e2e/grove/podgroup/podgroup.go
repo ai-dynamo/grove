@@ -223,8 +223,9 @@ func (pv *PodGroupVerifier) VerifySubGroups(podGroup *kaischedulingv2alpha2.PodG
 			return fmt.Errorf("SubGroup %q Parent: got %q, expected %q", expected.Name, *actual.Parent, *expected.Parent)
 		}
 
-		if actual.MinMember != expected.MinMember {
-			return fmt.Errorf("SubGroup %q MinMember: got %d, expected %d", expected.Name, actual.MinMember, expected.MinMember)
+		actualMinMember := ptr.Deref(actual.MinMember, 0)
+		if actualMinMember != expected.MinMember {
+			return fmt.Errorf("SubGroup %q MinMember: got %d, expected %d", expected.Name, actualMinMember, expected.MinMember)
 		}
 
 		actualRequired := ""
@@ -244,7 +245,7 @@ func (pv *PodGroupVerifier) VerifySubGroups(podGroup *kaischedulingv2alpha2.PodG
 		}
 
 		pv.logger.Debugf("SubGroup %q verified: parent=%v, minMember=%d, required=%q, preferred=%q",
-			expected.Name, actual.Parent, actual.MinMember, actualRequired, actualPreferred)
+			expected.Name, actual.Parent, actualMinMember, actualRequired, actualPreferred)
 	}
 
 	pv.logger.Infof("KAI PodGroup %s verified with %d SubGroups", podGroup.Name, len(expectedSubGroups))

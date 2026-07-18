@@ -120,6 +120,16 @@ const (
 	// ConditionTypePodCliqueScheduled indicates that the PodClique has been successfully scheduled.
 	// This condition is set to true when number of scheduled pods in the PodClique is greater than or equal to PodCliqueSpec.MinAvailable.
 	ConditionTypePodCliqueScheduled = "PodCliqueScheduled"
+	// ConditionTypeGangTerminationInProgress indicates that PCS-level gang termination has fired for this
+	// PodCliqueScalingGroup and is still in flight. It is set on the PCSG when the PCS-level handler deletes
+	// the PodCliques of the whole PCS replica, and is cleared when the PCSG's MinAvailableBreached transitions
+	// back to False (recovered). While it is True, further PCS-level gang termination for the PCS replica is
+	// suppressed — at most one fire per breach episode, regardless of how long the workload stays below
+	// MinAvailable. This is a PCS-level-only mechanism: the PCSG-replica-scoped recycle path does not use this
+	// flag and instead breaks its own re-fire loop via WasPCLQEverScheduled, since a freshly recreated
+	// PodClique has never been scheduled and is therefore excluded from the breached set.
+	// Its only Reason is ConditionReasonGangTerminationActive.
+	ConditionTypeGangTerminationInProgress = "GangTerminationInProgress"
 	// ConditionTopologyLevelsUnavailable indicates that the required topology levels defined on a PodCliqueSet for topology-aware scheduling are no longer available.
 	// This can happen when the ClusterTopologyBinding resource is modified which removes one or more levels required by the PodCliqueSet.
 	ConditionTopologyLevelsUnavailable = "TopologyLevelsUnavailable"
@@ -135,8 +145,6 @@ const (
 	ConditionReasonInsufficientScheduledPods = "InsufficientScheduledPods"
 	// ConditionReasonSufficientScheduledPods indicates that the number of scheduled pods in the PodClique greater or equal to PodCliqueSpec.MinAvailable.
 	ConditionReasonSufficientScheduledPods = "SufficientScheduledPods"
-	// ConditionReasonInsufficientScheduledPCSGReplicas indicates that the number of scheduled replicas in the PodCliqueScalingGroup is below the PodCliqueScalingGroupSpec.MinAvailable.
-	ConditionReasonInsufficientScheduledPCSGReplicas = "InsufficientScheduledPodCliqueScalingGroupReplicas"
 	// ConditionReasonScheduledReplicasBelowMinAvailable indicates that scheduledReplicas is below MinAvailable but greater than zero.
 	ConditionReasonScheduledReplicasBelowMinAvailable = "ScheduledReplicasBelowMinAvailable"
 	// ConditionReasonInsufficientAvailablePCSGReplicas indicates that the number of ready replicas in the PodCliqueScalingGroup is below the PodCliqueScalingGroupSpec.MinAvailable.
@@ -145,6 +153,12 @@ const (
 	ConditionReasonSufficientAvailablePCSGReplicas = "SufficientAvailablePodCliqueScalingGroupReplicas"
 	// ConditionReasonUpdateInProgress indicates that the resource is undergoing rolling update.
 	ConditionReasonUpdateInProgress = "UpdateInProgress"
+	// ConditionReasonGangTerminationActive is the (only) Reason paired with
+	// ConditionTypeGangTerminationInProgress=True. The Kubernetes condition API requires a
+	// non-empty Reason, and the flag has exactly one cause, so this Reason simply restates the
+	// Type in the CamelCase token form callers branch on. If a second cause for the flag is ever
+	// introduced, add a distinct Reason then.
+	ConditionReasonGangTerminationActive = "GangTerminationActive"
 	// ConditionReasonClusterTopologyNotFound indicates that the ClusterTopologyBinding resource required for topology-aware scheduling was not found.
 	ConditionReasonClusterTopologyNotFound = "ClusterTopologyNotFound"
 	// ConditionReasonTopologyLevelsUnavailable indicates that the one or more required topology levels defined on a

@@ -1,0 +1,43 @@
+# Scale Down Test: tiny sanity variant
+# Starts at 5 PCS replicas (10 pods); the test scales to 0.
+# Used to validate cluster + test plumbing end-to-end (including the new
+# PodsAtCountCondition milestone) without paying the cost of the real
+# 500/1000-pod scenarios.
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: scale-down-tiny
+  labels:
+    app: scale-down-tiny
+spec:
+  replicas: 5
+  template:
+    cliques:
+      - name: expert-worker
+        spec:
+          roleName: expert
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            schedulerName: default-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: type
+                          operator: In
+                          values:
+                            - kwok
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: expert-worker
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 1Mi

@@ -10,7 +10,7 @@ The following tools must be installed:
 - **Docker** - For running containers and k3d
 - **skaffold** (v2.x) - For deploying Grove operator
 - **helm** - For deploying Helm charts
-- **Go** (1.24.5+) - For running the tests
+- **Go** (1.26.3+) - For running the tests
 
 The following tools are nice to have
 - **k3d** (v5.x) - For creating local Kubernetes clusters
@@ -82,7 +82,7 @@ helmCharts:
   kaiScheduler:
     releaseName: kai-scheduler
     chartRef: oci://ghcr.io/kai-scheduler/kai-scheduler/kai-scheduler
-    version: v0.14.0  # <- Update this version
+    version: v0.15.2  # <- Update this version
     namespace: kai-scheduler
 ```
 

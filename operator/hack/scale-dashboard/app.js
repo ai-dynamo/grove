@@ -15,6 +15,8 @@
  */
 
 const RUNS_URL = "index/runs.ndjson";
+const MAX_MILESTONE_CHARTS = 8;
+const MAX_LATEST_TABLE_ROWS = 40;
 
 const STACK_COLORS = [
   "#16736f",
@@ -143,12 +145,14 @@ function setOptions(select, values) {
 
 function render() {
   const runs = selectedRuns();
-  setStatus(`${runs.length} runs loaded`);
+  const detail = selectedRunDetail(runs);
+  const detailNote = detail.hideMilestoneCharts || detail.hideLatestMilestoneRows ? "; milestone details hidden" : "";
+  setStatus(`${runs.length} ${state.testName} runs loaded${detailNote}`);
 
   drawTotalChart(runs);
   drawPhaseChart(runs);
-  renderMilestoneCharts(runs);
-  renderLatestTable(runs);
+  renderMilestoneCharts(runs, detail);
+  renderLatestTable(runs, detail);
 }
 
 function selectedRuns() {
@@ -260,10 +264,30 @@ function drawPhaseChart(runs) {
   drawStackedBars(els.phaseChart, stacks);
 }
 
-function renderMilestoneCharts(runs) {
+function selectedRunDetail(runs) {
+  const latest = runs[runs.length - 1];
+  const milestoneChartCount = milestonePhaseNames(runs).length;
+  const latestTableRowCount = latest ? latestValueRows(latest, true).length : 0;
+  const latestTableRowCountWithoutMilestones = latest ? latestValueRows(latest, false).length : 0;
+  const hasLatestMilestoneRows = latestTableRowCount > latestTableRowCountWithoutMilestones;
+  return {
+    hideMilestoneCharts: milestoneChartCount > MAX_MILESTONE_CHARTS,
+    hideLatestMilestoneRows: hasLatestMilestoneRows && latestTableRowCount > MAX_LATEST_TABLE_ROWS,
+    latestTableRowCount,
+    milestoneChartCount,
+  };
+}
+
+function renderMilestoneCharts(runs, detail) {
   els.milestoneCharts.replaceChildren();
-  const phaseNames = orderedPhaseNames(runs)
-    .filter((phaseName) => runs.some((run) => (phaseByName(run, phaseName)?.milestones || []).length > 0));
+  const phaseNames = milestonePhaseNames(runs);
+
+  if (detail.hideMilestoneCharts) {
+    els.milestoneCharts.append(detailMessage(
+      `Milestone charts hidden because this test has ${detail.milestoneChartCount} milestone-bearing phases. Download runs as JSON for raw milestone data.`,
+    ));
+    return;
+  }
 
   for (const phaseName of phaseNames) {
     const article = document.createElement("article");
@@ -293,6 +317,11 @@ function renderMilestoneCharts(runs) {
 
     drawMilestoneChart(runs, phaseName, svg, legend);
   }
+}
+
+function milestonePhaseNames(runs) {
+  return orderedPhaseNames(runs)
+    .filter((phaseName) => runs.some((run) => (phaseByName(run, phaseName)?.milestones || []).length > 0));
 }
 
 function drawMilestoneChart(runs, phaseName, svg, legend) {
@@ -490,13 +519,37 @@ function drawEmpty(svg, message) {
   addText(svg, dims.width / 2, dims.height / 2, message, "empty-label", "middle");
 }
 
-function renderLatestTable(runs) {
+function renderLatestTable(runs, detail) {
   const latest = runs[runs.length - 1];
   if (!latest) {
     els.latestBody.replaceChildren();
     return;
   }
 
+  const rows = latestValueRows(latest, !detail.hideLatestMilestoneRows);
+  const tableRows = rows.map((row) => {
+    const tr = document.createElement("tr");
+    tr.append(
+      cell(row.metric),
+      cell(`${formatSeconds(row.valueSeconds)}s`),
+      cell(row.runID),
+    );
+    return tr;
+  });
+
+  if (detail.hideLatestMilestoneRows) {
+    const tr = document.createElement("tr");
+    tr.className = "detail-note-row";
+    const td = cell(`Milestone rows hidden because the latest run has ${detail.latestTableRowCount} values. Download runs as JSON for raw milestone data.`);
+    td.colSpan = 3;
+    tr.append(td);
+    tableRows.push(tr);
+  }
+
+  els.latestBody.replaceChildren(...tableRows);
+}
+
+function latestValueRows(latest, includeMilestones) {
   const rows = [{ metric: "total", valueSeconds: latest.totalSeconds, runID: latest.runID }];
   for (const phase of latest.phases) {
     rows.push({
@@ -504,26 +557,25 @@ function renderLatestTable(runs) {
       valueSeconds: phase.valueSeconds,
       runID: latest.runID,
     });
-    for (const milestone of phase.milestones) {
-      rows.push({
-        metric: `milestone.${phase.name}.${milestone.name}`,
-        valueSeconds: milestone.valueSeconds,
-        runID: latest.runID,
-      });
+    if (includeMilestones) {
+      for (const milestone of phase.milestones) {
+        rows.push({
+          metric: `milestone.${phase.name}.${milestone.name}`,
+          valueSeconds: milestone.valueSeconds,
+          runID: latest.runID,
+        });
+      }
     }
   }
 
-  els.latestBody.replaceChildren(
-    ...rows.map((row) => {
-      const tr = document.createElement("tr");
-      tr.append(
-        cell(row.metric),
-        cell(`${formatSeconds(row.valueSeconds)}s`),
-        cell(row.runID),
-      );
-      return tr;
-    }),
-  );
+  return rows;
+}
+
+function detailMessage(text) {
+  const article = document.createElement("article");
+  article.className = "detail-message";
+  article.textContent = text;
+  return article;
 }
 
 function renderSummary(target, items) {

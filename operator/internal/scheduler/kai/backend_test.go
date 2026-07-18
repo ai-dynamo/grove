@@ -23,6 +23,7 @@ import (
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"k8s.io/client-go/tools/record"
 )
 
@@ -36,7 +37,7 @@ func TestBackend_PreparePod(t *testing.T) {
 		WithSchedulerName("default-scheduler").
 		Build()
 
-	b.PreparePod(pod)
+	require.NoError(t, b.PreparePod(pod))
 
 	assert.Equal(t, "kai-scheduler", pod.Spec.SchedulerName)
 }

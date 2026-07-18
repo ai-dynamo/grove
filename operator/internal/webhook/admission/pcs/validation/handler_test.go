@@ -23,6 +23,8 @@ import (
 
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler/lpx"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -117,6 +119,25 @@ func TestValidateCreate(t *testing.T) {
 			errorContains: "failed to cast object to PodCliqueSet",
 		},
 		{
+			name: "unsupported schedulerName fails validation without panic",
+			obj: testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
+				WithReplicas(1).
+				WithTerminationDelay(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithPodCliqueTemplateSpec(
+					testutils.NewPodCliqueTemplateSpecBuilder("test").
+						WithReplicas(1).
+						WithRoleName("test-role").
+						WithMinAvailable(1).
+						WithPodSpec(testutils.NewPodWithBuilderWithDefaultSpec("test-pod", "default").
+							WithSchedulerName(string(groveconfigv1alpha1.SchedulerNameVolcano)).
+							Build().Spec).
+						Build()).
+				Build(),
+			expectError:   true,
+			errorContains: "schedulerName must be an enabled scheduler backend",
+		},
+		{
 			name: "unknown scheduler name returns error without panic",
 			obj: &grovecorev1alpha1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
@@ -188,6 +209,42 @@ func TestValidateCreate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidatePodCliqueSetWithLPXBackend(t *testing.T) {
+	profile := groveconfigv1alpha1.SchedulerProfile{Name: groveconfigv1alpha1.SchedulerNameLPX}
+	registry := &testutils.FakeSchedulerRegistry{
+		Backends: map[string]scheduler.Backend{
+			string(groveconfigv1alpha1.SchedulerNameKube): testutils.NewFakeSchedulerBackend(
+				string(groveconfigv1alpha1.SchedulerNameKube),
+			),
+			string(groveconfigv1alpha1.SchedulerNameLPX): lpx.New(profile),
+		},
+		DefaultBackend: string(groveconfigv1alpha1.SchedulerNameKube),
+	}
+	handler := &Handler{schedRegistry: registry}
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder("worker").
+				WithRoleName("worker").
+				WithReplicas(1).
+				WithPodSpec(corev1.PodSpec{
+					SchedulerName: string(groveconfigv1alpha1.SchedulerNameLPX),
+					Containers: []corev1.Container{{
+						Name:  "worker",
+						Image: "worker",
+					}},
+				}).
+				Build(),
+		).
+		Build()
+
+	require.NoError(t, handler.validatePodCliqueSetWithBackend(context.Background(), pcs))
+
+	pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{}
+	err := handler.validatePodCliqueSetWithBackend(context.Background(), pcs)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not support Grove topology constraints")
 }
 
 // TestValidateUpdate tests validation of PodCliqueSet update requests.

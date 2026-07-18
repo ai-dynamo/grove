@@ -21,7 +21,6 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	schedv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
-	kaitopologyv1alpha1 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/kai/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -31,12 +30,14 @@ import (
 // Scheme is the kubernetes runtime scheme
 var Scheme = runtime.NewScheme()
 
+// init adds Grove and Kubernetes API groups to Scheme via their AddToScheme functions.
+// Scheduler-specific API groups (KAI, Volcano, etc.) are added by each backend's
+// Init into the scheme passed to it and should not be added here.
 func init() {
 	localSchemeBuilder := runtime.NewSchemeBuilder(
 		configv1alpha1.AddToScheme,
 		grovecorev1alpha1.AddToScheme,
 		schedv1alpha1.AddToScheme,
-		kaitopologyv1alpha1.AddToScheme,
 		k8sscheme.AddToScheme,
 	)
 	utilruntime.Must(metav1.AddMetaToScheme(Scheme))

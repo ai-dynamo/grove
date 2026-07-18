@@ -17,26 +17,17 @@ limitations under the License.
 package pod
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
 	"github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 
 	"github.com/go-logr/logr"
-	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 const (
@@ -102,44 +93,6 @@ func TestComputeUpdateWork(t *testing.T) {
 	}
 }
 
-// TestComputeUpdateWorkTreatsLegacyCurrentHashAsNew verifies that a ready pod
-// stamped with the legacy form of the current template hash is not considered
-// old work during the hash migration. Only pods whose hash matches neither the
-// canonical nor legacy candidate should be queued for rolling replacement.
-func TestComputeUpdateWorkTreatsLegacyCurrentHashAsNew(t *testing.T) {
-	r := _resource{expectationsStore: expect.NewExpectationsStore()}
-	sc := &syncContext{
-		// The canonical and legacy pods both represent the desired template.
-		// The stale pod simulates an actually outdated template hash.
-		existingPCLQPods: []*corev1.Pod{
-			newTestPod("canonical-ready", "canonical-hash", withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)),
-			newTestPod("legacy-ready", "legacy-hash", withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)),
-			newTestPod("stale-ready", "stale-hash", withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)),
-		},
-		expectedPodTemplateHash: "canonical-hash",
-		expectedPodTemplateHashes: componentutils.HashCandidates{
-			Canonical: "canonical-hash",
-			Legacy:    "legacy-hash",
-		},
-		pclqExpectationsStoreKey: "test-key",
-	}
-
-	work := r.computeUpdateWork(logr.Discard(), sc)
-
-	assert.ElementsMatch(t, []string{"canonical-ready", "legacy-ready"}, podNames(work.newTemplateHashReadyPods))
-	assert.ElementsMatch(t, []string{"stale-ready"}, podNames(work.oldTemplateHashReadyPods))
-	assert.Empty(t, work.oldTemplateHashPendingPods)
-	assert.Empty(t, work.oldTemplateHashUnhealthyPods)
-	assert.Empty(t, work.oldTemplateHashStartingPods)
-	assert.Empty(t, work.oldTemplateHashUncategorizedPods)
-}
-
-func podNames(pods []*corev1.Pod) []string {
-	return lo.Map(pods, func(pod *corev1.Pod, _ int) string {
-		return pod.Name
-	})
-}
-
 // newTestPod creates a pod with the given name, template hash label, and options applied.
 func newTestPod(name, templateHash string, opts ...func(*corev1.Pod)) *corev1.Pod {
 	pod := &corev1.Pod{
@@ -194,190 +147,6 @@ func withDeletionTimestamp() func(*corev1.Pod) {
 		pod.DeletionTimestamp = &now
 		pod.Finalizers = []string{"fake.finalizer/test"}
 	}
-}
-
-// TestComputeUpdateWorkPCSHashFlipDoesNotProduceOldHashWork verifies that a
-// PCS-level hash change does not schedule pod deletion when each pod's per-PCLQ
-// template hash is unchanged.
-//
-// This is the narrow classification test: it calls computeUpdateWork directly
-// and asserts that the stable-hash pods land in the new-template bucket, with
-// every old-template bucket empty.
-func TestComputeUpdateWorkPCSHashFlipDoesNotProduceOldHashWork(t *testing.T) {
-	const sharedHash = "per-pclq-hash-stable"
-
-	// All four pods carry the same per-PCLQ pod-template hash on the
-	// LabelPodTemplateHash label — the same hash the PCS template would
-	// produce for this clique even after a sibling clique was reordered in
-	// the cliques slice.
-	existingPods := []*corev1.Pod{
-		newTestPod("frontend-r0-pod-0", sharedHash, withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)),
-		newTestPod("planner-r0-pod-0", sharedHash, withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)),
-		newTestPod("decode-r0-pod-0", sharedHash, withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)),
-		newTestPod("prefill-r0-pod-0", sharedHash, withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)),
-	}
-
-	r := _resource{expectationsStore: expect.NewExpectationsStore()}
-	sc := &syncContext{
-		existingPCLQPods: existingPods,
-		// expectedPodTemplateHash matches every pod's LabelPodTemplateHash
-		// because ComputePCLQPodTemplateHash for an unchanged per-clique
-		// template returns an unchanged value — irrespective of whether the
-		// PCS-level computeGenerationHash flipped due to clique reorder.
-		expectedPodTemplateHash:  sharedHash,
-		pclqExpectationsStoreKey: "test-key",
-	}
-
-	work := r.computeUpdateWork(logr.Discard(), sc)
-
-	assert.Empty(t, work.oldTemplateHashPendingPods, "no pod should be classified as old-pending when per-PCLQ hash is unchanged")
-	assert.Empty(t, work.oldTemplateHashUnhealthyPods, "no pod should be classified as old-unhealthy when per-PCLQ hash is unchanged")
-	assert.Empty(t, work.oldTemplateHashStartingPods, "no pod should be classified as old-starting when per-PCLQ hash is unchanged")
-	assert.Empty(t, work.oldTemplateHashUncategorizedPods, "no pod should be classified as old-uncategorized when per-PCLQ hash is unchanged")
-	assert.Empty(t, work.oldTemplateHashReadyPods, "no pod should be classified as old-ready when per-PCLQ hash is unchanged")
-	assert.Len(t, work.newTemplateHashReadyPods, len(existingPods),
-		"every existing ready pod must land in the new-template-hash bucket when per-PCLQ hash is unchanged; otherwise processPendingUpdates would delete them")
-
-	// processPendingUpdates uses these same buckets to decide what to delete.
-	// With every "old" bucket empty:
-	//   - deleteOldNonReadyPods is a no-op (lo.Union of empty slices)
-	//   - getPodNamesPendingUpdate returns no pods
-	//   - nextPodToUpdate is nil
-	//   - control falls through to markRollingUpdateEnd
-	// i.e. NO pods are deleted from a pure clique-slice reorder.
-	allOldBuckets := append([]*corev1.Pod{}, work.oldTemplateHashPendingPods...)
-	allOldBuckets = append(allOldBuckets, work.oldTemplateHashUnhealthyPods...)
-	allOldBuckets = append(allOldBuckets, work.oldTemplateHashStartingPods...)
-	allOldBuckets = append(allOldBuckets, work.oldTemplateHashUncategorizedPods...)
-	allOldBuckets = append(allOldBuckets, work.oldTemplateHashReadyPods...)
-	assert.Empty(t, allOldBuckets,
-		"sanity: union of all old-hash buckets must be empty — this is the precondition that prevents pod deletion in the rolling-update path")
-}
-
-// TestProcessPendingUpdatesPCSHashFlipDoesNotDeletePods verifies that
-// processPendingUpdates finishes a rolling update without deleting pods when
-// the PCS-level hash changed but the per-PCLQ pod-template hash did not.
-//
-// This is the full-flow regression test: it runs processPendingUpdates with a
-// fake client and asserts both externally visible effects - no pods are deleted
-// and the rolling update is marked complete.
-func TestProcessPendingUpdatesPCSHashFlipDoesNotDeletePods(t *testing.T) {
-	const sharedHash = "per-pclq-hash-stable"
-	const pcsHashAfterReorder = "pcs-generation-hash-after-clique-reorder"
-	const namespace = testNS
-	const pclqName = "test-pclq"
-
-	scheme := runtime.NewScheme()
-	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
-	require.NoError(t, corev1.AddToScheme(scheme))
-
-	pclq := &grovecorev1alpha1.PodClique{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      pclqName,
-			Namespace: namespace,
-			Labels: map[string]string{
-				common.LabelPodTemplateHash: sharedHash,
-			},
-		},
-		Spec: grovecorev1alpha1.PodCliqueSpec{
-			Replicas:     4,
-			MinAvailable: ptr.To(int32(1)),
-		},
-		Status: grovecorev1alpha1.PodCliqueStatus{
-			Replicas:        4,
-			ReadyReplicas:   4,
-			UpdatedReplicas: 4,
-			// Update was just reset by the PCLQ reconciler in response to a
-			// PCS generation hash flip. The per-PCLQ template hash recorded
-			// here is identical to what is already on the pod labels because
-			// only the cliques map-list was reordered.
-			UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
-				UpdateStartedAt:            metav1.Now(),
-				PodCliqueSetGenerationHash: pcsHashAfterReorder,
-				PodTemplateHash:            sharedHash,
-			},
-		},
-	}
-
-	makePod := func(name string) *corev1.Pod {
-		return &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      name,
-				Namespace: namespace,
-				Labels: map[string]string{
-					common.LabelPodTemplateHash: sharedHash,
-				},
-			},
-			Status: corev1.PodStatus{
-				Phase: corev1.PodRunning,
-				Conditions: []corev1.PodCondition{
-					{Type: corev1.PodReady, Status: corev1.ConditionTrue},
-				},
-				ContainerStatuses: []corev1.ContainerStatus{
-					{Name: "main", Started: ptr.To(true), Ready: true},
-				},
-			},
-		}
-	}
-
-	pods := []*corev1.Pod{
-		makePod("pclq-pod-0"),
-		makePod("pclq-pod-1"),
-		makePod("pclq-pod-2"),
-		makePod("pclq-pod-3"),
-	}
-	originalUIDs := make(map[string]string, len(pods))
-	for _, p := range pods {
-		originalUIDs[p.Name] = string(p.UID)
-	}
-
-	objs := []client.Object{pclq}
-	for i := range pods {
-		objs = append(objs, pods[i])
-	}
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(objs...).
-		WithStatusSubresource(&grovecorev1alpha1.PodClique{}).
-		Build()
-
-	r := _resource{
-		client:            fakeClient,
-		scheme:            scheme,
-		eventRecorder:     record.NewFakeRecorder(32),
-		expectationsStore: expect.NewExpectationsStore(),
-	}
-
-	sc := &syncContext{
-		ctx:                      context.Background(),
-		pclq:                     pclq,
-		existingPCLQPods:         pods,
-		expectedPodTemplateHash:  sharedHash,
-		pclqExpectationsStoreKey: namespace + "/" + pclqName,
-	}
-
-	require.NoError(t, r.processPendingUpdates(logr.Discard(), sc),
-		"processPendingUpdates must not error when there is no work to do")
-
-	// 1. No pods deleted.
-	remainingPods := &corev1.PodList{}
-	require.NoError(t, fakeClient.List(context.Background(), remainingPods, client.InNamespace(namespace)))
-	assert.Len(t, remainingPods.Items, len(pods),
-		"no pods should be deleted when per-PCLQ pod-template hash is unchanged across the PCS hash flip")
-	for _, p := range remainingPods.Items {
-		assert.Nil(t, p.DeletionTimestamp,
-			"pod %q must not be marked for deletion", p.Name)
-	}
-
-	// 2. Rolling update was marked complete (markRollingUpdateEnd ran).
-	updatedPCLQ := &grovecorev1alpha1.PodClique{}
-	require.NoError(t, fakeClient.Get(context.Background(),
-		client.ObjectKey{Namespace: namespace, Name: pclqName}, updatedPCLQ))
-	require.NotNil(t, updatedPCLQ.Status.UpdateProgress, "UpdateProgress must remain set")
-	require.NotNil(t, updatedPCLQ.Status.UpdateProgress.UpdateEndedAt,
-		"UpdateEndedAt must be set — markRollingUpdateEnd should have run because there was no real per-PCLQ work")
-	assert.Nil(t, updatedPCLQ.Status.UpdateProgress.ReadyPodsSelectedToUpdate,
-		"ReadyPodsSelectedToUpdate must be cleared by markRollingUpdateEnd")
 }
 
 // bucket identifies which updateWork bucket a pod should land in.

@@ -40,18 +40,15 @@ type Backend interface {
 
 	// Init provides a hook to initialize/setup one-time scheduler resources,
 	// called at the startup of grove operator.
-	Init() error
+	Init(directClient client.Client) error
 
 	// SyncPodGang synchronizes (creates/updates) scheduler-specific resources for a PodGang
 	// reacting to a creation or update of a PodGang resource.
 	SyncPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error
 
-	// OnPodGangDelete cleans up scheduler-specific resources for the given PodGang.
-	OnPodGangDelete(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error
-
 	// PreparePod adds scheduler-backend-specific configuration to the given Pod object
 	// prior to its creation (schedulerName, annotations, etc.).
-	PreparePod(pod *corev1.Pod)
+	PreparePod(pod *corev1.Pod) error
 
 	// ValidatePodCliqueSet runs scheduler-specific validations on the PodCliqueSet (e.g. TAS required but not supported).
 	ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) error

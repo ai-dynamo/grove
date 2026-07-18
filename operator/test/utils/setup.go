@@ -20,6 +20,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -42,6 +43,13 @@ func SetupFakeClient(objects ...client.Object) client.WithWatch {
 		WithStatusSubresource(&grovecorev1alpha1.PodCliqueScalingGroup{}).
 		WithStatusSubresource(&grovecorev1alpha1.PodClique{}).
 		WithStatusSubresource(&v1.Pod{}).
+		WithIndex(&v1.Pod{}, ".metadata.controller.uid", func(obj client.Object) []string {
+			controllerRef := metav1.GetControllerOfNoCopy(obj)
+			if controllerRef == nil {
+				return nil
+			}
+			return []string{string(controllerRef.UID)}
+		}).
 		WithObjects(objects...).
 		Build()
 }
