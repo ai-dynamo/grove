@@ -1,5 +1,5 @@
 // /*
-// Copyright 2025 The Grove Authors.
+// Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -104,4 +104,37 @@ func GetPodGangMapEntriesForPCSG(entries []grovecorev1alpha1.PodGangEntry, pcsgN
 		}
 	}
 	return result
+}
+
+// LatestEpochForGenerationHash returns the largest grove.io/epoch among the entries whose
+// PodCliqueSetGenerationHash equals generationHash. It returns nil when no entry matches (nothing has
+// been emitted for that generation). Epochs are unix-nano strings; they are compared numerically so
+// the result is correct regardless of digit width. A missing or non-numeric epoch label is a contract
+// violation (Grove is the sole writer of these labels) returned as an error.
+func LatestEpochForGenerationHash(entries []grovecorev1alpha1.PodGangEntry, generationHash string) (*string, error) {
+	var (
+		latest string
+		maxVal int64
+		found  bool
+	)
+	for i := range entries {
+		if entries[i].PodCliqueSetGenerationHash != generationHash {
+			continue
+		}
+		label, ok := entries[i].Labels[apicommon.LabelEpoch]
+		if !ok {
+			return nil, fmt.Errorf("PodGangMap entry %q is missing the %s label", entries[i].Name, apicommon.LabelEpoch)
+		}
+		val, err := strconv.ParseInt(label, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("PodGangMap entry %q has a non-numeric %s label %q: %w", entries[i].Name, apicommon.LabelEpoch, label, err)
+		}
+		if !found || val > maxVal {
+			latest, maxVal, found = label, val, true
+		}
+	}
+	if !found {
+		return nil, nil
+	}
+	return &latest, nil
 }

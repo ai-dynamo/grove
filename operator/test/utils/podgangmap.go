@@ -1,5 +1,5 @@
 // /*
-// Copyright 2025 The Grove Authors.
+// Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -117,12 +117,6 @@ func NewPodGangMapBuilder(pcsName, namespace string, pcsUID types.UID, replicaIn
 // WithEntries sets the Spec.Entries on the PodGangMap.
 func (b *PodGangMapBuilder) WithEntries(entries ...grovecorev1alpha1.PodGangEntry) *PodGangMapBuilder {
 	b.pgm.Spec.Entries = entries
-	return b
-}
-
-// WithUpdateProgress sets Status.UpdateProgress on the PodGangMap.
-func (b *PodGangMapBuilder) WithUpdateProgress(progress *grovecorev1alpha1.PodGangMapUpdateProgress) *PodGangMapBuilder {
-	b.pgm.Status.UpdateProgress = progress
 	return b
 }
 

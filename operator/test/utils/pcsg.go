@@ -103,6 +103,24 @@ func (b *PodCliqueScalingGroupBuilder) WithPodGangMapping(mapping map[string][]i
 	return b
 }
 
+// WithStatusAvailableReplicas sets the Status.AvailableReplicas for the PodCliqueScalingGroup.
+func (b *PodCliqueScalingGroupBuilder) WithStatusAvailableReplicas(availableReplicas int32) *PodCliqueScalingGroupBuilder {
+	b.pcsg.Status.AvailableReplicas = availableReplicas
+	return b
+}
+
+// WithStatusCurrentPodCliqueSetGenerationHash sets the Status.CurrentPodCliqueSetGenerationHash for the PodCliqueScalingGroup.
+func (b *PodCliqueScalingGroupBuilder) WithStatusCurrentPodCliqueSetGenerationHash(hash *string) *PodCliqueScalingGroupBuilder {
+	b.pcsg.Status.CurrentPodCliqueSetGenerationHash = hash
+	return b
+}
+
+// WithStatusScheduledReplicas sets the Status.ScheduledReplicas for the PodCliqueScalingGroup.
+func (b *PodCliqueScalingGroupBuilder) WithStatusScheduledReplicas(scheduledReplicas int32) *PodCliqueScalingGroupBuilder {
+	b.pcsg.Status.ScheduledReplicas = scheduledReplicas
+	return b
+}
+
 // WithOptions applies option functions to customize the PodCliqueScalingGroup.
 func (b *PodCliqueScalingGroupBuilder) WithOptions(opts ...PCSGOption) *PodCliqueScalingGroupBuilder {
 	for _, opt := range opts {

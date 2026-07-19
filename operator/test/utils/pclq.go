@@ -126,6 +126,42 @@ func (b *PodCliqueBuilder) WithPodGangMapping(mapping map[string]int32) *PodCliq
 	return b
 }
 
+// WithStatusReadyReplicas sets the Status.ReadyReplicas for the PodClique.
+func (b *PodCliqueBuilder) WithStatusReadyReplicas(readyReplicas int32) *PodCliqueBuilder {
+	b.pclq.Status.ReadyReplicas = readyReplicas
+	return b
+}
+
+// WithStatusScheduledReplicas sets the Status.ScheduledReplicas for the PodClique.
+func (b *PodCliqueBuilder) WithStatusScheduledReplicas(scheduledReplicas int32) *PodCliqueBuilder {
+	b.pclq.Status.ScheduledReplicas = scheduledReplicas
+	return b
+}
+
+// WithMinAvailable sets the Spec.MinAvailable for the PodClique.
+func (b *PodCliqueBuilder) WithMinAvailable(minAvailable int32) *PodCliqueBuilder {
+	b.pclq.Spec.MinAvailable = ptr.To(minAvailable)
+	return b
+}
+
+// WithStatusUpdatedReplicas sets the Status.UpdatedReplicas for the PodClique.
+func (b *PodCliqueBuilder) WithStatusUpdatedReplicas(updatedReplicas int32) *PodCliqueBuilder {
+	b.pclq.Status.UpdatedReplicas = updatedReplicas
+	return b
+}
+
+// WithStatusCurrentPodTemplateHash sets the Status.CurrentPodTemplateHash for the PodClique.
+func (b *PodCliqueBuilder) WithStatusCurrentPodTemplateHash(hash *string) *PodCliqueBuilder {
+	b.pclq.Status.CurrentPodTemplateHash = hash
+	return b
+}
+
+// WithStatusCurrentPodCliqueSetGenerationHash sets the Status.CurrentPodCliqueSetGenerationHash for the PodClique.
+func (b *PodCliqueBuilder) WithStatusCurrentPodCliqueSetGenerationHash(hash *string) *PodCliqueBuilder {
+	b.pclq.Status.CurrentPodCliqueSetGenerationHash = hash
+	return b
+}
+
 // WithOptions applies option functions to customize the PodClique.
 func (b *PodCliqueBuilder) WithOptions(opts ...PCLQOption) *PodCliqueBuilder {
 	for _, opt := range opts {

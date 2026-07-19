@@ -1,5 +1,5 @@
 // /*
-// Copyright 2025 The Grove Authors.
+// Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@ import (
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:shortName={pgm}
-// +kubebuilder:subresource:status
 
 // PodGangMap is the desired-state mapping between PodGangs and their constituent
 // PodClique and PodCliqueScalingGroup pod counts for a single PodCliqueSet replica.
@@ -34,11 +33,6 @@ type PodGangMap struct {
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 	// Spec defines the desired PodGang-to-pod-count mapping for this PodCliqueSet replica.
 	Spec PodGangMapSpec `json:"spec,omitempty"`
-	// Status records the observed progress of an in-flight coherent update for this
-	// PodCliqueSet replica. It is populated only while a coherent update is in flight
-	// and is cleared once the update completes.
-	// +optional
-	Status PodGangMapStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -76,8 +70,8 @@ type PodGangEntry struct {
 	// standalone PodClique tail pods are subsumed into it. When false the entry collapses the tail
 	// PodGangs of a single PodCliqueScalingGroup within one epoch into one entry: PCSGReplicaIndices
 	// holds that epoch's rolled indices for the PCSG, which the PodGang materializer expands into one
-	// PodGang per index. It is the durable marker that lets the step structure recorded in Status be
-	// recovered from the entries after a crash between the spec and status writes.
+	// PodGang per index. It is the durable marker that lets the coherent update's step structure be
+	// reconstructed from the entries alone, so no separate step record needs to be persisted.
 	// +optional
 	IsEpochAnchor bool `json:"isEpochAnchor,omitempty"`
 	// PodCliques maps standalone PodClique name to the number of pods that belong to this PodGang.
@@ -104,65 +98,3 @@ type PodGangEntry struct {
 	// +optional
 	DependsOn []string `json:"dependsOn,omitempty"`
 }
-
-// PodGangMapStatus records the observed progress of a coherent update for a
-// PodCliqueSet replica.
-type PodGangMapStatus struct {
-	// UpdateProgress records the steps and sub-steps emitted so far for the
-	// in-flight coherent update, along with their readiness. It is non-nil only
-	// while a coherent update is in flight for this replica and is cleared once
-	// the update completes.
-	// +optional
-	UpdateProgress *PodGangMapUpdateProgress `json:"updateProgress,omitempty"`
-}
-
-// PodGangMapUpdateProgress records the observed step structure of an in-flight
-// coherent update.
-type PodGangMapUpdateProgress struct {
-	// Steps records the update's steps in emission order. It gives a view of
-	// what is done and what is in progress, and lets the coherent update path
-	// detect step boundaries and locate the anchor a step's standalone tail
-	// pods subsume into.
-	Steps []PodGangMapUpdateStep `json:"steps"`
-}
-
-// PodGangMapUpdateStep records one step of a coherent update.
-type PodGangMapUpdateStep struct {
-	// IsAnchorBearing is true when this step produces an anchor entry (in its
-	// first sub-step). It is false for a leftover step that produces no anchor.
-	// When IsAnchorBearing is true, the anchor's epoch is SubSteps[0].Epoch.
-	IsAnchorBearing bool `json:"isAnchorBearing"`
-	// State is the step's readiness. It is Ready when every sub-step is Ready,
-	// otherwise InProgress. Readiness is derived from PodGang readiness, which
-	// never un-sets, so State only ever advances from InProgress to Ready.
-	State PodGangMapUpdateState `json:"state"`
-	// SubSteps are this step's sub-steps in emission order. For an
-	// anchor-bearing step, SubSteps[0] is the anchor-bearing sub-step and the
-	// rest are tail sub-steps.
-	SubSteps []PodGangMapUpdateSubStep `json:"subSteps"`
-}
-
-// PodGangMapUpdateSubStep records one sub-step of a coherent update. A sub-step
-// corresponds to exactly one batch of PodGangs sharing a single epoch.
-type PodGangMapUpdateSubStep struct {
-	// Epoch is the grove.io/epoch value shared by every PodGang this sub-step
-	// emitted.
-	Epoch string `json:"epoch"`
-	// State is the sub-step's readiness. It is Ready when every PodGang at Epoch
-	// has become ready at least once, otherwise InProgress. Readiness never
-	// un-sets, so State only ever advances from InProgress to Ready.
-	State PodGangMapUpdateState `json:"state"`
-}
-
-// PodGangMapUpdateState is the readiness of a step or sub-step of a coherent
-// update.
-type PodGangMapUpdateState string
-
-const (
-	// PodGangMapUpdateStateInProgress indicates the step or sub-step has been
-	// emitted but is not yet fully ready.
-	PodGangMapUpdateStateInProgress PodGangMapUpdateState = "InProgress"
-	// PodGangMapUpdateStateReady indicates every PodGang in the step or sub-step
-	// has become ready at least once.
-	PodGangMapUpdateStateReady PodGangMapUpdateState = "Ready"
-)

@@ -1,5 +1,5 @@
 // /*
-// Copyright 2025 The Grove Authors.
+// Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -809,7 +809,7 @@ func TestGuardAgainstStaleSpecDuringCoherentUpdate(t *testing.T) {
 		if updatedStandalone != nil {
 			pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
 				UpdateStartedAt:             metav1.Now(),
-				UpdatedStandalonePodCliques: updatedStandalone,
+				InScopeStandalonePodCliques: updatedStandalone,
 			}
 		}
 		return pcs
@@ -845,7 +845,7 @@ func TestGuardAgainstStaleSpecDuringCoherentUpdate(t *testing.T) {
 			pclq: mkPCLQ(oldTpl, ptr.To(oldTpl), nil),
 		},
 		{
-			name: "Clique not in UpdatedStandalonePodCliques bypasses guard",
+			name: "Clique not in InScopeStandalonePodCliques bypasses guard",
 			pcs:  mkPCS(grovecorev1alpha1.CoherentStrategy, newHash, []string{"other-clique"}),
 			pclq: mkPCLQ(oldTpl, ptr.To(oldTpl), nil),
 		},

@@ -1,5 +1,5 @@
 // /*
-// Copyright 2025 The Grove Authors.
+// Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,9 +19,12 @@ package utils
 import (
 	"testing"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"k8s.io/utils/ptr"
 )
 
 func TestGetPodGangMapEntriesByGenerationHash(t *testing.T) {
@@ -131,4 +134,82 @@ func TestGetPodGangMapEntriesForPCSG(t *testing.T) {
 		result := GetPodGangMapEntriesForPCSG(nil, "pcs-0-prefill")
 		assert.Empty(t, result)
 	})
+}
+
+func TestLatestEpochForGenerationHash(t *testing.T) {
+	epochEntry := func(name, hash, epoch string) grovecorev1alpha1.PodGangEntry {
+		return grovecorev1alpha1.PodGangEntry{
+			Name:                       name,
+			PodCliqueSetGenerationHash: hash,
+			Labels:                     map[string]string{apicommon.LabelEpoch: epoch},
+		}
+	}
+	tests := []struct {
+		name      string
+		entries   []grovecorev1alpha1.PodGangEntry
+		hash      string
+		wantEpoch *string
+		wantErr   bool
+	}{
+		{
+			name:      "nil when no entry matches the hash",
+			entries:   []grovecorev1alpha1.PodGangEntry{epochEntry("pg-0", "old", "100")},
+			hash:      "new",
+			wantEpoch: nil,
+		},
+		{
+			name:      "nil for empty entries",
+			entries:   nil,
+			hash:      "new",
+			wantEpoch: nil,
+		},
+		{
+			name:      "returns the sole matching epoch",
+			entries:   []grovecorev1alpha1.PodGangEntry{epochEntry("pg-0", "new", "100")},
+			hash:      "new",
+			wantEpoch: ptr.To("100"),
+		},
+		{
+			name: "returns the numerically largest epoch, ignoring digit width",
+			entries: []grovecorev1alpha1.PodGangEntry{
+				epochEntry("pg-0", "new", "9"),
+				epochEntry("pg-1", "new", "100"),
+				epochEntry("pg-2", "new", "20"),
+			},
+			hash:      "new",
+			wantEpoch: ptr.To("100"),
+		},
+		{
+			name: "considers only entries at the requested hash",
+			entries: []grovecorev1alpha1.PodGangEntry{
+				epochEntry("pg-old", "old", "999"),
+				epochEntry("pg-new", "new", "100"),
+			},
+			hash:      "new",
+			wantEpoch: ptr.To("100"),
+		},
+		{
+			name:    "error when a matching entry is missing the epoch label",
+			entries: []grovecorev1alpha1.PodGangEntry{{Name: "pg-0", PodCliqueSetGenerationHash: "new"}},
+			hash:    "new",
+			wantErr: true,
+		},
+		{
+			name:    "error when a matching entry has a non-numeric epoch label",
+			entries: []grovecorev1alpha1.PodGangEntry{epochEntry("pg-0", "new", "not-a-number")},
+			hash:    "new",
+			wantErr: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := LatestEpochForGenerationHash(tc.entries, tc.hash)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantEpoch, got)
+		})
+	}
 }

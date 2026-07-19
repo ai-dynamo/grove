@@ -1,5 +1,4 @@
 // /*
-
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -208,28 +207,21 @@ type PodCliqueSetReplicaUpdateProgress struct {
 	// running the latest specification.
 	// +optional
 	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
-	// InFlightPodGangs are the names of PodGangs that are part of the current update
-	// iteration for this replica. The orchestrator waits for all of them to become
-	// available before advancing to the next iteration.
-	// Deprecated: use InFlightEpoch. Will be removed once all consumers migrate.
+	// InFlightEpochs are the grove.io/epochs of the PodGangs currently being rolled
+	// (in flight) for this replica's coherent update. The orchestrator waits for the
+	// PodGangs at these epochs to become ready before advancing to the next iteration.
+	// Today a single epoch is in flight at a time; the field is a list so that a future
+	// iteration supporting concurrent in-flight batches needs no API change. It is cleared
+	// once the coherent update for this replica completes.
 	// +optional
-	InFlightPodGangs []string `json:"inFlightPodGangs,omitempty"`
-	// InFlightEpoch is the grove.io/epoch of the PodGangs currently being rolled
-	// (in flight) for this replica's coherent update. It is cleared once the
-	// coherent update for this replica completes.
-	// +optional
-	InFlightEpoch *string `json:"inFlightEpoch,omitempty"`
-	// ErrorMessage captures the reason the update of this replica is stalled or failing, if any.
-	// Deprecated: use WaitingFor. Will be removed once all consumers migrate.
-	// +optional
-	ErrorMessage *string `json:"errorMessage,omitempty"`
-	// WaitingFor describes the current reason the orchestrator has not advanced
+	InFlightEpochs []string `json:"inFlightEpochs,omitempty"`
+	// Message describes the current reason the orchestrator has not advanced
 	// the coherent update this reconcile. Populated whenever any advance
-	// precondition is not met: PodGangs at the current InFlightEpoch not yet
+	// precondition is not met: PodGangs at the current InFlightEpochs not yet
 	// reporting LastReady, subsumed pods still coming up, or an availability
 	// budget preventing further takedown. Cleared once all preconditions hold.
 	// +optional
-	WaitingFor *string `json:"waitingFor,omitempty"`
+	Message *string `json:"message,omitempty"`
 }
 
 // RollingUpdateConfiguration carries per-component knobs that bound disruption

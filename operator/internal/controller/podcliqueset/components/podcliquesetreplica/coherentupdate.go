@@ -1,5 +1,5 @@
 // /*
-// Copyright 2025 The Grove Authors.
+// Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -26,9 +26,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
-	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
-	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/go-logr/logr"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -38,7 +36,7 @@ import (
 // orchestrateCoherentUpdate manages the coherent update process for PodCliqueSet replicas.
 // The orchestrator's responsibilities are narrowed to state machine progression:
 //   - Pick the next replica to update
-//   - Wait for InFlightPodGangs to become Ready (PodGangConditionTypeReady)
+//   - Wait for the latest current-hash epoch's PodGangs to become Ready
 //   - Advance to the next iteration or mark replica/update as complete
 //
 // It does NOT compute PodGangMap entries (PodGangMap component does that),
@@ -84,28 +82,36 @@ func (r _resource) orchestrateCoherentUpdate(ctx context.Context, logger logr.Lo
 	return r.patchUpdateProgressStatus(ctx, logger, pcs, original)
 }
 
-// checkAndAdvanceCoherentUpdate checks if the current in-flight PodGangs are Ready.
-// If they are not yet Ready, it re-queues. If they are Ready and the replica is fully
-// updated, it marks the replica as done and returns (true, nil) so the caller falls through to
-// pick the next replica or close the update. Otherwise, it clears InFlightPodGangs and re-queues
-// so that the PodGangMap component can compute the next iteration's entries.
+// checkAndAdvanceCoherentUpdate drives one reconcile of the in-flight replica's coherent update.
+//
+// Under reconstruct-from-Spec the orchestrator holds no persisted control state: each reconcile it
+// recomputes the latest current-hash epoch from the replica's PodGangMap (via latestCurrentHashEpoch)
+// and gates on that epoch's readiness. InFlightEpochs mirrors that latest epoch and Message mirrors
+// the current wait reason (observability + wait gate); both are overwritten each reconcile only when
+// they change, and InFlightEpochs is never nil'd until the replica completes.
+//
+// Outcomes:
+//   - replica already fully rolled  -> mark done, return (true, nil), caller falls through.
+//   - PGM absent / no current-hash epoch yet -> requeue (PGM component has not emitted the first
+//     sub-step).
+//   - latest epoch not yet ready    -> reflect epoch + reason, requeue (wait).
+//   - latest epoch ready but replica incomplete -> reflect epoch, requeue so the PGM component emits
+//     the next sub-step (advancing the latest epoch next reconcile).
 //
 // The boolean return distinguishes "replica done, caller should continue" from the other terminal
-// outcomes (waiting/requeue, in-progress) that always pair (false, err). markCurrentReplicaUpdateDone
-// only patches status; the PCS controller's For-watch uses GenerationChangedPredicate and skips
-// status-only events, so without same-reconcile fall-through the outer UpdateEndedAt would never
-// be minted.
+// outcomes (waiting/requeue). markCurrentReplicaUpdateDone only patches status; the PCS controller's
+// For-watch uses GenerationChangedPredicate and skips status-only events, so without same-reconcile
+// fall-through the outer UpdateEndedAt would never be minted.
 func (r _resource) checkAndAdvanceCoherentUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, updateWork *coherentPendingWork) (replicaDone bool, err error) {
-	// NOTE: While the API make a provision in the PCS status to potentially allow more than one PCS replica to be updated concurrently, none of the update strategies
-	// currently supported allow more than one PCS replica to be updated. Therefore, we only check for index 0 of `CurrentlyUpdating`
+	// NOTE: While the API makes a provision in the PCS status to potentially allow more than one PCS replica to be updated concurrently, none of the update strategies
+	// currently supported allow more than one PCS replica to be updated. Therefore, we only check for index 0 of `CurrentlyUpdating`.
 	// If and when concurrent PCS replica update is supported then we should iterate over all currently updating replicas.
 	currentProgress := &pcs.Status.UpdateProgress.CurrentlyUpdating[0]
 	replicaIndex := currentProgress.ReplicaIndex
 
 	// Early-exit when this replica is already fully updated. computeCoherentPendingWork derives
-	// updateWork.doneReplicaIndices from PCLQ/PCSG state rather than InFlightPodGangs, so the
-	// determination is independent of any in-flight bookkeeping. Skipping populateInFlightPodGangs
-	// in this case avoids the post-completion "no new in-flight PodGangs found, requeueing" loop.
+	// updateWork.doneReplicaIndices from PCLQ/PCSG state, so the determination is independent of any
+	// in-flight bookkeeping.
 	if slices.Contains(updateWork.doneReplicaIndices, int(replicaIndex)) {
 		logger.Info("Coherent update for replica completed", "replicaIndex", replicaIndex)
 		if err = r.markCurrentReplicaUpdateDone(ctx, logger, pcs); err != nil {
@@ -114,46 +120,42 @@ func (r _resource) checkAndAdvanceCoherentUpdate(ctx context.Context, logger log
 		return true, nil
 	}
 
-	if len(currentProgress.InFlightPodGangs) == 0 {
-		return false, r.populateInFlightPodGangs(ctx, logger, pcs, currentProgress)
-	}
-
-	// Check if all in-flight PodGangs have become Ready.
-	ready, err := componentutils.ArePodGangsReady(ctx, r.client, pcs.Namespace, currentProgress.InFlightPodGangs)
+	// Recompute the latest current-hash epoch from the PodGangMap each reconcile.
+	latestEpoch, err := r.latestCurrentHashEpoch(ctx, pcs, replicaIndex)
 	if err != nil {
-		return false, groveerr.WrapError(err,
-			errCodeListPCLQs,
-			component.OperationSync,
-			"failed to check readiness of in-flight PodGangs",
-		)
-	}
-	if !ready {
-		logger.Info("Waiting for in-flight PodGangs to become Ready",
-			"replicaIndex", replicaIndex,
-			"inFlightPodGangs", currentProgress.InFlightPodGangs)
-		return false, groveerr.New(
-			groveerr.ErrCodeContinueReconcileAndRequeue,
-			component.OperationSync,
-			fmt.Sprintf("coherent update of PodCliqueSet replica %d in progress, waiting for in-flight PodGangs to become Ready", replicaIndex),
-		)
-	}
-
-	// All in-flight PodGangs are Ready but the replica is not yet fully updated. Clear
-	// InFlightPodGangs and requeue so the PodGangMap component computes the next iteration's
-	// entries on the next reconcile. The requeue is required because patchUpdateProgressStatus
-	// only mutates status, and the PCS controller's For-watch uses GenerationChangedPredicate —
-	// without an explicit requeue here no further reconcile would fire to advance the update.
-	logger.Info("Current iteration complete, seeking next update target", "replicaIndex", replicaIndex)
-	original := pcs.DeepCopy()
-	pcs.Status.UpdateProgress.CurrentlyUpdating[0].InFlightPodGangs = nil
-	if err := r.patchUpdateProgressStatus(ctx, logger, pcs, original); err != nil {
 		return false, err
 	}
-	return false, groveerr.New(
-		groveerr.ErrCodeContinueReconcileAndRequeue,
-		component.OperationSync,
-		fmt.Sprintf("coherent update of PodCliqueSet replica %d cleared InFlightPodGangs; requeuing for next iteration", replicaIndex),
-	)
+	if latestEpoch == nil {
+		// The PodGangMap component has not emitted a current-hash sub-step yet. Requeue.
+		return false, r.requeueCoherentUpdate(ctx, logger, pcs,
+			fmt.Sprintf("no current-hash epoch present in PodGangMap for replica %d, requeueing", replicaIndex))
+	}
+
+	// Reflect the latest epoch in status (overwrite, never clear), patching only on change.
+	if !slices.Equal(currentProgress.InFlightEpochs, []string{*latestEpoch}) {
+		original := pcs.DeepCopy()
+		currentProgress.InFlightEpochs = []string{*latestEpoch}
+		if err = r.patchUpdateProgressStatus(ctx, logger, pcs, original); err != nil {
+			return false, err
+		}
+	}
+
+	// Gate advance on the latest epoch's readiness.
+	ready, err := componentutils.AllPodGangsAtEpochEverReady(ctx, r.client, pcs.Namespace, pcs.Name, replicaIndex, *latestEpoch)
+	if err != nil {
+		return false, groveerr.WrapError(err, errCodeListPCLQs, component.OperationSync,
+			fmt.Sprintf("failed to check readiness of epoch %s for replica %d", *latestEpoch, replicaIndex))
+	}
+	if !ready {
+		return false, r.requeueCoherentUpdate(ctx, logger, pcs,
+			fmt.Sprintf("waiting for epoch %s PodGangs of replica %d to become Ready", *latestEpoch, replicaIndex))
+	}
+
+	// Latest epoch ready but the replica is not fully updated: current sub-step complete. Requeue so
+	// the PodGangMap component emits the next sub-step. InFlightEpochs is left reflecting the
+	// (now-ready) latest epoch; it is overwritten with the new epoch next reconcile.
+	return false, r.requeueCoherentUpdate(ctx, logger, pcs,
+		fmt.Sprintf("epoch %s of replica %d complete; awaiting next sub-step", *latestEpoch, replicaIndex))
 }
 
 // computeCoherentPendingWork identifies which replicas still need updating vs. which are done.
@@ -189,60 +191,41 @@ func (w *coherentPendingWork) getNextPendingReplicaByIndex() *int {
 	return &w.pendingReplicaIndices[0]
 }
 
-// populateInFlightPodGangs reads the PodGangMap for the currently-updating replica,
-// identifies new-hash entries whose PodGangs are not yet Ready, and sets them
-// as InFlightPodGangs in the PCS status.
-func (r _resource) populateInFlightPodGangs(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, currentProgress *grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress) error {
-	replicaIndex := currentProgress.ReplicaIndex
+// latestCurrentHashEpoch reads the PodGangMap for the replica and returns the latest grove.io/epoch
+// among its current-hash entries, or nil when none have been emitted yet. A missing PodGangMap is
+// treated as "not emitted yet" (nil) so the caller requeues rather than erroring — the PodGangMap
+// component creates it on its own reconcile.
+func (r _resource) latestCurrentHashEpoch(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, replicaIndex int32) (*string, error) {
 	pgmName := apicommon.GeneratePodGangMapName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: int(replicaIndex)})
-
 	pgm, err := componentutils.GetPodGangMap(ctx, r.client, pgmName, pcs.Namespace)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return groveerr.New(
-				groveerr.ErrCodeContinueReconcileAndRequeue,
-				component.OperationSync,
-				fmt.Sprintf("PodGangMap %s not found for replica %d, requeueing", pgmName, replicaIndex),
-			)
+			return nil, nil
 		}
-		return groveerr.WrapError(err,
-			errCodeListPCLQs,
-			component.OperationSync,
-			fmt.Sprintf("failed to get PodGangMap %s for replica %d", pgmName, replicaIndex),
-		)
+		return nil, groveerr.WrapError(err, errCodeListPCLQs, component.OperationSync,
+			fmt.Sprintf("failed to get PodGangMap %s for replica %d", pgmName, replicaIndex))
 	}
+	latestEpoch, err := componentutils.LatestEpochForGenerationHash(pgm.Spec.Entries, *pcs.Status.CurrentGenerationHash)
+	if err != nil {
+		return nil, groveerr.WrapError(err, errCodeListPCLQs, component.OperationSync,
+			fmt.Sprintf("failed to derive latest current-hash epoch from PodGangMap %s for replica %d", pgmName, replicaIndex))
+	}
+	return latestEpoch, nil
+}
 
-	newHashEntries := componentutils.FilterPodGangMapEntriesByGenerationHash(pgm.Spec.Entries, *pcs.Status.CurrentGenerationHash)
-
-	var inFlightNames []string
-	for _, entry := range newHashEntries {
-		pg, err := componentutils.GetPodGang(ctx, r.client, entry.Name, pcs.Namespace)
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				inFlightNames = append(inFlightNames, entry.Name)
-				continue
-			}
-			return groveerr.WrapError(err,
-				errCodeListPCLQs,
-				component.OperationSync,
-				fmt.Sprintf("failed to get PodGang %s to check availability", entry.Name),
-			)
-		}
-		if !k8sutils.IsConditionTrue(pg.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeReady)) {
-			inFlightNames = append(inFlightNames, entry.Name)
+// requeueCoherentUpdate records reason on CurrentlyUpdating[0].Message for observability (patching
+// only when the message actually changes, so a steady wait does not write every reconcile) and
+// returns a soft-requeue error carrying the same reason. It re-indexes CurrentlyUpdating[0] from the
+// live pcs rather than trusting a caller-held pointer, because an earlier status patch in this
+// reconcile replaces the backing slice.
+func (r _resource) requeueCoherentUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, reason string) error {
+	currentProgress := &pcs.Status.UpdateProgress.CurrentlyUpdating[0]
+	if currentProgress.Message == nil || *currentProgress.Message != reason {
+		original := pcs.DeepCopy()
+		currentProgress.Message = ptr.To(reason)
+		if err := r.patchUpdateProgressStatus(ctx, logger, pcs, original); err != nil {
+			return err
 		}
 	}
-
-	if len(inFlightNames) == 0 {
-		return groveerr.New(
-			groveerr.ErrCodeContinueReconcileAndRequeue,
-			component.OperationSync,
-			fmt.Sprintf("no new in-flight PodGangs found for replica %d, requeueing", replicaIndex),
-		)
-	}
-
-	logger.Info("Populating InFlightPodGangs from PodGangMap", "replicaIndex", replicaIndex, "inFlightPodGangs", inFlightNames)
-	original := pcs.DeepCopy()
-	currentProgress.InFlightPodGangs = inFlightNames
-	return r.patchUpdateProgressStatus(ctx, logger, pcs, original)
+	return groveerr.New(groveerr.ErrCodeContinueReconcileAndRequeue, component.OperationSync, reason)
 }

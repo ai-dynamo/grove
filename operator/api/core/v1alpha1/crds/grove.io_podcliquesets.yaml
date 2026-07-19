@@ -11265,26 +11265,25 @@ spec:
                       description: PodCliqueSetReplicaUpdateProgress captures the
                         progress of an update for a specific PodCliqueSet replica.
                       properties:
-                        errorMessage:
+                        inFlightEpochs:
                           description: |-
-                            ErrorMessage captures the reason the update of this replica is stalled or failing, if any.
-                            Deprecated: use WaitingFor. Will be removed once all consumers migrate.
-                          type: string
-                        inFlightEpoch:
-                          description: |-
-                            InFlightEpoch is the grove.io/epoch of the PodGangs currently being rolled
-                            (in flight) for this replica's coherent update. It is cleared once the
-                            coherent update for this replica completes.
-                          type: string
-                        inFlightPodGangs:
-                          description: |-
-                            InFlightPodGangs are the names of PodGangs that are part of the current update
-                            iteration for this replica. The orchestrator waits for all of them to become
-                            available before advancing to the next iteration.
-                            Deprecated: use InFlightEpoch. Will be removed once all consumers migrate.
+                            InFlightEpochs are the grove.io/epochs of the PodGangs currently being rolled
+                            (in flight) for this replica's coherent update. The orchestrator waits for the
+                            PodGangs at these epochs to become ready before advancing to the next iteration.
+                            Today a single epoch is in flight at a time; the field is a list so that a future
+                            iteration supporting concurrent in-flight batches needs no API change. It is cleared
+                            once the coherent update for this replica completes.
                           items:
                             type: string
                           type: array
+                        message:
+                          description: |-
+                            Message describes the current reason the orchestrator has not advanced
+                            the coherent update this reconcile. Populated whenever any advance
+                            precondition is not met: PodGangs at the current InFlightEpochs not yet
+                            reporting LastReady, subsumed pods still coming up, or an availability
+                            budget preventing further takedown. Cleared once all preconditions hold.
+                          type: string
                         replicaIndex:
                           description: ReplicaIndex is the replica index of the PodCliqueSet
                             that is being updated.
@@ -11301,14 +11300,6 @@ spec:
                           description: UpdateStartedAt is the time at which the update
                             started for this PodCliqueSet replica index.
                           format: date-time
-                          type: string
-                        waitingFor:
-                          description: |-
-                            WaitingFor describes the current reason the orchestrator has not advanced
-                            the coherent update this reconcile. Populated whenever any advance
-                            precondition is not met: PodGangs at the current InFlightEpoch not yet
-                            reporting LastReady, subsumed pods still coming up, or an availability
-                            budget preventing further takedown. Cleared once all preconditions hold.
                           type: string
                       required:
                       - replicaIndex

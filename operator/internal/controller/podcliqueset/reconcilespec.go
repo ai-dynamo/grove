@@ -150,10 +150,19 @@ func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1alp
 		if err != nil {
 			return fmt.Errorf("could not detect out-of-date components for PodCliqueSet %v: %w", client.ObjectKeyFromObject(pcs), err)
 		}
-		pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
-			UpdateStartedAt:               metav1.Now(),
-			InScopeStandalonePodCliques:   updatedStandalonePCLQs,
-			InScopePodCliqueScalingGroups: updatedPCSGs,
+		prior := pcs.Status.UpdateProgress
+		if prior != nil && prior.UpdateEndedAt == nil {
+			// A generation change landed mid-update. Merge the newly out-of-date components into the
+			// frozen in-scope set so components already being rolled are not dropped, and keep the
+			// in-flight replica bookkeeping (UpdateStartedAt, CurrentlyUpdating) intact.
+			prior.InScopeStandalonePodCliques = unionSorted(prior.InScopeStandalonePodCliques, updatedStandalonePCLQs)
+			prior.InScopePodCliqueScalingGroups = unionSorted(prior.InScopePodCliqueScalingGroups, updatedPCSGs)
+		} else {
+			pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+				UpdateStartedAt:               metav1.Now(),
+				InScopeStandalonePodCliques:   updatedStandalonePCLQs,
+				InScopePodCliqueScalingGroups: updatedPCSGs,
+			}
 		}
 	} else {
 		pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
@@ -209,6 +218,14 @@ func (r *Reconciler) findUpdatedStandalonePCLQsAndPCSGs(ctx context.Context, pcs
 	standalone = sets.List(standaloneSet)
 	pcsgs = sets.List(pcsgSet)
 	return standalone, pcsgs, nil
+}
+
+// unionSorted returns the sorted, de-duplicated union of two string slices. sets.List is sorted for
+// ordered types, matching the ascending order findUpdatedStandalonePCLQsAndPCSGs produces.
+func unionSorted(a, b []string) []string {
+	s := sets.New(a...)
+	s.Insert(b...)
+	return sets.List(s)
 }
 
 // indexPCLQsByCliqueName groups the supplied PodCliques by unqualified clique name.

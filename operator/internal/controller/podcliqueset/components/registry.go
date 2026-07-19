@@ -25,7 +25,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podcliquescalinggroup"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podcliquesetreplica"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podgang"
-	podgangmap "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podgangmap-new"
+	podgangmap "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podgangmap"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/resourceclaim"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/role"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/rolebinding"

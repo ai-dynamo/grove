@@ -914,3 +914,121 @@ func TestGetPCSGReplicasFromSpec(t *testing.T) {
 	result := GetPCSGReplicasFromPCSTemplateSpec(pcs)
 	assert.Equal(t, map[string]int32{"prefill": 4, "decode": 3}, result)
 }
+
+func TestGetPCSReplicaIndexFromObjectMeta(t *testing.T) {
+	tests := []struct {
+		name    string
+		objMeta metav1.ObjectMeta
+		want    int
+		wantErr bool
+	}{
+		{
+			name:    "valid replica index label",
+			objMeta: metav1.ObjectMeta{Name: "pcs-2-frontend", Labels: map[string]string{common.LabelPodCliqueSetReplicaIndex: "2"}},
+			want:    2,
+		},
+		{
+			name:    "zero replica index",
+			objMeta: metav1.ObjectMeta{Name: "pcs-0-frontend", Labels: map[string]string{common.LabelPodCliqueSetReplicaIndex: "0"}},
+			want:    0,
+		},
+		{
+			name:    "missing label is an error",
+			objMeta: metav1.ObjectMeta{Name: "pcs-0-frontend", Labels: map[string]string{}},
+			wantErr: true,
+		},
+		{
+			name:    "nil labels is an error",
+			objMeta: metav1.ObjectMeta{Name: "pcs-0-frontend"},
+			wantErr: true,
+		},
+		{
+			name:    "non-numeric label is an error",
+			objMeta: metav1.ObjectMeta{Name: "pcs-0-frontend", Labels: map[string]string{common.LabelPodCliqueSetReplicaIndex: "abc"}},
+			wantErr: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := GetPCSReplicaIndexFromObjectMeta(tc.objMeta)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestIsPCSReplicaInCurrentlyUpdating(t *testing.T) {
+	ended := ptr.To(metav1.Now())
+	updating := func(replicaIndices ...int32) *grovecorev1alpha1.PodCliqueSetUpdateProgress {
+		cu := make([]grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress, 0, len(replicaIndices))
+		for _, idx := range replicaIndices {
+			cu = append(cu, grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{ReplicaIndex: idx})
+		}
+		return &grovecorev1alpha1.PodCliqueSetUpdateProgress{CurrentlyUpdating: cu}
+	}
+	tests := []struct {
+		name           string
+		updateProgress *grovecorev1alpha1.PodCliqueSetUpdateProgress
+		replicaIndex   int
+		want           bool
+	}{
+		{name: "nil UpdateProgress", updateProgress: nil, replicaIndex: 0, want: false},
+		{name: "replica in CurrentlyUpdating", updateProgress: updating(0), replicaIndex: 0, want: true},
+		{name: "replica not in CurrentlyUpdating", updateProgress: updating(1), replicaIndex: 0, want: false},
+		{name: "one of several updating replicas", updateProgress: updating(1, 3), replicaIndex: 3, want: true},
+		{
+			name: "replica present but UpdateEndedAt set",
+			updateProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0, UpdateEndedAt: ended}},
+			},
+			replicaIndex: 0,
+			want:         false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pcs := &grovecorev1alpha1.PodCliqueSet{Status: grovecorev1alpha1.PodCliqueSetStatus{UpdateProgress: tc.updateProgress}}
+			assert.Equal(t, tc.want, IsPCSReplicaInCurrentlyUpdating(pcs, tc.replicaIndex))
+		})
+	}
+}
+
+func TestIsPCSReplicaUnderCoherentUpdate(t *testing.T) {
+	coherent := func() *grovecorev1alpha1.PodCliqueSetUpdateStrategy {
+		return &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.CoherentStrategy}
+	}
+	inProgressUpdating0 := &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+		UpdateStartedAt:   metav1.Now(),
+		CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
+	}
+	tests := []struct {
+		name         string
+		strategy     *grovecorev1alpha1.PodCliqueSetUpdateStrategy
+		progress     *grovecorev1alpha1.PodCliqueSetUpdateProgress
+		replicaIndex int
+		want         bool
+	}{
+		{name: "coherent update in progress on this replica", strategy: coherent(), progress: inProgressUpdating0, replicaIndex: 0, want: true},
+		{name: "coherent update in progress on different replica", strategy: coherent(), progress: inProgressUpdating0, replicaIndex: 1, want: false},
+		{name: "coherent strategy but no update in progress", strategy: coherent(), progress: nil, want: false},
+		{
+			name:     "rolling recreate strategy is never coherent",
+			strategy: &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.RollingRecreateStrategy},
+			progress: inProgressUpdating0,
+			want:     false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pcs := &grovecorev1alpha1.PodCliqueSet{
+				Spec:   grovecorev1alpha1.PodCliqueSetSpec{UpdateStrategy: tc.strategy},
+				Status: grovecorev1alpha1.PodCliqueSetStatus{UpdateProgress: tc.progress},
+			}
+			assert.Equal(t, tc.want, IsPCSReplicaUnderCoherentUpdate(pcs, tc.replicaIndex))
+		})
+	}
+}

@@ -18,7 +18,9 @@ package utils
 
 import (
 	"context"
+	"fmt"
 	"slices"
+	"strconv"
 
 	"github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
@@ -171,6 +173,44 @@ func IsCoherentUpdateInProgress(pcs *grovecorev1alpha1.PodCliqueSet) bool {
 	return IsCoherentStrategy(pcs) &&
 		pcs.Status.UpdateProgress != nil &&
 		pcs.Status.UpdateProgress.UpdateEndedAt == nil
+}
+
+// GetPCSReplicaIndexFromObjectMeta reads the grove.io/podcliqueset-replica-index label off a
+// PodCliqueSet child (PodClique or PodCliqueScalingGroup) and parses it. Returns an error when the
+// label is absent or non-numeric, which is a contract violation since Grove stamps it on every child.
+func GetPCSReplicaIndexFromObjectMeta(objMeta metav1.ObjectMeta) (int, error) {
+	labelValue, ok := objMeta.Labels[common.LabelPodCliqueSetReplicaIndex]
+	if !ok {
+		return 0, fmt.Errorf("%s label is missing on %s", common.LabelPodCliqueSetReplicaIndex, objMeta.Name)
+	}
+	replicaIndex, err := strconv.Atoi(labelValue)
+	if err != nil {
+		return 0, fmt.Errorf("%s label on %s is not a valid integer: %q", common.LabelPodCliqueSetReplicaIndex, objMeta.Name, labelValue)
+	}
+	return replicaIndex, nil
+}
+
+// IsPCSReplicaInCurrentlyUpdating reports whether the given PCS replica index appears in
+// Status.UpdateProgress.CurrentlyUpdating with UpdateEndedAt unset. It does not consult the update
+// strategy, callers scope that. Returns false when UpdateProgress is nil.
+func IsPCSReplicaInCurrentlyUpdating(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int) bool {
+	if pcs.Status.UpdateProgress == nil {
+		return false
+	}
+	for i := range pcs.Status.UpdateProgress.CurrentlyUpdating {
+		p := &pcs.Status.UpdateProgress.CurrentlyUpdating[i]
+		if int(p.ReplicaIndex) == pcsReplicaIndex && p.UpdateEndedAt == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// IsPCSReplicaUnderCoherentUpdate reports whether the given PCS replica index is currently being
+// updated under a Coherent update: the PCS uses the Coherent strategy, an update is in flight, and
+// the replica is in CurrentlyUpdating with UpdateEndedAt unset.
+func IsPCSReplicaUnderCoherentUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int) bool {
+	return IsCoherentUpdateInProgress(pcs) && IsPCSReplicaInCurrentlyUpdating(pcs, pcsReplicaIndex)
 }
 
 // IsRollingRecreateUpdateInProgress returns true when a RollingRecreate update has been initiated and not yet completed.

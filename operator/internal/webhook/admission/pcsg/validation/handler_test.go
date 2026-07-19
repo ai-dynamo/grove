@@ -1,5 +1,5 @@
 // /*
-// Copyright 2025 The Grove Authors.
+// Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package validation
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -42,7 +43,7 @@ func TestValidateUpdate_NoReplicasChange(t *testing.T) {
 	cl := testutils.NewTestClientBuilder().Build()
 	h := newHandler(cl)
 
-	old, neu := buildPCSG(2), buildPCSG(2)
+	old, neu := buildPCSG(0, 2), buildPCSG(0, 2)
 	neu.Annotations = map[string]string{"foo": "bar"}
 
 	warnings, err := h.ValidateUpdate(context.Background(), old, neu)
@@ -51,27 +52,41 @@ func TestValidateUpdate_NoReplicasChange(t *testing.T) {
 }
 
 func TestValidateUpdate_ReplicasChange_NoCoherentUpdate(t *testing.T) {
-	pcs := buildPCS(false)
+	pcs := buildPCS(nil)
 	cl := testutils.NewTestClientBuilder().WithObjects(pcs).Build()
 	h := newHandler(cl)
 
-	old, neu := buildPCSG(2), buildPCSG(4)
+	old, neu := buildPCSG(0, 2), buildPCSG(0, 4)
 
 	warnings, err := h.ValidateUpdate(context.Background(), old, neu)
 	require.NoError(t, err)
 	assert.Nil(t, warnings)
 }
 
-func TestValidateUpdate_ReplicasChange_CoherentUpdateInProgress(t *testing.T) {
-	pcs := buildPCS(true)
+func TestValidateUpdate_ReplicasChange_ReplicaUnderCoherentUpdate(t *testing.T) {
+	// Coherent update in progress on replica 0, and this PCSG belongs to replica 0 => blocked.
+	pcs := buildPCS([]int32{0})
 	cl := testutils.NewTestClientBuilder().WithObjects(pcs).Build()
 	h := newHandler(cl)
 
-	old, neu := buildPCSG(2), buildPCSG(4)
+	old, neu := buildPCSG(0, 2), buildPCSG(0, 4)
 
 	warnings, err := h.ValidateUpdate(context.Background(), old, neu)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "coherent update is in progress")
+	assert.Nil(t, warnings)
+}
+
+func TestValidateUpdate_ReplicasChange_DifferentReplicaUnderCoherentUpdate(t *testing.T) {
+	// Coherent update in progress on replica 0, but this PCSG belongs to replica 1 => allowed.
+	pcs := buildPCS([]int32{0})
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs).Build()
+	h := newHandler(cl)
+
+	old, neu := buildPCSG(1, 2), buildPCSG(1, 4)
+
+	warnings, err := h.ValidateUpdate(context.Background(), old, neu)
+	require.NoError(t, err)
 	assert.Nil(t, warnings)
 }
 
@@ -81,10 +96,24 @@ func TestValidateUpdate_ReplicasChange_OwningPCSNotFound(t *testing.T) {
 	cl := testutils.NewTestClientBuilder().Build()
 	h := newHandler(cl)
 
-	old, neu := buildPCSG(2), buildPCSG(4)
+	old, neu := buildPCSG(0, 2), buildPCSG(0, 4)
 
 	warnings, err := h.ValidateUpdate(context.Background(), old, neu)
 	require.NoError(t, err)
+	assert.Nil(t, warnings)
+}
+
+func TestValidateUpdate_ReplicasChange_MissingReplicaIndexLabel(t *testing.T) {
+	// A PCSG missing the replica-index label is a contract violation; the webhook fails closed.
+	pcs := buildPCS([]int32{0})
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs).Build()
+	h := newHandler(cl)
+
+	old, neu := buildPCSG(0, 2), buildPCSG(0, 4)
+	delete(neu.Labels, apicommon.LabelPodCliqueSetReplicaIndex)
+
+	warnings, err := h.ValidateUpdate(context.Background(), old, neu)
+	require.Error(t, err)
 	assert.Nil(t, warnings)
 }
 
@@ -92,7 +121,7 @@ func TestValidateCreate_AlwaysAllowed(t *testing.T) {
 	cl := testutils.NewTestClientBuilder().Build()
 	h := newHandler(cl)
 
-	warnings, err := h.ValidateCreate(context.Background(), buildPCSG(4))
+	warnings, err := h.ValidateCreate(context.Background(), buildPCSG(0, 4))
 	require.NoError(t, err)
 	assert.Nil(t, warnings)
 }
@@ -101,7 +130,7 @@ func TestValidateDelete_AlwaysAllowed(t *testing.T) {
 	cl := testutils.NewTestClientBuilder().Build()
 	h := newHandler(cl)
 
-	warnings, err := h.ValidateDelete(context.Background(), buildPCSG(4))
+	warnings, err := h.ValidateDelete(context.Background(), buildPCSG(0, 4))
 	require.NoError(t, err)
 	assert.Nil(t, warnings)
 }
@@ -113,28 +142,38 @@ func newHandler(cl client.Client) *Handler {
 	}
 }
 
-func buildPCSG(replicas int32) *grovecorev1alpha1.PodCliqueScalingGroup {
+func buildPCSG(pcsReplicaIndex, replicas int32) *grovecorev1alpha1.PodCliqueScalingGroup {
 	return &grovecorev1alpha1.PodCliqueScalingGroup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      testPCSGName,
 			Namespace: testNamespace,
-			Labels:    map[string]string{apicommon.LabelPartOfKey: testPCSName},
+			Labels: map[string]string{
+				apicommon.LabelPartOfKey:                testPCSName,
+				apicommon.LabelPodCliqueSetReplicaIndex: strconv.Itoa(int(pcsReplicaIndex)),
+			},
 		},
 		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{Replicas: replicas},
 	}
 }
 
-func buildPCS(updateInProgress bool) *grovecorev1alpha1.PodCliqueSet {
+// buildPCS builds a Coherent-strategy PodCliqueSet. When updatingReplicaIndices is non-nil an update
+// is in flight with those replica indices in CurrentlyUpdating (UpdateEndedAt unset). A nil argument
+// means no update is in progress.
+func buildPCS(updatingReplicaIndices []int32) *grovecorev1alpha1.PodCliqueSet {
 	pcs := &grovecorev1alpha1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: testPCSName, Namespace: testNamespace},
 		Spec: grovecorev1alpha1.PodCliqueSetSpec{
 			UpdateStrategy: &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.CoherentStrategy},
 		},
 	}
-	if updateInProgress {
+	if updatingReplicaIndices != nil {
+		currentlyUpdating := make([]grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress, 0, len(updatingReplicaIndices))
+		for _, idx := range updatingReplicaIndices {
+			currentlyUpdating = append(currentlyUpdating, grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{ReplicaIndex: idx})
+		}
 		pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
-			UpdateStartedAt: metav1.NewTime(time.Now()),
-			UpdateEndedAt:   nil,
+			UpdateStartedAt:   metav1.NewTime(time.Now()),
+			CurrentlyUpdating: currentlyUpdating,
 		}
 	}
 	return pcs

@@ -1,5 +1,5 @@
 // /*
-// Copyright 2025 The Grove Authors.
+// Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -140,11 +140,11 @@ func (r _resource) patchUpdateProgressStatus(ctx context.Context, logger logr.Lo
 }
 
 // markCurrentReplicaUpdateDone records that the currently-updating replica finished.
-// It sets UpdateEndedAt and clears InFlightPodGangs (no-op for strategies that don't use it).
+// It sets UpdateEndedAt and clears InFlightEpochs (no-op for strategies that don't use it).
 func (r _resource) markCurrentReplicaUpdateDone(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
 	original := pcs.DeepCopy()
 	pcs.Status.UpdateProgress.CurrentlyUpdating[0].UpdateEndedAt = ptr.To(metav1.Now())
-	pcs.Status.UpdateProgress.CurrentlyUpdating[0].InFlightPodGangs = nil
+	pcs.Status.UpdateProgress.CurrentlyUpdating[0].InFlightEpochs = nil
 	if err := r.patchUpdateProgressStatus(ctx, logger, pcs, original); err != nil {
 		logger.Error(err, "failed to patch update progress", "replicaIndex", pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex)
 		return err

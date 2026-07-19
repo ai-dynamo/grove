@@ -1,5 +1,5 @@
 // /*
-// Copyright 2025 The Grove Authors.
+// Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,13 +20,12 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	"github.com/ai-dynamo/grove/operator/internal/errors"
 
 	"github.com/go-logr/logr"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -34,7 +33,7 @@ import (
 
 const (
 	// ErrValidateUpdatePodCliqueScalingGroup is the error code returned when the request to update a PodCliqueScalingGroup is invalid.
-	ErrValidateUpdatePodCliqueScalingGroup v1alpha1.ErrorCode = "ERR_VALIDATE_UPDATE_PODCLIQUESCALINGGROUP"
+	ErrValidateUpdatePodCliqueScalingGroup grovecorev1alpha1.ErrorCode = "ERR_VALIDATE_UPDATE_PODCLIQUESCALINGGROUP"
 )
 
 // Handler validates PodCliqueScalingGroup resources, blocking Spec.Replicas changes
@@ -54,24 +53,16 @@ func NewHandler(mgr manager.Manager) *Handler {
 
 // ValidateCreate is a no-op — Spec.Replicas of a freshly created PCSG cannot collide
 // with an in-progress Coherent update for it.
-func (h *Handler) ValidateCreate(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
+func (h *Handler) ValidateCreate(_ context.Context, _ *grovecorev1alpha1.PodCliqueScalingGroup) (admission.Warnings, error) {
 	return nil, nil
 }
 
-// ValidateUpdate rejects Spec.Replicas changes on a PodCliqueScalingGroup while the owning
-// PodCliqueSet has a Coherent update in progress. All other field changes are allowed
-// (immutability of other spec fields is enforced by the PCS validating webhook on the
-// owning template).
-func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
-	oldPCSG, err := castToPodCliqueScalingGroup(oldObj)
-	if err != nil {
-		return nil, errors.WrapError(err, ErrValidateUpdatePodCliqueScalingGroup, "Update", "failed to cast old object to PodCliqueScalingGroup")
-	}
-	newPCSG, err := castToPodCliqueScalingGroup(newObj)
-	if err != nil {
-		return nil, errors.WrapError(err, ErrValidateUpdatePodCliqueScalingGroup, "Update", "failed to cast new object to PodCliqueScalingGroup")
-	}
-
+// ValidateUpdate rejects Spec.Replicas changes on a PodCliqueScalingGroup while the PCS replica that
+// owns it is currently under a Coherent update (the replica is in Status.UpdateProgress.CurrentlyUpdating
+// with UpdateEndedAt unset). Replicas of the same PodCliqueSet that are not currently under update may
+// still scale. All other field changes are allowed (immutability of other spec fields is enforced by
+// the PCS validating webhook on the owning template).
+func (h *Handler) ValidateUpdate(ctx context.Context, oldPCSG, newPCSG *grovecorev1alpha1.PodCliqueScalingGroup) (admission.Warnings, error) {
 	if oldPCSG.Spec.Replicas == newPCSG.Spec.Replicas {
 		return nil, nil
 	}
@@ -90,22 +81,19 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 			fmt.Sprintf("failed to get owning PodCliqueSet for PodCliqueScalingGroup %s/%s", newPCSG.Namespace, newPCSG.Name))
 	}
 
-	if componentutils.IsCoherentUpdateInProgress(pcs) {
-		return nil, fmt.Errorf("spec.replicas changes are not allowed while a coherent update is in progress on PodCliqueSet %s/%s; complete the update before scaling",
-			pcs.Namespace, pcs.Name)
+	pcsReplicaIndex, err := componentutils.GetPCSReplicaIndexFromObjectMeta(newPCSG.ObjectMeta)
+	if err != nil {
+		return nil, errors.WrapError(err, ErrValidateUpdatePodCliqueScalingGroup, "Update",
+			fmt.Sprintf("could not determine PodCliqueSet replica index for PodCliqueScalingGroup %s/%s", newPCSG.Namespace, newPCSG.Name))
+	}
+	if componentutils.IsPCSReplicaUnderCoherentUpdate(pcs, pcsReplicaIndex) {
+		return nil, fmt.Errorf("spec.replicas changes are not allowed while a coherent update is in progress on PodCliqueSet %s/%s replica %d; complete the update of this replica before scaling",
+			pcs.Namespace, pcs.Name, pcsReplicaIndex)
 	}
 	return nil, nil
 }
 
 // ValidateDelete is a no-op.
-func (h *Handler) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
+func (h *Handler) ValidateDelete(_ context.Context, _ *grovecorev1alpha1.PodCliqueScalingGroup) (admission.Warnings, error) {
 	return nil, nil
-}
-
-func castToPodCliqueScalingGroup(obj runtime.Object) (*v1alpha1.PodCliqueScalingGroup, error) {
-	pcsg, ok := obj.(*v1alpha1.PodCliqueScalingGroup)
-	if !ok {
-		return nil, fmt.Errorf("expected a PodCliqueScalingGroup object but got %T", obj)
-	}
-	return pcsg, nil
 }

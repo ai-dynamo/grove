@@ -454,7 +454,7 @@ _Appears in:_
 | `updateStartedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateStartedAt is the time at which the update started for this PodCliqueSet replica index. |  |  |
 | `updateEndedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateEndedAt is the time at which the update ended for this PodCliqueSet replica index.<br />The update ends when all child resources have been updated with the latest specification, when all Pods are<br />running the latest specification. |  |  |
 | `inFlightPodGangs` _string array_ | InFlightPodGangs are the names of PodGangs that are part of the current update<br />iteration for this replica. The orchestrator waits for all of them to become<br />available before advancing to the next iteration.<br />Deprecated: use InFlightEpoch. Will be removed once all consumers migrate. |  |  |
-| `inFlightEpoch` _string_ | InFlightEpoch is the epoch of the most recent batch present on the PodGangMap<br />for this replica. Populated by the orchestrator each reconcile by reading the<br />max epoch across PodGangMap entries. Never cleared until the coherent update<br />completes for this replica. |  |  |
+| `inFlightEpoch` _string_ | InFlightEpoch is the grove.io/epoch of the PodGangs currently being rolled<br />(in flight) for this replica's coherent update. It is cleared once the<br />coherent update for this replica completes. |  |  |
 | `errorMessage` _string_ | ErrorMessage captures the reason the update of this replica is stalled or failing, if any.<br />Deprecated: use WaitingFor. Will be removed once all consumers migrate. |  |  |
 | `waitingFor` _string_ | WaitingFor describes the current reason the orchestrator has not advanced<br />the coherent update this reconcile. Populated whenever any advance<br />precondition is not met: PodGangs at the current InFlightEpoch not yet<br />reporting LastReady, subsumed pods still coming up, or an availability<br />budget preventing further takedown. Cleared once all preconditions hold. |  |  |
 
@@ -551,8 +551,8 @@ _Appears in:_
 | `updatedPodCliqueScalingGroupsCount` _integer_ | UpdatedPodCliqueScalingGroupsCount is the number of PodCliqueScalingGroups that have been updated to the<br />desired PodCliqueSet generation hash. | 0 |  |
 | `totalPodCliqueScalingGroupsCount` _integer_ | TotalPodCliqueScalingGroupsCount is the total number of PodCliqueScalingGroups expected to exist for the<br />PodCliqueSet at the current spec. | 0 |  |
 | `currentlyUpdating` _[PodCliqueSetReplicaUpdateProgress](#podcliquesetreplicaupdateprogress) array_ | CurrentlyUpdating captures the progress of the PodCliqueSet replicas that are currently being updated.<br />This field is only set for auto update strategies where Grove handles the orchestration. It is not set for the<br />OnDelete update strategy. |  |  |
-| `updatedStandalonePodCliques` _string array_ | UpdatedStandalonePodCliques captures the names of standalone PodCliques whose pod template was detected<br />as out-of-date when this coherent update started. The set is frozen for the lifetime of the update<br />(cleared together with UpdateEndedAt). The MVU machinery uses this set, in combination with the live PCS<br />spec, to compute the MVU template; a fresh recomputation from live PCLQ hashes would shrink the set as<br />pods roll over and break the MVU invariants. Only populated for the Coherent strategy. |  |  |
-| `updatedPodCliqueScalingGroups` _string array_ | UpdatedPodCliqueScalingGroups captures the config names of PodCliqueScalingGroups that had at least one<br />constituent PodClique detected as out-of-date when this coherent update started. Same lifetime semantics<br />as UpdatedStandalonePodCliques. Only populated for the Coherent strategy. |  |  |
+| `inScopeStandalonePodCliques` _string array_ | InScopeStandalonePodCliques captures the names of standalone PodCliques whose pod template<br />changed and are therefore in scope for the current coherent update. It names what changed,<br />not what has finished updating. The set is frozen for the lifetime of the update and is<br />cleared when UpdateEndedAt is set. Only populated for the Coherent strategy. |  |  |
+| `inScopePodCliqueScalingGroups` _string array_ | InScopePodCliqueScalingGroups captures the config names of PodCliqueScalingGroups that had at<br />least one constituent PodClique whose pod template changed and are therefore in scope for the<br />current coherent update. It names what changed, not what has finished updating. The set is<br />frozen for the lifetime of the update and is cleared when UpdateEndedAt is set. Only populated<br />for the Coherent strategy. |  |  |
 
 
 #### PodCliqueSetUpdateStrategy
@@ -678,11 +678,11 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `name` _string_ | Name is the name of the PodGang this entry corresponds to. |  |  |
 | `podCliqueSetGenerationHash` _string_ | PodCliqueSetGenerationHash is the PodCliqueSet generation hash that pods in this PodGang<br />must match. Used by PodClique and PodCliqueScalingGroup reconcilers to create pods at the<br />correct spec version and to distinguish old pods from new pods during a coherent update. |  |  |
+| `isEpochAnchor` _boolean_ | IsEpochAnchor marks whether this entry is the epoch anchor for its epoch. When true the entry<br />carries the minimum-availability floor that entries depending on it are scheduled after, and<br />standalone PodClique tail pods are subsumed into it. When false the entry collapses the tail<br />PodGangs of a single PodCliqueScalingGroup within one epoch into one entry: PCSGReplicaIndices<br />holds that epoch's rolled indices for the PCSG, which the PodGang materializer expands into one<br />PodGang per index. It is the durable marker that lets the step structure recorded in Status be<br />recovered from the entries after a crash between the spec and status writes. |  |  |
 | `podCliques` _object (keys:string, values:integer)_ | PodCliques maps standalone PodClique name to the number of pods that belong to this PodGang.<br />Only standalone PodCliques (not owned by a PodCliqueScalingGroup) are listed here.<br />PodCliques owned by a PodCliqueScalingGroup derive their PodGang association via<br />PCSGReplicaIndices below. |  |  |
-| `pcsgReplicaIndices` _object (keys:string, values:integer array)_ | PCSGReplicaIndices maps PodCliqueScalingGroup config name to the PCSG replica indices<br />that belong to this PodGang. The number of replicas is len(slice). Indices are stable<br />identities that survive entry reshuffles, so a PodClique reconciler for a PodCliqueScalingGroup-<br />owned PodClique can find its target PodGang by looking up its replica index here. |  |  |
+| `pcsgReplicaIndices` _object (keys:string, values:integer array)_ | PCSGReplicaIndices maps a PodCliqueScalingGroup config name to the PCSG replica indices this<br />entry carries. For a non-anchor entry the PodGang materializer expands these into one PodGang<br />per index. Indices are stable identities that survive entry reshuffles, so a PodClique<br />reconciler for a PodCliqueScalingGroup-owned PodClique can find its target PodGang by looking<br />up its replica index here. |  |  |
 | `labels` _object (keys:string, values:string)_ | Labels carries additional labels to stamp on the materialized PodGang resource,<br />beyond the labels the PodGang materialization adds by default. Today this carries<br />the grove.io/epoch label used for scheduling-order semantics. |  |  |
-| `dependsOn` _string array_ | DependsOn lists the PodGang names within the same PodCliqueSet replica whose pods must be<br />scheduled before pods in this PodGang have their scheduling gates removed.<br />Deprecated: use DependsOnEpoch. Will be removed once all consumers migrate. |  |  |
-| `dependsOnEpoch` _string_ | DependsOnEpoch is the epoch of the PodGangs whose pods must be scheduled<br />before this entry's PodGang becomes eligible for scheduling. nil means<br />the entry has no scheduling dependency and is eligible immediately. |  |  |
+| `dependsOn` _string array_ | DependsOn lists the epochs whose PodGangs must be scheduled before this entry's PodGang<br />becomes eligible for scheduling. An empty DependsOn means the entry has no scheduling<br />dependency and its PodGang is eligible for scheduling immediately. |  |  |
 
 
 #### PodGangMap
@@ -703,6 +703,7 @@ One PodGangMap resource exists per PodCliqueSet replica, named <pcs-name>-<pcs-r
 | `kind` _string_ | `PodGangMap` | | |
 | `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `spec` _[PodGangMapSpec](#podgangmapspec)_ | Spec defines the desired PodGang-to-pod-count mapping for this PodCliqueSet replica. |  |  |
+| `status` _[PodGangMapStatus](#podgangmapstatus)_ | Status records the observed progress of an in-flight coherent update for this<br />PodCliqueSet replica. It is populated only while a coherent update is in flight<br />and is cleared once the update completes. |  |  |
 
 
 #### PodGangMapSpec
@@ -720,6 +721,95 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `podCliqueSetReplicaIndex` _integer_ | PodCliqueSetReplicaIndex is the index of the PodCliqueSet replica this map belongs to. |  |  |
 | `entries` _[PodGangEntry](#podgangentry) array_ | Entries is the ordered list of desired PodGangs for this PodCliqueSet replica.<br />Each entry corresponds to one PodGang and specifies its pod and replica counts. |  |  |
+
+
+#### PodGangMapStatus
+
+
+
+PodGangMapStatus records the observed progress of a coherent update for a
+PodCliqueSet replica.
+
+
+
+_Appears in:_
+- [PodGangMap](#podgangmap)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `updateProgress` _[PodGangMapUpdateProgress](#podgangmapupdateprogress)_ | UpdateProgress records the steps and sub-steps emitted so far for the<br />in-flight coherent update, along with their readiness. It is non-nil only<br />while a coherent update is in flight for this replica and is cleared once<br />the update completes. |  |  |
+
+
+#### PodGangMapUpdateProgress
+
+
+
+PodGangMapUpdateProgress records the observed step structure of an in-flight
+coherent update.
+
+
+
+_Appears in:_
+- [PodGangMapStatus](#podgangmapstatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `steps` _[PodGangMapUpdateStep](#podgangmapupdatestep) array_ | Steps records the update's steps in emission order. It gives a view of<br />what is done and what is in progress, and lets the coherent update path<br />detect step boundaries and locate the anchor a step's standalone tail<br />pods subsume into. |  |  |
+
+
+#### PodGangMapUpdateState
+
+_Underlying type:_ _string_
+
+PodGangMapUpdateState is the readiness of a step or sub-step of a coherent
+update.
+
+
+
+_Appears in:_
+- [PodGangMapUpdateStep](#podgangmapupdatestep)
+- [PodGangMapUpdateSubStep](#podgangmapupdatesubstep)
+
+| Field | Description |
+| --- | --- |
+| `InProgress` | PodGangMapUpdateStateInProgress indicates the step or sub-step has been<br />emitted but is not yet fully ready.<br /> |
+| `Ready` | PodGangMapUpdateStateReady indicates every PodGang in the step or sub-step<br />has become ready at least once.<br /> |
+
+
+#### PodGangMapUpdateStep
+
+
+
+PodGangMapUpdateStep records one step of a coherent update.
+
+
+
+_Appears in:_
+- [PodGangMapUpdateProgress](#podgangmapupdateprogress)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `isAnchorBearing` _boolean_ | IsAnchorBearing is true when this step produces an anchor entry (in its<br />first sub-step). It is false for a leftover step that produces no anchor.<br />When IsAnchorBearing is true, the anchor's epoch is SubSteps[0].Epoch. |  |  |
+| `state` _[PodGangMapUpdateState](#podgangmapupdatestate)_ | State is the step's readiness. It is Ready when every sub-step is Ready,<br />otherwise InProgress. Readiness is derived from PodGang readiness, which<br />never un-sets, so State only ever advances from InProgress to Ready. |  |  |
+| `subSteps` _[PodGangMapUpdateSubStep](#podgangmapupdatesubstep) array_ | SubSteps are this step's sub-steps in emission order. For an<br />anchor-bearing step, SubSteps[0] is the anchor-bearing sub-step and the<br />rest are tail sub-steps. |  |  |
+
+
+#### PodGangMapUpdateSubStep
+
+
+
+PodGangMapUpdateSubStep records one sub-step of a coherent update. A sub-step
+corresponds to exactly one batch of PodGangs sharing a single epoch.
+
+
+
+_Appears in:_
+- [PodGangMapUpdateStep](#podgangmapupdatestep)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `epoch` _string_ | Epoch is the grove.io/epoch value shared by every PodGang this sub-step<br />emitted. |  |  |
+| `state` _[PodGangMapUpdateState](#podgangmapupdatestate)_ | State is the sub-step's readiness. It is Ready when every PodGang at Epoch<br />has become ready at least once, otherwise InProgress. Readiness never<br />un-sets, so State only ever advances from InProgress to Ready. |  |  |
 
 
 #### PodGangPhase
