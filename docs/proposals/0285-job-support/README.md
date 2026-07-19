@@ -50,6 +50,7 @@ This GREP closes that gap by extending Grove's existing hierarchy with the compl
 ### Non-Goals
 
 - **No pod-level retry.** A failed pod within a `PodClique` is not replaced in isolation. Any pod failure immediately fails the `PodClique`; the retry scope is the gang, owned by the parent `PodCliqueScalingGroup` or `PodCliqueSet`.
+- **No scaling for job-mode workloads.** Job workloads use fixed replica counts. Grove rejects autoscaling configuration and manual replica changes for job-mode `PodClique`, `PodCliqueScalingGroup`, and `PodCliqueSet` resources.
 - `completions` and `completedIndexes` — configurable completion counts and index-based filtering at the `PodCliqueScalingGroup` and `PodCliqueSet` levels. In this release, all replicas must complete successfully for a resource to be considered Completed.
 - Pod cleanup policies other than the fixed default (retain terminal pods, delete active pods on terminal state).
 - TTL-based automatic workload deletion after completion.
@@ -66,7 +67,7 @@ Three new API fields control job-mode policy:
 
 - **`completedNames`** *(PodCliqueScalingGroup / PodCliqueSet only)*: Named children within a replica that must complete for that replica to count as Completed. If omitted, all job-mode children must complete. At the `PodClique` level, all pods must complete for the `PodClique` to be considered Completed.
 - **`maxRestarts`** *(PodCliqueScalingGroup / PodCliqueSet only)*: Per-replica restart budget. A replica that exhausts its budget is considered failed.
-- **`maxRuntime`** *(all levels)*: Wall-clock deadline from first start. Exceeding it fails the resource immediately and permanently, regardless of any subsequent child outcomes. At the `PodCliqueScalingGroup` / `PodCliqueSet` level, `maxRuntime` is not reset when replicas are restarted. At the `PodClique` level, the timer resets per instance — the `PodClique` is recreated on gang restart, so each new instance starts a fresh clock.
+- **`maxRuntime`** *(all levels)*: Wall-clock deadline from `status.jobStartTime`, which is set on first start. Exceeding it fails the resource immediately and permanently, regardless of any subsequent child outcomes. At the `PodCliqueScalingGroup` / `PodCliqueSet` level, `maxRuntime` is not reset when replicas are restarted. At the `PodClique` level, the timer resets per instance — the `PodClique` is recreated on gang restart, so each new instance starts a fresh clock.
 
 Non-job-mode `PodClique`s (`restartPolicy: Always`) within a `PodCliqueScalingGroup` or `PodCliqueSet` are excluded from completion evaluation. A resource can be Completed even if some of its children remain running in long-running mode.
 
@@ -95,7 +96,7 @@ In job mode, `MinAvailableBreached`-based gang termination is disabled. If pods 
 Job mode uses `restartPolicy: Never`, which disables kubelet's in-place container restart. Grove is solely responsible for recreating pods on failure. At scale, this means every gang restart triggers a full pod deletion and recreation cycle — incurring Kubernetes API overhead and requiring the scheduler to re-place all pods from scratch. Re-scheduling at scale can take meaningful time and may not recover the same topology placement that the previous attempt had. This is a known limitation of the design.
 
 **`maxRuntime` at the `PodCliqueScalingGroup` / `PodCliqueSet` level is not reset on restarts.**
-`maxRuntime` on a `PodCliqueScalingGroup` or `PodCliqueSet` is measured from the first start of that resource and does not reset when replicas are restarted. Users who set a tight deadline may find the budget exhausted before all retry attempts have run. Mitigation: documentation should clearly state this behavior; users should size `maxRuntime` to account for the full expected duration across all attempts, not just one. Note: `maxRuntime` at the `PodClique` level does reset per instance, since the `PodClique` itself is recreated on gang restart.
+`maxRuntime` on a `PodCliqueScalingGroup` or `PodCliqueSet` is measured from `status.jobStartTime` and does not reset when replicas are restarted. Users who set a tight deadline may find the budget exhausted before all retry attempts have run. Mitigation: documentation should clearly state this behavior; users should size `maxRuntime` to account for the full expected duration across all attempts, not just one. Note: `maxRuntime` at the `PodClique` level does reset per instance, since the `PodClique` itself is recreated on gang restart.
 
 **Log loss on retry.**
 When a failed `PodClique` is deleted and recreated during a gang restart, terminal pods from the previous attempt are cascade-deleted along with it. Logs from failed attempts are not durably retained across retries. Mitigation: users who need per-attempt logs should rely on a cluster-level logging stack (e.g. Fluentd, Loki) rather than `kubectl logs`.
@@ -108,6 +109,8 @@ Job mode is signaled by setting `restartPolicy: Never` on the pod template spec 
 
 A `PodCliqueScalingGroup` or `PodCliqueSet` is in job mode when at least one of its child `PodClique`s is in job mode. The job-mode fields (`completedNames`, `maxRestarts`, `maxRuntime`) are valid on a `PodCliqueScalingGroup` or `PodCliqueSet` only when at least one child is in job mode; setting them on a fully long-running resource is a validation error.
 
+Scaling is rejected for job-mode workloads after creation. The initial `replicas` values define the fixed job shape, but later manual changes to `replicas` are not supported for job-mode `PodClique`, `PodCliqueScalingGroup`, or `PodCliqueSet` resources. Grove-managed autoscaling is also rejected: a job-mode `PodClique` cannot set `autoScalingConfig`, and a `PodCliqueScalingGroup` containing any job-mode child cannot set `scaleConfig`.
+
 ### New API Fields
 
 The new fields are added flat under `spec`, at the same level as `replicas` and `minAvailable`. No new nested struct is introduced.
@@ -115,8 +118,8 @@ The new fields are added flat under `spec`, at the same level as `replicas` and 
 **PodCliqueSpec** gains one new field:
 
 ```go
-// MaxRuntime is the maximum wall-clock duration from when the first pod in this
-// PodClique starts running until the PodClique is considered Failed.
+// MaxRuntime is the maximum wall-clock duration from status.jobStartTime until
+// the PodClique is considered Failed.
 // Only valid when restartPolicy: Never is set on the pod template.
 // +optional
 MaxRuntime *metav1.Duration `json:"maxRuntime,omitempty"`
@@ -140,9 +143,8 @@ CompletedNames []string `json:"completedNames,omitempty"`
 // +kubebuilder:default=0
 MaxRestarts *int32 `json:"maxRestarts,omitempty"`
 
-// MaxRuntime is the maximum wall-clock duration from when the first replica of
-// this resource starts running until the resource is considered Failed. Not reset
-// on replica restarts.
+// MaxRuntime is the maximum wall-clock duration from status.jobStartTime until
+// this resource is considered Failed. Not reset on replica restarts.
 // +optional
 MaxRuntime *metav1.Duration `json:"maxRuntime,omitempty"`
 ```
@@ -273,7 +275,19 @@ const (
 Phase JobPhase `json:"phase,omitempty"`
 ```
 
-**New status field.** `PodCliqueScalingGroup` and `PodCliqueSet` each gain a `replicaRestartCounts` field to track per-replica restart history:
+**Job start time.** All three resource types gain a `jobStartTime` status field:
+
+```go
+// JobStartTime is the time from which maxRuntime is measured. It is set for
+// job-mode resources when the first pod or child replica starts. It is nil for
+// non-job-mode resources.
+// +optional
+JobStartTime *metav1.Time `json:"jobStartTime,omitempty"`
+```
+
+For `PodCliqueScalingGroup` and `PodCliqueSet`, `jobStartTime` is not reset when replicas are restarted. For `PodClique`, the clock resets per instance because gang restart recreates the `PodClique` object.
+
+**Replica restart counts.** `PodCliqueScalingGroup` and `PodCliqueSet` each gain a `replicaRestartCounts` field to track per-replica restart history:
 
 ```go
 // ReplicaRestartCounts tracks the number of times each replica has been restarted,
@@ -344,8 +358,10 @@ The existing `PodCliqueScalingGroupReplicaDeleteSuccessful` / `PodCliqueSetRepli
 **Unit tests**
 
 - Validation: `restartPolicy: OnFailure` is rejected; `completedNames`, `maxRestarts`, and `maxRuntime` on a fully long-running resource are rejected.
+- Validation: autoscaling configuration and manual replica changes on job-mode resources are rejected.
 - Completion evaluation logic at each level: all-pods success → `Completed`; any pod failure → PCLQ `Failed`; named-children completion → PCSG/PCS replica `Completed`; non-`completedNames` child failure triggers restart but not immediate replica failure.
 - Failure evaluation: budget exhaustion → replica `Failed`; `maxRuntime` exceeded → immediate `Failed`; `Failed` is irreversible.
+- `jobStartTime` is set for job-mode resources, remains nil for non-job-mode resources, and is not reset on PCSG/PCS replica restarts.
 - `replicaRestartCounts` increments correctly on each restart and is never decremented.
 - Status phase is written before pod deletion (ordering guarantee).
 
