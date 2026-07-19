@@ -221,6 +221,8 @@ Follows the same two-level pattern as PCSG, with constituent `PodClique`s and `P
 
 - `Failed` is irreversible: a resource that reaches `Failed` will not subsequently transition to `Completed`, by construction of the failure definition.
 - Terminal states (`Completed`, `Failed`) are written to status before any pod cleanup begins.
+- Completion and failure are evaluated bottom-up, but cleanup after a parent reaches a terminal state is applied top-down to all non-terminal children in that terminal scope.
+- A terminal parent scope is a stop condition for descendants: child controllers must not recreate pods or child resources when their owning `PodCliqueScalingGroup` replica, `PodCliqueSet` replica, or `PodCliqueSet` resource is already terminal.
 
 ### Gang Restart Flow
 
@@ -253,6 +255,10 @@ When a constituent `PodClique` or `PodCliqueScalingGroup` within a PCS replica f
 
 These phases are represented as a dedicated `phase` field on each resource's status. Non-job-mode resources never set these phases.
 
+Phase is not propagated top-down to children that did not independently complete or fail. For example, if a `PodCliqueScalingGroup` replica completes because the `PodClique`s listed in `completedNames` completed successfully, any other child `PodClique`s may still have no job `phase`. They are not marked `Completed` or `Failed`; instead, the parent terminal state makes them no longer desired, and top-down cleanup removes their active pods and non-terminal child resources.
+
+Controllers must treat a terminal owner scope as authoritative when deciding whether to create or recreate descendants. A child controller must not recreate pods or child resources when its owning `PodCliqueScalingGroup` replica, `PodCliqueSet` replica, or `PodCliqueSet` resource is already terminal.
+
 ```go
 // JobPhase represents the terminal phase of a job-mode resource.
 type JobPhase string
@@ -281,15 +287,24 @@ This field accumulates across restarts and is never decremented.
 
 ### Cleanup Behavior
 
-Grove applies a single fixed cleanup policy for job-mode resources: active pods are deleted when a resource reaches a terminal state; terminal pods are retained.
+Grove applies a single fixed cleanup policy for job-mode resources: terminal state is calculated bottom-up, but cleanup is applied top-down. Active pods are deleted when the owning job-mode scope reaches a terminal state; terminal pods are retained.
+
+This distinction is important for partial-completion policies. For example, a `PodCliqueScalingGroup` replica may be considered `Completed` because the `PodClique`s listed in `completedNames` completed successfully, while other child `PodClique`s are still running. Once the replica is terminal, the PCSG controller deletes the non-terminal child `PodClique`s or active pods in that replica so they stop consuming resources. Similarly, once a `PodCliqueSet` replica or the whole PCS reaches a terminal state, the PCS controller cleans up active child `PodClique`s and `PodCliqueScalingGroup`s in that completed or failed scope.
 
 **On `PodClique` terminal state (`Completed` or `Failed`):**
 - Delete all active pods (`Pending`, `Running`) in the `PodClique`.
 - Retain all terminal pods (`Succeeded`, `Failed`) for log access via `kubectl logs`.
 
-**On `PodCliqueScalingGroup` or `PodCliqueSet` terminal state:**
-- The controller explicitly deletes active pods in all child `PodClique`s.
-- This covers leader-driven completion, where the PCSG or PCS may complete while worker `PodClique` pods are still running.
+**On `PodCliqueScalingGroup` replica terminal state:**
+- Delete active pods and non-terminal child `PodClique`s belonging to that replica.
+- This covers `completedNames`, where only selected children are required for completion and the remaining children may still be running.
+
+**On `PodCliqueSet` replica or resource terminal state:**
+- Delete active pods and non-terminal child `PodClique`s / `PodCliqueScalingGroup`s belonging to the terminal scope.
+- This prevents completed or failed PCS scopes from continuing to consume resources after the parent decision has already been made.
+
+**Recreation guard:**
+- Controllers must not recreate pods, `PodClique`s, or `PodCliqueScalingGroup`s whose owning PCSG/PCS scope is already terminal.
 
 **During a gang restart:**
 - The failed `PodClique` is deleted entirely (not retained), which cascade-deletes its terminal pods as well. Logs from the failed attempt are not preserved across restarts. See [Log loss on retry](#limitationsrisks--mitigations).
