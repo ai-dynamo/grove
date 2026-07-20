@@ -20,12 +20,16 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -75,10 +79,17 @@ func TestBackend_PreparePod_PreservesExistingSkipAnnotation(t *testing.T) {
 }
 
 func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
+	pcs := newPodCliqueSet(
+		"test-pcs",
+		"team-a",
+		podCliqueTemplateWithQueue("encoder-template", "team-b"),
+		podCliqueTemplateWithQueue("decoder-template", "team-c"),
+	)
 	podGang := testutils.NewPodGangBuilder("test-podgang", "default").
 		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
 		Build()
-	podGang.Labels["kai.scheduler/queue"] = "team-a"
+	setPodCliqueSetControllerOwner(podGang, pcs)
+	podGang.Labels[labelKeyQueueName] = "legacy-queue"
 	podGang.Annotations = map[string]string{"grove.io/topology-name": "cluster-topology"}
 	podGang.Spec.PriorityClassName = "high-priority"
 	podGang.Spec.TopologyConstraint = &groveschedulerv1alpha1.TopologyConstraint{
@@ -114,7 +125,7 @@ func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
 	}
 
 	cl := testutils.NewTestClientBuilder().
-		WithObjects(podGang).
+		WithObjects(pcs, podGang).
 		Build()
 	recorder := record.NewFakeRecorder(10)
 	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai}
@@ -150,9 +161,8 @@ func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
 	require.NotNil(t, gotPodGroup.Spec.SubGroups[2].MinMember)
 	assert.Equal(t, int32(3), *gotPodGroup.Spec.SubGroups[2].MinMember)
 
-	// Update PodGang: remove queue label and change min replicas.
+	// Update PodGang: change min replicas. Queue remains sourced from the owning PCS.
 	updatedPodGang := podGang.DeepCopy()
-	delete(updatedPodGang.Labels, "kai.scheduler/queue")
 	updatedPodGang.Spec.PodGroups[0].MinReplicas = 4
 	require.NoError(t, cl.Update(ctx, updatedPodGang))
 
@@ -160,7 +170,7 @@ func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
 	gotAfterUpdate := &kaischedulingv2alpha2.PodGroup{}
 	require.NoError(t, cl.Get(ctx, client.ObjectKey{Name: podGang.Name, Namespace: podGang.Namespace}, gotAfterUpdate))
 
-	// Existing queue should be preserved even when source label is removed.
+	// The owning PCS label overrides both template and legacy PodGang queues.
 	assert.Equal(t, "team-a", gotAfterUpdate.Spec.Queue)
 	require.NotNil(t, gotAfterUpdate.Spec.MinMember)
 	assert.Equal(t, int32(7), *gotAfterUpdate.Spec.MinMember)
@@ -169,11 +179,17 @@ func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
 }
 
 func TestBackend_SyncPodGangSetsOwnerReferenceAndSkipAnnotation(t *testing.T) {
+	pcs := newPodCliqueSet(
+		"owned-pcs",
+		"team-a",
+		podCliqueTemplateWithQueue("worker-template", "team-b"),
+	)
 	podGang := testutils.NewPodGangBuilder("owned", "default").
 		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
 		Build()
+	setPodCliqueSetControllerOwner(podGang, pcs)
 
-	cl := testutils.NewTestClientBuilder().WithObjects(podGang).Build()
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
 	recorder := record.NewFakeRecorder(10)
 	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai}
 	b := New(cl, cl.Scheme(), recorder, profile)
@@ -190,4 +206,127 @@ func TestBackend_SyncPodGangSetsOwnerReferenceAndSkipAnnotation(t *testing.T) {
 	updatedPodGang := &groveschedulerv1alpha1.PodGang{}
 	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), updatedPodGang))
 	assert.Equal(t, annotationValSkipPGR, updatedPodGang.Annotations[annotationKeySkipPGR])
+}
+
+func TestBackend_SyncPodGang_UsesUniquePodCliqueTemplateQueue(t *testing.T) {
+	pcs := newPodCliqueSet(
+		"template-queue-pcs",
+		"",
+		podCliqueTemplateWithQueue("worker-a", "team-a"),
+		podCliqueTemplateWithQueue("worker-b", "team-a"),
+	)
+	podGang := testutils.NewPodGangBuilder("template-queue-podgang", "default").
+		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
+		Build()
+	setPodCliqueSetControllerOwner(podGang, pcs)
+
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+	require.NoError(t, b.Init(cl))
+
+	ctx := context.Background()
+	require.NoError(t, b.SyncPodGang(ctx, podGang))
+
+	podGroup := &kaischedulingv2alpha2.PodGroup{}
+	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), podGroup))
+	assert.Equal(t, "team-a", podGroup.Spec.Queue)
+}
+
+func TestBackend_SyncPodGang_QueueResolutionFailuresDoNotCreatePodGroup(t *testing.T) {
+	tests := []struct {
+		name          string
+		pcs           *grovecorev1alpha1.PodCliqueSet
+		omitPCS       bool
+		wantErrSubstr string
+	}{
+		{
+			name:          "missing PodCliqueSet controller owner",
+			wantErrSubstr: "has no controlling PodCliqueSet",
+		},
+		{
+			name: "controlling PodCliqueSet is absent",
+			pcs: newPodCliqueSet(
+				"absent-pcs",
+				"team-a",
+				podCliqueTemplateWithQueue("worker", "team-b"),
+			),
+			omitPCS:       true,
+			wantErrSubstr: "get controlling PodCliqueSet default/absent-pcs",
+		},
+		{
+			name: "missing queue",
+			pcs: newPodCliqueSet(
+				"missing-queue-pcs",
+				"",
+				podCliqueTemplateWithQueue("worker", ""),
+			),
+			wantErrSubstr: "no KAI queue is configured",
+		},
+		{
+			name: "conflicting template queues without PodCliqueSet override",
+			pcs: newPodCliqueSet(
+				"conflicting-queues-pcs",
+				"",
+				podCliqueTemplateWithQueue("worker-a", "team-a"),
+				podCliqueTemplateWithQueue("worker-b", "team-b"),
+			),
+			wantErrSubstr: "conflicting KAI queues",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			podGang := testutils.NewPodGangBuilder("test-podgang", "default").
+				WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
+				Build()
+			objects := []client.Object{podGang}
+			if tt.pcs != nil {
+				setPodCliqueSetControllerOwner(podGang, tt.pcs)
+				if !tt.omitPCS {
+					objects = append(objects, tt.pcs)
+				}
+			}
+
+			cl := testutils.NewTestClientBuilder().WithObjects(objects...).Build()
+			b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+			require.NoError(t, b.Init(cl))
+
+			err := b.SyncPodGang(context.Background(), podGang)
+			require.ErrorContains(t, err, tt.wantErrSubstr)
+
+			podGroup := &kaischedulingv2alpha2.PodGroup{}
+			err = cl.Get(context.Background(), client.ObjectKeyFromObject(podGang), podGroup)
+			assert.True(t, apierrors.IsNotFound(err), "PodGroup must not be created when queue resolution fails")
+		})
+	}
+}
+
+func newPodCliqueSet(name, queue string, cliques ...*grovecorev1alpha1.PodCliqueTemplateSpec) *grovecorev1alpha1.PodCliqueSet {
+	builder := testutils.NewPodCliqueSetBuilder(name, "default", types.UID(name+"-uid"))
+	for _, clique := range cliques {
+		builder.WithPodCliqueTemplateSpec(clique)
+	}
+	pcs := builder.Build()
+	if queue != "" {
+		pcs.Labels = map[string]string{labelKeyQueueName: queue}
+	}
+	return pcs
+}
+
+func podCliqueTemplateWithQueue(name, queue string) *grovecorev1alpha1.PodCliqueTemplateSpec {
+	labels := map[string]string{}
+	if queue != "" {
+		labels[labelKeyQueueName] = queue
+	}
+	return testutils.NewPodCliqueTemplateSpecBuilder(name).WithLabels(labels).Build()
+}
+
+func setPodCliqueSetControllerOwner(podGang *groveschedulerv1alpha1.PodGang, pcs *grovecorev1alpha1.PodCliqueSet) {
+	podGang.OwnerReferences = []metav1.OwnerReference{{
+		APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(),
+		Kind:       "PodCliqueSet",
+		Name:       pcs.Name,
+		UID:        pcs.UID,
+		Controller: ptr.To(true),
+	}}
 }

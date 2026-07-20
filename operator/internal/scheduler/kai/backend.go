@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"sort"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -93,7 +94,7 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 		return fmt.Errorf("ensure KAI podgrouper skip annotation: %w", err)
 	}
 
-	newPodGroup, err := b.buildPodGroupForPodGang(podGang)
+	newPodGroup, err := b.buildPodGroupForPodGang(ctx, podGang)
 	if err != nil {
 		b.recordWarning(podGang, "KAIBackendMappingFailed", err)
 		return err
@@ -147,9 +148,13 @@ func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev
 }
 
 // buildPodGroupForPodGang translates a Grove PodGang into a KAI PodGroup object.
-func (b *schedulerBackend) buildPodGroupForPodGang(podGang *groveschedulerv1alpha1.PodGang) (*kaischedulingv2alpha2.PodGroup, error) {
+func (b *schedulerBackend) buildPodGroupForPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) (*kaischedulingv2alpha2.PodGroup, error) {
 	topologyName := getTopologyName(podGang)
 	topologyConstraint, err := toKAITopologyConstraint(podGang.Spec.TopologyConstraint, topologyName)
+	if err != nil {
+		return nil, err
+	}
+	queueName, err := b.resolveQueueName(ctx, podGang)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +204,7 @@ func (b *schedulerBackend) buildPodGroupForPodGang(podGang *groveschedulerv1alph
 		},
 		Spec: kaischedulingv2alpha2.PodGroupSpec{
 			MinMember:         ptr.To(minMember),
-			Queue:             resolveQueueName(podGang),
+			Queue:             queueName,
 			PriorityClassName: podGang.Spec.PriorityClassName,
 			SubGroups:         subGroups,
 		},
@@ -263,13 +268,60 @@ func toKAITopologyConstraint(topologyConstraint *groveschedulerv1alpha1.Topology
 	return result, nil
 }
 
-// resolveQueueName returns queue from labels first, then falls back to annotations.
-func resolveQueueName(podGang *groveschedulerv1alpha1.PodGang) string {
-	if podGang.Labels != nil && podGang.Labels[labelKeyQueueName] != "" {
-		return podGang.Labels[labelKeyQueueName]
+// resolveQueueName returns the KAI queue configured by the PodGang's owning PodCliqueSet.
+// A queue set on the PodCliqueSet itself overrides the queues on its PodClique templates.
+func (b *schedulerBackend) resolveQueueName(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) (string, error) {
+	owner := metav1.GetControllerOf(podGang)
+	if owner == nil {
+		return "", fmt.Errorf("podgang %s/%s has no controlling PodCliqueSet", podGang.Namespace, podGang.Name)
 	}
-	if podGang.Annotations != nil {
-		return podGang.Annotations[labelKeyQueueName]
+	if owner.APIVersion != grovecorev1alpha1.SchemeGroupVersion.String() || owner.Kind != "PodCliqueSet" {
+		return "", fmt.Errorf("podgang %s/%s is controlled by %s %q, expected PodCliqueSet", podGang.Namespace, podGang.Name, owner.APIVersion, owner.Kind)
+	}
+
+	pcs := &grovecorev1alpha1.PodCliqueSet{}
+	if err := b.client.Get(ctx, client.ObjectKey{Namespace: podGang.Namespace, Name: owner.Name}, pcs); err != nil {
+		return "", fmt.Errorf("get controlling PodCliqueSet %s/%s: %w", podGang.Namespace, owner.Name, err)
+	}
+
+	if queueName := resolveQueueNameFromMetadata(pcs.Labels, pcs.Annotations); queueName != "" {
+		return queueName, nil
+	}
+
+	queueNames := map[string]struct{}{}
+	for _, clique := range pcs.Spec.Template.Cliques {
+		if clique == nil {
+			continue
+		}
+		if queueName := resolveQueueNameFromMetadata(clique.Labels, clique.Annotations); queueName != "" {
+			queueNames[queueName] = struct{}{}
+		}
+	}
+
+	switch len(queueNames) {
+	case 0:
+		return "", fmt.Errorf("no KAI queue is configured on PodCliqueSet %s/%s or its PodClique templates", pcs.Namespace, pcs.Name)
+	case 1:
+		for queueName := range queueNames {
+			return queueName, nil
+		}
+	}
+
+	queueNamesList := make([]string, 0, len(queueNames))
+	for queueName := range queueNames {
+		queueNamesList = append(queueNamesList, queueName)
+	}
+	sort.Strings(queueNamesList)
+	return "", fmt.Errorf("conflicting KAI queues on PodCliqueSet %s/%s PodClique templates: %v; set %s on the PodCliqueSet to choose one", pcs.Namespace, pcs.Name, queueNamesList, labelKeyQueueName)
+}
+
+// resolveQueueNameFromMetadata returns queue from labels first, then falls back to annotations.
+func resolveQueueNameFromMetadata(labels, annotations map[string]string) string {
+	if labels != nil && labels[labelKeyQueueName] != "" {
+		return labels[labelKeyQueueName]
+	}
+	if annotations != nil {
+		return annotations[labelKeyQueueName]
 	}
 	return ""
 }
