@@ -19,20 +19,15 @@ set -o pipefail
 
 echo "> Adding Apache License header to all go files where it is not present"
 
-YEAR="$(date +%Y)"
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 REPO_HACK_DIR=$(dirname "$SCRIPT_DIR")/hack
 
-# addlicense with a license file (parameter -f) expects no comments in the file.
-# boilerplate.go.txt is however also used also when generating go code.
-# Therefore we remove '//' from boilerplate.go.txt here before passing it to addlicense.
-
-temp_file=$(mktemp)
-trap "rm -f $temp_file" EXIT
-sed -e "s/YEAR/${YEAR}/g" -e 's|^// *||' ${REPO_HACK_DIR}/boilerplate.go.txt > $temp_file
+# addlicense with a license file (parameter -f) expects no comments in the file,
+# as it adds the comment style appropriate for each file type itself.
 
 addlicense \
-  -f $temp_file \
+  -f "${REPO_HACK_DIR}/boilerplate.go.txt" \
+  -c "The Grove Authors." \
   -ignore "**/*.md" \
   -ignore "**/*.yaml" \
   -ignore "**/*.yml" \
