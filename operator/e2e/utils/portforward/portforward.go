@@ -1,4 +1,3 @@
-// /*
 // Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package portforward
 
@@ -29,9 +27,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const portForwardReadyTimeout = 10 * time.Second

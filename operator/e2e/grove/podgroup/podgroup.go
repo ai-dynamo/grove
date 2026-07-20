@@ -1,6 +1,5 @@
 //go:build e2e
 
-// /*
 // Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +13,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package podgroup
 
@@ -23,10 +21,10 @@ import (
 	"fmt"
 	"time"
 
-	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	nameutils "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
+	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
