@@ -19,7 +19,7 @@
 // These tests are disabled by default due to the 'e2e' build tag above.
 // To run these tests, use:
 //
-//	go test -tags=e2e ./e2e_testing/tests/...
+//	go test -tags=e2e ./e2e/tests/...
 //
 // Without the -tags=e2e flag, these tests will be skipped entirely.
 package tests

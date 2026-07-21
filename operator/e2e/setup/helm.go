@@ -63,6 +63,8 @@ type HelmInstallConfig struct {
 	RepoURL string
 	// ReuseValues reuses the last release's values and merges in the new values.
 	ReuseValues bool
+	// ResetValues resets to the values built into the new chart before applying Values.
+	ResetValues bool
 	// Timeout is the time to wait for Kubernetes operations (default: 5 minutes).
 	Timeout time.Duration
 }
@@ -321,6 +323,7 @@ func newUpgradeClient(actionConfig *action.Configuration, config *HelmInstallCon
 	client.Wait = config.Wait
 	client.Version = config.ChartVersion
 	client.ReuseValues = config.ReuseValues
+	client.ResetValues = config.ResetValues
 
 	// Set timeout
 	if config.Timeout > 0 {

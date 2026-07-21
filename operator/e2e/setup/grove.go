@@ -131,7 +131,7 @@ func (c *GroveConfig) toHelmValues() (map[string]interface{}, error) {
 //
 // This approach avoids wasteful rebuilds while staying compatible with the Skaffold installation.
 func UpdateGroveConfiguration(ctx context.Context, restConfig *rest.Config, chartDir string, config *GroveConfig, logger *log.Logger) error {
-	chartVersion, err := getChartVersion(chartDir)
+	chartVersion, err := GetGroveChartVersion(chartDir)
 	if err != nil {
 		return fmt.Errorf("failed to get chart version: %w", err)
 	}
@@ -182,12 +182,12 @@ type chartYAML struct {
 	Version string `yaml:"version"`
 }
 
-// getChartVersion reads the version from Chart.yaml in the given chart directory.
+// GetGroveChartVersion reads the version from Chart.yaml in the given chart directory.
 // The chartDir parameter should be the path to a Helm chart directory. Chart.yaml is
 // a required file per the Helm chart specification and will always exist for valid charts.
 // We read from Chart.yaml rather than hardcoding the version to maintain a single source
 // of truth, avoiding configuration drift between the chart definition and the e2e test code.
-func getChartVersion(chartDir string) (string, error) {
+func GetGroveChartVersion(chartDir string) (string, error) {
 	chartFile := filepath.Join(chartDir, "Chart.yaml")
 	data, err := os.ReadFile(chartFile)
 	if err != nil {
