@@ -25,6 +25,7 @@ import (
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/clustertopology"
+	"github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
@@ -35,15 +36,45 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/resourceversion"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// pcsStatusUpdateExpectation records the latest status write this reconciler persisted.
+// UID scopes resourceVersion ordering to one concrete PCS instance.
+type pcsStatusUpdateExpectation struct {
+	uid             types.UID
+	resourceVersion string
+}
 
 // reconcileStatus updates the PodCliqueSet status with current replica counts and rolling update progress
 func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	// Snapshot status before mutations so we can skip the Update call when nothing changes.
 	originalStatus := pcs.Status.DeepCopy()
 
+	if result := r.mutateStatus(ctx, logger, pcs); ctrlcommon.ShortCircuitReconcileFlow(result) {
+		return result
+	}
+
+	if !equality.Semantic.DeepEqual(*originalStatus, pcs.Status) {
+		return r.updateStatus(ctx, pcs)
+	}
+
+	// A no-op is safe when the cache has observed the latest status write from this
+	// reconciler. Without a pending expectation, this is the steady-state fast path.
+	if r.isStatusUpdateExpectationSatisfied(logger, pcs) {
+		return ctrlcommon.ContinueReconcile()
+	}
+
+	logger.V(1).Info("Cached PodCliqueSet has not observed the latest status write; verifying through the API reader",
+		"pcs", client.ObjectKeyFromObject(pcs))
+	return r.reconcileStatusFromAPI(ctx, logger, pcs)
+}
+
+// mutateStatus derives the PodCliqueSet status from the latest child state available in the cache.
+func (r *Reconciler) mutateStatus(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	// Calculate available replicas using PCSG-inspired approach
 	err := r.mutateReplicas(ctx, logger, pcs)
 	if err != nil {
@@ -59,21 +90,101 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 		return ctrlcommon.ReconcileWithErrors("failed to update selector for PodCliqueSet", err)
 	}
 
-	// Skip the status update when every mutate* above left status byte-identical to what
-	// the previous reconcile already persisted. The mutators are the only code writing
-	// pcs.Status here, so equality means there is nothing for the apiserver to store.
-	// Issuing the Update anyway bumps resourceVersion and fires a watch event that wakes
-	// every PCS observer and cascades into spurious reconciles. equality.Semantic is
-	// required because the status mixes counters, pointers, and conditions.
-	if equality.Semantic.DeepEqual(*originalStatus, pcs.Status) {
+	return ctrlcommon.ContinueReconcile()
+}
+
+// updateStatus persists status and records the resulting resourceVersion that the informer
+// cache must observe before a subsequent no-op can trust its cached baseline again.
+func (r *Reconciler) updateStatus(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
+	if err := r.client.Status().Update(ctx, pcs); err != nil {
+		return ctrlcommon.ReconcileWithErrors("failed to update PodCliqueSet status", err)
+	}
+	r.pcsStatusUpdateExpectations.Store(client.ObjectKeyFromObject(pcs), pcsStatusUpdateExpectation{
+		uid:             pcs.UID,
+		resourceVersion: pcs.ResourceVersion,
+	})
+	return ctrlcommon.ContinueReconcile()
+}
+
+// isStatusUpdateExpectationSatisfied reports whether the cached PCS has observed the latest
+// status write persisted by this reconciler.
+func (r *Reconciler) isStatusUpdateExpectationSatisfied(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) bool {
+	pcsObjectKey := client.ObjectKeyFromObject(pcs)
+	value, ok := r.pcsStatusUpdateExpectations.Load(pcsObjectKey)
+	if !ok {
+		return true
+	}
+
+	expectation := value.(pcsStatusUpdateExpectation)
+	if expectation.uid != pcs.UID {
+		// The expectation belongs to a deleted instance of the same name; drop it.
+		r.pcsStatusUpdateExpectations.Delete(pcsObjectKey)
+		return true
+	}
+
+	comparison, err := resourceversion.CompareResourceVersion(pcs.ResourceVersion, expectation.resourceVersion)
+	if err != nil {
+		logger.V(1).Info("Could not compare PodCliqueSet resource versions; verifying through the API reader",
+			"pcs", pcsObjectKey,
+			"cachedResourceVersion", pcs.ResourceVersion,
+			"expectedResourceVersion", expectation.resourceVersion,
+			"error", err)
+		return false
+	}
+	if comparison < 0 {
+		return false
+	}
+
+	r.pcsStatusUpdateExpectations.Delete(pcsObjectKey)
+	return true
+}
+
+// reconcileStatusFromAPI verifies a cached no-op against the current API Server object.
+// Mutating the fresh object preserves status fields written by other reconciliation paths.
+// The recomputation still reads children from the informer cache, so a single pass is not
+// guaranteed to produce the final status; it only guarantees that a corrective write is
+// never skipped forever. Later child events re-run reconcileStatus and converge the rest.
+func (r *Reconciler) reconcileStatusFromAPI(ctx context.Context, logger logr.Logger, cachedPCS *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
+	pcsObjectKey := client.ObjectKeyFromObject(cachedPCS)
+	latestPCS := &grovecorev1alpha1.PodCliqueSet{}
+	if err := r.apiReader.Get(ctx, pcsObjectKey, latestPCS); err != nil {
+		if apierrors.IsNotFound(err) {
+			r.pcsStatusUpdateExpectations.Delete(pcsObjectKey)
+			return ctrlcommon.ContinueReconcile()
+		}
+		return ctrlcommon.ReconcileWithErrors("failed to verify PodCliqueSet status from API Server", err)
+	}
+	if latestPCS.UID != cachedPCS.UID {
+		r.pcsStatusUpdateExpectations.Delete(pcsObjectKey)
+		return ctrlcommon.ContinueReconcile()
+	}
+	if !latestPCS.DeletionTimestamp.IsZero() {
+		// Deletion is handled by the dedicated deletion flow once the informer observes
+		// it; do not run deletion logic from within the status step. Short-circuit the
+		// remaining reconcile and requeue so the deletion event is picked up promptly.
+		r.pcsStatusUpdateExpectations.Delete(pcsObjectKey)
+		return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval,
+			fmt.Sprintf("PodCliqueSet %v is marked for deletion on the API Server; awaiting deletion flow", pcsObjectKey))
+	}
+	// The child reads below still use the informer cache. Only combine them with
+	// the direct parent read when both represent the same desired generation.
+	// The normal PCS update event will reconcile a newer generation once cached.
+	if latestPCS.Generation != cachedPCS.Generation {
 		return ctrlcommon.ContinueReconcile()
 	}
 
-	// Update the PodCliqueSet status
-	if err = r.client.Status().Update(ctx, pcs); err != nil {
-		return ctrlcommon.ReconcileWithErrors("failed to update PodCliqueSet status", err)
+	originalStatus := latestPCS.Status.DeepCopy()
+	if result := r.mutateStatus(ctx, logger, latestPCS); ctrlcommon.ShortCircuitReconcileFlow(result) {
+		return result
 	}
-	return ctrlcommon.ContinueReconcile()
+	if equality.Semantic.DeepEqual(*originalStatus, latestPCS.Status) {
+		// A direct read verifies current API state but does not prove the informer has
+		// observed the expected write. Keep the expectation until the cache catches up.
+		return ctrlcommon.ContinueReconcile()
+	}
+
+	logger.Info("Correcting PodCliqueSet status that regressed on the API Server", "pcs", pcsObjectKey)
+	return r.updateStatus(ctx, latestPCS)
 }
 
 // mutateReplicas updates the PodCliqueSet status replica counts and update-progress counts.

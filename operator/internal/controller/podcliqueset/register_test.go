@@ -89,11 +89,15 @@ func TestMapClusterTopologyToPodCliqueSets(t *testing.T) {
 }
 
 // TestPodCliqueSetPredicateUpdate verifies that the PodCliqueSet update predicate
-// enqueues on generation bumps and reconcile-trigger annotation changes, and
-// ignores unrelated annotation edits or no-op updates.
+// enqueues on deletion, generation bumps, and reconcile-trigger annotation changes,
+// and ignores unrelated annotation edits or no-op updates.
 func TestPodCliqueSetPredicateUpdate(t *testing.T) {
 	pred, ok := podCliqueSetPredicate().(predicate.Funcs)
 	require.True(t, ok, "predicate must be predicate.Funcs")
+
+	deletionTimestamp := metav1.Now()
+	deletingPCS := podCliqueSetWithGenerationAndAnnotations(1, nil)
+	deletingPCS.DeletionTimestamp = &deletionTimestamp
 
 	tests := []struct {
 		name string
@@ -106,6 +110,18 @@ func TestPodCliqueSetPredicateUpdate(t *testing.T) {
 			old:  podCliqueSetWithGenerationAndAnnotations(1, nil),
 			new:  podCliqueSetWithGenerationAndAnnotations(2, nil),
 			want: true,
+		},
+		{
+			name: "deletion timestamp addition enqueues",
+			old:  podCliqueSetWithGenerationAndAnnotations(1, nil),
+			new:  deletingPCS.DeepCopy(),
+			want: true,
+		},
+		{
+			name: "existing deletion timestamp does not enqueue",
+			old:  deletingPCS.DeepCopy(),
+			new:  deletingPCS.DeepCopy(),
+			want: false,
 		},
 		{
 			name: "reconcile trigger annotation change enqueues",

@@ -16,6 +16,7 @@ package podcliqueset
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -23,17 +24,22 @@ import (
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
+	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -841,6 +847,403 @@ func TestPCSMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 	})
 }
 
+func TestReconcileStatusConvergesWhenPCSCacheIsStale(t *testing.T) {
+	ctx := context.Background()
+	pcsHash := "gen-hash-current"
+	pcsUID := uuid.NewUUID()
+	cacheUpdateEndedAt := metav1.NewTime(time.Unix(100, 0))
+	apiUpdateEndedAt := metav1.NewTime(time.Unix(200, 0))
+
+	cachedPCS := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+		WithReplicas(3).
+		WithStandaloneClique("worker").
+		WithPodCliqueSetGenerationHash(&pcsHash).
+		WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
+			UpdateStartedAt:        metav1.NewTime(time.Unix(50, 0)),
+			UpdateEndedAt:          &cacheUpdateEndedAt,
+			UpdatedPodCliquesCount: 3,
+			TotalPodCliquesCount:   3,
+		}).
+		Build()
+	cachedPCS.ResourceVersion = "10"
+	cachedPCS.Status.Replicas = 3
+	cachedPCS.Status.AvailableReplicas = 3
+	cachedPCS.Status.UpdatedReplicas = 3
+	require.NoError(t, mutateSelector(cachedPCS))
+
+	apiPCS := cachedPCS.DeepCopy()
+	apiPCS.ResourceVersion = "11"
+	apiPCS.Status.UpdatedReplicas = 2
+	apiPCS.Status.UpdateProgress.UpdateEndedAt = &apiUpdateEndedAt
+	apiPCS.Status.UpdateProgress.UpdatedPodCliquesCount = 2
+
+	objects := []client.Object{apiPCS}
+	for replicaIndex := range int32(3) {
+		pclq := testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, replicaIndex).Build()
+		objects = append(objects, markStandalonePCLQConverged(t, cachedPCS, pclq, pcsHash))
+	}
+	cl := testutils.SetupFakeClient(objects...)
+	apiReader := &countingReader{Reader: cl}
+	r := &Reconciler{
+		client:    cl,
+		apiReader: apiReader,
+	}
+	pcsObjectKey := client.ObjectKeyFromObject(cachedPCS)
+	// The reconciler last persisted the API Server content; the cache lags behind it.
+	r.pcsStatusUpdateExpectations.Store(pcsObjectKey, pcsStatusUpdateExpectation{
+		uid:             pcsUID,
+		resourceVersion: apiPCS.ResourceVersion,
+	})
+
+	result := r.reconcileStatus(ctx, logr.Discard(), cachedPCS)
+	_, err := result.Result()
+	require.NoError(t, err)
+	assert.Equal(t, 1, apiReader.getCalls, "stale cached no-op should be verified through the API reader")
+
+	updatedPCS := &grovecorev1alpha1.PodCliqueSet{}
+	require.NoError(t, cl.Get(ctx, pcsObjectKey, updatedPCS))
+	assert.Equal(t, int32(3), updatedPCS.Status.UpdatedReplicas)
+	require.NotNil(t, updatedPCS.Status.UpdateProgress)
+	assert.Equal(t, int32(3), updatedPCS.Status.UpdateProgress.UpdatedPodCliquesCount)
+	assert.Equal(t, apiUpdateEndedAt, *updatedPCS.Status.UpdateProgress.UpdateEndedAt,
+		"fresh API Server progress timestamps must be preserved")
+
+	value, ok := r.pcsStatusUpdateExpectations.Load(pcsObjectKey)
+	require.True(t, ok)
+	expectation := value.(pcsStatusUpdateExpectation)
+	assert.Equal(t, updatedPCS.ResourceVersion, expectation.resourceVersion,
+		"expectation must track the corrected status write")
+	assert.Equal(t, pcsUID, expectation.uid)
+}
+
+func TestReconcileStatusKeepsExpectationUntilCacheObservesWrite(t *testing.T) {
+	ctx := context.Background()
+	pcsUID := uuid.NewUUID()
+	cachedPCS := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+		WithReplicas(1).
+		Build()
+	cachedPCS.ResourceVersion = "10"
+	cachedPCS.Status.Replicas = 1
+	cachedPCS.Status.AvailableReplicas = 1
+	cachedPCS.Status.UpdatedReplicas = 1
+	require.NoError(t, mutateSelector(cachedPCS))
+
+	// The API Server carries a newer status write (UpdateProgress set) that the
+	// informer cache has not observed yet. The status mutators never clear
+	// UpdateProgress, so recomputation keeps both copies as no-ops.
+	apiPCS := cachedPCS.DeepCopy()
+	apiPCS.ResourceVersion = "11"
+	apiPCS.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+		UpdateStartedAt: metav1.NewTime(time.Unix(100, 0)),
+	}
+	cl := testutils.SetupFakeClient(apiPCS)
+	apiReader := &countingReader{Reader: cl}
+	r := &Reconciler{
+		client:    cl,
+		apiReader: apiReader,
+	}
+	pcsObjectKey := client.ObjectKeyFromObject(cachedPCS)
+	r.pcsStatusUpdateExpectations.Store(pcsObjectKey, pcsStatusUpdateExpectation{
+		uid:             pcsUID,
+		resourceVersion: apiPCS.ResourceVersion,
+	})
+
+	result := r.reconcileStatus(ctx, logr.Discard(), cachedPCS.DeepCopy())
+	_, err := result.Result()
+	require.NoError(t, err)
+	assert.Equal(t, 1, apiReader.getCalls)
+
+	storedPCS := &grovecorev1alpha1.PodCliqueSet{}
+	require.NoError(t, cl.Get(ctx, pcsObjectKey, storedPCS))
+	assert.Equal(t, apiPCS.ResourceVersion, storedPCS.ResourceVersion,
+		"an already-converged API status must not be written again")
+	_, ok := r.pcsStatusUpdateExpectations.Load(pcsObjectKey)
+	assert.True(t, ok, "a direct read must not stand in for informer cache observation")
+
+	result = r.reconcileStatus(ctx, logr.Discard(), cachedPCS.DeepCopy())
+	_, err = result.Result()
+	require.NoError(t, err)
+	assert.Equal(t, 2, apiReader.getCalls, "a still-stale cache must be verified again")
+}
+
+func TestReconcileStatusSkipsDirectRecomputeForNewerGeneration(t *testing.T) {
+	ctx := context.Background()
+	pcsUID := uuid.NewUUID()
+	cachedPCS := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+		WithReplicas(1).
+		Build()
+	cachedPCS.Generation = 1
+	cachedPCS.ResourceVersion = "10"
+	cachedPCS.Status.Replicas = 1
+	cachedPCS.Status.AvailableReplicas = 1
+	cachedPCS.Status.UpdatedReplicas = 1
+	require.NoError(t, mutateSelector(cachedPCS))
+
+	apiPCS := cachedPCS.DeepCopy()
+	apiPCS.Generation = 2
+	apiPCS.ResourceVersion = "11"
+	apiPCS.Spec.Replicas = 2
+	apiPCS.Status.Replicas = 0
+	apiPCS.Status.AvailableReplicas = 0
+	apiPCS.Status.UpdatedReplicas = 0
+
+	cl := testutils.SetupFakeClient(apiPCS)
+	apiReader := &countingReader{Reader: cl}
+	r := &Reconciler{
+		client:    cl,
+		apiReader: apiReader,
+	}
+	pcsObjectKey := client.ObjectKeyFromObject(cachedPCS)
+	r.pcsStatusUpdateExpectations.Store(pcsObjectKey, pcsStatusUpdateExpectation{
+		uid:             pcsUID,
+		resourceVersion: apiPCS.ResourceVersion,
+	})
+
+	result := r.reconcileStatus(ctx, logr.Discard(), cachedPCS)
+	_, err := result.Result()
+	require.NoError(t, err)
+	assert.Equal(t, 1, apiReader.getCalls)
+
+	storedPCS := &grovecorev1alpha1.PodCliqueSet{}
+	require.NoError(t, cl.Get(ctx, pcsObjectKey, storedPCS))
+	assert.Equal(t, int32(0), storedPCS.Status.Replicas,
+		"a fresh parent generation must not be combined with children from the older cache generation")
+	assert.Equal(t, apiPCS.ResourceVersion, storedPCS.ResourceVersion)
+	_, ok := r.pcsStatusUpdateExpectations.Load(pcsObjectKey)
+	assert.True(t, ok, "a newer API generation does not mean the informer observed the status write")
+}
+
+func TestReconcileStatusRequeuesWhenLatestPCSIsDeleting(t *testing.T) {
+	ctx := context.Background()
+	pcsUID := uuid.NewUUID()
+	cachedPCS := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+		WithReplicas(1).
+		Build()
+	cachedPCS.ResourceVersion = "10"
+	cachedPCS.Status.Replicas = 1
+	cachedPCS.Status.AvailableReplicas = 1
+	cachedPCS.Status.UpdatedReplicas = 1
+	require.NoError(t, mutateSelector(cachedPCS))
+
+	apiPCS := cachedPCS.DeepCopy()
+	apiPCS.ResourceVersion = "11"
+	now := metav1.Now()
+	apiPCS.DeletionTimestamp = &now
+	apiPCS.Finalizers = []string{apicommonconstants.FinalizerPodCliqueSet}
+
+	cl := testutils.SetupFakeClient(apiPCS)
+	apiReader := &countingReader{Reader: cl}
+	r := &Reconciler{
+		client:    cl,
+		apiReader: apiReader,
+	}
+	pcsObjectKey := client.ObjectKeyFromObject(cachedPCS)
+	// A pending write that the cache has not observed.
+	r.pcsStatusUpdateExpectations.Store(pcsObjectKey, pcsStatusUpdateExpectation{
+		uid:             pcsUID,
+		resourceVersion: apiPCS.ResourceVersion,
+	})
+
+	result := r.reconcileStatus(ctx, logr.Discard(), cachedPCS)
+	ctrlResult, err := result.Result()
+	require.NoError(t, err)
+	assert.True(t, ctrlcommon.ShortCircuitReconcileFlow(result))
+	assert.Equal(t, internalconstants.ComponentSyncRetryInterval, ctrlResult.RequeueAfter)
+	assert.Equal(t, 1, apiReader.getCalls)
+	_, ok := r.pcsStatusUpdateExpectations.Load(pcsObjectKey)
+	assert.False(t, ok, "deletion handling must clear the pending status expectation")
+
+	storedPCS := &grovecorev1alpha1.PodCliqueSet{}
+	require.NoError(t, cl.Get(ctx, pcsObjectKey, storedPCS))
+	assert.Contains(t, storedPCS.Finalizers, apicommonconstants.FinalizerPodCliqueSet,
+		"status reconciliation must not enter the deletion flow")
+}
+
+func TestReconcileStatusNoOpFastPathSkipsAPIReader(t *testing.T) {
+	ctx := context.Background()
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+		WithReplicas(1).
+		Build()
+	pcs.ResourceVersion = "10"
+	pcs.Status.Replicas = 1
+	pcs.Status.AvailableReplicas = 1
+	pcs.Status.UpdatedReplicas = 1
+	require.NoError(t, mutateSelector(pcs))
+
+	cl := testutils.SetupFakeClient(pcs.DeepCopy())
+	apiReader := &countingReader{Reader: cl}
+	r := &Reconciler{
+		client:    cl,
+		apiReader: apiReader,
+	}
+
+	result := r.reconcileStatus(ctx, logr.Discard(), pcs)
+	_, err := result.Result()
+	require.NoError(t, err)
+	assert.Zero(t, apiReader.getCalls, "steady-state no-op must not read directly from the API Server")
+
+	storedPCS := &grovecorev1alpha1.PodCliqueSet{}
+	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(pcs), storedPCS))
+	assert.Equal(t, "10", storedPCS.ResourceVersion, "steady-state no-op must not write status")
+}
+
+func TestReconcileStatusSkipsNoOpAfterCacheObservesWrite(t *testing.T) {
+	ctx := context.Background()
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+		WithReplicas(1).
+		Build()
+	cl := testutils.SetupFakeClient(pcs)
+	apiReader := &countingReader{Reader: cl}
+	r := &Reconciler{
+		client:    cl,
+		apiReader: apiReader,
+	}
+
+	firstResult := r.reconcileStatus(ctx, logr.Discard(), pcs)
+	_, err := firstResult.Result()
+	require.NoError(t, err)
+
+	afterFirst := &grovecorev1alpha1.PodCliqueSet{}
+	pcsObjectKey := client.ObjectKeyFromObject(pcs)
+	require.NoError(t, cl.Get(ctx, pcsObjectKey, afterFirst))
+	_, ok := r.pcsStatusUpdateExpectations.Load(pcsObjectKey)
+	require.True(t, ok, "first status write must record an expectation")
+
+	secondResult := r.reconcileStatus(ctx, logr.Discard(), afterFirst.DeepCopy())
+	_, err = secondResult.Result()
+	require.NoError(t, err)
+	assert.Zero(t, apiReader.getCalls, "observed expectation should keep the no-op on the cached fast path")
+	_, ok = r.pcsStatusUpdateExpectations.Load(pcsObjectKey)
+	assert.False(t, ok, "observed expectation should be cleared")
+
+	afterSecond := &grovecorev1alpha1.PodCliqueSet{}
+	require.NoError(t, cl.Get(ctx, pcsObjectKey, afterSecond))
+	assert.Equal(t, afterFirst.ResourceVersion, afterSecond.ResourceVersion,
+		"identical status must not bump resourceVersion")
+}
+
+func TestReconcileClearsStatusExpectationWhenPCSIsNotFound(t *testing.T) {
+	ctx := context.Background()
+	pcsObjectKey := client.ObjectKey{Namespace: testNamespace, Name: testPCSName}
+	r := &Reconciler{client: testutils.SetupFakeClient()}
+	r.pcsStatusUpdateExpectations.Store(pcsObjectKey, pcsStatusUpdateExpectation{
+		uid:             uuid.NewUUID(),
+		resourceVersion: "11",
+	})
+
+	_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: pcsObjectKey})
+	require.NoError(t, err)
+	_, ok := r.pcsStatusUpdateExpectations.Load(pcsObjectKey)
+	assert.False(t, ok)
+}
+
+func TestReconcileDeleteClearsStatusUpdateExpectation(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).Build()
+	now := metav1.Now()
+	pcs.DeletionTimestamp = &now
+
+	r := &Reconciler{}
+	pcsObjectKey := client.ObjectKeyFromObject(pcs)
+	r.pcsStatusUpdateExpectations.Store(pcsObjectKey, pcsStatusUpdateExpectation{
+		uid:             pcs.UID,
+		resourceVersion: "11",
+	})
+
+	result := r.reconcileDelete(context.Background(), logr.Discard(), pcs)
+	_, err := result.Result()
+	require.NoError(t, err)
+	_, ok := r.pcsStatusUpdateExpectations.Load(pcsObjectKey)
+	assert.False(t, ok)
+}
+
+func TestIsStatusUpdateExpectationSatisfied(t *testing.T) {
+	pcsUID := uuid.NewUUID()
+	otherUID := uuid.NewUUID()
+	tests := []struct {
+		name            string
+		cachedUID       types.UID
+		cachedRV        string
+		expectation     *pcsStatusUpdateExpectation
+		wantObserved    bool
+		wantExpectation bool
+	}{
+		{
+			name:         "no expectation",
+			cachedUID:    pcsUID,
+			cachedRV:     "10",
+			wantObserved: true,
+		},
+		{
+			name:      "cache resource version is older",
+			cachedUID: pcsUID,
+			cachedRV:  "10",
+			expectation: &pcsStatusUpdateExpectation{
+				uid:             pcsUID,
+				resourceVersion: "11",
+			},
+			wantObserved:    false,
+			wantExpectation: true,
+		},
+		{
+			name:      "cache resource version matches",
+			cachedUID: pcsUID,
+			cachedRV:  "11",
+			expectation: &pcsStatusUpdateExpectation{
+				uid:             pcsUID,
+				resourceVersion: "11",
+			},
+			wantObserved: true,
+		},
+		{
+			name:      "cache resource version is newer",
+			cachedUID: pcsUID,
+			cachedRV:  "12",
+			expectation: &pcsStatusUpdateExpectation{
+				uid:             pcsUID,
+				resourceVersion: "11",
+			},
+			wantObserved: true,
+		},
+		{
+			name:      "malformed resource version falls back to API verification",
+			cachedUID: pcsUID,
+			cachedRV:  "opaque",
+			expectation: &pcsStatusUpdateExpectation{
+				uid:             pcsUID,
+				resourceVersion: "11",
+			},
+			wantObserved:    false,
+			wantExpectation: true,
+		},
+		{
+			name:      "expectation belongs to a deleted instance",
+			cachedUID: pcsUID,
+			cachedRV:  "10",
+			expectation: &pcsStatusUpdateExpectation{
+				uid:             otherUID,
+				resourceVersion: "11",
+			},
+			wantObserved: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, tt.cachedUID).Build()
+			pcs.ResourceVersion = tt.cachedRV
+			r := &Reconciler{}
+			pcsObjectKey := client.ObjectKeyFromObject(pcs)
+			if tt.expectation != nil {
+				r.pcsStatusUpdateExpectations.Store(pcsObjectKey, *tt.expectation)
+			}
+
+			assert.Equal(t, tt.wantObserved, r.isStatusUpdateExpectationSatisfied(logr.Discard(), pcs))
+			_, ok := r.pcsStatusUpdateExpectations.Load(pcsObjectKey)
+			assert.Equal(t, tt.wantExpectation, ok)
+		})
+	}
+}
+
 func TestCountUpdatedPCLQs(t *testing.T) {
 	hash := "h"
 	otherHash := "old"
@@ -890,21 +1293,6 @@ func TestCountUpdatedPCLQs(t *testing.T) {
 			assert.Equal(t, tt.want, countUpdatedPCLQs(tt.pcs, tt.in))
 		})
 	}
-}
-
-func markStandalonePCLQConverged(t testing.TB, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, generationHash string) *grovecorev1alpha1.PodClique {
-	t.Helper()
-	expectedTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
-	require.NoError(t, err)
-	if pclq.Labels == nil {
-		pclq.Labels = map[string]string{}
-	}
-	pclq.Labels[apicommon.LabelPodTemplateHash] = expectedTemplateHash
-	pclq.Status.CurrentPodTemplateHash = ptr.To(expectedTemplateHash)
-	pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(generationHash)
-	pclq.Status.ReadyReplicas = *pclq.Spec.MinAvailable
-	pclq.Status.UpdatedReplicas = *pclq.Spec.MinAvailable
-	return pclq
 }
 
 func TestCountUpdatedPCSGs(t *testing.T) {
@@ -962,19 +1350,6 @@ func TestFlattenNamesToSet(t *testing.T) {
 	}
 }
 
-// pcsgName returns the FQN for a PCSG owned by `testPCSName` at the given replica index, using
-// the same scheme that componentutils.GetExpectedPCSGFQNsPerPCSReplica produces.
-func pcsgName(replicaIndex int) string {
-	switch replicaIndex {
-	case 0:
-		return "test-pcs-0-compute"
-	case 1:
-		return "test-pcs-1-compute"
-	default:
-		return ""
-	}
-}
-
 // TestMutateSelector verifies the /scale selector is always published for PodCliqueSet, scoped to
 // resources managed by Grove for this PodCliqueSet (matched by `app.kubernetes.io/managed-by` and
 // `app.kubernetes.io/part-of`). It also asserts the rendered selector parses back into a usable
@@ -1013,4 +1388,147 @@ func TestMutateSelector(t *testing.T) {
 			assert.True(t, parsed.Matches(podLabels), "selector should match a Pod carrying the PCS-managed default labels")
 		})
 	}
+}
+
+// TestReconcileStatusFromAPIConflictDoesNotRecordExpectation asserts that when the
+// corrective status write fails, no expectation is stored for content that never
+// reached the API Server, and the step surfaces the error for a requeue.
+func TestReconcileStatusFromAPIConflictDoesNotRecordExpectation(t *testing.T) {
+	ctx := context.Background()
+	pcsUID := uuid.NewUUID()
+	cachedPCS := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+		WithReplicas(1).
+		Build()
+	cachedPCS.ResourceVersion = "10"
+	cachedPCS.Status.Replicas = 1
+	cachedPCS.Status.AvailableReplicas = 1
+	cachedPCS.Status.UpdatedReplicas = 1
+	require.NoError(t, mutateSelector(cachedPCS))
+
+	// The API Server holds a regressed status that must be corrected.
+	apiPCS := cachedPCS.DeepCopy()
+	apiPCS.ResourceVersion = "11"
+	apiPCS.Status.AvailableReplicas = 0
+
+	cl := testutils.SetupFakeClient(apiPCS)
+	conflictClient := &conflictingStatusClient{WithWatch: cl}
+	r := &Reconciler{
+		client:    conflictClient,
+		apiReader: cl,
+	}
+	pcsObjectKey := client.ObjectKeyFromObject(cachedPCS)
+	// A pending expectation that the cache has not observed forces the API-reader path.
+	r.pcsStatusUpdateExpectations.Store(pcsObjectKey, pcsStatusUpdateExpectation{
+		uid:             pcsUID,
+		resourceVersion: apiPCS.ResourceVersion,
+	})
+
+	result := r.reconcileStatus(ctx, logr.Discard(), cachedPCS.DeepCopy())
+	_, err := result.Result()
+	require.Error(t, err, "a failed corrective write must surface an error for requeue")
+
+	value, ok := r.pcsStatusUpdateExpectations.Load(pcsObjectKey)
+	require.True(t, ok, "the pre-existing expectation must survive a failed write")
+	expectation := value.(pcsStatusUpdateExpectation)
+	assert.Equal(t, apiPCS.ResourceVersion, expectation.resourceVersion,
+		"a failed write must not re-anchor the expectation to unpersisted content")
+}
+
+// TestReconcileStatusConvergesAfterReconcilerRestart simulates an operator restart:
+// the in-memory expectations are empty, the informer cache and the API Server both hold
+// a regressed status. Recomputation must still repair the status because the mutators
+// produce different content than the regressed baseline.
+func TestReconcileStatusConvergesAfterReconcilerRestart(t *testing.T) {
+	ctx := context.Background()
+	pcsHash := "gen-hash-current"
+	pcsUID := uuid.NewUUID()
+
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+		WithReplicas(1).
+		WithStandaloneClique("worker").
+		WithPodCliqueSetGenerationHash(&pcsHash).
+		Build()
+	// Regressed baseline in both the cache and the API Server.
+	pcs.Status.Replicas = 1
+	pcs.Status.AvailableReplicas = 0
+	pcs.Status.UpdatedReplicas = 0
+	require.NoError(t, mutateSelector(pcs))
+
+	pclq := testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).Build()
+	objects := []client.Object{pcs, markStandalonePCLQConverged(t, pcs, pclq, pcsHash)}
+	cl := testutils.SetupFakeClient(objects...)
+	apiReader := &countingReader{Reader: cl}
+	// Fresh reconciler: expectations map is empty, as after a restart.
+	r := &Reconciler{
+		client:    cl,
+		apiReader: apiReader,
+	}
+
+	result := r.reconcileStatus(ctx, logr.Discard(), pcs.DeepCopy())
+	_, err := result.Result()
+	require.NoError(t, err)
+	assert.Zero(t, apiReader.getCalls, "recomputation diverging from the cached baseline needs no API read")
+
+	storedPCS := &grovecorev1alpha1.PodCliqueSet{}
+	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(pcs), storedPCS))
+	assert.Equal(t, int32(1), storedPCS.Status.AvailableReplicas,
+		"a regressed status must be repaired even without an in-memory expectation")
+	assert.Equal(t, int32(1), storedPCS.Status.UpdatedReplicas)
+}
+
+func markStandalonePCLQConverged(t testing.TB, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, generationHash string) *grovecorev1alpha1.PodClique {
+	t.Helper()
+	expectedTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
+	require.NoError(t, err)
+	if pclq.Labels == nil {
+		pclq.Labels = map[string]string{}
+	}
+	pclq.Labels[apicommon.LabelPodTemplateHash] = expectedTemplateHash
+	pclq.Status.CurrentPodTemplateHash = ptr.To(expectedTemplateHash)
+	pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(generationHash)
+	pclq.Status.ReadyReplicas = *pclq.Spec.MinAvailable
+	pclq.Status.UpdatedReplicas = *pclq.Spec.MinAvailable
+	return pclq
+}
+
+// pcsgName returns the FQN for a PCSG owned by testPCSName at the given replica index.
+func pcsgName(replicaIndex int) string {
+	switch replicaIndex {
+	case 0:
+		return "test-pcs-0-compute"
+	case 1:
+		return "test-pcs-1-compute"
+	default:
+		return ""
+	}
+}
+
+type countingReader struct {
+	client.Reader
+	getCalls int
+}
+
+func (r *countingReader) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	r.getCalls++
+	return r.Reader.Get(ctx, key, obj, opts...)
+}
+
+// conflictingStatusClient makes every status Update fail with a Conflict error while
+// delegating everything else to the wrapped client.
+type conflictingStatusClient struct {
+	client.WithWatch
+}
+
+func (c *conflictingStatusClient) Status() client.SubResourceWriter {
+	return &conflictingStatusWriter{}
+}
+
+type conflictingStatusWriter struct {
+	client.SubResourceWriter
+}
+
+func (w *conflictingStatusWriter) Update(_ context.Context, obj client.Object, _ ...client.SubResourceUpdateOption) error {
+	return apierrors.NewConflict(
+		grovecorev1alpha1.SchemeGroupVersion.WithResource("podcliquesets").GroupResource(),
+		obj.GetName(), errors.New("simulated conflict"))
 }

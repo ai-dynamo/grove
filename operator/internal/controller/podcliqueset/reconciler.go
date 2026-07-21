@@ -39,9 +39,13 @@ type Reconciler struct {
 	config                        configv1alpha1.PodCliqueSetControllerConfiguration
 	tasConfig                     configv1alpha1.TopologyAwareSchedulingConfiguration
 	client                        ctrlclient.Client
+	apiReader                     ctrlclient.Reader
 	reconcileStatusRecorder       ctrlcommon.ReconcileErrorRecorder
 	operatorRegistry              component.OperatorRegistry[grovecorev1alpha1.PodCliqueSet]
 	pcsGenerationHashExpectations sync.Map
+	// pcsStatusUpdateExpectations tracks the latest status write per PCS so a cached
+	// no-op is trusted only after the informer has observed that resourceVersion.
+	pcsStatusUpdateExpectations sync.Map
 }
 
 // NewReconciler creates a new reconciler for PodCliqueSet.
@@ -52,9 +56,11 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueSetCo
 		config:                        controllerCfg,
 		tasConfig:                     topologyAwareSchedulingConfig,
 		client:                        client,
+		apiReader:                     mgr.GetAPIReader(),
 		reconcileStatusRecorder:       ctrlcommon.NewReconcileErrorRecorder(client),
 		operatorRegistry:              pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, schedRegistry),
 		pcsGenerationHashExpectations: sync.Map{},
+		pcsStatusUpdateExpectations:   sync.Map{},
 	}
 }
 
@@ -64,6 +70,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 
 	pcs := &grovecorev1alpha1.PodCliqueSet{}
 	if result := ctrlutils.GetPodCliqueSet(ctx, r.client, logger, req.NamespacedName, pcs); ctrlcommon.ShortCircuitReconcileFlow(result) {
+		// GetPodCliqueSet only short-circuits without an error when the object no
+		// longer exists. Drop the in-memory expectation left by its last status write.
+		if !result.HasErrors() {
+			r.pcsStatusUpdateExpectations.Delete(req.NamespacedName)
+		}
 		return result.Result()
 	}
 
@@ -82,6 +93,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 // reconcileDelete handles PodCliqueSet deletion when a deletion timestamp is set.
 func (r *Reconciler) reconcileDelete(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	if !pcs.DeletionTimestamp.IsZero() {
+		r.pcsStatusUpdateExpectations.Delete(ctrlclient.ObjectKeyFromObject(pcs))
 		if !controllerutil.ContainsFinalizer(pcs, constants.FinalizerPodCliqueSet) {
 			return ctrlcommon.DoNotRequeue()
 		}
