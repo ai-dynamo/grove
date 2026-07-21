@@ -24,6 +24,7 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	commonrevision "github.com/ai-dynamo/grove/operator/internal/controller/common/revision"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -273,7 +274,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 			cl := testutils.CreateDefaultFakeClient(existingObjects)
 			reconciler := &Reconciler{client: cl}
 			// Compute available replicas
-			stats, err := reconciler.computeAvailableAndUpdatedReplicas(context.Background(), logr.Discard(), pcs)
+			stats, err := reconciler.computeAvailableAndUpdatedReplicas(context.Background(), logr.Discard(), selectedRevisionForPCS(pcs), pcs)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expectedAvailable, stats.availableReplicas, "Available replicas mismatch")
 		})
@@ -781,7 +782,7 @@ func TestComputePCSUpdateProgressCounts(t *testing.T) {
 			cl := testutils.CreateDefaultFakeClient(objects)
 			r := &Reconciler{client: cl}
 
-			stats, err := r.computeAvailableAndUpdatedReplicas(context.Background(), logr.Discard(), pcs)
+			stats, err := r.computeAvailableAndUpdatedReplicas(context.Background(), logr.Discard(), selectedRevisionForPCS(pcs), pcs)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantUpdatedPCLQs, stats.updatedPCLQs, "updatedPCLQs")
 			assert.Equal(t, tt.wantTotalPCLQs, stats.totalPCLQs, "totalPCLQs")
@@ -825,20 +826,109 @@ func TestPCSMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 		pcs, children := build(false)
 		cl := testutils.CreateDefaultFakeClient(append([]client.Object{pcs}, children...))
 		r := &Reconciler{client: cl}
-		require.NoError(t, r.mutateReplicas(context.Background(), logr.Discard(), pcs))
+		require.NoError(t, r.mutateReplicas(context.Background(), logr.Discard(), selectedRevisionForPCS(pcs), pcs))
 		assert.Nil(t, pcs.Status.UpdateProgress, "UpdateProgress must remain nil when not initialized")
 	})
 	t.Run("UpdateProgress non-nil — counts populated from informer cache", func(t *testing.T) {
 		pcs, children := build(true)
 		cl := testutils.CreateDefaultFakeClient(append([]client.Object{pcs}, children...))
 		r := &Reconciler{client: cl}
-		require.NoError(t, r.mutateReplicas(context.Background(), logr.Discard(), pcs))
+		require.NoError(t, r.mutateReplicas(context.Background(), logr.Discard(), selectedRevisionForPCS(pcs), pcs))
 		require.NotNil(t, pcs.Status.UpdateProgress)
 		assert.Equal(t, int32(2), pcs.Status.UpdateProgress.UpdatedPodCliquesCount)
 		assert.Equal(t, int32(2), pcs.Status.UpdateProgress.TotalPodCliquesCount)
 		assert.Equal(t, int32(2), pcs.Status.UpdateProgress.UpdatedPodCliqueScalingGroupsCount)
 		assert.Equal(t, int32(2), pcs.Status.UpdateProgress.TotalPodCliqueScalingGroupsCount)
 	})
+}
+
+func TestMutateReplicasCompletesUpdateFromAggregateSnapshot(t *testing.T) {
+	const (
+		currentHash = "gen-hash-current"
+		oldHash     = "gen-hash-old"
+	)
+	pcsUID := uuid.NewUUID()
+	tests := []struct {
+		name                  string
+		childHashes           []string
+		completedBefore       bool
+		onDelete              bool
+		wantUpdatedReplicas   int32
+		wantUpdateCompleted   bool
+		wantCurrentlyUpdating bool
+	}{
+		{
+			name:                "active auto update completes with its fully converged counts",
+			childHashes:         []string{currentHash, currentHash},
+			wantUpdatedReplicas: 2,
+			wantUpdateCompleted: true,
+		},
+		{
+			name:                  "active auto update stays open with a partial snapshot",
+			childHashes:           []string{currentHash, oldHash},
+			wantUpdatedReplicas:   1,
+			wantCurrentlyUpdating: true,
+		},
+		{
+			name:                "completed update reports the current snapshot without reopening",
+			childHashes:         []string{currentHash, oldHash},
+			completedBefore:     true,
+			wantUpdatedReplicas: 1,
+			wantUpdateCompleted: true,
+		},
+		{
+			name:                  "OnDelete completion remains owned by revision selection",
+			childHashes:           []string{currentHash, currentHash},
+			onDelete:              true,
+			wantUpdatedReplicas:   2,
+			wantCurrentlyUpdating: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			progress := &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+				UpdateStartedAt:        metav1.Now(),
+				UpdatedPodCliquesCount: 2,
+				TotalPodCliquesCount:   2,
+				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{
+					ReplicaIndex:    1,
+					UpdateStartedAt: metav1.Now(),
+				}},
+			}
+			if tt.completedBefore {
+				progress.UpdateEndedAt = ptr.To(metav1.Now())
+				progress.CurrentlyUpdating = nil
+			}
+			pcsBuilder := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+				WithReplicas(2).
+				WithStandaloneClique("worker").
+				WithPodCliqueSetGenerationHash(ptr.To(currentHash)).
+				WithUpdateProgress(progress)
+			if tt.onDelete {
+				pcsBuilder = pcsBuilder.WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{
+					Type: grovecorev1alpha1.OnDeleteStrategy,
+				})
+			}
+			pcs := pcsBuilder.Build()
+			pcs.Status.UpdatedReplicas = 2
+
+			children := make([]client.Object, 0, len(tt.childHashes))
+			for replicaIndex, hash := range tt.childHashes {
+				pclq := testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, int32(replicaIndex)).Build()
+				children = append(children, markStandalonePCLQConverged(t, pcs, pclq, hash))
+			}
+			cl := testutils.CreateDefaultFakeClient(append([]client.Object{pcs}, children...))
+			r := &Reconciler{client: cl}
+
+			require.NoError(t, r.mutateReplicas(context.Background(), logr.Discard(), selectedRevisionForPCS(pcs), pcs))
+			assert.Equal(t, tt.wantUpdatedReplicas, pcs.Status.UpdatedReplicas)
+			assert.Equal(t, tt.wantUpdatedReplicas, pcs.Status.UpdateProgress.UpdatedPodCliquesCount)
+			assert.Equal(t, int32(2), pcs.Status.UpdateProgress.TotalPodCliquesCount)
+			assert.Equal(t, tt.wantUpdateCompleted, pcs.Status.UpdateProgress.UpdateEndedAt != nil)
+			assert.Equal(t, tt.wantCurrentlyUpdating, len(pcs.Status.UpdateProgress.CurrentlyUpdating) > 0)
+		})
+	}
 }
 
 func TestCountUpdatedPCLQs(t *testing.T) {
@@ -874,7 +964,6 @@ func TestCountUpdatedPCLQs(t *testing.T) {
 		in   []grovecorev1alpha1.PodClique
 		want int32
 	}{
-		{"nil hash -> 0 (early return guards against uninitialized PCS)", testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).WithStandaloneClique("worker").Build(), []grovecorev1alpha1.PodClique{matching}, 0},
 		{"empty input -> 0", pcs, nil, 0},
 		{"all matching", pcs, []grovecorev1alpha1.PodClique{matching, matching}, 2},
 		{"none matching", pcs, []grovecorev1alpha1.PodClique{nonMatching, noHash}, 0},
@@ -887,14 +976,14 @@ func TestCountUpdatedPCLQs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, countUpdatedPCLQs(tt.pcs, tt.in))
+			assert.Equal(t, tt.want, countUpdatedPCLQs(selectedRevisionForPCS(tt.pcs), tt.in))
 		})
 	}
 }
 
 func markStandalonePCLQConverged(t testing.TB, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, generationHash string) *grovecorev1alpha1.PodClique {
 	t.Helper()
-	expectedTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
+	expectedTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(selectedRevisionForPCS(pcs), pclq.ObjectMeta)
 	require.NoError(t, err)
 	if pclq.Labels == nil {
 		pclq.Labels = map[string]string{}
@@ -928,20 +1017,27 @@ func TestCountUpdatedPCSGs(t *testing.T) {
 
 	tests := []struct {
 		name string
-		hash *string
+		hash string
 		in   []grovecorev1alpha1.PodCliqueScalingGroup
 		want int32
 	}{
-		{"nil hash → 0", nil, []grovecorev1alpha1.PodCliqueScalingGroup{matching}, 0},
-		{"all matching", &hash, []grovecorev1alpha1.PodCliqueScalingGroup{matching, matching}, 2},
-		{"mixed", &hash, []grovecorev1alpha1.PodCliqueScalingGroup{matching, nonMatching}, 1},
-		{"terminating excluded", &hash, []grovecorev1alpha1.PodCliqueScalingGroup{matching, terminatingMatching}, 1},
+		{"all matching", hash, []grovecorev1alpha1.PodCliqueScalingGroup{matching, matching}, 2},
+		{"mixed", hash, []grovecorev1alpha1.PodCliqueScalingGroup{matching, nonMatching}, 1},
+		{"terminating excluded", hash, []grovecorev1alpha1.PodCliqueScalingGroup{matching, terminatingMatching}, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, countUpdatedPCSGs(tt.hash, tt.in))
 		})
 	}
+}
+
+func selectedRevisionForPCS(pcs *grovecorev1alpha1.PodCliqueSet) *commonrevision.SelectedRevision {
+	generationHash := "test-generation"
+	if pcs.Status.CurrentGenerationHash != nil {
+		generationHash = *pcs.Status.CurrentGenerationHash
+	}
+	return testutils.NewSelectedRevision(generationHash, candidateCliqueHashes(pcs))
 }
 
 func TestFlattenNamesToSet(t *testing.T) {

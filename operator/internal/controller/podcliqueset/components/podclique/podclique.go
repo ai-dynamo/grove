@@ -27,6 +27,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	commonrevision "github.com/ai-dynamo/grove/operator/internal/controller/common/revision"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
@@ -85,6 +86,10 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 
 // Sync synchronizes all resources that the PodClique Operator manages.
 func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
+	selectedRevision, err := componentutils.GetSelectedPodCliqueSetRevision(ctx, r.client, pcs)
+	if err != nil {
+		return err
+	}
 	existingPCLQFQNs, err := r.GetExistingResourceNames(ctx, logger, pcs.ObjectMeta)
 	if err != nil {
 		return groveerr.WrapError(err,
@@ -97,7 +102,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 	if err := r.triggerDeletionOfExcessPCLQs(ctx, logger, pcs, existingPCLQFQNs); err != nil {
 		return err
 	}
-	if err := r.createOrUpdatePCLQs(ctx, logger, pcs, existingPCLQFQNs); err != nil {
+	if err := r.createOrUpdatePCLQs(ctx, logger, pcs, selectedRevision, existingPCLQFQNs); err != nil {
 		return err
 	}
 
@@ -124,7 +129,7 @@ func (r _resource) triggerDeletionOfExcessPCLQs(ctx context.Context, logger logr
 }
 
 // createOrUpdatePCLQs creates or updates all expected PodCliques for the PodCliqueSet.
-func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, existingPCLQFQNs []string) error {
+func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, revision *commonrevision.SelectedRevision, existingPCLQFQNs []string) error {
 	expectedPCLQNames, _ := componentutils.GetExpectedPCLQNamesGroupByOwner(pcs)
 	tasks := make([]utils.Task, 0, len(expectedPCLQNames))
 	existingPCLQNameSet := componentutils.NewSet(existingPCLQFQNs)
@@ -139,7 +144,7 @@ func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, 
 			createOrUpdateTask := utils.Task{
 				Name: fmt.Sprintf("CreateOrUpdatePodClique-%s", pclqObjectKey),
 				Fn: func(ctx context.Context) error {
-					return r.doCreateOrUpdate(ctx, logger, pcs, pcsReplica, pclqObjectKey, pclqExists)
+					return r.doCreateOrUpdate(ctx, logger, pcs, revision, pcsReplica, pclqObjectKey, pclqExists)
 				},
 			}
 			tasks = append(tasks, createOrUpdateTask)
@@ -258,13 +263,13 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjectMeta
 }
 
 // doCreateOrUpdate creates or updates a single PodClique resource.
-func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int32, pclqObjectKey client.ObjectKey, pclqExists bool) error {
+func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, revision *commonrevision.SelectedRevision, pcsReplica int32, pclqObjectKey client.ObjectKey, pclqExists bool) error {
 	logger.Info("Running CreateOrUpdate PodClique", "pclqObjectKey", pclqObjectKey)
 	pclq := emptyPodClique(pclqObjectKey)
 	pcsObjKey := client.ObjectKeyFromObject(pcs)
 
 	opResult, err := controllerutil.CreateOrPatch(ctx, r.client, pclq, func() error {
-		return r.buildResource(logger, pclq, pcs, int(pcsReplica), pclqExists)
+		return r.buildResource(logger, pclq, pcs, revision, int(pcsReplica), pclqExists)
 	})
 	if err != nil {
 		r.eventRecorder.Eventf(pcs, corev1.EventTypeWarning, constants.ReasonPodCliqueCreateOrUpdateFailed, "PodClique %v creation or updation failed: %v", pclqObjectKey, err)
@@ -281,7 +286,7 @@ func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs
 }
 
 // buildResource configures a PodClique with the desired state from the template.
-func (r _resource) buildResource(logger logr.Logger, pclq *grovecorev1alpha1.PodClique, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int, pclqExists bool) error {
+func (r _resource) buildResource(logger logr.Logger, pclq *grovecorev1alpha1.PodClique, pcs *grovecorev1alpha1.PodCliqueSet, revision *commonrevision.SelectedRevision, pcsReplica int, pclqExists bool) error {
 	var err error
 	pclqObjectKey, pcsObjectKey := client.ObjectKeyFromObject(pclq), client.ObjectKeyFromObject(pcs)
 	pclqTemplateSpec, foundAtIndex, ok := lo.FindIndexOf(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec) bool {
@@ -305,7 +310,11 @@ func (r _resource) buildResource(logger logr.Logger, pclq *grovecorev1alpha1.Pod
 	}
 	// Add finalizer at creation so PCLQ controller does not need a separate PATCH on first reconcile.
 	controllerutil.AddFinalizer(pclq, apiconstants.FinalizerPodClique)
-	pclq.Labels = getLabels(pcs, pcsReplica, pclqObjectKey, pclqTemplateSpec, apicommon.GeneratePodGangNameForPodCliqueOwnedByPodCliqueSet(pcs, pcsReplica))
+	podTemplateHash, err := revision.CliqueHash(pclqTemplateSpec.Name)
+	if err != nil {
+		return err
+	}
+	pclq.Labels = getLabels(pcs, pcsReplica, pclqObjectKey, pclqTemplateSpec, apicommon.GeneratePodGangNameForPodCliqueOwnedByPodCliqueSet(pcs, pcsReplica), podTemplateHash)
 	pclq.Annotations = maps.Clone(pclqTemplateSpec.Annotations)
 	// PodGang owns topology selection; do not propagate a template topology annotation to PodClique pods.
 	delete(pclq.Annotations, apiconstants.AnnotationTopologyName)
@@ -384,13 +393,13 @@ func getPodCliqueSelectorLabels(pcsObjectMeta metav1.ObjectMeta) map[string]stri
 }
 
 // getLabels constructs labels for a PodClique resource including pod template hash.
-func getLabels(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int, pclqObjectKey client.ObjectKey, pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec, podGangName string) map[string]string {
+func getLabels(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int, pclqObjectKey client.ObjectKey, pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec, podGangName, podTemplateHash string) map[string]string {
 	pclqComponentLabels := map[string]string{
 		apicommon.LabelAppNameKey:               pclqObjectKey.Name,
 		apicommon.LabelComponentKey:             apicommon.LabelComponentNamePodCliqueSetPodClique,
 		apicommon.LabelPodCliqueSetReplicaIndex: strconv.Itoa(pcsReplica),
 		apicommon.LabelPodGang:                  podGangName,
-		apicommon.LabelPodTemplateHash:          componentutils.ComputePCLQPodTemplateHash(pclqTemplateSpec, pcs.Spec.Template.PriorityClassName),
+		apicommon.LabelPodTemplateHash:          podTemplateHash,
 	}
 	return lo.Assign(
 		pclqTemplateSpec.Labels,

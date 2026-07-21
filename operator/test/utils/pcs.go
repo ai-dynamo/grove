@@ -15,12 +15,20 @@
 package utils
 
 import (
+	"encoding/json"
+	"sort"
 	"time"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	revisiondata "github.com/ai-dynamo/grove/operator/internal/controller/common/revision"
+	"github.com/ai-dynamo/grove/operator/internal/utils/podtemplatehash"
 
+	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 )
 
 // PodCliqueSetBuilder is a builder for PodCliqueSet objects.
@@ -167,6 +175,72 @@ func (b *PodCliqueSetBuilder) WithAnnotations(annotations map[string]string) *Po
 // Build creates a PodCliqueSet object.
 func (b *PodCliqueSetBuilder) Build() *grovecorev1alpha1.PodCliqueSet {
 	return b.pcs
+}
+
+// ComputePodCliqueTemplateHashes returns candidate clique hashes for controller tests.
+func ComputePodCliqueTemplateHashes(pcs *grovecorev1alpha1.PodCliqueSet) map[string]string {
+	hashes := make(map[string]string, len(pcs.Spec.Template.Cliques))
+	for _, clique := range pcs.Spec.Template.Cliques {
+		hashes[clique.Name] = podtemplatehash.ComputePodClique(clique, pcs.Spec.Template.PriorityClassName)
+	}
+	return hashes
+}
+
+// NewSelectedRevision creates a validated selected revision fixture.
+func NewSelectedRevision(generationHash string, cliqueHashes map[string]string) *revisiondata.SelectedRevision {
+	raw, err := json.Marshal(revisiondata.Data{
+		Cliques:        selectedRevisionCliques(cliqueHashes),
+		GenerationHash: generationHash,
+	})
+	if err != nil {
+		panic(err)
+	}
+	selectedRevision, err := revisiondata.DecodeSelectedRevision(raw)
+	if err != nil {
+		panic(err)
+	}
+	return selectedRevision
+}
+
+// NewPodCliqueSetControllerRevision creates a valid selected revision fixture and updates the PCS status reference.
+func NewPodCliqueSetControllerRevision(pcs *grovecorev1alpha1.PodCliqueSet, cliqueHashes map[string]string) *appsv1.ControllerRevision {
+	if pcs.Status.CurrentGenerationHash == nil {
+		pcs.Status.CurrentGenerationHash = ptr.To("test-generation")
+	}
+	data, _ := json.Marshal(revisiondata.Data{
+		Cliques:        selectedRevisionCliques(cliqueHashes),
+		GenerationHash: *pcs.Status.CurrentGenerationHash,
+	})
+	name := pcs.Name + "-test-revision"
+	pcs.Status.CurrentRevision = ptr.To(name)
+	return &appsv1.ControllerRevision{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            name,
+			Namespace:       pcs.Namespace,
+			Labels:          apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name),
+			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(pcs, grovecorev1alpha1.SchemeGroupVersion.WithKind("PodCliqueSet"))},
+		},
+		Data:     runtime.RawExtension{Raw: data},
+		Revision: pcs.Generation,
+	}
+}
+
+func selectedRevisionCliques(cliqueHashes map[string]string) []revisiondata.CliqueData {
+	names := make([]string, 0, len(cliqueHashes))
+	for name := range cliqueHashes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	cliques := make([]revisiondata.CliqueData, 0, len(names))
+	for _, name := range names {
+		cliques = append(cliques, revisiondata.CliqueData{
+			Name:     name,
+			Template: json.RawMessage(`{}`),
+			Hash:     cliqueHashes[name],
+		})
+	}
+	return cliques
 }
 
 func createEmptyPodCliqueSet(name, namespace string, uid types.UID) *grovecorev1alpha1.PodCliqueSet {
