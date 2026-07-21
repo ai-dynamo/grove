@@ -28,6 +28,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"github.com/ai-dynamo/grove/operator/internal/eventrecorder"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -50,7 +51,7 @@ func TestNew(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, client, resource.client)
 	assert.Equal(t, scheme, resource.scheme)
-	assert.Equal(t, eventRecorder, resource.eventRecorder)
+	assert.NotNil(t, resource.eventRecorder)
 }
 
 // TestGetExistingResourceNames tests getting existing PodCliqueScalingGroup names
@@ -279,7 +280,7 @@ func TestSync(t *testing.T) {
 			r := &_resource{
 				client:        fakeClient,
 				scheme:        scheme,
-				eventRecorder: &record.FakeRecorder{},
+				eventRecorder: eventrecorder.NewTest(&record.FakeRecorder{}),
 			}
 
 			err := r.Sync(ctx, logger, tc.pcs)
@@ -366,7 +367,7 @@ func TestDelete(t *testing.T) {
 
 			r := &_resource{
 				client:        fakeClient,
-				eventRecorder: &record.FakeRecorder{},
+				eventRecorder: eventrecorder.NewTest(&record.FakeRecorder{}),
 			}
 
 			err := r.Delete(ctx, logger, tc.pcsObjMeta)

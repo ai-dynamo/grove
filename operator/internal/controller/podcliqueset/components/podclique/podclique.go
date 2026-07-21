@@ -28,6 +28,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
+	"github.com/ai-dynamo/grove/operator/internal/eventrecorder"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
@@ -53,7 +54,7 @@ const (
 type _resource struct {
 	client        client.Client
 	scheme        *runtime.Scheme
-	eventRecorder record.EventRecorder
+	eventRecorder *eventrecorder.Client
 }
 
 // New creates an instance of PodClique components operator.
@@ -61,7 +62,7 @@ func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.Even
 	return &_resource{
 		client:        client,
 		scheme:        scheme,
-		eventRecorder: eventRecorder,
+		eventRecorder: eventrecorder.New(eventRecorder, eventrecorder.DefaultConfig()),
 	}
 }
 
@@ -275,7 +276,7 @@ func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs
 		)
 	}
 
-	r.eventRecorder.Eventf(pcs, corev1.EventTypeNormal, constants.ReasonPodCliqueCreateOrUpdateSuccessful, "PodClique %v created or updated successfully", pclqObjectKey)
+	r.eventRecorder.CreateOrPatchSuccess(pcs, opResult, constants.ReasonPodCliqueCreateOrUpdateSuccessful, "PodClique %v created or updated successfully", pclqObjectKey)
 	logger.Info("triggered create or update of PodClique for PodCliqueSet", "pcs", pcsObjKey, "pclqObjectKey", pclqObjectKey, "result", opResult)
 	return nil
 }

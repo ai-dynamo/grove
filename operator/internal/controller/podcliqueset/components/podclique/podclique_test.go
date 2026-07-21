@@ -36,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
+	"github.com/ai-dynamo/grove/operator/internal/eventrecorder"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -453,7 +454,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 			operator := &_resource{
 				client:        nil, // not needed for buildResource
 				scheme:        groveclientscheme.Scheme,
-				eventRecorder: record.NewFakeRecorder(10),
+				eventRecorder: eventrecorder.NewTest(record.NewFakeRecorder(10)),
 			}
 
 			err := operator.buildResource(logr.Discard(), pclq, pcs, pcsReplica, false)

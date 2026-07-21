@@ -24,6 +24,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
+	"github.com/ai-dynamo/grove/operator/internal/eventrecorder"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
@@ -51,7 +52,7 @@ const (
 type _resource struct {
 	client        client.Client
 	scheme        *runtime.Scheme
-	eventRecorder record.EventRecorder
+	eventRecorder *eventrecorder.Client
 }
 
 // New creates a new ComputeDomain operator for managing ComputeDomain resources within PodCliqueSets.
@@ -59,7 +60,7 @@ func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRec
 	return &_resource{
 		client:        cl,
 		scheme:        scheme,
-		eventRecorder: eventRecorder,
+		eventRecorder: eventrecorder.New(eventRecorder, eventrecorder.DefaultConfig()),
 	}
 }
 
@@ -170,7 +171,7 @@ func (r _resource) doCreate(ctx context.Context, logger logr.Logger, pcs *grovec
 		)
 	}
 
-	r.eventRecorder.Eventf(pcs, corev1.EventTypeNormal, constants.ReasonComputeDomainCreateSuccessful,
+	r.eventRecorder.CreateOrPatchSuccess(pcs, opResult, constants.ReasonComputeDomainCreateSuccessful,
 		"ComputeDomain %v created successfully", cdObjKey)
 	logger.Info("Created ComputeDomain for PodCliqueSet", "pcs", pcsObjKey, "cdObjectKey", cdObjKey, "result", opResult)
 	return nil

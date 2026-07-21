@@ -32,6 +32,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"github.com/ai-dynamo/grove/operator/internal/eventrecorder"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -314,7 +315,7 @@ func TestBuildResource(t *testing.T) {
 			r := &_resource{
 				client:        fakeClient,
 				scheme:        scheme,
-				eventRecorder: record.NewFakeRecorder(10),
+				eventRecorder: eventrecorder.NewTest(record.NewFakeRecorder(10)),
 				tasConfig: configv1alpha1.TopologyAwareSchedulingConfiguration{
 					Enabled: test.tasEnabled,
 				},

@@ -26,6 +26,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
+	"github.com/ai-dynamo/grove/operator/internal/eventrecorder"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
@@ -50,7 +51,7 @@ const (
 type _resource struct {
 	client        client.Client
 	scheme        *runtime.Scheme
-	eventRecorder record.EventRecorder
+	eventRecorder *eventrecorder.Client
 }
 
 // New creates an instance of PodCliqueScalingGroup components operator.
@@ -58,7 +59,7 @@ func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.Even
 	return &_resource{
 		client:        client,
 		scheme:        scheme,
-		eventRecorder: eventRecorder,
+		eventRecorder: eventrecorder.New(eventRecorder, eventrecorder.DefaultConfig()),
 	}
 }
 
@@ -167,7 +168,7 @@ func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs
 	logger.Info("CreateOrUpdate PodCliqueScalingGroup", "objectKey", pcsgObjectKey)
 	pcsg := emptyPodCliqueScalingGroup(pcsgObjectKey)
 
-	if _, err := controllerutil.CreateOrPatch(ctx, r.client, pcsg, func() error {
+	opResult, err := controllerutil.CreateOrPatch(ctx, r.client, pcsg, func() error {
 		if err := r.buildResource(pcsg, pcs, pcsReplica, pcsgConfig, pcsgExists); err != nil {
 			return groveerr.WrapError(err,
 				errCodeCreatePodCliqueScalingGroup,
@@ -176,12 +177,13 @@ func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs
 			)
 		}
 		return nil
-	}); err != nil {
+	})
+	if err != nil {
 		r.eventRecorder.Eventf(pcs, corev1.EventTypeWarning, constants.ReasonPodCliqueScalingGroupCreateOrUpdateFailed, "Error creating or updating PodCliqueScalingGroup %v: %v", pcsgObjectKey, err)
 		return err
 	}
 
-	r.eventRecorder.Eventf(pcs, corev1.EventTypeNormal, constants.ReasonPodCliqueScalingGroupCreateSuccessful, "Created PodCliqueScalingGroup %v", pcsgObjectKey)
+	r.eventRecorder.CreateOrPatchSuccess(pcs, opResult, constants.ReasonPodCliqueScalingGroupCreateSuccessful, "Created PodCliqueScalingGroup %v", pcsgObjectKey)
 	logger.Info("Created or updated PodCliqueScalingGroup", "objectKey", pcsgObjectKey)
 	return nil
 }
