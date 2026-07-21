@@ -43,11 +43,10 @@ import (
 
 // schedulerBackend implements the scheduler Backend interface (Backend in scheduler package) for KAI scheduler.
 type schedulerBackend struct {
-	client        client.Client
-	scheme        *runtime.Scheme
-	name          string
-	eventRecorder record.EventRecorder
-	profile       configv1alpha1.SchedulerProfile
+	client  client.Client
+	scheme  *runtime.Scheme
+	name    string
+	profile configv1alpha1.SchedulerProfile
 }
 
 var _ scheduler.Backend = (*schedulerBackend)(nil)
@@ -63,13 +62,12 @@ const (
 
 // New creates a new KAI backend instance. profile is the scheduler profile for kai-scheduler;
 // schedulerBackend uses profile.Name and may unmarshal profile.Config for kai-specific options.
-func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1alpha1.SchedulerProfile) scheduler.Backend {
+func New(cl client.Client, scheme *runtime.Scheme, _ record.EventRecorder, profile configv1alpha1.SchedulerProfile) scheduler.Backend {
 	return &schedulerBackend{
-		client:        cl,
-		scheme:        scheme,
-		name:          string(profile.Name),
-		eventRecorder: eventRecorder,
-		profile:       profile,
+		client:  cl,
+		scheme:  scheme,
+		name:    string(profile.Name),
+		profile: profile,
 	}
 }
 
@@ -98,7 +96,6 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 
 	newPodGroup, err := b.buildPodGroupForPodGang(ctx, podGang)
 	if err != nil {
-		b.recordWarning(podGang, "KAIBackendMappingFailed", err)
 		return err
 	}
 
@@ -236,12 +233,6 @@ func (b *schedulerBackend) ensurePodGangSkipAnnotation(ctx context.Context, podG
 	}
 	podGang.Annotations[annotationKeySkipPGR] = annotationValSkipPGR
 	return b.client.Patch(ctx, podGang, client.MergeFrom(before))
-}
-
-func (b *schedulerBackend) recordWarning(obj runtime.Object, reason string, err error) {
-	if b.eventRecorder != nil && obj != nil && err != nil {
-		b.eventRecorder.Eventf(obj, corev1.EventTypeWarning, reason, "%v", err)
-	}
 }
 
 // getTopologyName resolves topology name from PodGang annotations with fallback keys.

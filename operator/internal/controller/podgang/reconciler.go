@@ -16,17 +16,26 @@ package podgang
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
+
+const errCodeSyncSchedulerBackend grovecorev1alpha1.ErrorCode = "ERR_SYNC_SCHEDULER_BACKEND"
 
 // Reconciler reconciles PodGang objects and converts them to scheduler-specific CRs
 type Reconciler struct {
@@ -79,8 +88,56 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 
 	if err := backend.SyncPodGang(ctx, podGang); err != nil {
 		logger.Error(err, "Failed to SyncPodGang on spec change")
+		if statusErr := r.setBackendLastError(ctx, podGang, err); statusErr != nil {
+			return ctrl.Result{}, errors.Join(err, statusErr)
+		}
+		return ctrl.Result{}, err
+	}
+	if err := r.setBackendLastError(ctx, podGang, nil); err != nil {
 		return ctrl.Result{}, err
 	}
 	logger.Info("Successfully synced PodGang")
 	return ctrl.Result{}, nil
+}
+
+// setBackendLastError records only scheduler-backend errors on the owning PodCliqueSet,
+// preserving errors written by the PodCliqueSet controller and other components.
+func (r *Reconciler) setBackendLastError(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang, syncErr error) error {
+	owner := metav1.GetControllerOf(podGang)
+	if owner == nil || owner.APIVersion != grovecorev1alpha1.SchemeGroupVersion.String() || owner.Kind != "PodCliqueSet" {
+		return fmt.Errorf("podgang %s/%s has no controlling PodCliqueSet", podGang.Namespace, podGang.Name)
+	}
+
+	pcs := &grovecorev1alpha1.PodCliqueSet{}
+	key := client.ObjectKey{Namespace: podGang.Namespace, Name: owner.Name}
+	if err := r.Get(ctx, key, pcs); err != nil {
+		if apierrors.IsNotFound(err) && syncErr == nil {
+			return nil
+		}
+		return fmt.Errorf("get owning PodCliqueSet %s: %w", key, err)
+	}
+
+	descriptionPrefix := fmt.Sprintf("podgang %s/%s: ", podGang.Namespace, podGang.Name)
+	desired := slices.DeleteFunc(slices.Clone(pcs.Status.LastErrors), func(lastErr grovecorev1alpha1.LastError) bool {
+		return lastErr.Code == errCodeSyncSchedulerBackend && strings.HasPrefix(lastErr.Description, descriptionPrefix)
+	})
+	if syncErr != nil {
+		desired = append(desired, grovecorev1alpha1.LastError{
+			Code:        errCodeSyncSchedulerBackend,
+			Description: descriptionPrefix + syncErr.Error(),
+			ObservedAt:  metav1.Now(),
+		})
+	}
+	if slices.EqualFunc(pcs.Status.LastErrors, desired, func(left, right grovecorev1alpha1.LastError) bool {
+		return left.Code == right.Code && left.Description == right.Description && left.ObservedAt.Equal(&right.ObservedAt)
+	}) {
+		return nil
+	}
+
+	before := pcs.DeepCopy()
+	pcs.Status.LastErrors = desired
+	if err := r.Status().Patch(ctx, pcs, client.MergeFrom(before)); err != nil {
+		return fmt.Errorf("update scheduler backend error on PodCliqueSet %s: %w", key, err)
+	}
+	return nil
 }
