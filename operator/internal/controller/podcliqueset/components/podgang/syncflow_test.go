@@ -44,6 +44,7 @@ import (
 var defaultFakeSchedulerRegistry = &testutils.FakeSchedulerRegistry{
 	Backends: map[string]scheduler.Backend{
 		"default-scheduler": testutils.NewFakeSchedulerBackend("default-scheduler"),
+		"kai-scheduler":     testutils.NewFakeSchedulerBackend("kai-scheduler"),
 	},
 	DefaultBackend: "default-scheduler",
 }
@@ -956,6 +957,62 @@ func TestComputeExpectedPodGangs(t *testing.T) {
 			assert.ElementsMatch(t, test.expectedBasePodGangNames, basePodGangNames)
 			assert.ElementsMatch(t, test.expectedScaledPodGangFQNs, scaledPodGangNames)
 		})
+	}
+}
+
+func TestComputeExpectedPodGangsWithDisjointSchedulers(t *testing.T) {
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs", Namespace: "default", UID: "test-uid-123"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Replicas: 1,
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+					{
+						Name: "kube-worker",
+						Spec: grovecorev1alpha1.PodCliqueSpec{
+							Replicas:     1,
+							MinAvailable: ptr.To(int32(1)),
+							PodSpec:      v1.PodSpec{SchedulerName: "default-scheduler"},
+						},
+					},
+					{
+						Name: "kai-worker",
+						Spec: grovecorev1alpha1.PodCliqueSpec{
+							Replicas:     1,
+							MinAvailable: ptr.To(int32(1)),
+							PodSpec:      v1.PodSpec{SchedulerName: "kai-scheduler"},
+						},
+					},
+				},
+				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+					{
+						Name:         "sg",
+						Replicas:     ptr.To(int32(2)),
+						MinAvailable: ptr.To(int32(1)),
+						CliqueNames:  []string{"kube-worker", "kai-worker"},
+					},
+				},
+			},
+		},
+	}
+	r := &_resource{schedRegistry: defaultFakeSchedulerRegistry}
+	sc := &syncContext{pcs: pcs, existingPCSGByName: map[string]grovecorev1alpha1.PodCliqueScalingGroup{}}
+
+	require.NoError(t, r.computeExpectedPodGangs(sc))
+	require.Len(t, sc.expectedPodGangs, 4)
+
+	expectedSchedulersByPodGang := map[string]string{
+		"test-pcs-0-default-scheduler":      "default-scheduler",
+		"test-pcs-0-kai-scheduler":          "kai-scheduler",
+		"test-pcs-0-sg-0-default-scheduler": "default-scheduler",
+		"test-pcs-0-sg-0-kai-scheduler":     "kai-scheduler",
+	}
+	for _, podGang := range sc.expectedPodGangs {
+		expectedScheduler, ok := expectedSchedulersByPodGang[podGang.fqn]
+		require.True(t, ok, "unexpected PodGang %q", podGang.fqn)
+		assert.Equal(t, expectedScheduler, podGang.schedulerName)
+		require.Len(t, podGang.pclqs, 1)
+		assert.Equal(t, expectedScheduler, podGang.pclqs[0].schedulerName)
 	}
 }
 

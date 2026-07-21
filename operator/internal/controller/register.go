@@ -48,7 +48,7 @@ func RegisterControllers(mgr ctrl.Manager, config *configv1alpha1.OperatorConfig
 	if err := pcReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
-	pcsgReconciler := podcliquescalinggroup.NewReconciler(mgr, config.Controllers.PodCliqueScalingGroup)
+	pcsgReconciler := podcliquescalinggroup.NewReconciler(mgr, config.Controllers.PodCliqueScalingGroup, schedRegistry)
 	if err := pcsgReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
