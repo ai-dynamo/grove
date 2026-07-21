@@ -27,6 +27,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/clustertopology"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	grovemetrics "github.com/ai-dynamo/grove/operator/internal/metrics"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
@@ -71,6 +72,9 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 
 	// Update the PodCliqueSet status
 	if err = r.client.Status().Update(ctx, pcs); err != nil {
+		if apierrors.IsConflict(err) {
+			grovemetrics.RecordStatusUpdateConflict(controllerName, "PodCliqueSet")
+		}
 		return ctrlcommon.ReconcileWithErrors("failed to update PodCliqueSet status", err)
 	}
 	return ctrlcommon.ContinueReconcile()
