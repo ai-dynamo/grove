@@ -25,9 +25,10 @@ spec:
       {{- end }}
       serviceAccountName: {{ required ".Values.serviceAccount.name is required" .Values.serviceAccount.name }}
       automountServiceAccountToken: false
+      {{- with .Values.podSecurityContext }}
       securityContext:
-        seccompProfile:
-          type: RuntimeDefault
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -41,6 +42,14 @@ spec:
         - name: crd-installer
           image: {{ include "image" .Values.crdInstaller.image }}
           imagePullPolicy: {{ .Values.crdInstaller.image.pullPolicy }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           volumeMounts:
             - name: kube-api-access-grove
               mountPath: /var/run/secrets/kubernetes.io/serviceaccount
@@ -74,9 +83,13 @@ spec:
             initialDelaySeconds: 10
             timeoutSeconds: 5
           {{- end }}
-          {{- if .Values.resources }}
+          {{- with .Values.resources }}
           resources:
-{{- toYaml .Values.resources | nindent 12 }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
           {{- end }}
           volumeMounts:
             - name: operator-config
