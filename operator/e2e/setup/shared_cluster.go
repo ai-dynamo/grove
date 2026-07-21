@@ -194,14 +194,14 @@ func (scm *SharedClusterManager) connectToCluster(ctx context.Context, testImage
 // refreshWorkerNodes re-fetches the list of Ready worker nodes from the cluster,
 // replacing the cached workerNodes slice built during Setup.
 //
-// On the prod-grove-e2e-v1 runner, k3d nodes run as Docker containers inside a
-// Docker-in-Docker (DinD) environment. Under resource contention a k3s-agent
-// process can die silently inside its container, causing that node to go NotReady.
-// The node monitoring goroutine (see StartNodeMonitoring) detects this and restarts
-// the container, but the restarted node gets a fresh registration and the old entry
-// in workerNodes becomes stale. Calling refreshWorkerNodes before each test ensures
-// PrepareForTest operates on the current Ready set rather than a snapshot from cluster
-// setup that may include replaced or not-yet-recovered nodes.
+// In CI, k3d nodes run as Docker containers with DinD memory mode. Under resource
+// contention a k3s-agent process can die silently inside its container, causing
+// that node to go NotReady. The node monitoring goroutine (see StartNodeMonitoring)
+// detects this and restarts the container, but the restarted node gets a fresh
+// registration and the old entry in workerNodes becomes stale. Calling
+// refreshWorkerNodes before each test ensures PrepareForTest operates on the
+// current Ready set rather than a snapshot from cluster setup that may include
+// replaced or not-yet-recovered nodes.
 func (scm *SharedClusterManager) refreshWorkerNodes(ctx context.Context) error {
 	var nodeList v1.NodeList
 	if err := scm.k8s.List(ctx, &nodeList); err != nil {
