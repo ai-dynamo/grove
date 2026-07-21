@@ -325,10 +325,12 @@ func mapPodGangToPCLQs() handler.MapFunc {
 	}
 }
 
-// extractPCLQNameFromPodName extracts the PodClique name from a Pod name by removing the replica index suffix
+// extractPCLQNameFromPodName extracts the PodClique name from a Pod name.
+// Pod names have the format <pclqName>-<podIndex>-<k8sRandomSuffix>, so two trailing
+// segments must be stripped: first the Kubernetes-generated random suffix, then the pod index.
 func extractPCLQNameFromPodName(podName string) string {
-	endIndex := strings.LastIndex(podName, "-")
-	return podName[:endIndex]
+	withoutRandom := podName[:strings.LastIndex(podName, "-")]
+	return withoutRandom[:strings.LastIndex(withoutRandom, "-")]
 }
 
 // podGangPredicate filters PodGang events to trigger on initialization and spec updates
