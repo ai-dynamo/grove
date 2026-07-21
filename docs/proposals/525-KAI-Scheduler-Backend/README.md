@@ -185,9 +185,9 @@ This mapping focuses on PodGroup ownership and gang membership. KAI Topology res
 
 KAI accepts one queue per PodGroup. The backend resolves that queue from the PodGang's owning PodCliqueSet:
 
-1. A `kai.scheduler/queue` label on the PodCliqueSet takes precedence. Its annotation is a compatibility fallback when the label is absent.
-2. Without a PodCliqueSet-level queue, the backend resolves labels first and annotations second on every PodClique template. All non-empty template values must name the same queue.
-3. If no queue is configured, or template queues conflict without a PodCliqueSet-level override, the backend reports a mapping error and does not create or update the KAI PodGroup.
+1. A `kai.scheduler/queue` label on the PodCliqueSet selects the queue for the complete scheduling unit. Its annotation is a compatibility fallback when the label is absent.
+2. Any explicitly configured PodClique-template queue must resolve to that same queue. Without a PodCliqueSet-level queue, labels are resolved first and annotations second on every PodClique template; all non-empty template values must name the same queue.
+3. For a PodCliqueSet targeting the KAI backend, admission rejects missing queue configuration and conflicting effective queue values. Reconciliation retains the same checks for pre-existing objects and does not create or update the KAI PodGroup when mapping fails.
 
 This preserves existing workloads that set the queue on PodClique templates while allowing the PodCliqueSet to select one queue explicitly for its complete scheduling unit.
 

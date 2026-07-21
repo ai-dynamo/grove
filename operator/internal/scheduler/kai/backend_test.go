@@ -82,8 +82,8 @@ func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
 	pcs := newPodCliqueSet(
 		"test-pcs",
 		"team-a",
-		podCliqueTemplateWithQueue("encoder-template", "team-b"),
-		podCliqueTemplateWithQueue("decoder-template", "team-c"),
+		podCliqueTemplateWithQueue("encoder-template", "team-a"),
+		podCliqueTemplateWithQueue("decoder-template", "team-a"),
 	)
 	podGang := testutils.NewPodGangBuilder("test-podgang", "default").
 		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
@@ -170,7 +170,7 @@ func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
 	gotAfterUpdate := &kaischedulingv2alpha2.PodGroup{}
 	require.NoError(t, cl.Get(ctx, client.ObjectKey{Name: podGang.Name, Namespace: podGang.Namespace}, gotAfterUpdate))
 
-	// The owning PCS label overrides both template and legacy PodGang queues.
+	// The owning PCS label supplies the queue, consistently with its templates.
 	assert.Equal(t, "team-a", gotAfterUpdate.Spec.Queue)
 	require.NotNil(t, gotAfterUpdate.Spec.MinMember)
 	assert.Equal(t, int32(7), *gotAfterUpdate.Spec.MinMember)
@@ -182,7 +182,7 @@ func TestBackend_SyncPodGangSetsOwnerReferenceAndSkipAnnotation(t *testing.T) {
 	pcs := newPodCliqueSet(
 		"owned-pcs",
 		"team-a",
-		podCliqueTemplateWithQueue("worker-template", "team-b"),
+		podCliqueTemplateWithQueue("worker-template", "team-a"),
 	)
 	podGang := testutils.NewPodGangBuilder("owned", "default").
 		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
@@ -230,6 +230,106 @@ func TestBackend_SyncPodGang_UsesUniquePodCliqueTemplateQueue(t *testing.T) {
 	podGroup := &kaischedulingv2alpha2.PodGroup{}
 	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), podGroup))
 	assert.Equal(t, "team-a", podGroup.Spec.Queue)
+}
+
+func TestBackend_ValidatePodCliqueSetQueues(t *testing.T) {
+	tests := []struct {
+		name          string
+		pcs           *grovecorev1alpha1.PodCliqueSet
+		wantErrSubstr string
+	}{
+		{
+			name: "matching PodCliqueSet and template queues",
+			pcs: newPodCliqueSet(
+				"matching-queues-pcs",
+				"team-a",
+				podCliqueTemplateWithQueue("worker", "team-a"),
+			),
+		},
+		{
+			name: "PodCliqueSet queue without template queue",
+			pcs: newPodCliqueSet(
+				"pcs-only-queue-pcs",
+				"team-a",
+				podCliqueTemplateWithQueue("worker", ""),
+			),
+		},
+		{
+			name: "matching template-only queues",
+			pcs: newPodCliqueSet(
+				"template-only-queue-pcs",
+				"",
+				podCliqueTemplateWithQueue("worker-a", "team-a"),
+				podCliqueTemplateWithQueue("worker-b", "team-a"),
+			),
+		},
+		{
+			name: "different PodCliqueSet and template queues",
+			pcs: newPodCliqueSet(
+				"conflicting-pcs-template-queues-pcs",
+				"team-a",
+				podCliqueTemplateWithQueue("worker", "team-b"),
+			),
+			wantErrSubstr: "is \"team-a\" but PodClique template \"worker\" resolves to \"team-b\"",
+		},
+		{
+			name: "conflicting template-only queues",
+			pcs: newPodCliqueSet(
+				"conflicting-template-queues-pcs",
+				"",
+				podCliqueTemplateWithQueue("worker-a", "team-a"),
+				podCliqueTemplateWithQueue("worker-b", "team-b"),
+			),
+			wantErrSubstr: "conflicting KAI queues",
+		},
+		{
+			name: "missing queue",
+			pcs: newPodCliqueSet(
+				"missing-queue-pcs",
+				"",
+				podCliqueTemplateWithQueue("worker", ""),
+			),
+			wantErrSubstr: "no KAI queue is configured",
+		},
+		{
+			name: "labels override annotations",
+			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := newPodCliqueSet(
+					"label-precedence-pcs",
+					"team-a",
+					podCliqueTemplateWithQueue("worker", "team-a"),
+				)
+				pcs.Annotations = map[string]string{labelKeyQueueName: "team-b"}
+				pcs.Spec.Template.Cliques[0].Annotations = map[string]string{labelKeyQueueName: "team-b"}
+				return pcs
+			}(),
+		},
+		{
+			name: "annotations are used when labels are absent",
+			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := newPodCliqueSet(
+					"annotation-fallback-pcs",
+					"",
+					podCliqueTemplateWithQueue("worker", ""),
+				)
+				pcs.Annotations = map[string]string{labelKeyQueueName: "team-a"}
+				pcs.Spec.Template.Cliques[0].Annotations = map[string]string{labelKeyQueueName: "team-a"}
+				return pcs
+			}(),
+		},
+	}
+
+	b := &schedulerBackend{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := b.ValidatePodCliqueSet(context.Background(), tt.pcs)
+			if tt.wantErrSubstr != "" {
+				require.ErrorContains(t, err, tt.wantErrSubstr)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestBackend_SyncPodGang_QueueResolutionFailuresDoNotCreatePodGroup(t *testing.T) {

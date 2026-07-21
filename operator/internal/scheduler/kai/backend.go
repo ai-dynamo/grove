@@ -143,8 +143,9 @@ func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 }
 
 // ValidatePodCliqueSet runs KAI-specific validations on the PodCliqueSet.
-func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet) error {
-	return nil
+func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecorev1alpha1.PodCliqueSet) error {
+	_, err := resolveQueueNameForPodCliqueSet(pcs)
+	return err
 }
 
 // buildPodGroupForPodGang translates a Grove PodGang into a KAI PodGroup object.
@@ -269,7 +270,6 @@ func toKAITopologyConstraint(topologyConstraint *groveschedulerv1alpha1.Topology
 }
 
 // resolveQueueName returns the KAI queue configured by the PodGang's owning PodCliqueSet.
-// A queue set on the PodCliqueSet itself overrides the queues on its PodClique templates.
 func (b *schedulerBackend) resolveQueueName(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) (string, error) {
 	owner := metav1.GetControllerOf(podGang)
 	if owner == nil {
@@ -284,7 +284,22 @@ func (b *schedulerBackend) resolveQueueName(ctx context.Context, podGang *groves
 		return "", fmt.Errorf("get controlling PodCliqueSet %s/%s: %w", podGang.Namespace, owner.Name, err)
 	}
 
+	return resolveQueueNameForPodCliqueSet(pcs)
+}
+
+// resolveQueueNameForPodCliqueSet returns the KAI queue configured by a PodCliqueSet.
+// A queue set on the PodCliqueSet establishes the queue for the scheduling unit, so
+// every explicitly configured PodClique template queue must resolve to the same value.
+func resolveQueueNameForPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) (string, error) {
 	if queueName := resolveQueueNameFromMetadata(pcs.Labels, pcs.Annotations); queueName != "" {
+		for _, clique := range pcs.Spec.Template.Cliques {
+			if clique == nil {
+				continue
+			}
+			if templateQueueName := resolveQueueNameFromMetadata(clique.Labels, clique.Annotations); templateQueueName != "" && templateQueueName != queueName {
+				return "", fmt.Errorf("KAI queue on PodCliqueSet %s/%s is %q but PodClique template %q resolves to %q", pcs.Namespace, pcs.Name, queueName, clique.Name, templateQueueName)
+			}
+		}
 		return queueName, nil
 	}
 
@@ -312,7 +327,7 @@ func (b *schedulerBackend) resolveQueueName(ctx context.Context, podGang *groves
 		queueNamesList = append(queueNamesList, queueName)
 	}
 	sort.Strings(queueNamesList)
-	return "", fmt.Errorf("conflicting KAI queues on PodCliqueSet %s/%s PodClique templates: %v; set %s on the PodCliqueSet to choose one", pcs.Namespace, pcs.Name, queueNamesList, labelKeyQueueName)
+	return "", fmt.Errorf("conflicting KAI queues on PodCliqueSet %s/%s PodClique templates: %v", pcs.Namespace, pcs.Name, queueNamesList)
 }
 
 // resolveQueueNameFromMetadata returns queue from labels first, then falls back to annotations.
