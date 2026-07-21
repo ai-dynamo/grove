@@ -98,9 +98,8 @@ func setupAutoCertProvisioning(ctx context.Context, mgr ctrl.Manager, cl client.
 			fmt.Sprintf("%s.%s", serviceName, namespace),
 			fmt.Sprintf("%s.%s.svc.cluster.local", serviceName, namespace),
 		},
-		Webhooks:               getWebhooks(authorizerEnabled),
-		EnableReadinessCheck:   true,
-		RestartOnSecretRefresh: true,
+		Webhooks:             getWebhooks(authorizerEnabled),
+		EnableReadinessCheck: true,
 	}
 	return cert.AddRotator(mgr, rotator)
 }
@@ -152,7 +151,10 @@ func createPlaceholderSecretIfNotExists(ctx context.Context, cl client.Client, n
 		return err
 	}
 
-	// Secret does not exist — create an empty TLS secret for cert-controller to populate.
+	// Secret does not exist — create an empty Opaque secret for cert-controller to populate.
+	// Must be Opaque (not kubernetes.io/tls) because Kubernetes enforces that tls.crt and tls.key are non-empty for
+	// TLS secrets, but we intentionally leave them absent here so that the kubelet only projects the actual files
+	// after they are populated by the cert-controller, avoiding the kubelet sync period.
 	secret = &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: namespace,
@@ -163,12 +165,7 @@ func createPlaceholderSecretIfNotExists(ctx context.Context, cl client.Client, n
 				"app.kubernetes.io/part-of":    "grove",
 			},
 		},
-		Type: corev1.SecretTypeTLS,
-		Data: map[string][]byte{
-			"tls.crt": {},
-			"tls.key": {},
-			"ca.crt":  {},
-		},
+		Type: corev1.SecretTypeOpaque,
 	}
 	if err := cl.Create(ctx, secret); err != nil {
 		// In HA deployments (replicaCount > 1), two replicas can race between

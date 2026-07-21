@@ -24,7 +24,7 @@ resources:
 nodeSelector: {}
 
 # Set of tolerations to apply to the operator deployment.
-tolerations: [ ]
+tolerations: []
 
 # Annotations to apply to the operator pod template.
 podAnnotations: {}
@@ -62,8 +62,8 @@ config:
       serverCertDir: /etc/grove-operator/webhook-certs
       # secretName is the name of the Kubernetes Secret containing webhook certificates.
       # The Secret must contain tls.crt, tls.key, and ca.crt.
-      # Default: "grove-webhook-server-cert"
-      secretName: "grove-webhook-server-cert"
+      # Default: "grove-webhook-server-cert-auto"
+      secretName: "grove-webhook-server-cert-auto"
       # certProvisionMode controls how webhook certificates are provisioned.
       # Values:
       #   "auto" (default): cert-controller automatically generates self-signed certificates.
@@ -207,7 +207,7 @@ webhookServerSecret:
   # Set to false when deploying via `helm template | kubectl apply` or GitOps tools
   # (ArgoCD, FluxCD), where the empty secret in the template overwrites auto-generated
   # certificates on every apply. The operator will create the secret itself if missing.
-  # Defaults to true for backward compatibility. 
+  # Defaults to true for backward compatibility.
   enabled: true
   labels:
     app.kubernetes.io/component: operator-webhook-server-secret

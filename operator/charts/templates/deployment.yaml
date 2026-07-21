@@ -120,4 +120,3 @@ spec:
           secret:
             secretName: {{ .Values.config.server.webhooks.secretName | default "grove-webhook-server-cert" }}
             defaultMode: 420
-            optional: true

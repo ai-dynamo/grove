@@ -288,15 +288,10 @@ func TestCreatePlaceholderSecretIfNotExists(t *testing.T) {
 		secret := &corev1.Secret{}
 		err = cl.Get(t.Context(), types.NamespacedName{Namespace: "test-ns", Name: "test-secret"}, secret)
 		require.NoError(t, err)
-		assert.Equal(t, corev1.SecretTypeTLS, secret.Type)
+		assert.Equal(t, corev1.SecretTypeOpaque, secret.Type)
 		assert.Equal(t, "test-ns", secret.Namespace)
 		assert.Equal(t, "test-secret", secret.Name)
-		assert.Contains(t, secret.Data, "tls.crt")
-		assert.Contains(t, secret.Data, "tls.key")
-		assert.Contains(t, secret.Data, "ca.crt")
-		assert.Empty(t, secret.Data["tls.crt"])
-		assert.Empty(t, secret.Data["tls.key"])
-		assert.Empty(t, secret.Data["ca.crt"])
+		assert.Empty(t, secret.Data)
 	})
 
 	t.Run("created secret has expected labels", func(t *testing.T) {
