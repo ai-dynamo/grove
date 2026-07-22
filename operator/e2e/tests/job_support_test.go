@@ -18,16 +18,15 @@ package tests
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	e2epods "github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
-	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	corev1 "k8s.io/api/core/v1"
@@ -44,6 +43,9 @@ const (
 	jobSupportStableFor  = 10 * time.Second
 )
 
+// Test_JobSupport_PCLQCompletesWhenAllPodsSucceed creates a finite PodClique,
+// simulates all pods reaching Succeeded, and verifies that the PCLQ completes
+// while retaining the succeeded pods.
 func Test_JobSupport_PCLQCompletesWhenAllPodsSucceed(t *testing.T) {
 	ctx := context.Background()
 	workloadName := "js-pclq-complete"
@@ -78,13 +80,19 @@ func Test_JobSupport_PCLQCompletesWhenAllPodsSucceed(t *testing.T) {
 	markPodsPhase(t, tc, podList.Items, corev1.PodSucceeded)
 
 	Logger.Info("4. Wait for the PodClique to reach phase=Completed")
-	pclq := waitForPCLQPhase(t, tc, pclqName, grovev1alpha1.JobPhaseCompleted)
+	pclq, err := tc.WaitForPodCliquePhase(pclqName, grovev1alpha1.JobPhaseCompleted)
+	if err != nil {
+		t.Fatalf("Failed to wait for PodClique %s phase %s: %v", pclqName, grovev1alpha1.JobPhaseCompleted, err)
+	}
 
 	Logger.Info("5. Verify succeeded pods are retained")
 	podList = waitForRetainedPodsInPhase(t, tc, int(pclq.Spec.Replicas), corev1.PodSucceeded)
-	assertPodsInPhase(t, podList.Items, corev1.PodSucceeded)
+	assertOnlyPodsRemainFor(t, tc, podList.Items, jobSupportStableFor)
 }
 
+// Test_JobSupport_PCLQFailureCleansActivePods creates a finite PodClique,
+// simulates a mixed terminal/non-terminal pod set, and verifies that one failed
+// pod fails the PCLQ while active pods are deleted and terminal pods are retained.
 func Test_JobSupport_PCLQFailureCleansActivePods(t *testing.T) {
 	ctx := context.Background()
 	workloadName := "js-pclq-fail"
@@ -121,15 +129,21 @@ func Test_JobSupport_PCLQFailureCleansActivePods(t *testing.T) {
 	pendingPod := findPodByCliqueIndex(t, podList.Items, "3")
 	markPodPhase(t, tc, succeededPod, corev1.PodSucceeded)
 	markPodPhase(t, tc, pendingPod, corev1.PodPending)
-	waitForPodsByPhase(t, tc, map[corev1.PodPhase]int{
+	// The failure has not been injected yet: hold the mixed pre-failure state so
+	// the later cleanup assertion covers both Running and Pending active pods.
+	if _, err := tc.WaitForPodPhaseCounts(map[corev1.PodPhase]int{
 		corev1.PodSucceeded: 1,
 		corev1.PodRunning:   2,
 		corev1.PodPending:   1,
-	})
+	}); err != nil {
+		t.Fatalf("Failed to wait for pre-failure pod phases: %v", err)
+	}
 	markPodPhase(t, tc, failedPod, corev1.PodFailed)
 
 	Logger.Info("4. Wait for the PodClique to reach phase=Failed")
-	waitForPCLQPhase(t, tc, pclqName, grovev1alpha1.JobPhaseFailed)
+	if _, err := tc.WaitForPodCliquePhase(pclqName, grovev1alpha1.JobPhaseFailed); err != nil {
+		t.Fatalf("Failed to wait for PodClique %s phase %s: %v", pclqName, grovev1alpha1.JobPhaseFailed, err)
+	}
 
 	Logger.Info("5. Verify terminal pods are retained and non-terminal pods are deleted without recreation")
 	podList = waitForRetainedPodsByPhase(t, tc, map[corev1.PodPhase]int{
@@ -291,59 +305,15 @@ func findPodByCliqueIndex(t *testing.T, pods []corev1.Pod, index string) *corev1
 	return nil
 }
 
-func waitForPCLQPhase(t *testing.T, tc *testctx.TestContext, name string, phase grovev1alpha1.JobPhase) *grovev1alpha1.PodClique {
-	t.Helper()
-
-	fetchPCLQ := waiter.FetchFunc[*grovev1alpha1.PodClique](func(ctx context.Context) (*grovev1alpha1.PodClique, error) {
-		pclq := &grovev1alpha1.PodClique{}
-		err := tc.Client.Get(ctx, client.ObjectKey{Namespace: tc.Namespace, Name: name}, pclq)
-		return pclq, client.IgnoreNotFound(err)
-	})
-	predicate := waiter.Predicate[*grovev1alpha1.PodClique](func(pclq *grovev1alpha1.PodClique) bool {
-		return pclq.Name != "" && pclq.Status.Phase == phase
-	})
-
-	pclq, err := waiter.New[*grovev1alpha1.PodClique]().
-		WithTimeout(tc.Timeout).
-		WithInterval(tc.Interval).
-		WaitFor(tc.Ctx, fetchPCLQ, predicate)
-	if err != nil {
-		t.Fatalf("Failed to wait for PodClique %s phase %s: %v", name, phase, err)
-	}
-	return pclq
-}
-
 func waitForRetainedPodsInPhase(t *testing.T, tc *testctx.TestContext, expectedCount int, phase corev1.PodPhase) *corev1.PodList {
 	t.Helper()
 
-	fetchPods := waiter.FetchFunc[*corev1.PodList](func(ctx context.Context) (*corev1.PodList, error) {
-		return tc.ListPods()
+	podList, err := tc.WaitForPodPhaseCounts(map[corev1.PodPhase]int{
+		phase: expectedCount,
 	})
-	predicate := waiter.Predicate[*corev1.PodList](func(podList *corev1.PodList) bool {
-		if len(podList.Items) != expectedCount {
-			return false
-		}
-		for i := range podList.Items {
-			if podList.Items[i].Status.Phase != phase || !podList.Items[i].DeletionTimestamp.IsZero() {
-				return false
-			}
-		}
-		return true
-	})
-
-	podList, err := waiter.New[*corev1.PodList]().
-		WithTimeout(tc.Timeout).
-		WithInterval(tc.Interval).
-		WaitFor(tc.Ctx, fetchPods, predicate)
 	if err != nil {
 		t.Fatalf("Failed to wait for retained pods in phase %s: %v", phase, err)
 	}
-	return podList
-}
-
-func waitForRetainedPodsByPhase(t *testing.T, tc *testctx.TestContext, expectedByPhase map[corev1.PodPhase]int) *corev1.PodList {
-	t.Helper()
-	podList := waitForPodsByPhase(t, tc, expectedByPhase)
 	for i := range podList.Items {
 		if !podList.Items[i].DeletionTimestamp.IsZero() {
 			t.Fatalf("Expected retained pod %s to stay present, but it is deleting", podList.Items[i].Name)
@@ -352,42 +322,16 @@ func waitForRetainedPodsByPhase(t *testing.T, tc *testctx.TestContext, expectedB
 	return podList
 }
 
-func waitForPodsByPhase(t *testing.T, tc *testctx.TestContext, expectedByPhase map[corev1.PodPhase]int) *corev1.PodList {
+func waitForRetainedPodsByPhase(t *testing.T, tc *testctx.TestContext, expectedByPhase map[corev1.PodPhase]int) *corev1.PodList {
 	t.Helper()
-	expectedCount := 0
-	for _, count := range expectedByPhase {
-		expectedCount += count
-	}
-
-	fetchPods := waiter.FetchFunc[*corev1.PodList](func(ctx context.Context) (*corev1.PodList, error) {
-		return tc.ListPods()
-	})
-	predicate := waiter.Predicate[*corev1.PodList](func(podList *corev1.PodList) bool {
-		if len(podList.Items) != expectedCount {
-			return false
-		}
-		actualByPhase := map[corev1.PodPhase]int{}
-		for i := range podList.Items {
-			actualByPhase[podList.Items[i].Status.Phase]++
-		}
-		for phase, expected := range expectedByPhase {
-			if actualByPhase[phase] != expected {
-				return false
-			}
-		}
-		return true
-	})
-
-	podList, err := waiter.New[*corev1.PodList]().
-		WithTimeout(tc.Timeout).
-		WithInterval(tc.Interval).
-		WaitFor(tc.Ctx, fetchPods, predicate)
+	podList, err := tc.WaitForPodPhaseCounts(expectedByPhase)
 	if err != nil {
-		podList, listErr := tc.ListPods()
-		if listErr != nil {
-			t.Fatalf("Failed to wait for pods by phase %v: %v; also failed to list pods: %v", expectedByPhase, err, listErr)
+		t.Fatalf("Failed to wait for retained pods by phase %v: %v", expectedByPhase, err)
+	}
+	for i := range podList.Items {
+		if !podList.Items[i].DeletionTimestamp.IsZero() {
+			t.Fatalf("Expected retained pod %s to stay present, but it is deleting", podList.Items[i].Name)
 		}
-		t.Fatalf("Failed to wait for pods by phase %v: %v; current pods: %v", expectedByPhase, err, describePods(podList.Items))
 	}
 	return podList
 }
@@ -416,38 +360,18 @@ func assertOnlyPodsRemainFor(t *testing.T, tc *testctx.TestContext, expectedPods
 func assertPodUIDsAndPhases(t *testing.T, pods []corev1.Pod, expectedByUID map[string]corev1.PodPhase) {
 	t.Helper()
 	if len(pods) != len(expectedByUID) {
-		t.Fatalf("Expected only retained terminal pods to remain, got %s", describePods(pods))
+		t.Fatalf("Expected only retained terminal pods to remain, got %s", e2epods.DescribePods(pods))
 	}
 	for _, pod := range pods {
 		expectedPhase, ok := expectedByUID[string(pod.UID)]
 		if !ok {
-			t.Fatalf("Unexpected pod present after terminal cleanup, got %s", describePods(pods))
+			t.Fatalf("Unexpected pod present after terminal cleanup, got %s", e2epods.DescribePods(pods))
 		}
 		if pod.Status.Phase != expectedPhase {
 			t.Fatalf("Expected retained pod %s to stay in phase %s, got %s", pod.Name, expectedPhase, pod.Status.Phase)
 		}
 		if !pod.DeletionTimestamp.IsZero() {
 			t.Fatalf("Expected retained pod %s to stay present, but it is deleting", pod.Name)
-		}
-	}
-}
-
-func describePods(pods []corev1.Pod) []string {
-	descriptions := make([]string, 0, len(pods))
-	for _, pod := range pods {
-		descriptions = append(descriptions, fmt.Sprintf("%s/%s phase=%s uid=%s", pod.Namespace, pod.Name, pod.Status.Phase, pod.UID))
-	}
-	return descriptions
-}
-
-func assertPodsInPhase(t *testing.T, pods []corev1.Pod, phase corev1.PodPhase) {
-	t.Helper()
-	for _, pod := range pods {
-		if pod.Status.Phase != phase {
-			t.Fatalf("Expected pod %s to be in phase %s, got %s", pod.Name, phase, pod.Status.Phase)
-		}
-		if !pod.DeletionTimestamp.IsZero() {
-			t.Fatalf("Expected pod %s to be retained, but it is deleting", pod.Name)
 		}
 	}
 }

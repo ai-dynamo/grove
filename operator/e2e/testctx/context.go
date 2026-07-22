@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/ai-dynamo/grove/operator/api/common"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/diagnostics"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
@@ -219,6 +220,12 @@ func (tc *TestContext) WaitForPodPhases(expectedRunning, expectedPending int) er
 	return tc.newPodManager().WaitForPhases(tc.Ctx, tc.Namespace, tc.GetLabelSelector(), expectedRunning, expectedPending, tc.Timeout, tc.Interval)
 }
 
+// WaitForPodPhaseCounts waits for pods to match exact counts by phase.
+func (tc *TestContext) WaitForPodPhaseCounts(expectedByPhase map[v1.PodPhase]int) (*v1.PodList, error) {
+	tc.T.Helper()
+	return tc.newPodManager().WaitForPhaseCounts(tc.Ctx, tc.Namespace, tc.GetLabelSelector(), expectedByPhase, tc.Timeout, tc.Interval)
+}
+
 // WaitForReadyPods waits for a specific number of pods to be ready.
 func (tc *TestContext) WaitForReadyPods(expectedReady int) error {
 	tc.T.Helper()
@@ -280,6 +287,12 @@ func (tc *TestContext) ScalePCS(name string, replicas int) error {
 // ScalePCSG scales a PodCliqueScalingGroup to the specified replica count.
 func (tc *TestContext) ScalePCSG(name string, replicas int) error {
 	return tc.newWorkloadManager().ScalePCSG(tc.Ctx, tc.Namespace, name, replicas, tc.Timeout, tc.Interval)
+}
+
+// WaitForPodCliquePhase waits until a PodClique reaches the expected phase.
+func (tc *TestContext) WaitForPodCliquePhase(name string, phase grovecorev1alpha1.JobPhase) (*grovecorev1alpha1.PodClique, error) {
+	tc.T.Helper()
+	return tc.newWorkloadManager().WaitForPodCliquePhase(tc.Ctx, tc.Namespace, name, phase, tc.Timeout, tc.Interval)
 }
 
 // ApplyYAMLFile applies a YAML file to the cluster.
