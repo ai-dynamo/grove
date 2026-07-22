@@ -82,7 +82,7 @@ func (r *Reconciler) ensureFinalizer(ctx context.Context, logger logr.Logger, pc
 // has already been persisted. Succeeded/Failed Pods are retained for logs and
 // failure inspection.
 func (r *Reconciler) cleanupActivePodsForTerminalPCLQ(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
-	existingPods, err := r.listOwnedPodsForTerminalCleanup(ctx, pclq)
+	existingPods, err := componentutils.GetPCLQPods(ctx, r.client, "", pclq)
 	if err != nil {
 		return ctrlcommon.ReconcileWithErrors("failed to list pods for terminal PodClique cleanup", err)
 	}
@@ -97,31 +97,6 @@ func (r *Reconciler) cleanupActivePodsForTerminalPCLQ(ctx context.Context, logge
 		}
 	}
 	return ctrlcommon.ContinueReconcile()
-}
-
-func (r *Reconciler) listOwnedPodsForTerminalCleanup(ctx context.Context, pclq *grovecorev1alpha1.PodClique) ([]*corev1.Pod, error) {
-	selectorLabels := map[string]string{
-		apicommon.LabelPodClique: pclq.Name,
-	}
-	if pcsName := componentutils.GetPodCliqueSetName(pclq.ObjectMeta); pcsName != "" {
-		for key, value := range apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcsName) {
-			selectorLabels[key] = value
-		}
-	}
-
-	podList := &corev1.PodList{}
-	if err := r.client.List(ctx, podList, client.InNamespace(pclq.Namespace), client.MatchingLabels(selectorLabels)); err != nil {
-		return nil, err
-	}
-
-	ownedPods := make([]*corev1.Pod, 0, len(podList.Items))
-	for i := range podList.Items {
-		pod := &podList.Items[i]
-		if metav1.IsControlledBy(pod, pclq) {
-			ownedPods = append(ownedPods, pod)
-		}
-	}
-	return ownedPods, nil
 }
 
 func isTerminalPod(pod *corev1.Pod) bool {

@@ -381,7 +381,6 @@ func TestIsFinitePCLQ(t *testing.T) {
 			}
 
 			assert.Equal(t, tc.expected, IsFinitePCLQ(pclq))
-			assert.Equal(t, tc.expected, IsFinitePCLQSpec(pclq.Spec))
 		})
 	}
 

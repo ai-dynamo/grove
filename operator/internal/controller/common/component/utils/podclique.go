@@ -215,12 +215,7 @@ func IsFinitePCLQ(pclq *grovecorev1alpha1.PodClique) bool {
 	if pclq == nil {
 		return false
 	}
-	return IsFinitePCLQSpec(pclq.Spec)
-}
-
-// IsFinitePCLQSpec reports whether a PodClique spec describes finite pods.
-func IsFinitePCLQSpec(spec grovecorev1alpha1.PodCliqueSpec) bool {
-	return spec.PodSpec.RestartPolicy == corev1.RestartPolicyNever
+	return pclq.Spec.PodSpec.RestartPolicy == corev1.RestartPolicyNever
 }
 
 // IsPCLQTerminal reports whether a PodClique has reached a finite terminal phase.

@@ -239,6 +239,12 @@ func TestMutateFinitePCLQPhase(t *testing.T) {
 			podPhases:     []corev1.PodPhase{corev1.PodSucceeded, corev1.PodRunning},
 		},
 		{
+			name:          "finite PodClique stays non-terminal while pods are still pending",
+			restartPolicy: corev1.RestartPolicyNever,
+			replicas:      2,
+			podPhases:     []corev1.PodPhase{corev1.PodSucceeded, corev1.PodPending},
+		},
+		{
 			name:          "finite PodClique does not complete before all expected pods exist",
 			restartPolicy: corev1.RestartPolicyNever,
 			replicas:      2,

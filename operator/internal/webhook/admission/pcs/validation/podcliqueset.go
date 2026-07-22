@@ -550,7 +550,7 @@ func (v *pcsValidator) validatePodCliqueSpec(name string, cliqueSpec grovecorev1
 	}
 
 	if cliqueSpec.ScaleConfig != nil {
-		if componentutils.IsFinitePCLQSpec(cliqueSpec) {
+		if componentutils.IsFinitePCLQ(&grovecorev1alpha1.PodClique{Spec: cliqueSpec}) {
 			allErrs = append(allErrs, field.Forbidden(fldPath.Child("autoScalingConfig"), "autoScalingConfig is not supported for finite PodCliques"))
 		} else {
 			allErrs = append(allErrs, validateScaleConfig(cliqueSpec.ScaleConfig, *cliqueSpec.MinAvailable, fldPath.Child("autoScalingConfig"))...)
@@ -1006,7 +1006,7 @@ func (v *pcsValidator) validatePodCliqueUpdate(oldCliques []*grovecorev1alpha1.P
 		// Validate immutable PodClique fields
 		cliqueFldPath := fldPath.Child("spec")
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.RoleName, oldIndexCliqueTuple.B.Spec.RoleName, cliqueFldPath.Child("roleName"))...)
-		if componentutils.IsFinitePCLQSpec(oldIndexCliqueTuple.B.Spec) {
+		if componentutils.IsFinitePCLQ(&grovecorev1alpha1.PodClique{Spec: oldIndexCliqueTuple.B.Spec}) {
 			allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.Replicas, oldIndexCliqueTuple.B.Spec.Replicas, cliqueFldPath.Child("replicas"))...)
 		}
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.MinAvailable, oldIndexCliqueTuple.B.Spec.MinAvailable, cliqueFldPath.Child("minAvailable"))...)
