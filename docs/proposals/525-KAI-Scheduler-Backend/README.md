@@ -17,6 +17,7 @@
   - [Precondition: KAI Backend Enabled](#precondition-kai-backend-enabled)
   - [KAI Backend Responsibilities](#kai-backend-responsibilities)
   - [PodCliqueSet to PodGroup Mapping](#podcliqueset-to-podgroup-mapping)
+    - [KAI Queue Resolution](#kai-queue-resolution)
     - [SubGroup Mapping Rules](#subgroup-mapping-rules)
   - [Pod Preparation](#pod-preparation)
   - [PodGroup Update Semantics](#podgroup-update-semantics)
@@ -171,7 +172,7 @@ In the KAI representation, BPG and SPG are not separate KAI PodGroups. They are 
 | PodCliqueSet and PodGang labels/annotations | PodGroup labels and annotations, preserving existing target-only keys |
 | Sum of all mapped subgroup minimum replicas | PodGroup `minMember` |
 | PodGang priority class | PodGroup priority class |
-| Queue label or annotation | PodGroup queue on initial creation |
+| PodCliqueSet `kai.scheduler/queue` metadata, or a shared PodClique-template queue | PodGroup queue on initial creation |
 | Base PodGang | Top-level KAI subgroup, usually named from the BPG name |
 | Scaled PodGang collection for a PCSG | Top-level KAI subgroup that groups scaled PodGang replicas |
 | Individual Scaled PodGang replica | Child KAI subgroup under the SPG collection subgroup |
@@ -179,6 +180,16 @@ In the KAI representation, BPG and SPG are not separate KAI PodGroups. They are 
 | PodGang owner reference | Preserved through PodGroup ownership metadata so cleanup follows Grove lifecycle |
 
 This mapping focuses on PodGroup ownership and gang membership. KAI Topology resources and topology-aware scheduling semantics are outside the scope of this proposal.
+
+#### KAI Queue Resolution
+
+KAI accepts one queue per PodGroup. The backend resolves that queue from the PodGang's owning PodCliqueSet:
+
+1. A `kai.scheduler/queue` label on the PodCliqueSet selects the queue for the complete scheduling unit. Its annotation is a compatibility fallback when the label is absent.
+2. Any explicitly configured PodClique-template queue must resolve to that same queue. Without a PodCliqueSet-level queue, labels are resolved first and annotations second on every PodClique template; all non-empty template values must name the same queue.
+3. For a PodCliqueSet targeting the KAI backend, admission rejects missing queue configuration and conflicting effective queue values. Reconciliation retains the same checks for pre-existing objects and does not create or update the KAI PodGroup when mapping fails.
+
+This preserves existing workloads that set the queue on PodClique templates while allowing the PodCliqueSet to select one queue explicitly for its complete scheduling unit.
 
 #### SubGroup Mapping Rules
 
@@ -308,7 +319,8 @@ Operational implications:
 
 - Validate `PreparePod` sets Pod `schedulerName` to `kai-scheduler` and adds Pod annotation `kai.scheduler/skip-podgrouper` when missing without dropping existing annotations.
 - Validate `Init()` compatibility guardrails: KAI versions below `v0.15.0` fail closed.
-- Validate `SyncPodGang` creates and updates KAI PodGroup state, including required field mapping and runtime-managed field preservation.
+- Validate `SyncPodGang` creates and updates KAI PodGroup state, including required field mapping, queue resolution, and runtime-managed field preservation.
+- Validate PodCliqueSet queue precedence, consistent PodClique-template queue fallback, and mapping failures for missing or conflicting queue configuration.
 - Validate `SyncPodGang` adds PodGang annotation `kai.scheduler/skip-podgrouper` when missing without dropping existing annotations.
 - Validate subgroup translation: Base PodGang and Scaled PodGang structure maps to KAI subgroups with correct `name`, `minSubGroup` / `minMember`, and parent relationships.
 - Validate subgroup-name constraints (lowercase/unique/valid label) and explicit error surfacing on invalid subgroup references.

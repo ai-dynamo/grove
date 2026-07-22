@@ -167,6 +167,20 @@ rules:
   - get
   - list
   - watch
+{{- if include "grove.scheduler.hasProfile" (list . "kai-scheduler") }}
+- apiGroups:
+  - scheduling.run.ai
+  resources:
+  - podgroups
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+  - patch
+  - update
+  - delete
+{{- end }}
 {{- if include "grove.scheduler.hasProfile" (list . "volcano") }}
 - apiGroups:
   - scheduling.volcano.sh

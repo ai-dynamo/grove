@@ -1751,6 +1751,7 @@ func Test_TAS21_TopologyValidationWebhooks(t *testing.T) {
 				Build(),
 		).
 		Build()
+	pcs.Labels = map[string]string{"kai.scheduler/queue": "test"}
 
 	if err := tc.Client.Create(ctx, pcs); err != nil {
 		t.Fatalf("Expected PodCliqueSet create to succeed with inherited optional topologyName, got: %v", err)
@@ -1774,7 +1775,7 @@ func Test_TAS22_PodCliqueSetTopologyCELValidation(t *testing.T) {
 	ensureGroveTopology(ctx, t, topologyVerifier)
 
 	newPCS := func(name string, topologyConstraint *corev1alpha1.TopologyConstraint) *corev1alpha1.PodCliqueSet {
-		return testutils.NewPodCliqueSetBuilder(name, "default", uuid.NewUUID()).
+		pcs := testutils.NewPodCliqueSetBuilder(name, "default", uuid.NewUUID()).
 			WithReplicas(0).
 			WithTopologyConstraint(topologyConstraint).
 			WithPodCliqueTemplateSpec(
@@ -1784,6 +1785,8 @@ func Test_TAS22_PodCliqueSetTopologyCELValidation(t *testing.T) {
 					Build(),
 			).
 			Build()
+		pcs.Labels = map[string]string{"kai.scheduler/queue": "test"}
+		return pcs
 	}
 
 	tests := []struct {
