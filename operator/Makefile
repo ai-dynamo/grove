@@ -79,7 +79,7 @@ lint: $(GOLANGCI_LINT)
 # Formats the codebase
 .PHONY: format
 format: $(GOIMPORTS_REVISER)
-	@$(REPO_HACK_DIR)/format.sh ./api/ ./cmd/ ./initc/ ./internal/  ./test/
+	@$(REPO_HACK_DIR)/format.sh ./api/ ./cmd/ ./initc/ ./internal/ ./test/ ./webhook/
 
 # Make targets for tests
 # -------------------------------------------------------------
