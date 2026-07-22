@@ -17,6 +17,7 @@ package kai
 import (
 	"context"
 	"fmt"
+	"maps"
 	"reflect"
 	"sort"
 
@@ -25,6 +26,7 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	"github.com/ai-dynamo/grove/operator/internal/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	kaitopologyv1alpha1 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/kai/v1alpha1"
@@ -164,6 +166,9 @@ func (b *schedulerBackend) buildPodGroupForPodGang(ctx context.Context, podGang 
 	subGroups := make([]kaischedulingv2alpha2.SubGroup, 0, len(podGang.Spec.TopologyConstraintGroupConfigs)+len(podGang.Spec.PodGroups))
 
 	for _, groupConfig := range podGang.Spec.TopologyConstraintGroupConfigs {
+		if len(groupConfig.PodGroupNames) == 0 {
+			continue
+		}
 		groupTopologyConstraint, groupErr := toKAITopologyConstraint(groupConfig.TopologyConstraint, topologyName)
 		if groupErr != nil {
 			return nil, groupErr
@@ -189,6 +194,8 @@ func (b *schedulerBackend) buildPodGroupForPodGang(ctx context.Context, podGang 
 			MinMember:          ptr.To(podGroup.MinReplicas),
 			TopologyConstraint: subGroupTopologyConstraint,
 		}
+		// Group configs cover a strict subset of PodGroups. Unmatched PodGroups
+		// intentionally remain root-level KAI SubGroups.
 		if parentName, found := parentBySubGroupName[podGroup.Name]; found {
 			subGroup.Parent = ptr.To(parentName)
 		}
@@ -200,8 +207,8 @@ func (b *schedulerBackend) buildPodGroupForPodGang(ctx context.Context, podGang 
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        podGang.Name,
 			Namespace:   podGang.Namespace,
-			Labels:      cloneStringMap(podGang.Labels),
-			Annotations: cloneStringMap(podGang.Annotations),
+			Labels:      maps.Clone(podGang.Labels),
+			Annotations: maps.Clone(podGang.Annotations),
 		},
 		Spec: kaischedulingv2alpha2.PodGroupSpec{
 			MinMember:         ptr.To(minMember),
@@ -365,50 +372,24 @@ func (b *schedulerBackend) inheritRuntimeManagedFields(oldPodGroup, newPodGroup 
 func podGroupsEqual(oldPodGroup, newPodGroup *kaischedulingv2alpha2.PodGroup) bool {
 	return reflect.DeepEqual(oldPodGroup.Spec, newPodGroup.Spec) &&
 		reflect.DeepEqual(oldPodGroup.OwnerReferences, newPodGroup.OwnerReferences) &&
-		mapsEqualBySourceKeys(newPodGroup.Labels, oldPodGroup.Labels) &&
-		mapsEqualBySourceKeys(newPodGroup.Annotations, oldPodGroup.Annotations)
-}
-
-// mapsEqualBySourceKeys checks whether target contains all key-values from source.
-func mapsEqualBySourceKeys(source, target map[string]string) bool {
-	if source != nil && target == nil {
-		return false
-	}
-	for key, sourceValue := range source {
-		if targetValue, exists := target[key]; !exists || targetValue != sourceValue {
-			return false
-		}
-	}
-	return true
+		utils.MapContainsAll(oldPodGroup.Labels, newPodGroup.Labels) &&
+		utils.MapContainsAll(oldPodGroup.Annotations, newPodGroup.Annotations)
 }
 
 // updatePodGroup copies desired fields from newPodGroup into existing object.
 func updatePodGroup(oldPodGroup, newPodGroup *kaischedulingv2alpha2.PodGroup) {
-	oldPodGroup.Annotations = copyStringMap(newPodGroup.Annotations, oldPodGroup.Annotations)
-	oldPodGroup.Labels = copyStringMap(newPodGroup.Labels, oldPodGroup.Labels)
+	if newPodGroup.Annotations != nil {
+		if oldPodGroup.Annotations == nil {
+			oldPodGroup.Annotations = map[string]string{}
+		}
+		maps.Copy(oldPodGroup.Annotations, newPodGroup.Annotations)
+	}
+	if newPodGroup.Labels != nil {
+		if oldPodGroup.Labels == nil {
+			oldPodGroup.Labels = map[string]string{}
+		}
+		maps.Copy(oldPodGroup.Labels, newPodGroup.Labels)
+	}
 	oldPodGroup.Spec = newPodGroup.Spec
 	oldPodGroup.OwnerReferences = newPodGroup.OwnerReferences
-}
-
-// copyStringMap copies all key-values from source into target map.
-func copyStringMap(source, target map[string]string) map[string]string {
-	if source != nil && target == nil {
-		target = map[string]string{}
-	}
-	for k, v := range source {
-		target[k] = v
-	}
-	return target
-}
-
-// cloneStringMap returns a shallow copy of the input string map.
-func cloneStringMap(input map[string]string) map[string]string {
-	if input == nil {
-		return nil
-	}
-	cloned := make(map[string]string, len(input))
-	for k, v := range input {
-		cloned[k] = v
-	}
-	return cloned
 }

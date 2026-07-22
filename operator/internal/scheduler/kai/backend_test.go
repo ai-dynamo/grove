@@ -178,6 +178,44 @@ func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
 	assert.Equal(t, int32(4), *gotAfterUpdate.Spec.SubGroups[1].MinMember)
 }
 
+func TestBackend_SyncPodGang_SkipsEmptyTopologyConstraintGroups(t *testing.T) {
+	pcs := newPodCliqueSet(
+		"empty-group-pcs",
+		"team-a",
+		podCliqueTemplateWithQueue("worker-template", "team-a"),
+	)
+	podGang := testutils.NewPodGangBuilder("empty-group-podgang", "default").
+		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
+		Build()
+	setPodCliqueSetControllerOwner(podGang, pcs)
+	podGang.Spec.TopologyConstraintGroupConfigs = []groveschedulerv1alpha1.TopologyConstraintGroupConfig{
+		{
+			Name: "empty-group",
+			TopologyConstraint: &groveschedulerv1alpha1.TopologyConstraint{
+				PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{
+					Required: ptr.To("host"),
+				},
+			},
+		},
+	}
+	podGang.Spec.PodGroups = []groveschedulerv1alpha1.PodGroup{
+		{Name: "worker", MinReplicas: 1},
+	}
+
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+	require.NoError(t, b.Init(cl))
+
+	ctx := context.Background()
+	require.NoError(t, b.SyncPodGang(ctx, podGang))
+
+	podGroup := &kaischedulingv2alpha2.PodGroup{}
+	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), podGroup))
+	require.Len(t, podGroup.Spec.SubGroups, 1)
+	assert.Equal(t, "worker", podGroup.Spec.SubGroups[0].Name)
+	assert.Nil(t, podGroup.Spec.SubGroups[0].Parent)
+}
+
 func TestBackend_SyncPodGangSetsOwnerReferenceAndSkipAnnotation(t *testing.T) {
 	pcs := newPodCliqueSet(
 		"owned-pcs",
@@ -399,6 +437,45 @@ func TestBackend_SyncPodGang_QueueResolutionFailuresDoNotCreatePodGroup(t *testi
 			assert.True(t, apierrors.IsNotFound(err), "PodGroup must not be created when queue resolution fails")
 		})
 	}
+}
+
+func TestPodGroupsEqual_AllowsTargetOnlyMetadata(t *testing.T) {
+	desired := &kaischedulingv2alpha2.PodGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels:      map[string]string{"source-label": "desired"},
+			Annotations: map[string]string{"source-annotation": "desired"},
+		},
+	}
+	existing := desired.DeepCopy()
+	existing.Labels[labelKeyNodePoolName] = "runtime-node-pool"
+	existing.Annotations["kai.scheduler/runtime"] = "preserve"
+
+	assert.True(t, podGroupsEqual(existing, desired))
+
+	existing.Labels["source-label"] = "stale"
+	assert.False(t, podGroupsEqual(existing, desired))
+}
+
+func TestUpdatePodGroup_CopiesDesiredMetadataAndPreservesTargetOnlyMetadata(t *testing.T) {
+	existing := &kaischedulingv2alpha2.PodGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels: map[string]string{labelKeyNodePoolName: "runtime-node-pool"},
+		},
+	}
+	desired := &kaischedulingv2alpha2.PodGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels:      map[string]string{"source-label": "desired"},
+			Annotations: map[string]string{"source-annotation": "desired"},
+		},
+	}
+
+	updatePodGroup(existing, desired)
+
+	assert.Equal(t, map[string]string{
+		labelKeyNodePoolName: "runtime-node-pool",
+		"source-label":       "desired",
+	}, existing.Labels)
+	assert.Equal(t, map[string]string{"source-annotation": "desired"}, existing.Annotations)
 }
 
 func newPodCliqueSet(name, queue string, cliques ...*grovecorev1alpha1.PodCliqueTemplateSpec) *grovecorev1alpha1.PodCliqueSet {
