@@ -32,7 +32,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -125,9 +127,13 @@ func TestGetOrderedKindsForSync(t *testing.T) {
 	assert.Equal(t, component.KindPod, kinds[1])
 }
 
-func TestReconcileSpecTerminalPCLQSkipsResourceSync(t *testing.T) {
+func TestReconcileSpecTerminalPCLQRetainsTerminalPodsDeletesActivePodsAndSkipsRecreation(t *testing.T) {
 	pclq := createTerminalPCLQ(grovecorev1alpha1.JobPhaseCompleted)
-	fakeClient := testutils.SetupFakeClient(pclq)
+	succeededPod := createOwnedPCLQPod(pclq, "succeeded", corev1.PodSucceeded)
+	failedPod := createOwnedPCLQPod(pclq, "failed", corev1.PodFailed)
+	runningPod := createOwnedPCLQPod(pclq, "running", corev1.PodRunning)
+	pendingPod := createOwnedPCLQPod(pclq, "pending", corev1.PodPending)
+	fakeClient := testutils.SetupFakeClient(pclq, succeededPod, failedPod, runningPod, pendingPod)
 	resourceClaimOperator := &countingPCLQOperator{}
 	podOperator := &countingPCLQOperator{}
 	registry := component.NewOperatorRegistry[grovecorev1alpha1.PodClique]()
@@ -142,6 +148,10 @@ func TestReconcileSpecTerminalPCLQSkipsResourceSync(t *testing.T) {
 
 	_, err := result.Result()
 	require.NoError(t, err)
+	assertPodExists(t, fakeClient, succeededPod)
+	assertPodExists(t, fakeClient, failedPod)
+	assertPodNotFound(t, fakeClient, runningPod)
+	assertPodNotFound(t, fakeClient, pendingPod)
 	assert.Zero(t, resourceClaimOperator.syncCalls, "terminal PodClique should not sync ResourceClaims")
 	assert.Zero(t, podOperator.syncCalls, "terminal PodClique should not sync Pods")
 }
@@ -165,6 +175,49 @@ func TestCleanupActivePodsForTerminalPCLQ(t *testing.T) {
 	assertPodExists(t, fakeClient, foreignRunningPod)
 	assertPodNotFound(t, fakeClient, runningPod)
 	assertPodNotFound(t, fakeClient, pendingPod)
+}
+
+func TestReconcileRequeuesWhenFinitePCLQTransitionsTerminal(t *testing.T) {
+	pcs, pclq, templateHash := newPodCliqueHashConvergenceFixture(t)
+	pclq.UID = uuid.NewUUID()
+	pclq.Generation = 1
+	pclq.Spec = grovecorev1alpha1.PodCliqueSpec{
+		Replicas:     2,
+		MinAvailable: ptr.To[int32](2),
+		PodSpec: corev1.PodSpec{
+			RestartPolicy: corev1.RestartPolicyNever,
+		},
+	}
+	pclq.Status = grovecorev1alpha1.PodCliqueStatus{
+		Replicas:                          2,
+		UpdatedReplicas:                   2,
+		ObservedGeneration:                ptr.To(pclq.Generation),
+		CurrentPodTemplateHash:            ptr.To(templateHash),
+		CurrentPodCliqueSetGenerationHash: pcs.Status.CurrentGenerationHash,
+	}
+	failedPod := createOwnedPCLQPod(pclq, "failed", corev1.PodFailed)
+	runningPod := createOwnedPCLQPod(pclq, "running", corev1.PodRunning)
+	fakeClient := testutils.SetupFakeClient(pcs, pclq, failedPod, runningPod)
+	registry := component.NewOperatorRegistry[grovecorev1alpha1.PodClique]()
+	registry.Register(component.KindResourceClaim, &countingPCLQOperator{})
+	registry.Register(component.KindPod, &countingPCLQOperator{})
+	r := &Reconciler{
+		client:           fakeClient,
+		operatorRegistry: registry,
+		eventRecorder:    record.NewFakeRecorder(1),
+	}
+
+	result, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{
+		Namespace: pclq.Namespace,
+		Name:      pclq.Name,
+	}})
+
+	require.NoError(t, err)
+	assert.True(t, result.Requeue)
+	updatedPCLQ := &grovecorev1alpha1.PodClique{}
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pclq), updatedPCLQ))
+	assert.Equal(t, grovecorev1alpha1.JobPhaseFailed, updatedPCLQ.Status.Phase)
+	assertPodExists(t, fakeClient, runningPod)
 }
 
 // TestShouldResetOrTriggerUpdate tests the shouldResetOrTriggerUpdate function for PodClique
