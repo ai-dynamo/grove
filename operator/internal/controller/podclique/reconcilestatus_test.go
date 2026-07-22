@@ -16,6 +16,7 @@ package podclique
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -208,6 +209,86 @@ func TestMutateUpdatedReplica(t *testing.T) {
 	}
 }
 
+func TestMutateFinitePCLQPhase(t *testing.T) {
+	tests := []struct {
+		name          string
+		restartPolicy corev1.RestartPolicy
+		replicas      int32
+		initialPhase  grovecorev1alpha1.JobPhase
+		podPhases     []corev1.PodPhase
+		expectedPhase grovecorev1alpha1.JobPhase
+	}{
+		{
+			name:          "finite PodClique completes when all expected pods succeeded",
+			restartPolicy: corev1.RestartPolicyNever,
+			replicas:      2,
+			podPhases:     []corev1.PodPhase{corev1.PodSucceeded, corev1.PodSucceeded},
+			expectedPhase: grovecorev1alpha1.JobPhaseCompleted,
+		},
+		{
+			name:          "finite PodClique fails when any pod failed",
+			restartPolicy: corev1.RestartPolicyNever,
+			replicas:      2,
+			podPhases:     []corev1.PodPhase{corev1.PodSucceeded, corev1.PodFailed},
+			expectedPhase: grovecorev1alpha1.JobPhaseFailed,
+		},
+		{
+			name:          "finite PodClique stays non-terminal while pods are still running",
+			restartPolicy: corev1.RestartPolicyNever,
+			replicas:      2,
+			podPhases:     []corev1.PodPhase{corev1.PodSucceeded, corev1.PodRunning},
+		},
+		{
+			name:          "finite PodClique does not complete before all expected pods exist",
+			restartPolicy: corev1.RestartPolicyNever,
+			replicas:      2,
+			podPhases:     []corev1.PodPhase{corev1.PodSucceeded},
+		},
+		{
+			name:          "infinite PodClique does not set phase from terminal pods",
+			restartPolicy: corev1.RestartPolicyAlways,
+			replicas:      2,
+			podPhases:     []corev1.PodPhase{corev1.PodSucceeded, corev1.PodSucceeded},
+		},
+		{
+			name:          "terminal completed phase is sticky",
+			restartPolicy: corev1.RestartPolicyNever,
+			replicas:      2,
+			initialPhase:  grovecorev1alpha1.JobPhaseCompleted,
+			podPhases:     []corev1.PodPhase{corev1.PodFailed},
+			expectedPhase: grovecorev1alpha1.JobPhaseCompleted,
+		},
+		{
+			name:          "terminal failed phase is sticky",
+			restartPolicy: corev1.RestartPolicyNever,
+			replicas:      2,
+			initialPhase:  grovecorev1alpha1.JobPhaseFailed,
+			podPhases:     []corev1.PodPhase{corev1.PodSucceeded, corev1.PodSucceeded},
+			expectedPhase: grovecorev1alpha1.JobPhaseFailed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pclq := &grovecorev1alpha1.PodClique{
+				Spec: grovecorev1alpha1.PodCliqueSpec{
+					Replicas: tt.replicas,
+					PodSpec: corev1.PodSpec{
+						RestartPolicy: tt.restartPolicy,
+					},
+				},
+				Status: grovecorev1alpha1.PodCliqueStatus{
+					Phase: tt.initialPhase,
+				},
+			}
+
+			mutateFinitePCLQPhase(pclq, createPodsWithPhases(tt.podPhases...))
+
+			assert.Equal(t, tt.expectedPhase, pclq.Status.Phase)
+		})
+	}
+}
+
 // TestReconcileStatusConvergesWhenReadyPodMatchesDesiredHash covers the live
 // latch where PCLQ metadata and the Ready pod already carry the desired
 // pod-template hash, but Status.CurrentPodTemplateHash is stale and
@@ -317,6 +398,21 @@ func createPodWithHash(name string, templateHash string) *corev1.Pod {
 			},
 		},
 	}
+}
+
+func createPodsWithPhases(phases ...corev1.PodPhase) []*corev1.Pod {
+	pods := make([]*corev1.Pod, 0, len(phases))
+	for i, phase := range phases {
+		pods = append(pods, &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: fmt.Sprintf("pod-%d", i),
+			},
+			Status: corev1.PodStatus{
+				Phase: phase,
+			},
+		})
+	}
+	return pods
 }
 
 func createReadyOwnedPodWithHash(name string, owner *grovecorev1alpha1.PodClique, templateHash string) *corev1.Pod {

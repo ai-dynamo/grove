@@ -63,6 +63,7 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	// mutate PodClique Status Replicas, ReadyReplicas, ScheduleGatedReplicas and UpdatedReplicas.
 	mutateReplicas(pclq, podCategories, len(existingPods))
 	mutateUpdatedReplica(pclq, existingPods)
+	mutateFinitePCLQPhase(pclq, existingPods)
 	// mutate PodClique.Status.CurrentPodTemplateHash and PodClique.Status.CurrentPodCliqueSetGenerationHash
 	if err = mutateCurrentHashes(logger, pcs, pclq); err != nil {
 		logger.Error(err, "failed to compute PodClique current hashes")
@@ -170,6 +171,29 @@ func mutateUpdatedReplica(pclq *grovecorev1alpha1.PodClique, existingPods []*cor
 			return agg
 		}, 0)
 		pclq.Status.UpdatedReplicas = int32(updatedReplicas)
+	}
+}
+
+// mutateFinitePCLQPhase updates terminal phase for finite PodCliques.
+func mutateFinitePCLQPhase(pclq *grovecorev1alpha1.PodClique, existingPods []*corev1.Pod) {
+	if !componentutils.IsFinitePCLQ(pclq) || componentutils.IsPCLQTerminal(pclq) {
+		return
+	}
+
+	if lo.SomeBy(existingPods, func(pod *corev1.Pod) bool {
+		return pod.Status.Phase == corev1.PodFailed
+	}) {
+		pclq.Status.Phase = grovecorev1alpha1.JobPhaseFailed
+		return
+	}
+
+	if int32(len(existingPods)) != pclq.Spec.Replicas {
+		return
+	}
+	if lo.EveryBy(existingPods, func(pod *corev1.Pod) bool {
+		return pod.Status.Phase == corev1.PodSucceeded
+	}) {
+		pclq.Status.Phase = grovecorev1alpha1.JobPhaseCompleted
 	}
 }
 
