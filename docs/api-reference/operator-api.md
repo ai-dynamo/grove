@@ -139,6 +139,24 @@ _Appears in:_
 | `publishNotReadyAddresses` _boolean_ | PublishNotReadyAddresses if set to true will publish the DNS records of pods even if the pods are not ready.<br /> if not set, it defaults to true. | true |  |
 
 
+#### JobPhase
+
+_Underlying type:_ _string_
+
+JobPhase represents the terminal phase of a finite Grove resource.
+
+_Validation:_
+- Enum: [Completed Failed]
+
+_Appears in:_
+- [PodCliqueStatus](#podcliquestatus)
+
+| Field | Description |
+| --- | --- |
+| `Completed` | JobPhaseCompleted indicates that the finite resource completed successfully.<br /> |
+| `Failed` | JobPhaseFailed indicates that the finite resource failed.<br /> |
+
+
 #### LastError
 
 
@@ -604,6 +622,7 @@ _Appears in:_
 | `updatedReplicas` _integer_ | UpdatedReplicas is the number of Pods that have been updated and are at the desired revision of the PodClique. | 0 |  |
 | `scheduleGatedReplicas` _integer_ | ScheduleGatedReplicas is the number of Pods that have been created with one or more scheduling gate(s) set.<br />Sum of ReadyReplicas and ScheduleGatedReplicas will always be <= Replicas. | 0 |  |
 | `scheduledReplicas` _integer_ | ScheduledReplicas is the number of Pods that have been scheduled by the backend scheduler. | 0 |  |
+| `phase` _[JobPhase](#jobphase)_ | Phase is the terminal phase of a finite PodClique. It is empty for non-finite PodCliques and finite PodCliques that are still running. |  | Enum: [Completed Failed] <br /> |
 | `hpaPodSelector` _string_ | Selector is the label selector that determines which pods are part of the PodClique.<br />PodClique is a unit of scale and this selector is used by HPA to scale the PodClique based on metrics captured<br />for the pods that match this selector. |  |  |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#condition-v1-meta) array_ | Conditions represents the latest available observations of the clique by its controller. |  |  |
 | `currentPodCliqueSetGenerationHash` _string_ | CurrentPodCliqueSetGenerationHash establishes a correlation to PodCliqueSet generation hash indicating<br />that the spec of the PodCliqueSet at this generation is fully realized in the PodClique. |  |  |
@@ -1274,5 +1293,4 @@ _Appears in:_
 | `serverCertDir` _string_ | ServerCertDir is the directory containing the server certificate and key. |  |  |
 | `secretName` _string_ | SecretName is the name of the Kubernetes Secret containing webhook certificates.<br />The Secret must contain tls.crt, tls.key, and ca.crt. | grove-webhook-server-cert |  |
 | `certProvisionMode` _[CertProvisionMode](#certprovisionmode)_ | CertProvisionMode controls how webhook certificates are provisioned. | auto | Enum: [auto manual] <br /> |
-
 
