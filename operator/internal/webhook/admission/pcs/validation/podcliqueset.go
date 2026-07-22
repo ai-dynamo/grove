@@ -592,6 +592,8 @@ func validateScaleConfig(scaleConfig *grovecorev1alpha1.AutoScalingConfig, minAv
 }
 
 // validatePodSpec validates the PodSpec ensuring certain fields are not set that would conflict with operator management.
+//
+//nolint:unparam // Keep warning plumbing aligned with peer validators; future PodSpec checks may emit admission warnings.
 func (v *pcsValidator) validatePodSpec(spec corev1.PodSpec, fldPath *field.Path) ([]string, field.ErrorList) {
 	allErrs := field.ErrorList{}
 	var warnings []string
