@@ -550,9 +550,13 @@ func (v *pcsValidator) validatePodCliqueSpec(name string, cliqueSpec grovecorev1
 	}
 
 	if cliqueSpec.ScaleConfig != nil {
-		allErrs = append(allErrs, validateScaleConfig(cliqueSpec.ScaleConfig, *cliqueSpec.MinAvailable, fldPath.Child("autoScalingConfig"))...)
-		if cliqueSpec.ScaleConfig.MaxReplicas < cliqueSpec.Replicas {
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("autoScalingConfig", "maxReplicas"), cliqueSpec.ScaleConfig.MaxReplicas, "must be greater than or equal to replicas"))
+		if componentutils.IsFinitePCLQ(&grovecorev1alpha1.PodClique{Spec: cliqueSpec}) {
+			allErrs = append(allErrs, field.Forbidden(fldPath.Child("autoScalingConfig"), "autoScalingConfig is not supported for finite PodCliques"))
+		} else {
+			allErrs = append(allErrs, validateScaleConfig(cliqueSpec.ScaleConfig, *cliqueSpec.MinAvailable, fldPath.Child("autoScalingConfig"))...)
+			if cliqueSpec.ScaleConfig.MaxReplicas < cliqueSpec.Replicas {
+				allErrs = append(allErrs, field.Invalid(fldPath.Child("autoScalingConfig", "maxReplicas"), cliqueSpec.ScaleConfig.MaxReplicas, "must be greater than or equal to replicas"))
+			}
 		}
 	}
 
@@ -588,12 +592,14 @@ func validateScaleConfig(scaleConfig *grovecorev1alpha1.AutoScalingConfig, minAv
 }
 
 // validatePodSpec validates the PodSpec ensuring certain fields are not set that would conflict with operator management.
+//
+//nolint:unparam // Keep warning plumbing aligned with peer validators; future PodSpec checks may emit admission warnings.
 func (v *pcsValidator) validatePodSpec(spec corev1.PodSpec, fldPath *field.Path) ([]string, field.ErrorList) {
 	allErrs := field.ErrorList{}
 	var warnings []string
 
-	if !utils.IsEmptyStringType(spec.RestartPolicy) {
-		warnings = append(warnings, "restartPolicy will be ignored, it will be set to Always")
+	if !utils.IsEmptyStringType(spec.RestartPolicy) && spec.RestartPolicy != corev1.RestartPolicyAlways && spec.RestartPolicy != corev1.RestartPolicyNever {
+		allErrs = append(allErrs, field.NotSupported(fldPath.Child("restartPolicy"), spec.RestartPolicy, []corev1.RestartPolicy{corev1.RestartPolicyAlways, corev1.RestartPolicyNever}))
 	}
 
 	specFldPath := fldPath.Child("spec")
@@ -1000,6 +1006,9 @@ func (v *pcsValidator) validatePodCliqueUpdate(oldCliques []*grovecorev1alpha1.P
 		// Validate immutable PodClique fields
 		cliqueFldPath := fldPath.Child("spec")
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.RoleName, oldIndexCliqueTuple.B.Spec.RoleName, cliqueFldPath.Child("roleName"))...)
+		if componentutils.IsFinitePCLQ(&grovecorev1alpha1.PodClique{Spec: oldIndexCliqueTuple.B.Spec}) {
+			allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.Replicas, oldIndexCliqueTuple.B.Spec.Replicas, cliqueFldPath.Child("replicas"))...)
+		}
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.MinAvailable, oldIndexCliqueTuple.B.Spec.MinAvailable, cliqueFldPath.Child("minAvailable"))...)
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.StartsAfter, oldIndexCliqueTuple.B.Spec.StartsAfter, cliqueFldPath.Child("startsAfter"))...)
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.PodSpec.SchedulerName, oldIndexCliqueTuple.B.Spec.PodSpec.SchedulerName, cliqueFldPath.Child("podSpec", "schedulerName"))...)

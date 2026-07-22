@@ -30,6 +30,7 @@ import (
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 
 	"github.com/go-logr/logr"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -39,8 +40,19 @@ import (
 // reconcileSpec performs the main reconciliation logic for PodClique spec changes
 func (r *Reconciler) reconcileSpec(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
 	log := logger.WithValues("operation", "specReconcile")
+	if stepResult := r.ensureFinalizer(ctx, log, pclq); ctrlcommon.ShortCircuitReconcileFlow(stepResult) {
+		return r.recordIncompleteReconcile(ctx, logger, pclq, &stepResult)
+	}
+
+	if componentutils.IsPCLQTerminal(pclq) {
+		if stepResult := r.cleanupActivePodsForTerminalPCLQ(ctx, log, pclq); ctrlcommon.ShortCircuitReconcileFlow(stepResult) {
+			return r.recordIncompleteReconcile(ctx, logger, pclq, &stepResult)
+		}
+		log.Info("Finished terminal spec reconciliation flow", "PodClique", client.ObjectKeyFromObject(pclq), "phase", pclq.Status.Phase)
+		return ctrlcommon.ContinueReconcile()
+	}
+
 	reconcileStepFns := []ctrlcommon.ReconcileStepFn[grovecorev1alpha1.PodClique]{
-		r.ensureFinalizer,
 		r.processUpdate,
 		r.syncPCLQResources,
 		r.updateObservedGeneration,
@@ -64,6 +76,31 @@ func (r *Reconciler) ensureFinalizer(ctx context.Context, logger logr.Logger, pc
 		}
 	}
 	return ctrlcommon.ContinueReconcile()
+}
+
+// cleanupActivePodsForTerminalPCLQ deletes active Pods after the terminal phase
+// has already been persisted. Succeeded/Failed Pods are retained for logs and
+// failure inspection.
+func (r *Reconciler) cleanupActivePodsForTerminalPCLQ(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
+	existingPods, err := componentutils.GetPCLQPods(ctx, r.client, "", pclq)
+	if err != nil {
+		return ctrlcommon.ReconcileWithErrors("failed to list pods for terminal PodClique cleanup", err)
+	}
+
+	for _, pod := range existingPods {
+		if isTerminalPod(pod) || !pod.DeletionTimestamp.IsZero() {
+			continue
+		}
+		logger.Info("Deleting active pod for terminal PodClique", "pod", client.ObjectKeyFromObject(pod), "PodClique", client.ObjectKeyFromObject(pclq), "phase", pclq.Status.Phase)
+		if err := client.IgnoreNotFound(r.client.Delete(ctx, pod)); err != nil {
+			return ctrlcommon.ReconcileWithErrors("failed to delete active pod for terminal PodClique", err)
+		}
+	}
+	return ctrlcommon.ContinueReconcile()
+}
+
+func isTerminalPod(pod *corev1.Pod) bool {
+	return pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
 }
 
 // processUpdate handles update logic for PodClique when the owner PodCliqueSet has changes

@@ -466,6 +466,84 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 	}
 }
 
+func TestFinitePodCliqueValidation(t *testing.T) {
+	testCases := []struct {
+		description   string
+		restartPolicy corev1.RestartPolicy
+		scaleConfig   *grovecorev1alpha1.AutoScalingConfig
+		errorMatchers []testutils.ErrorMatcher
+	}{
+		{
+			description: "empty restart policy remains valid for infinite PodCliques",
+		},
+		{
+			description:   "Always restart policy is valid for infinite PodCliques",
+			restartPolicy: corev1.RestartPolicyAlways,
+		},
+		{
+			description:   "Never restart policy is valid for finite PodCliques",
+			restartPolicy: corev1.RestartPolicyNever,
+		},
+		{
+			description:   "OnFailure restart policy is rejected",
+			restartPolicy: corev1.RestartPolicyOnFailure,
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeNotSupported, Field: "spec.template.cliques[0].spec.podSpec.restartPolicy"},
+			},
+		},
+		{
+			description:   "unsupported restart policy is rejected",
+			restartPolicy: corev1.RestartPolicy("Sometimes"),
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeNotSupported, Field: "spec.template.cliques[0].spec.podSpec.restartPolicy"},
+			},
+		},
+		{
+			description:   "autoscaling is rejected for finite PodCliques",
+			restartPolicy: corev1.RestartPolicyNever,
+			scaleConfig: &grovecorev1alpha1.AutoScalingConfig{
+				MinReplicas: ptr.To(int32(1)),
+				MaxReplicas: 2,
+			},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.cliques[0].spec.autoScalingConfig"},
+			},
+		},
+		{
+			description:   "autoscaling remains valid for infinite PodCliques",
+			restartPolicy: corev1.RestartPolicyAlways,
+			scaleConfig: &grovecorev1alpha1.AutoScalingConfig{
+				MinReplicas: ptr.To(int32(1)),
+				MaxReplicas: 2,
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			pcs := createTestPodCliqueSet("inference")
+			pcs.Spec.Template.Cliques[0].Spec.PodSpec.RestartPolicy = tc.restartPolicy
+			pcs.Spec.Template.Cliques[0].Spec.ScaleConfig = tc.scaleConfig
+
+			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(),
+				groveconfigv1alpha1.SchedulerConfiguration{
+					Profiles: []groveconfigv1alpha1.SchedulerProfile{
+						{Name: groveconfigv1alpha1.SchedulerNameKube},
+					},
+					DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+				}, nil, testutils.NewDefaultFakeRegistry())
+			warnings, errs := validator.validate()
+
+			if tc.errorMatchers != nil {
+				testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
+			} else {
+				assert.NoError(t, errs.ToAggregate(), "Expected no validation error for test case: %s", tc.description)
+			}
+			assert.Empty(t, warnings, "restartPolicy validation should not produce warnings")
+		})
+	}
+}
+
 func TestPodCliqueUpdateValidation(t *testing.T) {
 	testCases := []struct {
 		name           string
@@ -561,6 +639,29 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 			oldCliques:  []*grovecorev1alpha1.PodCliqueTemplateSpec{},
 			newCliques:  []*grovecorev1alpha1.PodCliqueTemplateSpec{},
 			expectError: false,
+		},
+		{
+			name:        "Valid: infinite PodClique replicas can change",
+			startupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
+			oldCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				createDummyPodCliqueTemplate("prefill"),
+			},
+			newCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				createDummyPodCliqueTemplateWithReplicas("prefill", 2),
+			},
+			expectError: false,
+		},
+		{
+			name:        "Invalid: finite PodClique replicas are immutable",
+			startupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
+			oldCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				createDummyPodCliqueTemplateWithRestartPolicy("prefill", corev1.RestartPolicyNever),
+			},
+			newCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				createDummyPodCliqueTemplateWithReplicasAndRestartPolicy("prefill", 2, corev1.RestartPolicyNever),
+			},
+			expectError:    true,
+			expectedErrMsg: "field is immutable",
 		},
 	}
 
@@ -1911,6 +2012,24 @@ func createDummyPodCliqueTemplate(name string) *grovecorev1alpha1.PodCliqueTempl
 		WithRoleName(fmt.Sprintf("dummy-%s-role", name)).
 		WithMinAvailable(1).
 		Build()
+}
+
+func createDummyPodCliqueTemplateWithReplicas(name string, replicas int32) *grovecorev1alpha1.PodCliqueTemplateSpec {
+	pclqTemplate := createDummyPodCliqueTemplate(name)
+	pclqTemplate.Spec.Replicas = replicas
+	return pclqTemplate
+}
+
+func createDummyPodCliqueTemplateWithRestartPolicy(name string, restartPolicy corev1.RestartPolicy) *grovecorev1alpha1.PodCliqueTemplateSpec {
+	pclqTemplate := createDummyPodCliqueTemplate(name)
+	pclqTemplate.Spec.PodSpec.RestartPolicy = restartPolicy
+	return pclqTemplate
+}
+
+func createDummyPodCliqueTemplateWithReplicasAndRestartPolicy(name string, replicas int32, restartPolicy corev1.RestartPolicy) *grovecorev1alpha1.PodCliqueTemplateSpec {
+	pclqTemplate := createDummyPodCliqueTemplateWithRestartPolicy(name, restartPolicy)
+	pclqTemplate.Spec.Replicas = replicas
+	return pclqTemplate
 }
 
 // createScalingGroupConfig creates a basic PodCliqueScalingGroupConfig for testing.

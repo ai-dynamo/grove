@@ -32,6 +32,9 @@ spec:
     - jsonPath: .status.updatedReplicas
       name: Updated
       type: integer
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
     - jsonPath: .status.scheduleGatedReplicas
       name: Gated
       priority: 1
@@ -9127,6 +9130,14 @@ spec:
                   by the controller.
                 format: int64
                 type: integer
+              phase:
+                description: Phase is the terminal phase of a finite PodClique. It
+                  is empty for non-finite PodCliques and finite PodCliques that are
+                  still running.
+                enum:
+                - Completed
+                - Failed
+                type: string
               readyReplicas:
                 default: 0
                 description: ReadyReplicas is the number of ready Pods targeted by

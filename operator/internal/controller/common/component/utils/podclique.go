@@ -209,6 +209,23 @@ func ComputePCLQPodTemplateHash(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTem
 	return k8sutils.ComputeHash(&podTemplateSpec)
 }
 
+// IsFinitePCLQ reports whether a PodClique is finite. The signal is deliberately
+// centralized so it can move from restartPolicy to a dedicated API field later.
+func IsFinitePCLQ(pclq *grovecorev1alpha1.PodClique) bool {
+	if pclq == nil {
+		return false
+	}
+	return pclq.Spec.PodSpec.RestartPolicy == corev1.RestartPolicyNever
+}
+
+// IsPCLQTerminal reports whether a PodClique has reached a finite terminal phase.
+func IsPCLQTerminal(pclq *grovecorev1alpha1.PodClique) bool {
+	if pclq == nil {
+		return false
+	}
+	return pclq.Status.Phase == grovecorev1alpha1.JobPhaseCompleted || pclq.Status.Phase == grovecorev1alpha1.JobPhaseFailed
+}
+
 // IsPCLQAutoUpdateInProgress checks if PodClique is under an auto-orchestrated update.
 func IsPCLQAutoUpdateInProgress(pclq *grovecorev1alpha1.PodClique) bool {
 	return pclq.Status.UpdateProgress != nil && pclq.Status.UpdateProgress.UpdateEndedAt == nil

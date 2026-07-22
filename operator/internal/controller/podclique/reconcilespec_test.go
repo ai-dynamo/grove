@@ -18,17 +18,23 @@ import (
 	"context"
 	"testing"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -119,6 +125,99 @@ func TestGetOrderedKindsForSync(t *testing.T) {
 	assert.Equal(t, 2, len(kinds))
 	assert.Equal(t, component.KindResourceClaim, kinds[0], "ResourceClaim must be synced before Pod")
 	assert.Equal(t, component.KindPod, kinds[1])
+}
+
+func TestReconcileSpecTerminalPCLQRetainsTerminalPodsDeletesActivePodsAndSkipsRecreation(t *testing.T) {
+	pclq := createTerminalPCLQ(grovecorev1alpha1.JobPhaseCompleted)
+	succeededPod := createOwnedPCLQPod(pclq, "succeeded", corev1.PodSucceeded)
+	failedPod := createOwnedPCLQPod(pclq, "failed", corev1.PodFailed)
+	runningPod := createOwnedPCLQPod(pclq, "running", corev1.PodRunning)
+	pendingPod := createOwnedPCLQPod(pclq, "pending", corev1.PodPending)
+	fakeClient := testutils.SetupFakeClient(pclq, succeededPod, failedPod, runningPod, pendingPod)
+	resourceClaimOperator := &countingPCLQOperator{}
+	podOperator := &countingPCLQOperator{}
+	registry := component.NewOperatorRegistry[grovecorev1alpha1.PodClique]()
+	registry.Register(component.KindResourceClaim, resourceClaimOperator)
+	registry.Register(component.KindPod, podOperator)
+	r := &Reconciler{
+		client:           fakeClient,
+		operatorRegistry: registry,
+	}
+
+	result := r.reconcileSpec(context.Background(), logr.Discard(), pclq)
+
+	_, err := result.Result()
+	require.NoError(t, err)
+	assertPodExists(t, fakeClient, succeededPod)
+	assertPodExists(t, fakeClient, failedPod)
+	assertPodNotFound(t, fakeClient, runningPod)
+	assertPodNotFound(t, fakeClient, pendingPod)
+	assert.Zero(t, resourceClaimOperator.syncCalls, "terminal PodClique should not sync ResourceClaims")
+	assert.Zero(t, podOperator.syncCalls, "terminal PodClique should not sync Pods")
+}
+
+func TestCleanupActivePodsForTerminalPCLQ(t *testing.T) {
+	pclq := createTerminalPCLQ(grovecorev1alpha1.JobPhaseFailed)
+	succeededPod := createOwnedPCLQPod(pclq, "succeeded", corev1.PodSucceeded)
+	failedPod := createOwnedPCLQPod(pclq, "failed", corev1.PodFailed)
+	runningPod := createOwnedPCLQPod(pclq, "running", corev1.PodRunning)
+	pendingPod := createOwnedPCLQPod(pclq, "pending", corev1.PodPending)
+	foreignRunningPod := createPCLQLabelledPodWithoutOwner(pclq, "foreign-running", corev1.PodRunning)
+	fakeClient := testutils.SetupFakeClient(pclq, succeededPod, failedPod, runningPod, pendingPod, foreignRunningPod)
+	r := &Reconciler{client: fakeClient}
+
+	result := r.cleanupActivePodsForTerminalPCLQ(context.Background(), logr.Discard(), pclq)
+
+	_, err := result.Result()
+	require.NoError(t, err)
+	assertPodExists(t, fakeClient, succeededPod)
+	assertPodExists(t, fakeClient, failedPod)
+	assertPodExists(t, fakeClient, foreignRunningPod)
+	assertPodNotFound(t, fakeClient, runningPod)
+	assertPodNotFound(t, fakeClient, pendingPod)
+}
+
+func TestReconcileRequeuesWhenFinitePCLQTransitionsTerminal(t *testing.T) {
+	pcs, pclq, templateHash := newPodCliqueHashConvergenceFixture(t)
+	pclq.UID = uuid.NewUUID()
+	pclq.Generation = 1
+	pclq.Spec = grovecorev1alpha1.PodCliqueSpec{
+		Replicas:     2,
+		MinAvailable: ptr.To[int32](2),
+		PodSpec: corev1.PodSpec{
+			RestartPolicy: corev1.RestartPolicyNever,
+		},
+	}
+	pclq.Status = grovecorev1alpha1.PodCliqueStatus{
+		Replicas:                          2,
+		UpdatedReplicas:                   2,
+		ObservedGeneration:                ptr.To(pclq.Generation),
+		CurrentPodTemplateHash:            ptr.To(templateHash),
+		CurrentPodCliqueSetGenerationHash: pcs.Status.CurrentGenerationHash,
+	}
+	failedPod := createOwnedPCLQPod(pclq, "failed", corev1.PodFailed)
+	runningPod := createOwnedPCLQPod(pclq, "running", corev1.PodRunning)
+	fakeClient := testutils.SetupFakeClient(pcs, pclq, failedPod, runningPod)
+	registry := component.NewOperatorRegistry[grovecorev1alpha1.PodClique]()
+	registry.Register(component.KindResourceClaim, &countingPCLQOperator{})
+	registry.Register(component.KindPod, &countingPCLQOperator{})
+	r := &Reconciler{
+		client:           fakeClient,
+		operatorRegistry: registry,
+		eventRecorder:    record.NewFakeRecorder(1),
+	}
+
+	result, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{
+		Namespace: pclq.Namespace,
+		Name:      pclq.Name,
+	}})
+
+	require.NoError(t, err)
+	assert.True(t, result.Requeue)
+	updatedPCLQ := &grovecorev1alpha1.PodClique{}
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pclq), updatedPCLQ))
+	assert.Equal(t, grovecorev1alpha1.JobPhaseFailed, updatedPCLQ.Status.Phase)
+	assertPodExists(t, fakeClient, runningPod)
 }
 
 // TestShouldResetOrTriggerUpdate tests the shouldResetOrTriggerUpdate function for PodClique
@@ -245,6 +344,69 @@ const (
 	testNamespace = "test-namespace"
 	testPCSName   = "test-pcs"
 )
+
+type countingPCLQOperator struct {
+	syncCalls int
+}
+
+func (o *countingPCLQOperator) GetExistingResourceNames(_ context.Context, _ logr.Logger, _ metav1.ObjectMeta) ([]string, error) {
+	return nil, nil
+}
+
+func (o *countingPCLQOperator) Sync(_ context.Context, _ logr.Logger, _ *grovecorev1alpha1.PodClique) error {
+	o.syncCalls++
+	return nil
+}
+
+func (o *countingPCLQOperator) Delete(_ context.Context, _ logr.Logger, _ metav1.ObjectMeta) error {
+	return nil
+}
+
+func createTerminalPCLQ(phase grovecorev1alpha1.JobPhase) *grovecorev1alpha1.PodClique {
+	pcsUID := uuid.NewUUID()
+	pclq := testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).Build()
+	pclq.UID = uuid.NewUUID()
+	pclq.Status.Phase = phase
+	return pclq
+}
+
+func createOwnedPCLQPod(pclq *grovecorev1alpha1.PodClique, name string, phase corev1.PodPhase) *corev1.Pod {
+	pod := createPCLQLabelledPodWithoutOwner(pclq, name, phase)
+	pod.OwnerReferences = []metav1.OwnerReference{
+		*metav1.NewControllerRef(pclq, grovecorev1alpha1.SchemeGroupVersion.WithKind("PodClique")),
+	}
+	return pod
+}
+
+func createPCLQLabelledPodWithoutOwner(pclq *grovecorev1alpha1.PodClique, name string, phase corev1.PodPhase) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: pclq.Namespace,
+			Labels: map[string]string{
+				apicommon.LabelManagedByKey: apicommon.LabelManagedByValue,
+				apicommon.LabelPartOfKey:    componentutils.GetPodCliqueSetName(pclq.ObjectMeta),
+				apicommon.LabelPodClique:    pclq.Name,
+			},
+		},
+		Status: corev1.PodStatus{
+			Phase: phase,
+		},
+	}
+}
+
+func assertPodExists(t *testing.T, cl client.Client, pod *corev1.Pod) {
+	t.Helper()
+	fetchedPod := &corev1.Pod{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(pod), fetchedPod))
+}
+
+func assertPodNotFound(t *testing.T, cl client.Client, pod *corev1.Pod) {
+	t.Helper()
+	fetchedPod := &corev1.Pod{}
+	err := cl.Get(context.Background(), client.ObjectKeyFromObject(pod), fetchedPod)
+	require.True(t, apierrors.IsNotFound(err), "expected pod %s to be deleted, got error: %v", pod.Name, err)
+}
 
 func TestProcessUpdateInitializesProgressWithoutActivePCSUpdate(t *testing.T) {
 	pcsUID := uuid.NewUUID()
