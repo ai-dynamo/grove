@@ -29,74 +29,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 )
 
-var _ func(ctrl.Manager, Options) error = Setup
+var _ func(ctrl.Manager, *configv1alpha1.OperatorConfiguration) error = Setup
 
-func TestNewOperatorConfiguration(t *testing.T) {
-	tests := []struct {
-		name            string
-		options         Options
-		wantProfiles    []configv1alpha1.SchedulerName
-		wantDefault     configv1alpha1.SchedulerName
-		wantErrContains string
-	}{
-		{
-			name:         "defaults to Kubernetes",
-			wantProfiles: []configv1alpha1.SchedulerName{configv1alpha1.SchedulerNameKube},
-			wantDefault:  configv1alpha1.SchedulerNameKube,
-		},
-		{
-			name: "enables optional backends",
-			options: Options{
-				KAI:     true,
-				Volcano: true,
-				LPX:     true,
-			},
-			wantProfiles: []configv1alpha1.SchedulerName{
-				configv1alpha1.SchedulerNameKube,
-				configv1alpha1.SchedulerNameKai,
-				configv1alpha1.SchedulerNameVolcano,
-				configv1alpha1.SchedulerNameLPX,
-			},
-			wantDefault: configv1alpha1.SchedulerNameKube,
-		},
-		{
-			name: "selects an enabled default backend",
-			options: Options{
-				KAI:     true,
-				Default: configv1alpha1.SchedulerNameKai,
-			},
-			wantProfiles: []configv1alpha1.SchedulerName{
-				configv1alpha1.SchedulerNameKube,
-				configv1alpha1.SchedulerNameKai,
-			},
-			wantDefault: configv1alpha1.SchedulerNameKai,
-		},
-		{
-			name: "rejects a disabled default backend",
-			options: Options{
-				Default: configv1alpha1.SchedulerNameVolcano,
-			},
-			wantErrContains: "default scheduler \"volcano\" is not enabled",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			operatorCfg, err := newOperatorConfiguration(tt.options)
-			if tt.wantErrContains != "" {
-				require.ErrorContains(t, err, tt.wantErrContains)
-				return
-			}
-			require.NoError(t, err)
-			require.Equal(t, tt.wantDefault, configv1alpha1.SchedulerName(operatorCfg.Scheduler.DefaultProfileName))
-
-			profiles := make([]configv1alpha1.SchedulerName, 0, len(operatorCfg.Scheduler.Profiles))
-			for _, profile := range operatorCfg.Scheduler.Profiles {
-				profiles = append(profiles, profile.Name)
-			}
-			require.ElementsMatch(t, tt.wantProfiles, profiles)
-		})
-	}
+func TestSetupRejectsNilConfiguration(t *testing.T) {
+	require.ErrorContains(t, Setup(nil, nil), "operator configuration must not be nil")
 }
 
 func TestSetup(t *testing.T) {
@@ -115,11 +51,18 @@ func TestSetup(t *testing.T) {
 		config: &rest.Config{Host: "https://127.0.0.1"},
 	}
 
-	require.NoError(t, Setup(mgr, Options{
-		KAI:     true,
-		LPX:     true,
-		Default: configv1alpha1.SchedulerNameKai,
-	}))
+	operatorCfg := &configv1alpha1.OperatorConfiguration{
+		Scheduler: configv1alpha1.SchedulerConfiguration{
+			Profiles: []configv1alpha1.SchedulerProfile{
+				{Name: configv1alpha1.SchedulerNameKai},
+				{Name: configv1alpha1.SchedulerNameLPX},
+			},
+			DefaultProfileName: string(configv1alpha1.SchedulerNameKai),
+		},
+	}
+	configv1alpha1.SetObjectDefaults_OperatorConfiguration(operatorCfg)
+
+	require.NoError(t, Setup(mgr, operatorCfg))
 	require.ElementsMatch(t, []string{
 		"/webhooks/default-podcliqueset",
 		"/webhooks/validate-clustertopology",

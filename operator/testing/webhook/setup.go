@@ -26,23 +26,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// Options configures the scheduler backends available to admission webhooks.
-// The Kubernetes default scheduler is always enabled.
-type Options struct {
-	KAI     bool
-	Volcano bool
-	LPX     bool
-
-	// Default selects the default scheduler backend. An empty value selects the
-	// Kubernetes default scheduler.
-	Default configv1alpha1.SchedulerName
-}
-
 // Setup registers Grove's production admission webhooks with mgr.
-func Setup(mgr ctrl.Manager, options Options) error {
-	operatorCfg, err := newOperatorConfiguration(options)
-	if err != nil {
-		return err
+// operatorCfg must be defaulted and validated like the production operator
+// configuration before calling Setup.
+func Setup(mgr ctrl.Manager, operatorCfg *configv1alpha1.OperatorConfiguration) error {
+	if operatorCfg == nil {
+		return fmt.Errorf("operator configuration must not be nil")
 	}
 
 	directClient, err := client.New(mgr.GetConfig(), client.Options{Scheme: mgr.GetScheme()})
@@ -61,37 +50,4 @@ func Setup(mgr ctrl.Manager, options Options) error {
 	}
 
 	return internalwebhook.Register(mgr, operatorCfg, schedRegistry)
-}
-
-func newOperatorConfiguration(options Options) (*configv1alpha1.OperatorConfiguration, error) {
-	profiles := []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}
-	enabled := map[configv1alpha1.SchedulerName]bool{
-		configv1alpha1.SchedulerNameKube: true,
-	}
-	enable := func(name configv1alpha1.SchedulerName, include bool) {
-		if include {
-			profiles = append(profiles, configv1alpha1.SchedulerProfile{Name: name})
-			enabled[name] = true
-		}
-	}
-	enable(configv1alpha1.SchedulerNameKai, options.KAI)
-	enable(configv1alpha1.SchedulerNameVolcano, options.Volcano)
-	enable(configv1alpha1.SchedulerNameLPX, options.LPX)
-
-	defaultScheduler := options.Default
-	if defaultScheduler == "" {
-		defaultScheduler = configv1alpha1.SchedulerNameKube
-	}
-	if !enabled[defaultScheduler] {
-		return nil, fmt.Errorf("default scheduler %q is not enabled", defaultScheduler)
-	}
-
-	operatorCfg := &configv1alpha1.OperatorConfiguration{
-		Scheduler: configv1alpha1.SchedulerConfiguration{
-			Profiles:           profiles,
-			DefaultProfileName: string(defaultScheduler),
-		},
-	}
-	configv1alpha1.SetObjectDefaults_OperatorConfiguration(operatorCfg)
-	return operatorCfg, nil
 }
