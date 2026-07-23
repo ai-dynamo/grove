@@ -74,11 +74,32 @@ func init() {
 	crlog.SetLogger(klog.Background())
 }
 
+// Default client-side rate limits for e2e tests.
+//
+// client-go's defaults (5 QPS / 10 burst) are far too low for parallel e2e
+// scenarios like RU-11 (30 nodes + PCS scale-out + rolling update), where the
+// client rate limiter can saturate and cause tests to fail with
+// "client rate limiter Wait returned an error: context deadline exceeded".
+// Bumping to 50/100 matches the ballpark used by most k8s test suites while
+// still being conservative enough for a test kind cluster.
+const (
+	e2eClientQPS   = 50
+	e2eClientBurst = 100
+)
+
 // New creates a Client from a rest.Config.
 func New(restConfig *rest.Config) (*Client, error) {
 	scheme, err := newScheme()
 	if err != nil {
 		return nil, fmt.Errorf("build scheme: %w", err)
+	}
+
+	// Bump client-side rate limits unless the caller already customized them.
+	if restConfig.QPS == 0 {
+		restConfig.QPS = e2eClientQPS
+	}
+	if restConfig.Burst == 0 {
+		restConfig.Burst = e2eClientBurst
 	}
 
 	cl, err := client.New(restConfig, client.Options{Scheme: scheme})
