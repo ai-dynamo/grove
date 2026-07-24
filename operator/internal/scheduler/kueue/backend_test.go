@@ -39,8 +39,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const podGroupTotalCountAnnotation = "kueue.x-k8s.io/pod-group-total-count"
-
 func TestBackend_PreparePod_Defaults(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
@@ -48,25 +46,36 @@ func TestBackend_PreparePod_Defaults(t *testing.T) {
 	b := New(cl, cl.Scheme(), recorder, profile)
 	assert.NoError(t, b.Init(nil))
 
-	pod := &corev1.Pod{
+	pcs := &grovecorev1alpha1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{
-			Labels: map[string]string{
-				apicommon.LabelPodClique: "test-podclique",
-				apicommon.LabelPodGang:   "test-podgang",
-			},
-			Annotations: map[string]string{
-				podGroupTotalCountAnnotation: "2",
+			Name:      "test-pcs",
+			Namespace: "default",
+			Labels:    map[string]string{queueNameLabel: "test-queue"},
+		},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2}},
+				},
 			},
 		},
-		Spec: corev1.PodSpec{SchedulerName: "kueue"},
+	}
+	pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: "test-pcs-0-worker"}}
+	pod := &corev1.Pod{Spec: corev1.PodSpec{SchedulerName: "kueue"}}
+	preparation := scheduler.PodPreparationContext{
+		PodCliqueSet: pcs,
+		PodClique:    pclq,
+		PodGangName:  "test-pcs-0",
 	}
 
-	require.NoError(t, b.PreparePod(pod))
+	require.NoError(t, b.PreparePod(pod, preparation))
 
 	assert.Equal(t, string(configv1alpha1.SchedulerNameKube), pod.Spec.SchedulerName)
-	assert.Empty(t, pod.Labels[queueNameLabel])
-	assert.Equal(t, "test-podclique", pod.Labels[podGroupNameLabel])
+	assert.Equal(t, "test-queue", pod.Labels[queueNameLabel])
+	assert.Equal(t, "test-pcs-0", pod.Labels[podGroupNameLabel])
+	assert.Equal(t, "test-pcs-0", pod.Labels[prebuiltWorkloadNameLabel])
 	assert.Equal(t, "2", pod.Annotations[podGroupTotalCountAnnotation])
+	assert.Equal(t, "test-pcs-0-worker", pod.Annotations[roleHashAnnotation])
 	// Grove pods are not marked as a Kueue serving group, so Kueue can finalize them on teardown.
 	assert.Empty(t, pod.Annotations[podGroupServingAnnotation])
 	assert.Equal(t, "false", pod.Annotations[retriableInGroupAnnotation])
@@ -84,26 +93,124 @@ func TestBackend_PreparePod_ConfigAndExistingMetadata(t *testing.T) {
 	b := New(cl, cl.Scheme(), recorder, profile)
 	assert.NoError(t, b.Init(nil))
 
-	pod := &corev1.Pod{
+	pcs := &grovecorev1alpha1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{
-			Labels: map[string]string{
-				apicommon.LabelPodClique: "test-podclique",
-				apicommon.LabelPodGang:   "test-podgang",
-				queueNameLabel:           "existing-queue",
-			},
-			Annotations: map[string]string{
-				podGroupTotalCountAnnotation: "7",
+			Name:      "test-pcs",
+			Namespace: "default",
+			Labels:    map[string]string{queueNameLabel: "configured-queue"},
+		},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 7}},
+				},
 			},
 		},
 	}
+	pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: "test-pcs-0-worker"}}
+	pod := &corev1.Pod{}
+	preparation := scheduler.PodPreparationContext{
+		PodCliqueSet: pcs,
+		PodClique:    pclq,
+		PodGangName:  "test-pcs-0",
+	}
 
-	require.NoError(t, b.PreparePod(pod))
+	require.NoError(t, b.PreparePod(pod, preparation))
 
 	assert.Equal(t, "custom-scheduler", pod.Spec.SchedulerName)
-	assert.Equal(t, "existing-queue", pod.Labels[queueNameLabel])
-	assert.Equal(t, "test-podclique", pod.Labels[podGroupNameLabel])
+	assert.Equal(t, "configured-queue", pod.Labels[queueNameLabel])
+	assert.Equal(t, "test-pcs-0", pod.Labels[podGroupNameLabel])
 	assert.Equal(t, "7", pod.Annotations[podGroupTotalCountAnnotation])
 	assert.Equal(t, "topology.ai-dynamo.io/rack", pod.Annotations[podSetRequiredTopologyAnnotation])
+}
+
+func TestBackend_PreparePod_PCSGAndTopology(t *testing.T) {
+	cl := testutils.CreateDefaultFakeClient(nil)
+	recorder := record.NewFakeRecorder(10)
+	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKueue}
+	b := New(cl, cl.Scheme(), recorder, profile)
+	require.NoError(t, b.Init(nil))
+
+	pcsgReplicas := int32(2)
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "demo",
+			Namespace: "default",
+			Labels:    map[string]string{queueNameLabel: "grove-poc"},
+		},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{},
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+					{Name: "leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2}},
+				},
+				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+					{Name: "decode", CliqueNames: []string{"leader", "worker"}, Replicas: &pcsgReplicas},
+				},
+			},
+		},
+	}
+	pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: "demo-0-decode-0-worker"}}
+	rackKey := "topology.ai-dynamo.io/rack"
+	podGang := &groveschedulerv1alpha1.PodGang{
+		Spec: groveschedulerv1alpha1.PodGangSpec{
+			PodGroups: []groveschedulerv1alpha1.PodGroup{
+				{
+					Name: "demo-0-decode-0-worker",
+					TopologyConstraint: &groveschedulerv1alpha1.TopologyConstraint{
+						PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{Required: &rackKey},
+					},
+				},
+			},
+		},
+	}
+	pod := &corev1.Pod{}
+	preparation := scheduler.PodPreparationContext{
+		PodCliqueSet: pcs,
+		PodClique:    pclq,
+		PodGang:      podGang,
+		PodGangName:  "demo-0",
+	}
+
+	require.NoError(t, b.PreparePod(pod, preparation))
+
+	assert.Equal(t, "6", pod.Annotations[podGroupTotalCountAnnotation])
+	assert.Equal(t, "demo-0-decode-0-worker", pod.Annotations[roleHashAnnotation])
+	assert.Equal(t, rackKey, pod.Annotations[podSetRequiredTopologyAnnotation])
+}
+
+func TestBackend_PreparePod_RequiresPodGangForTopology(t *testing.T) {
+	cl := testutils.CreateDefaultFakeClient(nil)
+	recorder := record.NewFakeRecorder(10)
+	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKueue}
+	b := New(cl, cl.Scheme(), recorder, profile)
+	require.NoError(t, b.Init(nil))
+
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "demo",
+			Namespace: "default",
+			Labels:    map[string]string{queueNameLabel: "grove-poc"},
+		},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{},
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+				},
+			},
+		},
+	}
+	preparation := scheduler.PodPreparationContext{
+		PodCliqueSet: pcs,
+		PodClique:    &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: "demo-0-worker"}},
+		PodGangName:  "demo-0",
+	}
+
+	err := b.PreparePod(&corev1.Pod{}, preparation)
+
+	require.ErrorContains(t, err, "is required to resolve Kueue topology")
 }
 
 func TestBackend_SyncPodGang_RequiresPodCliqueSetQueueLabel(t *testing.T) {

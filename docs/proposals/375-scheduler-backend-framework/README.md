@@ -157,6 +157,13 @@ The core of the framework is the `Backend` interface, which defines all operatio
 ```go
 package scheduler
 
+type PodPreparationContext struct {
+	PodCliqueSet *grovecorev1alpha1.PodCliqueSet
+	PodClique    *grovecorev1alpha1.PodClique
+	PodGang      *groveschedulerv1alpha1.PodGang
+	PodGangName  string
+}
+
 // SchedulerBackend defines the interface that different scheduler backends must implement.
 //
 // Architecture: Backend validates PodCliqueSet at admission, converts
@@ -192,7 +199,7 @@ type Backend interface {
 	// prior to its creation. This includes setting schedulerName,
 	// annotations, etc.
 	// This is called during Pod creation in the PodClique controller.
-	PreparePod(pod *corev1.Pod)
+	PreparePod(pod *corev1.Pod, preparation PodPreparationContext) error
 
 	// ValidatePodCliqueSet provides an ability to the scheduler backends to run additional
 	// validations on the PodCliqueSet resource. For example - if a scheduler does not yet support

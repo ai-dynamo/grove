@@ -22,7 +22,6 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
@@ -67,14 +66,7 @@ const (
 	errCodeUpdatePodCliqueStatus               grovecorev1alpha1.ErrorCode = "ERR_UPDATE_PODCLIQUE_STATUS"
 )
 
-const (
-	podGangSchedulingGate             = "grove.io/podgang-pending-creation"
-	kueuePodGroupTotalCountAnnotation = "kueue.x-k8s.io/pod-group-total-count"
-	kueuePodGroupNameLabel            = "kueue.x-k8s.io/pod-group-name"
-	kueuePrebuiltWorkloadNameLabel    = "kueue.x-k8s.io/prebuilt-workload-name"
-	kueuePodSetRequiredTopology       = "kueue.x-k8s.io/podset-required-topology"
-	kueueRoleHashAnnotation           = "kueue.x-k8s.io/role-hash"
-)
+const podGangSchedulingGate = "grove.io/podgang-pending-creation"
 
 type _resource struct {
 	client            client.Client
@@ -183,21 +175,13 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 			"failed to prepare pod spec with scheduler backend",
 		)
 	}
-	if backend.Name() == string(configv1alpha1.SchedulerNameKueue) {
-		if podGang == nil && componentutils.HasAnyTopologyConstraint(pcs) {
-			return groveerr.WrapError(
-				fmt.Errorf("PodGang %s/%s is required to resolve Kueue topology", pclq.Namespace, podGangName),
-				errCodeBuildPodResource,
-				component.OperationSync,
-				"failed to prepare pod spec with scheduler backend",
-			)
-		}
-		stampKueuePodGroupMetadata(pod, pcs, pclq, podGangName)
-		if topologyKey := scheduler.RequiredTopologyKeyForPodGroup(podGang, pclq.Name, ""); topologyKey != "" && pod.Annotations[kueuePodSetRequiredTopology] == "" {
-			pod.Annotations[kueuePodSetRequiredTopology] = topologyKey
-		}
+	preparation := scheduler.PodPreparationContext{
+		PodCliqueSet: pcs,
+		PodClique:    pclq,
+		PodGang:      podGang,
+		PodGangName:  podGangName,
 	}
-	if err = backend.PreparePod(pod); err != nil {
+	if err = backend.PreparePod(pod, preparation); err != nil {
 		return groveerr.WrapError(
 			err,
 			errCodeBuildPodResource,
@@ -287,56 +271,6 @@ func injectPCLQResourceClaimRefs(podSpec *corev1.PodSpec, pclqName string, resou
 	resourceSharers := resourceclaim.ResourceSharersFromPCLQ(resourceSharing)
 	resourceclaim.InjectResourceClaimRefs(podSpec, pclqName, resourceSharers, nil)
 	resourceclaim.InjectResourceClaimRefs(podSpec, pclqName, resourceSharers, &podIndex)
-}
-
-// stampKueuePodGroupMetadata stamps PodGang-scoped Kueue metadata on a Pod. Grove always builds a prebuilt Kueue
-// Workload per PodGang, so every Kueue-managed Pod is grouped by the PodGang name and references the prebuilt
-// Workload via the prebuilt-workload-name label. The role-hash annotation is set to the PodClique FQN, which
-// matches the corresponding Workload podSet name (the PodGroup name) so Kueue can map Pods to podSets uniquely,
-// including across PodCliqueScalingGroup replicas of the same clique. Kueue reads role-hash from annotations (not
-// labels); stamping it here prevents Kueue from computing a pod-spec hash that would never match the podSet name.
-func stampKueuePodGroupMetadata(pod *corev1.Pod, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, podGangName string) {
-	if pod.Labels == nil {
-		pod.Labels = make(map[string]string)
-	}
-	if pod.Annotations == nil {
-		pod.Annotations = make(map[string]string)
-	}
-	pod.Labels[kueuePodGroupNameLabel] = podGangName
-	pod.Labels[kueuePrebuiltWorkloadNameLabel] = podGangName
-	pod.Annotations[kueuePodGroupTotalCountAnnotation] = strconv.Itoa(kueuePodGangTotalPodCount(pcs))
-	pod.Annotations[kueueRoleHashAnnotation] = pclq.Name
-}
-
-// kueuePodGangTotalPodCount returns the total number of Pods in a single PodCliqueSet-replica PodGang. Cliques that
-// belong to a scaling group contribute clique.Replicas * scalingGroup.Replicas Pods; standalone cliques contribute
-// clique.Replicas Pods. This assumes each PodGang corresponds to one PodCliqueSet replica.
-func kueuePodGangTotalPodCount(pcs *grovecorev1alpha1.PodCliqueSet) int {
-	scalingGroupCliques := make(map[string]struct{})
-	for _, config := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-		for _, cliqueName := range config.CliqueNames {
-			scalingGroupCliques[cliqueName] = struct{}{}
-		}
-	}
-	total := 0
-	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
-		if _, ok := scalingGroupCliques[cliqueTemplate.Name]; ok {
-			continue
-		}
-		total += int(cliqueTemplate.Spec.Replicas)
-	}
-	for _, config := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-		groupReplicas := 1
-		if config.Replicas != nil {
-			groupReplicas = int(*config.Replicas)
-		}
-		for _, cliqueName := range config.CliqueNames {
-			if cliqueTemplate := componentutils.FindPodCliqueTemplateSpecByName(pcs, cliqueName); cliqueTemplate != nil {
-				total += int(cliqueTemplate.Spec.Replicas) * groupReplicas
-			}
-		}
-	}
-	return total
 }
 
 // Delete removes all Pods associated with the specified PodClique

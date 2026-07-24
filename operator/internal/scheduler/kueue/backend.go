@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -41,9 +42,12 @@ import (
 const (
 	queueNameLabel                   = "kueue.x-k8s.io/queue-name"
 	podGroupNameLabel                = "kueue.x-k8s.io/pod-group-name"
+	podGroupTotalCountAnnotation     = "kueue.x-k8s.io/pod-group-total-count"
+	prebuiltWorkloadNameLabel        = "kueue.x-k8s.io/prebuilt-workload-name"
 	podGroupServingAnnotation        = "kueue.x-k8s.io/pod-group-serving"
 	retriableInGroupAnnotation       = "kueue.x-k8s.io/retriable-in-group"
 	podSetRequiredTopologyAnnotation = "kueue.x-k8s.io/podset-required-topology"
+	roleHashAnnotation               = "kueue.x-k8s.io/role-hash"
 )
 
 var workloadGVK = schema.GroupVersionKind{
@@ -223,7 +227,20 @@ func findCliqueTemplateForPodGroup(pcs *grovecorev1alpha1.PodCliqueSet, podGroup
 	return best
 }
 
-func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
+func (b *schedulerBackend) PreparePod(pod *corev1.Pod, preparation scheduler.PodPreparationContext) error {
+	if preparation.PodCliqueSet == nil {
+		return fmt.Errorf("kueue backend requires PodCliqueSet when preparing a Pod")
+	}
+	if preparation.PodClique == nil {
+		return fmt.Errorf("kueue backend requires PodClique when preparing a Pod")
+	}
+	if preparation.PodGangName == "" {
+		return fmt.Errorf("kueue backend requires PodGang name when preparing a Pod")
+	}
+	if preparation.PodGang == nil && hasTopologyConstraint(preparation.PodCliqueSet) {
+		return fmt.Errorf("PodGang %s/%s is required to resolve Kueue topology", pod.Namespace, preparation.PodGangName)
+	}
+
 	pod.Spec.SchedulerName = b.config.UnderlyingSchedulerName
 	if pod.Labels == nil {
 		pod.Labels = make(map[string]string)
@@ -232,9 +249,15 @@ func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 		pod.Annotations = make(map[string]string)
 	}
 
-	if pod.Labels[podGroupNameLabel] == "" {
-		pod.Labels[podGroupNameLabel] = pod.Labels[apicommon.LabelPodClique]
+	queueName := preparation.PodCliqueSet.Labels[queueNameLabel]
+	if queueName == "" {
+		return fmt.Errorf("PodCliqueSet %s/%s must set label %q for Kueue queue selection", preparation.PodCliqueSet.Namespace, preparation.PodCliqueSet.Name, queueNameLabel)
 	}
+	pod.Labels[queueNameLabel] = queueName
+	pod.Labels[podGroupNameLabel] = preparation.PodGangName
+	pod.Labels[prebuiltWorkloadNameLabel] = preparation.PodGangName
+	pod.Annotations[podGroupTotalCountAnnotation] = strconv.Itoa(podGangTotalPodCount(preparation.PodCliqueSet))
+	pod.Annotations[roleHashAnnotation] = preparation.PodClique.Name
 	// Grove-managed pods are deliberately NOT marked as a Kueue "serving" pod group. A serving group is never
 	// considered finished, so Kueue would never remove the kueue.x-k8s.io/managed finalizer on teardown (the
 	// prebuilt Workload has no Kueue finalizer, so Workload deletion cannot trigger finalization either). As a
@@ -242,10 +265,55 @@ func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 	if pod.Annotations[retriableInGroupAnnotation] == "" {
 		pod.Annotations[retriableInGroupAnnotation] = "false"
 	}
-	if b.config.RequiredTopologyKey != "" && pod.Annotations[podSetRequiredTopologyAnnotation] == "" {
-		pod.Annotations[podSetRequiredTopologyAnnotation] = b.config.RequiredTopologyKey
+	if topologyKey := scheduler.RequiredTopologyKeyForPodGroup(preparation.PodGang, preparation.PodClique.Name, b.config.RequiredTopologyKey); topologyKey != "" && pod.Annotations[podSetRequiredTopologyAnnotation] == "" {
+		pod.Annotations[podSetRequiredTopologyAnnotation] = topologyKey
 	}
 	return nil
+}
+
+func hasTopologyConstraint(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+	if pcs.Spec.Template.TopologyConstraint != nil {
+		return true
+	}
+	for _, clique := range pcs.Spec.Template.Cliques {
+		if clique != nil && clique.TopologyConstraint != nil {
+			return true
+		}
+	}
+	for _, pcsg := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		if pcsg.TopologyConstraint != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func podGangTotalPodCount(pcs *grovecorev1alpha1.PodCliqueSet) int {
+	scalingGroupCliques := make(map[string]struct{})
+	for _, config := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		for _, cliqueName := range config.CliqueNames {
+			scalingGroupCliques[cliqueName] = struct{}{}
+		}
+	}
+	total := 0
+	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
+		if _, ok := scalingGroupCliques[cliqueTemplate.Name]; ok {
+			continue
+		}
+		total += int(cliqueTemplate.Spec.Replicas)
+	}
+	for _, config := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		groupReplicas := 1
+		if config.Replicas != nil {
+			groupReplicas = int(*config.Replicas)
+		}
+		for _, cliqueName := range config.CliqueNames {
+			if cliqueTemplate := findCliqueTemplateForPodGroup(pcs, cliqueName); cliqueTemplate != nil {
+				total += int(cliqueTemplate.Spec.Replicas) * groupReplicas
+			}
+		}
+	}
+	return total
 }
 
 // ValidatePodCliqueSet rejects PodCliqueSets that cannot be represented as a valid Kueue Workload.

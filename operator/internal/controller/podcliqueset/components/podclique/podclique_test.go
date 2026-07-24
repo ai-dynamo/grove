@@ -122,40 +122,6 @@ func TestGetExistingResourceNames(t *testing.T) {
 	}
 }
 
-func TestGetLabels_PropagatesKueueQueueNameFromPodCliqueSet(t *testing.T) {
-	pcs := &grovecorev1alpha1.PodCliqueSet{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      testPCSName,
-			Namespace: testPCSNamespace,
-			Labels:    map[string]string{kueueQueueNameLabel: "grove-poc"},
-		},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{
-						Name: "howl",
-						Spec: grovecorev1alpha1.PodCliqueSpec{
-							PodSpec: corev1.PodSpec{
-								Containers: []corev1.Container{{Name: "main", Image: "registry.k8s.io/pause:3.9"}},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	labels := getLabels(
-		pcs,
-		0,
-		client.ObjectKey{Name: "coyote-0-howl", Namespace: testPCSNamespace},
-		pcs.Spec.Template.Cliques[0],
-		"coyote-0",
-	)
-
-	assert.Equal(t, "grove-poc", labels[kueueQueueNameLabel])
-}
-
 func TestDelete(t *testing.T) {
 	testCases := []struct {
 		description           string

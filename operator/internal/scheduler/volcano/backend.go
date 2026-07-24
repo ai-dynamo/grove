@@ -129,7 +129,7 @@ func recordCapabilityEvent(eventRecorder record.EventRecorder, obj runtime.Objec
 	eventRecorder.Eventf(obj, corev1.EventTypeWarning, "VolcanoCapabilityUnavailable", "%v", err)
 }
 
-func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
+func (b *schedulerBackend) PreparePod(pod *corev1.Pod, _ scheduler.PodPreparationContext) error {
 	pod.Spec.SchedulerName = b.Name()
 	podGangName := pod.Labels[apicommon.LabelPodGang]
 	if podGangName == "" {
