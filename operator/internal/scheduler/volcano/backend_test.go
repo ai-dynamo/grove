@@ -21,6 +21,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 	schedulertest "github.com/ai-dynamo/grove/operator/test/utils/scheduler"
 
@@ -43,7 +44,7 @@ func TestBackend_PreparePod(t *testing.T) {
 	pod := testutils.NewPodBuilder("test-pod", "default").Build()
 	pod.Labels = map[string]string{apicommon.LabelPodGang: "pg-1"}
 
-	require.NoError(t, b.PreparePod(pod))
+	require.NoError(t, b.PreparePod(pod, scheduler.PreparePodContext{}))
 
 	assert.Equal(t, string(configv1alpha1.SchedulerNameVolcano), pod.Spec.SchedulerName)
 	assert.Equal(t, "pg-1", pod.Annotations[volcanov1beta1.VolcanoGroupNameAnnotationKey])
@@ -58,7 +59,7 @@ func TestBackend_PreparePodFailsWhenPodGangLabelMissing(t *testing.T) {
 
 	pod := testutils.NewPodBuilder("test-pod", "default").Build()
 
-	require.ErrorContains(t, b.PreparePod(pod), "volcano scheduler requires pod label")
+	require.ErrorContains(t, b.PreparePod(pod, scheduler.PreparePodContext{}), "volcano scheduler requires pod label")
 }
 
 func TestBackend_Init(t *testing.T) {

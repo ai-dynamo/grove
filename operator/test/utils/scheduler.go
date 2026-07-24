@@ -81,10 +81,18 @@ func (r *FakeSchedulerRegistry) AllTopologyAware() map[string]scheduler.Topology
 }
 
 // FakeSchedulerBackend is a minimal scheduler.Backend implementation for unit tests.
-type FakeSchedulerBackend struct{ name string }
+type FakeSchedulerBackend struct {
+	name         string
+	preparePodFn func(*corev1.Pod, scheduler.PreparePodContext) error
+}
 
 // NewFakeSchedulerBackend creates a new instance of FakeSchedulerBackend.
 func NewFakeSchedulerBackend(name string) scheduler.Backend { return &FakeSchedulerBackend{name: name} }
+
+// NewFakeSchedulerBackendWithPreparePod creates a fake backend with custom Pod preparation behavior.
+func NewFakeSchedulerBackendWithPreparePod(name string, preparePodFn func(*corev1.Pod, scheduler.PreparePodContext) error) scheduler.Backend {
+	return &FakeSchedulerBackend{name: name, preparePodFn: preparePodFn}
+}
 
 // Name returns the backend name.
 func (s *FakeSchedulerBackend) Name() string { return s.name }
@@ -97,8 +105,13 @@ func (s *FakeSchedulerBackend) SyncPodGang(_ context.Context, _ *groveschedulerv
 	return nil
 }
 
-// PreparePod is a no-op for the fake backend.
-func (s *FakeSchedulerBackend) PreparePod(_ *corev1.Pod) error { return nil }
+// PreparePod invokes the configured Pod preparation behavior.
+func (s *FakeSchedulerBackend) PreparePod(pod *corev1.Pod, preparation scheduler.PreparePodContext) error {
+	if s.preparePodFn != nil {
+		return s.preparePodFn(pod, preparation)
+	}
+	return nil
+}
 
 // ValidatePodCliqueSet is a no-op for the fake backend.
 func (s *FakeSchedulerBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet) error {

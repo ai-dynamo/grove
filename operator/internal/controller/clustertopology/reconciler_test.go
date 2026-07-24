@@ -83,7 +83,9 @@ func (f *fakeBackend) SyncPodGang(_ context.Context, _ *groveschedulerv1alpha1.P
 	return nil
 }
 
-func (f *fakeBackend) PreparePod(_ *corev1.Pod) error { return nil }
+func (f *fakeBackend) PreparePod(_ *corev1.Pod, _ scheduler.PreparePodContext) error {
+	return nil
+}
 
 func (f *fakeBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet) error {
 	return nil
