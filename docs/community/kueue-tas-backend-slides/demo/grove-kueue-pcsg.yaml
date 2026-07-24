@@ -16,7 +16,7 @@ spec:
     topologyConstraint:
       topologyName: grove-kind-topology
       pack:
-        required: host
+        required: rack
     podCliqueScalingGroups:
     - name: decode
       replicas: 2

@@ -39,9 +39,9 @@ docs/community/kueue-tas-backend-slides/demo/validate-grove-kueue-mincount.sh
 
 ### PCSG all-or-nothing
 
-`grove-kueue-pcsg.yaml` uses the same hostname topology. The base PodGang requests
-six Pods across two PCSG replicas; it exercises prebuilt Workload shape more than
-2-node placement.
+`grove-kueue-pcsg.yaml` uses the same rack topology as the minCount demo. The base
+PodGang requests six Pods across two PCSG replicas; it exercises prebuilt Workload
+shape more than 2-node placement.
 
 ```sh
 docs/community/kueue-tas-backend-slides/demo/validate-grove-kueue-pcsg.sh
