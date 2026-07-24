@@ -84,6 +84,7 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pclq
 	if err = lo.Ternary(apierrors.IsNotFound(err), nil, err); err != nil {
 		return nil, err
 	}
+	sc.podGang = existingPodGang
 
 	// initialize the Pod names that are updated in the PodGang resource for this PCLQ.
 	sc.podNamesUpdatedInPCLQPodGangs = r.getPodNamesUpdatedInAssociatedPodGang(existingPodGang, pclq.Name)
@@ -442,7 +443,7 @@ func (r _resource) createPods(ctx context.Context, logger logr.Logger, sc *syncC
 		// Get the available Pod host name index. This ensures that we fill the holes in the indices if there are any when creating
 		// new pods.
 		podHostNameIndex := availableIndices[i]
-		createTasks = append(createTasks, r.createPodCreationTask(logger, sc.pcs, sc.pclq, sc.associatedPodGangName, sc.pclqExpectationsStoreKey, i, podHostNameIndex))
+		createTasks = append(createTasks, r.createPodCreationTask(logger, sc.pcs, sc.pclq, sc.podGang, sc.associatedPodGangName, sc.pclqExpectationsStoreKey, i, podHostNameIndex))
 	}
 	runResult := utils.RunConcurrentlyWithSlowStart(ctx, logger, 1, createTasks)
 	if runResult.HasErrors() {
@@ -461,6 +462,7 @@ type syncContext struct {
 	ctx                             context.Context
 	pcs                             *grovecorev1alpha1.PodCliqueSet
 	pclq                            *grovecorev1alpha1.PodClique
+	podGang                         *groveschedulerv1alpha1.PodGang
 	associatedPodGangName           string
 	existingPCLQPods                []*corev1.Pod
 	podNamesUpdatedInPCLQPodGangs   []string

@@ -46,10 +46,15 @@ type Backend interface {
 
 	// PreparePod adds scheduler-backend-specific configuration to the given Pod object
 	// prior to its creation (schedulerName, annotations, etc.).
-	PreparePod(pod *corev1.Pod) error
+	PreparePod(pod *corev1.Pod, preparation PreparePodContext) error
 
 	// ValidatePodCliqueSet runs scheduler-specific validations on the PodCliqueSet (e.g. TAS required but not supported).
 	ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) error
+}
+
+// PreparePodContext contains the PodGang associated with a Pod being prepared.
+type PreparePodContext struct {
+	PodGang *groveschedulerv1alpha1.PodGang
 }
 
 // TopologyAwareBackend is an optional interface that Backend

@@ -21,6 +21,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -50,7 +51,7 @@ func TestBackend_PreparePod(t *testing.T) {
 	}
 	pod.Annotations = map[string]string{"keep": "me"}
 
-	require.NoError(t, b.PreparePod(pod))
+	require.NoError(t, b.PreparePod(pod, scheduler.PreparePodContext{}))
 
 	assert.Equal(t, "kai-scheduler", pod.Spec.SchedulerName)
 	assert.Equal(t, "me", pod.Annotations["keep"])
@@ -73,7 +74,7 @@ func TestBackend_PreparePod_PreservesExistingSkipAnnotation(t *testing.T) {
 	}
 	pod.Annotations = map[string]string{"kai.scheduler/skip-podgrouper": "custom"}
 
-	require.NoError(t, b.PreparePod(pod))
+	require.NoError(t, b.PreparePod(pod, scheduler.PreparePodContext{}))
 
 	assert.Equal(t, "true", pod.Annotations["kai.scheduler/skip-podgrouper"])
 }

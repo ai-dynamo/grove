@@ -24,6 +24,7 @@ import (
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -32,14 +33,14 @@ import (
 )
 
 // createPodCreationTask creates a utils.Task which will create a Pod, capture the create-expectation and also emit a success/failed event post creation.
-func (r _resource) createPodCreationTask(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, podGangName, pclqExpectationsKey string, taskIndex, podHostNameIndex int) utils.Task {
+func (r _resource) createPodCreationTask(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, podGang *groveschedulerv1alpha1.PodGang, podGangName, pclqExpectationsKey string, taskIndex, podHostNameIndex int) utils.Task {
 	pclqObjKey := client.ObjectKeyFromObject(pclq)
 	return utils.Task{
 		Name: fmt.Sprintf("CreatePod-%s-%d", pclq.Name, taskIndex),
 		Fn: func(ctx context.Context) error {
 			pod := &corev1.Pod{}
 			// build the Pod resource
-			if err := r.buildResource(pcs, pclq, podGangName, pod, podHostNameIndex); err != nil {
+			if err := r.buildResource(pcs, pclq, podGang, podGangName, pod, podHostNameIndex); err != nil {
 				return groveerr.WrapError(err,
 					errCodeBuildPodResource,
 					component.OperationSync,

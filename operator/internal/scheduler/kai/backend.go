@@ -121,7 +121,7 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 
 // PreparePod adds KAI scheduler-specific configuration to the Pod.
 // It sets externally-created PodGroup membership because KAI's podgrouper is skipped.
-func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
+func (b *schedulerBackend) PreparePod(pod *corev1.Pod, _ scheduler.PreparePodContext) error {
 	podGangName := pod.Labels[apicommon.LabelPodGang]
 	if podGangName == "" {
 		return fmt.Errorf("KAI scheduler requires pod label %q", apicommon.LabelPodGang)

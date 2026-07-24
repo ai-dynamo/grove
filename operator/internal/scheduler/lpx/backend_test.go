@@ -20,6 +20,7 @@ import (
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
@@ -40,7 +41,7 @@ func TestBackendPreparePod(t *testing.T) {
 		ResourceClaimName: ptr.To("model-partition-000"),
 	}}
 
-	require.NoError(t, backend.PreparePod(pod))
+	require.NoError(t, backend.PreparePod(pod, scheduler.PreparePodContext{}))
 
 	assert.Equal(t, string(configv1alpha1.SchedulerNameLPX), pod.Spec.SchedulerName)
 	require.Len(t, pod.Spec.SchedulingGates, 1)
