@@ -29,6 +29,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/lpx"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -103,7 +104,7 @@ func TestBuildResourceWithLPXBackend(t *testing.T) {
 	resource := &_resource{scheme: scheme, schedRegistry: registry}
 	pod := &corev1.Pod{}
 
-	require.NoError(t, resource.buildResource(pcs, pclq, podGangName, pod, 0))
+	require.NoError(t, resource.buildResource(pcs, pclq, nil, podGangName, pod, 0))
 
 	assert.Equal(t, string(configv1alpha1.SchedulerNameLPX), pod.Spec.SchedulerName)
 	assert.Equal(t, pclq.Name+"-", pod.GenerateName)
@@ -117,6 +118,50 @@ func TestBuildResourceWithLPXBackend(t *testing.T) {
 
 	pod.Annotations["example.com/source"] = "pod"
 	assert.Equal(t, "podclique", pclq.Annotations["example.com/source"])
+}
+
+func TestBuildResourcePassesPreparePodContext(t *testing.T) {
+	const (
+		namespace   = "default"
+		pcsName     = "model"
+		cliqueName  = "worker"
+		podGangName = "model-0"
+		backendName = "capture"
+	)
+
+	uid := types.UID("test-uid")
+	pcs := testutils.NewPodCliqueSetBuilder(pcsName, namespace, uid).
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder(cliqueName).Build(),
+		).
+		Build()
+	pclq := testutils.NewPodCliqueBuilder(pcsName, uid, cliqueName, namespace, 0).Build()
+	pclq.Spec.PodSpec.SchedulerName = backendName
+	podGang := &groveschedulerv1alpha1.PodGang{
+		ObjectMeta: metav1.ObjectMeta{Name: podGangName, Namespace: namespace},
+	}
+
+	var captured scheduler.PreparePodContext
+	backend := testutils.NewFakeSchedulerBackendWithPreparePod(
+		backendName,
+		func(_ *corev1.Pod, preparation scheduler.PreparePodContext) error {
+			captured = preparation
+			return nil
+		},
+	)
+	registry := &testutils.FakeSchedulerRegistry{
+		Backends:       map[string]scheduler.Backend{backendName: backend},
+		DefaultBackend: backendName,
+	}
+	scheme := runtime.NewScheme()
+	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	resource := &_resource{scheme: scheme, schedRegistry: registry}
+
+	require.NoError(t, resource.buildResource(pcs, pclq, podGang, podGangName, &corev1.Pod{}, 0))
+
+	assert.Same(t, pcs, captured.PodCliqueSet)
+	assert.Same(t, pclq, captured.PodClique)
+	assert.Same(t, podGang, captured.PodGang)
 }
 
 // TestGetSelectorLabelsForPods_PCSGOwnedPodClique tests that getSelectorLabelsForPods
