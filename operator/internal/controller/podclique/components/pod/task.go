@@ -21,6 +21,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 
@@ -37,9 +38,15 @@ func (r _resource) createPodCreationTask(logger logr.Logger, pcs *grovecorev1alp
 	return utils.Task{
 		Name: fmt.Sprintf("CreatePod-%s-%d", pclq.Name, taskIndex),
 		Fn: func(ctx context.Context) error {
+			podGang, err := componentutils.GetPodGang(ctx, r.client, podGangName, pclq.Namespace)
+			if apierrors.IsNotFound(err) {
+				podGang = nil
+			} else if err != nil {
+				return err
+			}
 			pod := &corev1.Pod{}
 			// build the Pod resource
-			if err := r.buildResource(pcs, pclq, podGangName, pod, podHostNameIndex); err != nil {
+			if err := r.buildResource(pcs, pclq, podGang, podGangName, pod, podHostNameIndex); err != nil {
 				return groveerr.WrapError(err,
 					errCodeBuildPodResource,
 					component.OperationSync,

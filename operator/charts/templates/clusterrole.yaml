@@ -145,6 +145,21 @@ rules:
   - update
   - delete
 {{- end }}
+{{- if include "grove.scheduler.hasProfile" (list . "kueue") }}
+- apiGroups:
+  - kueue.x-k8s.io
+  resources:
+  - topologies
+  - workloads
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+  - patch
+  - update
+  - delete
+{{- end }}
 # DRA (Dynamic Resource Allocation) integration for resource sharing
 - apiGroups:
   - resource.k8s.io

@@ -60,7 +60,7 @@ func (b *schedulerBackend) SyncPodGang(
 	return nil
 }
 
-func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
+func (b *schedulerBackend) PreparePod(pod *corev1.Pod, _ scheduler.PodPreparationContext) error {
 	pod.Spec.SchedulerName = b.name
 	return nil
 }

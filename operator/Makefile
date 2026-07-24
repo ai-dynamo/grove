@@ -247,11 +247,12 @@ run-soak-test:
 # Make targets for local development and testing
 # -------------------------------------------------------------
 # Starts a local k8s cluster using kind.
-# Usage: make kind-up [FAKE_NODES=<count>]
+# Usage: make kind-up [FAKE_NODES=<count>] [WORKERS=<count>]
 # Example: make kind-up FAKE_NODES=20
+# Example: make kind-up WORKERS=1   # 2-node cluster (control-plane + 1 worker)
 .PHONY: kind-up
 kind-up: $(KIND) $(YQ)
-	@$(MODULE_HACK_DIR)/kind-up.sh $(if $(FAKE_NODES),--fake-nodes $(FAKE_NODES))
+	@$(MODULE_HACK_DIR)/kind-up.sh $(if $(FAKE_NODES),--fake-nodes $(FAKE_NODES)) $(if $(WORKERS),--workers $(WORKERS))
 
 # Stops the local k8s cluster.
 .PHONY: kind-down

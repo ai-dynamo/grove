@@ -71,7 +71,7 @@ func (b *schedulerBackend) SyncPodGang(_ context.Context, _ *groveschedulerv1alp
 
 // PreparePod adds KAI scheduler-specific configuration to the Pod.
 // Sets Pod.Spec.SchedulerName so the pod is scheduled by KAI.
-func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
+func (b *schedulerBackend) PreparePod(pod *corev1.Pod, _ scheduler.PodPreparationContext) error {
 	pod.Spec.SchedulerName = b.Name()
 	return nil
 }

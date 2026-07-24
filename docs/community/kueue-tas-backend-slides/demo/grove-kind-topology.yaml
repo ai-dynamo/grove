@@ -1,0 +1,14 @@
+# Rack-only topology for the 2-node kind TAS smoke test.
+# Kueue TAS does not honor pod anti-affinity; if hostname is a Topology level,
+# TAS packs admitted Pods onto one host and pins kubernetes.io/hostname in
+# nodeSelector, which then conflicts with hostname anti-affinity.
+# Keep only rack here so TAS pins topology.ai-dynamo.io/rack; kube-scheduler
+# spreads Pods across hosts via required hostname anti-affinity.
+apiVersion: grove.io/v1alpha1
+kind: ClusterTopologyBinding
+metadata:
+  name: grove-kind-topology
+spec:
+  levels:
+  - domain: rack
+    key: topology.ai-dynamo.io/rack

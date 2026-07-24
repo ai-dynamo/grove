@@ -1,0 +1,46 @@
+# Grove PodCliqueSet demonstrating Kueue partial admission and TAS placement.
+# Kueue admits 2 of 4 Pods into the same rack (TAS pins rack only). Required
+# hostname anti-affinity then places those 2 Pods on different nodes; the
+# remaining 2 Pods must stay gated.
+# Apply after setup-kueue-kind-demo.sh.
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: grove-kueue-mincount
+  labels:
+    app: grove-kueue-mincount
+    kueue.x-k8s.io/queue-name: grove-poc
+spec:
+  replicas: 1
+  template:
+    topologyConstraint:
+      topologyName: grove-kind-topology
+      pack:
+        required: rack
+    cliques:
+    - name: frontend
+      spec:
+        roleName: frontend
+        replicas: 4
+        minAvailable: 2
+        podSpec:
+          schedulerName: kueue
+          terminationGracePeriodSeconds: 5
+          affinity:
+            podAntiAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+              - labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/part-of: grove-kueue-mincount
+                topologyKey: kubernetes.io/hostname
+          tolerations:
+          - key: node-role.kubernetes.io/control-plane
+            operator: Exists
+            effect: NoSchedule
+          containers:
+          - name: pause
+            image: registry.k8s.io/pause:3.9
+            resources:
+              requests:
+                cpu: "1"
+                memory: 64Mi

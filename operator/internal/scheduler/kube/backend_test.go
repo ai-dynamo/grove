@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
@@ -33,7 +34,7 @@ func TestBackend_PreparePod(t *testing.T) {
 
 	pod := testutils.NewPodBuilder("test-pod", "default").Build()
 
-	require.NoError(t, b.PreparePod(pod))
+	require.NoError(t, b.PreparePod(pod, scheduler.PodPreparationContext{}))
 
 	assert.Equal(t, string(configv1alpha1.SchedulerNameKube), pod.Spec.SchedulerName)
 }

@@ -98,7 +98,9 @@ func (s *FakeSchedulerBackend) SyncPodGang(_ context.Context, _ *groveschedulerv
 }
 
 // PreparePod is a no-op for the fake backend.
-func (s *FakeSchedulerBackend) PreparePod(_ *corev1.Pod) error { return nil }
+func (s *FakeSchedulerBackend) PreparePod(_ *corev1.Pod, _ scheduler.PodPreparationContext) error {
+	return nil
+}
 
 // ValidatePodCliqueSet is a no-op for the fake backend.
 func (s *FakeSchedulerBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet) error {
