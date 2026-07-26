@@ -1,0 +1,77 @@
+{
+  "testName": "ScaleDown",
+  "runID": "run-20260726-051959",
+  "namespace": "default",
+  "pcsCount": 1,
+  "groveImage": "registry:5001/grove-operator:E2E_TESTS@sha256:bff5cea075cd1ffde1643671d09e75f13035f0fac11d9e00ef5899a5b7c73f56",
+  "phases": [
+    {
+      "name": "operator-baseline",
+      "startTime": "2026-07-26T05:19:59.515485232Z",
+      "endTime": "2026-07-26T05:19:59.517526447Z",
+      "durationFromTestStartSeconds": 0.000046757,
+      "milestones": []
+    },
+    {
+      "name": "deploy",
+      "startTime": "2026-07-26T05:19:59.517578865Z",
+      "endTime": "2026-07-26T05:20:55.005642692Z",
+      "durationFromTestStartSeconds": 0.00214038,
+      "milestones": [
+        {
+          "name": "initial-pods-created",
+          "timestamp": "2026-07-26T05:20:35.79843721Z",
+          "durationFromPhaseStartSeconds": 36.280858355
+        },
+        {
+          "name": "initial-pods-ready",
+          "timestamp": "2026-07-26T05:20:55.005581277Z",
+          "durationFromPhaseStartSeconds": 55.488002412
+        }
+      ]
+    },
+    {
+      "name": "scale-down",
+      "startTime": "2026-07-26T05:20:55.005675262Z",
+      "endTime": "2026-07-26T05:21:25.729212902Z",
+      "durationFromTestStartSeconds": 55.490236778,
+      "milestones": [
+        {
+          "name": "pods-at-target",
+          "timestamp": "2026-07-26T05:21:25.729106233Z",
+          "durationFromPhaseStartSeconds": 30.72343097
+        }
+      ]
+    },
+    {
+      "name": "final-check",
+      "startTime": "2026-07-26T05:21:25.729251033Z",
+      "endTime": "2026-07-26T05:21:25.986270571Z",
+      "durationFromTestStartSeconds": 86.213812548,
+      "milestones": []
+    },
+    {
+      "name": "delete",
+      "startTime": "2026-07-26T05:21:25.986299274Z",
+      "endTime": "2026-07-26T05:21:26.092416538Z",
+      "durationFromTestStartSeconds": 86.470860799,
+      "milestones": [
+        {
+          "name": "pcs-deleted",
+          "timestamp": "2026-07-26T05:21:26.0923804Z",
+          "durationFromPhaseStartSeconds": 0.106081126
+        }
+      ]
+    }
+  ],
+  "testDurationSeconds": 86.576990135,
+  "k8sClient": {
+    "qps": 100,
+    "burst": 150
+  },
+  "controllerMaxReconcile": {
+    "podCliqueSet": 20,
+    "podCliqueScalingGroup": 20,
+    "podClique": 20
+  }
+}
