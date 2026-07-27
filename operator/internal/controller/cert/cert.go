@@ -148,6 +148,12 @@ func getWebhooks(authorizerEnabled bool) []cert.WebhookInfo {
 func createPlaceholderSecretIfNotExists(ctx context.Context, cl client.Client, namespace, secretName string) error {
 	secret := &corev1.Secret{}
 	err := cl.Get(ctx, types.NamespacedName{Namespace: namespace, Name: secretName}, secret)
+	if err == nil {
+		// In HA deployments (replicaCount > 1) or restarts, two replicas can race between
+		// Get (not found) and Create. If the secret already exists,
+		// we treat it as success and do not attempt to create it again.
+		return nil
+	}
 	if !apierrors.IsNotFound(err) {
 		return err
 	}
