@@ -135,7 +135,7 @@ release: "{{ .Release.Name }}"
 
 {{- define "operator.servicemonitor.labels" -}}
 {{- include "common.chart.labels" . }}
-{{- range $key, $val := .Values.serviceMonitor.labels }}
+{{- range $key, $val := .Values.metrics.serviceMonitor.labels }}
 {{ $key }}: {{ $val }}
 {{- end }}
 {{- end -}}
