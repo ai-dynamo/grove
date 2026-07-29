@@ -189,11 +189,11 @@ func TestEvaluateRollingUpdateBudget(t *testing.T) {
 }
 
 func TestProcessPendingUpdatesHonorsRollingUpdateStrategy(t *testing.T) {
-	t.Run("max one blocks all update deletions while a pod is pending", func(t *testing.T) {
+	t.Run("max one repairs one old pending pod without selecting a ready pod", func(t *testing.T) {
 		strategy := &grovecorev1alpha1.PodCliqueRollingUpdateStrategy{
 			MaxUnavailable: ptr.To(int32(1)),
 		}
-		_, r, sc := newRollingUpdateStrategyFixture(t, strategy, []*corev1.Pod{
+		pclq, r, sc := newRollingUpdateStrategyFixture(t, strategy, []*corev1.Pod{
 			pendingBudgetPodWithHash("pending", testOldHash),
 			readyBudgetPod("ready-1"),
 			readyBudgetPod("ready-2"),
@@ -201,7 +201,8 @@ func TestProcessPendingUpdatesHonorsRollingUpdateStrategy(t *testing.T) {
 
 		err := r.processPendingUpdates(logr.Discard(), sc)
 		require.Error(t, err)
-		assert.Empty(t, r.expectationsStore.GetDeleteExpectations(sc.pclqExpectationsStoreKey))
+		assert.Nil(t, pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate)
+		assert.Equal(t, []types.UID{"pending-uid"}, r.expectationsStore.GetDeleteExpectations(sc.pclqExpectationsStoreKey))
 	})
 
 	t.Run("max one deletes only the oldest ready pod", func(t *testing.T) {
@@ -240,7 +241,7 @@ func TestProcessPendingUpdatesHonorsRollingUpdateStrategy(t *testing.T) {
 		assert.Equal(t, []types.UID{"ready-0-uid"}, r.expectationsStore.GetDeleteExpectations(sc.pclqExpectationsStoreKey))
 	})
 
-	t.Run("a pending replacement blocks deletion after the target changes again", func(t *testing.T) {
+	t.Run("a pending replacement is recreated when the target changes again", func(t *testing.T) {
 		strategy := &grovecorev1alpha1.PodCliqueRollingUpdateStrategy{
 			MaxUnavailable: ptr.To(int32(1)),
 		}
@@ -248,6 +249,22 @@ func TestProcessPendingUpdatesHonorsRollingUpdateStrategy(t *testing.T) {
 			pendingBudgetPodWithHash("replacement", testNewHash),
 			readyBudgetPod("ready-1"),
 			readyBudgetPod("ready-2"),
+		})
+		sc.expectedPodTemplateHash = "newest-hash"
+
+		err := r.processPendingUpdates(logr.Discard(), sc)
+		require.Error(t, err)
+		assert.Equal(t, []types.UID{"replacement-uid"}, r.expectationsStore.GetDeleteExpectations(sc.pclqExpectationsStoreKey))
+	})
+
+	t.Run("a new target pending replacement blocks repair of another old pending pod", func(t *testing.T) {
+		strategy := &grovecorev1alpha1.PodCliqueRollingUpdateStrategy{
+			MaxUnavailable: ptr.To(int32(1)),
+		}
+		_, r, sc := newRollingUpdateStrategyFixture(t, strategy, []*corev1.Pod{
+			pendingBudgetPodWithHash("replacement", testNewHash),
+			pendingBudgetPodWithHash("other-old", testOldHash),
+			readyBudgetPod("ready"),
 		})
 
 		err := r.processPendingUpdates(logr.Discard(), sc)

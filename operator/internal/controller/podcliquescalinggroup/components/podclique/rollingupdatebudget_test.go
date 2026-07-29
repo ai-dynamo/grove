@@ -245,7 +245,7 @@ func TestProcessPendingUpdatesHonorsReplicaBudget(t *testing.T) {
 		assert.Equal(t, []string{"1", "2"}, remainingReplicaIndices(t, r.client))
 	})
 
-	t.Run("does not delete anything while one replica is unavailable", func(t *testing.T) {
+	t.Run("repairs an old unavailable replica without selecting a ready replica", func(t *testing.T) {
 		replicas := readyBudgetReplicas(3)
 		replicas[0].Status.ReadyReplicas = 0
 		r, sc := newRollingUpdateBudgetFixture(t, strategy, replicas, nil)
@@ -253,16 +253,29 @@ func TestProcessPendingUpdatesHonorsReplicaBudget(t *testing.T) {
 		err := r.processPendingUpdates(logr.Discard(), sc)
 		require.Error(t, err)
 		assert.Nil(t, sc.pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate)
-		assert.Equal(t, []string{"0", "1", "2"}, remainingReplicaIndices(t, r.client))
+		assert.Equal(t, []string{"1", "2"}, remainingReplicaIndices(t, r.client))
 	})
 
-	t.Run("does not select a second replica during a rapid target change", func(t *testing.T) {
+	t.Run("recreates the selected replica during a rapid target change", func(t *testing.T) {
 		current := int32(0)
 		r, sc := newRollingUpdateBudgetFixture(t, strategy, readyBudgetReplicas(3), &current)
 
 		err := r.processPendingUpdates(logr.Discard(), sc)
 		require.Error(t, err)
 		assert.Equal(t, int32(0), sc.pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current)
+		assert.Equal(t, []string{"1", "2"}, remainingReplicaIndices(t, r.client))
+	})
+
+	t.Run("an updated unavailable replica blocks repair of another old unavailable replica", func(t *testing.T) {
+		replicas := readyBudgetReplicas(3)
+		replicas[0].Labels[apicommon.LabelPodTemplateHash] = "new-hash"
+		replicas[0].Status.ReadyReplicas = 0
+		replicas[1].Status.ReadyReplicas = 0
+		r, sc := newRollingUpdateBudgetFixture(t, strategy, replicas, nil)
+
+		err := r.processPendingUpdates(logr.Discard(), sc)
+		require.Error(t, err)
+		assert.Nil(t, sc.pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate)
 		assert.Equal(t, []string{"0", "1", "2"}, remainingReplicaIndices(t, r.client))
 	})
 }

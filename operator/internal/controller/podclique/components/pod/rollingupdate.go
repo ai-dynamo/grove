@@ -44,6 +44,7 @@ type updateWork struct {
 	oldTemplateHashUncategorizedPods []*corev1.Pod // pods with old hash in an unrecognized state
 	oldTemplateHashReadyPods         []*corev1.Pod // pods with old hash that are fully ready and serving traffic
 	newTemplateHashReadyPods         []*corev1.Pod // pods with new hash that are fully ready
+	newTemplateHashNonReadyPods      []*corev1.Pod // pods with new hash that are still being created or becoming ready
 }
 
 // getPodNamesPendingUpdate returns names of pods with old template hash that are not already being deleted
@@ -83,6 +84,24 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 		)
 	}
 	if budget.blocked() {
+		// Replacing an old-hash Pod that is already unavailable does not make
+		// another Pod unavailable. Allow that repair to proceed so a later
+		// configuration change can recover a stuck Pod without opening a new
+		// availability slot. Once its replacement is in flight, wait for it to
+		// become Ready before repairing or updating another Pod.
+		if !r.hasPodRepairInFlight(sc, updateWork) {
+			repairedPods, repairErr := r.deleteOldNonReadyPods(logger, sc, updateWork, budget.limit)
+			if repairErr != nil {
+				return repairErr
+			}
+			if repairedPods > 0 {
+				return groveerr.New(
+					groveerr.ErrCodeContinueReconcileAndRequeue,
+					component.OperationSync,
+					fmt.Sprintf("recreated %d unavailable old-hash Pod(s) without consuming another rolling-update slot, requeuing", repairedPods),
+				)
+			}
+		}
 		return groveerr.New(
 			groveerr.ErrCodeContinueReconcileAndRequeue,
 			component.OperationSync,
@@ -172,7 +191,7 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 
 // computeUpdateWork categorizes pods by template hash and state.
 // Old-hash pods: Pending, Unhealthy, Starting, Uncategorized, or Ready.
-// New-hash pods: Ready only.
+// New-hash pods: Ready or non-Ready.
 func (r _resource) computeUpdateWork(logger logr.Logger, sc *syncContext) *updateWork {
 	work := &updateWork{}
 	for _, pod := range sc.existingPCLQPods {
@@ -197,14 +216,28 @@ func (r _resource) computeUpdateWork(logger logr.Logger, sc *syncContext) *updat
 				work.oldTemplateHashUncategorizedPods = append(work.oldTemplateHashUncategorizedPods, pod)
 			}
 		} else {
-			// New-hash pod — only count as ready; non-ready pods are not tracked so
-			// isCurrentPodUpdateComplete won't prematurely declare success.
 			if k8sutils.IsPodReady(pod) {
 				work.newTemplateHashReadyPods = append(work.newTemplateHashReadyPods, pod)
+			} else {
+				work.newTemplateHashNonReadyPods = append(work.newTemplateHashNonReadyPods, pod)
 			}
 		}
 	}
 	return work
+}
+
+// hasPodRepairInFlight reports whether an unavailable slot is already being
+// replaced. In that case another old unavailable Pod must not be deleted,
+// even though deleting it would not reduce the currently available count.
+func (r _resource) hasPodRepairInFlight(sc *syncContext, work *updateWork) bool {
+	if len(work.newTemplateHashNonReadyPods) > 0 ||
+		len(r.expectationsStore.GetDeleteExpectations(sc.pclqExpectationsStoreKey)) > 0 ||
+		len(r.expectationsStore.GetCreateExpectations(sc.pclqExpectationsStoreKey)) > 0 {
+		return true
+	}
+	return lo.SomeBy(sc.existingPCLQPods, func(pod *corev1.Pod) bool {
+		return k8sutils.IsResourceTerminating(pod.ObjectMeta)
+	})
 }
 
 // hasPodDeletionBeenTriggered checks if a pod is already terminating or has a delete expectation recorded
