@@ -195,8 +195,8 @@ func TestProcessPendingUpdatesHonorsRollingUpdateStrategy(t *testing.T) {
 		}
 		_, r, sc := newRollingUpdateStrategyFixture(t, strategy, []*corev1.Pod{
 			pendingBudgetPodWithHash("pending", testOldHash),
-			readyBudgetPodWithHash("ready-1", testOldHash),
-			readyBudgetPodWithHash("ready-2", testOldHash),
+			readyBudgetPod("ready-1"),
+			readyBudgetPod("ready-2"),
 		})
 
 		err := r.processPendingUpdates(logr.Discard(), sc)
@@ -210,9 +210,9 @@ func TestProcessPendingUpdatesHonorsRollingUpdateStrategy(t *testing.T) {
 			MaxUnavailable: ptr.To(int32(1)),
 		}
 		pclq, r, sc := newRollingUpdateStrategyFixture(t, strategy, []*corev1.Pod{
-			readyBudgetPodWithHashAndCreationTime("middle", testOldHash, now.Add(-2*time.Minute)),
-			readyBudgetPodWithHashAndCreationTime("newest", testOldHash, now.Add(-time.Minute)),
-			readyBudgetPodWithHashAndCreationTime("oldest", testOldHash, now.Add(-3*time.Minute)),
+			readyBudgetPodWithCreationTime("middle", now.Add(-2*time.Minute)),
+			readyBudgetPodWithCreationTime("newest", now.Add(-time.Minute)),
+			readyBudgetPodWithCreationTime("oldest", now.Add(-3*time.Minute)),
 		})
 
 		err := r.processPendingUpdates(logr.Discard(), sc)
@@ -227,9 +227,9 @@ func TestProcessPendingUpdatesHonorsRollingUpdateStrategy(t *testing.T) {
 			MaxUnavailable: ptr.To(int32(1)),
 		}
 		_, r, sc := newRollingUpdateStrategyFixture(t, strategy, []*corev1.Pod{
-			readyBudgetPodWithHash("ready-0", testOldHash),
-			readyBudgetPodWithHash("ready-1", testOldHash),
-			readyBudgetPodWithHash("ready-2", testOldHash),
+			readyBudgetPod("ready-0"),
+			readyBudgetPod("ready-1"),
+			readyBudgetPod("ready-2"),
 		})
 		require.NoError(t, r.expectationsStore.ExpectDeletions(
 			logr.Discard(), sc.pclqExpectationsStoreKey, sc.existingPCLQPods[0].UID,
@@ -246,8 +246,8 @@ func TestProcessPendingUpdatesHonorsRollingUpdateStrategy(t *testing.T) {
 		}
 		_, r, sc := newRollingUpdateStrategyFixture(t, strategy, []*corev1.Pod{
 			pendingBudgetPodWithHash("replacement", testNewHash),
-			readyBudgetPodWithHash("ready-1", testOldHash),
-			readyBudgetPodWithHash("ready-2", testOldHash),
+			readyBudgetPod("ready-1"),
+			readyBudgetPod("ready-2"),
 		})
 
 		err := r.processPendingUpdates(logr.Discard(), sc)
@@ -260,7 +260,7 @@ func TestProcessPendingUpdatesHonorsRollingUpdateStrategy(t *testing.T) {
 			MaxUnavailable: ptr.To(int32(1)),
 		}
 		pclq, r, sc := newRollingUpdateStrategyFixture(t, strategy, []*corev1.Pod{
-			readyBudgetPodWithHash("remaining-old", testOldHash),
+			readyBudgetPod("remaining-old"),
 		})
 		pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate = &grovecorev1alpha1.PodsSelectedToUpdate{
 			Current: "scaled-in-selected-pod",
@@ -347,17 +347,13 @@ func newRollingUpdateStrategyFixture(
 }
 
 func readyBudgetPod(name string) *corev1.Pod {
-	return readyBudgetPodWithHash(name, testOldHash)
+	return readyBudgetPodWithCreationTime(name, time.Time{})
 }
 
-func readyBudgetPodWithHash(name, hash string) *corev1.Pod {
-	return readyBudgetPodWithHashAndCreationTime(name, hash, time.Time{})
-}
-
-func readyBudgetPodWithHashAndCreationTime(name, hash string, creationTime time.Time) *corev1.Pod {
+func readyBudgetPodWithCreationTime(name string, creationTime time.Time) *corev1.Pod {
 	pod := newTestPod(
 		name,
-		hash,
+		testOldHash,
 		withPhase(corev1.PodRunning),
 		withReadyCondition(),
 		withContainerStatus(ptr.To(true), true),

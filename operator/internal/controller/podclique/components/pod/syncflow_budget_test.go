@@ -67,9 +67,9 @@ func TestDeleteExcessPodsHonorsMaxUnavailable(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			now := time.Now()
 			pods := []*corev1.Pod{
-				readyBudgetPodWithHashAndCreationTime("oldest", testOldHash, now.Add(-3*time.Minute)),
-				readyBudgetPodWithHashAndCreationTime("middle", testOldHash, now.Add(-2*time.Minute)),
-				readyBudgetPodWithHashAndCreationTime("newest", testOldHash, now.Add(-time.Minute)),
+				readyBudgetPodWithCreationTime("oldest", now.Add(-3*time.Minute)),
+				readyBudgetPodWithCreationTime("middle", now.Add(-2*time.Minute)),
+				readyBudgetPodWithCreationTime("newest", now.Add(-time.Minute)),
 			}
 			pclq, r, sc := newRollingUpdateStrategyFixture(t, tt.strategy, pods)
 			pclq.Spec.Replicas = 1
@@ -111,9 +111,9 @@ func TestRunSyncFlowDoesNotOverlapScaleInAndRollingUpdateDeletion(t *testing.T) 
 		MaxUnavailable: ptr.To(int32(1)),
 	}
 	pods := []*corev1.Pod{
-		readyBudgetPodWithHashAndCreationTime("oldest", testOldHash, now.Add(-3*time.Minute)),
-		readyBudgetPodWithHashAndCreationTime("middle", testOldHash, now.Add(-2*time.Minute)),
-		readyBudgetPodWithHashAndCreationTime("newest", testOldHash, now.Add(-time.Minute)),
+		readyBudgetPodWithCreationTime("oldest", now.Add(-3*time.Minute)),
+		readyBudgetPodWithCreationTime("middle", now.Add(-2*time.Minute)),
+		readyBudgetPodWithCreationTime("newest", now.Add(-time.Minute)),
 	}
 	pclq, r, sc := newRollingUpdateStrategyFixture(t, strategy, pods)
 	pclq.Spec.Replicas = 2
