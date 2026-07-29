@@ -518,6 +518,30 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 	assert.False(t, hasTopologyAnnotation)
 }
 
+func TestBuildResourcePropagatesRollingUpdateStrategy(t *testing.T) {
+	template := testutils.NewPodCliqueTemplateSpecBuilder("worker").Build()
+	template.Spec.RollingUpdate = &grovecorev1alpha1.PodCliqueRollingUpdateStrategy{
+		MaxUnavailable: ptr.To(int32(1)),
+	}
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testPCSNamespace, uuid.NewUUID()).
+		WithReplicas(1).
+		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+		WithPodCliqueTemplateSpec(template).
+		Build()
+	pclq := &grovecorev1alpha1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-0-worker", testPCSName),
+			Namespace: testPCSNamespace,
+		},
+	}
+
+	operator := &_resource{scheme: groveclientscheme.Scheme}
+	require.NoError(t, operator.buildResource(logr.Discard(), pclq, pcs, 0, false))
+	require.NotNil(t, pclq.Spec.RollingUpdate)
+	assert.Equal(t, template.Spec.RollingUpdate, pclq.Spec.RollingUpdate)
+	assert.NotSame(t, template.Spec.RollingUpdate, pclq.Spec.RollingUpdate)
+}
+
 // triageContainersByMNNVLClaim separates containers into those with MNNVL claim and those without.
 func triageContainersByMNNVLClaim(containers []corev1.Container) (withClaim, withoutClaim []string) {
 	for _, c := range containers {
