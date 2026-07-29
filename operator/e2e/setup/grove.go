@@ -61,7 +61,7 @@ type WebhooksConfig struct {
 }
 
 // helmValues mirrors the Helm values.yaml structure, using configv1alpha1 types
-// for config.server to ensure JSON field names stay synchronized with the API.
+// where the chart configuration matches the operator API.
 type helmValues struct {
 	CRDInstaller helmCRDInstallerValues `json:"crdInstaller"`
 	Config       helmConfigValues       `json:"config"`
@@ -74,7 +74,19 @@ type helmCRDInstallerValues struct {
 }
 
 type helmConfigValues struct {
-	Server configv1alpha1.ServerConfiguration `json:"server"`
+	Server helmServerValues `json:"server"`
+}
+
+type helmServerValues struct {
+	Webhooks     configv1alpha1.WebhookServer `json:"webhooks"`
+	HealthProbes helmHealthProbeValues        `json:"healthProbes"`
+}
+
+// helmHealthProbeValues includes the chart-only enable switch in addition to
+// the operator's health probe server configuration.
+type helmHealthProbeValues struct {
+	Enable bool `json:"enable"`
+	Port   int  `json:"port"`
 }
 
 type helmWebhookValues struct {
@@ -97,7 +109,7 @@ func (c *GroveConfig) toHelmValues() (map[string]interface{}, error) {
 	hv := helmValues{
 		CRDInstaller: helmCRDInstallerValues{Enabled: c.InstallCRDs},
 		Config: helmConfigValues{
-			Server: configv1alpha1.ServerConfiguration{
+			Server: helmServerValues{
 				Webhooks: configv1alpha1.WebhookServer{
 					Server: configv1alpha1.Server{
 						Port: DefaultWebhookPort,
@@ -105,6 +117,10 @@ func (c *GroveConfig) toHelmValues() (map[string]interface{}, error) {
 					ServerCertDir:     DefaultWebhookServerCertDir,
 					CertProvisionMode: c.Webhooks.CertProvisionMode,
 					SecretName:        c.Webhooks.SecretName,
+				},
+				HealthProbes: helmHealthProbeValues{
+					Enable: true,
+					Port:   DefaultHealthProbePort,
 				},
 			},
 		},

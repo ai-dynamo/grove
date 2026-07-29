@@ -81,7 +81,9 @@ config:
       #     - Requires Secret to exist before operator starts
       certProvisionMode: auto
     healthProbes:
-      enable: false
+      # Enable liveness and readiness probes for the operator. The readiness
+      # endpoint gates on webhook certificate provisioning and listener startup.
+      enable: true
       port: 9444
     metrics:
       port: 9445
