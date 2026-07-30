@@ -26,6 +26,7 @@ import (
 	authorizationwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/authorization"
 	defaultingwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/defaulting"
 	validatingwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/validation"
+	podcliquevalidationwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/podclique/validation"
 
 	"github.com/go-logr/logr"
 	cert "github.com/open-policy-agent/cert-controller/pkg/rotator"
@@ -128,6 +129,10 @@ func getWebhooks(authorizerEnabled bool) []cert.WebhookInfo {
 		{
 			Type: cert.Validating,
 			Name: clustertopologyvalidationwebhook.Name,
+		},
+		{
+			Type: cert.Validating,
+			Name: podcliquevalidationwebhook.Name,
 		},
 	}
 	if authorizerEnabled {

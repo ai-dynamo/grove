@@ -183,6 +183,13 @@ release: "{{ .Release.Name }}"
 {{- end }}
 {{- end -}}
 
+{{- define "operator.podclique.validating.webhook.labels" -}}
+{{- include "common.chart.labels" . }}
+{{- range $key, $val := .Values.webhooks.podCliqueValidationWebhook.labels }}
+{{ $key }}: {{ $val }}
+{{- end }}
+{{- end -}}
+
 {{- define "operator.authorizer.webhook.labels" -}}
 {{- include "common.chart.labels" . }}
 {{- range $key, $val := .Values.webhooks.authorizerWebhook.labels }}
