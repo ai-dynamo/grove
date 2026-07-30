@@ -65,9 +65,7 @@ const (
 	errCodeUpdatePodCliqueStatus               grovecorev1alpha1.ErrorCode = "ERR_UPDATE_PODCLIQUE_STATUS"
 )
 
-const (
-	podGangSchedulingGate = "grove.io/podgang-pending-creation"
-)
+const podGangSchedulingGate = "grove.io/podgang-pending-creation"
 
 type _resource struct {
 	client            client.Client
