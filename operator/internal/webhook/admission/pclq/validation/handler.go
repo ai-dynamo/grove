@@ -16,32 +16,118 @@ package validation
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/scaleguard"
 
 	"github.com/go-logr/logr"
+	admissionv1 "k8s.io/api/admission/v1"
+	autoscalingv1 "k8s.io/api/autoscaling/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 // Handler validates PodClique resources. It rejects a spec.replicas change, whether made directly or
-// through the scale subresource, while the owning PodCliqueSet replica is under a coherent update.
+// through the scale subresource, while the owning PodCliqueSet replica is under a coherent update, and
+// delegates to the owning scheduler backend for any further restriction (e.g. the kueue backend rejects
+// scaling altogether, since its Kueue Workload podSets are immutable once created).
 type Handler struct {
-	logger logr.Logger
-	client client.Client
+	logger        logr.Logger
+	client        client.Client
+	decoder       admission.Decoder
+	schedRegistry scheduler.Registry
 }
 
 // NewHandler creates a validating webhook handler for PodClique.
-func NewHandler(mgr manager.Manager) *Handler {
+func NewHandler(mgr manager.Manager, schedRegistry scheduler.Registry) *Handler {
 	return &Handler{
-		logger: mgr.GetLogger().WithName("webhook").WithName(Name),
-		client: mgr.GetClient(),
+		logger:        mgr.GetLogger().WithName("webhook").WithName(Name),
+		client:        mgr.GetClient(),
+		decoder:       admission.NewDecoder(mgr.GetScheme()),
+		schedRegistry: schedRegistry,
 	}
 }
 
-// Handle admits or denies a PodClique admission request, guarding replica scaling during a coherent update.
+// Handle admits or denies a PodClique admission request. The owning scheduler backend's own
+// restriction (e.g. kueue's immutability guarantee) is checked first and fails closed: if the backend
+// can't be resolved at all, the request is denied rather than silently admitted. Only once the backend
+// has not denied the change does the coherent-update/minAvailable guard shared with
+// PodCliqueScalingGroup run; that guard fails open on a missing object, to keep recovery unblocked.
 func (h *Handler) Handle(ctx context.Context, req admission.Request) admission.Response {
+	if req.Operation != admissionv1.Update {
+		return admission.Allowed(fmt.Sprintf("operation %s is not validated", req.Operation))
+	}
+	oldReplicas, newReplicas, err := h.decodeReplicas(req)
+	if err != nil {
+		return admission.Errored(http.StatusBadRequest, err)
+	}
+	backend, err := h.resolveBackend(ctx, req)
+	if err != nil {
+		return admission.Errored(http.StatusBadRequest, err)
+	}
+	if scaleValidator, ok := backend.(scheduler.PodCliqueScaleValidator); backend != nil && ok {
+		if err := scaleValidator.ValidatePodCliqueScale(ctx, oldReplicas, newReplicas); err != nil {
+			h.logger.Info("Denying PodClique update",
+				"podClique", client.ObjectKey{Namespace: req.Namespace, Name: req.Name},
+				"subResource", req.SubResource,
+				"user", req.UserInfo.Username,
+				"oldReplicas", oldReplicas,
+				"newReplicas", newReplicas,
+				"reason", err.Error())
+			return admission.Denied(err.Error())
+		}
+	}
 	return scaleguard.Handle(ctx, req, h.client, h.logger, &grovecorev1alpha1.PodClique{})
+}
+
+// decodeReplicas returns the replica counts the request moves between. The scale subresource admits
+// autoscaling/v1 Scale, the parent resource admits PodCliques.
+func (h *Handler) decodeReplicas(req admission.Request) (int32, int32, error) {
+	if req.SubResource == scaleSubResource {
+		var oldScale, newScale autoscalingv1.Scale
+		if err := h.decodeOldAndNew(req, &oldScale, &newScale); err != nil {
+			return 0, 0, err
+		}
+		return oldScale.Spec.Replicas, newScale.Spec.Replicas, nil
+	}
+
+	var oldPCLQ, newPCLQ grovecorev1alpha1.PodClique
+	if err := h.decodeOldAndNew(req, &oldPCLQ, &newPCLQ); err != nil {
+		return 0, 0, err
+	}
+	return oldPCLQ.Spec.Replicas, newPCLQ.Spec.Replicas, nil
+}
+
+// resolveBackend returns the backend owning the PodClique, or nil if none is registered.
+// Resolved from the PodClique as it stands, never from the incoming object: schedulerName is not
+// immutable on a live PodClique, so trusting it would let one request switch to a permissive backend
+// and scale at the same time.
+func (h *Handler) resolveBackend(ctx context.Context, req admission.Request) (scheduler.Backend, error) {
+	pclq := &grovecorev1alpha1.PodClique{}
+	if req.SubResource == scaleSubResource {
+		if err := h.client.Get(ctx, client.ObjectKey{Namespace: req.Namespace, Name: req.Name}, pclq); err != nil {
+			return nil, fmt.Errorf("failed to get PodClique to resolve its scheduler backend: %w", err)
+		}
+	} else {
+		if err := h.decoder.DecodeRaw(req.OldObject, pclq); err != nil {
+			return nil, fmt.Errorf("failed to decode PodClique to resolve its scheduler backend: %w", err)
+		}
+	}
+	return h.schedRegistry.GetOrDefault(pclq.Spec.PodSpec.SchedulerName), nil
+}
+
+// decodeOldAndNew decodes req.OldObject and req.Object into oldObj and newObj.
+func (h *Handler) decodeOldAndNew(req admission.Request, oldObj, newObj runtime.Object) error {
+	if err := h.decoder.DecodeRaw(req.OldObject, oldObj); err != nil {
+		return fmt.Errorf("failed to decode old object: %w", err)
+	}
+	if err := h.decoder.DecodeRaw(req.Object, newObj); err != nil {
+		return fmt.Errorf("failed to decode new object: %w", err)
+	}
+	return nil
 }
