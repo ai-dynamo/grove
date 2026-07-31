@@ -30,12 +30,12 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
+	kueuev1beta2 "sigs.k8s.io/kueue/apis/kueue/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -335,26 +335,25 @@ func TestBackend_SyncPodGang_CreatesPrebuiltWorkloadForSimplePCS(t *testing.T) {
 
 	require.NoError(t, b.SyncPodGang(context.Background(), podGang))
 
-	got := &unstructured.Unstructured{}
-	got.SetGroupVersionKind(workloadGVK)
+	got := &kueuev1beta2.Workload{}
 	require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "demo-0"}, got))
 
-	queueName, _, _ := unstructured.NestedString(got.Object, "spec", "queueName")
-	assert.Equal(t, "grove-poc", queueName)
+	assert.Equal(t, kueuev1beta2.LocalQueueName("grove-poc"), got.Spec.QueueName)
 
 	ownerRefs := got.GetOwnerReferences()
 	require.Len(t, ownerRefs, 1)
 	assert.Equal(t, "PodGang", ownerRefs[0].Kind)
 	assert.Equal(t, "demo-0", ownerRefs[0].Name)
 
-	podSets, _, _ := unstructured.NestedSlice(got.Object, "spec", "podSets")
-	require.Len(t, podSets, 1)
-	podSet := podSets[0].(map[string]any)
-	assert.Equal(t, "demo-0-worker", podSet["name"])
-	assert.Equal(t, int64(4), podSet["count"])
-	assert.Equal(t, int64(2), podSet["minCount"])
-	topologyRequest := podSet["topologyRequest"].(map[string]any)
-	assert.Equal(t, rackKey, topologyRequest["required"])
+	require.Len(t, got.Spec.PodSets, 1)
+	podSet := got.Spec.PodSets[0]
+	assert.Equal(t, kueuev1beta2.NewPodSetReference("demo-0-worker"), podSet.Name)
+	assert.Equal(t, int32(4), podSet.Count)
+	require.NotNil(t, podSet.MinCount)
+	assert.Equal(t, int32(2), *podSet.MinCount)
+	require.NotNil(t, podSet.TopologyRequest)
+	require.NotNil(t, podSet.TopologyRequest.Required)
+	assert.Equal(t, rackKey, *podSet.TopologyRequest.Required)
 }
 
 func TestBackend_SyncPodGang_RejectsInvalidMinReplicas(t *testing.T) {
@@ -499,25 +498,20 @@ func TestBackend_SyncPodGang_CreatesPrebuiltWorkloadForPCSGWithMinCountEqualsCou
 
 	require.NoError(t, b.SyncPodGang(context.Background(), podGang))
 
-	got := &unstructured.Unstructured{}
-	got.SetGroupVersionKind(workloadGVK)
+	got := &kueuev1beta2.Workload{}
 	require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "demo-0"}, got))
 
-	podSets, _, _ := unstructured.NestedSlice(got.Object, "spec", "podSets")
-	require.Len(t, podSets, 1)
-	podSet := podSets[0].(map[string]any)
-	assert.Equal(t, "demo-0-decode-0-worker", podSet["name"])
-	assert.Equal(t, int64(2), podSet["count"])
-	topologyRequest := podSet["topologyRequest"].(map[string]any)
-	assert.Equal(t, preferredTopologyKey, topologyRequest["preferred"])
-	template := podSet["template"].(map[string]any)
-	metadata := template["metadata"].(map[string]any)
-	annotations := metadata["annotations"].(map[string]any)
-	assert.Equal(t, preferredTopologyKey, annotations[podSetPreferredTopologyAnnotation])
+	require.Len(t, got.Spec.PodSets, 1)
+	podSet := got.Spec.PodSets[0]
+	assert.Equal(t, kueuev1beta2.NewPodSetReference("demo-0-decode-0-worker"), podSet.Name)
+	assert.Equal(t, int32(2), podSet.Count)
+	require.NotNil(t, podSet.TopologyRequest)
+	require.NotNil(t, podSet.TopologyRequest.Preferred)
+	assert.Equal(t, preferredTopologyKey, *podSet.TopologyRequest.Preferred)
+	assert.Equal(t, preferredTopologyKey, podSet.Template.Annotations[podSetPreferredTopologyAnnotation])
 	// PodCliqueScalingGroup cliques are all-or-nothing: minCount is omitted (Kueue defaults it to count).
 	// Kueue also rejects Workloads where more than one podSet sets minCount.
-	_, hasMinCount := podSet["minCount"]
-	assert.False(t, hasMinCount)
+	assert.Nil(t, podSet.MinCount)
 }
 
 func TestBackend_ValidatePodCliqueSet_MinCount(t *testing.T) {
