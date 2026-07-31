@@ -30,12 +30,12 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
+	kueuev1beta2 "sigs.k8s.io/kueue/apis/kueue/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -100,7 +100,7 @@ func TestBackend_PreparePod_ConfigAndExistingMetadata(t *testing.T) {
 	profile := configv1alpha1.SchedulerProfile{
 		Name: configv1alpha1.SchedulerNameKueue,
 		Config: &runtime.RawExtension{
-			Raw: []byte(`{"requiredTopologyKey":"topology.ai-dynamo.io/rack","underlyingSchedulerName":"custom-scheduler"}`),
+			Raw: []byte(`{"underlyingSchedulerName":"custom-scheduler"}`),
 		},
 	}
 	b := New(cl, cl.Scheme(), recorder, profile)
@@ -120,10 +120,18 @@ func TestBackend_PreparePod_ConfigAndExistingMetadata(t *testing.T) {
 			},
 		},
 	}
+	rackKey := "topology.ai-dynamo.io/rack"
 	podGang := &groveschedulerv1alpha1.PodGang{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs-0", Namespace: "default"},
 		Spec: groveschedulerv1alpha1.PodGangSpec{
-			PodGroups: []groveschedulerv1alpha1.PodGroup{{Name: "test-pcs-0-worker"}},
+			PodGroups: []groveschedulerv1alpha1.PodGroup{
+				{
+					Name: "test-pcs-0-worker",
+					TopologyConstraint: &groveschedulerv1alpha1.TopologyConstraint{
+						PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{Required: &rackKey},
+					},
+				},
+			},
 		},
 	}
 	require.NoError(t, cl.Create(context.Background(), pcs))
@@ -208,6 +216,41 @@ func TestBackend_PreparePod_PCSGAndTopology(t *testing.T) {
 	assert.Equal(t, "3", pod.Annotations[podGroupTotalCountAnnotation])
 	assert.Equal(t, "demo-0-decode-0-worker", pod.Annotations[roleHashAnnotation])
 	assert.Equal(t, rackKey, pod.Annotations[podSetRequiredTopologyAnnotation])
+}
+
+func TestBackend_TopologyRequestForPodGroup_CombinesRequiredAndPreferred(t *testing.T) {
+	cl := testutils.CreateDefaultFakeClient(nil)
+	recorder := record.NewFakeRecorder(10)
+	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKueue}
+	backend := New(cl, cl.Scheme(), recorder, profile)
+	require.NoError(t, backend.Init(nil))
+	b := backend.(*schedulerBackend)
+
+	rackKey := "topology.ai-dynamo.io/rack"
+	hostKey := "topology.ai-dynamo.io/host"
+	podGang := &groveschedulerv1alpha1.PodGang{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default"},
+		Spec: groveschedulerv1alpha1.PodGangSpec{
+			PodGroups: []groveschedulerv1alpha1.PodGroup{
+				{
+					Name: "demo-0-worker",
+					TopologyConstraint: &groveschedulerv1alpha1.TopologyConstraint{
+						PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{Required: &rackKey, Preferred: &hostKey},
+					},
+				},
+			},
+		},
+	}
+
+	got := b.topologyRequestForPodGroup(podGang, "demo-0-worker")
+
+	require.NotNil(t, got)
+	require.NotNil(t, got.request.Required)
+	require.NotNil(t, got.request.Preferred)
+	assert.Equal(t, rackKey, *got.request.Required)
+	assert.Equal(t, hostKey, *got.request.Preferred)
+	assert.Equal(t, rackKey, got.annotations[podSetRequiredTopologyAnnotation])
+	assert.Equal(t, hostKey, got.annotations[podSetPreferredTopologyAnnotation])
 }
 
 func TestBackend_PreparePod_RequiresPodGangForTopology(t *testing.T) {
@@ -335,26 +378,25 @@ func TestBackend_SyncPodGang_CreatesPrebuiltWorkloadForSimplePCS(t *testing.T) {
 
 	require.NoError(t, b.SyncPodGang(context.Background(), podGang))
 
-	got := &unstructured.Unstructured{}
-	got.SetGroupVersionKind(workloadGVK)
+	got := &kueuev1beta2.Workload{}
 	require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "demo-0"}, got))
 
-	queueName, _, _ := unstructured.NestedString(got.Object, "spec", "queueName")
-	assert.Equal(t, "grove-poc", queueName)
+	assert.Equal(t, kueuev1beta2.LocalQueueName("grove-poc"), got.Spec.QueueName)
 
 	ownerRefs := got.GetOwnerReferences()
 	require.Len(t, ownerRefs, 1)
 	assert.Equal(t, "PodGang", ownerRefs[0].Kind)
 	assert.Equal(t, "demo-0", ownerRefs[0].Name)
 
-	podSets, _, _ := unstructured.NestedSlice(got.Object, "spec", "podSets")
-	require.Len(t, podSets, 1)
-	podSet := podSets[0].(map[string]any)
-	assert.Equal(t, "demo-0-worker", podSet["name"])
-	assert.Equal(t, int64(4), podSet["count"])
-	assert.Equal(t, int64(2), podSet["minCount"])
-	topologyRequest := podSet["topologyRequest"].(map[string]any)
-	assert.Equal(t, rackKey, topologyRequest["required"])
+	require.Len(t, got.Spec.PodSets, 1)
+	podSet := got.Spec.PodSets[0]
+	assert.Equal(t, kueuev1beta2.NewPodSetReference("demo-0-worker"), podSet.Name)
+	assert.Equal(t, int32(4), podSet.Count)
+	require.NotNil(t, podSet.MinCount)
+	assert.Equal(t, int32(2), *podSet.MinCount)
+	require.NotNil(t, podSet.TopologyRequest)
+	require.NotNil(t, podSet.TopologyRequest.Required)
+	assert.Equal(t, rackKey, *podSet.TopologyRequest.Required)
 }
 
 func TestBackend_SyncPodGang_RejectsInvalidMinReplicas(t *testing.T) {
@@ -499,25 +541,20 @@ func TestBackend_SyncPodGang_CreatesPrebuiltWorkloadForPCSGWithMinCountEqualsCou
 
 	require.NoError(t, b.SyncPodGang(context.Background(), podGang))
 
-	got := &unstructured.Unstructured{}
-	got.SetGroupVersionKind(workloadGVK)
+	got := &kueuev1beta2.Workload{}
 	require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "demo-0"}, got))
 
-	podSets, _, _ := unstructured.NestedSlice(got.Object, "spec", "podSets")
-	require.Len(t, podSets, 1)
-	podSet := podSets[0].(map[string]any)
-	assert.Equal(t, "demo-0-decode-0-worker", podSet["name"])
-	assert.Equal(t, int64(2), podSet["count"])
-	topologyRequest := podSet["topologyRequest"].(map[string]any)
-	assert.Equal(t, preferredTopologyKey, topologyRequest["preferred"])
-	template := podSet["template"].(map[string]any)
-	metadata := template["metadata"].(map[string]any)
-	annotations := metadata["annotations"].(map[string]any)
-	assert.Equal(t, preferredTopologyKey, annotations[podSetPreferredTopologyAnnotation])
+	require.Len(t, got.Spec.PodSets, 1)
+	podSet := got.Spec.PodSets[0]
+	assert.Equal(t, kueuev1beta2.NewPodSetReference("demo-0-decode-0-worker"), podSet.Name)
+	assert.Equal(t, int32(2), podSet.Count)
+	require.NotNil(t, podSet.TopologyRequest)
+	require.NotNil(t, podSet.TopologyRequest.Preferred)
+	assert.Equal(t, preferredTopologyKey, *podSet.TopologyRequest.Preferred)
+	assert.Equal(t, preferredTopologyKey, podSet.Template.Annotations[podSetPreferredTopologyAnnotation])
 	// PodCliqueScalingGroup cliques are all-or-nothing: minCount is omitted (Kueue defaults it to count).
 	// Kueue also rejects Workloads where more than one podSet sets minCount.
-	_, hasMinCount := podSet["minCount"]
-	assert.False(t, hasMinCount)
+	assert.Nil(t, podSet.MinCount)
 }
 
 func TestBackend_ValidatePodCliqueSet_MinCount(t *testing.T) {
@@ -577,6 +614,35 @@ func TestBackend_ValidatePodCliqueSet_MinCount(t *testing.T) {
 			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
 				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 4}},
 				{Name: "frontend", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To[int32](1)}},
+			},
+		},
+		{
+			description: "PCSG with minAvailable == replicas is valid",
+			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{Name: "leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)}},
+			},
+			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				{Name: "decode", CliqueNames: []string{"leader"}, Replicas: ptr.To[int32](4), MinAvailable: ptr.To[int32](4)},
+			},
+		},
+		{
+			description: "PCSG with minAvailable < replicas is rejected",
+			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{Name: "leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)}},
+			},
+			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				{Name: "decode", CliqueNames: []string{"leader"}, Replicas: ptr.To[int32](4), MinAvailable: ptr.To[int32](2)},
+			},
+			wantErr:    true,
+			wantErrMsg: "PodCliqueScalingGroups to set minAvailable == replicas",
+		},
+		{
+			description: "PCSG with nil replicas or minAvailable defers to CRD defaulting",
+			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{Name: "leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}},
+			},
+			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				{Name: "decode", CliqueNames: []string{"leader"}},
 			},
 		},
 	}

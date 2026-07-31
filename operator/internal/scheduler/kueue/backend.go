@@ -32,13 +32,13 @@ import (
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	kueuev1beta2 "sigs.k8s.io/kueue/apis/kueue/v1beta2"
 )
 
 const (
@@ -53,16 +53,9 @@ const (
 	roleHashAnnotation                = "kueue.x-k8s.io/role-hash"
 )
 
-var workloadGVK = schema.GroupVersionKind{
-	Group:   "kueue.x-k8s.io",
-	Version: "v1beta2",
-	Kind:    "Workload",
-}
-
-type topologyRequest struct {
-	field         string
-	annotationKey string
-	key           string
+type resolvedTopologyRequest struct {
+	request     *kueuev1beta2.PodSetTopologyRequest
+	annotations map[string]string
 }
 
 type schedulerBackend struct {
@@ -92,6 +85,9 @@ func (b *schedulerBackend) Name() string {
 }
 
 func (b *schedulerBackend) Init(_ client.Client) error {
+	if err := kueuev1beta2.AddToScheme(b.scheme); err != nil {
+		return fmt.Errorf("failed to add Kueue APIs to scheme: %w", err)
+	}
 	if b.profile.Config == nil || len(b.profile.Config.Raw) == 0 {
 		return nil
 	}
@@ -135,19 +131,20 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 	return nil
 }
 
-func newKueueWorkload(namespace, name string) *unstructured.Unstructured {
-	workload := &unstructured.Unstructured{}
-	workload.SetGroupVersionKind(workloadGVK)
-	workload.SetNamespace(namespace)
-	workload.SetName(name)
-	return workload
+func newKueueWorkload(namespace, name string) *kueuev1beta2.Workload {
+	return &kueuev1beta2.Workload{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace,
+			Name:      name,
+		},
+	}
 }
 
 // buildPrebuiltWorkload constructs a prebuilt Kueue Workload from a PodGang, mapping each PodGroup to a Kueue
 // podSet. The podSet name is the PodGroup FQN so scaling-group replicas of the same clique stay unique. count
 // is the clique replicas; minCount is the PodGroup minReplicas for standalone cliques and is forced to count
 // for scaling-group cliques (POC assumption PCSG.minAvailable == PCSG.replicas).
-func (b *schedulerBackend) buildPrebuiltWorkload(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, podGang *groveschedulerv1alpha1.PodGang) (*unstructured.Unstructured, error) {
+func (b *schedulerBackend) buildPrebuiltWorkload(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, podGang *groveschedulerv1alpha1.PodGang) (*kueuev1beta2.Workload, error) {
 	queueName := pcs.Labels[queueNameLabel]
 	if queueName == "" {
 		return nil, fmt.Errorf("PodCliqueSet %s/%s must set label %q for Kueue queue selection", pcs.Namespace, pcs.Name, queueNameLabel)
@@ -158,56 +155,52 @@ func (b *schedulerBackend) buildPrebuiltWorkload(ctx context.Context, pcs *grove
 	// count; all other podSets (including every PodCliqueScalingGroup clique, which is all-or-nothing in this POC)
 	// omit minCount, which Kueue defaults to count.
 	minCountUsed := false
-	podSets := make([]any, 0, len(podGang.Spec.PodGroups))
+	podSets := make([]kueuev1beta2.PodSet, 0, len(podGang.Spec.PodGroups))
 	for _, podGroup := range podGang.Spec.PodGroups {
 		cliqueTemplate, err := b.resolveCliqueTemplate(ctx, pcs, podGroup.Name)
 		if err != nil {
 			return nil, err
 		}
-		podSpec, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&cliqueTemplate.Spec.PodSpec)
-		if err != nil {
-			return nil, fmt.Errorf("failed to convert pod spec for clique %q: %w", cliqueTemplate.Name, err)
-		}
 		topologyRequest := b.topologyRequestForPodGroup(podGang, podGroup.Name)
-
-		template := map[string]any{"spec": podSpec}
+		template := corev1.PodTemplateSpec{Spec: *cliqueTemplate.Spec.PodSpec.DeepCopy()}
 		if topologyRequest != nil {
-			template["metadata"] = map[string]any{
-				"annotations": map[string]any{topologyRequest.annotationKey: topologyRequest.key},
-			}
+			template.Annotations = topologyRequest.annotations
 		}
 
-		count := int64(cliqueTemplate.Spec.Replicas)
-		minCount := int64(podGroup.MinReplicas)
+		count := cliqueTemplate.Spec.Replicas
+		minCount := podGroup.MinReplicas
 		if minCount <= 0 || minCount > count {
 			return nil, fmt.Errorf("PodGroup %q in PodGang %s/%s has minReplicas %d outside the valid range [1, %d]", podGroup.Name, podGang.Namespace, podGang.Name, minCount, count)
 		}
 
-		podSet := map[string]any{
-			"name":     podGroup.Name,
-			"count":    count,
-			"template": template,
+		podSet := kueuev1beta2.PodSet{
+			Name:     kueuev1beta2.NewPodSetReference(podGroup.Name),
+			Count:    count,
+			Template: template,
 		}
 		isPartiallyAdmittedStandalonePodGroup := !isCliqueInScalingGroup(pcs, cliqueTemplate.Name) && minCount < count
 		if isPartiallyAdmittedStandalonePodGroup {
 			if minCountUsed {
 				return nil, fmt.Errorf("PodGang %s/%s has more than one partially admitted standalone PodGroup", podGang.Namespace, podGang.Name)
 			}
-			podSet["minCount"] = minCount
+			podSet.MinCount = &minCount
 			minCountUsed = true
 		}
 		if topologyRequest != nil {
-			podSet["topologyRequest"] = map[string]any{topologyRequest.field: topologyRequest.key}
+			podSet.TopologyRequest = topologyRequest.request
 		}
 		podSets = append(podSets, podSet)
 	}
 
-	workload := newKueueWorkload(podGang.Namespace, podGang.Name)
-	if err := unstructured.SetNestedField(workload.Object, queueName, "spec", "queueName"); err != nil {
-		return nil, err
-	}
-	if err := unstructured.SetNestedSlice(workload.Object, podSets, "spec", "podSets"); err != nil {
-		return nil, err
+	workload := &kueuev1beta2.Workload{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: podGang.Namespace,
+			Name:      podGang.Name,
+		},
+		Spec: kueuev1beta2.WorkloadSpec{
+			QueueName: kueuev1beta2.LocalQueueName(queueName),
+			PodSets:   podSets,
+		},
 	}
 	// Own the Workload by the PodGang so Kubernetes garbage collection removes it once the PodGang and all
 	// member Pods (which Kueue adds as owners on admission) are gone.
@@ -295,22 +288,33 @@ func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 	if pod.Annotations[retriableInGroupAnnotation] == "" {
 		pod.Annotations[retriableInGroupAnnotation] = "false"
 	}
-	if topologyRequest := b.topologyRequestForPodGroup(podGang, podCliqueName); topologyRequest != nil &&
-		pod.Annotations[podSetRequiredTopologyAnnotation] == "" &&
-		pod.Annotations[podSetPreferredTopologyAnnotation] == "" {
-		pod.Annotations[topologyRequest.annotationKey] = topologyRequest.key
+	if topologyRequest := b.topologyRequestForPodGroup(podGang, podCliqueName); topologyRequest != nil {
+		for k, v := range topologyRequest.annotations {
+			if pod.Annotations[k] == "" {
+				pod.Annotations[k] = v
+			}
+		}
 	}
 	return nil
 }
 
-func (b *schedulerBackend) topologyRequestForPodGroup(podGang *groveschedulerv1alpha1.PodGang, podGroupName string) *topologyRequest {
-	if key := scheduler.RequiredTopologyKeyForPodGroup(podGang, podGroupName, b.config.RequiredTopologyKey); key != "" {
-		return &topologyRequest{field: "required", annotationKey: podSetRequiredTopologyAnnotation, key: key}
+func (b *schedulerBackend) topologyRequestForPodGroup(podGang *groveschedulerv1alpha1.PodGang, podGroupName string) *resolvedTopologyRequest {
+	requiredKey := scheduler.RequiredTopologyKeyForPodGroup(podGang, podGroupName, "")
+	preferredKey := scheduler.PreferredTopologyKeyForPodGroup(podGang, podGroupName)
+	if requiredKey == "" && preferredKey == "" {
+		return nil
 	}
-	if key := scheduler.PreferredTopologyKeyForPodGroup(podGang, podGroupName); key != "" {
-		return &topologyRequest{field: "preferred", annotationKey: podSetPreferredTopologyAnnotation, key: key}
+	request := &kueuev1beta2.PodSetTopologyRequest{}
+	annotations := make(map[string]string, 2)
+	if requiredKey != "" {
+		request.Required = &requiredKey
+		annotations[podSetRequiredTopologyAnnotation] = requiredKey
 	}
-	return nil
+	if preferredKey != "" {
+		request.Preferred = &preferredKey
+		annotations[podSetPreferredTopologyAnnotation] = preferredKey
+	}
+	return &resolvedTopologyRequest{request: request, annotations: annotations}
 }
 
 func (b *schedulerBackend) podGangTotalPodCount(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, podGang *groveschedulerv1alpha1.PodGang) (int, error) {
@@ -332,6 +336,24 @@ func (b *schedulerBackend) podGangTotalPodCount(ctx context.Context, pcs *grovec
 // (minAvailable < replicas) semantics. PodCliques that belong to a PodCliqueScalingGroup are
 // all-or-nothing and never set minCount, so they are excluded from this check.
 func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecorev1alpha1.PodCliqueSet) error {
+	var partialGangPCSGs []string
+	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		// A nil Replicas or MinAvailable defers to the CRD's kubebuilder default; nothing to compare yet.
+		if pcsgConfig.Replicas == nil || pcsgConfig.MinAvailable == nil {
+			continue
+		}
+		if *pcsgConfig.MinAvailable < *pcsgConfig.Replicas {
+			partialGangPCSGs = append(partialGangPCSGs, pcsgConfig.Name)
+		}
+	}
+	// Kueue permits minCount on at most one podSet per Workload, and Grove reserves that single slot for a
+	// standalone PodClique (see the partialGangCliques check below). PodCliqueScalingGroups are therefore
+	// always all-or-nothing. Hence a PodCliqueSet with a PodCliqueScalingGroup whose minAvailable < replicas
+	// is rejected.
+	if len(partialGangPCSGs) > 0 {
+		return fmt.Errorf("kueue backend requires PodCliqueScalingGroups to set minAvailable == replicas (all-or-nothing), but the following set minAvailable < replicas: %s", strings.Join(partialGangPCSGs, ", "))
+	}
+
 	var (
 		partialGangCliques     []string
 		partialGangPCSGCliques []string
