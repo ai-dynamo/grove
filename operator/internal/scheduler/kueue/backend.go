@@ -1,0 +1,388 @@
+// /*
+// Copyright 2026 The Grove Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// */
+
+package kueue
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
+
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	"github.com/ai-dynamo/grove/operator/internal/utils"
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+	kueuev1beta2 "sigs.k8s.io/kueue/apis/kueue/v1beta2"
+)
+
+const (
+	queueNameLabel                    = "kueue.x-k8s.io/queue-name"
+	podGroupNameLabel                 = "kueue.x-k8s.io/pod-group-name"
+	podGroupTotalCountAnnotation      = "kueue.x-k8s.io/pod-group-total-count"
+	prebuiltWorkloadNameLabel         = "kueue.x-k8s.io/prebuilt-workload-name"
+	podGroupServingAnnotation         = "kueue.x-k8s.io/pod-group-serving"
+	retriableInGroupAnnotation        = "kueue.x-k8s.io/retriable-in-group"
+	podSetRequiredTopologyAnnotation  = "kueue.x-k8s.io/podset-required-topology"
+	podSetPreferredTopologyAnnotation = "kueue.x-k8s.io/podset-preferred-topology"
+	roleHashAnnotation                = "kueue.x-k8s.io/role-hash"
+)
+
+type resolvedTopologyRequest struct {
+	request       *kueuev1beta2.PodSetTopologyRequest
+	annotationKey string
+	key           string
+}
+
+type schedulerBackend struct {
+	client        client.Client
+	scheme        *runtime.Scheme
+	name          string
+	eventRecorder record.EventRecorder
+	profile       configv1alpha1.SchedulerProfile
+	config        configv1alpha1.KueueSchedulerConfiguration
+}
+
+var _ scheduler.Backend = (*schedulerBackend)(nil)
+
+func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1alpha1.SchedulerProfile) scheduler.Backend {
+	return &schedulerBackend{
+		client:        cl,
+		scheme:        scheme,
+		name:          string(profile.Name),
+		eventRecorder: eventRecorder,
+		profile:       profile,
+		config:        defaultConfig(),
+	}
+}
+
+func (b *schedulerBackend) Name() string {
+	return b.name
+}
+
+func (b *schedulerBackend) Init(_ client.Client) error {
+	if err := kueuev1beta2.AddToScheme(b.scheme); err != nil {
+		return fmt.Errorf("failed to add Kueue APIs to scheme: %w", err)
+	}
+	if b.profile.Config == nil || len(b.profile.Config.Raw) == 0 {
+		return nil
+	}
+	if err := json.Unmarshal(b.profile.Config.Raw, &b.config); err != nil {
+		return fmt.Errorf("failed to unmarshal kueue scheduler config: %w", err)
+	}
+	b.config = withDefaults(b.config)
+	return nil
+}
+
+// SyncPodGang builds a prebuilt Kueue Workload for every PodGang, mapping each PodGroup to a Kueue podSet.
+// Standalone PodCliques express partial-gang semantics via minCount == minAvailable, while PodCliques that
+// belong to a PodCliqueScalingGroup are treated as all-or-nothing (minCount == count) under the POC
+// assumption that PCSG.minAvailable == PCSG.replicas.
+func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
+	pcsName := podGang.Labels[apicommon.LabelPartOfKey]
+	if pcsName == "" {
+		return fmt.Errorf("PodGang %s/%s must set label %q", podGang.Namespace, podGang.Name, apicommon.LabelPartOfKey)
+	}
+	pcs := &grovecorev1alpha1.PodCliqueSet{}
+	if err := b.client.Get(ctx, client.ObjectKey{Namespace: podGang.Namespace, Name: pcsName}, pcs); err != nil {
+		return fmt.Errorf("failed to get PodCliqueSet %s/%s for PodGang %s: %w", podGang.Namespace, pcsName, podGang.Name, err)
+	}
+
+	desired, err := b.buildPrebuiltWorkload(ctx, pcs, podGang)
+	if err != nil {
+		return err
+	}
+	existing := newKueueWorkload(podGang.Namespace, podGang.Name)
+	if err = b.client.Get(ctx, client.ObjectKeyFromObject(existing), existing); err != nil {
+		if apierrors.IsNotFound(err) {
+			if err = b.client.Create(ctx, desired); err != nil {
+				return fmt.Errorf("failed to create prebuilt kueue Workload %s/%s: %w", podGang.Namespace, podGang.Name, err)
+			}
+			log.FromContext(ctx).Info("Created prebuilt Kueue Workload", "workload", client.ObjectKeyFromObject(desired))
+			return nil
+		}
+		return fmt.Errorf("failed to get prebuilt kueue Workload %s/%s: %w", podGang.Namespace, podGang.Name, err)
+	}
+	// Kueue Workload podSets are immutable once admitted, so the Workload is only created and not updated in this POC.
+	return nil
+}
+
+func newKueueWorkload(namespace, name string) *kueuev1beta2.Workload {
+	return &kueuev1beta2.Workload{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace,
+			Name:      name,
+		},
+	}
+}
+
+// buildPrebuiltWorkload constructs a prebuilt Kueue Workload from a PodGang, mapping each PodGroup to a Kueue
+// podSet. The podSet name is the PodGroup FQN so scaling-group replicas of the same clique stay unique. count
+// is the clique replicas; minCount is the PodGroup minReplicas for standalone cliques and is forced to count
+// for scaling-group cliques (POC assumption PCSG.minAvailable == PCSG.replicas).
+func (b *schedulerBackend) buildPrebuiltWorkload(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, podGang *groveschedulerv1alpha1.PodGang) (*kueuev1beta2.Workload, error) {
+	queueName := pcs.Labels[queueNameLabel]
+	if queueName == "" {
+		return nil, fmt.Errorf("PodCliqueSet %s/%s must set label %q for Kueue queue selection", pcs.Namespace, pcs.Name, queueNameLabel)
+	}
+
+	// Kueue permits at most one podSet per Workload to set minCount (partial admission is limited to a single
+	// podSet). Grove therefore only sets minCount on the first podSet whose minCount is strictly less than its
+	// count; all other podSets (including every PodCliqueScalingGroup clique, which is all-or-nothing in this POC)
+	// omit minCount, which Kueue defaults to count.
+	minCountUsed := false
+	podSets := make([]kueuev1beta2.PodSet, 0, len(podGang.Spec.PodGroups))
+	for _, podGroup := range podGang.Spec.PodGroups {
+		cliqueTemplate, err := b.resolveCliqueTemplate(ctx, pcs, podGroup.Name)
+		if err != nil {
+			return nil, err
+		}
+		topologyRequest := b.topologyRequestForPodGroup(podGang, podGroup.Name)
+		template := corev1.PodTemplateSpec{Spec: *cliqueTemplate.Spec.PodSpec.DeepCopy()}
+		if topologyRequest != nil {
+			template.Annotations = map[string]string{topologyRequest.annotationKey: topologyRequest.key}
+		}
+
+		count := cliqueTemplate.Spec.Replicas
+		minCount := podGroup.MinReplicas
+		if minCount <= 0 || minCount > count {
+			return nil, fmt.Errorf("PodGroup %q in PodGang %s/%s has minReplicas %d outside the valid range [1, %d]", podGroup.Name, podGang.Namespace, podGang.Name, minCount, count)
+		}
+
+		podSet := kueuev1beta2.PodSet{
+			Name:     kueuev1beta2.NewPodSetReference(podGroup.Name),
+			Count:    count,
+			Template: template,
+		}
+		isPartiallyAdmittedStandalonePodGroup := !isCliqueInScalingGroup(pcs, cliqueTemplate.Name) && minCount < count
+		if isPartiallyAdmittedStandalonePodGroup {
+			if minCountUsed {
+				return nil, fmt.Errorf("PodGang %s/%s has more than one partially admitted standalone PodGroup", podGang.Namespace, podGang.Name)
+			}
+			podSet.MinCount = &minCount
+			minCountUsed = true
+		}
+		if topologyRequest != nil {
+			podSet.TopologyRequest = topologyRequest.request
+		}
+		podSets = append(podSets, podSet)
+	}
+
+	workload := &kueuev1beta2.Workload{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: podGang.Namespace,
+			Name:      podGang.Name,
+		},
+		Spec: kueuev1beta2.WorkloadSpec{
+			QueueName: kueuev1beta2.LocalQueueName(queueName),
+			PodSets:   podSets,
+		},
+	}
+	// Own the Workload by the PodGang so Kubernetes garbage collection removes it once the PodGang and all
+	// member Pods (which Kueue adds as owners on admission) are gone.
+	if err := controllerutil.SetOwnerReference(podGang, workload, b.scheme); err != nil {
+		return nil, fmt.Errorf("failed to set owner reference on prebuilt kueue Workload %s/%s: %w", podGang.Namespace, podGang.Name, err)
+	}
+	return workload, nil
+}
+
+// isCliqueInScalingGroup reports whether the named clique is a member of any PodCliqueScalingGroup.
+func isCliqueInScalingGroup(pcs *grovecorev1alpha1.PodCliqueSet, cliqueName string) bool {
+	for _, config := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		for _, name := range config.CliqueNames {
+			if name == cliqueName {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (b *schedulerBackend) resolveCliqueTemplate(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, podCliqueName string) (*grovecorev1alpha1.PodCliqueTemplateSpec, error) {
+	pclq := &grovecorev1alpha1.PodClique{}
+	if err := b.client.Get(ctx, client.ObjectKey{Namespace: pcs.Namespace, Name: podCliqueName}, pclq); err != nil {
+		return nil, fmt.Errorf("failed to get PodClique %s/%s: %w", pcs.Namespace, podCliqueName, err)
+	}
+	templateName, err := utils.GetPodCliqueNameFromPodCliqueFQN(pclq.ObjectMeta)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve template name for PodClique %s/%s: %w", pclq.Namespace, pclq.Name, err)
+	}
+	cliqueTemplate := componentutils.FindPodCliqueTemplateSpecByName(pcs, templateName)
+	if cliqueTemplate == nil {
+		return nil, fmt.Errorf("no clique template %q found for PodClique %s/%s in PodCliqueSet %s/%s", templateName, pclq.Namespace, pclq.Name, pcs.Namespace, pcs.Name)
+	}
+	return cliqueTemplate, nil
+}
+
+func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
+	pcsName := pod.Labels[apicommon.LabelPartOfKey]
+	if pcsName == "" {
+		return fmt.Errorf("kueue backend requires pod label %q", apicommon.LabelPartOfKey)
+	}
+	podCliqueName := pod.Labels[apicommon.LabelPodClique]
+	if podCliqueName == "" {
+		return fmt.Errorf("kueue backend requires pod label %q", apicommon.LabelPodClique)
+	}
+	podGangName := pod.Labels[apicommon.LabelPodGang]
+	if podGangName == "" {
+		return fmt.Errorf("kueue backend requires pod label %q", apicommon.LabelPodGang)
+	}
+	pcs := &grovecorev1alpha1.PodCliqueSet{}
+	if err := b.client.Get(context.Background(), client.ObjectKey{Namespace: pod.Namespace, Name: pcsName}, pcs); err != nil {
+		return fmt.Errorf("failed to get PodCliqueSet %s/%s when preparing Pod: %w", pod.Namespace, pcsName, err)
+	}
+	podGang := &groveschedulerv1alpha1.PodGang{}
+	if err := b.client.Get(context.Background(), client.ObjectKey{Namespace: pod.Namespace, Name: podGangName}, podGang); err != nil {
+		return fmt.Errorf("failed to get PodGang %s/%s when preparing Pod: %w", pod.Namespace, podGangName, err)
+	}
+
+	pod.Spec.SchedulerName = b.config.UnderlyingSchedulerName
+	if pod.Labels == nil {
+		pod.Labels = make(map[string]string)
+	}
+	if pod.Annotations == nil {
+		pod.Annotations = make(map[string]string)
+	}
+
+	queueName := pcs.Labels[queueNameLabel]
+	if queueName == "" {
+		return fmt.Errorf("PodCliqueSet %s/%s must set label %q for Kueue queue selection", pcs.Namespace, pcs.Name, queueNameLabel)
+	}
+	pod.Labels[queueNameLabel] = queueName
+	pod.Labels[podGroupNameLabel] = podGangName
+	pod.Labels[prebuiltWorkloadNameLabel] = podGangName
+	totalPodCount, err := b.podGangTotalPodCount(context.Background(), pcs, podGang)
+	if err != nil {
+		return err
+	}
+	pod.Annotations[podGroupTotalCountAnnotation] = strconv.Itoa(totalPodCount)
+	pod.Annotations[roleHashAnnotation] = podCliqueName
+	// Grove-managed pods are deliberately NOT marked as a Kueue "serving" pod group. A serving group is never
+	// considered finished, so Kueue would never remove the kueue.x-k8s.io/managed finalizer on teardown (the
+	// prebuilt Workload has no Kueue finalizer, so Workload deletion cannot trigger finalization either). As a
+	// non-serving unretriable group, Kueue finalizes the Pods once they all terminate, letting them drain.
+	if pod.Annotations[retriableInGroupAnnotation] == "" {
+		pod.Annotations[retriableInGroupAnnotation] = "false"
+	}
+	if topologyRequest := b.topologyRequestForPodGroup(podGang, podCliqueName); topologyRequest != nil &&
+		pod.Annotations[podSetRequiredTopologyAnnotation] == "" &&
+		pod.Annotations[podSetPreferredTopologyAnnotation] == "" {
+		pod.Annotations[topologyRequest.annotationKey] = topologyRequest.key
+	}
+	return nil
+}
+
+func (b *schedulerBackend) topologyRequestForPodGroup(podGang *groveschedulerv1alpha1.PodGang, podGroupName string) *resolvedTopologyRequest {
+	if key := scheduler.RequiredTopologyKeyForPodGroup(podGang, podGroupName, b.config.RequiredTopologyKey); key != "" {
+		return &resolvedTopologyRequest{
+			request:       &kueuev1beta2.PodSetTopologyRequest{Required: &key},
+			annotationKey: podSetRequiredTopologyAnnotation,
+			key:           key,
+		}
+	}
+	if key := scheduler.PreferredTopologyKeyForPodGroup(podGang, podGroupName); key != "" {
+		return &resolvedTopologyRequest{
+			request:       &kueuev1beta2.PodSetTopologyRequest{Preferred: &key},
+			annotationKey: podSetPreferredTopologyAnnotation,
+			key:           key,
+		}
+	}
+	return nil
+}
+
+func (b *schedulerBackend) podGangTotalPodCount(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, podGang *groveschedulerv1alpha1.PodGang) (int, error) {
+	total := 0
+	for _, podGroup := range podGang.Spec.PodGroups {
+		cliqueTemplate, err := b.resolveCliqueTemplate(ctx, pcs, podGroup.Name)
+		if err != nil {
+			return 0, err
+		}
+		total += int(cliqueTemplate.Spec.Replicas)
+	}
+	return total, nil
+}
+
+// ValidatePodCliqueSet rejects PodCliqueSets that cannot be represented as a valid Kueue Workload.
+// Grove builds one prebuilt Kueue Workload per PodGang and maps each standalone PodClique with
+// minAvailable < replicas to a Kueue podSet that sets minCount. Kueue permits at most one podSet per
+// Workload to set minCount, so at most one standalone PodClique may declare partial-gang
+// (minAvailable < replicas) semantics. PodCliques that belong to a PodCliqueScalingGroup are
+// all-or-nothing and never set minCount, so they are excluded from this check.
+func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecorev1alpha1.PodCliqueSet) error {
+	var (
+		partialGangCliques     []string
+		partialGangPCSGCliques []string
+	)
+	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
+		if cliqueTemplate == nil {
+			continue
+		}
+		minAvailable := cliqueTemplate.Spec.MinAvailable
+		// A nil minAvailable defaults to replicas, so it is a full gang.
+		if minAvailable == nil {
+			continue
+		}
+		isPartialGang := *minAvailable > 0 && *minAvailable < cliqueTemplate.Spec.Replicas
+		if !isPartialGang {
+			continue
+		}
+		if isCliqueInScalingGroup(pcs, cliqueTemplate.Name) {
+			partialGangPCSGCliques = append(partialGangPCSGCliques, cliqueTemplate.Name)
+			continue
+		}
+		partialGangCliques = append(partialGangCliques, cliqueTemplate.Name)
+	}
+
+	// PodCliques that belong to a PodCliqueScalingGroup are treated as all-or-nothing by the Kueue backend:
+	// their podSets never set minCount, so a member clique's minAvailable < replicas would be silently
+	// ignored. Reject it so an accepted PodCliqueSet behaves as specified.
+	if len(partialGangPCSGCliques) > 0 {
+		return fmt.Errorf("kueue backend requires PodCliques that are members of a PodCliqueScalingGroup to set minAvailable == replicas (all-or-nothing), but the following set minAvailable < replicas: %s", strings.Join(partialGangPCSGCliques, ", "))
+	}
+
+	// Grove maps each standalone PodClique with minAvailable < replicas to a Kueue podSet that sets minCount,
+	// and Kueue permits minCount on at most one podSet per Workload.
+	if len(partialGangCliques) > 1 {
+		return fmt.Errorf("kueue backend allows at most one standalone PodClique with minAvailable < replicas because Kueue permits minCount on at most one podSet per Workload, but found %d: %s", len(partialGangCliques), strings.Join(partialGangCliques, ", "))
+	}
+	return nil
+}
+
+func defaultConfig() configv1alpha1.KueueSchedulerConfiguration {
+	return configv1alpha1.KueueSchedulerConfiguration{
+		UnderlyingSchedulerName: string(configv1alpha1.SchedulerNameKube),
+	}
+}
+
+func withDefaults(cfg configv1alpha1.KueueSchedulerConfiguration) configv1alpha1.KueueSchedulerConfiguration {
+	defaults := defaultConfig()
+	if cfg.UnderlyingSchedulerName == "" {
+		cfg.UnderlyingSchedulerName = defaults.UnderlyingSchedulerName
+	}
+	return cfg
+}
