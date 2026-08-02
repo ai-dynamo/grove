@@ -147,8 +147,8 @@ func TestGetKindSyncGroups(t *testing.T) {
 	}
 }
 
-// TestInitUpdateProgress tests the initUpdateProgress function for both OnDelete and RollingRecreate strategies
-func TestInitUpdateProgress(t *testing.T) {
+// TestSetRevisionStatus tests update initialization for both OnDelete and RollingRecreate strategies.
+func TestSetRevisionStatus(t *testing.T) {
 	tests := []struct {
 		name                   string
 		setupPCS               func() *grovecorev1alpha1.PodCliqueSet
@@ -265,15 +265,18 @@ func TestInitUpdateProgress(t *testing.T) {
 
 			fakeClient := testutils.SetupFakeClient(pcs)
 			reconciler := &Reconciler{
-				client:                        fakeClient,
-				pcsGenerationHashExpectations: sync.Map{},
+				client:                  fakeClient,
+				pcsRevisionExpectations: sync.Map{},
 			}
 
 			newGenerationHash := "new-hash"
 			pcsObjectName := pcs.Namespace + "/" + pcs.Name
 
-			err := reconciler.initUpdateProgress(context.Background(), pcs, pcsObjectName, newGenerationHash)
-			require.NoError(t, err, "initUpdateProgress should not return errors")
+			err := reconciler.setRevisionStatus(context.Background(), pcs, pcsObjectName, revisionSelection{
+				name:           "new-revision",
+				generationHash: newGenerationHash,
+			}, true)
+			require.NoError(t, err, "setRevisionStatus should not return errors")
 
 			// Fetch the updated PCS from the fake client
 			updatedPCS := &grovecorev1alpha1.PodCliqueSet{}
@@ -293,11 +296,13 @@ func TestInitUpdateProgress(t *testing.T) {
 
 			assert.Equal(t, int32(0), updatedPCS.Status.UpdateProgress.UpdatedPodCliqueScalingGroupsCount, "UpdatedPodCliqueScalingGroupsCount should be reset to 0")
 			assert.Equal(t, int32(0), updatedPCS.Status.UpdateProgress.UpdatedPodCliquesCount, "UpdatedPodCliquesCount should be reset to 0")
-			// Currently updating is not set by the initUpdateProgress function
+			// Currently updating is not set by revision initialization.
 			assert.Nil(t, updatedPCS.Status.UpdateProgress.CurrentlyUpdating, "CurrentlyUpdating should be nil")
 			assert.Equal(t, int32(0), updatedPCS.Status.UpdatedReplicas, "UpdatedReplicas should be reset to 0")
 			require.NotNil(t, updatedPCS.Status.CurrentGenerationHash)
 			assert.Equal(t, newGenerationHash, *updatedPCS.Status.CurrentGenerationHash)
+			require.NotNil(t, updatedPCS.Status.CurrentRevision)
+			assert.Equal(t, "new-revision", *updatedPCS.Status.CurrentRevision)
 		})
 	}
 }

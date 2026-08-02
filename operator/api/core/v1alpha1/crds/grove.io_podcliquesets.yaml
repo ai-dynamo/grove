@@ -11062,13 +11062,12 @@ spec:
                   type: object
                 type: array
               currentGenerationHash:
-                description: |-
-                  CurrentGenerationHash is a hash value generated out of a collection of fields in a PodCliqueSet.
-                  Since only a subset of fields is taken into account when generating the hash, not every change in the PodCliqueSetSpec will
-                  be accounted for when generating this hash value. A field in PodCliqueSetSpec is included if a change to it triggers
-                  a rolling recreate of PodCliques and/or PodCliqueScalingGroups.
-                  Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value
-                  then an update needs to be triggered.
+                description: CurrentGenerationHash is the opaque identity selected
+                  for the current rollout-relevant revision.
+                type: string
+              currentRevision:
+                description: CurrentRevision names the ControllerRevision containing
+                  the selected rollout revision.
                 type: string
               hpaPodSelector:
                 description: |-

@@ -124,33 +124,14 @@ func TestGetOrderedKindsForSync(t *testing.T) {
 // TestShouldResetOrTriggerUpdate tests the shouldResetOrTriggerUpdate function for PodClique
 func TestShouldResetOrTriggerUpdate(t *testing.T) {
 	tests := []struct {
-		name     string
-		pcs      *grovecorev1alpha1.PodCliqueSet
-		pclq     *grovecorev1alpha1.PodClique
-		expected bool
+		name           string
+		generationHash string
+		pclq           *grovecorev1alpha1.PodClique
+		expected       bool
 	}{
 		{
-			name: "waits_for_pcs_current_generation_hash_before_first_ever_update",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				Status: grovecorev1alpha1.PodCliqueSetStatus{
-					CurrentGenerationHash: nil,
-				},
-			},
-			pclq: &grovecorev1alpha1.PodClique{
-				Status: grovecorev1alpha1.PodCliqueStatus{
-					UpdateProgress:                    nil,
-					CurrentPodCliqueSetGenerationHash: ptr.To("old-hash"),
-				},
-			},
-			expected: false,
-		},
-		{
-			name: "first_ever_update_required",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				Status: grovecorev1alpha1.PodCliqueSetStatus{
-					CurrentGenerationHash: ptr.To("new-hash"),
-				},
-			},
+			name:           "first_ever_update_required",
+			generationHash: "new-hash",
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
 					UpdateProgress:                    nil,
@@ -160,12 +141,8 @@ func TestShouldResetOrTriggerUpdate(t *testing.T) {
 			expected: true,
 		},
 		{
-			name: "in_progress_update_not_stale_same_hash",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				Status: grovecorev1alpha1.PodCliqueSetStatus{
-					CurrentGenerationHash: ptr.To("current-hash"),
-				},
-			},
+			name:           "in_progress_update_not_stale_same_hash",
+			generationHash: "current-hash",
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
 					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
@@ -178,12 +155,8 @@ func TestShouldResetOrTriggerUpdate(t *testing.T) {
 			expected: false,
 		},
 		{
-			name: "in_progress_update_stale_different_hash",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				Status: grovecorev1alpha1.PodCliqueSetStatus{
-					CurrentGenerationHash: ptr.To("new-hash"),
-				},
-			},
+			name:           "in_progress_update_stale_different_hash",
+			generationHash: "new-hash",
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
 					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
@@ -196,12 +169,8 @@ func TestShouldResetOrTriggerUpdate(t *testing.T) {
 			expected: true,
 		},
 		{
-			name: "last_completed_update_not_stale_same_hash",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				Status: grovecorev1alpha1.PodCliqueSetStatus{
-					CurrentGenerationHash: ptr.To("current-hash"),
-				},
-			},
+			name:           "last_completed_update_not_stale_same_hash",
+			generationHash: "current-hash",
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
 					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
@@ -214,12 +183,8 @@ func TestShouldResetOrTriggerUpdate(t *testing.T) {
 			expected: false,
 		},
 		{
-			name: "last_completed_update_stale_different_hash",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				Status: grovecorev1alpha1.PodCliqueSetStatus{
-					CurrentGenerationHash: ptr.To("new-hash"),
-				},
-			},
+			name:           "last_completed_update_stale_different_hash",
+			generationHash: "new-hash",
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
 					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
@@ -235,7 +200,7 @@ func TestShouldResetOrTriggerUpdate(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := shouldResetOrTriggerUpdate(tc.pcs, tc.pclq)
+			result := shouldResetOrTriggerUpdate(tc.generationHash, tc.pclq)
 			assert.Equal(t, tc.expected, result)
 		})
 	}
@@ -263,7 +228,8 @@ func TestProcessUpdateInitializesProgressWithoutActivePCSUpdate(t *testing.T) {
 		UpdatedReplicas:                   1,
 	}
 
-	fakeClient := testutils.SetupFakeClient(pcs, pclq)
+	revision := testutils.NewPodCliqueSetControllerRevision(pcs, testutils.ComputePodCliqueTemplateHashes(pcs))
+	fakeClient := testutils.SetupFakeClient(pcs, pclq, revision)
 	reconciler := &Reconciler{client: fakeClient}
 
 	result := reconciler.processUpdate(context.Background(), logr.Discard(), pclq)
@@ -408,7 +374,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 			fakeClient := testutils.SetupFakeClient(pcs, pclq)
 			reconciler := &Reconciler{client: fakeClient}
 
-			err := reconciler.initOrResetUpdate(context.Background(), pcs, pclq)
+			err := reconciler.initOrResetUpdate(context.Background(), pcs, pclq, *pcs.Status.CurrentGenerationHash, "new-pod-template-hash")
 			require.NoError(t, err, "initOrResetUpdate should not return errors")
 
 			// Fetch the updated PCLQ from the fake client
