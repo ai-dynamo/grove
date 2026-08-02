@@ -1,0 +1,71 @@
+{
+  "testName": "ScaleUp_FromZero",
+  "runID": "run-20260802-052703",
+  "namespace": "default",
+  "pcsCount": 1,
+  "groveImage": "registry:5001/grove-operator:E2E_TESTS@sha256:5d8e5860a0a40ac24c25cd9199ae38a21f16ae1c935ea8b5f21287d1de85b45a",
+  "phases": [
+    {
+      "name": "operator-baseline",
+      "startTime": "2026-08-02T05:27:03.433920085Z",
+      "endTime": "2026-08-02T05:27:03.43761391Z",
+      "durationFromTestStartSeconds": 0.000045506,
+      "milestones": []
+    },
+    {
+      "name": "deploy",
+      "startTime": "2026-08-02T05:27:03.437643916Z",
+      "endTime": "2026-08-02T05:27:03.448396499Z",
+      "durationFromTestStartSeconds": 0.003769336,
+      "milestones": []
+    },
+    {
+      "name": "scale-up",
+      "startTime": "2026-08-02T05:27:03.448468785Z",
+      "endTime": "2026-08-02T05:28:12.929751156Z",
+      "durationFromTestStartSeconds": 0.014594225,
+      "milestones": [
+        {
+          "name": "all-pods-created",
+          "timestamp": "2026-08-02T05:27:38.854917636Z",
+          "durationFromPhaseStartSeconds": 35.406448851
+        },
+        {
+          "name": "all-pods-ready",
+          "timestamp": "2026-08-02T05:28:12.929692336Z",
+          "durationFromPhaseStartSeconds": 69.481223551
+        }
+      ]
+    },
+    {
+      "name": "final-check",
+      "startTime": "2026-08-02T05:28:12.929787043Z",
+      "endTime": "2026-08-02T05:28:23.326945803Z",
+      "durationFromTestStartSeconds": 69.495912463,
+      "milestones": []
+    },
+    {
+      "name": "delete",
+      "startTime": "2026-08-02T05:28:23.326979977Z",
+      "endTime": "2026-08-02T05:28:23.43715868Z",
+      "durationFromTestStartSeconds": 79.893105397,
+      "milestones": [
+        {
+          "name": "pcs-deleted",
+          "timestamp": "2026-08-02T05:28:23.437108135Z",
+          "durationFromPhaseStartSeconds": 0.110128158
+        }
+      ]
+    }
+  ],
+  "testDurationSeconds": 80.003300761,
+  "k8sClient": {
+    "qps": 100,
+    "burst": 150
+  },
+  "controllerMaxReconcile": {
+    "podCliqueSet": 20,
+    "podCliqueScalingGroup": 20,
+    "podClique": 20
+  }
+}
