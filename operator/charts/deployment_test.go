@@ -23,6 +23,7 @@ import (
 	"helm.sh/helm/v3/pkg/chartutil"
 	"helm.sh/helm/v3/pkg/engine"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/yaml"
 )
 
@@ -73,6 +74,36 @@ func TestOperatorHealthProbes(t *testing.T) {
 			require.NotNil(t, container.ReadinessProbe.HTTPGet)
 			assert.Equal(t, "/readyz", container.ReadinessProbe.HTTPGet.Path)
 			assert.EqualValues(t, 9444, container.ReadinessProbe.HTTPGet.Port.IntVal)
+		})
+	}
+}
+
+func TestOperatorImagePullSecrets(t *testing.T) {
+	tests := []struct {
+		name   string
+		values map[string]interface{}
+		want   []corev1.LocalObjectReference
+	}{
+		{
+			name:   "none by default",
+			values: nil,
+			want:   nil,
+		},
+		{
+			name: "set from values",
+			values: map[string]interface{}{
+				"imagePullSecrets": []interface{}{
+					map[string]interface{}{"name": "registry-creds"},
+				},
+			},
+			want: []corev1.LocalObjectReference{{Name: "registry-creds"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deployment := renderOperatorDeployment(t, tt.values)
+			assert.Equal(t, tt.want, deployment.Spec.Template.Spec.ImagePullSecrets)
 		})
 	}
 }

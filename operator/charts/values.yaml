@@ -12,6 +12,11 @@ image:
   # This sets the pull policy for images.
   pullPolicy: IfNotPresent
 
+# imagePullSecrets is an optional list of references to Secrets in the release
+# namespace used to pull the operator (and crd-installer init container) images.
+# Set this when the images are hosted in a private registry.
+imagePullSecrets: []
+
 resources:
   limits:
     memory: 1Gi
