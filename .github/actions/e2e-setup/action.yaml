@@ -33,7 +33,7 @@ runs:
         sudo apt-get install -y build-essential
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
       with:
         go-version: ${{ inputs.go-version }}
         cache: true
@@ -49,7 +49,7 @@ runs:
         echo "${GITHUB_WORKSPACE}/hack/tools/bin" >> "$GITHUB_PATH"
 
     - name: Cache e2e CLI tools
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: hack/tools/bin
         key: ${{ runner.os }}-${{ runner.arch }}-e2e-tools-${{ hashFiles('hack/tools.mk') }}

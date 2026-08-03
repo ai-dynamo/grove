@@ -136,10 +136,7 @@ func Test_RU9_RollingUpdateAllPodCliques(t *testing.T) {
 		}
 	}
 
-	tcLongTimeout := *tc
-	// RU-9 can exceed the default 4 minute poll timeout on smaller GitHub-hosted runners.
-	tcLongTimeout.Timeout = 6 * time.Minute
-	if err := waitForRollingUpdateComplete(&tcLongTimeout, 1); err != nil {
+	if err := waitForRollingUpdateComplete(tc, 1); err != nil {
 		t.Fatalf("Failed to wait for rolling update to complete: %v", err)
 	}
 

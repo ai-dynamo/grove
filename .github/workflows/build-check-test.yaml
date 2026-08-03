@@ -39,8 +39,8 @@ jobs:
     outputs:
       e2e-relevant: ${{ steps.filter.outputs.e2e-relevant }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.3
         id: filter
         with:
           filters: |
@@ -52,9 +52,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@7b8cf10d4e4a01d4992d18a89f4d7dc5a3e6d6f4 # v4.3.0
         with:
           go-version: "1.26.3"
           cache: true
@@ -70,9 +70,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@7b8cf10d4e4a01d4992d18a89f4d7dc5a3e6d6f4 # v4.3.0
         with:
           go-version: "1.26.3"
           cache: true
@@ -84,9 +84,9 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@7b8cf10d4e4a01d4992d18a89f4d7dc5a3e6d6f4 # v4.3.0
         with:
           go-version: "1.26.3"
           cache: true
@@ -109,7 +109,9 @@ jobs:
       github.event_name == 'pull_request' &&
       needs.changes.outputs.e2e-relevant == 'true' &&
       (github.event.pull_request.draft == false || contains(github.event.pull_request.labels.*.name, 'run-e2e'))
-    runs-on: ubuntu-24.04
+    # NVIDIA manages this self-hosted runner in the Velonix repository.
+    # It provides dedicated DinD capacity; e2e-setup owns tool versions.
+    runs-on: prod-grove-e2e-v1
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -146,7 +148,7 @@ jobs:
           echo "RAM: $(free -h | awk '/^Mem:/ {print $2}')"
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Pull registry image from GHCR to avoid Docker Hub rate limits
         run: |
@@ -174,7 +176,7 @@ jobs:
       # Uses 'warn' since this only runs on failure and missing files indicates a problem.
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: e2e-test-logs-${{ matrix.test_name }}
           path: operator/e2e-diagnostics/
