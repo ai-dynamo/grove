@@ -16,7 +16,6 @@ package podcliqueset
 
 import (
 	"context"
-	"sync"
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
@@ -36,12 +35,15 @@ import (
 
 // Reconciler reconciles PodCliqueSet resources.
 type Reconciler struct {
-	config                        configv1alpha1.PodCliqueSetControllerConfiguration
-	tasConfig                     configv1alpha1.TopologyAwareSchedulingConfiguration
-	client                        ctrlclient.Client
-	reconcileStatusRecorder       ctrlcommon.ReconcileErrorRecorder
-	operatorRegistry              component.OperatorRegistry[grovecorev1alpha1.PodCliqueSet]
-	pcsGenerationHashExpectations sync.Map
+	config    configv1alpha1.PodCliqueSetControllerConfiguration
+	tasConfig configv1alpha1.TopologyAwareSchedulingConfiguration
+	client    ctrlclient.Client
+	// apiReader reads straight from the apiserver, bypassing the informer cache. It is used only to
+	// fetch the PodCliqueSet being reconciled. See the Reconcile godoc for why that read cannot be
+	// served from the cache.
+	apiReader               ctrlclient.Reader
+	reconcileStatusRecorder ctrlcommon.ReconcileErrorRecorder
+	operatorRegistry        component.OperatorRegistry[grovecorev1alpha1.PodCliqueSet]
 }
 
 // NewReconciler creates a new reconciler for PodCliqueSet.
@@ -49,21 +51,33 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueSetCo
 	eventRecorder := mgr.GetEventRecorderFor(controllerName)
 	client := mgr.GetClient()
 	return &Reconciler{
-		config:                        controllerCfg,
-		tasConfig:                     topologyAwareSchedulingConfig,
-		client:                        client,
-		reconcileStatusRecorder:       ctrlcommon.NewReconcileErrorRecorder(client),
-		operatorRegistry:              pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, schedRegistry),
-		pcsGenerationHashExpectations: sync.Map{},
+		config:                  controllerCfg,
+		tasConfig:               topologyAwareSchedulingConfig,
+		client:                  client,
+		apiReader:               mgr.GetAPIReader(),
+		reconcileStatusRecorder: ctrlcommon.NewReconcileErrorRecorder(client),
+		operatorRegistry:        pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, schedRegistry),
 	}
 }
 
 // Reconcile reconciles a PodCliqueSet resource.
+//
+// The PodCliqueSet itself is read through apiReader rather than the informer cache. reconcileStatus
+// skips its write when the recomputed status equals the status this object was loaded with, treating
+// that as "already persisted". A cached read makes that claim unsound: the cache can still be serving
+// a copy from before a write this controller already made, so the recomputed status can match a stale
+// baseline and the skip drops a write the apiserver still needs. Nothing recovers from that - a PCS
+// status write does not change the generation, so it does not pass podCliqueSetPredicate and never
+// re-enqueues, and once the children go quiet no other event arrives either. Reading the object live
+// makes the baseline authoritative by construction, which is what the skip assumes.
+//
+// Child PodClique, PodCliqueScalingGroup and Pod reads stay cache-backed; they are level-triggered by
+// their own watches and a stale child read is corrected by the next event.
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := ctrllogger.FromContext(ctx).WithName(controllerName)
 
 	pcs := &grovecorev1alpha1.PodCliqueSet{}
-	if result := ctrlutils.GetPodCliqueSet(ctx, r.client, logger, req.NamespacedName, pcs); ctrlcommon.ShortCircuitReconcileFlow(result) {
+	if result := ctrlutils.GetPodCliqueSet(ctx, r.apiReader, logger, req.NamespacedName, pcs); ctrlcommon.ShortCircuitReconcileFlow(result) {
 		return result.Result()
 	}
 

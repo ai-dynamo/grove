@@ -37,8 +37,12 @@ import (
 
 // Reconciler reconciles PodClique objects.
 type Reconciler struct {
-	config                  configv1alpha1.PodCliqueControllerConfiguration
-	client                  ctrlclient.Client
+	config configv1alpha1.PodCliqueControllerConfiguration
+	client ctrlclient.Client
+	// apiReader reads straight from the apiserver, bypassing the informer cache. It is used only to
+	// fetch the PodClique being reconciled. See the Reconcile godoc for why that read cannot be
+	// served from the cache.
+	apiReader               ctrlclient.Reader
 	eventRecorder           record.EventRecorder
 	reconcileStatusRecorder ctrlcommon.ReconcileErrorRecorder
 	expectationsStore       *expect.ExpectationsStore
@@ -52,6 +56,7 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueContr
 	return &Reconciler{
 		config:                  controllerCfg,
 		client:                  mgr.GetClient(),
+		apiReader:               mgr.GetAPIReader(),
 		eventRecorder:           eventRecorder,
 		reconcileStatusRecorder: ctrlcommon.NewReconcileErrorRecorder(mgr.GetClient()),
 		expectationsStore:       expectationsStore,
@@ -60,6 +65,19 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueContr
 }
 
 // Reconcile reconciles the `PodClique` resource.
+//
+// The PodClique itself is read through apiReader rather than the informer cache. reconcileStatus
+// skips its write when the recomputed status equals the status this object was loaded with, treating
+// that as "already persisted". A cached read makes that claim unsound: the cache can still be serving
+// a copy from before a write this controller already made, so the recomputed status can match a stale
+// baseline and the skip drops a write the apiserver still needs. Nothing recovers from that - a status
+// write does not change the generation, so it is filtered by this controller's own
+// GenerationChangedPredicate and never re-enqueues, and once the Pods go quiet no other event arrives
+// either. Reading the object live makes the baseline authoritative by construction, which is what the
+// skip assumes.
+//
+// Child Pod reads and the parent PodCliqueSet lookup stay cache-backed; they are level-triggered by
+// their own watches and a stale read of them is corrected by the next event.
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := ctrllogger.FromContext(ctx).WithName(controllerName)
 
@@ -70,7 +88,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	ctx = componentutils.WithPodCliqueSetCache(ctx)
 
 	pclq := &grovecorev1alpha1.PodClique{}
-	if result := ctrlutils.GetPodClique(ctx, r.client, logger, req.NamespacedName, pclq, true); ctrlcommon.ShortCircuitReconcileFlow(result) {
+	if result := ctrlutils.GetPodClique(ctx, r.apiReader, logger, req.NamespacedName, pclq, true); ctrlcommon.ShortCircuitReconcileFlow(result) {
 		return result.Result()
 	}
 

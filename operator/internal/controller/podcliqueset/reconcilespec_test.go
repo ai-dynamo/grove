@@ -16,7 +16,6 @@ package podcliqueset
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -264,15 +263,11 @@ func TestInitUpdateProgress(t *testing.T) {
 			pcs := tt.setupPCS()
 
 			fakeClient := testutils.SetupFakeClient(pcs)
-			reconciler := &Reconciler{
-				client:                        fakeClient,
-				pcsGenerationHashExpectations: sync.Map{},
-			}
+			reconciler := &Reconciler{client: fakeClient}
 
 			newGenerationHash := "new-hash"
-			pcsObjectName := pcs.Namespace + "/" + pcs.Name
 
-			err := reconciler.initUpdateProgress(context.Background(), pcs, pcsObjectName, newGenerationHash)
+			err := reconciler.initUpdateProgress(context.Background(), pcs, newGenerationHash)
 			require.NoError(t, err, "initUpdateProgress should not return errors")
 
 			// Fetch the updated PCS from the fake client

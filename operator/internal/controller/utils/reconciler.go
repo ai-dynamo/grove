@@ -31,8 +31,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// GetPodCliqueSet gets the latest PodCliqueSet object. It will usually hit the informer cache. If the object is not found, it will log a message and return DoNotRequeue.
-func GetPodCliqueSet(ctx context.Context, cl client.Client, logger logr.Logger, objectKey client.ObjectKey, pcs *v1alpha1.PodCliqueSet) grovectrl.ReconcileStepResult {
+// GetPodCliqueSet gets the latest PodCliqueSet object from the given reader. If the object is not found, it will log a message and return DoNotRequeue.
+func GetPodCliqueSet(ctx context.Context, cl client.Reader, logger logr.Logger, objectKey client.ObjectKey, pcs *v1alpha1.PodCliqueSet) grovectrl.ReconcileStepResult {
 	if err := cl.Get(ctx, objectKey, pcs); err != nil {
 		if apierrors.IsNotFound(err) {
 			logger.Info("PodCliqueSet not found", "objectKey", objectKey)
@@ -43,8 +43,8 @@ func GetPodCliqueSet(ctx context.Context, cl client.Client, logger logr.Logger, 
 	return grovectrl.ContinueReconcile()
 }
 
-// GetPodClique gets the latest PodClique object. It will usually hit the informer cache. If the object is not found, it will log a message and return DoNotRequeue.
-func GetPodClique(ctx context.Context, cl client.Client, logger logr.Logger, objectKey client.ObjectKey, pclq *v1alpha1.PodClique, ignoreNotFound bool) grovectrl.ReconcileStepResult {
+// GetPodClique gets the latest PodClique object from the given reader. If the object is not found, it will log a message and return DoNotRequeue.
+func GetPodClique(ctx context.Context, cl client.Reader, logger logr.Logger, objectKey client.ObjectKey, pclq *v1alpha1.PodClique, ignoreNotFound bool) grovectrl.ReconcileStepResult {
 	if err := cl.Get(ctx, objectKey, pclq); err != nil {
 		if ignoreNotFound && apierrors.IsNotFound(err) {
 			logger.V(1).Info("PodClique not found", "objectKey", objectKey)
@@ -55,8 +55,8 @@ func GetPodClique(ctx context.Context, cl client.Client, logger logr.Logger, obj
 	return grovectrl.ContinueReconcile()
 }
 
-// GetPodCliqueScalingGroup gets the latest PodCliqueScalingGroup object. It will usually hit the informer cache. If the object is not found, it will log a message and return DoNotRequeue.
-func GetPodCliqueScalingGroup(ctx context.Context, cl client.Client, logger logr.Logger, objectKey client.ObjectKey, pcsg *v1alpha1.PodCliqueScalingGroup) grovectrl.ReconcileStepResult {
+// GetPodCliqueScalingGroup gets the latest PodCliqueScalingGroup object from the given reader. If the object is not found, it will log a message and return DoNotRequeue.
+func GetPodCliqueScalingGroup(ctx context.Context, cl client.Reader, logger logr.Logger, objectKey client.ObjectKey, pcsg *v1alpha1.PodCliqueScalingGroup) grovectrl.ReconcileStepResult {
 	if err := cl.Get(ctx, objectKey, pcsg); err != nil {
 		if apierrors.IsNotFound(err) {
 			logger.Info("PodCliqueScalingGroup not found")
