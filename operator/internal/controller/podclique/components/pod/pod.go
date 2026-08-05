@@ -63,6 +63,7 @@ const (
 	errCodeBuildPodResource                    grovecorev1alpha1.ErrorCode = "ERR_BUILD_POD_RESOURCE"
 	errCodeMissingPodCliqueTemplate            grovecorev1alpha1.ErrorCode = "ERR_MISSING_PODCLIQUE_TEMPLATE"
 	errCodeGetPodCliqueTemplate                grovecorev1alpha1.ErrorCode = "ERR_GET_PODCLIQUE_TEMPLATE"
+	errCodeGetPCSGPodIndex                     grovecorev1alpha1.ErrorCode = "ERR_GET_PCSG_POD_INDEX"
 	errCodeUpdatePodCliqueStatus               grovecorev1alpha1.ErrorCode = "ERR_UPDATE_PODCLIQUE_STATUS"
 	errCodeLabelPod                            grovecorev1alpha1.ErrorCode = "ERR_LABEL_POD"
 	errCodeRegisterExpectationsIndexers        grovecorev1alpha1.ErrorCode = "ERR_REGISTER_EXPECTATIONS_INDEXERS"
@@ -201,8 +202,17 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 		)
 	}
 
+	pcsgPodIndex, err := getPCSGPodIndex(pclq, podIndex)
+	if err != nil {
+		return groveerr.WrapError(err,
+			errCodeGetPCSGPodIndex,
+			component.OperationSync,
+			fmt.Sprintf("error computing PodCliqueScalingGroup pod index for PodClique %v", client.ObjectKeyFromObject(pclq)),
+		)
+	}
+
 	// Add GROVE specific Pod environment variables
-	addEnvironmentVariables(pod, pclq, pcsName, pcsReplicaIndex)
+	addEnvironmentVariables(pod, pclq, pcsName, pcsReplicaIndex, pcsgPodIndex)
 	// Configure hostname and subdomain for service discovery
 	configurePodHostname(pcsName, pcsReplicaIndex, pclq.Name, pod, podIndex)
 	// Inject all ResourceClaim refs (PCS, PCSG, PCLQ) at every scope into the pod
@@ -214,6 +224,25 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 		return configurePodInitContainer(pcs, pclq, pod)
 	}
 	return nil
+}
+
+// getPCSGPodIndex returns the pod's zero-based index within its PodCliqueScalingGroup replica.
+// Standalone PodCliques return nil because they have no group-wide index.
+func getPCSGPodIndex(pclq *grovecorev1alpha1.PodClique, podIndex int) (*int, error) {
+	if pclq.Labels[apicommon.LabelPodCliqueScalingGroup] == "" {
+		return nil, nil
+	}
+
+	offsetValue, ok := pclq.Labels[apicommon.LabelPodCliqueScalingGroupPodIndexOffset]
+	if !ok {
+		return nil, fmt.Errorf("PodClique is missing required label %q", apicommon.LabelPodCliqueScalingGroupPodIndexOffset)
+	}
+	offset, err := strconv.Atoi(offsetValue)
+	if err != nil {
+		return nil, fmt.Errorf("PodClique has invalid %s value %q: %w", apicommon.LabelPodCliqueScalingGroupPodIndexOffset, offsetValue, err)
+	}
+	index := offset + podIndex
+	return &index, nil
 }
 
 // injectAllResourceClaimRefs is the single consolidated injection point for all
@@ -339,7 +368,7 @@ func getLabels(pclqObjectMeta metav1.ObjectMeta, pcsName, podGangName string, pc
 }
 
 // addEnvironmentVariables adds Grove-specific environment variables to all containers and init-containers.
-func addEnvironmentVariables(pod *corev1.Pod, pclq *grovecorev1alpha1.PodClique, pcsName string, pcsReplicaIndex int) {
+func addEnvironmentVariables(pod *corev1.Pod, pclq *grovecorev1alpha1.PodClique, pcsName string, pcsReplicaIndex int, pcsgPodIndex *int) {
 	groveEnvVars := []corev1.EnvVar{
 		{
 			Name:  constants.EnvVarPodCliqueSetName,
@@ -367,6 +396,12 @@ func addEnvironmentVariables(pod *corev1.Pod, pclq *grovecorev1alpha1.PodClique,
 				},
 			},
 		},
+	}
+	if pcsgPodIndex != nil {
+		groveEnvVars = append(groveEnvVars, corev1.EnvVar{
+			Name:  constants.EnvVarPodCliqueScalingGroupPodIndex,
+			Value: strconv.Itoa(*pcsgPodIndex),
+		})
 	}
 	componentutils.PrependEnvVarsToContainers(pod.Spec.Containers, groveEnvVars)
 	componentutils.PrependEnvVarsToContainers(pod.Spec.InitContainers, groveEnvVars)

@@ -218,6 +218,7 @@ func TestAddEnvironmentVariables(t *testing.T) {
 	tests := []struct {
 		name              string
 		pclq              *grovecorev1alpha1.PodClique
+		pcsgPodIndex      *int
 		expectedEnvVars   []string
 		unexpectedEnvVars []string
 	}{
@@ -268,12 +269,14 @@ func TestAddEnvironmentVariables(t *testing.T) {
 					},
 				},
 			},
+			pcsgPodIndex: ptr.To(2),
 			expectedEnvVars: []string{
 				constants.EnvVarPodCliqueSetName,
 				constants.EnvVarPodCliqueSetIndex,
 				constants.EnvVarPodCliqueName,
 				constants.EnvVarHeadlessService,
 				constants.EnvVarPodIndex,
+				constants.EnvVarPodCliqueScalingGroupPodIndex,
 			},
 		},
 	}
@@ -284,7 +287,7 @@ func TestAddEnvironmentVariables(t *testing.T) {
 				Spec: tt.pclq.Spec.PodSpec,
 			}
 
-			addEnvironmentVariables(pod, tt.pclq, "test-pcs", 0)
+			addEnvironmentVariables(pod, tt.pclq, "test-pcs", 0, tt.pcsgPodIndex)
 
 			// Check that all containers have the expected environment variables
 			for _, container := range pod.Spec.Containers {
@@ -308,6 +311,72 @@ func TestAddEnvironmentVariables(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGetPCSGPodIndex(t *testing.T) {
+	t.Run("PCSG member", func(t *testing.T) {
+		pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
+			Name: "test-pcs-0-engine-0-worker",
+			Labels: map[string]string{
+				common.LabelPodCliqueScalingGroup:               "test-pcs-0-engine",
+				common.LabelPodCliqueScalingGroupReplicaIndex:   "0",
+				common.LabelPodCliqueScalingGroupPodIndexOffset: "1",
+			},
+		}}
+
+		index, err := getPCSGPodIndex(pclq, 1)
+
+		require.NoError(t, err)
+		require.NotNil(t, index)
+		assert.Equal(t, 2, *index)
+	})
+
+	t.Run("standalone PodClique", func(t *testing.T) {
+		index, err := getPCSGPodIndex(&grovecorev1alpha1.PodClique{}, 0)
+
+		require.NoError(t, err)
+		assert.Nil(t, index)
+	})
+
+	t.Run("PCSG member without offset", func(t *testing.T) {
+		pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{
+			common.LabelPodCliqueScalingGroup: "test-pcs-0-engine",
+		}}}
+
+		index, err := getPCSGPodIndex(pclq, 0)
+
+		assert.Error(t, err)
+		assert.Nil(t, index)
+	})
+}
+
+func TestPCSGPodIndexPrecedesDerivedRank(t *testing.T) {
+	pclq := &grovecorev1alpha1.PodClique{Spec: grovecorev1alpha1.PodCliqueSpec{PodSpec: corev1.PodSpec{
+		Containers: []corev1.Container{{
+			Name: "engine",
+			Env: []corev1.EnvVar{{
+				Name:  "DYNAMO_RANK",
+				Value: "$(GROVE_PCSG_POD_INDEX)",
+			}},
+		}},
+	}}}
+	pod := &corev1.Pod{Spec: *pclq.Spec.PodSpec.DeepCopy()}
+
+	addEnvironmentVariables(pod, pclq, "test-pcs", 0, ptr.To(2))
+
+	pcsgPodIndexPosition, dynamoRankPosition := -1, -1
+	for i, envVar := range pod.Spec.Containers[0].Env {
+		switch envVar.Name {
+		case constants.EnvVarPodCliqueScalingGroupPodIndex:
+			pcsgPodIndexPosition = i
+		case "DYNAMO_RANK":
+			dynamoRankPosition = i
+			assert.Equal(t, "$(GROVE_PCSG_POD_INDEX)", envVar.Value)
+		}
+	}
+	require.NotEqual(t, -1, pcsgPodIndexPosition)
+	require.NotEqual(t, -1, dynamoRankPosition)
+	assert.Less(t, pcsgPodIndexPosition, dynamoRankPosition)
 }
 
 func TestAddGroveEnvironmentVariables_NoDuplicates(t *testing.T) {
@@ -467,7 +536,7 @@ func TestAddGroveEnvironmentVariables_NoDuplicates(t *testing.T) {
 				Spec: tt.pclq.Spec.PodSpec,
 			}
 
-			addEnvironmentVariables(pod, tt.pclq, "test-pcs", 0)
+			addEnvironmentVariables(pod, tt.pclq, "test-pcs", 0, nil)
 
 			expectedPrefix := []string{
 				constants.EnvVarPodCliqueSetName,
@@ -511,7 +580,7 @@ func TestAddGroveEnvironmentVariables_EmptyContainers(t *testing.T) {
 	}
 
 	// Should not panic with empty containers
-	addEnvironmentVariables(pod, pclq, "test-pcs", 0)
+	addEnvironmentVariables(pod, pclq, "test-pcs", 0, nil)
 	assert.Empty(t, pod.Spec.Containers)
 }
 
@@ -540,7 +609,7 @@ func TestAddGroveEnvironmentVariables_MultipleContainers(t *testing.T) {
 		},
 	}
 
-	addEnvironmentVariables(pod, pclq, "test-pcs", 0)
+	addEnvironmentVariables(pod, pclq, "test-pcs", 0, nil)
 
 	// Both containers should have Grove environment variables
 	expectedEnvVars := []string{
