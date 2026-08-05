@@ -16,6 +16,7 @@ package utils
 
 import (
 	"context"
+	"fmt"
 	"slices"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -37,6 +38,24 @@ func FindScalingGroupConfigForClique(scalingGroupConfigs []grovecorev1alpha1.Pod
 		return nil
 	}
 	return &pcsgConfig
+}
+
+// GetPCSGPodIndexOffset returns the first zero-based pod index assigned to a PodClique within one
+// PodCliqueScalingGroup replica. Member PodCliques are flattened in cliqueNames order.
+func GetPCSGPodIndexOffset(pcs *grovecorev1alpha1.PodCliqueSet, cliqueNames []string, cliqueName string) (int, error) {
+	pcsgPodIndexOffset := 0
+	for _, memberCliqueName := range cliqueNames {
+		if memberCliqueName == cliqueName {
+			return pcsgPodIndexOffset, nil
+		}
+
+		pclqTemplateSpec := FindPodCliqueTemplateSpecByName(pcs, memberCliqueName)
+		if pclqTemplateSpec == nil {
+			return 0, fmt.Errorf("PodClique template %q not found in PodCliqueSet %q", memberCliqueName, pcs.Name)
+		}
+		pcsgPodIndexOffset += int(pclqTemplateSpec.Spec.Replicas)
+	}
+	return 0, fmt.Errorf("PodClique %q is not a member of the PodCliqueScalingGroup", cliqueName)
 }
 
 // GetPCSGsForPCS fetches all PodCliqueScalingGroups for a PodCliqueSet.
