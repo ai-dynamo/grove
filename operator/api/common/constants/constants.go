@@ -67,6 +67,8 @@ const (
 	EnvVarPodCliqueScalingGroupName = "GROVE_PCSG_NAME"
 	// EnvVarPodCliqueScalingGroupIndex is the environment variable name for PodCliqueScalingGroup replica index
 	EnvVarPodCliqueScalingGroupIndex = "GROVE_PCSG_INDEX"
+	// EnvVarPodCliqueScalingGroupPodIndex is the environment variable name for pod index within a PodCliqueScalingGroup replica
+	EnvVarPodCliqueScalingGroupPodIndex = "GROVE_PCSG_POD_INDEX"
 	// EnvVarPodCliqueScalingGroupTemplateNumPods is the environment variable name for total number of pods in PodCliqueScalingGroup template
 	EnvVarPodCliqueScalingGroupTemplateNumPods = "GROVE_PCSG_TEMPLATE_NUM_PODS"
 )

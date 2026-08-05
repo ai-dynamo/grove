@@ -307,6 +307,7 @@ func (r _resource) buildResource(logger logr.Logger, ss *syncSnapshot, pcsgRepli
 	// Add finalizer at creation so PCLQ controller does not need a separate PATCH on first reconcile.
 	controllerutil.AddFinalizer(pclq, apiconstants.FinalizerPodClique)
 
+	currentPCSGPodIndexOffset := pclq.Labels[apicommon.LabelPodCliqueScalingGroupPodIndexOffset]
 	rnr := apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}
 	podGangName, err := resolvePodGangName(ss.pgm, rnr, pcsg, int32(pcsgReplicaIndex))
 	if err != nil {
@@ -333,6 +334,21 @@ func (r _resource) buildResource(logger logr.Logger, ss *syncSnapshot, pcsgRepli
 	}
 	pcsgTemplateNumPods := r.getPCSGTemplateNumPods(pcs, pcsg)
 	r.addEnvironmentVariablesToPodContainerSpecs(pclq, pcsgTemplateNumPods)
+	pcsgPodIndexOffset, err := componentutils.GetPCSGPodIndexOffset(pcs, pcsg.Spec.CliqueNames, pclqTemplateSpec.Name)
+	if err != nil {
+		return groveerr.WrapError(err,
+			errCodeBuildPodClique,
+			component.OperationSync,
+			fmt.Sprintf("Error computing PodCliqueScalingGroup pod index offset for PodClique: %v", pclqObjectKey),
+		)
+	}
+	if pclqExists && currentPCSGPodIndexOffset != "" {
+		currentOffset, parseErr := strconv.Atoi(currentPCSGPodIndexOffset)
+		if parseErr == nil && currentOffset >= 0 {
+			pcsgPodIndexOffset = currentOffset
+		}
+	}
+	pclq.Labels[apicommon.LabelPodCliqueScalingGroupPodIndexOffset] = strconv.Itoa(pcsgPodIndexOffset)
 	dependentPCLQNames, err := identifyFullyQualifiedStartupDependencyNames(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex, pclq, foundAtIndex)
 	if err != nil {
 		return err

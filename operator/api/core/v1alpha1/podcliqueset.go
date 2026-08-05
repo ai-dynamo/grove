@@ -355,7 +355,8 @@ type PodCliqueScalingGroupConfig struct {
 	// Name is the name of the PodCliqueScalingGroupConfig. This should be unique within the PodCliqueSet.
 	// It allows consumers to give a semantic name to a group of PodCliques that needs to be scaled together.
 	Name string `json:"name"`
-	// CliqueNames is the list of names of the PodClique's that are part of the scaling group.
+	// CliqueNames is the ordered list of PodClique names that are part of the scaling group.
+	// The order determines the group-wide pod indices exposed through GROVE_PCSG_POD_INDEX.
 	CliqueNames []string `json:"cliqueNames"`
 	// Annotations is an unstructured key value map stored with a resource that may be
 	// set by external tools to store and retrieve arbitrary metadata. They are not
