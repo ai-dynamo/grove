@@ -465,6 +465,7 @@ func TestAddGroveEnvironmentVariables_NoDuplicates(t *testing.T) {
 				assertExpectedEnvVars(t, container, tt.expectedEnvVars)
 				assertReplacedEnvVars(t, container, tt.shouldReplace)
 				assertPreservedEnvVars(t, container, tt.shouldPreserve)
+				assertNoDuplicateEnvVars(t, container)
 			}
 		})
 	}
