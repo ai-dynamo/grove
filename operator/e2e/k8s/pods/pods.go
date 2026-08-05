@@ -223,7 +223,7 @@ func VerifyPhases(pods *v1.PodList, expectedRunning, expectedPending int) error 
 }
 
 // WaitForFailedPod polls until a pod matching the label selector is found that is NOT Ready
-// and has a terminated or restarted container. Returns the failed pod.
+// and has a container that terminated with a nonzero exit code. Returns the failed pod.
 func (pm *PodManager) WaitForFailedPod(ctx context.Context, namespace, labelSelector string, timeout, interval time.Duration) (*v1.Pod, error) {
 	fetchFailedPod := waiter.FetchFunc[*v1.Pod](func(ctx context.Context) (*v1.Pod, error) {
 		podList, err := pm.List(ctx, namespace, labelSelector)
@@ -236,9 +236,8 @@ func (pm *PodManager) WaitForFailedPod(ctx context.Context, namespace, labelSele
 				continue
 			}
 			for _, status := range pod.Status.ContainerStatuses {
-				if status.State.Terminated != nil ||
-					status.LastTerminationState.Terminated != nil ||
-					status.RestartCount > 0 {
+				if status.State.Terminated != nil && status.State.Terminated.ExitCode != 0 ||
+					status.LastTerminationState.Terminated != nil && status.LastTerminationState.Terminated.ExitCode != 0 {
 					return pod, nil
 				}
 			}
