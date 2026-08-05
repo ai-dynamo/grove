@@ -97,6 +97,8 @@ jobs:
   # Matrix entries can set:
   #   test_name     (required) - name shown in the GitHub Actions UI
   #   test_pattern  (optional) - Go test -run pattern (standard e2e tests)
+  #   create_flags  (optional) - extra flags appended to E2E_CREATE_FLAGS;
+  #                              empty string means "use the base e2e.yaml preset (KAI)"
   #   make_target   (optional) - Makefile target, defaults to run-e2e-full
   e2e:
     needs: [test, build, check, changes]
@@ -113,28 +115,52 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # --- kai-scheduler (primary backend: agnostic + sensitive + KAI-supported capabilities) ---
           - test_name: gang_scheduling
             test_pattern: "^Test_GS"
+            create_flags: ""
           - test_name: gang_termination
             test_pattern: "^Test_GT"
+            create_flags: ""
           - test_name: rolling_updates
             test_pattern: "^Test_RU"
+            create_flags: ""
           - test_name: ondelete_updates
             test_pattern: "^Test_OD"
+            create_flags: ""
           - test_name: startup_ordering
             test_pattern: "^Test_SO"
+            create_flags: ""
             make_target: "run-e2e-real-full"
           - test_name: Topology_Aware_Scheduling
             test_pattern: "^Test_TAS"
+            create_flags: ""
           - test_name: cert_management
             test_pattern: "^Test_CM"
+            create_flags: ""
           - test_name: auto_mnnvl
             test_pattern: "^Test_AutoMNNVL"
+            create_flags: ""
             make_target: "run-e2e-mnnvl-full"
           - test_name: crd_installer
             test_pattern: "^Test_CRD_Installer"
+            create_flags: ""
           - test_name: resource_sharing
             test_pattern: "^Test_RS"
+            create_flags: ""
+
+          # --- default-scheduler (sensitive tests only; agnostic skipped by policy,
+          #     capability-gated skipped by RequireCapability at runtime) ---
+          - test_name: rolling_updates_default-scheduler
+            test_pattern: "^Test_RU"
+            create_flags: "-f hack/e2e-default-scheduler.yaml"
+          - test_name: ondelete_updates_default-scheduler
+            test_pattern: "^Test_OD"
+            create_flags: "-f hack/e2e-default-scheduler.yaml"
+          - test_name: startup_ordering_default-scheduler
+            test_pattern: "^Test_SO"
+            create_flags: "-f hack/e2e-default-scheduler.yaml"
+            make_target: "run-e2e-real-full"
     name: E2E - ${{ matrix.test_name }}
     steps:
       # print runner specs so we have a record in case of failures
@@ -156,7 +182,7 @@ jobs:
 
       - name: Run e2e tests - ${{ matrix.test_name }}
         run: |
-          make ${{ matrix.make_target || 'run-e2e-full' }} TEST_PATTERN='${{ matrix.test_pattern }}' E2E_CREATE_FLAGS='--dind-memory-mode'
+          make ${{ matrix.make_target || 'run-e2e-full' }} TEST_PATTERN='${{ matrix.test_pattern }}' E2E_CREATE_FLAGS='${{ matrix.create_flags }} --dind-memory-mode'
         working-directory: operator
 
       # The test code handles cleanup via Teardown(), but this step provides
@@ -193,15 +219,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Must mirror the e2e job's matrix.test_name list exactly so required
+          # branch-protection checks resolve the same set of names regardless
+          # of whether E2E ran or was skipped.
           - test_name: gang_scheduling
           - test_name: gang_termination
           - test_name: rolling_updates
+          - test_name: ondelete_updates
           - test_name: startup_ordering
           - test_name: Topology_Aware_Scheduling
           - test_name: cert_management
           - test_name: auto_mnnvl
           - test_name: crd_installer
           - test_name: resource_sharing
+          - test_name: rolling_updates_default-scheduler
+          - test_name: ondelete_updates_default-scheduler
+          - test_name: startup_ordering_default-scheduler
     name: E2E - ${{ matrix.test_name }}
     steps:
       - name: Skip E2E (no relevant changes)

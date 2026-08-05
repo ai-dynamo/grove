@@ -1,0 +1,14 @@
+# E2E preset overlay for the in-tree default-scheduler backend.
+# Layers on top of e2e.yaml; cluster shape and KWOK config are inherited so
+# kai vs default-scheduler comparisons stay fair.
+#
+# Activated via: infra-manager.py setup -f hack/e2e-default-scheduler.yaml
+# (threaded through E2E_CREATE_FLAGS in the CI matrix; see build-check-test.yaml).
+
+scheduler:
+  kai:
+    enabled: false
+
+grove:
+  local:
+    skaffold_profile: e2e-default-scheduler

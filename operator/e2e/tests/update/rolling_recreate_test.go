@@ -306,7 +306,13 @@ func Test_RU11_RollingUpdateWithPCSScaleOut(t *testing.T) {
 
 	tests.Logger.Info("3. Change the specification of pc-a")
 	tcLongTimeout := *tc
-	tcLongTimeout.Timeout = 2 * time.Minute
+	// RU-11 is the tightest scenario: 30 nodes + PCS scale-out (10→30 pods) +
+	// parallel rolling update. With the previous 2-minute budget the client-go
+	// rate limiter (5 QPS / 10 burst) can saturate and produce
+	// "client rate limiter Wait returned an error: context deadline exceeded".
+	// Give this specific test a little extra headroom. The k8sclient default
+	// QPS/burst is also bumped separately to reduce the root cause.
+	tcLongTimeout.Timeout = 3 * time.Minute
 	updateWait := triggerRollingUpdate(&tcLongTimeout, 3, "pc-a")
 
 	tests.Logger.Info("4. Scale out the PCS during the rolling update (in parallel)")

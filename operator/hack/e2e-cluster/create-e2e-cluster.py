@@ -139,7 +139,7 @@ class ClusterConfig(BaseSettings):
     kai_version: str = Field(
         default=DEPENDENCIES["kai_scheduler"]["version"], pattern=r"^v[\d.]+(-[\w.]+)?$"
     )
-    skaffold_profile: str = "topology-test"
+    skaffold_profile: str = "e2e-kai"
     max_retries: int = Field(default=3, ge=1, le=10)
 
     # Constants (not configurable via environment variables)
