@@ -41,12 +41,13 @@ import (
 
 // Client is the unified Kubernetes client for e2e tests.
 // It embeds client.Client for all typed and unstructured operations,
-// and keeps a private clientset for capabilities client.Client lacks
+// and keeps private clients for watch and clientset-only capabilities
 // (log streaming, pod watching).
 type Client struct {
 	client.Client
-	RestConfig *rest.Config
-	clientset  kubernetes.Interface
+	RestConfig  *rest.Config
+	watchClient client.WithWatch
+	clientset   kubernetes.Interface
 }
 
 // schemeBuilder registers all types needed by e2e tests.
@@ -81,7 +82,7 @@ func New(restConfig *rest.Config) (*Client, error) {
 		return nil, fmt.Errorf("build scheme: %w", err)
 	}
 
-	cl, err := client.New(restConfig, client.Options{Scheme: scheme})
+	cl, err := client.NewWithWatch(restConfig, client.Options{Scheme: scheme})
 	if err != nil {
 		return nil, fmt.Errorf("create controller-runtime client: %w", err)
 	}
@@ -92,9 +93,10 @@ func New(restConfig *rest.Config) (*Client, error) {
 	}
 
 	return &Client{
-		Client:     cl,
-		RestConfig: restConfig,
-		clientset:  clientset,
+		Client:      cl,
+		RestConfig:  restConfig,
+		watchClient: cl,
+		clientset:   clientset,
 	}, nil
 }
 
@@ -106,6 +108,11 @@ func (k *Client) GetLogs(namespace, podName string, opts *corev1.PodLogOptions) 
 // WatchPods starts a watch on pods in the given namespace.
 func (k *Client) WatchPods(ctx context.Context, namespace string, opts metav1.ListOptions) (watch.Interface, error) {
 	return k.clientset.CoreV1().Pods(namespace).Watch(ctx, opts)
+}
+
+// Watch starts a typed or unstructured watch using the controller-runtime client.
+func (k *Client) Watch(ctx context.Context, obj client.ObjectList, opts ...client.ListOption) (watch.Interface, error) {
+	return k.watchClient.Watch(ctx, obj, opts...)
 }
 
 // Getter returns a waiter.GetFunc that uses client.Client.Get for the given type and namespace.

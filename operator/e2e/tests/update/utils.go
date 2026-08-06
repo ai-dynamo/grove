@@ -35,6 +35,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/util/retry"
@@ -503,41 +504,78 @@ func waitForRollingUpdate(tc *testctx.TestContext, expectedReplicas int32) <-cha
 	return errCh
 }
 
-// waitForOrdinalUpdating waits for a specific ordinal to start being updated during rolling update.
-// Uses tc.Workload.Name as the PCS name and tc.Timeout for the timeout (use a modified tc if a different timeout is needed).
-func waitForOrdinalUpdating(tc *testctx.TestContext, ordinal int32) error {
+// ordinalUpdateObserver watches a PodCliqueSet for a specific ordinal entering
+// CurrentlyUpdating. The watch must be established before triggering the update
+// so a short-lived transition cannot occur between observations.
+type ordinalUpdateObserver struct {
+	ctx     context.Context
+	cancel  context.CancelFunc
+	watcher watch.Interface
+	pcsName string
+	ordinal int32
+}
+
+func newOrdinalUpdateObserver(tc *testctx.TestContext, ordinal int32) (*ordinalUpdateObserver, error) {
 	pcsName := tc.Workload.Name
+	timeoutCtx, cancel := context.WithTimeout(tc.Ctx, tc.Timeout)
 
-	pollCount := 0
-	fetchPCS := waiter.FetchByName(pcsName, k8sclient.Getter[*grovev1alpha1.PodCliqueSet](tc.Client, tc.Namespace))
-	predicate := waiter.Predicate[*grovev1alpha1.PodCliqueSet](func(pcs *grovev1alpha1.PodCliqueSet) bool {
-		pollCount++
+	var pcs grovev1alpha1.PodCliqueSet
+	if err := tc.Client.Get(
+		timeoutCtx,
+		types.NamespacedName{Name: pcsName, Namespace: tc.Namespace},
+		&pcs,
+	); err != nil {
+		cancel()
+		return nil, fmt.Errorf("get PodCliqueSet %s before watching: %w", pcsName, err)
+	}
 
-		// Log status every few polls for debugging
-		if pollCount%3 == 1 {
+	pcsWatch, err := tc.Client.Watch(
+		timeoutCtx,
+		&grovev1alpha1.PodCliqueSetList{},
+		&client.ListOptions{
+			Namespace:     tc.Namespace,
+			FieldSelector: fields.OneTermEqualSelector("metadata.name", pcsName),
+			Raw:           &metav1.ListOptions{ResourceVersion: pcs.ResourceVersion},
+		},
+	)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("watch PodCliqueSet %s: %w", pcsName, err)
+	}
+
+	return &ordinalUpdateObserver{
+		ctx:     timeoutCtx,
+		cancel:  cancel,
+		watcher: pcsWatch,
+		pcsName: pcsName,
+		ordinal: ordinal,
+	}, nil
+}
+
+func (o *ordinalUpdateObserver) Wait() error {
+	_, err := waiter.WaitForWatchEvent(
+		o.ctx,
+		o.watcher.ResultChan(),
+		func(pcs *grovev1alpha1.PodCliqueSet) bool {
 			currentOrdinal := int32(-1)
 			if pcs.Status.UpdateProgress != nil && len(pcs.Status.UpdateProgress.CurrentlyUpdating) > 0 {
 				currentOrdinal = pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex
 			}
-			tests.Logger.Debugf("[waitForOrdinalUpdating] Poll #%d: waiting for ordinal %d, currently updating ordinal: %d",
-				pollCount, ordinal, currentOrdinal)
-		}
-
-		// Check if the target ordinal is currently being updated
-		if pcs.Status.UpdateProgress != nil &&
-			len(pcs.Status.UpdateProgress.CurrentlyUpdating) > 0 &&
-			pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex == ordinal {
-			tests.Logger.Debugf("[waitForOrdinalUpdating] Ordinal %d started updating after %d polls", ordinal, pollCount)
-			return true
-		}
-
-		return false
-	})
-	w := waiter.New[*grovev1alpha1.PodCliqueSet]().
-		WithTimeout(tc.Timeout).
-		WithInterval(tc.Interval)
-	err := w.WaitUntil(tc.Ctx, fetchPCS, predicate)
+			tests.Logger.Debugf(
+				"[ordinalUpdateObserver] Waiting for %s ordinal %d, currently updating ordinal: %d",
+				o.pcsName,
+				o.ordinal,
+				currentOrdinal,
+			)
+			return currentOrdinal == o.ordinal
+		},
+	)
 	return err
+}
+
+func (o *ordinalUpdateObserver) Stop() {
+	o.watcher.Stop()
+	o.cancel()
 }
 
 // getPodIdentifier returns a stable identifier for a pod based on its logical position in the workload.
