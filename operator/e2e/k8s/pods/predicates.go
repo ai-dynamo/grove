@@ -65,6 +65,31 @@ func MatchPhases(expectedTotal, expectedRunning, expectedPending int) waiter.Pre
 	}
 }
 
+// MatchPhaseCounts returns a Predicate that checks exact pod counts by phase.
+// Phases omitted from expectedByPhase are allowed only when their count is zero.
+func MatchPhaseCounts(expectedByPhase map[v1.PodPhase]int) waiter.Predicate[*v1.PodList] {
+	expectedTotal := 0
+	for _, count := range expectedByPhase {
+		expectedTotal += count
+	}
+
+	return func(pods *v1.PodList) bool {
+		if len(pods.Items) != expectedTotal {
+			return false
+		}
+		actualByPhase := make(map[v1.PodPhase]int, len(expectedByPhase))
+		for i := range pods.Items {
+			actualByPhase[pods.Items[i].Status.Phase]++
+		}
+		for phase, expected := range expectedByPhase {
+			if actualByPhase[phase] != expected {
+				return false
+			}
+		}
+		return true
+	}
+}
+
 // ReadyCount returns a Predicate that checks exactly n pods are ready.
 func ReadyCount(expected int) waiter.Predicate[*v1.PodList] {
 	return func(pods *v1.PodList) bool {

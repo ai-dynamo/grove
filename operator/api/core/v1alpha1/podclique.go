@@ -31,6 +31,7 @@ import (
 // +kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=`.status.readyReplicas`
 // +kubebuilder:printcolumn:name="Scheduled",type=integer,JSONPath=`.status.scheduledReplicas`
 // +kubebuilder:printcolumn:name="Updated",type=integer,JSONPath=`.status.updatedReplicas`
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Gated",type=integer,JSONPath=`.status.scheduleGatedReplicas`,priority=1
 // +kubebuilder:printcolumn:name="MinBreached",type=string,JSONPath=`.status.conditions[?(@.type=="MinAvailableBreached")].status`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
@@ -108,6 +109,17 @@ type AutoScalingConfig struct {
 	Metrics []autoscalingv2.MetricSpec `json:"metrics,omitempty" protobuf:"bytes,4,rep,name=metrics"`
 }
 
+// JobPhase represents the terminal phase of a finite Grove resource.
+// +kubebuilder:validation:Enum={Completed,Failed}
+type JobPhase string
+
+const (
+	// JobPhaseCompleted indicates that the finite resource completed successfully.
+	JobPhaseCompleted JobPhase = "Completed"
+	// JobPhaseFailed indicates that the finite resource failed.
+	JobPhaseFailed JobPhase = "Failed"
+)
+
 // PodCliqueStatus defines the status of a PodClique.
 type PodCliqueStatus struct {
 	// ObservedGeneration is the most recent generation observed by the controller.
@@ -129,6 +141,9 @@ type PodCliqueStatus struct {
 	// ScheduledReplicas is the number of Pods that have been scheduled by the backend scheduler.
 	// +kubebuilder:default=0
 	ScheduledReplicas int32 `json:"scheduledReplicas"`
+	// Phase is the terminal phase of a finite PodClique. It is empty for non-finite PodCliques and finite PodCliques that are still running.
+	// +optional
+	Phase JobPhase `json:"phase,omitempty"`
 	// Selector is the label selector that determines which pods are part of the PodClique.
 	// PodClique is a unit of scale and this selector is used by HPA to scale the PodClique based on metrics captured
 	// for the pods that match this selector.

@@ -75,6 +75,27 @@ func TestPodPredicate_Delete(t *testing.T) {
 	})
 }
 
+func TestPodPredicate_UpdateDetectsPodPhaseChanges(t *testing.T) {
+	r := &Reconciler{}
+	pred, ok := r.podPredicate().(predicate.Funcs)
+	require.True(t, ok, "predicate must be predicate.Funcs")
+
+	oldPod := testutils.NewPodBuilder("worker-0", "default").
+		WithOwner("pclq-1").
+		WithLabels(map[string]string{common.LabelManagedByKey: common.LabelManagedByValue}).
+		Build()
+	newPod := oldPod.DeepCopy()
+	oldPod.Status.Phase = corev1.PodRunning
+	newPod.Status.Phase = corev1.PodFailed
+
+	result := pred.UpdateFunc(event.UpdateEvent{
+		ObjectOld: oldPod,
+		ObjectNew: newPod,
+	})
+
+	assert.True(t, result, "finite PodClique status depends on pod phase transitions")
+}
+
 // TestPodCliqueSetPredicateCurrentlyUpdatingReplicaChanges verifies that the PodCliqueSet
 // watch predicate enqueues PodClique reconciles when the replica currently being rolled out
 // changes.

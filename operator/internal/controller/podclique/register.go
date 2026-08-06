@@ -146,7 +146,8 @@ func hasPodStatusChanged(updateEvent event.UpdateEvent) bool {
 	if !oldOk || !newOk {
 		return false
 	}
-	return hasReadyConditionChanged(oldPod.Status.Conditions, newPod.Status.Conditions) ||
+	return oldPod.Status.Phase != newPod.Status.Phase ||
+		hasReadyConditionChanged(oldPod.Status.Conditions, newPod.Status.Conditions) ||
 		hasLastTerminationStateChanged(oldPod.Status.InitContainerStatuses, newPod.Status.InitContainerStatuses) ||
 		hasLastTerminationStateChanged(oldPod.Status.ContainerStatuses, newPod.Status.ContainerStatuses) ||
 		hasStartedAndReadyChangedForAnyContainer(oldPod.Status.ContainerStatuses, newPod.Status.ContainerStatuses)

@@ -117,3 +117,8 @@ func (wm *WorkloadManager) WaitForPCSG(ctx context.Context, namespace, name stri
 func (wm *WorkloadManager) WaitForPodClique(ctx context.Context, namespace, name string, timeout, interval time.Duration) (*grovecorev1alpha1.PodClique, error) {
 	return WaitForPodCliqueStandalone(ctx, wm.k8s, namespace, name, timeout, interval)
 }
+
+// WaitForPodCliquePhase polls until a PodClique reaches the expected phase.
+func (wm *WorkloadManager) WaitForPodCliquePhase(ctx context.Context, namespace, name string, phase grovecorev1alpha1.JobPhase, timeout, interval time.Duration) (*grovecorev1alpha1.PodClique, error) {
+	return WaitForPodCliquePhase(ctx, wm.k8s, namespace, name, phase, timeout, interval)
+}

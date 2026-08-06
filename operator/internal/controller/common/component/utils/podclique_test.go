@@ -25,6 +25,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -356,6 +357,60 @@ func TestIsPCLQAutoUpdateInProgress(t *testing.T) {
 			assert.Equal(t, tc.expected, result)
 		})
 	}
+}
+
+func TestIsFinitePCLQ(t *testing.T) {
+	tests := []struct {
+		name          string
+		restartPolicy corev1.RestartPolicy
+		expected      bool
+	}{
+		{name: "restart policy never is finite", restartPolicy: corev1.RestartPolicyNever, expected: true},
+		{name: "restart policy always is infinite", restartPolicy: corev1.RestartPolicyAlways, expected: false},
+		{name: "empty restart policy is infinite before defaulting", expected: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pclq := &grovecorev1alpha1.PodClique{
+				Spec: grovecorev1alpha1.PodCliqueSpec{
+					PodSpec: corev1.PodSpec{
+						RestartPolicy: tc.restartPolicy,
+					},
+				},
+			}
+
+			assert.Equal(t, tc.expected, IsFinitePCLQ(pclq))
+		})
+	}
+
+	assert.False(t, IsFinitePCLQ(nil))
+}
+
+func TestIsPCLQTerminal(t *testing.T) {
+	tests := []struct {
+		name     string
+		phase    grovecorev1alpha1.JobPhase
+		expected bool
+	}{
+		{name: "completed is terminal", phase: grovecorev1alpha1.JobPhaseCompleted, expected: true},
+		{name: "failed is terminal", phase: grovecorev1alpha1.JobPhaseFailed, expected: true},
+		{name: "empty phase is not terminal", expected: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pclq := &grovecorev1alpha1.PodClique{
+				Status: grovecorev1alpha1.PodCliqueStatus{
+					Phase: tc.phase,
+				},
+			}
+
+			assert.Equal(t, tc.expected, IsPCLQTerminal(pclq))
+		})
+	}
+
+	assert.False(t, IsPCLQTerminal(nil))
 }
 
 // TestIsLastPCLQUpdateCompleted tests the IsLastPCLQUpdateCompleted function

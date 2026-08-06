@@ -66,6 +66,23 @@ func WaitForPodCliqueStandalone(ctx context.Context, k8sClient *k8sclient.Client
 	return waiter.WaitForResource(ctx, w, name, k8sclient.Getter[*grovecorev1alpha1.PodClique](k8sClient, namespace))
 }
 
+// WaitForPodCliquePhase polls until a PodClique reaches the expected phase.
+func WaitForPodCliquePhase(ctx context.Context, k8sClient *k8sclient.Client, namespace, name string, phase grovecorev1alpha1.JobPhase, timeout, interval time.Duration) (*grovecorev1alpha1.PodClique, error) {
+	fetchPCLQ := waiter.FetchByName(name, k8sclient.Getter[*grovecorev1alpha1.PodClique](k8sClient, namespace))
+	predicate := waiter.Predicate[*grovecorev1alpha1.PodClique](func(pclq *grovecorev1alpha1.PodClique) bool {
+		return pclq.Name != "" && pclq.Status.Phase == phase
+	})
+
+	w := waiter.New[*grovecorev1alpha1.PodClique]().
+		WithTimeout(timeout).
+		WithInterval(interval)
+	pclq, err := w.WaitFor(ctx, fetchPCLQ, predicate)
+	if err != nil {
+		return nil, fmt.Errorf("failed to wait for PodClique %s/%s phase %s: %w", namespace, name, phase, err)
+	}
+	return pclq, nil
+}
+
 // WaitForPodCliqueSetDeletion polls until a PodCliqueSet no longer exists.
 func WaitForPodCliqueSetDeletion(ctx context.Context, k8sClient *k8sclient.Client, namespace, name string, timeout, interval time.Duration) error {
 	w := waiter.New[*grovecorev1alpha1.PodCliqueSet]().
