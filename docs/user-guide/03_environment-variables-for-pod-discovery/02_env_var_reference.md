@@ -9,6 +9,18 @@ Grove automatically injects environment variables into every container and init 
 - **Coordination**: Understanding your role in a distributed system
 - **Configuration**: Self-configuring based on your position in the hierarchy
 
+Grove places its injected variables before the environment variables from the PodClique template. Kubernetes [expands `$(VAR_NAME)` references in environment variable values in list order](https://kubernetes.io/docs/tasks/inject-data-application/define-interdependent-environment-variables/), so template variables can derive values from Grove variables. For example:
+
+```yaml
+env:
+  - name: CLUSTER_LEADER_ADDRESS
+    value: "$(GROVE_PCSG_NAME)-$(GROVE_PCSG_INDEX)-leader-0.$(GROVE_HEADLESS_SERVICE)"
+args:
+  - "--leader-address=$(CLUSTER_LEADER_ADDRESS)"
+```
+
+The names of injected Grove variables are reserved. If a template defines a variable with the same name, Grove replaces the template value.
+
 However, before we get to the environment variables it is important to first make a distinction between a Pod's Name and its Hostname.
 
 ## Understanding Pod Names vs. Hostnames in Kubernetes
@@ -88,6 +100,7 @@ If a pod belongs to a PodClique that is part of a PodCliqueScalingGroup, these a
 |---------------------|-------------|---------------|
 | `GROVE_PCSG_NAME` | Fully qualified PCSG resource name (see structure below) | `my-service-0-model-instance` |
 | `GROVE_PCSG_INDEX` | Replica index of the PodCliqueScalingGroup (0-based) | `1` |
+| `GROVE_PCSG_POD_INDEX` | Index of this pod within its PodCliqueScalingGroup replica (0-based) | `2` |
 | `GROVE_PCSG_TEMPLATE_NUM_PODS` | Total number of pods in the PCSG template | `4` |
 
 **Understanding `GROVE_PCSG_NAME`:**
@@ -97,7 +110,30 @@ If a pod belongs to a PodClique that is part of a PodCliqueScalingGroup, these a
 
 **Note:** `GROVE_PCSG_TEMPLATE_NUM_PODS` represents the total number of pods defined in the PodCliqueScalingGroup template, calculated as the sum of replicas across all PodCliques in the PCSG. For example, if a PCSG has 1 leader replica and 3 worker replicas, this value would be 4. If you later scale up the number of workers in a PCSG replica (e.g., from 3 to 5), this environment variable will not update in already-running pods—it reflects the value at pod startup time.
 
+### Group-Wide Pod Index
+
+`GROVE_PCSG_POD_INDEX` provides a concrete pod identity across all PodCliques in one PodCliqueScalingGroup replica. Grove assigns indices by flattening the PodCliques in `cliqueNames` order and preserving each pod's order within its PodClique.
+
+For example, this configuration:
+
+```yaml
+podCliqueScalingGroups:
+  - name: engine
+    cliqueNames:
+      - engine-leader # replicas: 1
+      - engine-worker # replicas: 2
+```
+
+assigns index `0` to the leader pod and indices `1` and `2` to the worker pods. A higher-level API can use the concrete value to define an application-specific rank without shell arithmetic:
+
+```yaml
+env:
+  - name: DYNAMO_RANK
+    value: "$(GROVE_PCSG_POD_INDEX)"
+```
+
+The index is scoped to one PodCliqueScalingGroup replica. Grove records each member PodClique's offset when that concrete scaling element is created and retains it for the PodClique's lifetime, so replacing one of its pods does not recalculate ranks from the current PodCliqueSet template. Use the index together with `GROVE_PCSG_NAME` and `GROVE_PCSG_INDEX` when constructing an identity that must be unique across replicas. Standalone PodCliques do not receive `GROVE_PCSG_POD_INDEX`.
+
 ## Next Steps
 
 Continue to the [Hands-On Examples](./03_hands-on-examples.md) to deploy example PodCliqueSets and use environment variables to construct FQDNs and discover other pods. We strongly recommend working through these examples as they demonstrate the practical techniques you'll need to implement pod discovery in your own applications.
-

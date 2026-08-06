@@ -306,6 +306,7 @@ func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1alpha1.PodC
 	// Add finalizer at creation so PCLQ controller does not need a separate PATCH on first reconcile.
 	controllerutil.AddFinalizer(pclq, apiconstants.FinalizerPodClique)
 
+	currentPCSGPodIndexOffset := pclq.Labels[apicommon.LabelPodCliqueScalingGroupPodIndexOffset]
 	pcsReplicaIndex, err := getPCSReplicaFromPCSG(pcsg)
 	if err != nil {
 		return err
@@ -329,6 +330,21 @@ func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1alpha1.PodC
 	}
 	pcsgTemplateNumPods := r.getPCSGTemplateNumPods(pcs, pcsg)
 	r.addEnvironmentVariablesToPodContainerSpecs(pclq, pcsgTemplateNumPods)
+	pcsgPodIndexOffset, err := componentutils.GetPCSGPodIndexOffset(pcs, pcsg.Spec.CliqueNames, pclqTemplateSpec.Name)
+	if err != nil {
+		return groveerr.WrapError(err,
+			errCodeBuildPodClique,
+			component.OperationSync,
+			fmt.Sprintf("Error computing PodCliqueScalingGroup pod index offset for PodClique: %v", pclqObjectKey),
+		)
+	}
+	if pclqExists && currentPCSGPodIndexOffset != "" {
+		currentOffset, parseErr := strconv.Atoi(currentPCSGPodIndexOffset)
+		if parseErr == nil && currentOffset >= 0 {
+			pcsgPodIndexOffset = currentOffset
+		}
+	}
+	pclq.Labels[apicommon.LabelPodCliqueScalingGroupPodIndexOffset] = strconv.Itoa(pcsgPodIndexOffset)
 	dependentPCLQNames, err := identifyFullyQualifiedStartupDependencyNames(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex, pclq, foundAtIndex)
 	if err != nil {
 		return err
@@ -371,8 +387,8 @@ func (r _resource) addEnvironmentVariablesToPodContainerSpecs(pclq *grovecorev1a
 		},
 	}
 	pclqObjPodSpec := &pclq.Spec.PodSpec
-	componentutils.AddEnvVarsToContainers(pclqObjPodSpec.Containers, pcsgEnvVars)
-	componentutils.AddEnvVarsToContainers(pclqObjPodSpec.InitContainers, pcsgEnvVars)
+	componentutils.PrependEnvVarsToContainers(pclqObjPodSpec.Containers, pcsgEnvVars)
+	componentutils.PrependEnvVarsToContainers(pclqObjPodSpec.InitContainers, pcsgEnvVars)
 }
 
 // getPCSReplicaFromPCSG extracts the PodCliqueSet replica index from PodCliqueScalingGroup labels
