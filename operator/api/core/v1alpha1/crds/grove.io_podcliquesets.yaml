@@ -9350,6 +9350,21 @@ spec:
                               description: RoleName is the name of the role that this
                                 PodClique will assume.
                               type: string
+                            rollingUpdate:
+                              description: |-
+                                RollingUpdate configures how Pod deletions are paced while this PodClique
+                                is being updated to a new Pod template.
+                                If unset, the original Grove rolling-update behavior is preserved.
+                              properties:
+                                maxUnavailable:
+                                  description: |-
+                                    MaxUnavailable is the maximum number of desired Pods that may be
+                                    unavailable during a rolling update. Values greater than Replicas are
+                                    capped at Replicas.
+                                  format: int32
+                                  minimum: 1
+                                  type: integer
+                              type: object
                             startsAfter:
                               description: |-
                                 StartsAfter provides you a way to explicitly define the startup dependencies amongst cliques.
@@ -9561,6 +9576,22 @@ spec:
                             - scope
                             type: object
                           type: array
+                        rollingUpdate:
+                          description: |-
+                            RollingUpdate configures how PodCliqueScalingGroup replica deletions are
+                            paced while the group is being updated. MaxUnavailable is measured in
+                            complete PodCliqueScalingGroup replicas.
+                            If unset, the original Grove rolling-update behavior is preserved.
+                          properties:
+                            maxUnavailable:
+                              description: |-
+                                MaxUnavailable is the maximum number of complete
+                                PodCliqueScalingGroup replicas that may be unavailable during a rolling
+                                update. Values greater than Replicas are capped at Replicas.
+                              format: int32
+                              minimum: 1
+                              type: integer
+                          type: object
                         scaleConfig:
                           description: ScaleConfig is the horizontal pod autoscaler
                             configuration for the pod clique scaling group.

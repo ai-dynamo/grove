@@ -71,6 +71,11 @@ type PodCliqueSpec struct {
 	// Replicas.
 	// +optional
 	MinAvailable *int32 `json:"minAvailable,omitempty"`
+	// RollingUpdate configures how Pod deletions are paced while this PodClique
+	// is being updated to a new Pod template.
+	// If unset, the original Grove rolling-update behavior is preserved.
+	// +optional
+	RollingUpdate *PodCliqueRollingUpdateStrategy `json:"rollingUpdate,omitempty"`
 	// StartsAfter provides you a way to explicitly define the startup dependencies amongst cliques.
 	// If CliqueStartupType in PodGang has been set to 'CliqueStartupTypeExplicit', then to create an ordered start
 	// amongst PodClique's StartsAfter can be used. A forest of DAG's can be defined to model any start order dependencies.
@@ -84,6 +89,17 @@ type PodCliqueSpec struct {
 	// ScaleConfig is the horizontal pod autoscaler configuration for a PodClique.
 	// +optional
 	ScaleConfig *AutoScalingConfig `json:"autoScalingConfig,omitempty"`
+}
+
+// PodCliqueRollingUpdateStrategy configures availability safeguards for
+// controller-initiated Pod deletions during a PodClique rolling update.
+type PodCliqueRollingUpdateStrategy struct {
+	// MaxUnavailable is the maximum number of desired Pods that may be
+	// unavailable during a rolling update. Values greater than Replicas are
+	// capped at Replicas.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxUnavailable *int32 `json:"maxUnavailable,omitempty"`
 }
 
 // AutoScalingConfig defines the configuration for the horizontal pod autoscaler.

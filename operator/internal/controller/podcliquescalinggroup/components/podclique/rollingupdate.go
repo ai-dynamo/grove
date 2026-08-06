@@ -35,9 +35,11 @@ import (
 
 // updateWork encapsulates the information needed to perform a rolling update of a PodCliqueScalingGroup.
 type updateWork struct {
-	oldPendingReplicaIndices     []int
-	oldUnavailableReplicaIndices []int
-	oldReadyReplicaIndices       []int
+	oldPendingReplicaIndices         []int
+	oldUnavailableReplicaIndices     []int
+	oldReadyReplicaIndices           []int
+	updatedUnavailableReplicaIndices []int
+	currentOldReplicaIndex           *int
 }
 
 type replicaState int
@@ -58,9 +60,68 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 			component.OperationSync,
 			fmt.Sprintf("failed to compute pending update work for PodCliqueScalingGroup %v", client.ObjectKeyFromObject(sc.pcsg)))
 	}
-	// always delete PCSG replicas that are either pending or unavailable
-	if err = r.deleteOldPendingAndUnavailableReplicas(logger, sc, work); err != nil {
-		return err
+
+	budget, err := evaluateRollingUpdateBudget(sc)
+	if err != nil {
+		return groveerr.WrapError(err,
+			errCodeComputePendingPodCliqueScalingGroupUpdateWork,
+			component.OperationSync,
+			fmt.Sprintf("failed to compute rolling update budget for PodCliqueScalingGroup %v", client.ObjectKeyFromObject(sc.pcsg)))
+	}
+	if budget.blocked() {
+		// An old replica that is already unavailable may be recreated without
+		// consuming another replica-level availability slot. This lets a new
+		// target repair a stuck replica while all ready replicas remain
+		// untouched. Do not start another repair while a replacement is
+		// terminating, missing, or waiting to become available.
+		if !hasReplicaRepairInFlight(sc, work) {
+			repairIndices := work.getRepairReplicaIndices()
+			if len(repairIndices) > 0 {
+				if err = r.deleteReplicaIndices(
+					logger,
+					sc,
+					repairIndices,
+					budget.limit,
+					"repair unavailable PodCliqueScalingGroup replicas for rolling update",
+				); err != nil {
+					return err
+				}
+				return groveerr.New(
+					groveerr.ErrCodeContinueReconcileAndRequeue,
+					component.OperationSync,
+					fmt.Sprintf("recreated unavailable old replicas of PodCliqueScalingGroup %v without consuming another rolling-update slot, requeuing",
+						client.ObjectKeyFromObject(sc.pcsg)),
+				)
+			}
+		}
+		return groveerr.New(
+			groveerr.ErrCodeContinueReconcileAndRequeue,
+			component.OperationSync,
+			fmt.Sprintf("rolling update of PodCliqueScalingGroup %v is blocked by %s: unavailable=%d, maxUnavailable=%d",
+				client.ObjectKeyFromObject(sc.pcsg), budget.reason, budget.unavailable, budget.limit),
+		)
+	}
+
+	// Preserve the original behavior when no replica-level availability policy
+	// is configured: all old pending and unavailable replicas are deleted
+	// before the ready-replica state machine runs.
+	if !budget.enabled {
+		if err = r.deleteOldPendingAndUnavailableReplicas(logger, sc, work, len(work.oldPendingReplicaIndices)+len(work.oldUnavailableReplicaIndices)); err != nil {
+			return err
+		}
+	} else if len(work.oldPendingReplicaIndices)+len(work.oldUnavailableReplicaIndices) > 0 {
+		// Pending replicas are selected before unavailable replicas. Limit the
+		// combined deletion set to the remaining replica-level budget and
+		// requeue before considering a ready replica.
+		if err = r.deleteOldPendingAndUnavailableReplicas(logger, sc, work, budget.allowed); err != nil {
+			return err
+		}
+		return groveerr.New(
+			groveerr.ErrCodeContinueReconcileAndRequeue,
+			component.OperationSync,
+			fmt.Sprintf("deleted old pending or unavailable replicas of PodCliqueScalingGroup %v within maxUnavailable budget, requeuing",
+				client.ObjectKeyFromObject(sc.pcsg)),
+		)
 	}
 
 	// Check if there is currently a replica that is selected for update and its update has not yet completed.
@@ -166,19 +227,27 @@ func computePendingUpdateWork(sc *syncContext) (*updateWork, error) {
 		if isReplicaDeletedOrMarkedForDeletion(sc.pcsg, existingPCSGReplicaPCLQs, pcsgReplicaIndex) {
 			continue
 		}
-		// pcsgReplicaIndex is the currently updating replica
-		if sc.pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate != nil &&
-			sc.pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current == int32(pcsgReplicaIndex) {
-			continue
-		}
 		isUpdated, err := isReplicaUpdated(sc.expectedPCLQPodTemplateHashMap, existingPCSGReplicaPCLQs)
 		if err != nil {
 			return nil, err
 		}
+		state := getReplicaState(existingPCSGReplicaPCLQs)
 		if isUpdated {
+			if state != replicaStateReady {
+				work.updatedUnavailableReplicaIndices = append(work.updatedUnavailableReplicaIndices, pcsgReplicaIndex)
+			}
 			continue
 		}
-		state := getReplicaState(existingPCSGReplicaPCLQs)
+
+		// Keep the currently selected logical replica selected when the target
+		// changes again. Recreating this same index is not a second concurrent
+		// update, regardless of whether its old objects still report Ready.
+		if sc.pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate != nil &&
+			sc.pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current == int32(pcsgReplicaIndex) {
+			work.currentOldReplicaIndex = ptr.To(pcsgReplicaIndex)
+			continue
+		}
+
 		switch state {
 		case replicaStatePending:
 			work.oldPendingReplicaIndices = append(work.oldPendingReplicaIndices, pcsgReplicaIndex)
@@ -191,19 +260,64 @@ func computePendingUpdateWork(sc *syncContext) (*updateWork, error) {
 	return work, nil
 }
 
+func (w *updateWork) getRepairReplicaIndices() []int {
+	replicaIndices := make([]int, 0, 1+len(w.oldPendingReplicaIndices)+len(w.oldUnavailableReplicaIndices))
+	if w.currentOldReplicaIndex != nil {
+		replicaIndices = append(replicaIndices, *w.currentOldReplicaIndex)
+	}
+	replicaIndices = append(replicaIndices, w.oldPendingReplicaIndices...)
+	replicaIndices = append(replicaIndices, w.oldUnavailableReplicaIndices...)
+	return replicaIndices
+}
+
+// hasReplicaRepairInFlight reports whether a logical replica replacement has
+// already started and must become available before another replica is touched.
+func hasReplicaRepairInFlight(sc *syncContext, work *updateWork) bool {
+	if len(work.updatedUnavailableReplicaIndices) > 0 {
+		return true
+	}
+	if lo.SomeBy(sc.existingPCLQs, func(pclq grovecorev1alpha1.PodClique) bool {
+		return k8sutils.IsResourceTerminating(pclq.ObjectMeta)
+	}) {
+		return true
+	}
+	return isAnyReadyReplicaSelectedForUpdate(sc.pcsg) &&
+		work.currentOldReplicaIndex == nil &&
+		!isCurrentReplicaUpdateComplete(sc)
+}
+
 // deleteOldPendingAndUnavailableReplicas removes PCSG replicas that are pending or unavailable with old configurations
-func (r _resource) deleteOldPendingAndUnavailableReplicas(logger logr.Logger, sc *syncContext, work *updateWork) error {
-	replicaIndicesToDelete := lo.Map(append(work.oldPendingReplicaIndices, work.oldUnavailableReplicaIndices...), func(index int, _ int) string {
+func (r _resource) deleteOldPendingAndUnavailableReplicas(logger logr.Logger, sc *syncContext, work *updateWork, maxDeletions int) error {
+	return r.deleteReplicaIndices(
+		logger,
+		sc,
+		append(work.oldPendingReplicaIndices, work.oldUnavailableReplicaIndices...),
+		maxDeletions,
+		"delete pending and unavailable PodCliqueScalingGroup replicas for rolling update",
+	)
+}
+
+func (r _resource) deleteReplicaIndices(
+	logger logr.Logger,
+	sc *syncContext,
+	replicaIndices []int,
+	maxDeletions int,
+	reason string,
+) error {
+	replicaIndicesToDelete := lo.Map(replicaIndices, func(index int, _ int) string {
 		return strconv.Itoa(index)
 	})
-	deleteTasks := r.createDeleteTasks(logger, sc.pcs, sc.pcsg.Name, replicaIndicesToDelete,
-		"delete pending and unavailable PodCliqueScalingGroup replicas for rolling update")
+	if len(replicaIndicesToDelete) > maxDeletions {
+		replicaIndicesToDelete = replicaIndicesToDelete[:maxDeletions]
+	}
+	deleteTasks := r.createDeleteTasks(logger, sc.pcs, sc.pcsg.Name, replicaIndicesToDelete, reason)
 	return r.triggerDeletionOfPodCliques(sc.ctx, logger, client.ObjectKeyFromObject(sc.pcsg), deleteTasks)
 }
 
 // isAnyReadyReplicaSelectedForUpdate checks if there is currently a ready replica selected for rolling update
 func isAnyReadyReplicaSelectedForUpdate(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) bool {
-	return pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate != nil
+	return pcsg.Status.UpdateProgress != nil &&
+		pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate != nil
 }
 
 // isCurrentReplicaUpdateComplete verifies if the currently updating replica has completed its rolling update

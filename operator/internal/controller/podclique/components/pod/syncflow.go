@@ -135,6 +135,7 @@ func (r _resource) getPodNamesUpdatedInAssociatedPodGang(existingPodGang *groves
 func (r _resource) runSyncFlow(logger logr.Logger, sc *syncContext) syncFlowResult {
 	result := syncFlowResult{}
 	diff := r.syncExpectationsAndComputeDifference(logger, sc)
+	scaleInPending := diff > 0
 	if diff < 0 {
 		logger.Info("found fewer pods than desired", "pclq.spec.replicas", sc.pclq.Spec.Replicas, "delta", diff)
 		diff *= -1
@@ -150,7 +151,13 @@ func (r _resource) runSyncFlow(logger logr.Logger, sc *syncContext) syncFlowResu
 		}
 	}
 
-	if componentutils.IsAutoUpdateStrategy(sc.pcs) && componentutils.IsPCLQAutoUpdateInProgress(sc.pclq) {
+	// Scale-in and rolling-update deletions share the same maxUnavailable
+	// budget. Do not start update work while the replica count is still being
+	// reduced.
+	shouldProcessPendingUpdates := !scaleInPending || !isPodChangeConcurrencyControlEnabled(sc.pclq)
+	if shouldProcessPendingUpdates &&
+		componentutils.IsAutoUpdateStrategy(sc.pcs) &&
+		componentutils.IsPCLQAutoUpdateInProgress(sc.pclq) {
 		if err := r.processPendingUpdates(logger, sc); err != nil {
 			result.recordError(err)
 		}
@@ -198,14 +205,38 @@ func getTerminatingAndNonTerminatingPodUIDs(existingPCLQPods []*corev1.Pod) (ter
 	return
 }
 
-// deleteExcessPods deletes `diff` number of excess Pods from this PodClique concurrently.
-// It selects the pods using `DeletionSorter`. For details please see `DeletionSorter.Less` method.
-// The deletion of Pods are done in batches of increasing size. This is done to prevent burst of load
-// on the kube-apiserver. It will fail fast in case there is an
+// deleteExcessPods deletes excess Pods from this PodClique. When
+// maxUnavailable is configured, scale-in consumes the same budget as a
+// rolling update and only the currently available slots are selected.
 func (r _resource) deleteExcessPods(sc *syncContext, logger logr.Logger, diff int) error {
 	candidatePodsToDelete := selectExcessPodsToDelete(sc, logger)
 	numPodsToSelectForDeletion := min(diff, len(candidatePodsToDelete))
 	selectedPodsToDelete := candidatePodsToDelete[:numPodsToSelectForDeletion]
+
+	if isPodChangeConcurrencyControlEnabled(sc.pclq) {
+		budget, err := r.getScaleInBudget(sc)
+		if err != nil {
+			return groveerr.WrapError(err,
+				errCodeDeletePod,
+				component.OperationSync,
+				fmt.Sprintf("failed to evaluate scale-in budget for PodClique %v", client.ObjectKeyFromObject(sc.pclq)),
+			)
+		}
+		selectedPodsToDelete = selectScaleInPodsWithinBudget(
+			candidatePodsToDelete,
+			numPodsToSelectForDeletion,
+			budget,
+			r.expectationsStore.GetDeleteExpectations(sc.pclqExpectationsStoreKey),
+		)
+		if len(selectedPodsToDelete) == 0 {
+			logger.Info("Scale-in deletion blocked by maxUnavailable",
+				"diff", diff,
+				"unavailable", budget.unavailable,
+				"limit", budget.limit,
+			)
+			return nil
+		}
+	}
 
 	deleteTasks := make([]utils.Task, 0, len(selectedPodsToDelete))
 	for _, podToDelete := range selectedPodsToDelete {
@@ -222,8 +253,42 @@ func (r _resource) deleteExcessPods(sc *syncContext, logger logr.Logger, diff in
 			fmt.Sprintf("failed to delete Pods for PodClique %v", pclqObjectKey),
 		)
 	}
-	logger.Info("Deleted excess pods", "diff", diff, "noOfPodsDeleted", numPodsToSelectForDeletion)
+	logger.Info("Deleted excess pods", "diff", diff, "noOfPodsDeleted", len(selectedPodsToDelete))
 	return nil
+}
+
+func selectScaleInPodsWithinBudget(
+	candidates []*corev1.Pod,
+	maxCandidates int,
+	budget rollingUpdateBudget,
+	deleteExpectations []types.UID,
+) []*corev1.Pod {
+	deleteExpectationSet := componentutils.NewSet(deleteExpectations)
+	selected := make([]*corev1.Pod, 0, min(maxCandidates, budget.limit))
+	remainingNewChangeSlots := budget.allowed
+
+	for _, candidate := range candidates {
+		if len(selected) >= maxCandidates || len(selected) >= budget.limit {
+			break
+		}
+		if deleteExpectationSet.Has(candidate.UID) ||
+			k8sutils.IsResourceTerminating(candidate.ObjectMeta) {
+			continue
+		}
+
+		// Removing an already non-Ready excess Pod does not add another
+		// unavailable lifecycle. Permit that deletion even when no new slot is
+		// available, otherwise an unhealthy excess Pod could block scale-in.
+		alreadyChanging := isPodActivelyChanging(candidate)
+		if !alreadyChanging && remainingNewChangeSlots == 0 {
+			continue
+		}
+		selected = append(selected, candidate)
+		if !alreadyChanging {
+			remainingNewChangeSlots--
+		}
+	}
+	return selected
 }
 
 // selectExcessPodsToDelete identifies excess pods for deletion using DeletionSorter for prioritization
