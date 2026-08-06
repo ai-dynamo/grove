@@ -19,6 +19,7 @@
   - [PodCliqueSet to PodGroup Mapping](#podcliqueset-to-podgroup-mapping)
     - [KAI Queue Resolution](#kai-queue-resolution)
     - [SubGroup Mapping Rules](#subgroup-mapping-rules)
+    - [Topology Mapping](#topology-mapping)
   - [Pod Preparation](#pod-preparation)
   - [PodGroup Update Semantics](#podgroup-update-semantics)
   - [Reconciliation Flow](#reconciliation-flow)
@@ -26,7 +27,7 @@
   - [RBAC Matrix](#rbac-matrix)
   - [Dynamic RBAC Strategy](#dynamic-rbac-strategy)
   - [Test Plan](#test-plan)
-    - [Phase 1 (Current): Unit Tests](#phase-1-current-unit-tests)
+    - [Phase 1 (Current): Unit and Upgrade E2E Tests](#phase-1-current-unit-and-upgrade-e2e-tests)
     - [Phase 2 (Follow-up): E2E Tests](#phase-2-follow-up-e2e-tests)
   - [Graduation Criteria](#graduation-criteria)
     - [Alpha](#alpha)
@@ -37,7 +38,7 @@
 
 ## Summary
 
-This proposal adds a dedicated KAI scheduler backend to Grove's Scheduler Backend Framework so Grove can natively create, update, and delete KAI PodGroup resources for Grove PodGang workloads. This proposal is intentionally limited to PodGroup creation and management; it does not add new topology-aware scheduling support and does not change existing KAI Topology synchronization behavior from Grove ClusterTopology. The change improves maintainability, clarifies ownership boundaries, and enables predictable KAI-specific lifecycle handling for PodGang workloads by relying on KAI-Scheduler's externally-created PodGroup support.
+This proposal adds a dedicated KAI scheduler backend to Grove's Scheduler Backend Framework. Grove creates one KAI PodGroup per PodCliqueSet replica, represents Base and Scaled PodGangs as subgroups, and relies on KAI-Scheduler's externally-created PodGroup support. Topology constraints follow the PodGang representation defined by [GREP-244](../244-topology-aware-scheduling/README.md).
 
 ## Motivation
 
@@ -47,8 +48,8 @@ GREP-375 introduced a generic Scheduler Backend Framework, but the KAI integrati
 
 - Define the KAI backend behavior under the Scheduler Backend Framework lifecycle.
 - Define `PreparePod` behavior so Pods are scheduled by KAI consistently with Grove's scheduling gate flow and opt out of KAI podgrouper reconciliation when Grove owns the PodGroup.
-- Specify PodGang to KAI PodGroup translation and reconciliation responsibilities.
-- Define deletion-time cleanup behavior for KAI-owned scheduling resources.
+- Specify PodCliqueSet-replica to KAI PodGroup translation, migration, and reconciliation responsibilities.
+- Define ownership-based cleanup behavior for KAI-owned scheduling resources.
 - Document the minimum supported KAI-Scheduler version and required PodGroup capabilities.
 - Clarify required RBAC, scheme registration, and dependency/version expectations for KAI resources.
 - Establish test expectations for pod preparation, PodGroup sync, and delete paths.
@@ -62,19 +63,16 @@ GREP-375 introduced a generic Scheduler Backend Framework, but the KAI integrati
 - Replacing or deprecating non-KAI backends.
 - Defining how scheduler backends are enabled, selected, or resolved from operator configuration and workload templates. This proposal assumes the `kai-scheduler` backend is already enabled by the Scheduler Backend Framework.
 - Requiring PodGang status-only updates to trigger backend reconciliation. The current backend controller reacts to create, delete, and generation-changing updates.
-- Extending or refactoring existing KAI Topology resource management from Grove `ClusterTopology`/`ClusterTopologyBinding`.
-- Defining topology-aware scheduling behavior for KAI. That functionality is out of scope for this proposal and should be covered separately.
+- Extending or refactoring KAI Topology resource management defined by GREP-244.
 
 ## Proposal
 
-Grove will ship a built-in `kai-scheduler` backend that implements the Scheduler Backend Framework lifecycle hooks needed to manage KAI PodGroups. The backend is responsible for converting Grove PodGang intent to KAI PodGroup resources, preparing Pods to use KAI, participating in admission validation, and keeping KAI PodGroups in sync with Grove lifecycle events.
-
-This proposal only covers KAI PodGroup creation and management. It does not propose any KAI Topology creation/update flow, does not add startup-time topology synchronization, and does not define topology-aware scheduling behavior.
+Grove will ship a built-in `kai-scheduler` backend that uses the existing Scheduler Backend Framework hooks. The backend converts all PodGangs belonging to one PodCliqueSet replica into one KAI PodGroup, prepares Pods to use that aggregate, and keeps the representation synchronized from PodGang events. No new backend interface or status condition is introduced.
 
 At a high level, the proposal introduces:
 
 1. **KAI backend ownership model**: Grove backend controller is the single owner of KAI PodGroup reconciliation for PodGang resources that select `kai-scheduler`.
-2. **Deterministic lifecycle behavior**: backend initialization happens during operator startup, `PreparePod` sets the scheduler name and pod-level podgrouper skip annotation during Pod construction, `SyncPodGang` ensures the PodGang-level podgrouper skip annotation and handles create/update reconciliation, and `OnPodGangDelete` handles cleanup.
+2. **Deterministic lifecycle behavior**: `PreparePod` routes new Pods to the aggregate PodGroup, while `SyncPodGang` reconciles the complete PCS-replica representation. Aggregate PodGroups are owned by the PodCliqueSet and cleaned up by Kubernetes garbage collection.
 3. **KAI version dependency**: This backend requires KAI-Scheduler `v0.15.0` or newer, because that version supports both PodGroup subgroups and externally-created PodGroups, including `kai.scheduler/skip-podgrouper`.
 4. **Operator readiness requirements**: KAI PodGroup API types are registered in Grove scheme and RBAC allows backend operations on KAI PodGroups.
 5. **Update safety**: Grove preserves fields that KAI runtime components own so backend reconciliation does not erase scheduler decisions or mutable runtime state.
@@ -106,6 +104,7 @@ Operational behavior:
 
 - During backend `Init()`, Grove checks that the detected KAI version is `v0.15.0` or newer.
 - If KAI is below `v0.15.0`, backend startup returns an unsupported-version error and does not enable KAI PodGroup ownership reconciliation.
+- Operators must disable KAI stale-gang eviction with `--default-staleness-grace-period=-1` before upgrading. Otherwise KAI can evict a transitioning gang while Grove moves Pods between PodGroups.
 - Grove release notes MUST publish and maintain a Grove-to-KAI compatibility matrix whenever the minimum supported KAI version changes.
 
 ## Design Details
@@ -123,9 +122,9 @@ flowchart TD
     I[PodClique controller] --> J[PreparePod sets schedulerName and Pod skip-podgrouper annotation]
     H --> K[PodGang backend controller]
     K --> L[KAI Backend SyncPodGang sets PodGang skip-podgrouper annotation]
-    L --> M[Create or update KAI PodGroup]
-    K --> O[OnPodGangDelete]
-    O --> P[Delete KAI PodGroup]
+    L --> M[Create or update PCS-replica KAI PodGroup]
+    M --> N[Patch existing Pod membership]
+    N --> O[Delete legacy per-PodGang PodGroups]
 ```
 
 ### Backend Lifecycle Contract
@@ -135,9 +134,9 @@ The backend must cover the PodGroup-related backend surface from GREP-375:
 | Lifecycle surface | Trigger | KAI backend responsibility |
 | --- | --- | --- |
 | Backend initialization | Operator startup | Validate KAI-Scheduler version is `v0.15.0` or newer; otherwise fail closed and do not enable backend ownership mode. |
-| Pod preparation | PodClique controller builds a Pod | Set Pod `schedulerName` to `kai-scheduler` and ensure Pod annotation `kai.scheduler/skip-podgrouper` is present. |
-| PodGang sync | PodGang create or generation-changing update | Ensure PodGang annotation `kai.scheduler/skip-podgrouper` is present and reconcile the Grove-owned KAI PodGroup. |
-| PodGang deletion | PodGang delete event | Delete associated KAI PodGroup, ignoring not-found errors. |
+| Pod preparation | PodClique controller builds a Pod | Set `schedulerName`, skip-podgrouper annotation, aggregate `pod-group-name`, and leaf subgroup label. |
+| PodGang sync | PodGang create, generation-changing update, or deletion start | Ensure KAI metadata and reconcile the complete PCS-replica KAI PodGroup. |
+| PodCliqueSet deletion | Kubernetes owner deletion | Garbage-collect the PCS-owned aggregate PodGroups. |
 
 ### Precondition: KAI Backend Enabled
 
@@ -154,32 +153,36 @@ Under that assumption, this proposal only relies on the resolved backend identit
 - Rely on KAI-Scheduler external PodGroup support, ensure prepared Pods and Grove PodGangs have `kai.scheduler/skip-podgrouper` annotation so KAI podgrouper does not create or overwrite PodGroups that Grove owns.
 - Enforce compatibility guardrails during `Init()`: require KAI-Scheduler `v0.15.0` or newer and fail closed when the minimum supported version is not met.
 - Translate Grove Base PodGang and Scaled PodGang semantics to KAI PodGroup subgroup semantics.
-- Reconcile KAI PodGroup state on PodGang create and update.
-- Handle KAI resource cleanup on PodGang delete.
+- Reconcile KAI PodGroup state on PodGang create, update, and deletion start.
+- Migrate existing Pod membership before removing legacy per-PodGang PodGroups.
 
 ### PodCliqueSet to PodGroup Mapping
 
-The KAI backend creates one Grove-owned KAI PodGroup for the PodCliqueSet scheduling unit, then maps Grove PodGang structure into the KAI PodGroup subgroup layer. This follows Grove's existing PodGang construction model:
+The KAI backend creates one Grove-owned KAI PodGroup for each PodCliqueSet replica, then maps that replica's Grove PodGang structure into the KAI PodGroup subgroup layer. This follows Grove's existing PodGang construction model:
 
 - **Base PodGang (BPG)**: the foundational PodGang created for each PodCliqueSet replica. It contains standalone PodCliques and the PodCliqueScalingGroup replicas that are within `[0, minAvailable-1]`.
 - **Scaled PodGang (SPG)**: a PodGang created for a PodCliqueScalingGroup replica above `minAvailable`. These are the scaled-out PCSG replicas that Grove schedules as independent PodGang resources today.
 
 In the KAI representation, BPG and SPG are not separate KAI PodGroups. They are subgroup branches under the same PCS-level KAI PodGroup.
 
+The PodGang controller labels every PodGang with `grove.io/podcliqueset-replica-index`. It also labels each Scaled PodGang with its `grove.io/podcliquescalinggroup`; the Base PodGang omits that label because it can contain multiple scaling groups. The KAI backend uses the replica label to select one replica's PodGangs and validates the scaling-group label on each Scaled PodGang without parsing generated resource names or re-reading the PCS scaling-group configuration. When Scaled PodGangs exist, they are placed under one shared `scaled-podgangs` collection subgroup; the label value does not partition that hierarchy.
+
+Because different PodGangs can reconcile concurrently while targeting the same aggregate PodGroup, the backend serializes the complete aggregate reconciliation by `<namespace>/<aggregate-podgroup-name>`. PodGangs from different PodCliqueSet replicas continue reconciling concurrently.
+
 | Grove source | KAI PodGroup target |
 | --- | --- |
-| PodCliqueSet scheduling unit | One KAI PodGroup name and namespace |
+| PodCliqueSet replica | One KAI PodGroup named `grove-<pcs-name>-<replica>` |
 | PodCliqueSet and PodGang labels/annotations | PodGroup labels and annotations, preserving existing target-only keys |
-| Sum of all mapped subgroup minimum replicas | PodGroup `minMember` |
+| Required Base PodGang branch | PodGroup `minSubGroup: 1` before scale-out and `2` while the zero-minimum Scaled PodGang collection exists, leaving the Base PodGang as the required branch |
 | PodGang priority class | PodGroup priority class |
 | PodCliqueSet `kai.scheduler/queue` metadata, or a shared PodClique-template queue | PodGroup queue on initial creation |
 | Base PodGang | Top-level KAI subgroup, usually named from the BPG name |
-| Scaled PodGang collection for a PCSG | Top-level KAI subgroup that groups scaled PodGang replicas |
+| Scaled PodGangs for the PCS replica | One shared top-level KAI subgroup named `scaled-podgangs` that groups all Scaled PodGang replicas |
 | Individual Scaled PodGang replica | Child KAI subgroup under the SPG collection subgroup |
 | PodGang `spec.podgroups[]` / constituent PodCliques | Leaf KAI subgroups with `name`, `minMember`, and `parent` |
-| PodGang owner reference | Preserved through PodGroup ownership metadata so cleanup follows Grove lifecycle |
+| PodCliqueSet owner reference | Aggregate PodGroup ownership and garbage collection |
 
-This mapping focuses on PodGroup ownership and gang membership. KAI Topology resources and topology-aware scheduling semantics are outside the scope of this proposal.
+Topology constraints use translated PodGang fields; the backend does not retranslate user-facing topology domains.
 
 #### KAI Queue Resolution
 
@@ -198,12 +201,12 @@ SubGroup mapping is always used for KAI backend PodGroup generation.
 The intended subgroup tree is:
 
 ```text
-KAI PodGroup for one PCS scheduling unit
-├── BPG
+KAI PodGroup for one PCS scheduling unit (minSubGroup: 2 after scale-out)
+├── BPG (minSubGroup: number of required direct children)
 │   ├── PodClique / PodGang podgroup leaf
 │   ├── PodClique / PodGang podgroup leaf
 │   └── PodClique / PodGang podgroup leaf
-└── SPG
+└── scaled-podgangs collection (minSubGroup: 0)
     ├── SPG-1
     │   ├── PodClique / PodGang podgroup leaf
     │   ├── PodClique / PodGang podgroup leaf
@@ -219,7 +222,9 @@ This mirrors Grove's current split between base PodGangs and scaled PodGangs whi
 Mapping contract:
 
 - The Base PodGang maps to a top-level KAI subgroup.
-- The Scaled PodGang collection maps to a top-level KAI subgroup when scaled PodGangs exist.
+- One shared Scaled PodGang collection named `scaled-podgangs` maps to the other top-level KAI subgroup whenever Scaled PodGangs exist. It is omitted when empty because KAI v0.15.2 rejects `minSubGroup` on a SubGroup without children.
+- The aggregate PodGroup sets `minSubGroup: 1` while only the Base PodGang exists and `minSubGroup: 2` while the shared Scaled PodGang collection exists. KAI counts the shared `minSubGroup: 0` collection as satisfied without allocated Pods, leaving the Base PodGang as the remaining required branch regardless of subgroup ordering.
+- The shared Scaled PodGang collection sets `minSubGroup: 0`, making all scaled-out PodGang branches elastic while retaining their own branch and leaf minimums.
 - Each individual Scaled PodGang maps to a child subgroup under the SPG collection subgroup by setting the KAI subgroup `parent` to the SPG collection subgroup name.
 - Each constituent Grove PodGang `spec.podgroups[]` entry maps to a leaf KAI subgroup under its BPG or SPG replica subgroup.
 - Subgroup names must be DNS-label compatible, lowercase, and unique within the generated KAI PodGroup.
@@ -231,12 +236,24 @@ Mapping contract:
 Validation behavior:
 
 - Because KAI-Scheduler `v0.15.0` is the minimum supported version, subgroup support is assumed to be available when this backend is enabled.
-- If a pod points to a subgroup name that does not exist in the generated KAI PodGroup spec, backend treats this as configuration error and surfaces an event (do not silently remap).
+- If a pod points to a subgroup name that does not exist in the generated KAI PodGroup spec, backend returns a retryable error and emits a Warning Event on the triggering PodGang.
 - If the backend cannot derive a valid Base PodGang / Scaled PodGang subgroup tree, backend validation fails.
 
 Out of scope for this GREP:
 
 - Defining arbitrary user-authored multi-level subgroup trees beyond the Base PodGang / Scaled PodGang structure represented by Grove PodGang semantics. Future GREP can extend parent/minSubGroup authoring semantics if Grove needs direct user-facing control.
+
+#### Topology Mapping
+
+Topology behavior follows GREP-244:
+
+- Base PodGang `spec.topologyConstraint` maps to the aggregate PodGroup root.
+- Base PodGang `spec.topologyConstraintGroupConfigs` map to per-PCSG-replica subgroups.
+- A Scaled PodGang root constraint maps to that Scaled PodGang branch. Its collection subgroup remains topology-free because each PCSG replica is an independent placement unit.
+- `spec.podgroups[].topologyConstraint` maps to the corresponding PodClique leaf subgroup.
+- Required and preferred levels are copied from PodGang fields after Grove has translated topology domains to node-label keys.
+- `grove.io/topology-name` identifies the ClusterTopologyBinding. The backend uses its `schedulerTopologyBindings` entry for `kai-scheduler`, or the ClusterTopologyBinding name for an auto-managed KAI Topology.
+- Missing or inconsistent bindings are retried and reported through Warning Events on the triggering PodGang. When GREP-244 removes invalid PodGang constraints, the backend removes them from the aggregate without recreating Pods.
 
 ### Pod Preparation
 
@@ -244,6 +261,8 @@ When the KAI backend prepares a Pod, it must:
 
 - Set `pod.spec.schedulerName` to `kai-scheduler`.
 - Ensure `pod.metadata.annotations["kai.scheduler/skip-podgrouper"]` is present when missing.
+- Set `pod.metadata.annotations["pod-group-name"]` to `grove-<pcs-name>-<replica>`.
+- Set `pod.metadata.labels["kai.scheduler/subgroup-name"]` to the normalized PodClique leaf name.
 - Preserve any existing user or controller annotations on the Pod.
 
 The KAI backend must also ensure the routed PodGang itself has `podGang.metadata.annotations["kai.scheduler/skip-podgrouper"]` during `SyncPodGang()`.
@@ -266,17 +285,20 @@ For source-owned labels and annotations, Grove ensures values from the desired P
 1. During startup, backend `Init()` checks that KAI-Scheduler is `v0.15.0` or newer; initialization fails closed when the minimum supported version is not met.
 2. Backend controller receives PodGang event and resolves `kai-scheduler` backend.
 3. KAI backend ensures the PodGang has `kai.scheduler/skip-podgrouper`.
-4. KAI backend computes the desired PCS-level PodGroup representation from PodGang state, including Base PodGang and Scaled PodGang subgroup translation.
-5. Backend creates the KAI PodGroup if none exists.
-6. Backend inherits KAI runtime-managed fields from the existing PodGroup before comparing desired and actual state.
-7. Backend updates only when source-owned fields or desired scheduling intent changed.
-8. On PodGang deletion, backend removes the associated KAI PodGroup and ignores not-found errors.
+4. KAI backend lists sibling PodGangs and computes the desired PCS-replica PodGroup, including GREP-244 topology constraints.
+5. Backend creates or updates the aggregate while preserving KAI runtime-managed fields.
+6. Backend patches existing Pods to the aggregate PodGroup and verifies every Pod references a valid leaf subgroup.
+7. Only after verification, backend deletes legacy per-PodGang PodGroups.
+8. PodGang deletion updates the aggregate tree; PodCliqueSet deletion garbage-collects the aggregate.
+
+This same flow performs automatic upgrades from both legacy one-PodGroup-per-PodGang layouts: Grove-created PodGroups named after the PodGang, and KAI podgrouper-created PodGroups named `pg-<podgang>-<uid>`. Legacy groups are discovered through their PodGang ownership so cleanup remains retryable after Pods have already moved to the aggregate. There is no compatibility switch, migration phase, or migration condition. Failures remain retryable, are logged, and emit Warning Events on the triggering PodGang.
 
 The backend controller only handles PodGang create, delete, and generation-changing update events. Status-only transitions, such as the PodGang `Initialized` condition, do not trigger backend reconciliation. The KAI backend design must therefore rely on spec and metadata changes for PodGroup reconciliation.
 
 ### API and Registration Requirements
 
 - Grove runtime scheme includes KAI PodGroup API types for backend client operations.
+- Existing `PreparePod` and `SyncPodGang` interfaces are sufficient; no scheduler-backend API extension is required.
 - Phase 1 uses static minimal RBAC for enabled `kai-scheduler` support. Dynamic RBAC generation is planned for Phase 2 (Beta).
 - KAI-Scheduler version is `v0.15.0` or newer, which includes subgroup and externally-created PodGroup support.
 - Backend initialization must validate required API availability and the minimum supported KAI version before normal reconciliation.
@@ -315,26 +337,29 @@ Operational implications:
 
 ### Test Plan
 
-#### Phase 1 (Current): Unit Tests
+#### Phase 1 (Current): Unit and Upgrade E2E Tests
 
 - Validate `PreparePod` sets Pod `schedulerName` to `kai-scheduler` and adds Pod annotation `kai.scheduler/skip-podgrouper` when missing without dropping existing annotations.
 - Validate `Init()` compatibility guardrails: KAI versions below `v0.15.0` fail closed.
-- Validate `SyncPodGang` creates and updates KAI PodGroup state, including required field mapping, queue resolution, and runtime-managed field preservation.
+- Validate `SyncPodGang` creates and updates one aggregate KAI PodGroup per PCS replica, including queue resolution and runtime-managed field preservation.
 - Validate PodCliqueSet queue precedence, consistent PodClique-template queue fallback, and mapping failures for missing or conflicting queue configuration.
 - Validate `SyncPodGang` adds PodGang annotation `kai.scheduler/skip-podgrouper` when missing without dropping existing annotations.
-- Validate subgroup translation: Base PodGang and Scaled PodGang structure maps to KAI subgroups with correct `name`, `minSubGroup` / `minMember`, and parent relationships.
+- Validate subgroup and GREP-244 topology translation across PCS, PCSG replica, Scaled PodGang, and PodClique levels.
+- Validate the aggregate root transitions from `minSubGroup: 1` without Scaled PodGangs to `2` with one shared elastic Scaled PodGang collection, and returns to `1` after the last Scaled PodGang is removed.
 - Validate subgroup-name constraints (lowercase/unique/valid label) and explicit error surfacing on invalid subgroup references.
-- Validate `OnPodGangDelete` removes the associated KAI PodGroup and ignores already-deleted resources.
+- Validate existing Pods migrate before legacy PodGroups are deleted, partial failures retry safely, and scale-down removes obsolete branches.
+- Run a pinned upgrade E2E from Grove `v0.1.0-alpha.11`: preserve existing Pod UIDs and node assignments, migrate KAI podgrouper-created PodGroups, and validate the complete PCS-derived aggregate hierarchy and topology.
 
 #### Phase 2 (Follow-up): E2E Tests
 
-Phase 2 adds two deliverables that are explicitly out of scope for Phase 1:
+Phase 2 adds broader backend lifecycle coverage and dynamic RBAC beyond the focused upgrade E2E delivered in Phase 1:
 
 - Dynamic RBAC implementation:
   - synthesize RBAC rules from enabled scheduler backends only,
   - remove rules when a backend is disabled,
   - fail closed when managed RBAC reconciliation fails.
 - E2E coverage in cluster environments for PodGroup create/update/delete, subgroup behavior, and ownership/compatibility guardrails.
+- Gang-scheduling E2E coverage for a required Base PodGang followed by incremental admission of elastic Scaled PodGangs.
 
 Phase 2 test plan includes unit/integration tests for dynamic RBAC and E2E tests for end-to-end scheduler-backend behavior.
 

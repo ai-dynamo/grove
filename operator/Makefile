@@ -25,6 +25,8 @@ INSTALL_CRDS_NAME    := "grove-install-crds"
 K3S_IMAGE       ?= rancher/k3s:v1.35.5-k3s1
 E2E_REGISTRY_PORT ?= 5001
 E2E_CREATE_FLAGS  ?=
+E2E_UPGRADE_KAI_ENABLED ?= false
+UPGRADE_E2E_TEST_PATTERN ?= ^TestUpgradeFromLatestGitHubRelease$$
 ifndef DIAG_DIR
 DIAG_DIR := $(if $(GROVE_E2E_DIAG_DIR),$(GROVE_E2E_DIAG_DIR),$(MODULE_ROOT)/e2e-diagnostics)
 endif
@@ -139,11 +141,16 @@ run-upgrade-e2e: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
 run-upgrade-e2e: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
 run-upgrade-e2e: $(GOTESTSUM)
 	@echo "> Running e2e upgrade tests (verbose)..."
-	@$(MAKE) e2e-cluster-up E2E_CREATE_FLAGS="$(E2E_CREATE_FLAGS) --set grove.enabled=false --set scheduler.kai.enabled=false"
-	$(GOTESTSUM) --format short-verbose -- -count=1 -tags=e2e,e2eupgrade ./e2e/tests/upgrade/ -timeout 45m $(if $(TEST_PATTERN),-run '$(TEST_PATTERN)') || \
+	@$(MAKE) e2e-cluster-up E2E_CREATE_FLAGS="$(E2E_CREATE_FLAGS) --set grove.enabled=false --set scheduler.kai.enabled=$(E2E_UPGRADE_KAI_ENABLED)"
+	$(GOTESTSUM) --format short-verbose -- -count=1 -tags=e2e,e2eupgrade ./e2e/tests/upgrade/ -timeout 45m -run '$(if $(TEST_PATTERN),$(TEST_PATTERN),$(UPGRADE_E2E_TEST_PATTERN))' || \
 		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down
+
+# Run the KAI backend migration scenario in its own KAI-enabled cluster.
+.PHONY: run-kai-backend-upgrade-e2e
+run-kai-backend-upgrade-e2e:
+	@$(MAKE) run-upgrade-e2e E2E_UPGRADE_KAI_ENABLED=true UPGRADE_E2E_TEST_PATTERN='^TestKAIBackendUpgradeFromAlpha11$$'
 
 # Create a k3d cluster for e2e testing (with Grove and Kai scheduler deployed)
 # This is optional - tests work with any Kubernetes cluster that has the required components

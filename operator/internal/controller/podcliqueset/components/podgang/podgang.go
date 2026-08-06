@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -132,7 +133,10 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGa
 	// propagate. grove.io/-prefixed entries are operator-managed and have a
 	// lifecycle independent of the PCS, so they are preserved across reconciles
 	// and (for PCS keys with that prefix) skipped on mirror.
-	pg.Labels = mirrorPCSMetadata(pg.Labels, pcs.Labels, getLabels(pcs.Name))
+	pg.Labels = mirrorPCSMetadata(pg.Labels, pcs.Labels, getLabels(pcs.Name, pgi))
+	if pgi.podCliqueScalingGroupName == "" {
+		delete(pg.Labels, apicommon.LabelPodCliqueScalingGroup)
+	}
 	// Set scheduler name so the podgang controller can resolve the correct backend.
 	// When no scheduler can be resolved, drop any stale label from a previous reconcile.
 	if schedName := r.getSchedulerNameForPCS(pcs); schedName != "" {
@@ -212,12 +216,17 @@ func emptyPodGang(objKey client.ObjectKey) *groveschedulerv1alpha1.PodGang {
 }
 
 // getLabels constructs labels for a PodGang resource.
-func getLabels(pcsName string) map[string]string {
-	return lo.Assign(
+func getLabels(pcsName string, pgi *podGangInfo) map[string]string {
+	labels := lo.Assign(
 		apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcsName),
 		map[string]string{
-			apicommon.LabelComponentKey: apicommon.LabelComponentNamePodGang,
+			apicommon.LabelComponentKey:             apicommon.LabelComponentNamePodGang,
+			apicommon.LabelPodCliqueSetReplicaIndex: strconv.Itoa(pgi.pcsReplicaIndex),
 		})
+	if pgi.podCliqueScalingGroupName != "" {
+		labels[apicommon.LabelPodCliqueScalingGroup] = pgi.podCliqueScalingGroupName
+	}
+	return labels
 }
 
 // mirrorPCSMetadata returns the result of mirroring PCS-owned labels or annotations

@@ -65,6 +65,25 @@ func MatchPhases(expectedTotal, expectedRunning, expectedPending int) waiter.Pre
 	}
 }
 
+// AtLeastCountInPhases returns a Predicate that checks that at least minimumCount pods
+// are in one of the supplied phases.
+func AtLeastCountInPhases(minimumCount int, phases ...v1.PodPhase) waiter.Predicate[*v1.PodList] {
+	allowedPhases := make(map[v1.PodPhase]struct{}, len(phases))
+	for _, phase := range phases {
+		allowedPhases[phase] = struct{}{}
+	}
+
+	return func(pods *v1.PodList) bool {
+		matching := 0
+		for i := range pods.Items {
+			if _, allowed := allowedPhases[pods.Items[i].Status.Phase]; allowed {
+				matching++
+			}
+		}
+		return matching >= minimumCount
+	}
+}
+
 // ReadyCount returns a Predicate that checks exactly n pods are ready.
 func ReadyCount(expected int) waiter.Predicate[*v1.PodList] {
 	return func(pods *v1.PodList) bool {

@@ -55,15 +55,16 @@ func TestUpgradeFromLatestGitHubRelease(t *testing.T) {
 		ExpectedPods: 2,
 	}
 
-	tc := setupTest(t, testConfig{
+	cfg := testConfig{
 		fromVersion: fromVersion,
 		workload:    workload,
-	})
+	}
+	tc := setupTest(t, cfg)
 
 	podsList, err := tc.ListPods()
 	require.NoError(t, err, "listing workload pods")
 
-	upgradeGrove(t, tc)
+	upgradeGrove(t, tc, cfg)
 
 	tc.ScalePCSAndWait(workload.Name, 2, 4, 0)
 
