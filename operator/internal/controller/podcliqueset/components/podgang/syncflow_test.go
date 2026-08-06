@@ -1962,7 +1962,7 @@ func TestCreateOrUpdatePodGangs_ClearsStaleTopologyStateOnExistingPodGang(t *tes
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      pgName,
 				Namespace: ns,
-				Labels:    getLabels(pcsName),
+				Labels:    getLabels(pcsName, &podGangInfo{}),
 			},
 			Spec: groveschedulerv1alpha1.PodGangSpec{
 				PodGroups: []groveschedulerv1alpha1.PodGroup{{Name: pclqName, MinReplicas: 1}},
