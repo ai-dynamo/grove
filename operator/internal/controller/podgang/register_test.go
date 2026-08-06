@@ -20,6 +20,7 @@ import (
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 )
 
@@ -29,6 +30,7 @@ type predicateTestCase struct {
 	managedOld              bool
 	managedNew              bool
 	generationChanged       bool
+	deletionStarted         bool
 	shouldAllowCreateEvent  bool
 	shouldAllowDeleteEvent  bool
 	shouldAllowGenericEvent bool
@@ -78,6 +80,16 @@ func TestPodGangSpecChangePredicate(t *testing.T) {
 			shouldAllowUpdateEvent:  false,
 		},
 		{
+			name:                    "managed PodGang starts deletion",
+			managedOld:              true,
+			managedNew:              true,
+			deletionStarted:         true,
+			shouldAllowCreateEvent:  true,
+			shouldAllowDeleteEvent:  true,
+			shouldAllowGenericEvent: false,
+			shouldAllowUpdateEvent:  true,
+		},
+		{
 			name:                    "update with old managed and new unmanaged",
 			managedOld:              true,
 			managedNew:              false,
@@ -122,6 +134,10 @@ func TestPodGangSpecChangePredicate(t *testing.T) {
 				Build()
 			if tc.generationChanged {
 				newPG.SetGeneration(oldPG.GetGeneration() + 1)
+			}
+			if tc.deletionStarted {
+				now := metav1.Now()
+				newPG.DeletionTimestamp = &now
 			}
 
 			assert.Equal(t, tc.shouldAllowCreateEvent, pred.Create(event.CreateEvent{Object: newPG}), "Create")

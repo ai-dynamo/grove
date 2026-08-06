@@ -73,10 +73,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 
 	logger := log.FromContext(ctx).WithValues("scheduler", backend.Name(), "podGang", req.NamespacedName)
-	if !podGang.DeletionTimestamp.IsZero() {
-		return ctrl.Result{}, nil
-	}
-
 	if err := backend.SyncPodGang(ctx, podGang); err != nil {
 		logger.Error(err, "Failed to SyncPodGang on spec change")
 		return ctrl.Result{}, err

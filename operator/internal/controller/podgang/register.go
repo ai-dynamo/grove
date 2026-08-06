@@ -49,7 +49,8 @@ func podGangSpecChangePredicate() predicate.Predicate {
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			return grovectrlutils.IsManagedPodGang(e.ObjectOld) &&
 				grovectrlutils.IsManagedPodGang(e.ObjectNew) &&
-				(e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration())
+				(e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration() ||
+					e.ObjectOld.GetDeletionTimestamp().IsZero() != e.ObjectNew.GetDeletionTimestamp().IsZero())
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 	}
