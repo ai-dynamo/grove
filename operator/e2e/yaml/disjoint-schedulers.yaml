@@ -1,0 +1,72 @@
+# PodCliqueSet whose PodCliques select different enabled scheduler backends.
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: disjoint-schedulers
+  labels:
+    app: disjoint-schedulers
+spec:
+  replicas: 1
+  template:
+    cliques:
+      - name: kube-worker
+        spec:
+          roleName: kube-worker
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: default-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: kube-worker
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi
+      - name: kai-worker
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: kai-worker
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: kai-worker
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi

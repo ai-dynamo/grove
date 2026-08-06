@@ -27,6 +27,7 @@ import (
 	"github.com/go-logr/logr"
 	admissionv1 "k8s.io/api/admission/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -127,22 +128,80 @@ func (h *Handler) ValidateDelete(_ context.Context, _ runtime.Object) (admission
 	return nil, nil
 }
 
-// validatePodCliqueSetWithBackend resolves the scheduler backend for the PCS and runs backend-specific validation.
-// All cliques share the same (resolved) schedulerName after validateSchedulerNames, so we use the first clique.
+// validatePodCliqueSetWithBackend resolves every scheduler backend selected by
+// the PCS and runs backend-specific validation once per distinct backend.
 func (h *Handler) validatePodCliqueSetWithBackend(ctx context.Context, pcs *v1alpha1.PodCliqueSet) error {
-	schedulerName := ""
-	if len(pcs.Spec.Template.Cliques) > 0 && pcs.Spec.Template.Cliques[0] != nil {
-		schedulerName = pcs.Spec.Template.Cliques[0].Spec.PodSpec.SchedulerName
+	schedulerNames := make([]string, 0, len(pcs.Spec.Template.Cliques))
+	for _, clique := range pcs.Spec.Template.Cliques {
+		if clique != nil {
+			schedulerNames = append(schedulerNames, clique.Spec.PodSpec.SchedulerName)
+		}
+	}
+	if len(schedulerNames) == 0 {
+		schedulerNames = append(schedulerNames, "")
 	}
 
-	backend := h.schedRegistry.GetOrDefault(schedulerName)
-	if backend == nil {
-		if schedulerName == "" {
-			return fmt.Errorf("default scheduler backend is not configured")
+	seenBackends := make(map[string]struct{}, len(schedulerNames))
+	var validationErrs []error
+	for _, schedulerName := range schedulerNames {
+		backend := h.schedRegistry.GetOrDefault(schedulerName)
+		if backend == nil {
+			if schedulerName == "" {
+				validationErrs = append(validationErrs, fmt.Errorf("default scheduler backend is not configured"))
+			} else {
+				validationErrs = append(validationErrs, fmt.Errorf("schedulerName %q is not enabled in OperatorConfiguration", schedulerName))
+			}
+			continue
 		}
-		return fmt.Errorf("schedulerName %q is not enabled in OperatorConfiguration", schedulerName)
+		if _, seen := seenBackends[backend.Name()]; seen {
+			continue
+		}
+		seenBackends[backend.Name()] = struct{}{}
+		if err := backend.ValidatePodCliqueSet(ctx, h.podCliqueSetForBackend(pcs, backend.Name())); err != nil {
+			validationErrs = append(validationErrs, fmt.Errorf("scheduler backend %q: %w", backend.Name(), err))
+		}
 	}
-	return backend.ValidatePodCliqueSet(ctx, pcs)
+
+	return utilerrors.NewAggregate(validationErrs)
+}
+
+// podCliqueSetForBackend returns a copy containing only the cliques and scaling
+// groups assigned to backendName. PCS-level settings remain because they apply
+// to every scheduler-specific PodGang produced from the PCS.
+func (h *Handler) podCliqueSetForBackend(pcs *v1alpha1.PodCliqueSet, backendName string) *v1alpha1.PodCliqueSet {
+	scopedPCS := pcs.DeepCopy()
+	// Filter the already-deep-copied cliques in place instead of re-deep-copying the subset.
+	selectedCliques := scopedPCS.Spec.Template.Cliques[:0]
+	cliqueNames := make(map[string]struct{})
+	for _, clique := range scopedPCS.Spec.Template.Cliques {
+		if clique == nil {
+			continue
+		}
+		backend := h.schedRegistry.GetOrDefault(clique.Spec.PodSpec.SchedulerName)
+		if backend == nil || backend.Name() != backendName {
+			continue
+		}
+		selectedCliques = append(selectedCliques, clique)
+		cliqueNames[clique.Name] = struct{}{}
+	}
+	scopedPCS.Spec.Template.Cliques = selectedCliques
+
+	scopedScalingGroups := scopedPCS.Spec.Template.PodCliqueScalingGroupConfigs[:0]
+	for _, scalingGroup := range scopedPCS.Spec.Template.PodCliqueScalingGroupConfigs {
+		cliqueNamesForBackend := make([]string, 0, len(scalingGroup.CliqueNames))
+		for _, cliqueName := range scalingGroup.CliqueNames {
+			if _, ok := cliqueNames[cliqueName]; ok {
+				cliqueNamesForBackend = append(cliqueNamesForBackend, cliqueName)
+			}
+		}
+		if len(cliqueNamesForBackend) == 0 {
+			continue
+		}
+		scalingGroup.CliqueNames = cliqueNamesForBackend
+		scopedScalingGroups = append(scopedScalingGroups, scalingGroup)
+	}
+	scopedPCS.Spec.Template.PodCliqueScalingGroupConfigs = scopedScalingGroups
+	return scopedPCS
 }
 
 // castToPodCliqueSet attempts to cast a runtime.Object to a PodCliqueSet.

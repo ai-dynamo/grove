@@ -273,35 +273,34 @@ func (v *pcsValidator) validatePodCliqueTemplates(fldPath *field.Path) ([]string
 	return warnings, allErrs
 }
 
-// validateSchedulerNames ensures all pod scheduler names resolve to the same scheduler and that scheduler is enabled.
+// validateSchedulerNames ensures every scheduler selected by a PodClique is enabled.
 // Empty schedulerName is resolved to the default backend name from the injected registry.
 func (v *pcsValidator) validateSchedulerNames(schedulerNames []string, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	specPath := fldPath.Child("spec").Child("podSpec").Child("schedulerName")
 
-	defaultSchedulerName := v.schedRegistry.GetDefault().Name()
+	defaultBackend := v.schedRegistry.GetDefault()
+	defaultSchedulerName := ""
+	if defaultBackend != nil {
+		defaultSchedulerName = defaultBackend.Name()
+	}
 
-	// Check-1: Check if the scheduler names are unique
-	// Resolve empty to default backend name; then require all resolved names to be the same.
+	// Resolve empty scheduler names to the default backend, then validate each
+	// distinct scheduler once.
 	uniqueSchedulerNames := lo.Uniq(lo.Map(schedulerNames, func(item string, _ int) string {
 		if item == "" {
 			return defaultSchedulerName
 		}
 		return item
 	}))
-	if len(uniqueSchedulerNames) > 1 {
-		allErrs = append(allErrs, field.Invalid(specPath, strings.Join(uniqueSchedulerNames, ", "), "the schedulerName for all pods have to be the same"))
-	}
-
-	// Check-2: Validate that the resolved scheduler is enabled.
-	pcsSchedulerName := uniqueSchedulerNames[0]
-	// default-scheduler is always valid; any other name must appear in the registry of enabled OperatorConfiguration backends.
-	if v.schedRegistry.Get(pcsSchedulerName) == nil {
-		allErrs = append(allErrs, field.Invalid(
-			specPath,
-			pcsSchedulerName,
-			"schedulerName must be an enabled scheduler backend; this scheduler is not enabled in OperatorConfiguration",
-		))
+	for _, schedulerName := range uniqueSchedulerNames {
+		if schedulerName == "" || v.schedRegistry.Get(schedulerName) == nil {
+			allErrs = append(allErrs, field.Invalid(
+				specPath,
+				schedulerName,
+				"schedulerName must be an enabled scheduler backend; this scheduler is not enabled in OperatorConfiguration",
+			))
+		}
 	}
 	return allErrs
 }

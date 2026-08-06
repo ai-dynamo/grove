@@ -29,6 +29,7 @@ import (
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -54,14 +55,16 @@ type _resource struct {
 	client        client.Client
 	scheme        *runtime.Scheme
 	eventRecorder record.EventRecorder
+	schedRegistry scheduler.Registry
 }
 
 // New creates an instance of PodClique components operator.
-func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder) component.Operator[grovecorev1alpha1.PodCliqueSet] {
+func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, schedRegistry scheduler.Registry) component.Operator[grovecorev1alpha1.PodCliqueSet] {
 	return &_resource{
 		client:        client,
 		scheme:        scheme,
 		eventRecorder: eventRecorder,
+		schedRegistry: schedRegistry,
 	}
 }
 
@@ -305,7 +308,9 @@ func (r _resource) buildResource(logger logr.Logger, pclq *grovecorev1alpha1.Pod
 	}
 	// Add finalizer at creation so PCLQ controller does not need a separate PATCH on first reconcile.
 	controllerutil.AddFinalizer(pclq, apiconstants.FinalizerPodClique)
-	pclq.Labels = getLabels(pcs, pcsReplica, pclqObjectKey, pclqTemplateSpec, apicommon.GeneratePodGangNameForPodCliqueOwnedByPodCliqueSet(pcs, pcsReplica))
+	basePodGangName := apicommon.GeneratePodGangNameForPodCliqueOwnedByPodCliqueSet(pcs, pcsReplica)
+	podGangName := componentutils.GenerateSchedulerScopedPodGangName(basePodGangName, pcs, pclqTemplateSpec.Spec.PodSpec.SchedulerName, r.schedRegistry)
+	pclq.Labels = getLabels(pcs, pcsReplica, pclqObjectKey, pclqTemplateSpec, podGangName)
 	pclq.Annotations = maps.Clone(pclqTemplateSpec.Annotations)
 	// PodGang owns topology selection; do not propagate a template topology annotation to PodClique pods.
 	delete(pclq.Annotations, apiconstants.AnnotationTopologyName)
