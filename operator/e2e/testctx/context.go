@@ -221,6 +221,11 @@ func (tc *TestContext) WaitForPodPhases(expectedRunning, expectedPending int) er
 	return tc.newPodManager().WaitForPhases(tc.Ctx, tc.Namespace, tc.GetLabelSelector(), expectedRunning, expectedPending, tc.Timeout, tc.Interval)
 }
 
+// WaitForAtLeastPodPhases waits for at least minimumCount pods to enter one of the supplied phases.
+func (tc *TestContext) WaitForAtLeastPodPhases(minimumCount int, phases ...v1.PodPhase) error {
+	return tc.newPodManager().WaitForAtLeastPhases(tc.Ctx, tc.Namespace, tc.GetLabelSelector(), minimumCount, phases, tc.Timeout, tc.Interval)
+}
+
 // WaitForReadyPods waits for a specific number of pods to be ready.
 func (tc *TestContext) WaitForReadyPods(expectedReady int) error {
 	tc.T.Helper()
@@ -231,6 +236,12 @@ func (tc *TestContext) WaitForReadyPods(expectedReady int) error {
 func (tc *TestContext) WaitForRunningPods(expectedRunning int) error {
 	tc.T.Helper()
 	return tc.newPodManager().WaitForPhases(tc.Ctx, tc.Namespace, tc.GetLabelSelector(), expectedRunning, -1, tc.Timeout, tc.Interval)
+}
+
+// WaitForAtLeastRunningPods waits for at least the specified number of pods to be in Running phase.
+func (tc *TestContext) WaitForAtLeastRunningPods(minimumRunning int) error {
+	tc.T.Helper()
+	return tc.WaitForAtLeastPodPhases(minimumRunning, v1.PodRunning)
 }
 
 // WaitForFailedPod polls until a pod matching the label selector is not Ready and has terminated or restarted.
