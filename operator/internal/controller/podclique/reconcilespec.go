@@ -146,6 +146,15 @@ func shouldResetOrTriggerUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grove
 		return false
 	}
 
+	// PCLQ has no update history and its generation hash is already current.
+	// This happens for PCLQs scaled out after a rolling update: they are created
+	// from the already-updated template, so no rolling update pass is needed.
+	if pclq.Status.UpdateProgress == nil &&
+		pclq.Status.CurrentPodCliqueSetGenerationHash != nil &&
+		*pclq.Status.CurrentPodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash {
+		return false
+	}
+
 	// PCLQ has never been updated yet and PCS has a new generation hash.
 	firstEverUpdateRequired := pclq.Status.UpdateProgress == nil && pclq.Status.CurrentPodCliqueSetGenerationHash != nil && *pcs.Status.CurrentGenerationHash != *pclq.Status.CurrentPodCliqueSetGenerationHash
 	if firstEverUpdateRequired {
