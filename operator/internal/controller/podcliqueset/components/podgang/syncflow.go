@@ -520,11 +520,6 @@ func (r _resource) patchPodGangInitializedStatus(ctx context.Context, sc *syncCo
 		},
 	}
 	setOrUpdateInitializedCondition(statusPatch, status, reason, message)
-	// One could argue why not use Status.Phase to also denote Initialized condition. For now the argument is that
-	// current set of phases (Pending, Starting, Running) is influenced by the status of constituent Pods w.r.t their
-	// scheduling state, whereas initialized condition is denoting if a PodGang is ready to be scheduled
-	// (so it is pre-scheduling phase state). We can always revisit this in future if this reasoning changes.
-	statusPatch.Status.Phase = groveschedulerv1alpha1.PodGangPhasePending
 	if err := r.client.Status().Patch(ctx, statusPatch, client.Merge); err != nil {
 		return err
 	}
@@ -618,7 +613,7 @@ func (r _resource) createOrUpdatePodGang(ctx context.Context, sc *syncContext, p
 		)
 	}
 
-	// Update status with Initialized=False condition and Phase if not already set.
+	// Set Initialized=False if the condition is not already present.
 	// This needs to be done separately since CreateOrPatch doesn't handle updates/patches to status subresource.
 	if !k8sutils.HasCondition(pg.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized)) {
 		if err = r.patchPodGangInitializedStatus(ctx, sc, pg.Name, metav1.ConditionFalse, groveschedulerv1alpha1.ConditionReasonPodGangPodsCreationPending, "Not all constituent pods have been created yet"); err != nil {

@@ -81,6 +81,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		logger.Error(err, "Failed to SyncPodGang on spec change")
 		return ctrl.Result{}, err
 	}
+	if err := r.reconcileStatus(ctx, podGang, backend); err != nil {
+		logger.Error(err, "Failed to reconcile PodGang status")
+		return ctrl.Result{}, err
+	}
 	logger.Info("Successfully synced PodGang")
 	return ctrl.Result{}, nil
 }
