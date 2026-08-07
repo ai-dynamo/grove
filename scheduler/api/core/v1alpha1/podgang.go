@@ -143,6 +143,8 @@ type PodGangConditionType string
 const (
 	// PodGangConditionTypeScheduled indicates that the PodGang has been scheduled.
 	PodGangConditionTypeScheduled PodGangConditionType = "Scheduled"
+	// PodGangConditionTypeSchedulingBackendReady indicates whether the scheduler backend permits scheduling.
+	PodGangConditionTypeSchedulingBackendReady PodGangConditionType = "SchedulingBackendReady"
 	// PodGangConditionTypeReady indicates that all the constituent PodGroups are Ready.
 	PodGangConditionTypeReady PodGangConditionType = "Ready"
 	// PodGangConditionTypeInitialized indicates that all Pods have been created and PodGang has been populated with pod references.
@@ -164,6 +166,14 @@ const (
 	ConditionReasonPodGangPodsCreationPending = "PodGangPodsCreationPending"
 	// ConditionReasonPodGangPodsCreated indicates that all constituent Pods for a PodGang have been created.
 	ConditionReasonPodGangPodsCreated = "PodGangPodsCreated"
+	// ConditionReasonPodGangNotInitialized indicates that PodGang scheduling cannot be determined until initialization completes.
+	ConditionReasonPodGangNotInitialized = "PodGangNotInitialized"
+	// ConditionReasonInsufficientScheduledPods indicates that a PodGroup has fewer scheduled Pods than required.
+	ConditionReasonInsufficientScheduledPods = "InsufficientScheduledPods"
+	// ConditionReasonSufficientScheduledPods indicates that every PodGroup has enough scheduled Pods.
+	ConditionReasonSufficientScheduledPods = "SufficientScheduledPods"
+	// ConditionReasonSchedulingBackendStatusUnavailable indicates that scheduler backend status could not be obtained.
+	ConditionReasonSchedulingBackendStatusUnavailable = "SchedulingBackendStatusUnavailable"
 )
 
 // PodGangStatus defines the status of a PodGang.

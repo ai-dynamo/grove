@@ -23,7 +23,9 @@ import (
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -93,6 +95,26 @@ type TopologyAwareBackend interface {
 		ct *grovecorev1alpha1.ClusterTopologyBinding,
 		ref grovecorev1alpha1.SchedulerTopologyBinding,
 	) (bool, string, int64, error)
+}
+
+// PodGangSchedulingBackendCondition is a scheduler backend's readiness to schedule a PodGang.
+type PodGangSchedulingBackendCondition struct {
+	Status  metav1.ConditionStatus
+	Reason  string
+	Message string
+}
+
+// PodGangStatusProvider contributes scheduler-specific PodGang status.
+type PodGangStatusProvider interface {
+	GetPodGangSchedulingBackendCondition(
+		ctx context.Context,
+		podGang *groveschedulerv1alpha1.PodGang,
+	) (*PodGangSchedulingBackendCondition, error)
+}
+
+// PodGangStatusEventSource registers watches for backend resources that affect PodGang status.
+type PodGangStatusEventSource interface {
+	AddPodGangStatusWatches(builder *builder.Builder) *builder.Builder
 }
 
 // Registry provides access to initialized scheduler backends.
