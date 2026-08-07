@@ -46,6 +46,15 @@ var podPhaseToOrdinal = map[corev1.PodPhase]int{corev1.PodPending: 0, corev1.Pod
 // Code partially adapted from https://github.com/kubernetes/kubernetes/blob/5a450884b127f7b8e477d48cf3967a2a5eca9126/pkg/controller/controller_utils.go#L702
 // Only 4 conditions have been taken as is and used here.
 func (s DeletionSorter) Less(i, j int) bool {
+	// 0. Already terminating < not terminating
+	// A Pod that has been marked for deletion keeps reporting Running and Ready until its containers
+	// actually stop, so none of the criteria below can distinguish it from a healthy Pod. Sorting it
+	// first ensures that any surplus deletion budget is spent on Pods that are already on their way
+	// out rather than on Pods that are still serving.
+	if iTerminating, jTerminating := s.Pods[i].DeletionTimestamp != nil, s.Pods[j].DeletionTimestamp != nil; iTerminating != jTerminating {
+		return iTerminating
+	}
+
 	// 1. Unassigned < assigned
 	// If only one of the pods is unassigned, the unassigned one is smaller
 	if s.Pods[i].Spec.NodeName != s.Pods[j].Spec.NodeName && (len(s.Pods[i].Spec.NodeName) == 0 || len(s.Pods[j].Spec.NodeName) == 0) {
