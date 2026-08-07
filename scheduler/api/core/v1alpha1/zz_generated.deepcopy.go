@@ -158,6 +158,14 @@ func (in *PodGangStatus) DeepCopyInto(out *PodGangStatus) {
 		*out = new(float64)
 		**out = **in
 	}
+	if in.LastScheduled != nil {
+		in, out := &in.LastScheduled, &out.LastScheduled
+		*out = (*in).DeepCopy()
+	}
+	if in.LastReady != nil {
+		in, out := &in.LastReady, &out.LastReady
+		*out = (*in).DeepCopy()
+	}
 	return
 }
 

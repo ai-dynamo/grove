@@ -1,0 +1,182 @@
+# Workload for Coherent Update Strategy E2E Tests
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: workload-coherent
+  labels:
+    app: workload-coherent
+spec:
+  replicas: 1
+  updateStrategy:
+    type: Coherent
+  template:
+    cliques:
+      - name: frontend
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: role-frontend
+          replicas: 3
+          minAvailable: 1
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: frontend
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi
+      - name: prefill-worker
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: role-prefill-worker
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: prefill-worker
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi
+      - name: prefill-leader
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: role-prefill-leader
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: prefill-leader
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi
+      - name: decode-worker
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: role-decode-worker
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: decode-worker
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi
+      - name: decode-leader
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: role-decode-leader
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: decode-leader
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi
+    podCliqueScalingGroups:
+      - name: prefill
+        replicas: 4
+        minAvailable: 2
+        cliqueNames:
+          - prefill-worker
+          - prefill-leader
+      - name: decode
+        replicas: 5
+        minAvailable: 2
+        cliqueNames:
+          - decode-worker
+          - decode-leader

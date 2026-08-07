@@ -303,6 +303,94 @@ func TestGroupPCLQsByPodGangName(t *testing.T) {
 	}
 }
 
+// TestGroupPCLQsByPCSGReplicaIndex tests the GroupPCLQsByPCSGReplicaIndex function
+func TestGroupPCLQsByPCSGReplicaIndex(t *testing.T) {
+	pclqWithReplicaIndex := func(name, replicaIndex string) grovecorev1alpha1.PodClique {
+		return grovecorev1alpha1.PodClique{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: name,
+				Labels: map[string]string{
+					apicommon.LabelPodCliqueScalingGroupReplicaIndex: replicaIndex,
+				},
+			},
+		}
+	}
+
+	tests := []struct {
+		// Test case description
+		name string
+		// pclqs is the list of PodCliques to group
+		pclqs []grovecorev1alpha1.PodClique
+		// expected is the expected grouping (only checked when wantErr is false)
+		expected map[int][]grovecorev1alpha1.PodClique
+		// wantErr asserts that an error is returned
+		wantErr bool
+	}{
+		{
+			name: "groups_by_replica_index",
+			pclqs: []grovecorev1alpha1.PodClique{
+				pclqWithReplicaIndex("pclq-0a", "0"),
+				pclqWithReplicaIndex("pclq-0b", "0"),
+				pclqWithReplicaIndex("pclq-1", "1"),
+			},
+			expected: map[int][]grovecorev1alpha1.PodClique{
+				0: {
+					pclqWithReplicaIndex("pclq-0a", "0"),
+					pclqWithReplicaIndex("pclq-0b", "0"),
+				},
+				1: {
+					pclqWithReplicaIndex("pclq-1", "1"),
+				},
+			},
+		},
+		{
+			name:     "empty_list",
+			pclqs:    []grovecorev1alpha1.PodClique{},
+			expected: map[int][]grovecorev1alpha1.PodClique{},
+		},
+		{
+			name: "skips_pclqs_missing_replica_index_label",
+			pclqs: []grovecorev1alpha1.PodClique{
+				{ObjectMeta: metav1.ObjectMeta{Name: "pclq-no-label", Labels: map[string]string{}}},
+				pclqWithReplicaIndex("pclq-0", "0"),
+			},
+			expected: map[int][]grovecorev1alpha1.PodClique{
+				0: {pclqWithReplicaIndex("pclq-0", "0")},
+			},
+		},
+		{
+			name: "non_numeric_replica_index_returns_error",
+			pclqs: []grovecorev1alpha1.PodClique{
+				pclqWithReplicaIndex("pclq-bad", "abc"),
+			},
+			wantErr: true,
+		},
+		{
+			name: "negative_replica_index_is_accepted",
+			// strconv.Atoi parses "-1" as a valid int — the util's contract is "valid integer",
+			// not "non-negative integer". Document this so a future reader knows it isn't filtered here.
+			pclqs: []grovecorev1alpha1.PodClique{
+				pclqWithReplicaIndex("pclq-neg", "-1"),
+			},
+			expected: map[int][]grovecorev1alpha1.PodClique{
+				-1: {pclqWithReplicaIndex("pclq-neg", "-1")},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := GroupPCLQsByPCSGReplicaIndex(tc.pclqs)
+			if tc.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
 // TestIsPCLQAutoUpdateInProgress tests the IsPCLQAutoUpdateInProgress function
 func TestIsPCLQAutoUpdateInProgress(t *testing.T) {
 	tests := []struct {
@@ -581,4 +669,53 @@ func TestGetMinAvailableBreachedPCLQInfoFiltersNeverScheduled(t *testing.T) {
 	pclqs := []grovecorev1alpha1.PodClique{pclqBreachedNeverScheduled, pclqBreachedAfterHealthy}
 	names, _ := GetMinAvailableBreachedPCLQInfo(pclqs, time.Hour, time.Now())
 	assert.Equal(t, []string{"regressed"}, names, "never-scheduled PCLQ must be filtered out")
+}
+
+func TestIsStandalonePCLQ(t *testing.T) {
+	tests := []struct {
+		name     string
+		pclq     *grovecorev1alpha1.PodClique
+		expected bool
+	}{
+		{
+			name: "standalone PCLQ owned by PodCliqueSet",
+			pclq: &grovecorev1alpha1.PodClique{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "pcs-0-frontend",
+					OwnerReferences: []metav1.OwnerReference{
+						{Kind: constants.KindPodCliqueSet, Name: "pcs"},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "PCSG-owned PCLQ owned by PodCliqueScalingGroup",
+			pclq: &grovecorev1alpha1.PodClique{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "pcs-0-prefill-0-pworker",
+					OwnerReferences: []metav1.OwnerReference{
+						{Kind: constants.KindPodCliqueScalingGroup, Name: "pcs-0-prefill"},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "PCLQ with no owner references",
+			pclq: &grovecorev1alpha1.PodClique{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "orphan-pclq",
+				},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := IsStandalonePCLQ(tc.pclq)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
 }

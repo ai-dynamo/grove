@@ -107,6 +107,39 @@ type PodCliqueScalingGroupStatus struct {
 	CurrentPodCliqueSetGenerationHash *string `json:"currentPodCliqueSetGenerationHash,omitempty"`
 	// UpdateProgress provides details about the ongoing update of the PodCliqueScalingGroup.
 	UpdateProgress *PodCliqueScalingGroupUpdateProgress `json:"updateProgress,omitempty"`
+	// PodGangMapping captures the desired association of each PodCliqueScalingGroup replica to a PodGang.
+	// During initial deployment and while an update is in flight, it is derived from the PodGangMap,
+	// the single source of truth in those phases. In steady state it becomes the source of truth.
+	// PodCliqueScalingGroup scale-in and scale-out are recorded here, and the PodGangMap is synced from it.
+	//
+	// Each element maps a PodGangMap entry (identified by epoch and role) to the PodCliqueScalingGroup
+	// replica indices it carries.
+	// +listType=atomic
+	PodGangMapping []PodGangReplicaAssignment `json:"podGangMapping,omitempty"`
+}
+
+// PodGangReplicaAssignment records the PodCliqueScalingGroup replica indices carried by one PodGangMap
+// entry. It is a per-PodCliqueScalingGroup projection of that entry which carries the entry identity
+// needed to resolve back to the entry (Epoch, Role plus AnchorIndex) together with the replica
+// indices this PodCliqueScalingGroup contributes. The PodGang name is not stored. It is derivable from
+// the replica index, so storing it per index would bloat the status on a large scale-out.
+type PodGangReplicaAssignment struct {
+	// Epoch is the epoch of the PodGangMap entry this assignment belongs to. It is empty for a
+	// ScaleOut assignment. Today a single PodGangMap entry captures all of a PodCliqueScalingGroup's
+	// scale-out replicas, so the ScaleOut assignment is resolved by role rather than epoch, and the
+	// PodCliqueScalingGroup reconciler leaves the epoch unset (the epoch is authored by the PodGangMap
+	// writer and the steady-state sync is one way). If this ever moves to a model with more than one
+	// ScaleOut entry, the PodCliqueScalingGroup reconciler will backfill this epoch from the PodGangMap.
+	// +optional
+	Epoch string `json:"epoch,omitempty"`
+	// Role classifies the PodGang as Anchor, Tail, or ScaleOut.
+	Role PodGangEntryRole `json:"role"`
+	// AnchorIndex is the index of the anchor PodGang. It is meaningful only when Role is Anchor.
+	// +optional
+	AnchorIndex int32 `json:"anchorIndex,omitempty"`
+	// ReplicaIndices are this PodCliqueScalingGroup's replica indices that belong to the PodGangMap
+	// entry identified by (Epoch, Role).
+	ReplicaIndices []int32 `json:"replicaIndices"`
 }
 
 // PodCliqueScalingGroupUpdateProgress provides details about the ongoing update of the PodCliqueScalingGroup.
