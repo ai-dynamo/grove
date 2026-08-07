@@ -11114,18 +11114,8 @@ spec:
                     name:
                       description: Name is the name of the PodGang.
                       type: string
-                    phase:
-                      description: Phase is the current phase of the PodGang.
-                      enum:
-                      - Pending
-                      - Starting
-                      - Running
-                      - Failed
-                      - Succeeded
-                      type: string
                   required:
                   - name
-                  - phase
                   type: object
                 type: array
               replicas:

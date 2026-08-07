@@ -137,18 +137,6 @@ type NamespacedName struct {
 	Name string `json:"name"`
 }
 
-// PodGangPhase defines the current phase of a PodGang.
-type PodGangPhase string
-
-const (
-	// PodGangPhasePending indicates that all the pods in a PodGang have been created and the PodGang is pending scheduling.
-	PodGangPhasePending PodGangPhase = "Pending"
-	// PodGangPhaseStarting indicates that the scheduler has started binding pods in the PodGang to nodes.
-	PodGangPhaseStarting PodGangPhase = "Starting"
-	// PodGangPhaseRunning indicates that all the pods in the PodGang have been scheduled and are running.
-	PodGangPhaseRunning PodGangPhase = "Running"
-)
-
 // PodGangConditionType defines the type of condition for a PodGang.
 type PodGangConditionType string
 
@@ -180,8 +168,6 @@ const (
 
 // PodGangStatus defines the status of a PodGang.
 type PodGangStatus struct {
-	// Phase is the current phase of a PodGang.
-	Phase PodGangPhase `json:"phase"`
 	// Conditions is a list of conditions that describe the current state of the PodGang.
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 	// PlacementScore is network optimality score for the PodGang. If the choice that the scheduler has made corresponds to the
