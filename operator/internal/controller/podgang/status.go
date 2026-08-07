@@ -41,6 +41,7 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, podGang *groveschedule
 		}
 	}
 	scheduledCondition := getScheduledCondition(podGang, pods)
+	readyCondition := getReadyCondition(podGang, pods)
 	schedulingBackendReadyCondition, backendStatusErr := getSchedulingBackendReadyCondition(ctx, podGang, backend)
 	if backendStatusErr != nil {
 		schedulingBackendReadyCondition = &metav1.Condition{
@@ -63,7 +64,8 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, podGang *groveschedule
 	} else {
 		schedulingBackendReadyChanged = meta.SetStatusCondition(&podGang.Status.Conditions, *schedulingBackendReadyCondition)
 	}
-	if !scheduledChanged && !schedulingBackendReadyChanged {
+	readyChanged := meta.SetStatusCondition(&podGang.Status.Conditions, readyCondition)
+	if !scheduledChanged && !schedulingBackendReadyChanged && !readyChanged {
 		return backendStatusErr
 	}
 	if err := r.Status().Patch(ctx, podGang, client.MergeFrom(original)); err != nil {
@@ -117,6 +119,35 @@ func getSchedulingBackendReadyCondition(ctx context.Context, podGang *grovesched
 		Message:            backendCondition.Message,
 		ObservedGeneration: podGang.Generation,
 	}, nil
+}
+
+func getReadyCondition(podGang *groveschedulerv1alpha1.PodGang, pods map[types.NamespacedName]*corev1.Pod) metav1.Condition {
+	condition := metav1.Condition{
+		Type:               string(groveschedulerv1alpha1.PodGangConditionTypeReady),
+		ObservedGeneration: podGang.Generation,
+	}
+	if !isPodGangInitialized(podGang) {
+		condition.Status = metav1.ConditionUnknown
+		condition.Reason = groveschedulerv1alpha1.ConditionReasonPodGangNotInitialized
+		condition.Message = "PodGang readiness cannot be determined before initialization completes"
+		return condition
+	}
+
+	for _, podGroup := range podGang.Spec.PodGroups {
+		ready := countPodsWithCondition(podGroup.PodReferences, pods, corev1.PodReady)
+		if ready >= podGroup.MinReplicas {
+			continue
+		}
+		condition.Status = metav1.ConditionFalse
+		condition.Reason = groveschedulerv1alpha1.ConditionReasonInsufficientReadyPods
+		condition.Message = fmt.Sprintf("PodGroup %q has %d of %d required Pods ready", podGroup.Name, ready, podGroup.MinReplicas)
+		return condition
+	}
+
+	condition.Status = metav1.ConditionTrue
+	condition.Reason = groveschedulerv1alpha1.ConditionReasonSufficientReadyPods
+	condition.Message = "All PodGroups satisfy MinReplicas"
+	return condition
 }
 
 func isPodGangInitialized(podGang *groveschedulerv1alpha1.PodGang) bool {

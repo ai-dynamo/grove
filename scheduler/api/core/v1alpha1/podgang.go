@@ -174,6 +174,10 @@ const (
 	ConditionReasonSufficientScheduledPods = "SufficientScheduledPods"
 	// ConditionReasonSchedulingBackendStatusUnavailable indicates that scheduler backend status could not be obtained.
 	ConditionReasonSchedulingBackendStatusUnavailable = "SchedulingBackendStatusUnavailable"
+	// ConditionReasonInsufficientReadyPods indicates that a PodGroup has fewer ready Pods than required.
+	ConditionReasonInsufficientReadyPods = "InsufficientReadyPods"
+	// ConditionReasonSufficientReadyPods indicates that every PodGroup has enough ready Pods.
+	ConditionReasonSufficientReadyPods = "SufficientReadyPods"
 )
 
 // PodGangStatus defines the status of a PodGang.

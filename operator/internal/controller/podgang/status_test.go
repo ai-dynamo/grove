@@ -124,8 +124,51 @@ func TestGetSchedulingBackendReadyCondition(t *testing.T) {
 	assert.Nil(t, condition)
 }
 
+func TestGetReadyCondition(t *testing.T) {
+	const namespace = "default"
+	podGang := testutils.NewPodGangBuilder("test-podgang", namespace).
+		WithGeneration(3).
+		WithManaged(true).
+		Build()
+	podGang.Spec.PodGroups = []groveschedulerv1alpha1.PodGroup{{
+		Name:        "workers",
+		MinReplicas: 2,
+		PodReferences: []groveschedulerv1alpha1.NamespacedName{
+			{Namespace: namespace, Name: "worker-0"},
+			{Namespace: namespace, Name: "worker-1"},
+		},
+	}}
+
+	condition := getReadyCondition(podGang, nil)
+	assert.Equal(t, metav1.ConditionUnknown, condition.Status)
+	assert.Equal(t, groveschedulerv1alpha1.ConditionReasonPodGangNotInitialized, condition.Reason)
+
+	podGang.Status.Conditions = []metav1.Condition{{
+		Type:   string(groveschedulerv1alpha1.PodGangConditionTypeInitialized),
+		Status: metav1.ConditionTrue,
+	}}
+	terminatingPod := readyPod("worker-1", podGang.Name)
+	now := metav1.Now()
+	terminatingPod.DeletionTimestamp = &now
+	pods := map[types.NamespacedName]*corev1.Pod{
+		{Namespace: namespace, Name: "worker-0"}: readyPod("worker-0", podGang.Name),
+		{Namespace: namespace, Name: "worker-1"}: terminatingPod,
+	}
+
+	condition = getReadyCondition(podGang, pods)
+	assert.Equal(t, metav1.ConditionFalse, condition.Status)
+	assert.Equal(t, groveschedulerv1alpha1.ConditionReasonInsufficientReadyPods, condition.Reason)
+	assert.Equal(t, `PodGroup "workers" has 1 of 2 required Pods ready`, condition.Message)
+
+	pods[types.NamespacedName{Namespace: namespace, Name: "worker-1"}] = readyPod("worker-1", podGang.Name)
+	condition = getReadyCondition(podGang, pods)
+	assert.Equal(t, metav1.ConditionTrue, condition.Status)
+	assert.Equal(t, groveschedulerv1alpha1.ConditionReasonSufficientReadyPods, condition.Reason)
+	assert.Equal(t, int64(3), condition.ObservedGeneration)
+}
+
 func TestReconcileStatus(t *testing.T) {
-	podGang, cl := createInitializedPodGangWithScheduledPod(t)
+	podGang, cl := createInitializedPodGangWithScheduledAndReadyPod(t)
 	r := &Reconciler{Client: cl}
 	current := &groveschedulerv1alpha1.PodGang{}
 	require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(podGang), current))
@@ -144,14 +187,17 @@ func TestReconcileStatus(t *testing.T) {
 	scheduledCondition := apimeta.FindStatusCondition(updated.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeScheduled))
 	require.NotNil(t, scheduledCondition)
 	assert.Equal(t, metav1.ConditionTrue, scheduledCondition.Status)
+	readyCondition := apimeta.FindStatusCondition(updated.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeReady))
+	require.NotNil(t, readyCondition)
+	assert.Equal(t, metav1.ConditionTrue, readyCondition.Status)
 	schedulingBackendReadyCondition := apimeta.FindStatusCondition(updated.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeSchedulingBackendReady))
 	require.NotNil(t, schedulingBackendReadyCondition)
 	assert.Equal(t, metav1.ConditionFalse, schedulingBackendReadyCondition.Status)
 	assert.Equal(t, "QueueDoesNotExist", schedulingBackendReadyCondition.Reason)
 }
 
-func TestReconcileStatusPersistsGroveConditionOnBackendError(t *testing.T) {
-	podGang, cl := createInitializedPodGangWithScheduledPod(t)
+func TestReconcileStatusPersistsGroveConditionsOnBackendError(t *testing.T) {
+	podGang, cl := createInitializedPodGangWithScheduledAndReadyPod(t)
 	r := &Reconciler{Client: cl}
 	current := &groveschedulerv1alpha1.PodGang{}
 	require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(podGang), current))
@@ -167,6 +213,9 @@ func TestReconcileStatusPersistsGroveConditionOnBackendError(t *testing.T) {
 	scheduledCondition := apimeta.FindStatusCondition(updated.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeScheduled))
 	require.NotNil(t, scheduledCondition)
 	assert.Equal(t, metav1.ConditionTrue, scheduledCondition.Status)
+	readyCondition := apimeta.FindStatusCondition(updated.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeReady))
+	require.NotNil(t, readyCondition)
+	assert.Equal(t, metav1.ConditionTrue, readyCondition.Status)
 	schedulingBackendReadyCondition := apimeta.FindStatusCondition(updated.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeSchedulingBackendReady))
 	require.NotNil(t, schedulingBackendReadyCondition)
 	assert.Equal(t, metav1.ConditionUnknown, schedulingBackendReadyCondition.Status)
@@ -184,7 +233,7 @@ func scheduledConditionForTest(t *testing.T, r *Reconciler, podGang *groveschedu
 	return getScheduledCondition(podGang, pods)
 }
 
-func createInitializedPodGangWithScheduledPod(t *testing.T) (*groveschedulerv1alpha1.PodGang, client.Client) {
+func createInitializedPodGangWithScheduledAndReadyPod(t *testing.T) (*groveschedulerv1alpha1.PodGang, client.Client) {
 	t.Helper()
 	const namespace = "default"
 	podGang := testutils.NewPodGangBuilder("test-podgang", namespace).
@@ -203,8 +252,13 @@ func createInitializedPodGangWithScheduledPod(t *testing.T) (*groveschedulerv1al
 		Type:   string(groveschedulerv1alpha1.PodGangConditionTypeInitialized),
 		Status: metav1.ConditionTrue,
 	}}
+	pod := readyPod("worker-0", podGang.Name)
+	pod.Status.Conditions = append(pod.Status.Conditions, corev1.PodCondition{
+		Type:   corev1.PodScheduled,
+		Status: corev1.ConditionTrue,
+	})
 	return podGang, testutils.NewTestClientBuilder().
-		WithObjects(podGang, scheduledPod("worker-0", namespace, podGang.Name)).
+		WithObjects(podGang, pod).
 		WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
 		Build()
 }
@@ -213,6 +267,15 @@ func scheduledPod(name, namespace, podGangName string) *corev1.Pod {
 	pod := unscheduledPod(name, namespace, podGangName)
 	pod.Status.Conditions = []corev1.PodCondition{{
 		Type:   corev1.PodScheduled,
+		Status: corev1.ConditionTrue,
+	}}
+	return pod
+}
+
+func readyPod(name, podGangName string) *corev1.Pod {
+	pod := unscheduledPod(name, "default", podGangName)
+	pod.Status.Conditions = []corev1.PodCondition{{
+		Type:   corev1.PodReady,
 		Status: corev1.ConditionTrue,
 	}}
 	return pod

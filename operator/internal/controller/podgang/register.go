@@ -44,7 +44,7 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 		Watches(
 			&corev1.Pod{},
 			handler.EnqueueRequestsFromMapFunc(mapPodToPodGang),
-			builder.WithPredicates(podSchedulingStatusChangePredicate()),
+			builder.WithPredicates(podStatusChangePredicate()),
 		).
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: *r.config.ConcurrentSyncs,
@@ -87,7 +87,7 @@ func hasInitializedConditionChanged(updateEvent event.UpdateEvent) bool {
 		meta.IsStatusConditionTrue(newPodGang.Status.Conditions, conditionType)
 }
 
-func podSchedulingStatusChangePredicate() predicate.Predicate {
+func podStatusChangePredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(_ event.CreateEvent) bool { return true },
 		DeleteFunc: func(_ event.DeleteEvent) bool { return true },
@@ -99,7 +99,8 @@ func podSchedulingStatusChangePredicate() predicate.Predicate {
 			}
 			return oldPod.Labels[apicommon.LabelPodGang] != newPod.Labels[apicommon.LabelPodGang] ||
 				oldPod.DeletionTimestamp.IsZero() != newPod.DeletionTimestamp.IsZero() ||
-				isPodConditionTrue(oldPod, corev1.PodScheduled) != isPodConditionTrue(newPod, corev1.PodScheduled)
+				isPodConditionTrue(oldPod, corev1.PodScheduled) != isPodConditionTrue(newPod, corev1.PodScheduled) ||
+				isPodConditionTrue(oldPod, corev1.PodReady) != isPodConditionTrue(newPod, corev1.PodReady)
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 	}

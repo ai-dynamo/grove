@@ -156,8 +156,8 @@ func TestPodGangChangePredicateAllowsInitialization(t *testing.T) {
 	assert.True(t, pred.Update(event.UpdateEvent{ObjectOld: oldPodGang, ObjectNew: newPodGang}))
 }
 
-func TestPodSchedulingStatusChangePredicate(t *testing.T) {
-	pred := podSchedulingStatusChangePredicate()
+func TestPodStatusChangePredicate(t *testing.T) {
+	pred := podStatusChangePredicate()
 	oldPod := unscheduledPod("worker-0", "default", "test-podgang")
 	newPod := oldPod.DeepCopy()
 	newPod.Status.Conditions = []corev1.PodCondition{{
@@ -173,6 +173,13 @@ func TestPodSchedulingStatusChangePredicate(t *testing.T) {
 	unchangedPod := newPod.DeepCopy()
 	unchangedPod.Status.Conditions[0].Message = "diagnostic changed"
 	assert.False(t, pred.Update(event.UpdateEvent{ObjectOld: newPod, ObjectNew: unchangedPod}))
+
+	readyPod := newPod.DeepCopy()
+	readyPod.Status.Conditions = append(readyPod.Status.Conditions, corev1.PodCondition{
+		Type:   corev1.PodReady,
+		Status: corev1.ConditionTrue,
+	})
+	assert.True(t, pred.Update(event.UpdateEvent{ObjectOld: newPod, ObjectNew: readyPod}))
 }
 
 func TestMapPodToPodGang(t *testing.T) {
