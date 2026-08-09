@@ -1,0 +1,71 @@
+{
+  "testName": "ScaleUp_Tiny",
+  "runID": "run-20260809-044150",
+  "namespace": "default",
+  "pcsCount": 1,
+  "groveImage": "registry:5001/grove-operator:E2E_TESTS@sha256:f187f2eee7f565984a890d6695f9bcf4c7a802520a4cefa45d39d2d1c84b34e5",
+  "phases": [
+    {
+      "name": "operator-baseline",
+      "startTime": "2026-08-09T04:41:50.143365356Z",
+      "endTime": "2026-08-09T04:41:50.146036963Z",
+      "durationFromTestStartSeconds": 0.000025768,
+      "milestones": []
+    },
+    {
+      "name": "deploy",
+      "startTime": "2026-08-09T04:41:50.146057596Z",
+      "endTime": "2026-08-09T04:41:50.153145555Z",
+      "durationFromTestStartSeconds": 0.002718018,
+      "milestones": []
+    },
+    {
+      "name": "scale-up",
+      "startTime": "2026-08-09T04:41:50.153163805Z",
+      "endTime": "2026-08-09T04:41:55.502900524Z",
+      "durationFromTestStartSeconds": 0.00982423,
+      "milestones": [
+        {
+          "name": "all-pods-created",
+          "timestamp": "2026-08-09T04:41:55.269749348Z",
+          "durationFromPhaseStartSeconds": 5.116585546
+        },
+        {
+          "name": "all-pods-ready",
+          "timestamp": "2026-08-09T04:41:55.50283089Z",
+          "durationFromPhaseStartSeconds": 5.349667089
+        }
+      ]
+    },
+    {
+      "name": "final-check",
+      "startTime": "2026-08-09T04:41:55.502925439Z",
+      "endTime": "2026-08-09T04:41:55.681832321Z",
+      "durationFromTestStartSeconds": 5.359585852,
+      "milestones": []
+    },
+    {
+      "name": "delete",
+      "startTime": "2026-08-09T04:41:55.681854124Z",
+      "endTime": "2026-08-09T04:41:55.788104745Z",
+      "durationFromTestStartSeconds": 5.538514545,
+      "milestones": [
+        {
+          "name": "pcs-deleted",
+          "timestamp": "2026-08-09T04:41:55.788080974Z",
+          "durationFromPhaseStartSeconds": 0.106226853
+        }
+      ]
+    }
+  ],
+  "testDurationSeconds": 5.644781488,
+  "k8sClient": {
+    "qps": 100,
+    "burst": 150
+  },
+  "controllerMaxReconcile": {
+    "podCliqueSet": 20,
+    "podCliqueScalingGroup": 20,
+    "podClique": 20
+  }
+}
