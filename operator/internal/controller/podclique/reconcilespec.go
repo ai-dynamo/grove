@@ -14,7 +14,7 @@
 
 package podclique
 
-
+// Reconcile logic for PodClique resources.
 import (
 	"context"
 	"fmt"
