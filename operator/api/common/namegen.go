@@ -157,3 +157,11 @@ func ExtractScalingGroupNameFromPCSGFQN(pcsgFQN string, pcsNameReplica ResourceN
 	}
 	return pcsgFQN[len(prefix):], nil
 }
+
+// ExtractPodCliqueNameFromStandalonePCLQFQN extracts the unqualified PodClique template name from a
+// standalone PodClique FQN. For example, "simple1-0-frontend" with pcsNameReplica="simple1-0"
+// returns "frontend". The caller must pass a standalone PodClique FQN.
+func ExtractPodCliqueNameFromStandalonePCLQFQN(pclqFQN string, pcsNameReplica ResourceNameReplica) string {
+	prefix := fmt.Sprintf("%s-%d-", pcsNameReplica.Name, pcsNameReplica.Replica)
+	return pclqFQN[len(prefix):]
+}
