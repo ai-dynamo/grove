@@ -79,6 +79,8 @@ func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admis
 	warnings, errs := v.validate()
 	warnings = append(warnings, topologyWarnings...)
 	allErrs = append(allErrs, errs...)
+	resourceClaimNameValidator := newGeneratedResourceClaimNameValidator(pcs)
+	allErrs = append(allErrs, resourceClaimNameValidator.validate(field.NewPath("spec", "template"))...)
 
 	// Validate MNNVL annotations on PCS metadata and spec (clique templates)
 	allErrs = append(allErrs, mnnvl.ValidatePCSOnCreate(pcs, h.networkConfig.AutoMNNVLEnabled)...)
@@ -105,6 +107,8 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 
 	v := newPCSValidator(newPCS, admissionv1.Update, h.tasConfig, h.schedulerConfig, h.client, h.schedRegistry)
 	warnings, errs := v.validate()
+	resourceClaimNameValidator := newGeneratedResourceClaimNameValidator(newPCS)
+	errs = append(errs, resourceClaimNameValidator.validateUpdate(oldPCS, field.NewPath("spec", "template"))...)
 
 	// Validate MNNVL annotation immutability on PCS metadata and spec (clique templates)
 	errs = append(errs, mnnvl.ValidatePCSOnUpdate(oldPCS, newPCS)...)
