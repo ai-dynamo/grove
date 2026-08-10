@@ -16,6 +16,7 @@ package pod
 
 import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -49,8 +50,8 @@ func (s DeletionSorter) Less(i, j int) bool {
 	// actually stop, so none of the criteria below can distinguish it from a healthy Pod. Sorting it
 	// first ensures that any surplus deletion budget is spent on Pods that are already on their way
 	// out rather than on Pods that are still serving.
-	if iTerminating, jTerminating := s.Pods[i].DeletionTimestamp != nil, s.Pods[j].DeletionTimestamp != nil; iTerminating != jTerminating {
-		return iTerminating
+	if isPodTerminating(s.Pods[i]) != isPodTerminating(s.Pods[j]) {
+		return isPodTerminating(s.Pods[i])
 	}
 
 	// 1. Unassigned < assigned
@@ -80,6 +81,11 @@ func (s DeletionSorter) Less(i, j int) bool {
 		return s.Pods[i].CreationTimestamp.IsZero()
 	}
 	return s.Pods[i].CreationTimestamp.After(s.Pods[j].CreationTimestamp.Time)
+}
+
+// isPodTerminating checks if a pod has already been marked for deletion.
+func isPodTerminating(pod *corev1.Pod) bool {
+	return k8sutils.IsResourceTerminating(pod.ObjectMeta)
 }
 
 // isPodReady checks if a pod is ready by looking for the PodReady condition with status True
