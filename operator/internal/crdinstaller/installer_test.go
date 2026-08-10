@@ -64,12 +64,12 @@ spec:
 `
 }
 
-// TestInstallCRDs_AllApplied verifies that InstallCRDs applies all 5 Grove CRDs
+// TestInstallCRDs_AllApplied verifies that InstallCRDs applies all 6 Grove CRDs
 // (operator and scheduler) in a single call with no errors.
 //
 // Flow:
 //  1. Call InstallCRDs against a fresh fake client.
-//  2. For each of the 5 expected CRD names, fetch the object from the API.
+//  2. For each of the 6 expected CRD names, fetch the object from the API.
 //  3. Assert every fetch succeeds, confirming all CRDs were created.
 func TestInstallCRDs_AllApplied(t *testing.T) {
 	cl := buildFakeClient()
@@ -80,17 +80,19 @@ func TestInstallCRDs_AllApplied(t *testing.T) {
 		operatorcrds.PodCliqueSetCRD(),
 		operatorcrds.PodCliqueScalingGroupCRD(),
 		operatorcrds.ClusterTopologyCRD(),
+		operatorcrds.PodGangMapCRD(),
 		schedulercrds.PodGangCRD(),
 	}
 	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), allCRDs)
 	require.NoError(t, err)
 
-	// Verify all 5 CRDs exist by name.
+	// Verify all 6 CRDs exist by name.
 	for _, crdName := range []string{
 		"podcliques.grove.io",
 		"podcliquesets.grove.io",
 		"podcliquescalinggroups.grove.io",
 		"clustertopologybindings.grove.io",
+		"podgangmaps.grove.io",
 		"podgangs.scheduler.grove.io",
 	} {
 		obj := &unstructured.Unstructured{}

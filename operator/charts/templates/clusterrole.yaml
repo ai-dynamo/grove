@@ -30,6 +30,7 @@ rules:
   - clustertopologybindings
   - clustertopologybindings/status
   - podcliquescalinggroups/status
+  - podgangmaps
   verbs:
   - create
   - get
@@ -251,6 +252,7 @@ rules:
   - podcliques.grove.io
   - podcliquescalinggroups.grove.io
   - clustertopologybindings.grove.io
+  - podgangmaps.grove.io
   - podgangs.scheduler.grove.io
   verbs:
   - get

@@ -39,6 +39,7 @@ var groveCRDNames = []string{
 	"podcliquesets.grove.io",
 	"podcliquescalinggroups.grove.io",
 	"clustertopologybindings.grove.io",
+	"podgangmaps.grove.io",
 	"podgangs.scheduler.grove.io",
 }
 
@@ -74,7 +75,7 @@ func enableCRDInstaller(t *testing.T, ctx context.Context, restConfig *rest.Conf
 	}
 }
 
-// Test_CRD_Installer_AllCRDsExist verifies that all 5 Grove CRDs are present and
+// Test_CRD_Installer_AllCRDsExist verifies that all 6 Grove CRDs are present and
 // established in the cluster after the operator has been deployed.
 // This test does not require crdInstaller.enabled=true — CRDs are installed by the
 // Helm crds/ directory on fresh install regardless of the crdInstaller flag.
@@ -186,7 +187,7 @@ func Test_CRD_Installer_Idempotent(t *testing.T) {
 		t.Fatalf("operator pod did not become ready after restart: %v", err)
 	}
 
-	// All 5 CRDs must still exist and be Established after the restart.
+	// All 6 CRDs must still exist and be Established after the restart.
 	for _, crdName := range groveCRDNames {
 		crd := &unstructured.Unstructured{}
 		crd.SetGroupVersionKind(customResourceDefinition)
