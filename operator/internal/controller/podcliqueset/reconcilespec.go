@@ -275,6 +275,8 @@ func getKindSyncGroups() [][]component.Kind {
 	return [][]component.Kind{
 		// G1: RBAC + static per-PCS infra (Service, HPA targets by name so no ordering
 		// vs PodClique/PCSG needed, ComputeDomain/ResourceClaim are independent add-ons).
+		// PodGangMap is computed here — it has no dependency on any other component, and
+		// must be ready before PodGang (G3) reads it.
 		{
 			component.KindServiceAccount,
 			component.KindRole,
@@ -285,6 +287,7 @@ func getKindSyncGroups() [][]component.Kind {
 			component.KindPodCliqueSetReplica,
 			component.KindComputeDomain,
 			component.KindResourceClaim,
+			component.KindPodGangMap,
 		},
 		// G2: PodClique must exist before PodGang can reference their pods.
 		{
