@@ -37,47 +37,15 @@ jobs:
   # Detect which paths have changed to conditionally run E2E tests
   changes:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/pull-request/')
-    permissions:
-      contents: read
-      pull-requests: read
+    if: startsWith(github.ref, 'refs/heads/pull-request/')
     outputs:
-      e2e-relevant: ${{ steps.filter-pr.outputs.e2e-relevant || steps.filter-copy.outputs.e2e-relevant }}
-      pr-draft: ${{ steps.copied-pr.outputs.draft }}
-      run-e2e: ${{ steps.copied-pr.outputs.run-e2e }}
+      e2e-relevant: ${{ steps.filter.outputs.e2e-relevant }}
     steps:
       - uses: actions/checkout@v4
-      - name: Read copied pull request metadata
-        id: copied-pr
-        if: startsWith(github.ref, 'refs/heads/pull-request/')
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
-        with:
-          script: |
-            const pull_number = Number(context.ref.split('/').at(-1));
-            const { data: pull } = await github.rest.pulls.get({
-              ...context.repo,
-              pull_number,
-            });
-
-            core.setOutput('base-ref', pull.base.ref);
-            core.setOutput('draft', String(pull.draft));
-            core.setOutput(
-              'run-e2e',
-              String(pull.labels.some((label) => label.name === 'run-e2e')),
-            );
       - uses: dorny/paths-filter@v3
-        id: filter-pr
-        if: github.event_name == 'pull_request'
+        id: filter
         with:
-          filters: |
-            e2e-relevant:
-              - 'operator/**'
-              - '.github/**'
-      - uses: dorny/paths-filter@v3
-        id: filter-copy
-        if: startsWith(github.ref, 'refs/heads/pull-request/')
-        with:
-          base: ${{ steps.copied-pr.outputs.base-ref }}
+          base: main
           filters: |
             e2e-relevant:
               - 'operator/**'
@@ -137,12 +105,10 @@ jobs:
   #   make_target   (optional) - Makefile target, defaults to run-e2e-full
   e2e:
     needs: [test, build, check, changes]
-    # Run only from copy-pr-bot's trusted branch. Draft PRs require the
-    # 'run-e2e' label.
+    # Run only from copy-pr-bot's trusted branch.
     if: |
       startsWith(github.ref, 'refs/heads/pull-request/') &&
-      needs.changes.outputs.e2e-relevant == 'true' &&
-      (needs.changes.outputs.pr-draft == 'false' || needs.changes.outputs.run-e2e == 'true')
+      needs.changes.outputs.e2e-relevant == 'true'
     # use NVIDIA self-hosted runner setting is on Velonix repository
     runs-on: prod-grove-e2e-v1
     timeout-minutes: 60
@@ -220,18 +186,14 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  # This job runs with the same matrix as 'e2e' when E2E tests are skipped (no relevant
-  # file changes and no 'run-e2e' label). It reports a passing status so that required
-  # branch protection checks are satisfied even for documentation-only PRs.
+  # This job runs with the same matrix as 'e2e' when E2E tests are skipped because
+  # no relevant files changed. It reports a passing status so that required branch
+  # protection checks are satisfied even for documentation-only PRs.
   e2e-skip:
     needs: [changes]
     if: |
-      (github.event_name == 'pull_request' &&
-       needs.changes.outputs.e2e-relevant != 'true' &&
-       !contains(github.event.pull_request.labels.*.name, 'run-e2e')) ||
-      (startsWith(github.ref, 'refs/heads/pull-request/') &&
-       needs.changes.outputs.e2e-relevant != 'true' &&
-       needs.changes.outputs.run-e2e != 'true')
+      startsWith(github.ref, 'refs/heads/pull-request/') &&
+      needs.changes.outputs.e2e-relevant != 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -250,4 +212,4 @@ jobs:
     name: E2E - ${{ matrix.test_name }}
     steps:
       - name: Skip E2E (no relevant changes)
-        run: echo "E2E skipped — no changes to operator/ or .github/ and 'run-e2e' label not set"
+        run: echo "E2E skipped — no changes to operator/ or .github/"
