@@ -22,11 +22,13 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -581,4 +583,50 @@ func TestGetMinAvailableBreachedPCLQInfoFiltersNeverScheduled(t *testing.T) {
 	pclqs := []grovecorev1alpha1.PodClique{pclqBreachedNeverScheduled, pclqBreachedAfterHealthy}
 	names, _ := GetMinAvailableBreachedPCLQInfo(pclqs, time.Hour, time.Now())
 	assert.Equal(t, []string{"regressed"}, names, "never-scheduled PCLQ must be filtered out")
+}
+
+func TestGroupPCLQsByPCSReplicaIndex(t *testing.T) {
+	const (
+		pcsName   = "pcs"
+		namespace = "default"
+		pcsUID    = types.UID("uid")
+	)
+	tests := []struct {
+		name          string
+		pclqs         []grovecorev1alpha1.PodClique
+		expectErr     bool
+		expectedIndex map[int]int // replica index -> number of PodCliques in that group
+	}{
+		{
+			name: "groups PodCliques by replica index",
+			pclqs: []grovecorev1alpha1.PodClique{
+				*testutils.NewPodCliqueBuilder(pcsName, pcsUID, "clq-a", namespace, 0).Build(),
+				*testutils.NewPodCliqueBuilder(pcsName, pcsUID, "clq-b", namespace, 0).Build(),
+				*testutils.NewPodCliqueBuilder(pcsName, pcsUID, "clq-a", namespace, 1).Build(),
+			},
+			expectedIndex: map[int]int{0: 2, 1: 1},
+		},
+		{
+			name: "non-integer replica-index label is an error",
+			pclqs: []grovecorev1alpha1.PodClique{
+				*testutils.NewPodCliqueBuilder(pcsName, pcsUID, "clq-a", namespace, 0).
+					WithLabels(map[string]string{apicommon.LabelPodCliqueSetReplicaIndex: "abc"}).Build(),
+			},
+			expectErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual, err := GroupPCLQsByPCSReplicaIndex(tt.pclqs)
+			if tt.expectErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Len(t, actual, len(tt.expectedIndex))
+			for idx, count := range tt.expectedIndex {
+				assert.Len(t, actual[idx], count)
+			}
+		})
+	}
 }

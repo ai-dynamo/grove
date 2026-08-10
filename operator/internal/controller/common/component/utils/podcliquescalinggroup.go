@@ -16,7 +16,9 @@ package utils
 
 import (
 	"context"
+	"fmt"
 	"slices"
+	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
@@ -80,9 +82,18 @@ func GenerateDependencyNamesForBasePodGang(pcs *grovecorev1alpha1.PodCliqueSet, 
 	return parentPCLQNames
 }
 
-// GroupPCSGsByPCSReplicaIndex filters PCSGs that have a PodCliqueSetReplicaIndex label and groups them by the PCS replica.
-func GroupPCSGsByPCSReplicaIndex(pcsgs []grovecorev1alpha1.PodCliqueScalingGroup) map[string][]grovecorev1alpha1.PodCliqueScalingGroup {
-	return groupPCSGsByLabel(pcsgs, apicommon.LabelPodCliqueSetReplicaIndex)
+// GroupPCSGsByPCSReplicaIndex filters PCSGs that have a PodCliqueSetReplicaIndex label and groups them by the PCS replica index.
+// A PodCliqueSetReplicaIndex label that is not a valid integer is a contract violation and returns an error.
+func GroupPCSGsByPCSReplicaIndex(pcsgs []grovecorev1alpha1.PodCliqueScalingGroup) (map[int][]grovecorev1alpha1.PodCliqueScalingGroup, error) {
+	grouped := make(map[int][]grovecorev1alpha1.PodCliqueScalingGroup)
+	for labelValue, pcsgsForReplica := range groupPCSGsByLabel(pcsgs, apicommon.LabelPodCliqueSetReplicaIndex) {
+		replicaIndex, err := strconv.Atoi(labelValue)
+		if err != nil {
+			return nil, fmt.Errorf("%s label value %q is not a valid integer", apicommon.LabelPodCliqueSetReplicaIndex, labelValue)
+		}
+		grouped[replicaIndex] = pcsgsForReplica
+	}
+	return grouped, nil
 }
 
 // groupPCSGsByLabel groups PodCliqueScalingGroups by the value of the specified label key

@@ -75,6 +75,8 @@ const (
 	KindPodCliqueScalingGroup Kind = "PodCliqueScalingGroup"
 	// KindPodGang indicates that the resource is a PodGang.
 	KindPodGang Kind = "PodGang"
+	// KindPodGangMap indicates that the resource is a PodGangMap.
+	KindPodGangMap Kind = "PodGangMap"
 	// KindPodCliqueSetReplica indicates that the resource is a PodCliqueSet replica.
 	KindPodCliqueSetReplica Kind = "PodCliqueSetReplica"
 	// KindComputeDomain indicates that the resource is a ComputeDomain.

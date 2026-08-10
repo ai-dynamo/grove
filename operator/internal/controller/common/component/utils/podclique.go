@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -79,9 +80,18 @@ func GroupPCLQsByPCSGReplicaIndex(pclqs []grovecorev1alpha1.PodClique) map[strin
 	return groupPCLQsByLabel(pclqs, apicommon.LabelPodCliqueScalingGroupReplicaIndex)
 }
 
-// GroupPCLQsByPCSReplicaIndex filters PCLQs that have a PodCliqueSetReplicaIndex label and groups them by the PCS replica.
-func GroupPCLQsByPCSReplicaIndex(pclqs []grovecorev1alpha1.PodClique) map[string][]grovecorev1alpha1.PodClique {
-	return groupPCLQsByLabel(pclqs, apicommon.LabelPodCliqueSetReplicaIndex)
+// GroupPCLQsByPCSReplicaIndex filters PCLQs that have a PodCliqueSetReplicaIndex label and groups them by the PCS replica index.
+// A PodCliqueSetReplicaIndex label that is not a valid integer is a contract violation and returns an error.
+func GroupPCLQsByPCSReplicaIndex(pclqs []grovecorev1alpha1.PodClique) (map[int][]grovecorev1alpha1.PodClique, error) {
+	grouped := make(map[int][]grovecorev1alpha1.PodClique)
+	for labelValue, pclqsForReplica := range groupPCLQsByLabel(pclqs, apicommon.LabelPodCliqueSetReplicaIndex) {
+		replicaIndex, err := strconv.Atoi(labelValue)
+		if err != nil {
+			return nil, fmt.Errorf("%s label value %q is not a valid integer", apicommon.LabelPodCliqueSetReplicaIndex, labelValue)
+		}
+		grouped[replicaIndex] = pclqsForReplica
+	}
+	return grouped, nil
 }
 
 // InitialScheduleGrace is the small window after PodClique / PodCliqueScalingGroup creation in

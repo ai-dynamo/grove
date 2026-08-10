@@ -17,9 +17,12 @@ package utils
 import (
 	"testing"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 )
@@ -200,6 +203,51 @@ func TestIsPCSGUpdateComplete(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			result := IsPCSGUpdateComplete(tc.pcsg, tc.pcsGenerationHash)
 			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestGroupPCSGsByPCSReplicaIndex(t *testing.T) {
+	const (
+		pcsName   = "pcs"
+		namespace = "default"
+	)
+	tests := []struct {
+		name          string
+		pcsgs         []grovecorev1alpha1.PodCliqueScalingGroup
+		expectErr     bool
+		expectedIndex map[int]int // replica index -> number of PCSGs in that group
+	}{
+		{
+			name: "groups PodCliqueScalingGroups by replica index",
+			pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{
+				*testutils.NewPodCliqueScalingGroupBuilder("pcs-0-sga", namespace, pcsName, 0).Build(),
+				*testutils.NewPodCliqueScalingGroupBuilder("pcs-0-sgb", namespace, pcsName, 0).Build(),
+				*testutils.NewPodCliqueScalingGroupBuilder("pcs-1-sga", namespace, pcsName, 1).Build(),
+			},
+			expectedIndex: map[int]int{0: 2, 1: 1},
+		},
+		{
+			name: "non-integer replica-index label is an error",
+			pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{
+				*testutils.NewPodCliqueScalingGroupBuilder("pcs-x-sga", namespace, pcsName, 0).
+					WithLabels(map[string]string{apicommon.LabelPodCliqueSetReplicaIndex: "abc"}).Build(),
+			},
+			expectErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual, err := GroupPCSGsByPCSReplicaIndex(tt.pcsgs)
+			if tt.expectErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Len(t, actual, len(tt.expectedIndex))
+			for idx, count := range tt.expectedIndex {
+				assert.Len(t, actual[idx], count)
+			}
 		})
 	}
 }
