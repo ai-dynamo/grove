@@ -18,6 +18,7 @@ on:
   push:
     branches:
       - main
+      - "release/*"
       - "pull-request/[0-9]+"
   pull_request:
     types: [opened, synchronize, reopened, labeled, ready_for_review]
@@ -26,21 +27,57 @@ on:
 # Cancel in-progress runs when a new run is triggered for the same PR
 # This prevents stale runs from consuming resources
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   # Detect which paths have changed to conditionally run E2E tests
   changes:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/pull-request/')
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
-      e2e-relevant: ${{ steps.filter.outputs.e2e-relevant }}
+      e2e-relevant: ${{ steps.filter-pr.outputs.e2e-relevant || steps.filter-copy.outputs.e2e-relevant }}
+      pr-draft: ${{ steps.copied-pr.outputs.draft }}
+      run-e2e: ${{ steps.copied-pr.outputs.run-e2e }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
-        id: filter
+      - name: Read copied pull request metadata
+        id: copied-pr
+        if: startsWith(github.ref, 'refs/heads/pull-request/')
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
+          script: |
+            const pull_number = Number(context.ref.split('/').at(-1));
+            const { data: pull } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number,
+            });
+
+            core.setOutput('base-ref', pull.base.ref);
+            core.setOutput('draft', String(pull.draft));
+            core.setOutput(
+              'run-e2e',
+              String(pull.labels.some((label) => label.name === 'run-e2e')),
+            );
+      - uses: dorny/paths-filter@v3
+        id: filter-pr
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            e2e-relevant:
+              - 'operator/**'
+              - '.github/**'
+      - uses: dorny/paths-filter@v3
+        id: filter-copy
+        if: startsWith(github.ref, 'refs/heads/pull-request/')
+        with:
+          base: ${{ steps.copied-pr.outputs.base-ref }}
           filters: |
             e2e-relevant:
               - 'operator/**'
@@ -100,12 +137,12 @@ jobs:
   #   make_target   (optional) - Makefile target, defaults to run-e2e-full
   e2e:
     needs: [test, build, check, changes]
-    # Run on non-draft PRs (or draft PRs with 'run-e2e' label)
-    # AND only when operator or .github files are changed
+    # Run only from copy-pr-bot's trusted branch. Draft PRs require the
+    # 'run-e2e' label.
     if: |
-      github.event_name == 'pull_request' &&
+      startsWith(github.ref, 'refs/heads/pull-request/') &&
       needs.changes.outputs.e2e-relevant == 'true' &&
-      (github.event.pull_request.draft == false || contains(github.event.pull_request.labels.*.name, 'run-e2e'))
+      (needs.changes.outputs.pr-draft == 'false' || needs.changes.outputs.run-e2e == 'true')
     # use NVIDIA self-hosted runner setting is on Velonix repository
     runs-on: prod-grove-e2e-v1
     timeout-minutes: 60
@@ -189,9 +226,12 @@ jobs:
   e2e-skip:
     needs: [changes]
     if: |
-      github.event_name == 'pull_request' &&
-      needs.changes.outputs.e2e-relevant != 'true' &&
-      !contains(github.event.pull_request.labels.*.name, 'run-e2e')
+      (github.event_name == 'pull_request' &&
+       needs.changes.outputs.e2e-relevant != 'true' &&
+       !contains(github.event.pull_request.labels.*.name, 'run-e2e')) ||
+      (startsWith(github.ref, 'refs/heads/pull-request/') &&
+       needs.changes.outputs.e2e-relevant != 'true' &&
+       needs.changes.outputs.run-e2e != 'true')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
