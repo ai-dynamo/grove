@@ -190,6 +190,68 @@ func TestGenerateRCTName(t *testing.T) {
 	}
 }
 
+func TestGenerateComputeDomainName(t *testing.T) {
+	assert.Equal(
+		t,
+		"training-10-encoders",
+		GenerateComputeDomainName(
+			apicommon.ResourceNameReplica{Name: "training", Replica: 10},
+			"encoders",
+		),
+	)
+}
+
+func TestEffectiveMNNVLGroupNames(t *testing.T) {
+	tests := []struct {
+		description    string
+		pcs            *grovecorev1alpha1.PodCliqueSet
+		expectedGroups []string
+	}{
+		{
+			description:    "GPU clique inherits PCS group",
+			pcs:            createPCSWithGPU(map[string]string{AnnotationMNNVLGroup: "pcs-group"}),
+			expectedGroups: []string{"pcs-group"},
+		},
+		{
+			description: "clique group overrides PCS group",
+			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createPCSWithGPU(map[string]string{AnnotationMNNVLGroup: "pcs-group"})
+				pcs.Spec.Template.Cliques[0].Annotations = map[string]string{AnnotationMNNVLGroup: "clique-group"}
+				return pcs
+			}(),
+			expectedGroups: []string{"clique-group"},
+		},
+		{
+			description: "PCSG group overrides PCS group",
+			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createPCSWithPCSGConfigAnnotations(map[string]string{AnnotationMNNVLGroup: "pcsg-group"})
+				pcs.Annotations = map[string]string{AnnotationMNNVLGroup: "pcs-group"}
+				return pcs
+			}(),
+			expectedGroups: []string{"pcsg-group"},
+		},
+		{
+			description: "clique opt-out overrides inherited group",
+			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createPCSWithGPU(map[string]string{AnnotationMNNVLGroup: "pcs-group"})
+				pcs.Spec.Template.Cliques[0].Annotations = map[string]string{AnnotationMNNVLGroup: AnnotationMNNVLGroupOptOut}
+				return pcs
+			}(),
+		},
+		{
+			description:    "non-GPU clique is ignored",
+			pcs:            createPCSWithNonGPUCliqueAnnotations(map[string]string{AnnotationMNNVLGroup: "cpu-group"}),
+			expectedGroups: nil,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.description, func(t *testing.T) {
+			assert.ElementsMatch(t, test.expectedGroups, EffectiveMNNVLGroupNames(test.pcs).UnsortedList())
+		})
+	}
+}
+
 func TestValidateMNNVLGroupName(t *testing.T) {
 	tests := []struct {
 		description string

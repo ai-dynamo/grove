@@ -15,11 +15,13 @@
 package mnnvl
 
 import (
+	"strings"
 	"testing"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	"github.com/stretchr/testify/assert"
+	corev1 "k8s.io/api/core/v1"
 )
 
 func TestValidatePCSOnCreate_Metadata(t *testing.T) {
@@ -154,7 +156,7 @@ func TestValidatePCSOnUpdate_Metadata(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.description, func(t *testing.T) {
-			errs := ValidatePCSOnUpdate(test.oldPCS, test.newPCS)
+			errs := ValidatePCSOnUpdate(test.oldPCS, test.newPCS, true)
 
 			if test.expectError {
 				assert.NotEmpty(t, errs, "expected validation errors")
@@ -361,7 +363,7 @@ func TestValidatePCSOnUpdate_PCSGConfig(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.description, func(t *testing.T) {
-			errs := ValidatePCSOnUpdate(test.oldPCS, test.newPCS)
+			errs := ValidatePCSOnUpdate(test.oldPCS, test.newPCS, true)
 
 			if test.expectError {
 				assert.NotEmpty(t, errs, "expected validation errors")
@@ -463,7 +465,7 @@ func TestValidatePCSOnUpdate_Spec(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.description, func(t *testing.T) {
-			errs := ValidatePCSOnUpdate(test.oldPCS, test.newPCS)
+			errs := ValidatePCSOnUpdate(test.oldPCS, test.newPCS, true)
 
 			if test.expectError {
 				assert.NotEmpty(t, errs, "expected validation errors")
@@ -511,4 +513,122 @@ func TestValidatePCSOnCreate_NonGPUCliqueWithMNNVL(t *testing.T) {
 			assert.Empty(t, errs, "MNNVL annotations on non-GPU cliques should be accepted")
 		})
 	}
+}
+
+func TestValidatePCSOnCreate_ComputeDomainName(t *testing.T) {
+	tests := []struct {
+		description        string
+		pcs                *grovecorev1alpha1.PodCliqueSet
+		expectedNameLength int
+		expectError        bool
+	}{
+		{
+			description:        "63-character generated label value is accepted",
+			pcs:                createPCSForComputeDomainNameValidation(strings.Repeat("p", 55), "group", 10, true),
+			expectedNameLength: 63,
+			expectError:        false,
+		},
+		{
+			description:        "64-character generated label value is rejected",
+			pcs:                createPCSForComputeDomainNameValidation(strings.Repeat("p", 55), "group", 11, true),
+			expectedNameLength: 64,
+			expectError:        true,
+		},
+		{
+			description: "non-GPU clique does not create a ComputeDomain",
+			pcs:         createPCSForComputeDomainNameValidation(strings.Repeat("p", 56), "group", 1, false),
+			expectError: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.description, func(t *testing.T) {
+			if test.expectedNameLength > 0 {
+				checks := buildGeneratedComputeDomainNameChecks(test.pcs)
+				assert.Len(t, checks, 1)
+				assert.Len(t, checks[0].generatedName, test.expectedNameLength)
+			}
+			errs := ValidatePCSOnCreate(test.pcs, true)
+
+			if test.expectError {
+				assert.Len(t, errs, 1)
+				assert.Equal(t, "metadata.name", errs[0].Field)
+				assert.Contains(t, errs[0].Detail, "generated ComputeDomain name")
+				assert.Contains(t, errs[0].Detail, "app.kubernetes.io/name")
+			} else {
+				assert.Empty(t, errs)
+			}
+		})
+	}
+}
+
+func TestValidatePCSOnUpdate_ComputeDomainName(t *testing.T) {
+	tests := []struct {
+		description      string
+		oldPCS           *grovecorev1alpha1.PodCliqueSet
+		newPCS           *grovecorev1alpha1.PodCliqueSet
+		autoMNNVLEnabled bool
+		expectedField    string
+	}{
+		{
+			description:      "scale-out crossing the label length boundary is rejected",
+			oldPCS:           createPCSForComputeDomainNameValidation(strings.Repeat("p", 55), "group", 10, true),
+			newPCS:           createPCSForComputeDomainNameValidation(strings.Repeat("p", 55), "group", 11, true),
+			autoMNNVLEnabled: true,
+			expectedField:    "spec.replicas",
+		},
+		{
+			description:      "unchanged legacy invalid name is accepted",
+			oldPCS:           createPCSForComputeDomainNameValidation(strings.Repeat("p", 56), "group", 1, true),
+			newPCS:           createPCSForComputeDomainNameValidation(strings.Repeat("p", 56), "group", 1, true),
+			autoMNNVLEnabled: true,
+		},
+		{
+			description:      "legacy invalid name can scale in",
+			oldPCS:           createPCSForComputeDomainNameValidation(strings.Repeat("p", 55), "group", 11, true),
+			newPCS:           createPCSForComputeDomainNameValidation(strings.Repeat("p", 55), "group", 10, true),
+			autoMNNVLEnabled: true,
+		},
+		{
+			description:      "newly effective invalid group is rejected",
+			oldPCS:           createPCSForComputeDomainNameValidation(strings.Repeat("p", 56), "group", 1, false),
+			newPCS:           createPCSForComputeDomainNameValidation(strings.Repeat("p", 56), "group", 1, true),
+			autoMNNVLEnabled: true,
+			expectedField:    "metadata.name",
+		},
+		{
+			description:      "generated name validation is skipped when Auto-MNNVL is disabled",
+			oldPCS:           createPCSForComputeDomainNameValidation(strings.Repeat("p", 55), "group", 10, true),
+			newPCS:           createPCSForComputeDomainNameValidation(strings.Repeat("p", 55), "group", 11, true),
+			autoMNNVLEnabled: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.description, func(t *testing.T) {
+			errs := ValidatePCSOnUpdate(test.oldPCS, test.newPCS, test.autoMNNVLEnabled)
+
+			if test.expectedField == "" {
+				assert.Empty(t, errs)
+				return
+			}
+			assert.Len(t, errs, 1)
+			assert.Equal(t, test.expectedField, errs[0].Field)
+			assert.Contains(t, errs[0].Detail, "generated ComputeDomain name")
+		})
+	}
+}
+
+func createPCSForComputeDomainNameValidation(
+	name, groupName string,
+	replicas int32,
+	withGPU bool,
+) *grovecorev1alpha1.PodCliqueSet {
+	pcs := createPCSWithGPU(map[string]string{AnnotationMNNVLGroup: groupName})
+	pcs.Name = name
+	pcs.Spec.Replicas = replicas
+	if !withGPU {
+		pcs.Spec.Template.Cliques[0].Spec.PodSpec.Containers[0].Resources = corev1.ResourceRequirements{}
+	}
+	return pcs
 }

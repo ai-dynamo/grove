@@ -77,40 +77,6 @@ func TestNew(t *testing.T) {
 // Helper Function Tests
 // ================================
 
-func Test_generateComputeDomainName(t *testing.T) {
-	testCases := []struct {
-		description  string
-		pcsName      string
-		replicaIndex int
-		groupName    string
-		expected     string
-	}{
-		{
-			description:  "default group",
-			pcsName:      "mypcs",
-			replicaIndex: 0,
-			groupName:    "default",
-			expected:     "mypcs-0-default",
-		},
-		{
-			description:  "named group with higher replica index",
-			pcsName:      "training",
-			replicaIndex: 5,
-			groupName:    "encoders",
-			expected:     "training-5-encoders",
-		},
-	}
-
-	t.Parallel()
-	for _, tc := range testCases {
-		t.Run(tc.description, func(t *testing.T) {
-			t.Parallel()
-			result := generateComputeDomainName(tc.pcsName, tc.replicaIndex, tc.groupName)
-			assert.Equal(t, tc.expected, result)
-		})
-	}
-}
-
 func TestGetRequiredCDNames(t *testing.T) {
 	testCases := []struct {
 		description    string

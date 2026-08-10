@@ -312,7 +312,10 @@ type cdNameInfo struct {
 }
 
 func (c cdNameInfo) fullName() string {
-	return generateComputeDomainName(c.pcsName, c.replicaIndex, c.groupName)
+	return mnnvl.GenerateComputeDomainName(
+		apicommon.ResourceNameReplica{Name: c.pcsName, Replica: c.replicaIndex},
+		c.groupName,
+	)
 }
 
 // triageCDs computes the set differences between required and existing ComputeDomains,
@@ -340,7 +343,7 @@ func triageCDs(requiredCDs []cdNameInfo, existingCDFQNs []string) (toCreate []cd
 // It collects MNNVL groups from all annotation layers (PCS, PCSG configs,
 // clique templates), deduplicates, and generates a cdNameInfo per group per replica.
 func getRequiredCDNames(pcs *grovecorev1alpha1.PodCliqueSet) []cdNameInfo {
-	groups := collectDistinctGroups(pcs)
+	groups := mnnvl.EffectiveMNNVLGroupNames(pcs)
 	if len(groups) == 0 {
 		return nil
 	}
@@ -356,49 +359,6 @@ func getRequiredCDNames(pcs *grovecorev1alpha1.PodCliqueSet) []cdNameInfo {
 		}
 	}
 	return result
-}
-
-// collectDistinctGroups determines which MNNVL groups need ComputeDomains by
-// resolving the effective group for each GPU clique using hierarchical
-// annotation resolution (clique → PCSG → PCS). Non-GPU cliques are skipped
-// so that a PCS-level annotation doesn't create orphaned CDs when no GPU
-// cliques exist.
-func collectDistinctGroups(pcs *grovecorev1alpha1.PodCliqueSet) map[string]struct{} {
-	groups := make(map[string]struct{})
-
-	pcsgByClique := buildPCSGLookup(pcs)
-
-	for _, clique := range pcs.Spec.Template.Cliques {
-		if clique == nil || !mnnvl.HasGPUInPodSpec(&clique.Spec.PodSpec) {
-			continue
-		}
-		var pcsgAnnotations map[string]string
-		if pcsgCfg, ok := pcsgByClique[clique.Name]; ok {
-			pcsgAnnotations = pcsgCfg.Annotations
-		}
-		if group, ok := mnnvl.ResolveGroupNameHierarchically(clique.Annotations, pcsgAnnotations, pcs.Annotations); ok {
-			groups[group] = struct{}{}
-		}
-	}
-
-	return groups
-}
-
-// buildPCSGLookup builds a map from clique name to the PCSG config that contains it.
-func buildPCSGLookup(pcs *grovecorev1alpha1.PodCliqueSet) map[string]grovecorev1alpha1.PodCliqueScalingGroupConfig {
-	lookup := make(map[string]grovecorev1alpha1.PodCliqueScalingGroupConfig)
-	for _, pcsg := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-		for _, cliqueName := range pcsg.CliqueNames {
-			lookup[cliqueName] = pcsg
-		}
-	}
-	return lookup
-}
-
-// generateComputeDomainName creates the CD name for a replica.
-// Format: {pcs-name}-{replica-index}-{group-name} (e.g., "my-pcs-0-workers").
-func generateComputeDomainName(pcsName string, replicaIndex int, groupName string) string {
-	return fmt.Sprintf("%s-%d-%s", pcsName, replicaIndex, groupName)
 }
 
 // getSelectorLabels returns labels for selecting ComputeDomains of a PCS.

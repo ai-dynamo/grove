@@ -348,6 +348,8 @@ CD names include the group name and use the form `{pcs-name}-{replica-index}-{gr
 
 Group names are scoped to the PCS — different PCS resources can use the same group names without conflict (the PCS name provides uniqueness).
 
+The generated ComputeDomain name is also stored in the `app.kubernetes.io/name` label, whose value is limited to 63 characters. The validating webhook checks the name generated for the highest configured PCS replica index on create and regular update requests. Direct updates through the PCS `/scale` subresource do not pass through this validation.
+
 #### Reconciliation Ordering
 
 ComputeDomain resources must be synced **before** creating PCLQs and PCSGs, ensuring the CD exists before pods that reference its RCT are created. If CD creation fails, the sync stops and requeues for retry.

@@ -19,9 +19,11 @@ import (
 	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
@@ -80,10 +82,47 @@ func ResolveGroupNameHierarchically(annotationLayers ...map[string]string) (stri
 	return "", false
 }
 
+// EffectiveMNNVLGroupNames returns the distinct MNNVL groups used by GPU PodCliques.
+func EffectiveMNNVLGroupNames(pcs *grovecorev1alpha1.PodCliqueSet) sets.Set[string] {
+	groups := sets.New[string]()
+	if pcs == nil {
+		return groups
+	}
+
+	pcsgAnnotationsByCliqueName := make(map[string]map[string]string)
+	for i := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		pcsg := &pcs.Spec.Template.PodCliqueScalingGroupConfigs[i]
+		for _, cliqueName := range pcsg.CliqueNames {
+			pcsgAnnotationsByCliqueName[cliqueName] = pcsg.Annotations
+		}
+	}
+
+	for _, clique := range pcs.Spec.Template.Cliques {
+		if clique == nil || !HasGPUInPodSpec(&clique.Spec.PodSpec) {
+			continue
+		}
+		groupName, enrolled := ResolveGroupNameHierarchically(
+			clique.Annotations,
+			pcsgAnnotationsByCliqueName[clique.Name],
+			pcs.Annotations,
+		)
+		if enrolled {
+			groups.Insert(groupName)
+		}
+	}
+	return groups
+}
+
+// GenerateComputeDomainName creates the ComputeDomain name for a PCS replica.
+// Format: {pcs-name}-{replica-index}-{group-name}.
+func GenerateComputeDomainName(pcsNameReplica apicommon.ResourceNameReplica, groupName string) string {
+	return fmt.Sprintf("%s-%d-%s", pcsNameReplica.Name, pcsNameReplica.Replica, groupName)
+}
+
 // GenerateRCTName creates the ResourceClaimTemplate name for a PCS replica.
 // Format: {pcs-name}-{replica-index}-{group-name}.
 func GenerateRCTName(pcsNameReplica apicommon.ResourceNameReplica, groupName string) string {
-	return fmt.Sprintf("%s-%d-%s", pcsNameReplica.Name, pcsNameReplica.Replica, groupName)
+	return GenerateComputeDomainName(pcsNameReplica, groupName)
 }
 
 // HasGPUInPodSpec checks if any container in the PodSpec requests GPU resources.

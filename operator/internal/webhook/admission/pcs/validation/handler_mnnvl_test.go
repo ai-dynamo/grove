@@ -16,6 +16,7 @@ package validation
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -102,6 +103,15 @@ func TestValidateCreate_MNNVL(t *testing.T) {
 			expectError:      true,
 			errorContains:    "not a valid DNS-1123 label",
 		},
+		{
+			description: "generated ComputeDomain label value is too long -> error",
+			pcs: createValidPCSWithGPU(map[string]string{
+				mnnvl.AnnotationMNNVLGroup: strings.Repeat("g", 53),
+			}),
+			autoMNNVLEnabled: true,
+			expectError:      true,
+			errorContains:    "generated ComputeDomain name",
+		},
 	}
 
 	for _, tt := range tests {
@@ -146,11 +156,12 @@ func TestValidateCreate_MNNVL(t *testing.T) {
 // TestValidateUpdate_MNNVL tests the MNNVL annotation immutability on update.
 func TestValidateUpdate_MNNVL(t *testing.T) {
 	tests := []struct {
-		description   string
-		oldPCS        *grovecorev1alpha1.PodCliqueSet
-		newPCS        *grovecorev1alpha1.PodCliqueSet
-		expectError   bool
-		errorContains string
+		description      string
+		oldPCS           *grovecorev1alpha1.PodCliqueSet
+		newPCS           *grovecorev1alpha1.PodCliqueSet
+		autoMNNVLEnabled bool
+		expectError      bool
+		errorContains    string
 	}{
 		{
 			description: "no annotation on both -> no error",
@@ -220,6 +231,20 @@ func TestValidateUpdate_MNNVL(t *testing.T) {
 			expectError:   true,
 			errorContains: "cannot be added",
 		},
+		{
+			description: "scale-out makes generated ComputeDomain label value too long -> error",
+			oldPCS: createValidPCSWithGPUReplicas(
+				map[string]string{mnnvl.AnnotationMNNVLGroup: strings.Repeat("g", 52)},
+				10,
+			),
+			newPCS: createValidPCSWithGPUReplicas(
+				map[string]string{mnnvl.AnnotationMNNVLGroup: strings.Repeat("g", 52)},
+				11,
+			),
+			autoMNNVLEnabled: true,
+			expectError:      true,
+			errorContains:    "generated ComputeDomain name",
+		},
 	}
 
 	for _, tt := range tests {
@@ -231,11 +256,12 @@ func TestValidateUpdate_MNNVL(t *testing.T) {
 				Logger: logr.Discard(),
 			}
 
-			// MNNVL validation on update doesn't depend on feature flag
 			cfg := configv1alpha1.OperatorConfiguration{
 				TopologyAwareScheduling: getDefaultTASConfig(),
-				Network:                 getDefaultNetworkConfig(),
-				Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
+				Network: configv1alpha1.NetworkAcceleration{
+					AutoMNNVLEnabled: tt.autoMNNVLEnabled,
+				},
+				Scheduler: configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
 			}
 			handler := NewHandler(mgr, &cfg, testutils.NewDefaultFakeRegistry())
 
@@ -320,6 +346,12 @@ func createValidPCSWithGPU(annotations map[string]string) *grovecorev1alpha1.Pod
 				Build(),
 		).
 		Build()
+}
+
+func createValidPCSWithGPUReplicas(annotations map[string]string, replicas int32) *grovecorev1alpha1.PodCliqueSet {
+	pcs := createValidPCSWithGPU(annotations)
+	pcs.Spec.Replicas = replicas
+	return pcs
 }
 
 // createValidPCSWithCliqueAnnotations creates a fully valid PCS with

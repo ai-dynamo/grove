@@ -16,30 +16,41 @@ package mnnvl
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	kubeutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
+	"k8s.io/apimachinery/pkg/util/sets"
+	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
 const mnnvlNotEnabledMsgFormat = "MNNVL is not enabled in the operator configuration. Either enable MNNVL globally or remove the %s annotation"
 
-// ValidatePCSOnCreate validates all MNNVL annotations on a PodCliqueSet during creation:
-// PCS-level metadata and each PodCliqueTemplateSpec in the spec.
+// ValidatePCSOnCreate validates MNNVL annotations and generated resource names
+// on a PodCliqueSet during creation.
 func ValidatePCSOnCreate(pcs *grovecorev1alpha1.PodCliqueSet, autoMNNVLEnabled bool) field.ErrorList {
 	allErrs := field.ErrorList{}
 	allErrs = append(allErrs, validateMetadataOnCreate(pcs, autoMNNVLEnabled)...)
 	allErrs = append(allErrs, validateSpecOnCreate(pcs, autoMNNVLEnabled)...)
+	if autoMNNVLEnabled {
+		allErrs = append(allErrs, validateGeneratedComputeDomainNames(pcs, field.NewPath("metadata", "name"))...)
+	}
 	return allErrs
 }
 
-// ValidatePCSOnUpdate validates MNNVL annotation immutability on a PodCliqueSet during update:
-// PCS-level metadata and each PodCliqueTemplateSpec in the spec.
-func ValidatePCSOnUpdate(oldPCS, newPCS *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
+// ValidatePCSOnUpdate validates MNNVL annotation immutability and generated
+// resource names on a PodCliqueSet during update.
+func ValidatePCSOnUpdate(oldPCS, newPCS *grovecorev1alpha1.PodCliqueSet, autoMNNVLEnabled bool) field.ErrorList {
 	allErrs := field.ErrorList{}
 	allErrs = append(allErrs, validateMetadataOnUpdate(oldPCS, newPCS)...)
 	allErrs = append(allErrs, validateSpecOnUpdate(oldPCS, newPCS)...)
+	if autoMNNVLEnabled {
+		allErrs = append(allErrs, validateGeneratedComputeDomainNamesOnUpdate(oldPCS, newPCS)...)
+	}
 	return allErrs
 }
 
@@ -159,4 +170,97 @@ var mnnvlImmutableKeys = []string{AnnotationMNNVLGroup}
 
 func validateMNNVLAnnotationsImmutability(oldAnnotations, newAnnotations map[string]string, basePath *field.Path) field.ErrorList {
 	return kubeutils.ValidateAnnotationsImmutability(oldAnnotations, newAnnotations, mnnvlImmutableKeys, basePath)
+}
+
+type generatedComputeDomainNameCheck struct {
+	groupName        string
+	generatedName    string
+	validationErrors []string
+}
+
+func validateGeneratedComputeDomainNames(pcs *grovecorev1alpha1.PodCliqueSet, fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+	for _, check := range buildGeneratedComputeDomainNameChecks(pcs) {
+		if len(check.validationErrors) > 0 {
+			allErrs = append(allErrs, generatedComputeDomainNameError(check, fldPath, pcs.Name))
+		}
+	}
+	return allErrs
+}
+
+func validateGeneratedComputeDomainNamesOnUpdate(
+	oldPCS, newPCS *grovecorev1alpha1.PodCliqueSet,
+) field.ErrorList {
+	oldInvalidGroups := invalidGeneratedComputeDomainGroups(oldPCS)
+	oldEffectiveGroups := EffectiveMNNVLGroupNames(oldPCS)
+
+	var allErrs field.ErrorList
+	for _, check := range buildGeneratedComputeDomainNameChecks(newPCS) {
+		if len(check.validationErrors) == 0 {
+			continue
+		}
+		if oldInvalidGroups.Has(check.groupName) && newPCS.Spec.Replicas <= oldPCS.Spec.Replicas {
+			continue
+		}
+
+		fldPath := field.NewPath("metadata", "name")
+		badValue := any(newPCS.Name)
+		if oldEffectiveGroups.Has(check.groupName) && newPCS.Spec.Replicas > oldPCS.Spec.Replicas {
+			fldPath = field.NewPath("spec", "replicas")
+			badValue = newPCS.Spec.Replicas
+		}
+		allErrs = append(allErrs, generatedComputeDomainNameError(check, fldPath, badValue))
+	}
+	return allErrs
+}
+
+func buildGeneratedComputeDomainNameChecks(pcs *grovecorev1alpha1.PodCliqueSet) []generatedComputeDomainNameCheck {
+	groupNames := EffectiveMNNVLGroupNames(pcs).UnsortedList()
+	slices.Sort(groupNames)
+
+	maxReplicaIndex := 0
+	if pcs.Spec.Replicas > 1 {
+		maxReplicaIndex = int(pcs.Spec.Replicas - 1)
+	}
+
+	checks := make([]generatedComputeDomainNameCheck, 0, len(groupNames))
+	for _, groupName := range groupNames {
+		generatedName := GenerateComputeDomainName(
+			apicommon.ResourceNameReplica{Name: pcs.Name, Replica: maxReplicaIndex},
+			groupName,
+		)
+		checks = append(checks, generatedComputeDomainNameCheck{
+			groupName:        groupName,
+			generatedName:    generatedName,
+			validationErrors: k8svalidation.IsValidLabelValue(generatedName),
+		})
+	}
+	return checks
+}
+
+func invalidGeneratedComputeDomainGroups(pcs *grovecorev1alpha1.PodCliqueSet) sets.Set[string] {
+	groups := sets.New[string]()
+	for _, check := range buildGeneratedComputeDomainNameChecks(pcs) {
+		if len(check.validationErrors) > 0 {
+			groups.Insert(check.groupName)
+		}
+	}
+	return groups
+}
+
+func generatedComputeDomainNameError(
+	check generatedComputeDomainNameCheck,
+	fldPath *field.Path,
+	badValue any,
+) *field.Error {
+	return field.Invalid(
+		fldPath,
+		badValue,
+		fmt.Sprintf(
+			"generated ComputeDomain name %q for MNNVL group %q must be a valid label value because it is used as app.kubernetes.io/name: %s",
+			check.generatedName,
+			check.groupName,
+			strings.Join(check.validationErrors, "; "),
+		),
+	)
 }
