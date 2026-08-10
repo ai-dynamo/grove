@@ -51,7 +51,7 @@ func TestBuildBootstrapEntries(t *testing.T) {
 				Build(),
 			expectedRoles: []grovecorev1alpha1.PodGangEntryRole{grovecorev1alpha1.PodGangEntryRoleAnchor},
 			assertEntries: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
-				anchor := entryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
+				anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
 				assert.Equal(t, int32(3), anchor.PodCliques["clq-a"])
 				assert.Empty(t, anchor.PCSGReplicaIndices)
 				assert.Nil(t, anchor.DependsOn)
@@ -68,10 +68,10 @@ func TestBuildBootstrapEntries(t *testing.T) {
 				grovecorev1alpha1.PodGangEntryRoleScaleOut,
 			},
 			assertEntries: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
-				anchor := entryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
+				anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
 				assert.Empty(t, anchor.PodCliques)
 				assert.Equal(t, []int32{0, 1}, anchor.PCSGReplicaIndices["sg"])
-				scaleOut := entryByRole(entries, grovecorev1alpha1.PodGangEntryRoleScaleOut)
+				scaleOut := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleScaleOut)
 				assert.Empty(t, scaleOut.PCSGReplicaIndices["sg"])
 				assert.Equal(t, []string{anchor.Epoch}, scaleOut.DependsOn)
 			},
@@ -88,10 +88,10 @@ func TestBuildBootstrapEntries(t *testing.T) {
 				grovecorev1alpha1.PodGangEntryRoleScaleOut,
 			},
 			assertEntries: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
-				anchor := entryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
+				anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
 				assert.Empty(t, anchor.PodCliques)
 				assert.Equal(t, []int32{0, 1}, anchor.PCSGReplicaIndices["sg"])
-				tail := entryByRole(entries, grovecorev1alpha1.PodGangEntryRoleTail)
+				tail := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleTail)
 				assert.Equal(t, []int32{2, 3}, tail.PCSGReplicaIndices["sg"])
 				assert.Equal(t, []string{anchor.Epoch}, tail.DependsOn)
 			},
@@ -109,10 +109,10 @@ func TestBuildBootstrapEntries(t *testing.T) {
 				grovecorev1alpha1.PodGangEntryRoleScaleOut,
 			},
 			assertEntries: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
-				anchor := entryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
+				anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
 				assert.Equal(t, int32(3), anchor.PodCliques["clq-a"])
 				assert.Equal(t, []int32{0, 1}, anchor.PCSGReplicaIndices["sg"])
-				tail := entryByRole(entries, grovecorev1alpha1.PodGangEntryRoleTail)
+				tail := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleTail)
 				assert.Equal(t, []int32{2, 3}, tail.PCSGReplicaIndices["sg"])
 			},
 		},
@@ -121,7 +121,7 @@ func TestBuildBootstrapEntries(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			clk := clocktesting.NewFakeClock(time.Unix(0, 1000))
 			actual := buildBootstrapEntries(tt.pcs, clk)
-			assert.Equal(t, tt.expectedRoles, rolesOf(actual))
+			assert.Equal(t, tt.expectedRoles, testutils.RolesOf(actual))
 			tt.assertEntries(t, actual)
 		})
 	}
@@ -151,7 +151,7 @@ func TestSyncEntries(t *testing.T) {
 			standalonePCLQs: []grovecorev1alpha1.PodClique{standalonePCLQ("clq-a", 3)},
 			pcsgs:           []grovecorev1alpha1.PodCliqueScalingGroup{pcsg("sg", 2)},
 			assertResult: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
-				anchor := entryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
+				anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
 				assert.Equal(t, []int32{0, 1}, anchor.PCSGReplicaIndices["sg"])
 				assert.Equal(t, int32(3), anchor.PodCliques["clq-a"])
 			},
@@ -167,7 +167,7 @@ func TestSyncEntries(t *testing.T) {
 			},
 			pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{pcsg("sg", 3)},
 			assertResult: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
-				scaleOut := entryByRole(entries, grovecorev1alpha1.PodGangEntryRoleScaleOut)
+				scaleOut := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleScaleOut)
 				assert.Equal(t, []int32{2}, scaleOut.PCSGReplicaIndices["sg"])
 			},
 		},
@@ -184,10 +184,10 @@ func TestSyncEntries(t *testing.T) {
 			pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{pcsg("sg", 4)},
 			assertResult: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
 				// live=4, current=6, drain 2: both come from the scaleout entry (highest indices first).
-				assert.Empty(t, entryByRole(entries, grovecorev1alpha1.PodGangEntryRoleScaleOut).PCSGReplicaIndices["sg"])
-				assert.Equal(t, []int32{2, 3}, entryByRole(entries, grovecorev1alpha1.PodGangEntryRoleTail).PCSGReplicaIndices["sg"])
+				assert.Empty(t, testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleScaleOut).PCSGReplicaIndices["sg"])
+				assert.Equal(t, []int32{2, 3}, testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleTail).PCSGReplicaIndices["sg"])
 				// The anchor is never drained; its MinAvailable indices are preserved.
-				assert.Equal(t, []int32{0, 1}, entryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor).PCSGReplicaIndices["sg"])
+				assert.Equal(t, []int32{0, 1}, testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor).PCSGReplicaIndices["sg"])
 			},
 		},
 		{
@@ -203,10 +203,10 @@ func TestSyncEntries(t *testing.T) {
 			pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{pcsg("sg", 3)},
 			assertResult: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
 				// live=3, current=4, drain 1: the scaleout entry has nothing, so the tail is drained.
-				assert.Empty(t, entryByRole(entries, grovecorev1alpha1.PodGangEntryRoleScaleOut).PCSGReplicaIndices["sg"])
-				assert.Equal(t, []int32{2}, entryByRole(entries, grovecorev1alpha1.PodGangEntryRoleTail).PCSGReplicaIndices["sg"])
+				assert.Empty(t, testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleScaleOut).PCSGReplicaIndices["sg"])
+				assert.Equal(t, []int32{2}, testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleTail).PCSGReplicaIndices["sg"])
 				// The anchor is never drained; its MinAvailable indices are preserved.
-				assert.Equal(t, []int32{0, 1}, entryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor).PCSGReplicaIndices["sg"])
+				assert.Equal(t, []int32{0, 1}, testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor).PCSGReplicaIndices["sg"])
 			},
 		},
 		{
@@ -219,7 +219,7 @@ func TestSyncEntries(t *testing.T) {
 			},
 			standalonePCLQs: []grovecorev1alpha1.PodClique{standalonePCLQ("clq-a", 5)},
 			assertResult: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
-				anchor := entryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
+				anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
 				assert.Equal(t, int32(5), anchor.PodCliques["clq-a"])
 			},
 		},
@@ -231,23 +231,6 @@ func TestSyncEntries(t *testing.T) {
 			tt.assertResult(t, actual)
 		})
 	}
-}
-
-func rolesOf(entries []grovecorev1alpha1.PodGangEntry) []grovecorev1alpha1.PodGangEntryRole {
-	roles := make([]grovecorev1alpha1.PodGangEntryRole, 0, len(entries))
-	for i := range entries {
-		roles = append(roles, entries[i].Role)
-	}
-	return roles
-}
-
-func entryByRole(entries []grovecorev1alpha1.PodGangEntry, role grovecorev1alpha1.PodGangEntryRole) grovecorev1alpha1.PodGangEntry {
-	for i := range entries {
-		if entries[i].Role == role {
-			return entries[i]
-		}
-	}
-	return grovecorev1alpha1.PodGangEntry{}
 }
 
 func anchorEntry(podCliques map[string]int32, pcsgIndices map[string][]int32) grovecorev1alpha1.PodGangEntry {

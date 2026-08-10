@@ -121,3 +121,22 @@ func (b *PodGangMapBuilder) WithEntries(entries ...grovecorev1alpha1.PodGangEntr
 func (b *PodGangMapBuilder) Build() *grovecorev1alpha1.PodGangMap {
 	return b.pgm
 }
+
+// RolesOf returns the role of each entry in order.
+func RolesOf(entries []grovecorev1alpha1.PodGangEntry) []grovecorev1alpha1.PodGangEntryRole {
+	roles := make([]grovecorev1alpha1.PodGangEntryRole, 0, len(entries))
+	for i := range entries {
+		roles = append(roles, entries[i].Role)
+	}
+	return roles
+}
+
+// EntryByRole returns the first entry with the given role, or a zero entry when none matches.
+func EntryByRole(entries []grovecorev1alpha1.PodGangEntry, role grovecorev1alpha1.PodGangEntryRole) grovecorev1alpha1.PodGangEntry {
+	for i := range entries {
+		if entries[i].Role == role {
+			return entries[i]
+		}
+	}
+	return grovecorev1alpha1.PodGangEntry{}
+}
