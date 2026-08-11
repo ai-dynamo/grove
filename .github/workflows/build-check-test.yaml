@@ -26,14 +26,17 @@ on:
 # Cancel in-progress runs when a new run is triggered for the same PR
 # This prevents stale runs from consuming resources
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   # Detect which paths have changed to conditionally run E2E tests
   changes:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: startsWith(github.ref, 'refs/heads/pull-request/')
     outputs:
       e2e-relevant: ${{ steps.filter.outputs.e2e-relevant }}
     steps:
@@ -41,6 +44,7 @@ jobs:
       - uses: dorny/paths-filter@v3
         id: filter
         with:
+          base: main
           filters: |
             e2e-relevant:
               - 'operator/**'
@@ -100,12 +104,10 @@ jobs:
   #   make_target   (optional) - Makefile target, defaults to run-e2e-full
   e2e:
     needs: [test, build, check, changes]
-    # Run on non-draft PRs (or draft PRs with 'run-e2e' label)
-    # AND only when operator or .github files are changed
+    # Run only from copy-pr-bot's trusted branch.
     if: |
-      github.event_name == 'pull_request' &&
-      needs.changes.outputs.e2e-relevant == 'true' &&
-      (github.event.pull_request.draft == false || contains(github.event.pull_request.labels.*.name, 'run-e2e'))
+      startsWith(github.ref, 'refs/heads/pull-request/') &&
+      needs.changes.outputs.e2e-relevant == 'true'
     # use NVIDIA self-hosted runner setting is on Velonix repository
     runs-on: prod-grove-e2e-v1
     timeout-minutes: 60
@@ -183,15 +185,14 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  # This job runs with the same matrix as 'e2e' when E2E tests are skipped (no relevant
-  # file changes and no 'run-e2e' label). It reports a passing status so that required
-  # branch protection checks are satisfied even for documentation-only PRs.
+  # This job runs with the same matrix as 'e2e' when E2E tests are skipped because
+  # no relevant files changed. It reports a passing status so that required branch
+  # protection checks are satisfied even for documentation-only PRs.
   e2e-skip:
     needs: [changes]
     if: |
-      github.event_name == 'pull_request' &&
-      needs.changes.outputs.e2e-relevant != 'true' &&
-      !contains(github.event.pull_request.labels.*.name, 'run-e2e')
+      startsWith(github.ref, 'refs/heads/pull-request/') &&
+      needs.changes.outputs.e2e-relevant != 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -210,4 +211,4 @@ jobs:
     name: E2E - ${{ matrix.test_name }}
     steps:
       - name: Skip E2E (no relevant changes)
-        run: echo "E2E skipped — no changes to operator/ or .github/ and 'run-e2e' label not set"
+        run: echo "E2E skipped — no changes to operator/ or .github/"
