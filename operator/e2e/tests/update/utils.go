@@ -352,17 +352,12 @@ func waitForRollingUpdateComplete(tc *testctx.TestContext, expectedReplicas int3
 	predicate := waiter.Predicate[*grovev1alpha1.PodCliqueSet](func(pcs *grovev1alpha1.PodCliqueSet) bool {
 		pollCount++
 
-		// Log status every few polls for debugging
-		if pollCount%3 == 1 {
-			tests.Logger.Debugf("[waitForRollingUpdateComplete] Poll #%d: UpdatedReplicas=%d, expectedReplicas=%d, UpdateProgress=%v",
-				pollCount, pcs.Status.UpdatedReplicas, expectedReplicas, pcs.Status.UpdateProgress != nil)
-			if pcs.Status.UpdateProgress != nil {
-				tests.Logger.Debugf("  UpdateStartedAt=%v, UpdateEndedAt=%v, CurrentlyUpdating=%v",
-					pcs.Status.UpdateProgress.UpdateStartedAt,
-					pcs.Status.UpdateProgress.UpdateEndedAt,
-					pcs.Status.UpdateProgress.CurrentlyUpdating)
-			}
+		endedAt := "<nil>"
+		if pcs.Status.UpdateProgress != nil && pcs.Status.UpdateProgress.UpdateEndedAt != nil {
+			endedAt = pcs.Status.UpdateProgress.UpdateEndedAt.UTC().Format("15:04:05Z")
 		}
+		tests.Logger.Infof("[waitForRollingUpdateComplete] Poll #%d: UpdatedReplicas=%d/%d UpdateEndedAt=%s",
+			pollCount, pcs.Status.UpdatedReplicas, expectedReplicas, endedAt)
 
 		// Check if rolling update is complete:
 		// - UpdatedReplicas should match expected
