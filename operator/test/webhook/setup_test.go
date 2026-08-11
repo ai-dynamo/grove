@@ -31,10 +31,6 @@ import (
 
 var _ func(ctrl.Manager, *configv1alpha1.OperatorConfiguration) error = Setup
 
-func TestSetupRejectsNilConfiguration(t *testing.T) {
-	require.ErrorContains(t, Setup(nil, nil), "operator configuration must not be nil")
-}
-
 func TestSetup(t *testing.T) {
 	cl := testutils.NewTestClientBuilder().Build()
 	server := &recordingServer{

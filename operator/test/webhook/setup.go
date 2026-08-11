@@ -30,10 +30,6 @@ import (
 // operatorCfg must be defaulted and validated like the production operator
 // configuration before calling Setup.
 func Setup(mgr ctrl.Manager, operatorCfg *configv1alpha1.OperatorConfiguration) error {
-	if operatorCfg == nil {
-		return fmt.Errorf("operator configuration must not be nil")
-	}
-
 	directClient, err := client.New(mgr.GetConfig(), client.Options{Scheme: mgr.GetScheme()})
 	if err != nil {
 		return fmt.Errorf("failed to create direct client: %w", err)
