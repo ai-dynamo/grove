@@ -17,7 +17,6 @@ package pod
 import (
 	"context"
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/ai-dynamo/grove/operator/api/common"
@@ -35,12 +34,70 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+// pcsName and pcsReplicaIndex used across the read-side gate-removal tests.
+const (
+	testPCSName         = "simple1"
+	testPCSReplicaIndex = 0
+	testAnchorEpoch     = "1000"
+	testScaledEpoch     = "1001"
+	testAnchorPCLQName  = "simple1-0-pcb"
+	testScaledPodGang   = "simple1-0-1001-sga-2"
+	testScaledPCLQName  = "simple1-0-sga-pcb"
+)
+
+// newGateRemovalSyncContext builds a syncContext for the gate-removal tests. associatedPodGangEpoch
+// is the epoch of the PodGang the tested PodClique's pods belong to; an empty epoch models a PodGang
+// that is not materialized yet. pgm carries the PodGangMap entries the dependency is resolved from.
+func newGateRemovalSyncContext(pods []*corev1.Pod, associatedPodGangEpoch string, pgm *grovecorev1alpha1.PodGangMap, podsInPodGang bool) *syncContext {
+	sc := &syncContext{
+		ctx:                    context.Background(),
+		pcs:                    &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: testPCSName, Namespace: "default"}},
+		pclq:                   &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: "test-pclq", Namespace: "default"}},
+		pcsReplicaIndex:        testPCSReplicaIndex,
+		pgm:                    pgm,
+		associatedPodGangName:  "simple1-0-" + associatedPodGangEpoch,
+		associatedPodGangEpoch: associatedPodGangEpoch,
+		existingPCLQPods:       pods,
+	}
+	if podsInPodGang {
+		for _, pod := range pods {
+			sc.podNamesUpdatedInPCLQPodGangs = append(sc.podNamesUpdatedInPCLQPodGangs, pod.Name)
+		}
+	}
+	return sc
+}
+
+// anchorPGM returns a PodGangMap whose anchor entry (epoch testAnchorEpoch) has no dependency and
+// whose scaled entry (epoch testScaledEpoch) depends on the anchor.
+func anchorPGM() *grovecorev1alpha1.PodGangMap {
+	return &grovecorev1alpha1.PodGangMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "simple1-0", Namespace: "default"},
+		Spec: grovecorev1alpha1.PodGangMapSpec{
+			Entries: []grovecorev1alpha1.PodGangEntry{
+				{Epoch: testAnchorEpoch, Role: grovecorev1alpha1.PodGangEntryRoleAnchor},
+				{Epoch: testScaledEpoch, Role: grovecorev1alpha1.PodGangEntryRoleScaleOut, DependsOn: []string{testAnchorEpoch}},
+			},
+		},
+	}
+}
+
+// anchorPodGang returns the anchor PodGang named simple1-0-1000 with a single PodGroup requiring
+// MinReplicas. Its readiness is decided by the scheduled state of the referenced PodClique.
+func anchorPodGang() *groveschedulerv1alpha1.PodGang {
+	return &groveschedulerv1alpha1.PodGang{
+		ObjectMeta: metav1.ObjectMeta{Name: "simple1-0-" + testAnchorEpoch, Namespace: "default"},
+		Spec: groveschedulerv1alpha1.PodGangSpec{
+			PodGroups: []groveschedulerv1alpha1.PodGroup{{Name: testAnchorPCLQName, MinReplicas: 2}},
+		},
+	}
+}
+
 func TestCheckAndRemovePodSchedulingGates_MinAvailableAware(t *testing.T) {
 	tests := []struct {
 		name                string
-		podGangName         string
-		basePodGangExists   bool
-		basePodGangReady    bool
+		podEpoch            string // epoch of the pod's PodGang; anchor or scaled
+		anchorExists        bool
+		anchorScheduled     bool
 		podHasGate          bool
 		podInPodGang        bool
 		expectedGateRemoved bool
@@ -49,306 +106,183 @@ func TestCheckAndRemovePodSchedulingGates_MinAvailableAware(t *testing.T) {
 		description         string
 	}{
 		{
-			name:                "Base PodGang pod - gates removed immediately",
-			podGangName:         "simple1-0",
-			basePodGangExists:   true,
-			basePodGangReady:    false, // Irrelevant for base PodGang
+			name:                "anchor pod - gate removed immediately",
+			podEpoch:            testAnchorEpoch,
 			podHasGate:          true,
 			podInPodGang:        true,
 			expectedGateRemoved: true,
 			expectedSkippedPods: 0,
-			expectError:         false,
-			description:         "Base PodGang pods should have gates removed immediately",
+			description:         "anchor PodGang pods have no dependency and get gates removed immediately",
 		},
 		{
-			name:                "Scaled PodGang pod - base not ready",
-			podGangName:         "simple1-0-sga-2",
-			basePodGangExists:   true,
-			basePodGangReady:    false,
+			name:                "scaled pod - dependency not scheduled",
+			podEpoch:            testScaledEpoch,
+			anchorExists:        true,
+			anchorScheduled:     false,
 			podHasGate:          true,
 			podInPodGang:        true,
 			expectedGateRemoved: false,
 			expectedSkippedPods: 1,
-			expectError:         false,
-			description:         "Scaled PodGang pods should keep gates when base not ready",
+			description:         "scaled PodGang pods keep gates when the dependency anchor is not scheduled",
 		},
 		{
-			name:                "Scaled PodGang pod - base ready",
-			podGangName:         "simple1-0-sga-2",
-			basePodGangExists:   true,
-			basePodGangReady:    true,
+			name:                "scaled pod - dependency scheduled",
+			podEpoch:            testScaledEpoch,
+			anchorExists:        true,
+			anchorScheduled:     true,
 			podHasGate:          true,
 			podInPodGang:        true,
 			expectedGateRemoved: true,
 			expectedSkippedPods: 0,
-			expectError:         false,
-			description:         "Scaled PodGang pods should have gates removed when base ready",
+			description:         "scaled PodGang pods have gates removed when the dependency anchor is scheduled",
 		},
 		{
-			name:                "Scaled PodGang pod - base missing",
-			podGangName:         "simple1-0-sga-3",
-			basePodGangExists:   false,
-			basePodGangReady:    false,
+			name:                "scaled pod - dependency PodGang missing",
+			podEpoch:            testScaledEpoch,
+			anchorExists:        false,
 			podHasGate:          true,
 			podInPodGang:        true,
 			expectedGateRemoved: false,
-			expectedSkippedPods: 0, // No skips when error occurs
+			expectedSkippedPods: 0, // no skips recorded when the check errors and returns early
 			expectError:         true,
-			description:         "Scaled PodGang pods should cause requeue when base PodGang missing",
+			description:         "a missing dependency anchor PodGang causes a requeue error",
 		},
 		{
-			name:                "Pod not in PodGang yet",
-			podGangName:         "simple1-0-sga-2",
-			basePodGangExists:   true,
-			basePodGangReady:    true,
+			name:                "pod not in PodGang yet",
+			podEpoch:            testScaledEpoch,
+			anchorExists:        true,
+			anchorScheduled:     true,
 			podHasGate:          true,
 			podInPodGang:        false,
 			expectedGateRemoved: false,
 			expectedSkippedPods: 1,
-			expectError:         false,
-			description:         "Pods not yet in PodGang should keep gates regardless",
+			description:         "pods not yet recorded in the PodGang keep gates regardless of dependency state",
 		},
 		{
-			name:                "Pod without gate",
-			podGangName:         "simple1-0-sga-2",
-			basePodGangExists:   true,
-			basePodGangReady:    true,
+			name:                "pod without gate",
+			podEpoch:            testScaledEpoch,
+			anchorExists:        true,
+			anchorScheduled:     true,
 			podHasGate:          false,
 			podInPodGang:        true,
 			expectedGateRemoved: false,
 			expectedSkippedPods: 0,
-			expectError:         false,
-			description:         "Pods without gates should be ignored",
+			description:         "pods without gates are ignored",
+		},
+		{
+			name:                "pod's PodGang not materialized yet - stays gated",
+			podEpoch:            "", // empty epoch models an unmaterialized PodGang
+			podHasGate:          true,
+			podInPodGang:        true,
+			expectedGateRemoved: false,
+			expectedSkippedPods: 1,
+			description:         "when the pod's PodGang is not created yet the dependency cannot be resolved, so it stays gated",
+		},
+		{
+			name:                "pod's epoch not present in the PodGangMap - requeue error",
+			podEpoch:            "9999", // no PodGangMap entry carries this epoch
+			podHasGate:          true,
+			podInPodGang:        true,
+			expectedGateRemoved: false,
+			expectedSkippedPods: 0,
+			expectError:         true,
+			description:         "an epoch absent from the PodGangMap is a contract violation and requeues",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create test objects
-			pod := createTestPod(tt.podGangName, tt.podHasGate, tt.podInPodGang)
-			var objects []client.Object
-			objects = append(objects, pod)
+			podGangName := "simple1-0-" + tt.podEpoch
+			if tt.podEpoch == testScaledEpoch {
+				podGangName = testScaledPodGang
+			}
+			pod := createTestPod(podGangName, tt.podHasGate, tt.podInPodGang)
+			objects := []client.Object{pod}
 
-			// Check if this is testing a base PodGang or scaled PodGang based on name pattern
-			isScaledPodGangTest := strings.Contains(tt.podGangName, "-sga-")
-
-			if isScaledPodGangTest {
-				// Always create the scaled PodGang for scaled PodGang tests
-				scaledPodGang := &groveschedulerv1alpha1.PodGang{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      tt.podGangName,
-						Namespace: "default",
-					},
-					Spec: groveschedulerv1alpha1.PodGangSpec{
-						PodGroups: []groveschedulerv1alpha1.PodGroup{
-							{
-								Name:        "simple1-0-sga-pcb",
-								MinReplicas: 1,
-							},
-						},
-					},
+			// Seed the anchor PodGang and its PodClique so the dependency scheduled-check can resolve.
+			if tt.anchorExists {
+				objects = append(objects, anchorPodGang())
+				scheduledReplicas := int32(1) // below MinReplicas (2) => not scheduled
+				if tt.anchorScheduled {
+					scheduledReplicas = 2
 				}
-				objects = append(objects, scaledPodGang)
-
-				// Only create base PodGang if it's supposed to exist
-				if tt.basePodGangExists {
-					basePodGang := createTestBasePodGang(tt.podGangName, tt.basePodGangReady)
-					objects = append(objects, basePodGang)
-				}
-			} else if tt.basePodGangExists {
-				// Just create the base PodGang for base PodGang tests
-				basePodGang := createTestBasePodGang(tt.podGangName, tt.basePodGangReady)
-				objects = append(objects, basePodGang)
+				objects = append(objects, createTestPodClique(testAnchorPCLQName, 2, scheduledReplicas))
 			}
 
-			if tt.basePodGangExists {
-				if tt.basePodGangReady {
-					// Add ready PodClique for base PodGang
-					basePclq := createTestPodClique("simple1-0-pcb", 2, 2) // ReadyReplicas >= MinAvailable
-					objects = append(objects, basePclq)
-				} else {
-					// Add not-ready PodClique for base PodGang
-					basePclq := createTestPodClique("simple1-0-pcb", 2, 1) // ReadyReplicas < MinAvailable
-					objects = append(objects, basePclq)
-				}
-			}
-
-			// Create fake client
 			scheme := runtime.NewScheme()
-			err := corev1.AddToScheme(scheme)
-			require.NoError(t, err)
-			err = grovecorev1alpha1.AddToScheme(scheme)
-			require.NoError(t, err)
-			err = groveschedulerv1alpha1.AddToScheme(scheme)
-			require.NoError(t, err)
+			require.NoError(t, corev1.AddToScheme(scheme))
+			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+			require.NoError(t, groveschedulerv1alpha1.AddToScheme(scheme))
 			fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
 
-			// Create a test PodClique for the sync context
-			testPclq := &grovecorev1alpha1.PodClique{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-pclq",
-					Namespace: "default",
-				},
-			}
-
-			// For scaled PodGang tests, add the base PodGang label to the PodClique
-			// This is what the production code expects to read in checkBasePodGangScheduledForPodClique
-			if isScaledPodGangTest {
-				testPclq.Labels = map[string]string{
-					common.LabelBasePodGang: "simple1-0",
-				}
-			}
-
-			// Create resource and sync context
 			r := &_resource{client: fakeClient}
-			sc := &syncContext{
-				ctx:                           context.Background(),
-				pclq:                          testPclq,
-				existingPCLQPods:              []*corev1.Pod{pod},
-				podNamesUpdatedInPCLQPodGangs: []string{},
-			}
+			sc := newGateRemovalSyncContext([]*corev1.Pod{pod}, tt.podEpoch, anchorPGM(), tt.podInPodGang)
 
-			if tt.podInPodGang {
-				sc.podNamesUpdatedInPCLQPodGangs = []string{pod.Name}
-			}
-
-			// Test the gate removal logic
 			skippedPods, err := r.checkAndRemovePodSchedulingGates(sc, logr.Discard())
-
 			if tt.expectError {
-				require.Error(t, err, "Expected error for test case: %s", tt.name)
-				// When error occurs, we don't check skipped pods as function returns early
+				require.Error(t, err, "expected error for test case: %s", tt.name)
 				return
-			} else {
-				require.NoError(t, err, "Unexpected error for test case: %s", tt.name)
 			}
-
-			// Verify results
+			require.NoError(t, err, "unexpected error for test case: %s", tt.name)
 			assert.Len(t, skippedPods, tt.expectedSkippedPods, tt.description)
 
-			// Check if gate was actually removed
 			updatedPod := &corev1.Pod{}
-			err = fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pod), updatedPod)
-			require.NoError(t, err)
-
+			require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pod), updatedPod))
 			hasGateAfter := hasPodGangSchedulingGate(updatedPod)
 			if tt.expectedGateRemoved {
-				assert.False(t, hasGateAfter, "Pod should not have scheduling gate after removal")
+				assert.False(t, hasGateAfter, "pod should not have scheduling gate after removal")
 			} else if tt.podHasGate {
-				assert.True(t, hasGateAfter, "Pod should still have scheduling gate")
+				assert.True(t, hasGateAfter, "pod should still have scheduling gate")
 			}
 		})
 	}
 }
 
 func TestCheckAndRemovePodSchedulingGates_ConcurrentExecution(t *testing.T) {
-	// Test that multiple pods can have their gates removed concurrently without race conditions
-
-	// Create multiple pods with gates for base PodGang (should all be processed)
+	// Multiple anchor pods (no dependency) should all have their gates removed concurrently.
 	var pods []*corev1.Pod
 	var objects []client.Object
-
 	for i := 0; i < 5; i++ {
-		pod := createTestPod("simple1-0", true, true) // Base PodGang, has gate, in PodGang
+		pod := createTestPod("simple1-0-"+testAnchorEpoch, true, true)
 		pod.Name = fmt.Sprintf("test-pod-%d", i)
 		pods = append(pods, pod)
 		objects = append(objects, pod)
-	}
-
-	// Create a base PodGang resource (needed for the logic to work correctly)
-	basePodGang := &groveschedulerv1alpha1.PodGang{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "simple1-0",
-			Namespace: "default",
-			// No base-podgang label - this indicates it's a base PodGang
-		},
-		Spec: groveschedulerv1alpha1.PodGangSpec{
-			PodGroups: []groveschedulerv1alpha1.PodGroup{
-				{
-					Name:        "simple1-0-pcb",
-					MinReplicas: 2,
-				},
-			},
-		},
-	}
-	objects = append(objects, basePodGang)
-
-	// Create fake client
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = grovecorev1alpha1.AddToScheme(scheme)
-	_ = groveschedulerv1alpha1.AddToScheme(scheme)
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
-
-	// Create test PodClique for the sync context
-	testPclq := &grovecorev1alpha1.PodClique{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-pclq",
-			Namespace: "default",
-		},
-	}
-
-	// Create resource and sync context
-	r := &_resource{client: fakeClient}
-	sc := &syncContext{
-		ctx:                           context.Background(),
-		pclq:                          testPclq,
-		existingPCLQPods:              pods,
-		podNamesUpdatedInPCLQPodGangs: []string{},
-	}
-
-	// All pods are in PodGang
-	for _, pod := range pods {
-		sc.podNamesUpdatedInPCLQPodGangs = append(sc.podNamesUpdatedInPCLQPodGangs, pod.Name)
-	}
-
-	// Test the gate removal logic
-	skippedPods, err := r.checkAndRemovePodSchedulingGates(sc, logr.Discard())
-	require.NoError(t, err)
-	assert.Empty(t, skippedPods, "No pods should be skipped for base PodGang")
-
-	// Verify all pods had their gates removed
-	for i, originalPod := range pods {
-		updatedPod := &corev1.Pod{}
-		err = fakeClient.Get(context.Background(), client.ObjectKeyFromObject(originalPod), updatedPod)
-		require.NoError(t, err)
-
-		hasGateAfter := hasPodGangSchedulingGate(updatedPod)
-		assert.False(t, hasGateAfter, "Pod %d should not have scheduling gate after removal", i)
-	}
-}
-
-func TestCheckAndRemovePodSchedulingGates_PreservesForeignGates(t *testing.T) {
-	const foreignAdmissionGate = "foo.io/admission"
-
-	pod := createTestPod("simple1-0", true, true)
-	pod.Spec.SchedulingGates = append(pod.Spec.SchedulingGates, corev1.PodSchedulingGate{Name: foreignAdmissionGate})
-
-	basePodGang := &groveschedulerv1alpha1.PodGang{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "simple1-0",
-			Namespace: "default",
-		},
-		Spec: groveschedulerv1alpha1.PodGangSpec{
-			PodGroups: []groveschedulerv1alpha1.PodGroup{
-				{Name: "simple1-0-pcb", MinReplicas: 1},
-			},
-		},
 	}
 
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
 	require.NoError(t, groveschedulerv1alpha1.AddToScheme(scheme))
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod, basePodGang).Build()
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
 
 	r := &_resource{client: fakeClient}
-	sc := &syncContext{
-		ctx:                           context.Background(),
-		pclq:                          &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: "test-pclq", Namespace: "default"}},
-		existingPCLQPods:              []*corev1.Pod{pod},
-		podNamesUpdatedInPCLQPodGangs: []string{pod.Name},
+	sc := newGateRemovalSyncContext(pods, testAnchorEpoch, anchorPGM(), true)
+
+	skippedPods, err := r.checkAndRemovePodSchedulingGates(sc, logr.Discard())
+	require.NoError(t, err)
+	assert.Empty(t, skippedPods, "no anchor pods should be skipped")
+
+	for i, originalPod := range pods {
+		updatedPod := &corev1.Pod{}
+		require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(originalPod), updatedPod))
+		assert.False(t, hasPodGangSchedulingGate(updatedPod), "pod %d should not have scheduling gate after removal", i)
 	}
+}
+
+func TestCheckAndRemovePodSchedulingGates_PreservesForeignGates(t *testing.T) {
+	const foreignAdmissionGate = "foo.io/admission"
+
+	pod := createTestPod("simple1-0-"+testAnchorEpoch, true, true)
+	pod.Spec.SchedulingGates = append(pod.Spec.SchedulingGates, corev1.PodSchedulingGate{Name: foreignAdmissionGate})
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	require.NoError(t, groveschedulerv1alpha1.AddToScheme(scheme))
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
+
+	r := &_resource{client: fakeClient}
+	sc := newGateRemovalSyncContext([]*corev1.Pod{pod}, testAnchorEpoch, anchorPGM(), true)
 
 	skippedPods, err := r.checkAndRemovePodSchedulingGates(sc, logr.Discard())
 	require.NoError(t, err)
@@ -362,140 +296,135 @@ func TestCheckAndRemovePodSchedulingGates_PreservesForeignGates(t *testing.T) {
 }
 
 func TestRemovePodGangSchedulingGate(t *testing.T) {
-	t.Run("removes only the Grove gate", func(t *testing.T) {
-		pod := &corev1.Pod{
-			Spec: corev1.PodSpec{
-				SchedulingGates: []corev1.PodSchedulingGate{
-					{Name: "foo.io/admission"},
-					{Name: podGangSchedulingGate},
-					{Name: "foo.io/topology"},
-				},
-			},
-		}
-		assert.True(t, removePodGangSchedulingGate(pod))
-		assert.Equal(t, []corev1.PodSchedulingGate{
-			{Name: "foo.io/admission"},
-			{Name: "foo.io/topology"},
-		}, pod.Spec.SchedulingGates)
-	})
-	t.Run("returns false when Grove gate is absent", func(t *testing.T) {
-		pod := &corev1.Pod{
-			Spec: corev1.PodSpec{
-				SchedulingGates: []corev1.PodSchedulingGate{
-					{Name: "foo.io/admission"},
-				},
-			},
-		}
-		assert.False(t, removePodGangSchedulingGate(pod))
-		assert.Equal(t, []corev1.PodSchedulingGate{
-			{Name: "foo.io/admission"},
-		}, pod.Spec.SchedulingGates)
-	})
-}
-
-func TestIsBasePodGangScheduled(t *testing.T) {
 	tests := []struct {
-		name              string
-		basePodGangExists bool
-		podCliques        []testPodClique
-		expectedScheduled bool
-		expectError       bool
-		description       string
+		name          string
+		gates         []corev1.PodSchedulingGate
+		wantRemoved   bool
+		wantRemaining []string
 	}{
 		{
-			name:              "Base PodGang is scheduled - all PodCliques meet MinAvailable",
-			basePodGangExists: true,
+			name:          "removes the grove gate when present",
+			gates:         []corev1.PodSchedulingGate{{Name: podGangSchedulingGate}},
+			wantRemoved:   true,
+			wantRemaining: nil,
+		},
+		{
+			name:          "returns false when the grove gate is absent",
+			gates:         []corev1.PodSchedulingGate{{Name: "foo.io/other"}},
+			wantRemoved:   false,
+			wantRemaining: []string{"foo.io/other"},
+		},
+		{
+			name:          "removes only the grove gate and preserves others",
+			gates:         []corev1.PodSchedulingGate{{Name: podGangSchedulingGate}, {Name: "foo.io/other"}},
+			wantRemoved:   true,
+			wantRemaining: []string{"foo.io/other"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pod := &corev1.Pod{Spec: corev1.PodSpec{SchedulingGates: tt.gates}}
+			removed := removePodGangSchedulingGate(pod)
+			assert.Equal(t, tt.wantRemoved, removed)
+			var remaining []string
+			for _, g := range pod.Spec.SchedulingGates {
+				remaining = append(remaining, g.Name)
+			}
+			assert.Equal(t, tt.wantRemaining, remaining)
+		})
+	}
+}
+
+func TestIsPodGangScheduled(t *testing.T) {
+	tests := []struct {
+		name                 string
+		podGangExists        bool
+		podCliques           []testPodClique
+		skipPodCliqueSeeding bool
+		expectedScheduled    bool
+		expectError          bool
+		description          string
+	}{
+		{
+			name:          "scheduled - all PodCliques meet MinAvailable",
+			podGangExists: true,
 			podCliques: []testPodClique{
 				{name: "simple1-0-pcb", minAvailable: 2, scheduledReplicas: 2},
 				{name: "simple1-0-pcc", minAvailable: 1, scheduledReplicas: 3},
 			},
 			expectedScheduled: true,
-			expectError:       false,
-			description:       "All PodCliques meet their MinAvailable requirements",
+			description:       "all PodCliques meet their MinAvailable requirements",
 		},
 		{
-			name:              "Base PodGang not scheduled - one PodClique below MinAvailable",
-			basePodGangExists: true,
+			name:          "not scheduled - one PodClique below MinAvailable",
+			podGangExists: true,
 			podCliques: []testPodClique{
 				{name: "simple1-0-pcb", minAvailable: 2, scheduledReplicas: 2},
-				{name: "simple1-0-pcc", minAvailable: 3, scheduledReplicas: 2}, // Below MinAvailable
+				{name: "simple1-0-pcc", minAvailable: 3, scheduledReplicas: 2},
 			},
 			expectedScheduled: false,
-			expectError:       false,
-			description:       "One PodClique below MinAvailable makes base PodGang not scheduled",
+			description:       "one PodClique below MinAvailable makes the PodGang not scheduled",
 		},
 		{
-			name:              "Base PodGang missing",
-			basePodGangExists: false,
-			podCliques:        []testPodClique{},
+			name:              "PodGang missing",
+			podGangExists:     false,
 			expectedScheduled: false,
 			expectError:       true,
-			description:       "Missing base PodGang should return error for requeue",
+			description:       "a missing PodGang returns an error for requeue",
 		},
 		{
-			name:              "Base PodGang ready - single PodClique",
-			basePodGangExists: true,
+			name:          "scheduled - single PodClique",
+			podGangExists: true,
 			podCliques: []testPodClique{
 				{name: "simple1-0-pcb", minAvailable: 1, scheduledReplicas: 1},
 			},
 			expectedScheduled: true,
-			expectError:       false,
-			description:       "Single PodClique meeting MinAvailable",
+			description:       "single PodClique meeting MinAvailable",
+		},
+		{
+			name:          "PodGang references a PodClique that does not exist - requeue error",
+			podGangExists: true,
+			podCliques: []testPodClique{
+				{name: "simple1-0-pcb", minAvailable: 1, scheduledReplicas: 1},
+			},
+			skipPodCliqueSeeding: true,
+			expectedScheduled:    false,
+			expectError:          true,
+			description:          "a PodGroup whose PodClique is not found returns an error for requeue",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var objects []client.Object
-
-			if tt.basePodGangExists {
-				// Create the scaled PodGang with the base-podgang label
-				scaledPodGang := &groveschedulerv1alpha1.PodGang{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "simple1-0-sga-2",
-						Namespace: "default",
-						Labels: map[string]string{
-							common.LabelBasePodGang: "simple1-0",
-						},
-					},
-					Spec: groveschedulerv1alpha1.PodGangSpec{
-						PodGroups: []groveschedulerv1alpha1.PodGroup{
-							{
-								Name:        "simple1-0-sga-pcb",
-								MinReplicas: 1,
-							},
-						},
-					},
+			if tt.podGangExists {
+				podGroups := make([]groveschedulerv1alpha1.PodGroup, len(tt.podCliques))
+				for i, pclq := range tt.podCliques {
+					podGroups[i] = groveschedulerv1alpha1.PodGroup{Name: pclq.name, MinReplicas: pclq.minAvailable}
+					if !tt.skipPodCliqueSeeding {
+						objects = append(objects, createTestPodClique(pclq.name, pclq.minAvailable, pclq.scheduledReplicas))
+					}
 				}
-				objects = append(objects, scaledPodGang)
-
-				// Create the base PodGang
-				basePodGang := createTestBasePodGangWithPodCliques(tt.podCliques)
-				objects = append(objects, basePodGang)
-
-				// Add corresponding PodCliques
-				for _, pclq := range tt.podCliques {
-					podClique := createTestPodClique(pclq.name, pclq.minAvailable, pclq.scheduledReplicas)
-					objects = append(objects, podClique)
-				}
+				objects = append(objects, &groveschedulerv1alpha1.PodGang{
+					ObjectMeta: metav1.ObjectMeta{Name: "simple1-0-" + testAnchorEpoch, Namespace: "default"},
+					Spec:       groveschedulerv1alpha1.PodGangSpec{PodGroups: podGroups},
+				})
 			}
 
-			// Create fake client
 			scheme := runtime.NewScheme()
-			_ = grovecorev1alpha1.AddToScheme(scheme)
-			_ = groveschedulerv1alpha1.AddToScheme(scheme)
+			require.NoError(t, corev1.AddToScheme(scheme))
+			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+			require.NoError(t, groveschedulerv1alpha1.AddToScheme(scheme))
 			fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
 
-			// Test the readiness check
 			r := &_resource{client: fakeClient}
-			result, err := r.isBasePodGangScheduled(context.Background(), logr.Discard(), "default", "simple1-0")
+			result, err := r.isPodGangScheduled(context.Background(), logr.Discard(), "default", "simple1-0-"+testAnchorEpoch)
 
 			if tt.expectError {
-				require.Error(t, err, "Expected error for test case: %s", tt.name)
-				// When error occurs, result should be false and we don't check expectedScheduled
-				assert.False(t, result, "Result should be false when error occurs")
+				require.Error(t, err, "expected error for test case: %s", tt.name)
+				assert.False(t, result, "result should be false when error occurs")
 			} else {
-				require.NoError(t, err, "Unexpected error for test case: %s", tt.name)
+				require.NoError(t, err, "unexpected error for test case: %s", tt.name)
 				assert.Equal(t, tt.expectedScheduled, result, tt.description)
 			}
 		})
@@ -517,121 +446,20 @@ func createTestPod(podGangName string, hasGate bool, inPodGang bool) *corev1.Pod
 			Namespace: "default",
 			Labels:    map[string]string{},
 		},
-		Spec: corev1.PodSpec{},
 	}
-
 	if hasGate {
-		pod.Spec.SchedulingGates = []corev1.PodSchedulingGate{
-			{Name: podGangSchedulingGate},
-		}
+		pod.Spec.SchedulingGates = []corev1.PodSchedulingGate{{Name: podGangSchedulingGate}}
 	}
-
 	if inPodGang {
 		pod.Labels[common.LabelPodGang] = podGangName
-
-		// Add base-podgang label for scaled PodGang pods
-		if strings.Contains(podGangName, "-sga-") {
-			// Extract base PodGang name: "simple1-0-sga-2" -> "simple1-0"
-			if sgaIndex := strings.Index(podGangName, "-sga-"); sgaIndex != -1 {
-				basePodGangName := podGangName[:sgaIndex]
-				pod.Labels[common.LabelBasePodGang] = basePodGangName
-			}
-		}
 	}
-
 	return pod
-}
-
-// createTestPodGangs creates both scaled and base PodGangs for testing
-func createTestPodGangs(scaledPodGangName string, ready bool) []client.Object {
-	basePodGangName := "simple1-0"
-	var objects []client.Object
-
-	// Create the scaled PodGang (no longer needs base-podgang label since production code doesn't add it)
-	scaledPodGang := &groveschedulerv1alpha1.PodGang{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      scaledPodGangName,
-			Namespace: "default",
-		},
-		Spec: groveschedulerv1alpha1.PodGangSpec{
-			PodGroups: []groveschedulerv1alpha1.PodGroup{
-				{
-					Name:        "simple1-0-sga-pcb",
-					MinReplicas: 1,
-				},
-			},
-		},
-	}
-	objects = append(objects, scaledPodGang)
-
-	// Create the base PodGang
-	podGroups := []groveschedulerv1alpha1.PodGroup{
-		{
-			Name:        "simple1-0-pcb",
-			MinReplicas: 2,
-		},
-	}
-
-	if !ready {
-		// Add another PodGroup to make it more complex
-		podGroups = append(podGroups, groveschedulerv1alpha1.PodGroup{
-			Name:        "simple1-0-pcc",
-			MinReplicas: 3,
-		})
-	}
-
-	basePodGang := &groveschedulerv1alpha1.PodGang{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      basePodGangName,
-			Namespace: "default",
-		},
-		Spec: groveschedulerv1alpha1.PodGangSpec{
-			PodGroups: podGroups,
-		},
-	}
-	objects = append(objects, basePodGang)
-
-	return objects
-}
-
-// Legacy function for backwards compatibility - now returns just the base PodGang
-func createTestBasePodGang(scaledPodGangName string, ready bool) *groveschedulerv1alpha1.PodGang {
-	objects := createTestPodGangs(scaledPodGangName, ready)
-	// Return the base PodGang (last object in the list)
-	return objects[len(objects)-1].(*groveschedulerv1alpha1.PodGang)
-}
-
-func createTestBasePodGangWithPodCliques(podCliques []testPodClique) *groveschedulerv1alpha1.PodGang {
-	podGroups := make([]groveschedulerv1alpha1.PodGroup, len(podCliques))
-	for i, pclq := range podCliques {
-		podGroups[i] = groveschedulerv1alpha1.PodGroup{
-			Name:        pclq.name,
-			MinReplicas: pclq.minAvailable,
-		}
-	}
-
-	return &groveschedulerv1alpha1.PodGang{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "simple1-0",
-			Namespace: "default",
-		},
-		Spec: groveschedulerv1alpha1.PodGangSpec{
-			PodGroups: podGroups,
-		},
-	}
 }
 
 func createTestPodClique(name string, minAvailable, scheduledReplicas int32) *grovecorev1alpha1.PodClique {
 	return &grovecorev1alpha1.PodClique{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: "default",
-		},
-		Spec: grovecorev1alpha1.PodCliqueSpec{
-			MinAvailable: ptr.To(minAvailable),
-		},
-		Status: grovecorev1alpha1.PodCliqueStatus{
-			ScheduledReplicas: scheduledReplicas,
-		},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+		Spec:       grovecorev1alpha1.PodCliqueSpec{MinAvailable: ptr.To(minAvailable)},
+		Status:     grovecorev1alpha1.PodCliqueStatus{ScheduledReplicas: scheduledReplicas},
 	}
 }

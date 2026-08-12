@@ -154,15 +154,14 @@ func (r _resource) resolveTopologyLevels(ctx context.Context, logger logr.Logger
 func (r _resource) computeExpectedPodGangs(ctx context.Context, ss *syncState) ([]*podGangInfo, error) {
 	var expectedPodGangs []*podGangInfo
 	for pcsReplicaIndex := range int(ss.pcs.Spec.Replicas) {
-		pgmName := apicommon.GeneratePodGangMapName(apicommon.ResourceNameReplica{Name: ss.pcs.Name, Replica: pcsReplicaIndex})
-		pgm, err := componentutils.GetPodGangMap(ctx, r.client, pgmName, ss.pcs.Namespace)
+		pgm, err := componentutils.GetPodGangMap(ctx, r.client, client.ObjectKeyFromObject(ss.pcs), pcsReplicaIndex)
 		if err != nil {
 			return nil, err
 		}
 		for _, entry := range pgm.Spec.Entries {
 			pgInfos, err := r.buildPodGangInfosFromEntry(ss, pcsReplicaIndex, entry)
 			if err != nil {
-				return nil, fmt.Errorf("failed to build PodGang info from entry with epoch %q in PodGangMap %s: %w", entry.Epoch, pgmName, err)
+				return nil, fmt.Errorf("failed to build PodGang info from entry with epoch %q in PodGangMap %s: %w", entry.Epoch, pgm.Name, err)
 			}
 			expectedPodGangs = append(expectedPodGangs, pgInfos...)
 		}

@@ -48,6 +48,7 @@ const (
 	errCodeDeletePod                           grovecorev1alpha1.ErrorCode = "ERR_DELETE_POD"
 	errCodeGetAvailablePodHostNameIndices      grovecorev1alpha1.ErrorCode = "ERR_GET_AVAILABLE_POD_HOSTNAME_INDICES"
 	errCodeGetPodGang                          grovecorev1alpha1.ErrorCode = "ERR_GET_PODGANG"
+	errCodeGetPodGangMap                       grovecorev1alpha1.ErrorCode = "ERR_GET_PODGANGMAP"
 	errCodeGetPodCliqueSet                     grovecorev1alpha1.ErrorCode = "ERR_GET_PODCLIQUESET"
 	errCodeGetPodClique                        grovecorev1alpha1.ErrorCode = "ERR_GET_PODCLIQUE"
 	errCodeListPod                             grovecorev1alpha1.ErrorCode = "ERR_LIST_POD"

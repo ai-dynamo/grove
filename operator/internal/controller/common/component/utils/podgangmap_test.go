@@ -34,15 +34,16 @@ func TestGetPodGangMap(t *testing.T) {
 	const namespace = "default"
 	pgm := testutils.NewPodGangMapBuilder("pcs", namespace, types.UID("uid"), 0).Build()
 	cl := testutils.CreateDefaultFakeClient([]client.Object{pgm})
+	pcsObjectKey := client.ObjectKey{Namespace: namespace, Name: "pcs"}
 
 	t.Run("returns the PodGangMap when it exists", func(t *testing.T) {
-		actual, err := GetPodGangMap(context.Background(), cl, "pcs-0", namespace)
+		actual, err := GetPodGangMap(context.Background(), cl, pcsObjectKey, 0)
 		require.NoError(t, err)
 		assert.Equal(t, "pcs-0", actual.Name)
 	})
 
 	t.Run("returns a NotFound error when it does not exist", func(t *testing.T) {
-		_, err := GetPodGangMap(context.Background(), cl, "pcs-9", namespace)
+		_, err := GetPodGangMap(context.Background(), cl, pcsObjectKey, 9)
 		assert.True(t, apierrors.IsNotFound(err))
 	})
 }
@@ -146,4 +147,135 @@ func pgmWithReplicaIndexLabel(pcsName, namespace, value string) grovecorev1alpha
 			Labels:    map[string]string{apicommon.LabelPodCliqueSetReplicaIndex: value},
 		},
 	}
+}
+
+func TestEpochForPCSGReplica(t *testing.T) {
+	const (
+		pcsName       = "pcs"
+		namespace     = "default"
+		genHash       = "hash-1"
+		pcsgName      = "sg"
+		anchorEpoch   = "1000"
+		tailEpoch     = "1001"
+		scaleOutEpoch = "1002"
+	)
+	// Anchor holds index 0 (MinAvailable=1), Tail holds [1,3), ScaleOut is pre-created and holds a
+	// placed scale-out index 3. Index 4 is a grown-but-not-yet-placed scale-out index.
+	pgm := testutils.NewPodGangMapBuilder(pcsName, namespace, "uid", 0).WithEntries(
+		testutils.NewPodGangEntryBuilder(genHash, anchorEpoch).
+			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+			WithPCSGReplicaIndices(map[string][]int32{pcsgName: {0}}).Build(),
+		testutils.NewPodGangEntryBuilder(genHash, tailEpoch).
+			WithRole(grovecorev1alpha1.PodGangEntryRoleTail).
+			WithPCSGReplicaIndices(map[string][]int32{pcsgName: {1, 2}}).
+			WithDependsOn(anchorEpoch).Build(),
+		testutils.NewPodGangEntryBuilder(genHash, scaleOutEpoch).
+			WithRole(grovecorev1alpha1.PodGangEntryRoleScaleOut).
+			WithPCSGReplicaIndices(map[string][]int32{pcsgName: {3}}).
+			WithDependsOn(anchorEpoch).Build(),
+	).Build()
+
+	tests := []struct {
+		name          string
+		index         int32
+		expectedEpoch string
+	}{
+		{"anchor index resolves to the anchor epoch", 0, anchorEpoch},
+		{"tail index resolves to the tail epoch", 2, tailEpoch},
+		{"placed scale-out index resolves to the ScaleOut epoch", 3, scaleOutEpoch},
+		{"not-yet-placed scale-out index falls back to the ScaleOut entry", 4, scaleOutEpoch},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			actual, err := EpochForPCSGReplica(pgm, pcsgName, test.index)
+			require.NoError(t, err)
+			assert.Equal(t, test.expectedEpoch, actual)
+		})
+	}
+
+	t.Run("errors when no owning entry and no ScaleOut entry exist", func(t *testing.T) {
+		anchorOnly := testutils.NewPodGangMapBuilder(pcsName, namespace, "uid", 0).WithEntries(
+			testutils.NewPodGangEntryBuilder(genHash, anchorEpoch).
+				WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+				WithPCSGReplicaIndices(map[string][]int32{pcsgName: {0}}).Build(),
+		).Build()
+		_, err := EpochForPCSGReplica(anchorOnly, pcsgName, 5)
+		require.Error(t, err)
+	})
+}
+
+func TestDependsOnForEpoch(t *testing.T) {
+	const (
+		pcsName       = "pcs"
+		namespace     = "default"
+		genHash       = "hash-1"
+		pcsgName      = "sg"
+		anchorEpoch   = "1000"
+		tailEpoch     = "1001"
+		scaleOutEpoch = "1002"
+	)
+	pgm := testutils.NewPodGangMapBuilder(pcsName, namespace, "uid", 0).WithEntries(
+		testutils.NewPodGangEntryBuilder(genHash, anchorEpoch).
+			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+			WithPCSGReplicaIndices(map[string][]int32{pcsgName: {0}}).Build(),
+		testutils.NewPodGangEntryBuilder(genHash, tailEpoch).
+			WithRole(grovecorev1alpha1.PodGangEntryRoleTail).
+			WithPCSGReplicaIndices(map[string][]int32{pcsgName: {1, 2}}).
+			WithDependsOn(anchorEpoch).Build(),
+		testutils.NewPodGangEntryBuilder(genHash, scaleOutEpoch).
+			WithRole(grovecorev1alpha1.PodGangEntryRoleScaleOut).
+			WithDependsOn(anchorEpoch).Build(),
+	).Build()
+
+	tests := []struct {
+		name              string
+		epoch             string
+		expectedDependsOn []string
+	}{
+		{"anchor entry epoch has no dependency", anchorEpoch, nil},
+		{"tail entry epoch depends on the anchor epoch", tailEpoch, []string{anchorEpoch}},
+		{"scale-out entry epoch depends on the anchor epoch", scaleOutEpoch, []string{anchorEpoch}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			actual, err := DependsOnForEpoch(pgm, test.epoch)
+			require.NoError(t, err)
+			assert.Equal(t, test.expectedDependsOn, actual)
+		})
+	}
+
+	t.Run("errors when no entry carries the epoch", func(t *testing.T) {
+		_, err := DependsOnForEpoch(pgm, "9999")
+		require.Error(t, err)
+	})
+}
+
+func TestAnchorPodGangEpoch(t *testing.T) {
+	const (
+		pcsName     = "pcs"
+		namespace   = "default"
+		genHash     = "hash-1"
+		anchorEpoch = "1000"
+	)
+
+	t.Run("returns the AnchorIndex 0 entry epoch", func(t *testing.T) {
+		pgm := testutils.NewPodGangMapBuilder(pcsName, namespace, "uid", 0).WithEntries(
+			testutils.NewPodGangEntryBuilder(genHash, anchorEpoch).
+				WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).Build(),
+			testutils.NewPodGangEntryBuilder(genHash, "1002").
+				WithRole(grovecorev1alpha1.PodGangEntryRoleScaleOut).Build(),
+		).Build()
+		actual, err := AnchorPodGangEpoch(pgm)
+		require.NoError(t, err)
+		assert.Equal(t, anchorEpoch, actual)
+	})
+
+	t.Run("errors when no anchor entry exists", func(t *testing.T) {
+		pgm := testutils.NewPodGangMapBuilder(pcsName, namespace, "uid", 0).WithEntries(
+			testutils.NewPodGangEntryBuilder(genHash, "1002").
+				WithRole(grovecorev1alpha1.PodGangEntryRoleScaleOut).Build(),
+		).Build()
+		_, err := AnchorPodGangEpoch(pgm)
+		require.Error(t, err)
+	})
 }
