@@ -150,7 +150,7 @@ func podCliquePredicate() predicate.Predicate {
 	}
 }
 
-// podCliqueScalingGroupPredicate returns a predicate that filters PCSG events for relevant status changes.
+// podCliqueScalingGroupPredicate returns a predicate that filters PCSG events for relevant spec or status changes.
 func podCliqueScalingGroupPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(_ event.CreateEvent) bool { return false },
@@ -161,7 +161,10 @@ func podCliqueScalingGroupPredicate() predicate.Predicate {
 			if !okOld || !okNew {
 				return false
 			}
-			return hasMinAvailableBreachedConditionChanged(oldPCSG.Status.Conditions, newPCSG.Status.Conditions) ||
+			// A bare Spec change (e.g. an external Replicas bump for scale-out) does not write PCSG
+			// status, so it must be observed via the generation change to enqueue the PodCliqueSet.
+			return hasSpecChanged(updateEvent) ||
+				hasMinAvailableBreachedConditionChanged(oldPCSG.Status.Conditions, newPCSG.Status.Conditions) ||
 				hasPodCliqueScalingGroupStatusChanged(&oldPCSG.Status, &newPCSG.Status)
 		},
 		GenericFunc: func(_ event.TypedGenericEvent[client.Object]) bool { return false },
