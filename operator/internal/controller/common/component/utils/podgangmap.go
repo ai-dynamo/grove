@@ -26,6 +26,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// GetPodGangMap fetches a PodGangMap by name and namespace.
+func GetPodGangMap(ctx context.Context, cl client.Client, podGangMapName, namespace string) (*grovecorev1alpha1.PodGangMap, error) {
+	pgm := &grovecorev1alpha1.PodGangMap{}
+	if err := cl.Get(ctx, client.ObjectKey{Namespace: namespace, Name: podGangMapName}, pgm); err != nil {
+		return nil, err
+	}
+	return pgm, nil
+}
+
 // ListPodGangMapsForPCS fetches all PodGangMaps owned by a PodCliqueSet.
 func ListPodGangMapsForPCS(ctx context.Context, cl client.Client, pcsObjectKey client.ObjectKey) ([]grovecorev1alpha1.PodGangMap, error) {
 	pgmList := &grovecorev1alpha1.PodGangMapList{}

@@ -24,10 +24,28 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+func TestGetPodGangMap(t *testing.T) {
+	const namespace = "default"
+	pgm := testutils.NewPodGangMapBuilder("pcs", namespace, types.UID("uid"), 0).Build()
+	cl := testutils.CreateDefaultFakeClient([]client.Object{pgm})
+
+	t.Run("returns the PodGangMap when it exists", func(t *testing.T) {
+		actual, err := GetPodGangMap(context.Background(), cl, "pcs-0", namespace)
+		require.NoError(t, err)
+		assert.Equal(t, "pcs-0", actual.Name)
+	})
+
+	t.Run("returns a NotFound error when it does not exist", func(t *testing.T) {
+		_, err := GetPodGangMap(context.Background(), cl, "pcs-9", namespace)
+		assert.True(t, apierrors.IsNotFound(err))
+	})
+}
 
 func TestListPodGangMapsForPCS(t *testing.T) {
 	const (

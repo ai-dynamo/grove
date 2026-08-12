@@ -116,7 +116,7 @@ func TestGetExistingResourceNames(t *testing.T) {
 				assert.NoError(t, err)
 				assert.ElementsMatch(t, tc.expectedPodCliqueNames, actualPCLQNames)
 			} else {
-				testutils.CheckGroveError(t, tc.expectedErr, err)
+				testutils.AssertGroveError(t, tc.expectedErr, err)
 			}
 		})
 	}
@@ -166,7 +166,7 @@ func TestDelete(t *testing.T) {
 			operator := New(cl, groveclientscheme.Scheme, record.NewFakeRecorder(10))
 			err := operator.Delete(context.Background(), logr.Discard(), pcsObjMeta)
 			if tc.expectedError != nil {
-				testutils.CheckGroveError(t, tc.expectedError, err)
+				testutils.AssertGroveError(t, tc.expectedError, err)
 			} else {
 				assert.NoError(t, err)
 				podCliquesPostDelete := getExistingPodCliques(t, cl, pcsObjMeta)
