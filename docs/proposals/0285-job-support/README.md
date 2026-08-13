@@ -71,7 +71,7 @@ Three new API fields control job-mode policy:
 
 Non-job-mode `PodClique`s (`restartPolicy: Always`) within a `PodCliqueScalingGroup` or `PodCliqueSet` are excluded from completion evaluation. A resource can be Completed even if some of its children remain running in long-running mode.
 
-**Gang termination in job mode.** Gang scheduling is unchanged: `minAvailable` continues to gate pod launch until the full gang can be placed simultaneously, on initial start and after each restart. For gang termination, job mode replaces the `MinAvailableBreached` trigger with the `Failed` phase as the termination signal — and fires immediately, without `terminationDelay`. Crucially, the termination scope is identical to the existing gang-termination implementation: the same gang boundary that would have been torn down on a `MinAvailableBreached` event is torn down on a `Failed` event. Job mode changes the trigger, not the scope.
+**Gang termination in job mode.** Gang scheduling is unchanged: `minAvailable` continues to gate pod launch until the full gang can be placed simultaneously, on initial start and after each restart. `minAvailable` also continues to be passed to scheduler backends as the gang's minimum member count. For gang termination, job mode uses the `Failed` phase as the termination signal instead of `MinAvailableBreached`, and fires immediately without `terminationDelay`. A pod failure or eviction with `restartPolicy: Never` moves the pod to a terminal `Failed` phase, causing the owning `PodClique` to fail and triggering this gang-termination path. Crucially, the termination scope is identical to the existing gang-termination implementation: the same gang boundary that would have been torn down on a `MinAvailableBreached` event is torn down on a `Failed` event. Job mode changes the runtime trigger, not the scheduling contract or termination scope.
 
 ### User Stories
 
@@ -89,8 +89,8 @@ As a machine learning engineer running a leader-worker training job, I want the 
 
 ### Limitations/Risks & Mitigations
 
-**Gang termination depends on application-level failure propagation.**
-In job mode, `MinAvailableBreached`-based gang termination is disabled. If pods are evicted (e.g. due to a node failure) but the remaining running pods do not exit — for example because the application hangs rather than fails — Grove will not detect the partial gang and will not trigger a restart. Gang termination relies on the application observing the failure (e.g. a rendezvous timeout or broken collective) and exiting non-zero. Workloads that do not fail fast on peer loss may stall indefinitely.
+**Application-level hangs without pod failure.**
+In job mode, `MinAvailableBreached`-based gang termination is disabled. Ordinary pod failures and evictions are still handled: with `restartPolicy: Never`, the pod reaches a terminal `Failed` phase, the owning `PodClique` becomes `Failed`, and Grove terminates or restarts the gang through the failure path. The remaining risk is narrower: if the cluster does not surface a failed pod and the application keeps running despite a lost peer or broken collective, Grove cannot infer the application-level deadlock from availability alone. Workloads should use framework-level failure detection, such as rendezvous timeouts, and exit non-zero when peer loss makes progress impossible.
 
 **API overhead and topology placement loss at scale.**
 Job mode uses `restartPolicy: Never`, which disables kubelet's in-place container restart. Grove is solely responsible for recreating pods on failure. At scale, this means every gang restart triggers a full pod deletion and recreation cycle — incurring Kubernetes API overhead and requiring the scheduler to re-place all pods from scratch. Re-scheduling at scale can take meaningful time and may not recover the same topology placement that the previous attempt had. This is a known limitation of the design.
