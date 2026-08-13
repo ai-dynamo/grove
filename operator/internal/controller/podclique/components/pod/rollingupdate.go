@@ -71,16 +71,16 @@ func (w *updateWork) getNextPodToUpdate() *corev1.Pod {
 
 // processPendingUpdates processes pending updates for the PodClique.
 // This is the main entry point for handling rolling updates of pods in the PodClique.
-func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) error {
-	updateWork := r.computeUpdateWork(logger, sc)
-	pclq := sc.pclq
+func (r _resource) processPendingUpdates(ctx context.Context, logger logr.Logger, ss *syncSnapshot) error {
+	uw := r.computeUpdateWork(logger, ss)
+	pclq := ss.pclq
 	// Always delete old-hash pods that are not Ready (pending, unhealthy, starting, or uncategorized).
-	if err := r.deleteOldNonReadyPods(logger, sc, updateWork); err != nil {
+	if err := r.deleteOldNonReadyPods(ctx, logger, ss, uw); err != nil {
 		return err
 	}
 
 	// Check if there is currently a pod that is selected for update and its update has not yet completed.
-	if isAnyReadyPodSelectedForUpdate(pclq) && !isCurrentPodUpdateComplete(sc, updateWork) {
+	if isAnyReadyPodSelectedForUpdate(pclq) && !isCurrentPodUpdateComplete(ss, uw) {
 		return groveerr.New(
 			groveerr.ErrCodeContinueReconcileAndRequeue,
 			component.OperationSync,
@@ -91,7 +91,7 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 	// If we are here, then it means that either no ready pod has been selected for update or the current ready pod update is complete.
 	// In either of these cases we should pick up next pod to update if there are any pending pods to update.
 	var nextPodToUpdate *corev1.Pod
-	if podNamesPendingUpdate := updateWork.getPodNamesPendingUpdate(r.expectationsStore.GetDeleteExpectations(sc.pclqExpectationsStoreKey)); len(podNamesPendingUpdate) > 0 {
+	if podNamesPendingUpdate := uw.getPodNamesPendingUpdate(r.expectationsStore.GetDeleteExpectations(ss.pclqExpectationsStoreKey)); len(podNamesPendingUpdate) > 0 {
 		if pclq.Status.ReadyReplicas < *pclq.Spec.MinAvailable {
 			return groveerr.New(
 				groveerr.ErrCodeContinueReconcileAndRequeue,
@@ -99,7 +99,7 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 				fmt.Sprintf("ready replicas %d lesser than minAvailable %d, requeuing", pclq.Status.ReadyReplicas, *pclq.Spec.MinAvailable),
 			)
 		}
-		nextPodToUpdate = updateWork.getNextPodToUpdate()
+		nextPodToUpdate = uw.getNextPodToUpdate()
 	}
 
 	// If there is next pod to update then trigger the update of this pod by first triggering its deletion followed by a requeue.
@@ -107,13 +107,13 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 		nextPodToUpdateObjectKey := client.ObjectKeyFromObject(nextPodToUpdate)
 		logger.Info("Selected nextPodToUpdate", "pod", nextPodToUpdateObjectKey)
 		// update the status
-		if err := r.updatePCLQStatusWithNextPodToUpdate(sc.ctx, logger, sc.pclq, nextPodToUpdate.Name); err != nil {
+		if err := r.updatePCLQStatusWithNextPodToUpdate(ctx, logger, ss.pclq, nextPodToUpdate.Name); err != nil {
 			return err
 		}
 
 		// trigger deletion of nextPodToUpdate
-		deletionTask := r.createPodDeletionTask(logger, pclq, nextPodToUpdate, sc.pclqExpectationsStoreKey)
-		if err := deletionTask.Fn(sc.ctx); err != nil {
+		deletionTask := r.createPodDeletionTask(logger, pclq, nextPodToUpdate, ss.pclqExpectationsStoreKey)
+		if err := deletionTask.Fn(ctx); err != nil {
 			return groveerr.WrapError(
 				err,
 				errCodeDeletePod,
@@ -130,18 +130,18 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 	}
 
 	// If the control comes here, then mark the end of update.
-	return r.markRollingUpdateEnd(sc.ctx, logger, pclq)
+	return r.markRollingUpdateEnd(ctx, logger, pclq)
 }
 
 // computeUpdateWork categorizes pods by template hash and state.
 // Old-hash pods: Pending, Unhealthy, Starting, Uncategorized, or Ready.
 // New-hash pods: Ready only.
-func (r _resource) computeUpdateWork(logger logr.Logger, sc *syncContext) *updateWork {
+func (r _resource) computeUpdateWork(logger logr.Logger, ss *syncSnapshot) *updateWork {
 	work := &updateWork{}
-	for _, pod := range sc.existingPCLQPods {
-		if pod.Labels[common.LabelPodTemplateHash] != sc.expectedPodTemplateHash {
+	for _, pod := range ss.existingPCLQPods {
+		if pod.Labels[common.LabelPodTemplateHash] != ss.expectedPodTemplateHash {
 			// Old-hash pod — skip if deletion already in flight.
-			if r.hasPodDeletionBeenTriggered(sc, pod) {
+			if r.hasPodDeletionBeenTriggered(ss, pod) {
 				logger.Info("skipping old Pod since its deletion has already been triggered", "pod", client.ObjectKeyFromObject(pod))
 				continue
 			}
@@ -171,14 +171,14 @@ func (r _resource) computeUpdateWork(logger logr.Logger, sc *syncContext) *updat
 }
 
 // hasPodDeletionBeenTriggered checks if a pod is already terminating or has a delete expectation recorded
-func (r _resource) hasPodDeletionBeenTriggered(sc *syncContext, pod *corev1.Pod) bool {
-	return k8sutils.IsResourceTerminating(pod.ObjectMeta) || r.expectationsStore.HasDeleteExpectation(sc.pclqExpectationsStoreKey, pod.GetUID())
+func (r _resource) hasPodDeletionBeenTriggered(ss *syncSnapshot, pod *corev1.Pod) bool {
+	return k8sutils.IsResourceTerminating(pod.ObjectMeta) || r.expectationsStore.HasDeleteExpectation(ss.pclqExpectationsStoreKey, pod.GetUID())
 }
 
 // deleteOldNonReadyPods removes old-hash pods that are not Ready: pending, unhealthy, starting (startup probe),
 // or uncategorized (unknown state). All of these are safe to delete immediately since they are not serving traffic
 // and will be replaced with pods having the correct template hash.
-func (r _resource) deleteOldNonReadyPods(logger logr.Logger, sc *syncContext, work *updateWork) error {
+func (r _resource) deleteOldNonReadyPods(ctx context.Context, logger logr.Logger, ss *syncSnapshot, work *updateWork) error {
 	if len(work.oldTemplateHashUncategorizedPods) > 0 {
 		logger.Info("found old-hash pods in an unrecognized state, deleting them",
 			"unexpected", true,
@@ -186,7 +186,7 @@ func (r _resource) deleteOldNonReadyPods(logger logr.Logger, sc *syncContext, wo
 	}
 
 	podsToDelete := lo.Union(work.oldTemplateHashPendingPods, work.oldTemplateHashUnhealthyPods, work.oldTemplateHashStartingPods, work.oldTemplateHashUncategorizedPods)
-	deletionTasks := r.createPodDeletionTasks(logger, sc.pclq, podsToDelete, sc.pclqExpectationsStoreKey)
+	deletionTasks := r.createPodDeletionTasks(logger, ss.pclq, podsToDelete, ss.pclqExpectationsStoreKey)
 
 	if len(deletionTasks) == 0 {
 		logger.Info("no non-ready pods having old PodTemplateHash found")
@@ -198,9 +198,9 @@ func (r _resource) deleteOldNonReadyPods(logger logr.Logger, sc *syncContext, wo
 		"oldUnhealthyPods", componentutils.PodsToObjectNames(work.oldTemplateHashUnhealthyPods),
 		"oldStartingPods", componentutils.PodsToObjectNames(work.oldTemplateHashStartingPods),
 		"oldUncategorizedPods", componentutils.PodsToObjectNames(work.oldTemplateHashUncategorizedPods))
-	if runResult := utils.RunConcurrently(sc.ctx, logger, deletionTasks); runResult.HasErrors() {
+	if runResult := utils.RunConcurrently(ctx, logger, deletionTasks); runResult.HasErrors() {
 		err := runResult.GetAggregatedError()
-		pclqObjectKey := client.ObjectKeyFromObject(sc.pclq)
+		pclqObjectKey := client.ObjectKeyFromObject(ss.pclq)
 		logger.Error(err, "failed to delete pods for PCLQ", "runSummary", runResult.GetSummary())
 		return groveerr.WrapError(err,
 			errCodeDeletePod,
@@ -221,11 +221,11 @@ func isAnyReadyPodSelectedForUpdate(pclq *grovecorev1alpha1.PodClique) bool {
 // The update of the currently updating pod is considered complete if either the pod does not exist anymore
 // or if the number of ready pods with new PodTemplateHash is greater than or equal to the number of pods
 // that have been selected for update (including the currently updating pod).
-func isCurrentPodUpdateComplete(sc *syncContext, work *updateWork) bool {
+func isCurrentPodUpdateComplete(ss *syncSnapshot, work *updateWork) bool {
 	// Get the pod corresponding to the currently updating pod. If the pod exists and still does not have a deletion timestamp
 	// then the current update is not complete
-	currentlyUpdatingPodName := sc.pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate.Current
-	pod, ok := lo.Find(sc.existingPCLQPods, func(pod *corev1.Pod) bool {
+	currentlyUpdatingPodName := ss.pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate.Current
+	pod, ok := lo.Find(ss.existingPCLQPods, func(pod *corev1.Pod) bool {
 		return currentlyUpdatingPodName == pod.Name
 	})
 	if ok && !k8sutils.IsResourceTerminating(pod.ObjectMeta) {
@@ -233,7 +233,7 @@ func isCurrentPodUpdateComplete(sc *syncContext, work *updateWork) bool {
 	}
 
 	// Also verify count as a sanity check
-	podsSelectedToUpdate := len(sc.pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate.Completed) + 1
+	podsSelectedToUpdate := len(ss.pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate.Completed) + 1
 	return len(work.newTemplateHashReadyPods) >= podsSelectedToUpdate
 }
 

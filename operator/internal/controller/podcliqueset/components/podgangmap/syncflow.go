@@ -126,7 +126,7 @@ func (r _resource) getExistingPGMByReplica(ctx context.Context, pcs *grovecorev1
 
 // runSyncFlow reconciles the PodGangMap for every PCS replica, then deletes PodGangMaps orphaned by
 // a PCS replica scale-in. A replica with no PodGangMap entries is bootstrapped from the PCS spec.
-// A replica that already has entries has them re-authored by syncEntries, and an under-update replica
+// A replica that already has entries has them re-authored by reconcileEntries, and an under-update replica
 // first has its entries advanced to the current generation hash.
 func (r _resource) runSyncFlow(ctx context.Context, syncSnap *syncSnapshot) error {
 	for pcsReplicaIndex := range int(syncSnap.pcs.Spec.Replicas) {
@@ -147,7 +147,7 @@ func (r _resource) runSyncFlow(ctx context.Context, syncSnap *syncSnapshot) erro
 				advanceEntriesGenerationHash(entries, *syncSnap.pcs.Status.CurrentGenerationHash)
 			}
 			scaleOutEpoch := strconv.FormatInt(r.clk.Now().UnixNano(), 10)
-			entries, err = syncEntries(syncSnap.pcs, entries,
+			entries, err = reconcileEntries(syncSnap.pcs, entries,
 				syncSnap.existingStandalonePCLQsByReplica[pcsReplicaIndex],
 				syncSnap.existingPCSGsByReplica[pcsReplicaIndex],
 				pcsReplicaIndex, scaleOutEpoch)

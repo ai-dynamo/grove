@@ -42,15 +42,13 @@ const (
 	testScaledEpoch     = "1001"
 	testAnchorPCLQName  = "simple1-0-pcb"
 	testScaledPodGang   = "simple1-0-1001-sga-2"
-	testScaledPCLQName  = "simple1-0-sga-pcb"
 )
 
-// newGateRemovalSyncContext builds a syncContext for the gate-removal tests. associatedPodGangEpoch
+// newGateRemovalSyncSnapshot builds a syncSnapshot for the gate-removal tests. associatedPodGangEpoch
 // is the epoch of the PodGang the tested PodClique's pods belong to; an empty epoch models a PodGang
 // that is not materialized yet. pgm carries the PodGangMap entries the dependency is resolved from.
-func newGateRemovalSyncContext(pods []*corev1.Pod, associatedPodGangEpoch string, pgm *grovecorev1alpha1.PodGangMap, podsInPodGang bool) *syncContext {
-	sc := &syncContext{
-		ctx:                    context.Background(),
+func newGateRemovalSyncSnapshot(pods []*corev1.Pod, associatedPodGangEpoch string, pgm *grovecorev1alpha1.PodGangMap, podsInPodGang bool) *syncSnapshot {
+	sc := &syncSnapshot{
 		pcs:                    &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: testPCSName, Namespace: "default"}},
 		pclq:                   &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: "test-pclq", Namespace: "default"}},
 		pcsReplicaIndex:        testPCSReplicaIndex,
@@ -216,9 +214,9 @@ func TestCheckAndRemovePodSchedulingGates_MinAvailableAware(t *testing.T) {
 			fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
 
 			r := &_resource{client: fakeClient}
-			sc := newGateRemovalSyncContext([]*corev1.Pod{pod}, tt.podEpoch, anchorPGM(), tt.podInPodGang)
+			ss := newGateRemovalSyncSnapshot([]*corev1.Pod{pod}, tt.podEpoch, anchorPGM(), tt.podInPodGang)
 
-			skippedPods, err := r.checkAndRemovePodSchedulingGates(sc, logr.Discard())
+			skippedPods, err := r.checkAndRemovePodSchedulingGates(context.Background(), logr.Discard(), ss)
 			if tt.expectError {
 				require.Error(t, err, "expected error for test case: %s", tt.name)
 				return
@@ -256,9 +254,9 @@ func TestCheckAndRemovePodSchedulingGates_ConcurrentExecution(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
 
 	r := &_resource{client: fakeClient}
-	sc := newGateRemovalSyncContext(pods, testAnchorEpoch, anchorPGM(), true)
+	ss := newGateRemovalSyncSnapshot(pods, testAnchorEpoch, anchorPGM(), true)
 
-	skippedPods, err := r.checkAndRemovePodSchedulingGates(sc, logr.Discard())
+	skippedPods, err := r.checkAndRemovePodSchedulingGates(t.Context(), logr.Discard(), ss)
 	require.NoError(t, err)
 	assert.Empty(t, skippedPods, "no anchor pods should be skipped")
 
@@ -282,9 +280,9 @@ func TestCheckAndRemovePodSchedulingGates_PreservesForeignGates(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
 
 	r := &_resource{client: fakeClient}
-	sc := newGateRemovalSyncContext([]*corev1.Pod{pod}, testAnchorEpoch, anchorPGM(), true)
+	sc := newGateRemovalSyncSnapshot([]*corev1.Pod{pod}, testAnchorEpoch, anchorPGM(), true)
 
-	skippedPods, err := r.checkAndRemovePodSchedulingGates(sc, logr.Discard())
+	skippedPods, err := r.checkAndRemovePodSchedulingGates(t.Context(), logr.Discard(), sc)
 	require.NoError(t, err)
 	assert.Empty(t, skippedPods)
 

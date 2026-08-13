@@ -122,7 +122,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pclq *grovecore
 	if err != nil {
 		return err
 	}
-	result := r.runSyncFlow(logger, sc)
+	result := r.runSyncFlow(ctx, logger, sc)
 	if result.hasErrors() {
 		return result.getAggregatedError()
 	}

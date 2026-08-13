@@ -92,7 +92,7 @@ func buildBootstrapTailEntry(pcs *grovecorev1alpha1.PodCliqueSet, epoch, anchorE
 	return entry, true
 }
 
-// syncEntries re-authors the entries of a PCS replica whose PodGangMap already has entries. It runs
+// reconcileEntries re-authors the entries of a PCS replica whose PodGangMap already has entries. It runs
 // in steady state (no update in progress) and while a RollingRecreate is in progress.
 //
 // Each entry keeps its identity (epoch, role, DependsOn, anchor index) and its already-placed replica
@@ -104,7 +104,7 @@ func buildBootstrapTailEntry(pcs *grovecorev1alpha1.PodCliqueSet, epoch, anchorE
 // Spec.Replicas. A scale-out appends new indices to the ScaleOut entry. A scale-in drains indices in
 // role order ScaleOut, Tail, Anchor. Each standalone PodClique pod count on the anchor is set from its
 // live Spec.Replicas. A ScaleOut entry is ensured and empty entries are dropped.
-func syncEntries(pcs *grovecorev1alpha1.PodCliqueSet,
+func reconcileEntries(pcs *grovecorev1alpha1.PodCliqueSet,
 	entries []grovecorev1alpha1.PodGangEntry,
 	standalonePCLQs []grovecorev1alpha1.PodClique,
 	pcsgs []grovecorev1alpha1.PodCliqueScalingGroup,
