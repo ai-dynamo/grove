@@ -17,13 +17,13 @@
   - [Examples](#examples)
   - [Completion and Failure Evaluation](#completion-and-failure-evaluation)
   - [Gang Restart Flow](#gang-restart-flow)
-  - [Phase and Status Model](#phase-and-status-model)
+  - [Condition and Status Model](#condition-and-status-model)
   - [Cleanup Behavior](#cleanup-behavior)
   - [Monitoring](#monitoring)
   - [Test Plan](#test-plan)
   - [Graduation Criteria](#graduation-criteria)
 - [Alternatives](#alternatives)
-  - [Conditions-only for job observability](#conditions-only-for-job-observability)
+  - [Status phase for job observability](#status-phase-for-job-observability)
 <!-- /toc -->
 
 ## Summary
@@ -34,7 +34,7 @@ Grove currently supports long-running workloads such as inference services, wher
 
 Grove is purpose-built for AI infrastructure workloads. While its current model — gang scheduling, `minAvailable`-based availability, automatic restart on pod loss — serves long-running inference services well, it does not fit distributed training or batch workloads that run to completion. These workloads have fundamentally different lifecycle semantics: a pod exiting with code 0 is success, not a failure to be restarted; a single worker failure in a tightly coupled AllReduce job stalls the entire gang and warrants a full restart, not a local pod replacement; and the job as a whole has a well-defined done state.
 
-Kubernetes' own `restartPolicy: Never` provides the right pod-level primitive — pods reach a terminal phase (`Succeeded` or `Failed`) on exit — but Grove currently has no way to act on those terminal phases. Without job support, users running training workloads on Grove must layer their own completion tracking and restart logic on top, or use a separate job controller that is unaware of Grove's gang scheduling and topology placement.
+Kubernetes' own `restartPolicy: Never` provides the right pod-level primitive — pods reach a terminal state (`Succeeded` or `Failed`) on exit — but Grove currently has no way to act on those terminal states. Without job support, users running training workloads on Grove must layer their own completion tracking and restart logic on top, or use a separate job controller that is unaware of Grove's gang scheduling and topology placement.
 
 This GREP closes that gap by extending Grove's existing hierarchy with the completion and failure semantics needed for finite workloads, while reusing the existing gang scheduling, topology, and restart machinery.
 
@@ -58,7 +58,7 @@ This GREP closes that gap by extending Grove's existing hierarchy with the compl
 
 ## Proposal
 
-Job support extends Grove's existing workload hierarchy to handle finite workloads. A `PodClique` enters job mode when its pod template sets `restartPolicy: Never`. `restartPolicy` is not a new field — today `Always` is the default and only permitted value. With this GREP, `Never` becomes a valid option: it remains optional (defaulting to `Always` preserves existing behavior), and setting it signals to Grove that this `PodClique` is job-mode. In job mode, pods reach terminal Kubernetes phases (`Succeeded` / `Failed`) on exit, and Grove owns all completion and restart decisions — kubelet does not restart containers in-place.
+Job support extends Grove's existing workload hierarchy to handle finite workloads. A `PodClique` enters job mode when its pod template sets `restartPolicy: Never`. `restartPolicy` is not a new field — today `Always` is the default and only permitted value. With this GREP, `Never` becomes a valid option: it remains optional (defaulting to `Always` preserves existing behavior), and setting it signals to Grove that this `PodClique` is job-mode. In job mode, pods reach terminal Kubernetes states (`Succeeded` / `Failed`) on exit, and Grove owns all completion and restart decisions — kubelet does not restart containers in-place.
 
 Completion and failure are evaluated bottom-up. At each level, the resource is **Completed** when all job-mode children have succeeded, and **Failed** when enough children have failed that the completion criterion is unreachable — regardless of how remaining children resolve. Once a resource reaches **Failed**, it cannot subsequently become **Completed**.
 
@@ -71,7 +71,7 @@ Two new API fields control job-mode policy:
 
 Non-job-mode `PodClique`s (`restartPolicy: Always`) within a `PodCliqueScalingGroup` or `PodCliqueSet` are excluded from completion evaluation. A resource can be Completed even if some of its children remain running in long-running mode.
 
-**Gang termination in job mode.** Gang scheduling is unchanged: `minAvailable` continues to gate pod launch until the full gang can be placed simultaneously, on initial start and after each restart. `minAvailable` also continues to be passed to scheduler backends as the gang's minimum member count. For gang termination, job mode uses the `Failed` phase as the termination signal instead of `MinAvailableBreached`, and fires immediately without `terminationDelay`. A pod failure or eviction with `restartPolicy: Never` moves the pod to a terminal `Failed` phase, causing the owning `PodClique` to fail and triggering this gang-termination path. Crucially, the termination scope is identical to the existing gang-termination implementation: the same gang boundary that would have been torn down on a `MinAvailableBreached` event is torn down on a `Failed` event. Job mode changes the runtime trigger, not the scheduling contract or termination scope.
+**Gang termination in job mode.** Gang scheduling is unchanged: `minAvailable` continues to gate pod launch until the full gang can be placed simultaneously, on initial start and after each restart. `minAvailable` also continues to be passed to scheduler backends as the gang's minimum member count. For gang termination, job mode uses the `Failed` condition as the termination signal instead of `MinAvailableBreached`, and fires immediately without `terminationDelay`. A pod failure or eviction with `restartPolicy: Never` moves the pod to a terminal `Failed` state, causing the owning `PodClique` to set the `Failed` condition and triggering this gang-termination path. Crucially, the termination scope is identical to the existing gang-termination implementation: the same gang boundary that would have been torn down on a `MinAvailableBreached` event is torn down on a `Failed` event. Job mode changes the runtime trigger, not the scheduling contract or termination scope.
 
 ### User Stories
 
@@ -90,7 +90,7 @@ As a machine learning engineer running a leader-worker training job, I want the 
 ### Limitations/Risks & Mitigations
 
 **Application-level hangs without pod failure.**
-In job mode, `MinAvailableBreached`-based gang termination is disabled. Ordinary pod failures and evictions are still handled: with `restartPolicy: Never`, the pod reaches a terminal `Failed` phase, the owning `PodClique` becomes `Failed`, and Grove terminates or restarts the gang through the failure path. The remaining risk is narrower: if the cluster does not surface a failed pod and the application keeps running despite a lost peer or broken collective, Grove cannot infer the application-level deadlock from availability alone. Workloads should use framework-level failure detection, such as rendezvous timeouts, and exit non-zero when peer loss makes progress impossible.
+In job mode, `MinAvailableBreached`-based gang termination is disabled. Ordinary pod failures and evictions are still handled: with `restartPolicy: Never`, the pod reaches a terminal `Failed` state, the owning `PodClique` sets the `Failed` condition, and Grove terminates or restarts the gang through the failure path. The remaining risk is narrower: if the cluster does not surface a failed pod and the application keeps running despite a lost peer or broken collective, Grove cannot infer the application-level deadlock from availability alone. Workloads should use framework-level failure detection, such as rendezvous timeouts, and exit non-zero when peer loss makes progress impossible.
 
 **API overhead and topology placement loss at scale.**
 Job mode uses `restartPolicy: Never`, which disables kubelet's in-place container restart. Grove is solely responsible for recreating pods on failure. At scale, this means every gang restart triggers a full pod deletion and recreation cycle — incurring Kubernetes API overhead and requiring the scheduler to re-place all pods from scratch. Re-scheduling at scale can take meaningful time and may not recover the same topology placement that the previous attempt had. This is a known limitation of the design.
@@ -183,7 +183,7 @@ Completion and failure are evaluated independently at each level, using only the
 
 **PodClique**
 
-A `PodClique` is **Completed** when all of its pods have exited with code 0 (`phase=Succeeded`). It is **Failed** when any pod exits with a non-zero code (`phase=Failed`), since pod-level retry is not supported and a single failure makes the all-pods completion criterion unreachable.
+A `PodClique` is **Completed** when all of its pods have exited with code 0 (`pod phase=Succeeded`). It is **Failed** when any pod exits with a non-zero code (`pod phase=Failed`), since pod-level retry is not supported and a single failure makes the all-pods completion criterion unreachable.
 
 Non-job-mode `PodClique`s (`restartPolicy: Always`) never set `Completed` or `Failed`.
 
@@ -214,7 +214,7 @@ When a `PodClique` reaches `Failed`, its parent evaluates whether to restart or 
 
 1. The PCSG increments `replicaRestartCounts[replicaIndex]`.
 2. If the budget is not exhausted: the PCSG deletes the failed `PodClique` and recreates it from the template. The new `PodClique` is placed by the scheduler as a complete gang before any pods run.
-3. If the budget is exhausted: the PCSG marks that replica as `Failed` and re-evaluates its own phase.
+3. If the budget is exhausted: the PCSG marks that replica as failed and re-evaluates its own terminal conditions.
 
 **PCLQ or PCSG failure handled by PCS:**
 
@@ -222,38 +222,40 @@ When a constituent `PodClique` or `PodCliqueScalingGroup` within a PCS replica f
 
 1. The PCS increments `replicaRestartCounts[replicaIndex]`.
 2. If the budget is not exhausted: the PCS deletes all constituents of that replica (all `PodClique`s and `PodCliqueScalingGroup`s) and recreates them together from the template.
-3. If the budget is exhausted: the PCS marks that replica as `Failed` and re-evaluates its own phase.
+3. If the budget is exhausted: the PCS marks that replica as failed and re-evaluates its own terminal conditions.
 
-**Ordering guarantee.** In all cases, the terminal phase and updated `replicaRestartCounts` are persisted to status before any deletion begins. If the controller restarts mid-cleanup, it can resume from the persisted state without double-counting restarts or re-creating resources that were already deleted. Cleanup of active (non-terminal) pods when a resource reaches a terminal state is described in [Cleanup Behavior](#cleanup-behavior).
+**Ordering guarantee.** In all cases, terminal conditions and updated `replicaRestartCounts` are persisted to status before any deletion begins. If the controller restarts mid-cleanup, it can resume from the persisted state without double-counting restarts or re-creating resources that were already deleted. Cleanup of active (non-terminal) pods when a resource reaches a terminal state is described in [Cleanup Behavior](#cleanup-behavior).
 
 **Gang scheduling on restart.** Recreated pods are placed by the scheduler as a complete gang, consistent with the initial launch behavior.
 
-### Phase and Status Model
+### Condition and Status Model
 
-**New phases.** Two terminal phases are added across all three resource types:
+**New conditions.** Two terminal conditions are added across all three resource types:
 
 - `Completed` — all required job-mode children have succeeded.
-- `Failed` — enough children have failed that the completion criterion is permanently unreachable. Once set, this phase is irreversible.
+- `Failed` — enough children have failed that the completion criterion is permanently unreachable. Once set, this condition is irreversible.
 
-These phases are represented as a dedicated `phase` field on each resource's status. Non-job-mode resources never set these phases.
+These conditions are represented in the standard `conditions` list on each resource's status. Non-job-mode resources never set these conditions. Grove does not introduce `Pending` or `Running` states for this feature.
 
-Phase is not propagated top-down to children that did not independently complete or fail. For example, if a `PodCliqueScalingGroup` replica completes because the `PodClique`s listed in `completedNames` completed successfully, any other child `PodClique`s may still have no job `phase`. They are not marked `Completed` or `Failed`; instead, the parent terminal state makes them no longer desired, and top-down cleanup removes their active pods and non-terminal child resources.
+Terminal conditions are not propagated top-down to children that did not independently complete or fail. For example, if a `PodCliqueScalingGroup` replica completes because the `PodClique`s listed in `completedNames` completed successfully, any other child `PodClique`s may not have a `Completed` or `Failed` condition. Instead, the parent terminal state makes them no longer desired, and top-down cleanup removes their active pods and non-terminal child resources.
 
 Controllers must treat a terminal owner scope as authoritative when deciding whether to create or recreate descendants. A child controller must not recreate pods or child resources when its owning `PodCliqueScalingGroup` replica, `PodCliqueSet` replica, or `PodCliqueSet` resource is already terminal.
 
 ```go
-// JobPhase represents the terminal phase of a job-mode resource.
-type JobPhase string
-
 const (
-    JobPhaseCompleted JobPhase = "Completed"
-    JobPhaseFailed    JobPhase = "Failed"
+    ConditionTypeCompleted = "Completed"
+    ConditionTypeFailed    = "Failed"
+
+    ConditionReasonAllRequiredChildrenCompleted = "AllRequiredChildrenCompleted"
+    ConditionReasonRestartBudgetExhausted       = "RestartBudgetExhausted"
 )
 
-// Phase is set on job-mode resources when they reach a terminal state.
+// Conditions represent the latest available observations of the job-mode resource.
 // +optional
-Phase JobPhase `json:"phase,omitempty"`
+Conditions []metav1.Condition `json:"conditions,omitempty"`
 ```
+
+Condition messages should carry resource-specific detail such as pod name, child name, replica index, or exhausted restart count. This GREP does not prescribe exact message text.
 
 **Replica restart counts.** `PodCliqueScalingGroup` and `PodCliqueSet` each gain a `replicaRestartCounts` field to track per-replica restart history:
 
@@ -295,22 +297,22 @@ This distinction is important for partial-completion policies. For example, a `P
 - Terminal pods remain available until the workload is deleted by the user or an external TTL policy (out of scope for this release).
 
 **Ordering:**
-- Phase is always written to status before any pod deletion begins.
+- Terminal conditions are always written to status before any pod deletion begins.
 
 ### Monitoring
 
-Job support surfaces observability through a dedicated `phase` field on each resource's status and Kubernetes events for key lifecycle transitions. No new conditions are introduced.
+Job support surfaces observability through status conditions and Kubernetes events for key lifecycle transitions.
 
-**Status phase.** The `phase` field is the primary at-a-glance signal of job progress, visible directly in `kubectl get` output:
+**Status conditions.** `Completed` and `Failed` conditions are the primary status signals for job-mode resources:
 
-| Phase | Meaning |
-|---|---|
-| `Completed` | All required job-mode children succeeded. |
-| `Failed` | Completion is permanently unreachable. |
+| Condition | Status | Meaning |
+|---|---|---|
+| `Completed` | `True` | All required job-mode children succeeded. |
+| `Failed` | `True` | Completion is permanently unreachable. |
 
-Non-job-mode resources never set these phases.
+Non-job-mode resources never set these conditions.
 
-**Kubernetes events.** Events carry the detail behind phase transitions and operational actions. The `involvedObject` field identifies the resource the event is attached to; the `message` field carries per-event detail such as replica index and child name. The `involvedObject.kind` distinguishes PCSG-level from PCS-level events sharing the same reason string.
+**Kubernetes events.** Events carry the detail behind condition transitions and operational actions. The `involvedObject` field identifies the resource the event is attached to; the `message` field carries per-event detail such as replica index and child name. The `involvedObject.kind` distinguishes PCSG-level from PCS-level events sharing the same reason string.
 
 | Attached to | Type | Reason | Message carries |
 |---|---|---|---|
@@ -330,7 +332,7 @@ The existing `PodCliqueScalingGroupReplicaDeleteSuccessful` / `PodCliqueSetRepli
 - Completion evaluation logic at each level: all-pods success → `Completed`; any pod failure → PCLQ `Failed`; named-children completion → PCSG/PCS replica `Completed`; non-`completedNames` child failure triggers restart but not immediate replica failure.
 - Failure evaluation: budget exhaustion → replica `Failed`; `Failed` is irreversible.
 - `replicaRestartCounts` increments correctly on each restart and is never decremented.
-- Status phase is written before pod deletion (ordering guarantee).
+- Terminal conditions are written before pod deletion (ordering guarantee).
 
 **E2e tests** (new file: `e2e/tests/job_support_test.go`)
 
@@ -340,13 +342,13 @@ The existing `PodCliqueScalingGroupReplicaDeleteSuccessful` / `PodCliqueSetRepli
 - **Leader-driven completion**: leader exits 0, workers still running → PCSG replica `Completed`, active worker pods cleaned up.
 - **Mixed job/long-running**: job-mode PCLQ completes alongside long-running PCLQ → parent reaches `Completed`.
 - **Gang scheduling on restart**: after a gang restart, verify that a new PCLQ / PCSG / PCS replica is created and the existing gang scheduling machinery places it as a complete gang.
-- **Phase and events**: verify `phase=Completed`/`Failed` and `GangRestartTriggered`/`JobCompleted`/`JobFailed` events are emitted at the right moments.
+- **Conditions and events**: verify `Completed=True` / `Failed=True` conditions and `GangRestartTriggered` / `JobCompleted` / `JobFailed` events are emitted at the right moments.
 
 ### Graduation Criteria
 
 **Alpha**
 
-- Full implementation of job support as described in this GREP, including all API fields, controller logic, phase and event emission, and cleanup behavior.
+- Full implementation of job support as described in this GREP, including all API fields, controller logic, condition and event emission, and cleanup behavior.
 - Unit and e2e tests passing.
 
 **Beta**
@@ -362,8 +364,8 @@ The existing `PodCliqueScalingGroupReplicaDeleteSuccessful` / `PodCliqueSetRepli
 
 ## Alternatives
 
-### Conditions-only for job observability
+### Status phase for job observability
 
-Rather than a dedicated `phase` field, job completion and failure could be expressed purely as conditions — `JobCompleted` and `JobFailed` — consistent with how Kubernetes Job, Deployment, and Grove's existing `MinAvailableBreached` condition work. This approach is more idiomatic with the Kubernetes API conventions and requires no new field type on status.
+A dedicated `phase` field was considered for job completion and failure. It would provide a compact mutually-exclusive status value, but it also raises follow-up lifecycle questions: if `Completed` and `Failed` are phases, users may reasonably expect non-terminal phases such as `Pending` and `Running`, and those states would also need semantics for long-running Grove workloads.
 
-It was ruled out in favor of a dedicated `phase` field because conditions require `kubectl describe` or a JSONPath query to read; a `phase` field is visible directly in `kubectl get` output without any flags. For a terminal, mutually-exclusive state like job completion or failure, a dedicated field is a better fit than a boolean condition — it communicates clearly that the resource has reached a final state and avoids the ambiguity of having both `JobCompleted=False` and `JobFailed=False` during normal running.
+This GREP uses conditions instead. `Completed` and `Failed` are only set when applicable, follow common Kubernetes status conventions, and avoid introducing a general lifecycle state machine for resources that are otherwise expected to run indefinitely.
