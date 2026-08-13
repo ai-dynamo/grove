@@ -45,11 +45,11 @@ This GREP closes that gap by extending Grove's existing hierarchy with completio
 - Enable finite, completion-oriented workloads in Grove alongside existing long-running workloads, with Grove owning all completion and restart decisions.
 - Define bottom-up completion and failure semantics across the `PodClique` → `PodCliqueScalingGroup` → `PodCliqueSet` hierarchy.
 - Support diverse job framework patterns — from all-ranks completion (every worker must succeed) to leader-driven completion (a single designated pod's exit determines the outcome).
-- Introduce `spec.policy.completion` at the `PodClique`, `PodCliqueScalingGroup`, and `PodCliqueSet` levels as the explicit API signal for completion-aware behavior, completion criteria, and restart budgets.
+- Introduce `spec.policy.completion` on `PodClique` to signal completion-aware behavior, and on `PodCliqueScalingGroup` / `PodCliqueSet` to configure parent completion criteria and restart budgets.
 - Define `policy.completion.failure.maxRestarts` on `PodClique`, `PodCliqueScalingGroup`, and `PodCliqueSet`; `PodClique` supports only `0` in this release, while `PodCliqueScalingGroup` and `PodCliqueSet` use it as a per-replica gang restart budget.
 - Define `policy.completion.success.completedNames` on `PodCliqueScalingGroup` and `PodCliqueSet` to support named-child completion criteria.
 - Support gang restart for completion-aware parent scopes: when a required `PodClique` or `PodCliqueScalingGroup` fails, the parent deletes and recreates the affected scope as a unit, consuming from a per-replica restart budget.
-- Guarantee that terminal states are persisted to status before any pod cleanup, and that terminal pods (`Succeeded`, `Failed`) are retained for log access until the workload is deleted.
+- Guarantee that terminal states are persisted to status before any pod cleanup, and that terminal pods (`Succeeded`, `Failed`) from final terminal scopes are retained for log access until the workload is deleted.
 
 ### Non-Goals
 
@@ -57,7 +57,7 @@ This GREP closes that gap by extending Grove's existing hierarchy with completio
 - **No scaling for completion-aware workloads.** Completion-aware workloads use fixed replica counts. Grove rejects autoscaling configuration and manual replica changes for resources with `policy.completion` and for parent scopes that contain completion-aware direct children.
 - `completions` and `completedIndexes` — configurable completion counts and index-based filtering at the `PodCliqueScalingGroup` and `PodCliqueSet` levels. In this release, all replicas must complete successfully for a resource to be considered Completed.
 - Runtime deadline support (`maxRuntime`). Deadline semantics require a separate design for resource-level versus replica-level or attempt-level limits, and whether deadlines reset on gang restart. Since runtime deadlines are orthogonal to completion tracking and gang restart, they are deferred to keep the first release focused.
-- Pod cleanup policies other than the fixed default (retain terminal pods, delete active pods on terminal state).
+- Pod cleanup policies other than the fixed default (retain terminal pods from final terminal scopes, delete active pods on terminal state).
 - TTL-based automatic workload deletion after completion.
 
 ## Proposal
@@ -75,13 +75,13 @@ Two nested policy fields control completion-aware behavior:
 
 Regular-mode `PodClique`s within a `PodCliqueScalingGroup` or `PodCliqueSet` are excluded from completion evaluation. A resource can be Completed even if some of its children remain running in regular mode.
 
-**Gang termination for completion-aware resources.** Gang scheduling is unchanged: `minAvailable` continues to gate pod launch until the full gang can be placed simultaneously, on initial start and after each restart. `minAvailable` also continues to be passed to scheduler backends as the gang's minimum member count. For gang termination, completion-aware resources use the `Failed` condition as the termination signal instead of `MinAvailableBreached`, and fire immediately without `terminationDelay`. A pod failure or eviction in a completion-aware `PodClique` moves the pod to `pod phase=Failed`, causing the owning `PodClique` to set the `Failed` condition and triggering this gang-termination path. Crucially, the termination scope is identical to the existing gang-termination implementation: the same gang boundary that would have been torn down on a `MinAvailableBreached` event is torn down on a `Failed` event. Completion-aware behavior changes the runtime trigger, not the scheduling contract or termination scope.
+**Gang termination for completion-aware resources.** Gang scheduling is unchanged: `minAvailable` continues to gate pod launch until the full gang can be placed simultaneously, on initial start and after each restart. `minAvailable` also continues to be passed to scheduler backends as the gang's minimum member count. For gang termination, completion-aware resources use the `Failed` condition as the termination signal instead of `MinAvailableBreached`, and fire immediately without `terminationDelay`. A pod failure or eviction in a completion-aware `PodClique` moves the pod to `pod phase=Failed`, causing the owning `PodClique` to set the `Failed` condition and triggering this gang-termination path. Crucially, the termination scope is identical to the existing gang-termination implementation: the same gang boundary that would have been torn down by a `MinAvailableBreached` trigger is torn down by a `Failed` trigger. Completion-aware behavior changes the runtime trigger, not the scheduling contract or termination scope.
 
 ### User Stories
 
 #### Story 1: Running a finite job in Grove
 
-As a platform engineer, I want to run completion-aware workloads in Grove alongside existing long-running inference services, so that I can use a single orchestration system for both training jobs and inference deployments, with Grove handling gang scheduling, topology placement, and restart budgets consistently across both workload types.
+As a platform engineer, I want to run finite, completion-oriented workloads in Grove alongside existing long-running inference services, so that I can use a single orchestration system for both training jobs and inference deployments, with Grove handling gang scheduling, topology placement, and restart budgets consistently across both workload types.
 
 #### Story 2: Synchronous distributed training (all-ranks completion)
 
@@ -128,8 +128,9 @@ The new fields are nested under `spec.policy.completion`. The API shape is:
 Policy *WorkloadPolicy `json:"policy,omitempty"`
 
 type WorkloadPolicy struct {
-    // Completion enables completion-aware behavior for this resource when at least
-    // one supported field under it is explicitly set.
+    // Completion configures completion-aware behavior. On PodClique, setting at
+    // least one supported leaf enables completion-aware behavior. On parent
+    // resources, this configures evaluation of completion-aware direct children.
     // +optional
     Completion *CompletionPolicy `json:"completion,omitempty"`
 }
@@ -157,16 +158,15 @@ type CompletionFailurePolicy struct {
     // On PodCliqueScalingGroup and PodCliqueSet it is a per-replica gang restart
     // budget. On PodClique, only 0 is supported in this release.
     // +optional
-    // +kubebuilder:default=0
     MaxRestarts *int32 `json:"maxRestarts,omitempty"`
 }
 ```
 
 `policy.completion.success.completedNames` is valid only for `PodCliqueScalingGroup` and `PodCliqueSet`. When set, it must be non-empty. `PodClique` always uses all-pods success: all pods must reach `pod phase=Succeeded`.
 
-`policy.completion.failure.maxRestarts` is valid for all three resources. On `PodCliqueScalingGroup` and `PodCliqueSet`, values must be non-negative and default to `0` when omitted by a completion-aware resource. On `PodClique`, the only supported explicit value is `0`; values greater than `0` are future work because pod-level retry is not implemented.
+`policy.completion.failure.maxRestarts` is valid for all three resources. On `PodCliqueScalingGroup` and `PodCliqueSet`, values must be non-negative; when omitted by a completion-aware resource, Grove treats the budget as `0`. On `PodClique`, the only supported explicit value is `0`; values greater than `0` are future work because pod-level retry is not implemented.
 
-Defaults apply only after a resource is completion-aware, either because a `PodClique` explicitly sets a supported completion-policy leaf or because a parent contains completion-aware direct children. Defaults do not make an empty `policy.completion` object valid.
+When a resource is completion-aware and a policy value is omitted, Grove applies semantic defaults during evaluation: all pods are required for `PodClique` success, all completion-aware direct children are required for parent success, and `maxRestarts` is treated as `0`. Defaults do not make an empty `policy.completion` object valid.
 
 ### Examples
 
@@ -335,13 +335,13 @@ This field accumulates across restarts and is never decremented.
 
 ### Cleanup Behavior
 
-Grove applies a single fixed cleanup policy for completion-aware resources: terminal state is calculated bottom-up, but cleanup is applied top-down. Active pods are deleted when the owning completion-aware scope reaches a terminal state; terminal pods are retained.
+Grove applies a single fixed cleanup policy for completion-aware resources: terminal state is calculated bottom-up, but cleanup is applied top-down. Active pods are deleted when the owning completion-aware scope reaches a terminal state; terminal pods from final terminal scopes are retained.
 
 This distinction is important for partial-completion policies. For example, a `PodCliqueScalingGroup` replica may be considered `Completed` because the `PodClique`s listed in `completedNames` completed successfully, while other child `PodClique`s are still running. Once the replica is terminal, the PCSG controller deletes the non-terminal child `PodClique`s or active pods in that replica so they stop consuming resources. Similarly, once a `PodCliqueSet` replica or the whole PCS reaches a terminal state, the PCS controller cleans up active child `PodClique`s and `PodCliqueScalingGroup`s in that completed or failed scope.
 
 **On `PodClique` terminal state (`Completed` or `Failed`):**
 - Delete all active pods (`Pending`, `Running`) in the `PodClique`.
-- Retain all terminal pods (`Succeeded`, `Failed`) for log access via `kubectl logs`.
+- Retain terminal pods (`Succeeded`, `Failed`) for log access via `kubectl logs`, unless the `PodClique` is deleted as part of a gang restart.
 
 **On `PodCliqueScalingGroup` replica terminal state:**
 - Delete active pods and non-terminal child `PodClique`s belonging to that replica.
@@ -358,7 +358,7 @@ This distinction is important for partial-completion policies. For example, a `P
 - The failed `PodClique` is deleted entirely (not retained), which cascade-deletes its terminal pods as well. Logs from the failed attempt are not preserved across restarts. See [Log loss on retry](#limitationsrisks--mitigations).
 
 **Terminal pod retention:**
-- Terminal pods remain available until the workload is deleted by the user or an external TTL policy (out of scope for this release).
+- Terminal pods from final terminal scopes remain available until the workload is deleted by the user or an external TTL policy (out of scope for this release).
 
 **Ordering:**
 - Terminal conditions are always written to status before any pod deletion begins.
