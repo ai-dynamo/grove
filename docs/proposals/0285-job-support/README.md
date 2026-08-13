@@ -28,7 +28,7 @@
 
 ## Summary
 
-Grove currently supports long-running workloads such as inference services, where pods are expected to run indefinitely. This GREP introduces job support — the ability to run finite, completion-oriented workloads in Grove. Job-mode workloads exit normally when their task is done, and Grove tracks completion and failure bottom-up through the `PodClique` → `PodCliqueScalingGroup` → `PodCliqueSet` hierarchy. New API fields (`completedNames`, `maxRestarts`, `maxRuntime`) give users precise control over named-child completion, failure tolerance, and time bounds. Gang-restart semantics ensure that tightly coupled distributed workloads — such as multi-node training jobs — are retried as a unit when a failure occurs.
+Grove currently supports long-running workloads such as inference services, where pods are expected to run indefinitely. This GREP introduces job support — the ability to run finite, completion-oriented workloads in Grove. Job-mode workloads exit normally when their task is done, and Grove tracks completion and failure bottom-up through the `PodClique` → `PodCliqueScalingGroup` → `PodCliqueSet` hierarchy. New API fields (`completedNames`, `maxRestarts`) give users precise control over named-child completion and failure tolerance. Gang-restart semantics ensure that tightly coupled distributed workloads — such as multi-node training jobs — are retried as a unit when a failure occurs.
 
 ## Motivation
 
@@ -43,7 +43,7 @@ This GREP closes that gap by extending Grove's existing hierarchy with the compl
 - Enable finite, completion-oriented workloads in Grove alongside existing long-running workloads, with Grove owning all completion and restart decisions.
 - Define bottom-up completion and failure semantics across the `PodClique` → `PodCliqueScalingGroup` → `PodCliqueSet` hierarchy.
 - Support diverse job framework patterns — from all-ranks completion (every worker must succeed) to leader-driven completion (a single designated pod's exit determines the outcome).
-- Introduce `completedNames`, `maxRestarts`, and `maxRuntime` API fields at the `PodCliqueScalingGroup` and `PodCliqueSet` levels, and `maxRuntime` at the `PodClique` level, to express named-child completion, per-replica restart budgets, and wall-clock deadlines.
+- Introduce `completedNames` and `maxRestarts` API fields at the `PodCliqueScalingGroup` and `PodCliqueSet` levels to express named-child completion and per-replica restart budgets.
 - Support gang restart: when a `PodClique` or `PodCliqueScalingGroup` fails, the parent deletes and recreates the affected scope as a unit, consuming from a per-replica restart budget.
 - Guarantee that terminal states are persisted to status before any pod cleanup, and that terminal pods (`Succeeded`, `Failed`) are retained for log access until the workload is deleted.
 
@@ -52,6 +52,7 @@ This GREP closes that gap by extending Grove's existing hierarchy with the compl
 - **No pod-level retry.** A failed pod within a `PodClique` is not replaced in isolation. Any pod failure immediately fails the `PodClique`; the retry scope is the gang, owned by the parent `PodCliqueScalingGroup` or `PodCliqueSet`.
 - **No scaling for job-mode workloads.** Job workloads use fixed replica counts. Grove rejects autoscaling configuration and manual replica changes for job-mode `PodClique`, `PodCliqueScalingGroup`, and `PodCliqueSet` resources.
 - `completions` and `completedIndexes` — configurable completion counts and index-based filtering at the `PodCliqueScalingGroup` and `PodCliqueSet` levels. In this release, all replicas must complete successfully for a resource to be considered Completed.
+- Runtime deadline support (`maxRuntime`). Deadline semantics require a separate design for resource-level versus replica-level or attempt-level limits, and whether deadlines reset on gang restart. Since runtime deadlines are orthogonal to completion tracking and gang restart, they are deferred to keep the first release focused.
 - Pod cleanup policies other than the fixed default (retain terminal pods, delete active pods on terminal state).
 - TTL-based automatic workload deletion after completion.
 
@@ -63,11 +64,10 @@ Completion and failure are evaluated bottom-up. At each level, the resource is *
 
 When a `PodClique` fails, its parent (`PodCliqueScalingGroup` or `PodCliqueSet`) deletes it and recreates the full gang as a unit. This consumes one restart from the parent's per-replica budget. A `PodCliqueScalingGroup` or `PodCliqueSet` fails when enough of its replicas have exhausted their budget that the completion target is unreachable.
 
-Three new API fields control job-mode policy:
+Two new API fields control job-mode policy:
 
 - **`completedNames`** *(PodCliqueScalingGroup / PodCliqueSet only)*: Named children within a replica that must complete for that replica to count as Completed. If omitted, all job-mode children must complete. At the `PodClique` level, all pods must complete for the `PodClique` to be considered Completed.
 - **`maxRestarts`** *(PodCliqueScalingGroup / PodCliqueSet only)*: Per-replica restart budget. A replica that exhausts its budget is considered failed.
-- **`maxRuntime`** *(all levels)*: Wall-clock deadline from `status.jobStartTime`, which is set on first start. Exceeding it fails the resource immediately and permanently, regardless of any subsequent child outcomes. At the `PodCliqueScalingGroup` / `PodCliqueSet` level, `maxRuntime` is not reset when replicas are restarted. At the `PodClique` level, the timer resets per instance — the `PodClique` is recreated on gang restart, so each new instance starts a fresh clock.
 
 Non-job-mode `PodClique`s (`restartPolicy: Always`) within a `PodCliqueScalingGroup` or `PodCliqueSet` are excluded from completion evaluation. A resource can be Completed even if some of its children remain running in long-running mode.
 
@@ -77,7 +77,7 @@ Non-job-mode `PodClique`s (`restartPolicy: Always`) within a `PodCliqueScalingGr
 
 #### Story 1: Running a finite job in Grove
 
-As a platform engineer, I want to run finite, completion-oriented workloads in Grove — alongside existing long-running inference services — so that I can use a single orchestration system for both training jobs and inference deployments, with Grove handling gang scheduling, topology placement, restart budgets, and runtime deadlines consistently across both workload types.
+As a platform engineer, I want to run finite, completion-oriented workloads in Grove — alongside existing long-running inference services — so that I can use a single orchestration system for both training jobs and inference deployments, with Grove handling gang scheduling, topology placement, and restart budgets consistently across both workload types.
 
 #### Story 2: Synchronous distributed training (all-ranks completion)
 
@@ -95,9 +95,6 @@ In job mode, `MinAvailableBreached`-based gang termination is disabled. Ordinary
 **API overhead and topology placement loss at scale.**
 Job mode uses `restartPolicy: Never`, which disables kubelet's in-place container restart. Grove is solely responsible for recreating pods on failure. At scale, this means every gang restart triggers a full pod deletion and recreation cycle — incurring Kubernetes API overhead and requiring the scheduler to re-place all pods from scratch. Re-scheduling at scale can take meaningful time and may not recover the same topology placement that the previous attempt had. This is a known limitation of the design.
 
-**`maxRuntime` at the `PodCliqueScalingGroup` / `PodCliqueSet` level is not reset on restarts.**
-`maxRuntime` on a `PodCliqueScalingGroup` or `PodCliqueSet` is measured from `status.jobStartTime` and does not reset when replicas are restarted. Users who set a tight deadline may find the budget exhausted before all retry attempts have run. Mitigation: documentation should clearly state this behavior; users should size `maxRuntime` to account for the full expected duration across all attempts, not just one. Note: `maxRuntime` at the `PodClique` level does reset per instance, since the `PodClique` itself is recreated on gang restart.
-
 **Log loss on retry.**
 When a failed `PodClique` is deleted and recreated during a gang restart, terminal pods from the previous attempt are cascade-deleted along with it. Logs from failed attempts are not durably retained across retries. Mitigation: users who need per-attempt logs should rely on a cluster-level logging stack (e.g. Fluentd, Loki) rather than `kubectl logs`.
 
@@ -107,23 +104,13 @@ When a failed `PodClique` is deleted and recreated during a gang restart, termin
 
 Job mode is signaled by setting `restartPolicy: Never` on the pod template spec of a `PodClique`. No separate mode flag is needed. `restartPolicy: Always` (the current default) continues to work unchanged; `restartPolicy: OnFailure` is explicitly forbidden and rejected at admission.
 
-A `PodCliqueScalingGroup` or `PodCliqueSet` is in job mode when at least one of its child `PodClique`s is in job mode. The job-mode fields (`completedNames`, `maxRestarts`, `maxRuntime`) are valid on a `PodCliqueScalingGroup` or `PodCliqueSet` only when at least one child is in job mode; setting them on a fully long-running resource is a validation error.
+A `PodCliqueScalingGroup` or `PodCliqueSet` is in job mode when at least one of its child `PodClique`s is in job mode. The job-mode fields (`completedNames`, `maxRestarts`) are valid on a `PodCliqueScalingGroup` or `PodCliqueSet` only when at least one child is in job mode; setting them on a fully long-running resource is a validation error.
 
 Scaling is rejected for job-mode workloads after creation. The initial `replicas` values define the fixed job shape, but later manual changes to `replicas` are not supported for job-mode `PodClique`, `PodCliqueScalingGroup`, or `PodCliqueSet` resources. Grove-managed autoscaling is also rejected: a job-mode `PodClique` cannot set `autoScalingConfig`, and a `PodCliqueScalingGroup` containing any job-mode child cannot set `scaleConfig`.
 
 ### New API Fields
 
 The new fields are added flat under `spec`, at the same level as `replicas` and `minAvailable`. No new nested struct is introduced.
-
-**PodCliqueSpec** gains one new field:
-
-```go
-// MaxRuntime is the maximum wall-clock duration from status.jobStartTime until
-// the PodClique is considered Failed.
-// Only valid when restartPolicy: Never is set on the pod template.
-// +optional
-MaxRuntime *metav1.Duration `json:"maxRuntime,omitempty"`
-```
 
 **PodCliqueScalingGroupSpec** and **PodCliqueSetSpec** each gain:
 
@@ -142,23 +129,17 @@ CompletedNames []string `json:"completedNames,omitempty"`
 // +optional
 // +kubebuilder:default=0
 MaxRestarts *int32 `json:"maxRestarts,omitempty"`
-
-// MaxRuntime is the maximum wall-clock duration from status.jobStartTime until
-// this resource is considered Failed. Not reset on replica restarts.
-// +optional
-MaxRuntime *metav1.Duration `json:"maxRuntime,omitempty"`
 ```
 
 ### Examples
 
-**All-ranks completion** — all 8 workers must succeed; the gang retries up to 3 times within a 24-hour window:
+**All-ranks completion** — all 8 workers must succeed; the gang retries up to 3 times:
 
 ```yaml
 # PodCliqueSet spec (relevant fields only)
 spec:
   replicas: 1
   maxRestarts: 3
-  maxRuntime: 24h
   template:
     cliques:
     - name: worker
@@ -175,7 +156,6 @@ spec:
 # PodCliqueSet spec (relevant fields only)
 spec:
   replicas: 1
-  maxRuntime: 24h
   template:
     podCliqueScalingGroups:
     - name: trainer
@@ -203,7 +183,7 @@ Completion and failure are evaluated independently at each level, using only the
 
 **PodClique**
 
-A `PodClique` is **Completed** when all of its pods have exited with code 0 (`phase=Succeeded`). It is **Failed** when any pod exits with a non-zero code (`phase=Failed`), since pod-level retry is not supported and a single failure makes the all-pods completion criterion unreachable. If `maxRuntime` is exceeded, the `PodClique` is marked `Failed` immediately regardless of pod states.
+A `PodClique` is **Completed** when all of its pods have exited with code 0 (`phase=Succeeded`). It is **Failed** when any pod exits with a non-zero code (`phase=Failed`), since pod-level retry is not supported and a single failure makes the all-pods completion criterion unreachable.
 
 Non-job-mode `PodClique`s (`restartPolicy: Always`) never set `Completed` or `Failed`.
 
@@ -213,7 +193,7 @@ Evaluation is two-level:
 
 1. *Replica state*: a replica is **Completed** when all of its job-mode child `PodClique`s are `Completed` — or, if `completedNames` is set, when all named children are `Completed`. A replica is permanently **Failed** when a required child `PodClique` fails and no restart budget remains (`maxRestarts` exhausted, or `maxRestarts: 0`). A failure of a `PodClique` not listed in `completedNames` triggers a gang restart and consumes budget, but does not immediately mark the replica as `Failed` — the named children can still complete on the next attempt.
 
-2. *PCSG state*: the PCSG is **Completed** when all replicas are `Completed`. It is **Failed** when enough replicas have exhausted their budget that the remaining replicas cannot satisfy the completion criterion. If `maxRuntime` is exceeded, the PCSG is marked `Failed` immediately.
+2. *PCSG state*: the PCSG is **Completed** when all replicas are `Completed`. It is **Failed** when enough replicas have exhausted their budget that the remaining replicas cannot satisfy the completion criterion.
 
 **PodCliqueSet**
 
@@ -253,7 +233,7 @@ When a constituent `PodClique` or `PodCliqueScalingGroup` within a PCS replica f
 **New phases.** Two terminal phases are added across all three resource types:
 
 - `Completed` — all required job-mode children have succeeded.
-- `Failed` — enough children have failed that the completion criterion is permanently unreachable, or `maxRuntime` has been exceeded. Once set, this phase is irreversible.
+- `Failed` — enough children have failed that the completion criterion is permanently unreachable. Once set, this phase is irreversible.
 
 These phases are represented as a dedicated `phase` field on each resource's status. Non-job-mode resources never set these phases.
 
@@ -275,18 +255,6 @@ const (
 Phase JobPhase `json:"phase,omitempty"`
 ```
 
-**Job start time.** All three resource types gain a `jobStartTime` status field:
-
-```go
-// JobStartTime is the time from which maxRuntime is measured. It is set for
-// job-mode resources when the first pod or child replica starts. It is nil for
-// non-job-mode resources.
-// +optional
-JobStartTime *metav1.Time `json:"jobStartTime,omitempty"`
-```
-
-For `PodCliqueScalingGroup` and `PodCliqueSet`, `jobStartTime` is not reset when replicas are restarted. For `PodClique`, the clock resets per instance because gang restart recreates the `PodClique` object.
-
 **Replica restart counts.** `PodCliqueScalingGroup` and `PodCliqueSet` each gain a `replicaRestartCounts` field to track per-replica restart history:
 
 ```go
@@ -303,7 +271,7 @@ This field accumulates across restarts and is never decremented.
 
 Grove applies a single fixed cleanup policy for job-mode resources: terminal state is calculated bottom-up, but cleanup is applied top-down. Active pods are deleted when the owning job-mode scope reaches a terminal state; terminal pods are retained.
 
-This distinction is important for partial-completion policies. For example, a `PodCliqueScalingGroup` replica may be considered `Completed` because the `PodClique`s listed in `completedNames` completed successfully, while other child `PodClique`s are still running; or it may become `Failed` because `maxRuntime` was exhausted while children are still active. Once the replica is terminal, the PCSG controller deletes the non-terminal child `PodClique`s or active pods in that replica so they stop consuming resources. Similarly, once a `PodCliqueSet` replica or the whole PCS reaches a terminal state, the PCS controller cleans up active child `PodClique`s and `PodCliqueScalingGroup`s in that completed or failed scope.
+This distinction is important for partial-completion policies. For example, a `PodCliqueScalingGroup` replica may be considered `Completed` because the `PodClique`s listed in `completedNames` completed successfully, while other child `PodClique`s are still running. Once the replica is terminal, the PCSG controller deletes the non-terminal child `PodClique`s or active pods in that replica so they stop consuming resources. Similarly, once a `PodCliqueSet` replica or the whole PCS reaches a terminal state, the PCS controller cleans up active child `PodClique`s and `PodCliqueScalingGroup`s in that completed or failed scope.
 
 **On `PodClique` terminal state (`Completed` or `Failed`):**
 - Delete all active pods (`Pending`, `Running`) in the `PodClique`.
@@ -338,7 +306,7 @@ Job support surfaces observability through a dedicated `phase` field on each res
 | Phase | Meaning |
 |---|---|
 | `Completed` | All required job-mode children succeeded. |
-| `Failed` | Completion is permanently unreachable, or `maxRuntime` was exceeded. |
+| `Failed` | Completion is permanently unreachable. |
 
 Non-job-mode resources never set these phases.
 
@@ -347,7 +315,7 @@ Non-job-mode resources never set these phases.
 | Attached to | Type | Reason | Message carries |
 |---|---|---|---|
 | PCLQ / PCSG / PCS | `Normal` | `JobCompleted` | — |
-| PCLQ / PCSG / PCS | `Warning` | `JobFailed` | Failure reason (e.g. pod failure, `maxRuntime` exceeded) |
+| PCLQ / PCSG / PCS | `Warning` | `JobFailed` | Failure reason (e.g. pod failure, restart budget exhausted) |
 | PCSG / PCS | `Warning` | `GangRestartTriggered` | Replica index, failed child name |
 | PCSG / PCS | `Warning` | `RestartBudgetExhausted` | Replica index |
 
@@ -357,11 +325,10 @@ The existing `PodCliqueScalingGroupReplicaDeleteSuccessful` / `PodCliqueSetRepli
 
 **Unit tests**
 
-- Validation: `restartPolicy: OnFailure` is rejected; `completedNames`, `maxRestarts`, and `maxRuntime` on a fully long-running resource are rejected.
+- Validation: `restartPolicy: OnFailure` is rejected; `completedNames` and `maxRestarts` on a fully long-running resource are rejected.
 - Validation: autoscaling configuration and manual replica changes on job-mode resources are rejected.
 - Completion evaluation logic at each level: all-pods success → `Completed`; any pod failure → PCLQ `Failed`; named-children completion → PCSG/PCS replica `Completed`; non-`completedNames` child failure triggers restart but not immediate replica failure.
-- Failure evaluation: budget exhaustion → replica `Failed`; `maxRuntime` exceeded → immediate `Failed`; `Failed` is irreversible.
-- `jobStartTime` is set for job-mode resources, remains nil for non-job-mode resources, and is not reset on PCSG/PCS replica restarts.
+- Failure evaluation: budget exhaustion → replica `Failed`; `Failed` is irreversible.
 - `replicaRestartCounts` increments correctly on each restart and is never decremented.
 - Status phase is written before pod deletion (ordering guarantee).
 
@@ -370,7 +337,6 @@ The existing `PodCliqueScalingGroupReplicaDeleteSuccessful` / `PodCliqueSetRepli
 - **All-ranks completion**: all workers complete successfully → PCS reaches `Completed`.
 - **Pod failure → gang restart**: one pod fails → PCLQ fails → parent restarts the gang → restart budget decremented.
 - **Budget exhaustion**: replica exhausts `maxRestarts` → PCSG/PCS fails.
-- **`maxRuntime` exceeded**: deadline fires → resource marked `Failed` immediately.
 - **Leader-driven completion**: leader exits 0, workers still running → PCSG replica `Completed`, active worker pods cleaned up.
 - **Mixed job/long-running**: job-mode PCLQ completes alongside long-running PCLQ → parent reaches `Completed`.
 - **Gang scheduling on restart**: after a gang restart, verify that a new PCLQ / PCSG / PCS replica is created and the existing gang scheduling machinery places it as a complete gang.
