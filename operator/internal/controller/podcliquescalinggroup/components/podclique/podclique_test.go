@@ -372,6 +372,47 @@ func TestAddEnvironmentVariablesToPodContainerSpecs(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "replace_colliding_pcsg_env_var",
+			pclq: &grovecorev1alpha1.PodClique{
+				Spec: grovecorev1alpha1.PodCliqueSpec{
+					PodSpec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{
+								Name: "container",
+								Env: []corev1.EnvVar{
+									{Name: apiconstants.EnvVarPodCliqueScalingGroupName, Value: "stale"},
+									{Name: "USER_VAR", Value: "user-value"},
+								},
+							},
+						},
+					},
+				},
+			},
+			numPods: 5,
+			validate: func(t *testing.T, pclq *grovecorev1alpha1.PodClique) {
+				assert.Equal(t, []corev1.EnvVar{
+					{
+						Name: apiconstants.EnvVarPodCliqueScalingGroupName,
+						ValueFrom: &corev1.EnvVarSource{
+							FieldRef: &corev1.ObjectFieldSelector{
+								FieldPath: fmt.Sprintf("metadata.labels['%s']", apicommon.LabelPodCliqueScalingGroup),
+							},
+						},
+					},
+					{Name: apiconstants.EnvVarPodCliqueScalingGroupTemplateNumPods, Value: "5"},
+					{
+						Name: apiconstants.EnvVarPodCliqueScalingGroupIndex,
+						ValueFrom: &corev1.EnvVarSource{
+							FieldRef: &corev1.ObjectFieldSelector{
+								FieldPath: fmt.Sprintf("metadata.labels['%s']", apicommon.LabelPodCliqueScalingGroupReplicaIndex),
+							},
+						},
+					},
+					{Name: "USER_VAR", Value: "user-value"},
+				}, pclq.Spec.PodSpec.Containers[0].Env)
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -1148,6 +1189,62 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 	assert.Equal(t, "yes", pclq.Annotations["example.com/keep"])
 	_, hasTopologyAnnotation := pclq.Annotations[apiconstants.AnnotationTopologyName]
 	assert.False(t, hasTopologyAnnotation)
+}
+
+func TestBuildResource_PersistsPCSGPodIndexOffset(t *testing.T) {
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs", Namespace: "default"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				StartupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+					{Name: "leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2}},
+				},
+			},
+		},
+	}
+	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pcs-0-engine",
+			Namespace: "default",
+			Labels: map[string]string{
+				apicommon.LabelPodCliqueSetReplicaIndex: "0",
+			},
+		},
+		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
+			MinAvailable: ptr.To(int32(1)),
+			CliqueNames:  []string{"leader", "worker"},
+		},
+	}
+	operator := &_resource{scheme: groveclientscheme.Scheme}
+
+	t.Run("records offset on creation", func(t *testing.T) {
+		pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pcs-0-engine-0-worker",
+			Namespace: "default",
+		}}
+
+		err := operator.buildResource(logr.Discard(), pcs, pcsg, 0, pclq, false)
+
+		require.NoError(t, err)
+		assert.Equal(t, "1", pclq.Labels[apicommon.LabelPodCliqueScalingGroupPodIndexOffset])
+	})
+
+	t.Run("retains offset on update", func(t *testing.T) {
+		pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pcs-0-engine-0-worker",
+			Namespace: "default",
+			Labels: map[string]string{
+				apicommon.LabelPodCliqueScalingGroupPodIndexOffset: "7",
+			},
+		}}
+
+		err := operator.buildResource(logr.Discard(), pcs, pcsg, 0, pclq, true)
+
+		require.NoError(t, err)
+		assert.Equal(t, "7", pclq.Labels[apicommon.LabelPodCliqueScalingGroupPodIndexOffset])
+	})
 }
 
 // triageContainersByMNNVLClaim separates containers into those with MNNVL claim and those without.
