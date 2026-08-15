@@ -43,6 +43,9 @@ const (
 	ExitErrStart
 	// ExitErrMNNVLPrerequisites indicates that the application exited because MNNVL prerequisites are not met.
 	ExitErrMNNVLPrerequisites
+	// ExitErrSetPodGangMigrationGate indicates that the application exited due to an error setting the
+	// PodGang migration gate condition on legacy PodCliqueSets before the manager started.
+	ExitErrSetPodGangMigrationGate
 )
 
 var (

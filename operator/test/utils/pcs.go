@@ -164,6 +164,12 @@ func (b *PodCliqueSetBuilder) WithAnnotations(annotations map[string]string) *Po
 	return b
 }
 
+// WithStatusConditions sets the status conditions on the PodCliqueSet.
+func (b *PodCliqueSetBuilder) WithStatusConditions(conditions ...metav1.Condition) *PodCliqueSetBuilder {
+	b.pcs.Status.Conditions = conditions
+	return b
+}
+
 // Build creates a PodCliqueSet object.
 func (b *PodCliqueSetBuilder) Build() *grovecorev1alpha1.PodCliqueSet {
 	return b.pcs

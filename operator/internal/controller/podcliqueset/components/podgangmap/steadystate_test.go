@@ -31,9 +31,10 @@ import (
 )
 
 const (
-	testPCSName   = "pcs"
 	testNamespace = "default"
+	testPCSName   = "pcs"
 	testGenHash   = "hash1"
+	testPCSGName  = "sg"
 )
 
 func TestBuildBootstrapEntries(t *testing.T) {
@@ -60,7 +61,7 @@ func TestBuildBootstrapEntries(t *testing.T) {
 		{
 			name: "scaling group only, no standalone clique, replicas equal minAvailable",
 			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
-				WithScalingGroupConfig("sg", []string{"c"}, 2, 2).
+				WithScalingGroupConfig(testPCSGName, []string{"c"}, 2, 2).
 				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).
 				Build(),
 			expectedRoles: []grovecorev1alpha1.PodGangEntryRole{
@@ -70,16 +71,16 @@ func TestBuildBootstrapEntries(t *testing.T) {
 			assertEntries: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
 				anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
 				assert.Empty(t, anchor.PodCliques)
-				assert.Equal(t, []int32{0, 1}, anchor.PCSGReplicaIndices["sg"])
+				assert.Equal(t, []int32{0, 1}, anchor.PCSGReplicaIndices[testPCSGName])
 				scaleOut := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleScaleOut)
-				assert.Empty(t, scaleOut.PCSGReplicaIndices["sg"])
+				assert.Empty(t, scaleOut.PCSGReplicaIndices[testPCSGName])
 				assert.Equal(t, []string{anchor.Epoch}, scaleOut.DependsOn)
 			},
 		},
 		{
 			name: "scaling group only, replicas above minAvailable yields tail",
 			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
-				WithScalingGroupConfig("sg", []string{"c"}, 4, 2).
+				WithScalingGroupConfig(testPCSGName, []string{"c"}, 4, 2).
 				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).
 				Build(),
 			expectedRoles: []grovecorev1alpha1.PodGangEntryRole{
@@ -90,9 +91,9 @@ func TestBuildBootstrapEntries(t *testing.T) {
 			assertEntries: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
 				anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
 				assert.Empty(t, anchor.PodCliques)
-				assert.Equal(t, []int32{0, 1}, anchor.PCSGReplicaIndices["sg"])
+				assert.Equal(t, []int32{0, 1}, anchor.PCSGReplicaIndices[testPCSGName])
 				tail := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleTail)
-				assert.Equal(t, []int32{2, 3}, tail.PCSGReplicaIndices["sg"])
+				assert.Equal(t, []int32{2, 3}, tail.PCSGReplicaIndices[testPCSGName])
 				assert.Equal(t, []string{anchor.Epoch}, tail.DependsOn)
 			},
 		},
@@ -100,7 +101,7 @@ func TestBuildBootstrapEntries(t *testing.T) {
 			name: "standalone clique and scaling group together",
 			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
 				WithStandaloneCliqueReplicas("clq-a", 3).
-				WithScalingGroupConfig("sg", []string{"c"}, 4, 2).
+				WithScalingGroupConfig(testPCSGName, []string{"c"}, 4, 2).
 				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).
 				Build(),
 			expectedRoles: []grovecorev1alpha1.PodGangEntryRole{
@@ -111,9 +112,9 @@ func TestBuildBootstrapEntries(t *testing.T) {
 			assertEntries: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
 				anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
 				assert.Equal(t, int32(3), anchor.PodCliques["clq-a"])
-				assert.Equal(t, []int32{0, 1}, anchor.PCSGReplicaIndices["sg"])
+				assert.Equal(t, []int32{0, 1}, anchor.PCSGReplicaIndices[testPCSGName])
 				tail := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleTail)
-				assert.Equal(t, []int32{2, 3}, tail.PCSGReplicaIndices["sg"])
+				assert.Equal(t, []int32{2, 3}, tail.PCSGReplicaIndices[testPCSGName])
 			},
 		},
 	}
@@ -142,71 +143,71 @@ func TestSyncEntries(t *testing.T) {
 			name: "no change keeps entries as is",
 			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
 				WithStandaloneCliqueReplicas("clq-a", 3).
-				WithScalingGroupConfig("sg", []string{"c"}, 2, 2).
+				WithScalingGroupConfig(testPCSGName, []string{"c"}, 2, 2).
 				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).Build(),
 			existingEntries: []grovecorev1alpha1.PodGangEntry{
-				anchorEntry(map[string]int32{"clq-a": 3}, map[string][]int32{"sg": {0, 1}}),
+				anchorEntry(map[string]int32{"clq-a": 3}, map[string][]int32{testPCSGName: {0, 1}}),
 				scaleOutEntry(nil),
 			},
 			standalonePCLQs: []grovecorev1alpha1.PodClique{standalonePCLQ("clq-a", 3)},
-			pcsgs:           []grovecorev1alpha1.PodCliqueScalingGroup{pcsg("sg", 2)},
+			pcsgs:           []grovecorev1alpha1.PodCliqueScalingGroup{pcsg(2)},
 			assertResult: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
 				anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
-				assert.Equal(t, []int32{0, 1}, anchor.PCSGReplicaIndices["sg"])
+				assert.Equal(t, []int32{0, 1}, anchor.PCSGReplicaIndices[testPCSGName])
 				assert.Equal(t, int32(3), anchor.PodCliques["clq-a"])
 			},
 		},
 		{
 			name: "scale out appends new index to scaleout entry",
 			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
-				WithScalingGroupConfig("sg", []string{"c"}, 2, 2).
+				WithScalingGroupConfig(testPCSGName, []string{"c"}, 2, 2).
 				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).Build(),
 			existingEntries: []grovecorev1alpha1.PodGangEntry{
-				anchorEntry(nil, map[string][]int32{"sg": {0, 1}}),
+				anchorEntry(nil, map[string][]int32{testPCSGName: {0, 1}}),
 				scaleOutEntry(nil),
 			},
-			pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{pcsg("sg", 3)},
+			pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{pcsg(3)},
 			assertResult: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
 				scaleOut := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleScaleOut)
-				assert.Equal(t, []int32{2}, scaleOut.PCSGReplicaIndices["sg"])
+				assert.Equal(t, []int32{2}, scaleOut.PCSGReplicaIndices[testPCSGName])
 			},
 		},
 		{
 			name: "scale in drains only the scaleout entry",
 			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
-				WithScalingGroupConfig("sg", []string{"c"}, 4, 2).
+				WithScalingGroupConfig(testPCSGName, []string{"c"}, 4, 2).
 				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).Build(),
 			existingEntries: []grovecorev1alpha1.PodGangEntry{
-				anchorEntry(nil, map[string][]int32{"sg": {0, 1}}),
-				tailEntry(map[string][]int32{"sg": {2, 3}}),
-				scaleOutEntry(map[string][]int32{"sg": {4, 5}}),
+				anchorEntry(nil, map[string][]int32{testPCSGName: {0, 1}}),
+				tailEntry(map[string][]int32{testPCSGName: {2, 3}}),
+				scaleOutEntry(map[string][]int32{testPCSGName: {4, 5}}),
 			},
-			pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{pcsg("sg", 4)},
+			pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{pcsg(4)},
 			assertResult: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
 				// live=4, current=6, drain 2: both come from the scaleout entry (highest indices first).
-				assert.Empty(t, testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleScaleOut).PCSGReplicaIndices["sg"])
-				assert.Equal(t, []int32{2, 3}, testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleTail).PCSGReplicaIndices["sg"])
+				assert.Empty(t, testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleScaleOut).PCSGReplicaIndices[testPCSGName])
+				assert.Equal(t, []int32{2, 3}, testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleTail).PCSGReplicaIndices[testPCSGName])
 				// The anchor is never drained; its MinAvailable indices are preserved.
-				assert.Equal(t, []int32{0, 1}, testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor).PCSGReplicaIndices["sg"])
+				assert.Equal(t, []int32{0, 1}, testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor).PCSGReplicaIndices[testPCSGName])
 			},
 		},
 		{
 			name: "scale in drains tail when scaleout has no indices",
 			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
-				WithScalingGroupConfig("sg", []string{"c"}, 4, 2).
+				WithScalingGroupConfig(testPCSGName, []string{"c"}, 4, 2).
 				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).Build(),
 			existingEntries: []grovecorev1alpha1.PodGangEntry{
-				anchorEntry(nil, map[string][]int32{"sg": {0, 1}}),
-				tailEntry(map[string][]int32{"sg": {2, 3}}),
+				anchorEntry(nil, map[string][]int32{testPCSGName: {0, 1}}),
+				tailEntry(map[string][]int32{testPCSGName: {2, 3}}),
 				scaleOutEntry(nil),
 			},
-			pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{pcsg("sg", 3)},
+			pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{pcsg(3)},
 			assertResult: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
 				// live=3, current=4, drain 1: the scaleout entry has nothing, so the tail is drained.
-				assert.Empty(t, testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleScaleOut).PCSGReplicaIndices["sg"])
-				assert.Equal(t, []int32{2}, testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleTail).PCSGReplicaIndices["sg"])
+				assert.Empty(t, testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleScaleOut).PCSGReplicaIndices[testPCSGName])
+				assert.Equal(t, []int32{2}, testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleTail).PCSGReplicaIndices[testPCSGName])
 				// The anchor is never drained; its MinAvailable indices are preserved.
-				assert.Equal(t, []int32{0, 1}, testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor).PCSGReplicaIndices["sg"])
+				assert.Equal(t, []int32{0, 1}, testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor).PCSGReplicaIndices[testPCSGName])
 			},
 		},
 		{
@@ -266,10 +267,10 @@ func standalonePCLQ(cliqueName string, replicas int32) grovecorev1alpha1.PodCliq
 	}
 }
 
-func pcsg(pcsgConfigName string, replicas int32) grovecorev1alpha1.PodCliqueScalingGroup {
+func pcsg(replicas int32) grovecorev1alpha1.PodCliqueScalingGroup {
 	return grovecorev1alpha1.PodCliqueScalingGroup{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: testPCSName, Replica: 0}, pcsgConfigName),
+			Name: apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: testPCSName, Replica: 0}, testPCSGName),
 		},
 		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{Replicas: replicas, MinAvailable: ptr.To(int32(2))},
 	}

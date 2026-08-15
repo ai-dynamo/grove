@@ -121,7 +121,6 @@ func TestVerifyAllPodsCreated(t *testing.T) {
 			sc := &syncState{
 				logger:             ctrllogger.FromContext(t.Context()).WithName("test"),
 				existingPCLQPods:   tt.existingPods,
-				existingPCLQs:      tt.existingPCLQs,
 				existingPCLQByName: componentutils.PodCliqueByName(tt.existingPCLQs),
 			}
 			r := &_resource{schedRegistry: defaultFakeSchedulerRegistry}
@@ -223,7 +222,6 @@ func TestGetPodsPendingCreation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			ss := &syncState{
 				logger:             ctrllogger.FromContext(t.Context()).WithName("test"),
-				existingPCLQs:      test.existingPCLQs,
 				existingPCLQByName: componentutils.PodCliqueByName(test.existingPCLQs),
 				existingPCLQPods:   test.existingPods,
 			}
@@ -330,7 +328,6 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 			logger:                ctrllogger.FromContext(ctx),
 			expectedPodGangs:      []*podGangInfo{pgi},
 			existingPodGangByName: map[string]groveschedulerv1alpha1.PodGang{},
-			existingPCLQs:         []grovecorev1alpha1.PodClique{pclq},
 			existingPCLQByName:    componentutils.PodCliqueByName([]grovecorev1alpha1.PodClique{pclq}),
 			existingPCLQPods:      map[string][]v1.Pod{},
 		}
@@ -360,7 +357,6 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 			logger:                ctrllogger.FromContext(ctx),
 			expectedPodGangs:      []*podGangInfo{pgi},
 			existingPodGangByName: map[string]groveschedulerv1alpha1.PodGang{},
-			existingPCLQs:         pclqs,
 			existingPCLQByName:    componentutils.PodCliqueByName(pclqs),
 			existingPCLQPods:      pods,
 		}
@@ -387,7 +383,6 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 			logger:                ctrllogger.FromContext(ctx),
 			expectedPodGangs:      []*podGangInfo{pgi},
 			existingPodGangByName: map[string]groveschedulerv1alpha1.PodGang{pgName: *existingPG},
-			existingPCLQs:         pclqs,
 			existingPCLQByName:    componentutils.PodCliqueByName(pclqs),
 			existingPCLQPods:      pods,
 		}
@@ -414,7 +409,6 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 			logger:                ctrllogger.FromContext(ctx),
 			expectedPodGangs:      []*podGangInfo{pgi},
 			existingPodGangByName: map[string]groveschedulerv1alpha1.PodGang{pgName: *existingPG},
-			existingPCLQs:         pclqs,
 			existingPCLQByName:    componentutils.PodCliqueByName(pclqs),
 			existingPCLQPods:      pods,
 		}
@@ -455,7 +449,6 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 			logger:                ctrllogger.FromContext(ctx),
 			expectedPodGangs:      []*podGangInfo{firstPGI, secondPGI},
 			existingPodGangByName: map[string]groveschedulerv1alpha1.PodGang{},
-			existingPCLQs:         pclqs,
 			existingPCLQByName:    componentutils.PodCliqueByName(pclqs),
 			existingPCLQPods:      pods,
 		}

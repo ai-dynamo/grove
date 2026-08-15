@@ -50,7 +50,7 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs 
 		unassignedPodsByPCLQ: make(map[string][]corev1.Pod),
 	}
 
-	ss.existingPCLQs, err = r.getExistingPCLQsForPCS(ctx, pcs)
+	existingPCLQs, err := r.getExistingPCLQsForPCS(ctx, pcs)
 	if err != nil {
 		return nil, groveerr.WrapError(err,
 			errCodeListPodCliques,
@@ -58,7 +58,7 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs 
 			fmt.Sprintf("failed to list PodCliques for PodCliqueSet %v", pcsObjectKey),
 		)
 	}
-	ss.existingPCLQByName = componentutils.PodCliqueByName(ss.existingPCLQs)
+	ss.existingPCLQByName = componentutils.PodCliqueByName(existingPCLQs)
 
 	ss.tasEnabled = r.tasConfig.Enabled
 	if r.tasConfig.Enabled {
@@ -128,7 +128,19 @@ func (r _resource) resolveTopologyLevels(ctx context.Context, logger logr.Logger
 		return nil, nil
 	}
 	topologyName, err := componentutils.FindExplicitTopologyNameForPodCliqueSet(pcs)
-	if err != nil || topologyName == "" {
+	if err != nil {
+		if errors.Is(err, componentutils.ErrTopologyNameMissing) {
+			// There is no TopologyName present to look up the topology levels from. This is not considered an
+			// error in this flow.
+			return nil, nil
+		}
+		return nil, groveerr.WrapError(err,
+			errCodeResolveTopologyLevels,
+			component.OperationSync,
+			fmt.Sprintf("failed to find topology name from PodCliqueSet %v", pcs.Name),
+		)
+	}
+	if topologyName == "" {
 		return nil, nil
 	}
 	levels, err := clustertopology.GetClusterTopologyLevels(ctx, r.client, topologyName)
@@ -142,7 +154,7 @@ func (r _resource) resolveTopologyLevels(ctx context.Context, logger logr.Logger
 			return nil, nil
 		}
 		return nil, groveerr.WrapError(err,
-			errCodeGetClusterTopologyLevels,
+			errCodeResolveTopologyLevels,
 			component.OperationSync,
 			fmt.Sprintf("failed to get cluster topology levels for %q", topologyName))
 	}
@@ -606,20 +618,12 @@ type syncState struct {
 	existingPodGangByName  map[string]groveschedulerv1alpha1.PodGang
 	deletedPodGangNames    []string
 	existingPCLQPods       map[string][]corev1.Pod
-	existingPCLQs          []grovecorev1alpha1.PodClique
 	existingPCLQByName     map[string]grovecorev1alpha1.PodClique
 	expectedPodGangByName  map[string]*podGangInfo
 	expectedPodGangNameSet componentutils.Set[string]
 	unassignedPodsByPCLQ   map[string][]corev1.Pod
 	tasEnabled             bool
 	topologyLevels         []grovecorev1alpha1.TopologyLevel
-}
-
-// getPodGangNamesPendingCreation identifies PodGangs not yet created.
-func (ss *syncState) getPodGangNamesPendingCreation() []string {
-	return lo.FilterMap(ss.expectedPodGangs, func(podGang *podGangInfo, _ int) (string, bool) {
-		return podGang.fqn, !ss.isExistingPodGang(podGang.fqn)
-	})
 }
 
 func (ss *syncState) isExistingPodGang(podGangName string) bool {

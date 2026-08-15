@@ -78,6 +78,21 @@ func EpochForPCSGReplica(pgm *grovecorev1alpha1.PodGangMap, pcsgName string, pcs
 	return entry.Epoch, nil
 }
 
+// PodGangNameForPCSGReplica returns the epoch-based PodGang name that a PodCliqueScalingGroup replica
+// index belongs to, reading its entry from the PodGangMap. An Anchor entry yields the anchor PodGang
+// name. A Tail or ScaleOut entry yields the non-anchor name. It uses the same entry lookup as
+// EpochForPCSGReplica, so it agrees with how the PodGang materializer names the PodGang.
+func PodGangNameForPCSGReplica(pgm *grovecorev1alpha1.PodGangMap, rnr apicommon.ResourceNameReplica, pcsgName string, pcsgReplicaIndex int32) (string, error) {
+	entry, err := podGangEntryForPCSGReplica(pgm, pcsgName, pcsgReplicaIndex)
+	if err != nil {
+		return "", err
+	}
+	if entry.Role == grovecorev1alpha1.PodGangEntryRoleAnchor {
+		return apicommon.GenerateAnchorPodGangName(rnr, entry.Epoch), nil
+	}
+	return apicommon.GenerateNonAnchorPodGangName(rnr, entry.Epoch, pcsgName, pcsgReplicaIndex), nil
+}
+
 // DependsOnForEpoch returns the epochs that the PodGangMap entry with the given epoch depends on
 // before its pods may be scheduled. An empty result means the entry has no scheduling dependency. It
 // returns an error when no entry carries the epoch, which the caller treats as requeue-worthy rather
@@ -120,7 +135,7 @@ func podGangEntryForPCSGReplica(pgm *grovecorev1alpha1.PodGangMap, pcsgName stri
 
 // AnchorPodGangEpoch returns the epoch of the AnchorIndex 0 anchor entry of the PodGangMap. Standalone
 // PodCliques always belong to this entry. It returns an error when no such anchor entry exists, a
-// contract violation that must be requeued.
+// contract violation that must be re-queued.
 func AnchorPodGangEpoch(pgm *grovecorev1alpha1.PodGangMap) (string, error) {
 	for i := range pgm.Spec.Entries {
 		entry := &pgm.Spec.Entries[i]

@@ -110,13 +110,10 @@ func reconcileEntries(pcs *grovecorev1alpha1.PodCliqueSet,
 	pcsgs []grovecorev1alpha1.PodCliqueScalingGroup,
 	pcsReplicaIndex int,
 	scaleOutEpoch string) ([]grovecorev1alpha1.PodGangEntry, error) {
-
 	refreshStandalonePodCliqueCounts(entries, pcs, standalonePCLQs, pcsReplicaIndex)
-
 	if err := reconcilePCSGReplicaIndices(entries, pcs, pcsgs, pcsReplicaIndex); err != nil {
 		return nil, err
 	}
-
 	entries = ensureScaleOutEntry(entries, pcs, scaleOutEpoch, nil)
 	return removeEmptyEntries(entries, *pcs.Status.CurrentGenerationHash), nil
 }

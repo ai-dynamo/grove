@@ -26,6 +26,7 @@ import (
 	pclqcomponent "github.com/ai-dynamo/grove/operator/internal/controller/podclique/components"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
+	"github.com/ai-dynamo/grove/operator/internal/podgangmigrator"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	"k8s.io/client-go/tools/record"
@@ -79,6 +80,19 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			return ctrlcommon.DoNotRequeue().Result()
 		}
 		return r.triggerDeletionFlow(ctx, logger, pclq).Result()
+	}
+
+	// While the owning PodCliqueSet is being migrated to the epoch-based PodGang scheme, do not act on
+	// spec changes (scaling), so scaling does not interleave with the migration. Deletion is handled
+	// above and is allowed to proceed. The gate condition is set before the manager starts, so it is
+	// already observed on the first reconcile of a legacy PodCliqueSet.
+	pcs, err := componentutils.GetPodCliqueSet(ctx, r.client, pclq.ObjectMeta)
+	if err != nil {
+		return ctrlcommon.ReconcileWithErrors("failed to get owner PodCliqueSet for PodGang migration gate check", err).Result()
+	}
+	if podgangmigrator.IsMigrationInProgress(pcs) {
+		logger.Info("PodGang migration in progress for owner PodCliqueSet; requeuing without acting", "podCliqueSet", ctrlclient.ObjectKeyFromObject(pcs))
+		return ctrlcommon.ReconcileAfter(podgangmigrator.MigrationRequeueInterval, "PodGang migration in progress for owner PodCliqueSet").Result()
 	}
 
 	reconcileSpecFlowResult := r.reconcileSpec(ctx, logger, pclq)

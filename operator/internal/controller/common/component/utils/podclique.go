@@ -36,7 +36,7 @@ import (
 
 // GetPCLQsByOwner retrieves PodClique objects that are owned by the specified owner kind and object key, and match the provided selector labels.
 func GetPCLQsByOwner(ctx context.Context, cl client.Client, ownerKind string, ownerObjectKey client.ObjectKey, selectorLabels map[string]string) ([]grovecorev1alpha1.PodClique, error) {
-	pclqs, err := GetPCLQsMatchingLabels(ctx, cl, ownerObjectKey.Namespace, selectorLabels)
+	pclqs, err := ListPCLQsMatchingLabels(ctx, cl, ownerObjectKey.Namespace, selectorLabels)
 	if err != nil {
 		return pclqs, err
 	}
@@ -58,8 +58,8 @@ func GetPCLQsByOwnerReplicaIndex(ctx context.Context, cl client.Client, ownerKin
 	return groupPCLQsByLabel(pclqs, apicommon.LabelPodCliqueSetReplicaIndex), nil
 }
 
-// GetPCLQsMatchingLabels gets all the PodClique's in a given namespace matching selectorLabels.
-func GetPCLQsMatchingLabels(ctx context.Context, cl client.Client, namespace string, selectorLabels map[string]string) ([]grovecorev1alpha1.PodClique, error) {
+// ListPCLQsMatchingLabels lists all the PodClique's in a given namespace matching selectorLabels.
+func ListPCLQsMatchingLabels(ctx context.Context, cl client.Client, namespace string, selectorLabels map[string]string) ([]grovecorev1alpha1.PodClique, error) {
 	podCliqueList := &grovecorev1alpha1.PodCliqueList{}
 	if err := cl.List(ctx,
 		podCliqueList,

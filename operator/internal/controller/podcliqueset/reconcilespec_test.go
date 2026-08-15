@@ -135,6 +135,7 @@ func TestGetKindSyncGroups(t *testing.T) {
 		component.KindPodCliqueScalingGroup,
 		component.KindPodGang,
 		component.KindPodGangMap,
+		component.KindPodGangMigrator,
 	}
 
 	actualKinds := make([]component.Kind, 0)

@@ -289,11 +289,16 @@ func getKindSyncGroups() [][]component.Kind {
 			component.KindResourceClaim,
 			component.KindPodGangMap,
 		},
-		// G2: PodClique must exist before PodGang can reference their pods.
+		// G2: migrate a legacy PodCliqueSet to the epoch-based PodGang scheme, using the PodGangMap from G1.
+		// This runs before PodClique (G3) and PodGang (G4) so those see a consistent new-scheme world.
+		{
+			component.KindPodGangMigrator,
+		},
+		// G3: PodClique must exist before PodGang can reference their pods.
 		{
 			component.KindPodClique,
 		},
-		// G3: PCSG and PodGang run concurrently — PCSG creates its own PodCliques via a
+		// G4: PCSG and PodGang run concurrently — PCSG creates its own PodCliques via a
 		// separate reconciler, and PodGang reads existing PodClique/Pod state.
 		{
 			component.KindPodCliqueScalingGroup,

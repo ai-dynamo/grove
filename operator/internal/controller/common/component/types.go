@@ -83,6 +83,9 @@ const (
 	KindComputeDomain Kind = "ComputeDomain"
 	// KindResourceClaim indicates that the resource is a DRA ResourceClaim.
 	KindResourceClaim Kind = "ResourceClaim"
+	// KindPodGangMigrator is an action component (not a managed resource) that migrates a PodCliqueSet
+	// from the legacy PodGang naming to the epoch-based PodGang naming and PodGangMap scheme.
+	KindPodGangMigrator Kind = "PodGangMigrator"
 )
 
 // OperatorRegistry is a facade that gives access to all components operators.

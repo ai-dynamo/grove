@@ -24,6 +24,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podcliquesetreplica"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podgang"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podgangmap"
+	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podgangmigrator"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/resourceclaim"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/role"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/rolebinding"
@@ -53,6 +54,7 @@ func CreateOperatorRegistry(mgr manager.Manager, eventRecorder record.EventRecor
 	reg.Register(component.KindHorizontalPodAutoscaler, hpa.New(cl, mgr.GetScheme()))
 	reg.Register(component.KindPodGang, podgang.New(cl, mgr.GetScheme(), eventRecorder, topologyAwareSchedulingConfig, schedRegistry))
 	reg.Register(component.KindPodGangMap, podgangmap.New(cl, mgr.GetScheme(), clock.RealClock{}))
+	reg.Register(component.KindPodGangMigrator, podgangmigrator.New(cl, mgr.GetScheme()))
 	reg.Register(component.KindPodCliqueSetReplica, podcliquesetreplica.New(cl, eventRecorder))
 
 	// Only register ComputeDomain operator if MNNVL is enabled

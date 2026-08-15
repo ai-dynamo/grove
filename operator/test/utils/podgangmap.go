@@ -72,6 +72,16 @@ func (b *PodGangEntryBuilder) Build() grovecorev1alpha1.PodGangEntry {
 	return b.entry
 }
 
+// NewPCSGPodGangEntry builds a PodGangEntry for a single PodCliqueScalingGroup, the common shape in
+// tests. It sets the epoch, generation hash, role, and the PodCliqueScalingGroup replica indices the
+// entry holds. Use the builder directly when an entry also needs DependsOn or standalone PodCliques.
+func NewPCSGPodGangEntry(pcsGenerationHash, epoch string, role grovecorev1alpha1.PodGangEntryRole, pcsgName string, pcsgReplicaIndices ...int32) grovecorev1alpha1.PodGangEntry {
+	return NewPodGangEntryBuilder(pcsGenerationHash, epoch).
+		WithRole(role).
+		WithPCSGReplicaIndices(map[string][]int32{pcsgName: pcsgReplicaIndices}).
+		Build()
+}
+
 // PodGangMapBuilder provides a fluent interface for building test PodGangMap objects.
 type PodGangMapBuilder struct {
 	pgm *grovecorev1alpha1.PodGangMap
