@@ -16,6 +16,7 @@
   - [Test Plan](#test-plan)
   - [Graduation Criteria](#graduation-criteria)
 - [Open Questions](#open-questions)
+- [Remaining Work](#remaining-work)
 - [Alternatives](#alternatives)
 - [Appendix](#appendix)
   - [Upstream Follow-ups](#upstream-follow-ups)
@@ -23,7 +24,7 @@
 
 ## Summary
 
-Grove should treat `PodClique` or `PodCliqueScalingGroup` components with `replicas: 0` as an intentional idle state. This GREP keeps `minAvailable` non-zero and immutable, makes gang logic tolerant of zero-replica members, keeps the default behavior for positive replicas below `minAvailable`, and defines an opt-in clamp policy for generic autoscalers.
+Grove should treat `PodClique` or `PodCliqueScalingGroup` components with `replicas: 0` as an intentional idle state. This GREP keeps `minAvailable` non-zero and immutable, makes gang logic tolerant of zero-replica members, and describes two below-quorum policies for `0 < replicas < minAvailable`: `Block`, which keeps today's rejection, and `Clamp`, which wakes the component at `minAvailable`. Both are carried here because the choice between them is an [open question](#open-questions).
 
 ## Motivation
 
@@ -36,9 +37,9 @@ External autoscalers should be treated as producers of desired replicas, not as 
 ### Goals
 
 - Treat `replicas: 0` as an intentional idle state without changing `minAvailable`.
-- Keep positive replicas below `minAvailable` invalid by default.
-- Define an opt-in `Clamp` policy for generic autoscalers that wake below `minAvailable`.
-- Preserve autoscaler-written `spec.replicas` as desired scale.
+- Make `0` the only value below `minAvailable` that Grove runs as written.
+- Describe both below-quorum policies for `0 < replicas < minAvailable`, `Block` and `Clamp`, and leave the choice between them to [Open Questions](#open-questions).
+- Preserve autoscaler-written `spec.replicas` as desired scale, never writing an effective value back.
 
 ### Non-Goals
 
@@ -71,6 +72,8 @@ For `0 < replicas < minAvailable`, Grove should define an explicit below-quorum 
 | `replicas: 0` | Intentional idle state. The component contributes no required gang members and does not breach `minAvailable`. | Same as `Block`. |
 | `0 < replicas < minAvailable` | Invalid, as in the `PodCliqueSet` template today, with the same rule extended to the object and its `scale` subresource. Grove does not create partial gang members. | Accepted only when waking from `0`. Grove preserves `spec.replicas` as desired scale and computes `effectiveReplicas = minAvailable`. |
 | `replicas >= minAvailable` | Normal Grove behavior. The component participates in gang scheduling and gang termination using its configured `minAvailable`. | Same as `Block`; desired and effective replicas are equal. |
+
+Which column survives is an [open question](#open-questions): reviewers have asked for `Clamp` to be the only behavior. The columns are independent, so dropping one leaves the other unchanged.
 
 Existing manifests keep their meaning, except a `PodClique` with `replicas: 0` and `minAvailable: 1`: one replica today, idle here.
 
@@ -219,7 +222,7 @@ A `PodClique` produces no error there only because defaulting rewrites `replicas
 
 ### Monitoring
 
-For `Clamp`, a `ReplicasBelowMinAvailable` condition should carry the desired and effective replica counts, so users can see why the running member count exceeds `spec.replicas`. It is also the only feedback channel for a below-quorum write, since an autoscaler cannot act on a rejection.
+For `Clamp`, a `ReplicasBelowMinAvailable` condition should carry the desired and effective replica counts, so users can see why the running member count exceeds `spec.replicas`. It is also the only feedback channel for a below-quorum write, since an autoscaler cannot act on a rejection. Whether it is also the only channel for the desired/effective split depends on what `/scale` reports, which [Open Questions](#open-questions) leaves undecided.
 
 ### Test Plan
 
@@ -241,8 +244,17 @@ Prototype coverage should show:
 
 ## Open Questions
 
-- Is the below-quorum behavior a fixed rule or an opt-in policy? Reviewer feedback describes the override as unconditional, which would drop `belowMinAvailablePolicy`. This GREP keeps the field, defaulting to `Block`.
-- Does `/scale` `status.replicas` report desired or effective replicas, and should the three levels agree? Today `PodClique` counts non-terminating pods while `PodCliqueScalingGroup` and `PodCliqueSet` mirror `spec.replicas`. The HPA rescale decision reads `spec.replicas`, but KEDA's per-pod external metric divides by `status.replicas`.
+- Is the below-quorum behavior a fixed rule or an opt-in policy? Reviewer feedback describes the override as unconditional, keeping only `Clamp` and dropping `belowMinAvailablePolicy`. This GREP still carries both, because unconditional clamping is not purely additive: no admission webhook covers `PodClique` or `PodCliqueScalingGroup` today, so a component already at `replicas: 1` with `minAvailable: 2` runs one pod now and would silently run two. Settling on one behavior drops the other column, the field, and the policy names that qualify the rest of this GREP.
+- What does `/scale` `status.replicas` report, and should the three levels agree? It can mirror `spec.replicas` as `desired`, report the clamped target as `effective`, or report `actual` observed pods, which is what the subresource contract asks for. The question exists only under `Clamp`. The levels disagree today: `PodClique` counts non-terminating pods while `PodCliqueScalingGroup` and `PodCliqueSet` mirror `spec.replicas`, so behavior depends on where an autoscaler attaches. HPA reads `spec.replicas` to rescale, but its per-pod branch, used by KEDA's `AverageValue` metrics, divides by `status.replicas`. Reporting `desired` leaves [Monitoring](#monitoring) as the only channel for the split. Answering this needs the contract read and HPA and KEDA behavior measured; a later revision will cover both.
+
+## Remaining Work
+
+Accepting the direction above does not finish the GREP. Still to come, in this order:
+
+- Measured autoscaler behavior, not reasoning about it: HPA and KEDA against a `Clamp` component across the wake-up edge, repeated below-quorum writes, `cooldownPeriod` and stabilization windows, and each `status.replicas` choice. It confirms or replaces the no-write-fight and no-oscillation claims above, and lands here with its setup and versions.
+- The admission rule over previous and new value pairs, including create and re-apply, where there is no previous value.
+- Gang behavior in detail: how the `PodGang` reshapes on idle and wake, whether an idle component is absent from the [coherent update](../393-coherent-rolling-updates/README.md) `PodGangMap` or present and empty, whether it joins an MVU, what a scale to zero does to an update in flight, and what that means for gang termination and partial scale.
+- The implementation surface in one place. Neither `PodClique` nor `PodCliqueScalingGroup` has a webhook today, so this GREP implies new ones on both and their `scale` subresource, plus dropping the `PodClique` `replicas: 0` defaulting, the `effectiveMinAvailable` readers, and looser `scaleConfig` rules. Listing them is in scope; designing them is not.
 
 ## Alternatives
 
