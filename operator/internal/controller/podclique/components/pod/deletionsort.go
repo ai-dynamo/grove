@@ -44,6 +44,7 @@ var podPhaseToOrdinal = map[corev1.PodPhase]int{corev1.PodPending: 0, corev1.Pod
 // Code partially adapted from https://github.com/kubernetes/kubernetes/blob/5a450884b127f7b8e477d48cf3967a2a5eca9126/pkg/controller/controller_utils.go#L702
 // Only 4 conditions have been taken as is and used here.
 func (s DeletionSorter) Less(i, j int) bool {
+	// Trigger change to see test running
 	// 1. Unassigned < assigned
 	// If only one of the pods is unassigned, the unassigned one is smaller
 	if s.Pods[i].Spec.NodeName != s.Pods[j].Spec.NodeName && (len(s.Pods[i].Spec.NodeName) == 0 || len(s.Pods[j].Spec.NodeName) == 0) {
