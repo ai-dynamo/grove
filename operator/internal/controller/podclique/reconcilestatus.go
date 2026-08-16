@@ -230,13 +230,35 @@ func computeMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, num
 	scheduledReplicas := int(pclq.Status.ScheduledReplicas)
 	now := metav1.Now()
 
-	// scheduledReplicas < MinAvailable always breaches. TerminationDelay (default 4h) is
-	// the natural grace window: during a normal startup the breach flickers True briefly
-	// and resolves before TerminationDelay; a workload that stays below MinAvailable past
-	// TerminationDelay is genuinely stuck and gang-terminating gives the scheduler a fresh
-	// PodGang to retry against the current cluster state. This covers both the partial-
-	// regression case (0 < scheduled < MinAvailable) and the full-regression case
-	// (scheduled == 0 after the workload was once healthy).
+	// scheduledReplicas < MinAvailable always breaches, with one exception: a brand-new
+	// PodClique whose pods have not been scheduled yet (scheduledReplicas == 0) within
+	// InitialScheduleGrace of creation. Without this exception, every PodClique writes a
+	// MinAvailableBreached=True condition on its very first status reconcile (pods are
+	// created but the scheduler hasn't placed them yet), which is expected and not a
+	// regression — but the condition write still bumps resourceVersion and cascades into
+	// reconciles on every controller watching PodCliques. Under sustained churn (many
+	// PodCliques created in a burst, e.g. a scale-up) this adds significant reconcile
+	// overhead for a condition that resolves within seconds anyway. Once the grace window
+	// elapses, scheduledReplicas == 0 breaches normally like any other case — a workload
+	// that loses all its pods after being healthy must still breach so gang termination can
+	// eventually recycle it (this was the bug the always-breach rule fixed).
+	//
+	// TerminationDelay (default 4h) is the natural grace window for the breach->terminate
+	// action itself: during a normal startup the breach flickers True briefly and resolves
+	// before TerminationDelay; a workload that stays below MinAvailable past TerminationDelay
+	// is genuinely stuck and gang-terminating gives the scheduler a fresh PodGang to retry
+	// against the current cluster state. This covers both the partial-regression case
+	// (0 < scheduled < MinAvailable) and the full-regression case (scheduled == 0 after the
+	// workload was once healthy).
+	if scheduledReplicas == 0 && isWithinInitialScheduleGrace(pclq, now) {
+		return metav1.Condition{
+			Type:               constants.ConditionTypeMinAvailableBreached,
+			Status:             metav1.ConditionFalse,
+			Reason:             constants.ConditionReasonAwaitingInitialSchedule,
+			Message:            "No pods scheduled yet; within initial scheduling grace window",
+			LastTransitionTime: now,
+		}
+	}
 	if scheduledReplicas < minAvailable {
 		return metav1.Condition{
 			Type:               constants.ConditionTypeMinAvailableBreached,
@@ -268,6 +290,14 @@ func computeMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, num
 		Message:            fmt.Sprintf("Either sufficient ready or starting pods found. expected at least: %d, found: %d", minAvailable, readyOrStartingPods),
 		LastTransitionTime: now,
 	}
+}
+
+// isWithinInitialScheduleGrace reports whether now is still within InitialScheduleGrace of the
+// PodClique's creation. Mirrors the grace window used by WasPCLQEverScheduled for the same
+// apiserver-timing reason: absorb the gap between CreationTimestamp and the first reconcile that
+// observes scheduled pods.
+func isWithinInitialScheduleGrace(pclq *grovecorev1alpha1.PodClique, now metav1.Time) bool {
+	return now.Time.Before(pclq.CreationTimestamp.Add(componentutils.InitialScheduleGrace))
 }
 
 // mutatePodCliqueScheduledCondition updates the PodCliqueScheduled condition based on scheduled pod counts

@@ -479,6 +479,56 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 			wantStatus: metav1.ConditionTrue,
 			wantReason: constants.ConditionReasonScheduledReplicasBelowMinAvailable,
 		},
+		{
+			// scheduled == 0 immediately after creation, still inside InitialScheduleGrace,
+			// must NOT breach — this is the churn-storm case: a burst of newly created
+			// PodCliques (e.g. a scale-up) would otherwise all write MinAvailableBreached=True
+			// on their very first status reconcile before the scheduler has had a chance to
+			// place any pod, cascading into extra reconciles across every PCLQ observer.
+			name: "fresh PCLQ within InitialScheduleGrace — not yet breached",
+			pclq: &grovecorev1alpha1.PodClique{
+				ObjectMeta: metav1.ObjectMeta{
+					CreationTimestamp: metav1.Now(),
+				},
+				Spec: grovecorev1alpha1.PodCliqueSpec{
+					Replicas:     3,
+					MinAvailable: ptr.To(int32(3)),
+				},
+				Status: grovecorev1alpha1.PodCliqueStatus{
+					ObservedGeneration: ptr.To(int64(1)),
+					Replicas:           3,
+					ScheduledReplicas:  0,
+					ReadyReplicas:      0,
+				},
+			},
+			wantStatus: metav1.ConditionFalse,
+			wantReason: constants.ConditionReasonAwaitingInitialSchedule,
+		},
+		{
+			// scheduled == 0 and InitialScheduleGrace has elapsed: the grace exception no
+			// longer applies and the always-breach rule from #614 takes over unchanged. This
+			// is the regression case #614 fixed — a workload that never manages to schedule
+			// (or loses all pods after being healthy) must still breach so TerminationDelay
+			// can eventually recycle it.
+			name: "PCLQ past InitialScheduleGrace still unscheduled — breaches",
+			pclq: &grovecorev1alpha1.PodClique{
+				ObjectMeta: metav1.ObjectMeta{
+					CreationTimestamp: pastTransition,
+				},
+				Spec: grovecorev1alpha1.PodCliqueSpec{
+					Replicas:     3,
+					MinAvailable: ptr.To(int32(3)),
+				},
+				Status: grovecorev1alpha1.PodCliqueStatus{
+					ObservedGeneration: ptr.To(int64(1)),
+					Replicas:           3,
+					ScheduledReplicas:  0,
+					ReadyReplicas:      0,
+				},
+			},
+			wantStatus: metav1.ConditionTrue,
+			wantReason: constants.ConditionReasonScheduledReplicasBelowMinAvailable,
+		},
 	}
 
 	for _, tt := range tests {
