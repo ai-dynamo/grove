@@ -86,5 +86,20 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return statusReconcileResult.Result()
 	}
 
-	return reconcileSpecFlowResult.Result()
+	result, err := reconcileSpecFlowResult.Result()
+	// reconcileStatus mutates pclq.Status.Conditions in place even when it only continues the
+	// flow, so this reads the MinAvailableBreached condition as of the reconcile that just ran.
+	// See minAvailableBreachedGraceRemaining for why this explicit requeue is needed: without
+	// it, a PodClique whose pods never get scheduled would never be reconciled again once its
+	// InitialScheduleGrace window elapses. Only tightens the requeue (never loosens one
+	// reconcileSpec already asked for), so reconcileSpec's own retry cadence is preserved as-is.
+	// Skipped when err != nil: controller-runtime ignores Result in that case and applies its
+	// own error backoff, so result.RequeueAfter would be dead/misleading to set here.
+	if err == nil {
+		if graceRemaining, graceActive := minAvailableBreachedGraceRemaining(pclq); graceActive &&
+			(result.RequeueAfter <= 0 || graceRemaining < result.RequeueAfter) {
+			result.RequeueAfter = graceRemaining
+		}
+	}
+	return result, err
 }

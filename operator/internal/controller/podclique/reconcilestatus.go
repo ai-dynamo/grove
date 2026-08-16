@@ -72,10 +72,9 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 
 	// mutate the conditions only if the PodClique has been successfully reconciled at least once.
 	// This prevents prematurely setting incorrect conditions.
-	var minAvailableBreachedCondition metav1.Condition
 	if pclq.Status.ObservedGeneration != nil {
 		mutatePodCliqueScheduledCondition(pclq)
-		minAvailableBreachedCondition = mutateMinAvailableBreachedCondition(pclq,
+		mutateMinAvailableBreachedCondition(pclq,
 			len(podCategories[k8sutils.PodHasAtleastOneContainerWithNonZeroExitCode]),
 			len(podCategories[k8sutils.PodStartedButNotReady]))
 		r.emitAllScheduledReplicasLostIfNeeded(pclq, originalStatus.ScheduledReplicas)
@@ -94,31 +93,37 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	// fires a watch event that wakes every controller observing PodCliques, which on a quiet
 	// cluster cascades into N spurious reconciles. equality.Semantic is needed (not plain
 	// ==) because the status mixes counters, pointers, conditions, and a label-selector map.
-	statusChanged := !equality.Semantic.DeepEqual(*originalStatus, pclq.Status)
-	if statusChanged {
-		// update the PodClique status.
-		if err := r.client.Status().Patch(ctx, pclq, patch); err != nil {
-			logger.Error(err, "failed to update PodClique status")
-			return ctrlcommon.ReconcileWithErrors("failed to update PodClique status", err)
-		}
+	if equality.Semantic.DeepEqual(*originalStatus, pclq.Status) {
+		return ctrlcommon.ContinueReconcile()
 	}
 
-	// While MinAvailableBreached is being held False purely because scheduledReplicas == 0 is
-	// still within InitialScheduleGrace, nothing else guarantees a follow-up reconcile once the
-	// grace window elapses: if the pods never get scheduled (e.g. insufficient capacity, a
-	// cordoned node), there is no further pod watch event to wake this reconciler, and the
-	// suppression would otherwise persist forever — silently reintroducing the exact bug the
-	// always-breach rule was written to fix. Explicitly requeue for when the grace window ends
-	// so the condition is re-evaluated even with zero new events.
-	if minAvailableBreachedCondition.Reason == constants.ConditionReasonAwaitingInitialSchedule {
-		remaining := time.Until(pclq.CreationTimestamp.Add(componentutils.InitialScheduleGrace))
-		if remaining <= 0 {
-			remaining = time.Second
-		}
-		return ctrlcommon.ReconcileAfter(remaining, "requeue to re-evaluate MinAvailableBreached once InitialScheduleGrace elapses")
+	// update the PodClique status.
+	if err := r.client.Status().Patch(ctx, pclq, patch); err != nil {
+		logger.Error(err, "failed to update PodClique status")
+		return ctrlcommon.ReconcileWithErrors("failed to update PodClique status", err)
 	}
-
 	return ctrlcommon.ContinueReconcile()
+}
+
+// minAvailableBreachedGraceRemaining reports how much longer the MinAvailableBreached condition
+// is being suppressed for scheduledReplicas == 0 within InitialScheduleGrace of pclq's creation
+// (see computeMinAvailableBreachedCondition). Reads pclq.Status.Conditions as already mutated by
+// reconcileStatus in this same reconcile pass, so it reflects the condition that was (or would
+// have been, if the status patch was skipped as a no-op) just computed. Callers use this to
+// schedule an explicit follow-up reconcile: without it, a PodClique whose pods never get
+// scheduled (e.g. a cordoned node) would never receive another pod watch event, and the
+// suppression would persist forever — silently reintroducing the bug the always-breach rule in
+// computeMinAvailableBreachedCondition was written to fix.
+func minAvailableBreachedGraceRemaining(pclq *grovecorev1alpha1.PodClique) (time.Duration, bool) {
+	cond := meta.FindStatusCondition(pclq.Status.Conditions, constants.ConditionTypeMinAvailableBreached)
+	if cond == nil || cond.Reason != constants.ConditionReasonAwaitingInitialSchedule {
+		return 0, false
+	}
+	remaining := time.Until(pclq.CreationTimestamp.Add(componentutils.InitialScheduleGrace))
+	if remaining <= 0 {
+		remaining = time.Second
+	}
+	return remaining, true
 }
 
 // mutateCurrentHashes updates the PodClique's current template and generation hashes when updates are complete
