@@ -17,6 +17,7 @@ package podclique
 import (
 	"context"
 	"fmt"
+	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -71,9 +72,10 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 
 	// mutate the conditions only if the PodClique has been successfully reconciled at least once.
 	// This prevents prematurely setting incorrect conditions.
+	var minAvailableBreachedCondition metav1.Condition
 	if pclq.Status.ObservedGeneration != nil {
 		mutatePodCliqueScheduledCondition(pclq)
-		mutateMinAvailableBreachedCondition(pclq,
+		minAvailableBreachedCondition = mutateMinAvailableBreachedCondition(pclq,
 			len(podCategories[k8sutils.PodHasAtleastOneContainerWithNonZeroExitCode]),
 			len(podCategories[k8sutils.PodStartedButNotReady]))
 		r.emitAllScheduledReplicasLostIfNeeded(pclq, originalStatus.ScheduledReplicas)
@@ -92,15 +94,30 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	// fires a watch event that wakes every controller observing PodCliques, which on a quiet
 	// cluster cascades into N spurious reconciles. equality.Semantic is needed (not plain
 	// ==) because the status mixes counters, pointers, conditions, and a label-selector map.
-	if equality.Semantic.DeepEqual(*originalStatus, pclq.Status) {
-		return ctrlcommon.ContinueReconcile()
+	statusChanged := !equality.Semantic.DeepEqual(*originalStatus, pclq.Status)
+	if statusChanged {
+		// update the PodClique status.
+		if err := r.client.Status().Patch(ctx, pclq, patch); err != nil {
+			logger.Error(err, "failed to update PodClique status")
+			return ctrlcommon.ReconcileWithErrors("failed to update PodClique status", err)
+		}
 	}
 
-	// update the PodClique status.
-	if err := r.client.Status().Patch(ctx, pclq, patch); err != nil {
-		logger.Error(err, "failed to update PodClique status")
-		return ctrlcommon.ReconcileWithErrors("failed to update PodClique status", err)
+	// While MinAvailableBreached is being held False purely because scheduledReplicas == 0 is
+	// still within InitialScheduleGrace, nothing else guarantees a follow-up reconcile once the
+	// grace window elapses: if the pods never get scheduled (e.g. insufficient capacity, a
+	// cordoned node), there is no further pod watch event to wake this reconciler, and the
+	// suppression would otherwise persist forever — silently reintroducing the exact bug the
+	// always-breach rule was written to fix. Explicitly requeue for when the grace window ends
+	// so the condition is re-evaluated even with zero new events.
+	if minAvailableBreachedCondition.Reason == constants.ConditionReasonAwaitingInitialSchedule {
+		remaining := time.Until(pclq.CreationTimestamp.Add(componentutils.InitialScheduleGrace))
+		if remaining <= 0 {
+			remaining = time.Second
+		}
+		return ctrlcommon.ReconcileAfter(remaining, "requeue to re-evaluate MinAvailableBreached once InitialScheduleGrace elapses")
 	}
+
 	return ctrlcommon.ContinueReconcile()
 }
 
@@ -206,12 +223,15 @@ func (r *Reconciler) emitAllScheduledReplicasLostIfNeeded(pclq *grovecorev1alpha
 	}
 }
 
-// mutateMinAvailableBreachedCondition updates the MinAvailableBreached condition based on pod availability
-func mutateMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, numNotReadyPodsWithContainersInError, numPodsStartedButNotReady int) {
+// mutateMinAvailableBreachedCondition updates the MinAvailableBreached condition based on pod
+// availability and returns the condition that was computed (regardless of whether it changed),
+// so the caller can react to its Reason (see the InitialScheduleGrace requeue in reconcileStatus).
+func mutateMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, numNotReadyPodsWithContainersInError, numPodsStartedButNotReady int) metav1.Condition {
 	newCondition := computeMinAvailableBreachedCondition(pclq, numNotReadyPodsWithContainersInError, numPodsStartedButNotReady)
 	if k8sutils.HasConditionChanged(pclq.Status.Conditions, newCondition) {
 		meta.SetStatusCondition(&pclq.Status.Conditions, newCondition)
 	}
+	return newCondition
 }
 
 // computeMinAvailableBreachedCondition calculates the MinAvailableBreached condition status based on pod availability
