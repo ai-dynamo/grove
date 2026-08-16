@@ -49,6 +49,7 @@ const state = {
   testName: "",
   startDate: "",
   endDate: "",
+  hiddenOverviewTests: new Set(),
 };
 
 const els = {
@@ -186,24 +187,30 @@ function render() {
 }
 
 function drawOverviewChart(runs) {
-  const rows = runs
+  const allRows = runs
     .map((run) => ({ run, value: run.totalSeconds }))
     .filter((item) => Number.isFinite(item.value))
     .sort((a, b) => a.run.date - b.run.date);
-  const testNames = unique(rows.map((row) => row.run.testName)).sort();
-  const colors = testColorMap(testNames);
+  const testNames = unique(allRows.map((row) => row.run.testName)).sort();
+  const colors = testColorMap(unique(state.runs.map((run) => run.testName)).sort());
 
-  renderLegend(els.overviewLegend, testNames.map((name) => ({ name, color: colors.get(name) })));
+  renderOverviewLegend(testNames, colors);
 
   const svg = els.overviewChart;
   const dims = prepareChart(svg, { top: 20, right: 28, bottom: 42, left: 58 });
-  if (rows.length === 0) {
+  if (allRows.length === 0) {
     drawEmpty(svg, "No total runtime points");
     return;
   }
 
-  const minX = rows[0].run.date.getTime();
-  const maxX = rows[rows.length - 1].run.date.getTime();
+  const rows = allRows.filter((row) => !state.hiddenOverviewTests.has(row.run.testName));
+  if (rows.length === 0) {
+    drawEmpty(svg, "All test series hidden");
+    return;
+  }
+
+  const minX = allRows[0].run.date.getTime();
+  const maxX = allRows[allRows.length - 1].run.date.getTime();
   const maxY = Math.max(...rows.map((row) => row.value), 0.001);
   const yTop = maxY * 1.15;
   const xScale = (value) => {
@@ -214,7 +221,7 @@ function drawOverviewChart(runs) {
 
   drawGrid(svg, dims, yTop);
 
-  for (const testName of testNames) {
+  for (const testName of testNames.filter((name) => !state.hiddenOverviewTests.has(name))) {
     const seriesRows = rows.filter((row) => row.run.testName === testName);
     const color = colors.get(testName);
     const points = seriesRows.map((row) => [
@@ -260,7 +267,7 @@ function drawOverviewChart(runs) {
     }
   }
 
-  drawDateLabels(svg, dims, rows.map((row) => row.run));
+  drawDateLabels(svg, dims, allRows.map((row) => row.run));
 }
 
 function selectedRuns(runs) {
@@ -758,6 +765,32 @@ function renderLegend(target, items) {
       const swatch = document.createElement("i");
       swatch.style.background = item.color;
       entry.append(swatch, document.createTextNode(item.name));
+      return entry;
+    }),
+  );
+}
+
+function renderOverviewLegend(testNames, colors) {
+  els.overviewLegend.replaceChildren(
+    ...testNames.map((testName) => {
+      const visible = !state.hiddenOverviewTests.has(testName);
+      const entry = document.createElement("button");
+      entry.className = "legend-toggle";
+      entry.type = "button";
+      entry.setAttribute("aria-pressed", String(visible));
+      entry.setAttribute("aria-label", `${visible ? "Hide" : "Show"} ${testName} series`);
+
+      const swatch = document.createElement("i");
+      swatch.style.background = colors.get(testName);
+      entry.append(swatch, document.createTextNode(testName));
+      entry.addEventListener("click", () => {
+        if (visible) {
+          state.hiddenOverviewTests.add(testName);
+        } else {
+          state.hiddenOverviewTests.delete(testName);
+        }
+        render();
+      });
       return entry;
     }),
   );

@@ -230,6 +230,34 @@ select {
   white-space: nowrap;
 }
 
+.legend-toggle {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  gap: 6px;
+  padding: 2px 0;
+  white-space: nowrap;
+}
+
+.legend-toggle[aria-pressed="false"] {
+  color: #9aa4b3;
+  text-decoration: line-through;
+}
+
+.legend-toggle[aria-pressed="false"] i {
+  opacity: 0.35;
+}
+
+.legend-toggle:focus-visible {
+  border-radius: 3px;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .legend i {
   border-radius: 2px;
   display: inline-block;
