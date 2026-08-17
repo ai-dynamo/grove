@@ -107,8 +107,6 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 
 	v := newPCSValidator(newPCS, admissionv1.Update, h.tasConfig, h.schedulerConfig, h.client, h.schedRegistry)
 	warnings, errs := v.validate()
-	resourceClaimNameValidator := newGeneratedResourceClaimNameValidator(newPCS)
-	errs = append(errs, resourceClaimNameValidator.validateUpdate(oldPCS, field.NewPath("spec", "template"))...)
 
 	// Validate MNNVL annotation immutability on PCS metadata and spec (clique templates)
 	errs = append(errs, mnnvl.ValidatePCSOnUpdate(oldPCS, newPCS)...)
@@ -123,6 +121,8 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 	}
 	updateWarnings := newTopologyConstraintsValidator(newPCS, h.tasConfig.Enabled, nil).updateWarnings()
 	warnings = append(warnings, updateWarnings...)
+	resourceClaimNameWarnings := newGeneratedResourceClaimNameValidator(newPCS).updateWarnings(field.NewPath("spec", "template"))
+	warnings = append(warnings, resourceClaimNameWarnings...)
 	return warnings, v.validateUpdate(oldPCS)
 }
 

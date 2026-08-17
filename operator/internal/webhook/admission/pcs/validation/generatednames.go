@@ -27,12 +27,10 @@ import (
 )
 
 type generatedResourceClaimNameCheck struct {
-	identity             string
 	fieldPath            *field.Path
 	referenceName        string
 	maxGeneratedName     string
 	ownerDescription     string
-	replicaLimits        []int32
 	nameValidationErrors []string
 }
 
@@ -50,28 +48,18 @@ func (v *generatedResourceClaimNameValidator) validate(fldPath *field.Path) fiel
 	return generatedResourceClaimNameErrors(buildGeneratedResourceClaimNameChecks(v.pcs, fldPath))
 }
 
-func (v *generatedResourceClaimNameValidator) validateUpdate(
-	oldPCS *grovecorev1alpha1.PodCliqueSet,
-	fldPath *field.Path,
-) field.ErrorList {
-	oldChecks := indexGeneratedResourceClaimNameChecksByIdentity(
-		buildGeneratedResourceClaimNameChecks(oldPCS, fldPath),
-	)
-	newChecks := buildGeneratedResourceClaimNameChecks(v.pcs, fldPath)
-
-	var allErrs field.ErrorList
-	for _, check := range newChecks {
+func (v *generatedResourceClaimNameValidator) updateWarnings(fldPath *field.Path) []string {
+	var warnings []string
+	for _, check := range buildGeneratedResourceClaimNameChecks(v.pcs, fldPath) {
 		if len(check.nameValidationErrors) == 0 {
 			continue
 		}
-		oldCheck, exists := oldChecks[check.identity]
-		if exists && len(oldCheck.nameValidationErrors) > 0 &&
-			!replicaLimitsIncreased(oldCheck.replicaLimits, check.replicaLimits) {
-			continue
-		}
-		allErrs = append(allErrs, generatedResourceClaimNameError(check))
+		warnings = append(warnings, fmt.Sprintf(
+			"%s generates an invalid ResourceClaim name for Pods; new Pods may fail admission",
+			check.fieldPath,
+		))
 	}
-	return allErrs
+	return warnings
 }
 
 func buildGeneratedResourceClaimNameChecks(
@@ -82,19 +70,14 @@ func buildGeneratedResourceClaimNameChecks(
 	pcsReplicas := pcs.Spec.Replicas
 	maxPCSReplicaIndex := maxReplicaIndex(pcsReplicas)
 
-	for i := range pcs.Spec.Template.ResourceSharing {
-		ref := &pcs.Spec.Template.ResourceSharing[i].ResourceSharingSpec
-		checks = appendGeneratedResourceClaimNameCheck(
-			checks,
-			fmt.Sprintf("pcs/%s/%s", ref.Name, ref.Scope),
-			fldPath.Child("resourceSharing").Index(i).Child("name"),
-			pcs.Name,
-			ref,
-			"PodCliqueSet",
-			nil,
-			pcsReplicas,
-		)
-	}
+	checks = appendGeneratedResourceClaimNameChecks(
+		checks,
+		resourceclaim.ResourceSharersFromPCS(pcs.Spec.Template.ResourceSharing),
+		fldPath.Child("resourceSharing"),
+		pcs.Name,
+		"PodCliqueSet",
+		pcsReplicas,
+	)
 
 	pcsgConfigIndexesByCliqueName := make(map[string][]int)
 	for i := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
@@ -104,19 +87,14 @@ func buildGeneratedResourceClaimNameChecks(
 			cfg.Name,
 		)
 		maxPCSGReplicas := maxPCSGConfiguredReplicas(cfg)
-		for j := range cfg.ResourceSharing {
-			ref := &cfg.ResourceSharing[j].ResourceSharingSpec
-			checks = appendGeneratedResourceClaimNameCheck(
-				checks,
-				fmt.Sprintf("pcsg/%s/%s/%s", cfg.Name, ref.Name, ref.Scope),
-				fldPath.Child("podCliqueScalingGroups").Index(i).Child("resourceSharing").Index(j).Child("name"),
-				pcsgName,
-				ref,
-				fmt.Sprintf("PodCliqueScalingGroup %q", cfg.Name),
-				[]int32{pcsReplicas},
-				maxPCSGReplicas,
-			)
-		}
+		checks = appendGeneratedResourceClaimNameChecks(
+			checks,
+			resourceclaim.ResourceSharersFromPCSG(cfg.ResourceSharing),
+			fldPath.Child("podCliqueScalingGroups").Index(i).Child("resourceSharing"),
+			pcsgName,
+			fmt.Sprintf("PodCliqueScalingGroup %q", cfg.Name),
+			maxPCSGReplicas,
+		)
 		for _, cliqueName := range cfg.CliqueNames {
 			pcsgConfigIndexesByCliqueName[cliqueName] = append(pcsgConfigIndexesByCliqueName[cliqueName], i)
 		}
@@ -134,19 +112,14 @@ func buildGeneratedResourceClaimNameChecks(
 				apicommon.ResourceNameReplica{Name: pcs.Name, Replica: maxPCSReplicaIndex},
 				clique.Name,
 			)
-			for j := range clique.ResourceSharing {
-				ref := &clique.ResourceSharing[j]
-				checks = appendGeneratedResourceClaimNameCheck(
-					checks,
-					fmt.Sprintf("pclq/%s/standalone/%s/%s", clique.Name, ref.Name, ref.Scope),
-					resourceSharingPath.Index(j).Child("name"),
-					pclqName,
-					ref,
-					fmt.Sprintf("standalone PodClique %q", clique.Name),
-					[]int32{pcsReplicas},
-					maxPCLQReplicas,
-				)
-			}
+			checks = appendGeneratedResourceClaimNameChecks(
+				checks,
+				resourceclaim.ResourceSharersFromPCLQ(clique.ResourceSharing),
+				resourceSharingPath,
+				pclqName,
+				fmt.Sprintf("standalone PodClique %q", clique.Name),
+				maxPCLQReplicas,
+			)
 			continue
 		}
 
@@ -164,60 +137,53 @@ func buildGeneratedResourceClaimNameChecks(
 				},
 				clique.Name,
 			)
-			for j := range clique.ResourceSharing {
-				ref := &clique.ResourceSharing[j]
-				checks = appendGeneratedResourceClaimNameCheck(
-					checks,
-					fmt.Sprintf("pclq/%s/pcsg/%s/%s/%s", clique.Name, cfg.Name, ref.Name, ref.Scope),
-					resourceSharingPath.Index(j).Child("name"),
-					pclqName,
-					ref,
-					fmt.Sprintf("PodClique %q in PodCliqueScalingGroup %q", clique.Name, cfg.Name),
-					[]int32{pcsReplicas, maxPCSGReplicas},
-					maxPCLQReplicas,
-				)
-			}
+			checks = appendGeneratedResourceClaimNameChecks(
+				checks,
+				resourceclaim.ResourceSharersFromPCLQ(clique.ResourceSharing),
+				resourceSharingPath,
+				pclqName,
+				fmt.Sprintf("PodClique %q in PodCliqueScalingGroup %q", clique.Name, cfg.Name),
+				maxPCLQReplicas,
+			)
 		}
 	}
 
 	return checks
 }
 
-func appendGeneratedResourceClaimNameCheck(
+func appendGeneratedResourceClaimNameChecks(
 	checks []generatedResourceClaimNameCheck,
-	identity string,
+	sharers []resourceclaim.ResourceSharer,
 	fldPath *field.Path,
 	ownerName string,
-	ref *grovecorev1alpha1.ResourceSharingSpec,
 	ownerDescription string,
-	parentReplicaLimits []int32,
 	replicaLimit int32,
 ) []generatedResourceClaimNameCheck {
-	if ref.Name == "" {
-		return checks
-	}
+	for i, sharer := range sharers {
+		ref := sharer.GetBase()
+		if ref.Name == "" {
+			continue
+		}
 
-	var generatedName string
-	replicaLimits := append([]int32(nil), parentReplicaLimits...)
-	switch ref.Scope {
-	case grovecorev1alpha1.ResourceSharingScopeAllReplicas:
-		generatedName = resourceclaim.AllReplicasRCName(ownerName, ref.Name)
-	case grovecorev1alpha1.ResourceSharingScopePerReplica:
-		generatedName = resourceclaim.PerReplicaRCName(ownerName, maxReplicaIndex(replicaLimit), ref.Name)
-		replicaLimits = append(replicaLimits, replicaLimit)
-	default:
-		return checks
-	}
+		var generatedName string
+		switch ref.Scope {
+		case grovecorev1alpha1.ResourceSharingScopeAllReplicas:
+			generatedName = resourceclaim.AllReplicasRCName(ownerName, ref.Name)
+		case grovecorev1alpha1.ResourceSharingScopePerReplica:
+			generatedName = resourceclaim.PerReplicaRCName(ownerName, maxReplicaIndex(replicaLimit), ref.Name)
+		default:
+			continue
+		}
 
-	return append(checks, generatedResourceClaimNameCheck{
-		identity:             identity,
-		fieldPath:            fldPath,
-		referenceName:        ref.Name,
-		maxGeneratedName:     generatedName,
-		ownerDescription:     ownerDescription,
-		replicaLimits:        replicaLimits,
-		nameValidationErrors: k8svalidation.IsDNS1123Label(generatedName),
-	})
+		checks = append(checks, generatedResourceClaimNameCheck{
+			fieldPath:            fldPath.Index(i).Child("name"),
+			referenceName:        ref.Name,
+			maxGeneratedName:     generatedName,
+			ownerDescription:     ownerDescription,
+			nameValidationErrors: k8svalidation.IsDNS1123Label(generatedName),
+		})
+	}
+	return checks
 }
 
 func generatedResourceClaimNameErrors(checks []generatedResourceClaimNameCheck) field.ErrorList {
@@ -241,28 +207,6 @@ func generatedResourceClaimNameError(check generatedResourceClaimNameCheck) *fie
 			strings.Join(check.nameValidationErrors, "; "),
 		),
 	)
-}
-
-func indexGeneratedResourceClaimNameChecksByIdentity(
-	checks []generatedResourceClaimNameCheck,
-) map[string]generatedResourceClaimNameCheck {
-	result := make(map[string]generatedResourceClaimNameCheck, len(checks))
-	for _, check := range checks {
-		result[check.identity] = check
-	}
-	return result
-}
-
-func replicaLimitsIncreased(oldLimits, newLimits []int32) bool {
-	if len(oldLimits) != len(newLimits) {
-		return true
-	}
-	for i := range newLimits {
-		if newLimits[i] > oldLimits[i] {
-			return true
-		}
-	}
-	return false
 }
 
 func maxPCSGConfiguredReplicas(cfg *grovecorev1alpha1.PodCliqueScalingGroupConfig) int32 {
