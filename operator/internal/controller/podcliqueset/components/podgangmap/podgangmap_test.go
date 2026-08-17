@@ -16,17 +16,24 @@ package podgangmap
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/go-logr/logr"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	clocktesting "k8s.io/utils/clock/testing"
 	"k8s.io/utils/ptr"
@@ -65,6 +72,45 @@ func TestSyncBootstrapsPodGangMapForFreshReplica(t *testing.T) {
 	scaleOut := testutils.EntryByRole(pgm.Spec.Entries, grovecorev1alpha1.PodGangEntryRoleScaleOut)
 	assert.Empty(t, scaleOut.PCSGReplicaIndices["sg"])
 	assert.Equal(t, []string{anchor.Epoch}, scaleOut.DependsOn)
+}
+
+func TestSyncReusesEpochFromExistingPodGangsWhenPodGangMapIsMissing(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
+		WithReplicas(1).
+		WithStandaloneCliqueReplicas("clq-a", 1).
+		WithPodCliqueSetGenerationHash(ptr.To("hash1")).
+		Build()
+
+	// The PodGangMap for replica 0 is gone, but its anchor PodGang still carries the epoch its pods use.
+	anchorPodGang := podGangForReplica(t, "pcs-0-1500", "pcs", 0, "1500", grovecorev1alpha1.PodGangEntryRoleAnchor)
+
+	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, anchorPodGang})
+	// A clock at 9999 would assign a different epoch, so reusing 1500 proves the epoch came from the PodGang.
+	operator := New(cl, groveclientscheme.Scheme, clocktesting.NewFakeClock(time.Unix(0, 9999)))
+
+	err := operator.Sync(context.Background(), logr.Discard(), pcs)
+	require.NoError(t, err)
+
+	pgm := getPodGangMap(t, cl, "pcs-0")
+	anchor := testutils.EntryByRole(pgm.Spec.Entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
+	assert.Equal(t, "1500", anchor.Epoch)
+}
+
+func TestSyncRequeuesWhenPodGangMapHasNoEntries(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
+		WithReplicas(1).
+		WithStandaloneCliqueReplicas("clq-a", 1).
+		WithPodCliqueSetGenerationHash(ptr.To("hash1")).
+		Build()
+
+	// A PodGangMap that exists but has no entries is a stale read.
+	emptyPGM := testutils.NewPodGangMapBuilder("pcs", "default", types.UID("uid"), 0).Build()
+
+	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, emptyPGM})
+	operator := New(cl, groveclientscheme.Scheme, clocktesting.NewFakeClock(time.Unix(0, 1000)))
+
+	err := operator.Sync(context.Background(), logr.Discard(), pcs)
+	testutils.AssertGroveError(t, &groveerr.GroveError{Code: groveerr.ErrCodeRequeueAfter, Operation: "Sync"}, err)
 }
 
 func TestSyncDeletesOrphanedPodGangMaps(t *testing.T) {
@@ -153,6 +199,22 @@ func oldHashPodGangMap(pcsName, namespace string, replicaIndex int) *grovecorev1
 			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
 			WithPodCliques(map[string]int32{"clq-a": 1}).Build()).
 		Build()
+}
+
+// podGangForReplica builds a PodGang for a PCS replica carrying the labels the PodGangMap component
+// selects, groups, and reads epochs on: the PodGang selector labels, the replica index, the epoch, and
+// the role.
+func podGangForReplica(t *testing.T, name, pcsName string, replicaIndex int, epoch string, role grovecorev1alpha1.PodGangEntryRole) *groveschedulerv1alpha1.PodGang {
+	t.Helper()
+	labels := lo.Assign(
+		componentutils.GetPodGangSelectorLabels(metav1.ObjectMeta{Name: pcsName}),
+		map[string]string{
+			apicommon.LabelPodCliqueSetReplicaIndex: strconv.Itoa(replicaIndex),
+			apicommon.LabelEpoch:                    epoch,
+			apicommon.LabelPodGangRole:              string(role),
+		},
+	)
+	return testutils.NewPodGangBuilder(name, "default").WithLabels(labels).Build()
 }
 
 func getPodGangMap(t *testing.T, cl client.Client, name string) *grovecorev1alpha1.PodGangMap {

@@ -23,30 +23,72 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/samber/lo"
 	"k8s.io/utils/clock"
 )
 
-// buildBootstrapEntries emits the initial PodGangMap entries for a fresh PCS replica. It produces
-// one anchor entry (epoch E0, DependsOn nil) carrying every standalone PodClique's full replica
-// count and every PodCliqueScalingGroup's MinAvailable replicas, one Tail entry aggregating each
-// PodCliqueScalingGroup's replicas above MinAvailable across all PodCliqueScalingGroups (epoch
-// E1 > E0, DependsOn E0), and, when the PodCliqueSet has any PodCliqueScalingGroup, one empty
-// ScaleOut entry (epoch E2 > E1, DependsOn E0) that future scale-outs attach to. Entries are
-// returned in epoch order.
-func buildBootstrapEntries(pcs *grovecorev1alpha1.PodCliqueSet, clk clock.Clock) []grovecorev1alpha1.PodGangEntry {
-	anchorEpoch := strconv.FormatInt(clk.Now().UnixNano(), 10)
-	tailEpoch := strconv.FormatInt(clk.Now().UnixNano()+1, 10)
-	scaleOutEpoch := strconv.FormatInt(clk.Now().UnixNano()+2, 10)
+// buildBootstrapEntries builds the initial PodGangMap entries for a PCS replica from the PCS spec. It
+// produces an anchor entry with every standalone PodClique and each PodCliqueScalingGroup's
+// MinAvailable replicas, a Tail entry for PodCliqueScalingGroup replicas above MinAvailable, and, when
+// the PodCliqueSet has a PodCliqueScalingGroup, an empty ScaleOut entry that later scale-outs attach
+// to. Each entry reuses the epoch its existing PodGangs carry. It assigns a new epoch for a role that
+// has no existing PodGang, or for every role when there is no anchor PodGang to reuse.
+func buildBootstrapEntries(pcs *grovecorev1alpha1.PodCliqueSet, clk clock.Clock, existingPodGangs []groveschedulerv1alpha1.PodGang) []grovecorev1alpha1.PodGangEntry {
+	epochByRole := epochByRoleFromPodGangs(existingPodGangs)
+	now := clk.Now().UnixNano()
+
+	var anchorEpoch, tailEpoch, scaleOutEpoch int64
+	if adopted, ok := epochByRole[grovecorev1alpha1.PodGangEntryRoleAnchor]; ok {
+		anchorEpoch = adopted
+		tailEpoch = epochOrDefault(epochByRole, grovecorev1alpha1.PodGangEntryRoleTail, anchorEpoch+1)
+		scaleOutEpoch = epochOrDefault(epochByRole, grovecorev1alpha1.PodGangEntryRoleScaleOut, anchorEpoch+2)
+	} else {
+		anchorEpoch = now
+		tailEpoch = now + 1
+		scaleOutEpoch = now + 2
+	}
 
 	entries := make([]grovecorev1alpha1.PodGangEntry, 0, 3)
-	entries = append(entries, buildBootstrapAnchorEntry(pcs, anchorEpoch))
-	if tailEntry, ok := buildBootstrapTailEntry(pcs, tailEpoch, anchorEpoch); ok {
+	entries = append(entries, buildBootstrapAnchorEntry(pcs, strconv.FormatInt(anchorEpoch, 10)))
+	if tailEntry, ok := buildBootstrapTailEntry(pcs, strconv.FormatInt(tailEpoch, 10), strconv.FormatInt(anchorEpoch, 10)); ok {
 		entries = append(entries, tailEntry)
 	}
-	entries = ensureScaleOutEntry(entries, pcs, scaleOutEpoch, nil)
+	entries = ensureScaleOutEntry(entries, pcs, strconv.FormatInt(scaleOutEpoch, 10), nil)
 
 	return entries
+}
+
+// epochByRoleFromPodGangs returns the epoch each role's PodGangs carry, keyed by role, from the
+// grove.io/podgang-role and grove.io/epoch labels. PodGangs of one role share an epoch, so the first
+// value seen for a role is used. A role whose PodGangs carry no epoch, and a role with no PodGang, are
+// omitted from the returned map.
+func epochByRoleFromPodGangs(existingPodGangs []groveschedulerv1alpha1.PodGang) map[grovecorev1alpha1.PodGangEntryRole]int64 {
+	byRole := make(map[grovecorev1alpha1.PodGangEntryRole]int64)
+	for i := range existingPodGangs {
+		labels := existingPodGangs[i].Labels
+		epochStr, hasEpoch := labels[apicommon.LabelEpoch]
+		role, hasRole := labels[apicommon.LabelPodGangRole]
+		if !hasEpoch || !hasRole {
+			continue
+		}
+		epoch, err := strconv.ParseInt(epochStr, 10, 64)
+		if err != nil {
+			continue
+		}
+		if _, seen := byRole[grovecorev1alpha1.PodGangEntryRole(role)]; !seen {
+			byRole[grovecorev1alpha1.PodGangEntryRole(role)] = epoch
+		}
+	}
+	return byRole
+}
+
+// epochOrDefault returns the epoch for the role, or defaultEpoch when the role is absent.
+func epochOrDefault(epochByRole map[grovecorev1alpha1.PodGangEntryRole]int64, role grovecorev1alpha1.PodGangEntryRole, defaultEpoch int64) int64 {
+	if epoch, ok := epochByRole[role]; ok {
+		return epoch
+	}
+	return defaultEpoch
 }
 
 // buildBootstrapAnchorEntry returns the anchor entry carrying every standalone PodClique's full

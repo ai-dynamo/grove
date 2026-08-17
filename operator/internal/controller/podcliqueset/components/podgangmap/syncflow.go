@@ -25,6 +25,7 @@ import (
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/go-logr/logr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -38,6 +39,7 @@ type syncSnapshot struct {
 	existingStandalonePCLQsByReplica map[int][]grovecorev1alpha1.PodClique
 	existingPCSGsByReplica           map[int][]grovecorev1alpha1.PodCliqueScalingGroup
 	existingPGMByReplica             map[int]grovecorev1alpha1.PodGangMap
+	existingPodGangsByReplica        map[int][]groveschedulerv1alpha1.PodGang
 }
 
 // takeSnapshot queries the live resources and creates a syncSnapshot.
@@ -55,6 +57,10 @@ func (r _resource) takeSnapshot(ctx context.Context, logger logr.Logger, pcs *gr
 		return nil, err
 	}
 	syncSnap.existingPGMByReplica, err = r.getExistingPGMByReplica(ctx, pcs)
+	if err != nil {
+		return nil, err
+	}
+	syncSnap.existingPodGangsByReplica, err = r.getExistingPodGangsByReplica(ctx, pcs)
 	if err != nil {
 		return nil, err
 	}
@@ -124,20 +130,53 @@ func (r _resource) getExistingPGMByReplica(ctx context.Context, pcs *grovecorev1
 	return pgmByReplica, nil
 }
 
-// runSyncFlow reconciles the PodGangMap for every PCS replica, then deletes PodGangMaps orphaned by
-// a PCS replica scale-in. A replica with no PodGangMap entries is bootstrapped from the PCS spec.
-// A replica that already has entries has them re-authored by reconcileEntries, and an under-update replica
-// first has its entries advanced to the current generation hash.
+// getExistingPodGangsByReplica fetches all PodGangs for the PCS and groups them by PCS replica index.
+func (r _resource) getExistingPodGangsByReplica(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (map[int][]groveschedulerv1alpha1.PodGang, error) {
+	existingPodGangs, err := componentutils.GetExistingPodGangs(ctx, r.client, pcs.ObjectMeta, pcs.Namespace)
+	if err != nil {
+		return nil, groveerr.WrapError(err,
+			errCodeListPodGangs,
+			component.OperationSync,
+			fmt.Sprintf("Error listing PodGangs for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
+		)
+	}
+	podGangsByReplica, err := componentutils.GroupPodGangsByPCSReplicaIndex(existingPodGangs)
+	if err != nil {
+		return nil, groveerr.WrapError(err,
+			errCodeGroupPodGangsByReplica,
+			component.OperationSync,
+			fmt.Sprintf("Error grouping PodGangs by replica index for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
+		)
+	}
+	return podGangsByReplica, nil
+}
+
+// runSyncFlow reconciles the PodGangMap for every PCS replica, then deletes PodGangMaps orphaned by a
+// PCS replica scale-in. Each replica is in one of three states.
+//  1. No PodGangMap. Its entries are authored from the PCS spec, reusing the epoch its existing
+//     PodGangs carry so a rebuilt PodGangMap does not strand pods.
+//  2. A PodGangMap with no entries. This is a stale read, since a live PodGangMap always has an
+//     anchor entry. The reconcile requeues.
+//  3. A PodGangMap with entries. reconcileEntries re-authors them, advancing an under-update replica
+//     to the current generation hash first.
 func (r _resource) runSyncFlow(ctx context.Context, syncSnap *syncSnapshot) error {
 	for pcsReplicaIndex := range int(syncSnap.pcs.Spec.Replicas) {
 		pgm, pgmExists := syncSnap.existingPGMByReplica[pcsReplicaIndex]
-		pgmHasEntries := pgmExists && len(pgm.Spec.Entries) > 0
+
+		if pgmExists && len(pgm.Spec.Entries) == 0 {
+			return groveerr.New(
+				groveerr.ErrCodeRequeueAfter,
+				component.OperationSync,
+				fmt.Sprintf("PodGangMap for replica %d of PodCliqueSet %v has no entries, requeuing", pcsReplicaIndex, client.ObjectKeyFromObject(syncSnap.pcs)),
+			)
+		}
+
 		var (
 			entries []grovecorev1alpha1.PodGangEntry
 			err     error
 		)
-		if !pgmHasEntries {
-			entries = buildBootstrapEntries(syncSnap.pcs, r.clk)
+		if !pgmExists {
+			entries = buildBootstrapEntries(syncSnap.pcs, r.clk, syncSnap.existingPodGangsByReplica[pcsReplicaIndex])
 		} else {
 			// Deep-copy the existing entries so mutations here do not alias the snapshot's PodGangMap.
 			entries = clonePodGangEntries(pgm.Spec.Entries)

@@ -304,3 +304,40 @@ func TestGetExistingPodGangs(t *testing.T) {
 		assert.Empty(t, result)
 	})
 }
+
+func TestGroupPodGangsByPCSReplicaIndex(t *testing.T) {
+	const namespace = "default"
+	podGangWithReplicaIndex := func(name, replicaIndexLabel string) groveschedulerv1alpha1.PodGang {
+		labels := map[string]string{}
+		if replicaIndexLabel != "" {
+			labels[apicommon.LabelPodCliqueSetReplicaIndex] = replicaIndexLabel
+		}
+		return groveschedulerv1alpha1.PodGang{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: labels},
+		}
+	}
+
+	t.Run("groups PodGangs by replica index", func(t *testing.T) {
+		podGangs := []groveschedulerv1alpha1.PodGang{
+			podGangWithReplicaIndex("pg-0-a", "0"),
+			podGangWithReplicaIndex("pg-0-b", "0"),
+			podGangWithReplicaIndex("pg-1-a", "1"),
+		}
+		actual, err := GroupPodGangsByPCSReplicaIndex(podGangs)
+		require.NoError(t, err)
+		require.Len(t, actual[0], 2)
+		require.Len(t, actual[1], 1)
+		assert.ElementsMatch(t, []string{"pg-0-a", "pg-0-b"}, []string{actual[0][0].Name, actual[0][1].Name})
+		assert.Equal(t, "pg-1-a", actual[1][0].Name)
+	})
+
+	t.Run("missing replica-index label is an error", func(t *testing.T) {
+		_, err := GroupPodGangsByPCSReplicaIndex([]groveschedulerv1alpha1.PodGang{podGangWithReplicaIndex("pg-no-label", "")})
+		require.Error(t, err)
+	})
+
+	t.Run("non-integer replica-index label is an error", func(t *testing.T) {
+		_, err := GroupPodGangsByPCSReplicaIndex([]groveschedulerv1alpha1.PodGang{podGangWithReplicaIndex("pg-bad", "abc")})
+		require.Error(t, err)
+	})
+}

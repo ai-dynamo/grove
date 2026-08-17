@@ -23,6 +23,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,10 +40,11 @@ const (
 
 func TestBuildBootstrapEntries(t *testing.T) {
 	tests := []struct {
-		name          string
-		pcs           *grovecorev1alpha1.PodCliqueSet
-		expectedRoles []grovecorev1alpha1.PodGangEntryRole
-		assertEntries func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry)
+		name             string
+		pcs              *grovecorev1alpha1.PodCliqueSet
+		existingPodGangs []groveschedulerv1alpha1.PodGang
+		expectedRoles    []grovecorev1alpha1.PodGangEntryRole
+		assertEntries    func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry)
 	}{
 		{
 			name: "standalone clique only, no scaling group",
@@ -117,13 +119,169 @@ func TestBuildBootstrapEntries(t *testing.T) {
 				assert.Equal(t, []int32{2, 3}, tail.PCSGReplicaIndices[testPCSGName])
 			},
 		},
+		{
+			name: "reuses anchor epoch from an existing anchor PodGang",
+			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+				WithStandaloneCliqueReplicas("clq-a", 3).
+				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).
+				Build(),
+			existingPodGangs: []groveschedulerv1alpha1.PodGang{
+				*podGangWithEpochRole("pg-anchor", "500", grovecorev1alpha1.PodGangEntryRoleAnchor),
+			},
+			expectedRoles: []grovecorev1alpha1.PodGangEntryRole{grovecorev1alpha1.PodGangEntryRoleAnchor},
+			assertEntries: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
+				anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
+				assert.Equal(t, "500", anchor.Epoch)
+			},
+		},
+		{
+			name: "reuses anchor and tail epochs from existing PodGangs",
+			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+				WithScalingGroupConfig(testPCSGName, []string{"c"}, 4, 2).
+				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).
+				Build(),
+			existingPodGangs: []groveschedulerv1alpha1.PodGang{
+				*podGangWithEpochRole("pg-anchor", "500", grovecorev1alpha1.PodGangEntryRoleAnchor),
+				*podGangWithEpochRole("pg-tail", "600", grovecorev1alpha1.PodGangEntryRoleTail),
+			},
+			expectedRoles: []grovecorev1alpha1.PodGangEntryRole{
+				grovecorev1alpha1.PodGangEntryRoleAnchor,
+				grovecorev1alpha1.PodGangEntryRoleTail,
+				grovecorev1alpha1.PodGangEntryRoleScaleOut,
+			},
+			assertEntries: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
+				anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
+				assert.Equal(t, "500", anchor.Epoch)
+				tail := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleTail)
+				assert.Equal(t, "600", tail.Epoch)
+			},
+		},
+		{
+			name: "reuses anchor epoch and assigns tail epoch when no tail PodGang exists",
+			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+				WithScalingGroupConfig(testPCSGName, []string{"c"}, 4, 2).
+				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).
+				Build(),
+			existingPodGangs: []groveschedulerv1alpha1.PodGang{
+				*podGangWithEpochRole("pg-anchor", "500", grovecorev1alpha1.PodGangEntryRoleAnchor),
+			},
+			expectedRoles: []grovecorev1alpha1.PodGangEntryRole{
+				grovecorev1alpha1.PodGangEntryRoleAnchor,
+				grovecorev1alpha1.PodGangEntryRoleTail,
+				grovecorev1alpha1.PodGangEntryRoleScaleOut,
+			},
+			assertEntries: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
+				anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
+				assert.Equal(t, "500", anchor.Epoch)
+				// The tail epoch is assigned after the anchor epoch so anchor < tail holds.
+				tail := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleTail)
+				assert.Equal(t, "501", tail.Epoch)
+				assert.Equal(t, []string{"500"}, tail.DependsOn)
+			},
+		},
+		{
+			name: "assigns all epochs when no anchor PodGang exists even if a tail PodGang carries one",
+			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+				WithScalingGroupConfig(testPCSGName, []string{"c"}, 4, 2).
+				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).
+				Build(),
+			existingPodGangs: []groveschedulerv1alpha1.PodGang{
+				*podGangWithEpochRole("pg-tail", "600", grovecorev1alpha1.PodGangEntryRoleTail),
+			},
+			expectedRoles: []grovecorev1alpha1.PodGangEntryRole{
+				grovecorev1alpha1.PodGangEntryRoleAnchor,
+				grovecorev1alpha1.PodGangEntryRoleTail,
+				grovecorev1alpha1.PodGangEntryRoleScaleOut,
+			},
+			assertEntries: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
+				// No anchor PodGang to reuse, so all epochs are assigned from the clock and the orphan
+				// tail epoch is ignored. anchor < tail < scaleOut holds.
+				anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
+				tail := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleTail)
+				assert.NotEqual(t, "600", tail.Epoch)
+				assert.Less(t, anchor.Epoch, tail.Epoch)
+			},
+		},
+		{
+			name: "assigns epochs when existing PodGangs carry no epoch label (legacy)",
+			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+				WithStandaloneCliqueReplicas("clq-a", 3).
+				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).
+				Build(),
+			existingPodGangs: []groveschedulerv1alpha1.PodGang{
+				*testutils.NewPodGangBuilder("pg-legacy", testNamespace).Build(),
+			},
+			expectedRoles: []grovecorev1alpha1.PodGangEntryRole{grovecorev1alpha1.PodGangEntryRoleAnchor},
+			assertEntries: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
+				anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
+				// A clock at 1000ns produces epoch "1000". A legacy PodGang carries no epoch to reuse.
+				assert.Equal(t, "1000", anchor.Epoch)
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			clk := clocktesting.NewFakeClock(time.Unix(0, 1000))
-			actual := buildBootstrapEntries(tt.pcs, clk)
+			actual := buildBootstrapEntries(tt.pcs, clk, tt.existingPodGangs)
 			assert.Equal(t, tt.expectedRoles, testutils.RolesOf(actual))
 			tt.assertEntries(t, actual)
+		})
+	}
+}
+
+func TestEpochByRoleFromPodGangs(t *testing.T) {
+	tests := []struct {
+		name     string
+		podGangs []groveschedulerv1alpha1.PodGang
+		expected map[grovecorev1alpha1.PodGangEntryRole]int64
+	}{
+		{
+			name:     "no PodGangs yields an empty map",
+			podGangs: nil,
+			expected: map[grovecorev1alpha1.PodGangEntryRole]int64{},
+		},
+		{
+			name: "reads epoch per role",
+			podGangs: []groveschedulerv1alpha1.PodGang{
+				*podGangWithEpochRole("a", "500", grovecorev1alpha1.PodGangEntryRoleAnchor),
+				*podGangWithEpochRole("t", "600", grovecorev1alpha1.PodGangEntryRoleTail),
+			},
+			expected: map[grovecorev1alpha1.PodGangEntryRole]int64{
+				grovecorev1alpha1.PodGangEntryRoleAnchor: 500,
+				grovecorev1alpha1.PodGangEntryRoleTail:   600,
+			},
+		},
+		{
+			name: "first PodGang of a role wins",
+			podGangs: []groveschedulerv1alpha1.PodGang{
+				*podGangWithEpochRole("t1", "600", grovecorev1alpha1.PodGangEntryRoleTail),
+				*podGangWithEpochRole("t2", "700", grovecorev1alpha1.PodGangEntryRoleTail),
+			},
+			expected: map[grovecorev1alpha1.PodGangEntryRole]int64{
+				grovecorev1alpha1.PodGangEntryRoleTail: 600,
+			},
+		},
+		{
+			name: "skips PodGangs missing the epoch or role label",
+			podGangs: []groveschedulerv1alpha1.PodGang{
+				*testutils.NewPodGangBuilder("no-labels", testNamespace).Build(),
+				*testutils.NewPodGangBuilder("epoch-only", testNamespace).
+					WithLabels(map[string]string{apicommon.LabelEpoch: "500"}).Build(),
+			},
+			expected: map[grovecorev1alpha1.PodGangEntryRole]int64{},
+		},
+		{
+			name: "skips a PodGang whose epoch label is not an integer",
+			podGangs: []groveschedulerv1alpha1.PodGang{
+				*podGangWithEpochRole("bad", "not-a-number", grovecorev1alpha1.PodGangEntryRoleAnchor),
+			},
+			expected: map[grovecorev1alpha1.PodGangEntryRole]int64{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual := epochByRoleFromPodGangs(tt.podGangs)
+			assert.Equal(t, tt.expected, actual)
 		})
 	}
 }
@@ -232,6 +390,15 @@ func TestSyncEntries(t *testing.T) {
 			tt.assertResult(t, actual)
 		})
 	}
+}
+
+// podGangWithEpochRole builds a PodGang carrying the grove.io/epoch and grove.io/podgang-role labels.
+func podGangWithEpochRole(name, epoch string, role grovecorev1alpha1.PodGangEntryRole) *groveschedulerv1alpha1.PodGang {
+	return testutils.NewPodGangBuilder(name, testNamespace).
+		WithLabels(map[string]string{
+			apicommon.LabelEpoch:       epoch,
+			apicommon.LabelPodGangRole: string(role),
+		}).Build()
 }
 
 func anchorEntry(podCliques map[string]int32, pcsgIndices map[string][]int32) grovecorev1alpha1.PodGangEntry {
