@@ -61,10 +61,13 @@ func podNames(pods []*corev1.Pod) []string {
 	return names
 }
 
-// TestDeletionSorterPrefersTerminatingPods asserts the criterion that keeps a surplus deletion budget
-// away from Pods that are still serving. A Pod inside its termination grace period keeps reporting
-// Running and Ready, so without an explicit deletionTimestamp criterion it ties with a healthy Pod on
-// every other rule and the resulting order is whatever the caller happened to pass in.
+// TestDeletionSorterPrefersTerminatingPods pins the defensive criterion 0.
+//
+// The scale-in caller (selectExcessPodsToDelete) filters terminating Pods out before sorting, so this
+// criterion does not fire on that path. It exists for callers that hand DeletionSorter an unfiltered
+// list — the type and its Pods field are both exported. A Pod inside its termination grace period
+// keeps reporting Running and Ready, so without an explicit deletionTimestamp rule it ties with a
+// healthy Pod on every other criterion and the resulting order is whatever the caller passed in.
 func TestDeletionSorterPrefersTerminatingPods(t *testing.T) {
 	createdAt := metav1.NewTime(time.Now())
 

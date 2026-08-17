@@ -46,10 +46,14 @@ var podPhaseToOrdinal = map[corev1.PodPhase]int{corev1.PodPending: 0, corev1.Pod
 // Only 4 conditions have been taken as is and used here.
 func (s DeletionSorter) Less(i, j int) bool {
 	// 0. Already terminating < not terminating
-	// A Pod that has been marked for deletion keeps reporting Running and Ready until its containers
-	// actually stop, so none of the criteria below can distinguish it from a healthy Pod. Sorting it
-	// first ensures that any surplus deletion budget is spent on Pods that are already on their way
-	// out rather than on Pods that are still serving.
+	//
+	// DEFENSIVE: the scale-in caller (selectExcessPodsToDelete) filters terminating Pods out
+	// before sorting, so in that path this criterion never fires. It is kept because
+	// DeletionSorter is exported along with its Pods field and a future caller may hand it an
+	// unfiltered list. A Pod that has been marked for deletion keeps reporting Running and Ready
+	// until its containers actually stop, so none of the criteria below can distinguish it from a
+	// healthy Pod — without this rule such a caller would spend its deletion budget on a Pod that
+	// is still serving.
 	if isPodTerminating(s.Pods[i]) != isPodTerminating(s.Pods[j]) {
 		return isPodTerminating(s.Pods[i])
 	}
