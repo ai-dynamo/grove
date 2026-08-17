@@ -96,6 +96,31 @@ func TestSyncReusesEpochFromExistingPodGangsWhenPodGangMapIsMissing(t *testing.T
 	assert.Equal(t, "1500", anchor.Epoch)
 }
 
+func TestSyncIgnoresLegacyPodGangsWithoutEpochLabelWhenPodGangMapIsMissing(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
+		WithReplicas(1).
+		WithStandaloneCliqueReplicas("clq-a", 1).
+		WithPodCliqueSetGenerationHash(ptr.To("hash1")).
+		Build()
+
+	// A legacy PodGang from before the epoch scheme carries no grove.io/epoch or replica-index label.
+	// It must be skipped, not error the sync, so migration can proceed.
+	legacyPodGang := testutils.NewPodGangBuilder("pcs-0", "default").
+		WithLabels(componentutils.GetPodGangSelectorLabels(metav1.ObjectMeta{Name: "pcs"})).
+		Build()
+
+	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, legacyPodGang})
+	operator := New(cl, groveclientscheme.Scheme, clocktesting.NewFakeClock(time.Unix(0, 1000)))
+
+	err := operator.Sync(context.Background(), logr.Discard(), pcs)
+	require.NoError(t, err)
+
+	// The PodGangMap is created from the spec, assigning a new epoch since no epoch-scheme PodGang exists.
+	pgm := getPodGangMap(t, cl, "pcs-0")
+	anchor := testutils.EntryByRole(pgm.Spec.Entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
+	assert.Equal(t, "1000", anchor.Epoch)
+}
+
 func TestSyncRequeuesWhenPodGangMapHasNoEntries(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
 		WithReplicas(1).

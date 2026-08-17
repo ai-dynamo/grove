@@ -16,8 +16,6 @@ package utils
 
 import (
 	"context"
-	"fmt"
-	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 
@@ -55,23 +53,4 @@ func GetExistingPodGangs(ctx context.Context, cl client.Client, pcsObjectMeta me
 		return nil, err
 	}
 	return podGangs.Items, nil
-}
-
-// GroupPodGangsByPCSReplicaIndex groups PodGangs by their PodCliqueSet replica index read from the
-// grove.io/podcliqueset-replica-index label. A missing or non-integer label is a contract violation
-// and returns an error.
-func GroupPodGangsByPCSReplicaIndex(podGangs []groveschedulerv1alpha1.PodGang) (map[int][]groveschedulerv1alpha1.PodGang, error) {
-	grouped := make(map[int][]groveschedulerv1alpha1.PodGang)
-	for i := range podGangs {
-		labelValue, ok := podGangs[i].Labels[apicommon.LabelPodCliqueSetReplicaIndex]
-		if !ok {
-			return nil, fmt.Errorf("PodGang %s has no label %s", podGangs[i].Name, apicommon.LabelPodCliqueSetReplicaIndex)
-		}
-		pcsReplicaIndex, err := strconv.Atoi(labelValue)
-		if err != nil {
-			return nil, fmt.Errorf("%s label on PodGang %s is not a valid integer: %q", apicommon.LabelPodCliqueSetReplicaIndex, podGangs[i].Name, labelValue)
-		}
-		grouped[pcsReplicaIndex] = append(grouped[pcsReplicaIndex], podGangs[i])
-	}
-	return grouped, nil
 }

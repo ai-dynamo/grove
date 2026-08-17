@@ -130,7 +130,10 @@ func (r _resource) getExistingPGMByReplica(ctx context.Context, pcs *grovecorev1
 	return pgmByReplica, nil
 }
 
-// getExistingPodGangsByReplica fetches all PodGangs for the PCS and groups them by PCS replica index.
+// getExistingPodGangsByReplica fetches the epoch-scheme PodGangs for the PCS and groups them by PCS
+// replica index. Only PodGangs carrying the grove.io/epoch label are considered. Legacy PodGangs
+// created before the epoch scheme carry no epoch and are not a reconstruction source, so they are
+// skipped and are replaced by the PodGang component during migration.
 func (r _resource) getExistingPodGangsByReplica(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (map[int][]groveschedulerv1alpha1.PodGang, error) {
 	existingPodGangs, err := componentutils.GetExistingPodGangs(ctx, r.client, pcs.ObjectMeta, pcs.Namespace)
 	if err != nil {
@@ -140,13 +143,25 @@ func (r _resource) getExistingPodGangsByReplica(ctx context.Context, pcs *grovec
 			fmt.Sprintf("Error listing PodGangs for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
 		)
 	}
-	podGangsByReplica, err := componentutils.GroupPodGangsByPCSReplicaIndex(existingPodGangs)
-	if err != nil {
-		return nil, groveerr.WrapError(err,
-			errCodeGroupPodGangsByReplica,
-			component.OperationSync,
-			fmt.Sprintf("Error grouping PodGangs by replica index for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
-		)
+	podGangsByReplica := make(map[int][]groveschedulerv1alpha1.PodGang)
+	for i := range existingPodGangs {
+		labels := existingPodGangs[i].Labels
+		if _, hasEpoch := labels[apicommon.LabelEpoch]; !hasEpoch {
+			continue
+		}
+		// An epoch-scheme PodGang always carries the replica-index label, so a missing or malformed
+		// value is a coding error.
+		replicaIndexLabel, ok := labels[apicommon.LabelPodCliqueSetReplicaIndex]
+		if !ok {
+			return nil, groveerr.New(errCodeGroupPodGangsByReplica, component.OperationSync,
+				fmt.Sprintf("PodGang %s has label %s but no %s", existingPodGangs[i].Name, apicommon.LabelEpoch, apicommon.LabelPodCliqueSetReplicaIndex))
+		}
+		pcsReplicaIndex, err := strconv.Atoi(replicaIndexLabel)
+		if err != nil {
+			return nil, groveerr.New(errCodeGroupPodGangsByReplica, component.OperationSync,
+				fmt.Sprintf("%s label on PodGang %s is not a valid integer: %q", apicommon.LabelPodCliqueSetReplicaIndex, existingPodGangs[i].Name, replicaIndexLabel))
+		}
+		podGangsByReplica[pcsReplicaIndex] = append(podGangsByReplica[pcsReplicaIndex], existingPodGangs[i])
 	}
 	return podGangsByReplica, nil
 }
