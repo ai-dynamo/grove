@@ -35,6 +35,18 @@ const (
 	LabelBasePodGang = "grove.io/base-podgang"
 	// LabelPodCliqueSetReplicaIndex is a key for a label that sets the replica index of a PodCliqueSet.
 	LabelPodCliqueSetReplicaIndex = "grove.io/podcliqueset-replica-index"
+	// LabelPodCliqueSetGenerationHash is set on PodGang resources to record the PodCliqueSet generation
+	// hash they were created for.
+	LabelPodCliqueSetGenerationHash = "grove.io/podcliqueset-generation-hash"
+	// LabelEpoch is set on PodGang resources to record the batch in which the PodGang was created.
+	// The value is a monotonic unix-nano integer used as a distinct orderable key. PodGangs created
+	// together share the same epoch. Subsequent batches carry strictly greater values. It is consumed
+	// by the pod-component scheduling-gate-removal logic via the PodGangEntry DependsOn.
+	LabelEpoch = "grove.io/epoch"
+	// LabelPodGangRole is set on PodGang resources to record the role of the PodGangMap entry the
+	// PodGang was materialized from. The value is one of Anchor, Tail, or ScaleOut. It lets the role
+	// classification survive on the live PodGang and be selected on.
+	LabelPodGangRole = "grove.io/podgang-role"
 	// LabelPodCliqueScalingGroup is a key for a label that sets the PodCliqueScalingGroup name.
 	LabelPodCliqueScalingGroup = "grove.io/podcliquescalinggroup"
 	// LabelPodCliqueScalingGroupReplicaIndex is a key for a label that sets the replica index of a PodCliqueScalingGroup within PodCliqueSet.
@@ -77,6 +89,8 @@ const (
 	LabelComponentNameHorizontalPodAutoscaler = "pcs-hpa"
 	// LabelComponentNamePodGang is the label key representing the component name for a PodGang resource.
 	LabelComponentNamePodGang = "podgang"
+	// LabelComponentNamePodGangMap is the label key representing the component name for a PodGangMap resource.
+	LabelComponentNamePodGangMap = "pcs-podgangmap"
 	// LabelComponentNamePodCliqueSetPodClique is the label key representing the component name for a PodClique
 	// whose owner is PodCliqueSet. These PodCliques do not belong to any PodCliqueScalingGroup.
 	LabelComponentNamePodCliqueSetPodClique = "pcs-podclique"

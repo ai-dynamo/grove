@@ -57,7 +57,7 @@ func TestComputeUpdateWork(t *testing.T) {
 	r := _resource{expectationsStore: expect.NewExpectationsStore()}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sc := &syncContext{
+			sc := &syncSnapshot{
 				existingPCLQPods:         []*corev1.Pod{tt.pod},
 				expectedPodTemplateHash:  testNewHash,
 				pclqExpectationsStoreKey: "test-key",

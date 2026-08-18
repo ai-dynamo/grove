@@ -273,8 +273,18 @@ func (r *Reconciler) recordIncompleteReconcile(ctx context.Context, logger logr.
 // are processed in order to respect cross-group dependencies.
 func getKindSyncGroups() [][]component.Kind {
 	return [][]component.Kind{
-		// G1: RBAC + static per-PCS infra (Service, HPA targets by name so no ordering
+		// G1: PodCliqueSetReplica runs alone and first. It is the only component that writes the
+		// PodCliqueSet status back into the shared object mid-reconcile. Status().Patch decodes the
+		// server response into the same PodCliqueSet the other components read, so running it alongside
+		// any component that reads the PodCliqueSet races that decode. It also produces the update
+		// progress that PodGangMap reads, so it must complete before PodGangMap.
+		{
+			component.KindPodCliqueSetReplica,
+		},
+		// G2: RBAC + static per-PCS infra (Service, HPA targets by name so no ordering
 		// vs PodClique/PCSG needed, ComputeDomain/ResourceClaim are independent add-ons).
+		// PodGangMap is computed here — it has no dependency on any other component in this group, and
+		// must be ready before PodGang (G5) reads it.
 		{
 			component.KindServiceAccount,
 			component.KindRole,
@@ -282,15 +292,20 @@ func getKindSyncGroups() [][]component.Kind {
 			component.KindServiceAccountTokenSecret,
 			component.KindHeadlessService,
 			component.KindHorizontalPodAutoscaler,
-			component.KindPodCliqueSetReplica,
 			component.KindComputeDomain,
 			component.KindResourceClaim,
+			component.KindPodGangMap,
 		},
-		// G2: PodClique must exist before PodGang can reference their pods.
+		// G3: migrate a legacy PodCliqueSet to the epoch-based PodGang scheme, using the PodGangMap from G2.
+		// This runs before PodClique (G4) and PodGang (G5) so those see a consistent new-scheme world.
+		{
+			component.KindPodGangMigrator,
+		},
+		// G4: PodClique must exist before PodGang can reference their pods.
 		{
 			component.KindPodClique,
 		},
-		// G3: PCSG and PodGang run concurrently — PCSG creates its own PodCliques via a
+		// G5: PCSG and PodGang run concurrently — PCSG creates its own PodCliques via a
 		// separate reconciler, and PodGang reads existing PodClique/Pod state.
 		{
 			component.KindPodCliqueScalingGroup,

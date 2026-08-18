@@ -50,7 +50,7 @@ const (
 
 // processPendingUpdates processes pending updates for the PodCliqueScalingGroup.
 // This is the main entry point for handling rolling updates of PodCliques in the PodCliqueScalingGroup.
-func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) error {
+func (r _resource) processPendingUpdates(ctx context.Context, logger logr.Logger, sc *syncSnapshot) error {
 	work, err := computePendingUpdateWork(sc)
 	if err != nil {
 		return groveerr.WrapError(err,
@@ -59,7 +59,7 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 			fmt.Sprintf("failed to compute pending update work for PodCliqueScalingGroup %v", client.ObjectKeyFromObject(sc.pcsg)))
 	}
 	// always delete PCSG replicas that are either pending or unavailable
-	if err = r.deleteOldPendingAndUnavailableReplicas(logger, sc, work); err != nil {
+	if err = r.deleteOldPendingAndUnavailableReplicas(ctx, logger, sc, work); err != nil {
 		return err
 	}
 
@@ -89,13 +89,13 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 	// Trigger the update if there is an index still pending an update.
 	if nextReplicaIndexToUpdate != nil {
 		logger.Info("Selected the next replica to update", "nextReplicaIndexToUpdate", *nextReplicaIndexToUpdate)
-		if err := r.updatePCSGStatusWithNextReplicaToUpdate(sc.ctx, logger, sc.pcsg, *nextReplicaIndexToUpdate); err != nil {
+		if err = r.updatePCSGStatusWithNextReplicaToUpdate(ctx, logger, sc.pcsg, *nextReplicaIndexToUpdate); err != nil {
 			return err
 		}
 
 		// Trigger deletion of the next replica index.
 		deleteTask := r.createDeleteTasks(logger, sc.pcs, sc.pcsg.Name, []string{strconv.Itoa(*nextReplicaIndexToUpdate)}, "deleting replica for rolling update")
-		if err := r.triggerDeletionOfPodCliques(sc.ctx, logger, client.ObjectKeyFromObject(sc.pcsg), deleteTask); err != nil {
+		if err = r.triggerDeletionOfPodCliques(ctx, logger, client.ObjectKeyFromObject(sc.pcsg), deleteTask); err != nil {
 			return err
 		}
 
@@ -107,7 +107,7 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 		)
 	}
 
-	return r.markRollingUpdateEnd(sc.ctx, logger, sc.pcsg)
+	return r.markRollingUpdateEnd(ctx, logger, sc.pcsg)
 }
 
 // updatePCSGStatusWithNextReplicaToUpdate marks the next replica index as selected for rolling update in the PCSG status
@@ -157,7 +157,7 @@ func (r _resource) markRollingUpdateEnd(ctx context.Context, logger logr.Logger,
 }
 
 // computePendingUpdateWork analyzes existing replicas and categorizes them by update status and availability state
-func computePendingUpdateWork(sc *syncContext) (*updateWork, error) {
+func computePendingUpdateWork(sc *syncSnapshot) (*updateWork, error) {
 	work := &updateWork{}
 	existingPCLQsByReplicaIndex := componentutils.GroupPCLQsByPCSGReplicaIndex(sc.existingPCLQs)
 	for pcsgReplicaIndex := range int(sc.pcsg.Spec.Replicas) {
@@ -192,13 +192,13 @@ func computePendingUpdateWork(sc *syncContext) (*updateWork, error) {
 }
 
 // deleteOldPendingAndUnavailableReplicas removes PCSG replicas that are pending or unavailable with old configurations
-func (r _resource) deleteOldPendingAndUnavailableReplicas(logger logr.Logger, sc *syncContext, work *updateWork) error {
+func (r _resource) deleteOldPendingAndUnavailableReplicas(ctx context.Context, logger logr.Logger, sc *syncSnapshot, work *updateWork) error {
 	replicaIndicesToDelete := lo.Map(append(work.oldPendingReplicaIndices, work.oldUnavailableReplicaIndices...), func(index int, _ int) string {
 		return strconv.Itoa(index)
 	})
 	deleteTasks := r.createDeleteTasks(logger, sc.pcs, sc.pcsg.Name, replicaIndicesToDelete,
 		"delete pending and unavailable PodCliqueScalingGroup replicas for rolling update")
-	return r.triggerDeletionOfPodCliques(sc.ctx, logger, client.ObjectKeyFromObject(sc.pcsg), deleteTasks)
+	return r.triggerDeletionOfPodCliques(ctx, logger, client.ObjectKeyFromObject(sc.pcsg), deleteTasks)
 }
 
 // isAnyReadyReplicaSelectedForUpdate checks if there is currently a ready replica selected for rolling update
@@ -207,7 +207,7 @@ func isAnyReadyReplicaSelectedForUpdate(pcsg *grovecorev1alpha1.PodCliqueScaling
 }
 
 // isCurrentReplicaUpdateComplete verifies if the currently updating replica has completed its rolling update
-func isCurrentReplicaUpdateComplete(sc *syncContext) bool {
+func isCurrentReplicaUpdateComplete(sc *syncSnapshot) bool {
 	currentlyUpdatingReplicaIndex := int(sc.pcsg.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate.Current)
 	existingPCLQsByReplicaIndex := componentutils.GroupPCLQsByPCSGReplicaIndex(sc.existingPCLQs)
 	// Get the expected PCLQ PodTemplateHash and compare it against all existing PCLQs for the currently updating replica index.

@@ -23,9 +23,12 @@ import (
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // terminationDelayInWorkloadYAML mirrors spec.template.terminationDelay in
@@ -327,20 +330,23 @@ func Test_GT6_ScaledPodGangPodDeletion(t *testing.T) {
 		t.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
 
-	Logger.Info("3. Find a scaled pc-c pod (one with grove.io/base-podgang and clique=pc-c so killing it stays within pc-c's min=1 tolerance)")
+	Logger.Info("3. Find a scaled pc-c pod (in a non-anchor PodGang and clique=pc-c so killing it stays within pc-c's min=1 tolerance)")
 	pods, err := tc.ListPods()
 	if err != nil {
 		t.Fatalf("Failed to list pods: %v", err)
 	}
-	scaled := findReadyScaledPCCPod(pods, "workload2-gt")
+	scaled, err := findReadyScaledPCCPod(ctx, tc, pods, "workload2-gt")
+	if err != nil {
+		t.Fatalf("Failed to find a scaled pc-c pod: %v", err)
+	}
 	if scaled == nil {
 		dumpPodsByClique(t, pods)
-		t.Fatalf("no ready pc-c pod with the %s label (scaled PodGang) found", apicommon.LabelBasePodGang)
+		t.Fatalf("no ready pc-c pod in a non-anchor PodGang found")
 	}
 	pcAUIDs := capturePodUIDsForClique(pods, "workload2-gt-0-pc-a")
 
-	Logger.Infof("4. Cordon node %s and delete pod %s (clique=%s, base-podgang=%s)",
-		scaled.Spec.NodeName, scaled.Name, scaled.Labels[apicommon.LabelPodClique], scaled.Labels[apicommon.LabelBasePodGang])
+	Logger.Infof("4. Cordon node %s and delete pod %s (clique=%s, podgang=%s)",
+		scaled.Spec.NodeName, scaled.Name, scaled.Labels[apicommon.LabelPodClique], scaled.Labels[apicommon.LabelPodGang])
 	if err := tc.CordonNode(scaled.Spec.NodeName); err != nil {
 		t.Fatalf("Failed to cordon node: %v", err)
 	}
@@ -378,15 +384,28 @@ func findReadyPodFromPodClique(pods *corev1.PodList, cliqueFQN string) *corev1.P
 	return nil
 }
 
-// findReadyScaledPCCPod returns the first ready pc-c pod that has a base-podgang
-// label set (i.e. lives in a scaled PodGang). Used by GT-6: pc-c has min=1
-// replicas=3 so killing one of these doesn't breach the PCLQ, which lets us
-// observe the "scaled pod recreated, no full-workload gang term" behaviour
-// without triggering a PCSG-scoped restart as a side effect.
-func findReadyScaledPCCPod(pods *corev1.PodList, workloadName string) *corev1.Pod {
+// findReadyScaledPCCPod returns the first ready pc-c pod that lives in a
+// non-anchor PodGang. A pod's grove.io/podgang label names the PodGang it
+// belongs to, and that PodGang carries a grove.io/podgang-role label (Anchor,
+// Tail or ScaleOut); any role other than Anchor is a scaled PodGang. Used by
+// GT-6: pc-c has min=1 replicas=3 so killing one of these doesn't breach the
+// PCLQ, which lets us observe the "scaled pod recreated, no full-workload gang
+// term" behaviour without triggering a PCSG-scoped restart as a side effect.
+func findReadyScaledPCCPod(ctx context.Context, tc *testctx.TestContext, pods *corev1.PodList, workloadName string) (*corev1.Pod, error) {
+	var podGangList groveschedulerv1alpha1.PodGangList
+	if err := tc.Client.List(ctx, &podGangList, client.InNamespace(tc.Namespace)); err != nil {
+		return nil, fmt.Errorf("failed to list PodGangs: %w", err)
+	}
+	roleByPodGangName := make(map[string]string, len(podGangList.Items))
+	for i := range podGangList.Items {
+		pg := &podGangList.Items[i]
+		roleByPodGangName[pg.Name] = pg.Labels[apicommon.LabelPodGangRole]
+	}
+
 	for i := range pods.Items {
 		p := &pods.Items[i]
-		if v, ok := p.Labels[apicommon.LabelBasePodGang]; !ok || v == "" {
+		role, ok := roleByPodGangName[p.Labels[apicommon.LabelPodGang]]
+		if !ok || role == string(grovecorev1alpha1.PodGangEntryRoleAnchor) {
 			continue
 		}
 		clique := p.Labels[apicommon.LabelPodClique]
@@ -398,9 +417,9 @@ func findReadyScaledPCCPod(pods *corev1.PodList, workloadName string) *corev1.Po
 		if !isPodReady(p) {
 			continue
 		}
-		return p
+		return p, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // findReadyPodsFromPodClique returns up to n ready pods from cliqueFQN.

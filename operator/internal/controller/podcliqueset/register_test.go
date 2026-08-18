@@ -249,3 +249,30 @@ func TestPodCliqueScalingGroupPredicateStatusChangesAffectingUpdatedAccounting(t
 		})
 	}
 }
+
+// TestPodCliqueScalingGroupPredicateSpecChange asserts that the PodCliqueScalingGroup predicate
+// enqueues the PodCliqueSet on a bare spec change (observed via a generation bump), which is how a
+// scale-out reaches the PodGangMap now that PCSG scale-out no longer writes status.
+func TestPodCliqueScalingGroupPredicateSpecChange(t *testing.T) {
+	pred, ok := podCliqueScalingGroupPredicate().(predicate.Funcs)
+	require.True(t, ok, "predicate must be predicate.Funcs")
+
+	oldPCSG := &grovecorev1alpha1.PodCliqueScalingGroup{ObjectMeta: metav1.ObjectMeta{Generation: 1}}
+	newPCSG := oldPCSG.DeepCopy()
+	newPCSG.Generation = 2
+	newPCSG.Spec.Replicas = 3
+
+	assert.True(t, pred.UpdateFunc(event.UpdateEvent{ObjectOld: oldPCSG, ObjectNew: newPCSG}))
+}
+
+// TestPodCliqueScalingGroupPredicateNoChange asserts that the predicate ignores an update with no
+// spec or relevant status change.
+func TestPodCliqueScalingGroupPredicateNoChange(t *testing.T) {
+	pred, ok := podCliqueScalingGroupPredicate().(predicate.Funcs)
+	require.True(t, ok, "predicate must be predicate.Funcs")
+
+	oldPCSG := &grovecorev1alpha1.PodCliqueScalingGroup{ObjectMeta: metav1.ObjectMeta{Generation: 1}}
+	newPCSG := oldPCSG.DeepCopy()
+
+	assert.False(t, pred.UpdateFunc(event.UpdateEvent{ObjectOld: oldPCSG, ObjectNew: newPCSG}))
+}

@@ -116,7 +116,7 @@ func TestGetExistingResourceNames(t *testing.T) {
 				assert.NoError(t, err)
 				assert.ElementsMatch(t, tc.expectedPodCliqueNames, actualPCLQNames)
 			} else {
-				testutils.CheckGroveError(t, tc.expectedErr, err)
+				testutils.AssertGroveError(t, tc.expectedErr, err)
 			}
 		})
 	}
@@ -166,7 +166,7 @@ func TestDelete(t *testing.T) {
 			operator := New(cl, groveclientscheme.Scheme, record.NewFakeRecorder(10))
 			err := operator.Delete(context.Background(), logr.Discard(), pcsObjMeta)
 			if tc.expectedError != nil {
-				testutils.CheckGroveError(t, tc.expectedError, err)
+				testutils.AssertGroveError(t, tc.expectedError, err)
 			} else {
 				assert.NoError(t, err)
 				podCliquesPostDelete := getExistingPodCliques(t, cl, pcsObjMeta)
@@ -456,7 +456,13 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 				eventRecorder: record.NewFakeRecorder(10),
 			}
 
-			err := operator.buildResource(logr.Discard(), pclq, pcs, pcsReplica, false)
+			// A standalone PodClique belongs to the anchor entry, so buildResource resolves its PodGang
+			// name from the anchor entry's epoch.
+			pgm := testutils.NewPodGangMapBuilder(testPCSName, testPCSNamespace, uuid.NewUUID(), pcsReplica).WithEntries(
+				testutils.NewPodGangEntryBuilder("hash", "1000").
+					WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).Build(),
+			).Build()
+			err := operator.buildResource(logr.Discard(), pcs, pcsReplica, false, pgm, pclq)
 			require.NoError(t, err)
 
 			// Verify pod-level claims
@@ -510,7 +516,13 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 	}
 
 	operator := &_resource{scheme: groveclientscheme.Scheme}
-	err := operator.buildResource(logr.Discard(), pclq, pcs, 0, false)
+	// A standalone PodClique belongs to the anchor entry, so buildResource resolves its PodGang name
+	// from the anchor entry's epoch.
+	pgm := testutils.NewPodGangMapBuilder(testPCSName, testPCSNamespace, uuid.NewUUID(), 0).WithEntries(
+		testutils.NewPodGangEntryBuilder("hash", "1000").
+			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).Build(),
+	).Build()
+	err := operator.buildResource(logr.Discard(), pcs, 0, false, pgm, pclq)
 	require.NoError(t, err)
 	require.NotNil(t, pclq.Annotations)
 	assert.Equal(t, "yes", pclq.Annotations["example.com/keep"])

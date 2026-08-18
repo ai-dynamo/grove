@@ -78,6 +78,17 @@ func (b *PodGangBuilder) WithSchedulerName(name string) *PodGangBuilder {
 	return b
 }
 
+// WithLabels merges the given labels onto the PodGang.
+func (b *PodGangBuilder) WithLabels(labels map[string]string) *PodGangBuilder {
+	if b.pg.Labels == nil {
+		b.pg.Labels = make(map[string]string)
+	}
+	for k, v := range labels {
+		b.pg.Labels[k] = v
+	}
+	return b
+}
+
 // WithDeletionTimestamp sets the DeletionTimestamp on the PodGang to simulate a pending deletion.
 func (b *PodGangBuilder) WithDeletionTimestamp() *PodGangBuilder {
 	now := metav1.NewTime(time.Now())

@@ -19,9 +19,12 @@ package podgroup
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	nameutils "github.com/ai-dynamo/grove/operator/api/common"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
@@ -47,10 +50,8 @@ type PCSGCliqueConfig struct {
 
 // ScaledPCSGConfig defines configuration for verifying a scaled PCSG replica.
 type ScaledPCSGConfig struct {
-	Name          string
 	PCSGName      string
 	PCSGReplica   int
-	MinAvailable  int
 	CliqueConfigs []PCSGCliqueConfig
 	Constraint    string
 }
@@ -161,16 +162,42 @@ func (pv *PodGroupVerifier) WaitForKAIPodGroups(ctx context.Context, namespace, 
 	return podGroups, nil
 }
 
-// FilterPodGroupByOwner filters a list of PodGroups to find the one owned by the specified PodGang.
-func FilterPodGroupByOwner(podGroups []kaischedulingv2alpha2.PodGroup, podGangName string) (*kaischedulingv2alpha2.PodGroup, error) {
+// FindAnchorPodGroup finds the KAI PodGroup for the anchor PodGang of a PodCliqueSet replica.
+// The anchor PodGang name embeds a runtime-minted epoch, so it cannot be reconstructed. Instead the
+// PodGroup is matched on the labels cloned from its PodGang: the anchor role and the PodCliqueSet
+// replica index.
+func FindAnchorPodGroup(podGroups []kaischedulingv2alpha2.PodGroup, pcsReplicaIndex int) (*kaischedulingv2alpha2.PodGroup, error) {
 	for i := range podGroups {
-		for _, ref := range podGroups[i].OwnerReferences {
-			if ref.Kind == "PodGang" && ref.Name == podGangName {
-				return &podGroups[i], nil
-			}
+		labels := podGroups[i].Labels
+		if labels[nameutils.LabelPodGangRole] == string(grovecorev1alpha1.PodGangEntryRoleAnchor) &&
+			labels[nameutils.LabelPodCliqueSetReplicaIndex] == strconv.Itoa(pcsReplicaIndex) {
+			return &podGroups[i], nil
 		}
 	}
-	return nil, fmt.Errorf("no PodGroup found owned by PodGang %s", podGangName)
+	return nil, fmt.Errorf("no anchor PodGroup found for PodCliqueSet replica index %d", pcsReplicaIndex)
+}
+
+// FindScaledPodGroup finds the KAI PodGroup for a scaled (Tail or ScaleOut) PodGang of a
+// PodCliqueScalingGroup replica. The scaled PodGang name is
+// <pcs>-<replica>-<epoch>-<pcsgName>-<pcsgReplicaIndex>; only the epoch is runtime-minted. The
+// PodGroup is matched on its cloned PodGang labels (a Tail or ScaleOut role and the PodCliqueSet
+// replica index) plus a name suffix of -<pcsgName>-<pcsgReplicaIndex>.
+func FindScaledPodGroup(podGroups []kaischedulingv2alpha2.PodGroup, pcsReplicaIndex int, pcsgName string, pcsgReplicaIndex int) (*kaischedulingv2alpha2.PodGroup, error) {
+	nameSuffix := fmt.Sprintf("-%s-%d", pcsgName, pcsgReplicaIndex)
+	for i := range podGroups {
+		labels := podGroups[i].Labels
+		role := labels[nameutils.LabelPodGangRole]
+		if role != string(grovecorev1alpha1.PodGangEntryRoleTail) && role != string(grovecorev1alpha1.PodGangEntryRoleScaleOut) {
+			continue
+		}
+		if labels[nameutils.LabelPodCliqueSetReplicaIndex] != strconv.Itoa(pcsReplicaIndex) {
+			continue
+		}
+		if strings.HasSuffix(podGroups[i].Name, nameSuffix) {
+			return &podGroups[i], nil
+		}
+	}
+	return nil, fmt.Errorf("no scaled PodGroup found for PodCliqueSet replica index %d, PodCliqueScalingGroup %s replica index %d", pcsReplicaIndex, pcsgName, pcsgReplicaIndex)
 }
 
 // VerifyTopologyConstraint verifies the top-level TopologyConstraint of a KAI PodGroup.
@@ -250,20 +277,19 @@ func (pv *PodGroupVerifier) VerifySubGroups(podGroup *kaischedulingv2alpha2.PodG
 	return nil
 }
 
-// GetPodGroupForBasePodGangReplica retrieves the KAI PodGroup for a PodGangSet replica's base PodGang.
-func (pv *PodGroupVerifier) GetPodGroupForBasePodGangReplica(ctx context.Context, namespace, workloadName string, pgsReplica int, timeout, interval time.Duration) (*kaischedulingv2alpha2.PodGroup, error) {
-	podGroups, err := pv.WaitForKAIPodGroups(ctx, namespace, workloadName, timeout, interval)
+// GetPodGroupForAnchorPodGang retrieves the KAI PodGroup for a PodCliqueSet replica's anchor PodGang.
+func (pv *PodGroupVerifier) GetPodGroupForAnchorPodGang(ctx context.Context, namespace, pcsName string, pcsReplica int, timeout, interval time.Duration) (*kaischedulingv2alpha2.PodGroup, error) {
+	podGroups, err := pv.WaitForKAIPodGroups(ctx, namespace, pcsName, timeout, interval)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get KAI PodGroups: %w", err)
 	}
 
-	basePodGangName := nameutils.GenerateBasePodGangName(nameutils.ResourceNameReplica{Name: workloadName, Replica: pgsReplica})
-	basePodGroup, err := FilterPodGroupByOwner(podGroups, basePodGangName)
+	anchorPodGroup, err := FindAnchorPodGroup(podGroups, pcsReplica)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find PodGroup for PodGang %s: %w", basePodGangName, err)
+		return nil, fmt.Errorf("failed to find anchor PodGroup for PodCliqueSet %s replica %d: %w", pcsName, pcsReplica, err)
 	}
 
-	return basePodGroup, nil
+	return anchorPodGroup, nil
 }
 
 // VerifyPodGroupTopology verifies both top-level topology constraint and SubGroups structure.
@@ -286,28 +312,29 @@ func (pv *PodGroupVerifier) VerifyScaledPCSGReplicaTopology(ctx context.Context,
 		return fmt.Errorf("failed to get KAI PodGroups: %w", err)
 	}
 
-	pcsgFQN := nameutils.GeneratePodCliqueScalingGroupName(
-		nameutils.ResourceNameReplica{Name: pcsName, Replica: pcsReplica},
-		pcsgConfig.PCSGName,
-	)
-
-	scaledPodGangName := nameutils.CreatePodGangNameFromPCSGFQN(pcsgFQN, pcsgConfig.PCSGReplica-pcsgConfig.MinAvailable)
-
-	scaledPodGroup, err := FilterPodGroupByOwner(podGroups, scaledPodGangName)
+	scaledPodGroup, err := FindScaledPodGroup(podGroups, pcsReplica, pcsgConfig.PCSGName, pcsgConfig.PCSGReplica)
 	if err != nil {
-		return fmt.Errorf("failed to find scaled PodGroup for %s: %w", scaledPodGangName, err)
+		return fmt.Errorf("failed to find scaled PodGroup: %w", err)
 	}
 
+	// The scaled PodGang carries the PCS-level constraint at the PodGroup top level. When the PCSG has
+	// its own topology constraint the operator emits a PCSG-parent SubGroup carrying it, with the
+	// PCSG's PodCliques parented under it; without one the PodCliques remain root-level SubGroups.
+	hasPCSGConstraint := pcsgConfig.Constraint != ""
 	var expectedSubGroups []ExpectedSubGroup
-	for _, cliqueConfig := range pcsgConfig.CliqueConfigs {
+	if hasPCSGConstraint {
 		expectedSubGroups = append(expectedSubGroups,
-			CreateExpectedPCLQInPCSGSubGroupNoParent(pcsName, pcsReplica, pcsgConfig.PCSGName, pcsgConfig.PCSGReplica, cliqueConfig.Name, cliqueConfig.PodCount, cliqueConfig.Constraint))
+			CreateExpectedPCSGParentSubGroup(pcsName, pcsReplica, pcsgConfig.PCSGName, pcsgConfig.PCSGReplica, pcsgConfig.Constraint))
+	}
+	for _, cliqueConfig := range pcsgConfig.CliqueConfigs {
+		if hasPCSGConstraint {
+			expectedSubGroups = append(expectedSubGroups,
+				CreateExpectedPCLQInPCSGSubGroup(pcsName, pcsReplica, pcsgConfig.PCSGName, pcsgConfig.PCSGReplica, cliqueConfig.Name, cliqueConfig.PodCount, cliqueConfig.Constraint))
+		} else {
+			expectedSubGroups = append(expectedSubGroups,
+				CreateExpectedPCLQInPCSGSubGroupNoParent(pcsName, pcsReplica, pcsgConfig.PCSGName, pcsgConfig.PCSGReplica, cliqueConfig.Name, cliqueConfig.PodCount, cliqueConfig.Constraint))
+		}
 	}
 
-	scaledTopConstraint := pcsConstraint
-	if pcsgConfig.Constraint != "" {
-		scaledTopConstraint = pcsgConfig.Constraint
-	}
-
-	return pv.VerifyPodGroupTopology(scaledPodGroup, scaledTopConstraint, "", expectedSubGroups)
+	return pv.VerifyPodGroupTopology(scaledPodGroup, pcsConstraint, "", expectedSubGroups)
 }

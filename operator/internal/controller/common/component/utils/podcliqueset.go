@@ -152,3 +152,54 @@ func GetExpectedStandAlonePCLQFQNsPerPCSReplica(pcs *grovecorev1alpha1.PodClique
 	}
 	return pclqFQNsByPCSReplica
 }
+
+// CountStandalonePCLQs returns the number of standalone PodCliques declared in the PCS template.
+func CountStandalonePCLQs(pcs *grovecorev1alpha1.PodCliqueSet) int {
+	return lo.CountBy(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec) bool {
+		return isStandalonePCLQ(pcs, pclqTemplateSpec.Name)
+	})
+}
+
+// GetStandalonePCLQReplicasFromPCSTemplateSpec returns the total replica count per standalone PodClique from the PCS template spec.
+func GetStandalonePCLQReplicasFromPCSTemplateSpec(pcs *grovecorev1alpha1.PodCliqueSet) map[string]int32 {
+	result := make(map[string]int32)
+	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
+		if isStandalonePCLQ(pcs, cliqueTemplate.Name) {
+			result[cliqueTemplate.Name] = cliqueTemplate.Spec.Replicas
+		}
+	}
+	return result
+}
+
+// GetPCSGMinAvailableFromPCSTemplateSpec returns the MinAvailable replica count per PodCliqueScalingGroup from the PCS template spec.
+func GetPCSGMinAvailableFromPCSTemplateSpec(pcs *grovecorev1alpha1.PodCliqueSet) map[string]int32 {
+	result := make(map[string]int32)
+	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		result[pcsgConfig.Name] = *pcsgConfig.MinAvailable
+	}
+	return result
+}
+
+// GetPCSGReplicasFromPCSTemplateSpec returns the total replica count per PodCliqueScalingGroup from the PCS template spec.
+func GetPCSGReplicasFromPCSTemplateSpec(pcs *grovecorev1alpha1.PodCliqueSet) map[string]int32 {
+	result := make(map[string]int32)
+	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		result[pcsgConfig.Name] = *pcsgConfig.Replicas
+	}
+	return result
+}
+
+// IsPCSReplicaInCurrentlyUpdating reports whether the given PCS replica index is currently under
+// update, that is it appears in Status.UpdateProgress.CurrentlyUpdating with UpdateEndedAt unset.
+func IsPCSReplicaInCurrentlyUpdating(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int) bool {
+	if pcs.Status.UpdateProgress == nil {
+		return false
+	}
+	for i := range pcs.Status.UpdateProgress.CurrentlyUpdating {
+		p := &pcs.Status.UpdateProgress.CurrentlyUpdating[i]
+		if int(p.ReplicaIndex) == pcsReplicaIndex && p.UpdateEndedAt == nil {
+			return true
+		}
+	}
+	return false
+}

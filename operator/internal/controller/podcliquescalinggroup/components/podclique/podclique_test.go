@@ -1069,9 +1069,10 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 			}
 
 			// Create PCSG with MNNVL annotations and required label for pcsReplicaIndex
+			pcsgConfigName := "sg"
 			pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:        fmt.Sprintf("%s-%d", pcsName, pcsReplicaIndex),
+					Name:        fmt.Sprintf("%s-%d-%s", pcsName, pcsReplicaIndex, pcsgConfigName),
 					Namespace:   pcsNamespace,
 					Annotations: tc.pcsgAnnotations,
 					Labels: map[string]string{
@@ -1085,7 +1086,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 			}
 
 			// Create empty PodClique with matching name suffix (must end with template name)
-			pclqName := fmt.Sprintf("%s-%d-%s-%d-%s", pcsName, pcsReplicaIndex, "pcsg", pcsgReplicaIndex, pclqTemplateName)
+			pclqName := fmt.Sprintf("%s-%d-%s-%d-%s", pcsName, pcsReplicaIndex, pcsgConfigName, pcsgReplicaIndex, pclqTemplateName)
 			pclq := &grovecorev1alpha1.PodClique{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      pclqName,
@@ -1103,7 +1104,15 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 				eventRecorder: &record.FakeRecorder{},
 			}
 
-			err := operator.buildResource(logr.Discard(), pcs, pcsg, pcsgReplicaIndex, pclq, false)
+			// The anchor entry owns PodCliqueScalingGroup replica index 0 (below MinAvailable), so
+			// buildResource resolves the PodGang name from this entry's epoch.
+			pgm := testutils.NewPodGangMapBuilder(pcsName, pcsNamespace, "uid", pcsReplicaIndex).WithEntries(
+				testutils.NewPodGangEntryBuilder("hash", "1000").
+					WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+					WithPCSGReplicaIndices(map[string][]int32{pcsgConfigName: {int32(pcsgReplicaIndex)}}).Build(),
+			).Build()
+			ss := &syncSnapshot{pcs: pcs, pcsg: pcsg, pcsReplicaIndex: pcsReplicaIndex, pgm: pgm}
+			err := operator.buildResource(logr.Discard(), ss, pcsgReplicaIndex, pclq, false)
 			require.NoError(t, err)
 
 			// Verify pod-level claims
@@ -1182,8 +1191,17 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 		},
 	}
 
+	// The anchor entry owns PodCliqueScalingGroup replica index 0 (below MinAvailable), so buildResource
+	// resolves the PodGang name from this entry's epoch.
+	pgm := testutils.NewPodGangMapBuilder("test-pcs", "default", "uid", 0).WithEntries(
+		testutils.NewPodGangEntryBuilder("hash", "1000").
+			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+			WithPCSGReplicaIndices(map[string][]int32{"sg": {0}}).Build(),
+	).Build()
+
 	operator := &_resource{scheme: groveclientscheme.Scheme}
-	err := operator.buildResource(logr.Discard(), pcs, pcsg, 0, pclq, false)
+	ss := &syncSnapshot{pcs: pcs, pcsg: pcsg, pcsReplicaIndex: 0, pgm: pgm}
+	err := operator.buildResource(logr.Discard(), ss, 0, pclq, false)
 	require.NoError(t, err)
 	require.NotNil(t, pclq.Annotations)
 	assert.Equal(t, "yes", pclq.Annotations["example.com/keep"])
@@ -1208,4 +1226,61 @@ func triageContainersByMNNVLClaim(containers []corev1.Container) (withClaim, wit
 		}
 	}
 	return withClaim, withoutClaim
+}
+
+func TestResolvePodGangName(t *testing.T) {
+	const (
+		pcsName       = "test-pcs"
+		namespace     = "default"
+		pcsgConfig    = "sg"
+		anchorEpoch   = "1000"
+		tailEpoch     = "1001"
+		scaleOutEpoch = "1002"
+	)
+	rnr := apicommon.ResourceNameReplica{Name: pcsName, Replica: 0}
+	pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(rnr, pcsgConfig)
+	// MinAvailable 2: anchor owns indices [0,2), tail owns [2,4), ScaleOut is pre-created and empty.
+	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+		ObjectMeta: metav1.ObjectMeta{Name: pcsgFQN, Namespace: namespace},
+		Spec:       grovecorev1alpha1.PodCliqueScalingGroupSpec{MinAvailable: ptr.To(int32(2)), CliqueNames: []string{"worker"}},
+	}
+	pgm := testutils.NewPodGangMapBuilder(pcsName, namespace, "uid", 0).WithEntries(
+		testutils.NewPodGangEntryBuilder("hash", anchorEpoch).
+			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+			WithPCSGReplicaIndices(map[string][]int32{pcsgConfig: {0, 1}}).Build(),
+		testutils.NewPodGangEntryBuilder("hash", tailEpoch).
+			WithRole(grovecorev1alpha1.PodGangEntryRoleTail).
+			WithPCSGReplicaIndices(map[string][]int32{pcsgConfig: {2, 3}}).
+			WithDependsOn(anchorEpoch).Build(),
+		testutils.NewPodGangEntryBuilder("hash", scaleOutEpoch).
+			WithRole(grovecorev1alpha1.PodGangEntryRoleScaleOut).
+			WithDependsOn(anchorEpoch).Build(),
+	).Build()
+
+	tests := []struct {
+		name             string
+		pcsgReplicaIndex int32
+		expectedName     string
+	}{
+		{"anchor index resolves to the anchor PodGang name", 0, apicommon.GenerateAnchorPodGangName(rnr, anchorEpoch)},
+		{"tail index resolves to a non-anchor PodGang name at the tail epoch", 2, apicommon.GenerateNonAnchorPodGangName(rnr, tailEpoch, pcsgConfig, 2)},
+		{"not-yet-placed scale-out index resolves at the ScaleOut epoch", 5, apicommon.GenerateNonAnchorPodGangName(rnr, scaleOutEpoch, pcsgConfig, 5)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			actual, err := resolvePodGangName(pgm, rnr, pcsg, test.pcsgReplicaIndex)
+			require.NoError(t, err)
+			assert.Equal(t, test.expectedName, actual)
+		})
+	}
+
+	t.Run("errors when the index is unresolvable and no ScaleOut entry exists", func(t *testing.T) {
+		anchorOnly := testutils.NewPodGangMapBuilder(pcsName, namespace, "uid", 0).WithEntries(
+			testutils.NewPodGangEntryBuilder("hash", anchorEpoch).
+				WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+				WithPCSGReplicaIndices(map[string][]int32{pcsgConfig: {0, 1}}).Build(),
+		).Build()
+		_, err := resolvePodGangName(anchorOnly, rnr, pcsg, 5)
+		require.Error(t, err)
+	})
 }

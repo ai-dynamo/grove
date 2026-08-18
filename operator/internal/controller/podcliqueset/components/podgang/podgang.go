@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -42,17 +43,15 @@ import (
 )
 
 const (
-	errCodeListPodGangs               grovecorev1alpha1.ErrorCode = "ERR_LIST_PODGANGS"
-	errCodeDeletePodGangs             grovecorev1alpha1.ErrorCode = "ERR_DELETE_PODGANGS"
-	errCodeDeleteExcessPodGang        grovecorev1alpha1.ErrorCode = "ERR_DELETE_EXCESS_PODGANG"
-	errCodeListPods                   grovecorev1alpha1.ErrorCode = "ERR_LIST_PODS_FOR_PODCLIQUESET"
-	errCodeListPodCliques             grovecorev1alpha1.ErrorCode = "ERR_LIST_PODCLIQUES_FOR_PODCLIQUESET"
-	errCodeListPodCliqueScalingGroups grovecorev1alpha1.ErrorCode = "ERR_LIST_PODCLIQUESCALINGGROUPS_FOR_PODCLIQUESET"
-	errCodeComputeExistingPodGangs    grovecorev1alpha1.ErrorCode = "ERR_COMPUTE_EXISTING_PODGANG"
-	errCodeSetControllerReference     grovecorev1alpha1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
-	errCodeCreateOrPatchPodGang       grovecorev1alpha1.ErrorCode = "ERR_CREATE_OR_PATCH_PODGANG"
-	errCodeCreatePodGang              grovecorev1alpha1.ErrorCode = "ERR_CREATE_PODGANG"
-	errCodeGetClusterTopologyLevels   grovecorev1alpha1.ErrorCode = "ERR_GET_CLUSTER_TOPOLOGY_LEVELS"
+	errCodeListPodGangs            grovecorev1alpha1.ErrorCode = "ERR_LIST_PODGANGS"
+	errCodeDeletePodGangs          grovecorev1alpha1.ErrorCode = "ERR_DELETE_PODGANGS"
+	errCodeDeleteExcessPodGang     grovecorev1alpha1.ErrorCode = "ERR_DELETE_EXCESS_PODGANG"
+	errCodeListPods                grovecorev1alpha1.ErrorCode = "ERR_LIST_PODS_FOR_PODCLIQUESET"
+	errCodeListPodCliques          grovecorev1alpha1.ErrorCode = "ERR_LIST_PODCLIQUES_FOR_PODCLIQUESET"
+	errCodeComputeExistingPodGangs grovecorev1alpha1.ErrorCode = "ERR_COMPUTE_EXISTING_PODGANG"
+	errCodeSetControllerReference  grovecorev1alpha1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
+	errCodeCreateOrPatchPodGang    grovecorev1alpha1.ErrorCode = "ERR_CREATE_OR_PATCH_PODGANG"
+	errCodeResolveTopologyLevels   grovecorev1alpha1.ErrorCode = "ERR_RESOLVE_TOPOLOGY_LEVELS"
 )
 
 type _resource struct {
@@ -132,14 +131,7 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGa
 	// propagate. grove.io/-prefixed entries are operator-managed and have a
 	// lifecycle independent of the PCS, so they are preserved across reconciles
 	// and (for PCS keys with that prefix) skipped on mirror.
-	pg.Labels = mirrorPCSMetadata(pg.Labels, pcs.Labels, getLabels(pcs.Name))
-	// Set scheduler name so the podgang controller can resolve the correct backend.
-	// When no scheduler can be resolved, drop any stale label from a previous reconcile.
-	if schedName := r.getSchedulerNameForPCS(pcs); schedName != "" {
-		pg.Labels[apicommon.LabelSchedulerName] = schedName
-	} else {
-		delete(pg.Labels, apicommon.LabelSchedulerName)
-	}
+	pg.Labels = mirrorPCSMetadata(pg.Labels, pcs.Labels, r.buildLabels(pcs, pgi, r.getSchedulerNameForPCS(pcs)))
 	pg.Annotations = mirrorPCSMetadata(pg.Annotations, pcs.Annotations, nil)
 	if r.tasConfig.Enabled && podGangHasTranslatedTopologyConstraints(pgi) {
 		if topologyName, err := componentutils.FindExplicitTopologyNameForPodCliqueSet(pcs); err == nil && topologyName != "" {
@@ -211,13 +203,18 @@ func emptyPodGang(objKey client.ObjectKey) *groveschedulerv1alpha1.PodGang {
 	}
 }
 
-// getLabels constructs labels for a PodGang resource.
-func getLabels(pcsName string) map[string]string {
+func (r _resource) buildLabels(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGangInfo, schedulerName string) map[string]string {
+	pgLabels := map[string]string{
+		apicommon.LabelComponentKey:               apicommon.LabelComponentNamePodGang,
+		apicommon.LabelPodCliqueSetReplicaIndex:   strconv.Itoa(pgi.pcsReplicaIndex),
+		apicommon.LabelSchedulerName:              schedulerName,
+		apicommon.LabelPodCliqueSetGenerationHash: *pcs.Status.CurrentGenerationHash,
+	}
 	return lo.Assign(
-		apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcsName),
-		map[string]string{
-			apicommon.LabelComponentKey: apicommon.LabelComponentNamePodGang,
-		})
+		apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name),
+		pgLabels,
+		pgi.extraLabels,
+	)
 }
 
 // mirrorPCSMetadata returns the result of mirroring PCS-owned labels or annotations

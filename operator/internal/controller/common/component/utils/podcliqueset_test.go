@@ -20,11 +20,13 @@ import (
 
 	"github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -475,6 +477,185 @@ func TestGetExpectedPCLQNamesGroupByOwner(t *testing.T) {
 			pcsNames, pcsgNames := GetExpectedPCLQNamesGroupByOwner(tc.pcs)
 			assert.ElementsMatch(t, tc.expectedPCLQNamesForPCS, pcsNames)
 			assert.ElementsMatch(t, tc.expectedPCLQNamesForPCSG, pcsgNames)
+		})
+	}
+}
+
+func TestCountStandalonePCLQs(t *testing.T) {
+	tests := []struct {
+		name     string
+		pcs      *grovecorev1alpha1.PodCliqueSet
+		expected int
+	}{
+		{
+			name: "no standalone clique, only a scaling group",
+			pcs: testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
+				WithScalingGroupConfig("sg", []string{"c"}, 4, 2).Build(),
+			expected: 0,
+		},
+		{
+			name: "standalone cliques only",
+			pcs: testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
+				WithStandaloneCliqueReplicas("clq-a", 3).
+				WithStandaloneCliqueReplicas("clq-b", 1).Build(),
+			expected: 2,
+		},
+		{
+			name: "standalone clique and scaling group",
+			pcs: testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
+				WithStandaloneCliqueReplicas("clq-a", 3).
+				WithScalingGroupConfig("sg", []string{"c"}, 4, 2).Build(),
+			expected: 1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual := CountStandalonePCLQs(tt.pcs)
+			assert.Equal(t, tt.expected, actual)
+		})
+	}
+}
+
+func TestGetStandalonePCLQReplicasFromPCSTemplateSpec(t *testing.T) {
+	tests := []struct {
+		name     string
+		pcs      *grovecorev1alpha1.PodCliqueSet
+		expected map[string]int32
+	}{
+		{
+			name: "no standalone clique yields empty map",
+			pcs: testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
+				WithScalingGroupConfig("sg", []string{"c"}, 4, 2).Build(),
+			expected: map[string]int32{},
+		},
+		{
+			name: "standalone cliques only",
+			pcs: testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
+				WithStandaloneCliqueReplicas("clq-a", 3).
+				WithStandaloneCliqueReplicas("clq-b", 1).Build(),
+			expected: map[string]int32{"clq-a": 3, "clq-b": 1},
+		},
+		{
+			name: "excludes scaling group member cliques",
+			pcs: testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
+				WithStandaloneCliqueReplicas("clq-a", 3).
+				WithScalingGroupConfig("sg", []string{"c"}, 4, 2).Build(),
+			expected: map[string]int32{"clq-a": 3},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual := GetStandalonePCLQReplicasFromPCSTemplateSpec(tt.pcs)
+			assert.Equal(t, tt.expected, actual)
+		})
+	}
+}
+
+func TestGetPCSGMinAvailableFromPCSTemplateSpec(t *testing.T) {
+	tests := []struct {
+		name     string
+		pcs      *grovecorev1alpha1.PodCliqueSet
+		expected map[string]int32
+	}{
+		{
+			name:     "no scaling group yields empty map",
+			pcs:      testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").WithStandaloneCliqueReplicas("clq-a", 3).Build(),
+			expected: map[string]int32{},
+		},
+		{
+			name: "one entry per scaling group",
+			pcs: testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
+				WithScalingGroupConfig("sg-a", []string{"c1"}, 4, 2).
+				WithScalingGroupConfig("sg-b", []string{"c2"}, 3, 1).Build(),
+			expected: map[string]int32{"sg-a": 2, "sg-b": 1},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual := GetPCSGMinAvailableFromPCSTemplateSpec(tt.pcs)
+			assert.Equal(t, tt.expected, actual)
+		})
+	}
+}
+
+func TestGetPCSGReplicasFromPCSTemplateSpec(t *testing.T) {
+	tests := []struct {
+		name     string
+		pcs      *grovecorev1alpha1.PodCliqueSet
+		expected map[string]int32
+	}{
+		{
+			name:     "no scaling group yields empty map",
+			pcs:      testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").WithStandaloneCliqueReplicas("clq-a", 3).Build(),
+			expected: map[string]int32{},
+		},
+		{
+			name: "one entry per scaling group",
+			pcs: testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
+				WithScalingGroupConfig("sg-a", []string{"c1"}, 4, 2).
+				WithScalingGroupConfig("sg-b", []string{"c2"}, 3, 1).Build(),
+			expected: map[string]int32{"sg-a": 4, "sg-b": 3},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual := GetPCSGReplicasFromPCSTemplateSpec(tt.pcs)
+			assert.Equal(t, tt.expected, actual)
+		})
+	}
+}
+
+func TestIsPCSReplicaInCurrentlyUpdating(t *testing.T) {
+	tests := []struct {
+		name            string
+		updateProgress  *grovecorev1alpha1.PodCliqueSetUpdateProgress
+		pcsReplicaIndex int
+		expected        bool
+	}{
+		{
+			name:            "nil update progress",
+			updateProgress:  nil,
+			pcsReplicaIndex: 0,
+			expected:        false,
+		},
+		{
+			name: "replica currently updating with unset UpdateEndedAt",
+			updateProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{
+					{ReplicaIndex: 1},
+				},
+			},
+			pcsReplicaIndex: 1,
+			expected:        true,
+		},
+		{
+			name: "replica present but update already ended",
+			updateProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{
+					{ReplicaIndex: 1, UpdateEndedAt: ptr.To(metav1.Now())},
+				},
+			},
+			pcsReplicaIndex: 1,
+			expected:        false,
+		},
+		{
+			name: "replica not in CurrentlyUpdating",
+			updateProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{
+					{ReplicaIndex: 0},
+				},
+			},
+			pcsReplicaIndex: 1,
+			expected:        false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pcs := &grovecorev1alpha1.PodCliqueSet{
+				Status: grovecorev1alpha1.PodCliqueSetStatus{UpdateProgress: tt.updateProgress},
+			}
+			actual := IsPCSReplicaInCurrentlyUpdating(pcs, tt.pcsReplicaIndex)
+			assert.Equal(t, tt.expected, actual)
 		})
 	}
 }
