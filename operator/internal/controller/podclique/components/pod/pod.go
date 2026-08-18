@@ -356,8 +356,8 @@ func addEnvironmentVariables(pod *corev1.Pod, pclq *grovecorev1alpha1.PodClique,
 			},
 		},
 	}
-	componentutils.AddEnvVarsToContainers(pod.Spec.Containers, groveEnvVars)
-	componentutils.AddEnvVarsToContainers(pod.Spec.InitContainers, groveEnvVars)
+	componentutils.PrependEnvVarsToContainers(pod.Spec.Containers, groveEnvVars)
+	componentutils.PrependEnvVarsToContainers(pod.Spec.InitContainers, groveEnvVars)
 }
 
 // configurePodHostname sets the pod hostname and subdomain for service discovery

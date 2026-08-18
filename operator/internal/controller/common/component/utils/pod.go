@@ -109,10 +109,23 @@ func GetPCLQPods(ctx context.Context, cl client.Client, _ string, pclq *grovecor
 	return ownedPods, nil
 }
 
-// AddEnvVarsToContainers adds the given environment variables to the Pod containers.
-func AddEnvVarsToContainers(containers []corev1.Container, envVars []corev1.EnvVar) {
+// PrependEnvVarsToContainers prepends the given environment variables to the Pod containers.
+// Existing variables with the same names are replaced by the prepended values.
+func PrependEnvVarsToContainers(containers []corev1.Container, envVars []corev1.EnvVar) {
+	envVarNames := make(map[string]struct{}, len(envVars))
+	for _, envVar := range envVars {
+		envVarNames[envVar.Name] = struct{}{}
+	}
+
 	for i := range containers {
-		containers[i].Env = append(containers[i].Env, envVars...)
+		combinedEnvVars := make([]corev1.EnvVar, 0, len(envVars)+len(containers[i].Env))
+		combinedEnvVars = append(combinedEnvVars, envVars...)
+		for _, envVar := range containers[i].Env {
+			if _, isInjected := envVarNames[envVar.Name]; !isInjected {
+				combinedEnvVars = append(combinedEnvVars, envVar)
+			}
+		}
+		containers[i].Env = combinedEnvVars
 	}
 }
 

@@ -371,8 +371,8 @@ func (r _resource) addEnvironmentVariablesToPodContainerSpecs(pclq *grovecorev1a
 		},
 	}
 	pclqObjPodSpec := &pclq.Spec.PodSpec
-	componentutils.AddEnvVarsToContainers(pclqObjPodSpec.Containers, pcsgEnvVars)
-	componentutils.AddEnvVarsToContainers(pclqObjPodSpec.InitContainers, pcsgEnvVars)
+	componentutils.PrependEnvVarsToContainers(pclqObjPodSpec.Containers, pcsgEnvVars)
+	componentutils.PrependEnvVarsToContainers(pclqObjPodSpec.InitContainers, pcsgEnvVars)
 }
 
 // getPCSReplicaFromPCSG extracts the PodCliqueSet replica index from PodCliqueScalingGroup labels
