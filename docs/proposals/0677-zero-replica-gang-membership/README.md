@@ -18,13 +18,14 @@
 - [Open Questions](#open-questions)
 - [Remaining Work](#remaining-work)
 - [Alternatives](#alternatives)
+- [Historical Discussion](#historical-discussion)
 - [Appendix](#appendix)
   - [Upstream Follow-ups](#upstream-follow-ups)
 <!-- /toc -->
 
 ## Summary
 
-Grove should treat `PodClique` or `PodCliqueScalingGroup` components with `replicas: 0` as an intentional idle state. This GREP keeps `minAvailable` non-zero and immutable, makes gang logic tolerant of zero-replica members, and describes two below-quorum policies for `0 < replicas < minAvailable`: `Block`, which keeps today's rejection, and `Clamp`, which wakes the component at `minAvailable`. Both are carried here because the choice between them is an [open question](#open-questions).
+Grove should treat `PodClique` or `PodCliqueScalingGroup` components with `replicas: 0` as an intentional idle state. This GREP keeps `minAvailable` non-zero and immutable, makes gang logic tolerant of zero-replica members, and uses a fixed `Clamp` rule to wake a component at `minAvailable` when an autoscaler writes a positive value below quorum.
 
 ## Motivation
 
@@ -38,7 +39,7 @@ External autoscalers should be treated as producers of desired replicas, not as 
 
 - Treat `replicas: 0` as an intentional idle state without changing `minAvailable`.
 - Make `0` the only value below `minAvailable` that Grove runs as written.
-- Describe both below-quorum policies for `0 < replicas < minAvailable`, `Block` and `Clamp`, and leave the choice between them to [Open Questions](#open-questions).
+- Clamp a wake-up request in `0 < replicas < minAvailable` to an effective count of `minAvailable`.
 - Preserve autoscaler-written `spec.replicas` as desired scale, never writing an effective value back.
 
 ### Non-Goals
@@ -65,17 +66,15 @@ An idle component should leave the `PodGang` rather than stay in it with a zero 
 
 ### Below-Quorum Policy
 
-For `0 < replicas < minAvailable`, Grove should define an explicit below-quorum policy:
+For `0 < replicas < minAvailable`, Grove uses a fixed `Clamp` rule:
 
-| Desired replicas | Default policy `Block` | Opt-in policy `Clamp` |
-| --- | --- | --- |
-| `replicas: 0` | Intentional idle state. The component contributes no required gang members and does not breach `minAvailable`. | Same as `Block`. |
-| `0 < replicas < minAvailable` | Invalid, as in the `PodCliqueSet` template today, with the same rule extended to the object and its `scale` subresource. Grove does not create partial gang members. | Accepted only when waking from `0`. Grove preserves `spec.replicas` as desired scale and computes `effectiveReplicas = minAvailable`. |
-| `replicas >= minAvailable` | Normal Grove behavior. The component participates in gang scheduling and gang termination using its configured `minAvailable`. | Same as `Block`; desired and effective replicas are equal. |
+| Desired replicas | Behavior |
+| --- | --- |
+| `replicas: 0` | Intentional idle state. The component contributes no required gang members and does not breach `minAvailable`. |
+| `0 < replicas < minAvailable` | Accepted only when waking from `0`. Grove preserves `spec.replicas` as desired scale and computes `effectiveReplicas = minAvailable`. |
+| `replicas >= minAvailable` | Normal Grove behavior. The component participates in gang scheduling and gang termination using its configured `minAvailable`; desired and effective replicas are equal. |
 
-Which column survives is an [open question](#open-questions): reviewers have asked for `Clamp` to be the only behavior. The columns are independent, so dropping one leaves the other unchanged.
-
-Existing manifests keep their meaning, except a `PodClique` with `replicas: 0` and `minAvailable: 1`: one replica today, idle here.
+Existing behavior changes in two cases: a `PodClique` with `replicas: 0` becomes idle instead of defaulting to one, and an object already in `(0, minAvailable)` is reconciled at `effectiveReplicas = minAvailable`.
 
 `Clamp` applies only on the wake-up edge: a write from `0` into the range is accepted, one from `minAvailable` or above is rejected, so `0` is the only legal scale-in target below `minAvailable`. An explicit scale-in deserves an error, not a silent promotion. Comparing against the previous value puts that check in a validating webhook on the resource and its `scale` subresource, not in defaulting.
 
@@ -85,7 +84,7 @@ Grove should not implement `Clamp` by writing the clamped value back to `spec.re
 
 The main risk is confusing "idle" with "unavailable." The proposed direction ties idle state to desired replicas, not observed status.
 
-Generic HPA/KEDA users can still fail to wake from zero to one without an autoscaler floor, and `Clamp` is the opt-in escape. Its cost is a desired/effective split: `spec.replicas: 1` may intentionally run `minAvailable` members. Validity also depends on the object's current value, so the same manifest can be accepted or rejected.
+Generic HPA/KEDA users can still fail to wake from zero to one without an autoscaler floor, so Grove applies `Clamp` on that wake-up edge. Its cost is a desired/effective split: `spec.replicas: 1` may intentionally run `minAvailable` members. Validity also depends on the object's current value, so the same manifest can be accepted or rejected.
 
 That split is transitional: most replica writers cannot express an active floor above `1` while still allowing `0`. KEDA can, pairing `minReplicaCount` with `idleReplicaCount: 0`, and if the rest gain it nothing lands in `(0, minAvailable)`. Grove must still define the case, since users and custom controllers also write `spec.replicas`.
 
@@ -93,15 +92,7 @@ Rolling updates already stall on a zero-replica standalone `PodClique`: completi
 
 ## Design Details
 
-This GREP proposes `belowMinAvailablePolicy` as an optional enum field next to `replicas` and `minAvailable` on `PodClique`, `PodCliqueScalingGroup`, and their `PodCliqueSet` template configs:
-
-```go
-// +kubebuilder:validation:Enum=Block;Clamp
-// +kubebuilder:default=Block
-BelowMinAvailablePolicy *BelowMinAvailablePolicy `json:"belowMinAvailablePolicy,omitempty"`
-```
-
-`Clamp` is opt-in for users who want Grove to translate a positive desired replica count below `minAvailable` into gang-safe effective replicas. It must never clamp `replicas: 0`, which would defeat scale-to-zero.
+`Clamp` is fixed behavior for translating a positive desired replica count below `minAvailable` into gang-safe effective replicas when waking from zero. It must never clamp `replicas: 0`, which would defeat scale-to-zero.
 
 For `Clamp`, the effective count is:
 
@@ -112,6 +103,8 @@ effectiveReplicas = max(desiredReplicas, minAvailable) otherwise
 
 `effectiveReplicas` is derived per reconciliation, not stored; only admission consults the previous value. A `Clamp` component therefore cannot oscillate: it is idle or at least `minAvailable`. Grove treats `spec.replicas` as read-only, leaving the replica writer as its only writer, and the defaulting of `PodClique` `replicas: 0` to `1` is removed.
 
+For the `/scale` subresource, `spec.replicas` remains the desired replica count and `status.replicas` reports actual observed replicas. `PodClique`, `PodCliqueScalingGroup`, and `PodCliqueSet` should use that same semantic contract.
+
 Gang logic reads `minAvailable` directly today, so idle needs a derived floor: `effectiveMinAvailable` is `0` while idle and `minAvailable` otherwise. The contributed `PodGroup`, the breach condition, and the rolling-update completion check should all read it, so an idle component contributes no `PodGroup`, never breaches, and counts as updated.
 
 ### Autoscaler Integration
@@ -120,11 +113,11 @@ Grove only observes `spec.replicas`, so what matters per writer is when it sleep
 
 | Replica writer | Sleep trigger | Wake-up value | Grove needs |
 | --- | --- | --- | --- |
-| Native HPA | Manual `0` is Kubernetes' maintenance mode and stops the HPA. It sleeps by itself only with the `HPAScaleToZero` gate. | Manual, or `1` if the HPA slept it. | `Block`, and no defaulting back to `1`. |
-| KEDA | Triggers idle for `cooldownPeriod`, 5 minutes by default. Sleeping is the default shape. | `minReplicaCount`, `1` by default. It is also the scale-down floor, so skipping the below-quorum range needs `minReplicaCount: minAvailable` with `idleReplicaCount: 0`. | `Block` with that pairing. `Clamp` if `minAvailable` is above `1` and the `ScaledObject` is not editable. |
+| Native HPA | Manual `0` is Kubernetes' maintenance mode and stops the HPA. It sleeps by itself only with the `HPAScaleToZero` gate. | Manual, or `1` if the HPA slept it. | Fixed `Clamp` on wake-up, and no defaulting back to `1`. |
+| KEDA | Triggers idle for `cooldownPeriod`, 5 minutes by default. Sleeping is the default shape. | `minReplicaCount`, `1` by default. It is also the scale-down floor, so skipping the below-quorum range needs `minReplicaCount: minAvailable` with `idleReplicaCount: 0`. | Fixed `Clamp` if `minAvailable` is above `1`; the pairing avoids the desired/effective split when the `ScaledObject` is editable. |
 | Knative KPA | An idle window with no requests, on by default. | `1`, when the activator takes a request. | Same as KEDA, but out of reach: its activator and metrics assume Knative Revisions. |
-| Dynamo Planner, writing the DGD or a `DynamoGraphDeploymentScalingAdapter` | Its own policy; zero is a computed target. | Whatever it computes. | `Clamp` when `minAvailable` is above `1`. Its only floor, `min_endpoint`, permits zero only at `0`, so a decaying load enters the below-quorum range. |
-| A custom controller | Its own policy. | Whatever it computes. | Only zero support, provided it skips `1 .. minAvailable - 1`. |
+| Dynamo Planner, writing the DGD or a `DynamoGraphDeploymentScalingAdapter` | Its own policy; zero is a computed target. | Whatever it computes. | `Clamp` only on a wake from `0`; active scale-in must stay at or above `minAvailable` or jump to `0`. |
+| A custom controller | Its own policy. | Whatever it computes. | Fixed `Clamp` when it wakes into `1 .. minAvailable - 1`; active scale-in into that range is rejected. |
 | Grove's `scaleConfig` | Never; admission requires `minReplicas >= minAvailable`. | n/a | `minReplicas: 0` valid while `1 .. minAvailable - 1` stays invalid, no defaulting it from `replicas`, and the `HPAScaleToZero` gate on the generated HPA. |
 
 Waking from zero also needs a signal independent of a running replica, since serving metrics deadlock: in Dynamo, a model with no workers leaves `/v1/models` and returns `404`.
@@ -170,7 +163,6 @@ spec:
         roleName: decode
         replicas: 2
         minAvailable: 2
-        belowMinAvailablePolicy: Clamp
         podSpec:
           containers: [{name: decode, image: nginx:latest}]
     podCliqueScalingGroups:
@@ -178,7 +170,6 @@ spec:
       cliqueNames: [pleader, pworker]
       replicas: 2
       minAvailable: 2
-      belowMinAvailablePolicy: Clamp
 ```
 
 Scale-to-zero happens on the derived objects, not this template: Grove sets `replicas` only at creation, so the replica writer owns it afterwards.
@@ -200,14 +191,14 @@ kubectl scale podcliquescalinggroup scale-to-zero-deepseek-0-prefill --replicas=
 
 Each row is one write on that component:
 
-| Write | `Block` | `Clamp` |
-| --- | --- | --- |
-| `0` to `1` | Rejected | Accepted, `effectiveReplicas: 2` |
-| `1` to `2` | Unreachable | Accepted, still two members |
-| `2` to `3` | Accepted | Accepted |
-| `3` to `2` | Accepted | Accepted |
-| `2` to `1` | Rejected | Rejected |
-| `2` to `0` | Accepted | Accepted |
+| Write | Fixed `Clamp` behavior |
+| --- | --- |
+| `0` to `1` | Accepted, `effectiveReplicas: 2` |
+| `1` to `2` | Accepted, still two members |
+| `2` to `3` | Accepted |
+| `3` to `2` | Accepted |
+| `2` to `1` | Rejected |
+| `2` to `0` | Accepted |
 
 `(0, minAvailable)` is therefore one-way: reachable only from `0`, left by scaling up or by writing `0`.
 
@@ -222,7 +213,7 @@ A `PodClique` produces no error there only because defaulting rewrites `replicas
 
 ### Monitoring
 
-For `Clamp`, a `ReplicasBelowMinAvailable` condition should carry the desired and effective replica counts, so users can see why the running member count exceeds `spec.replicas`. It is also the only feedback channel for a below-quorum write, since an autoscaler cannot act on a rejection. Whether it is also the only channel for the desired/effective split depends on what `/scale` reports, which [Open Questions](#open-questions) leaves undecided.
+For `Clamp`, a `ReplicasBelowMinAvailable` condition should carry the desired and effective replica counts, so users can see why the running member count exceeds `spec.replicas`; `/scale.status.replicas` exposes the observed count but not why it differs.
 
 ### Test Plan
 
@@ -230,10 +221,10 @@ Prototype coverage should show:
 
 - zero-replica components do not block the base gang;
 - an idle component does not stall a rolling update;
-- default `Block` rejects `0 < replicas < minAvailable`;
-- opt-in `Clamp` computes an effective count of at least `minAvailable` when waking from `0`;
+- fixed `Clamp` computes an effective count of at least `minAvailable` when waking from `0`;
 - `Clamp` rejects a scale-in into the below-quorum range on both the resource and its `scale` subresource;
 - `Clamp` does not write the effective value back to `spec.replicas`;
+- all three `/scale.status.replicas` implementations report actual observed replicas;
 - scaling back to `minAvailable` or above can re-enter normal gang behavior.
 
 ### Graduation Criteria
@@ -244,17 +235,16 @@ Prototype coverage should show:
 
 ## Open Questions
 
-- Is the below-quorum behavior a fixed rule or an opt-in policy? Reviewer feedback describes the override as unconditional, keeping only `Clamp` and dropping `belowMinAvailablePolicy`. This GREP still carries both, because unconditional clamping is not purely additive: no admission webhook covers `PodClique` or `PodCliqueScalingGroup` today, so a component already at `replicas: 1` with `minAvailable: 2` runs one pod now and would silently run two. Settling on one behavior drops the other column, the field, and the policy names that qualify the rest of this GREP.
-- What does `/scale` `status.replicas` report, and should the three levels agree? It can mirror `spec.replicas` as `desired`, report the clamped target as `effective`, or report `actual` observed pods, which is what the subresource contract asks for. The question exists only under `Clamp`. The levels disagree today: `PodClique` counts non-terminating pods while `PodCliqueScalingGroup` and `PodCliqueSet` mirror `spec.replicas`, so behavior depends on where an autoscaler attaches. HPA reads `spec.replicas` to rescale, but its per-pod branch, used by KEDA's `AverageValue` metrics, divides by `status.replicas`. Reporting `desired` leaves [Monitoring](#monitoring) as the only channel for the split. Answering this needs the contract read and HPA and KEDA behavior measured; a later revision will cover both.
+- Should active scale-in into `(0, minAvailable)` be rejected, or accepted and internally clamped? The current direction limits `Clamp` to scale-out from `0`, returning a validation error for invalid scale-in so callers receive explicit feedback; rejection, however, makes HPA retry failed writes. Acceptance avoids retries by preserving the autoscaler-written desired value in `spec.replicas` while `status.replicas` remains observed, but HPA may report a successful scale-down without reducing pods.
 
 ## Remaining Work
 
 Accepting the direction above does not finish the GREP. Still to come, in this order:
 
-- Measured autoscaler behavior, not reasoning about it: HPA and KEDA against a `Clamp` component across the wake-up edge, repeated below-quorum writes, `cooldownPeriod` and stabilization windows, and each `status.replicas` choice. It confirms or replaces the no-write-fight and no-oscillation claims above, and lands here with its setup and versions.
+- Measured autoscaler behavior, not reasoning about it: HPA and KEDA against a `Clamp` component across the wake-up edge, repeated below-quorum writes, `cooldownPeriod` and stabilization windows, and observed `status.replicas`. It confirms or replaces the no-write-fight and no-oscillation claims above, and lands here with its setup and versions.
 - The admission rule over previous and new value pairs, including create and re-apply, where there is no previous value.
 - Gang behavior in detail: how the `PodGang` reshapes on idle and wake, whether an idle component is absent from the [coherent update](../393-coherent-rolling-updates/README.md) `PodGangMap` or present and empty, whether it joins an MVU, what a scale to zero does to an update in flight, and what that means for gang termination and partial scale.
-- The implementation surface in one place. Neither `PodClique` nor `PodCliqueScalingGroup` has a webhook today, so this GREP implies new ones on both and their `scale` subresource, plus dropping the `PodClique` `replicas: 0` defaulting, the `effectiveMinAvailable` readers, and looser `scaleConfig` rules. Listing them is in scope; designing them is not.
+- The implementation surface in one place. Neither `PodClique` nor `PodCliqueScalingGroup` has a webhook today, so this GREP implies new ones on both and their `scale` subresource, plus dropping the `PodClique` `replicas: 0` defaulting, the `effectiveMinAvailable` readers, looser `scaleConfig` rules, observed `status.replicas` at all three levels, and upgrade handling for pre-existing below-quorum objects. Listing them is in scope; designing them is not.
 
 ## Alternatives
 
@@ -264,6 +254,31 @@ Accepting the direction above does not finish the GREP. Still to come, in this o
 - Only support `Block` and never add `Clamp`: keeps `spec.replicas` truthful, but generic HPA/KEDA scale-from-zero can get stuck without an autoscaler floor.
 - Make `Clamp` direction-agnostic: re-applying a stored object never fails, but an explicit scale-in is silently promoted with no signal to the caller.
 - Add `activeMinReplicas` now: useful if active warm capacity can differ from gang quorum, but premature if the active floor is simply `minAvailable`.
+
+## Historical Discussion
+
+This section records an earlier design stage and is not normative. The proposal originally carried two below-quorum policies while reviewers considered whether `Clamp` should be fixed behavior:
+
+| Desired replicas | Default policy `Block` | Opt-in policy `Clamp` |
+| --- | --- | --- |
+| `replicas: 0` | Intentional idle state. The component contributes no required gang members and does not breach `minAvailable`. | Same as `Block`. |
+| `0 < replicas < minAvailable` | Invalid, as in the `PodCliqueSet` template today, with the same rule extended to the object and its `scale` subresource. Grove does not create partial gang members. | Accepted only when waking from `0`. Grove preserves `spec.replicas` as desired scale and computes `effectiveReplicas = minAvailable`. |
+| `replicas >= minAvailable` | Normal Grove behavior. The component participates in gang scheduling and gang termination using its configured `minAvailable`. | Same as `Block`; desired and effective replicas are equal. |
+
+The opt-in design proposed `belowMinAvailablePolicy` next to `replicas` and `minAvailable` on `PodClique`, `PodCliqueScalingGroup`, and their `PodCliqueSet` template configs:
+
+```go
+// +kubebuilder:validation:Enum=Block;Clamp
+// +kubebuilder:default=Block
+BelowMinAvailablePolicy *BelowMinAvailablePolicy `json:"belowMinAvailablePolicy,omitempty"`
+```
+
+This preserved existing behavior by default because unconditional clamping is not purely additive: no admission webhook covers `PodClique` or `PodCliqueScalingGroup` today, so a component already at `replicas: 1` with `minAvailable: 2` runs one pod now and would run two under `Clamp`. Opt-in `Clamp` was the escape for generic autoscalers that wake below `minAvailable`, at the cost of an additional API field and behavior that varied by policy.
+
+Review resolved two questions: `Clamp` is fixed behavior without a policy field, and `/scale.status.replicas` reports observed replicas while `spec.replicas` holds desired state. The normative proposal therefore drops `Block`, `belowMinAvailablePolicy`, and policy-qualified behavior; they remain here only to preserve the design history.
+
+An intermediate draft considered persisting the clamped value to `spec.replicas`. The current proposal keeps `Clamp` internal to preserve replica-writer ownership and avoid write contention.
+
 ## Appendix
 
 - Tracking issue: [ai-dynamo/grove#677](https://github.com/ai-dynamo/grove/issues/677)
