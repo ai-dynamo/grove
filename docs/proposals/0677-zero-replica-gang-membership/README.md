@@ -78,7 +78,7 @@ Existing behavior changes in two cases: a `PodClique` with `replicas: 0` becomes
 
 `Clamp` applies only on the wake-up edge: a write from `0` into the range is accepted, one from `minAvailable` or above is rejected, so `0` is the only legal scale-in target below `minAvailable`. An explicit scale-in deserves an error, not a silent promotion. Comparing against the previous value puts that check in a validating webhook on the resource and its `scale` subresource, not in defaulting.
 
-Grove should not implement `Clamp` by writing the clamped value back to `spec.replicas`. HPA or KEDA may repeatedly recompute a desired value such as `1`; writing `minAvailable` back into the scale target can create a control-plane write fight. The override is therefore internal only: the autoscaler-written value stays in `spec.replicas` as desired scale, Grove derives the effective value separately, and a writer that keeps recomputing `1` keeps rewriting the value it already wrote, which is a no-op rather than a fight.
+Grove should not implement `Clamp` by writing the clamped value back to `spec.replicas`. HPA or KEDA may repeatedly recompute a desired value such as `1`; writing `minAvailable` back into the scale target can create a control-plane write fight. The override is therefore internal only: the autoscaler-written value stays in `spec.replicas` as desired scale and Grove derives the effective value separately. After a successful wake, repeated writes of the stored below-quorum value are no-ops. A later active scale-in into the same range is rejected under the current wake-only rule and may be retried periodically; this is control-plane retry churn, not replica oscillation.
 
 ### Limitations/Risks & Mitigations
 
@@ -104,6 +104,8 @@ effectiveReplicas = max(desiredReplicas, minAvailable) otherwise
 `effectiveReplicas` is derived per reconciliation, not stored; only admission consults the previous value. A `Clamp` component therefore cannot oscillate: it is idle or at least `minAvailable`. Grove treats `spec.replicas` as read-only, leaving the replica writer as its only writer, and the defaulting of `PodClique` `replicas: 0` to `1` is removed.
 
 For the `/scale` subresource, `spec.replicas` remains the desired replica count and `status.replicas` reports actual observed replicas. `PodClique`, `PodCliqueScalingGroup`, and `PodCliqueSet` should use that same semantic contract.
+
+With `AverageValue` metrics, reporting observed replicas can cause one corrective HPA write from `1` to `2`; the experiment observed convergence without repeated writes or replica reversal.
 
 Gang logic reads `minAvailable` directly today, so idle needs a derived floor: `effectiveMinAvailable` is `0` while idle and `minAvailable` otherwise. The contributed `PodGroup`, the breach condition, and the rolling-update completion check should all read it, so an idle component contributes no `PodGroup`, never breaches, and counts as updated.
 
@@ -193,14 +195,17 @@ Each row is one write on that component:
 
 | Write | Fixed `Clamp` behavior |
 | --- | --- |
-| `0` to `1` | Accepted, `effectiveReplicas: 2` |
+| `0` to `1` | Accepted, `spec.replicas: 1`, `effectiveReplicas: 2` |
+| `1` to `1` | Accepted as an idempotent re-apply; no stored-value change |
 | `1` to `2` | Accepted, still two members |
 | `2` to `3` | Accepted |
 | `3` to `2` | Accepted |
-| `2` to `1` | Rejected |
+| `2` to `1` | Rejected; direction-agnostic behavior remains an open question |
 | `2` to `0` | Accepted |
 
 `(0, minAvailable)` is therefore one-way: reachable only from `0`, left by scaling up or by writing `0`.
+
+The same update semantics apply to the main resource and its `/scale` subresource. `CREATE` has no previous value and remains part of the admission rule follow-up.
 
 Today neither write is rejected: no admission webhook covers `PodClique` or `PodCliqueScalingGroup`. Both are accepted, and the idle member then holds the whole `PodGang` below its member count, leaving the router `SchedulingGated` (#676). Only the `PodCliqueSet` template validates the same shape:
 
@@ -227,6 +232,8 @@ Prototype coverage should show:
 - all three `/scale.status.replicas` implementations report actual observed replicas;
 - scaling back to `minAvailable` or above can re-enter normal gang behavior.
 
+An experiment-only prototype recorded 142 logical cases. Wake-only `Clamp` produced periodic denied HPA writes during active below-quorum scale-in, while direction-agnostic internal clamping completed the KEDA and Grove writer gates without persistent rejection, mutation, quorum breach, or replica reversal.
+
 ### Graduation Criteria
 
 - Alpha: direction accepted and initial implementation exists.
@@ -235,13 +242,14 @@ Prototype coverage should show:
 
 ## Open Questions
 
-- Should active scale-in into `(0, minAvailable)` be rejected, or accepted and internally clamped? The current direction limits `Clamp` to scale-out from `0`, returning a validation error for invalid scale-in so callers receive explicit feedback; rejection, however, makes HPA retry failed writes. Acceptance avoids retries by preserving the autoscaler-written desired value in `spec.replicas` while `status.replicas` remains observed, but HPA may report a successful scale-down without reducing pods.
+- Should active scale-in into `(0, minAvailable)` be rejected, or accepted and internally clamped? Wake-only `Clamp` gives callers an explicit validation error and avoids reporting a successful scale-down that does not reduce effective replicas. In KEDA 2.20.2 tests, however, it caused 8-9 denied HPA writes in 30 seconds and 65 during a 300-second cooldown. This was control-plane retry churn, not replica oscillation or quorum loss.
+
+  Direction-agnostic `Clamp` preserved the requested `spec.replicas` and completed 11/11 KEDA contract cases and 15/15 Grove writer cases without denied writes, repeated writes, or replica reversal. Its trade-off is that a below-quorum scale-in appears successful while effective replicas remain at `minAvailable`.
 
 ## Remaining Work
 
 Accepting the direction above does not finish the GREP. Still to come, in this order:
 
-- Measured autoscaler behavior, not reasoning about it: HPA and KEDA against a `Clamp` component across the wake-up edge, repeated below-quorum writes, `cooldownPeriod` and stabilization windows, and observed `status.replicas`. It confirms or replaces the no-write-fight and no-oscillation claims above, and lands here with its setup and versions.
 - The admission rule over previous and new value pairs, including create and re-apply, where there is no previous value.
 - Gang behavior in detail: how the `PodGang` reshapes on idle and wake, whether an idle component is absent from the [coherent update](../393-coherent-rolling-updates/README.md) `PodGangMap` or present and empty, whether it joins an MVU, what a scale to zero does to an update in flight, and what that means for gang termination and partial scale.
 - The implementation surface in one place. Neither `PodClique` nor `PodCliqueScalingGroup` has a webhook today, so this GREP implies new ones on both and their `scale` subresource, plus dropping the `PodClique` `replicas: 0` defaulting, the `effectiveMinAvailable` readers, looser `scaleConfig` rules, observed `status.replicas` at all three levels, and upgrade handling for pre-existing below-quorum objects. Listing them is in scope; designing them is not.
