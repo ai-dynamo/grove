@@ -353,6 +353,41 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 			cliqueTemplates: []string{"prefill"},
 		},
 		{
+			description: "Valid scaling group with maxUnavailable",
+			pcsName:     "inference",
+			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				{
+					Name:         "workers",
+					CliqueNames:  []string{"prefill"},
+					Replicas:     ptr.To(int32(3)),
+					MinAvailable: ptr.To(int32(2)),
+					RollingUpdate: &grovecorev1alpha1.PodCliqueScalingGroupRollingUpdateStrategy{
+						MaxUnavailable: ptr.To(int32(1)),
+					},
+				},
+			},
+			cliqueTemplates: []string{"prefill"},
+		},
+		{
+			description: "Invalid scaling group maxUnavailable",
+			pcsName:     "inference",
+			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				{
+					Name:         "workers",
+					CliqueNames:  []string{"prefill"},
+					Replicas:     ptr.To(int32(3)),
+					MinAvailable: ptr.To(int32(2)),
+					RollingUpdate: &grovecorev1alpha1.PodCliqueScalingGroupRollingUpdateStrategy{
+						MaxUnavailable: ptr.To(int32(0)),
+					},
+				},
+			},
+			cliqueTemplates: []string{"prefill"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].rollingUpdate.maxUnavailable"},
+			},
+		},
+		{
 			description: "Invalid Replicas (negative value)",
 			pcsName:     "inference",
 			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
@@ -1140,6 +1175,54 @@ func TestValidateCliqueDependencies(t *testing.T) {
 			} else {
 				assert.Empty(t, errs)
 			}
+		})
+	}
+}
+
+func TestValidatePodCliqueRollingUpdateStrategy(t *testing.T) {
+	tests := []struct {
+		name          string
+		strategy      *grovecorev1alpha1.PodCliqueRollingUpdateStrategy
+		errorContains string
+	}{
+		{
+			name: "unset strategy",
+		},
+		{
+			name:     "empty strategy",
+			strategy: &grovecorev1alpha1.PodCliqueRollingUpdateStrategy{},
+		},
+		{
+			name: "arbitrary positive max unavailable",
+			strategy: &grovecorev1alpha1.PodCliqueRollingUpdateStrategy{
+				MaxUnavailable: ptr.To(int32(42)),
+			},
+		},
+		{
+			name: "zero max unavailable",
+			strategy: &grovecorev1alpha1.PodCliqueRollingUpdateStrategy{
+				MaxUnavailable: ptr.To(int32(0)),
+			},
+			errorContains: "must be greater than 0",
+		},
+		{
+			name: "negative max unavailable",
+			strategy: &grovecorev1alpha1.PodCliqueRollingUpdateStrategy{
+				MaxUnavailable: ptr.To(int32(-1)),
+			},
+			errorContains: "must be greater than 0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errs := validatePodCliqueRollingUpdateStrategy(tt.strategy, field.NewPath("spec", "rollingUpdate"))
+			if tt.errorContains == "" {
+				assert.Empty(t, errs)
+				return
+			}
+			require.NotEmpty(t, errs)
+			assert.Contains(t, errs.ToAggregate().Error(), tt.errorContains)
 		})
 	}
 }

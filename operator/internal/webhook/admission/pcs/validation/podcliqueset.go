@@ -375,6 +375,11 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigs(fldPath *field.Path)
 			}
 		}
 
+		allErrs = append(allErrs, validatePodCliqueScalingGroupRollingUpdateStrategy(
+			scalingGroupConfig.RollingUpdate,
+			fldPath.Index(i).Child("rollingUpdate"),
+		)...)
+
 		// validate ScaleConfig.MinReplicas >= MinAvailable
 		if scalingGroupConfig.ScaleConfig != nil && scalingGroupConfig.MinAvailable != nil {
 			if scalingGroupConfig.ScaleConfig.MinReplicas != nil && *scalingGroupConfig.ScaleConfig.MinReplicas < *scalingGroupConfig.MinAvailable {
@@ -555,6 +560,7 @@ func (v *pcsValidator) validatePodCliqueSpec(name string, cliqueSpec grovecorev1
 			allErrs = append(allErrs, field.Invalid(fldPath.Child("autoScalingConfig", "maxReplicas"), cliqueSpec.ScaleConfig.MaxReplicas, "must be greater than or equal to replicas"))
 		}
 	}
+	allErrs = append(allErrs, validatePodCliqueRollingUpdateStrategy(cliqueSpec.RollingUpdate, fldPath.Child("rollingUpdate"))...)
 
 	warnings, cliquePodSpecErrs := v.validatePodSpec(cliqueSpec.PodSpec, fldPath.Child("podSpec"))
 	if len(cliquePodSpecErrs) != 0 {
@@ -562,6 +568,38 @@ func (v *pcsValidator) validatePodCliqueSpec(name string, cliqueSpec grovecorev1
 	}
 
 	return warnings, allErrs
+}
+
+func validatePodCliqueRollingUpdateStrategy(strategy *grovecorev1alpha1.PodCliqueRollingUpdateStrategy, fldPath *field.Path) field.ErrorList {
+	if strategy == nil {
+		return nil
+	}
+
+	allErrs := field.ErrorList{}
+	if strategy.MaxUnavailable != nil && *strategy.MaxUnavailable <= 0 {
+		allErrs = append(allErrs, field.Invalid(
+			fldPath.Child("maxUnavailable"),
+			*strategy.MaxUnavailable,
+			"must be greater than 0",
+		))
+	}
+	return allErrs
+}
+
+func validatePodCliqueScalingGroupRollingUpdateStrategy(strategy *grovecorev1alpha1.PodCliqueScalingGroupRollingUpdateStrategy, fldPath *field.Path) field.ErrorList {
+	if strategy == nil {
+		return nil
+	}
+
+	allErrs := field.ErrorList{}
+	if strategy.MaxUnavailable != nil && *strategy.MaxUnavailable <= 0 {
+		allErrs = append(allErrs, field.Invalid(
+			fldPath.Child("maxUnavailable"),
+			*strategy.MaxUnavailable,
+			"must be greater than 0",
+		))
+	}
+	return allErrs
 }
 
 // isStartupTypeExplicit returns true if the startup type is Explicit.

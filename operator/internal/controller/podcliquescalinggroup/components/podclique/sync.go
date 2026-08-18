@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"sort"
 	"strconv"
 	"time"
 
@@ -106,7 +107,8 @@ func (r _resource) runSyncFlow(logger logr.Logger, sc *syncContext) error {
 
 	// If there are excess PodCliques than expected, delete the ones that are no longer expected but existing.
 	// This can happen when PCSG replicas have been scaled-in.
-	if err := r.triggerDeletionOfExcessPCSGReplicas(logger, sc); err != nil {
+	scaleInPending, err := r.triggerDeletionOfExcessPCSGReplicas(logger, sc)
+	if err != nil {
 		return err
 	}
 	// Create or update the expected PodCliques as per the PodCliqueScalingGroup configurations defined in the PodCliqueSet.
@@ -133,7 +135,10 @@ func (r _resource) runSyncFlow(logger logr.Logger, sc *syncContext) error {
 			return err
 		}
 	} else {
-		if componentutils.IsAutoUpdateStrategy(sc.pcs) {
+		// maxUnavailable is shared by scale-in and rolling-update deletions.
+		// Do not start another update deletion while scale-in is pending.
+		if componentutils.IsAutoUpdateStrategy(sc.pcs) &&
+			(!scaleInPending || !isPCSGReplicaChangeConcurrencyControlEnabled(sc)) {
 			if err := r.processPendingUpdates(logger, sc); err != nil {
 				return err
 			}
@@ -151,49 +156,101 @@ func (r _resource) runSyncFlow(logger logr.Logger, sc *syncContext) error {
 	return nil
 }
 
-// triggerDeletionOfExcessPCSGReplicas removes PCSG replicas that exceed the desired replica count due to scale-down
-func (r _resource) triggerDeletionOfExcessPCSGReplicas(logger logr.Logger, sc *syncContext) error {
-	existingPCSGReplicas := getExistingNonTerminatingPCSGReplicas(sc.existingPCLQs)
-	// Check if the number of existing PodCliques is greater than expected, if so, we need to delete the extra ones.
-	diff := existingPCSGReplicas - int(sc.pcsg.Spec.Replicas)
-	if diff > 0 {
-		pcsgObjectKey := client.ObjectKeyFromObject(sc.pcsg)
-		logger.Info("Found more PodCliques than expected, triggering deletion of excess PodCliques", "expected", int(sc.pcsg.Spec.Replicas), "existing", existingPCSGReplicas, "diff", diff)
-		reason := "Delete excess PodCliqueScalingGroup replicas"
-		replicaIndicesToDelete := computePCSGReplicasToDelete(existingPCSGReplicas, int(sc.pcsg.Spec.Replicas))
-		deletionTasks := r.createDeleteTasks(logger, sc.pcs, pcsgObjectKey.Name, replicaIndicesToDelete, reason)
-		if err := r.triggerDeletionOfPodCliques(sc.ctx, logger, pcsgObjectKey, deletionTasks); err != nil {
-			return err
-		}
-
-		return sc.refreshExistingPCLQs(sc.pcsg)
+// triggerDeletionOfExcessPCSGReplicas removes PCSG replicas that exceed the
+// desired replica count due to scale-down. It returns true while any excess
+// replica still exists, including replicas already terminating.
+func (r _resource) triggerDeletionOfExcessPCSGReplicas(logger logr.Logger, sc *syncContext) (bool, error) {
+	replicaIndicesToDelete := getExcessPCSGReplicaIndices(sc.existingPCLQs, int(sc.pcsg.Spec.Replicas))
+	if len(replicaIndicesToDelete) == 0 {
+		return false, nil
 	}
-	return nil
+
+	pcsgObjectKey := client.ObjectKeyFromObject(sc.pcsg)
+	logger.Info("Found excess PodCliqueScalingGroup replicas",
+		"expected", int(sc.pcsg.Spec.Replicas),
+		"replicaIndices", replicaIndicesToDelete,
+	)
+
+	if isPCSGReplicaChangeConcurrencyControlEnabled(sc) {
+		budget, activeReplicaIndices, err := evaluateScaleInBudget(sc)
+		if err != nil {
+			return true, err
+		}
+		replicaIndicesToDelete = selectScaleInReplicaIndicesWithinBudget(
+			replicaIndicesToDelete,
+			componentutils.GroupPCLQsByPCSGReplicaIndex(sc.existingPCLQs),
+			activeReplicaIndices,
+			budget,
+		)
+		if len(replicaIndicesToDelete) == 0 {
+			logger.Info("PCSG scale-in deletion blocked by maxUnavailable",
+				"unavailable", budget.unavailable,
+				"limit", budget.limit,
+			)
+			return true, nil
+		}
+	}
+
+	reason := "Delete excess PodCliqueScalingGroup replicas"
+	deletionTasks := r.createDeleteTasks(logger, sc.pcs, pcsgObjectKey.Name, replicaIndicesToDelete, reason)
+	if err := r.triggerDeletionOfPodCliques(sc.ctx, logger, pcsgObjectKey, deletionTasks); err != nil {
+		return true, err
+	}
+	if err := sc.refreshExistingPCLQs(sc.pcsg); err != nil {
+		return true, err
+	}
+	return true, nil
 }
 
-// getExistingNonTerminatingPCSGReplicas counts the number of unique PCSG replica indices from non-terminating PodCliques
-func getExistingNonTerminatingPCSGReplicas(existingPCLQs []grovecorev1alpha1.PodClique) int {
-	existingIndices := make([]string, 0, len(existingPCLQs))
+func getExcessPCSGReplicaIndices(existingPCLQs []grovecorev1alpha1.PodClique, desired int) []string {
+	indexSet := make(map[int]struct{})
 	for _, pclq := range existingPCLQs {
-		if k8sutils.IsResourceTerminating(pclq.ObjectMeta) {
+		index, err := strconv.Atoi(pclq.Labels[apicommon.LabelPodCliqueScalingGroupReplicaIndex])
+		if err != nil || index < desired {
 			continue
 		}
-		pcsgReplicaIndex, ok := pclq.Labels[apicommon.LabelPodCliqueScalingGroupReplicaIndex]
-		if !ok {
-			continue
-		}
-		existingIndices = append(existingIndices, pcsgReplicaIndex)
+		indexSet[index] = struct{}{}
 	}
-	return len(lo.Uniq(existingIndices))
+
+	indices := make([]int, 0, len(indexSet))
+	for index := range indexSet {
+		indices = append(indices, index)
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(indices)))
+	return lo.Map(indices, func(index int, _ int) string {
+		return strconv.Itoa(index)
+	})
 }
 
-// computePCSGReplicasToDelete generates the replica indices that should be deleted when scaling down
-func computePCSGReplicasToDelete(existingReplicas, expectedReplicas int) []string {
-	indices := make([]string, 0, existingReplicas-expectedReplicas)
-	for i := expectedReplicas; i < existingReplicas; i++ {
-		indices = append(indices, strconv.Itoa(i))
+func selectScaleInReplicaIndicesWithinBudget(
+	candidates []string,
+	existingPCLQsByReplicaIndex map[string][]grovecorev1alpha1.PodClique,
+	activeReplicaIndices map[string]struct{},
+	budget rollingUpdateBudget,
+) []string {
+	selected := make([]string, 0, budget.limit)
+	remainingNewChangeSlots := budget.allowed
+
+	for _, candidate := range candidates {
+		if len(selected) >= budget.limit {
+			break
+		}
+		if lo.EveryBy(existingPCLQsByReplicaIndex[candidate], func(pclq grovecorev1alpha1.PodClique) bool {
+			return k8sutils.IsResourceTerminating(pclq.ObjectMeta)
+		}) {
+			continue
+		}
+
+		_, alreadyChanging := activeReplicaIndices[candidate]
+		if !alreadyChanging && remainingNewChangeSlots == 0 {
+			continue
+		}
+		selected = append(selected, candidate)
+		if !alreadyChanging {
+			remainingNewChangeSlots--
+		}
 	}
-	return indices
+	return selected
 }
 
 // createExpectedPCLQs creates any missing PodCliques needed to satisfy the desired PCSG replica configuration

@@ -382,6 +382,12 @@ type PodCliqueScalingGroupConfig struct {
 	// +optional
 	// +kubebuilder:default=1
 	MinAvailable *int32 `json:"minAvailable,omitempty"`
+	// RollingUpdate configures how PodCliqueScalingGroup replica deletions are
+	// paced while the group is being updated. MaxUnavailable is measured in
+	// complete PodCliqueScalingGroup replicas.
+	// If unset, the original Grove rolling-update behavior is preserved.
+	// +optional
+	RollingUpdate *PodCliqueScalingGroupRollingUpdateStrategy `json:"rollingUpdate,omitempty"`
 	// ScaleConfig is the horizontal pod autoscaler configuration for the pod clique scaling group.
 	// +optional
 	ScaleConfig *AutoScalingConfig `json:"scaleConfig,omitempty"`
@@ -397,6 +403,18 @@ type PodCliqueScalingGroupConfig struct {
 	// Must be equal to or stricter than parent PodCliqueSet constraints.
 	// +optional
 	TopologyConstraint *TopologyConstraint `json:"topologyConstraint,omitempty"`
+}
+
+// PodCliqueScalingGroupRollingUpdateStrategy configures availability
+// safeguards for controller-initiated replica deletions during a
+// PodCliqueScalingGroup rolling update.
+type PodCliqueScalingGroupRollingUpdateStrategy struct {
+	// MaxUnavailable is the maximum number of complete
+	// PodCliqueScalingGroup replicas that may be unavailable during a rolling
+	// update. Values greater than Replicas are capped at Replicas.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxUnavailable *int32 `json:"maxUnavailable,omitempty"`
 }
 
 // ResourceSharingScope defines the sharing scope for resource claims.

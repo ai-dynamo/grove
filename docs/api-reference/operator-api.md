@@ -288,6 +288,23 @@ PodClique is a set of pods running the same image.
 | `status` _[PodCliqueStatus](#podcliquestatus)_ | Status defines the status of a PodClique. |  |  |
 
 
+#### PodCliqueRollingUpdateStrategy
+
+
+
+PodCliqueRollingUpdateStrategy configures availability safeguards for
+controller-initiated Pod deletions during a PodClique rolling update.
+
+
+
+_Appears in:_
+- [PodCliqueSpec](#podcliquespec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `maxUnavailable` _integer_ | MaxUnavailable is the maximum number of desired Pods that may be<br />unavailable during a rolling update. Values greater than Replicas are<br />capped at Replicas. |  | Minimum: 1 <br /> |
+
+
 #### PodCliqueScalingGroup
 
 
@@ -328,6 +345,7 @@ _Appears in:_
 | `annotations` _object (keys:string, values:string)_ | Annotations is an unstructured key value map stored with a resource that may be<br />set by external tools to store and retrieve arbitrary metadata. They are not<br />queryable and should be preserved when modifying objects.<br />More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations |  |  |
 | `replicas` _integer_ | Replicas is the desired number of replicas for the scaling group at template level.<br />This allows one to control the replicas of the scaling group at startup.<br />If not specified, it defaults to 1. | 1 |  |
 | `minAvailable` _integer_ | MinAvailable serves two purposes:<br />Gang Scheduling:<br />It defines the minimum number of replicas that are guaranteed to be gang scheduled.<br />Gang Termination:<br />It defines the minimum requirement of available replicas for a PodCliqueScalingGroup.<br />Violation of this threshold for a duration beyond TerminationDelay will result in termination of the PodCliqueSet replica that it belongs to.<br />Default: If not specified, it defaults to 1.<br />Constraints:<br />MinAvailable cannot be greater than Replicas.<br />If ScaleConfig is defined then its MinAvailable should not be less than ScaleConfig.MinReplicas. | 1 |  |
+| `rollingUpdate` _[PodCliqueScalingGroupRollingUpdateStrategy](#podcliquescalinggrouprollingupdatestrategy)_ | RollingUpdate configures how PodCliqueScalingGroup replica deletions are<br />paced while the group is being updated. MaxUnavailable is measured in<br />complete PodCliqueScalingGroup replicas.<br />If unset, the original Grove rolling-update behavior is preserved. |  |  |
 | `scaleConfig` _[AutoScalingConfig](#autoscalingconfig)_ | ScaleConfig is the horizontal pod autoscaler configuration for the pod clique scaling group. |  |  |
 | `resourceSharing` _[PCSGResourceSharingSpec](#pcsgresourcesharingspec) array_ | ResourceSharing defines shared ResourceClaims at the PCSG level.<br />Each entry references a template (internal or external) and specifies a Scope:<br />  - AllReplicas: one RC for the entire PCSG, shared across all replicas<br />  - PerReplica: one RC per PCSG replica, shared across all PCLQs in that replica<br />The optional Filter field controls which PodCliques receive the claims.<br />At PCSG level, only childCliqueNames filtering is available. |  |  |
 | `topologyConstraint` _[TopologyConstraint](#topologyconstraint)_ | TopologyConstraint defines topology placement requirements for PodCliqueScalingGroup.<br />Must be equal to or stricter than parent PodCliqueSet constraints. |  |  |
@@ -349,6 +367,24 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `current` _integer_ | Current is the index of the PodCliqueScalingGroup replica that is currently being updated. |  |  |
 | `completed` _integer array_ | Completed is the list of indices of PodCliqueScalingGroup replicas that have been updated to the latest PodCliqueSet spec. |  |  |
+
+
+#### PodCliqueScalingGroupRollingUpdateStrategy
+
+
+
+PodCliqueScalingGroupRollingUpdateStrategy configures availability
+safeguards for controller-initiated replica deletions during a
+PodCliqueScalingGroup rolling update.
+
+
+
+_Appears in:_
+- [PodCliqueScalingGroupConfig](#podcliquescalinggroupconfig)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `maxUnavailable` _integer_ | MaxUnavailable is the maximum number of complete<br />PodCliqueScalingGroup replicas that may be unavailable during a rolling<br />update. Values greater than Replicas are capped at Replicas. |  | Minimum: 1 <br /> |
 
 
 #### PodCliqueScalingGroupSpec
@@ -580,6 +616,7 @@ _Appears in:_
 | `podSpec` _[PodSpec](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#podspec-v1-core)_ | Spec is the spec of the pods in the clique. |  |  |
 | `replicas` _integer_ | Replicas is the number of replicas of the pods in the clique. It cannot be less than 1. |  |  |
 | `minAvailable` _integer_ | MinAvailable serves two purposes:<br />1. It defines the minimum number of pods that are guaranteed to be gang scheduled.<br />2. It defines the minimum requirement of available pods in a PodClique. Violation of this threshold will result<br />in termination of the PodGang that it belongs to. If MinAvailable is not set, then it will default to the template<br />Replicas. |  |  |
+| `rollingUpdate` _[PodCliqueRollingUpdateStrategy](#podcliquerollingupdatestrategy)_ | RollingUpdate configures how Pod deletions are paced while this PodClique<br />is being updated to a new Pod template.<br />If unset, the original Grove rolling-update behavior is preserved. |  |  |
 | `startsAfter` _string array_ | StartsAfter provides you a way to explicitly define the startup dependencies amongst cliques.<br />If CliqueStartupType in PodGang has been set to 'CliqueStartupTypeExplicit', then to create an ordered start<br />amongst PodClique's StartsAfter can be used. A forest of DAG's can be defined to model any start order dependencies.<br />If there are more than one PodClique's defined and StartsAfter is not set for any of them, then their startup order<br />is random at best and must not be relied upon.<br />Validations:<br />1. If a StartsAfter has been defined and one or more cycles are detected in DAG's then it will be flagged as validation error.<br />2. If StartsAfter is defined and does not identify any PodClique then it will be flagged as a validation error. |  |  |
 | `autoScalingConfig` _[AutoScalingConfig](#autoscalingconfig)_ | ScaleConfig is the horizontal pod autoscaler configuration for a PodClique. |  |  |
 
