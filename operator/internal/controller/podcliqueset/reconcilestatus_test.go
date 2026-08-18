@@ -24,6 +24,7 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	commonrevision "github.com/ai-dynamo/grove/operator/internal/controller/common/revision"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -273,7 +274,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 			cl := testutils.CreateDefaultFakeClient(existingObjects)
 			reconciler := &Reconciler{client: cl}
 			// Compute available replicas
-			stats, err := reconciler.computeAvailableAndUpdatedReplicas(context.Background(), logr.Discard(), pcs)
+			stats, err := reconciler.computeAvailableAndUpdatedReplicas(context.Background(), logr.Discard(), pcs, selectedRevisionForPCS(t, pcs))
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expectedAvailable, stats.availableReplicas, "Available replicas mismatch")
 		})
@@ -781,7 +782,7 @@ func TestComputePCSUpdateProgressCounts(t *testing.T) {
 			cl := testutils.CreateDefaultFakeClient(objects)
 			r := &Reconciler{client: cl}
 
-			stats, err := r.computeAvailableAndUpdatedReplicas(context.Background(), logr.Discard(), pcs)
+			stats, err := r.computeAvailableAndUpdatedReplicas(context.Background(), logr.Discard(), pcs, selectedRevisionForPCS(t, pcs))
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantUpdatedPCLQs, stats.updatedPCLQs, "updatedPCLQs")
 			assert.Equal(t, tt.wantTotalPCLQs, stats.totalPCLQs, "totalPCLQs")
@@ -807,6 +808,10 @@ func TestPCSMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 		if withProgress {
 			b = b.WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
 				UpdateStartedAt: metav1.Now(),
+				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{
+					ReplicaIndex:    1,
+					UpdateStartedAt: metav1.Now(),
+				}},
 			})
 		}
 		pcs := b.Build()
@@ -825,19 +830,23 @@ func TestPCSMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 		pcs, children := build(false)
 		cl := testutils.CreateDefaultFakeClient(append([]client.Object{pcs}, children...))
 		r := &Reconciler{client: cl}
-		require.NoError(t, r.mutateReplicas(context.Background(), logr.Discard(), pcs))
+		require.NoError(t, r.mutateReplicas(context.Background(), logr.Discard(), pcs, selectedRevisionForPCS(t, pcs)))
 		assert.Nil(t, pcs.Status.UpdateProgress, "UpdateProgress must remain nil when not initialized")
 	})
 	t.Run("UpdateProgress non-nil — counts populated from informer cache", func(t *testing.T) {
 		pcs, children := build(true)
 		cl := testutils.CreateDefaultFakeClient(append([]client.Object{pcs}, children...))
 		r := &Reconciler{client: cl}
-		require.NoError(t, r.mutateReplicas(context.Background(), logr.Discard(), pcs))
+		require.NoError(t, r.mutateReplicas(context.Background(), logr.Discard(), pcs, selectedRevisionForPCS(t, pcs)))
 		require.NotNil(t, pcs.Status.UpdateProgress)
 		assert.Equal(t, int32(2), pcs.Status.UpdateProgress.UpdatedPodCliquesCount)
 		assert.Equal(t, int32(2), pcs.Status.UpdateProgress.TotalPodCliquesCount)
 		assert.Equal(t, int32(2), pcs.Status.UpdateProgress.UpdatedPodCliqueScalingGroupsCount)
 		assert.Equal(t, int32(2), pcs.Status.UpdateProgress.TotalPodCliqueScalingGroupsCount)
+		assert.Nil(t, pcs.Status.UpdateProgress.UpdateEndedAt,
+			"aggregate status must not complete an orchestrator-owned update")
+		require.Len(t, pcs.Status.UpdateProgress.CurrentlyUpdating, 1)
+		assert.Equal(t, int32(1), pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex)
 	})
 }
 
@@ -874,7 +883,6 @@ func TestCountUpdatedPCLQs(t *testing.T) {
 		in   []grovecorev1alpha1.PodClique
 		want int32
 	}{
-		{"nil hash -> 0 (early return guards against uninitialized PCS)", testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).WithStandaloneClique("worker").Build(), []grovecorev1alpha1.PodClique{matching}, 0},
 		{"empty input -> 0", pcs, nil, 0},
 		{"all matching", pcs, []grovecorev1alpha1.PodClique{matching, matching}, 2},
 		{"none matching", pcs, []grovecorev1alpha1.PodClique{nonMatching, noHash}, 0},
@@ -887,14 +895,14 @@ func TestCountUpdatedPCLQs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, countUpdatedPCLQs(tt.pcs, tt.in))
+			assert.Equal(t, tt.want, countUpdatedPCLQs(selectedRevisionForPCS(t, tt.pcs), tt.in))
 		})
 	}
 }
 
 func markStandalonePCLQConverged(t testing.TB, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, generationHash string) *grovecorev1alpha1.PodClique {
 	t.Helper()
-	expectedTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
+	expectedTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(selectedRevisionForPCS(t, pcs), pclq.ObjectMeta)
 	require.NoError(t, err)
 	if pclq.Labels == nil {
 		pclq.Labels = map[string]string{}
@@ -905,6 +913,14 @@ func markStandalonePCLQConverged(t testing.TB, pcs *grovecorev1alpha1.PodCliqueS
 	pclq.Status.ReadyReplicas = *pclq.Spec.MinAvailable
 	pclq.Status.UpdatedReplicas = *pclq.Spec.MinAvailable
 	return pclq
+}
+
+// selectedRevisionForPCS returns revision data for status tests without mutating their PodCliqueSet fixture.
+func selectedRevisionForPCS(t testing.TB, pcs *grovecorev1alpha1.PodCliqueSet) *commonrevision.Revision {
+	t.Helper()
+	revision, err := testutils.NewRevision(pcs.DeepCopy())
+	require.NoError(t, err)
+	return revision
 }
 
 func TestCountUpdatedPCSGs(t *testing.T) {
@@ -928,14 +944,13 @@ func TestCountUpdatedPCSGs(t *testing.T) {
 
 	tests := []struct {
 		name string
-		hash *string
+		hash string
 		in   []grovecorev1alpha1.PodCliqueScalingGroup
 		want int32
 	}{
-		{"nil hash → 0", nil, []grovecorev1alpha1.PodCliqueScalingGroup{matching}, 0},
-		{"all matching", &hash, []grovecorev1alpha1.PodCliqueScalingGroup{matching, matching}, 2},
-		{"mixed", &hash, []grovecorev1alpha1.PodCliqueScalingGroup{matching, nonMatching}, 1},
-		{"terminating excluded", &hash, []grovecorev1alpha1.PodCliqueScalingGroup{matching, terminatingMatching}, 1},
+		{"all matching", hash, []grovecorev1alpha1.PodCliqueScalingGroup{matching, matching}, 2},
+		{"mixed", hash, []grovecorev1alpha1.PodCliqueScalingGroup{matching, nonMatching}, 1},
+		{"terminating excluded", hash, []grovecorev1alpha1.PodCliqueScalingGroup{matching, terminatingMatching}, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

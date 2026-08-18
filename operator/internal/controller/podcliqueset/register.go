@@ -24,6 +24,7 @@ import (
 	grovectrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 
+	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -49,6 +50,7 @@ func (r *Reconciler) RegisterWithManager(mgr manager.Manager) error {
 			MaxConcurrentReconciles: *r.config.ConcurrentSyncs,
 		}).
 		For(&grovecorev1alpha1.PodCliqueSet{}, builder.WithPredicates(podCliqueSetPredicate())).
+		Owns(&appsv1.ControllerRevision{}).
 		Watches(
 			&grovecorev1alpha1.ClusterTopologyBinding{},
 			handler.EnqueueRequestsFromMapFunc(mapClusterTopologyToPodCliqueSets(r.client)),
