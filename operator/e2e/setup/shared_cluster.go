@@ -575,17 +575,19 @@ func SetupRegistryTestImages(registryPort string, images []string) error {
 	for _, imageName := range images {
 		registryImage := fmt.Sprintf("localhost:%s/%s", registryPort, imageName)
 
-		// Step 1: Pull the image
-		pullReader, err := cli.ImagePull(ctx, imageName, image.PullOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to pull %s: %w", imageName, err)
-		}
-
-		// Consume the pull output to avoid blocking
-		_, err = io.Copy(io.Discard, pullReader)
-		ioutil.CloseQuietly(pullReader)
-		if err != nil {
-			return fmt.Errorf("failed to read pull output for %s: %w", imageName, err)
+		// Step 1: Pull the image only if it is not already in the local Docker cache.
+		// Skipping the pull when the image is cached avoids Docker Hub rate limits
+		// (HTTP 429) during repeated local runs such as stress tests.
+		if _, _, err := cli.ImageInspectWithRaw(ctx, imageName); err != nil {
+			pullReader, err := cli.ImagePull(ctx, imageName, image.PullOptions{})
+			if err != nil {
+				return fmt.Errorf("failed to pull %s: %w", imageName, err)
+			}
+			_, err = io.Copy(io.Discard, pullReader)
+			ioutil.CloseQuietly(pullReader)
+			if err != nil {
+				return fmt.Errorf("failed to read pull output for %s: %w", imageName, err)
+			}
 		}
 
 		// Step 2: Tag the image for the local registry

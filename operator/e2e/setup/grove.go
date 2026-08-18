@@ -61,7 +61,7 @@ type WebhooksConfig struct {
 }
 
 // helmValues mirrors the Helm values.yaml structure, using configv1alpha1 types
-// for config.server to ensure JSON field names stay synchronized with the API.
+// where the chart configuration matches the operator API.
 type helmValues struct {
 	CRDInstaller helmCRDInstallerValues `json:"crdInstaller"`
 	Config       helmConfigValues       `json:"config"`
@@ -74,7 +74,19 @@ type helmCRDInstallerValues struct {
 }
 
 type helmConfigValues struct {
-	Server configv1alpha1.ServerConfiguration `json:"server"`
+	Server helmServerValues `json:"server"`
+}
+
+type helmServerValues struct {
+	Webhooks     configv1alpha1.WebhookServer `json:"webhooks"`
+	HealthProbes helmHealthProbeValues        `json:"healthProbes"`
+}
+
+// helmHealthProbeValues includes the chart-only enable switch in addition to
+// the operator's health probe server configuration.
+type helmHealthProbeValues struct {
+	Enable bool `json:"enable"`
+	Port   int  `json:"port"`
 }
 
 type helmWebhookValues struct {
@@ -97,7 +109,7 @@ func (c *GroveConfig) toHelmValues() (map[string]interface{}, error) {
 	hv := helmValues{
 		CRDInstaller: helmCRDInstallerValues{Enabled: c.InstallCRDs},
 		Config: helmConfigValues{
-			Server: configv1alpha1.ServerConfiguration{
+			Server: helmServerValues{
 				Webhooks: configv1alpha1.WebhookServer{
 					Server: configv1alpha1.Server{
 						Port: DefaultWebhookPort,
@@ -105,6 +117,10 @@ func (c *GroveConfig) toHelmValues() (map[string]interface{}, error) {
 					ServerCertDir:     DefaultWebhookServerCertDir,
 					CertProvisionMode: c.Webhooks.CertProvisionMode,
 					SecretName:        c.Webhooks.SecretName,
+				},
+				HealthProbes: helmHealthProbeValues{
+					Enable: true,
+					Port:   DefaultHealthProbePort,
 				},
 			},
 		},
@@ -131,7 +147,7 @@ func (c *GroveConfig) toHelmValues() (map[string]interface{}, error) {
 //
 // This approach avoids wasteful rebuilds while staying compatible with the Skaffold installation.
 func UpdateGroveConfiguration(ctx context.Context, restConfig *rest.Config, chartDir string, config *GroveConfig, logger *log.Logger) error {
-	chartVersion, err := getChartVersion(chartDir)
+	chartVersion, err := GetGroveChartVersion(chartDir)
 	if err != nil {
 		return fmt.Errorf("failed to get chart version: %w", err)
 	}
@@ -182,12 +198,12 @@ type chartYAML struct {
 	Version string `yaml:"version"`
 }
 
-// getChartVersion reads the version from Chart.yaml in the given chart directory.
+// GetGroveChartVersion reads the version from Chart.yaml in the given chart directory.
 // The chartDir parameter should be the path to a Helm chart directory. Chart.yaml is
 // a required file per the Helm chart specification and will always exist for valid charts.
 // We read from Chart.yaml rather than hardcoding the version to maintain a single source
 // of truth, avoiding configuration drift between the chart definition and the e2e test code.
-func getChartVersion(chartDir string) (string, error) {
+func GetGroveChartVersion(chartDir string) (string, error) {
 	chartFile := filepath.Join(chartDir, "Chart.yaml")
 	data, err := os.ReadFile(chartFile)
 	if err != nil {
@@ -210,12 +226,23 @@ func getChartVersion(chartDir string) (string, error) {
 // It uses runtime.Caller to find the path relative to this source file.
 // This function is exported for use by callers of UpdateGroveConfiguration.
 func GetGroveChartDir() (string, error) {
+	rootDir, err := GetOperatorRootDir()
+	if err != nil {
+		return "", err
+	}
+	// This file is at operator/e2e/setup/grove.go
+	// Chart directory is at operator/charts
+	return filepath.Join(rootDir, "charts"), nil
+}
+
+// GetOperatorRootDir returns the absolute path to the Grove operator directory.
+// It uses runtime.Caller to find the path relative to this source file.
+func GetOperatorRootDir() (string, error) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
 		return "", fmt.Errorf("failed to get current file path")
 	}
 	// This file is at operator/e2e/setup/grove.go
-	// Chart directory is at operator/charts
-	chartDir := filepath.Join(filepath.Dir(currentFile), "../../charts")
-	return filepath.Abs(chartDir)
+	rootDir := filepath.Join(filepath.Dir(currentFile), "../../")
+	return filepath.Abs(rootDir)
 }

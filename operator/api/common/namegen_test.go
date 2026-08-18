@@ -112,7 +112,8 @@ func TestExtractScalingGroupNameFromPCSGFQN(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ExtractScalingGroupNameFromPCSGFQN(tt.pcsgName, tt.pcsNameReplica)
+			result, err := ExtractScalingGroupNameFromPCSGFQN(tt.pcsgName, tt.pcsNameReplica)
+			assert.NoError(t, err)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -175,7 +176,8 @@ func TestExtractScalingGroupNameFromPCSGFQN_Consistency(t *testing.T) {
 			generatedPCSGName := GeneratePodCliqueScalingGroupName(tc.pcsNameReplica, tc.scalingGroupName)
 
 			// Extract scaling group name back
-			extractedScalingGroupName := ExtractScalingGroupNameFromPCSGFQN(generatedPCSGName, tc.pcsNameReplica)
+			extractedScalingGroupName, err := ExtractScalingGroupNameFromPCSGFQN(generatedPCSGName, tc.pcsNameReplica)
+			assert.NoError(t, err)
 
 			// They should match
 			assert.Equal(t, tc.scalingGroupName, extractedScalingGroupName)

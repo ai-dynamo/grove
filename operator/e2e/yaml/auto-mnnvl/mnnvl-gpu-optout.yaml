@@ -5,6 +5,8 @@ apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
   name: mnnvl-gpu-optout
+  labels:
+    kai.scheduler/queue: test
   annotations:
     grove.io/mnnvl-group: "none"
 spec:

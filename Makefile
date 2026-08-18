@@ -123,6 +123,12 @@ run-e2e:
 	@echo "> Running e2e tests for operator"
 	@make --directory=operator run-e2e
 
+# Runs the standalone latest-release-to-current operator upgrade test.
+.PHONY: run-upgrade-e2e
+run-upgrade-e2e:
+	@echo "> Running operator upgrade e2e test"
+	@make --directory=operator run-upgrade-e2e
+
 # Runs all tests
 .PHONY: test
 test: test-unit

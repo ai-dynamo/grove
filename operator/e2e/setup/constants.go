@@ -40,6 +40,10 @@ const (
 	// NOTE: If you change this, also update config.server.webhooks.port in operator/charts/values.yaml
 	DefaultWebhookPort = 9443
 
+	// DefaultHealthProbePort is the default port for health and readiness probes.
+	// NOTE: If you change this, also update config.server.healthProbes.port in operator/charts/values.yaml
+	DefaultHealthProbePort = 9444
+
 	// DefaultWebhookServerCertDir is the default directory for webhook certificates.
 	// NOTE: If you change this, also update config.server.webhooks.serverCertDir in operator/charts/values.yaml
 	DefaultWebhookServerCertDir = "/etc/grove-operator/webhook-certs"

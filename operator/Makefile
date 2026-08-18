@@ -25,6 +25,9 @@ INSTALL_CRDS_NAME    := "grove-install-crds"
 K3S_IMAGE       ?= rancher/k3s:v1.35.5-k3s1
 E2E_REGISTRY_PORT ?= 5001
 E2E_CREATE_FLAGS  ?=
+ifndef DIAG_DIR
+DIAG_DIR := $(if $(GROVE_E2E_DIAG_DIR),$(GROVE_E2E_DIAG_DIR),$(MODULE_ROOT)/e2e-diagnostics)
+endif
 
 # Include tools targets
 include $(REPO_HACK_DIR)/tools.mk
@@ -129,6 +132,19 @@ run-e2e-verbose: $(GOTESTSUM)
 	@echo "> Running e2e tests (verbose)..."
 	@cd e2e && $(GOTESTSUM) --format short-verbose -- -count=1 -tags=e2e ./tests/... -timeout 45m $(if $(TEST_PATTERN),-run '$(TEST_PATTERN)')
 
+# Run the standalone upgrade test from the latest published GitHub release to
+# the operator built from the current checkout. The test owns its k3d cluster.
+.PHONY: run-upgrade-e2e
+run-upgrade-e2e: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
+run-upgrade-e2e: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
+run-upgrade-e2e: $(GOTESTSUM)
+	@echo "> Running e2e upgrade tests (verbose)..."
+	@$(MAKE) e2e-cluster-up E2E_CREATE_FLAGS="$(E2E_CREATE_FLAGS) --set grove.enabled=false --set scheduler.kai.enabled=false"
+	$(GOTESTSUM) --format short-verbose -- -count=1 -tags=e2e,e2eupgrade ./e2e/tests/upgrade/ -timeout 45m $(if $(TEST_PATTERN),-run '$(TEST_PATTERN)') || \
+		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
+	@echo "> Tests passed, cleaning up cluster..."
+	@$(MAKE) e2e-cluster-down
+
 # Create a k3d cluster for e2e testing (with Grove and Kai scheduler deployed)
 # This is optional - tests work with any Kubernetes cluster that has the required components
 .PHONY: e2e-cluster-up
@@ -159,6 +175,8 @@ run-e2e-full: e2e-cluster-up
 # with MNNVL-specific env overrides and flags.
 # Usage: make run-e2e-mnnvl-full
 .PHONY: run-e2e-mnnvl-full
+run-e2e-mnnvl-full: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
+run-e2e-mnnvl-full: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
 run-e2e-mnnvl-full: export E2E_CLUSTER__WORKER_NODES = 2
 run-e2e-mnnvl-full: export E2E_CLUSTER__K3S_IMAGE = $(K3S_IMAGE)
 run-e2e-mnnvl-full: export E2E_CLUSTER__PREPULL_IMAGES = false

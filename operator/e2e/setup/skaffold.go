@@ -38,7 +38,7 @@ import (
 type SkaffoldInstallConfig struct {
 	// SkaffoldYAMLPath is the path to the skaffold.yaml file. Required.
 	SkaffoldYAMLPath string
-	// RestConfig is the Kubernetes REST configuration. Required.
+	// RestConfig is the Kubernetes REST configuration (optional).
 	RestConfig *rest.Config
 	// Profiles are the Skaffold profiles to activate (optional).
 	Profiles []string
@@ -58,9 +58,6 @@ type SkaffoldInstallConfig struct {
 func (c *SkaffoldInstallConfig) Validate() error {
 	if c.SkaffoldYAMLPath == "" {
 		return fmt.Errorf("SkaffoldYAMLPath is required")
-	}
-	if c.RestConfig == nil {
-		return fmt.Errorf("RestConfig is required")
 	}
 	if c.PushRepo == "" {
 		return fmt.Errorf("PushRepo is required")
@@ -82,40 +79,28 @@ func (c *SkaffoldInstallConfig) Validate() error {
 
 // InstallWithSkaffold builds and deploys using Skaffold CLI. It runs in two phases to
 // account for the push registry being different than the pull registry for k3d.
-// Note: we're using Skaffold CLI  instead of go libraries because there are
-// depdenency conflicts between grove and Skaffold at the time of implentaiton.
+// Note: we're using Skaffold CLI instead of go libraries because there are
+// dependency conflicts between grove and Skaffold at the time of implentaiton.
+// It is the caller's responsibility to call cleanup() even with errors.
 func InstallWithSkaffold(ctx context.Context, config *SkaffoldInstallConfig) (func(), error) {
-	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid config: %w", err)
+	if config.RestConfig == nil {
+		return nil, fmt.Errorf("invalid config: RestConfig is required")
 	}
 
-	// Resolve to absolute path to ensure it works regardless of current working directory
-	absSkaffoldPath, err := filepath.Abs(config.SkaffoldYAMLPath)
+	absSkaffoldPath, skaffoldDir, err := skaffoldSetup(ctx, config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve absolute path for %s: %w", config.SkaffoldYAMLPath, err)
+		return nil, err
 	}
-
-	config.Logger.Debugf("🔧 Installing using Skaffold from: %s", absSkaffoldPath)
 
 	// Create a temporary kubeconfig file
 	kubeconfigPath, cleanup, err := writeTemporaryKubeconfig(config.RestConfig, config.Logger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create temporary kubeconfig: %w", err)
+		return cleanup, fmt.Errorf("failed to create temporary kubeconfig: %w", err)
 	}
-
-	// Ensure cleanup is called even if installation fails
-	defer func() {
-		if err != nil {
-			cleanup()
-		}
-	}()
-
-	// Get the directory containing the skaffold.yaml file
-	skaffoldDir := filepath.Dir(absSkaffoldPath)
 
 	// Phase 1: Build and push images to localhost:port
 	config.Logger.Debugf("🏗️ Phase 1: Building and pushing images...")
-	builtImages, err := runSkaffoldBuild(ctx, absSkaffoldPath, skaffoldDir, kubeconfigPath, config)
+	builtImages, err := runSkaffoldBuild(ctx, absSkaffoldPath, skaffoldDir, config)
 	if err != nil {
 		return cleanup, fmt.Errorf("skaffold build failed: %w", err)
 	}
@@ -130,9 +115,48 @@ func InstallWithSkaffold(ctx context.Context, config *SkaffoldInstallConfig) (fu
 	return cleanup, nil
 }
 
+// BuildWithSkaffold builds images using Skaffold CLI.
+// Note: we're using Skaffold CLI instead of go libraries because there are
+// depdenency conflicts between grove and Skaffold at the time of implentaiton.
+func BuildWithSkaffold(ctx context.Context, config *SkaffoldInstallConfig) (map[string]string, error) {
+	absSkaffoldPath, skaffoldDir, err := skaffoldSetup(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build and push images to localhost:port
+	config.Logger.Debugf("🏗️ Building and pushing images...")
+	builtImages, err := runSkaffoldBuild(ctx, absSkaffoldPath, skaffoldDir, config)
+	if err != nil {
+		return nil, fmt.Errorf("skaffold build failed: %w", err)
+	}
+
+	return builtImages, nil
+}
+
+// skaffoldSetup validates the configuration and returns the locations of the config file and directory.
+func skaffoldSetup(ctx context.Context, config *SkaffoldInstallConfig) (string, string, error) {
+	if err := config.Validate(); err != nil {
+		return "", "", fmt.Errorf("invalid config: %w", err)
+	}
+
+	// Resolve to absolute path to ensure it works regardless of current working directory
+	absSkaffoldPath, err := filepath.Abs(config.SkaffoldYAMLPath)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to resolve absolute path for %s: %w", config.SkaffoldYAMLPath, err)
+	}
+
+	config.Logger.Debugf("🔧 Building using Skaffold from: %s", absSkaffoldPath)
+
+	// Get the directory containing the skaffold.yaml file
+	skaffoldDir := filepath.Dir(absSkaffoldPath)
+
+	return absSkaffoldPath, skaffoldDir, nil
+}
+
 // runSkaffoldBuild runs skaffold build to build and push images to PushRepo
 // Returns a map of image names to their full tags with digests
-func runSkaffoldBuild(ctx context.Context, absSkaffoldPath, skaffoldDir, kubeconfigPath string, config *SkaffoldInstallConfig) (map[string]string, error) {
+func runSkaffoldBuild(ctx context.Context, absSkaffoldPath, skaffoldDir string, config *SkaffoldInstallConfig) (map[string]string, error) {
 	args := []string{"build", "--quiet", "--output={{json .}}"}
 
 	// Add default repo for build (push repository)
@@ -158,8 +182,6 @@ func runSkaffoldBuild(ctx context.Context, absSkaffoldPath, skaffoldDir, kubecon
 	cmd.Env = filterEnv(os.Environ(), "GOOS", "GOARCH")
 	config.Logger.Debugf("Filtered environment variables (removed GOOS, GOARCH), kept %d vars", len(cmd.Env))
 	cmd.Env = append(cmd.Env, "CGO_ENABLED=0")
-
-	cmd.Env = append(cmd.Env, fmt.Sprintf("KUBECONFIG=%s", kubeconfigPath))
 
 	// Add build-specific environment variables
 	for k, v := range config.Env {

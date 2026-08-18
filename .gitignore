@@ -54,7 +54,13 @@ scheduler/bin/*
 operator/charts/crds/*
 
 # scale-test result/profile output (per-run)
-operator/e2e/tests/scale/ScaleTest_*/
+operator/e2e/tests/scale/Scale*/
+
+# e2e diagnostic log files written to CWD when GROVE_E2E_DIAG_DIR is unset (local runs)
+e2e-diag-*.log
+
+# stress-test output directories
+operator/e2e-diagnostics/stress-run-*/
 
 # Python bytecode cache
 __pycache__/

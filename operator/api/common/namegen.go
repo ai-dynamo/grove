@@ -16,6 +16,7 @@ package common
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 )
@@ -124,7 +125,10 @@ func GeneratePodGangNameForPodCliqueOwnedByPCSG(pcs *v1alpha1.PodCliqueSet, pcsR
 
 // ExtractScalingGroupNameFromPCSGFQN extracts the scaling group name from a PodCliqueScalingGroup FQN.
 // For example, "simple1-0-sga" with pcsNameReplica="simple1-0" returns "sga".
-func ExtractScalingGroupNameFromPCSGFQN(pcsgFQN string, pcsNameReplica ResourceNameReplica) string {
+func ExtractScalingGroupNameFromPCSGFQN(pcsgFQN string, pcsNameReplica ResourceNameReplica) (string, error) {
 	prefix := fmt.Sprintf("%s-%d-", pcsNameReplica.Name, pcsNameReplica.Replica)
-	return pcsgFQN[len(prefix):]
+	if !strings.HasPrefix(pcsgFQN, prefix) {
+		return "", fmt.Errorf("FQN %q does not have expected prefix %q", pcsgFQN, prefix)
+	}
+	return pcsgFQN[len(prefix):], nil
 }
