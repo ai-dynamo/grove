@@ -143,6 +143,35 @@ type PodCliqueStatus struct {
 	CurrentPodTemplateHash *string `json:"currentPodTemplateHash,omitempty"`
 	// UpdateProgress provides details about the ongoing update of the PodClique.
 	UpdateProgress *PodCliqueUpdateProgress `json:"updateProgress,omitempty"`
+	// PodGangMapping captures the desired association of this standalone PodClique's pods to PodGangs.
+	// It is populated only for standalone PodCliques. Depending on the update strategy, a standalone
+	// PodClique's pods can belong to one or more PodGangs, so this records a pod count per PodGang.
+	// During initial deployment and while an update is in flight, it is derived from the PodGangMap,
+	// the single source of truth in those phases. In steady state it becomes the source of truth.
+	// PodClique scale-in and scale-out are recorded here, and the PodGangMap is synced from it.
+	//
+	// A PodCliqueScalingGroup-owned PodClique has no such mapping. All pods of such a PodClique belong
+	// to a single PodGang, and its binding is derived from the PodCliqueScalingGroup's PodGangMapping.
+	//
+	// Each element maps a PodGang (an anchor) to the number of this PodClique's pods it holds.
+	// +listType=map
+	// +listMapKey=podGangName
+	PodGangMapping []PodGangPodCountAssignment `json:"podGangMapping,omitempty"`
+}
+
+// PodGangPodCountAssignment records the number of a standalone PodClique's pods carried by one
+// PodGangMap entry. A standalone PodClique's pods can span one or more PodGangs depending on the
+// update strategy, so its PodGangMapping holds one such assignment per PodGang. A standalone
+// PodClique's pods always belong to an anchor PodGang, so the referenced entry is always an anchor.
+// It is a per-PodClique projection of that entry. PodGangMap only fields such as scheduling
+// dependencies and the generation hash are omitted.
+type PodGangPodCountAssignment struct {
+	// PodGangName is the name of the PodGang that carries these pods.
+	PodGangName string `json:"podGangName"`
+	// Epoch is the epoch of the PodGangMap entry this assignment belongs to.
+	Epoch string `json:"epoch"`
+	// PodCount is the number of this PodClique's pods that belong to the PodGangMap entry.
+	PodCount int32 `json:"podCount"`
 }
 
 // PodCliqueUpdateProgress provides details about the ongoing update of the PodClique.

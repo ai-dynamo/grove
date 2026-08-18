@@ -33,8 +33,25 @@ const (
 	// LabelBasePodGang is a key for a label that sets the base PodGang name for scaled PodGangs.
 	// This label is present on scaled PodGangs (beyond MinAvailable) and points to their base PodGang.
 	LabelBasePodGang = "grove.io/base-podgang"
+	// LabelMinimumViableUnit is a key for a label that identifies MVU-shaped PodGangs.
+	// An MVU PodGang contains minAvailable replicas of all standalone PCLQs and all PCSGs —
+	// the smallest set of components that must be updated together in lockstep.
+	LabelMinimumViableUnit = "grove.io/minimum-viable-unit"
 	// LabelPodCliqueSetReplicaIndex is a key for a label that sets the replica index of a PodCliqueSet.
 	LabelPodCliqueSetReplicaIndex = "grove.io/podcliqueset-replica-index"
+	// LabelPodCliqueSetGenerationHash is set on PodGang resources to record the PCS generation hash
+	// they were created for.
+	LabelPodCliqueSetGenerationHash = "grove.io/podcliqueset-generation-hash"
+	// LabelEpoch is set on PodGang resources to record the batch in which the PodGang was created.
+	// The value is a monotonic unix-nano timestamp. PodGangs created together share the same epoch.
+	// Subsequent batches carry strictly greater values. Consumed by the coherent-update orchestrator
+	// (via InFlightEpoch) and by the pod-component scheduling-gate-removal logic (via the
+	// PodGangEntry's DependsOn).
+	LabelEpoch = "grove.io/epoch"
+	// LabelPodGangRole is set on PodGang resources to record the role of the PodGangMap entry the
+	// PodGang was materialized from. The value is one of Anchor, Tail, or ScaleOut. It lets the role
+	// classification survive on the live PodGang and be selected on.
+	LabelPodGangRole = "grove.io/podgang-role"
 	// LabelPodCliqueScalingGroup is a key for a label that sets the PodCliqueScalingGroup name.
 	LabelPodCliqueScalingGroup = "grove.io/podcliquescalinggroup"
 	// LabelPodCliqueScalingGroupReplicaIndex is a key for a label that sets the replica index of a PodCliqueScalingGroup within PodCliqueSet.
@@ -86,6 +103,8 @@ const (
 	// LabelComponentNameResourceClaim is the label key representing the component name
 	// for a DRA ResourceClaim managed by the resource sharing subsystem.
 	LabelComponentNameResourceClaim = "resource-claim"
+	// LabelComponentNamePodGangMap is the label key representing the component name for a PodGangMap resource.
+	LabelComponentNamePodGangMap = "pcs-podgangmap"
 )
 
 // GetDefaultLabelsForPodCliqueSetManagedResources gets the default labels for resources managed by PodCliqueSet.

@@ -29,6 +29,7 @@ import (
 // 2. Deploy workload WL1, and verify 10 newly created pods
 // 3. Verify all workload pods are pending due to insufficient resources
 // 4. Uncordon the node and verify all pods get scheduled
+// MPG: {pca: 2, {pcb: 1, pcc: 3}, {pcb: 1, pcc: 3}}
 func Test_GS1_GangSchedulingWithFullReplicas(t *testing.T) {
 	ctx := context.Background()
 
@@ -80,6 +81,8 @@ func Test_GS1_GangSchedulingWithFullReplicas(t *testing.T) {
 // 5. Wait for pods to become ready
 // 6. Scale PCSG replicas to 3 and verify 4 new pending pods
 // 7. Uncordon remaining nodes and verify all pods get scheduled
+// MPG: {pca: 2, {pcb: 1, pcc: 3}, {pcb: 1, pcc: 3}}
+// TPG: {{pcb: 1, pcc: 3}}
 func Test_GS2_GangSchedulingWithScalingFullReplicas(t *testing.T) {
 	ctx := context.Background()
 
@@ -149,6 +152,8 @@ func Test_GS2_GangSchedulingWithScalingFullReplicas(t *testing.T) {
 // 5. Wait for pods to become ready
 // 6. Scale PCS replicas to 2 and verify 10 new pending pods
 // 7. Uncordon remaining nodes and verify all pods get scheduled
+// MPG1: {pca: 2, {pcb: 1, pcc: 3}, {pcb: 1, pcc: 3}}
+// MPG2: {pca: 2, {pcb: 1, pcc: 3}, {pcb: 1, pcc: 3}}
 func Test_GS3_GangSchedulingWithPCSScalingFullReplicas(t *testing.T) {
 	ctx := context.Background()
 
@@ -214,6 +219,10 @@ func Test_GS3_GangSchedulingWithPCSScalingFullReplicas(t *testing.T) {
 // 8. Scale PCS replicas to 2 and verify 10 new pending pods
 // 9. Scale PCSG replicas to 3 and verify 4 new pending pods
 // 10. Uncordon remaining nodes and verify all pods get scheduled
+// MPG1: {pca: 2, {pcb: 1, pcc: 3}, {pcb: 1, pcc: 3}}
+// TPG1: {{pcb: 1, pcc: 3}}
+// MPG2: {pca: 2, {pcb: 1, pcc: 3}, {pcb: 1, pcc: 3}}
+// TPG2: {{pcb: 1, pcc: 3}}
 func Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas(t *testing.T) {
 	ctx := context.Background()
 
@@ -277,9 +286,11 @@ func Test_GS4_GangSchedulingWithPCSAndPCSGScalingFullReplicas(t *testing.T) {
 // 1. Initialize a 10-node Grove cluster, then cordon 8 nodes
 // 2. Deploy workload WL2, and verify 10 newly created pods
 // 3. Verify all workload pods are pending due to insufficient resources
-// 4. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1})
+// 4. Uncordon 1 node and verify a total of 3 pods get scheduled (minAvailable of the MPG) (pcs-0-{pc-a: 1, sg-x-0: {pc-b: 1, pc-c: 1}})
 // 5. Wait for scheduled pods to become ready
 // 6. Uncordon 7 nodes and verify all remaining workload pods get scheduled
+// MPG: {pc-a: 1, {pc-b: 1, pc-c: 1}, {pc-b: 1, pc-c: 1}}, the additional pods outside of minAvailable are added as PodReferences.
+// The MPG is scheduled when minAvailable pods can be scheduled.
 func Test_GS5_GangSchedulingWithMinReplicas(t *testing.T) {
 	ctx := context.Background()
 
@@ -339,15 +350,15 @@ func Test_GS5_GangSchedulingWithMinReplicas(t *testing.T) {
 // 1. Initialize a 14-node Grove cluster, then cordon 12 nodes
 // 2. Deploy workload WL2, and verify 10 newly created pods
 // 3. Verify all workload pods are pending due to insufficient resources
-// 4. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1})
+// 4. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a: 1, sg-x-0: {pc-b: 1, pc-c: 1}}), as minAvailable is 1 for all cliques
 // 5. Wait for scheduled pods to become ready
 // 6. Uncordon 7 nodes and verify the remaining workload pods get scheduled
 // 7. Wait for scheduled pods to become ready
 // 8. Set pcs-0-sg-x resource replicas equal to 3, then verify 4 newly created pods
 // 9. Verify all newly created pods are pending due to insufficient resources
-// 10. Uncordon 2 nodes and verify 2 more pods get scheduled (pcs-0-{sg-x-2-pc-b=1, sg-x-2-pc-c=1})
+// 10. Uncordon 2 nodes and verify 2 more pods get scheduled (pcs-0-sg-x-2: {pc-b: 1, pc-c: 1})
 // 11. Wait for scheduled pods to become ready
-// 12. Uncordon 2 nodes and verify remaining workload pods get scheduled
+// 12. Uncordon 2 nodes and verify remaining workload pods get scheduled (pcs-0-sg-x-2: {pc-b: 1, pc-c: 2})
 func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 	ctx := context.Background()
 
@@ -375,8 +386,8 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 	Logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	tc.VerifyAllPodsArePendingWithSleep()
 
-	Logger.Info("4. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1})")
-	// Based on workload2 min-replicas: pcs-0-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1}
+	Logger.Info("4. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a: 1, sg-x-0: {pc-b: 1, pc-c: 1}})")
+	// Based on workload2 min-replicas: pcs-0-{pc-a: 1, sg-x-0: {pc-b: 1, pc-c: 1}}
 	tc.UncordonNodes(nodesToCordon[:1])
 
 	// Wait for exactly 3 pods to be scheduled (min-replicas)
@@ -412,9 +423,9 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 		t.Fatalf("Failed to verify all pending pods have Unschedulable events: %v", err)
 	}
 
-	Logger.Info("10. Uncordon 2 nodes and verify 2 more pods get scheduled (pcs-0-{sg-x-2-pc-b=1, sg-x-2-pc-c=1})")
+	Logger.Info("10. Uncordon 2 nodes and verify 2 more pods get scheduled (pcs-0-sg-x-2: {pc-b: 1, pc-c: 1})")
 	// Uncordon 2 nodes and verify exactly 2 more pods get scheduled
-	// pcs-0-{sg-x-2-pc-b = 1, sg-x-2-pc-c = 1} (min-replicas for the new PCSG replica)
+	// pcs-0-sg-x-2: {pc-b: 1, pc-c: 1} (minAvailable for the new PCSG replica)
 	twoNodesToUncordon := nodesToCordon[8:10]
 	tc.UncordonNodes(twoNodesToUncordon)
 
@@ -449,15 +460,15 @@ func Test_GS6_GangSchedulingWithPCSGScalingMinReplicas(t *testing.T) {
 // 1. Initialize a 14-node Grove cluster, then cordon 12 nodes
 // 2. Deploy workload WL2, and verify 10 newly created pods
 // 3. Verify all workload pods are pending due to insufficient resources
-// 4. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1})
+// 4. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a: 1, sg-x-0: {pc-b: 1, pc-c: 1}})
 // 5. Wait for scheduled pods to become ready
-// 6. Uncordon 2 nodes and verify 2 more pods get scheduled (pcs-0-{sg-x-1-pc-b=1, sg-x-1-pc-c=1})
+// 6. Uncordon 2 nodes and verify 2 more pods get scheduled (pcs-0-sg-x-1: {pc-b: 1, pc-c: 1})
 // 7. Wait for scheduled pods to become ready
 // 8. Uncordon 5 nodes and verify the remaining workload pods get scheduled
 // 9. Wait for scheduled pods to become ready
 // 10. Set pcs-0-sg-x resource replicas equal to 3, then verify 4 newly created pods
 // 11. Verify all newly created pods are pending due to insufficient resources
-// 12. Uncordon 2 nodes and verify 2 more pods get scheduled (pcs-0-{sg-x-2-pc-b=1, sg-x-2-pc-c=1})
+// 12. Uncordon 2 nodes and verify 2 more pods get scheduled (pcs-0-sg-x-2: {pc-b: 1, pc-c: 1})
 // 13. Wait for scheduled pods to become ready
 // 14. Uncordon 2 nodes and verify remaining workload pods get scheduled
 func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
@@ -487,7 +498,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	Logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	tc.VerifyAllPodsArePendingWithSleep()
 
-	Logger.Info("4. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1})")
+	Logger.Info("4. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a: 1, sg-x-0: {pc-b: 1, pc-c: 1}})")
 	firstNodeToUncordon := nodesToCordon[0]
 	if err := tc.UncordonNode(firstNodeToUncordon); err != nil {
 		t.Fatalf("Failed to uncordon node %s: %v", firstNodeToUncordon, err)
@@ -503,7 +514,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 		t.Fatalf("Failed to wait for 3 scheduled pods to become ready: %v", err)
 	}
 
-	Logger.Info("6. Uncordon 2 nodes and verify 2 more pods get scheduled (pcs-0-{sg-x-1-pc-b=1, sg-x-1-pc-c=1})")
+	Logger.Info("6. Uncordon 2 nodes and verify 2 more pods get scheduled (pcs-0-sg-x-1: {pc-b: 1, pc-c: 1})")
 	twoNodesToUncordon := nodesToCordon[1:3]
 	tc.UncordonNodes(twoNodesToUncordon)
 
@@ -527,7 +538,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	}
 
 	// Verify all 10 initial pods are running
-	pods, err = tc.ListPods()
+	_, err = tc.ListPods()
 	if err != nil {
 		t.Fatalf("Failed to list workload pods: %v", err)
 	}
@@ -540,7 +551,7 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 	expectedNewPendingPods := 4
 	tc.ScalePCSGInstanceAndWait(pcsgName, 3, expectedPodsAfterScaling, expectedNewPendingPods)
 
-	Logger.Info("12. Uncordon 2 nodes and verify 2 more pods get scheduled (pcs-0-{sg-x-2-pc-b=1, sg-x-2-pc-c=1})")
+	Logger.Info("12. Uncordon 2 nodes and verify 2 more pods get scheduled (pcs-0-sg-x-2: {pc-b: 1, pc-c: 1})")
 	twoMoreNodesToUncordon := nodesToCordon[8:10]
 	tc.UncordonNodes(twoMoreNodesToUncordon)
 
@@ -576,9 +587,9 @@ func Test_GS7_GangSchedulingWithPCSGScalingMinReplicasAdvanced1(t *testing.T) {
 // 3. Verify all workload pods are pending due to insufficient resources
 // 4. Set pcs-0-sg-x resource replicas equal to 3, verify 4 more newly created pods
 // 5. Verify all 14 newly created pods are pending due to insufficient resources
-// 6. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1})
+// 6. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a: 1, sg-x-0: {pc-b: 1, pc-c: 1}})
 // 7. Wait for scheduled pods to become ready
-// 8. Uncordon 4 nodes and verify 4 more pods get scheduled (pcs-0-{sg-x-1-pc-b=1, sg-x-1-pc-c=1}, pcs-0-{sg-x-2-pc-b=1, sg-x-2-pc-c=1})
+// 8. Uncordon 4 nodes and verify 4 more pods get scheduled (pcs-0-sg-x-1: {pc-b: 1, pc-c: 1}, pcs-0-sg-x-2: {pc-b: 1, pc-c: 1})
 // 9. Wait for scheduled pods to become ready
 // 10. Uncordon 7 nodes and verify the remaining workload pods get scheduled
 func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
@@ -616,7 +627,7 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 	Logger.Info("5. Verify all 14 newly created pods are pending due to insufficient resources")
 	tc.VerifyAllPodsArePendingWithSleep()
 
-	Logger.Info("6. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1})")
+	Logger.Info("6. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a: 1, sg-x-0: {pc-b: 1, pc-c: 1}})")
 	firstNodeToUncordon := nodesToCordon[0]
 	if err := tc.UncordonNode(firstNodeToUncordon); err != nil {
 		t.Fatalf("Failed to uncordon node %s: %v", firstNodeToUncordon, err)
@@ -668,14 +679,16 @@ func Test_GS8_GangSchedulingWithPCSGScalingMinReplicasAdvanced2(t *testing.T) {
 // 1. Initialize a 20-node Grove cluster, then cordon 18 nodes
 // 2. Deploy workload WL2, and verify 10 newly created pods
 // 3. Verify all workload pods are pending due to insufficient resources
-// 4. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1})
+// 4. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a: 1, sg-x-0: {pc-b: 1, pc-c: 1}})
 // 5. Wait for scheduled pods to become ready
 // 6. Uncordon 7 nodes and verify the remaining workload pods get scheduled
 // 7. Wait for scheduled pods to become ready
 // 8. Set PCS resource replicas equal to 2, then verify 10 more newly created pods
-// 9. Uncordon 3 nodes and verify another 3 pods get scheduled (pcs-1-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1})
+// 9. Uncordon 3 nodes and verify another 3 pods get scheduled (pcs-1-{pc-a: 1, sg-x-0: {pc-b: 1, pc-c: 1}})
 // 10. Wait for scheduled pods to become ready
 // 11. Uncordon 7 nodes and verify the remaining workload pods get scheduled
+// MPG1: {pc-a: 1, {pc-b: 1, pc-c: 1}, {pc-b: 1, pc-c: 1}}, the additional pods outside of minAvailable are added as PodReferences.
+// MPG2: {pc-a: 1, {pc-b: 1, pc-c: 1}, {pc-b: 1, pc-c: 1}}, the additional pods outside of minAvailable are added as PodReferences.
 func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 	ctx := context.Background()
 
@@ -703,7 +716,7 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 	Logger.Info("3. Verify all workload pods are pending due to insufficient resources")
 	tc.VerifyAllPodsArePendingWithSleep()
 
-	Logger.Info("4. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1})")
+	Logger.Info("4. Uncordon 1 node and verify a total of 3 pods get scheduled (pcs-0-{pc-a: 1, sg-x-0: {pc-b: 1, pc-c: 1}})")
 	firstNodeToUncordon := nodesToCordon[0]
 	if err := tc.UncordonNode(firstNodeToUncordon); err != nil {
 		t.Fatalf("Failed to uncordon node %s: %v", firstNodeToUncordon, err)
@@ -738,7 +751,7 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 	expectedNewPendingPods := 10
 	tc.ScalePCSAndWait(pcsName, 2, expectedPodsAfterScaling, expectedNewPendingPods)
 
-	Logger.Info("9. Uncordon 3 nodes and verify another 3 pods get scheduled (pcs-1-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1})")
+	Logger.Info("9. Uncordon 3 nodes and verify another 3 pods get scheduled (pcs-1-{pc-a: 1, sg-x-0: {pc-b: 1, pc-c: 1}})")
 	threeNodesToUncordon := nodesToCordon[8:11]
 	tc.UncordonNodes(threeNodesToUncordon)
 
@@ -774,11 +787,13 @@ func Test_GS9_GangSchedulingWithPCSScalingMinReplicas(t *testing.T) {
 // 3. Verify all workload pods are pending due to insufficient resources
 // 4. Set PCS resource replicas equal to 2, then verify 10 more newly created pods
 // 5. Verify all 20 newly created pods are pending due to insufficient resources
-// 6. Uncordon 4 nodes and verify a total of 6 pods get scheduled (pcs-0-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1}, pcs-1-{pc-a=1, sg-x-0-pc-b=1, sg-x-0-pc-c=1})
+// 6. Uncordon 4 nodes and verify a total of 6 pods get scheduled (pcs-0-{pc-a: 1, sg-x-0: {pc-b: 1, pc-c: 1}}, pcs-1-{pc-a: 1, sg-x-0: {pc-b: 1, pc-c: 1}})
 // 7. Wait for scheduled pods to become ready
-// 8. Uncordon 4 nodes and verify 4 more pods get scheduled (pcs-0-{sg-x-1-pc-b=1, sg-x-1-pc-c=1}, pcs-1-{sg-x-1-pc-b=1, sg-x-1-pc-c=1})
+// 8. Uncordon 4 nodes and verify 4 more pods get scheduled (pcs-0-sg-x-1: {pc-b: 1, pc-c: 1}, pcs-1-sg-x-1: {pc-b: 1, pc-c: 1})
 // 9. Wait for scheduled pods to become ready
 // 10. Uncordon 10 nodes and verify the remaining workload pods get scheduled
+// MPG1: {pc-a: 1, {pc-b: 1, pc-c: 1}, {pc-b: 1, pc-c: 1}}, the additional pods outside of minAvailable are added as PodReferences.
+// MPG2: {pc-a: 1, {pc-b: 1, pc-c: 1}, {pc-b: 1, pc-c: 1}}, the additional pods outside of minAvailable are added as PodReferences.
 func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 	ctx := context.Background()
 
@@ -883,6 +898,10 @@ func Test_GS10_GangSchedulingWithPCSScalingMinReplicasAdvanced(t *testing.T) {
 // 18. Uncordon 2 nodes
 // 19. Wait for 2 more pods to be scheduled (min-available for pcs-1-sg-x-2)
 // 20. Uncordon 2 nodes and verify remaining workload pods get scheduled
+// MPG1: {pc-a: 1, {pc-b: 1, pc-c: 1}, {pc-b: 1, pc-c: 1}}, the additional pods outside of minAvailable are added as PodReferences.
+// TPG1: {{pc-b: 1, pc-c: 1}}
+// MPG2: {pc-a: 1, {pc-b: 1, pc-c: 1}, {pc-b: 1, pc-c: 1}}, the additional pods outside of minAvailable are added as PodReferences.
+// TPG2: {{pc-b: 1, pc-c: 1}}
 func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 	ctx := context.Background()
 
@@ -1025,6 +1044,10 @@ func Test_GS11_GangSchedulingWithPCSAndPCSGScalingMinReplicas(t *testing.T) {
 // 10. Uncordon 8 nodes and verify 8 more pods get scheduled (remaining PCSG pods)
 // 11. Wait for scheduled pods to become ready
 // 12. Uncordon 14 nodes and verify the remaining workload pods get scheduled
+// MPG1: {pc-a: 1, {pc-b: 1, pc-c: 1}, {pc-b: 1, pc-c: 1}}, the additional pods outside of minAvailable are added as PodReferences.
+// TPG1: {{pc-b: 1, pc-c: 1}}
+// MPG2: {pc-a: 1, {pc-b: 1, pc-c: 1}, {pc-b: 1, pc-c: 1}}, the additional pods outside of minAvailable are added as PodReferences.
+// TPG2: {{pc-b: 1, pc-c: 1}}
 func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 	ctx := context.Background()
 

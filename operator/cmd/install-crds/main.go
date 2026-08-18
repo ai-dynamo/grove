@@ -40,6 +40,7 @@ func allCRDs() []string {
 		operatorcrds.PodCliqueSetCRD(),
 		operatorcrds.PodCliqueScalingGroupCRD(),
 		operatorcrds.ClusterTopologyCRD(),
+		operatorcrds.PodGangMapCRD(),
 		schedulercrds.PodGangCRD(),
 	}
 }

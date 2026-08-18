@@ -17,11 +17,7 @@ package common
 import (
 	"testing"
 
-	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-
 	"github.com/stretchr/testify/assert"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 )
 
 func TestGenerateInitContainerSATokenSecretName(t *testing.T) {
@@ -119,37 +115,6 @@ func TestExtractScalingGroupNameFromPCSGFQN(t *testing.T) {
 	}
 }
 
-func TestGenerateBasePodGangName(t *testing.T) {
-	tests := []struct {
-		name           string
-		pcsNameReplica ResourceNameReplica
-		expected       string
-	}{
-		{
-			name:           "simple base PodGang name",
-			pcsNameReplica: ResourceNameReplica{Name: "simple1", Replica: 0},
-			expected:       "simple1-0",
-		},
-		{
-			name:           "base PodGang with different replica",
-			pcsNameReplica: ResourceNameReplica{Name: "test-app", Replica: 2},
-			expected:       "test-app-2",
-		},
-		{
-			name:           "complex PCS name",
-			pcsNameReplica: ResourceNameReplica{Name: "my-complex-workload", Replica: 5},
-			expected:       "my-complex-workload-5",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := GenerateBasePodGangName(tt.pcsNameReplica)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestExtractScalingGroupNameFromPCSGFQN_Consistency(t *testing.T) {
 	// Test that ExtractScalingGroupNameFromPCSGFQN is the inverse of GeneratePodCliqueScalingGroupName
 	testCases := []struct {
@@ -185,106 +150,6 @@ func TestExtractScalingGroupNameFromPCSGFQN_Consistency(t *testing.T) {
 	}
 }
 
-func TestGeneratePodGangNameForPodCliqueOwnedByPodCliqueSet(t *testing.T) {
-	// Create a PodCliqueSet for testing
-	pcs := &v1alpha1.PodCliqueSet{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "simple1",
-		},
-	}
-
-	tests := []struct {
-		name                string
-		pcsReplicaIndex     int
-		expectedPodGangName string
-	}{
-		{
-			name:                "PCS replica 0",
-			pcsReplicaIndex:     0,
-			expectedPodGangName: "simple1-0",
-		},
-		{
-			name:                "PCS replica 1",
-			pcsReplicaIndex:     1,
-			expectedPodGangName: "simple1-1",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := GeneratePodGangNameForPodCliqueOwnedByPodCliqueSet(pcs, tt.pcsReplicaIndex)
-			assert.Equal(t, tt.expectedPodGangName, result)
-		})
-	}
-}
-
-func TestGeneratePodGangNameForPodCliqueOwnedByPCSG(t *testing.T) {
-	// Create a PodCliqueSet for testing
-	pcs := &v1alpha1.PodCliqueSet{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "simple1",
-		},
-	}
-
-	tests := []struct {
-		name                string
-		pcsReplicaIndex     int
-		pcsg                *v1alpha1.PodCliqueScalingGroup
-		pcsgReplicaIndex    int
-		expectedPodGangName string
-	}{
-		{
-			name:            "PCSG PodClique within minAvailable",
-			pcsReplicaIndex: 0,
-			pcsg: &v1alpha1.PodCliqueScalingGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "simple1-0-sga",
-				},
-				Spec: v1alpha1.PodCliqueScalingGroupSpec{
-					MinAvailable: ptr.To[int32](3),
-				},
-			},
-			pcsgReplicaIndex:    1, // Within minAvailable (< 3)
-			expectedPodGangName: "simple1-0",
-		},
-		{
-			name:            "PCSG PodClique beyond minAvailable - first scaled",
-			pcsReplicaIndex: 0,
-			pcsg: &v1alpha1.PodCliqueScalingGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "simple1-0-sga",
-				},
-				Spec: v1alpha1.PodCliqueScalingGroupSpec{
-					MinAvailable: ptr.To[int32](3),
-				},
-			},
-			pcsgReplicaIndex:    3,                 // Beyond minAvailable (>= 3)
-			expectedPodGangName: "simple1-0-sga-0", // First scaled PodGang (3-3=0)
-		},
-		{
-			name:            "PCSG PodClique beyond minAvailable - second scaled",
-			pcsReplicaIndex: 0,
-			pcsg: &v1alpha1.PodCliqueScalingGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "simple1-0-sga",
-				},
-				Spec: v1alpha1.PodCliqueScalingGroupSpec{
-					MinAvailable: ptr.To[int32](3),
-				},
-			},
-			pcsgReplicaIndex:    4,                 // Beyond minAvailable (>= 3)
-			expectedPodGangName: "simple1-0-sga-1", // Second scaled PodGang (4-3=1)
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := GeneratePodGangNameForPodCliqueOwnedByPCSG(pcs, tt.pcsReplicaIndex, tt.pcsg, tt.pcsgReplicaIndex)
-			assert.Equal(t, tt.expectedPodGangName, result)
-		})
-	}
-}
-
 func TestCreatePodGangNameFromPCSGFQN(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -312,10 +177,67 @@ func TestCreatePodGangNameFromPCSGFQN(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := CreatePodGangNameFromPCSGFQN(tt.pcsgFQN, tt.pcsgReplicaIndex)
-			assert.Equal(t, tt.expected, result)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := CreatePodGangNameFromPCSGFQN(tc.pcsgFQN, tc.pcsgReplicaIndex)
+			assert.Equal(t, tc.expected, result)
 		})
 	}
+}
+
+func TestGenerateAnchorPodGangName(t *testing.T) {
+	tests := []struct {
+		name         string
+		pcsName      string
+		replicaIndex int
+		epoch        string
+		expected     string
+	}{
+		{
+			name:         "anchor for replica 0",
+			pcsName:      "my-pcs",
+			replicaIndex: 0,
+			epoch:        "1700000000000000000",
+			expected:     "my-pcs-0-1700000000000000000",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			actual := GenerateAnchorPodGangName(ResourceNameReplica{Name: tc.pcsName, Replica: tc.replicaIndex}, tc.epoch)
+			assert.Equal(t, tc.expected, actual)
+		})
+	}
+}
+
+func TestGenerateNonAnchorPodGangName(t *testing.T) {
+	tests := []struct {
+		name         string
+		pcsName      string
+		replicaIndex int
+		epoch        string
+		pcsgName     string
+		index        int32
+		expected     string
+	}{
+		{
+			name:         "single-segment pcsg name",
+			pcsName:      "my-pcs",
+			replicaIndex: 0,
+			epoch:        "1700000000000000000",
+			pcsgName:     "prefill",
+			index:        3,
+			expected:     "my-pcs-0-1700000000000000000-prefill-3",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			actual := GenerateNonAnchorPodGangName(ResourceNameReplica{Name: tc.pcsName, Replica: tc.replicaIndex}, tc.epoch, tc.pcsgName, tc.index)
+			assert.Equal(t, tc.expected, actual)
+		})
+	}
+}
+
+func TestGeneratePodGangMapName(t *testing.T) {
+	pcsNameReplica := ResourceNameReplica{Name: "my-pcs", Replica: 0}
+	assert.Equal(t, "my-pcs-0", GeneratePodGangMapName(pcsNameReplica))
 }

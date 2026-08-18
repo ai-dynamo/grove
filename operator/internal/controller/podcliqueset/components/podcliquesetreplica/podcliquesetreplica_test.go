@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 
 	"github.com/go-logr/logr"
@@ -166,8 +167,8 @@ func TestSync(t *testing.T) {
 	}
 }
 
-// TestIsRollingUpdateInProgress tests the isRollingUpdateInProgress function
-func TestIsRollingUpdateInProgress(t *testing.T) {
+// TestIsRollingRecreateUpdateInProgress tests the IsRollingRecreateUpdateInProgress function
+func TestIsRollingRecreateUpdateInProgress(t *testing.T) {
 	tests := []struct {
 		name string
 		// pcs is the PodCliqueSet to check
@@ -213,7 +214,7 @@ func TestIsRollingUpdateInProgress(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := isAutoUpdateInProgress(tc.pcs)
+			result := componentutils.IsRollingRecreateUpdateInProgress(tc.pcs)
 			assert.Equal(t, tc.expected, result)
 		})
 	}

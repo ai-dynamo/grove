@@ -59,7 +59,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 					WithReplicas(2).
 					WithStandaloneClique("worker").
 					WithScalingGroup("compute", []string{"frontend", "backend"}).
-					WithPodCliqueSetGenerationHash(&pcsGenerationHash).
+					WithStatusCurrentGenerationHash(&pcsGenerationHash).
 					Build()
 			},
 			childResources: func() []client.Object {
@@ -138,7 +138,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 					WithReplicas(2).
 					WithStandaloneClique("worker").
 					WithStandaloneClique("monitor").
-					WithPodCliqueSetGenerationHash(&pcsGenerationHash).
+					WithStatusCurrentGenerationHash(&pcsGenerationHash).
 					Build()
 			},
 			childResources: func() []client.Object {
@@ -162,7 +162,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 					WithReplicas(2).
 					WithScalingGroup("compute", []string{"frontend", "backend"}).
 					WithScalingGroup("storage", []string{"database"}).
-					WithPodCliqueSetGenerationHash(&pcsGenerationHash).
+					WithStatusCurrentGenerationHash(&pcsGenerationHash).
 					Build()
 			},
 			childResources: func() []client.Object {
@@ -185,7 +185,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(1).
 					WithStandaloneClique("worker").
-					WithPodCliqueSetGenerationHash(&pcsGenerationHash).
+					WithStatusCurrentGenerationHash(&pcsGenerationHash).
 					Build()
 			},
 			childResources: func() []client.Object {
@@ -202,7 +202,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(1).
 					WithScalingGroup("compute", []string{"frontend"}).
-					WithPodCliqueSetGenerationHash(&pcsGenerationHash).
+					WithStatusCurrentGenerationHash(&pcsGenerationHash).
 					Build()
 			},
 			childResources: func() []client.Object {
@@ -219,7 +219,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(1).
 					WithStandaloneClique("worker").
-					WithPodCliqueSetGenerationHash(&pcsGenerationHash).
+					WithStatusCurrentGenerationHash(&pcsGenerationHash).
 					Build()
 			},
 			childResources: func() []client.Object {
@@ -237,7 +237,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(1).
 					WithScalingGroup("compute", []string{"frontend"}).
-					WithPodCliqueSetGenerationHash(&pcsGenerationHash).
+					WithStatusCurrentGenerationHash(&pcsGenerationHash).
 					Build()
 			},
 			childResources:    func() []client.Object { return []client.Object{} },
@@ -249,7 +249,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(1).
 					WithStandaloneClique("worker").
-					WithPodCliqueSetGenerationHash(&pcsGenerationHash).
+					WithStatusCurrentGenerationHash(&pcsGenerationHash).
 					Build()
 			},
 			childResources: func() []client.Object {
@@ -710,7 +710,7 @@ func TestComputePCSUpdateProgressCounts(t *testing.T) {
 					WithReplicas(2).
 					WithStandaloneClique("worker").
 					WithScalingGroup("compute", []string{"frontend"}).
-					WithPodCliqueSetGenerationHash(&pcsHash).Build()
+					WithStatusCurrentGenerationHash(&pcsHash).Build()
 			},
 			childResources: func(t *testing.T, pcs *grovecorev1alpha1.PodCliqueSet) []client.Object {
 				return []client.Object{
@@ -728,7 +728,7 @@ func TestComputePCSUpdateProgressCounts(t *testing.T) {
 					WithReplicas(2).
 					WithStandaloneClique("worker").
 					WithScalingGroup("compute", []string{"frontend"}).
-					WithPodCliqueSetGenerationHash(&pcsHash).Build()
+					WithStatusCurrentGenerationHash(&pcsHash).Build()
 			},
 			childResources: func(t *testing.T, pcs *grovecorev1alpha1.PodCliqueSet) []client.Object {
 				return []client.Object{
@@ -747,7 +747,7 @@ func TestComputePCSUpdateProgressCounts(t *testing.T) {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(2).
 					WithStandaloneClique("worker").
-					WithPodCliqueSetGenerationHash(&pcsHash).Build()
+					WithStatusCurrentGenerationHash(&pcsHash).Build()
 			},
 			childResources: func(t *testing.T, pcs *grovecorev1alpha1.PodCliqueSet) []client.Object {
 				return []client.Object{
@@ -764,7 +764,7 @@ func TestComputePCSUpdateProgressCounts(t *testing.T) {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(1).
 					WithStandaloneClique("worker").
-					WithPodCliqueSetGenerationHash(&pcsHash).Build()
+					WithStatusCurrentGenerationHash(&pcsHash).Build()
 			},
 			childResources: func(_ *testing.T, _ *grovecorev1alpha1.PodCliqueSet) []client.Object {
 				return []client.Object{standalonePCLQNoHash(0)}
@@ -803,7 +803,7 @@ func TestPCSMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 			WithReplicas(2).
 			WithStandaloneClique("worker").
 			WithScalingGroup("compute", []string{"frontend"}).
-			WithPodCliqueSetGenerationHash(&pcsHash)
+			WithStatusCurrentGenerationHash(&pcsHash)
 		if withProgress {
 			b = b.WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
 				UpdateStartedAt: metav1.Now(),
@@ -847,7 +847,7 @@ func TestCountUpdatedPCLQs(t *testing.T) {
 	pcsUID := uuid.NewUUID()
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 		WithStandaloneClique("worker").
-		WithPodCliqueSetGenerationHash(&hash).
+		WithStatusCurrentGenerationHash(&hash).
 		Build()
 
 	matching := *markStandalonePCLQConverged(t, pcs, testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).Build(), hash)
