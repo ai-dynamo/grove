@@ -502,6 +502,16 @@ func waitForRollingUpdate(tc *testctx.TestContext, expectedReplicas int32) <-cha
 // ordinalUpdateObserver watches a PodCliqueSet for a specific ordinal entering
 // CurrentlyUpdating. The watch must be established before triggering the update
 // so a short-lived transition cannot occur between observations.
+//
+// Lifecycle note: newOrdinalUpdateObserver deliberately hands ownership of the
+// timeout context and its cancel func to the returned observer. Callers keep
+// the observer alive across the mutation window and later call Wait() (which
+// reads from a channel bound to the same context) before finally calling
+// Stop(). Do NOT collapse the constructor's cancel into a `defer cancel()` at
+// the top of the function: that would fire cancel at constructor return time,
+// leaving the caller with an already-Done context and a watcher whose result
+// channel is closed before Wait() ever runs. See observer_defer_cancel_test.go
+// for a runnable proof of this invariant.
 type ordinalUpdateObserver struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -512,6 +522,11 @@ type ordinalUpdateObserver struct {
 
 func newOrdinalUpdateObserver(tc *testctx.TestContext, ordinal int32) (*ordinalUpdateObserver, error) {
 	pcsName := tc.Workload.Name
+	// NOTE: cancel is intentionally NOT deferred here. It is either invoked on
+	// the error paths below, or handed to the returned observer to be run from
+	// Stop() after Wait() completes. Adding `defer cancel()` here would break
+	// Wait(): the caller only invokes Wait() after triggering the update, and
+	// by then this context (and the watcher bound to it) would already be dead.
 	timeoutCtx, cancel := context.WithTimeout(tc.Ctx, tc.Timeout)
 
 	var pcs grovev1alpha1.PodCliqueSet
