@@ -48,11 +48,11 @@ func (r _resource) createPodCreationTask(logger logr.Logger, pcs *grovecorev1alp
 			}
 			// create the Pod
 			if err := r.client.Create(ctx, pod); err != nil {
-				r.eventRecorder.Eventf(pclq, corev1.EventTypeWarning, constants.ReasonPodCreateFailed, "Error creating pod %v: %v", pod.Name, err)
+				r.eventRecorder.Eventf(pclq, corev1.EventTypeWarning, constants.ReasonPodCreateFailed, "Error creating Pod with generateName %q: %v", pod.GenerateName, err)
 				return groveerr.WrapError(err,
 					errCodeCreatePod,
 					component.OperationSync,
-					fmt.Sprintf("failed to create Pod: %s for PodClique %v", pod.Name, pclqObjKey),
+					fmt.Sprintf("failed to create Pod with generateName %q for PodClique %v", pod.GenerateName, pclqObjKey),
 				)
 			}
 			logger.Info("Created Pod for PodClique", "podName", pod.Name, "podUID", pod.GetUID())
